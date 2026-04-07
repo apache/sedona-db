@@ -15,112 +15,134 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use std::borrow::Cow;
+
 use arrow_schema::ArrowError;
+use sedona_schema::raster::BandDataType;
 
-use sedona_schema::raster::{BandDataType, StorageType};
-
-/// Metadata for a raster
-#[derive(Debug, Clone)]
-pub struct RasterMetadata {
-    pub width: u64,
-    pub height: u64,
-    pub upperleft_x: f64,
-    pub upperleft_y: f64,
-    pub scale_x: f64,
-    pub scale_y: f64,
-    pub skew_x: f64,
-    pub skew_y: f64,
+/// Zero-copy view into a band's N-D data buffer with layout metadata.
+///
+/// In Phase 1, strides are always standard C-order contiguous and offset is 0.
+/// Phase 2 will introduce non-standard strides for zero-copy slicing.
+#[derive(Debug)]
+pub struct NdBuffer<'a> {
+    pub buffer: &'a [u8],
+    pub shape: &'a [u64],
+    pub strides: &'a [i64],
+    pub offset: u64,
+    pub data_type: BandDataType,
 }
 
-/// Metadata for a single band
-#[derive(Debug, Clone)]
-pub struct BandMetadata {
-    pub nodata_value: Option<Vec<u8>>,
-    pub storage_type: StorageType,
-    pub datatype: BandDataType,
-    /// URL for OutDb reference (only used when storage_type == OutDbRef)
-    pub outdb_url: Option<String>,
-    /// Band ID within the OutDb resource (only used when storage_type == OutDbRef)
-    pub outdb_band_id: Option<u32>,
-}
-
-/// Trait for accessing complete raster data
+/// Trait for accessing an N-dimensional raster (top level).
+///
+/// Replaces the legacy `RasterRef` + `MetadataRef` + `BandsRef` hierarchy with
+/// a single flat interface. Bands are 0-indexed.
 pub trait RasterRef {
-    /// Raster metadata accessor
-    fn metadata(&self) -> &dyn MetadataRef;
-    /// CRS accessor
+    /// Number of bands/variables
+    fn num_bands(&self) -> usize;
+
+    /// Access a band by 0-based index
+    fn band(&self, index: usize) -> Option<Box<dyn BandRef + '_>>;
+
+    /// Band name (e.g., Zarr variable name). None for unnamed bands.
+    fn band_name(&self, index: usize) -> Option<&str>;
+
+    /// CRS string (PROJJSON, WKT, or authority code). None if not set.
     fn crs(&self) -> Option<&str>;
-    /// Bands accessor
-    fn bands(&self) -> &dyn BandsRef;
-}
 
-/// Trait for accessing raster metadata (dimensions, geotransform, bounding box, etc.)
-pub trait MetadataRef {
-    /// Width of the raster in pixels
-    fn width(&self) -> u64;
-    /// Height of the raster in pixels
-    fn height(&self) -> u64;
-    /// X coordinate of the upper-left corner
-    fn upper_left_x(&self) -> f64;
-    /// Y coordinate of the upper-left corner
-    fn upper_left_y(&self) -> f64;
-    /// X-direction pixel size (scale)
-    fn scale_x(&self) -> f64;
-    /// Y-direction pixel size (scale)
-    fn scale_y(&self) -> f64;
-    /// X-direction skew/rotation
-    fn skew_x(&self) -> f64;
-    /// Y-direction skew/rotation
-    fn skew_y(&self) -> f64;
-}
-/// Trait for accessing all bands in a raster
-pub trait BandsRef {
-    /// Number of bands in the raster
-    fn len(&self) -> usize;
-    /// Check if no bands are present
-    fn is_empty(&self) -> bool {
-        self.len() == 0
+    /// 6-element affine transform in GDAL GeoTransform order:
+    /// `[origin_x, scale_x, skew_x, origin_y, skew_y, scale_y]`
+    fn transform(&self) -> &[f64];
+
+    /// Name of the X spatial dimension (e.g., "x", "lon", "easting")
+    fn x_dim(&self) -> &str;
+
+    /// Name of the Y spatial dimension (e.g., "y", "lat", "northing")
+    fn y_dim(&self) -> &str;
+
+    /// Width in pixels — size of the X spatial dimension in band(0).
+    fn width(&self) -> Option<u64> {
+        self.band(0).and_then(|b| b.dim_size(self.x_dim()))
     }
-    /// Get a specific band by number (returns Error if out of bounds)
-    /// By convention, band numbers are 1-based
-    fn band(&self, number: usize) -> Result<Box<dyn BandRef + '_>, ArrowError>;
-    /// Iterator over all bands
-    fn iter(&self) -> Box<dyn BandIterator<'_> + '_>;
+
+    /// Height in pixels — size of the Y spatial dimension in band(0).
+    fn height(&self) -> Option<u64> {
+        self.band(0).and_then(|b| b.dim_size(self.y_dim()))
+    }
+
+    /// Look up a band by name. Returns None if no band has that name.
+    fn band_by_name(&self, name: &str) -> Option<Box<dyn BandRef + '_>> {
+        (0..self.num_bands())
+            .find(|&i| self.band_name(i) == Some(name))
+            .and_then(|i| self.band(i))
+    }
 }
 
-/// Trait for accessing individual band data
+/// Trait for accessing a single band/variable within an N-D raster.
+///
+/// This is the consumer interface. Implementations handle storage details
+/// Two data access paths:
+/// - `contiguous_data()` — flat row-major bytes for consumers that don't need
+///   stride awareness (most RS_* functions, GDAL boundary, serialization).
+/// - `nd_buffer()` — raw buffer + shape + strides + offset for stride-aware
+///   consumers (numpy zero-copy views, Arrow FFI) that want to avoid copies.
 pub trait BandRef {
-    /// Band metadata accessor
-    fn metadata(&self) -> &dyn BandMetadataRef;
-    /// Raw band data as bytes (zero-copy access)
-    fn data(&self) -> &[u8];
-}
+    // -- Dimension metadata --
 
-/// Trait for accessing individual band metadata
-pub trait BandMetadataRef {
-    /// No-data value as raw bytes (None if null)
-    fn nodata_value(&self) -> Option<&[u8]>;
-    /// Storage type (InDb, OutDbRef, etc)
-    fn storage_type(&self) -> Result<StorageType, ArrowError>;
-    /// Band data type (UInt8, Float32, etc.)
-    fn data_type(&self) -> Result<BandDataType, ArrowError>;
-    /// OutDb URL (only used when storage_type == OutDbRef)
-    fn outdb_url(&self) -> Option<&str>;
-    /// OutDb band ID (only used when storage_type == OutDbRef)
-    fn outdb_band_id(&self) -> Option<u32>;
+    /// Number of dimensions in this band
+    fn ndim(&self) -> usize;
 
-    /// No-data value interpreted as f64.
+    /// Dimension names in order (e.g., `["time", "y", "x"]`)
+    fn dim_names(&self) -> Vec<&str>;
+
+    /// Shape (size of each dimension)
+    fn shape(&self) -> &[u64];
+
+    /// Size of a named dimension (None if doesn't exist)
+    fn dim_size(&self, name: &str) -> Option<u64> {
+        let idx = self.dim_index(name)?;
+        Some(self.shape()[idx])
+    }
+
+    /// Index of a named dimension (None if doesn't exist)
+    fn dim_index(&self, name: &str) -> Option<usize> {
+        self.dim_names().iter().position(|n| *n == name)
+    }
+
+    // -- Band metadata --
+
+    /// Data type for all elements in this band
+    fn data_type(&self) -> BandDataType;
+
+    /// Nodata value as raw bytes (None if not set)
+    fn nodata(&self) -> Option<&[u8]>;
+
+    /// OutDb URI (None for in-memory bands)
+    fn outdb_uri(&self) -> Option<&str> {
+        None
+    }
+
+    // -- Data access --
+
+    /// Raw backing buffer + layout. Triggers load for lazy impls.
+    /// Returns an NdBuffer with shape, strides, offset, and raw byte buffer.
+    fn nd_buffer(&self) -> Result<NdBuffer<'_>, ArrowError>;
+
+    /// Contiguous row-major bytes. Zero-copy (`Cow::Borrowed`) when data
+    /// has standard C-order strides; copies into a new buffer only when
+    /// strides are non-standard. Most RS_* functions use this.
+    fn contiguous_data(&self) -> Result<Cow<'_, [u8]>, ArrowError>;
+
+    /// Nodata value interpreted as f64.
     ///
     /// Returns `Ok(None)` when no nodata value is defined, `Ok(Some(f64))` on
-    /// success, or an error when the raw bytes have an unexpected length for
-    /// the band's data type.
-    fn nodata_value_as_f64(&self) -> Result<Option<f64>, ArrowError> {
-        let bytes = match self.nodata_value() {
+    /// success, or an error when the raw bytes have an unexpected length.
+    fn nodata_as_f64(&self) -> Result<Option<f64>, ArrowError> {
+        let bytes = match self.nodata() {
             Some(b) => b,
             None => return Ok(None),
         };
-        let dt = self.data_type()?;
-        nodata_bytes_to_f64(bytes, &dt).map(Some)
+        nodata_bytes_to_f64(bytes, &self.data_type()).map(Some)
     }
 }
 
@@ -128,7 +150,7 @@ pub trait BandMetadataRef {
 ///
 /// The bytes are expected to be in little-endian order and exactly match the
 /// byte size of the data type.
-fn nodata_bytes_to_f64(bytes: &[u8], dt: &BandDataType) -> Result<f64, ArrowError> {
+pub fn nodata_bytes_to_f64(bytes: &[u8], dt: &BandDataType) -> Result<f64, ArrowError> {
     macro_rules! read_le {
         ($t:ty, $n:expr) => {{
             let arr: [u8; $n] = bytes.try_into().map_err(|_| {
@@ -170,15 +192,6 @@ fn nodata_bytes_to_f64(bytes: &[u8], dt: &BandDataType) -> Result<f64, ArrowErro
         BandDataType::Int64 => read_le!(i64, 8),
         BandDataType::Float32 => read_le!(f32, 4),
         BandDataType::Float64 => read_le!(f64, 8),
-    }
-}
-
-/// Trait for iterating over bands within a raster
-pub trait BandIterator<'a>: Iterator<Item = Box<dyn BandRef + 'a>> {
-    fn len(&self) -> usize;
-    /// Check if there are no more bands
-    fn is_empty(&self) -> bool {
-        self.len() == 0
     }
 }
 

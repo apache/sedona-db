@@ -21,13 +21,8 @@ use datafusion_common::error::Result;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_raster::builder::RasterBuilder;
-use sedona_raster::traits::BandMetadata;
-use sedona_raster::traits::RasterMetadata;
 use sedona_schema::{
-    crs::lnglat,
-    datatypes::SedonaType,
-    matchers::ArgMatcher,
-    raster::{BandDataType, StorageType},
+    crs::lnglat, datatypes::SedonaType, matchers::ArgMatcher, raster::BandDataType,
 };
 
 /// RS_Example() scalar UDF implementation
@@ -60,30 +55,15 @@ impl SedonaScalarKernel for RsExample {
         let executor = RasterExecutor::new(arg_types, args);
         let mut builder = RasterBuilder::new(1);
 
-        let raster_metadata = RasterMetadata {
-            width: 64,
-            height: 32,
-            upperleft_x: 43.08,
-            upperleft_y: 79.07,
-            scale_x: 2.0,
-            scale_y: 2.0,
-            skew_x: 1.0,
-            skew_y: 1.0,
-        };
+        let width: u64 = 64;
+        let height: u64 = 32;
         let crs = lnglat().unwrap().to_crs_string();
-        builder.start_raster(&raster_metadata, Some(&crs))?;
+        builder.start_raster_2d(width, height, 43.08, 79.07, 2.0, 2.0, 1.0, 1.0, Some(&crs))?;
         let nodata_value = 127u8;
         for band_id in 1..=3 {
-            builder.start_band(BandMetadata {
-                datatype: BandDataType::UInt8,
-                nodata_value: Some(vec![nodata_value]),
-                storage_type: StorageType::InDb,
-                outdb_url: None,
-                outdb_band_id: None,
-            })?;
+            builder.start_band_2d(BandDataType::UInt8, Some(&[nodata_value]))?;
 
-            let mut band_data =
-                vec![band_id as u8; (raster_metadata.width * raster_metadata.height) as usize];
+            let mut band_data = vec![band_id as u8; (width * height) as usize];
             band_data[0] = nodata_value; // set the top corner to nodata
 
             builder.band_data_writer().append_value(&band_data);
@@ -121,16 +101,13 @@ mod tests {
 
             assert_eq!(raster_array.len(), 1);
             let raster = raster_array.get(0).unwrap();
-            let metadata = raster.metadata();
-            assert_eq!(metadata.width(), 64);
-            assert_eq!(metadata.height(), 32);
+            assert_eq!(raster.width().unwrap(), 64);
+            assert_eq!(raster.height().unwrap(), 32);
 
-            let bands = raster.bands();
-            let band = bands.band(1).unwrap();
-            let band_metadata = band.metadata();
-            assert_eq!(band_metadata.data_type().unwrap(), BandDataType::UInt8);
-            assert_eq!(band_metadata.nodata_value(), Some(&[127u8][..]));
-            assert_eq!(band_metadata.storage_type().unwrap(), StorageType::InDb);
+            let band = raster.band(0).unwrap();
+            assert_eq!(band.data_type(), BandDataType::UInt8);
+            assert_eq!(band.nodata(), Some(&[127u8][..]));
+            assert!(band.outdb_uri().is_none());
         } else {
             panic!("Expected scalar struct result");
         }

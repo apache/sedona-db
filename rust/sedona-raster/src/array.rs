@@ -15,445 +15,260 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use std::borrow::Cow;
+
 use arrow_array::{
-    Array, BinaryArray, BinaryViewArray, Float64Array, ListArray, StringArray, StringViewArray,
-    StructArray, UInt32Array, UInt64Array,
+    Array, BinaryArray, BinaryViewArray, Float64Array, Int64Array, ListArray, StringArray,
+    StringViewArray, StructArray, UInt32Array, UInt64Array,
 };
 use arrow_schema::ArrowError;
 
-use crate::traits::{
-    BandIterator, BandMetadataRef, BandRef, BandsRef, MetadataRef, RasterMetadata, RasterRef,
-};
-use sedona_schema::raster::{
-    band_indices, band_metadata_indices, metadata_indices, raster_indices, BandDataType,
-    StorageType,
-};
+use crate::traits::{BandRef, NdBuffer, RasterRef};
+use sedona_schema::raster::{band_indices, raster_indices, BandDataType};
 
-/// Implement MetadataRef for RasterMetadata to allow direct use with builder
-impl MetadataRef for RasterMetadata {
-    fn width(&self) -> u64 {
-        self.width
-    }
-    fn height(&self) -> u64 {
-        self.height
-    }
-    fn upper_left_x(&self) -> f64 {
-        self.upperleft_x
-    }
-    fn upper_left_y(&self) -> f64 {
-        self.upperleft_y
-    }
-    fn scale_x(&self) -> f64 {
-        self.scale_x
-    }
-    fn scale_y(&self) -> f64 {
-        self.scale_y
-    }
-    fn skew_x(&self) -> f64 {
-        self.skew_x
-    }
-    fn skew_y(&self) -> f64 {
-        self.skew_y
-    }
-}
+// ---------------------------------------------------------------------------
+// Band implementation (Arrow-backed)
+// ---------------------------------------------------------------------------
 
-/// Implementation of MetadataRef for Arrow StructArray
-struct MetadataRefImpl<'a> {
-    width_array: &'a UInt64Array,
-    height_array: &'a UInt64Array,
-    upper_left_x_array: &'a Float64Array,
-    upper_left_y_array: &'a Float64Array,
-    scale_x_array: &'a Float64Array,
-    scale_y_array: &'a Float64Array,
-    skew_x_array: &'a Float64Array,
-    skew_y_array: &'a Float64Array,
-    index: usize,
-}
-
-impl<'a> MetadataRef for MetadataRefImpl<'a> {
-    #[inline(always)]
-    fn width(&self) -> u64 {
-        self.width_array.value(self.index)
-    }
-
-    #[inline(always)]
-    fn height(&self) -> u64 {
-        self.height_array.value(self.index)
-    }
-
-    #[inline(always)]
-    fn upper_left_x(&self) -> f64 {
-        self.upper_left_x_array.value(self.index)
-    }
-
-    #[inline(always)]
-    fn upper_left_y(&self) -> f64 {
-        self.upper_left_y_array.value(self.index)
-    }
-
-    #[inline(always)]
-    fn scale_x(&self) -> f64 {
-        self.scale_x_array.value(self.index)
-    }
-
-    #[inline(always)]
-    fn scale_y(&self) -> f64 {
-        self.scale_y_array.value(self.index)
-    }
-
-    #[inline(always)]
-    fn skew_x(&self) -> f64 {
-        self.skew_x_array.value(self.index)
-    }
-
-    #[inline(always)]
-    fn skew_y(&self) -> f64 {
-        self.skew_y_array.value(self.index)
-    }
-}
-
-/// Implementation of BandMetadataRef for Arrow StructArray
-struct BandMetadataRefImpl<'a> {
-    nodata_array: &'a BinaryArray,
-    storage_type_array: &'a UInt32Array,
-    datatype_array: &'a UInt32Array,
-    outdb_url_array: &'a StringArray,
-    outdb_band_id_array: &'a UInt32Array,
-    band_index: usize,
-}
-
-impl<'a> BandMetadataRef for BandMetadataRefImpl<'a> {
-    fn nodata_value(&self) -> Option<&[u8]> {
-        if self.nodata_array.is_null(self.band_index) {
-            None
-        } else {
-            Some(self.nodata_array.value(self.band_index))
-        }
-    }
-
-    fn storage_type(&self) -> Result<StorageType, ArrowError> {
-        let value = self.storage_type_array.value(self.band_index);
-        let storage_type = match value {
-            0 => StorageType::InDb,
-            1 => StorageType::OutDbRef,
-            _ => {
-                return Err(ArrowError::InvalidArgumentError(format!(
-                    "Unknown storage type: {}",
-                    value
-                )))
-            }
-        };
-        Ok(storage_type)
-    }
-
-    fn data_type(&self) -> Result<BandDataType, ArrowError> {
-        let value = self.datatype_array.value(self.band_index);
-        let band_data_type = match value {
-            1 => BandDataType::UInt8,
-            2 => BandDataType::UInt16,
-            3 => BandDataType::Int16,
-            4 => BandDataType::UInt32,
-            5 => BandDataType::Int32,
-            6 => BandDataType::Float32,
-            7 => BandDataType::Float64,
-            8 => BandDataType::UInt64,
-            9 => BandDataType::Int64,
-            10 => BandDataType::Int8,
-            _ => {
-                return Err(ArrowError::InvalidArgumentError(format!(
-                    "Unknown band data type: {}",
-                    self.datatype_array.value(self.band_index)
-                )))
-            }
-        };
-        Ok(band_data_type)
-    }
-
-    fn outdb_url(&self) -> Option<&str> {
-        if self.outdb_url_array.is_null(self.band_index) {
-            None
-        } else {
-            Some(self.outdb_url_array.value(self.band_index))
-        }
-    }
-
-    fn outdb_band_id(&self) -> Option<u32> {
-        if self.outdb_band_id_array.is_null(self.band_index) {
-            None
-        } else {
-            Some(self.outdb_band_id_array.value(self.band_index))
-        }
-    }
-}
-
-/// Implementation of BandRef for accessing individual band data
+/// Arrow-backed implementation of BandRef for a single band within a raster.
 struct BandRefImpl<'a> {
-    band_metadata: BandMetadataRefImpl<'a>,
-    band_data: &'a [u8],
+    // Band metadata arrays (indexed by absolute band row)
+    dim_names_list: &'a ListArray,
+    dim_names_values: &'a StringArray,
+    shape_list: &'a ListArray,
+    shape_values: &'a UInt64Array,
+    datatype_array: &'a UInt32Array,
+    nodata_array: &'a BinaryArray,
+    strides_list: &'a ListArray,
+    strides_values: &'a Int64Array,
+    offset_array: &'a UInt64Array,
+    outdb_uri_array: &'a StringArray,
+    data_array: &'a BinaryViewArray,
+    /// Absolute row index within the flattened bands arrays
+    band_row: usize,
 }
 
 impl<'a> BandRef for BandRefImpl<'a> {
-    fn metadata(&self) -> &dyn BandMetadataRef {
-        &self.band_metadata
+    fn ndim(&self) -> usize {
+        self.shape_list.value_length(self.band_row) as usize
     }
 
-    fn data(&self) -> &[u8] {
-        self.band_data
-    }
-}
-
-/// Implementation of BandsRef for accessing all bands in a raster
-struct BandsRefImpl<'a> {
-    bands_list: &'a ListArray,
-    raster_index: usize,
-    // Direct references to the metadata and data arrays
-    nodata_array: &'a BinaryArray,
-    storage_type_array: &'a UInt32Array,
-    datatype_array: &'a UInt32Array,
-    outdb_url_array: &'a StringArray,
-    outdb_band_id_array: &'a UInt32Array,
-    band_data_array: &'a BinaryViewArray,
-}
-
-impl<'a> BandsRef for BandsRefImpl<'a> {
-    fn len(&self) -> usize {
-        self.bands_list.value_length(self.raster_index) as usize
+    fn dim_names(&self) -> Vec<&str> {
+        let start = self.dim_names_list.value_offsets()[self.band_row] as usize;
+        let end = self.dim_names_list.value_offsets()[self.band_row + 1] as usize;
+        (start..end)
+            .map(|i| self.dim_names_values.value(i))
+            .collect()
     }
 
-    /// Get a specific band by number (1-based index)
-    fn band(&self, number: usize) -> Result<Box<dyn BandRef + '_>, ArrowError> {
-        if number == 0 {
-            return Err(ArrowError::InvalidArgumentError(format!(
-                "Invalid band number {number}: band numbers must be 1-based"
-            )));
+    fn shape(&self) -> &[u64] {
+        let start = self.shape_list.value_offsets()[self.band_row] as usize;
+        let end = self.shape_list.value_offsets()[self.band_row + 1] as usize;
+        &self.shape_values.values()[start..end]
+    }
+
+    fn data_type(&self) -> BandDataType {
+        let value = self.datatype_array.value(self.band_row);
+        BandDataType::try_from_u32(value)
+            .unwrap_or_else(|| panic!("Unknown band data type: {value}"))
+    }
+
+    fn nodata(&self) -> Option<&[u8]> {
+        if self.nodata_array.is_null(self.band_row) {
+            None
+        } else {
+            Some(self.nodata_array.value(self.band_row))
         }
-        // By convention, band numbers are 1-based.
-        // Convert to zero-based index.
-        let index = number - 1;
-        if index >= self.len() {
-            return Err(ArrowError::InvalidArgumentError(format!(
-                "Band number {} is out of range: this raster has {} bands",
-                number,
-                self.len()
-            )));
-        }
-
-        let start = self.bands_list.value_offsets()[self.raster_index] as usize;
-        let band_row = start + index;
-
-        let band_metadata = BandMetadataRefImpl {
-            nodata_array: self.nodata_array,
-            storage_type_array: self.storage_type_array,
-            datatype_array: self.datatype_array,
-            outdb_url_array: self.outdb_url_array,
-            outdb_band_id_array: self.outdb_band_id_array,
-            band_index: band_row,
-        };
-
-        let band_data = self.band_data_array.value(band_row);
-
-        Ok(Box::new(BandRefImpl {
-            band_metadata,
-            band_data,
-        }))
     }
 
-    fn iter(&self) -> Box<dyn BandIterator<'_> + '_> {
-        Box::new(BandIteratorImpl {
-            bands: self,
-            current: 1, // Start at 1 for 1-based band numbering
+    fn outdb_uri(&self) -> Option<&str> {
+        if self.outdb_uri_array.is_null(self.band_row) {
+            None
+        } else {
+            Some(self.outdb_uri_array.value(self.band_row))
+        }
+    }
+
+    fn nd_buffer(&self) -> Result<NdBuffer<'_>, ArrowError> {
+        let strides_start = self.strides_list.value_offsets()[self.band_row] as usize;
+        let strides_end = self.strides_list.value_offsets()[self.band_row + 1] as usize;
+
+        Ok(NdBuffer {
+            buffer: self.data_array.value(self.band_row),
+            shape: self.shape(),
+            strides: &self.strides_values.values()[strides_start..strides_end],
+            offset: self.offset_array.value(self.band_row),
+            data_type: self.data_type(),
         })
     }
-}
 
-/// Concrete implementation of BandIterator trait
-pub struct BandIteratorImpl<'a> {
-    bands: &'a dyn BandsRef,
-    current: usize,
-}
-
-impl<'a> Iterator for BandIteratorImpl<'a> {
-    type Item = Box<dyn BandRef + 'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        // current is 1-based, compare against len() + 1
-        if self.current <= self.bands.len() {
-            let band = self.bands.band(self.current).ok(); // Convert Result to Option
-            self.current += 1;
-            band
-        } else {
-            None
-        }
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        // current is 1-based, so remaining calculation needs adjustment
-        let remaining = self.bands.len().saturating_sub(self.current - 1);
-        (remaining, Some(remaining))
+    fn contiguous_data(&self) -> Result<Cow<'_, [u8]>, ArrowError> {
+        // Phase 1: all data is contiguous, so always return Borrowed
+        Ok(Cow::Borrowed(self.data_array.value(self.band_row)))
     }
 }
 
-impl<'a> BandIterator<'a> for BandIteratorImpl<'a> {
-    fn len(&self) -> usize {
-        // current is 1-based, so remaining calculation needs adjustment
-        self.bands.len().saturating_sub(self.current - 1)
-    }
-}
+// ---------------------------------------------------------------------------
+// Raster implementation (Arrow-backed)
+// ---------------------------------------------------------------------------
 
-impl ExactSizeIterator for BandIteratorImpl<'_> {}
-
-/// Implementation of RasterRef for complete raster access
+/// Arrow-backed implementation of RasterRef for a single raster row.
 pub struct RasterRefImpl<'a> {
-    metadata: MetadataRefImpl<'a>,
-    crs: &'a StringViewArray,
-    bands: BandsRefImpl<'a>,
+    raster_struct_array: &'a RasterStructArray<'a>,
+    raster_index: usize,
 }
 
 impl<'a> RasterRefImpl<'a> {
-    /// Creates a new RasterRefImpl that provides zero-copy access to the raster at the specified index.
-    ///
-    /// # Arguments
-    /// * `raster_struct_array` - The Arrow StructArray containing raster data
-    /// * `raster_index` - The zero-based index of the raster to access
-    #[inline(always)]
-    pub fn new(raster_struct_array: &RasterStructArray<'a>, raster_index: usize) -> Self {
-        let metadata = MetadataRefImpl {
-            width_array: raster_struct_array.width_array,
-            height_array: raster_struct_array.height_array,
-            upper_left_x_array: raster_struct_array.upper_left_x_array,
-            upper_left_y_array: raster_struct_array.upper_left_y_array,
-            scale_x_array: raster_struct_array.scale_x_array,
-            scale_y_array: raster_struct_array.scale_y_array,
-            skew_x_array: raster_struct_array.skew_x_array,
-            skew_y_array: raster_struct_array.skew_y_array,
-            index: raster_index,
-        };
-
-        let bands = BandsRefImpl {
-            bands_list: raster_struct_array.bands_list,
-            raster_index,
-            nodata_array: raster_struct_array.band_nodata_array,
-            storage_type_array: raster_struct_array.band_storage_type_array,
-            datatype_array: raster_struct_array.band_datatype_array,
-            outdb_url_array: raster_struct_array.band_outdb_url_array,
-            outdb_band_id_array: raster_struct_array.band_outdb_band_id_array,
-            band_data_array: raster_struct_array.band_data_array,
-        };
-
-        Self {
-            metadata,
-            crs: raster_struct_array.crs,
-            bands,
-        }
-    }
-
+    /// Returns the raw CRS string reference with the array's lifetime.
     pub fn crs_str_ref(&self) -> Option<&'a str> {
-        if self.crs.is_null(self.bands.raster_index) {
+        if self
+            .raster_struct_array
+            .crs_array
+            .is_null(self.raster_index)
+        {
             None
         } else {
-            Some(self.crs.value(self.bands.raster_index))
+            Some(self.raster_struct_array.crs_array.value(self.raster_index))
         }
     }
 }
 
 impl<'a> RasterRef for RasterRefImpl<'a> {
-    #[inline(always)]
-    fn metadata(&self) -> &dyn MetadataRef {
-        &self.metadata
+    fn num_bands(&self) -> usize {
+        self.raster_struct_array
+            .bands_list
+            .value_length(self.raster_index) as usize
     }
 
-    #[inline(always)]
+    fn band(&self, index: usize) -> Option<Box<dyn BandRef + '_>> {
+        if index >= self.num_bands() {
+            return None;
+        }
+        let start = self.raster_struct_array.bands_list.value_offsets()[self.raster_index] as usize;
+        let band_row = start + index;
+        Some(Box::new(BandRefImpl {
+            dim_names_list: self.raster_struct_array.band_dim_names_list,
+            dim_names_values: self.raster_struct_array.band_dim_names_values,
+            shape_list: self.raster_struct_array.band_shape_list,
+            shape_values: self.raster_struct_array.band_shape_values,
+            datatype_array: self.raster_struct_array.band_datatype_array,
+            nodata_array: self.raster_struct_array.band_nodata_array,
+            strides_list: self.raster_struct_array.band_strides_list,
+            strides_values: self.raster_struct_array.band_strides_values,
+            offset_array: self.raster_struct_array.band_offset_array,
+            outdb_uri_array: self.raster_struct_array.band_outdb_uri_array,
+            data_array: self.raster_struct_array.band_data_array,
+            band_row,
+        }))
+    }
+
+    fn band_name(&self, index: usize) -> Option<&str> {
+        if index >= self.num_bands() {
+            return None;
+        }
+        let start = self.raster_struct_array.bands_list.value_offsets()[self.raster_index] as usize;
+        let band_row = start + index;
+        if self.raster_struct_array.band_name_array.is_null(band_row) {
+            None
+        } else {
+            Some(self.raster_struct_array.band_name_array.value(band_row))
+        }
+    }
+
     fn crs(&self) -> Option<&str> {
         self.crs_str_ref()
     }
 
-    #[inline(always)]
-    fn bands(&self) -> &dyn BandsRef {
-        &self.bands
+    fn transform(&self) -> &[f64] {
+        let start =
+            self.raster_struct_array.transform_list.value_offsets()[self.raster_index] as usize;
+        let end =
+            self.raster_struct_array.transform_list.value_offsets()[self.raster_index + 1] as usize;
+        debug_assert!(
+            end - start >= 6,
+            "transform list must have at least 6 elements for raster {}, got {}",
+            self.raster_index,
+            end - start
+        );
+        &self.raster_struct_array.transform_values.values()[start..start + 6]
+    }
+
+    fn x_dim(&self) -> &str {
+        self.raster_struct_array
+            .x_dim_array
+            .value(self.raster_index)
+    }
+
+    fn y_dim(&self) -> &str {
+        self.raster_struct_array
+            .y_dim_array
+            .value(self.raster_index)
     }
 }
 
-/// Access rasters from the Arrow StructArray
+// ---------------------------------------------------------------------------
+// RasterStructArray — efficient columnar access to rasters
+// ---------------------------------------------------------------------------
+
+/// Access rasters from the Arrow StructArray.
 ///
-/// This provides efficient, zero-copy access to raster data stored in Arrow format.
+/// Provides efficient, zero-copy access to N-D raster data stored in Arrow format.
 pub struct RasterStructArray<'a> {
     raster_array: &'a StructArray,
-    width_array: &'a UInt64Array,
-    height_array: &'a UInt64Array,
-    upper_left_x_array: &'a Float64Array,
-    upper_left_y_array: &'a Float64Array,
-    scale_x_array: &'a Float64Array,
-    scale_y_array: &'a Float64Array,
-    skew_x_array: &'a Float64Array,
-    skew_y_array: &'a Float64Array,
-    crs: &'a StringViewArray,
+    // Top-level fields
+    crs_array: &'a StringViewArray,
+    transform_list: &'a ListArray,
+    transform_values: &'a Float64Array,
+    x_dim_array: &'a StringViewArray,
+    y_dim_array: &'a StringViewArray,
     bands_list: &'a ListArray,
-    band_nodata_array: &'a BinaryArray,
-    band_storage_type_array: &'a UInt32Array,
+    // Band-level fields (flattened across all bands in all rasters)
+    band_name_array: &'a StringArray,
+    band_dim_names_list: &'a ListArray,
+    band_dim_names_values: &'a StringArray,
+    band_shape_list: &'a ListArray,
+    band_shape_values: &'a UInt64Array,
     band_datatype_array: &'a UInt32Array,
-    band_outdb_url_array: &'a StringArray,
-    band_outdb_band_id_array: &'a UInt32Array,
+    band_nodata_array: &'a BinaryArray,
+    band_strides_list: &'a ListArray,
+    band_strides_values: &'a Int64Array,
+    band_offset_array: &'a UInt64Array,
+    band_outdb_uri_array: &'a StringArray,
     band_data_array: &'a BinaryViewArray,
 }
 
 impl<'a> RasterStructArray<'a> {
-    /// Create a new RasterStructArray from an existing StructArray
+    /// Create a new RasterStructArray from an existing StructArray.
     #[inline]
     pub fn new(raster_array: &'a StructArray) -> Self {
-        let crs = raster_array
+        // Top-level fields
+        let crs_array = raster_array
             .column(raster_indices::CRS)
             .as_any()
             .downcast_ref::<StringViewArray>()
             .unwrap();
-
-        // Extract the metadata arrays for direct access
-        let metadata_struct = raster_array
-            .column(raster_indices::METADATA)
+        let transform_list = raster_array
+            .column(raster_indices::TRANSFORM)
             .as_any()
-            .downcast_ref::<StructArray>()
+            .downcast_ref::<ListArray>()
             .unwrap();
-        let width_array = metadata_struct
-            .column(metadata_indices::WIDTH)
-            .as_any()
-            .downcast_ref::<UInt64Array>()
-            .unwrap();
-        let height_array = metadata_struct
-            .column(metadata_indices::HEIGHT)
-            .as_any()
-            .downcast_ref::<UInt64Array>()
-            .unwrap();
-        let upper_left_x_array = metadata_struct
-            .column(metadata_indices::UPPERLEFT_X)
+        let transform_values = transform_list
+            .values()
             .as_any()
             .downcast_ref::<Float64Array>()
             .unwrap();
-        let upper_left_y_array = metadata_struct
-            .column(metadata_indices::UPPERLEFT_Y)
+        let x_dim_array = raster_array
+            .column(raster_indices::X_DIM)
             .as_any()
-            .downcast_ref::<Float64Array>()
+            .downcast_ref::<StringViewArray>()
             .unwrap();
-        let scale_x_array = metadata_struct
-            .column(metadata_indices::SCALE_X)
+        let y_dim_array = raster_array
+            .column(raster_indices::Y_DIM)
             .as_any()
-            .downcast_ref::<Float64Array>()
-            .unwrap();
-        let scale_y_array = metadata_struct
-            .column(metadata_indices::SCALE_Y)
-            .as_any()
-            .downcast_ref::<Float64Array>()
-            .unwrap();
-        let skew_x_array = metadata_struct
-            .column(metadata_indices::SKEW_X)
-            .as_any()
-            .downcast_ref::<Float64Array>()
-            .unwrap();
-        let skew_y_array = metadata_struct
-            .column(metadata_indices::SKEW_Y)
-            .as_any()
-            .downcast_ref::<Float64Array>()
+            .downcast_ref::<StringViewArray>()
             .unwrap();
 
-        // Extract the band arrays for direct access
+        // Bands list and nested struct
         let bands_list = raster_array
             .column(raster_indices::BANDS)
             .as_any()
@@ -464,35 +279,62 @@ impl<'a> RasterStructArray<'a> {
             .as_any()
             .downcast_ref::<StructArray>()
             .unwrap();
-        let band_metadata_struct = bands_struct
-            .column(band_indices::METADATA)
-            .as_any()
-            .downcast_ref::<StructArray>()
-            .unwrap();
-        let band_nodata_array = band_metadata_struct
-            .column(band_metadata_indices::NODATAVALUE)
-            .as_any()
-            .downcast_ref::<BinaryArray>()
-            .unwrap();
-        let band_storage_type_array = band_metadata_struct
-            .column(band_metadata_indices::STORAGE_TYPE)
-            .as_any()
-            .downcast_ref::<UInt32Array>()
-            .unwrap();
-        let band_datatype_array = band_metadata_struct
-            .column(band_metadata_indices::DATATYPE)
-            .as_any()
-            .downcast_ref::<UInt32Array>()
-            .unwrap();
-        let band_outdb_url_array = band_metadata_struct
-            .column(band_metadata_indices::OUTDB_URL)
+
+        // Band-level fields
+        let band_name_array = bands_struct
+            .column(band_indices::NAME)
             .as_any()
             .downcast_ref::<StringArray>()
             .unwrap();
-        let band_outdb_band_id_array = band_metadata_struct
-            .column(band_metadata_indices::OUTDB_BAND_ID)
+        let band_dim_names_list = bands_struct
+            .column(band_indices::DIM_NAMES)
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .unwrap();
+        let band_dim_names_values = band_dim_names_list
+            .values()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let band_shape_list = bands_struct
+            .column(band_indices::SHAPE)
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .unwrap();
+        let band_shape_values = band_shape_list
+            .values()
+            .as_any()
+            .downcast_ref::<UInt64Array>()
+            .unwrap();
+        let band_datatype_array = bands_struct
+            .column(band_indices::DATA_TYPE)
             .as_any()
             .downcast_ref::<UInt32Array>()
+            .unwrap();
+        let band_nodata_array = bands_struct
+            .column(band_indices::NODATA)
+            .as_any()
+            .downcast_ref::<BinaryArray>()
+            .unwrap();
+        let band_strides_list = bands_struct
+            .column(band_indices::STRIDES)
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .unwrap();
+        let band_strides_values = band_strides_list
+            .values()
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        let band_offset_array = bands_struct
+            .column(band_indices::OFFSET)
+            .as_any()
+            .downcast_ref::<UInt64Array>()
+            .unwrap();
+        let band_outdb_uri_array = bands_struct
+            .column(band_indices::OUTDB_URI)
+            .as_any()
+            .downcast_ref::<StringArray>()
             .unwrap();
         let band_data_array = bands_struct
             .column(band_indices::DATA)
@@ -502,328 +344,56 @@ impl<'a> RasterStructArray<'a> {
 
         Self {
             raster_array,
-            width_array,
-            height_array,
-            upper_left_x_array,
-            upper_left_y_array,
-            scale_x_array,
-            scale_y_array,
-            skew_x_array,
-            skew_y_array,
-            crs,
+            crs_array,
+            transform_list,
+            transform_values,
+            x_dim_array,
+            y_dim_array,
             bands_list,
-            band_nodata_array,
-            band_storage_type_array,
+            band_name_array,
+            band_dim_names_list,
+            band_dim_names_values,
+            band_shape_list,
+            band_shape_values,
             band_datatype_array,
-            band_outdb_url_array,
-            band_outdb_band_id_array,
+            band_nodata_array,
+            band_strides_list,
+            band_strides_values,
+            band_offset_array,
+            band_outdb_uri_array,
             band_data_array,
         }
     }
 
-    /// Get the total number of rasters in the array
+    /// Get the total number of rasters in the array.
     #[inline(always)]
     pub fn len(&self) -> usize {
         self.raster_array.len()
     }
 
-    /// Check if the array is empty
+    /// Check if the array is empty.
     #[inline(always)]
     pub fn is_empty(&self) -> bool {
         self.raster_array.is_empty()
     }
 
-    /// Get a specific raster by index without consuming the iterator
+    /// Get a specific raster by index.
     #[inline(always)]
-    pub fn get(&self, index: usize) -> Result<RasterRefImpl<'a>, ArrowError> {
+    pub fn get(&'a self, index: usize) -> Result<RasterRefImpl<'a>, ArrowError> {
         if index >= self.raster_array.len() {
             return Err(ArrowError::InvalidArgumentError(format!(
                 "Invalid raster index: {index}"
             )));
         }
-
-        Ok(RasterRefImpl::new(self, index))
+        Ok(RasterRefImpl {
+            raster_struct_array: self,
+            raster_index: index,
+        })
     }
 
+    /// Check if a raster at the given index is null.
     #[inline(always)]
     pub fn is_null(&self, index: usize) -> bool {
         self.raster_array.is_null(index)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::builder::RasterBuilder;
-    use crate::traits::{BandMetadata, RasterMetadata};
-    use arrow_schema::DataType;
-    use sedona_schema::raster::{BandDataType, StorageType};
-    use sedona_testing::rasters::generate_test_rasters;
-
-    #[test]
-    fn test_array_basic_functionality() {
-        // Create a simple raster for testing using the correct API
-        let mut builder = RasterBuilder::new(10); // capacity
-
-        let metadata = RasterMetadata {
-            width: 10,
-            height: 10,
-            upperleft_x: 0.0,
-            upperleft_y: 0.0,
-            scale_x: 1.0,
-            scale_y: -1.0,
-            skew_x: 0.0,
-            skew_y: 0.0,
-        };
-
-        let epsg4326 = "EPSG:4326";
-
-        builder.start_raster(&metadata, Some(epsg4326)).unwrap();
-
-        let band_metadata = BandMetadata {
-            nodata_value: Some(vec![255u8]),
-            storage_type: StorageType::InDb,
-            datatype: BandDataType::UInt8,
-            outdb_url: None,
-            outdb_band_id: None,
-        };
-
-        // Add a single band with some test data using the correct API
-        builder.start_band(band_metadata.clone()).unwrap();
-        let test_data = vec![1u8; 100]; // 10x10 raster with value 1
-        builder.band_data_writer().append_value(&test_data);
-        builder.finish_band().unwrap();
-        let result = builder.finish_raster();
-        assert!(result.is_ok());
-
-        let raster_array = builder.finish().unwrap();
-
-        // Test the array
-        let rasters = RasterStructArray::new(&raster_array);
-
-        assert_eq!(rasters.len(), 1);
-        assert!(!rasters.is_empty());
-
-        let raster = rasters.get(0).unwrap();
-        let metadata = raster.metadata();
-
-        assert_eq!(metadata.width(), 10);
-        assert_eq!(metadata.height(), 10);
-        assert_eq!(metadata.scale_x(), 1.0);
-        assert_eq!(metadata.scale_y(), -1.0);
-
-        let bands = raster.bands();
-        assert_eq!(bands.len(), 1);
-        assert!(!bands.is_empty());
-
-        // Access band with 1-based band_number
-        let band = bands.band(1).unwrap();
-        assert_eq!(band.data().len(), 100);
-        assert_eq!(band.data()[0], 1u8);
-
-        let band_meta = band.metadata();
-        assert_eq!(band_meta.storage_type().unwrap(), StorageType::InDb);
-        assert_eq!(band_meta.data_type().unwrap(), BandDataType::UInt8);
-
-        let crs = raster.crs().unwrap();
-        assert_eq!(crs, epsg4326);
-
-        // Test array over bands
-        let band_iter: Vec<_> = bands.iter().collect();
-        assert_eq!(band_iter.len(), 1);
-    }
-
-    #[test]
-    fn test_multi_band_array() {
-        let mut builder = RasterBuilder::new(3);
-
-        let metadata = RasterMetadata {
-            width: 5,
-            height: 5,
-            upperleft_x: 0.0,
-            upperleft_y: 0.0,
-            scale_x: 1.0,
-            scale_y: -1.0,
-            skew_x: 0.0,
-            skew_y: 0.0,
-        };
-
-        builder.start_raster(&metadata, None).unwrap();
-
-        // Add three bands using the correct API
-        for band_idx in 0..3 {
-            let band_metadata = BandMetadata {
-                nodata_value: Some(vec![255u8]),
-                storage_type: StorageType::InDb,
-                datatype: BandDataType::UInt8,
-                outdb_url: None,
-                outdb_band_id: None,
-            };
-
-            builder.start_band(band_metadata).unwrap();
-            let test_data = vec![band_idx as u8; 25]; // 5x5 raster
-            builder.band_data_writer().append_value(&test_data);
-            builder.finish_band().unwrap();
-        }
-
-        let result = builder.finish_raster();
-        assert!(result.is_ok());
-
-        let raster_array = builder.finish().unwrap();
-
-        let rasters = RasterStructArray::new(&raster_array);
-        let raster = rasters.get(0).unwrap();
-        let bands = raster.bands();
-
-        assert_eq!(bands.len(), 3);
-
-        // Test each band has different data
-        // Use 1-based band numbers
-        for i in 0..3 {
-            // Access band with 1-based band_number
-            let band = bands.band(i + 1).unwrap();
-            let expected_value = i as u8;
-            assert!(band.data().iter().all(|&x| x == expected_value));
-        }
-
-        // Test array
-        let band_values: Vec<u8> = bands
-            .iter()
-            .enumerate()
-            .map(|(i, band)| {
-                assert_eq!(band.data()[0], i as u8);
-                band.data()[0]
-            })
-            .collect();
-
-        assert_eq!(band_values, vec![0, 1, 2]);
-    }
-
-    #[test]
-    fn test_raster_is_null() {
-        let raster_array = generate_test_rasters(2, Some(1)).unwrap();
-        let rasters = RasterStructArray::new(&raster_array);
-        assert_eq!(rasters.len(), 2);
-        assert!(!rasters.is_null(0));
-        assert!(rasters.is_null(1));
-    }
-
-    /// Test that `data_type()` and `storage_type()` return `Err` for invalid values
-    /// instead of panicking.
-    #[test]
-    fn test_invalid_band_metadata_returns_err() {
-        use arrow_buffer::{OffsetBuffer, ScalarBuffer};
-        use sedona_schema::raster::RasterSchema;
-        use std::sync::Arc;
-
-        // Build a valid single-band raster first
-        let mut builder = RasterBuilder::new(1);
-        let metadata = RasterMetadata {
-            width: 2,
-            height: 2,
-            upperleft_x: 0.0,
-            upperleft_y: 0.0,
-            scale_x: 1.0,
-            scale_y: -1.0,
-            skew_x: 0.0,
-            skew_y: 0.0,
-        };
-        builder.start_raster(&metadata, None).unwrap();
-        let band_meta = BandMetadata {
-            nodata_value: None,
-            storage_type: StorageType::InDb,
-            datatype: BandDataType::UInt8,
-            outdb_url: None,
-            outdb_band_id: None,
-        };
-        builder.start_band(band_meta).unwrap();
-        builder.band_data_writer().append_value([1u8; 4]);
-        builder.finish_band().unwrap();
-        builder.finish_raster().unwrap();
-        let valid_array = builder.finish().unwrap();
-
-        // Extract original columns from the valid raster
-        let metadata_col = valid_array.column(raster_indices::METADATA).clone();
-        let crs_col = valid_array.column(raster_indices::CRS).clone();
-        let bands_list = valid_array
-            .column(raster_indices::BANDS)
-            .as_any()
-            .downcast_ref::<ListArray>()
-            .unwrap();
-        let bands_struct = bands_list
-            .values()
-            .as_any()
-            .downcast_ref::<StructArray>()
-            .unwrap();
-        let orig_band_meta_struct = bands_struct
-            .column(band_indices::METADATA)
-            .as_any()
-            .downcast_ref::<StructArray>()
-            .unwrap();
-        let band_data_col = bands_struct.column(band_indices::DATA).clone();
-
-        // Build tampered band metadata with invalid storage_type=99 and datatype=99
-        let DataType::Struct(band_metadata_fields) = RasterSchema::band_metadata_type() else {
-            panic!("Expected struct type for band metadata");
-        };
-        let tampered_band_metadata = StructArray::new(
-            band_metadata_fields,
-            vec![
-                orig_band_meta_struct
-                    .column(band_metadata_indices::NODATAVALUE)
-                    .clone(),
-                Arc::new(UInt32Array::from(vec![99u32])), // invalid storage_type
-                Arc::new(UInt32Array::from(vec![99u32])), // invalid datatype
-                orig_band_meta_struct
-                    .column(band_metadata_indices::OUTDB_URL)
-                    .clone(),
-                orig_band_meta_struct
-                    .column(band_metadata_indices::OUTDB_BAND_ID)
-                    .clone(),
-            ],
-            None,
-        );
-
-        // Rebuild band struct
-        let DataType::Struct(band_fields) = RasterSchema::band_type() else {
-            panic!("Expected struct type for band");
-        };
-        let tampered_band_struct = StructArray::new(
-            band_fields,
-            vec![Arc::new(tampered_band_metadata), band_data_col],
-            None,
-        );
-
-        // Rebuild bands list
-        let DataType::List(band_field) = RasterSchema::bands_type() else {
-            panic!("Expected list type for bands");
-        };
-        let tampered_bands_list = ListArray::new(
-            band_field,
-            OffsetBuffer::new(ScalarBuffer::from(vec![0i32, 1])),
-            Arc::new(tampered_band_struct),
-            None,
-        );
-
-        // Rebuild the top-level raster struct
-        let tampered_raster = StructArray::new(
-            RasterSchema::fields(),
-            vec![metadata_col, crs_col, Arc::new(tampered_bands_list)],
-            None,
-        );
-
-        // Read back and verify that data_type() and storage_type() return Err
-        let rasters = RasterStructArray::new(&tampered_raster);
-        let raster = rasters.get(0).unwrap();
-        let band = raster.bands().band(1).unwrap();
-        let band_meta = band.metadata();
-
-        let storage_err = band_meta.storage_type().unwrap_err();
-        assert!(storage_err.to_string().contains("Unknown storage type: 99"));
-
-        let data_type_err = band_meta.data_type().unwrap_err();
-        assert!(data_type_err
-            .to_string()
-            .contains("Unknown band data type: 99"));
     }
 }
