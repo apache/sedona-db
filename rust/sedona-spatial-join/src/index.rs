@@ -29,7 +29,6 @@ pub(crate) use build_side_collector::{
 };
 pub(crate) use default_spatial_index_builder::DefaultSpatialIndexBuilder;
 
-pub(crate) use default_spatial_index_builder::DefaultSpatialIndexBuilder;
 use wkb::reader::Wkb;
 
 /// The result of a spatial index query
