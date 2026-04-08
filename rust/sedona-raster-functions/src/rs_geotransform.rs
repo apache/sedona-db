@@ -162,22 +162,18 @@ impl SedonaScalarKernel for RsGeoTransform {
             match raster_opt {
                 None => builder.append_null(),
                 Some(raster) => {
-                    let metadata = raster.metadata();
+                    let t = raster.transform();
                     match self.param {
                         GeoTransformParam::Rotation => {
                             let rotation = rotation(raster);
                             builder.append_value(rotation);
                         }
-                        GeoTransformParam::ScaleX => builder.append_value(metadata.scale_x()),
-                        GeoTransformParam::ScaleY => builder.append_value(metadata.scale_y()),
-                        GeoTransformParam::SkewX => builder.append_value(metadata.skew_x()),
-                        GeoTransformParam::SkewY => builder.append_value(metadata.skew_y()),
-                        GeoTransformParam::UpperLeftX => {
-                            builder.append_value(metadata.upper_left_x())
-                        }
-                        GeoTransformParam::UpperLeftY => {
-                            builder.append_value(metadata.upper_left_y())
-                        }
+                        GeoTransformParam::ScaleX => builder.append_value(t[1]),
+                        GeoTransformParam::ScaleY => builder.append_value(t[5]),
+                        GeoTransformParam::SkewX => builder.append_value(t[2]),
+                        GeoTransformParam::SkewY => builder.append_value(t[4]),
+                        GeoTransformParam::UpperLeftX => builder.append_value(t[0]),
+                        GeoTransformParam::UpperLeftY => builder.append_value(t[3]),
                     }
                 }
             }

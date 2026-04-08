@@ -1,0 +1,57 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: RS_Shape
+description: Returns the shape (size of each dimension) of a raster band.
+kernels:
+  - returns: list<int64>
+    args: [raster]
+  - returns: list<int64>
+    args:
+    - raster
+    - name: band
+      type: int
+      description: Band index (1-based). Defaults to 1 if not specified.
+---
+
+## Description
+
+Returns the shape of a raster band as a list of dimension sizes. The entries
+correspond to the dimension names returned by
+[RS_DimNames](rs_dimnames.qmd).
+
+For a standard 2D raster this returns `[height, width]`. For an N-dimensional
+raster with a time dimension it might return `[12, 256, 256]` meaning 12 time
+steps at 256x256 spatial resolution.
+
+When the band index is omitted, returns the shape of band 1. If bands have
+different shapes, an error is returned prompting the user to specify a band
+index.
+
+## Examples
+
+```sql
+-- 2D raster: returns [256, 256]
+SELECT RS_Shape(raster);
+
+-- 3D raster with time: returns [12, 256, 256]
+SELECT RS_Shape(raster);
+
+-- Specific band
+SELECT RS_Shape(raster, 2);
+```
