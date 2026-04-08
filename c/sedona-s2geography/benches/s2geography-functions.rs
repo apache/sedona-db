@@ -208,6 +208,17 @@ fn criterion_benchmark(c: &mut Criterion) {
         ),
     );
 
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_symdifference",
+        BenchmarkArgs::ArrayScalar(
+            Transformed(Polygon(10).into(), to_geography()),
+            Transformed(Polygon(10).into(), to_geography()),
+        ),
+    );
+
     // Predicate functions
     benchmark::scalar(
         c,
