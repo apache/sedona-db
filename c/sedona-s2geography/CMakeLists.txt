@@ -28,9 +28,15 @@ find_package(OpenSSL REQUIRED)
 find_package(absl REQUIRED)
 
 # Build s2geometry using its own CMake (v0.12.0 has proper add_subdirectory support).
-set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(BUILD_SHARED_LIBS
+    OFF
+    CACHE BOOL "" FORCE)
+set(BUILD_TESTS
+    OFF
+    CACHE BOOL "" FORCE)
+set(BUILD_EXAMPLES
+    OFF
+    CACHE BOOL "" FORCE)
 add_subdirectory(s2geometry)
 
 if(WIN32 AND NOT MSVC)
