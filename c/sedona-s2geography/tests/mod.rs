@@ -168,7 +168,7 @@ fn difference() {
     let result = tester
         .invoke_scalar_scalar("POINT (0 0)", "POINT (0 0)")
         .unwrap();
-    tester.assert_scalar_result_equals(result, "GEOMETRYCOLLECTION EMPTY");
+    tester.assert_scalar_result_equals(result, "POINT EMPTY");
 }
 
 #[test]
@@ -297,7 +297,7 @@ fn sym_difference() {
     let result = tester
         .invoke_scalar_scalar("POINT (0 0)", "POINT (0 0)")
         .unwrap();
-    tester.assert_scalar_result_equals(result, "GEOMETRYCOLLECTION EMPTY");
+    tester.assert_scalar_result_equals(result, "POINT EMPTY");
 }
 
 #[test]
@@ -309,4 +309,44 @@ fn union() {
         .invoke_scalar_scalar("POINT (0 0)", "POINT (0 0)")
         .unwrap();
     tester.assert_scalar_result_equals(result, "POINT (0 0)");
+}
+
+#[test]
+fn reduce_precision() {
+    let udf = s2_udf("st_reduceprecision");
+    let tester = ScalarUdfTester::new(
+        udf.into(),
+        vec![WKB_GEOGRAPHY, SedonaType::Arrow(DataType::Float64)],
+    );
+    tester.assert_return_type(WKB_GEOGRAPHY);
+    let result = tester.invoke_scalar_scalar("POINT (0.1 0.2)", 1).unwrap();
+    tester.assert_scalar_result_equals(result, "POINT (0 0)");
+}
+
+#[test]
+fn simplify() {
+    let udf = s2_udf("st_simplify");
+    let tester = ScalarUdfTester::new(
+        udf.into(),
+        vec![WKB_GEOGRAPHY, SedonaType::Arrow(DataType::Float64)],
+    );
+    tester.assert_return_type(WKB_GEOGRAPHY);
+    let result = tester
+        .invoke_scalar_scalar("LINESTRING (0 0, 0 5, 0 10)", 0.1)
+        .unwrap();
+    tester.assert_scalar_result_equals(result, "LINESTRING (0 0, 0 10)");
+}
+
+#[test]
+fn buffer() {
+    let udf = s2_udf("st_buffer");
+    let tester = ScalarUdfTester::new(
+        udf.into(),
+        vec![WKB_GEOGRAPHY, SedonaType::Arrow(DataType::Float64)],
+    );
+    tester.assert_return_type(WKB_GEOGRAPHY);
+    let result = tester
+        .invoke_scalar_scalar("POLYGON ((0 0, 0.01 0, 0 0.01, 0 0))", -100000)
+        .unwrap();
+    tester.assert_scalar_result_equals(result, "POLYGON EMPTY");
 }
