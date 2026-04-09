@@ -16,19 +16,43 @@
 # specific language governing permissions and limitations
 # under the License.
 title: ST_Relate
-description: Returns the DE-9IM intersection matrix string for two geometries.
+description: >
+    Returns the DE-9IM intersection matrix string for two geometries, or tests
+    whether two geometries satisfy a given intersection matrix pattern.
 kernels:
   - returns: string
     args: [geometry, geometry]
+  - returns: boolean
+    args:
+    - geometry
+    - geometry
+    - name: intersectionMatrixPattern
+      type: string
+      description: >
+        A 9-character DE-9IM pattern string. Each character can be 0-2, T, F, or *
+        (wildcard).
 ---
 ## Description
-Returns the DE-9IM (Dimensionally Extended 9-Intersection Model) intersection matrix
-as a 9-character string describing the spatial relationship between two geometries.
+When called with two geometry arguments, returns the DE-9IM (Dimensionally Extended
+9-Intersection Model) intersection matrix as a 9-character string describing the
+spatial relationship between two geometries.
+
+When called with a third string argument, returns `true` if the two geometries
+satisfy the given DE-9IM intersection matrix pattern, `false` otherwise. The pattern
+can use wildcards (`*`) and `T` (any non-empty intersection) in addition to exact
+dimension values (0, 1, 2, F).
 
 ## Examples
 ```sql
 SELECT ST_Relate(
-    ST_GeomFromWKT('POINT(0 0)'),
-    ST_GeomFromWKT('POINT(1 1)')
+    ST_GeomFromText('POINT (0.5 0.5)'),
+    ST_GeomFromText('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))')
+);
+```
+```sql
+SELECT ST_Relate(
+    ST_GeomFromText('POINT (0.5 0.5)'),
+    ST_GeomFromText('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))'),
+    '0FFFFF212'
 );
 ```
