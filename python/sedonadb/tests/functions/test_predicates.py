@@ -504,6 +504,7 @@ def test_st_relate(eng, geom1, geom2, expected):
         (None, None, None, None),
         ("POINT (0 0)", None, "FF0FFF0F2", None),
         (None, "POINT (0 0)", "FF0FFF0F2", None),
+        ("POINT (0 0)", "POINT (0 0)", None, None),
         # Exact match — disjoint points
         ("POINT (0 0)", "POINT (1 1)", "FF0FFF0F2", True),
         # Exact match — point inside polygon
