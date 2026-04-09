@@ -17,6 +17,7 @@
 
 use std::sync::Arc;
 
+use crate::index::GpuSpatialIndexBuilder;
 use crate::join_provider::GpuSpatialJoinProvider;
 use arrow_schema::Schema;
 use datafusion::physical_plan::ExecutionPlan;
@@ -32,6 +33,7 @@ use sedona_query_planner::spatial_predicate::{
 };
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;
+use sedona_spatial_join::join_provider::{DefaultSpatialJoinProvider, SpatialJoinProvider};
 use sedona_spatial_join::SpatialJoinExec;
 
 /// [SpatialJoinFactory] implementation for the default spatial join
@@ -93,7 +95,12 @@ impl SpatialJoinPhysicalPlanner for GpuSpatialJoinPhysicalPlanner {
             (args.physical_left.clone(), args.physical_right.clone())
         };
 
-        let join_provider = Arc::new(GpuSpatialJoinProvider);
+        let join_provider: Arc<dyn SpatialJoinProvider> =
+            if GpuSpatialIndexBuilder::is_using_gpu(args.spatial_predicate, args.join_options)? {
+                Arc::new(GpuSpatialJoinProvider)
+            } else {
+                Arc::new(DefaultSpatialJoinProvider)
+            };
 
         let exec = SpatialJoinExec::try_new(
             physical_left,
