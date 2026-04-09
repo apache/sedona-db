@@ -261,7 +261,7 @@ impl SpatialIndexBuilder for GPUSpatialIndexBuilder {
                 data_id_to_batch_pos.push((batch_idx as i32, idx as i32));
             }
             refiner
-                .push_build(&batch.geom_array.geometry_array())
+                .push_build(batch.geom_array.geometry_array())
                 .map_err(|e| {
                     DataFusionError::Execution(format!(
                         "Failed to add geometries to GPU refiner {e:?}"

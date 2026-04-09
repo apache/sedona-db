@@ -30,12 +30,12 @@ use sedona_libgpuspatial::{
 use sedona_spatial_join::evaluated_batch::EvaluatedBatch;
 use sedona_spatial_join::index::spatial_index::SpatialIndex;
 use sedona_spatial_join::index::QueryResultMetrics;
+use sedona_spatial_join::spatial_predicate::SpatialRelationType;
+use sedona_spatial_join::SpatialPredicate;
 use std::ops::Range;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use wkb::reader::Wkb;
-use sedona_spatial_join::spatial_predicate::SpatialRelationType;
-use sedona_spatial_join::SpatialPredicate;
 
 pub struct GPUSpatialIndex {
     pub(crate) schema: SchemaRef,
@@ -225,7 +225,7 @@ impl SpatialIndex for GPUSpatialIndex {
         let candidate_count = gpu_build_indices.len();
 
         self.refine(
-            &evaluated_batch.geom_array.geometry_array(),
+            evaluated_batch.geom_array.geometry_array(),
             &self.spatial_predicate,
             &mut gpu_build_indices,
             &mut gpu_probe_indices,
@@ -309,13 +309,13 @@ mod tests {
         SpatialIndexBuilder, SpatialJoinBuildMetrics,
     };
     use sedona_spatial_join::operand_evaluator::EvaluatedGeometryArray;
+    use sedona_spatial_join::spatial_predicate::{RelationPredicate, SpatialRelationType};
+    use sedona_spatial_join::SpatialPredicate;
     use sedona_testing::create::create_array;
     use std::pin::Pin;
     use std::sync::Arc;
     use std::task::{Context, Poll};
     use std::vec::IntoIter;
-    use sedona_spatial_join::spatial_predicate::{RelationPredicate, SpatialRelationType};
-    use sedona_spatial_join::SpatialPredicate;
 
     pub struct SingleBatchStream {
         // We use an Option so we can `take()` it on the first poll,

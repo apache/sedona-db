@@ -101,7 +101,7 @@ impl SpatialJoinPhysicalPlanner for DefaultSpatialJoinPhysicalPlanner {
             args.join_type,
             None,
             args.join_options,
-            Arc::new(DefaultSpatialJoinProvider)
+            Arc::new(DefaultSpatialJoinProvider),
         )?;
 
         if should_swap {

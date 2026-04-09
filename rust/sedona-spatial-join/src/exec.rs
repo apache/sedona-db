@@ -120,6 +120,7 @@ pub struct SpatialJoinExec {
 
 impl SpatialJoinExec {
     /// Try to create a new [`SpatialJoinExec`]
+    #[allow(clippy::too_many_arguments)]
     pub fn try_new(
         left: Arc<dyn ExecutionPlan>,
         right: Arc<dyn ExecutionPlan>,
@@ -546,10 +547,10 @@ mod exec_transform_tests {
     use datafusion_physical_plan::projection::{ProjectionExec, ProjectionExpr};
     use datafusion_physical_plan::ExecutionPlan;
 
-    use sedona_common::{sedona_internal_err, SpatialJoinOptions};
-    use crate::join_provider::DefaultSpatialJoinProvider;
     use super::*;
+    use crate::join_provider::DefaultSpatialJoinProvider;
     use crate::spatial_predicate::{RelationPredicate, SpatialRelationType};
+    use sedona_common::{sedona_internal_err, SpatialJoinOptions};
 
     fn make_schema(fields: &[(&str, DataType)]) -> SchemaRef {
         Arc::new(Schema::new(
