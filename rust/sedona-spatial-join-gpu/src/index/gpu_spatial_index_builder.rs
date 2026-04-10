@@ -256,18 +256,19 @@ impl SpatialIndexBuilder for GPUSpatialIndexBuilder {
         build_timer.done();
         let visited_build_side = self.build_visited_bitmaps()?;
         // Build index for rectangle queries
-        Ok(Arc::new(GPUSpatialIndex::new(
-            self.spatial_predicate.clone(),
-            self.schema.clone(),
-            Arc::new(index),
-            Arc::new(refiner),
-            self.indexed_batches
+        Ok(Arc::new(GPUSpatialIndex {
+            schema: self.schema.clone(),
+            index: Arc::new(index),
+            refiner: Arc::new(refiner),
+            spatial_predicate: self.spatial_predicate.clone(),
+            indexed_batches: self
+                .indexed_batches
                 .drain(0..self.indexed_batches.len())
                 .collect(),
             data_id_to_batch_pos,
             visited_build_side,
-            AtomicUsize::new(self.probe_threads_count),
-        )?))
+            probe_threads_counter: AtomicUsize::new(self.probe_threads_count),
+        }))
     }
 
     async fn add_stream(

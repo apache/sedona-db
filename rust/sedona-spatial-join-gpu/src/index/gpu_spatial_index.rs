@@ -92,29 +92,6 @@ impl GPUSpatialIndex {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        spatial_predicate: SpatialPredicate,
-        schema: SchemaRef,
-        index: Arc<GpuSpatialIndex>,
-        refiner: Arc<GpuSpatialRefiner>,
-        indexed_batches: Vec<EvaluatedBatch>,
-        data_id_to_batch_pos: Vec<(i32, i32)>,
-        visited_build_side: Option<Mutex<Vec<BooleanBufferBuilder>>>,
-        probe_threads_counter: AtomicUsize,
-    ) -> Result<Self> {
-        Ok(Self {
-            schema,
-            spatial_predicate,
-            index,
-            refiner,
-            indexed_batches,
-            data_id_to_batch_pos,
-            visited_build_side,
-            probe_threads_counter,
-        })
-    }
-
     fn refine(
         &self,
         probe_geoms: &ArrayRef,
