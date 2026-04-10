@@ -18,10 +18,11 @@ import math
 import os
 import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Tuple, Any
+from typing import TYPE_CHECKING, Any, List, Tuple
 
 import geoarrow.pyarrow as ga
 import pyarrow as pa
+import yaml
 
 if TYPE_CHECKING:
     import pandas
@@ -671,15 +672,27 @@ class BigQuery(DBEngine):
       not scanned for these tests because doing so would incur cost.
     - SEDONADB_BIGQUERY_TEST_CREDENTIALS_FILE: (optional) Path to a service
       account JSON key file. When omitted, ADC is used instead.
+
+    Unless modifying these tests, the cached results should allow these tests
+    to run without an active connection (and should allow tests to run locally
+    much faster as opening a connection to BigQuery is slow).
     """
 
-    def __init__(self):
-        self.con = None
-        self._setup_con()
+    _CACHE_DIR = Path(__file__).resolve().parent.parent.parent / "tests" / "geography"
 
-    def _setup_con(self):
+    def __init__(self, cache_path: "Path | None" = None):
+        self._cache_path = cache_path or self._CACHE_DIR / "bigquery_cache.yml"
+        self._file_cache = ArrowSQLCache("bigquery", self._cache_path)
+        self.con = None
+        self._con_attempted = False
+
+    def _ensure_con(self):
         import adbc_driver_bigquery
         import adbc_driver_bigquery.dbapi
+
+        if self.con is not None or self._con_attempted:
+            return
+        self._con_attempted = True
 
         project_id = os.environ.get(
             "SEDONADB_BIGQUERY_TEST_PROJECT_ID", "sedonadb-testing"
@@ -703,13 +716,15 @@ class BigQuery(DBEngine):
             )
 
         self.con = adbc_driver_bigquery.dbapi.connect(db_kwargs=db_kwargs)
-        self._cache = {}
 
     def close(self):
-        """Close the connection"""
-        self._cache.clear()
+        """Close the connection and flush any new cache entries to disk"""
+        self._file_cache.flush()
         if self.con:
             self.con.close()
+
+    def __del__(self):
+        self.close()
 
     @classmethod
     def name(cls):
@@ -736,11 +751,20 @@ class BigQuery(DBEngine):
         raise NotImplementedError("Create table from Arrow not implemented")
 
     def execute_and_collect(self, query) -> pa.Table:
-        if query not in self._cache:
-            with self.con.cursor() as cur:
-                cur.execute(query)
-                self._cache[query] = cur.fetch_arrow_table()
-        return self._cache[query]
+        cached = self._file_cache.get(query)
+        if cached is not None:
+            return cached
+
+        self._ensure_con()
+        if self.con is None:
+            raise RuntimeError(
+                "Query not in cache and BigQuery connection unavailable:\n" + query
+            )
+        with self.con.cursor() as cur:
+            cur.execute(query)
+            result = cur.fetch_arrow_table()
+        self._file_cache.put(query, result)
+        return result
 
     def result_to_table(self, result: pa.Table) -> pa.Table:
         # BigQuery only has a GEOGRAPHY type (always WGS84 with spherical edges).
@@ -760,6 +784,76 @@ class BigQuery(DBEngine):
                 cols[name] = col
 
         return pa.table(cols)
+
+
+class ArrowSQLCache:
+    """A YAML-file-backed cache for Arrow-based query results.
+
+    Each entry stores a pa.Table as base64-encoded Arrow IPC. Queries are
+    sorted alphabetically when written for stable git diffs. Results are
+    nested under ``results.<engine_name>`` in the YAML output.
+
+    Leading comment lines (e.g., a license header) are preserved across
+    rewrites.
+    """
+
+    def __init__(self, engine_name: str, path: Path):
+        self._engine_name = engine_name
+        self._path = path
+        self._header_lines: list[str] = []
+        self._entries: dict = {}
+        self._dirty = False
+        if self._path.exists():
+            self._load()
+
+    def _load(self):
+        with open(self._path) as f:
+            lines = f.readlines()
+
+        # Split leading comment lines from the YAML body
+        body_start = 0
+        for i, line in enumerate(lines):
+            if line.startswith("#") or line.strip() == "":
+                body_start = i + 1
+            else:
+                break
+        self._header_lines = lines[:body_start]
+
+        body = "".join(lines[body_start:])
+        doc = yaml.safe_load(body) if body.strip() else {}
+        if doc and "results" in doc:
+            self._entries = doc["results"].get(self._engine_name, {})
+        else:
+            self._entries = doc or {}
+
+    def get(self, query: str) -> "pa.Table | None":
+        entry = self._entries.get(query)
+        if entry is None:
+            return None
+        import base64
+
+        buf = base64.b64decode(entry)
+        return pa.ipc.open_stream(buf).read_all()
+
+    def put(self, query: str, table: pa.Table):
+        import base64
+
+        sink = pa.BufferOutputStream()
+        with pa.ipc.new_stream(sink, table.schema) as writer:
+            writer.write_table(table)
+        self._entries[query] = base64.b64encode(sink.getvalue().to_pybytes()).decode()
+        self._dirty = True
+
+    def flush(self):
+        if not self._dirty:
+            return
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        sorted_entries = dict(sorted(self._entries.items()))
+        doc = {"results": {self._engine_name: sorted_entries}}
+        with open(self._path, "w") as f:
+            f.writelines(self._header_lines)
+            yaml.dump(doc, f, default_flow_style=False, sort_keys=False)
+        self._dirty = False
 
 
 def geom_or_null(arg, srid=None):
