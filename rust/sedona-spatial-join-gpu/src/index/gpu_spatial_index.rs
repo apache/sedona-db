@@ -148,7 +148,6 @@ impl SpatialIndex for GPUSpatialIndex {
         self.schema.clone()
     }
 
-    #[allow(dead_code)] // This is used for tests
     fn num_indexed_batches(&self) -> usize {
         self.indexed_batches.len()
     }
@@ -227,9 +226,7 @@ impl SpatialIndex for GPUSpatialIndex {
         false
     }
 
-    fn merge_probe_stats(&self, stats: GeoStatistics) {
-        let _ = stats;
-    }
+    fn merge_probe_stats(&self, _stats: GeoStatistics) {}
 
     fn visited_build_side(&self) -> Option<&Mutex<Vec<BooleanBufferBuilder>>> {
         self.visited_build_side.as_ref()
