@@ -657,6 +657,111 @@ class PostGISSingleThread(PostGIS):
             cur.execute("SET max_parallel_workers_per_gather TO 0")
 
 
+class BigQuery(DBEngine):
+    """A BigQuery implementation of the DBEngine using ADBC
+
+    Uses the ADBC BigQuery driver. Authentication uses Application Default
+    Credentials (ADC) by default — run ``gcloud auth application-default login``
+    once to set that up. Set the following environment variables to configure
+    the connection:
+
+    - SEDONADB_BIGQUERY_TEST_PROJECT_ID: GCP project identifier. Defaults to
+      "sedonadb-testing".
+    - SEDONADB_BIGQUERY_TEST_DATASET_ID: Datasert identifier. In general data is
+      not scanned for these tests because doing so would incur cost.
+    - SEDONADB_BIGQUERY_TEST_CREDENTIALS_FILE: (optional) Path to a service
+      account JSON key file. When omitted, ADC is used instead.
+    """
+
+    def __init__(self):
+        self.con = None
+        self._setup_con()
+
+    def _setup_con(self):
+        import adbc_driver_bigquery
+        import adbc_driver_bigquery.dbapi
+
+        project_id = os.environ.get(
+            "SEDONADB_BIGQUERY_TEST_PROJECT_ID", "sedonadb-testing"
+        )
+        dataset_id = os.environ.get(
+            "SEDONADB_BIGQUERY_TEST_DATASET_ID", "sedonadb_test"
+        )
+        credentials_file = os.environ.get("SEDONADB_BIGQUERY_TEST_CREDENTIALS_FILE")
+
+        db_kwargs = {
+            adbc_driver_bigquery.DatabaseOptions.PROJECT_ID.value: project_id,
+            adbc_driver_bigquery.DatabaseOptions.DATASET_ID.value: dataset_id,
+        }
+
+        if credentials_file:
+            db_kwargs[adbc_driver_bigquery.DatabaseOptions.AUTH_TYPE.value] = (
+                adbc_driver_bigquery.DatabaseOptions.AUTH_VALUE_JSON_CREDENTIAL_FILE.value
+            )
+            db_kwargs[adbc_driver_bigquery.DatabaseOptions.AUTH_CREDENTIALS.value] = (
+                credentials_file
+            )
+
+        self.con = adbc_driver_bigquery.dbapi.connect(db_kwargs=db_kwargs)
+        self._cache = {}
+
+    def close(self):
+        """Close the connection"""
+        self._cache.clear()
+        if self.con:
+            self.con.close()
+
+    @classmethod
+    def name(cls):
+        return "bigquery"
+
+    @classmethod
+    def install_hint(cls):
+        return (
+            "- Run `pip install adbc-driver-bigquery` to install the required driver\n"
+            "- Run `gcloud auth application-default login` to authenticate\n"
+            "- Set SEDONADB_BIGQUERY_TEST_PROJECT_ID to a valid BigQuery project identifier"
+        )
+
+    def val_or_null(self, arg):
+        if isinstance(arg, bytes):
+            return f"FROM_HEX('{arg.hex()}')"
+        else:
+            return super().val_or_null(arg)
+
+    def create_table_parquet(self, name, paths) -> "BigQuery":
+        raise NotImplementedError("Create table from Parquet not implemented")
+
+    def create_table_arrow(self, name, obj, *, geometry_cols=None) -> "BigQuery":
+        raise NotImplementedError("Create table from Arrow not implemented")
+
+    def execute_and_collect(self, query) -> pa.Table:
+        if query not in self._cache:
+            with self.con.cursor() as cur:
+                cur.execute(query)
+                self._cache[query] = cur.fetch_arrow_table()
+        return self._cache[query]
+
+    def result_to_table(self, result: pa.Table) -> pa.Table:
+        # BigQuery only has a GEOGRAPHY type (always WGS84 with spherical edges).
+        # The ADBC driver returns geography columns as WKT strings with
+        # Arrow extension metadata: ARROW:extension:name = 'google:sqlType:geography'.
+        cols = {}
+        for name, col in zip(result.schema.names, result.columns):
+            field = result.schema.field(name)
+            ext_name = (field.metadata or {}).get(b"ARROW:extension:name", b"")
+            if ext_name == b"google:sqlType:geography":
+                col_wkb = ga.as_wkb(col.cast(pa.string()))
+                cols[name] = ga.with_crs(
+                    ga.wkb().with_edge_type(ga.EdgeType.SPHERICAL).wrap_array(col_wkb),
+                    ga.OGC_CRS84,
+                )
+            else:
+                cols[name] = col
+
+        return pa.table(cols)
+
+
 def geom_or_null(arg, srid=None):
     """Format SQL expression for a geometry object or NULL"""
     if arg is None:

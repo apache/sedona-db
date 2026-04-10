@@ -16,10 +16,10 @@
 # under the License.
 
 import pytest
-from sedonadb.testing import SedonaDB, geog_or_null
+from sedonadb.testing import SedonaDB, BigQuery, geog_or_null
 
 
-@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
 @pytest.mark.parametrize(
     ("geog", "expected"),
     [
