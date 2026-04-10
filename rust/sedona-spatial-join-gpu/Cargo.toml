@@ -40,19 +40,13 @@ arrow-schema = { workspace = true }
 async-trait = { workspace = true }
 datafusion = { workspace = true }
 datafusion-common = { workspace = true }
-datafusion-common-runtime = { workspace = true }
-datafusion-physical-plan = { workspace = true }
-datafusion-execution = { workspace = true }
-datafusion-expr = { workspace = true }
 datafusion-physical-expr = { workspace = true }
 geo-types = { workspace = true }
 parking_lot = { workspace = true }
 sedona-common = { workspace = true }
 sedona-expr = { workspace = true }
-sedona-geometry = { workspace = true }
 geo-index = { workspace = true }
 tokio = { workspace = true }
-rand = { workspace = true }
 sedona-schema = { workspace = true }
 sedona-functions = { workspace = true }
 sedona-spatial-join = { workspace = true }
@@ -61,7 +55,6 @@ sedona-geo-generic-alg = { workspace = true }
 sedona-query-planner = { workspace = true }
 futures = { workspace = true }
 wkb = { workspace = true }
-fastrand = { workspace = true }
 log = { workspace = true }
 
 [dev-dependencies]
