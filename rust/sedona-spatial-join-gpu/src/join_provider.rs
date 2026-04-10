@@ -16,6 +16,7 @@
 // under the License.
 
 use crate::index::GpuSpatialIndexBuilder;
+use crate::options::GpuOptions;
 use arrow_array::ArrayRef;
 use arrow_schema::SchemaRef;
 use datafusion_common::JoinType;
@@ -39,14 +40,22 @@ use std::sync::Arc;
 use wkb::reader::GeometryType;
 
 #[derive(Debug)]
-pub(crate) struct GpuSpatialJoinProvider;
+pub(crate) struct GpuSpatialJoinProvider {
+    gpu_options: GpuOptions,
+}
+
+impl GpuSpatialJoinProvider {
+    pub(crate) fn new(gpu_options: GpuOptions) -> Self {
+        Self { gpu_options }
+    }
+}
 
 impl SpatialJoinProvider for GpuSpatialJoinProvider {
     fn try_new_spatial_index_builder(
         &self,
         schema: SchemaRef,
         spatial_predicate: SpatialPredicate,
-        options: SpatialJoinOptions,
+        _options: SpatialJoinOptions,
         join_type: JoinType,
         probe_threads_count: usize,
         metrics: SpatialJoinBuildMetrics,
@@ -54,7 +63,7 @@ impl SpatialJoinProvider for GpuSpatialJoinProvider {
         let builder = GpuSpatialIndexBuilder::new(
             schema,
             spatial_predicate,
-            options,
+            self.gpu_options.clone(),
             join_type,
             probe_threads_count,
             metrics,

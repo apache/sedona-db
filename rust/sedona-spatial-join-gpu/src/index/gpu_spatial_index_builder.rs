@@ -16,6 +16,7 @@
 // under the License.
 
 use crate::index::gpu_spatial_index::GPUSpatialIndex;
+use crate::options::GpuOptions;
 use arrow::array::BooleanBufferBuilder;
 use arrow::compute::concat_batches;
 use arrow_array::RecordBatch;
@@ -45,7 +46,7 @@ use std::sync::Arc;
 pub(crate) struct GPUSpatialIndexBuilder {
     schema: SchemaRef,
     spatial_predicate: SpatialPredicate,
-    options: SpatialJoinOptions,
+    gpu_options: GpuOptions,
     join_type: JoinType,
     probe_threads_count: usize,
     metrics: SpatialJoinBuildMetrics,
@@ -56,24 +57,9 @@ pub(crate) struct GPUSpatialIndexBuilder {
 }
 
 impl GPUSpatialIndexBuilder {
-    pub(crate) fn is_using_gpu(
+    pub(crate) fn is_spatial_predicate_supported_on_gpu(
         spatial_predicate: &SpatialPredicate,
-        join_opts: &SpatialJoinOptions,
-    ) -> Result<bool> {
-        if join_opts.gpu.enable {
-            if Self::is_spatial_predicate_supported_on_gpu(spatial_predicate) {
-                return Ok(true);
-            } else if join_opts.gpu.fallback_to_cpu {
-                log::warn!("Falling back to CPU spatial join as the spatial predicate is not supported on GPU");
-                return Ok(false);
-            } else {
-                return Err(DataFusionError::Execution("GPU spatial join is enabled, but the spatial predicate is not supported on GPU".into()));
-            }
-        }
-        Ok(false)
-    }
-
-    fn is_spatial_predicate_supported_on_gpu(spatial_predicate: &SpatialPredicate) -> bool {
+    ) -> bool {
         match spatial_predicate {
             SpatialPredicate::Relation(rel) => match rel.relation_type {
                 SpatialRelationType::Intersects => true,
@@ -93,7 +79,7 @@ impl GPUSpatialIndexBuilder {
     pub fn new(
         schema: SchemaRef,
         spatial_predicate: SpatialPredicate,
-        options: SpatialJoinOptions,
+        gpu_options: GpuOptions,
         join_type: JoinType,
         probe_threads_count: usize,
         metrics: SpatialJoinBuildMetrics,
@@ -101,7 +87,7 @@ impl GPUSpatialIndexBuilder {
         Self {
             schema,
             spatial_predicate,
-            options,
+            gpu_options,
             join_type,
             probe_threads_count,
             metrics,
@@ -195,18 +181,18 @@ impl SpatialIndexBuilder for GPUSpatialIndexBuilder {
             return Ok(Arc::new(GPUSpatialIndex::empty(
                 self.spatial_predicate.clone(),
                 self.schema.clone(),
-                self.options.clone(),
+                self.gpu_options.clone(),
                 AtomicUsize::new(self.probe_threads_count),
             )?));
         }
         let build_timer = self.metrics.build_time.timer();
         let gpu_options = GpuSpatialOptions {
-            cuda_use_memory_pool: self.options.gpu.use_memory_pool,
-            cuda_memory_pool_init_percent: self.options.gpu.memory_pool_init_percentage as i32,
+            cuda_use_memory_pool: self.gpu_options.use_memory_pool,
+            cuda_memory_pool_init_percent: self.gpu_options.memory_pool_init_percentage as i32,
             concurrency: self.probe_threads_count as u32,
-            device_id: self.options.gpu.device_id as i32,
-            compress_bvh: self.options.gpu.compress_bvh,
-            pipeline_batches: self.options.gpu.pipeline_batches as u32,
+            device_id: self.gpu_options.device_id as i32,
+            compress_bvh: self.gpu_options.compress_bvh,
+            pipeline_batches: self.gpu_options.pipeline_batches as u32,
         };
 
         let mut index = GpuSpatialIndex::try_new(&gpu_options).map_err(|e| {
@@ -225,7 +211,7 @@ impl SpatialIndexBuilder for GPUSpatialIndexBuilder {
 
         let sedona_type = self.indexed_batches[0].geom_array.sedona_type().clone();
 
-        if self.options.gpu.concat_build {
+        if self.gpu_options.concat_build {
             let concat_batch = concat_evaluated_batches(&self.indexed_batches)?;
             self.indexed_batches.clear();
             self.indexed_batches.push(concat_batch);
@@ -289,7 +275,6 @@ impl SpatialIndexBuilder for GPUSpatialIndexBuilder {
         Ok(Arc::new(GPUSpatialIndex::new(
             self.spatial_predicate.clone(),
             self.schema.clone(),
-            self.options.clone(),
             Arc::new(index),
             Arc::new(refiner),
             self.indexed_batches
