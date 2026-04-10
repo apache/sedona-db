@@ -72,7 +72,7 @@ uint64_t SedonaGeographyGlueLngLatToCellId(double lng, double lat) {
   }
 }
 
-size_t SedonaGeographyGlueNumKernels(void) { return 18; }
+size_t SedonaGeographyGlueNumKernels(void) { return 20; }
 
 int SedonaGeographyGlueInitKernels(void* kernels_array, size_t kerenels_size_bytes) {
   if (kerenels_size_bytes !=
@@ -100,6 +100,8 @@ int SedonaGeographyGlueInitKernels(void* kernels_array, size_t kerenels_size_byt
   s2geography::sedona_udf::ShortestLineKernel(kernel_ptr++);
   s2geography::sedona_udf::SymDifferenceKernel(kernel_ptr++);
   s2geography::sedona_udf::UnionKernel(kernel_ptr++);
+  s2geography::sedona_udf::ReducePrecisionKernel(kernel_ptr++);
+  s2geography::sedona_udf::SimplifyKernel(kernel_ptr++);
 
   return 0;
 }
