@@ -37,7 +37,6 @@ use sedona_spatial_join::index::spatial_index_builder::{
     SpatialIndexBuilder, SpatialJoinBuildMetrics,
 };
 use sedona_spatial_join::operand_evaluator::EvaluatedGeometryArray;
-use sedona_spatial_join::spatial_predicate::SpatialRelationType;
 use sedona_spatial_join::utils::join_utils::need_produce_result_in_final;
 use sedona_spatial_join::SpatialPredicate;
 use std::sync::atomic::AtomicUsize;
