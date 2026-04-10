@@ -19,9 +19,10 @@ use std::sync::Arc;
 
 use crate::index::GpuSpatialIndexBuilder;
 use crate::join_provider::GpuSpatialJoinProvider;
+use crate::options::GpuOptions;
 use arrow_schema::Schema;
 use datafusion::physical_plan::ExecutionPlan;
-use datafusion_common::{JoinSide, Result};
+use datafusion_common::{DataFusionError, JoinSide, Result};
 use datafusion_physical_expr::PhysicalExpr;
 use sedona_common::{sedona_internal_err, SpatialJoinOptions};
 use sedona_query_planner::probe_shuffle_exec::ProbeShuffleExec;
@@ -33,7 +34,6 @@ use sedona_query_planner::spatial_predicate::{
 };
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;
-use sedona_spatial_join::join_provider::{DefaultSpatialJoinProvider, SpatialJoinProvider};
 use sedona_spatial_join::SpatialJoinExec;
 
 /// [SpatialJoinFactory] implementation for the default spatial join
@@ -95,12 +95,23 @@ impl SpatialJoinPhysicalPlanner for GpuSpatialJoinPhysicalPlanner {
             (args.physical_left.clone(), args.physical_right.clone())
         };
 
-        let join_provider: Arc<dyn SpatialJoinProvider> =
-            if GpuSpatialIndexBuilder::is_using_gpu(args.spatial_predicate, args.join_options)? {
-                Arc::new(GpuSpatialJoinProvider)
+        let gpu_options = args
+            .options
+            .extensions
+            .get::<GpuOptions>()
+            .cloned()
+            .unwrap_or_default();
+
+        let supported =
+            GpuSpatialIndexBuilder::is_spatial_predicate_supported_on_gpu(args.spatial_predicate);
+
+        if !supported {
+            if gpu_options.fallback_to_cpu {
+                log::warn!("Falling back to CPU spatial join as the spatial predicate is not supported on GPU");
             } else {
-                Arc::new(DefaultSpatialJoinProvider)
-            };
+                return Err(DataFusionError::Plan("GPU spatial join is enabled, but the spatial predicate is not supported on GPU".into()));
+            }
+        }
 
         let exec = SpatialJoinExec::try_new(
             physical_left,
@@ -110,7 +121,7 @@ impl SpatialJoinPhysicalPlanner for GpuSpatialJoinPhysicalPlanner {
             args.join_type,
             None,
             args.join_options,
-            join_provider,
+            Arc::new(GpuSpatialJoinProvider::new(gpu_options)),
         )?;
 
         if should_swap {

@@ -18,4 +18,5 @@
 mod index;
 mod join_provider;
 
+pub mod options;
 pub mod physical_planner;

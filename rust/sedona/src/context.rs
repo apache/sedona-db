@@ -64,6 +64,9 @@ use sedona_pointcloud::las::{
     format::{Extension, LasFormatFactory},
     options::{GeometryEncoding, LasExtraBytes, LasOptions},
 };
+#[cfg(feature = "gpu")]
+use sedona_spatial_join_gpu::options::GpuOptions;
+
 use sedona_query_planner::{
     optimizer::register_spatial_join_logical_optimizer, query_planner::SedonaQueryPlanner,
 };
@@ -139,6 +142,9 @@ impl SedonaContext {
                 .with_las_extra_bytes(LasExtraBytes::Typed),
         );
 
+        #[cfg(feature = "gpu")]
+        let session_config = session_config.with_option_extension(GpuOptions::default());
+
         #[allow(unused_mut)]
         let mut state_builder = SessionStateBuilder::new()
             .with_default_features()
@@ -149,22 +155,22 @@ impl SedonaContext {
         let mut planner = SedonaQueryPlanner::new();
         #[cfg(feature = "spatial-join")]
         {
-            #[cfg(not(feature = "gpu"))]
-            {
-                use sedona_spatial_join::physical_planner::DefaultSpatialJoinPhysicalPlanner;
-
-                planner = planner.with_spatial_join_physical_planner(Arc::new(
-                    DefaultSpatialJoinPhysicalPlanner::new(),
-                ));
-            }
-
-            // Register the GPU join
+            // Register the GPU join ahead of the default planer
+            // If a query is not supported, it falls back to the default planner.
             #[cfg(feature = "gpu")]
             {
                 use sedona_spatial_join_gpu::physical_planner::GpuSpatialJoinPhysicalPlanner;
 
                 planner = planner.with_spatial_join_physical_planner(Arc::new(
                     GpuSpatialJoinPhysicalPlanner::new(),
+                ));
+            }
+
+            {
+                use sedona_spatial_join::physical_planner::DefaultSpatialJoinPhysicalPlanner;
+
+                planner = planner.with_spatial_join_physical_planner(Arc::new(
+                    DefaultSpatialJoinPhysicalPlanner::new(),
                 ));
             }
         }

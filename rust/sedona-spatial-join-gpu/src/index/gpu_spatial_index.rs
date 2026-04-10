@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use crate::options::GpuOptions;
 use arrow::array::BooleanBufferBuilder;
 use arrow_array::{ArrayRef, RecordBatch};
 use arrow_schema::SchemaRef;
@@ -22,7 +23,7 @@ use async_trait::async_trait;
 use datafusion_common::{DataFusionError, Result};
 use geo_types::{coord, Rect};
 use parking_lot::Mutex;
-use sedona_common::{ExecutionMode, SpatialJoinOptions};
+use sedona_common::ExecutionMode;
 use sedona_expr::statistics::GeoStatistics;
 use sedona_libgpuspatial::{
     GpuSpatialIndex, GpuSpatialOptions, GpuSpatialRefiner, GpuSpatialRelationPredicate,
@@ -39,7 +40,6 @@ use wkb::reader::Wkb;
 
 pub struct GPUSpatialIndex {
     pub(crate) schema: SchemaRef,
-    pub(crate) _options: SpatialJoinOptions,
     /// GPU spatial index for performing GPU-accelerated filtering
     pub(crate) index: Arc<GpuSpatialIndex>,
     /// GPU spatial refiner for performing GPU-accelerated refinement
@@ -62,28 +62,27 @@ impl GPUSpatialIndex {
     pub fn empty(
         spatial_predicate: SpatialPredicate,
         schema: SchemaRef,
-        options: SpatialJoinOptions,
+        gpu_options: GpuOptions,
         probe_threads_counter: AtomicUsize,
     ) -> Result<Self> {
-        let gpu_options = GpuSpatialOptions {
-            cuda_use_memory_pool: options.gpu.use_memory_pool,
-            cuda_memory_pool_init_percent: options.gpu.memory_pool_init_percentage as i32,
+        let gpu_libspatial_options = GpuSpatialOptions {
+            cuda_use_memory_pool: gpu_options.use_memory_pool,
+            cuda_memory_pool_init_percent: gpu_options.memory_pool_init_percentage as i32,
             concurrency: 1,
-            device_id: options.gpu.device_id as i32,
-            compress_bvh: options.gpu.compress_bvh,
-            pipeline_batches: options.gpu.pipeline_batches as u32,
+            device_id: gpu_options.device_id as i32,
+            compress_bvh: gpu_options.compress_bvh,
+            pipeline_batches: gpu_options.pipeline_batches as u32,
         };
 
         Ok(Self {
             schema,
-            _options: options,
             spatial_predicate,
             index: Arc::new(
-                GpuSpatialIndex::try_new(&gpu_options)
+                GpuSpatialIndex::try_new(&gpu_libspatial_options)
                     .map_err(|e| DataFusionError::Execution(e.to_string()))?,
             ),
             refiner: Arc::new(
-                GpuSpatialRefiner::try_new(&gpu_options)
+                GpuSpatialRefiner::try_new(&gpu_libspatial_options)
                     .map_err(|e| DataFusionError::Execution(e.to_string()))?,
             ),
             indexed_batches: vec![],
@@ -97,7 +96,6 @@ impl GPUSpatialIndex {
     pub fn new(
         spatial_predicate: SpatialPredicate,
         schema: SchemaRef,
-        options: SpatialJoinOptions,
         index: Arc<GpuSpatialIndex>,
         refiner: Arc<GpuSpatialRefiner>,
         indexed_batches: Vec<EvaluatedBatch>,
@@ -107,7 +105,6 @@ impl GPUSpatialIndex {
     ) -> Result<Self> {
         Ok(Self {
             schema,
-            _options: options,
             spatial_predicate,
             index,
             refiner,
@@ -292,12 +289,12 @@ impl SpatialIndex for GPUSpatialIndex {
 #[cfg(feature = "gpu")]
 mod tests {
     use crate::index::gpu_spatial_index_builder::GPUSpatialIndexBuilder;
+    use crate::options::GpuOptions;
     use arrow_array::RecordBatch;
     use arrow_schema::{DataType, Field, SchemaRef};
     use datafusion_common::JoinType;
     use datafusion_physical_expr::expressions::Column;
     use futures::Stream;
-    use sedona_common::{ExecutionMode, GpuOptions, SpatialJoinOptions};
     use sedona_expr::statistics::GeoStatistics;
     use sedona_schema::datatypes::WKB_GEOMETRY;
     use sedona_spatial_join::evaluated_batch::evaluated_batch_stream::{
@@ -420,8 +417,8 @@ mod tests {
     }
     #[test]
     fn test_spatial_index_builder_empty() {
-        let options = SpatialJoinOptions {
-            execution_mode: ExecutionMode::PrepareBuild,
+        let options = GpuOptions {
+            enable: true,
             ..Default::default()
         };
         let metrics = SpatialJoinBuildMetrics::default();
@@ -449,7 +446,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_spatial_index_builder_add_batch() {
-        let options = SpatialJoinOptions {
+        let options = GpuOptions {
+            enable: true,
             ..Default::default()
         };
         let metrics = SpatialJoinBuildMetrics::default();
@@ -498,12 +496,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_spatial_index_builder_add_multiple_batches() {
-        let gpu_ops = GpuOptions {
+        let gpu_options = GpuOptions {
+            enable: true,
             concat_build: false,
-            ..Default::default()
-        };
-        let options = SpatialJoinOptions {
-            gpu: gpu_ops,
             ..Default::default()
         };
         let metrics = SpatialJoinBuildMetrics::default();
@@ -525,7 +520,7 @@ mod tests {
         let builder = GPUSpatialIndexBuilder::new(
             schema.clone(),
             spatial_predicate,
-            options,
+            gpu_options,
             JoinType::Inner,
             4,
             metrics,
@@ -578,7 +573,7 @@ mod tests {
 
     async fn setup_index_for_batch_test(
         build_geoms: &[Option<&str>],
-        options: SpatialJoinOptions,
+        options: GpuOptions,
     ) -> SpatialIndexRef {
         let metrics = SpatialJoinBuildMetrics::default();
         let spatial_predicate = SpatialPredicate::Relation(RelationPredicate::new(
@@ -637,7 +632,11 @@ mod tests {
     #[tokio::test]
     async fn test_query_batch_empty_results() {
         let build_geoms = &[Some("POINT (0 0)"), Some("POINT (1 1)")];
-        let index = setup_index_for_batch_test(build_geoms, SpatialJoinOptions::default()).await;
+        let options = GpuOptions {
+            enable: true,
+            ..Default::default()
+        };
+        let index = setup_index_for_batch_test(build_geoms, options).await;
 
         // Probe with geometries that don't intersect
         let probe_geoms = &[Some("POINT (10 10)"), Some("POINT (20 20)")];
@@ -664,12 +663,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_query_batch_non_empty_results_multiple_build_batches() {
-        let gpu_ops = GpuOptions {
+        let gpu_options = GpuOptions {
+            enable: true,
             concat_build: false,
-            ..Default::default()
-        };
-        let options = SpatialJoinOptions {
-            gpu: gpu_ops,
             ..Default::default()
         };
         let metrics = SpatialJoinBuildMetrics::default();
@@ -689,7 +685,7 @@ mod tests {
         let builder = GPUSpatialIndexBuilder::new(
             schema.clone(),
             spatial_predicate,
-            options,
+            gpu_options,
             JoinType::Inner,
             4,
             metrics,
