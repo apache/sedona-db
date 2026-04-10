@@ -17,20 +17,19 @@
 
 use std::sync::Arc;
 
-use crate::index::GpuSpatialIndexBuilder;
 use crate::join_provider::GpuSpatialJoinProvider;
 use crate::options::GpuOptions;
 use arrow_schema::Schema;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion_common::{DataFusionError, JoinSide, Result};
 use datafusion_physical_expr::PhysicalExpr;
-use sedona_common::{sedona_internal_err, SpatialJoinOptions};
+use sedona_common::SpatialJoinOptions;
 use sedona_query_planner::probe_shuffle_exec::ProbeShuffleExec;
 use sedona_query_planner::spatial_join_physical_planner::{
     PlanSpatialJoinArgs, SpatialJoinPhysicalPlanner,
 };
 use sedona_query_planner::spatial_predicate::{
-    DistancePredicate, KNNPredicate, RelationPredicate, SpatialPredicate, SpatialRelationType,
+    RelationPredicate, SpatialPredicate, SpatialRelationType,
 };
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;
@@ -279,7 +278,7 @@ mod test {
     use super::*;
     use arrow_schema::{DataType, Field};
     use datafusion_physical_expr::expressions::Column;
-    use sedona_query_planner::spatial_predicate::SpatialRelationType;
+    use sedona_query_planner::spatial_predicate::{KNNPredicate, SpatialRelationType};
     use sedona_schema::datatypes::{WKB_GEOGRAPHY, WKB_GEOMETRY};
 
     #[test]
