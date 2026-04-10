@@ -57,25 +57,6 @@ pub(crate) struct GPUSpatialIndexBuilder {
 }
 
 impl GPUSpatialIndexBuilder {
-    pub(crate) fn is_spatial_predicate_supported_on_gpu(
-        spatial_predicate: &SpatialPredicate,
-    ) -> bool {
-        match spatial_predicate {
-            SpatialPredicate::Relation(rel) => match rel.relation_type {
-                SpatialRelationType::Intersects => true,
-                SpatialRelationType::Contains => true,
-                SpatialRelationType::Within => true,
-                SpatialRelationType::Covers => true,
-                SpatialRelationType::CoveredBy => true,
-                SpatialRelationType::Touches => true,
-                SpatialRelationType::Crosses => false,
-                SpatialRelationType::Overlaps => false,
-                SpatialRelationType::Equals => true,
-            },
-            SpatialPredicate::Distance(_) => false,
-            SpatialPredicate::KNearestNeighbors(_) => false,
-        }
-    }
     pub fn new(
         schema: SchemaRef,
         spatial_predicate: SpatialPredicate,
@@ -140,6 +121,9 @@ impl GPUSpatialIndexBuilder {
         _options: &SpatialJoinOptions,
     ) -> usize {
         let num_geoms = geo_stats.total_geometries().unwrap_or(0) as usize;
+        // This line estimates the size of temporary memory space for an array of bounding boxes,
+        // which will be fed to the GPU library to build an on-device index.
+        // The memory is allocated until the finishing of a spatial join.
         // Each geometry requires 4 f32 values to store the bounding rectangle (min_x, min_y, max_x, max_y)
         num_geoms * (4 * 4)
     }
