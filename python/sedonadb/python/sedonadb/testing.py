@@ -848,11 +848,10 @@ class ArrowSQLCache:
         if not self._dirty:
             return
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        sorted_entries = dict(sorted(self._entries.items()))
-        doc = {"results": {self._engine_name: sorted_entries}}
+        doc = {"results": {self._engine_name: self._entries}}
         with open(self._path, "w") as f:
             f.writelines(self._header_lines)
-            yaml.dump(doc, f, default_flow_style=False, sort_keys=False)
+            yaml.dump(doc, f, default_flow_style=False, sort_keys=True)
         self._dirty = False
 
 
