@@ -30,7 +30,7 @@ use sedona_query_planner::spatial_join_physical_planner::{
     PlanSpatialJoinArgs, SpatialJoinPhysicalPlanner,
 };
 use sedona_query_planner::spatial_predicate::{
-    DistancePredicate, KNNPredicate, RelationPredicate, SpatialPredicate,
+    DistancePredicate, KNNPredicate, RelationPredicate, SpatialPredicate, SpatialRelationType,
 };
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;
@@ -61,12 +61,21 @@ impl SpatialJoinPhysicalPlanner for GpuSpatialJoinPhysicalPlanner {
         &self,
         args: &PlanSpatialJoinArgs<'_>,
     ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
-        if !is_spatial_predicate_supported(
-            args.spatial_predicate,
-            &args.physical_left.schema(),
-            &args.physical_right.schema(),
-        )? {
-            return Ok(None);
+        let supported = is_spatial_predicate_supported_on_gpu(args.spatial_predicate);
+        let gpu_options = args
+            .options
+            .extensions
+            .get::<GpuOptions>()
+            .cloned()
+            .unwrap_or_default();
+
+        if !supported {
+            if gpu_options.fallback_to_cpu {
+                log::warn!("Falling back to CPU spatial join as the spatial predicate is not supported on GPU");
+                return Ok(None);
+            } else {
+                return Err(DataFusionError::Plan("GPU spatial join is enabled, but the spatial predicate is not supported on GPU".into()));
+            }
         }
 
         let should_swap = !matches!(
@@ -94,24 +103,6 @@ impl SpatialJoinPhysicalPlanner for GpuSpatialJoinPhysicalPlanner {
         } else {
             (args.physical_left.clone(), args.physical_right.clone())
         };
-
-        let gpu_options = args
-            .options
-            .extensions
-            .get::<GpuOptions>()
-            .cloned()
-            .unwrap_or_default();
-
-        let supported =
-            GpuSpatialIndexBuilder::is_spatial_predicate_supported_on_gpu(args.spatial_predicate);
-
-        if !supported {
-            if gpu_options.fallback_to_cpu {
-                log::warn!("Falling back to CPU spatial join as the spatial predicate is not supported on GPU");
-            } else {
-                return Err(DataFusionError::Plan("GPU spatial join is enabled, but the spatial predicate is not supported on GPU".into()));
-            }
-        }
 
         let exec = SpatialJoinExec::try_new(
             physical_left,
@@ -228,40 +219,58 @@ pub fn is_spatial_predicate_supported(
     left_schema: &Schema,
     right_schema: &Schema,
 ) -> Result<bool> {
-    /// Only spatial predicates working with planar geometry are supported for optimization.
-    /// Geography (spherical) types are explicitly excluded and will not trigger optimized spatial joins.
     fn is_geometry_type_supported(expr: &Arc<dyn PhysicalExpr>, schema: &Schema) -> Result<bool> {
-        let left_return_field = expr.return_field(schema)?;
-        let sedona_type = SedonaType::from_storage_field(&left_return_field)?;
-        let matcher = ArgMatcher::is_geometry();
-        Ok(matcher.match_type(&sedona_type))
+        let return_field = expr.return_field(schema)?;
+        let sedona_type = SedonaType::from_storage_field(&return_field)?;
+        Ok(ArgMatcher::is_geometry().match_type(&sedona_type))
     }
 
-    match spatial_predicate {
-        SpatialPredicate::Relation(RelationPredicate { left, right, .. })
-        | SpatialPredicate::Distance(DistancePredicate { left, right, .. }) => {
+    let both_geometry =
+        |left: &Arc<dyn PhysicalExpr>, right: &Arc<dyn PhysicalExpr>| -> Result<bool> {
             Ok(is_geometry_type_supported(left, left_schema)?
                 && is_geometry_type_supported(right, right_schema)?)
-        }
-        SpatialPredicate::KNearestNeighbors(KNNPredicate {
+        };
+
+    match spatial_predicate {
+        SpatialPredicate::Relation(RelationPredicate {
             left,
             right,
-            probe_side,
-            ..
+            relation_type,
         }) => {
-            let (left, right) = match probe_side {
-                JoinSide::Left => (left, right),
-                JoinSide::Right => (right, left),
-                _ => {
-                    return sedona_internal_err!(
-                        "Invalid probe side in KNN predicate: {:?}",
-                        probe_side
-                    )
-                }
-            };
-            Ok(is_geometry_type_supported(left, left_schema)?
-                && is_geometry_type_supported(right, right_schema)?)
+            if !matches!(
+                relation_type,
+                SpatialRelationType::Intersects
+                    | SpatialRelationType::Contains
+                    | SpatialRelationType::Within
+                    | SpatialRelationType::Covers
+                    | SpatialRelationType::CoveredBy
+                    | SpatialRelationType::Touches
+                    | SpatialRelationType::Equals
+            ) {
+                return Ok(false);
+            }
+
+            both_geometry(left, right)
         }
+        SpatialPredicate::Distance(_) | SpatialPredicate::KNearestNeighbors(_) => Ok(false),
+    }
+}
+
+fn is_spatial_predicate_supported_on_gpu(spatial_predicate: &SpatialPredicate) -> bool {
+    match spatial_predicate {
+        SpatialPredicate::Relation(rel) => match rel.relation_type {
+            SpatialRelationType::Intersects => true,
+            SpatialRelationType::Contains => true,
+            SpatialRelationType::Within => true,
+            SpatialRelationType::Covers => true,
+            SpatialRelationType::CoveredBy => true,
+            SpatialRelationType::Touches => true,
+            SpatialRelationType::Crosses => false,
+            SpatialRelationType::Overlaps => false,
+            SpatialRelationType::Equals => true,
+        },
+        SpatialPredicate::Distance(_) => false,
+        SpatialPredicate::KNearestNeighbors(_) => false,
     }
 }
 
