@@ -33,7 +33,6 @@ use crate::gdal_dyn_bindgen::SedonaGdalApi;
 /// initialization of [`GdalApi`] via [`GdalApi::try_from_shared_library`] or
 /// [`GdalApi::try_from_current_process`], and you cannot obtain a `&GdalApi`
 /// without successful initialization.
-#[macro_export]
 macro_rules! call_gdal_api {
     ($api:expr, $func:ident $(, $arg:expr)*) => {
         if let Some(func) = $api.inner.$func {

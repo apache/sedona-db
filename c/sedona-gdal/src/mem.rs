@@ -167,8 +167,8 @@ impl MemDatasetBuilder {
     }
 
     /// Set the dataset projection definition string.
-    pub fn projection(mut self, wkt: impl Into<String>) -> Self {
-        self.projection = Some(wkt.into());
+    pub fn projection(mut self, projection: impl Into<String>) -> Self {
+        self.projection = Some(projection.into());
         self
     }
 
@@ -314,13 +314,37 @@ mod tests {
     }
 
     #[test]
-    fn test_mem_builder_with_projection() {
+    fn test_mem_builder_with_wkt_projection() {
+        let projections = [
+            r#"GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]]"#,
+            r#"{"$schema":"https://proj.org/schemas/v0.7/projjson.schema.json","type":"GeographicCRS","name":"WGS 84 (CRS84)","datum_ensemble":{"name":"World Geodetic System 1984 ensemble","members":[{"name":"World Geodetic System 1984 (Transit)","id":{"authority":"EPSG","code":1166}},{"name":"World Geodetic System 1984 (G730)","id":{"authority":"EPSG","code":1152}},{"name":"World Geodetic System 1984 (G873)","id":{"authority":"EPSG","code":1153}},{"name":"World Geodetic System 1984 (G1150)","id":{"authority":"EPSG","code":1154}},{"name":"World Geodetic System 1984 (G1674)","id":{"authority":"EPSG","code":1155}},{"name":"World Geodetic System 1984 (G1762)","id":{"authority":"EPSG","code":1156}},{"name":"World Geodetic System 1984 (G2139)","id":{"authority":"EPSG","code":1309}},{"name":"World Geodetic System 1984 (G2296)","id":{"authority":"EPSG","code":1383}}],"ellipsoid":{"name":"WGS 84","semi_major_axis":6378137,"inverse_flattening":298.257223563},"accuracy":"2.0","id":{"authority":"EPSG","code":6326}},"coordinate_system":{"subtype":"ellipsoidal","axis":[{"name":"Geodetic longitude","abbreviation":"Lon","direction":"east","unit":"degree"},{"name":"Geodetic latitude","abbreviation":"Lat","direction":"north","unit":"degree"}]},"scope":"Not known.","area":"World.","bbox":{"south_latitude":-90,"west_longitude":-180,"north_latitude":90,"east_longitude":180},"id":{"authority":"OGC","code":"CRS84"}}"#,
+            "EPSG:4326",
+        ];
+        for projection in projections {
+            with_global_gdal(|gdal| {
+                let mut data = [0u8; 8 * 8];
+                let dataset = unsafe {
+                    MemDatasetBuilder::new(8, 8)
+                        .add_band(GdalDataType::UInt8, data.as_mut_ptr())
+                        .projection(projection)
+                        .build(gdal)
+                        .unwrap()
+                };
+                let proj = dataset.projection();
+                assert!(proj.contains("WGS 84"), "Expected WGS 84 in: {proj}");
+            })
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn test_mem_builder_with_epsg_code_projection() {
         with_global_gdal(|gdal| {
             let mut data = [0u8; 8 * 8];
             let dataset = unsafe {
                 MemDatasetBuilder::new(8, 8)
                     .add_band(GdalDataType::UInt8, data.as_mut_ptr())
-                    .projection(r#"GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]]"#)
+                    .projection("EPSG:4326")
                     .build(gdal)
                     .unwrap()
             };
