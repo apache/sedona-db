@@ -161,10 +161,12 @@ impl SpatialIndexBuilder for GPUSpatialIndexBuilder {
     /// Finish building and return the completed SpatialIndex.
     fn finish(&mut self) -> Result<SpatialIndexRef> {
         if self.indexed_batches.is_empty() {
+            let visited_build_side = self.build_visited_bitmaps()?;
             return Ok(Arc::new(GPUSpatialIndex::empty(
                 self.spatial_predicate.clone(),
                 self.schema.clone(),
                 self.gpu_options.clone(),
+                visited_build_side,
                 AtomicUsize::new(self.probe_threads_count),
             )?));
         }
@@ -179,10 +181,10 @@ impl SpatialIndexBuilder for GPUSpatialIndexBuilder {
         };
 
         let mut index = GpuSpatialIndex::try_new(&gpu_options).map_err(|e| {
-            DataFusionError::Execution(format!("Failed to initialize GPU context {e:?}"))
+            DataFusionError::Execution(format!("Failed to initialize GPU Index: {e:?}"))
         })?;
         let mut refiner = GpuSpatialRefiner::try_new(&gpu_options).map_err(|e| {
-            DataFusionError::Execution(format!("Failed to initialize GPU context {e:?}"))
+            DataFusionError::Execution(format!("Failed to initialize GPU Refiner: {e:?}"))
         })?;
 
         // Concat indexed batches into a single batch to reduce build time

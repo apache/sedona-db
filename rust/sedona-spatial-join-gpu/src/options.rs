@@ -47,6 +47,5 @@ extensions_options! {
 }
 
 impl ConfigExtension for GpuOptions {
-    // Keeps existing SQL path style: SET sedona.spatial_join.gpu.enable = true
-    const PREFIX: &'static str = "sedona.spatial_join.gpu";
+    const PREFIX: &'static str = "gpu";
 }

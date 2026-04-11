@@ -63,6 +63,7 @@ impl GPUSpatialIndex {
         spatial_predicate: SpatialPredicate,
         schema: SchemaRef,
         gpu_options: GpuOptions,
+        visited_build_side: Option<Mutex<Vec<BooleanBufferBuilder>>>,
         probe_threads_counter: AtomicUsize,
     ) -> Result<Self> {
         let gpu_libspatial_options = GpuSpatialOptions {
@@ -87,7 +88,7 @@ impl GPUSpatialIndex {
             ),
             indexed_batches: vec![],
             data_id_to_batch_pos: vec![],
-            visited_build_side: None,
+            visited_build_side,
             probe_threads_counter,
         })
     }
@@ -448,7 +449,6 @@ mod tests {
             metrics,
         );
 
-        let batch = RecordBatch::new_empty(schema.clone());
         let geom_batch = create_array(
             &[
                 Some("POINT (0.25 0.25)"),
@@ -458,6 +458,8 @@ mod tests {
             ],
             &WKB_GEOMETRY,
         );
+        let batch =
+            RecordBatch::try_new(schema.clone(), vec![Arc::new(geom_batch.clone())]).unwrap();
         let indexed_batch = EvaluatedBatch {
             batch,
             geom_array: EvaluatedGeometryArray::try_new(geom_batch, &WKB_GEOMETRY).unwrap(),
@@ -501,7 +503,6 @@ mod tests {
         );
 
         // --- Create Batch 1 ---
-        let batch1 = RecordBatch::new_empty(schema.clone());
         let geom_batch1 = create_array(
             &[
                 Some("POINT (0.25 0.25)"),
@@ -511,13 +512,14 @@ mod tests {
             ],
             &WKB_GEOMETRY,
         );
+        let batch1 =
+            RecordBatch::try_new(schema.clone(), vec![Arc::new(geom_batch1.clone())]).unwrap();
         let evaluated_batch1 = EvaluatedBatch {
             batch: batch1,
             geom_array: EvaluatedGeometryArray::try_new(geom_batch1, &WKB_GEOMETRY).unwrap(),
         };
 
         // --- Create Batch 2 ---
-        let batch2 = RecordBatch::new_empty(schema.clone());
         let geom_batch2 = create_array(
             &[
                 Some("POINT (1 1)"),
@@ -526,6 +528,8 @@ mod tests {
             ],
             &WKB_GEOMETRY,
         );
+        let batch2 =
+            RecordBatch::try_new(schema.clone(), vec![Arc::new(geom_batch2.clone())]).unwrap();
         let evaluated_batch2 = EvaluatedBatch {
             batch: batch2,
             geom_array: EvaluatedGeometryArray::try_new(geom_batch2, &WKB_GEOMETRY).unwrap(),
@@ -667,7 +671,6 @@ mod tests {
 
         // --- Build Side: Multiple Batches of Polygons ---
         // Batch 0
-        let build_batch0 = RecordBatch::new_empty(schema.clone());
         let build_geom_batch0 = create_array(
             &[
                 Some("POLYGON ((0 0, 0 10, 10 10, 10 0, 0 0))"),
@@ -675,17 +678,22 @@ mod tests {
             ],
             &WKB_GEOMETRY,
         );
+        let build_batch0 =
+            RecordBatch::try_new(schema.clone(), vec![Arc::new(build_geom_batch0.clone())])
+                .unwrap();
         let evaluated_build0 = EvaluatedBatch {
             batch: build_batch0,
             geom_array: EvaluatedGeometryArray::try_new(build_geom_batch0, &WKB_GEOMETRY).unwrap(),
         };
 
         // Batch 1
-        let build_batch1 = RecordBatch::new_empty(schema.clone());
         let build_geom_batch1 = create_array(
             &[Some("POLYGON ((40 40, 40 50, 50 50, 50 40, 40 40))")],
             &WKB_GEOMETRY,
         );
+        let build_batch1 =
+            RecordBatch::try_new(schema.clone(), vec![Arc::new(build_geom_batch1.clone())])
+                .unwrap();
         let evaluated_build1 = EvaluatedBatch {
             batch: build_batch1,
             geom_array: EvaluatedGeometryArray::try_new(build_geom_batch1, &WKB_GEOMETRY).unwrap(),

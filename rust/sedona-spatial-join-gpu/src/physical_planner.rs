@@ -68,6 +68,10 @@ impl SpatialJoinPhysicalPlanner for GpuSpatialJoinPhysicalPlanner {
             .cloned()
             .unwrap_or_default();
 
+        if !gpu_options.enable {
+            return Ok(None);
+        }
+
         if !supported {
             if gpu_options.fallback_to_cpu {
                 log::warn!("Falling back to CPU spatial join as the spatial predicate is not supported on GPU");

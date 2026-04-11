@@ -5209,7 +5209,6 @@ dependencies = [
  "sedona-geometry",
  "sedona-geoparquet",
  "sedona-geos",
- "sedona-libgpuspatial",
  "sedona-pointcloud",
  "sedona-proj",
  "sedona-query-planner",
