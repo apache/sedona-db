@@ -31,7 +31,7 @@ jobs:
       contents: read
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/github-script@v8
+      - uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');

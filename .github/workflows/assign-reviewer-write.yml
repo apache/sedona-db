@@ -48,7 +48,7 @@ jobs:
           persist-credentials: false
 
       - name: Download PR metadata artifact
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
@@ -74,7 +74,7 @@ jobs:
         run: unzip -d pr-meta pr-meta.zip
 
       - name: Assign reviewer
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');
