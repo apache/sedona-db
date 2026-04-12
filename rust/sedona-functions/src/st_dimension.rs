@@ -35,7 +35,7 @@ pub fn st_dimension_udf() -> SedonaScalarUDF {
         "st_dimension",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STDimension {})]),
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_📐".to_string()])
 }
 
 #[derive(Debug)]

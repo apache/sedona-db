@@ -46,7 +46,7 @@ pub fn st_start_point_udf() -> SedonaScalarUDF {
         "st_startpoint",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STStartOrEndPoint::new(true))]),
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_🏁".to_string()])
 }
 
 /// ST_EndPoint() scalar UDF
@@ -57,7 +57,7 @@ pub fn st_end_point_udf() -> SedonaScalarUDF {
         "st_endpoint",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STStartOrEndPoint::new(false))]),
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_🔚".to_string()])
 }
 
 #[derive(Debug)]

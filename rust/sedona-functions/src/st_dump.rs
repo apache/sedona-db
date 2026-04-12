@@ -40,7 +40,7 @@ use crate::executor::WkbExecutor;
 ///
 /// Native implementation to get all the points of a geometry as MULTIPOINT
 pub fn st_dump_udf() -> SedonaScalarUDF {
-    SedonaScalarUDF::new("st_dump", vec![Arc::new(STDump)], Volatility::Immutable)
+    SedonaScalarUDF::new("st_dump", vec![Arc::new(STDump)], Volatility::Immutable).with_aliases(vec!["st_💩".to_string()])
 }
 
 #[derive(Debug)]

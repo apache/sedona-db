@@ -44,7 +44,7 @@ pub fn st_point_udf() -> SedonaScalarUDF {
         "st_point",
         vec![sridified_kernel, kernel],
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_📍".to_string()])
 }
 
 /// ST_GeogPoint() scalar UDF implementation
@@ -61,7 +61,7 @@ pub fn st_geogpoint_udf() -> SedonaScalarUDF {
         "st_geogpoint",
         vec![sridified_kernel, kernel],
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_🌍".to_string()])
 }
 
 #[derive(Debug)]

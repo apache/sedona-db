@@ -36,7 +36,7 @@ pub fn st_astext_udf() -> SedonaScalarUDF {
         ItemCrsKernel::wrap_impl(vec![Arc::new(STAsText {})]),
         Volatility::Immutable,
     );
-    udf.with_aliases(vec!["st_aswkt".to_string()])
+    udf.with_aliases(vec!["st_aswkt".to_string(), "st_📖".to_string()])
 }
 
 #[derive(Debug)]
