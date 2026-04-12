@@ -17,7 +17,7 @@
 use crate::{error::PySedonaError, udf::sedona_scalar_udf};
 use pyo3::{ffi::Py_uintptr_t, prelude::*};
 use sedona_adbc::AdbcSedonadbDriverInit;
-use sedona_gdal::global::{configure_global_gdal_api, with_global_gdal_api, GdalApiBuilder};
+use sedona_gdal::global::{configure_global_gdal_api, with_global_gdal, GdalApiBuilder};
 use sedona_proj::register::{configure_global_proj_engine, ProjCrsEngineBuilder};
 use std::ffi::c_void;
 
@@ -107,7 +107,7 @@ fn configure_gdal_shared(shared_library_path: String) -> Result<(), PySedonaErro
 
 #[pyfunction]
 fn gdal_version() -> Result<Option<String>, PySedonaError> {
-    match with_global_gdal_api(|api| api.version_info("RELEASE_NAME")) {
+    match with_global_gdal(|gdal| gdal.version_info("RELEASE_NAME")) {
         Ok(version) if !version.is_empty() => Ok(Some(version)),
         _ => Ok(None),
     }
