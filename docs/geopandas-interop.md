@@ -25,10 +25,10 @@ This notebook shows how to leverage GeoPandas with SedonaDB for large-scale geos
 
 You'll learn how to:
 
-- Read common geospatial file formats like GeoJSON and FlatGeobuf into a GeoPandas GeoDataFrame
+- Read common geospatial file formats like GeoJSON and FlatGeobuf into a GeoPandas GeoDataFrame.
 - Convert these data from these input formats into a SedonaDB DataFrame for large-scale analysis.
 
-Any file type that can be read by GeoPandas can also be read into a SedonaDB DataFrame!
+Any file type that can be read by GeoPandas can also be read into a SedonaDB DataFrame.
 
 
 ```python
@@ -69,7 +69,7 @@ gdf
 </style>
 <table border="1" class="dataframe">
   <thead>
-    <tr style="text-align: right;">
+    <tr style="text-align: left;">
       <th></th>
       <th>prop0</th>
       <th>prop1</th>
