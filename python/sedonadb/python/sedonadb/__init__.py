@@ -29,4 +29,4 @@ __all__ = ["connect", "options", "gdal_version"]
 # creating a transform and configure_gdal() is called before any
 # GDAL-backed operation (e.g., raster I/O).
 configure_proj("auto")
-configure_gdal(preset="auto")
+configure_gdal("auto")

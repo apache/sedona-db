@@ -591,13 +591,12 @@ def _configure_proj_pyproj():
 
 
 def _proj_lib_name() -> str:
-    if sys.platform == "darwin":
-        return "libproj.dylib"
-    if sys.platform.startswith("linux"):
-        return "libproj.so"
     if sys.platform == "win32":
         return "proj.dll"
-    raise ValueError(f"Unsupported platform: {sys.platform}")
+    elif sys.platform == "darwin":
+        return "libproj.dylib"
+    else:
+        return "libproj.so"
 
 
 def _configure_proj_system():
@@ -679,6 +678,9 @@ def configure_gdal(
         elif preset == "system":
             shared_library = _gdal_lib_name()
         elif preset == "auto":
+            # The GDAL library bundled with rasterio has more features enabled by default
+            # (e.g., more compression codecs) than the one bundled with pyogrio, so try
+            # it first.
             tried = ["rasterio", "pyogrio", "conda", "homebrew", "system"]
             errors = []
             for option in tried:
@@ -721,13 +723,12 @@ def configure_gdal(
 
 
 def _gdal_lib_name() -> str:
-    if sys.platform == "darwin":
-        return "libgdal.dylib"
-    if sys.platform.startswith("linux"):
-        return "libgdal.so"
     if sys.platform == "win32":
         return "gdal.dll"
-    raise ValueError(f"Unsupported platform: {sys.platform}")
+    elif sys.platform == "darwin":
+        return "libgdal.dylib"
+    else:
+        return "libgdal.so"
 
 
 def _find_gdal_in_package(pkg_name: str) -> Path:
