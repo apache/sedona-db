@@ -14,3 +14,9 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+
+import pytest
+import sedonadb
+
+if "s2geography" not in sedonadb.__features__:
+    pytest.skip("Python package built without s2geography")
