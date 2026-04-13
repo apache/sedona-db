@@ -44,6 +44,7 @@ def test_st_geogpoint(eng, x, y, expected):
             expected,
         )
 
+
 # Note that we can't test WKB output for BigQuery because it snaps vertices such that
 # the exact output bytes are not identical.
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
