@@ -679,10 +679,13 @@ class BigQuery(DBEngine):
     """
 
     _CACHE_DIR = Path(__file__).resolve().parent.parent.parent / "tests" / "geography"
+    _shared_cache: "ArrowSQLCache | None" = None
 
     def __init__(self, cache_path: "Path | None" = None):
         self._cache_path = cache_path or self._CACHE_DIR / "bigquery_cache.yml"
-        self._file_cache = ArrowSQLCache("bigquery", self._cache_path)
+        if cache_path is not None or BigQuery._shared_cache is None:
+            BigQuery._shared_cache = ArrowSQLCache("bigquery", self._cache_path)
+        self._file_cache = BigQuery._shared_cache
         self.con = None
         self._con_attempted = False
 
