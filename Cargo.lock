@@ -2532,9 +2532,9 @@ checksum = "dea2df4cf52843e0452895c455a1a2cfbb842a1e7329671acf418fdc53ed4c59"
 
 [[package]]
 name = "fastrand"
-version = "2.4.0"
+version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a043dc74da1e37d6afe657061213aa6f425f855399a11d3463c6ecccc4dfda1f"
+checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
 
 [[package]]
 name = "fd-lock"
@@ -5215,6 +5215,7 @@ dependencies = [
  "sedona-s2geography",
  "sedona-schema",
  "sedona-spatial-join",
+ "sedona-spatial-join-gpu",
  "sedona-testing",
  "sedona-tg",
  "serde",
@@ -5747,6 +5748,40 @@ dependencies = [
  "sedona-schema",
  "sedona-testing",
  "sedona-tg",
+ "tokio",
+ "wkb",
+ "wkt 0.14.0",
+]
+
+[[package]]
+name = "sedona-spatial-join-gpu"
+version = "0.4.0"
+dependencies = [
+ "arrow",
+ "arrow-array",
+ "arrow-schema",
+ "async-trait",
+ "criterion",
+ "datafusion",
+ "datafusion-common",
+ "datafusion-physical-expr",
+ "env_logger 0.11.8",
+ "futures",
+ "geo-index",
+ "geo-types",
+ "log",
+ "parking_lot",
+ "rand 0.10.0",
+ "rstest",
+ "sedona-common",
+ "sedona-expr",
+ "sedona-functions",
+ "sedona-geo-generic-alg",
+ "sedona-libgpuspatial",
+ "sedona-query-planner",
+ "sedona-schema",
+ "sedona-spatial-join",
+ "sedona-testing",
  "tokio",
  "wkb",
  "wkt 0.14.0",
@@ -6348,9 +6383,9 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tokio"
-version = "1.51.0"
+version = "1.51.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2bd1c4c0fc4a7ab90fc15ef6daaa3ec3b893f004f915f2392557ed23237820cd"
+checksum = "f66bf9585cda4b724d3e78ab34b73fb2bbaba9011b9bfdf69dc836382ea13b8c"
 dependencies = [
  "bytes",
  "libc",

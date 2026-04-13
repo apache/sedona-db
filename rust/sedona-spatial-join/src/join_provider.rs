@@ -66,7 +66,7 @@ pub trait SpatialJoinProvider: std::fmt::Debug + Send + Sync {
 
 /// Default implementation of the [SpatialJoinProvider]
 #[derive(Debug)]
-pub(crate) struct DefaultSpatialJoinProvider;
+pub struct DefaultSpatialJoinProvider;
 
 impl SpatialJoinProvider for DefaultSpatialJoinProvider {
     fn try_new_spatial_index_builder(
