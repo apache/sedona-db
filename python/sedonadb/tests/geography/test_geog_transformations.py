@@ -16,7 +16,24 @@
 # under the License.
 
 import pytest
+from sedonadb.testing import BigQuery, PostGIS, SedonaDB, geog_or_null
 import sedonadb
 
 if "s2geography" not in sedonadb.__features__:
     pytest.skip("Python package built without s2geography")
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS, BigQuery])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        ("POINT (0 0)", "POINT (0 0)"),
+        ("LINESTRING (0 0, 0 1)", "POINT (0 0.5)"),
+        ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", "POINT (0.5 0.5)"),
+    ],
+)
+def test_st_centroid(eng, geom, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_Centroid({geog_or_null(geom)})", expected, wkt_precision=4
+    )
