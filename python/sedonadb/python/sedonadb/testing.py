@@ -668,7 +668,7 @@ class BigQuery(DBEngine):
 
     - SEDONADB_BIGQUERY_TEST_PROJECT_ID: GCP project identifier. Defaults to
       "sedonadb-testing".
-    - SEDONADB_BIGQUERY_TEST_DATASET_ID: Datasert identifier. In general data is
+    - SEDONADB_BIGQUERY_TEST_DATASET_ID: Dataset identifier. In general data is
       not scanned for these tests because doing so would incur cost.
     - SEDONADB_BIGQUERY_TEST_CREDENTIALS_FILE: (optional) Path to a service
       account JSON key file. When omitted, ADC is used instead.
@@ -727,7 +727,10 @@ class BigQuery(DBEngine):
             self.con.close()
 
     def __del__(self):
-        self.close()
+        try:
+            self.close()
+        except Exception:
+            pass
 
     @classmethod
     def name(cls):
@@ -758,11 +761,14 @@ class BigQuery(DBEngine):
         if cached is not None:
             return cached
 
-        self._ensure_con()
-        if self.con is None:
+        try:
+            self._ensure_con()
+        except Exception as e:
             raise RuntimeError(
-                "Query not in cache and BigQuery connection unavailable:\n" + query
-            )
+                "Query not in cache and BigQuery connection unavailable:\n"
+                + BigQuery.install_hint()
+            ) from e
+
         with self.con.cursor() as cur:
             cur.execute(query)
             result = cur.fetch_arrow_table()

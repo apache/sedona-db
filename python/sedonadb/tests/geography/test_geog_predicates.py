@@ -20,7 +20,7 @@ import sedonadb
 from sedonadb.testing import BigQuery, PostGIS, SedonaDB, geog_or_null
 
 if "s2geography" not in sedonadb.__features__:
-    pytest.skip("Python package built without s2geography")
+    pytest.skip("Python package built without s2geography", allow_module_level=True)
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS, BigQuery])
