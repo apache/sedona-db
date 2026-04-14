@@ -27,7 +27,7 @@ When constructing an array of spatial objects (like `ST_POINT`) in SedonaDB, you
 
 ### The Incorrect Method: `ARRAY()`
 
-Attempting to use the `ARRAY()` function to create an array of spatial types is not supported and will result in a planning error. SedonaDB will not recognize `ARRAY` as a valid function for this operation.
+Attempting to use the `ARRAY()` function to create an array of spatial types is not supported and results in a planning error. SedonaDB does not recognize `ARRAY` as a valid function for this operation.
 
 ```python title="Example (Fails)"
 >>> sd.sql("SELECT ARRAY(ST_POINT(1,2), ST_POINT(3,4))")
@@ -38,7 +38,7 @@ Error during planning: Invalid function 'array'
 ### The Correct Method: Brackets
 
 To correctly build an array, enclose your comma-separated spatial objects in **square brackets `[]`**. This syntax
-successfully creates a list containing the spatial data structures.
+successfully creates a list that contains the spatial data structures.
 
 ```python title="Example (Works)"
 >>> sd.sql("SELECT [ST_POINT(1,2), ST_POINT(3,4)]").show()
@@ -54,9 +54,9 @@ This approach correctly instructs SedonaDB to construct an array containing the 
 
 ## Temporary Views Not Supported in SQL
 
-SedonaDB does not support the `CREATE TEMP VIEW` or `CREATE TEMPORARY VIEW` SQL commands. Executing these statements will result in an error.
+SedonaDB does not support the `CREATE TEMP VIEW` or `CREATE TEMPORARY VIEW` SQL commands. Executing these statements results in an error.
 
-Attempting to create a temporary view directly with `sd.sql()` will fail, as shown below.
+Attempting to create a temporary view directly with `sd.sql()` fails, as shown below.
 
 ```python title="Unsupported Example"
 >>> sd.sql("CREATE TEMP VIEW b AS SELECT * FROM '/path/to/building.parquet'")
@@ -65,7 +65,7 @@ Traceback (most recent call last):
 sedonadb._lib.SedonaError: Temporary views not supported
 ```
 
-### Recommended Alternative
+### Recommended View Alternative
 
 The correct way to create a view is to load your data and use `to_view()`.
 
