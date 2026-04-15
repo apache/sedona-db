@@ -33,7 +33,7 @@ use parking_lot::Mutex;
 use sedona_common::{sedona_internal_err, SpatialJoinOptions};
 
 use crate::{
-    join_provider::SpatialJoinProvider,
+    join_provider::{DefaultSpatialJoinProvider, SpatialJoinProvider},
     prepare::{SpatialJoinComponents, SpatialJoinComponentsBuilder},
     spatial_predicate::{KNNPredicate, SpatialPredicate, SpatialPredicateTrait},
     stream::SpatialJoinStream,
@@ -120,7 +120,6 @@ pub struct SpatialJoinExec {
 
 impl SpatialJoinExec {
     /// Try to create a new [`SpatialJoinExec`]
-    #[allow(clippy::too_many_arguments)]
     pub fn try_new(
         left: Arc<dyn ExecutionPlan>,
         right: Arc<dyn ExecutionPlan>,
@@ -129,22 +128,12 @@ impl SpatialJoinExec {
         join_type: &JoinType,
         projection: Option<Vec<usize>>,
         options: &SpatialJoinOptions,
-        join_provider: Arc<dyn SpatialJoinProvider>,
     ) -> Result<Self> {
         let seed = options
             .debug
             .random_seed
             .unwrap_or(fastrand::u64(0..0xFFFF));
-        Self::try_new_internal(
-            left,
-            right,
-            on,
-            filter,
-            join_type,
-            projection,
-            seed,
-            join_provider,
-        )
+        Self::try_new_internal(left, right, on, filter, join_type, projection, seed)
     }
 
     /// Create a new SpatialJoinExec with additional options
@@ -157,7 +146,6 @@ impl SpatialJoinExec {
         join_type: &JoinType,
         projection: Option<Vec<usize>>,
         seed: u64,
-        join_provider: Arc<dyn SpatialJoinProvider>,
     ) -> Result<Self> {
         let left_schema = left.schema();
         let right_schema = right.schema();
@@ -187,10 +175,18 @@ impl SpatialJoinExec {
             cache,
             once_async_spatial_join_components: Arc::new(Mutex::new(None)),
             seed,
-            join_provider,
+            join_provider: Arc::new(DefaultSpatialJoinProvider),
         })
     }
 
+    /// Create a new [`SpatialJoinExec`] with customized [`SpatialJoinProvider`]
+    pub fn with_spatial_join_provider(
+        mut self,
+        join_provider: Arc<dyn SpatialJoinProvider>,
+    ) -> Self {
+        self.join_provider = join_provider;
+        self
+    }
     /// How the join is performed
     pub fn join_type(&self) -> &JoinType {
         &self.join_type
@@ -230,7 +226,6 @@ impl SpatialJoinExec {
             &self.join_type.swap(),
             swapped_projection,
             self.seed,
-            self.join_provider.clone(),
         )?;
 
         let swapped_join: Arc<dyn ExecutionPlan> = Arc::new(swapped_join);
@@ -267,7 +262,6 @@ impl SpatialJoinExec {
             &self.join_type,
             projection,
             self.seed,
-            self.join_provider.clone(),
         )
     }
 
@@ -420,7 +414,6 @@ impl ExecutionPlan for SpatialJoinExec {
                 &self.join_type,
                 None,
                 self.seed,
-                self.join_provider.clone(),
             )?;
             Ok(Some(Arc::new(new_exec)))
         } else {
@@ -440,7 +433,6 @@ impl ExecutionPlan for SpatialJoinExec {
             &self.join_type,
             self.projection.clone(),
             self.seed,
-            self.join_provider.clone(),
         )?;
         Ok(Arc::new(new_exec))
     }
@@ -547,10 +539,10 @@ mod exec_transform_tests {
     use datafusion_physical_plan::projection::{ProjectionExec, ProjectionExpr};
     use datafusion_physical_plan::ExecutionPlan;
 
-    use super::*;
-    use crate::join_provider::DefaultSpatialJoinProvider;
-    use crate::spatial_predicate::{RelationPredicate, SpatialRelationType};
     use sedona_common::{sedona_internal_err, SpatialJoinOptions};
+
+    use super::*;
+    use crate::spatial_predicate::{RelationPredicate, SpatialRelationType};
 
     fn make_schema(fields: &[(&str, DataType)]) -> SchemaRef {
         Arc::new(Schema::new(
@@ -601,7 +593,6 @@ mod exec_transform_tests {
             &JoinType::LeftMark,
             None,
             &SpatialJoinOptions::default(),
-            Arc::new(DefaultSpatialJoinProvider),
         )?;
 
         let projection = ProjectionExec::try_new(
@@ -650,7 +641,6 @@ mod exec_transform_tests {
             &JoinType::Inner,
             None,
             0,
-            Arc::new(DefaultSpatialJoinProvider),
         )?);
 
         // Project only columns used by the predicate: l2 then r1.
@@ -725,7 +715,6 @@ mod exec_transform_tests {
             &JoinType::Inner,
             None,
             0,
-            Arc::new(DefaultSpatialJoinProvider),
         )?);
 
         // Project only geometry columns (left then right) so pushdown is allowed.
@@ -783,16 +772,8 @@ mod exec_transform_tests {
             Arc::new(Column::new("rgeom", 1)),
             SpatialRelationType::Contains,
         ));
-        let exec = SpatialJoinExec::try_new_internal(
-            left,
-            right,
-            on,
-            None,
-            &JoinType::Left,
-            None,
-            0,
-            Arc::new(DefaultSpatialJoinProvider),
-        )?;
+        let exec =
+            SpatialJoinExec::try_new_internal(left, right, on, None, &JoinType::Left, None, 0)?;
 
         let swapped = exec.swap_inputs()?;
         let spatial_execs = collect_spatial_join_exec(&swapped)?;
@@ -843,16 +824,8 @@ mod exec_transform_tests {
             use_spheroid: false,
             probe_side: JoinSide::Right,
         });
-        let exec = SpatialJoinExec::try_new_internal(
-            left,
-            right,
-            on,
-            None,
-            &JoinType::Inner,
-            None,
-            0,
-            Arc::new(DefaultSpatialJoinProvider),
-        )?;
+        let exec =
+            SpatialJoinExec::try_new_internal(left, right, on, None, &JoinType::Inner, None, 0)?;
 
         let swapped = exec.swap_inputs()?;
         let spatial_execs = collect_spatial_join_exec(&swapped)?;

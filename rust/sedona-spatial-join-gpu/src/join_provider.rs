@@ -98,6 +98,11 @@ impl EvaluatedGeometryArrayFactory for DefaultGeometryArrayFactory {
         let mut rect_vec = Vec::with_capacity(num_rows);
         geometry_array.iter_as_wkb(sedona_type, num_rows, |wkb_opt| {
             let rect_opt = if let Some(wkb) = &wkb_opt {
+                // This piece of code checks whether the underlying geometry is a point
+                // By representing the point with an MBR with the same min corner and max corner,
+                // libgpuspatial treats the MBR as a point, which triggers an optimized point query
+                // instead of using rect-rect query for high performance
+                // Ref: https://github.com/apache/sedona-db/blob/9187f8b8c4ca52b64837fab5fddd377703f7331b/c/sedona-libgpuspatial/libgpuspatial/src/rt_spatial_index.cu#L374
                 if let Some(rect) = wkb.bounding_rect() {
                     let min = rect.min();
                     let max = rect.max();

@@ -21,10 +21,9 @@ use crate::join_provider::GpuSpatialJoinProvider;
 use crate::options::GpuOptions;
 use arrow_schema::Schema;
 use datafusion::physical_plan::ExecutionPlan;
-use datafusion_common::{DataFusionError, JoinSide, Result};
+use datafusion_common::{DataFusionError, Result};
 use datafusion_physical_expr::PhysicalExpr;
 use sedona_common::SpatialJoinOptions;
-use sedona_query_planner::probe_shuffle_exec::ProbeShuffleExec;
 use sedona_query_planner::spatial_join_physical_planner::{
     PlanSpatialJoinArgs, SpatialJoinPhysicalPlanner,
 };
@@ -60,7 +59,11 @@ impl SpatialJoinPhysicalPlanner for GpuSpatialJoinPhysicalPlanner {
         &self,
         args: &PlanSpatialJoinArgs<'_>,
     ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
-        let supported = is_spatial_predicate_supported_on_gpu(args.spatial_predicate);
+        let supported = is_spatial_predicate_supported(
+            args.spatial_predicate,
+            &args.physical_left.schema(),
+            &args.physical_right.schema(),
+        )?;
         let gpu_options = args
             .options
             .extensions
@@ -91,32 +94,17 @@ impl SpatialJoinPhysicalPlanner for GpuSpatialJoinPhysicalPlanner {
                 args.physical_right.as_ref(),
             )?;
 
-        // Repartition the probe side when enabled. This breaks spatial locality in sorted/skewed
-        // datasets, leading to more balanced workloads during out-of-core spatial join.
-        // We determine which pre-swap input will be the probe AFTER any potential swap, and
-        // repartition it here. swap_inputs() will then carry the RepartitionExec to the correct
-        // child position.
-        let (physical_left, physical_right) = if args.join_options.repartition_probe_side {
-            repartition_probe_side(
-                args.physical_left.clone(),
-                args.physical_right.clone(),
-                args.spatial_predicate,
-                should_swap,
-            )?
-        } else {
-            (args.physical_left.clone(), args.physical_right.clone())
-        };
-
         let exec = SpatialJoinExec::try_new(
-            physical_left,
-            physical_right,
+            args.physical_left.clone(),
+            args.physical_right.clone(),
             args.spatial_predicate.clone(),
             args.remainder.cloned(),
             args.join_type,
             None,
             args.join_options,
-            Arc::new(GpuSpatialJoinProvider::new(gpu_options)),
         )?;
+        let exec =
+            exec.with_spatial_join_provider(Arc::new(GpuSpatialJoinProvider::new(gpu_options)));
 
         if should_swap {
             exec.swap_inputs().map(Some)
@@ -171,52 +159,6 @@ fn should_swap_join_order(
     Ok(should_swap)
 }
 
-/// Repartition the probe side of a spatial join using `RoundRobinBatch` partitioning.
-///
-/// The purpose is to break spatial locality in sorted or skewed datasets, which can cause
-/// imbalanced partitions when running out-of-core spatial join. The number of partitions is
-/// preserved; only the distribution of rows across partitions is shuffled.
-///
-/// The `should_swap` parameter indicates whether `swap_inputs()` will be called after
-/// `SpatialJoinExec` is constructed. This affects which pre-swap input will become the
-/// probe side:
-/// - For non-KNN predicates: probe is always `Right` after any swap. If `should_swap` is true,
-///   the current `left` will become `right` (probe) after swap, so we repartition `left`.
-/// - For KNN predicates: `should_swap` is always false, and the probe side is determined by
-///   `KNNPredicate::probe_side`.
-fn repartition_probe_side(
-    mut physical_left: Arc<dyn ExecutionPlan>,
-    mut physical_right: Arc<dyn ExecutionPlan>,
-    spatial_predicate: &SpatialPredicate,
-    should_swap: bool,
-) -> Result<(Arc<dyn ExecutionPlan>, Arc<dyn ExecutionPlan>)> {
-    let probe_plan = match spatial_predicate {
-        SpatialPredicate::KNearestNeighbors(knn) => match knn.probe_side {
-            JoinSide::Left => &mut physical_left,
-            JoinSide::Right => &mut physical_right,
-            JoinSide::None => {
-                // KNNPredicate::probe_side is asserted not to be None in its constructor;
-                // treat this as a debug-only invariant violation and default to right.
-                debug_assert!(false, "KNNPredicate::probe_side must not be JoinSide::None");
-                &mut physical_right
-            }
-        },
-        _ => {
-            // For Relation/Distance predicates, probe is always Right after swap.
-            // If should_swap, the current left will be moved to the right (probe) by swap_inputs().
-            if should_swap {
-                &mut physical_left
-            } else {
-                &mut physical_right
-            }
-        }
-    };
-
-    *probe_plan = Arc::new(ProbeShuffleExec::try_new(Arc::clone(probe_plan))?);
-
-    Ok((physical_left, physical_right))
-}
-
 pub fn is_spatial_predicate_supported(
     spatial_predicate: &SpatialPredicate,
     left_schema: &Schema,
@@ -256,110 +198,5 @@ pub fn is_spatial_predicate_supported(
             both_geometry(left, right)
         }
         SpatialPredicate::Distance(_) | SpatialPredicate::KNearestNeighbors(_) => Ok(false),
-    }
-}
-
-fn is_spatial_predicate_supported_on_gpu(spatial_predicate: &SpatialPredicate) -> bool {
-    match spatial_predicate {
-        SpatialPredicate::Relation(rel) => match rel.relation_type {
-            SpatialRelationType::Intersects => true,
-            SpatialRelationType::Contains => true,
-            SpatialRelationType::Within => true,
-            SpatialRelationType::Covers => true,
-            SpatialRelationType::CoveredBy => true,
-            SpatialRelationType::Touches => true,
-            SpatialRelationType::Crosses => false,
-            SpatialRelationType::Overlaps => false,
-            SpatialRelationType::Equals => true,
-        },
-        SpatialPredicate::Distance(_) => false,
-        SpatialPredicate::KNearestNeighbors(_) => false,
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use arrow_schema::{DataType, Field};
-    use datafusion_physical_expr::expressions::Column;
-    use sedona_query_planner::spatial_predicate::{KNNPredicate, SpatialRelationType};
-    use sedona_schema::datatypes::{WKB_GEOGRAPHY, WKB_GEOMETRY};
-
-    #[test]
-    fn test_is_spatial_predicate_supported() {
-        // Planar geometry field
-        let geom_field = WKB_GEOMETRY.to_storage_field("geom", false).unwrap();
-        let schema = Arc::new(Schema::new(vec![geom_field.clone()]));
-        let col_expr = Arc::new(Column::new("geom", 0)) as Arc<dyn PhysicalExpr>;
-        let rel_pred = RelationPredicate::new(
-            col_expr.clone(),
-            col_expr.clone(),
-            SpatialRelationType::Intersects,
-        );
-        let spatial_pred = SpatialPredicate::Relation(rel_pred);
-        assert!(is_spatial_predicate_supported(&spatial_pred, &schema, &schema).unwrap());
-
-        // Geography field (should NOT be supported)
-        let geog_field = WKB_GEOGRAPHY.to_storage_field("geog", false).unwrap();
-        let geog_schema = Arc::new(Schema::new(vec![geog_field.clone()]));
-        let geog_col_expr = Arc::new(Column::new("geog", 0)) as Arc<dyn PhysicalExpr>;
-        let rel_pred_geog = RelationPredicate::new(
-            geog_col_expr.clone(),
-            geog_col_expr.clone(),
-            SpatialRelationType::Intersects,
-        );
-        let spatial_pred_geog = SpatialPredicate::Relation(rel_pred_geog);
-        assert!(
-            !is_spatial_predicate_supported(&spatial_pred_geog, &geog_schema, &geog_schema)
-                .unwrap()
-        );
-    }
-
-    #[test]
-    fn test_is_knn_predicate_supported() {
-        // ST_KNN(left, right)
-        let left_schema = Arc::new(Schema::new(vec![WKB_GEOMETRY
-            .to_storage_field("geom", false)
-            .unwrap()]));
-        let right_schema = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Int32, false),
-            WKB_GEOMETRY.to_storage_field("geom", false).unwrap(),
-        ]));
-        let left_col_expr = Arc::new(Column::new("geom", 0)) as Arc<dyn PhysicalExpr>;
-        let right_col_expr = Arc::new(Column::new("geom", 1)) as Arc<dyn PhysicalExpr>;
-        let knn_pred = SpatialPredicate::KNearestNeighbors(KNNPredicate::new(
-            left_col_expr.clone(),
-            right_col_expr.clone(),
-            5,
-            false,
-            JoinSide::Left,
-        ));
-        assert!(is_spatial_predicate_supported(&knn_pred, &left_schema, &right_schema).unwrap());
-
-        // ST_KNN(right, left)
-        let knn_pred = SpatialPredicate::KNearestNeighbors(KNNPredicate::new(
-            right_col_expr.clone(),
-            left_col_expr.clone(),
-            5,
-            false,
-            JoinSide::Right,
-        ));
-        assert!(is_spatial_predicate_supported(&knn_pred, &left_schema, &right_schema).unwrap());
-
-        // ST_KNN with geography (should NOT be supported)
-        let left_geog_schema = Arc::new(Schema::new(vec![WKB_GEOGRAPHY
-            .to_storage_field("geog", false)
-            .unwrap()]));
-        assert!(
-            !is_spatial_predicate_supported(&knn_pred, &left_geog_schema, &right_schema).unwrap()
-        );
-
-        let right_geog_schema = Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Int32, false),
-            WKB_GEOGRAPHY.to_storage_field("geog", false).unwrap(),
-        ]));
-        assert!(
-            !is_spatial_predicate_supported(&knn_pred, &left_schema, &right_geog_schema).unwrap()
-        );
     }
 }
