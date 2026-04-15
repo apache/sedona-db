@@ -19,11 +19,18 @@
 
 #include <cerrno>
 #include <cstdint>
+#include <string>
 
 #include "absl/base/config.h"
 
 #include <openssl/opensslv.h>
-#include <s2geography.h>
+#include <s2geography/accessors-geog.h>
+#include <s2geography/accessors.h>
+#include <s2geography/build.h>
+#include <s2geography/coverings.h>
+#include <s2geography/distance.h>
+#include <s2geography/linear-referencing.h>
+#include <s2geography/predicates.h>
 #include <s2geography/sedona_udf/sedona_extension.h>
 
 #include <s2/s2earth.h>
@@ -72,7 +79,7 @@ uint64_t SedonaGeographyGlueLngLatToCellId(double lng, double lat) {
   }
 }
 
-size_t SedonaGeographyGlueNumKernels(void) { return 23; }
+size_t SedonaGeographyGlueNumKernels(void) { return 27; }
 
 int SedonaGeographyGlueInitKernels(void* kernels_array, size_t kerenels_size_bytes) {
   if (kerenels_size_bytes !=
@@ -105,6 +112,10 @@ int SedonaGeographyGlueInitKernels(void* kernels_array, size_t kerenels_size_byt
   s2geography::sedona_udf::BufferKernel(kernel_ptr++);
   s2geography::sedona_udf::BufferQuadSegsKernel(kernel_ptr++);
   s2geography::sedona_udf::BufferParamsKernel(kernel_ptr++);
+  s2geography::sedona_udf::DistanceWithinKernel(kernel_ptr++);
+  s2geography::sedona_udf::CellIdFromPointKernel(kernel_ptr++);
+  s2geography::sedona_udf::CoveringCellIdsKernel(kernel_ptr++);
+  s2geography::sedona_udf::LongestLineKernel(kernel_ptr++);
 
   return 0;
 }
