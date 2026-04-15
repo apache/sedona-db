@@ -55,6 +55,14 @@ lines <- gsub("r/sedonadb/src/rust", "rust", lines, fixed = TRUE)
 # remove unnecessary workspace members
 lines <- gsub('"python/sedonadb",', "", lines, fixed = TRUE)
 lines <- gsub('"sedona-cli",', "", lines, fixed = TRUE)
-lines <- gsub('"c/sedona-libgpuspatial",', "", lines, fixed = TRUE)
-lines <- gsub('"rust/sedona-spatial-join-gpu",', "", lines, fixed = TRUE)
+# remove GPU-related lines (members and workspace dependencies)
+lines <- lines[!grepl("sedona-spatial-join-gpu", lines, fixed = TRUE)]
+lines <- lines[!grepl("sedona-libgpuspatial", lines, fixed = TRUE)]
 writeLines(lines, top_cargo_toml)
+
+# Remove GPU-related feature and dependency from sedona crate
+sedona_cargo_toml <- "src/rust/sedona/Cargo.toml"
+lines <- readLines(sedona_cargo_toml)
+# remove gpu feature and sedona-spatial-join-gpu dependency lines
+lines <- lines[!grepl("sedona-spatial-join-gpu", lines, fixed = TRUE)]
+writeLines(lines, sedona_cargo_toml)
