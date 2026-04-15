@@ -15,13 +15,13 @@
 # specific language governing permissions and limitations
 # under the License.
 from sedonadb import _lib
-from sedonadb.context import connect, configure_proj, configure_gdal, gdal_version
+from sedonadb.context import connect, configure_proj, configure_gdal
 
 __version__ = _lib.sedona_python_version()
 
 __features__ = _lib.sedona_python_features()
 
-__all__ = ["connect", "options", "gdal_version"]
+__all__ = ["connect", "options"]
 
 # Attempt to configure PROJ and GDAL on import. This will warn if PROJ
 # or GDAL can't be configured but should never error. The auto-configured

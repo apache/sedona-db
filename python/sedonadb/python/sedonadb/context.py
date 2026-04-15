@@ -640,7 +640,7 @@ def configure_gdal(
     Args:
         preset: One of:
             - None: Use a custom `shared_library` path.
-            - auto: Try all presets in the order pyogrio, rasterio, conda,
+            - auto: Try all presets in the order rasterio, pyogrio, conda,
               homebrew, system and warn if none succeeded.
             - pyogrio: Attempt to use the GDAL shared library bundled with
               pyogrio. This aligns the GDAL version with the one used by
