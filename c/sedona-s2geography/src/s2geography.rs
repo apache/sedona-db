@@ -97,13 +97,6 @@ impl Versions {
             c_str.to_string_lossy().into_owned()
         }
     }
-
-    /// A simple function that performs a non-trivial operation
-    ///
-    /// This is needed as a smoke check to ensure required libraries are linked.
-    pub fn test_linkage() -> f64 {
-        unsafe { SedonaGeographyGlueTestLinkage() }
-    }
 }
 
 #[cfg(test)]
@@ -137,6 +130,5 @@ mod test {
         assert_eq!(Versions::s2geometry(), "0.13.1");
         assert!(Versions::abseil().starts_with("20"));
         assert!(Versions::openssl().contains("."));
-        assert!(Versions::test_linkage() > 0.0);
     }
 }

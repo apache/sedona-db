@@ -42,13 +42,19 @@ const char* SedonaGeographyGlueS2GeometryVersion(void);
 
 const char* SedonaGeographyGlueAbseilVersion(void);
 
-double SedonaGeographyGlueTestLinkage(void);
-
 uint64_t SedonaGeographyGlueLngLatToCellId(double lng, double lat);
 
 size_t SedonaGeographyGlueNumKernels(void);
 
 int SedonaGeographyGlueInitKernels(void* kernels_array, size_t kernels_size_bytes);
+
+struct SedonaGeography;
+
+int SedonaGeographyCreateFromWkbNonOwning(struct SedonaGeography** geog, const uint8_t* buf, size_t len);
+
+int SedonaGeographyGetBounds(const struct SedonaGeography* geog, double* xmin, double* ymin, double* xmax, double* ymax);
+
+void SedonaGeographyDestroy(struct SedonaGeography* geog);
 
 #ifdef __cplusplus
 }

@@ -21,7 +21,6 @@ unsafe extern "C" {
     pub fn SedonaGeographyGlueOpenSSLVersion() -> *const c_char;
     pub fn SedonaGeographyGlueS2GeometryVersion() -> *const c_char;
     pub fn SedonaGeographyGlueAbseilVersion() -> *const c_char;
-    pub fn SedonaGeographyGlueTestLinkage() -> f64;
     pub fn SedonaGeographyGlueLngLatToCellId(lng: f64, lat: f64) -> u64;
     pub fn SedonaGeographyGlueNumKernels() -> usize;
     pub fn SedonaGeographyGlueInitKernels(

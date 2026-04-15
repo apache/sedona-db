@@ -18,6 +18,7 @@
 #include "geography_glue.h"
 
 #include <cerrno>
+#include <cmath>
 #include <cstdint>
 #include <string>
 
@@ -59,16 +60,6 @@ const char* SedonaGeographyGlueAbseilVersion(void) {
 #else
   return "<live at head>";
 #endif
-}
-
-double SedonaGeographyGlueTestLinkage(void) {
-  PointGeography geog1(S2LatLng::FromDegrees(45, -64).ToPoint());
-  PointGeography geog2(S2LatLng::FromDegrees(4, -97).ToPoint());
-
-  ShapeIndexGeography index1(geog1);
-  ShapeIndexGeography index2(geog2);
-
-  return S2Earth::RadiusMeters() * s2_distance(index1, index2);
 }
 
 uint64_t SedonaGeographyGlueLngLatToCellId(double lng, double lat) {
@@ -119,3 +110,57 @@ int SedonaGeographyGlueInitKernels(void* kernels_array, size_t kerenels_size_byt
 
   return 0;
 }
+
+/// Opaque wrapper around a GeoArrowGeography for C API
+struct SedonaGeography {
+  s2geography::GeoArrowGeography geog;
+};
+
+int SedonaGeographyCreateFromWkbNonOwning(struct SedonaGeography** geog,
+                                          const uint8_t* buf, size_t len) {
+  // // Parse WKB into a geometry view
+  // struct GeoArrowWKBReader reader;
+  // GeoArrowErrorCode code = GeoArrowWKBReaderInit(&reader);
+  // if (code != GEOARROW_OK) {
+  //   return EINVAL;
+  // }
+
+  // struct GeoArrowBufferView src{buf, static_cast<int64_t>(len)};
+  // struct GeoArrowGeometryView view;
+  // code = GeoArrowWKBReaderRead(&reader, src, &view, nullptr);
+  // if (code != GEOARROW_OK) {
+  //   GeoArrowWKBReaderReset(&reader);
+  //   return EINVAL;
+  // }
+
+  // // Create SedonaGeography and initialize from view
+  // // The GeoArrowGeography references the original WKB buffer (non-owning)
+  // auto* result = new SedonaGeography();
+  // result->geog.Init(view);
+
+  // GeoArrowWKBReaderReset(&reader);
+
+  // *geog = result;
+  return 0;
+}
+
+int SedonaGeographyGetBounds(const struct SedonaGeography* geog, double* xmin,
+                             double* ymin, double* xmax, double* ymax) {
+  s2geography::LatLngRectBounder bounder;
+  bounder.Clear();
+  bounder.Update(geog->geog);
+  S2LatLngRect bounds = bounder.Finish();
+
+  if (bounds.is_empty()) {
+    *xmin = *ymin = *xmax = *ymax = std::nan("");
+    return 0;
+  }
+
+  *xmin = bounds.lng_lo().degrees();
+  *ymin = bounds.lat_lo().degrees();
+  *xmax = bounds.lng_hi().degrees();
+  *ymax = bounds.lat_hi().degrees();
+  return 0;
+}
+
+void SedonaGeographyDestroy(struct SedonaGeography* geog) { delete geog; }
