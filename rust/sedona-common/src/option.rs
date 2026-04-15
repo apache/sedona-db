@@ -114,7 +114,6 @@ config_namespace! {
 
         /// Options for debugging or testing spatial join
         pub debug : SpatialJoinDebugOptions, default = SpatialJoinDebugOptions::default()
-
     }
 }
 

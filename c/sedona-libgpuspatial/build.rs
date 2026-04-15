@@ -235,7 +235,6 @@ fn main() {
     } else {
         println!("cargo:warning=CUDA not found. GPU functionality will not be available.");
         println!("cargo:warning=Install CUDA and set CUDA_HOME to enable GPU support.");
-        println!("Error: Something failed.");
 
         // Create empty bindings file so the build doesn't fail
         let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());

@@ -82,9 +82,6 @@ struct GpuSpatialRuntimeExporter {
       std::string ptx_root(config->ptx_root);
       auto rt_config = gpuspatial::get_default_rt_config(ptx_root);
 
-      GPUSPATIAL_LOG_INFO("Initializing GpuSpatialRuntime on device %d, PTX root %s",
-                          config->device_id, config->ptx_root);
-
       CUDA_CHECK(cudaSetDevice(config->device_id));
 
       gpuspatial::MemoryManager::instance().Init(config->use_cuda_memory_pool,
