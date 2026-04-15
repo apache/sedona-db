@@ -155,13 +155,11 @@ impl SedonaContext {
         let mut planner = SedonaQueryPlanner::new();
         #[cfg(feature = "spatial-join")]
         {
-            {
-                use sedona_spatial_join::physical_planner::DefaultSpatialJoinPhysicalPlanner;
+            use sedona_spatial_join::physical_planner::DefaultSpatialJoinPhysicalPlanner;
 
-                planner = planner.with_spatial_join_physical_planner(Arc::new(
-                    DefaultSpatialJoinPhysicalPlanner::new(),
-                ));
-            }
+            planner = planner.with_spatial_join_physical_planner(Arc::new(
+                DefaultSpatialJoinPhysicalPlanner::new(),
+            ));
             // Register the GPU join after the default planer
             // If a query is not supported, it falls back to the default planner.
             #[cfg(feature = "gpu")]
