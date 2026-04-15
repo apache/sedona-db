@@ -15,12 +15,12 @@
 # specific language governing permissions and limitations
 # under the License.
 
-import sedonadb
+import sedonadb.context
 
 
 def test_gdal_version():
     """Verify that GDAL was loaded successfully and reports a valid version."""
-    version = sedonadb.gdal_version()
+    version = sedonadb.context.gdal_version()
     assert version is not None, "GDAL should be loaded (gdal_version() returned None)"
     assert len(version) > 0, "GDAL version string should not be empty"
 
