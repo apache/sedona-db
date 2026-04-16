@@ -220,5 +220,5 @@ jobs:
           echo "=== Building libgpuspatial tests ==="
           cd c/sedona-libgpuspatial/libgpuspatial
           mkdir build
-          cmake --preset=default-with-tests -S . -B build
+          cmake --preset=default-with-tests -S . -B build -DCMAKE_CUDA_ARCHITECTURES=75
           cmake --build build --target all
