@@ -134,15 +134,13 @@ fn invoke_scalar(item: &Wkb, dim_index: usize) -> Result<Option<f64>> {
             let coord = PointTrait::coord(point);
             return get_coord(coord_dim, coord, dim_index);
         }
-        geo_traits::GeometryType::LineString(linestring) => {
-            if LineStringTrait::num_coords(linestring) == 0 {
-                return Ok(None);
-            }
+        geo_traits::GeometryType::LineString(linestring)
+            if LineStringTrait::num_coords(linestring) == 0 =>
+        {
+            return Ok(None);
         }
-        geo_traits::GeometryType::Polygon(polygon) => {
-            if PolygonTrait::exterior(polygon).is_none() {
-                return Ok(None);
-            }
+        geo_traits::GeometryType::Polygon(polygon) if PolygonTrait::exterior(polygon).is_none() => {
+            return Ok(None);
         }
         geo_traits::GeometryType::MultiPoint(multipoint) => {
             match MultiPointTrait::num_points(multipoint) {
@@ -157,20 +155,20 @@ fn invoke_scalar(item: &Wkb, dim_index: usize) -> Result<Option<f64>> {
                 _ => {}
             }
         }
-        geo_traits::GeometryType::MultiLineString(multilinestring) => {
-            if MultiLineStringTrait::num_line_strings(multilinestring) == 0 {
-                return Ok(None);
-            }
+        geo_traits::GeometryType::MultiLineString(multilinestring)
+            if MultiLineStringTrait::num_line_strings(multilinestring) == 0 =>
+        {
+            return Ok(None);
         }
-        geo_traits::GeometryType::MultiPolygon(multipolygon) => {
-            if MultiPolygonTrait::num_polygons(multipolygon) == 0 {
-                return Ok(None);
-            }
+        geo_traits::GeometryType::MultiPolygon(multipolygon)
+            if MultiPolygonTrait::num_polygons(multipolygon) == 0 =>
+        {
+            return Ok(None);
         }
-        geo_traits::GeometryType::GeometryCollection(geometrycollection) => {
-            if geometrycollection.num_geometries() == 0 {
-                return Ok(None);
-            }
+        geo_traits::GeometryType::GeometryCollection(geometrycollection)
+            if geometrycollection.num_geometries() == 0 =>
+        {
+            return Ok(None);
         }
         _ => {}
     };

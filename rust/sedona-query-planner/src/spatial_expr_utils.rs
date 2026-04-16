@@ -47,15 +47,11 @@ pub(crate) fn collect_spatial_predicate_names(expr: &Expr) -> HashSet<String> {
                     collect(left, acc);
                     collect(right, acc);
                 }
-                Operator::Lt | Operator::LtEq => {
-                    if is_distance_expr(left) {
-                        acc.insert("st_dwithin".to_string());
-                    }
+                Operator::Lt | Operator::LtEq if is_distance_expr(left) => {
+                    acc.insert("st_dwithin".to_string());
                 }
-                Operator::Gt | Operator::GtEq => {
-                    if is_distance_expr(right) {
-                        acc.insert("st_dwithin".to_string());
-                    }
+                Operator::Gt | Operator::GtEq if is_distance_expr(right) => {
+                    acc.insert("st_dwithin".to_string());
                 }
                 _ => (),
             },

@@ -546,8 +546,8 @@ impl StreamRepartitioner {
         for ((writer_opt, accumulator), num_rows) in self
             .spill_registry
             .into_iter()
-            .zip(self.geo_stats_accumulators.into_iter())
-            .zip(self.num_rows.into_iter())
+            .zip(self.geo_stats_accumulators)
+            .zip(self.num_rows)
         {
             let spilled_partition = if let Some(writer) = writer_opt {
                 let spill_files = vec![Arc::new(writer.finish()?)];

@@ -84,17 +84,13 @@ impl SedonaScalarKernel for STAsGeoJSON {
 fn geom_to_geojson(geom: &Wkb) -> Result<String> {
     // Special case handling for geometries that geo_types::Geometry cannot represent
     match geom.as_type() {
-        geo_traits::GeometryType::Point(pt) => {
-            if pt.coord().is_none() {
-                // Empty point - geo_types cannot represent this
-                return Ok(r#"{"type":"Point","coordinates":[]}"#.to_string());
-            }
+        geo_traits::GeometryType::Point(pt) if pt.coord().is_none() => {
+            // Empty point - geo_types cannot represent this
+            return Ok(r#"{"type":"Point","coordinates":[]}"#.to_string());
         }
-        geo_traits::GeometryType::Polygon(poly) => {
-            if poly.exterior().is_none() {
-                // Empty polygon - to match PostGIS behavior
-                return Ok(r#"{"type":"Polygon","coordinates":[]}"#.to_string());
-            }
+        geo_traits::GeometryType::Polygon(poly) if poly.exterior().is_none() => {
+            // Empty polygon - to match PostGIS behavior
+            return Ok(r#"{"type":"Polygon","coordinates":[]}"#.to_string());
         }
         _ => {}
     }
