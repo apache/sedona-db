@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING, Any, List, Tuple
 
 import geoarrow.pyarrow as ga
 import pyarrow as pa
-import yaml
 
 if TYPE_CHECKING:
     import pandas
@@ -816,6 +815,8 @@ class ArrowSQLCache:
             self._load()
 
     def _load(self):
+        import yaml
+
         with open(self._path) as f:
             lines = f.readlines()
 
@@ -859,6 +860,8 @@ class ArrowSQLCache:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         doc = {"results": {self._engine_name: self._entries}}
         with open(self._path, "w") as f:
+            import yaml
+
             f.writelines(self._header_lines)
             yaml.dump(doc, f, default_flow_style=False, sort_keys=True)
         self._dirty = False
