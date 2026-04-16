@@ -21,6 +21,8 @@
 
 #include "rmm/cuda_stream_view.hpp"
 
+#include <thrust/pair.h>
+
 namespace gpuspatial {
 
 template <typename POINT_T, typename INDEX_T>

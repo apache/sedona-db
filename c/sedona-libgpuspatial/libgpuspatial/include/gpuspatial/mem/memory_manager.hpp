@@ -16,10 +16,10 @@
 // under the License.
 
 #pragma once
-#include "rmm/mr/device/cuda_async_memory_resource.hpp"
-#include "rmm/mr/device/device_memory_resource.hpp"
-#include "rmm/mr/device/pool_memory_resource.hpp"
-#include "rmm/mr/device/tracking_resource_adaptor.hpp"
+#include "rmm/mr/cuda_async_memory_resource.hpp"
+#include "rmm/mr/device_memory_resource.hpp"
+#include "rmm/mr/pool_memory_resource.hpp"
+#include "rmm/mr/tracking_resource_adaptor.hpp"
 
 #include <memory>
 namespace gpuspatial {

@@ -10,7 +10,6 @@ c/sedona-geoarrow-c/src/nanoarrow/*
 c/sedona-s2geography/s2geography/*
 c/sedona-s2geography/s2geometry/*
 c/sedona-libgpuspatial/libgpuspatial/cmake/RAPIDS_VERSION
-c/sedona-libgpuspatial/libgpuspatial/cmake/patches/rmm_race_condition.patch
 c/sedona-libgpuspatial/libgpuspatial/include/gpuspatial/relate/relate.hpp
 c/sedona-libgpuspatial/libgpuspatial/include/gpuspatial/utils/thread_pool.hpp
 c/sedona-tg/src/tg/*

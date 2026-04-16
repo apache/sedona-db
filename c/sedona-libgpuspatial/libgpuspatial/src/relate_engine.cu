@@ -33,6 +33,7 @@
 
 #include <thrust/remove.h>
 #include <thrust/sort.h>
+#include <thrust/tuple.h>
 #include <thrust/unique.h>
 #include <cuda/std/iterator>
 
