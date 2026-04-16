@@ -226,7 +226,8 @@ impl SpatialJoinExec {
             &self.join_type.swap(),
             swapped_projection,
             self.seed,
-        )?;
+        )?
+        .with_spatial_join_provider(Arc::clone(&self.join_provider));
 
         let swapped_join: Arc<dyn ExecutionPlan> = Arc::new(swapped_join);
 
@@ -254,7 +255,7 @@ impl SpatialJoinExec {
             },
             None => None,
         };
-        SpatialJoinExec::try_new_internal(
+        Ok(SpatialJoinExec::try_new_internal(
             Arc::clone(&self.left),
             Arc::clone(&self.right),
             self.on.clone(),
@@ -262,7 +263,8 @@ impl SpatialJoinExec {
             &self.join_type,
             projection,
             self.seed,
-        )
+        )?
+        .with_spatial_join_provider(Arc::clone(&self.join_provider)))
     }
 
     /// This function creates the cache object that stores the plan properties such as schema,
@@ -414,7 +416,8 @@ impl ExecutionPlan for SpatialJoinExec {
                 &self.join_type,
                 None,
                 self.seed,
-            )?;
+            )?
+            .with_spatial_join_provider(Arc::clone(&self.join_provider));
             Ok(Some(Arc::new(new_exec)))
         } else {
             try_embed_projection(projection, self)
@@ -433,7 +436,8 @@ impl ExecutionPlan for SpatialJoinExec {
             &self.join_type,
             self.projection.clone(),
             self.seed,
-        )?;
+        )?
+        .with_spatial_join_provider(Arc::clone(&self.join_provider));
         Ok(Arc::new(new_exec))
     }
 
