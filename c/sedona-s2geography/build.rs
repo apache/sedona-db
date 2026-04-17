@@ -31,7 +31,7 @@ fn main() {
 
     // Link the libraries that are easy to enumerate by hand and whose location
     // we control in CMakeLists.txt.
-    let mut lib_dirs = ["geography_glue", "s2geography", "s2"]
+    let mut lib_dirs = ["s2geography_c", "s2geography", "s2"]
         .map(|lib| find_lib_dir(&dst, lib))
         .into_iter()
         .collect::<HashSet<_>>()
@@ -43,7 +43,7 @@ fn main() {
         println!("cargo:rustc-link-search=native={}", lib_dir.display());
     }
 
-    println!("cargo:rustc-link-lib=static=geography_glue");
+    println!("cargo:rustc-link-lib=static=s2geography_c");
     println!("cargo:rustc-link-lib=static=s2geography");
     println!("cargo:rustc-link-lib=static=s2");
 

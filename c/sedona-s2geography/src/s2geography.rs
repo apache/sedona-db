@@ -22,7 +22,7 @@ use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::ScalarKernelRef;
 use sedona_extension::{extension::SedonaCScalarKernel, scalar_kernel::ImportedScalarKernel};
 
-use crate::geography_glue_bindgen::*;
+use crate::s2geography_c_bindgen::*;
 
 /// Compute an S2 Cell identifier from a longitude/latitude pair
 ///
@@ -31,22 +31,26 @@ use crate::geography_glue_bindgen::*;
 /// normalized such that invalid lon/lat pairs will still compute
 /// a result (even though that result may be difficult to interpret).
 pub fn s2_cell_id_from_lnglat(lnglat: (f64, f64)) -> u64 {
-    unsafe { SedonaGeographyGlueLngLatToCellId(lnglat.0, lnglat.1) }
+    let vertex = S2GeogVertex {
+        v: [lnglat.0, lnglat.1, 0.0, 0.0],
+    };
+    unsafe { S2GeogLngLatToCellId(&vertex) }
 }
 
 pub fn s2_scalar_kernels() -> Result<Vec<(String, ScalarKernelRef)>> {
     let mut ffi_scalar_kernels = Vec::<SedonaCScalarKernel>::new();
-    ffi_scalar_kernels.resize_with(unsafe { SedonaGeographyGlueNumKernels() }, Default::default);
+    ffi_scalar_kernels.resize_with(unsafe { S2GeogNumKernels() }, Default::default);
 
     let err_code = unsafe {
-        SedonaGeographyGlueInitKernels(
+        S2GeogInitKernels(
             ffi_scalar_kernels.as_mut_ptr() as _,
             size_of::<SedonaCScalarKernel>() * ffi_scalar_kernels.len(),
+            S2GEOGRAPHY_KERNEL_FORMAT_SEDONA_UDF,
         )
     };
 
     if err_code != 0 {
-        return sedona_internal_err!("SedonaGeographyGlueInitKernels() failed");
+        return sedona_internal_err!("S2GeogInitKernels() failed");
     }
 
     ffi_scalar_kernels
@@ -68,7 +72,7 @@ impl Versions {
     /// Return the statically linked s2 version as a string
     pub fn s2geometry() -> String {
         unsafe {
-            let raw_c_str = SedonaGeographyGlueS2GeometryVersion();
+            let raw_c_str = S2GeogS2GeometryVersion();
             let c_str = std::ffi::CStr::from_ptr(raw_c_str);
             c_str.to_string_lossy().into_owned()
         }
@@ -80,7 +84,7 @@ impl Versions {
     /// or dynamically linked.
     pub fn abseil() -> String {
         unsafe {
-            let raw_c_str = SedonaGeographyGlueAbseilVersion();
+            let raw_c_str = S2GeogAbseilVersion();
             let c_str = std::ffi::CStr::from_ptr(raw_c_str);
             c_str.to_string_lossy().into_owned()
         }
@@ -92,7 +96,7 @@ impl Versions {
     /// or dynamically linked.
     pub fn openssl() -> String {
         unsafe {
-            let raw_c_str = SedonaGeographyGlueOpenSSLVersion();
+            let raw_c_str = S2GeogOpenSSLVersion();
             let c_str = std::ffi::CStr::from_ptr(raw_c_str);
             c_str.to_string_lossy().into_owned()
         }

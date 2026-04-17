@@ -90,21 +90,6 @@ install(TARGETS s2
         ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
         LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}")
 
-# Add our glue library
-add_library(geography_glue src/geography_glue.cc)
-target_link_libraries(geography_glue
-                      s2geography
-                      s2
-                      OpenSSL::SSL
-                      OpenSSL::Crypto
-                      ${S2_EXTRA_OPENSSL_LIBS})
-
-install(TARGETS geography_glue
-        EXPORT "geoarrow"
-        RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
-        ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
-        LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}")
-
 # Write a file to the binary directory containing the resolved locations
 # of OpenSSL and the libraries we need to link
 file(TOUCH "${CMAKE_BINARY_DIR}/openssl_libraries.txt")
