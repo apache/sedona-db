@@ -46,6 +46,11 @@ impl<'a> Geography<'a> {
     pub fn prepare(&mut self) -> Result<(), S2GeogCError> {
         unsafe { s2geog_call!(S2GeogForcePrepare(self.ptr)) }
     }
+
+    /// Get a const pointer to the underlying S2Geog for use in C API calls
+    pub(crate) fn as_ptr(&self) -> *const S2Geog {
+        self.ptr
+    }
 }
 
 impl<'a> Default for Geography<'a> {
