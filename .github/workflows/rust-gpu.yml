@@ -53,7 +53,7 @@ defaults:
 # Expected: ~45-60 minutes first time, ~10-15 minutes cached
 env:
   WORKFLOW_TIMEOUT_MINUTES: 90
-  # At GEOS updated to 3.14.0
+  # At s2geometry updated to 0.13.0
   VCPKG_REF: 580d480f750618f8affeb77abbb956e6eeaee0ce
 
 jobs:
