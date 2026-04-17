@@ -157,7 +157,7 @@ thread_local! {
 }
 
 /// Safe wrapper around an S2GeogError that ensures proper cleanup
-struct S2GeogErrorGuard {
+pub struct S2GeogErrorGuard {
     ptr: *mut S2GeogError,
 }
 

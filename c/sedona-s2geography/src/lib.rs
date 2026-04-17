@@ -14,7 +14,8 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-pub mod register;
-pub mod utils;
-mod s2geography_c_bindgen;
+pub mod geography;
 pub mod kernels;
+pub mod register;
+mod s2geography_c_bindgen;
+pub mod utils;
