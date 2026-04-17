@@ -58,6 +58,7 @@ pub const S2GEOGRAPHY_OP_INTERSECTS: c_int = 1;
 pub const S2GEOGRAPHY_OP_CONTAINS: c_int = 2;
 pub const S2GEOGRAPHY_OP_WITHIN: c_int = 3;
 pub const S2GEOGRAPHY_OP_EQUALS: c_int = 4;
+pub const S2GEOGRAPHY_OP_DISTANCE_WITHIN: c_int = 5;
 pub const S2GEOGRAPHY_OUTPUT_TYPE_BOOL: c_int = 1;
 
 unsafe extern "C" {
@@ -118,6 +119,13 @@ unsafe extern "C" {
         op: *mut S2GeogOp,
         arg0: *const S2Geog,
         arg1: *const S2Geog,
+        err: *mut S2GeogError,
+    ) -> S2GeogErrorCode;
+    pub fn S2GeogOpEvalGeogGeogDouble(
+        op: *mut S2GeogOp,
+        arg0: *const S2Geog,
+        arg1: *const S2Geog,
+        arg2: f64,
         err: *mut S2GeogError,
     ) -> S2GeogErrorCode;
     pub fn S2GeogOpGetInt(op: *mut S2GeogOp) -> i64;

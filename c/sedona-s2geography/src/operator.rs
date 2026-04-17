@@ -26,6 +26,7 @@ use crate::utils::S2GeogCError;
 
 /// S2Geography operator types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 #[repr(i32)]
 pub enum OpType {
     /// Tests whether two geometries intersect
@@ -36,6 +37,8 @@ pub enum OpType {
     Within = S2GEOGRAPHY_OP_WITHIN,
     /// Tests whether two geometries are equal
     Equals = S2GEOGRAPHY_OP_EQUALS,
+    /// Tests whether two geometries are within some distance
+    DWithin = S2GEOGRAPHY_OP_DISTANCE_WITHIN,
 }
 
 impl OpType {
@@ -46,8 +49,10 @@ impl OpType {
 
 /// S2Geography output types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 #[repr(i32)]
 pub enum OutputType {
+    Unknown = 0,
     Bool = S2GEOGRAPHY_OUTPUT_TYPE_BOOL,
 }
 
@@ -88,18 +93,17 @@ impl Op {
     }
 
     /// Get the output type of this operator
-    pub fn output_type(&self) -> c_int {
-        unsafe { S2GeogOpOutputType(self.ptr) }
-    }
-
-    /// Check if the output type is boolean
-    pub fn is_bool_output(&self) -> bool {
-        self.output_type() == S2GEOGRAPHY_OUTPUT_TYPE_BOOL
+    pub fn output_type(&self) -> OutputType {
+        let output_type_int = unsafe { S2GeogOpOutputType(self.ptr) };
+        match output_type_int {
+            S2GEOGRAPHY_OUTPUT_TYPE_BOOL => OutputType::Bool,
+            _ => OutputType::Unknown,
+        }
     }
 
     /// Evaluate a predicate on two geographies
     ///
-    /// Evaluate an operations that accepts two geographies and returns a boolean
+    /// Evaluate an operation that accepts two geographies and returns a boolean
     pub fn eval_binary_predicate(
         &mut self,
         geog0: &Geography,
@@ -110,6 +114,26 @@ impl Op {
                 self.ptr,
                 geog0.as_ptr(),
                 geog1.as_ptr()
+            ))?;
+            Ok(S2GeogOpGetInt(self.ptr) != 0)
+        }
+    }
+
+    /// Evaluate a distance predicate on two geographies
+    ///
+    /// Evaluate an operation that accepts two geographies + a double and returns a boolean
+    pub fn eval_binary_distance_predicate(
+        &mut self,
+        geog0: &Geography,
+        geog1: &Geography,
+        distance: f64,
+    ) -> Result<bool, S2GeogCError> {
+        unsafe {
+            s2geog_call!(S2GeogOpEvalGeogGeogDouble(
+                self.ptr,
+                geog0.as_ptr(),
+                geog1.as_ptr(),
+                distance
             ))?;
             Ok(S2GeogOpGetInt(self.ptr) != 0)
         }
@@ -139,7 +163,7 @@ mod tests {
     fn test_op_properties() {
         let op = Op::new(OpType::Intersects);
         assert_eq!(op.name(), "intersects");
-        assert!(op.is_bool_output());
+        assert_eq!(op.output_type(), OutputType::Bool);
     }
 
     #[test]
@@ -192,5 +216,21 @@ mod tests {
         let mut op = Op::new(OpType::Equals);
         assert!(op.eval_binary_predicate(&point1, &point2).unwrap());
         assert!(!op.eval_binary_predicate(&point1, &point3).unwrap());
+    }
+
+    #[test]
+    fn test_op_dwithin() {
+        let mut factory = GeographyFactory::new();
+        let geog1 = factory.from_wkt("POINT (0 0)").unwrap();
+        let geog2 = factory.from_wkt("POINT (0 1)").unwrap();
+
+        let mut op = Op::new(OpType::DWithin);
+        assert_eq!(op.name(), "distance_within");
+        assert!(!op
+            .eval_binary_distance_predicate(&geog1, &geog2, 100000.0)
+            .unwrap());
+        assert!(op
+            .eval_binary_distance_predicate(&geog1, &geog2, 200000.0)
+            .unwrap());
     }
 }
