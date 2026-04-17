@@ -51,15 +51,17 @@ impl RectBounder {
         unsafe { s2geog_call!(S2GeogRectBounderBound(self.ptr, geog.as_ptr())) }
     }
 
-    /// Check if the bounder is empty (no geometries have been added)
+    /// Check if the bounder is empty (no geometries or only empty geometries
+    /// have been added)
     pub fn is_empty(&self) -> bool {
         unsafe { S2GeogRectBounderIsEmpty(self.ptr) != 0 }
     }
 
     /// Finish the bounding computation and return the bounding rectangle
     ///
-    /// Returns `(lo, hi)` where `lo` is `(lng, lat)` of the southwest corner
-    /// and `hi` is `(lng, lat)` of the northeast corner.
+    /// Returns `(xmin, ymin, xmax, ymax)` which represent the west, south, east, and
+    /// north bounds of the geography. The xmin may be greater than xmax for the case
+    /// where the geography wraps around the antimeridian.
     ///
     /// Returns `None` if the bounder is empty.
     pub fn finish(&self) -> Result<Option<(f64, f64, f64, f64)>, S2GeogCError> {

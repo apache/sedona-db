@@ -25,8 +25,19 @@ use crate::utils::S2GeogCError;
 
 /// Safe wrapper around an unbound S2Geog geography object
 ///
-/// This variant of the Geography owns its coordinates and is not bound to another
-/// lifetime.
+/// The Geography is a wrapper around a traditional geometry optmizied for
+/// a spherical interpretation of edges using the S2 geometry library. The
+/// geography caches some internal scratch space and may be reused when
+/// looping over many geographies derived from the same lifetime.
+///
+/// Some Geography objects are tied to the lifetime of their input (e.g.,
+/// when reading WKB); however, others own their coordinates (e.g., when
+/// reading WKT).
+///
+/// Geographies are thread safe. The internal index is built on the fly when
+/// required in a thread safe way (although it may result in faster evaluation
+/// to force a build early in a situation where it is known that a lot of
+/// evaluations are about to happen).
 pub struct Geography<'a> {
     ptr: *mut S2Geog,
     _marker: PhantomData<&'a [u8]>,
@@ -43,11 +54,14 @@ impl<'a> Geography<'a> {
         }
     }
 
+    /// Force build an index on this geography
+    ///
+    /// This operation forces an index build, which may be expensive but can result in
+    /// faster evaluation when passed to some operations (e.g., predicates).
     pub fn prepare(&mut self) -> Result<(), S2GeogCError> {
         unsafe { s2geog_call!(S2GeogForcePrepare(self.ptr)) }
     }
 
-    /// Get a const pointer to the underlying S2Geog for use in C API calls
     pub(crate) fn as_ptr(&self) -> *const S2Geog {
         self.ptr
     }
@@ -113,6 +127,8 @@ impl GeographyFactory {
         Ok(geog)
     }
 
+    /// Internal wrappers around the actual init. These is the function that should be used
+    /// in the event of looping over WKBs from the same arrow array.
     fn init_from_wkb(&mut self, wkb: &[u8], geog: &mut Geography) -> Result<(), S2GeogCError> {
         unsafe {
             s2geog_call!(S2GeogFactoryInitFromWkbNonOwning(

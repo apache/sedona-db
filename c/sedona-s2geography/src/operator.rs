@@ -24,7 +24,7 @@ use crate::s2geog_check;
 use crate::s2geography_c_bindgen::*;
 use crate::utils::S2GeogCError;
 
-/// Spatial predicate operator types
+/// S2Geography operator types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
 pub enum OpType {
@@ -44,10 +44,23 @@ impl OpType {
     }
 }
 
-/// Safe wrapper around S2GeogOp for evaluating spatial predicates
+/// S2Geography output types
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+pub enum OutputType {
+    Bool = S2GEOGRAPHY_OUTPUT_TYPE_BOOL,
+}
+
+/// Safe wrapper around S2GeogOp for evaluating spatial operations
 ///
-/// This struct represents a spatial predicate operator that can be applied
-/// to pairs of geographies to test spatial relationships.
+/// This struct represents an operator that can be applied
+/// to various combinations of arguments. If possible one
+/// should use the kernels, which have lower overhead and operate more
+/// directly on the input when it arrives as Arrow batches.
+///
+/// Operations are an abstraction that help amortize overhead when evaluating
+/// the same operation many times and reduce the API surface of the s2geography
+/// C API when the Arrow interface is not sufficient.
 pub struct Op {
     ptr: *mut S2GeogOp,
 }
@@ -84,9 +97,9 @@ impl Op {
         self.output_type() == S2GEOGRAPHY_OUTPUT_TYPE_BOOL
     }
 
-    /// Evaluate the predicate on two geographies
+    /// Evaluate a predicate on two geographies
     ///
-    /// Returns the result as a boolean (true if the predicate holds).
+    /// Evaluate an operations that accepts two geographies and returns a boolean
     pub fn eval_binary_predicate(
         &mut self,
         geog0: &Geography,
