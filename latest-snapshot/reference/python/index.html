@@ -4354,6 +4354,33 @@ much faster as opening a connection to BigQuery is slow).</p>
 
 </div>
 
+<div class="doc doc-object doc-function">
+
+
+<h4 id="sedonadb.testing.BigQuery.set_cache_dir" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">set_cache_dir</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-classmethod"><code>classmethod</code></small>
+  </span>
+
+<a href="#sedonadb.testing.BigQuery.set_cache_dir" class="headerlink" title="Permanent link">¶</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">set_cache_dir</span><span class="p">(</span><span class="n">cache_dir</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" title="pathlib.Path" href="https://docs.python.org/3/library/pathlib.html#pathlib.Path">Path</a></span> <span class="o">|</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Set the directory containing bigquery_cache.yml.</p>
+<p>Call this before any BigQuery instances are created to configure
+where the cache file is located. This is typically called from a
+conftest.py in the test directory.</p>
+
+
+    </div>
+
+</div>
+
 
 
   </div>
