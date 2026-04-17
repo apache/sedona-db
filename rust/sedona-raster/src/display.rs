@@ -34,9 +34,21 @@ use crate::traits::RasterRef;
 /// [WxH/nbands] @ [xmin ymin xmax ymax] skew=(skew_x, skew_y) / CRS
 /// ```
 ///
+/// Without CRS:
+/// ```text
+/// [WxH/nbands] @ [xmin ymin xmax ymax]
+/// ```
+///
 /// With outdb bands:
 /// ```text
 /// [WxH/nbands] @ [xmin ymin xmax ymax] / CRS <outdb>
+/// ```
+///
+/// # Examples
+///
+/// ```text
+/// [1x2/1] @ [1 1.6 1.1 2] / OGC:CRS84
+/// [3x4/1] @ [3 2.4 3.84 4.24] skew=(0.06, 0.08) / OGC:CRS84
 /// ```
 pub struct RasterDisplay<'a>(pub &'a dyn RasterRef);
 
@@ -69,15 +81,20 @@ impl fmt::Display for RasterDisplay<'_> {
         let has_outdb =
             (0..nbands).any(|i| raster.band(i).is_some_and(|b| b.outdb_uri().is_some()));
 
+        // Write: [WxH/nbands] @ [xmin ymin xmax ymax]
+        // This handles both skewed and non-skewed rasters correctly
+        // by computing the axis-aligned bounding box from all 4 corners.
         write!(
             f,
             "[{width}x{height}/{nbands}] @ [{xmin} {ymin} {xmax} {ymax}]"
         )?;
 
+        // Conditionally append skew info
         if has_skew {
             write!(f, " skew=({skew_x}, {skew_y})")?;
         }
 
+        // Append CRS if present
         if let Some(crs) = raster.crs() {
             if crs.starts_with('{') {
                 write!(f, " / {{...}}")?;
@@ -91,5 +108,44 @@ impl fmt::Display for RasterDisplay<'_> {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::array::RasterStructArray;
+    use sedona_testing::rasters::generate_test_rasters;
+
+    #[test]
+    fn display_non_skewed_raster() {
+        let rasters = generate_test_rasters(1, None).unwrap();
+        let raster_array = RasterStructArray::new(&rasters);
+        let raster = raster_array.get(0).unwrap();
+        let display = format!("{}", RasterDisplay(&raster));
+        assert_eq!(display, "[1x2/1] @ [1 1.6 1.1 2] / OGC:CRS84");
+    }
+
+    #[test]
+    fn display_skewed_raster() {
+        let rasters = generate_test_rasters(3, None).unwrap();
+        let raster_array = RasterStructArray::new(&rasters);
+        let raster = raster_array.get(2).unwrap();
+        let display = format!("{}", RasterDisplay(&raster));
+        assert_eq!(
+            display,
+            "[3x4/1] @ [3 2.4 3.84 4.24] skew=(0.06, 0.08) / OGC:CRS84"
+        );
+    }
+
+    #[test]
+    fn display_write_to_fmt_write() {
+        let rasters = generate_test_rasters(1, None).unwrap();
+        let raster_array = RasterStructArray::new(&rasters);
+        let raster = raster_array.get(0).unwrap();
+        let mut buf = String::new();
+        use std::fmt::Write;
+        write!(buf, "{}", RasterDisplay(&raster)).unwrap();
+        assert_eq!(buf, "[1x2/1] @ [1 1.6 1.1 2] / OGC:CRS84");
     }
 }

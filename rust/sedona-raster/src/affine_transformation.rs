@@ -148,18 +148,17 @@ mod tests {
         transform: [f64; 6],
     }
 
-    impl TestRaster {
-        fn new(
-            origin_x: f64,
-            origin_y: f64,
-            scale_x: f64,
-            scale_y: f64,
-            skew_x: f64,
-            skew_y: f64,
-        ) -> Self {
-            Self {
-                transform: [origin_x, scale_x, skew_x, origin_y, skew_y, scale_y],
-            }
+    /// Construct a TestRaster with named fields for readability.
+    fn test_raster(
+        origin_x: f64,
+        origin_y: f64,
+        scale_x: f64,
+        scale_y: f64,
+        skew_x: f64,
+        skew_y: f64,
+    ) -> TestRaster {
+        TestRaster {
+            transform: [origin_x, scale_x, skew_x, origin_y, skew_y, scale_y],
         }
     }
 
@@ -190,15 +189,15 @@ mod tests {
     #[test]
     fn test_rotation() {
         // 0 degree rotation
-        let raster = TestRaster::new(0.0, 0.0, 1.0, -1.0, 0.0, 0.0);
+        let raster = test_raster(0.0, 0.0, 1.0, -1.0, 0.0, 0.0);
         assert_eq!(rotation(&raster), 0.0);
 
         // pi/2
-        let raster = TestRaster::new(0.0, 0.0, 0.0, 0.0, -1.0, 1.0);
+        let raster = test_raster(0.0, 0.0, 0.0, 0.0, -1.0, 1.0);
         assert_relative_eq!(rotation(&raster), PI / 2.0, epsilon = 1e-6);
 
         // pi/4
-        let raster = TestRaster::new(
+        let raster = test_raster(
             0.0,
             0.0,
             FRAC_1_SQRT_2,
@@ -209,17 +208,17 @@ mod tests {
         assert_relative_eq!(rotation(&raster), PI / 4.0, epsilon = 1e-6);
 
         // pi/3
-        let raster = TestRaster::new(0.0, 0.0, 0.5, 0.5, -0.866025, 0.866025);
+        let raster = test_raster(0.0, 0.0, 0.5, 0.5, -0.866025, 0.866025);
         assert_relative_eq!(rotation(&raster), PI / 3.0, epsilon = 1e-6);
 
         // pi
-        let raster = TestRaster::new(0.0, 0.0, -1.0, -1.0, 0.0, 0.0);
+        let raster = test_raster(0.0, 0.0, -1.0, -1.0, 0.0, 0.0);
         assert_relative_eq!(rotation(&raster), -PI, epsilon = 1e-6);
     }
 
     #[test]
     fn test_to_world_coordinate() {
-        let raster = TestRaster::new(100.0, 200.0, 1.0, -2.0, 0.25, 0.5);
+        let raster = test_raster(100.0, 200.0, 1.0, -2.0, 0.25, 0.5);
 
         assert_eq!(to_world_coordinate(&raster, 0, 0), (100.0, 200.0));
         assert_eq!(to_world_coordinate(&raster, 5, 10), (107.5, 182.5));
@@ -230,7 +229,7 @@ mod tests {
 
     #[test]
     fn test_to_raster_coordinate() {
-        let raster = TestRaster::new(100.0, 200.0, 1.0, -2.0, 0.25, 0.5);
+        let raster = test_raster(100.0, 200.0, 1.0, -2.0, 0.25, 0.5);
 
         assert_eq!(to_raster_coordinate(&raster, 100.0, 200.0).unwrap(), (0, 0));
         assert_eq!(
@@ -248,7 +247,7 @@ mod tests {
         );
 
         // Zero determinant
-        let bad_raster = TestRaster::new(100.0, 200.0, 1.0, 0.0, 0.0, 0.0);
+        let bad_raster = test_raster(100.0, 200.0, 1.0, 0.0, 0.0, 0.0);
         let result = to_raster_coordinate(&bad_raster, 100.0, 200.0);
         assert!(result.is_err());
         assert!(result

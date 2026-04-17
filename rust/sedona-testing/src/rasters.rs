@@ -24,7 +24,8 @@ use sedona_schema::crs::lnglat;
 use sedona_schema::raster::BandDataType;
 
 /// Generate a StructArray of rasters with sequentially increasing dimensions and pixel values.
-/// These tiny rasters provide fast, easy and predictable test data for unit tests.
+///
+/// These tiny rasters are to provide fast, easy and predictable test data for unit tests.
 pub fn generate_test_rasters(
     count: usize,
     null_raster_index: Option<usize>,
@@ -32,6 +33,7 @@ pub fn generate_test_rasters(
     let mut builder = RasterBuilder::new(count);
     let crs = lnglat().unwrap().to_crs_string();
     for i in 0..count {
+        // If a null raster index is specified and that matches the current index, append a null raster
         if matches!(null_raster_index, Some(index) if index == i) {
             builder.append_null()?;
             continue;
@@ -67,7 +69,10 @@ pub fn generate_test_rasters(
 }
 
 /// Generates a set of tiled rasters arranged in a grid.
-/// Each raster has 3 bands (RGB) with random pixel values.
+///
+/// - Each raster has 3 bands (RGB) with random pixel values.
+/// - Corner tiles have nodata values placed at their outer corner positions
+///   to test nodata handling at tile boundaries.
 pub fn generate_tiled_rasters(
     tile_size: (usize, usize),
     number_of_tiles: (usize, usize),
@@ -102,12 +107,14 @@ pub fn generate_tiled_rasters(
             )?;
 
             for _ in 0..band_count {
+                // Set a nodata value appropriate for the data type
                 let nodata_value = get_nodata_value_for_type(&data_type);
                 let nodata_value_bytes = nodata_value.clone();
 
                 raster_builder.start_band_2d(data_type, nodata_value.as_deref())?;
 
                 let pixel_count = tile_width * tile_height;
+                // Determine which corner position (if any) should contain the nodata value
                 let corner_position =
                     get_corner_position(tile_x, tile_y, x_tiles, y_tiles, tile_width, tile_height);
                 let band_data = generate_random_band_data(
@@ -130,6 +137,8 @@ pub fn generate_tiled_rasters(
 }
 
 /// Builds a 1x1 single-band raster with a non-invertible geotransform (zero scales and skews).
+///
+/// Useful for testing error handling of inverse affine transforms.
 pub fn build_noninvertible_raster() -> StructArray {
     let mut builder = RasterBuilder::new(1);
     let crs = lnglat().unwrap().to_crs_string();
@@ -175,6 +184,9 @@ pub fn raster_from_single_band(
 }
 
 /// Builds a single raster with 3 bands of different types for testing multi-band operations.
+///
+/// Band 1: UInt8 (nodata=255), Band 2: UInt16 (nodata=0), Band 3: Float32 (no nodata).
+/// Each band is 2x2 pixels.
 pub fn generate_multi_band_raster() -> StructArray {
     let mut builder = RasterBuilder::new(1);
     let crs = lnglat().unwrap().to_crs_string();
