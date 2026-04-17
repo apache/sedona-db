@@ -67,6 +67,7 @@ pub fn scalar_kernels() -> Vec<(&'static str, Vec<ScalarKernelRef>)> {
         "st_makevalid" => crate::st_makevalid::st_make_valid_impl,
         "st_minimumclearance" => crate::st_minimumclearance::st_minimum_clearance_impl,
         "st_minimumclearanceline" => crate::st_minimumclearance_line::st_minimum_clearance_line_impl,
+        "st_normalize" => crate::st_normalize::st_normalize_impl,
         "st_nrings" => crate::st_nrings::st_nrings_impl,
         "st_numinteriorrings" => crate::st_numinteriorrings::st_num_interior_rings_impl,
         "st_numpoints" => crate::st_numpoints::st_num_points_impl,
