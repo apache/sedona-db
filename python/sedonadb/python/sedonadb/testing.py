@@ -674,20 +674,27 @@ class BigQuery(DBEngine):
 
     Unless modifying these tests, the cached results should allow these tests
     to run without an active connection (and should allow tests to run locally
-    much faster as opening a connection to BigQuery is slow). The cache location
-    can be manually set using the SEDONADB_BIGQUERY_TEST_CACHE_PATH environment
-    variable.
+    much faster as opening a connection to BigQuery is slow).
     """
 
-    _CACHE_DIR = Path(__file__).resolve().parent.parent.parent / "tests" / "geography"
+    _CACHE_DIR: "Path | None" = None
     _shared_cache: "ArrowSQLCache | None" = None
 
+    @classmethod
+    def set_cache_dir(cls, cache_dir: "Path | str") -> None:
+        """Set the directory containing bigquery_cache.yml.
+
+        Call this before any BigQuery instances are created to configure
+        where the cache file is located. This is typically called from a
+        conftest.py in the test directory.
+        """
+        cls._CACHE_DIR = Path(cache_dir)
+        cls._shared_cache = None  # Reset so next instance uses new path
+
     def __init__(self, cache_path: "Path | None" = None):
-        if cache_path is None:
-            env_cache = os.environ.get("SEDONADB_BIGQUERY_TEST_CACHE_PATH")
-            if env_cache:
-                cache_path = Path(env_cache)
-        self._cache_path = cache_path or self._CACHE_DIR / "bigquery_cache.yml"
+        if cache_path is None and BigQuery._CACHE_DIR is not None:
+            cache_path = BigQuery._CACHE_DIR / "bigquery_cache.yml"
+        self._cache_path = cache_path
         if cache_path is not None or BigQuery._shared_cache is None:
             BigQuery._shared_cache = ArrowSQLCache("bigquery", self._cache_path)
         self._file_cache = BigQuery._shared_cache
