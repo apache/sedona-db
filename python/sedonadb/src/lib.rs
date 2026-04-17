@@ -53,16 +53,17 @@ fn sedona_python_version() -> PyResult<String> {
     Ok(VERSION.to_string())
 }
 
-#[cfg(feature = "s2geography")]
 #[pyfunction]
 fn sedona_python_features() -> PyResult<Vec<String>> {
-    Ok(vec!["s2geography".to_string()])
-}
+    let mut features = vec![];
 
-#[cfg(not(feature = "s2geography"))]
-#[pyfunction]
-fn sedona_python_features() -> PyResult<Vec<String>> {
-    Ok(vec![])
+    #[cfg(feature = "s2geography")]
+    features.push("s2geography".to_string());
+
+    #[cfg(feature = "gpu")]
+    features.push("gpu".to_string());
+
+    Ok(features)
 }
 
 #[pyfunction]
