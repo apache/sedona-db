@@ -16,8 +16,8 @@
 // under the License.
 pub mod geography;
 pub mod kernels;
+pub mod operator;
+pub mod rect_bounder;
 pub mod register;
 mod s2geography_c_bindgen;
 pub mod utils;
-pub mod rect_bounder;
-pub mod operator;
