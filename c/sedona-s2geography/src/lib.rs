@@ -20,3 +20,4 @@ pub mod register;
 mod s2geography_c_bindgen;
 pub mod utils;
 pub mod rect_bounder;
+pub mod operator;
