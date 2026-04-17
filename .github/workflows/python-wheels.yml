@@ -91,6 +91,7 @@ jobs:
           CIBW_BUILD: "*-win_amd64"
           CIBW_TEST_REQUIRES: pytest adbc_driver_manager geoarrow-pyarrow geopandas
           CIBW_TEST_COMMAND: pytest {package}/tests -vv
+          CIBW_ENVIRONMENT: SEDONADB_BIGQUERY_TEST_CACHE_PATH={project}/python/sedonadb/tests/geography/bigquery_cache.yml
 
       - uses: actions/upload-artifact@v7
         with:
@@ -144,6 +145,7 @@ jobs:
           VCPKG_ROOT: ${{ github.workspace }}/vcpkg
           CIBW_TEST_REQUIRES: pytest adbc_driver_manager geoarrow-pyarrow geopandas duckdb
           CIBW_TEST_COMMAND: pytest {package}/tests -vv
+          CIBW_ENVIRONMENT: SEDONADB_BIGQUERY_TEST_CACHE_PATH={project}/python/sedonadb/tests/geography/bigquery_cache.yml
 
       - uses: actions/upload-artifact@v7
         with:
@@ -197,6 +199,7 @@ jobs:
           VCPKG_ROOT: ${{ github.workspace }}/vcpkg
           CIBW_TEST_REQUIRES: pytest adbc_driver_manager geoarrow-pyarrow geopandas duckdb
           CIBW_TEST_COMMAND: pytest {package}/tests -vv
+          CIBW_ENVIRONMENT: SEDONADB_BIGQUERY_TEST_CACHE_PATH={project}/python/sedonadb/tests/geography/bigquery_cache.yml
           SEDONADB_MACOS_ARCH: x86_64
 
       - uses: actions/upload-artifact@v7
@@ -245,6 +248,7 @@ jobs:
           CIBW_SKIP: "*musllinux*"
           CIBW_TEST_REQUIRES: pytest adbc_driver_manager geoarrow-pyarrow geopandas duckdb
           CIBW_TEST_COMMAND: pytest {package}/tests -vv
+          CIBW_ENVIRONMENT: SEDONADB_BIGQUERY_TEST_CACHE_PATH={project}/python/sedonadb/tests/geography/bigquery_cache.yml
 
       - uses: actions/upload-artifact@v7
         with:
