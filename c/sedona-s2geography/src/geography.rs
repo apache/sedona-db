@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use std::marker::PhantomData;
 use std::ptr;
 
 use crate::s2geog_call;
@@ -22,37 +23,38 @@ use crate::s2geog_check;
 use crate::s2geography_c_bindgen::*;
 use crate::utils::S2GeogCError;
 
-/// Safe wrapper around an S2Geog geography object
-pub struct Geography {
+/// Safe wrapper around an unbound S2Geog geography object
+///
+/// This variant of the Geography owns its coordinates and is not bound to another
+/// lifetime.
+pub struct Geography<'a> {
     ptr: *mut S2Geog,
+    _marker: PhantomData<&'a [u8]>,
 }
 
-impl Geography {
+impl<'a> Geography<'a> {
     /// Create a new empty geography
     pub fn new() -> Self {
         let mut ptr: *mut S2Geog = ptr::null_mut();
         unsafe { s2geog_check!(S2GeogCreate(&mut ptr)) }.unwrap();
-        Self { ptr }
+        Self {
+            ptr,
+            _marker: PhantomData,
+        }
     }
 
-    /// Force building the internal shape index for this geography
-    ///
-    /// Most operations attempt to avoid building the internal ShapeIndex
-    /// because doing so can be slow; however, for repeated calls to the same
-    /// function (e.g., predicates), it can be faster to force the creation
-    /// of an index.
     pub fn prepare(&mut self) -> Result<(), S2GeogCError> {
         unsafe { s2geog_call!(S2GeogForcePrepare(self.ptr)) }
     }
 }
 
-impl Default for Geography {
+impl<'a> Default for Geography<'a> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Drop for Geography {
+impl<'a> Drop for Geography<'a> {
     fn drop(&mut self) {
         if !self.ptr.is_null() {
             unsafe {
@@ -64,7 +66,8 @@ impl Drop for Geography {
 
 // Safety: Geography contains only a pointer to C++ data that is thread-safe
 // when accessed through const methods
-unsafe impl Send for Geography {}
+unsafe impl<'a> Send for Geography<'a> {}
+unsafe impl<'a> Sync for Geography<'a> {}
 
 /// Factory for creating Geography objects from various formats
 pub struct GeographyFactory {
@@ -80,14 +83,26 @@ impl GeographyFactory {
     }
 
     /// Create a geography from WKB bytes
-    pub fn from_wkb(&mut self, wkb: &[u8]) -> Result<Geography, S2GeogCError> {
+    pub fn from_wkb<'a>(&mut self, wkb: &'a [u8]) -> Result<Geography<'a>, S2GeogCError> {
+        let mut geog = Geography::new();
+        self.init_from_wkb(wkb, &mut geog)?;
+        Ok(geog)
+    }
+
+    /// Create a bound geography from WKB bytes
+    ///
+    /// The returned geography is bound to the lifetime of the WKB buffer,
+    /// ensuring the buffer is not dropped while the geography is in use.
+    /// This is necessary because the underlying C++ implementation may
+    /// reference the original WKB data.
+    pub fn from_wkb_bound<'a>(&mut self, wkb: &'a [u8]) -> Result<Geography<'a>, S2GeogCError> {
         let mut geog = Geography::new();
         self.init_from_wkb(wkb, &mut geog)?;
         Ok(geog)
     }
 
     /// Create a geography from WKT string
-    pub fn from_wkt(&mut self, wkt: &str) -> Result<Geography, S2GeogCError> {
+    pub fn from_wkt(&mut self, wkt: &str) -> Result<Geography<'static>, S2GeogCError> {
         let mut geog = Geography::new();
         self.init_from_wkt(wkt, &mut geog)?;
         Ok(geog)
