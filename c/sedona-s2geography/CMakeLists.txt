@@ -27,14 +27,16 @@ set(CMAKE_CXX_STANDARD 17)
 find_package(OpenSSL REQUIRED)
 find_package(absl REQUIRED)
 
+# We always want static libraries for the Rust crate
+set(BUILD_SHARED_LIBS
+    OFF
+    CACHE BOOL "" FORCE)
+
 # Try to find s2 via find_package first (e.g., from vcpkg which has Windows patches)
 find_package(s2 QUIET)
 
 if(NOT s2_FOUND)
   # Build s2geometry using its own CMake (v0.12.0 has proper add_subdirectory support).
-  set(BUILD_SHARED_LIBS
-      OFF
-      CACHE BOOL "" FORCE)
   set(BUILD_TESTS
       OFF
       CACHE BOOL "" FORCE)
@@ -146,6 +148,7 @@ if(NOT WIN32)
 
   add_executable(linker_flags "CMakeLists.txt")
   target_link_libraries(linker_flags
+                        s2::s2
                         OpenSSL::SSL
                         OpenSSL::Crypto
                         ${S2_EXTRA_OPENSSL_LIBS}
@@ -165,6 +168,7 @@ int main(int argc, const char** args) {
 }")
   add_executable(linker_flags "${CMAKE_CURRENT_BINARY_DIR}/linker_flags.cc")
   target_link_libraries(linker_flags
+                        s2::s2
                         OpenSSL::SSL
                         OpenSSL::Crypto
                         ${S2_EXTRA_OPENSSL_LIBS}
