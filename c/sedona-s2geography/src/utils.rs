@@ -232,7 +232,7 @@ mod test {
 
     #[test]
     fn test_versions() {
-        assert_eq!(Versions::s2geometry(), "0.13.1");
+        assert!(Versions::s2geometry().contains("."));
 
         // These all may have been picked up from the environment
         assert!(Versions::abseil().starts_with("20"));

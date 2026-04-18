@@ -25,7 +25,7 @@ use crate::utils::S2GeogCError;
 
 /// Safe wrapper around an unbound S2Geog geography object
 ///
-/// The Geography is a wrapper around a traditional geometry optmizied for
+/// The Geography is a wrapper around a traditional geometry optimized for
 /// a spherical interpretation of edges using the S2 geometry library. The
 /// geography caches some internal scratch space and may be reused when
 /// looping over many geographies derived from the same lifetime.
@@ -62,7 +62,7 @@ impl<'a> Geography<'a> {
         unsafe { s2geog_call!(S2GeogForcePrepare(self.ptr)) }
     }
 
-    /// Estmate the memory used by this geography
+    /// Estimate the memory used by this geography
     pub fn mem_used(&self) -> usize {
         unsafe { S2GeogMemUsed(self.ptr) }
     }
@@ -106,20 +106,13 @@ impl GeographyFactory {
         Self { ptr }
     }
 
-    /// Create a geography from WKB bytes
-    pub fn from_wkb<'a>(&mut self, wkb: &'a [u8]) -> Result<Geography<'a>, S2GeogCError> {
-        let mut geog = Geography::new();
-        self.init_from_wkb(wkb, &mut geog)?;
-        Ok(geog)
-    }
-
     /// Create a bound geography from WKB bytes
     ///
     /// The returned geography is bound to the lifetime of the WKB buffer,
     /// ensuring the buffer is not dropped while the geography is in use.
-    /// This is necessary because the underlying C++ implementation may
-    /// reference the original WKB data.
-    pub fn from_wkb_bound<'a>(&mut self, wkb: &'a [u8]) -> Result<Geography<'a>, S2GeogCError> {
+    /// This is necessary because the underlying C++ implementation
+    /// references the original WKB data.
+    pub fn from_wkb<'a>(&mut self, wkb: &'a [u8]) -> Result<Geography<'a>, S2GeogCError> {
         let mut geog = Geography::new();
         self.init_from_wkb(wkb, &mut geog)?;
         Ok(geog)
@@ -132,7 +125,7 @@ impl GeographyFactory {
         Ok(geog)
     }
 
-    /// Internal wrappers around the actual init. These is the function that should be used
+    /// Internal wrappers around the actual init. This is the function that should be used
     /// in the event of looping over WKBs from the same arrow array.
     fn init_from_wkb(&mut self, wkb: &[u8], geog: &mut Geography) -> Result<(), S2GeogCError> {
         unsafe {
