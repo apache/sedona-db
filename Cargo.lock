@@ -5470,7 +5470,6 @@ dependencies = [
 name = "sedona-gdal"
 version = "0.4.0"
 dependencies = [
- "criterion",
  "gdal-sys",
  "libloading 0.9.0",
  "sedona-testing",

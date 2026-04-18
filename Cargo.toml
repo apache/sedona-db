@@ -107,9 +107,9 @@ geo-types = "0.7.17"
 geojson = "1.0.0"
 geos = { version = "11.1.1", features = ["geo", "v3_12_0"] }
 glam = "0.32.0"
-libloading = "0.9"
 libmimalloc-sys = { version = "0.1", default-features = false }
 log = "^0.4"
+libloading = "0.9"
 lru = "0.16"
 mimalloc = { version = "0.1", default-features = false }
 num-traits = { version = "0.2", default-features = false, features = ["libm"] }

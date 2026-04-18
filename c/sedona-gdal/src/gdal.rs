@@ -167,6 +167,12 @@ impl Gdal {
 
     /// Copy the bytes of a VSI in-memory file, taking ownership of the GDAL buffer.
     /// See also [`vsi::get_vsi_mem_file_bytes_owned`].
+    pub fn get_vsi_mem_file_bytes_owned(&self, file_name: &str) -> Result<Vec<u8>> {
+        vsi::get_vsi_mem_file_bytes_owned(self.api, file_name)
+    }
+
+    /// Open a VSI directory for iteration.
+    /// See also [`vsi::open_dir`].
     pub fn open_vsi_dir(
         &self,
         path: &str,
@@ -176,12 +182,10 @@ impl Gdal {
         crate::vsi::open_dir(self.api, path, recurse_depth, options)
     }
 
+    /// Return the directory separator used by GDAL for a given VSI path.
+    /// See also [`vsi::get_directory_separator`].
     pub fn vsi_directory_separator(&self, path: &str) -> Result<String> {
         crate::vsi::get_directory_separator(self.api, path)
-    }
-
-    pub fn get_vsi_mem_file_bytes_owned(&self, file_name: &str) -> Result<Vec<u8>> {
-        vsi::get_vsi_mem_file_bytes_owned(self.api, file_name)
     }
 
     // -- Raster operations ---------------------------------------------------
