@@ -70,6 +70,7 @@ unsafe extern "C" {
 
     pub fn S2GeogCreate(geog: *mut *mut S2Geog) -> S2GeogErrorCode;
     pub fn S2GeogForcePrepare(geog: *mut S2Geog, err: *mut S2GeogError) -> S2GeogErrorCode;
+    pub fn S2GeogMemUsed(geog: *mut S2Geog) -> usize;
     pub fn S2GeogDestroy(geog: *mut S2Geog);
 
     pub fn S2GeogFactoryCreate(geog_factory: *mut *mut S2GeogFactory) -> S2GeogErrorCode;

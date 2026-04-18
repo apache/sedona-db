@@ -62,6 +62,11 @@ impl<'a> Geography<'a> {
         unsafe { s2geog_call!(S2GeogForcePrepare(self.ptr)) }
     }
 
+    /// Estmate the memory used by this geography
+    pub fn mem_used(&self) -> usize {
+        unsafe { S2GeogMemUsed(self.ptr) }
+    }
+
     pub(crate) fn as_ptr(&self) -> *const S2Geog {
         self.ptr
     }
@@ -176,6 +181,7 @@ mod tests {
     fn test_geography_from_wkt() {
         let mut factory = GeographyFactory::new();
         let mut geog = factory.from_wkt("POINT (0 1)").unwrap();
+        assert!(geog.mem_used() >= 150);
         geog.prepare().unwrap();
     }
 
@@ -184,6 +190,7 @@ mod tests {
         let wkb_bytes = sedona_testing::create::make_wkb("POINT (0 1)");
         let mut factory = GeographyFactory::new();
         let mut geog = factory.from_wkb(&wkb_bytes).unwrap();
+        assert!(geog.mem_used() >= 150);
         geog.prepare().unwrap();
     }
 }
