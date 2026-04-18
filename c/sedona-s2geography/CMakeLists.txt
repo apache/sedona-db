@@ -27,17 +27,26 @@ set(CMAKE_CXX_STANDARD 17)
 find_package(OpenSSL REQUIRED)
 find_package(absl REQUIRED)
 
-# Build s2geometry using its own CMake (v0.12.0 has proper add_subdirectory support).
-set(BUILD_SHARED_LIBS
-    OFF
-    CACHE BOOL "" FORCE)
-set(BUILD_TESTS
-    OFF
-    CACHE BOOL "" FORCE)
-set(BUILD_EXAMPLES
-    OFF
-    CACHE BOOL "" FORCE)
-add_subdirectory(s2geometry)
+# Try to find s2 via find_package first (e.g., from vcpkg which has Windows patches)
+find_package(s2 QUIET)
+
+if(NOT s2_FOUND)
+  # Build s2geometry using its own CMake (v0.12.0 has proper add_subdirectory support).
+  set(BUILD_SHARED_LIBS
+      OFF
+      CACHE BOOL "" FORCE)
+  set(BUILD_TESTS
+      OFF
+      CACHE BOOL "" FORCE)
+  set(BUILD_EXAMPLES
+      OFF
+      CACHE BOOL "" FORCE)
+  add_subdirectory(s2geometry)
+  set(S2_BUILT_FROM_SUBDIRECTORY TRUE)
+else()
+  message(STATUS "Found s2 via find_package")
+  set(S2_BUILT_FROM_SUBDIRECTORY FALSE)
+endif()
 
 if(WIN32 AND NOT MSVC)
   # mingw (e.g., R for Windows) needs extra libraries
@@ -77,18 +86,22 @@ set(ABSL_LIBRARIES
     absl::vlog_is_on)
 
 # Build s2geography (needs the s2::s2 alias and version info)
-add_library(s2::s2 ALIAS s2)
+if(S2_BUILT_FROM_SUBDIRECTORY)
+  add_library(s2::s2 ALIAS s2)
+endif()
 set(S2_VERSION_MAJOR 0)
 set(S2_VERSION_MINOR 13)
 set(S2_VERSION_PATCH 1)
 add_subdirectory(s2geography)
 
 # s2geography's install export set references s2, so we need to include it.
-install(TARGETS s2
-        EXPORT "s2geography-targets"
-        RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
-        ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
-        LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}")
+if(S2_BUILT_FROM_SUBDIRECTORY)
+  install(TARGETS s2
+          EXPORT "s2geography-targets"
+          RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+          ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+          LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}")
+endif()
 
 # Write a file to the binary directory containing the resolved locations
 # of OpenSSL and the libraries we need to link

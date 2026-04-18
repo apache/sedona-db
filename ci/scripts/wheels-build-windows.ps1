@@ -30,7 +30,7 @@ $vcpkgLibDirectory = "$vcpkgInstalledDirectory\lib"
 try {
     Push-Location "$env:VCPKG_ROOT"
 	.\bootstrap-vcpkg
-	.\vcpkg --overlay-triplets="${scriptDirectory}/custom-triplets" install geos abseil openssl
+	.\vcpkg --overlay-triplets="${scriptDirectory}/custom-triplets" install geos abseil openssl s2geometry
 	Pop-Location
 }
 finally {
