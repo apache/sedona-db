@@ -34,8 +34,8 @@ use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::sedona_internal_err;
 use sedona_gdal::gdal::Gdal;
 use sedona_gdal::mem::MemDatasetBuilder;
-use sedona_gdal::raster::Buffer;
-use sedona_gdal::raster::GdalDataType;
+use sedona_gdal::raster::types::Buffer;
+use sedona_gdal::raster::types::GdalDataType;
 use sedona_proj::transform::with_global_proj_engine;
 
 use arrow_schema::DataType;

@@ -33,7 +33,7 @@ use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_gdal::dataset::Dataset;
 use sedona_gdal::gdal::Gdal;
 use sedona_gdal::mem::MemDatasetBuilder;
-use sedona_gdal::raster::Buffer;
+use sedona_gdal::raster::types::Buffer;
 
 use arrow_schema::DataType;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
@@ -451,7 +451,7 @@ fn initialize_band(
     }
 }
 
-fn initialize_band_t<T: sedona_gdal::raster::GdalType + Copy>(
+fn initialize_band_t<T: sedona_gdal::raster::types::GdalType + Copy>(
     dataset: &Dataset,
     width: usize,
     height: usize,

@@ -200,7 +200,7 @@ fn polygonize_raster(
 
     // Create layer with geometry field and value field
     let spatial_ref = gdal_dataset.spatial_ref().ok();
-    let layer = mem_ds
+    let mut layer = mem_ds
         .create_layer(sedona_gdal::dataset::LayerOptions {
             name: "polygons",
             srs: spatial_ref.as_ref(),
@@ -223,7 +223,7 @@ fn polygonize_raster(
         None,
         &layer,
         0,
-        &sedona_gdal::raster::PolygonizeOptions::default(),
+        &sedona_gdal::raster::polygonize::PolygonizeOptions::default(),
     )
     .map_err(|e| exec_datafusion_err!("GDAL polygonize failed: {e}"))?;
 

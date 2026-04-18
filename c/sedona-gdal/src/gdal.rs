@@ -167,6 +167,19 @@ impl Gdal {
 
     /// Copy the bytes of a VSI in-memory file, taking ownership of the GDAL buffer.
     /// See also [`vsi::get_vsi_mem_file_bytes_owned`].
+    pub fn open_vsi_dir(
+        &self,
+        path: &str,
+        recurse_depth: i32,
+        options: Option<&crate::cpl::CslStringList>,
+    ) -> Result<crate::vsi::VsiDir> {
+        crate::vsi::open_dir(self.api, path, recurse_depth, options)
+    }
+
+    pub fn vsi_directory_separator(&self, path: &str) -> Result<String> {
+        crate::vsi::get_directory_separator(self.api, path)
+    }
+
     pub fn get_vsi_mem_file_bytes_owned(&self, file_name: &str) -> Result<Vec<u8>> {
         vsi::get_vsi_mem_file_bytes_owned(self.api, file_name)
     }

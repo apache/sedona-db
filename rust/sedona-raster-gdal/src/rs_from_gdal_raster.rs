@@ -75,7 +75,7 @@ impl RsFromGDALRaster {
         let content_copy = content.to_vec();
 
         // Write content to VSI memory file
-        gdal.create_mem_file(&vsi_path, content_copy)
+        gdal.create_mem_file(&vsi_path, &content_copy)
             .map_err(|e| exec_datafusion_err!("Failed to create VSI memory file: {}", e))?;
 
         // Delegate to load_as_indb_raster, then always clean up

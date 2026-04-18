@@ -54,8 +54,8 @@ use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::sedona_internal_err;
 use sedona_gdal::gdal::Gdal;
 use sedona_gdal::mem::MemDatasetBuilder;
-use sedona_gdal::raster::Buffer;
-use sedona_gdal::raster::GdalDataType;
+use sedona_gdal::raster::types::Buffer;
+use sedona_gdal::raster::types::GdalDataType;
 use sedona_proj::transform::with_global_proj_engine;
 
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
@@ -813,7 +813,7 @@ struct RasterWindow {
     height: usize,
 }
 
-fn bounds_from_envelope(env: sedona_gdal::vector::Envelope) -> Bounds {
+fn bounds_from_envelope(env: sedona_gdal::vector::geometry::Envelope) -> Bounds {
     Bounds {
         min_x: env.MinX,
         max_x: env.MaxX,
@@ -1054,7 +1054,7 @@ mod tests {
     use super::*;
     use datafusion_common::cast::as_struct_array;
     use sedona_gdal::mem::MemDatasetBuilder;
-    use sedona_gdal::raster::GdalDataType;
+    use sedona_gdal::raster::types::GdalDataType;
     use sedona_raster::affine_transformation::to_world_coordinate;
     use sedona_raster::array::RasterStructArray;
     use sedona_raster_functions::crs_utils::crs_transform_coord;

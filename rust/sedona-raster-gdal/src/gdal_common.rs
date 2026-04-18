@@ -21,7 +21,7 @@ use sedona_gdal::gdal::Gdal;
 use sedona_gdal::gdal_dyn_bindgen::{GDAL_OF_RASTER, GDAL_OF_READONLY, GDAL_OF_VERBOSE_ERROR};
 use sedona_gdal::mem::MemDatasetBuilder;
 use sedona_gdal::raster::types::DatasetOptions;
-use sedona_gdal::raster::GdalDataType;
+use sedona_gdal::raster::types::GdalDataType;
 
 use sedona_raster::traits::RasterRef;
 use sedona_schema::raster::{BandDataType, StorageType};
@@ -188,7 +188,7 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
         let band_data = band.data();
         let data_ptr = band_data.as_ptr();
         unsafe {
-            mem_ds_builder = mem_ds_builder.add_band(gdal_type, data_ptr);
+            mem_ds_builder = mem_ds_builder.add_band(gdal_type, data_ptr as *mut u8);
         }
     }
 

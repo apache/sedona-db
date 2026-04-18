@@ -290,3 +290,90 @@ mod tests {
         .unwrap();
     }
 }
+
+pub struct VsiDirEntry {
+    pub name: String,
+    pub mode: Option<i32>,
+    pub size: Option<crate::gdal_dyn_bindgen::vsi_l_offset>,
+    pub mtime: Option<crate::gdal_dyn_bindgen::GIntBig>,
+}
+
+pub struct VsiDir {
+    api: &'static crate::gdal_api::GdalApi,
+    handle: *mut crate::gdal_dyn_bindgen::VSIDIR,
+}
+
+impl VsiDir {
+    pub fn next_entry(&mut self) -> Option<VsiDirEntry> {
+        let entry = unsafe { (self.api.inner.VSIGetNextDirEntry?)(self.handle) };
+        if entry.is_null() {
+            return None;
+        }
+        let entry = unsafe { &*entry };
+
+        let name = if entry.pszName.is_null() {
+            String::new()
+        } else {
+            unsafe { std::ffi::CStr::from_ptr(entry.pszName) }
+                .to_string_lossy()
+                .into_owned()
+        };
+
+        Some(VsiDirEntry {
+            name,
+            mode: (entry.bModeKnown != 0).then_some(entry.nMode),
+            size: (entry.bSizeKnown != 0).then_some(entry.nSize),
+            mtime: (entry.bMTimeKnown != 0).then_some(entry.nMTime),
+        })
+    }
+}
+
+impl Iterator for VsiDir {
+    type Item = VsiDirEntry;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.next_entry()
+    }
+}
+
+impl Drop for VsiDir {
+    fn drop(&mut self) {
+        if !self.handle.is_null() {
+            if let Some(close) = self.api.inner.VSICloseDir {
+                unsafe { close(self.handle) };
+            }
+            self.handle = std::ptr::null_mut();
+        }
+    }
+}
+
+pub fn open_dir(
+    api: &'static crate::gdal_api::GdalApi,
+    path: &str,
+    recurse_depth: i32,
+    options: Option<&crate::cpl::CslStringList>,
+) -> crate::errors::Result<VsiDir> {
+    let c_path = std::ffi::CString::new(path)?;
+    let options_ptr: *const *const std::os::raw::c_char = options
+        .map(|opts| opts.as_ptr() as *const *const std::os::raw::c_char)
+        .unwrap_or(std::ptr::null());
+    let handle =
+        unsafe { (api.inner.VSIOpenDir.unwrap())(c_path.as_ptr(), recurse_depth, options_ptr) };
+    if handle.is_null() {
+        return Err(api.last_null_pointer_err("VSIOpenDir"));
+    }
+    Ok(VsiDir { api, handle })
+}
+
+pub fn get_directory_separator(
+    api: &'static crate::gdal_api::GdalApi,
+    path: &str,
+) -> crate::errors::Result<String> {
+    let c_path = std::ffi::CString::new(path)?;
+    let separator_ptr = unsafe { (api.inner.VSIGetDirectorySeparator.unwrap())(c_path.as_ptr()) };
+    if separator_ptr.is_null() {
+        return Err(api.last_null_pointer_err("VSIGetDirectorySeparator"));
+    }
+    Ok(unsafe { std::ffi::CStr::from_ptr(separator_ptr) }
+        .to_string_lossy()
+        .into_owned())
+}

@@ -18,8 +18,9 @@
 use datafusion_common::{exec_datafusion_err, exec_err, DataFusionError, Result};
 use sedona_gdal::dataset::Dataset;
 use sedona_gdal::gdal::Gdal;
-use sedona_gdal::raster::GdalDataType;
-use sedona_gdal::raster::{GdalType, RasterBand};
+use sedona_gdal::raster::rasterband::RasterBand;
+use sedona_gdal::raster::types::GdalDataType;
+use sedona_gdal::raster::types::GdalType;
 use sedona_raster::traits::RasterRef;
 use sedona_schema::raster::{BandDataType, StorageType};
 
