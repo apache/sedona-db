@@ -47,7 +47,7 @@ pub fn st_translate_udf() -> SedonaScalarUDF {
             Arc::new(STTranslate { is_3d: false }),
         ]),
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_🚚".to_string()])
 }
 
 #[derive(Debug)]

@@ -186,6 +186,45 @@ We welcome contributions! Here's how you can get involved:
 
 SedonaDB is a subproject of **Apache Sedona**, an Apache Software Foundation project. The project is governed by the Apache Software Foundation and subject to all the rules and oversight requirements. SedonaDB is built on top of **Apache Arrow** and **Apache DataFusion** for fast query processing.
 
+### Emoji Aliases
+
+All `ST_` functions support emoji aliases for a more expressive query experience:
+
+| Function | Emoji | | Function | Emoji |
+|---|---|---|---|---|
+| `st_dump` | 💩 | | `st_reverse` | 🔙 |
+| `st_x` | ❌ | | `st_isempty` | 🕳️ |
+| `st_y` | 🤷 | | `st_isclosed` | 🔒 |
+| `st_z` | 💤 | | `st_iscollection` | 🗂️ |
+| `st_m` | Ⓜ️ | | `st_interiorringn` | 💍 |
+| `st_xmin` | ⬅️ | | `st_translate` | 🚚 |
+| `st_xmax` | ➡️ | | `st_numgeometries` | 🔢 |
+| `st_ymin` | ⬇️ | | `st_geometrytype` | 🔍 |
+| `st_ymax` | ⬆️ | | `st_geometryn` | 🎰 |
+| `st_zmin` | 🏝️ | | `st_scale` | ⚖️ |
+| `st_zmax` | 🏔️ | | `st_flipcoordinates` | 🪞 |
+| `st_mmin` | ⏬ | | `st_makeline` | 📏 |
+| `st_mmax` | ⏫ | | `st_pointn` | 👆 |
+| `st_geomfromwkt` | 📝 | | `st_envelope` | ✉️ |
+| `st_geogfromwkt` | 🌏 | | `st_dimension` | 📐 |
+| `st_geomfromewkt` | 📜 | | `st_azimuth` | 🧭 |
+| `st_geomfromwkb` | 📥 | | `st_astext` | 📖 |
+| `st_geomfromwkbunchecked` | 🤞 | | `st_asbinary` | 💾 |
+| `st_geogfromwkb` | 🌐 | | `st_asewkb` | 📦 |
+| `st_geomfromewkb` | 📨 | | `st_affine` | 🎭 |
+| `st_point` | 📍 | | `st_rotate` | 🌀 |
+| `st_geogpoint` | 🌍 | | `st_rotatex` | 🎡 |
+| `st_pointz` | ⛰️ | | `st_rotatey` | 🎠 |
+| `st_pointm` | ⏱️ | | `st_points` | ✨ |
+| `st_pointzm` | 🗻 | | `st_npoints` | #️⃣ |
+| `st_force2d` | 2️⃣ | | `st_hasz` | 🧗 |
+| `st_force3d` | 3️⃣ | | `st_hasm` | ⌚ |
+| `st_force3dm` | 🧊 | | `st_zmflag` | 🚩 |
+| `st_force4d` | 4️⃣ | | `st_startpoint` | 🏁 |
+| `st_srid` | 🆔 | | `st_endpoint` | 🔚 |
+| `st_crs` | 🎯 | | `st_setsrid` | 🏷️ |
+| `st_setcrs` | 📌 | | | |
+
 ### Related Projects
 
 - **[Apache Sedona](https://sedona.apache.org/)** - The main Apache Sedona project for distributed spatial analytics

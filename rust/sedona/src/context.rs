@@ -577,6 +577,49 @@ impl Default for SedonaWriteOptions {
     }
 }
 
+/// A custom SQL dialect that wraps an underlying dialect and extends
+/// `is_identifier_part` to accept additional characters.
+#[derive(Debug)]
+struct SedonaDialect {
+    inner: Box<dyn Dialect>,
+}
+
+impl SedonaDialect {
+    fn new(inner: Box<dyn Dialect>) -> Self {
+        Self { inner }
+    }
+}
+
+impl Dialect for SedonaDialect {
+    fn is_identifier_start(&self, ch: char) -> bool {
+        self.inner.is_identifier_start(ch) || ch.len_utf8() > 2
+    }
+
+    fn is_identifier_part(&self, ch: char) -> bool {
+        self.inner.is_identifier_part(ch) || ch.len_utf8() > 2
+    }
+
+    fn is_delimited_identifier_start(&self, ch: char) -> bool {
+        self.inner.is_delimited_identifier_start(ch) || ch.len_utf8() > 2
+    }
+
+    fn identifier_quote_style(&self, identifier: &str) -> Option<char> {
+        self.inner.identifier_quote_style(identifier)
+    }
+
+    fn supports_string_literal_backslash_escape(&self) -> bool {
+        self.inner.supports_string_literal_backslash_escape()
+    }
+
+    fn supports_filter_during_aggregation(&self) -> bool {
+        self.inner.supports_filter_during_aggregation()
+    }
+
+    fn supports_group_by_expr(&self) -> bool {
+        self.inner.supports_group_by_expr()
+    }
+}
+
 // Because Dialect/dialect_from_str is not marked as Send, using the async
 // function in certain contexts will fail to compile. Here we use a wrapper
 // to ensure that that the Dialect can be specified and parsed in any async
@@ -591,8 +634,9 @@ unsafe impl Send for ThreadSafeDialect {}
 impl ThreadSafeDialect {
     pub fn try_new(dialect: &datafusion::config::Dialect) -> Result<Self> {
         if let Some(box_dialect) = dialect_from_str(dialect) {
+            let sedona_dialect: Box<dyn Dialect> = Box::new(SedonaDialect::new(box_dialect));
             Ok(Self {
-                inner: box_dialect.into(),
+                inner: sedona_dialect.into(),
             })
         } else {
             plan_err!("Unsupported SQL dialect: {dialect}")

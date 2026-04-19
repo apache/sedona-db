@@ -45,7 +45,7 @@ pub fn st_scale_udf() -> SedonaScalarUDF {
             Arc::new(STScale { is_3d: false }),
         ]),
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_⚖️".to_string()])
 }
 
 #[derive(Debug)]

@@ -33,7 +33,7 @@ pub fn st_geometry_type_udf() -> SedonaScalarUDF {
         "st_geometrytype",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STGeometryType {})]),
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_🔍".to_string()])
 }
 
 #[derive(Debug)]

@@ -45,7 +45,7 @@ pub fn st_affine_udf() -> SedonaScalarUDF {
             Arc::new(STAffine { is_3d: false }),
         ]),
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_🎭".to_string()])
 }
 
 #[derive(Debug)]

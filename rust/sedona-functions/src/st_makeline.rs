@@ -50,7 +50,7 @@ pub fn st_makeline_udf() -> SedonaScalarUDF {
             }),
         ]),
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_📏".to_string()])
 }
 
 #[derive(Debug)]

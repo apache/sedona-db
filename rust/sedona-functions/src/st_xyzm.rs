@@ -41,7 +41,7 @@ pub fn st_x_udf() -> SedonaScalarUDF {
         "st_x",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STXyzm { dim: "x" })]),
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_❌".to_string()])
 }
 
 /// ST_Y() scalar UDF implementation
@@ -52,7 +52,7 @@ pub fn st_y_udf() -> SedonaScalarUDF {
         "st_y",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STXyzm { dim: "y" })]),
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_🤷".to_string()])
 }
 
 /// ST_Z() scalar UDF implementation
@@ -63,7 +63,7 @@ pub fn st_z_udf() -> SedonaScalarUDF {
         "st_z",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STXyzm { dim: "z" })]),
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_💤".to_string()])
 }
 
 /// ST_M() scalar UDF implementation
@@ -74,7 +74,7 @@ pub fn st_m_udf() -> SedonaScalarUDF {
         "st_m",
         ItemCrsKernel::wrap_impl(vec![Arc::new(STXyzm { dim: "m" })]),
         Volatility::Immutable,
-    )
+    ).with_aliases(vec!["st_Ⓜ️".to_string()])
 }
 
 #[derive(Debug)]
