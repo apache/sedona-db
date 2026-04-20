@@ -17,11 +17,15 @@
 
 use std::sync::Arc;
 
+use arrow_schema::Schema;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion_common::Result;
-use sedona_query_planner::spatial_join_physical_planner::{
-    PlanSpatialJoinArgs, SpatialJoinPhysicalPlanner,
+use datafusion_physical_expr::PhysicalExpr;
+use sedona_query_planner::{
+    spatial_join_physical_planner::{PlanSpatialJoinArgs, SpatialJoinPhysicalPlanner},
+    spatial_predicate::{RelationPredicate, SpatialPredicate, SpatialRelationType},
 };
+use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 /// [SpatialJoinPhysicalPlanner] implementation for geography-based spatial joins.
 ///
@@ -50,5 +54,47 @@ impl SpatialJoinPhysicalPlanner for GeographySpatialJoinPhysicalPlanner {
     ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
         // TODO: Implement geography-based spatial join planning
         unimplemented!("Geography spatial join planning is not yet implemented")
+    }
+}
+
+pub fn is_spatial_predicate_supported(
+    spatial_predicate: &SpatialPredicate,
+    left_schema: &Schema,
+    right_schema: &Schema,
+) -> Result<bool> {
+    fn is_geometry_type_supported(expr: &Arc<dyn PhysicalExpr>, schema: &Schema) -> Result<bool> {
+        let return_field = expr.return_field(schema)?;
+        let sedona_type = SedonaType::from_storage_field(&return_field)?;
+        Ok(ArgMatcher::is_geography().match_type(&sedona_type))
+    }
+
+    let both_geography =
+        |left: &Arc<dyn PhysicalExpr>, right: &Arc<dyn PhysicalExpr>| -> Result<bool> {
+            Ok(is_geometry_type_supported(left, left_schema)?
+                && is_geometry_type_supported(right, right_schema)?)
+        };
+
+    match spatial_predicate {
+        SpatialPredicate::Relation(RelationPredicate {
+            left,
+            right,
+            relation_type,
+        }) => {
+            if !matches!(
+                relation_type,
+                SpatialRelationType::Intersects
+                    | SpatialRelationType::Contains
+                    | SpatialRelationType::Within
+                    | SpatialRelationType::Covers
+                    | SpatialRelationType::CoveredBy
+                    | SpatialRelationType::Touches
+                    | SpatialRelationType::Equals
+            ) {
+                return Ok(false);
+            }
+
+            both_geography(left, right)
+        }
+        SpatialPredicate::Distance(_) | SpatialPredicate::KNearestNeighbors(_) => Ok(false),
     }
 }

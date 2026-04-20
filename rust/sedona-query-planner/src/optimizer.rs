@@ -21,7 +21,7 @@ use crate::spatial_expr_utils::{
     collect_spatial_predicate_names, find_knn_query_side, KNNJoinQuerySide,
 };
 use datafusion::execution::session_state::SessionStateBuilder;
-use datafusion::optimizer::{ApplyOrder, Optimizer, OptimizerConfig, OptimizerRule};
+use datafusion_optimizer::{ApplyOrder, Optimizer, OptimizerConfig, OptimizerRule};
 use datafusion_common::tree_node::Transformed;
 use datafusion_common::{NullEquality, Result};
 use datafusion_expr::logical_plan::Extension;
