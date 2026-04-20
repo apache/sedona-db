@@ -5767,6 +5767,7 @@ dependencies = [
  "datafusion-physical-plan",
  "sedona-query-planner",
  "sedona-schema",
+ "sedona-spatial-join",
 ]
 
 [[package]]

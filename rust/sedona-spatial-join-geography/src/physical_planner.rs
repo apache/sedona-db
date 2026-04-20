@@ -26,6 +26,7 @@ use sedona_query_planner::{
     spatial_predicate::{RelationPredicate, SpatialPredicate, SpatialRelationType},
 };
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
+use sedona_spatial_join::SpatialJoinExec;
 
 /// [SpatialJoinPhysicalPlanner] implementation for geography-based spatial joins.
 ///
@@ -50,10 +51,27 @@ impl Default for GeographySpatialJoinPhysicalPlanner {
 impl SpatialJoinPhysicalPlanner for GeographySpatialJoinPhysicalPlanner {
     fn plan_spatial_join(
         &self,
-        _args: &PlanSpatialJoinArgs<'_>,
+        args: &PlanSpatialJoinArgs<'_>,
     ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
-        // TODO: Implement geography-based spatial join planning
-        unimplemented!("Geography spatial join planning is not yet implemented")
+        if is_spatial_predicate_supported(
+            args.spatial_predicate,
+            args.physical_left.schema().as_ref(),
+            args.physical_right.schema().as_ref(),
+        )? {
+            return Ok(None);
+        }
+
+        let exec = SpatialJoinExec::try_new(
+            args.physical_left.clone(),
+            args.physical_right.clone(),
+            args.spatial_predicate.clone(),
+            args.remainder.cloned(),
+            args.join_type,
+            None,
+            args.join_options,
+        )?;
+
+        Ok(Some(Arc::new(exec)))
     }
 }
 
