@@ -28,6 +28,8 @@ use sedona_query_planner::{
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use sedona_spatial_join::SpatialJoinExec;
 
+use crate::join_provider::GeographyJoinProvider;
+
 /// [SpatialJoinPhysicalPlanner] implementation for geography-based spatial joins.
 ///
 /// This struct provides the entrypoint for the SedonaQueryPlanner to instantiate
@@ -71,7 +73,9 @@ impl SpatialJoinPhysicalPlanner for GeographySpatialJoinPhysicalPlanner {
             args.join_options,
         )?;
 
-        Ok(Some(Arc::new(exec)))
+        Ok(Some(Arc::new(exec.with_spatial_join_provider(Arc::new(
+            GeographyJoinProvider::new(),
+        )))))
     }
 }
 
@@ -98,21 +102,24 @@ pub fn is_spatial_predicate_supported(
             right,
             relation_type,
         }) => {
-            if !matches!(
-                relation_type,
-                SpatialRelationType::Intersects
-                    | SpatialRelationType::Contains
-                    | SpatialRelationType::Within
-                    | SpatialRelationType::Covers
-                    | SpatialRelationType::CoveredBy
-                    | SpatialRelationType::Touches
-                    | SpatialRelationType::Equals
-            ) {
+            if !both_geography(left, right)? {
                 return Ok(false);
             }
 
-            both_geography(left, right)
+            if matches!(
+                relation_type,
+                SpatialRelationType::Intersects
+                    | SpatialRelationType::Contains
+                    | SpatialRelationType::Equals
+            ) {
+                return Ok(true);
+            }
         }
-        SpatialPredicate::Distance(_) | SpatialPredicate::KNearestNeighbors(_) => Ok(false),
+        SpatialPredicate::Distance(d) => {
+            return both_geography(&d.left, &d.right);
+        }
+        _ => {}
     }
+
+    Ok(false)
 }
