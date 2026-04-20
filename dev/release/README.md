@@ -74,6 +74,10 @@ release highlight has an example and that the example runs. Blog posts are
 rendered from the [docs/blog/posts](https://github.com/apache/sedona/tree/master/docs/blog/posts)
 subdirectory of the apache/sedona repository.
 
+Also update `docs/release-notes.md` in this repository with a new entry
+summarizing the release highlights, so the published documentation tracks
+the history of each release.
+
 Before the release branch is created, the GitHub milestone should also be updated.
 Items that should be included in the milestone are:
 
