@@ -19,12 +19,12 @@ use datafusion_common::Result;
 use fastrand::Rng;
 use sedona_raster::array::RasterStructArray;
 use sedona_raster::builder::RasterBuilder;
-use sedona_raster::traits::{BandMetadata, RasterMetadata, RasterRef};
+use sedona_raster::traits::RasterRef;
 use sedona_schema::crs::lnglat;
-use sedona_schema::raster::{BandDataType, StorageType};
+use sedona_schema::raster::BandDataType;
 
-/// Generate a StructArray of rasters with sequentially increasing dimensions and pixel values
-/// These tiny rasters are to provide fast, easy and predictable test data for unit tests.
+/// Generate a StructArray of rasters with sequentially increasing dimensions and pixel values.
+/// These tiny rasters provide fast, easy and predictable test data for unit tests.
 pub fn generate_test_rasters(
     count: usize,
     null_raster_index: Option<usize>,
@@ -32,34 +32,28 @@ pub fn generate_test_rasters(
     let mut builder = RasterBuilder::new(count);
     let crs = lnglat().unwrap().to_crs_string();
     for i in 0..count {
-        // If a null raster index is specified and that matches the current index,
-        // append a null raster
         if matches!(null_raster_index, Some(index) if index == i) {
             builder.append_null()?;
             continue;
         }
 
-        let raster_metadata = RasterMetadata {
-            width: i as u64 + 1,
-            height: i as u64 + 2,
-            upperleft_x: i as f64 + 1.0,
-            upperleft_y: i as f64 + 2.0,
-            scale_x: i.max(1) as f64 * 0.1,
-            scale_y: i.max(1) as f64 * -0.2,
-            skew_x: i as f64 * 0.03,
-            skew_y: i as f64 * 0.04,
-        };
-        builder.start_raster(&raster_metadata, Some(&crs))?;
-        builder.start_band(BandMetadata {
-            datatype: BandDataType::UInt16,
-            nodata_value: Some(vec![0u8; 2]),
-            storage_type: StorageType::InDb,
-            outdb_url: None,
-            outdb_band_id: None,
-        })?;
+        let width = i as u64 + 1;
+        let height = i as u64 + 2;
+        builder.start_raster_2d(
+            width,
+            height,
+            i as f64 + 1.0,         // origin_x
+            i as f64 + 2.0,         // origin_y
+            i.max(1) as f64 * 0.1,  // scale_x
+            i.max(1) as f64 * -0.2, // scale_y
+            i as f64 * 0.03,        // skew_x
+            i as f64 * 0.04,        // skew_y
+            Some(&crs),
+        )?;
+        builder.start_band_2d(BandDataType::UInt16, Some(&[0u8, 0u8]))?;
 
         let pixel_count = (i + 1) * (i + 2); // width * height
-        let mut band_data = Vec::with_capacity(pixel_count * 2); // 2 bytes per u16
+        let mut band_data = Vec::with_capacity(pixel_count * 2);
         for pixel_value in 0..pixel_count as u16 {
             band_data.extend_from_slice(&pixel_value.to_le_bytes());
         }
@@ -72,11 +66,8 @@ pub fn generate_test_rasters(
     Ok(builder.finish()?)
 }
 
-/// Generates a set of tiled rasters arranged in a grid
-/// - Each raster tile has specified dimensions and random pixel values
-/// - Each raster has 3 bands which can be interpreted as RGB values
-///   and the result can be visualized as a mosaic of tiles.
-/// - There are nodata values at the 4 corners of the overall mosaic.
+/// Generates a set of tiled rasters arranged in a grid.
+/// Each raster has 3 bands (RGB) with random pixel values.
 pub fn generate_tiled_rasters(
     tile_size: (usize, usize),
     number_of_tiles: (usize, usize),
@@ -98,38 +89,25 @@ pub fn generate_tiled_rasters(
             let origin_x = (tile_x * tile_width) as f64;
             let origin_y = (tile_y * tile_height) as f64;
 
-            let raster_metadata = RasterMetadata {
-                width: tile_width as u64,
-                height: tile_height as u64,
-                upperleft_x: origin_x,
-                upperleft_y: origin_y,
-                scale_x: 1.0,
-                scale_y: 1.0,
-                skew_x: 0.0,
-                skew_y: 0.0,
-            };
-
-            raster_builder.start_raster(&raster_metadata, Some(&crs))?;
+            raster_builder.start_raster_2d(
+                tile_width as u64,
+                tile_height as u64,
+                origin_x,
+                origin_y,
+                1.0,
+                1.0,
+                0.0,
+                0.0,
+                Some(&crs),
+            )?;
 
             for _ in 0..band_count {
-                // Set a nodata value appropriate for the data type
                 let nodata_value = get_nodata_value_for_type(&data_type);
-
                 let nodata_value_bytes = nodata_value.clone();
 
-                let band_metadata = BandMetadata {
-                    nodata_value,
-                    storage_type: StorageType::InDb,
-                    datatype: data_type,
-                    outdb_url: None,
-                    outdb_band_id: None,
-                };
-
-                raster_builder.start_band(band_metadata)?;
+                raster_builder.start_band_2d(data_type, nodata_value.as_deref())?;
 
                 let pixel_count = tile_width * tile_height;
-
-                // Determine which corner position (if any) should have nodata in this tile
                 let corner_position =
                     get_corner_position(tile_x, tile_y, x_tiles, y_tiles, tile_width, tile_height);
                 let band_data = generate_random_band_data(
@@ -152,31 +130,14 @@ pub fn generate_tiled_rasters(
 }
 
 /// Builds a 1x1 single-band raster with a non-invertible geotransform (zero scales and skews).
-/// Useful for testing error handling of inverse affine transforms.
 pub fn build_noninvertible_raster() -> StructArray {
     let mut builder = RasterBuilder::new(1);
-    let metadata = RasterMetadata {
-        width: 1,
-        height: 1,
-        upperleft_x: 0.0,
-        upperleft_y: 0.0,
-        scale_x: 0.0,
-        scale_y: 0.0,
-        skew_x: 0.0,
-        skew_y: 0.0,
-    };
     let crs = lnglat().unwrap().to_crs_string();
     builder
-        .start_raster(&metadata, Some(&crs))
+        .start_raster_2d(1, 1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, Some(&crs))
         .expect("start raster");
     builder
-        .start_band(BandMetadata {
-            datatype: BandDataType::UInt8,
-            nodata_value: None,
-            storage_type: StorageType::InDb,
-            outdb_url: None,
-            outdb_band_id: None,
-        })
+        .start_band_2d(BandDataType::UInt8, None)
         .expect("start band");
     builder.band_data_writer().append_value([0u8]);
     builder.finish_band().expect("finish band");
@@ -193,61 +154,37 @@ pub fn raster_from_single_band(
     crs: Option<&str>,
 ) -> StructArray {
     let mut builder = RasterBuilder::new(1);
-    let metadata = RasterMetadata {
-        width: width as u64,
-        height: height as u64,
-        upperleft_x: 0.0,
-        upperleft_y: 0.0,
-        scale_x: 1.0,
-        scale_y: -1.0,
-        skew_x: 0.0,
-        skew_y: 0.0,
-    };
-
-    builder.start_raster(&metadata, crs).expect("start raster");
     builder
-        .start_band(BandMetadata {
-            datatype: data_type,
-            nodata_value: None,
-            storage_type: StorageType::InDb,
-            outdb_url: None,
-            outdb_band_id: None,
-        })
-        .expect("start band");
+        .start_raster_2d(
+            width as u64,
+            height as u64,
+            0.0,
+            0.0,
+            1.0,
+            -1.0,
+            0.0,
+            0.0,
+            crs,
+        )
+        .expect("start raster");
+    builder.start_band_2d(data_type, None).expect("start band");
     builder.band_data_writer().append_value(band_bytes);
     builder.finish_band().expect("finish band");
     builder.finish_raster().expect("finish raster");
-
     builder.finish().expect("finish")
 }
 
 /// Builds a single raster with 3 bands of different types for testing multi-band operations.
-/// Band 1: UInt8 (nodata=255), Band 2: UInt16 (nodata=0), Band 3: Float32 (no nodata).
-/// Each band is 2x2 pixels.
 pub fn generate_multi_band_raster() -> StructArray {
     let mut builder = RasterBuilder::new(1);
     let crs = lnglat().unwrap().to_crs_string();
-    let metadata = RasterMetadata {
-        width: 2,
-        height: 2,
-        upperleft_x: 10.0,
-        upperleft_y: 20.0,
-        scale_x: 0.5,
-        scale_y: -0.5,
-        skew_x: 0.0,
-        skew_y: 0.0,
-    };
-    builder.start_raster(&metadata, Some(&crs)).unwrap();
+    builder
+        .start_raster_2d(2, 2, 10.0, 20.0, 0.5, -0.5, 0.0, 0.0, Some(&crs))
+        .unwrap();
 
     // Band 1: UInt8, nodata=255
     builder
-        .start_band(BandMetadata {
-            datatype: BandDataType::UInt8,
-            nodata_value: Some(vec![255u8]),
-            storage_type: StorageType::InDb,
-            outdb_url: None,
-            outdb_band_id: None,
-        })
+        .start_band_2d(BandDataType::UInt8, Some(&[255u8]))
         .unwrap();
     builder
         .band_data_writer()
@@ -256,13 +193,7 @@ pub fn generate_multi_band_raster() -> StructArray {
 
     // Band 2: UInt16, nodata=0
     builder
-        .start_band(BandMetadata {
-            datatype: BandDataType::UInt16,
-            nodata_value: Some(vec![0u8, 0u8]),
-            storage_type: StorageType::InDb,
-            outdb_url: None,
-            outdb_band_id: None,
-        })
+        .start_band_2d(BandDataType::UInt16, Some(&[0u8, 0u8]))
         .unwrap();
     let band2_data: Vec<u8> = [100u16, 200u16, 300u16, 400u16]
         .iter()
@@ -272,15 +203,7 @@ pub fn generate_multi_band_raster() -> StructArray {
     builder.finish_band().unwrap();
 
     // Band 3: Float32, no nodata
-    builder
-        .start_band(BandMetadata {
-            datatype: BandDataType::Float32,
-            nodata_value: None,
-            storage_type: StorageType::InDb,
-            outdb_url: None,
-            outdb_band_id: None,
-        })
-        .unwrap();
+    builder.start_band_2d(BandDataType::Float32, None).unwrap();
     let band3_data: Vec<u8> = [1.5f32, 2.5f32, 3.5f32, 4.5f32]
         .iter()
         .flat_map(|v| v.to_le_bytes())
@@ -292,8 +215,6 @@ pub fn generate_multi_band_raster() -> StructArray {
     builder.finish().unwrap()
 }
 
-/// Determine if this tile contains a corner of the overall grid and return its position
-/// Returns Some(position) if this tile contains a corner, None otherwise
 fn get_corner_position(
     tile_x: usize,
     tile_y: usize,
@@ -302,19 +223,15 @@ fn get_corner_position(
     tile_width: usize,
     tile_height: usize,
 ) -> Option<usize> {
-    // Top-left corner (tile 0,0, pixel 0)
     if tile_x == 0 && tile_y == 0 {
         return Some(0);
     }
-    // Top-right corner (tile x_tiles-1, 0, pixel tile_width-1)
     if tile_x == x_tiles - 1 && tile_y == 0 {
         return Some(tile_width - 1);
     }
-    // Bottom-left corner (tile 0, y_tiles-1, pixel (tile_height-1)*tile_width)
     if tile_x == 0 && tile_y == y_tiles - 1 {
         return Some((tile_height - 1) * tile_width);
     }
-    // Bottom-right corner (tile x_tiles-1, y_tiles-1, pixel tile_height*tile_width-1)
     if tile_x == x_tiles - 1 && tile_y == y_tiles - 1 {
         return Some(tile_height * tile_width - 1);
     }
@@ -328,8 +245,6 @@ fn generate_random_band_data(
     corner_position: Option<usize>,
     rng: &mut Rng,
 ) -> Vec<u8> {
-    /// Generate random band data for a given pixel type and set the corner pixel
-    /// to the nodata value if applicable.
     macro_rules! gen_band {
         ($byte_size:expr, $rng_expr:expr) => {{
             let byte_size: usize = $byte_size;
@@ -376,7 +291,7 @@ fn get_nodata_value_for_type(data_type: &BandDataType) -> Option<Vec<u8>> {
     }
 }
 
-/// Compare two RasterStructArrays for equality
+/// Compare two RasterStructArrays for equality.
 pub fn assert_raster_arrays_equal(
     raster_array1: &RasterStructArray,
     raster_array2: &RasterStructArray,
@@ -394,86 +309,72 @@ pub fn assert_raster_arrays_equal(
     }
 }
 
-/// Compare two rasters for equality
+/// Compare two rasters for equality.
 pub fn assert_raster_equal(raster1: &impl RasterRef, raster2: &impl RasterRef) {
-    // Compare metadata
-    let meta1 = raster1.metadata();
-    let meta2 = raster2.metadata();
-    assert_eq!(meta1.width(), meta2.width(), "Raster widths do not match");
     assert_eq!(
-        meta1.height(),
-        meta2.height(),
+        raster1.width(),
+        raster2.width(),
+        "Raster widths do not match"
+    );
+    assert_eq!(
+        raster1.height(),
+        raster2.height(),
         "Raster heights do not match"
     );
     assert_eq!(
-        meta1.upper_left_x(),
-        meta2.upper_left_x(),
-        "Raster upper left x does not match"
+        raster1.transform(),
+        raster2.transform(),
+        "Raster transforms do not match"
     );
     assert_eq!(
-        meta1.upper_left_y(),
-        meta2.upper_left_y(),
-        "Raster upper left y does not match"
+        raster1.x_dim(),
+        raster2.x_dim(),
+        "Raster x_dim does not match"
     );
     assert_eq!(
-        meta1.scale_x(),
-        meta2.scale_x(),
-        "Raster scale x does not match"
+        raster1.y_dim(),
+        raster2.y_dim(),
+        "Raster y_dim does not match"
     );
     assert_eq!(
-        meta1.scale_y(),
-        meta2.scale_y(),
-        "Raster scale y does not match"
-    );
-    assert_eq!(
-        meta1.skew_x(),
-        meta2.skew_x(),
-        "Raster skew x does not match"
-    );
-    assert_eq!(
-        meta1.skew_y(),
-        meta2.skew_y(),
-        "Raster skew y does not match"
+        raster1.num_bands(),
+        raster2.num_bands(),
+        "Number of bands do not match"
     );
 
-    // Compare bands
-    let bands1 = raster1.bands();
-    let bands2 = raster2.bands();
-    assert_eq!(bands1.len(), bands2.len(), "Number of bands do not match");
+    for band_index in 0..raster1.num_bands() {
+        let band1 = raster1
+            .band(band_index)
+            .unwrap_or_else(|| panic!("Band {band_index} missing from raster1"));
+        let band2 = raster2
+            .band(band_index)
+            .unwrap_or_else(|| panic!("Band {band_index} missing from raster2"));
 
-    for band_index in 0..bands1.len() {
-        let band1 = bands1.band(band_index + 1).unwrap();
-        let band2 = bands2.band(band_index + 1).unwrap();
-
-        let band_meta1 = band1.metadata();
-        let band_meta2 = band2.metadata();
         assert_eq!(
-            band_meta1.data_type().unwrap(),
-            band_meta2.data_type().unwrap(),
-            "Band data types do not match"
+            band1.data_type(),
+            band2.data_type(),
+            "Band {band_index} data types do not match"
         );
         assert_eq!(
-            band_meta1.nodata_value(),
-            band_meta2.nodata_value(),
-            "Band nodata values do not match"
+            band1.nodata(),
+            band2.nodata(),
+            "Band {band_index} nodata values do not match"
         );
         assert_eq!(
-            band_meta1.storage_type().unwrap(),
-            band_meta2.storage_type().unwrap(),
-            "Band storage types do not match"
+            band1.dim_names(),
+            band2.dim_names(),
+            "Band {band_index} dim_names do not match"
         );
         assert_eq!(
-            band_meta1.outdb_url(),
-            band_meta2.outdb_url(),
-            "Band outdb URLs do not match"
+            band1.shape(),
+            band2.shape(),
+            "Band {band_index} shapes do not match"
         );
         assert_eq!(
-            band_meta1.outdb_band_id(),
-            band_meta2.outdb_band_id(),
-            "Band outdb band IDs do not match"
+            band1.contiguous_data().unwrap().as_ref(),
+            band2.contiguous_data().unwrap().as_ref(),
+            "Band {band_index} data does not match"
         );
-
-        assert_eq!(band1.data(), band2.data(), "Band data does not match");
     }
 }
 
@@ -492,29 +393,24 @@ mod tests {
 
         for i in 0..count {
             let raster = raster_array.get(i).unwrap();
-            let metadata = raster.metadata();
-            assert_eq!(metadata.width(), i as u64 + 1);
-            assert_eq!(metadata.height(), i as u64 + 2);
-            assert_eq!(metadata.upper_left_x(), i as f64 + 1.0);
-            assert_eq!(metadata.upper_left_y(), i as f64 + 2.0);
-            assert_eq!(metadata.scale_x(), (i.max(1) as f64) * 0.1);
-            assert_eq!(metadata.scale_y(), (i.max(1) as f64) * -0.2);
-            assert_eq!(metadata.skew_x(), (i as f64) * 0.03);
-            assert_eq!(metadata.skew_y(), (i as f64) * 0.04);
+            assert_eq!(raster.width(), Some(i as u64 + 1));
+            assert_eq!(raster.height(), Some(i as u64 + 2));
 
-            let bands = raster.bands();
-            let band = bands.band(1).unwrap();
-            let band_metadata = band.metadata();
-            assert_eq!(band_metadata.data_type().unwrap(), BandDataType::UInt16);
-            assert_eq!(band_metadata.nodata_value(), Some(&[0u8, 0u8][..]));
-            assert_eq!(band_metadata.storage_type().unwrap(), StorageType::InDb);
-            assert_eq!(band_metadata.outdb_url(), None);
-            assert_eq!(band_metadata.outdb_band_id(), None);
+            let t = raster.transform();
+            assert_eq!(t[0], i as f64 + 1.0); // origin_x
+            assert_eq!(t[3], i as f64 + 2.0); // origin_y
+            assert_eq!(t[1], (i.max(1) as f64) * 0.1); // scale_x
+            assert_eq!(t[5], (i.max(1) as f64) * -0.2); // scale_y
+            assert_eq!(t[2], (i as f64) * 0.03); // skew_x
+            assert_eq!(t[4], (i as f64) * 0.04); // skew_y
 
-            let band_data = band.data();
-            let expected_pixel_count = (i + 1) * (i + 2); // width * height
+            assert_eq!(raster.num_bands(), 1);
+            let band = raster.band(0).unwrap();
+            assert_eq!(band.data_type(), BandDataType::UInt16);
+            assert_eq!(band.nodata(), Some(&[0u8, 0u8][..]));
 
-            // Convert raw bytes back to u16 values for comparison
+            let band_data = band.contiguous_data().unwrap();
+            let expected_pixel_count = (i + 1) * (i + 2);
             let mut actual_pixel_values = Vec::new();
             for chunk in band_data.chunks_exact(2) {
                 let value = u16::from_le_bytes([chunk[0], chunk[1]]);
@@ -533,68 +429,21 @@ mod tests {
         let struct_array =
             generate_tiled_rasters(tile_size, number_of_tiles, data_type, Some(43)).unwrap();
         let raster_array = RasterStructArray::new(&struct_array);
-        assert_eq!(raster_array.len(), 16); // 4x4 tiles
+        assert_eq!(raster_array.len(), 16);
         for i in 0..16 {
             let raster = raster_array.get(i).unwrap();
-            let metadata = raster.metadata();
-            assert_eq!(metadata.width(), 64);
-            assert_eq!(metadata.height(), 64);
-            assert_eq!(metadata.upper_left_x(), ((i % 4) * 64) as f64);
-            assert_eq!(metadata.upper_left_y(), ((i / 4) * 64) as f64);
-            let bands = raster.bands();
-            assert_eq!(bands.len(), 3);
+            assert_eq!(raster.width(), Some(64));
+            assert_eq!(raster.height(), Some(64));
+            let t = raster.transform();
+            assert_eq!(t[0], ((i % 4) * 64) as f64); // origin_x
+            assert_eq!(t[3], ((i / 4) * 64) as f64); // origin_y
+            assert_eq!(raster.num_bands(), 3);
             for band_index in 0..3 {
-                let band = bands.band(band_index + 1).unwrap();
-                let band_metadata = band.metadata();
-                assert_eq!(band_metadata.data_type().unwrap(), BandDataType::UInt8);
-                assert_eq!(band_metadata.storage_type().unwrap(), StorageType::InDb);
-                let band_data = band.data();
-                assert_eq!(band_data.len(), 64 * 64); // 4096 pixels
+                let band = raster.band(band_index).unwrap();
+                assert_eq!(band.data_type(), BandDataType::UInt8);
+                assert_eq!(band.contiguous_data().unwrap().len(), 64 * 64);
             }
         }
-    }
-
-    #[test]
-    fn test_raster_arrays_equal() {
-        let raster_array1 = generate_test_rasters(3, None).unwrap();
-        let raster_struct_array1 = RasterStructArray::new(&raster_array1);
-        // Test that identical arrays are equal
-        assert_raster_arrays_equal(&raster_struct_array1, &raster_struct_array1);
-    }
-
-    #[test]
-    #[should_panic = "Raster array lengths do not match"]
-    fn test_raster_arrays_not_equal() {
-        let raster_array1 = generate_test_rasters(3, None).unwrap();
-        let raster_struct_array1 = RasterStructArray::new(&raster_array1);
-
-        // Test that arrays with different lengths are not equal
-        let raster_array2 = generate_test_rasters(4, None).unwrap();
-        let raster_struct_array2 = RasterStructArray::new(&raster_array2);
-        assert_raster_arrays_equal(&raster_struct_array1, &raster_struct_array2);
-    }
-
-    #[test]
-    fn test_raster_equal() {
-        let raster_array1 =
-            generate_tiled_rasters((256, 256), (1, 1), BandDataType::UInt8, Some(43)).unwrap();
-        let raster1 = RasterStructArray::new(&raster_array1).get(0).unwrap();
-
-        // Assert that the rasters are equal to themselves
-        assert_raster_equal(&raster1, &raster1);
-    }
-
-    #[test]
-    #[should_panic = "Band data does not match"]
-    fn test_raster_different_band_data() {
-        let raster_array1 =
-            generate_tiled_rasters((128, 128), (1, 1), BandDataType::UInt8, Some(43)).unwrap();
-        let raster_array2 =
-            generate_tiled_rasters((128, 128), (1, 1), BandDataType::UInt8, Some(47)).unwrap();
-
-        let raster1 = RasterStructArray::new(&raster_array1).get(0).unwrap();
-        let raster2 = RasterStructArray::new(&raster_array2).get(0).unwrap();
-        assert_raster_equal(&raster1, &raster2);
     }
 
     #[test]
@@ -604,39 +453,72 @@ mod tests {
         assert_eq!(raster_array.len(), 1);
 
         let raster = raster_array.get(0).unwrap();
-        let metadata = raster.metadata();
-        assert_eq!(metadata.width(), 2);
-        assert_eq!(metadata.height(), 2);
-        assert_eq!(metadata.upper_left_x(), 10.0);
-        assert_eq!(metadata.upper_left_y(), 20.0);
+        assert_eq!(raster.width(), Some(2));
+        assert_eq!(raster.height(), Some(2));
+        assert_eq!(raster.num_bands(), 3);
 
-        let bands = raster.bands();
-        assert_eq!(bands.len(), 3);
+        let b1 = raster.band(0).unwrap();
+        assert_eq!(b1.data_type(), BandDataType::UInt8);
+        assert_eq!(b1.nodata(), Some(&[255u8][..]));
+        assert_eq!(b1.contiguous_data().unwrap().as_ref(), &[1u8, 2, 3, 4]);
 
-        // Band 1: UInt8, nodata=255
-        let b1 = bands.band(1).unwrap();
-        assert_eq!(b1.metadata().data_type().unwrap(), BandDataType::UInt8);
-        assert_eq!(b1.metadata().nodata_value(), Some(&[255u8][..]));
-        assert_eq!(b1.data(), &[1u8, 2, 3, 4]);
+        let b2 = raster.band(1).unwrap();
+        assert_eq!(b2.data_type(), BandDataType::UInt16);
+        assert_eq!(b2.nodata(), Some(&[0u8, 0][..]));
 
-        // Band 2: UInt16, nodata=0
-        let b2 = bands.band(2).unwrap();
-        assert_eq!(b2.metadata().data_type().unwrap(), BandDataType::UInt16);
-        assert_eq!(b2.metadata().nodata_value(), Some(&[0u8, 0][..]));
-
-        // Band 3: Float32, no nodata
-        let b3 = bands.band(3).unwrap();
-        assert_eq!(b3.metadata().data_type().unwrap(), BandDataType::Float32);
-        assert_eq!(b3.metadata().nodata_value(), None);
+        let b3 = raster.band(2).unwrap();
+        assert_eq!(b3.data_type(), BandDataType::Float32);
+        assert_eq!(b3.nodata(), None);
     }
 
     #[test]
-    #[should_panic = "Raster upper left x does not match"]
+    fn test_raster_arrays_equal() {
+        let raster_array1 = generate_test_rasters(3, None).unwrap();
+        let raster_struct_array1 = RasterStructArray::new(&raster_array1);
+        assert_raster_arrays_equal(&raster_struct_array1, &raster_struct_array1);
+    }
+
+    #[test]
+    #[should_panic = "Raster array lengths do not match"]
+    fn test_raster_arrays_not_equal() {
+        let raster_array1 = generate_test_rasters(3, None).unwrap();
+        let raster_struct_array1 = RasterStructArray::new(&raster_array1);
+        let raster_array2 = generate_test_rasters(4, None).unwrap();
+        let raster_struct_array2 = RasterStructArray::new(&raster_array2);
+        assert_raster_arrays_equal(&raster_struct_array1, &raster_struct_array2);
+    }
+
+    #[test]
+    fn test_raster_equal() {
+        let raster_array1 =
+            generate_tiled_rasters((256, 256), (1, 1), BandDataType::UInt8, Some(43)).unwrap();
+        let rsa = RasterStructArray::new(&raster_array1);
+        let raster1 = rsa.get(0).unwrap();
+        assert_raster_equal(&raster1, &raster1);
+    }
+
+    #[test]
+    #[should_panic = "Band 0 data does not match"]
+    fn test_raster_different_band_data() {
+        let raster_array1 =
+            generate_tiled_rasters((128, 128), (1, 1), BandDataType::UInt8, Some(43)).unwrap();
+        let raster_array2 =
+            generate_tiled_rasters((128, 128), (1, 1), BandDataType::UInt8, Some(47)).unwrap();
+        let rsa1 = RasterStructArray::new(&raster_array1);
+        let rsa2 = RasterStructArray::new(&raster_array2);
+        let raster1 = rsa1.get(0).unwrap();
+        let raster2 = rsa2.get(0).unwrap();
+        assert_raster_equal(&raster1, &raster2);
+    }
+
+    #[test]
+    #[should_panic = "Raster transforms do not match"]
     fn test_raster_different_metadata() {
         let raster_array =
             generate_tiled_rasters((128, 128), (2, 1), BandDataType::UInt8, Some(43)).unwrap();
-        let raster1 = RasterStructArray::new(&raster_array).get(0).unwrap();
-        let raster2 = RasterStructArray::new(&raster_array).get(1).unwrap();
+        let rsa = RasterStructArray::new(&raster_array);
+        let raster1 = rsa.get(0).unwrap();
+        let raster2 = rsa.get(1).unwrap();
         assert_raster_equal(&raster1, &raster2);
     }
 }

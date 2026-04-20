@@ -1,0 +1,57 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: RS_BandToDim
+description: Collapses all bands into a single band with a new dimension.
+kernels:
+  - returns: raster
+    args:
+    - raster
+    - name: dim_name
+      type: utf8
+      description: Name for the new dimension (e.g., 'time', 'band').
+---
+
+## Description
+
+Collapses all bands in a raster into a single band by introducing a new
+dimension. The new dimension is prepended to the existing dimensions, with
+size equal to the number of bands. Band data is concatenated in band order.
+
+All bands must have identical dimension names, shapes, and data types. If
+they differ, an error is returned.
+
+This is the inverse of [RS_DimToBand](rs_dimtoband.qmd). A round-trip
+`RS_BandToDim(RS_DimToBand(raster, 'dim'), 'dim')` recovers the original
+data layout.
+
+This is useful for converting GeoTIFF-style multi-band rasters into a single
+N-dimensional chunk for export to formats like Zarr.
+
+## Examples
+
+```sql
+-- Collapse 3 RGB bands [y, x] into 1 band [band=3, y, x]
+SELECT RS_BandToDim(raster, 'band');
+
+-- Collapse time-step bands back into a time dimension
+SELECT RS_BandToDim(raster, 'time');
+
+-- Round-trip: split then recombine
+SELECT RS_BandToDim(RS_DimToBand(raster, 'time'), 'time');
+```
