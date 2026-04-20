@@ -1,22 +1,3 @@
-<!---
-  Licensed to the Apache Software Foundation (ASF) under one
-  or more contributor license agreements.  See the NOTICE file
-  distributed with this work for additional information
-  regarding copyright ownership.  The ASF licenses this file
-  to you under the Apache License, Version 2.0 (the
-  "License"); you may not use this file except in compliance
-  with the License.  You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-  Unless required by applicable law or agreed to in writing,
-  software distributed under the License is distributed on an
-  "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-  KIND, either express or implied.  See the License for the
-  specific language governing permissions and limitations
-  under the License.
--->
-
 # GPU Acceleration for Spatial Join
 
 SedonaDB supports GPU-accelerated spatial joins with NVIDIA GPUs. The
@@ -84,24 +65,26 @@ Common environment variables used by the GPU build:
 - `LIBGPUSPATIAL_LOGGING_LEVEL`: Logging level, including `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`, `CRITICAL`.
 - `GPUSPATIAL_PROFILING=ON`: Profiling mode (`ON`, `OFF`) to compile profiling instrumentation.
 
-
-
 ## Enable GPU Join with SQL `SET`
+
 The GPU join is disabled by default even if you enabled the GPU feature at build time. To enable GPU acceleration for spatial joins, set the `gpu.enable` option to `true`:
+
+
 ```python
-import sedona.db
+import sedonadb
 
-sd = sedona.db.connect()
+ctx = sedonadb.connect()
 
-sd.sql("SET gpu.enable = true").execute()
+ctx.sql("SET gpu.enable = true")
 ```
 
 ## Performance Tuning and Special Cautions
 
 To keep the GPU efficiently utilized, use larger execution batches:
 
+
 ```python
-sd.sql("SET datafusion.execution.batch_size = 100000").execute()
+ctx.sql("SET datafusion.execution.batch_size = 100000")
 ```
 
 Important guidance:
@@ -126,20 +109,253 @@ The following session options are available under the `gpu.` prefix:
 
 Example:
 
+
 ```python
-import sedona.db
+import sedonadb
 
-sd = sedona.db.connect()
+ctx = sedonadb.connect()
 
-sd.sql("SET gpu.enable = true").execute()
-sd.sql("SET gpu.device_id = 0").execute()
-sd.sql("SET gpu.use_memory_pool = true").execute()
-sd.sql("SET gpu.memory_pool_init_percentage = 60").execute()
-sd.sql("SET gpu.pipeline_batches = 2").execute()
-sd.sql("SET gpu.compress_bvh = false").execute()
-sd.sql("SET datafusion.execution.batch_size = 100000").execute()
+ctx.sql("SET gpu.enable = true")
+ctx.sql("SET gpu.device_id = 0")
+ctx.sql("SET gpu.use_memory_pool = true")
+ctx.sql("SET gpu.memory_pool_init_percentage = 60")
+ctx.sql("SET gpu.pipeline_batches = 2")
+ctx.sql("SET gpu.compress_bvh = false")
+ctx.sql("SET datafusion.execution.batch_size = 100000")
 ```
 
+## Example
+
+
+```python
+!nvidia-smi
+```
+
+    Mon Apr 20 19:26:08 2026
+    +-----------------------------------------------------------------------------------------+
+    | NVIDIA-SMI 580.105.08             Driver Version: 580.105.08     CUDA Version: 13.0     |
+    +-----------------------------------------+------------------------+----------------------+
+    | GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+    | Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+    |                                         |                        |               MIG M. |
+    |=========================================+========================+======================|
+    |   0  NVIDIA L4                      On  |   00000000:31:00.0 Off |                    0 |
+    | N/A   36C    P8             19W /   72W |       0MiB /  23034MiB |      0%      Default |
+    |                                         |                        |                  N/A |
+    +-----------------------------------------+------------------------+----------------------+
+
+    +-----------------------------------------------------------------------------------------+
+    | Processes:                                                                              |
+    |  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+    |        ID   ID                                                               Usage      |
+    |=========================================================================================|
+    |  No running processes found                                                             |
+    +-----------------------------------------------------------------------------------------+
+
+
+
+```python
+from huggingface_hub import snapshot_download
+import os
+
+snapshot_download(
+  repo_id='apache-sedona/spatialbench',
+  repo_type='dataset',
+  local_dir='hf-data',
+  allow_patterns=[
+    "v0.1.0/sf1/zone/*",
+    "v0.1.0/sf1/trip/*"],
+)
+```
+
+
+    Downloading (incomplete total...): 0.00B [00:00, ?B/s]
+
+
+
+    Fetching 8 files:   0%|          | 0/8 [00:00<?, ?it/s]
+
+
+    Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+
+
+
+
+
+    '/mnt/data/sedona-db/docs/hf-data'
+
+
+
+
+```python
+import sedonadb
+
+ctx = sedonadb.connect()
+ctx.options.memory_limit = "unlimited"
+```
+
+
+```python
+ctx.sql(f"""
+    CREATE EXTERNAL TABLE zone
+    STORED AS PARQUET
+    LOCATION 'hf-data/v0.1.0/sf1/zone/'
+""")
+ctx.sql(f"""
+    CREATE EXTERNAL TABLE trip
+    STORED AS PARQUET
+    LOCATION 'hf-data/v0.1.0/sf1/trip/'
+""")
+```
+
+
+
+
+    <sedonadb.dataframe.DataFrame object at 0x7ff5213d96d0>
+
+
+
+
+```python
+import time
+from tqdm.notebook import tqdm
+from IPython.display import display, HTML
+import ipywidgets as widgets
+
+def interactive_spatial_benchmark(ctx, runs=6):
+    query = """
+    SELECT COUNT(*) AS cross_zone_trip_count
+    FROM trip t
+        JOIN zone pickup_zone
+            ON ST_Within(ST_GeomFromWKB(t.t_pickuploc), ST_GeomFromWKB(pickup_zone.z_boundary))
+        JOIN zone dropoff_zone
+            ON ST_Within(ST_GeomFromWKB(t.t_dropoffloc), ST_GeomFromWKB(dropoff_zone.z_boundary))
+    WHERE pickup_zone.z_zonekey != dropoff_zone.z_zonekey
+    """
+
+    modes = [("CPU", "false"), ("GPU", "true")]
+    averages = {}
+
+    # 1. Create a scrollable widget to catch the verbose `.show()` output
+    log_output = widgets.Output(layout={'border': '1px solid #ccc', 'height': '150px', 'overflow_y': 'auto'})
+    display(HTML("<h3>🚀 Running Spatial Benchmark...</h3>"))
+    display(log_output)
+
+    # 2. Execute the Benchmark
+    for mode_name, gpu_flag in modes:
+        ctx.sql(f"SET gpu.enable = {gpu_flag}")
+        if gpu_flag:
+            ctx.sql("SET datafusion.execution.batch_size = 2000000") # Increase batch size
+        else:
+            ctx.sql("SET datafusion.execution.batch_size = 8192") # Default
+        execution_times = []
+
+        # Display a Jupyter-native progress bar
+        for i in tqdm(range(runs), desc=f"{mode_name} Executions"):
+            start_time = time.time()
+
+            result = ctx.sql(query)
+
+            # Execute physical plan and catch the output inside our widget
+            with log_output:
+                print(f"--- {mode_name} Run {i+1} ---")
+                result.show()
+
+            elapsed = time.time() - start_time
+
+            # Record everything except the first run (warmup)
+            if i > 0:
+                execution_times.append(elapsed)
+
+        # Calculate average
+        averages[mode_name] = sum(execution_times) / len(execution_times)
+
+    # 3. Clean up the UI
+    log_output.clear_output()
+    log_output.layout.display = 'none'
+
+    # 4. Generate Table Results
+    cpu_avg = averages["CPU"]
+    gpu_avg = averages["GPU"]
+
+    # Calculate speedup (using CPU as the 1.0x baseline)
+    cpu_speedup = 1.0
+    gpu_speedup = cpu_avg / gpu_avg if gpu_avg > 0 else 0
+
+    # Color code the GPU speedup (green if faster, red if slower)
+    gpu_color = "green" if gpu_speedup >= 1.0 else "red"
+
+    html_table = f"""
+    <table style="width: 60%; text-align: center; border-collapse: collapse; font-family: sans-serif; margin-top: 15px;">
+        <tr style="background-color: #f8f9fa; border-bottom: 2px solid #dee2e6;">
+            <th style="padding: 12px; border: 1px solid #dee2e6;">Mode</th>
+            <th style="padding: 12px; border: 1px solid #dee2e6;">Average Time (s)</th>
+            <th style="padding: 12px; border: 1px solid #dee2e6;">Speedup</th>
+        </tr>
+        <tr>
+            <td style="padding: 12px; border: 1px solid #dee2e6;"><b>CPU</b> (Baseline)</td>
+            <td style="padding: 12px; border: 1px solid #dee2e6;">{cpu_avg:.4f}</td>
+            <td style="padding: 12px; border: 1px solid #dee2e6;">{cpu_speedup:.2f}x</td>
+        </tr>
+        <tr>
+            <td style="padding: 12px; border: 1px solid #dee2e6;"><b>GPU</b></td>
+            <td style="padding: 12px; border: 1px solid #dee2e6;">{gpu_avg:.4f}</td>
+            <td style="padding: 12px; border: 1px solid #dee2e6; color: {gpu_color}; font-weight: bold;">{gpu_speedup:.2f}x</td>
+        </tr>
+    </table>
+    """
+
+    display(HTML("<h3>📊 Benchmark Results (Averaged over 5 runs)</h3>"))
+    display(HTML(html_table))
+
+# --- Execution Block ---
+# Run the interactive function with your Sedona Context
+interactive_spatial_benchmark(ctx)
+```
+
+
+<h3>🚀 Running Spatial Benchmark...</h3>
+
+
+
+    Output(layout=Layout(border_bottom='1px solid #ccc', border_left='1px solid #ccc', border_right='1px solid #cc…
+
+
+
+    CPU Executions:   0%|          | 0/6 [00:00<?, ?it/s]
+
+
+
+    GPU Executions:   0%|          | 0/6 [00:00<?, ?it/s]
+
+
+
+<h3>📊 Benchmark Results (Averaged over 5 runs)</h3>
+
+
+
+
+<table style="width: 60%; text-align: center; border-collapse: collapse; font-family: sans-serif; margin-top: 15px;">
+    <tr style="background-color: #f8f9fa; border-bottom: 2px solid #dee2e6;">
+        <th style="padding: 12px; border: 1px solid #dee2e6;">Mode</th>
+        <th style="padding: 12px; border: 1px solid #dee2e6;">Average Time (s)</th>
+        <th style="padding: 12px; border: 1px solid #dee2e6;">Speedup</th>
+    </tr>
+    <tr>
+        <td style="padding: 12px; border: 1px solid #dee2e6;"><b>CPU</b> (Baseline)</td>
+        <td style="padding: 12px; border: 1px solid #dee2e6;">21.5221</td>
+        <td style="padding: 12px; border: 1px solid #dee2e6;">1.00x</td>
+    </tr>
+    <tr>
+        <td style="padding: 12px; border: 1px solid #dee2e6;"><b>GPU</b></td>
+        <td style="padding: 12px; border: 1px solid #dee2e6;">2.8889</td>
+        <td style="padding: 12px; border: 1px solid #dee2e6; color: green; font-weight: bold;">7.45x</td>
+    </tr>
+</table>
+
+
+
 ## References
+
 1. Geng, Liang, Rubao Lee, and Xiaodong Zhang. "Librts: A spatial indexing library by ray tracing." Proceedings of the 30th ACM SIGPLAN Annual Symposium on Principles and Practice of Parallel Programming. 2025.
 2. Geng, Liang, Rubao Lee, and Xiaodong Zhang. "Rayjoin: Fast and precise spatial join." Proceedings of the 38th ACM International Conference on Supercomputing. 2024.
