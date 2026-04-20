@@ -5216,6 +5216,7 @@ dependencies = [
  "sedona-s2geography",
  "sedona-schema",
  "sedona-spatial-join",
+ "sedona-spatial-join-geography",
  "sedona-spatial-join-gpu",
  "sedona-testing",
  "sedona-tg",
@@ -5768,6 +5769,7 @@ dependencies = [
  "datafusion-physical-plan",
  "sedona-expr",
  "sedona-query-planner",
+ "sedona-s2geography",
  "sedona-schema",
  "sedona-spatial-join",
 ]
