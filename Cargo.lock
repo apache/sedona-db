@@ -5755,6 +5755,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sedona-spatial-join-geography"
+version = "0.4.0"
+dependencies = [
+ "datafusion",
+ "datafusion-common",
+ "sedona-query-planner",
+]
+
+[[package]]
 name = "sedona-spatial-join-gpu"
 version = "0.4.0"
 dependencies = [
