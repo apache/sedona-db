@@ -35,6 +35,8 @@ use sedona_spatial_join::{
     SpatialJoinOptions, SpatialPredicate,
 };
 
+use crate::spatial_index_builder::GeographySpatialIndexBuilder;
+
 #[derive(Debug)]
 pub struct GeographyJoinProvider {
     inner: DefaultSpatialJoinProvider,
@@ -64,14 +66,20 @@ impl SpatialJoinProvider for GeographyJoinProvider {
         probe_threads_count: usize,
         metrics: SpatialJoinBuildMetrics,
     ) -> Result<Box<dyn SpatialIndexBuilder>> {
-        self.inner.try_new_spatial_index_builder(
+        // Create the inner (default) builder
+        let inner_builder = self.inner.try_new_spatial_index_builder(
             schema,
-            spatial_predicate,
+            spatial_predicate.clone(),
             options,
             join_type,
             probe_threads_count,
             metrics,
-        )
+        )?;
+
+        // Wrap it with the geography-aware builder
+        let geography_builder = GeographySpatialIndexBuilder::new(inner_builder, spatial_predicate);
+
+        Ok(Box::new(geography_builder))
     }
 
     fn estimate_extra_memory_usage(

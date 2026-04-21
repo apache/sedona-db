@@ -33,7 +33,7 @@ use crate::{index::IndexQueryResult, spatial_predicate::SpatialPredicate};
 /// geometries that truly satisfy the spatial predicate are returned. Different spatial libraries
 /// (Geo, GEOS, TG) provide their own implementations with varying performance characteristics
 /// and geometric predicate support.
-pub(crate) trait IndexQueryResultRefiner: Send + Sync {
+pub trait IndexQueryResultRefiner: Send + Sync {
     /// Refine index query results by evaluating the exact spatial predicate.
     ///
     /// Takes a probe geometry and a list of candidate build-side geometries from the R-tree

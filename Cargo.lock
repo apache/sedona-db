@@ -5760,8 +5760,10 @@ dependencies = [
 name = "sedona-spatial-join-geography"
 version = "0.4.0"
 dependencies = [
+ "arrow",
  "arrow-array",
  "arrow-schema",
+ "async-trait",
  "datafusion",
  "datafusion-common",
  "datafusion-execution",
@@ -5769,12 +5771,16 @@ dependencies = [
  "datafusion-physical-plan",
  "geo-index",
  "geo-types",
+ "log",
+ "parking_lot",
+ "sedona-common",
  "sedona-expr",
  "sedona-functions",
  "sedona-query-planner",
  "sedona-s2geography",
  "sedona-schema",
  "sedona-spatial-join",
+ "wkb",
 ]
 
 [[package]]
