@@ -30,13 +30,12 @@ use sedona_s2geography::{
 use sedona_schema::datatypes::SedonaType;
 use sedona_spatial_join::{
     index::{spatial_index_builder::SpatialJoinBuildMetrics, SpatialIndexBuilder},
-    join_provider::{SpatialJoinProvider},
+    join_provider::SpatialJoinProvider,
     operand_evaluator::{EvaluatedGeometryArray, EvaluatedGeometryArrayFactory},
     SpatialJoinOptions, SpatialPredicate,
 };
 
 use crate::spatial_index_builder::GeographySpatialIndexBuilder;
-
 
 #[derive(Debug)]
 pub struct GeographyJoinProvider;

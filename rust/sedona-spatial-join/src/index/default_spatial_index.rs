@@ -49,7 +49,7 @@ use crate::{
         IndexQueryResult, QueryResultMetrics,
     },
     operand_evaluator::distance_value_at,
-    refine::{IndexQueryResultRefiner},
+    refine::IndexQueryResultRefiner,
     spatial_predicate::SpatialPredicate,
 };
 use arrow::array::BooleanBufferBuilder;

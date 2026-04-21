@@ -23,9 +23,12 @@
 use std::sync::Arc;
 
 use datafusion_common::Result;
-use sedona_common::{ExecutionMode, SpatialJoinOptions, sedona_internal_err};
+use sedona_common::{sedona_internal_err, ExecutionMode, SpatialJoinOptions};
 use sedona_expr::statistics::GeoStatistics;
-use sedona_spatial_join::{IndexQueryResult, IndexQueryResultRefiner, SpatialPredicate, refine::IndexQueryResultRefinerFactory};
+use sedona_spatial_join::{
+    refine::IndexQueryResultRefinerFactory, IndexQueryResult, IndexQueryResultRefiner,
+    SpatialPredicate,
+};
 use wkb::reader::Wkb;
 
 /// A refiner that uses s2geography to evaluate spatial predicates on the sphere.
@@ -118,12 +121,15 @@ pub struct GeographyRefinerFactory;
 
 impl IndexQueryResultRefinerFactory for GeographyRefinerFactory {
     fn create_refiner(
-            &self,
-            predicate: &SpatialPredicate,
-            _options: SpatialJoinOptions,
-            _num_build_geoms: usize,
-            build_stats: GeoStatistics,
-        ) -> Result<Arc<dyn IndexQueryResultRefiner>> {
-        Ok(Arc::new(GeographyRefiner::new(predicate.clone(), build_stats)))
+        &self,
+        predicate: &SpatialPredicate,
+        _options: SpatialJoinOptions,
+        _num_build_geoms: usize,
+        build_stats: GeoStatistics,
+    ) -> Result<Arc<dyn IndexQueryResultRefiner>> {
+        Ok(Arc::new(GeographyRefiner::new(
+            predicate.clone(),
+            build_stats,
+        )))
     }
 }
