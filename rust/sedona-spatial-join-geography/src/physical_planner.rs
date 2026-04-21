@@ -55,7 +55,7 @@ impl SpatialJoinPhysicalPlanner for GeographySpatialJoinPhysicalPlanner {
         &self,
         args: &PlanSpatialJoinArgs<'_>,
     ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
-        if is_spatial_predicate_supported(
+        if !is_spatial_predicate_supported(
             args.spatial_predicate,
             args.physical_left.schema().as_ref(),
             args.physical_right.schema().as_ref(),
