@@ -7,13 +7,13 @@
       
       
       
-        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/working-with-parquet-files/">
+        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/gpu-acceleration/">
       
       
-        <link rel="prev" href="../iceberg/">
+        <link rel="prev" href="../memory-management/">
       
       
-        <link rel="next" href="../working-with-sql-sedonadb/">
+        <link rel="next" href="../reference/python/">
       
       
         
@@ -24,7 +24,7 @@
     
     
       
-        <title>Working with Parquet Files - Apache Sedona</title>
+        <title>GPU Acceleration - Apache Sedona</title>
       
     
     
@@ -88,7 +88,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#working-with-parquet-files" class="md-skip">
+        <a href="#gpu-acceleration-for-spatial-join" class="md-skip">
           Skip to content
         </a>
       
@@ -161,7 +161,7 @@
             <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Working with Parquet Files
+              GPU Acceleration
             
           </span>
             </div>
@@ -718,6 +718,8 @@
                 
   
   
+    
+  
   
   
     
@@ -733,11 +735,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_4">
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_4" checked="">
         
           
           <label class="md-nav__link" for="__nav_2_4" id="__nav_2_4_label" tabindex="">
@@ -758,7 +760,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_4_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_4_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_2_4">
             <span class="md-nav__icon md-icon"></span>
             
@@ -801,10 +803,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../gpu-acceleration/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    GPU Acceleration
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -820,6 +849,125 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+      
+        <li class="md-nav__item">
+  <a href="#why-this-matters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why This Matters
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#filtering-and-refining-stages" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Filtering and Refining Stages
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#supported-predicates-and-fallback-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported Predicates and Fallback Behavior
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#install-from-source-with-the-gpu-feature" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Install from Source with the GPU Feature
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#enable-gpu-join-with-sql-set" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Enable GPU Join with SQL SET
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#performance-tuning-and-special-cautions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance Tuning and Special Cautions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#gpu-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GPU Options
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        References
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -984,8 +1132,6 @@
                 
   
   
-    
-  
   
   
     
@@ -1001,11 +1147,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_6" checked="">
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_6">
         
           
           <label class="md-nav__link" for="__nav_2_6" id="__nav_2_6_label" tabindex="">
@@ -1026,7 +1172,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_6_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_6_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2_6">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1181,37 +1327,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Working with Parquet Files
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../working-with-parquet-files/" class="md-nav__link">
         
   
   
@@ -1227,48 +1346,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
-      
-        <li class="md-nav__item">
-  <a href="#install-sedonadb" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Install SedonaDB
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#implementation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Implementation
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1596,10 +1673,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
       
         <li class="md-nav__item">
-  <a href="#install-sedonadb" class="md-nav__link">
+  <a href="#why-this-matters" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Install SedonaDB
+        Why This Matters
       
     </span>
   </a>
@@ -1607,10 +1684,87 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#implementation" class="md-nav__link">
+  <a href="#filtering-and-refining-stages" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Implementation
+        Filtering and Refining Stages
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#supported-predicates-and-fallback-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported Predicates and Fallback Behavior
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#install-from-source-with-the-gpu-feature" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Install from Source with the GPU Feature
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#enable-gpu-join-with-sql-set" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Enable GPU Join with SQL SET
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#performance-tuning-and-special-cautions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance Tuning and Special Cautions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#gpu-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GPU Options
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        References
       
     </span>
   </a>
@@ -1634,7 +1788,7 @@
 
 
   
-    <a href="https://github.com/apache/sedona-db/blob/main/docs/working-with-parquet-files.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/apache/sedona-db/blob/main/docs/gpu-acceleration.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"></path></svg>
     </a>
@@ -1642,90 +1796,324 @@
   
 
 
-<h1 id="working-with-parquet-files">Working with Parquet Files<a class="headerlink" href="#working-with-parquet-files" title="Permanent link">¶</a></h1>
-<p>The easiest way to read a GeoParquet or Parquet file is to use <code>sd.read_parquet()</code>. Alternatively, you can query these files directly by their path in SQL.</p>
-<h2 id="install-sedonadb">Install SedonaDB<a class="headerlink" href="#install-sedonadb" title="Permanent link">¶</a></h2>
-<p>Use pip to install SedonaDB from the Python Package Index (PyPI).</p>
+<h1 id="gpu-acceleration-for-spatial-join">GPU Acceleration for Spatial Join<a class="headerlink" href="#gpu-acceleration-for-spatial-join" title="Permanent link">¶</a></h1>
+<p>SedonaDB supports GPU-accelerated spatial joins with NVIDIA GPUs. The
+key innovation is using NVIDIA RT cores for spatial query acceleration, which significantly reduces
+candidate search cost and predicate evaluation.</p>
 <blockquote>
-<p><strong>Note</strong>: Before running this notebook on your local machine, you must have SedonaDB installed in your environment. You can install SedonaDB with the following command: <code>pip install "apache-sedona[db]"</code></p>
+<p><strong>Prerequisites:</strong> GPU acceleration requires a SedonaDB build with GPU support, NVIDIA CUDA 12+
+on a GPU with compute capability 7.5 or higher.
+The feature works with or without dedicated RT cores. When RT cores are not available, NVIDA OptiX
+emulates ray tracing on CUDA cores.</p>
 </blockquote>
-<h2 id="implementation">Implementation<a class="headerlink" href="#implementation" title="Permanent link">¶</a></h2>
-<p>A common workflow for working with GeoParquet and/or Parquet files is:</p>
+<h2 id="why-this-matters">Why This Matters<a class="headerlink" href="#why-this-matters" title="Permanent link">¶</a></h2>
+<p>Spatial joins are often bottlenecked by candidate generation and exact refinement. SedonaDB's GPU
+path targets both phases:</p>
+<ul>
+<li>RT-core acceleration for high-throughput spatial filtering.</li>
+<li>A geometry-aware refinement pipeline, including a heavily optimized point-in-polygon (PIP) path.</li>
+</ul>
+<h2 id="filtering-and-refining-stages">Filtering and Refining Stages<a class="headerlink" href="#filtering-and-refining-stages" title="Permanent link">¶</a></h2>
+<p>The GPU-based join follows SedonaDB's two-stage execution model:</p>
 <ol>
-<li><strong>Load</strong> the Parquet file into a data frame using <code>sd.read_parquet()</code>.</li>
-<li><strong>Register</strong> the data frame as a view with <code>to_view()</code>.</li>
-<li><strong>Query</strong> the view using <code>sd.sql()</code>.</li>
-<li><strong>Write</strong> your results to a Parquet file with <code>.to_parquet()</code> or use <code>.to_pandas()</code> to export your results to a DataFrame or GeoDataFrame.</li>
+<li><strong>Filtering stage</strong></li>
+<li>Runs on NVIDIA RT cores [1].</li>
+<li>
+<p>Quickly generates candidate geometry pairs that intersect.</p>
+</li>
+<li>
+<p><strong>Refining stage</strong></p>
+</li>
+<li>Runs exact predicate checks on candidates.</li>
+<li>For point-polygon geometry pairs, refinement is heavily optimized and accelerated with RT-core-backed
+     ray-tracing techniques [2].</li>
+<li>For other spatial join patterns, refinement runs on CUDA-core kernels. We will gradually expand the RT acceleration coverage in future releases.</li>
 </ol>
-<div class="highlight"><pre><span></span><code><span class="c1"># Import the sedona.db module and connect to SedonaDB</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">sedona.db</span>
+<h2 id="supported-predicates-and-fallback-behavior">Supported Predicates and Fallback Behavior<a class="headerlink" href="#supported-predicates-and-fallback-behavior" title="Permanent link">¶</a></h2>
+<p>GPU spatial join currently supports relation predicates:</p>
+<ul>
+<li><code>ST_Intersects</code></li>
+<li><code>ST_Contains</code></li>
+<li><code>ST_Within</code></li>
+<li><code>ST_Covers</code></li>
+<li><code>ST_CoveredBy</code></li>
+<li><code>ST_Touches</code></li>
+<li><code>ST_Equals</code></li>
+</ul>
+<p>Not currently supported on the GPU path:</p>
+<ul>
+<li>Distance predicates (for example, <code>ST_DWithin</code>)</li>
+<li>KNN / KNN join predicates</li>
+<li>GeometryCollection</li>
+</ul>
+<p>When <code>gpu.fallback_to_cpu = true</code> (default), unsupported predicates fall back to CPU spatial join.
+When <code>gpu.fallback_to_cpu = false</code>, unsupported predicates fail the query.</p>
+<h2 id="install-from-source-with-the-gpu-feature">Install from Source with the GPU Feature<a class="headerlink" href="#install-from-source-with-the-gpu-feature" title="Permanent link">¶</a></h2>
+<p>If you build the Python package from source, enable GPU at build time and configure the CUDA
+environment before running <code>MATURIN_PEP517_ARGS="--features gpu" pip install</code>.</p>
+<p>Common environment variables used by the GPU build:</p>
+<ul>
+<li><code>CUDA_HOME</code>: points to your CUDA toolkit root.</li>
+<li>
+<p><code>CMAKE_CUDA_ARCHITECTURES</code>: CUDA SM targets (default falls back to <code>86;89</code> if not set). Change this according to your GPU architecture.</p>
+</li>
+<li>
+<p><code>LIBGPUSPATIAL_LOGGING_LEVEL</code>: Logging level, including <code>TRACE</code>, <code>DEBUG</code>, <code>INFO</code>, <code>WARN</code>, <code>ERROR</code>, <code>CRITICAL</code>.</p>
+</li>
+<li><code>GPUSPATIAL_PROFILING=ON</code>: Profiling mode (<code>ON</code>, <code>OFF</code>) to compile profiling instrumentation.</li>
+</ul>
+<h2 id="enable-gpu-join-with-sql-set">Enable GPU Join with SQL <code>SET</code><a class="headerlink" href="#enable-gpu-join-with-sql-set" title="Permanent link">¶</a></h2>
+<p>The GPU join is disabled by default even if you enabled the GPU feature at build time. To enable GPU acceleration for spatial joins, set the <code>gpu.enable</code> option to <code>true</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">sedonadb</span>
 
-<span class="n">sd</span> <span class="o">=</span> <span class="n">sedona</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
+<span class="n">ctx</span> <span class="o">=</span> <span class="n">sedonadb</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
+
+<span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SET gpu.enable = true"</span><span class="p">)</span>
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><span class="c1"># 1. Load the Parquet file</span>
-<span class="n">df</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">read_parquet</span><span class="p">(</span>
-    <span class="s2">"https://raw.githubusercontent.com/geoarrow/geoarrow-data/v0.2.0/"</span>
-    <span class="s2">"natural-earth/files/natural-earth_cities_geo.parquet"</span>
+<h2 id="performance-tuning-and-special-cautions">Performance Tuning and Special Cautions<a class="headerlink" href="#performance-tuning-and-special-cautions" title="Permanent link">¶</a></h2>
+<p>To keep the GPU efficiently utilized, use larger execution batches:</p>
+<div class="highlight"><pre><span></span><code><span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SET datafusion.execution.batch_size = 100000"</span><span class="p">)</span>
+</code></pre></div>
+<p>Important guidance:</p>
+<ul>
+<li>A large batch size (for example, <code>100000</code>) is often necessary for good GPU throughput.</li>
+<li>For highest GPU performance, spilling should be disabled (for example, set <code>sd.options.memory_limit = "unlimited"</code> before running queries).</li>
+<li>Small joins may not amortize GPU overhead and can be slower than CPU execution.</li>
+<li>Start with defaults for other <code>gpu.*</code> options, then tune based on measured workload behavior.</li>
+</ul>
+<h2 id="gpu-options">GPU Options<a class="headerlink" href="#gpu-options" title="Permanent link">¶</a></h2>
+<p>The following session options are available under the <code>gpu.</code> prefix:</p>
+<ul>
+<li><code>gpu.enable</code> (bool, default <code>false</code>): enable GPU spatial join.</li>
+<li><code>gpu.concat_build</code> (bool, default <code>true</code>): concatenate geometry buffers before GPU processing.</li>
+<li><code>gpu.device_id</code> (int, default <code>0</code>): CUDA device ID.</li>
+<li><code>gpu.fallback_to_cpu</code> (bool, default <code>true</code>): use CPU path when GPU path is unavailable/unsupported.</li>
+<li><code>gpu.use_memory_pool</code> (bool, default <code>true</code>): use CUDA memory pool.</li>
+<li><code>gpu.memory_pool_init_percentage</code> (int, default <code>50</code>): initial CUDA memory pool size as a percentage of total GPU memory.</li>
+<li><code>gpu.pipeline_batches</code> (int, default <code>1</code>): overlap parsing and refinement across batches.</li>
+<li><code>gpu.compress_bvh</code> (bool, default <code>false</code>): compress BVH to reduce memory usage (can reduce performance).</li>
+</ul>
+<p>Example:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">sedonadb</span>
+
+<span class="n">ctx</span> <span class="o">=</span> <span class="n">sedonadb</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
+
+<span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SET gpu.enable = true"</span><span class="p">)</span>
+<span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SET gpu.device_id = 0"</span><span class="p">)</span>
+<span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SET gpu.use_memory_pool = true"</span><span class="p">)</span>
+<span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SET gpu.memory_pool_init_percentage = 60"</span><span class="p">)</span>
+<span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SET gpu.pipeline_batches = 2"</span><span class="p">)</span>
+<span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SET gpu.compress_bvh = false"</span><span class="p">)</span>
+<span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SET datafusion.execution.batch_size = 100000"</span><span class="p">)</span>
+</code></pre></div>
+<h2 id="example">Example<a class="headerlink" href="#example" title="Permanent link">¶</a></h2>
+<div class="highlight"><pre><span></span><code><span class="err">!</span><span class="n">nvidia</span><span class="o">-</span><span class="n">smi</span>
+</code></pre></div>
+<div class="codehilite"><pre><span></span><code><span class="c">Mon Apr 20 19:26:08 2026       </span>
+<span class="nb">+-----------------------------------------------------------------------------------------+</span>
+<span class="c">| NVIDIA</span><span class="nb">-</span><span class="c">SMI 580</span><span class="nt">.</span><span class="c">105</span><span class="nt">.</span><span class="c">08             Driver Version: 580</span><span class="nt">.</span><span class="c">105</span><span class="nt">.</span><span class="c">08     CUDA Version: 13</span><span class="nt">.</span><span class="c">0     |</span>
+<span class="nb">+-----------------------------------------+------------------------+----------------------+</span>
+<span class="c">| GPU  Name                 Persistence</span><span class="nb">-</span><span class="c">M | Bus</span><span class="nb">-</span><span class="c">Id          Disp</span><span class="nt">.</span><span class="c">A | Volatile Uncorr</span><span class="nt">.</span><span class="c"> ECC |</span>
+<span class="c">| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory</span><span class="nb">-</span><span class="c">Usage | GPU</span><span class="nb">-</span><span class="c">Util  Compute M</span><span class="nt">.</span><span class="c"> |</span>
+<span class="c">|                                         |                        |               MIG M</span><span class="nt">.</span><span class="c"> |</span>
+<span class="c">|=========================================</span><span class="nb">+</span><span class="c">========================</span><span class="nb">+</span><span class="c">======================|</span>
+<span class="c">|   0  NVIDIA L4                      On  |   00000000:31:00</span><span class="nt">.</span><span class="c">0 Off |                    0 |</span>
+<span class="c">| N/A   36C    P8             19W /   72W |       0MiB /  23034MiB |      0%      Default |</span>
+<span class="c">|                                         |                        |                  N/A |</span>
+<span class="nb">+-----------------------------------------+------------------------+----------------------+</span>
+
+<span class="nb">+-----------------------------------------------------------------------------------------+</span>
+<span class="c">| Processes:                                                                              |</span>
+<span class="c">|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |</span>
+<span class="c">|        ID   ID                                                               Usage      |</span>
+<span class="c">|=========================================================================================|</span>
+<span class="c">|  No running processes found                                                             |</span>
+<span class="nb">+-----------------------------------------------------------------------------------------+</span>
+</code></pre></div>
+
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">huggingface_hub</span><span class="w"> </span><span class="kn">import</span> <span class="n">snapshot_download</span>
+
+<span class="n">snapshot_download</span><span class="p">(</span>
+    <span class="n">repo_id</span><span class="o">=</span><span class="s2">"apache-sedona/spatialbench"</span><span class="p">,</span>
+    <span class="n">repo_type</span><span class="o">=</span><span class="s2">"dataset"</span><span class="p">,</span>
+    <span class="n">local_dir</span><span class="o">=</span><span class="s2">"hf-data"</span><span class="p">,</span>
+    <span class="n">allow_patterns</span><span class="o">=</span><span class="p">[</span><span class="s2">"v0.1.0/sf1/zone/*"</span><span class="p">,</span> <span class="s2">"v0.1.0/sf1/trip/*"</span><span class="p">],</span>
 <span class="p">)</span>
-
-<span class="c1"># 2. Register the data frame as a view</span>
-<span class="n">df</span><span class="o">.</span><span class="n">to_view</span><span class="p">(</span><span class="s2">"zone"</span><span class="p">)</span>
-
-<span class="c1"># 3. Query the view and store the result in a new DataFrame</span>
-<span class="n">query_result_df</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SELECT * FROM zone LIMIT 10"</span><span class="p">)</span>
-<span class="n">query_result_df</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
 </code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌──────────────┬───────────────────────────────┐
-│     name     ┆            geometry           │
-│     utf8     ┆            geometry           │
-╞══════════════╪═══════════════════════════════╡
-│ Vatican City ┆ POINT(12.4533865 41.9032822)  │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ San Marino   ┆ POINT(12.4417702 43.9360958)  │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Vaduz        ┆ POINT(9.5166695 47.1337238)   │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Lobamba      ┆ POINT(31.1999971 -26.4666675) │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Luxembourg   ┆ POINT(6.1300028 49.6116604)   │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Palikir      ┆ POINT(158.1499743 6.9166437)  │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Majuro       ┆ POINT(171.3800002 7.1030043)  │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Funafuti     ┆ POINT(179.2166471 -8.516652)  │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Melekeok     ┆ POINT(134.6265485 7.4873962)  │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Bir Lehlou   ┆ POINT(-9.6525222 26.1191667)  │
-└──────────────┴───────────────────────────────┘
+<div class="codehilite"><pre><span></span><code><span class="n">Downloading</span><span class="w"> </span><span class="p">(</span><span class="n">incomplete</span><span class="w"> </span><span class="n">total</span><span class="o">...</span><span class="p">):</span><span class="w"> </span><span class="mf">0.00</span><span class="n">B</span><span class="w"> </span><span class="p">[</span><span class="mi">00</span><span class="p">:</span><span class="mi">00</span><span class="p">,</span><span class="w"> </span><span class="err">?</span><span class="n">B</span><span class="o">/</span><span class="n">s</span><span class="p">]</span>
+
+
+
+<span class="n">Fetching</span><span class="w"> </span><span class="mi">8</span><span class="w"> </span><span class="n">files</span><span class="p">:</span><span class="w">   </span><span class="mi">0</span><span class="o">%|</span><span class="w">          </span><span class="o">|</span><span class="w"> </span><span class="mi">0</span><span class="o">/</span><span class="mi">8</span><span class="w"> </span><span class="p">[</span><span class="mi">00</span><span class="p">:</span><span class="mi">00</span><span class="o">&lt;</span><span class="err">?</span><span class="p">,</span><span class="w"> </span><span class="err">?</span><span class="n">it</span><span class="o">/</span><span class="n">s</span><span class="p">]</span>
+
+
+<span class="n">Warning</span><span class="p">:</span><span class="w"> </span><span class="n">You</span><span class="w"> </span><span class="n">are</span><span class="w"> </span><span class="n">sending</span><span class="w"> </span><span class="n">unauthenticated</span><span class="w"> </span><span class="n">requests</span><span class="w"> </span><span class="n">to</span><span class="w"> </span><span class="n">the</span><span class="w"> </span><span class="n">HF</span><span class="w"> </span><span class="n">Hub</span><span class="o">.</span><span class="w"> </span><span class="n">Please</span><span class="w"> </span><span class="n">set</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="n">HF_TOKEN</span><span class="w"> </span><span class="n">to</span><span class="w"> </span><span class="n">enable</span><span class="w"> </span><span class="n">higher</span><span class="w"> </span><span class="n">rate</span><span class="w"> </span><span class="n">limits</span><span class="w"> </span><span class="ow">and</span><span class="w"> </span><span class="n">faster</span><span class="w"> </span><span class="n">downloads</span><span class="o">.</span>
+
+
+
+
+
+<span class="s1">'/mnt/data/sedona-db/docs/hf-data'</span>
 </code></pre></div>
 
-<div class="highlight"><pre><span></span><code><span class="c1"># 4. Write the result to a new Parquet file</span>
-<span class="n">output_path</span> <span class="o">=</span> <span class="s2">"query_results.parquet"</span>
-<span class="n">query_result_df</span><span class="o">.</span><span class="n">to_parquet</span><span class="p">(</span><span class="n">output_path</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">sedonadb</span>
 
-<span class="c1"># (Optional) Verify the written file</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="se">\n</span><span class="s2">Verifying the written file at '</span><span class="si">{</span><span class="n">output_path</span><span class="si">}</span><span class="s2">'..."</span><span class="p">)</span>
-<span class="n">verified_df</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">read_parquet</span><span class="p">(</span><span class="n">output_path</span><span class="p">)</span>
-<span class="n">verified_df</span><span class="o">.</span><span class="n">show</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>
+<span class="n">ctx</span> <span class="o">=</span> <span class="n">sedonadb</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
+<span class="n">ctx</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">memory_limit</span> <span class="o">=</span> <span class="s2">"unlimited"</span>
 </code></pre></div>
-<div class="codehilite"><pre><span></span><code>Verifying the written file at 'query_results.parquet'...
-┌──────────────┬───────────────────────────────┐
-│     name     ┆            geometry           │
-│     utf8     ┆            geometry           │
-╞══════════════╪═══════════════════════════════╡
-│ Vatican City ┆ POINT(12.4533865 41.9032822)  │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ San Marino   ┆ POINT(12.4417702 43.9360958)  │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Vaduz        ┆ POINT(9.5166695 47.1337238)   │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Lobamba      ┆ POINT(31.1999971 -26.4666675) │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Luxembourg   ┆ POINT(6.1300028 49.6116604)   │
-└──────────────┴───────────────────────────────┘
+<div class="highlight"><pre><span></span><code><span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"""</span>
+<span class="s2">    CREATE EXTERNAL TABLE zone</span>
+<span class="s2">    STORED AS PARQUET</span>
+<span class="s2">    LOCATION 'hf-data/v0.1.0/sf1/zone/'</span>
+<span class="s2">"""</span><span class="p">)</span>
+<span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"""</span>
+<span class="s2">    CREATE EXTERNAL TABLE trip</span>
+<span class="s2">    STORED AS PARQUET</span>
+<span class="s2">    LOCATION 'hf-data/v0.1.0/sf1/trip/'</span>
+<span class="s2">"""</span><span class="p">)</span>
 </code></pre></div>
+<div class="codehilite"><pre><span></span><code>&lt;sedonadb.dataframe.DataFrame object at 0x7ff5213d96d0&gt;
+</code></pre></div>
+
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">tqdm.notebook</span><span class="w"> </span><span class="kn">import</span> <span class="n">tqdm</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">IPython.display</span><span class="w"> </span><span class="kn">import</span> <span class="n">display</span><span class="p">,</span> <span class="n">HTML</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">ipywidgets</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">widgets</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">interactive_spatial_benchmark</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">runs</span><span class="o">=</span><span class="mi">6</span><span class="p">):</span>
+    <span class="n">query</span> <span class="o">=</span> <span class="s2">"""</span>
+<span class="s2">    SELECT COUNT(*) AS cross_zone_trip_count</span>
+<span class="s2">    FROM trip t</span>
+<span class="s2">        JOIN zone pickup_zone</span>
+<span class="s2">            ON ST_Within(ST_GeomFromWKB(t.t_pickuploc), ST_GeomFromWKB(pickup_zone.z_boundary))</span>
+<span class="s2">        JOIN zone dropoff_zone</span>
+<span class="s2">            ON ST_Within(ST_GeomFromWKB(t.t_dropoffloc), ST_GeomFromWKB(dropoff_zone.z_boundary))</span>
+<span class="s2">    WHERE pickup_zone.z_zonekey != dropoff_zone.z_zonekey</span>
+<span class="s2">    """</span>
+
+    <span class="n">modes</span> <span class="o">=</span> <span class="p">[(</span><span class="s2">"CPU"</span><span class="p">,</span> <span class="s2">"false"</span><span class="p">),</span> <span class="p">(</span><span class="s2">"GPU"</span><span class="p">,</span> <span class="s2">"true"</span><span class="p">)]</span>
+    <span class="n">averages</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="c1"># 1. Create a scrollable widget to catch the verbose `.show()` output</span>
+    <span class="n">log_output</span> <span class="o">=</span> <span class="n">widgets</span><span class="o">.</span><span class="n">Output</span><span class="p">(</span>
+        <span class="n">layout</span><span class="o">=</span><span class="p">{</span><span class="s2">"border"</span><span class="p">:</span> <span class="s2">"1px solid #ccc"</span><span class="p">,</span> <span class="s2">"height"</span><span class="p">:</span> <span class="s2">"150px"</span><span class="p">,</span> <span class="s2">"overflow_y"</span><span class="p">:</span> <span class="s2">"auto"</span><span class="p">}</span>
+    <span class="p">)</span>
+    <span class="n">display</span><span class="p">(</span><span class="n">HTML</span><span class="p">(</span><span class="s2">"&lt;h3&gt;🚀 Running Spatial Benchmark...&lt;/h3&gt;"</span><span class="p">))</span>
+    <span class="n">display</span><span class="p">(</span><span class="n">log_output</span><span class="p">)</span>
+
+    <span class="c1"># 2. Execute the Benchmark</span>
+    <span class="k">for</span> <span class="n">mode_name</span><span class="p">,</span> <span class="n">gpu_flag</span> <span class="ow">in</span> <span class="n">modes</span><span class="p">:</span>
+        <span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="sa">f</span><span class="s2">"SET gpu.enable = </span><span class="si">{</span><span class="n">gpu_flag</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">gpu_flag</span><span class="p">:</span>
+            <span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span>
+                <span class="s2">"SET datafusion.execution.batch_size = 2000000"</span>
+            <span class="p">)</span>  <span class="c1"># Increase batch size</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SET datafusion.execution.batch_size = 8192"</span><span class="p">)</span>  <span class="c1"># Default</span>
+        <span class="n">execution_times</span> <span class="o">=</span> <span class="p">[]</span>
+
+        <span class="c1"># Display a Jupyter-native progress bar</span>
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">tqdm</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="n">runs</span><span class="p">),</span> <span class="n">desc</span><span class="o">=</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">mode_name</span><span class="si">}</span><span class="s2"> Executions"</span><span class="p">):</span>
+            <span class="n">start_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+
+            <span class="n">result</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
+
+            <span class="c1"># Execute physical plan and catch the output inside our widget</span>
+            <span class="k">with</span> <span class="n">log_output</span><span class="p">:</span>
+                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"--- </span><span class="si">{</span><span class="n">mode_name</span><span class="si">}</span><span class="s2"> Run </span><span class="si">{</span><span class="n">i</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="si">}</span><span class="s2"> ---"</span><span class="p">)</span>
+                <span class="n">result</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+
+            <span class="n">elapsed</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">start_time</span>
+
+            <span class="c1"># Record everything except the first run (warmup)</span>
+            <span class="k">if</span> <span class="n">i</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="n">execution_times</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">elapsed</span><span class="p">)</span>
+
+        <span class="c1"># Calculate average</span>
+        <span class="n">averages</span><span class="p">[</span><span class="n">mode_name</span><span class="p">]</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">execution_times</span><span class="p">)</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">execution_times</span><span class="p">)</span>
+
+    <span class="c1"># 3. Clean up the UI</span>
+    <span class="n">log_output</span><span class="o">.</span><span class="n">clear_output</span><span class="p">()</span>
+    <span class="n">log_output</span><span class="o">.</span><span class="n">layout</span><span class="o">.</span><span class="n">display</span> <span class="o">=</span> <span class="s2">"none"</span>
+
+    <span class="c1"># 4. Generate Table Results</span>
+    <span class="n">cpu_avg</span> <span class="o">=</span> <span class="n">averages</span><span class="p">[</span><span class="s2">"CPU"</span><span class="p">]</span>
+    <span class="n">gpu_avg</span> <span class="o">=</span> <span class="n">averages</span><span class="p">[</span><span class="s2">"GPU"</span><span class="p">]</span>
+
+    <span class="c1"># Calculate speedup (using CPU as the 1.0x baseline)</span>
+    <span class="n">cpu_speedup</span> <span class="o">=</span> <span class="mf">1.0</span>
+    <span class="n">gpu_speedup</span> <span class="o">=</span> <span class="n">cpu_avg</span> <span class="o">/</span> <span class="n">gpu_avg</span> <span class="k">if</span> <span class="n">gpu_avg</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="mi">0</span>
+
+    <span class="c1"># Color code the GPU speedup (green if faster, red if slower)</span>
+    <span class="n">gpu_color</span> <span class="o">=</span> <span class="s2">"green"</span> <span class="k">if</span> <span class="n">gpu_speedup</span> <span class="o">&gt;=</span> <span class="mf">1.0</span> <span class="k">else</span> <span class="s2">"red"</span>
+
+    <span class="n">html_table</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"""</span>
+<span class="s2">    &lt;table style="width: 60%; text-align: center; border-collapse: collapse; font-family: sans-serif; margin-top: 15px;"&gt;</span>
+<span class="s2">        &lt;tr style="background-color: #f8f9fa; border-bottom: 2px solid #dee2e6;"&gt;</span>
+<span class="s2">            &lt;th style="padding: 12px; border: 1px solid #dee2e6;"&gt;Mode&lt;/th&gt;</span>
+<span class="s2">            &lt;th style="padding: 12px; border: 1px solid #dee2e6;"&gt;Average Time (s)&lt;/th&gt;</span>
+<span class="s2">            &lt;th style="padding: 12px; border: 1px solid #dee2e6;"&gt;Speedup&lt;/th&gt;</span>
+<span class="s2">        &lt;/tr&gt;</span>
+<span class="s2">        &lt;tr&gt;</span>
+<span class="s2">            &lt;td style="padding: 12px; border: 1px solid #dee2e6;"&gt;&lt;b&gt;CPU&lt;/b&gt; (Baseline)&lt;/td&gt;</span>
+<span class="s2">            &lt;td style="padding: 12px; border: 1px solid #dee2e6;"&gt;</span><span class="si">{</span><span class="n">cpu_avg</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&lt;/td&gt;</span>
+<span class="s2">            &lt;td style="padding: 12px; border: 1px solid #dee2e6;"&gt;</span><span class="si">{</span><span class="n">cpu_speedup</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">x&lt;/td&gt;</span>
+<span class="s2">        &lt;/tr&gt;</span>
+<span class="s2">        &lt;tr&gt;</span>
+<span class="s2">            &lt;td style="padding: 12px; border: 1px solid #dee2e6;"&gt;&lt;b&gt;GPU&lt;/b&gt;&lt;/td&gt;</span>
+<span class="s2">            &lt;td style="padding: 12px; border: 1px solid #dee2e6;"&gt;</span><span class="si">{</span><span class="n">gpu_avg</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&lt;/td&gt;</span>
+<span class="s2">            &lt;td style="padding: 12px; border: 1px solid #dee2e6; color: </span><span class="si">{</span><span class="n">gpu_color</span><span class="si">}</span><span class="s2">; font-weight: bold;"&gt;</span><span class="si">{</span><span class="n">gpu_speedup</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">x&lt;/td&gt;</span>
+<span class="s2">        &lt;/tr&gt;</span>
+<span class="s2">    &lt;/table&gt;</span>
+<span class="s2">    """</span>
+
+    <span class="n">display</span><span class="p">(</span><span class="n">HTML</span><span class="p">(</span><span class="s2">"&lt;h3&gt;📊 Benchmark Results (Averaged over 5 runs)&lt;/h3&gt;"</span><span class="p">))</span>
+    <span class="n">display</span><span class="p">(</span><span class="n">HTML</span><span class="p">(</span><span class="n">html_table</span><span class="p">))</span>
+
+
+<span class="c1"># --- Execution Block ---</span>
+<span class="c1"># Run the interactive function with your Sedona Context</span>
+<span class="n">interactive_spatial_benchmark</span><span class="p">(</span><span class="n">ctx</span><span class="p">)</span>
+</code></pre></div>
+<h3>🚀 Running Spatial Benchmark...</h3>
+
+<div class="codehilite"><pre><span></span><code><span class="nx">Output</span><span class="p">(</span><span class="nx">layout</span><span class="o">=</span><span class="nx">Layout</span><span class="p">(</span><span class="nx">border_bottom</span><span class="o">=</span><span class="s1">'1px solid #ccc'</span><span class="p">,</span><span class="w"> </span><span class="nx">border_left</span><span class="o">=</span><span class="s1">'1px solid #ccc'</span><span class="p">,</span><span class="w"> </span><span class="nx">border_right</span><span class="o">=</span><span class="err">'</span><span class="mf">1</span><span class="nx">px</span><span class="w"> </span><span class="nx">solid</span><span class="w"> </span><span class="n">#cc</span><span class="err">…</span>
+
+
+
+<span class="nx">CPU</span><span class="w"> </span><span class="nx">Executions</span><span class="o">:</span><span class="w">   </span><span class="mf">0</span><span class="o">%|</span><span class="w">          </span><span class="o">|</span><span class="w"> </span><span class="mf">0</span><span class="o">/</span><span class="mf">6</span><span class="w"> </span><span class="p">[</span><span class="mo">00</span><span class="o">:</span><span class="mo">00</span><span class="cp">&lt;?</span><span class="p">,</span> <span class="o">?</span><span class="nx">it</span><span class="o">/</span><span class="nx">s</span><span class="p">]</span>
+
+
+
+<span class="nx">GPU</span> <span class="nx">Executions</span><span class="o">:</span>   <span class="mi">0</span><span class="o">%|</span>          <span class="o">|</span> <span class="mi">0</span><span class="o">/</span><span class="mi">6</span> <span class="p">[</span><span class="mo">00</span><span class="o">:</span><span class="mo">00</span><span class="o">&lt;?</span><span class="p">,</span> <span class="o">?</span><span class="nx">it</span><span class="o">/</span><span class="nx">s</span><span class="p">]</span>
+</code></pre></div>
+
+<h3>📊 Benchmark Results (Averaged over 5 runs)</h3>
+
+<table style="width: 60%; text-align: center; border-collapse: collapse; font-family: sans-serif; margin-top: 15px;">
+    <tbody><tr style="background-color: #f8f9fa; border-bottom: 2px solid #dee2e6;">
+        <th style="padding: 12px; border: 1px solid #dee2e6;">Mode</th>
+        <th style="padding: 12px; border: 1px solid #dee2e6;">Average Time (s)</th>
+        <th style="padding: 12px; border: 1px solid #dee2e6;">Speedup</th>
+    </tr>
+    <tr>
+        <td style="padding: 12px; border: 1px solid #dee2e6;"><b>CPU</b> (Baseline)</td>
+        <td style="padding: 12px; border: 1px solid #dee2e6;">21.5221</td>
+        <td style="padding: 12px; border: 1px solid #dee2e6;">1.00x</td>
+    </tr>
+    <tr>
+        <td style="padding: 12px; border: 1px solid #dee2e6;"><b>GPU</b></td>
+        <td style="padding: 12px; border: 1px solid #dee2e6;">2.8889</td>
+        <td style="padding: 12px; border: 1px solid #dee2e6; color: green; font-weight: bold;">7.45x</td>
+    </tr>
+</tbody></table>
+
+<h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">¶</a></h2>
+<ol>
+<li>Geng, Liang, Rubao Lee, and Xiaodong Zhang. "Librts: A spatial indexing library by ray tracing." Proceedings of the 30<sup>th</sup> ACM SIGPLAN Annual Symposium on Principles and Practice of Parallel Programming. 2025.</li>
+<li>Geng, Liang, Rubao Lee, and Xiaodong Zhang. "Rayjoin: Fast and precise spatial join." Proceedings of the 38<sup>th</sup> ACM International Conference on Supercomputing. 2024.</li>
+</ol>
 
 
 
@@ -1746,7 +2134,7 @@
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"></path></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="September 19, 2025 07:13:30 UTC">September 19, 2025 07:13:30</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="April 21, 2026 18:13:05 UTC">April 21, 2026 18:13:05</span>
   </span>
 
     
