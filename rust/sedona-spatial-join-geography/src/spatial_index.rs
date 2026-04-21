@@ -29,7 +29,7 @@ use arrow_schema::SchemaRef;
 use async_trait::async_trait;
 use datafusion_common::Result;
 use parking_lot::Mutex;
-use sedona_common::ExecutionMode;
+use sedona_common::{sedona_internal_err, ExecutionMode};
 use sedona_expr::statistics::GeoStatistics;
 use sedona_spatial_join::{
     evaluated_batch::EvaluatedBatch,
@@ -101,31 +101,14 @@ impl SpatialIndex for GeographySpatialIndex {
 
     fn query_knn(
         &self,
-        probe_wkb: &Wkb,
-        k: u32,
-        use_spheroid: bool,
-        include_tie_breakers: bool,
-        build_batch_positions: &mut Vec<(i32, i32)>,
-        distances: Option<&mut Vec<f64>>,
+        _probe_wkb: &Wkb,
+        _k: u32,
+        _use_spheroid: bool,
+        _include_tie_breakers: bool,
+        _build_batch_positions: &mut Vec<(i32, i32)>,
+        _distances: Option<&mut Vec<f64>>,
     ) -> Result<QueryResultMetrics> {
-        // TODO: Implement geography-specific KNN using s2geography distance calculations
-        //
-        // The proper implementation should:
-        // 1. Use the R-tree to get initial candidates
-        // 2. Calculate spherical distances using s2geography
-        // 3. Return the k nearest neighbors based on spherical distance
-        //
-        // For now, we delegate to the inner index which uses Cartesian distance.
-        // This is incorrect for geography types but serves as a placeholder.
-        log::warn!("GeographySpatialIndex::query_knn currently uses Cartesian distance - geography distance not yet implemented");
-        self.inner.query_knn(
-            probe_wkb,
-            k,
-            use_spheroid,
-            include_tie_breakers,
-            build_batch_positions,
-            distances,
-        )
+        sedona_internal_err!("query_knn should not be called (knn join should not be planned)")
     }
 
     async fn query_batch(
