@@ -22,54 +22,52 @@
 
 use std::sync::Arc;
 
-use datafusion_common::Result;
+use datafusion_common::{exec_datafusion_err, Result};
 use sedona_common::{sedona_internal_err, ExecutionMode, SpatialJoinOptions};
 use sedona_expr::statistics::GeoStatistics;
+use sedona_s2geography::{
+    geography::{Geography, GeographyFactory},
+    operator::{Op, OpType},
+};
 use sedona_spatial_join::{
-    refine::IndexQueryResultRefinerFactory, IndexQueryResult, IndexQueryResultRefiner,
-    SpatialPredicate,
+    refine::IndexQueryResultRefinerFactory,
+    spatial_predicate::{RelationPredicate, SpatialRelationType},
+    IndexQueryResult, IndexQueryResultRefiner, SpatialPredicate,
 };
 use wkb::reader::Wkb;
 
-/// A refiner that uses s2geography to evaluate spatial predicates on the sphere.
-///
-/// This refiner is designed to work with geography types where spatial predicates
-/// need to be evaluated using spherical geometry rather than Cartesian geometry.
-///
-/// # Thread Safety
-///
-/// The `GeographyFactory` from s2geography is not thread-safe, so the actual
-/// predicate evaluation will need to use thread-local factories when implemented.
-/// For now, this is a stub implementation.
 #[derive(Debug)]
 pub struct GeographyRefiner {
-    /// The spatial predicate to evaluate
-    _predicate: SpatialPredicate,
-    /// Statistics for build-side geometries
-    #[allow(dead_code)]
-    build_stats: GeoStatistics,
+    op_type: OpType,
 }
 
 impl GeographyRefiner {
-    /// Create a new geography refiner for the given spatial predicate.
-    ///
-    /// # Arguments
-    /// * `predicate` - The spatial predicate to evaluate (e.g., intersects, contains, distance)
-    /// * `build_stats` - Statistics about the build-side geometries
-    pub fn new(predicate: SpatialPredicate, build_stats: GeoStatistics) -> Self {
-        Self {
-            _predicate: predicate,
-            build_stats,
-        }
-    }
+    pub fn new(predicate: SpatialPredicate) -> Result<Self> {
+        let op_type = match predicate {
+            SpatialPredicate::Relation(RelationPredicate {
+                left: _,
+                right: _,
+                relation_type,
+            }) => match relation_type {
+                SpatialRelationType::Intersects => OpType::Intersects,
+                SpatialRelationType::Contains => OpType::Contains,
+                SpatialRelationType::Within => OpType::Within,
+                SpatialRelationType::Equals => OpType::Equals,
+                _ => {
+                    return sedona_internal_err!(
+                        "GeographyRefiner crated with unsupported relation type {relation_type}"
+                    )
+                }
+            },
+            SpatialPredicate::Distance(_) => OpType::DWithin,
+            _ => {
+                return sedona_internal_err!(
+                    "GeographyRefiner crated with unsupported predicate {predicate}"
+                )
+            }
+        };
 
-    fn evaluate_single(
-        &self,
-        _probe_wkb: &[u8],
-        _build_wkb: &[u8],
-        _distance: Option<f64>,
-    ) -> Result<bool> {
-        sedona_internal_err!("not yet implemented")
+        Ok(Self { op_type })
     }
 }
 
@@ -79,12 +77,35 @@ impl IndexQueryResultRefiner for GeographyRefiner {
         probe: &Wkb<'_>,
         index_query_results: &[IndexQueryResult],
     ) -> Result<Vec<(i32, i32)>> {
-        let probe_bytes = probe.buf();
         let mut results = Vec::with_capacity(index_query_results.len());
+        let mut op = Op::new(self.op_type);
+
+        // TODO: thread local factories?
+        let mut factory = GeographyFactory::new();
+        let probe_geog = factory
+            .from_wkb(probe.buf())
+            .map_err(|e| exec_datafusion_err!("{e}"))?;
+
+        // TODO: exploit preparedness in the same way as the tg geometries
+        let mut build_geog = Geography::new();
 
         for result in index_query_results {
-            let build_bytes = result.wkb.buf();
-            if self.evaluate_single(probe_bytes, build_bytes, result.distance)? {
+            factory
+                .init_from_wkb(result.wkb.buf(), &mut build_geog)
+                .map_err(|e| exec_datafusion_err!("{e}"))?;
+
+            // TODO: evaluation order left vs right?
+            let eval = if matches!(self.op_type, OpType::DWithin) {
+                op.eval_binary_distance_predicate(
+                    &build_geog,
+                    &probe_geog,
+                    result.distance.unwrap_or(f64::INFINITY),
+                )
+            } else {
+                op.eval_binary_predicate(&build_geog, &probe_geog)
+            };
+
+            if eval.map_err(|e| exec_datafusion_err!("{e}"))? {
                 results.push(result.position);
             }
         }
@@ -103,7 +124,7 @@ impl IndexQueryResultRefiner for GeographyRefiner {
     }
 
     fn actual_execution_mode(&self) -> ExecutionMode {
-        // For now, we don't support prepared geometries
+        // TODO: preparedness
         ExecutionMode::PrepareNone
     }
 
@@ -125,11 +146,8 @@ impl IndexQueryResultRefinerFactory for GeographyRefinerFactory {
         predicate: &SpatialPredicate,
         _options: SpatialJoinOptions,
         _num_build_geoms: usize,
-        build_stats: GeoStatistics,
+        _build_stats: GeoStatistics,
     ) -> Result<Arc<dyn IndexQueryResultRefiner>> {
-        Ok(Arc::new(GeographyRefiner::new(
-            predicate.clone(),
-            build_stats,
-        )))
+        Ok(Arc::new(GeographyRefiner::new(predicate.clone())?))
     }
 }
