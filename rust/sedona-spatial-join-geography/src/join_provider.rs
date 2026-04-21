@@ -30,31 +30,16 @@ use sedona_s2geography::{
 use sedona_schema::datatypes::SedonaType;
 use sedona_spatial_join::{
     index::{spatial_index_builder::SpatialJoinBuildMetrics, SpatialIndexBuilder},
-    join_provider::{DefaultSpatialJoinProvider, SpatialJoinProvider},
+    join_provider::{SpatialJoinProvider},
     operand_evaluator::{EvaluatedGeometryArray, EvaluatedGeometryArrayFactory},
     SpatialJoinOptions, SpatialPredicate,
 };
 
 use crate::spatial_index_builder::GeographySpatialIndexBuilder;
 
+
 #[derive(Debug)]
-pub struct GeographyJoinProvider {
-    inner: DefaultSpatialJoinProvider,
-}
-
-impl GeographyJoinProvider {
-    pub fn new() -> Self {
-        GeographyJoinProvider {
-            inner: DefaultSpatialJoinProvider,
-        }
-    }
-}
-
-impl Default for GeographyJoinProvider {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+pub struct GeographyJoinProvider;
 
 impl SpatialJoinProvider for GeographyJoinProvider {
     fn try_new_spatial_index_builder(
@@ -67,7 +52,7 @@ impl SpatialJoinProvider for GeographyJoinProvider {
         metrics: SpatialJoinBuildMetrics,
     ) -> Result<Box<dyn SpatialIndexBuilder>> {
         // Create the inner (default) builder
-        let inner_builder = self.inner.try_new_spatial_index_builder(
+        let builder = GeographySpatialIndexBuilder::new(
             schema,
             spatial_predicate.clone(),
             options,
@@ -76,10 +61,7 @@ impl SpatialJoinProvider for GeographyJoinProvider {
             metrics,
         )?;
 
-        // Wrap it with the geography-aware builder
-        let geography_builder = GeographySpatialIndexBuilder::new(inner_builder, spatial_predicate);
-
-        Ok(Box::new(geography_builder))
+        Ok(Box::new(builder))
     }
 
     fn estimate_extra_memory_usage(

@@ -74,7 +74,7 @@ impl SpatialJoinPhysicalPlanner for GeographySpatialJoinPhysicalPlanner {
         )?;
 
         Ok(Some(Arc::new(exec.with_spatial_join_provider(Arc::new(
-            GeographyJoinProvider::new(),
+            GeographyJoinProvider,
         )))))
     }
 }

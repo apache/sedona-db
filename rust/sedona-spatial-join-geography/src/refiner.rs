@@ -23,9 +23,9 @@
 use std::sync::Arc;
 
 use datafusion_common::Result;
-use sedona_common::ExecutionMode;
+use sedona_common::{ExecutionMode, SpatialJoinOptions, sedona_internal_err};
 use sedona_expr::statistics::GeoStatistics;
-use sedona_spatial_join::{IndexQueryResult, IndexQueryResultRefiner, SpatialPredicate};
+use sedona_spatial_join::{IndexQueryResult, IndexQueryResultRefiner, SpatialPredicate, refine::IndexQueryResultRefinerFactory};
 use wkb::reader::Wkb;
 
 /// A refiner that uses s2geography to evaluate spatial predicates on the sphere.
@@ -41,7 +41,7 @@ use wkb::reader::Wkb;
 #[derive(Debug)]
 pub struct GeographyRefiner {
     /// The spatial predicate to evaluate
-    predicate: SpatialPredicate,
+    _predicate: SpatialPredicate,
     /// Statistics for build-side geometries
     #[allow(dead_code)]
     build_stats: GeoStatistics,
@@ -55,67 +55,18 @@ impl GeographyRefiner {
     /// * `build_stats` - Statistics about the build-side geometries
     pub fn new(predicate: SpatialPredicate, build_stats: GeoStatistics) -> Self {
         Self {
-            predicate,
+            _predicate: predicate,
             build_stats,
         }
     }
 
-    /// Evaluate a single predicate between probe and build geometries.
-    ///
-    /// # Arguments
-    /// * `probe_wkb` - WKB bytes of the probe geometry
-    /// * `build_wkb` - WKB bytes of the build geometry
-    /// * `distance` - Optional distance parameter for distance predicates
-    ///
-    /// # Returns
-    /// * `Ok(true)` if the predicate is satisfied
-    /// * `Ok(false)` if the predicate is not satisfied
     fn evaluate_single(
         &self,
-        probe_wkb: &[u8],
-        build_wkb: &[u8],
-        distance: Option<f64>,
+        _probe_wkb: &[u8],
+        _build_wkb: &[u8],
+        _distance: Option<f64>,
     ) -> Result<bool> {
-        // TODO: Implement predicate evaluation using s2geography
-        //
-        // This stub currently returns false for all predicates.
-        // The actual implementation should:
-        // 1. Use a thread-local GeographyFactory to parse WKB
-        // 2. Parse probe_wkb and build_wkb into Geography objects
-        // 3. Evaluate the spatial predicate using s2geography
-        // 4. Return true if the predicate is satisfied
-        //
-        // Example implementation outline:
-        // thread_local! {
-        //     static FACTORY: RefCell<GeographyFactory> = RefCell::new(GeographyFactory::new());
-        // }
-        //
-        // FACTORY.with(|factory| {
-        //     let mut factory = factory.borrow_mut();
-        //     let mut probe_geog = Geography::new();
-        //     let mut build_geog = Geography::new();
-        //     factory.init_from_wkb(probe_wkb, &mut probe_geog)?;
-        //     factory.init_from_wkb(build_wkb, &mut build_geog)?;
-        //
-        //     match &self.predicate {
-        //         SpatialPredicate::Relation(rel) => {
-        //             // Use s2geography relation predicates
-        //         }
-        //         SpatialPredicate::Distance(dist_pred) => {
-        //             // Use s2geography distance calculation
-        //         }
-        //         SpatialPredicate::KNearestNeighbors(_) => {
-        //             // KNN is handled separately
-        //         }
-        //     }
-        // })
-
-        let _ = (probe_wkb, build_wkb, distance);
-        log::warn!(
-            "GeographyRefiner::evaluate_single is not yet implemented for {:?}",
-            self.predicate
-        );
-        Ok(false)
+        sedona_internal_err!("not yet implemented")
     }
 }
 
@@ -162,5 +113,17 @@ impl IndexQueryResultRefiner for GeographyRefiner {
     }
 }
 
-/// Shared, thread-safe geography refiner.
-pub type GeographyRefinerRef = Arc<dyn IndexQueryResultRefiner>;
+#[derive(Debug)]
+pub struct GeographyRefinerFactory;
+
+impl IndexQueryResultRefinerFactory for GeographyRefinerFactory {
+    fn create_refiner(
+            &self,
+            predicate: &SpatialPredicate,
+            _options: SpatialJoinOptions,
+            _num_build_geoms: usize,
+            build_stats: GeoStatistics,
+        ) -> Result<Arc<dyn IndexQueryResultRefiner>> {
+        Ok(Arc::new(GeographyRefiner::new(predicate.clone(), build_stats)))
+    }
+}

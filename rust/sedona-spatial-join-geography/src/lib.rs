@@ -18,5 +18,4 @@
 pub mod join_provider;
 pub mod physical_planner;
 pub mod refiner;
-pub mod spatial_index;
 pub mod spatial_index_builder;

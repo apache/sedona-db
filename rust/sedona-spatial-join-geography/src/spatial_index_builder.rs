@@ -22,67 +22,46 @@
 
 use std::sync::Arc;
 
+use arrow_schema::SchemaRef;
 use async_trait::async_trait;
-use datafusion_common::Result;
+use datafusion_common::{JoinType, Result};
+use sedona_common::SpatialJoinOptions;
 use sedona_expr::statistics::GeoStatistics;
 use sedona_spatial_join::{
     evaluated_batch::evaluated_batch_stream::SendableEvaluatedBatchStream,
-    index::{SpatialIndexBuilder, SpatialIndexRef},
+    index::{
+        default_spatial_index_builder::DefaultSpatialIndexBuilder,
+        spatial_index_builder::SpatialJoinBuildMetrics, SpatialIndexBuilder, SpatialIndexRef,
+    },
     SpatialPredicate,
 };
 
-use crate::refiner::GeographyRefiner;
-use crate::spatial_index::GeographySpatialIndex;
+use crate::refiner::GeographyRefinerFactory;
 
-/// Builder for creating geography-aware spatial indexes.
-///
-/// This builder wraps a default spatial index builder and produces
-/// [`GeographySpatialIndex`] instances that apply geography-specific
-/// refinement during spatial join queries.
-///
-/// # Architecture
-///
-/// The builder follows a delegation pattern:
-/// 1. `add_stream()` is delegated to the inner builder to collect geometry batches
-/// 2. `finish()` creates the inner spatial index, then wraps it with a geography refiner
-///
-/// # Usage
-///
-/// ```ignore
-/// let builder = GeographySpatialIndexBuilder::new(
-///     inner_builder,
-///     predicate,
-/// )?;
-///
-/// builder.add_stream(stream, stats).await?;
-/// let index = builder.finish()?;
-/// ```
 pub struct GeographySpatialIndexBuilder {
-    /// The wrapped default spatial index builder
-    inner: Box<dyn SpatialIndexBuilder>,
-    /// The spatial predicate for this join
-    predicate: SpatialPredicate,
-    /// Accumulated build-side statistics
-    build_stats: GeoStatistics,
+    inner: DefaultSpatialIndexBuilder,
 }
 
 impl GeographySpatialIndexBuilder {
-    /// Create a new geography spatial index builder.
-    ///
-    /// # Arguments
-    /// * `inner` - The underlying spatial index builder to wrap
-    /// * `predicate` - The spatial predicate for this join
-    pub fn new(inner: Box<dyn SpatialIndexBuilder>, predicate: SpatialPredicate) -> Self {
-        Self {
-            inner,
-            predicate,
-            build_stats: GeoStatistics::empty(),
-        }
-    }
-
-    /// Get a reference to the spatial predicate.
-    pub fn predicate(&self) -> &SpatialPredicate {
-        &self.predicate
+    pub fn new(
+        schema: SchemaRef,
+        spatial_predicate: SpatialPredicate,
+        options: SpatialJoinOptions,
+        join_type: JoinType,
+        probe_threads_count: usize,
+        metrics: SpatialJoinBuildMetrics,
+    ) -> Result<Self> {
+        let inner = DefaultSpatialIndexBuilder::new(
+            schema,
+            spatial_predicate,
+            options,
+            join_type,
+            probe_threads_count,
+            metrics,
+        )?;
+        Ok(Self {
+            inner: inner.with_refiner_factory(Arc::new(GeographyRefinerFactory)),
+        })
     }
 }
 
@@ -93,25 +72,10 @@ impl SpatialIndexBuilder for GeographySpatialIndexBuilder {
         stream: SendableEvaluatedBatchStream,
         geo_statistics: GeoStatistics,
     ) -> Result<()> {
-        // Accumulate statistics for the geography refiner
-        self.build_stats.merge(&geo_statistics);
-        // Delegate batch collection to the inner builder
         self.inner.add_stream(stream, geo_statistics).await
     }
 
     fn finish(&mut self) -> Result<SpatialIndexRef> {
-        // Build the inner spatial index
-        let inner_index = self.inner.finish()?;
-
-        // Create the geography refiner
-        let refiner = Arc::new(GeographyRefiner::new(
-            self.predicate.clone(),
-            self.build_stats.clone(),
-        ));
-
-        // Wrap the inner index with geography-specific refinement
-        let geography_index = GeographySpatialIndex::new(inner_index, refiner);
-
-        Ok(Arc::new(geography_index))
+        self.inner.finish()
     }
 }
