@@ -128,14 +128,7 @@ fn get_band_path(
                 builder.append_null();
             } else if let Some(band) = raster.band((band_index - 1) as usize) {
                 match band.outdb_uri() {
-                    Some(uri) => {
-                        // Return just the path portion, stripping the internal
-                        // scheme prefix and fragment from the outdb_uri.
-                        let path = sedona_raster::outdb_uri::parse_outdb_uri(uri)
-                            .map(|parsed| parsed.path)
-                            .unwrap_or(uri);
-                        builder.append_value(path);
-                    }
+                    Some(uri) => builder.append_value(uri),
                     None => builder.append_null(),
                 }
             } else {
@@ -258,9 +251,9 @@ mod tests {
 
     /// Build a raster array with out-db bands for testing RS_BandPath.
     /// Returns a StructArray with 3 rasters:
-    ///   [0] OutDbRef band with URI "geotiff://s3://bucket/raster_0.tif#band=1"
+    ///   [0] OutDbRef band with URI "s3://bucket/raster_0.tif", format "geotiff"
     ///   [1] null raster
-    ///   [2] Two bands: InDb band 1, OutDbRef band 2 with URI "geotiff://s3://bucket/raster_2.tif#band=3"
+    ///   [2] Two bands: InDb band 1, OutDbRef band 2 with URI "s3://bucket/raster_2.tif", format "geotiff"
     fn build_outdb_rasters() -> arrow_array::StructArray {
         use sedona_raster::builder::RasterBuilder;
         use sedona_schema::raster::BandDataType;
@@ -278,7 +271,8 @@ mod tests {
                 &[4, 4],
                 BandDataType::Float32,
                 None,
-                Some("geotiff://s3://bucket/raster_0.tif#band=1"),
+                Some("s3://bucket/raster_0.tif"),
+                Some("geotiff"),
             )
             .unwrap();
         builder.band_data_writer().append_value([]);
@@ -302,7 +296,8 @@ mod tests {
                 &[4, 4],
                 BandDataType::Float32,
                 None,
-                Some("geotiff://s3://bucket/raster_2.tif#band=3"),
+                Some("s3://bucket/raster_2.tif"),
+                Some("geotiff"),
             )
             .unwrap();
         builder.band_data_writer().append_value([]);

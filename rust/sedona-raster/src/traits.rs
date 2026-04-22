@@ -117,8 +117,18 @@ pub trait BandRef {
     /// Nodata value as raw bytes (None if not set)
     fn nodata(&self) -> Option<&[u8]>;
 
-    /// OutDb URI (None for in-memory bands)
+    /// OutDb URI — location of the external resource (e.g.
+    /// `"s3://bucket/file.tif"`, `"file:///…"`, `"mem://…"`). None for
+    /// in-memory bands. Scheme resolution is delegated to an
+    /// `ObjectStoreRegistry`; it does *not* imply a format.
     fn outdb_uri(&self) -> Option<&str> {
+        None
+    }
+
+    /// OutDb format — how to interpret the bytes at `outdb_uri`
+    /// (e.g. `"geotiff"`, `"zarr"`). None means in-memory — the band's
+    /// `contiguous_data()` / `nd_buffer()` is authoritative.
+    fn outdb_format(&self) -> Option<&str> {
         None
     }
 

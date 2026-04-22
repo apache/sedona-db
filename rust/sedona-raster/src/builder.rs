@@ -72,6 +72,7 @@ pub struct RasterBuilder {
     band_strides_offsets: Vec<i32>,
     band_offset: UInt64Builder,
     band_outdb_uri: StringBuilder,
+    band_outdb_format: StringViewBuilder,
     band_data: BinaryViewBuilder,
 
     // List structure tracking
@@ -109,6 +110,7 @@ impl RasterBuilder {
             band_strides_offsets: vec![0],
             band_offset: UInt64Builder::with_capacity(capacity),
             band_outdb_uri: StringBuilder::with_capacity(capacity, capacity),
+            band_outdb_format: StringViewBuilder::with_capacity(capacity),
             band_data: BinaryViewBuilder::with_capacity(capacity),
 
             band_offsets: vec![0],
@@ -182,6 +184,13 @@ impl RasterBuilder {
     }
 
     /// Start a new band with explicit N-D parameters.
+    ///
+    /// `outdb_uri` is the *location* of the external resource (scheme is
+    /// resolved by an `ObjectStoreRegistry`). `outdb_format` is the *format*
+    /// used to interpret the bytes at that location (e.g. `"geotiff"`,
+    /// `"zarr"`). A null `outdb_format` means the band is in-memory — the
+    /// band's `data` buffer is authoritative.
+    #[allow(clippy::too_many_arguments)]
     pub fn start_band(
         &mut self,
         name: Option<&str>,
@@ -190,6 +199,7 @@ impl RasterBuilder {
         data_type: BandDataType,
         nodata: Option<&[u8]>,
         outdb_uri: Option<&str>,
+        outdb_format: Option<&str>,
     ) -> Result<(), ArrowError> {
         // Name
         match name {
@@ -245,6 +255,12 @@ impl RasterBuilder {
             None => self.band_outdb_uri.append_null(),
         }
 
+        // OutDb format
+        match outdb_format {
+            Some(format) => self.band_outdb_format.append_value(format),
+            None => self.band_outdb_format.append_null(),
+        }
+
         self.current_band_count += 1;
         self.band_data_count_at_start = self.band_data.len();
 
@@ -270,6 +286,7 @@ impl RasterBuilder {
             &[self.current_height, self.current_width],
             data_type,
             nodata,
+            None,
             None,
         )
     }
@@ -402,6 +419,7 @@ impl RasterBuilder {
             Arc::new(strides_list),
             Arc::new(self.band_offset.finish()),
             Arc::new(self.band_outdb_uri.finish()),
+            Arc::new(self.band_outdb_format.finish()),
             Arc::new(self.band_data.finish()),
         ];
         let band_struct = StructArray::new(band_fields, band_arrays, None);
@@ -558,6 +576,7 @@ mod tests {
                 BandDataType::Float32,
                 None,
                 None,
+                None,
             )
             .unwrap();
         let data = vec![0u8; 3 * 4 * 5 * 4]; // 3*4*5 Float32 elements
@@ -601,6 +620,7 @@ mod tests {
                 BandDataType::Float32,
                 None,
                 None,
+                None,
             )
             .unwrap();
         let data = vec![0u8; 180 * 360 * 4];
@@ -635,6 +655,7 @@ mod tests {
                 BandDataType::Float32,
                 None,
                 None,
+                None,
             )
             .unwrap();
         let data_3d = vec![0u8; 12 * 64 * 64 * 4];
@@ -648,6 +669,7 @@ mod tests {
                 &["y", "x"],
                 &[64, 64],
                 BandDataType::Float64,
+                None,
                 None,
                 None,
             )
@@ -690,6 +712,7 @@ mod tests {
                 &["time", "pressure", "y", "x"],
                 &[6, 10, 32, 32],
                 BandDataType::Float32,
+                None,
                 None,
                 None,
             )
@@ -747,7 +770,15 @@ mod tests {
 
         // UInt8: element size = 1, shape [3, 4] → strides [4, 1]
         builder
-            .start_band(None, &["y", "x"], &[3, 4], BandDataType::UInt8, None, None)
+            .start_band(
+                None,
+                &["y", "x"],
+                &[3, 4],
+                BandDataType::UInt8,
+                None,
+                None,
+                None,
+            )
             .unwrap();
         builder.band_data_writer().append_value(vec![0u8; 12]);
         builder.finish_band().unwrap();
@@ -761,6 +792,7 @@ mod tests {
                 BandDataType::Float64,
                 None,
                 None,
+                None,
             )
             .unwrap();
         builder
@@ -770,7 +802,7 @@ mod tests {
 
         // UInt16: element size = 2, shape [10] → strides [2]
         builder
-            .start_band(None, &["x"], &[10], BandDataType::UInt16, None, None)
+            .start_band(None, &["x"], &[10], BandDataType::UInt16, None, None, None)
             .unwrap();
         builder.band_data_writer().append_value(vec![0u8; 20]);
         builder.finish_band().unwrap();
@@ -823,6 +855,7 @@ mod tests {
                 &["y", "x"],
                 &[4, 4],
                 BandDataType::Float32,
+                None,
                 None,
                 None,
             )

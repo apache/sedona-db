@@ -43,6 +43,7 @@ struct BandRefImpl<'a> {
     strides_values: &'a Int64Array,
     offset_array: &'a UInt64Array,
     outdb_uri_array: &'a StringArray,
+    outdb_format_array: &'a StringViewArray,
     data_array: &'a BinaryViewArray,
     /// Absolute row index within the flattened bands arrays
     band_row: usize,
@@ -86,6 +87,14 @@ impl<'a> BandRef for BandRefImpl<'a> {
             None
         } else {
             Some(self.outdb_uri_array.value(self.band_row))
+        }
+    }
+
+    fn outdb_format(&self) -> Option<&str> {
+        if self.outdb_format_array.is_null(self.band_row) {
+            None
+        } else {
+            Some(self.outdb_format_array.value(self.band_row))
         }
     }
 
@@ -157,6 +166,7 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
             strides_values: self.raster_struct_array.band_strides_values,
             offset_array: self.raster_struct_array.band_offset_array,
             outdb_uri_array: self.raster_struct_array.band_outdb_uri_array,
+            outdb_format_array: self.raster_struct_array.band_outdb_format_array,
             data_array: self.raster_struct_array.band_data_array,
             band_row,
         }))
@@ -234,6 +244,7 @@ pub struct RasterStructArray<'a> {
     band_strides_values: &'a Int64Array,
     band_offset_array: &'a UInt64Array,
     band_outdb_uri_array: &'a StringArray,
+    band_outdb_format_array: &'a StringViewArray,
     band_data_array: &'a BinaryViewArray,
 }
 
@@ -336,6 +347,11 @@ impl<'a> RasterStructArray<'a> {
             .as_any()
             .downcast_ref::<StringArray>()
             .unwrap();
+        let band_outdb_format_array = bands_struct
+            .column(band_indices::OUTDB_FORMAT)
+            .as_any()
+            .downcast_ref::<StringViewArray>()
+            .unwrap();
         let band_data_array = bands_struct
             .column(band_indices::DATA)
             .as_any()
@@ -361,6 +377,7 @@ impl<'a> RasterStructArray<'a> {
             band_strides_values,
             band_offset_array,
             band_outdb_uri_array,
+            band_outdb_format_array,
             band_data_array,
         }
     }

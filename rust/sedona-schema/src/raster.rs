@@ -54,7 +54,14 @@ impl RasterSchema {
         )))
     }
 
-    /// Individual band schema — flattened N-D band with dimension metadata
+    /// Individual band schema — flattened N-D band with dimension metadata.
+    ///
+    /// Out-of-band ("outdb") bands carry two orthogonal identifiers:
+    /// - `outdb_uri` is the *location* (what scheme/registry to dispatch to,
+    ///   e.g. `s3://bucket/file.tif`, `file:///…`, `mem://…`).
+    /// - `outdb_format` is the *format* (how to interpret the bytes, e.g.
+    ///   `"geotiff"`, `"zarr"`). Null format means in-memory — the band's
+    ///   `data` buffer is authoritative.
     pub fn band_type() -> DataType {
         DataType::Struct(Fields::from(vec![
             Field::new(column::NAME, DataType::Utf8, true),
@@ -65,6 +72,7 @@ impl RasterSchema {
             Field::new(column::STRIDES, Self::strides_type(), false),
             Field::new(column::OFFSET, DataType::UInt64, false),
             Field::new(column::OUTDB_URI, DataType::Utf8, true),
+            Field::new(column::OUTDB_FORMAT, DataType::Utf8View, true),
             Field::new(column::DATA, DataType::BinaryView, false),
         ]))
     }
@@ -173,7 +181,8 @@ pub mod band_indices {
     pub const STRIDES: usize = 5;
     pub const OFFSET: usize = 6;
     pub const OUTDB_URI: usize = 7;
-    pub const DATA: usize = 8;
+    pub const OUTDB_FORMAT: usize = 8;
+    pub const DATA: usize = 9;
 }
 
 /// Column name constants used throughout the raster schema definition.
@@ -195,6 +204,7 @@ pub mod column {
     pub const STRIDES: &str = "strides";
     pub const OFFSET: &str = "offset";
     pub const OUTDB_URI: &str = "outdb_uri";
+    pub const OUTDB_FORMAT: &str = "outdb_format";
     pub const DATA: &str = "data";
 }
 
@@ -247,7 +257,7 @@ mod tests {
         // Test band indices
         let band_type = RasterSchema::band_type();
         if let DataType::Struct(band_fields) = band_type {
-            assert_eq!(band_fields.len(), 9, "Expected exactly 9 band fields");
+            assert_eq!(band_fields.len(), 10, "Expected exactly 10 band fields");
             assert_eq!(band_fields[band_indices::NAME].name(), column::NAME);
             assert_eq!(
                 band_fields[band_indices::DIM_NAMES].name(),
@@ -264,6 +274,10 @@ mod tests {
             assert_eq!(
                 band_fields[band_indices::OUTDB_URI].name(),
                 column::OUTDB_URI
+            );
+            assert_eq!(
+                band_fields[band_indices::OUTDB_FORMAT].name(),
+                column::OUTDB_FORMAT
             );
             assert_eq!(band_fields[band_indices::DATA].name(), column::DATA);
         } else {
