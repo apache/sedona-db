@@ -18,6 +18,7 @@
 import io
 import tempfile
 import warnings
+import zipfile
 from pathlib import Path
 
 import geoarrow.pyarrow as ga
@@ -143,6 +144,27 @@ def test_read_ogr_layer_selection(con):
         # Reading with the correct layer name should work
         geopandas.testing.assert_geodataframe_equal(
             con.read_pyogrio(gpkg_path, options={"layer": "my_layer"}).to_pandas(),
+            gdf,
+        )
+
+
+def test_read_ogr_path_suffix(con):
+    series = geopandas.GeoSeries.from_xy([0, 1], [1, 2], crs="EPSG:3857")
+    gdf = geopandas.GeoDataFrame({"val": ["a", "b"], "wkb_geometry": series})
+    gdf = gdf.set_geometry(gdf["wkb_geometry"])
+
+    with tempfile.TemporaryDirectory() as td:
+        gpkg_path = f"{td}/data.gpkg"
+        gdf.to_file(gpkg_path)
+
+        zip_path = f"{td}/archive.zip"
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.write(gpkg_path, "nested/data.gpkg")
+
+        geopandas.testing.assert_geodataframe_equal(
+            con.read_pyogrio(
+                zip_path, options={"path_suffix": "nested/data.gpkg"}
+            ).to_pandas(),
             gdf,
         )
 

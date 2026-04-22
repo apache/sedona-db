@@ -144,6 +144,10 @@ class PyogrioFormatSpec(ExternalFormatSpec):
         if ogr_src.endswith(".zip"):
             ogr_src = f"/vsizip/{ogr_src}"
 
+        path_suffix = self._options.pop("path_suffix", None)
+        if path_suffix is not None:
+            ogr_src = f"{ogr_src}/{path_suffix}"
+
         if args.is_projected():
             file_columns = args.file_schema.names
             columns = [file_columns[i] for i in args.file_projection]
