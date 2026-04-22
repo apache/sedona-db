@@ -32,6 +32,7 @@ use sedona_s2geography::{
 use sedona_spatial_join::{
     refine::IndexQueryResultRefinerFactory,
     spatial_predicate::{RelationPredicate, SpatialRelationType},
+    utils::init_once_array::InitOnceArray,
     IndexQueryResult, IndexQueryResultRefiner, SpatialPredicate,
 };
 use wkb::reader::Wkb;
@@ -39,10 +40,11 @@ use wkb::reader::Wkb;
 #[derive(Debug)]
 pub struct GeographyRefiner {
     op_type: OpType,
+    prepared_geoms: InitOnceArray<Option<Geography<'static>>>,
 }
 
 impl GeographyRefiner {
-    pub fn new(predicate: SpatialPredicate) -> Result<Self> {
+    pub fn new(predicate: SpatialPredicate, num_build_geoms: usize) -> Result<Self> {
         let op_type = match predicate {
             SpatialPredicate::Relation(RelationPredicate {
                 left: _,
@@ -55,19 +57,23 @@ impl GeographyRefiner {
                 SpatialRelationType::Equals => OpType::Equals,
                 _ => {
                     return sedona_internal_err!(
-                        "GeographyRefiner crated with unsupported relation type {relation_type}"
+                        "GeographyRefiner created with unsupported relation type {relation_type}"
                     )
                 }
             },
             SpatialPredicate::Distance(_) => OpType::DWithin,
             _ => {
                 return sedona_internal_err!(
-                    "GeographyRefiner crated with unsupported predicate {predicate}"
+                    "GeographyRefiner created with unsupported predicate {predicate}"
                 )
             }
         };
 
-        Ok(Self { op_type })
+        let prepared_geoms = InitOnceArray::new(num_build_geoms);
+        Ok(Self {
+            op_type,
+            prepared_geoms,
+        })
     }
 }
 
@@ -86,6 +92,8 @@ impl IndexQueryResultRefiner for GeographyRefiner {
             .from_wkb(probe.buf())
             .map_err(|e| exec_datafusion_err!("{e}"))?;
 
+        let mut build_geog = Geography::new();
+
         // Crude heuristic used by the S2Loop (build an index after 20 unindexed
         // contains queries even for small looops).
         if probe.buf().len() > (32 * 2 * size_of::<f64>()) || index_query_results.len() > 20 {
@@ -94,27 +102,69 @@ impl IndexQueryResultRefiner for GeographyRefiner {
                 .map_err(|e| exec_datafusion_err!("{e}"))?;
         }
 
-        // TODO: exploit preparedness in the same way as the tg geometries
-        let mut build_geog = Geography::new();
+        // We're in prepared build mode
+        if !self.prepared_geoms.is_empty() {
+            for result in index_query_results {
+                let (prepared_build_geom, _) =
+                    self.prepared_geoms.get_or_create(result.geom_idx, || {
+                        // Basically, prepare anything except points on the build side
+                        if result.wkb.buf().len() > 32 {
+                            let mut geog = factory
+                                .from_wkb(result.wkb.buf())
+                                .map_err(|e| exec_datafusion_err!("{e}"))?;
+                            geog.prepare().map_err(|e| exec_datafusion_err!("{e}"))?;
+                            Ok(Some(unsafe {
+                                // Safety: the evaluated batches keep the required WKB alive
+                                std::mem::transmute::<Geography<'_>, Geography<'static>>(geog)
+                            }))
+                        } else {
+                            Ok(None)
+                        }
+                    })?;
 
-        for result in index_query_results {
-            factory
-                .init_from_wkb(result.wkb.buf(), &mut build_geog)
-                .map_err(|e| exec_datafusion_err!("{e}"))?;
+                let build_geog_ref = if let Some(prepared_geog) = prepared_build_geom {
+                    prepared_geog
+                } else {
+                    factory
+                        .init_from_wkb(result.wkb.buf(), &mut build_geog)
+                        .map_err(|e| exec_datafusion_err!("{e}"))?;
+                    &build_geog
+                };
 
-            // TODO: evaluation order left vs right?
-            let eval = if matches!(self.op_type, OpType::DWithin) {
-                op.eval_binary_distance_predicate(
-                    &build_geog,
-                    &probe_geog,
-                    result.distance.unwrap_or(f64::INFINITY),
-                )
-            } else {
-                op.eval_binary_predicate(&build_geog, &probe_geog)
-            };
+                let eval = if matches!(self.op_type, OpType::DWithin) {
+                    op.eval_binary_distance_predicate(
+                        build_geog_ref,
+                        &probe_geog,
+                        result.distance.unwrap_or(f64::INFINITY),
+                    )
+                } else {
+                    op.eval_binary_predicate(build_geog_ref, &probe_geog)
+                };
 
-            if eval.map_err(|e| exec_datafusion_err!("{e}"))? {
-                results.push(result.position);
+                if eval.map_err(|e| exec_datafusion_err!("{e}"))? {
+                    results.push(result.position);
+                }
+            }
+        } else {
+            for result in index_query_results {
+                factory
+                    .init_from_wkb(result.wkb.buf(), &mut build_geog)
+                    .map_err(|e| exec_datafusion_err!("{e}"))?;
+
+                // TODO: evaluation order left vs right?
+                let eval = if matches!(self.op_type, OpType::DWithin) {
+                    op.eval_binary_distance_predicate(
+                        &build_geog,
+                        &probe_geog,
+                        result.distance.unwrap_or(f64::INFINITY),
+                    )
+                } else {
+                    op.eval_binary_predicate(&build_geog, &probe_geog)
+                };
+
+                if eval.map_err(|e| exec_datafusion_err!("{e}"))? {
+                    results.push(result.position);
+                }
             }
         }
 
@@ -153,9 +203,12 @@ impl IndexQueryResultRefinerFactory for GeographyRefinerFactory {
         &self,
         predicate: &SpatialPredicate,
         _options: SpatialJoinOptions,
-        _num_build_geoms: usize,
+        num_build_geoms: usize,
         _build_stats: GeoStatistics,
     ) -> Result<Arc<dyn IndexQueryResultRefiner>> {
-        Ok(Arc::new(GeographyRefiner::new(predicate.clone())?))
+        Ok(Arc::new(GeographyRefiner::new(
+            predicate.clone(),
+            num_build_geoms,
+        )?))
     }
 }

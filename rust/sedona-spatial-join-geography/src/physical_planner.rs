@@ -26,7 +26,10 @@ use sedona_query_planner::{
     spatial_predicate::{RelationPredicate, SpatialPredicate, SpatialRelationType},
 };
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
-use sedona_spatial_join::{physical_planner::repartition_probe_side, SpatialJoinExec};
+use sedona_spatial_join::{
+    physical_planner::{repartition_probe_side, should_swap_join_order},
+    SpatialJoinExec,
+};
 
 use crate::join_provider::GeographyJoinProvider;
 
@@ -63,6 +66,16 @@ impl SpatialJoinPhysicalPlanner for GeographySpatialJoinPhysicalPlanner {
             return Ok(None);
         }
 
+        let should_swap = !matches!(
+            args.spatial_predicate,
+            SpatialPredicate::KNearestNeighbors(_)
+        ) && args.join_type.supports_swap()
+            && should_swap_join_order(
+                args.join_options,
+                args.physical_left.as_ref(),
+                args.physical_right.as_ref(),
+            )?;
+
         // Repartition the probe side when enabled. This breaks spatial locality in sorted/skewed
         // datasets, leading to more balanced workloads during out-of-core spatial join.
         // We determine which pre-swap input will be the probe AFTER any potential swap, and
@@ -73,7 +86,7 @@ impl SpatialJoinPhysicalPlanner for GeographySpatialJoinPhysicalPlanner {
                 args.physical_left.clone(),
                 args.physical_right.clone(),
                 args.spatial_predicate,
-                false,
+                should_swap,
             )?
         } else {
             (args.physical_left.clone(), args.physical_right.clone())
@@ -90,7 +103,11 @@ impl SpatialJoinPhysicalPlanner for GeographySpatialJoinPhysicalPlanner {
         )?
         .with_spatial_join_provider(Arc::new(GeographyJoinProvider));
 
-        Ok(Some(Arc::new(exec) as Arc<dyn ExecutionPlan>))
+        if should_swap {
+            exec.swap_inputs().map(Some)
+        } else {
+            Ok(Some(Arc::new(exec) as Arc<dyn ExecutionPlan>))
+        }
     }
 }
 

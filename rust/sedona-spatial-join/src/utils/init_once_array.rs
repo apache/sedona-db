@@ -26,7 +26,8 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 ///
 /// Uses atomic pointers for lock-free operations with proper memory ordering.
 /// Null pointers indicate empty slots.
-pub(crate) struct InitOnceArray<T: Send + Sync> {
+#[derive(Debug)]
+pub struct InitOnceArray<T: Send + Sync> {
     ptrs: Vec<AtomicPtr<T>>,
 }
 
@@ -113,13 +114,11 @@ impl<T: Send + Sync> InitOnceArray<T> {
     }
 
     /// Get the size of the array.
-    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.ptrs.len()
     }
 
     /// Check if the array is empty.
-    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.ptrs.is_empty()
     }

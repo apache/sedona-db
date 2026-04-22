@@ -38,6 +38,7 @@ use crate::utils::S2GeogCError;
 /// required in a thread safe way (although it may result in faster evaluation
 /// to force a build early in a situation where it is known that a lot of
 /// evaluations are about to happen).
+#[derive(Debug)]
 pub struct Geography<'a> {
     ptr: *mut S2Geog,
     _marker: PhantomData<&'a [u8]>,
