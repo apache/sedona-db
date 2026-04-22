@@ -18,7 +18,8 @@
 use std::sync::Arc;
 
 use arrow_array::ArrayRef;
-use datafusion_common::{exec_datafusion_err, JoinType, Result};
+use datafusion_common::{exec_datafusion_err, not_impl_err, JoinType, Result};
+use datafusion_physical_plan::ColumnarValue;
 use geo_index::rtree::util::f64_box_to_f32;
 use geo_types::{coord, Rect};
 use sedona_expr::statistics::GeoStatistics;
@@ -86,7 +87,15 @@ impl EvaluatedGeometryArrayFactory for GeographyEvaluatedArrayFactory {
         &self,
         geometry_array: ArrayRef,
         sedona_type: &SedonaType,
+        distance_columnar_value: Option<&ColumnarValue>,
     ) -> Result<EvaluatedGeometryArray> {
+        // We don't support expansion yet
+        if distance_columnar_value.is_some() {
+            return not_impl_err!(
+                "rectangle expansion by distance is not yet supported for geography joins"
+            );
+        }
+
         // compute rectangles from wkb using the RectBounder from s2geography
         let num_rows = geometry_array.len();
         let mut bounder = RectBounder::new();
