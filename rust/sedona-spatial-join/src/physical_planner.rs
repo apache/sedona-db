@@ -168,7 +168,7 @@ fn should_swap_join_order(
 ///   the current `left` will become `right` (probe) after swap, so we repartition `left`.
 /// - For KNN predicates: `should_swap` is always false, and the probe side is determined by
 ///   `KNNPredicate::probe_side`.
-fn repartition_probe_side(
+pub fn repartition_probe_side(
     mut physical_left: Arc<dyn ExecutionPlan>,
     mut physical_right: Arc<dyn ExecutionPlan>,
     spatial_predicate: &SpatialPredicate,

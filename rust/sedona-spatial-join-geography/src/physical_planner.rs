@@ -26,7 +26,7 @@ use sedona_query_planner::{
     spatial_predicate::{RelationPredicate, SpatialPredicate, SpatialRelationType},
 };
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
-use sedona_spatial_join::SpatialJoinExec;
+use sedona_spatial_join::{physical_planner::repartition_probe_side, SpatialJoinExec};
 
 use crate::join_provider::GeographyJoinProvider;
 
@@ -57,25 +57,40 @@ impl SpatialJoinPhysicalPlanner for GeographySpatialJoinPhysicalPlanner {
     ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
         if !is_spatial_predicate_supported(
             args.spatial_predicate,
-            args.physical_left.schema().as_ref(),
-            args.physical_right.schema().as_ref(),
+            &args.physical_left.schema(),
+            &args.physical_right.schema(),
         )? {
             return Ok(None);
         }
 
+        // Repartition the probe side when enabled. This breaks spatial locality in sorted/skewed
+        // datasets, leading to more balanced workloads during out-of-core spatial join.
+        // We determine which pre-swap input will be the probe AFTER any potential swap, and
+        // repartition it here. swap_inputs() will then carry the RepartitionExec to the correct
+        // child position.
+        let (physical_left, physical_right) = if args.join_options.repartition_probe_side {
+            repartition_probe_side(
+                args.physical_left.clone(),
+                args.physical_right.clone(),
+                args.spatial_predicate,
+                false,
+            )?
+        } else {
+            (args.physical_left.clone(), args.physical_right.clone())
+        };
+
         let exec = SpatialJoinExec::try_new(
-            args.physical_left.clone(),
-            args.physical_right.clone(),
+            physical_left,
+            physical_right,
             args.spatial_predicate.clone(),
             args.remainder.cloned(),
             args.join_type,
             None,
             args.join_options,
-        )?;
+        )?
+        .with_spatial_join_provider(Arc::new(GeographyJoinProvider));
 
-        Ok(Some(Arc::new(exec.with_spatial_join_provider(Arc::new(
-            GeographyJoinProvider,
-        )))))
+        Ok(Some(Arc::new(exec) as Arc<dyn ExecutionPlan>))
     }
 }
 
