@@ -51,6 +51,11 @@ impl RectBounder {
         unsafe { s2geog_call!(S2GeogRectBounderBound(self.ptr, geog.as_ptr())) }
     }
 
+    /// Perform the minimum expansion required to satisfy a distance expansion
+    pub fn expand_by_distance(&mut self, distance_meters: f64) {
+        unsafe { S2GeogRectBounderExpandByDistance(self.ptr, distance_meters) }
+    }
+
     /// Check if the bounder is empty (no geometries or only empty geometries
     /// have been added)
     pub fn is_empty(&self) -> bool {
