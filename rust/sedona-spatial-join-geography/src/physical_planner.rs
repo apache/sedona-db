@@ -110,6 +110,7 @@ pub fn is_spatial_predicate_supported(
                 relation_type,
                 SpatialRelationType::Intersects
                     | SpatialRelationType::Contains
+                    | SpatialRelationType::Within
                     | SpatialRelationType::Equals
             ) {
                 return Ok(true);
