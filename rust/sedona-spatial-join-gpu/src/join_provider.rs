@@ -19,6 +19,8 @@ use crate::index::GpuSpatialIndexBuilder;
 use crate::options::GpuOptions;
 use arrow_array::ArrayRef;
 use arrow_schema::SchemaRef;
+use datafusion::logical_expr::ColumnarValue;
+use datafusion_common::not_impl_err;
 use datafusion_common::JoinType;
 use datafusion_common::Result;
 use geo_index::rtree::util::f64_box_to_f32;
@@ -93,7 +95,14 @@ impl EvaluatedGeometryArrayFactory for DefaultGeometryArrayFactory {
         &self,
         geometry_array: ArrayRef,
         sedona_type: &SedonaType,
+        distance_columnar_value: Option<&ColumnarValue>,
     ) -> Result<EvaluatedGeometryArray> {
+        if distance_columnar_value.is_some() {
+            return not_impl_err!(
+                "rectangle expansion by distance is not yet supported for GPU joins"
+            );
+        }
+
         let num_rows = geometry_array.len();
         let mut rect_vec = Vec::with_capacity(num_rows);
         geometry_array.iter_as_wkb(sedona_type, num_rows, |wkb_opt| {
