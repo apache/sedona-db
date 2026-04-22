@@ -17,7 +17,7 @@
 use core::fmt;
 use std::{mem::transmute, sync::Arc};
 
-use arrow::compute::interleave as arrow_interleave;
+use arrow::compute::{concat as arrow_concat, interleave as arrow_interleave};
 use arrow_array::{Array, ArrayRef, Float64Array, RecordBatch};
 use arrow_schema::DataType;
 use datafusion_common::{utils::proxy::VecAllocExt, JoinSide, Result, ScalarValue};
@@ -201,49 +201,51 @@ impl EvaluatedGeometryArray {
         self
     }
 
-    /// Build a new `EvaluatedGeometryArray` by interleaving rows from the provided
-    /// source arrays according to `indices`. Each `(batch_idx, row_idx)` pair
-    /// identifies a source array and row.
+    /// Build a new `EvaluatedGeometryArray` by concatenating the provided source arrays in order.
     ///
-    /// The rectangles are gathered directly from the source arrays (no
-    /// recomputation), while the WKB references are recomputed from the
-    /// interleaved Arrow array since their lifetimes are tied to it.
-    pub fn interleave(
-        geom_arrays: &[&EvaluatedGeometryArray],
-        indices: &[(usize, usize)],
-    ) -> Result<Self> {
+    /// The rectangles are appended in source order without recomputation, while the WKB references
+    /// are rebuilt from the concatenated Arrow array since their lifetimes are tied to it.
+    pub fn concat(geom_arrays: &[&EvaluatedGeometryArray]) -> Result<Self> {
         if geom_arrays.is_empty() {
-            return sedona_internal_err!("interleave requires at least one geometry array");
+            return sedona_internal_err!("concat requires at least one geometry array");
         }
 
         let sedona_type = &geom_arrays[0].sedona_type;
+        for geom in geom_arrays.iter().skip(1) {
+            if geom.sedona_type != *sedona_type {
+                return sedona_internal_err!(
+                    "concat requires all geometry arrays to have the same sedona type"
+                );
+            }
+        }
 
-        // Interleave the Arrow geometry arrays.
         let value_refs: Vec<&dyn Array> = geom_arrays
             .iter()
             .map(|g| g.geometry_array.as_ref())
             .collect();
-        let geometry_array = arrow_interleave(&value_refs, indices)?;
+        let geometry_array = arrow_concat(&value_refs)?;
 
-        // Gather rects by index — no recomputation.
-        let rects: Vec<Option<Rect<f32>>> = indices
-            .iter()
-            .map(|&(batch_idx, row_idx)| geom_arrays[batch_idx].rects[row_idx])
-            .collect();
+        let total_len: usize = geom_arrays.iter().map(|g| g.rects.len()).sum();
+        let mut rects = Vec::with_capacity(total_len);
+        for geom in geom_arrays {
+            rects.extend(geom.rects.iter().cloned());
+        }
 
         let mut out = Self::try_new_with_rects(geometry_array, rects, sedona_type)?;
-
-        // Interleave distance columns.
-        out.distance = Self::interleave_distance(geom_arrays, indices)?;
+        out.distance = Self::concat_distance(geom_arrays)?;
 
         Ok(out)
     }
 
-    /// Interleave the optional distance metadata across source geometry arrays.
-    pub(crate) fn interleave_distance(
+    /// Merge optional distance metadata across source geometry arrays using the provided
+    /// array-combining function.
+    fn merge_distance<F>(
         geom_arrays: &[&EvaluatedGeometryArray],
-        indices: &[(usize, usize)],
-    ) -> Result<Option<ColumnarValue>> {
+        build_array: F,
+    ) -> Result<Option<ColumnarValue>>
+    where
+        F: FnOnce(&[&dyn Array]) -> Result<ArrayRef>,
+    {
         let mut first_value: Option<&ColumnarValue> = None;
         let mut needs_array = false;
         let mut all_null = true;
@@ -314,8 +316,61 @@ impl EvaluatedGeometryArray {
         }
 
         let array_refs: Vec<&dyn Array> = arrays.iter().map(|a| a.as_ref()).collect();
-        let array = arrow_interleave(&array_refs, indices)?;
+        let array = build_array(&array_refs)?;
         Ok(Some(ColumnarValue::Array(array)))
+    }
+
+    /// Concatenate the optional distance metadata across source geometry arrays.
+    pub(crate) fn concat_distance(
+        geom_arrays: &[&EvaluatedGeometryArray],
+    ) -> Result<Option<ColumnarValue>> {
+        Self::merge_distance(geom_arrays, |arrays| Ok(arrow_concat(arrays)?))
+    }
+
+    /// Build a new `EvaluatedGeometryArray` by interleaving rows from the provided
+    /// source arrays according to `indices`. Each `(batch_idx, row_idx)` pair
+    /// identifies a source array and row.
+    ///
+    /// The rectangles are gathered directly from the source arrays (no
+    /// recomputation), while the WKB references are recomputed from the
+    /// interleaved Arrow array since their lifetimes are tied to it.
+    pub fn interleave(
+        geom_arrays: &[&EvaluatedGeometryArray],
+        indices: &[(usize, usize)],
+    ) -> Result<Self> {
+        if geom_arrays.is_empty() {
+            return sedona_internal_err!("interleave requires at least one geometry array");
+        }
+
+        let sedona_type = &geom_arrays[0].sedona_type;
+
+        // Interleave the Arrow geometry arrays.
+        let value_refs: Vec<&dyn Array> = geom_arrays
+            .iter()
+            .map(|g| g.geometry_array.as_ref())
+            .collect();
+        let geometry_array = arrow_interleave(&value_refs, indices)?;
+
+        // Gather rects by index — no recomputation.
+        let rects: Vec<Option<Rect<f32>>> = indices
+            .iter()
+            .map(|&(batch_idx, row_idx)| geom_arrays[batch_idx].rects[row_idx])
+            .collect();
+
+        let mut out = Self::try_new_with_rects(geometry_array, rects, sedona_type)?;
+
+        // Interleave distance columns.
+        out.distance = Self::interleave_distance(geom_arrays, indices)?;
+
+        Ok(out)
+    }
+
+    /// Interleave the optional distance metadata across source geometry arrays.
+    pub(crate) fn interleave_distance(
+        geom_arrays: &[&EvaluatedGeometryArray],
+        indices: &[(usize, usize)],
+    ) -> Result<Option<ColumnarValue>> {
+        Self::merge_distance(geom_arrays, |arrays| Ok(arrow_interleave(arrays, indices)?))
     }
 
     /// Type of geometry_array
@@ -627,6 +682,100 @@ mod test {
         let mut geom = EvaluatedGeometryArray::try_new(geom_array, &WKB_GEOMETRY)?;
         geom.distance = distance;
         Ok(geom)
+    }
+
+    #[test]
+    fn concat_empty_input_errors() {
+        let result = EvaluatedGeometryArray::concat(&[]);
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(e
+                .to_string()
+                .contains("concat requires at least one geometry array"));
+        }
+    }
+
+    #[test]
+    fn concat_preserves_order_and_distance() -> Result<()> {
+        use arrow_array::Float64Array;
+
+        let wkbs1 = vec![
+            wkb_point((10.0, 10.0)).unwrap(),
+            wkb_point((20.0, 20.0)).unwrap(),
+        ];
+        let wkbs2 = vec![wkb_point((30.0, 30.0)).unwrap()];
+
+        let array: ArrayRef = Arc::new(Float64Array::from(vec![10.0]));
+        let geom1 = make_geom_array_with_distance(
+            wkbs1,
+            Some(ColumnarValue::Scalar(ScalarValue::Float64(Some(5.0)))),
+        )?;
+        let geom2 = make_geom_array_with_distance(wkbs2, Some(ColumnarValue::Array(array)))?;
+
+        let geom_arrays = vec![&geom1, &geom2];
+        let result = EvaluatedGeometryArray::concat(&geom_arrays)?;
+
+        assert_eq!(result.geometry_array().len(), 3);
+        assert_eq!(result.rects().len(), 3);
+        assert_eq!(result.rects()[0].unwrap().min().x, 10.0);
+        assert_eq!(result.rects()[1].unwrap().min().x, 20.0);
+        assert_eq!(result.rects()[2].unwrap().min().x, 30.0);
+
+        let distance = result.distance().as_ref().unwrap();
+        match distance {
+            ColumnarValue::Array(array) => {
+                let float_array = array.as_any().downcast_ref::<Float64Array>().unwrap();
+                assert_eq!(float_array.len(), 3);
+                assert_eq!(float_array.value(0), 5.0);
+                assert_eq!(float_array.value(1), 5.0);
+                assert_eq!(float_array.value(2), 10.0);
+            }
+            _ => panic!("expected concatenated distance array"),
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn concat_uniform_scalar_distance_stays_scalar() -> Result<()> {
+        let wkbs1 = vec![wkb_point((10.0, 10.0)).unwrap()];
+        let wkbs2 = vec![wkb_point((20.0, 20.0)).unwrap()];
+
+        let scalar = ScalarValue::Float64(Some(7.5));
+        let geom1 =
+            make_geom_array_with_distance(wkbs1, Some(ColumnarValue::Scalar(scalar.clone())))?;
+        let geom2 =
+            make_geom_array_with_distance(wkbs2, Some(ColumnarValue::Scalar(scalar.clone())))?;
+
+        let geom_arrays = vec![&geom1, &geom2];
+        let result = EvaluatedGeometryArray::concat(&geom_arrays)?;
+
+        assert_eq!(result.geometry_array().len(), 2);
+        assert!(matches!(result.distance(), Some(ColumnarValue::Scalar(_))));
+        if let Some(ColumnarValue::Scalar(value)) = result.distance() {
+            assert_eq!(*value, scalar);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn concat_inconsistent_distance_metadata_errors() -> Result<()> {
+        let wkbs1 = vec![wkb_point((10.0, 10.0)).unwrap()];
+        let wkbs2 = vec![wkb_point((20.0, 20.0)).unwrap()];
+
+        let geom1 = make_geom_array_with_distance(
+            wkbs1,
+            Some(ColumnarValue::Scalar(ScalarValue::Float64(Some(5.0)))),
+        )?;
+        let geom2 = make_geom_array_with_distance(wkbs2, None)?;
+
+        let geom_arrays = vec![&geom1, &geom2];
+        let result = EvaluatedGeometryArray::concat(&geom_arrays);
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(e.to_string().contains("Inconsistent distance metadata"));
+        }
+        Ok(())
     }
 
     #[test]

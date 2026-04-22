@@ -132,24 +132,13 @@ fn concat_evaluated_batches(batches: &[EvaluatedBatch]) -> Result<EvaluatedBatch
         return sedona_internal_err!("Cannot concatenate empty list of EvaluatedBatches");
     }
 
-    // 1. Concatenate the underlying Arrow RecordBatches
+    // Concatenate the underlying Arrow RecordBatches
     let schema = batches[0].schema();
     let record_batches: Vec<&RecordBatch> = batches.iter().map(|b| &b.batch).collect();
     let concatenated_batch = concat_batches(&schema, record_batches)?;
-
-    // 2. Prepare for Geometry Interleaving
-    // We need to create a list of (batch_index, row_index) for every row in order
-    let mut indices = Vec::with_capacity(concatenated_batch.num_rows());
-    for (batch_idx, batch) in batches.iter().enumerate() {
-        for row_idx in 0..batch.num_rows() {
-            indices.push((batch_idx, row_idx));
-        }
-    }
-
-    // 3. Concatenate Geometry Arrays using the interleave method
+    // Concatenate Geometry Arrays using the interleave method
     let geom_arrays: Vec<&EvaluatedGeometryArray> = batches.iter().map(|b| &b.geom_array).collect();
-
-    let concatenated_geom_array = EvaluatedGeometryArray::interleave(&geom_arrays, &indices)?;
+    let concatenated_geom_array = EvaluatedGeometryArray::concat(&geom_arrays)?;
 
     Ok(EvaluatedBatch {
         batch: concatenated_batch,
