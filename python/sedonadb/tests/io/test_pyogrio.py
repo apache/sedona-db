@@ -131,6 +131,22 @@ def test_read_ogr_filter(con):
         )
 
 
+def test_read_ogr_layer_selection(con):
+    series = geopandas.GeoSeries.from_xy([0, 1], [1, 2], crs="EPSG:3857")
+    gdf = geopandas.GeoDataFrame({"val": ["a", "b"], "wkb_geometry": series})
+    gdf = gdf.set_geometry(gdf["wkb_geometry"])
+
+    with tempfile.TemporaryDirectory() as td:
+        gpkg_path = f"{td}/test.gpkg"
+        gdf.to_file(gpkg_path, layer="my_layer")
+
+        # Reading with the correct layer name should work
+        geopandas.testing.assert_geodataframe_equal(
+            con.read_pyogrio(gpkg_path, options={"layer": "my_layer"}).to_pandas(),
+            gdf,
+        )
+
+
 def test_read_ogr_file_not_found(con):
     with pytest.raises(
         sedonadb._lib.SedonaError, match="Can't infer schema for zero objects"

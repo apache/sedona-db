@@ -284,8 +284,10 @@ class SedonaContext:
             table_paths: A str, Path, or iterable of paths containing URLs or
                 paths. Globs (i.e., `path/*.gpkg`), directories, and zipped
                 versions of otherwise readable files are supported.
-            options: An optional mapping of key/value pairs (open options)
-                passed to GDAL/OGR.
+            options: An optional mapping of key/value pairs passed to
+                pyogrio/GDAL. Supports pyogrio keyword arguments (e.g.,
+                ``layer``, ``where``, ``sql``, ``max_features``) as well
+                as GDAL driver-specific dataset open options.
             extension: An optional file extension (e.g., `"fgb"`) used when
                 `table_paths` specifies one or more directories or a glob
                 that does not enforce a file extension.

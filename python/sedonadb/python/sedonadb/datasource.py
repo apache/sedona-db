@@ -164,10 +164,11 @@ class PyogrioFormatSpec(ExternalFormatSpec):
         else:
             bbox = None
 
+        ogr_kwargs = {**self._options}
+        ogr_kwargs.update(columns=columns, batch_size=batch_size, bbox=bbox)
+
         return PyogrioReaderShelter(
-            pyogrio.raw.ogr_open_arrow(
-                ogr_src, {}, columns=columns, batch_size=batch_size, bbox=bbox
-            ),
+            pyogrio.raw.open_arrow(ogr_src, **ogr_kwargs),
             columns,
         )
 
