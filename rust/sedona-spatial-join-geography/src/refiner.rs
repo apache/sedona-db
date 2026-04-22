@@ -82,9 +82,17 @@ impl IndexQueryResultRefiner for GeographyRefiner {
 
         // TODO: thread local factories?
         let mut factory = GeographyFactory::new();
-        let probe_geog = factory
+        let mut probe_geog = factory
             .from_wkb(probe.buf())
             .map_err(|e| exec_datafusion_err!("{e}"))?;
+
+        // Crude heuristic used by the S2Loop (build an index after 20 unindexed
+        // contains queries even for small looops).
+        if probe.buf().len() > (32 * 2 * size_of::<f64>()) || index_query_results.len() > 20 {
+            probe_geog
+                .prepare()
+                .map_err(|e| exec_datafusion_err!("{e}"))?;
+        }
 
         // TODO: exploit preparedness in the same way as the tg geometries
         let mut build_geog = Geography::new();
