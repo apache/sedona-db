@@ -18,9 +18,15 @@ use arrow_schema::{DataType, Field, FieldRef, Fields};
 
 /// Schema for storing N-dimensional raster data in Apache Arrow format.
 ///
-/// Each raster has a CRS, an affine transform, explicit spatial dimension names
-/// (`x_dim`, `y_dim`), and a list of bands. Each band is an N-D chunk with named
-/// dimensions, a shape, and optional strides for zero-copy slicing.
+/// Each raster has a CRS, an affine transform, a list of spatial dimension
+/// names (`spatial_dims`) and sizes (`spatial_shape`), and a list of bands.
+/// Each band is an N-D chunk with named dimensions, a shape, and optional
+/// strides for zero-copy slicing.
+///
+/// `spatial_dims` + `spatial_shape` are the raster-level source of truth for
+/// the spatial grid — today length 2 (`["x","y"]`, `[width, height]`),
+/// Z-ready for a future 3D phase. All bands must contain every name in
+/// `spatial_dims` in their own `dim_names`, with matching sizes.
 ///
 /// Legacy 2D rasters are represented as bands with `dim_names=["y","x"]` and
 /// `shape=[height, width]`.
@@ -33,8 +39,8 @@ impl RasterSchema {
         Fields::from(vec![
             Field::new(column::CRS, Self::crs_type(), true),
             Field::new(column::TRANSFORM, Self::transform_type(), false),
-            Field::new(column::X_DIM, DataType::Utf8View, false),
-            Field::new(column::Y_DIM, DataType::Utf8View, false),
+            Field::new(column::SPATIAL_DIMS, Self::spatial_dims_type(), false),
+            Field::new(column::SPATIAL_SHAPE, Self::spatial_shape_type(), false),
             Field::new(column::BANDS, Self::bands_type(), true),
         ])
     }
@@ -43,6 +49,19 @@ impl RasterSchema {
     /// `[origin_x, scale_x, skew_x, origin_y, skew_y, scale_y]`
     pub fn transform_type() -> DataType {
         DataType::List(FieldRef::new(Field::new("item", DataType::Float64, false)))
+    }
+
+    /// Spatial dimension names schema — list of `Utf8View` strings, one per
+    /// spatial axis. Today always `["x","y"]`; becomes `["x","y","z"]` if a
+    /// future phase adds Z support.
+    pub fn spatial_dims_type() -> DataType {
+        DataType::List(FieldRef::new(Field::new("item", DataType::Utf8View, false)))
+    }
+
+    /// Spatial shape schema — list of `Int64` sizes in the same order as
+    /// `spatial_dims`. Today `[width, height]`.
+    pub fn spatial_shape_type() -> DataType {
+        DataType::List(FieldRef::new(Field::new("item", DataType::Int64, false)))
     }
 
     /// Bands list schema
@@ -167,8 +186,8 @@ impl BandDataType {
 pub mod raster_indices {
     pub const CRS: usize = 0;
     pub const TRANSFORM: usize = 1;
-    pub const X_DIM: usize = 2;
-    pub const Y_DIM: usize = 3;
+    pub const SPATIAL_DIMS: usize = 2;
+    pub const SPATIAL_SHAPE: usize = 3;
     pub const BANDS: usize = 4;
 }
 
@@ -190,8 +209,8 @@ pub mod column {
     // Top-level raster fields
     pub const CRS: &str = "crs";
     pub const TRANSFORM: &str = "transform";
-    pub const X_DIM: &str = "x_dim";
-    pub const Y_DIM: &str = "y_dim";
+    pub const SPATIAL_DIMS: &str = "spatial_dims";
+    pub const SPATIAL_SHAPE: &str = "spatial_shape";
     pub const BANDS: &str = "bands";
     pub const BAND: &str = "band";
 
@@ -218,8 +237,8 @@ mod tests {
         assert_eq!(fields.len(), 5);
         assert_eq!(fields[0].name(), column::CRS);
         assert_eq!(fields[1].name(), column::TRANSFORM);
-        assert_eq!(fields[2].name(), column::X_DIM);
-        assert_eq!(fields[3].name(), column::Y_DIM);
+        assert_eq!(fields[2].name(), column::SPATIAL_DIMS);
+        assert_eq!(fields[3].name(), column::SPATIAL_SHAPE);
         assert_eq!(fields[4].name(), column::BANDS);
     }
 
@@ -239,14 +258,14 @@ mod tests {
             "Raster TRANSFORM index mismatch"
         );
         assert_eq!(
-            raster_fields[raster_indices::X_DIM].name(),
-            column::X_DIM,
-            "Raster X_DIM index mismatch"
+            raster_fields[raster_indices::SPATIAL_DIMS].name(),
+            column::SPATIAL_DIMS,
+            "Raster SPATIAL_DIMS index mismatch"
         );
         assert_eq!(
-            raster_fields[raster_indices::Y_DIM].name(),
-            column::Y_DIM,
-            "Raster Y_DIM index mismatch"
+            raster_fields[raster_indices::SPATIAL_SHAPE].name(),
+            column::SPATIAL_SHAPE,
+            "Raster SPATIAL_SHAPE index mismatch"
         );
         assert_eq!(
             raster_fields[raster_indices::BANDS].name(),

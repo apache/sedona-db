@@ -339,14 +339,14 @@ pub fn assert_raster_equal(raster1: &impl RasterRef, raster2: &impl RasterRef) {
         "Raster transforms do not match"
     );
     assert_eq!(
-        raster1.x_dim(),
-        raster2.x_dim(),
-        "Raster x_dim does not match"
+        raster1.spatial_dims(),
+        raster2.spatial_dims(),
+        "Raster spatial_dims do not match"
     );
     assert_eq!(
-        raster1.y_dim(),
-        raster2.y_dim(),
-        "Raster y_dim does not match"
+        raster1.spatial_shape(),
+        raster2.spatial_shape(),
+        "Raster spatial_shape does not match"
     );
     assert_eq!(
         raster1.num_bands(),

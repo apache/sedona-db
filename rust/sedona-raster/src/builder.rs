@@ -41,7 +41,7 @@ use arrow_schema::DataType;
 ///
 /// let mut builder = RasterBuilder::new(1);
 ///
-/// // 2D raster convenience: sets transform, x_dim="x", y_dim="y"
+/// // 2D raster convenience: sets transform, spatial_dims=["x","y"], spatial_shape=[w,h]
 /// builder.start_raster_2d(100, 100, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, Some("EPSG:4326")).unwrap();
 ///
 /// // 2D band convenience: sets dim_names=["y","x"], shape=[h,w], contiguous strides
@@ -57,8 +57,10 @@ pub struct RasterBuilder {
     crs: StringViewBuilder,
     transform_values: Float64Builder,
     transform_offsets: Vec<i32>,
-    x_dim: StringViewBuilder,
-    y_dim: StringViewBuilder,
+    spatial_dims_values: StringViewBuilder,
+    spatial_dims_offsets: Vec<i32>,
+    spatial_shape_values: Int64Builder,
+    spatial_shape_offsets: Vec<i32>,
 
     // Band fields (flattened across all bands)
     band_name: StringBuilder,
@@ -83,6 +85,12 @@ pub struct RasterBuilder {
     current_width: u64,
     current_height: u64,
 
+    // Per-raster validation state: spatial dims/shape and recorded bands so
+    // finish_raster can check every band matches the top-level spatial grid.
+    current_spatial_dims: Vec<String>,
+    current_spatial_shape: Vec<i64>,
+    current_raster_bands: Vec<(Vec<String>, Vec<u64>)>,
+
     // Track band_data count at the start of each band for finish_band validation
     band_data_count_at_start: usize,
 
@@ -96,8 +104,10 @@ impl RasterBuilder {
             crs: StringViewBuilder::with_capacity(capacity),
             transform_values: Float64Builder::with_capacity(capacity * 6),
             transform_offsets: vec![0],
-            x_dim: StringViewBuilder::with_capacity(capacity),
-            y_dim: StringViewBuilder::with_capacity(capacity),
+            spatial_dims_values: StringViewBuilder::with_capacity(capacity * 2),
+            spatial_dims_offsets: vec![0],
+            spatial_shape_values: Int64Builder::with_capacity(capacity * 2),
+            spatial_shape_offsets: vec![0],
 
             band_name: StringBuilder::with_capacity(capacity, capacity),
             band_dim_names_values: StringBuilder::with_capacity(capacity * 2, capacity * 4),
@@ -118,6 +128,10 @@ impl RasterBuilder {
             current_width: 0,
             current_height: 0,
 
+            current_spatial_dims: Vec::new(),
+            current_spatial_shape: Vec::new(),
+            current_raster_bands: Vec::new(),
+
             band_data_count_at_start: 0,
 
             raster_validity: BooleanBuilder::with_capacity(capacity),
@@ -128,13 +142,26 @@ impl RasterBuilder {
     ///
     /// `transform` must be a 6-element GDAL GeoTransform:
     /// `[origin_x, scale_x, skew_x, origin_y, skew_y, scale_y]`
+    ///
+    /// `spatial_dims` names the raster-level spatial dimensions (today always
+    /// length 2, e.g. `["x","y"]`). `spatial_shape` gives their sizes in the
+    /// same order. Every band added to this raster must contain each name in
+    /// `spatial_dims` within its own `dim_names`, with matching size.
     pub fn start_raster(
         &mut self,
         transform: &[f64; 6],
-        x_dim: &str,
-        y_dim: &str,
+        spatial_dims: &[&str],
+        spatial_shape: &[i64],
         crs: Option<&str>,
     ) -> Result<(), ArrowError> {
+        if spatial_dims.len() != spatial_shape.len() {
+            return Err(ArrowError::InvalidArgumentError(format!(
+                "spatial_dims.len() ({}) must equal spatial_shape.len() ({})",
+                spatial_dims.len(),
+                spatial_shape.len()
+            )));
+        }
+
         // Transform
         for &v in transform {
             self.transform_values.append_value(v);
@@ -142,9 +169,18 @@ impl RasterBuilder {
         let next = *self.transform_offsets.last().unwrap() + 6;
         self.transform_offsets.push(next);
 
-        // Spatial dim names
-        self.x_dim.append_value(x_dim);
-        self.y_dim.append_value(y_dim);
+        // Spatial dims + shape
+        for d in spatial_dims {
+            self.spatial_dims_values.append_value(d);
+        }
+        let next = *self.spatial_dims_offsets.last().unwrap() + spatial_dims.len() as i32;
+        self.spatial_dims_offsets.push(next);
+
+        for &s in spatial_shape {
+            self.spatial_shape_values.append_value(s);
+        }
+        let next = *self.spatial_shape_offsets.last().unwrap() + spatial_shape.len() as i32;
+        self.spatial_shape_offsets.push(next);
 
         // CRS
         match crs {
@@ -153,6 +189,12 @@ impl RasterBuilder {
         }
 
         self.current_band_count = 0;
+        self.current_spatial_dims = spatial_dims.iter().map(|s| s.to_string()).collect();
+        self.current_spatial_shape = spatial_shape.to_vec();
+        self.current_raster_bands.clear();
+        // Preserve legacy current_width/current_height for start_band_2d (set
+        // by start_raster_2d). Callers using this direct entry point drive
+        // their own shapes via start_band.
         self.current_width = 0;
         self.current_height = 0;
 
@@ -161,8 +203,8 @@ impl RasterBuilder {
 
     /// Convenience: start a 2D raster with the legacy 8-parameter interface.
     ///
-    /// Sets `x_dim="x"`, `y_dim="y"`, and builds the 6-element GDAL transform
-    /// from the individual parameters.
+    /// Sets `spatial_dims=["x","y"]`, `spatial_shape=[width, height]`, and
+    /// builds the 6-element GDAL transform from the individual parameters.
     #[allow(clippy::too_many_arguments)]
     pub fn start_raster_2d(
         &mut self,
@@ -177,7 +219,7 @@ impl RasterBuilder {
         crs: Option<&str>,
     ) -> Result<(), ArrowError> {
         let transform = [origin_x, scale_x, skew_x, origin_y, skew_y, scale_y];
-        self.start_raster(&transform, "x", "y", crs)?;
+        self.start_raster(&transform, &["x", "y"], &[width as i64, height as i64], crs)?;
         self.current_width = width;
         self.current_height = height;
         Ok(())
@@ -264,6 +306,12 @@ impl RasterBuilder {
         self.current_band_count += 1;
         self.band_data_count_at_start = self.band_data.len();
 
+        // Record this band's dims/shape for strict validation at finish_raster.
+        self.current_raster_bands.push((
+            dim_names.iter().map(|s| s.to_string()).collect(),
+            shape.to_vec(),
+        ));
+
         Ok(())
     }
 
@@ -313,10 +361,39 @@ impl RasterBuilder {
     }
 
     /// Finish all bands for the current raster.
+    ///
+    /// Strictly validates every band added since `start_raster`: each name in
+    /// the top-level `spatial_dims` must appear in the band's own `dim_names`
+    /// with a size matching the corresponding entry in `spatial_shape`.
     pub fn finish_raster(&mut self) -> Result<(), ArrowError> {
+        for (band_idx, (band_dims, band_shape)) in self.current_raster_bands.iter().enumerate() {
+            for (spatial_idx, spatial_dim) in self.current_spatial_dims.iter().enumerate() {
+                let pos = band_dims
+                    .iter()
+                    .position(|d| d == spatial_dim)
+                    .ok_or_else(|| {
+                        ArrowError::InvalidArgumentError(format!(
+                            "Band {band_idx} is missing spatial dimension {spatial_dim:?} \
+                         (band dim_names = {band_dims:?})"
+                        ))
+                    })?;
+                let expected = self.current_spatial_shape[spatial_idx];
+                let actual = band_shape[pos] as i64;
+                if actual != expected {
+                    return Err(ArrowError::InvalidArgumentError(format!(
+                        "Band {band_idx} dimension {spatial_dim:?} has size {actual}, \
+                         expected {expected} from top-level spatial_shape"
+                    )));
+                }
+            }
+        }
+
         let next_offset = self.band_offsets.last().unwrap() + self.current_band_count;
         self.band_offsets.push(next_offset);
         self.raster_validity.append_value(true);
+        self.current_raster_bands.clear();
+        self.current_spatial_dims.clear();
+        self.current_spatial_shape.clear();
         Ok(())
     }
 
@@ -329,9 +406,11 @@ impl RasterBuilder {
         let next = *self.transform_offsets.last().unwrap() + 6;
         self.transform_offsets.push(next);
 
-        // Spatial dims: defaults
-        self.x_dim.append_value("x");
-        self.y_dim.append_value("y");
+        // Spatial dims + shape: empty list for null rasters.
+        let next = *self.spatial_dims_offsets.last().unwrap();
+        self.spatial_dims_offsets.push(next);
+        let next = *self.spatial_shape_offsets.last().unwrap();
+        self.spatial_shape_offsets.push(next);
 
         // CRS: null
         self.crs.append_null();
@@ -360,6 +439,37 @@ impl RasterBuilder {
             transform_field,
             transform_offsets,
             Arc::new(transform_values),
+            None,
+        );
+
+        // Build spatial_dims list
+        let spatial_dims_values = self.spatial_dims_values.finish();
+        let spatial_dims_offsets = OffsetBuffer::new(ScalarBuffer::from(self.spatial_dims_offsets));
+        let DataType::List(spatial_dims_field) = RasterSchema::spatial_dims_type() else {
+            return Err(ArrowError::SchemaError(
+                "Expected list type for spatial_dims".to_string(),
+            ));
+        };
+        let spatial_dims_list = ListArray::new(
+            spatial_dims_field,
+            spatial_dims_offsets,
+            Arc::new(spatial_dims_values),
+            None,
+        );
+
+        // Build spatial_shape list
+        let spatial_shape_values = self.spatial_shape_values.finish();
+        let spatial_shape_offsets =
+            OffsetBuffer::new(ScalarBuffer::from(self.spatial_shape_offsets));
+        let DataType::List(spatial_shape_field) = RasterSchema::spatial_shape_type() else {
+            return Err(ArrowError::SchemaError(
+                "Expected list type for spatial_shape".to_string(),
+            ));
+        };
+        let spatial_shape_list = ListArray::new(
+            spatial_shape_field,
+            spatial_shape_offsets,
+            Arc::new(spatial_shape_values),
             None,
         );
 
@@ -439,8 +549,8 @@ impl RasterBuilder {
         let raster_arrays: Vec<ArrayRef> = vec![
             Arc::new(self.crs.finish()),
             Arc::new(transform_list),
-            Arc::new(self.x_dim.finish()),
-            Arc::new(self.y_dim.finish()),
+            Arc::new(spatial_dims_list),
+            Arc::new(spatial_shape_list),
             Arc::new(bands_list),
         ];
 
@@ -565,7 +675,9 @@ mod tests {
     fn test_nd_band() {
         let mut builder = RasterBuilder::new(1);
         let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
-        builder.start_raster(&transform, "x", "y", None).unwrap();
+        builder
+            .start_raster(&transform, &["x", "y"], &[5, 4], None)
+            .unwrap();
 
         // 3D band: [time=3, y=4, x=5]
         builder
@@ -610,7 +722,12 @@ mod tests {
         let mut builder = RasterBuilder::new(1);
         let transform = [10.0, 0.01, 0.0, 50.0, 0.0, -0.01];
         builder
-            .start_raster(&transform, "longitude", "latitude", Some("EPSG:4326"))
+            .start_raster(
+                &transform,
+                &["longitude", "latitude"],
+                &[360, 180],
+                Some("EPSG:4326"),
+            )
             .unwrap();
         builder
             .start_band(
@@ -644,7 +761,9 @@ mod tests {
         // One 3D band and one 2D band in the same raster
         let mut builder = RasterBuilder::new(1);
         let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
-        builder.start_raster(&transform, "x", "y", None).unwrap();
+        builder
+            .start_raster(&transform, &["x", "y"], &[64, 64], None)
+            .unwrap();
 
         // Band 0: 3D [time=12, y=64, x=64]
         builder
@@ -705,7 +824,9 @@ mod tests {
     fn test_dim_index_lookup() {
         let mut builder = RasterBuilder::new(1);
         let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
-        builder.start_raster(&transform, "x", "y", None).unwrap();
+        builder
+            .start_raster(&transform, &["x", "y"], &[32, 32], None)
+            .unwrap();
         builder
             .start_band(
                 None,
@@ -764,11 +885,16 @@ mod tests {
 
     #[test]
     fn test_nd_buffer_strides_various_types() {
-        let mut builder = RasterBuilder::new(1);
+        // Each raster exercises a different shape; strict spatial-grid
+        // validation forbids mixing bands of disagreeing spatial sizes within
+        // one raster.
+        let mut builder = RasterBuilder::new(3);
         let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
-        builder.start_raster(&transform, "x", "y", None).unwrap();
 
-        // UInt8: element size = 1, shape [3, 4] → strides [4, 1]
+        // Raster 0 — UInt8: element size = 1, shape [3, 4] → strides [4, 1]
+        builder
+            .start_raster(&transform, &["x", "y"], &[4, 3], None)
+            .unwrap();
         builder
             .start_band(
                 None,
@@ -782,8 +908,12 @@ mod tests {
             .unwrap();
         builder.band_data_writer().append_value(vec![0u8; 12]);
         builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
 
-        // Float64: element size = 8, shape [2, 3, 5] → strides [120, 40, 8]
+        // Raster 1 — Float64: element size = 8, shape [2, 3, 5] → strides [120, 40, 8]
+        builder
+            .start_raster(&transform, &["x", "y"], &[5, 3], None)
+            .unwrap();
         builder
             .start_band(
                 None,
@@ -799,38 +929,46 @@ mod tests {
             .band_data_writer()
             .append_value(vec![0u8; 2 * 3 * 5 * 8]);
         builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
 
-        // UInt16: element size = 2, shape [10] → strides [2]
+        // Raster 2 — UInt16: element size = 2, shape [10] → strides [2].
+        // Only has an "x" dim, so declare spatial_dims=["x"].
+        builder
+            .start_raster(&transform, &["x"], &[10], None)
+            .unwrap();
         builder
             .start_band(None, &["x"], &[10], BandDataType::UInt16, None, None, None)
             .unwrap();
         builder.band_data_writer().append_value(vec![0u8; 20]);
         builder.finish_band().unwrap();
-
         builder.finish_raster().unwrap();
+
         let array = builder.finish().unwrap();
         let rasters = RasterStructArray::new(&array);
-        let r = rasters.get(0).unwrap();
 
-        let b0 = r.band(0).unwrap();
-        let buf0 = b0.nd_buffer().unwrap();
-        assert_eq!(buf0.strides, &[4, 1]); // UInt8 [3, 4]
+        let r0 = rasters.get(0).unwrap();
+        let b0 = r0.band(0).unwrap();
+        assert_eq!(b0.nd_buffer().unwrap().strides, &[4, 1]); // UInt8 [3, 4]
 
-        let b1 = r.band(1).unwrap();
-        let buf1 = b1.nd_buffer().unwrap();
-        assert_eq!(buf1.strides, &[120, 40, 8]); // Float64 [2, 3, 5]
+        let r1 = rasters.get(1).unwrap();
+        let b1 = r1.band(0).unwrap();
+        assert_eq!(b1.nd_buffer().unwrap().strides, &[120, 40, 8]); // Float64 [2, 3, 5]
 
-        let b2 = r.band(2).unwrap();
-        let buf2 = b2.nd_buffer().unwrap();
-        assert_eq!(buf2.strides, &[2]); // UInt16 [10]
+        let r2 = rasters.get(2).unwrap();
+        let b2 = r2.band(0).unwrap();
+        assert_eq!(b2.nd_buffer().unwrap().strides, &[2]); // UInt16 [10]
     }
 
     #[test]
     fn test_width_height_no_bands() {
+        // Zero-band raster — used as a "target grid" specification (GDAL warp
+        // pattern). Width/height come from the top-level spatial_shape, not
+        // band(0).
         let mut builder = RasterBuilder::new(1);
         let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
-        builder.start_raster(&transform, "x", "y", None).unwrap();
-        // No bands added
+        builder
+            .start_raster(&transform, &["x", "y"], &[64, 32], None)
+            .unwrap();
         builder.finish_raster().unwrap();
 
         let array = builder.finish().unwrap();
@@ -838,15 +976,17 @@ mod tests {
         let r = rasters.get(0).unwrap();
 
         assert_eq!(r.num_bands(), 0);
-        assert_eq!(r.width(), None);
-        assert_eq!(r.height(), None);
+        assert_eq!(r.width(), Some(64));
+        assert_eq!(r.height(), Some(32));
     }
 
     #[test]
     fn test_band_name_nullable() {
         let mut builder = RasterBuilder::new(1);
         let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
-        builder.start_raster(&transform, "x", "y", None).unwrap();
+        builder
+            .start_raster(&transform, &["x", "y"], &[4, 4], None)
+            .unwrap();
 
         // Named band
         builder
@@ -878,5 +1018,115 @@ mod tests {
         assert_eq!(r.band_name(0), Some("temperature"));
         assert_eq!(r.band_name(1), None); // unnamed
         assert_eq!(r.band_name(99), None); // out of range
+    }
+
+    #[test]
+    fn test_spatial_dims_shape_roundtrip() {
+        let mut builder = RasterBuilder::new(1);
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        builder
+            .start_raster(&transform, &["longitude", "latitude"], &[360, 180], None)
+            .unwrap();
+        builder
+            .start_band(
+                None,
+                &["latitude", "longitude"],
+                &[180, 360],
+                BandDataType::UInt8,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        builder
+            .band_data_writer()
+            .append_value(vec![0u8; 360 * 180]);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+
+        let array = builder.finish().unwrap();
+        let rasters = RasterStructArray::new(&array);
+        let r = rasters.get(0).unwrap();
+
+        assert_eq!(r.spatial_dims(), vec!["longitude", "latitude"]);
+        assert_eq!(r.spatial_shape(), &[360, 180]);
+        assert_eq!(r.x_dim(), "longitude");
+        assert_eq!(r.y_dim(), "latitude");
+        assert_eq!(r.width(), Some(360));
+        assert_eq!(r.height(), Some(180));
+    }
+
+    #[test]
+    fn test_zero_band_raster_roundtrip() {
+        // Zero-band rasters double as "target grid" specifications. They must
+        // round-trip through the builder cleanly.
+        let mut builder = RasterBuilder::new(1);
+        let transform = [10.0, 1.0, 0.0, 20.0, 0.0, -1.0];
+        builder
+            .start_raster(&transform, &["x", "y"], &[128, 64], Some("EPSG:3857"))
+            .unwrap();
+        builder.finish_raster().unwrap();
+
+        let array = builder.finish().unwrap();
+        let rasters = RasterStructArray::new(&array);
+        let r = rasters.get(0).unwrap();
+
+        assert_eq!(r.num_bands(), 0);
+        assert_eq!(r.spatial_dims(), vec!["x", "y"]);
+        assert_eq!(r.spatial_shape(), &[128, 64]);
+        assert_eq!(r.width(), Some(128));
+        assert_eq!(r.height(), Some(64));
+        assert_eq!(r.crs(), Some("EPSG:3857"));
+    }
+
+    #[test]
+    fn test_band_missing_spatial_dim_errors() {
+        let mut builder = RasterBuilder::new(1);
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        builder
+            .start_raster(&transform, &["x", "y"], &[4, 4], None)
+            .unwrap();
+        // Band is missing "y" entirely.
+        builder
+            .start_band(None, &["x"], &[4], BandDataType::UInt8, None, None, None)
+            .unwrap();
+        builder.band_data_writer().append_value(vec![0u8; 4]);
+        builder.finish_band().unwrap();
+
+        let err = builder.finish_raster().unwrap_err();
+        assert!(
+            err.to_string().contains("missing spatial dimension"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_band_spatial_dim_size_mismatch_errors() {
+        let mut builder = RasterBuilder::new(1);
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        builder
+            .start_raster(&transform, &["x", "y"], &[4, 4], None)
+            .unwrap();
+        // Band has "x" and "y" but x-size disagrees with top-level shape.
+        builder
+            .start_band(
+                None,
+                &["y", "x"],
+                &[4, 8],
+                BandDataType::UInt8,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        builder.band_data_writer().append_value(vec![0u8; 32]);
+        builder.finish_band().unwrap();
+
+        let err = builder.finish_raster().unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("has size 8") && msg.contains("expected 4"),
+            "unexpected error: {msg}"
+        );
     }
 }

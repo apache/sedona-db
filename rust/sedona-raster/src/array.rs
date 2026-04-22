@@ -203,16 +203,20 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
         &self.raster_struct_array.transform_values.values()[start..start + 6]
     }
 
-    fn x_dim(&self) -> &str {
-        self.raster_struct_array
-            .x_dim_array
-            .value(self.raster_index)
+    fn spatial_dims(&self) -> Vec<&str> {
+        let offsets = self.raster_struct_array.spatial_dims_list.value_offsets();
+        let start = offsets[self.raster_index] as usize;
+        let end = offsets[self.raster_index + 1] as usize;
+        (start..end)
+            .map(|i| self.raster_struct_array.spatial_dims_values.value(i))
+            .collect()
     }
 
-    fn y_dim(&self) -> &str {
-        self.raster_struct_array
-            .y_dim_array
-            .value(self.raster_index)
+    fn spatial_shape(&self) -> &[i64] {
+        let offsets = self.raster_struct_array.spatial_shape_list.value_offsets();
+        let start = offsets[self.raster_index] as usize;
+        let end = offsets[self.raster_index + 1] as usize;
+        &self.raster_struct_array.spatial_shape_values.values()[start..end]
     }
 }
 
@@ -229,8 +233,10 @@ pub struct RasterStructArray<'a> {
     crs_array: &'a StringViewArray,
     transform_list: &'a ListArray,
     transform_values: &'a Float64Array,
-    x_dim_array: &'a StringViewArray,
-    y_dim_array: &'a StringViewArray,
+    spatial_dims_list: &'a ListArray,
+    spatial_dims_values: &'a StringViewArray,
+    spatial_shape_list: &'a ListArray,
+    spatial_shape_values: &'a Int64Array,
     bands_list: &'a ListArray,
     // Band-level fields (flattened across all bands in all rasters)
     band_name_array: &'a StringArray,
@@ -268,15 +274,25 @@ impl<'a> RasterStructArray<'a> {
             .as_any()
             .downcast_ref::<Float64Array>()
             .unwrap();
-        let x_dim_array = raster_array
-            .column(raster_indices::X_DIM)
+        let spatial_dims_list = raster_array
+            .column(raster_indices::SPATIAL_DIMS)
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .unwrap();
+        let spatial_dims_values = spatial_dims_list
+            .values()
             .as_any()
             .downcast_ref::<StringViewArray>()
             .unwrap();
-        let y_dim_array = raster_array
-            .column(raster_indices::Y_DIM)
+        let spatial_shape_list = raster_array
+            .column(raster_indices::SPATIAL_SHAPE)
             .as_any()
-            .downcast_ref::<StringViewArray>()
+            .downcast_ref::<ListArray>()
+            .unwrap();
+        let spatial_shape_values = spatial_shape_list
+            .values()
+            .as_any()
+            .downcast_ref::<Int64Array>()
             .unwrap();
 
         // Bands list and nested struct
@@ -363,8 +379,10 @@ impl<'a> RasterStructArray<'a> {
             crs_array,
             transform_list,
             transform_values,
-            x_dim_array,
-            y_dim_array,
+            spatial_dims_list,
+            spatial_dims_values,
+            spatial_shape_list,
+            spatial_shape_values,
             bands_list,
             band_name_array,
             band_dim_names_list,

@@ -178,11 +178,11 @@ mod tests {
         fn transform(&self) -> &[f64] {
             &self.transform
         }
-        fn x_dim(&self) -> &str {
-            "x"
+        fn spatial_dims(&self) -> Vec<&str> {
+            vec!["x", "y"]
         }
-        fn y_dim(&self) -> &str {
-            "y"
+        fn spatial_shape(&self) -> &[i64] {
+            &[]
         }
     }
 

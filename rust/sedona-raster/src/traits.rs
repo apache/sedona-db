@@ -54,20 +54,37 @@ pub trait RasterRef {
     /// `[origin_x, scale_x, skew_x, origin_y, skew_y, scale_y]`
     fn transform(&self) -> &[f64];
 
-    /// Name of the X spatial dimension (e.g., "x", "lon", "easting")
-    fn x_dim(&self) -> &str;
+    /// Spatial dimension names, in order (today `["x","y"]`; a future Z phase
+    /// would extend to `["x","y","z"]`). Every band must contain each of these
+    /// names in its own `dim_names`, with matching sizes.
+    fn spatial_dims(&self) -> Vec<&str>;
 
-    /// Name of the Y spatial dimension (e.g., "y", "lat", "northing")
-    fn y_dim(&self) -> &str;
+    /// Spatial dimension sizes, in the same order as `spatial_dims`. Today
+    /// `[width, height]`.
+    fn spatial_shape(&self) -> &[i64];
 
-    /// Width in pixels — size of the X spatial dimension in band(0).
-    fn width(&self) -> Option<u64> {
-        self.band(0).and_then(|b| b.dim_size(self.x_dim()))
+    /// Name of the X spatial dimension (e.g., "x", "lon", "easting").
+    fn x_dim(&self) -> &str {
+        let dims = self.spatial_dims();
+        dims.into_iter().next().unwrap_or("x")
     }
 
-    /// Height in pixels — size of the Y spatial dimension in band(0).
+    /// Name of the Y spatial dimension (e.g., "y", "lat", "northing").
+    fn y_dim(&self) -> &str {
+        let dims = self.spatial_dims();
+        dims.into_iter().nth(1).unwrap_or("y")
+    }
+
+    /// Width in pixels — size of the X spatial dimension from the top-level
+    /// `spatial_shape`.
+    fn width(&self) -> Option<u64> {
+        self.spatial_shape().first().map(|&v| v as u64)
+    }
+
+    /// Height in pixels — size of the Y spatial dimension from the top-level
+    /// `spatial_shape`.
     fn height(&self) -> Option<u64> {
-        self.band(0).and_then(|b| b.dim_size(self.y_dim()))
+        self.spatial_shape().get(1).map(|&v| v as u64)
     }
 
     /// Look up a band by name. Returns None if no band has that name.
