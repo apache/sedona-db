@@ -191,7 +191,7 @@ impl SedonaScalarKernel for RsPixelAsCentroid {
                     let grid_x = (col_x - 1) as f64 + 0.5;
                     let grid_y = (row_y - 1) as f64 + 0.5;
 
-                    let affine = AffineMatrix::from_metadata(raster.metadata());
+                    let affine = AffineMatrix::from_transform(raster.transform());
                     let (wx, wy) = affine.transform(grid_x, grid_y);
 
                     write_wkb_point(&mut builder, (wx, wy))

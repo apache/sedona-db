@@ -24,7 +24,6 @@ use datafusion_common::error::Result;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_raster::traits::RasterRef;
-use sedona_schema::raster::StorageType;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 /// RS_BandPath() scalar UDF implementation
@@ -124,22 +123,25 @@ fn get_band_path(
     match raster_opt {
         None => builder.append_null(),
         Some(raster) => {
-            let bands = raster.bands();
-            let num_bands = bands.len() as i32;
+            let num_bands = raster.num_bands() as i32;
             if band_index < 1 || band_index > num_bands {
                 builder.append_null();
-            } else {
-                let band = bands.band(band_index as usize)?;
-                let band_metadata = band.metadata();
-
-                if band_metadata.storage_type()? == StorageType::OutDbRef {
-                    match band_metadata.outdb_url() {
-                        Some(url) => builder.append_value(url),
-                        None => builder.append_null(),
+            } else if let Some(band) = raster.band((band_index - 1) as usize) {
+                match band.outdb_uri() {
+                    Some(uri) => {
+                        // Strip the URL fragment — it carries loader-internal
+                        // details (band id, chunk coords) that users calling
+                        // RS_BandPath don't want to see.
+                        let path = match uri.rfind('#') {
+                            Some(hash) => &uri[..hash],
+                            None => uri,
+                        };
+                        builder.append_value(path);
                     }
-                } else {
-                    builder.append_null()
+                    None => builder.append_null(),
                 }
+            } else {
+                builder.append_null();
             }
         }
     }
@@ -225,11 +227,11 @@ mod tests {
             .downcast_ref::<StringArray>()
             .expect("Expected StringArray");
 
-        // Raster 0, band 1: OutDbRef -> URL
+        // Raster 0, band 1: OutDbRef → URI
         assert_eq!(string_array.value(0), "s3://bucket/raster_0.tif");
-        // Raster 1: null raster -> null
+        // Raster 1: null raster → null
         assert!(string_array.is_null(1));
-        // Raster 2, band 2: OutDbRef -> URL
+        // Raster 2, band 2: OutDbRef → URI
         assert_eq!(string_array.value(2), "s3://bucket/raster_2.tif");
     }
 
@@ -257,38 +259,33 @@ mod tests {
     }
 
     /// Build a raster array with out-db bands for testing RS_BandPath.
+    /// URIs include a `#band=N` fragment that loaders use to pick the right
+    /// sub-dataset; `RS_BandPath` strips the fragment before returning the
+    /// path to the user.
     /// Returns a StructArray with 3 rasters:
-    ///   [0] OutDbRef band with URL "s3://bucket/raster_0.tif"
+    ///   [0] OutDbRef band with URI "s3://bucket/raster_0.tif#band=1", format "geotiff"
     ///   [1] null raster
-    ///   [2] Two bands: InDb band 1, OutDbRef band 2 with URL "s3://bucket/raster_2.tif"
+    ///   [2] Two bands: InDb band 1, OutDbRef band 2 with URI "s3://bucket/raster_2.tif#band=3", format "geotiff"
     fn build_outdb_rasters() -> arrow_array::StructArray {
         use sedona_raster::builder::RasterBuilder;
-        use sedona_raster::traits::{BandMetadata, RasterMetadata};
-        use sedona_schema::raster::{BandDataType, StorageType};
-
-        let metadata = RasterMetadata {
-            width: 4,
-            height: 4,
-            upperleft_x: 0.0,
-            upperleft_y: 0.0,
-            scale_x: 1.0,
-            scale_y: -1.0,
-            skew_x: 0.0,
-            skew_y: 0.0,
-        };
+        use sedona_schema::raster::BandDataType;
 
         let mut builder = RasterBuilder::new(3);
 
         // Raster 0: single OutDbRef band
-        builder.start_raster(&metadata, Some("EPSG:4326")).unwrap();
         builder
-            .start_band(BandMetadata {
-                nodata_value: None,
-                storage_type: StorageType::OutDbRef,
-                datatype: BandDataType::Float32,
-                outdb_url: Some("s3://bucket/raster_0.tif".to_string()),
-                outdb_band_id: Some(1),
-            })
+            .start_raster_2d(4, 4, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, Some("EPSG:4326"))
+            .unwrap();
+        builder
+            .start_band(
+                None,
+                &["y", "x"],
+                &[4, 4],
+                BandDataType::Float32,
+                None,
+                Some("s3://bucket/raster_0.tif#band=1"),
+                Some("geotiff"),
+            )
             .unwrap();
         builder.band_data_writer().append_value([]);
         builder.finish_band().unwrap();
@@ -298,26 +295,22 @@ mod tests {
         builder.append_null().unwrap();
 
         // Raster 2: two bands — InDb (band 1) + OutDbRef (band 2)
-        builder.start_raster(&metadata, Some("EPSG:4326")).unwrap();
         builder
-            .start_band(BandMetadata {
-                nodata_value: None,
-                storage_type: StorageType::InDb,
-                datatype: BandDataType::UInt8,
-                outdb_url: None,
-                outdb_band_id: None,
-            })
+            .start_raster_2d(4, 4, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, Some("EPSG:4326"))
             .unwrap();
+        builder.start_band_2d(BandDataType::UInt8, None).unwrap();
         builder.band_data_writer().append_value([0u8; 16]);
         builder.finish_band().unwrap();
         builder
-            .start_band(BandMetadata {
-                nodata_value: None,
-                storage_type: StorageType::OutDbRef,
-                datatype: BandDataType::Float32,
-                outdb_url: Some("s3://bucket/raster_2.tif".to_string()),
-                outdb_band_id: Some(3),
-            })
+            .start_band(
+                None,
+                &["y", "x"],
+                &[4, 4],
+                BandDataType::Float32,
+                None,
+                Some("s3://bucket/raster_2.tif#band=3"),
+                Some("geotiff"),
+            )
             .unwrap();
         builder.band_data_writer().append_value([]);
         builder.finish_band().unwrap();
@@ -339,8 +332,7 @@ mod tests {
             .downcast_ref::<StringArray>()
             .expect("Expected StringArray");
 
-        // Raster 0: OutDbRef band 1 → returns URL
-        assert!(!string_array.is_null(0));
+        // Raster 0: OutDbRef band → URI
         assert_eq!(string_array.value(0), "s3://bucket/raster_0.tif");
         // Raster 1: null raster → null
         assert!(string_array.is_null(1));
@@ -365,11 +357,11 @@ mod tests {
             .downcast_ref::<StringArray>()
             .expect("Expected StringArray");
 
-        // Raster 0, band 1: OutDbRef → URL
+        // Raster 0, band 1: OutDbRef → URI
         assert_eq!(string_array.value(0), "s3://bucket/raster_0.tif");
         // Raster 1: null raster → null
         assert!(string_array.is_null(1));
-        // Raster 2, band 2: OutDbRef → URL
+        // Raster 2, band 2: OutDbRef → URI
         assert_eq!(string_array.value(2), "s3://bucket/raster_2.tif");
     }
 
