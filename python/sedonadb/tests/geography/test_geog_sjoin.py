@@ -24,6 +24,7 @@ if "s2geography" not in sedonadb.__features__:
     pytest.skip("Python package built without s2geography", allow_module_level=True)
 
 
+@pytest.mark.parametrize("spatial_join_enabled", [True, False])
 @pytest.mark.parametrize(
     "join_type", ["INNER JOIN", "LEFT OUTER JOIN", "RIGHT OUTER JOIN"]
 )
@@ -35,11 +36,15 @@ if "s2geography" not in sedonadb.__features__:
         "ST_Distance(sjoin_geog1.geog, sjoin_geog2.geog) < 100000",
     ],
 )
-def test_spatial_join_geography_matches_postgis(join_type, on):
+def test_spatial_join_geography_matches_postgis(spatial_join_enabled, join_type, on):
     with (
         SedonaDB.create_or_skip() as eng_sedonadb,
         PostGIS.create_or_skip() as eng_postgis,
     ):
+        eng_sedonadb.con.sql(
+            f"SET sedona.spatial_join.enable = {str(spatial_join_enabled).lower()}"
+        ).execute()
+
         # Select two sets of bounding boxes that cross the antimeridian,
         # which would be disjoint on a Euclidean plane. A geography join will produce non-empty results,
         # whereas a geometry join would not.

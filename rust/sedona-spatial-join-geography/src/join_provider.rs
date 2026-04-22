@@ -17,11 +17,12 @@
 
 use std::sync::Arc;
 
-use arrow_array::ArrayRef;
-use datafusion_common::{exec_datafusion_err, not_impl_err, JoinType, Result};
+use arrow_array::{ArrayRef, Float64Array};
+use datafusion_common::{exec_datafusion_err, JoinType, Result, ScalarValue};
 use datafusion_physical_plan::ColumnarValue;
 use geo_index::rtree::util::f64_box_to_f32;
 use geo_types::{coord, Rect};
+use sedona_common::sedona_internal_err;
 use sedona_expr::statistics::GeoStatistics;
 use sedona_functions::executor::IterGeo;
 use sedona_s2geography::{
@@ -89,59 +90,104 @@ impl EvaluatedGeometryArrayFactory for GeographyEvaluatedArrayFactory {
         sedona_type: &SedonaType,
         distance_columnar_value: Option<&ColumnarValue>,
     ) -> Result<EvaluatedGeometryArray> {
-        // We don't support expansion yet
-        if distance_columnar_value.is_some() {
-            return not_impl_err!(
-                "rectangle expansion by distance is not yet supported for geography joins"
-            );
-        }
+        // Without distance expansion use the impl without a bounder modifier
+        let Some(distance_columnar_value) = distance_columnar_value else {
+            return try_new_evaluated_array_impl(geometry_array, sedona_type, |_bounder| {});
+        };
 
-        // compute rectangles from wkb using the RectBounder from s2geography
-        let num_rows = geometry_array.len();
-        let mut bounder = RectBounder::new();
-        let mut factory = GeographyFactory::new();
-        let mut geog = Geography::new();
-        let mut rect_vec = Vec::with_capacity(num_rows);
-        geometry_array.iter_as_wkb_bytes(sedona_type, num_rows, |wkb_opt| {
-            if let Some(wkb) = wkb_opt {
-                bounder.clear();
-                factory.init_from_wkb(wkb, &mut geog).map_err(|e| {
-                    exec_datafusion_err!("Failed to read WKB in evaluated array factory: {e}")
-                })?;
-                bounder.bound(&geog).map_err(|e| {
-                    exec_datafusion_err!(
-                        "Failed to bound geography in evaluated array factory: {e}"
-                    )
-                })?;
-                let maybe_bounds = bounder.finish().map_err(|e| {
-                    exec_datafusion_err!(
-                        "Failed to finish bounding in evaluated array factory: {e}"
-                    )
-                })?;
-                if let Some((mut min_x, min_y, mut max_x, max_y)) = maybe_bounds {
-                    // The evaluated geometry array currently needs Cartesian rectangles; however
-                    // we can still recalculate these when we ingest into the index. In the
-                    // partitioned join we may want to ensure we can express bounds in a way that
-                    // the partitioner understands (if it doesn't already) to do a better job
-                    // partitioning wraparounds.
-                    if min_x > max_x {
-                        min_x = -180.0;
-                        max_x = 180.0;
-                    }
-
-                    let (min_x, min_y, max_x, max_y) = f64_box_to_f32(min_x, min_y, max_x, max_y);
-                    let rect = Rect::new(coord!(x: min_x, y: min_y), coord!(x: max_x, y: max_y));
-                    rect_vec.push(Some(rect));
+        let result = match distance_columnar_value {
+            ColumnarValue::Scalar(ScalarValue::Float64(Some(distance))) => {
+                try_new_evaluated_array_impl(geometry_array, sedona_type, |bounder| {
+                    bounder.expand_by_distance(*distance);
+                })
+            }
+            ColumnarValue::Scalar(ScalarValue::Float64(None)) => {
+                todo!()
+            }
+            ColumnarValue::Array(array) => {
+                if let Some(array) = array.as_any().downcast_ref::<Float64Array>() {
+                    let mut distance_iter = array.iter();
+                    try_new_evaluated_array_impl(geometry_array, sedona_type, |bounder| {
+                        if let Some(next_distance) = distance_iter
+                            .next()
+                            .expect("distance array has correct length")
+                        {
+                            // Non null distance
+                            bounder.expand_by_distance(next_distance);
+                        } else {
+                            // Null distance
+                            bounder.clear();
+                        }
+                    })
                 } else {
-                    rect_vec.push(None);
+                    return sedona_internal_err!("Distance columnar value is not a Float64Array");
                 }
+            }
+            _ => {
+                return sedona_internal_err!("Distance columnar value is not a Float64");
+            }
+        }?;
+
+        // Store the distance value so it can be used during refinement
+        Ok(result.with_distance(Some(distance_columnar_value.clone())))
+    }
+}
+
+fn try_new_evaluated_array_impl(
+    geometry_array: ArrayRef,
+    sedona_type: &SedonaType,
+    mut modify_bounder: impl FnMut(&mut RectBounder),
+) -> Result<EvaluatedGeometryArray> {
+    // Compute rectangles from wkb using the RectBounder from s2geography
+    let num_rows = geometry_array.len();
+    let mut bounder = RectBounder::new();
+    let mut factory = GeographyFactory::new();
+    let mut geog = Geography::new();
+    let mut rect_vec = Vec::with_capacity(num_rows);
+
+    geometry_array.iter_as_wkb_bytes(sedona_type, num_rows, |wkb_opt| {
+        if let Some(wkb) = wkb_opt {
+            bounder.clear();
+            factory.init_from_wkb(wkb, &mut geog).map_err(|e| {
+                exec_datafusion_err!("Failed to read WKB in evaluated array factory: {e}")
+            })?;
+            bounder.bound(&geog).map_err(|e| {
+                exec_datafusion_err!("Failed to bound geography in evaluated array factory: {e}")
+            })?;
+
+            // Account for distance (either by expanding the bounds or by emptying them for a null
+            // distance).
+            modify_bounder(&mut bounder);
+
+            let maybe_bounds = bounder.finish().map_err(|e| {
+                exec_datafusion_err!("Failed to finish bounding in evaluated array factory: {e}")
+            })?;
+            if let Some((mut min_x, min_y, mut max_x, max_y)) = maybe_bounds {
+                // The evaluated geometry array currently needs Cartesian rectangles; however
+                // we can still recalculate these when we ingest into the index. In the
+                // partitioned join we may want to ensure we can express bounds in a way that
+                // the partitioner understands (if it doesn't already) to do a better job
+                // partitioning wraparounds.
+                if min_x > max_x {
+                    min_x = -180.0;
+                    max_x = 180.0;
+                }
+
+                let (min_x, min_y, max_x, max_y) = f64_box_to_f32(min_x, min_y, max_x, max_y);
+                let rect = Rect::new(coord!(x: min_x, y: min_y), coord!(x: max_x, y: max_y));
+                rect_vec.push(Some(rect));
             } else {
                 rect_vec.push(None);
             }
+        } else {
+            // Also call the bounder modifier here to ensure it's called exactly once for every
+            // element
+            modify_bounder(&mut bounder);
+            rect_vec.push(None);
+        }
 
-            Ok(())
-        })?;
+        Ok(())
+    })?;
 
-        EvaluatedGeometryArray::try_new_with_rects(geometry_array, rect_vec, sedona_type)
-    }
+    EvaluatedGeometryArray::try_new_with_rects(geometry_array, rect_vec, sedona_type)
 }
