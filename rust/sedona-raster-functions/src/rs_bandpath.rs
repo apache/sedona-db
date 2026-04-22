@@ -128,7 +128,16 @@ fn get_band_path(
                 builder.append_null();
             } else if let Some(band) = raster.band((band_index - 1) as usize) {
                 match band.outdb_uri() {
-                    Some(uri) => builder.append_value(uri),
+                    Some(uri) => {
+                        // Strip the URL fragment — it carries loader-internal
+                        // details (band id, chunk coords) that users calling
+                        // RS_BandPath don't want to see.
+                        let path = match uri.rfind('#') {
+                            Some(hash) => &uri[..hash],
+                            None => uri,
+                        };
+                        builder.append_value(path);
+                    }
                     None => builder.append_null(),
                 }
             } else {
@@ -250,10 +259,13 @@ mod tests {
     }
 
     /// Build a raster array with out-db bands for testing RS_BandPath.
+    /// URIs include a `#band=N` fragment that loaders use to pick the right
+    /// sub-dataset; `RS_BandPath` strips the fragment before returning the
+    /// path to the user.
     /// Returns a StructArray with 3 rasters:
-    ///   [0] OutDbRef band with URI "s3://bucket/raster_0.tif", format "geotiff"
+    ///   [0] OutDbRef band with URI "s3://bucket/raster_0.tif#band=1", format "geotiff"
     ///   [1] null raster
-    ///   [2] Two bands: InDb band 1, OutDbRef band 2 with URI "s3://bucket/raster_2.tif", format "geotiff"
+    ///   [2] Two bands: InDb band 1, OutDbRef band 2 with URI "s3://bucket/raster_2.tif#band=3", format "geotiff"
     fn build_outdb_rasters() -> arrow_array::StructArray {
         use sedona_raster::builder::RasterBuilder;
         use sedona_schema::raster::BandDataType;
@@ -271,7 +283,7 @@ mod tests {
                 &[4, 4],
                 BandDataType::Float32,
                 None,
-                Some("s3://bucket/raster_0.tif"),
+                Some("s3://bucket/raster_0.tif#band=1"),
                 Some("geotiff"),
             )
             .unwrap();
@@ -296,7 +308,7 @@ mod tests {
                 &[4, 4],
                 BandDataType::Float32,
                 None,
-                Some("s3://bucket/raster_2.tif"),
+                Some("s3://bucket/raster_2.tif#band=3"),
                 Some("geotiff"),
             )
             .unwrap();
