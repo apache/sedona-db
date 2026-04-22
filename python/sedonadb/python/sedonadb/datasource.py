@@ -144,7 +144,7 @@ class PyogrioFormatSpec(ExternalFormatSpec):
         if ogr_src.endswith(".zip"):
             ogr_src = f"/vsizip/{ogr_src}"
 
-        path_suffix = self._options.pop("path_suffix", None)
+        path_suffix = self._options.get("path_suffix")
         if path_suffix is not None:
             ogr_src = f"{ogr_src}/{path_suffix}"
 
@@ -170,6 +170,7 @@ class PyogrioFormatSpec(ExternalFormatSpec):
 
         ogr_kwargs = {**self._options}
         ogr_kwargs.update(columns=columns, batch_size=batch_size, bbox=bbox)
+        ogr_kwargs.pop("path_suffix", None)
 
         return PyogrioReaderShelter(
             pyogrio.raw.open_arrow(ogr_src, **ogr_kwargs),
