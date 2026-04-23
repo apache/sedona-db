@@ -158,11 +158,11 @@ impl IndexQueryResultRefiner for GeographyRefiner {
                 };
 
                 let eval = if matches!(self.op_type, OpType::DWithin) {
-                    op.eval_binary_distance_predicate(
-                        build_geog_ref,
-                        &probe_geog,
-                        result.distance.unwrap_or(f64::INFINITY),
-                    )
+                    if let Some(distance) = result.distance {
+                        op.eval_binary_distance_predicate(build_geog_ref, &probe_geog, distance)
+                    } else {
+                        Ok(false)
+                    }
                 } else {
                     op.eval_binary_predicate(build_geog_ref, &probe_geog)
                 };
@@ -179,11 +179,11 @@ impl IndexQueryResultRefiner for GeographyRefiner {
                     .map_err(|e| exec_datafusion_err!("{e}"))?;
 
                 let eval = if matches!(self.op_type, OpType::DWithin) {
-                    op.eval_binary_distance_predicate(
-                        &build_geog,
-                        &probe_geog,
-                        result.distance.unwrap_or(f64::INFINITY),
-                    )
+                    if let Some(distance) = result.distance {
+                        op.eval_binary_distance_predicate(&build_geog, &probe_geog, distance)
+                    } else {
+                        Ok(false)
+                    }
                 } else {
                     op.eval_binary_predicate(&build_geog, &probe_geog)
                 };

@@ -81,7 +81,8 @@ impl DefaultGeometryArrayFactory {
             }
             ColumnarValue::Scalar(ScalarValue::Float64(None)) => {
                 // Distance expression evaluates to NULL, the resulting distance should be NULL as well.
-                result.rects.clear();
+                // We don't need to modify the rectangles for this case.
+
             }
             ColumnarValue::Array(array) => {
                 if let Some(array) = array.as_any().downcast_ref::<Float64Array>() {

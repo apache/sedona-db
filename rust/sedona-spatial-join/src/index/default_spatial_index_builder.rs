@@ -112,14 +112,16 @@ impl DefaultSpatialIndexBuilder {
     ) -> usize {
         // Estimate the amount of memory needed by the refiner
         let num_geoms = geo_stats.total_geometries().unwrap_or(0) as usize;
-        let refiner = refiner_factory
-            .create_refiner(
-                spatial_predicate,
-                options.clone(),
-                num_geoms,
-                geo_stats.clone(),
-            )
-            .expect("Refiner can be constructed");
+        let Ok(refiner) = refiner_factory.create_refiner(
+            spatial_predicate,
+            options.clone(),
+            num_geoms,
+            geo_stats.clone(),
+        ) else {
+            // A refiner that fails to construct also consumes no memory
+            return 0;
+        };
+
         let refiner_mem_usage = refiner.estimate_max_memory_usage(geo_stats);
 
         let knn_components_mem_usage =
