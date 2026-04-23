@@ -20,10 +20,13 @@ import json
 import pandas as pd
 import pytest
 import sedonadb
-from sedonadb.testing import PostGIS, SedonaDB
+from sedonadb.testing import PostGIS, SedonaDB, skip_if_not_exists
 
 if "s2geography" not in sedonadb.__features__:
     pytest.skip("Python package built without s2geography", allow_module_level=True)
+
+
+
 
 
 @pytest.mark.parametrize("spatial_join_enabled", [True, False])
@@ -117,8 +120,10 @@ def test_spatial_join_geog_matches_postgis(spatial_join_enabled, join_type, on):
         "ST_DWithin(sjoin_point.geometry, sjoin_polygon.geometry, sjoin_polygon.dist * 10)",
     ],
 )
-def test_spatial_join_geog_matches_geom(con, spatial_join_enabled, join_type, on):
-    con.sql(
+def test_spatial_join_geog_matches_geom(spatial_join_enabled, join_type, on):
+    # Use a standalone session because we are messing with the options
+    sd = sedonadb.connect()
+    sd.sql(
         f"SET sedona.spatial_join.enable = {str(spatial_join_enabled).lower()}"
     ).execute()
 
@@ -127,7 +132,7 @@ def test_spatial_join_geog_matches_geom(con, spatial_join_enabled, join_type, on
     utm_bounds = [500000, 5500000, 510000, 5510000]
 
     # Generate random points in UTM coordinates
-    con.funcs.table.sd_random_geometry(
+    sd.funcs.table.sd_random_geometry(
         "Point",
         100,
         bounds=utm_bounds,
@@ -136,7 +141,7 @@ def test_spatial_join_geog_matches_geom(con, spatial_join_enabled, join_type, on
 
     # Generate random polygons in UTM coordinates
     # Size range scaled to UTM meters (100-1000m polygons)
-    con.funcs.table.sd_random_geometry(
+    sd.funcs.table.sd_random_geometry(
         "Polygon",
         100,
         bounds=utm_bounds,
@@ -149,24 +154,24 @@ def test_spatial_join_geog_matches_geom(con, spatial_join_enabled, join_type, on
     ).to_view("sjoin_geom_polygon_base", overwrite=True)
 
     # Create geometry views with UTM SRID (EPSG:32632)
-    con.sql("""
+    sd.sql("""
         SELECT id, dist, ST_SetSRID(geometry, 32632) AS geometry
         FROM sjoin_geom_point_base
     """).to_view("sjoin_point", overwrite=True)
 
-    con.sql("""
+    sd.sql("""
         SELECT id, dist, ST_SetSRID(geometry, 32632) AS geometry
         FROM sjoin_geom_polygon_base
     """).to_view("sjoin_polygon", overwrite=True)
 
     # Create geography views by transforming UTM to WGS84
-    con.sql("""
+    sd.sql("""
         SELECT id, dist,
                ST_SetSRID(ST_GeogFromWKB(ST_AsBinary(ST_Transform(geometry, 4326))), 4326) AS geometry
         FROM sjoin_point
     """).to_view("sjoin_point_geog", overwrite=True)
 
-    con.sql("""
+    sd.sql("""
         SELECT id, dist,
                ST_SetSRID(ST_GeogFromWKB(ST_AsBinary(ST_Transform(geometry, 4326))), 4326) AS geometry
         FROM sjoin_polygon
@@ -179,7 +184,7 @@ def test_spatial_join_geog_matches_geom(con, spatial_join_enabled, join_type, on
         ON {on}
         ORDER BY id0, id1
     """
-    geometry_results = con.sql(geom_sql).to_pandas()
+    geometry_results = sd.sql(geom_sql).to_pandas()
 
     # Construct geography join predicate (replace table names)
     geog_on = on.replace("sjoin_point", "sjoin_point_geog").replace(
@@ -191,7 +196,7 @@ def test_spatial_join_geog_matches_geom(con, spatial_join_enabled, join_type, on
         ON {geog_on}
         ORDER BY id0, id1
     """
-    geography_results = con.sql(geog_sql).to_pandas()
+    geography_results = sd.sql(geog_sql).to_pandas()
 
     # Both should produce non-empty results
     assert len(geometry_results) > 0
@@ -205,8 +210,10 @@ def test_spatial_join_geog_matches_geom(con, spatial_join_enabled, join_type, on
 
 
 @pytest.mark.parametrize("spatial_join_enabled", [True, False])
-def test_spatial_join_geog_equals(con, spatial_join_enabled):
-    con.sql(
+def test_spatial_join_geog_equals(spatial_join_enabled):
+    # Use a standalone session because we are messing with the options
+    sd = sedonadb.connect()
+    sd.sql(
         f"SET sedona.spatial_join.enable = {str(spatial_join_enabled).lower()}"
     ).execute()
 
@@ -214,7 +221,7 @@ def test_spatial_join_geog_equals(con, spatial_join_enabled):
     wgs84_bounds = [-10, -10, 10, 10]
 
     # Generate random points
-    con.funcs.table.sd_random_geometry(
+    sd.funcs.table.sd_random_geometry(
         "Point",
         100,
         bounds=wgs84_bounds,
@@ -222,13 +229,13 @@ def test_spatial_join_geog_equals(con, spatial_join_enabled):
     ).to_view("sjoin_equals_base", overwrite=True)
 
     # Create geometry view with SRID 4326
-    con.sql("""
+    sd.sql("""
         SELECT id, ST_SetSRID(geometry, 4326) AS geometry
         FROM sjoin_equals_base
     """).to_view("sjoin_equals_geom", overwrite=True)
 
     # Create geography view from the same data
-    con.sql("""
+    sd.sql("""
         SELECT id, ST_SetSRID(ST_GeogFromWKB(ST_AsBinary(geometry)), 4326) AS geometry
         FROM sjoin_equals_base
     """).to_view("sjoin_equals_geog", overwrite=True)
@@ -240,7 +247,7 @@ def test_spatial_join_geog_equals(con, spatial_join_enabled):
         ON ST_Equals(a.geometry, b.geometry)
         ORDER BY id0, id1
     """
-    geometry_results = con.sql(geom_sql).to_pandas()
+    geometry_results = sd.sql(geom_sql).to_pandas()
 
     # Run geography self-join with ST_Equals
     geog_sql = """
@@ -249,7 +256,7 @@ def test_spatial_join_geog_equals(con, spatial_join_enabled):
         ON ST_Equals(a.geometry, b.geometry)
         ORDER BY id0, id1
     """
-    geography_results = con.sql(geog_sql).to_pandas()
+    geography_results = sd.sql(geog_sql).to_pandas()
 
     # Both should produce non-empty results (at minimum, each point equals itself)
     assert len(geometry_results) > 0
@@ -260,3 +267,206 @@ def test_spatial_join_geog_equals(con, spatial_join_enabled):
         geometry_results.reset_index(drop=True),
         geography_results.reset_index(drop=True),
     )
+
+
+@pytest.mark.parametrize("spatial_join_enabled", [True, False])
+def test_spatial_join_cities_countries_intersects(geoarrow_data, spatial_join_enabled):
+    """Test that cities in countries intersects join matches PostGIS result."""
+    path_cities = (
+        geoarrow_data / "natural-earth" / "files" / "natural-earth_cities.parquet"
+    )
+    path_countries = (
+        geoarrow_data
+        / "natural-earth"
+        / "files"
+        / "natural-earth_countries-geography.parquet"
+    )
+    skip_if_not_exists(path_cities)
+    skip_if_not_exists(path_countries)
+
+    with (
+        SedonaDB.create_or_skip() as eng_sedonadb,
+        PostGIS.create_or_skip() as eng_postgis,
+    ):
+        eng_sedonadb.con.sql(
+            f"SET sedona.spatial_join.enable = {str(spatial_join_enabled).lower()}"
+        ).execute()
+
+        # Load cities and convert to geography
+        df_cities = eng_sedonadb.execute_and_collect(
+            f"""
+            SELECT name,
+                   ST_SetSRID(ST_GeogFromWKB(ST_AsBinary(geometry)), 4326) AS geog
+            FROM '{path_cities}'
+            """
+        )
+
+        # Load countries and convert to geography
+        df_countries = eng_sedonadb.execute_and_collect(
+            f"""
+            SELECT name,
+                   ST_SetSRID(ST_GeogFromWKB(ST_AsBinary(geometry)), 4326) AS geog
+            FROM '{path_countries}'
+            """
+        )
+
+        eng_sedonadb.create_table_arrow("cities", df_cities)
+        eng_sedonadb.create_table_arrow("countries", df_countries)
+        eng_postgis.create_table_arrow("cities", df_cities)
+        eng_postgis.create_table_arrow("countries", df_countries)
+
+        sql = """
+            SELECT cities.name AS city_name, countries.name AS country_name
+            FROM cities
+            INNER JOIN countries
+            ON ST_Intersects(cities.geog, countries.geog)
+        """
+
+        sedonadb_results = (
+            eng_sedonadb.execute_and_collect(sql)
+            .to_pandas()
+            .sort_values(["city_name", "country_name"])
+            .reset_index(drop=True)
+        )
+        assert len(sedonadb_results) > 0, "Expected non-empty join result"
+
+        postgis_results = (
+            eng_postgis.result_to_pandas(eng_postgis.execute_and_collect(sql))
+            .sort_values(["city_name", "country_name"])
+            .reset_index(drop=True)
+        )
+        pd.testing.assert_frame_equal(sedonadb_results, postgis_results)
+
+
+@pytest.mark.parametrize("spatial_join_enabled", [True, False])
+@pytest.mark.parametrize("distance_meters", [100000.0, 500000.0])
+def test_spatial_join_cities_countries_dwithin(
+    geoarrow_data, spatial_join_enabled, distance_meters
+):
+    path_cities = (
+        geoarrow_data / "natural-earth" / "files" / "natural-earth_cities.parquet"
+    )
+    path_countries = (
+        geoarrow_data
+        / "natural-earth"
+        / "files"
+        / "natural-earth_countries-geography.parquet"
+    )
+    skip_if_not_exists(path_cities)
+    skip_if_not_exists(path_countries)
+
+    with (
+        SedonaDB.create_or_skip() as eng_sedonadb,
+        PostGIS.create_or_skip() as eng_postgis,
+    ):
+        eng_sedonadb.con.sql(
+            f"SET sedona.spatial_join.enable = {str(spatial_join_enabled).lower()}"
+        ).execute()
+
+        # Load cities and convert to geography
+        df_cities = eng_sedonadb.execute_and_collect(
+            f"""
+            SELECT name,
+                   ST_SetSRID(ST_GeogFromWKB(ST_AsBinary(geometry)), 4326) AS geog
+            FROM '{path_cities}'
+            """
+        )
+
+        # Load countries and convert to geography
+        df_countries = eng_sedonadb.execute_and_collect(
+            f"""
+            SELECT name,
+                   ST_SetSRID(ST_GeogFromWKB(ST_AsBinary(geometry)), 4326) AS geog
+            FROM '{path_countries}'
+            """
+        )
+
+        eng_sedonadb.create_table_arrow("cities", df_cities)
+        eng_sedonadb.create_table_arrow("countries", df_countries)
+        eng_postgis.create_table_arrow("cities", df_cities)
+        eng_postgis.create_table_arrow("countries", df_countries)
+
+        sql = f"""
+            SELECT cities.name AS city_name, countries.name AS country_name
+            FROM cities
+            INNER JOIN countries
+            ON ST_DWithin(cities.geog, countries.geog, {distance_meters})
+        """
+
+        sedonadb_results = (
+            eng_sedonadb.execute_and_collect(sql)
+            .to_pandas()
+            .sort_values(["city_name", "country_name"])
+            .reset_index(drop=True)
+        )
+        assert len(sedonadb_results) > 0, "Expected non-empty join result"
+
+        postgis_results = (
+            eng_postgis.result_to_pandas(eng_postgis.execute_and_collect(sql))
+            .sort_values(["city_name", "country_name"])
+            .reset_index(drop=True)
+        )
+        pd.testing.assert_frame_equal(sedonadb_results, postgis_results)
+
+
+@pytest.mark.parametrize("spatial_join_enabled", [True, False])
+def test_spatial_join_countries_self_intersects(geoarrow_data, spatial_join_enabled):
+    """Test that countries self-join on intersects matches PostGIS result.
+
+    This tests polygon-polygon geography join for countries that share borders.
+    """
+    path_countries = (
+        geoarrow_data
+        / "natural-earth"
+        / "files"
+        / "natural-earth_countries-geography.parquet"
+    )
+    skip_if_not_exists(path_countries)
+
+    with (
+        SedonaDB.create_or_skip() as eng_sedonadb,
+        PostGIS.create_or_skip() as eng_postgis,
+    ):
+        eng_sedonadb.con.sql(
+            f"SET sedona.spatial_join.enable = {str(spatial_join_enabled).lower()}"
+        ).execute()
+
+        # Load countries and convert to geography
+        df_countries = eng_sedonadb.execute_and_collect(
+            f"""
+            SELECT name,
+                   ST_SetSRID(ST_GeogFromWKB(ST_AsBinary(geometry)), 4326) AS geog
+            FROM '{path_countries}'
+            """
+        )
+
+        eng_sedonadb.create_table_arrow("countries_a", df_countries)
+        eng_sedonadb.create_table_arrow("countries_b", df_countries)
+        eng_postgis.create_table_arrow("countries_a", df_countries)
+        eng_postgis.create_table_arrow("countries_b", df_countries)
+
+        # Self-join: find all pairs of countries that share borders (intersect)
+        # Exclude self-matches by name to get only true border pairs
+        sql = """
+            SELECT countries_a.name AS country_a, countries_b.name AS country_b
+            FROM countries_a
+            INNER JOIN countries_b
+            ON ST_Intersects(countries_a.geog, countries_b.geog)
+            WHERE countries_a.name < countries_b.name
+        """
+
+        sedonadb_results = (
+            eng_sedonadb.execute_and_collect(sql)
+            .to_pandas()
+            .sort_values(["country_a", "country_b"])
+            .reset_index(drop=True)
+        )
+        # There should be many countries that share borders
+        assert len(sedonadb_results) > 0, "Expected non-empty self-join result"
+
+        postgis_results = (
+            eng_postgis.result_to_pandas(eng_postgis.execute_and_collect(sql))
+            .sort_values(["country_a", "country_b"])
+            .reset_index(drop=True)
+        )
+        pd.testing.assert_frame_equal(sedonadb_results, postgis_results)
