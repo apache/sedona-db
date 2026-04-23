@@ -43,7 +43,7 @@ pub struct GeographySpatialJoinPhysicalPlanner;
 impl GeographySpatialJoinPhysicalPlanner {
     /// Create a new geography join planner
     pub fn new() -> Self {
-        Self {}
+        Self
     }
 }
 
