@@ -161,7 +161,7 @@ impl SedonaContext {
                 DefaultSpatialJoinPhysicalPlanner::new(),
             ));
 
-            // Register the geography join after the default planer
+            // Register the geography join after the default planner
             // If a query is not supported, it falls back to the default planner.
             #[cfg(feature = "s2geography")]
             {
@@ -172,7 +172,7 @@ impl SedonaContext {
                 ));
             }
 
-            // Register the GPU join after the default planer
+            // Register the GPU join after the default planner
             // If a query is not supported, it falls back to the default planner.
             #[cfg(feature = "gpu")]
             {

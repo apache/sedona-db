@@ -78,7 +78,7 @@ impl GeographyRefiner {
         };
 
         // Allow join options to turn off preparedness
-        let prepared_geoms = if matches!(
+        let prepared_geoms = if !matches!(
             options.execution_mode,
             ExecutionMode::PrepareNone | ExecutionMode::PrepareProbe
         ) {
@@ -115,7 +115,7 @@ impl IndexQueryResultRefiner for GeographyRefiner {
         let mut build_geog = Geography::new();
 
         // Crude heuristic used by the S2Loop (build an index after 20 unindexed
-        // contains queries even for small looops).
+        // contains queries even for small loops).
         if probe.buf().len() > (32 * 2 * size_of::<f64>()) || index_query_results.len() > 20 {
             probe_geog
                 .prepare()
@@ -134,7 +134,8 @@ impl IndexQueryResultRefiner for GeographyRefiner {
                                 .map_err(|e| exec_datafusion_err!("{e}"))?;
                             geog.prepare().map_err(|e| exec_datafusion_err!("{e}"))?;
                             Ok(Some(unsafe {
-                                // Safety: the evaluated batches keep the required WKB alive
+                                // Safety: the evaluated batches keep the required WKB alive. The
+                                // refiner always outlives the evaluated batches.
                                 std::mem::transmute::<Geography<'_>, Geography<'static>>(geog)
                             }))
                         } else {
