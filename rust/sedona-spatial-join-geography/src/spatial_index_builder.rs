@@ -38,7 +38,7 @@ use sedona_spatial_join::{
 
 use crate::refiner::GeographyRefinerFactory;
 
-pub struct GeographySpatialIndexBuilder {
+pub(crate) struct GeographySpatialIndexBuilder {
     inner: DefaultSpatialIndexBuilder,
 }
 

@@ -144,6 +144,13 @@ mod tests {
         assert!(hi_lng >= 10.0);
         assert!(hi_lat >= 20.0);
 
+        bounder.expand_by_distance(100_000.0); // 100km
+        let expanded = bounder.finish().unwrap().unwrap();
+        assert!(expanded.0 < lo_lng);
+        assert!(expanded.1 < lo_lat);
+        assert!(expanded.2 > hi_lng);
+        assert!(expanded.3 > hi_lat);
+
         bounder.clear();
         assert!(bounder.is_empty());
     }

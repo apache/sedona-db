@@ -32,6 +32,7 @@ use sedona_query_planner::spatial_predicate::{
 };
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;
+use sedona_spatial_join::physical_planner::should_swap_join_order;
 use sedona_spatial_join::SpatialJoinExec;
 
 /// [SpatialJoinFactory] implementation for the default spatial join
@@ -112,51 +113,6 @@ impl SpatialJoinPhysicalPlanner for GpuSpatialJoinPhysicalPlanner {
             Ok(Some(Arc::new(exec) as Arc<dyn ExecutionPlan>))
         }
     }
-}
-
-/// Spatial join reordering heuristic:
-/// 1. Put the input with fewer rows on the build side, because fewer entries
-///    produce a smaller and more efficient spatial index (R-tree).
-/// 2. If row-count statistics are unavailable (for example, for CSV sources),
-///    fall back to total input size as an estimate.
-/// 3. Do not swap the join order if join reordering is disabled or no relevant
-///    statistics are available.
-fn should_swap_join_order(
-    spatial_join_options: &SpatialJoinOptions,
-    left: &dyn ExecutionPlan,
-    right: &dyn ExecutionPlan,
-) -> Result<bool> {
-    if !spatial_join_options.spatial_join_reordering {
-        log::info!(
-            "spatial join swap heuristic disabled via sedona.spatial_join.spatial_join_reordering"
-        );
-        return Ok(false);
-    }
-
-    let left_stats = left.partition_statistics(None)?;
-    let right_stats = right.partition_statistics(None)?;
-
-    let left_num_rows = left_stats.num_rows;
-    let right_num_rows = right_stats.num_rows;
-    let left_total_byte_size = left_stats.total_byte_size;
-    let right_total_byte_size = right_stats.total_byte_size;
-
-    let should_swap = match (left_num_rows.get_value(), right_num_rows.get_value()) {
-        (Some(l), Some(r)) => l > r,
-        _ => match (
-            left_total_byte_size.get_value(),
-            right_total_byte_size.get_value(),
-        ) {
-            (Some(l), Some(r)) => l > r,
-            _ => false,
-        },
-    };
-
-    log::info!(
-        "spatial join swap heuristic: left_num_rows={left_num_rows:?}, right_num_rows={right_num_rows:?}, left_total_byte_size={left_total_byte_size:?}, right_total_byte_size={right_total_byte_size:?}, should_swap={should_swap}"
-    );
-
-    Ok(should_swap)
 }
 
 pub fn is_spatial_predicate_supported(

@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-pub mod join_provider;
+mod join_provider;
 pub mod physical_planner;
-pub mod refiner;
-pub mod spatial_index_builder;
+mod refiner;
+mod spatial_index_builder;

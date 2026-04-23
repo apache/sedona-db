@@ -40,7 +40,7 @@ use sedona_spatial_join::{
 use crate::spatial_index_builder::GeographySpatialIndexBuilder;
 
 #[derive(Debug)]
-pub struct GeographyJoinProvider;
+pub(crate) struct GeographyJoinProvider;
 
 impl SpatialJoinProvider for GeographyJoinProvider {
     fn try_new_spatial_index_builder(
