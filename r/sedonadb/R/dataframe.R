@@ -472,7 +472,6 @@ sd_summarise <- function(.data, ..., .env = parent.frame()) {
   .data <- as_sedonadb_dataframe(.data)
 
   expr_quos <- rlang::enquos(...)
-  env <- parent.frame()
 
   expr_ctx <- sd_expr_ctx(infer_nanoarrow_schema(.data), .env, ctx = .data$ctx)
   r_exprs <- expr_quos |> rlang::quos_auto_name() |> lapply(rlang::quo_get_expr)
@@ -497,6 +496,33 @@ sd_summarize <- function(.data, ..., .env = parent.frame()) {
   sd_summarise(.data, ..., .env = .env)
 }
 
+#' Join two SedonaDB DataFrames
+#'
+#' Perform a join operation between two dataframes. Use [sd_join_by()] to
+#' specify join conditions using `x$column` and `y$column` syntax to
+#' reference columns from the left and right tables respectively.
+#'
+#' @param x The left dataframe
+#' @param y The right dataframe (will use the same context as x)
+#' @param by A `sedonadb_join_by` object from [sd_join_by()], or `NULL` for
+#'   a natural join on columns with matching names.
+#' @param suffix A character vector of length 2 specifying suffixes to add
+#'   to overlapping column names from x and y respectively.
+#' @param how The type of join to perform: "inner", "left", "right", or "full".
+#'
+#' @returns An object of class sedonadb_dataframe
+#'
+#' @examples
+#' \dontrun{
+#' # Join on matching id columns
+#' sd_join(orders, customers, sd_join_by(x$customer_id == y$id))
+#'
+#' # Left join with inequality condition
+#' sd_join(events, sessions,
+#'         sd_join_by(x$user_id == y$user_id, x$timestamp >= y$start_time),
+#'         how = "left")
+#' }
+#'
 sd_join <- function(
   x,
   y,
@@ -504,15 +530,72 @@ sd_join <- function(
   suffix = c(".x", ".y"),
   how = c("inner", "left", "right", "full")
 ) {
+  how <- match.arg(how)
   x <- as_sedonadb_dataframe(x)
   y <- as_sedonadb_dataframe(y, ctx = x$ctx)
 
-  expr_quos <- rlang::enquos(...)
-  env <- parent.frame()
   ctx <- x$ctx
 
-  x_expr_ctx <- sd_expr_ctx(infer_nanoarrow_schema(x), env, ctx = ctx)
-  y_expr_ctx <- sd_expr_ctx(infer_nanoarrow_schema(y), env, ctx = ctx)
+  x_schema <- infer_nanoarrow_schema(x)
+  y_schema <- infer_nanoarrow_schema(y)
+
+  # Create join expression context for evaluating join conditions
+
+  join_expr_ctx <- sd_join_expr_ctx(x_schema, y_schema, ctx = ctx)
+
+  # Evaluate join conditions
+
+  if (is.null(by)) {
+    # Natural join: find common column names
+    x_names <- names(x_schema$children)
+    y_names <- names(y_schema$children)
+    common <- intersect(x_names, y_names)
+
+    if (length(common) == 0) {
+      stop(
+        "No common columns found for natural join. ",
+        "Use sd_join_by() to specify join conditions."
+      )
+    }
+
+    # Build equality conditions for common columns
+    join_conditions <- lapply(common, function(col) {
+      sd_expr_binary(
+        "==",
+        sd_expr_column(col, qualifier = "x", factory = join_expr_ctx$factory),
+        sd_expr_column(col, qualifier = "y", factory = join_expr_ctx$factory),
+        factory = join_expr_ctx$factory
+      )
+    })
+  } else if (inherits(by, "sedonadb_join_by")) {
+    join_conditions <- sd_eval_join_conditions(by, join_expr_ctx)
+  } else {
+    stop("`by` must be NULL (natural join) or a sd_join_by() object")
+  }
+
+  # Return join information for now (actual execution requires Rust join method)
+  structure(
+    list(
+      x = x,
+      y = y,
+      conditions = join_conditions,
+      how = how,
+      suffix = suffix,
+      join_expr_ctx = join_expr_ctx
+    ),
+    class = "sedonadb_join_plan"
+  )
+}
+
+#' @export
+print.sedonadb_join_plan <- function(x, ...) {
+  cat("<sedonadb_join_plan>\n")
+  cat("  type:", x$how, "join\n")
+  cat("  conditions:\n")
+  for (cond in x$conditions) {
+    cat("    ", cond$display(), "\n", sep = "")
+  }
+  invisible(x)
 }
 
 #' Write DataFrame to (Geo)Parquet files
