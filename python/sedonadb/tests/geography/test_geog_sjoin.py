@@ -15,10 +15,12 @@
 # specific language governing permissions and limitations
 # under the License.
 
-import pytest
 import json
+
+import pandas as pd
+import pytest
 import sedonadb
-from sedonadb.testing import SedonaDB, PostGIS
+from sedonadb.testing import PostGIS, SedonaDB
 
 if "s2geography" not in sedonadb.__features__:
     pytest.skip("Python package built without s2geography", allow_module_level=True)
@@ -36,7 +38,7 @@ if "s2geography" not in sedonadb.__features__:
         "ST_Distance(sjoin_geog1.geog, sjoin_geog2.geog) < 100000",
     ],
 )
-def test_spatial_join_geography_matches_postgis(spatial_join_enabled, join_type, on):
+def test_spatial_join_geog_matches_postgis(spatial_join_enabled, join_type, on):
     with (
         SedonaDB.create_or_skip() as eng_sedonadb,
         PostGIS.create_or_skip() as eng_postgis,
@@ -98,3 +100,106 @@ def test_spatial_join_geography_matches_postgis(spatial_join_enabled, join_type,
 
         # Check that a PostGIS join produces the same results
         eng_postgis.assert_query_result(sql, sedonadb_results)
+
+
+@pytest.mark.parametrize("spatial_join_enabled", [True, False])
+@pytest.mark.parametrize(
+    "join_type", ["INNER JOIN", "LEFT OUTER JOIN", "RIGHT OUTER JOIN"]
+)
+@pytest.mark.parametrize(
+    "on",
+    [
+        "ST_Intersects(sjoin_point.geometry, sjoin_polygon.geometry)",
+        "ST_Within(sjoin_point.geometry, sjoin_polygon.geometry)",
+        "ST_Contains(sjoin_polygon.geometry, sjoin_point.geometry)",
+        "ST_DWithin(sjoin_point.geometry, sjoin_polygon.geometry, 1000.0)",
+        "ST_DWithin(sjoin_point.geometry, sjoin_polygon.geometry, sjoin_point.dist * 10)",
+        "ST_DWithin(sjoin_point.geometry, sjoin_polygon.geometry, sjoin_polygon.dist * 10)",
+    ],
+)
+def test_spatial_join_geog_matches_geom(con, spatial_join_enabled, join_type, on):
+    con.sql(
+        f"SET sedona.spatial_join.enable = {str(spatial_join_enabled).lower()}"
+    ).execute()
+
+    # UTM zone 32N bounds: ~10km x 10km area in central Europe
+    # This is small enough that planar and spherical calculations should match
+    utm_bounds = [500000, 5500000, 510000, 5510000]
+
+    # Generate random points in UTM coordinates
+    con.funcs.table.sd_random_geometry(
+        "Point",
+        100,
+        bounds=utm_bounds,
+        seed=48763,
+    ).to_view("sjoin_geom_point_base", overwrite=True)
+
+    # Generate random polygons in UTM coordinates
+    # Size range scaled to UTM meters (100-1000m polygons)
+    con.funcs.table.sd_random_geometry(
+        "Polygon",
+        100,
+        bounds=utm_bounds,
+        size=(100, 1000),
+        hole_rate=0.5,
+        # Make sure the vertices are close enough together that get the same result as
+        # geometry.
+        num_vertices=(20, 30),
+        seed=49373,
+    ).to_view("sjoin_geom_polygon_base", overwrite=True)
+
+    # Create geometry views with UTM SRID (EPSG:32632)
+    con.sql("""
+        SELECT id, dist, ST_SetSRID(geometry, 32632) AS geometry
+        FROM sjoin_geom_point_base
+    """).to_view("sjoin_point", overwrite=True)
+
+    con.sql("""
+        SELECT id, dist, ST_SetSRID(geometry, 32632) AS geometry
+        FROM sjoin_geom_polygon_base
+    """).to_view("sjoin_polygon", overwrite=True)
+
+    # Create geography views by transforming UTM to WGS84
+    con.sql("""
+        SELECT id, dist,
+               ST_SetSRID(ST_GeogFromWKB(ST_AsBinary(ST_Transform(geometry, 4326))), 4326) AS geometry
+        FROM sjoin_point
+    """).to_view("sjoin_point_geog", overwrite=True)
+
+    con.sql("""
+        SELECT id, dist,
+               ST_SetSRID(ST_GeogFromWKB(ST_AsBinary(ST_Transform(geometry, 4326))), 4326) AS geometry
+        FROM sjoin_polygon
+    """).to_view("sjoin_polygon_geog", overwrite=True)
+
+    # Run geometry join
+    geom_sql = f"""
+        SELECT sjoin_point.id id0, sjoin_polygon.id id1
+        FROM sjoin_point {join_type} sjoin_polygon
+        ON {on}
+        ORDER BY id0, id1
+    """
+    geometry_results = con.sql(geom_sql).to_pandas()
+
+    # Construct geography join predicate (replace table names)
+    geog_on = on.replace("sjoin_point", "sjoin_point_geog").replace(
+        "sjoin_polygon", "sjoin_polygon_geog"
+    )
+    geog_sql = f"""
+        SELECT sjoin_point_geog.id id0, sjoin_polygon_geog.id id1
+        FROM sjoin_point_geog {join_type} sjoin_polygon_geog
+        ON {geog_on}
+        ORDER BY id0, id1
+    """
+    geography_results = con.sql(geog_sql).to_pandas()
+
+    # Both should produce non-empty results
+    assert len(geometry_results) > 0
+    assert len(geography_results) > 0
+
+    # Results should be identical
+    pd.testing.assert_frame_equal(
+        geometry_results.reset_index(drop=True),
+        geography_results.reset_index(drop=True),
+        check_names=False,
+    )
