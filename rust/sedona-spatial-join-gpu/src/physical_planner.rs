@@ -23,7 +23,6 @@ use arrow_schema::Schema;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion_common::{DataFusionError, Result};
 use datafusion_physical_expr::PhysicalExpr;
-use sedona_common::SpatialJoinOptions;
 use sedona_query_planner::spatial_join_physical_planner::{
     PlanSpatialJoinArgs, SpatialJoinPhysicalPlanner,
 };
