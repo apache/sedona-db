@@ -201,5 +201,62 @@ def test_spatial_join_geog_matches_geom(con, spatial_join_enabled, join_type, on
     pd.testing.assert_frame_equal(
         geometry_results.reset_index(drop=True),
         geography_results.reset_index(drop=True),
-        check_names=False,
+    )
+
+
+@pytest.mark.parametrize("spatial_join_enabled", [True, False])
+def test_spatial_join_geog_equals(con, spatial_join_enabled):
+    con.sql(
+        f"SET sedona.spatial_join.enable = {str(spatial_join_enabled).lower()}"
+    ).execute()
+
+    # Small area in WGS84 coordinates (valid for both geometry and geography)
+    wgs84_bounds = [-10, -10, 10, 10]
+
+    # Generate random points
+    con.funcs.table.sd_random_geometry(
+        "Point",
+        100,
+        bounds=wgs84_bounds,
+        seed=48763,
+    ).to_view("sjoin_equals_base", overwrite=True)
+
+    # Create geometry view with SRID 4326
+    con.sql("""
+        SELECT id, ST_SetSRID(geometry, 4326) AS geometry
+        FROM sjoin_equals_base
+    """).to_view("sjoin_equals_geom", overwrite=True)
+
+    # Create geography view from the same data
+    con.sql("""
+        SELECT id, ST_SetSRID(ST_GeogFromWKB(ST_AsBinary(geometry)), 4326) AS geometry
+        FROM sjoin_equals_base
+    """).to_view("sjoin_equals_geog", overwrite=True)
+
+    # Run geometry self-join with ST_Equals
+    geom_sql = """
+        SELECT a.id id0, b.id id1
+        FROM sjoin_equals_geom a INNER JOIN sjoin_equals_geom b
+        ON ST_Equals(a.geometry, b.geometry)
+        ORDER BY id0, id1
+    """
+    geometry_results = con.sql(geom_sql).to_pandas()
+
+    # Run geography self-join with ST_Equals
+    geog_sql = """
+        SELECT a.id id0, b.id id1
+        FROM sjoin_equals_geog a INNER JOIN sjoin_equals_geog b
+        ON ST_Equals(a.geometry, b.geometry)
+        ORDER BY id0, id1
+    """
+    geography_results = con.sql(geog_sql).to_pandas()
+
+    # Both should produce non-empty results (at minimum, each point equals itself)
+    assert len(geometry_results) > 0
+    assert len(geography_results) > 0
+
+    # Results should be identical
+    pd.testing.assert_frame_equal(
+        geometry_results.reset_index(drop=True),
+        geography_results.reset_index(drop=True),
     )
