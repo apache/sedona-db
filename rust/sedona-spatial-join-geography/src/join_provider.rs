@@ -111,7 +111,9 @@ impl EvaluatedGeometryArrayFactory for GeographyEvaluatedArrayFactory {
                 })
             }
             ColumnarValue::Scalar(ScalarValue::Float64(None)) => {
-                todo!()
+                try_new_evaluated_array_impl(geometry_array, sedona_type, |bounder| {
+                    bounder.clear();
+                })
             }
             ColumnarValue::Array(array) => {
                 if let Some(array) = array.as_any().downcast_ref::<Float64Array>() {
