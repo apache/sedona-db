@@ -134,8 +134,8 @@ def test_read_ogr_filter(con):
 
 def test_read_ogr_layer_selection(con):
     series = geopandas.GeoSeries.from_xy([0, 1], [1, 2], crs="EPSG:3857")
-    gdf = geopandas.GeoDataFrame({"val": ["a", "b"], "wkb_geometry": series})
-    gdf = gdf.set_geometry(gdf["wkb_geometry"])
+    gdf = geopandas.GeoDataFrame({"val": ["a", "b"], "geom": series})
+    gdf = gdf.set_geometry(gdf["geom"])
 
     with tempfile.TemporaryDirectory() as td:
         gpkg_path = f"{td}/test.gpkg"
@@ -150,8 +150,8 @@ def test_read_ogr_layer_selection(con):
 
 def test_read_ogr_path_suffix(con):
     series = geopandas.GeoSeries.from_xy([0, 1], [1, 2], crs="EPSG:3857")
-    gdf = geopandas.GeoDataFrame({"val": ["a", "b"], "wkb_geometry": series})
-    gdf = gdf.set_geometry(gdf["wkb_geometry"])
+    gdf = geopandas.GeoDataFrame({"val": ["a", "b"], "geom": series})
+    gdf = gdf.set_geometry(gdf["geom"])
 
     with tempfile.TemporaryDirectory() as td:
         gpkg_path = f"{td}/data.gpkg"
