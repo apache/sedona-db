@@ -325,8 +325,9 @@ def test_spatial_join_cities_countries_intersects(geoarrow_data, spatial_join_en
             .sort_values(["city_name", "country_name"])
             .reset_index(drop=True)
         )
-        assert len(sedonadb_results) > 0, "Expected non-empty join result"
+        assert len(sedonadb_results) > 0
 
+        # Sort in Python because string ordering is not the same as SedonaDB
         postgis_results = (
             eng_postgis.result_to_pandas(eng_postgis.execute_and_collect(sql))
             .sort_values(["city_name", "country_name"])
@@ -396,8 +397,9 @@ def test_spatial_join_cities_countries_dwithin(
             .sort_values(["city_name", "country_name"])
             .reset_index(drop=True)
         )
-        assert len(sedonadb_results) > 0, "Expected non-empty join result"
+        assert len(sedonadb_results) > 0
 
+        # Sort in Python because string ordering is not the same as SedonaDB
         postgis_results = (
             eng_postgis.result_to_pandas(eng_postgis.execute_and_collect(sql))
             .sort_values(["city_name", "country_name"])
@@ -459,8 +461,9 @@ def test_spatial_join_countries_self_intersects(geoarrow_data, spatial_join_enab
             .reset_index(drop=True)
         )
         # There should be many countries that share borders
-        assert len(sedonadb_results) > 0, "Expected non-empty self-join result"
+        assert len(sedonadb_results) > 0
 
+        # Sort in Python because string ordering is not the same as SedonaDB
         postgis_results = (
             eng_postgis.result_to_pandas(eng_postgis.execute_and_collect(sql))
             .sort_values(["country_a", "country_b"])
