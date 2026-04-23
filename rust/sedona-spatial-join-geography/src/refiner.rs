@@ -77,7 +77,7 @@ impl GeographyRefiner {
             }
         };
 
-        // If we
+        // Allow join options to turn off preparedness
         let prepared_geoms = if matches!(
             options.execution_mode,
             ExecutionMode::PrepareNone | ExecutionMode::PrepareProbe

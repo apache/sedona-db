@@ -104,21 +104,22 @@ impl DefaultSpatialIndexBuilder {
         self
     }
 
-    pub(crate) fn estimate_extra_memory_usage(
+    pub fn estimate_extra_memory_usage(
         geo_stats: &GeoStatistics,
         spatial_predicate: &SpatialPredicate,
         options: &SpatialJoinOptions,
+        refiner_factory: Arc<dyn IndexQueryResultRefinerFactory>,
     ) -> usize {
         // Estimate the amount of memory needed by the refiner
         let num_geoms = geo_stats.total_geometries().unwrap_or(0) as usize;
-        let refiner = DefaultIndexQueryResultRefinerFactory
+        let refiner = refiner_factory
             .create_refiner(
                 spatial_predicate,
                 options.clone(),
                 num_geoms,
                 geo_stats.clone(),
             )
-            .expect("Default refiner can be constructed");
+            .expect("Refiner can be constructed");
         let refiner_mem_usage = refiner.estimate_max_memory_usage(geo_stats);
 
         let knn_components_mem_usage =

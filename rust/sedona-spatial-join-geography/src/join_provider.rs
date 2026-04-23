@@ -31,13 +31,18 @@ use sedona_s2geography::{
 };
 use sedona_schema::datatypes::SedonaType;
 use sedona_spatial_join::{
-    index::{spatial_index_builder::SpatialJoinBuildMetrics, SpatialIndexBuilder},
+    index::{
+        default_spatial_index_builder::DefaultSpatialIndexBuilder,
+        spatial_index_builder::SpatialJoinBuildMetrics, SpatialIndexBuilder,
+    },
     join_provider::SpatialJoinProvider,
     operand_evaluator::{EvaluatedGeometryArray, EvaluatedGeometryArrayFactory},
     SpatialJoinOptions, SpatialPredicate,
 };
 
-use crate::spatial_index_builder::GeographySpatialIndexBuilder;
+use crate::{
+    refiner::GeographyRefinerFactory, spatial_index_builder::GeographySpatialIndexBuilder,
+};
 
 #[derive(Debug)]
 pub(crate) struct GeographyJoinProvider;
@@ -67,12 +72,16 @@ impl SpatialJoinProvider for GeographyJoinProvider {
 
     fn estimate_extra_memory_usage(
         &self,
-        _geo_stats: &GeoStatistics,
-        _spatial_predicate: &SpatialPredicate,
-        _options: &SpatialJoinOptions,
+        geo_stats: &GeoStatistics,
+        spatial_predicate: &SpatialPredicate,
+        options: &SpatialJoinOptions,
     ) -> usize {
-        // TODO: calculate
-        0
+        DefaultSpatialIndexBuilder::estimate_extra_memory_usage(
+            geo_stats,
+            spatial_predicate,
+            options,
+            Arc::new(GeographyRefinerFactory),
+        )
     }
 
     fn evaluated_array_factory(&self) -> Arc<dyn EvaluatedGeometryArrayFactory> {

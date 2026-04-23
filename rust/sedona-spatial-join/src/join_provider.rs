@@ -29,6 +29,7 @@ use crate::{
         DefaultSpatialIndexBuilder,
     },
     operand_evaluator::{DefaultGeometryArrayFactory, EvaluatedGeometryArrayFactory},
+    refine::DefaultIndexQueryResultRefinerFactory,
     SpatialPredicate,
 };
 
@@ -99,6 +100,7 @@ impl SpatialJoinProvider for DefaultSpatialJoinProvider {
             geo_stats,
             spatial_predicate,
             options,
+            Arc::new(DefaultIndexQueryResultRefinerFactory),
         )
     }
 
