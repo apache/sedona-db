@@ -2843,8 +2843,13 @@ versions of otherwise readable files are supported.</p>
 )
           –
           <div class="doc-md-description">
-            <p>An optional mapping of key/value pairs (open options)
-passed to GDAL/OGR.</p>
+            <p>An optional mapping of key/value pairs passed to
+pyogrio/GDAL. Supports pyogrio keyword arguments (e.g.,
+<code>layer</code>, <code>where</code>, <code>sql</code>, <code>max_features</code>) as well
+as GDAL driver-specific dataset open options. Additionally,
+<code>path_suffix</code> can append a subpath to the resolved
+GDAL source (e.g., <code>{"path_suffix": "data.gdb"}</code> for
+a GDB stored inside a .zip file).</p>
           </div>
         </li>
         <li class="doc-section-item field-body">
