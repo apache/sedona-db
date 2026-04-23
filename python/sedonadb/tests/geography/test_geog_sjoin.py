@@ -26,9 +26,6 @@ if "s2geography" not in sedonadb.__features__:
     pytest.skip("Python package built without s2geography", allow_module_level=True)
 
 
-
-
-
 @pytest.mark.parametrize("spatial_join_enabled", [True, False])
 @pytest.mark.parametrize(
     "join_type", ["INNER JOIN", "LEFT OUTER JOIN", "RIGHT OUTER JOIN"]
