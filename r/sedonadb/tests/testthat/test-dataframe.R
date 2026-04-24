@@ -527,7 +527,6 @@ test_that("sd_summarise() works with dplyr-like summarise syntax", {
 test_that("sd_join() select argument is applied to join results", {
   df1 <- data.frame(common = "from_x", letters_x = letters[1:6], key = 1:6)
   df2 <- data.frame(common = "from_y", key = 10:4, letters_y = LETTERS[1:7])
-  # TODO: join keys cannot be called `x` or `y` in the current implementation
 
   # With select = NULL, columns are blindly stacked
   joined <- sd_join(df1, df2, sd_join_by(x$key == y$key), select = NULL)
