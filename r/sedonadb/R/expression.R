@@ -128,6 +128,19 @@ sd_expr_alias <- function(expr, alias, factory = sd_expr_factory()) {
 
 #' @rdname sd_expr_column
 #' @export
+sd_expr_parse_binary <- function(expr) {
+  result <- expr$parse_binary()
+  if (is.null(result)) {
+    return(NULL)
+  }
+
+  result$left <- .savvy_wrap_SedonaDBExpr(result$left)
+  result$right <- .savvy_wrap_SedonaDBExpr(result$right)
+  result
+}
+
+#' @rdname sd_expr_column
+#' @export
 as_sd_expr <- function(x, factory = sd_expr_factory()) {
   if (inherits(x, "SedonaDBExpr")) {
     x

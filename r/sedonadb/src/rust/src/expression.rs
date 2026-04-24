@@ -22,7 +22,7 @@ use datafusion_expr::{
     expr::{AggregateFunction, FieldMetadata, NullTreatment, ScalarFunction},
     BinaryExpr, Cast, Expr, Operator,
 };
-use savvy::{savvy, savvy_err, EnvironmentSexp};
+use savvy::{savvy, savvy_err, EnvironmentSexp, NullSexp};
 use sedona::context::SedonaContext;
 
 use crate::{
@@ -85,6 +85,31 @@ impl SedonaDBExpr {
     fn negate(&self) -> savvy::Result<SedonaDBExpr> {
         let inner = Expr::Negative(Box::new(self.inner.clone()));
         Ok(Self { inner })
+    }
+
+    fn variant_name(&self) -> savvy::Result<savvy::Sexp> {
+        self.inner.variant_name().try_into()
+    }
+
+    fn parse_binary(&self) -> savvy::Result<savvy::Sexp> {
+        match &self.inner {
+            Expr::BinaryExpr(e) => {
+                let op = savvy::OwnedStringSexp::try_from_scalar(e.op.to_string())?;
+                let left = SedonaDBExpr {
+                    inner: e.left.as_ref().clone(),
+                };
+                let right = SedonaDBExpr {
+                    inner: e.right.as_ref().clone(),
+                };
+
+                let mut result = savvy::OwnedListSexp::new(3, true)?;
+                result.set_name_and_value(0, "op", op)?;
+                result.set_name_and_value(1, "left", savvy::Sexp::try_from(left)?)?;
+                result.set_name_and_value(2, "right", savvy::Sexp::try_from(right)?)?;
+                result.into()
+            }
+            _ => Ok(NullSexp.into()),
+        }
     }
 }
 

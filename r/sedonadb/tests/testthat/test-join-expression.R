@@ -378,22 +378,22 @@ test_that("sd_build_default_select() removes y-side equijoin keys", {
 
 test_that("sd_extract_equijoin_keys() extracts simple equality keys", {
   x_schema <- nanoarrow::na_struct(list(
-    id = nanoarrow::na_int32(),
+    id_x = nanoarrow::na_int32(),
     date = nanoarrow::na_date32()
   ))
   y_schema <- nanoarrow::na_struct(list(
-    id = nanoarrow::na_int32(),
+    id_y = nanoarrow::na_int32(),
     start = nanoarrow::na_date32()
   ))
   ctx <- sd_join_expr_ctx(x_schema, y_schema)
 
   # Multiple conditions: one equality, one inequality
-  jb <- sd_join_by(x$id == y$id, x$date >= y$start)
+  jb <- sd_join_by(x$id_x == y$id_y, x$date >= y$start)
   conditions <- sd_eval_join_conditions(jb, ctx)
 
   keys <- sd_extract_equijoin_keys(conditions)
 
   # Only the equality condition should be extracted
-  expect_equal(keys$x_cols, "id")
-  expect_equal(keys$y_cols, "id")
+  expect_equal(keys$x_cols, "id_x")
+  expect_equal(keys$y_cols, "id_y")
 })

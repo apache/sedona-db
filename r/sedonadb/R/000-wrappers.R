@@ -483,9 +483,21 @@ class(`InternalDataFrame`) <- c(
   }
 }
 
+`SedonaDBExpr_parse_binary` <- function(self) {
+  function() {
+    .Call(savvy_SedonaDBExpr_parse_binary__impl, `self`)
+  }
+}
+
 `SedonaDBExpr_qualified_name` <- function(self) {
   function() {
     .Call(savvy_SedonaDBExpr_qualified_name__impl, `self`)
+  }
+}
+
+`SedonaDBExpr_variant_name` <- function(self) {
+  function() {
+    .Call(savvy_SedonaDBExpr_variant_name__impl, `self`)
   }
 }
 
@@ -497,7 +509,9 @@ class(`InternalDataFrame`) <- c(
   e$`debug_string` <- `SedonaDBExpr_debug_string`(ptr)
   e$`display` <- `SedonaDBExpr_display`(ptr)
   e$`negate` <- `SedonaDBExpr_negate`(ptr)
+  e$`parse_binary` <- `SedonaDBExpr_parse_binary`(ptr)
   e$`qualified_name` <- `SedonaDBExpr_qualified_name`(ptr)
+  e$`variant_name` <- `SedonaDBExpr_variant_name`(ptr)
 
   class(e) <- c("sedonadb::SedonaDBExpr", "SedonaDBExpr", "savvy_sedonadb__sealed")
   e

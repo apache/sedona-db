@@ -87,7 +87,9 @@ SEXP savvy_SedonaDBExpr_cast__ffi(SEXP self__, SEXP c_arg__schema_xptr);
 SEXP savvy_SedonaDBExpr_debug_string__ffi(SEXP self__);
 SEXP savvy_SedonaDBExpr_display__ffi(SEXP self__);
 SEXP savvy_SedonaDBExpr_negate__ffi(SEXP self__);
+SEXP savvy_SedonaDBExpr_parse_binary__ffi(SEXP self__);
 SEXP savvy_SedonaDBExpr_qualified_name__ffi(SEXP self__);
+SEXP savvy_SedonaDBExpr_variant_name__ffi(SEXP self__);
 
 // methods and associated functions for SedonaDBExprFactory
 SEXP savvy_SedonaDBExprFactory_aggregate_function__ffi(SEXP self__,

@@ -538,29 +538,30 @@ sd_extract_equijoin_keys <- function(join_conditions) {
   y_cols <- character()
 
   for (cond in join_conditions) {
-    if (!inherits(cond, "SedonaDBExpr")) {
+    stopifnot(inherits(cond, "SedonaDBExpr"))
+
+    parsed <- sd_expr_parse_binary(cond)
+    if (
+      is.null(parsed) ||
+        parsed$op != "=" ||
+        parsed$left$variant_name() != "Column" ||
+        parsed$right$variant_name() != "Column"
+    ) {
       next
     }
 
-    # TODO: this is totally insane, we can do a better job extracting
-    # equijoin keys from expressions.
-
-    # Try to parse the display string for equality pattern
-    # Format: "x.col = y.col " (may have trailing space)
-    display <- trimws(cond$display())
-
-    # Match pattern: "x.something = y.something"
-    # Handles column names with underscores, numbers, etc.
-    pattern <- "^(x\\.[a-zA-Z_][a-zA-Z0-9_]*)\\s*=\\s*(y\\.[a-zA-Z_][a-zA-Z0-9_]*)$"
-    match <- regmatches(display, regexec(pattern, display))[[1]]
-
-    if (length(match) == 3) {
-      # Extract column names without qualifier
-      x_col <- sub("^x\\.", "", match[2])
-      y_col <- sub("^y\\.", "", match[3])
-      x_cols <- c(x_cols, x_col)
-      y_cols <- c(y_cols, y_col)
-    }
+    left <- parsed$left$qualified_name()
+    right <- parsed$right$qualified_name()
+    switch(
+      left[1],
+      x = x_cols <- append(x_cols, left[2]),
+      y = y_cols <- append(y_cols, left[2])
+    )
+    switch(
+      right[1],
+      x = x_cols <- append(x_cols, right[2]),
+      y = y_cols <- append(y_cols, right[2])
+    )
   }
 
   list(x_cols = x_cols, y_cols = y_cols)
