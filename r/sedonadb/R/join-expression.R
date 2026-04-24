@@ -23,7 +23,9 @@
 #' columns from the left and right tables.
 #'
 #' @param ... Expressions specifying join conditions. These should be
-#'   comparison expressions (e.g., `x$id == y$id`, `x$value > y$threshold`).
+#'   comparison expressions (e.g., `x$id == y$id`, `x$value > y$threshold`)
+#'   or spatial predicate expressions
+#'   (e.g., `st_intersects(x$geometry, y$geometry)`).
 #'   Multiple conditions are combined with AND.
 #'
 #' @returns An object of class `sedonadb_join_by` containing the unevaluated
@@ -179,6 +181,20 @@ sd_eval_join_conditions <- function(join_by, join_expr_ctx) {
     expr <- rlang::quo_get_expr(quo)
     env <- rlang::quo_get_env(quo)
 
+    # Before we even attempt evaluation, we intercept bare names so that
+    # sd_join_by(x, y, z) creates an equijoin
+    if (rlang::is_symbol(expr)) {
+      col <- as.character(expr)
+      return(
+        sd_expr_binary(
+          "==",
+          sd_expr_column(col, qualifier = "x", factory = join_expr_ctx$factory),
+          sd_expr_column(col, qualifier = "y", factory = join_expr_ctx$factory),
+          factory = join_expr_ctx$factory
+        )
+      )
+    }
+
     rlang::try_fetch(
       {
         result <- sd_eval_join_expr_inner(expr, join_expr_ctx, env)
@@ -289,12 +305,30 @@ sd_build_join_conditions <- function(join_expr_ctx, by = NULL, ctx = NULL) {
       )
     }
 
+    # Message
+    join_by_syms <- vapply(rlang::syms(common), rlang::expr_deparse, character(1))
+    message(sprintf(
+      "Joining with `by = sd_join_by(%s)`",
+      paste0(join_by_syms, collapse = ", ")
+    ))
+
     # Build equality conditions for common columns
     join_conditions <- lapply(common, function(col) {
       sd_expr_binary(
         "==",
         sd_expr_column(col, qualifier = "x", factory = join_expr_ctx$factory),
         sd_expr_column(col, qualifier = "y", factory = join_expr_ctx$factory),
+        factory = join_expr_ctx$factory
+      )
+    })
+  } else if (is.character(by)) {
+    by_unnamed <- !rlang::have_name(by)
+    names(by)[by_unnamed] <- by[by_unnamed]
+    join_conditions <- lapply(seq_along(by), function(i) {
+      sd_expr_binary(
+        "==",
+        sd_expr_column(names(by)[i], qualifier = "x", factory = join_expr_ctx$factory),
+        sd_expr_column(by[i], qualifier = "y", factory = join_expr_ctx$factory),
         factory = join_expr_ctx$factory
       )
     })

@@ -8,7 +8,9 @@ sd_join_by(...)
 }
 \arguments{
 \item{...}{Expressions specifying join conditions. These should be
-comparison expressions (e.g., \code{x$id == y$id}, \code{x$value > y$threshold}).
+comparison expressions (e.g., \code{x$id == y$id}, \code{x$value > y$threshold})
+or spatial predicate expressions
+(e.g., \code{st_intersects(x$geometry, y$geometry)}).
 Multiple conditions are combined with AND.}
 }
 \value{

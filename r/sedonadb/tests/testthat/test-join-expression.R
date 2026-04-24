@@ -126,6 +126,13 @@ test_that("sd_eval_join_conditions() evaluates equality conditions", {
   expect_snapshot(conditions[[1]])
 })
 
+test_that("sd_eval_join_conditions() evaluates symbols as equality conditions", {
+  x_schema <- nanoarrow::na_struct(list(id = nanoarrow::na_int32()))
+  y_schema <- nanoarrow::na_struct(list(id = nanoarrow::na_int32()))
+  ctx <- sd_join_expr_ctx(x_schema, y_schema)
+  expect_snapshot(print(sd_eval_join_conditions(sd_join_by(id), ctx)))
+})
+
 test_that("sd_eval_join_conditions() evaluates inequality conditions", {
   x_schema <- nanoarrow::na_struct(list(value = nanoarrow::na_double()))
   y_schema <- nanoarrow::na_struct(list(threshold = nanoarrow::na_double()))
@@ -230,10 +237,21 @@ test_that("sd_build_join_conditions() creates natural join when by is NULL", {
   ))
   ctx <- sd_join_expr_ctx(x_schema, y_schema)
 
-  conditions <- sd_build_join_conditions(ctx)
+  expect_snapshot(print(sd_build_join_conditions(ctx)))
+})
 
-  expect_length(conditions, 1) # Natural join on 'id'
-  expect_s3_class(conditions[[1]], "SedonaDBExpr")
+test_that("sd_build_join_conditions() creates equijoin conditions for names", {
+  x_schema <- nanoarrow::na_struct(list(
+    id = nanoarrow::na_int32(),
+    x_val = nanoarrow::na_string()
+  ))
+  y_schema <- nanoarrow::na_struct(list(
+    id = nanoarrow::na_int32(),
+    y_val = nanoarrow::na_int32()
+  ))
+  ctx <- sd_join_expr_ctx(x_schema, y_schema)
+
+  expect_snapshot(sd_build_join_conditions(ctx, c("id", "x_val" = "y_val")))
 })
 
 test_that("sd_join_select_default() creates default select spec", {

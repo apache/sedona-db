@@ -4,7 +4,13 @@
 \alias{sd_join}
 \title{Join two SedonaDB DataFrames}
 \usage{
-sd_join(x, y, by = NULL, join_type = "inner", select = NULL)
+sd_join(
+  x,
+  y,
+  by = NULL,
+  join_type = "inner",
+  select = sd_join_select_default()
+)
 }
 \arguments{
 \item{x}{The left dataframe}
@@ -18,9 +24,15 @@ a natural join on columns with matching names.}
 "full", "leftsemi", "rightsemi", "leftanti", "rightanti", "leftmark",
 or "rightmark".}
 
-\item{select}{Post-join column selection. Use \code{NULL} for no modification, which
-may result in duplicate (unqualified) column names. The column may still be
-referred to with a qualifier in advanced usage using \code{\link[=sd_expr_column]{sd_expr_column()}}.}
+\item{select}{Post-join column selection. One of
+\itemize{
+\item \code{NULL} for no modification, which may result in duplicate (unqualified)
+column names. The column may still be
+referred to with a qualifier in advanced usage using \code{\link[=sd_expr_column]{sd_expr_column()}}.
+\item \code{\link[=sd_join_select_default]{sd_join_select_default()}} for dplyr-like behaviour (equi-join keys
+removed, intersecting names suffixed)
+\item \code{\link[=sd_join_select]{sd_join_select()}} for a custom selection
+}}
 }
 \value{
 An object of class sedonadb_dataframe

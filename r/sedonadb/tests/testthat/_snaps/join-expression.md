@@ -39,6 +39,16 @@
       <SedonaDBExpr>
       x.id = y.id
 
+# sd_eval_join_conditions() evaluates symbols as equality conditions
+
+    Code
+      print(sd_eval_join_conditions(sd_join_by(id), ctx))
+    Output
+      [[1]]
+      <SedonaDBExpr>
+      x.id = y.id
+      
+
 # sd_eval_join_conditions() evaluates inequality conditions
 
     Code
@@ -62,6 +72,32 @@
     Output
       <SedonaDBExpr>
       x.date >= y.start_date
+
+# sd_build_join_conditions() creates natural join when by is NULL
+
+    Code
+      print(sd_build_join_conditions(ctx))
+    Message
+      Joining with `by = sd_join_by(id)`
+    Output
+      [[1]]
+      <SedonaDBExpr>
+      x.id = y.id
+      
+
+# sd_build_join_conditions() creates equijoin conditions for names
+
+    Code
+      sd_build_join_conditions(ctx, c("id", x_val = "y_val"))
+    Output
+      [[1]]
+      <SedonaDBExpr>
+      x.id = y.id
+      
+      [[2]]
+      <SedonaDBExpr>
+      x.x_val = y.y_val
+      
 
 # sd_join_select_default() prints nicely
 

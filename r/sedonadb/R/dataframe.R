@@ -509,9 +509,13 @@ sd_summarize <- function(.data, ..., .env = parent.frame()) {
 #' @param join_type The type of join to perform. One of "inner", "left", "right",
 #'   "full", "leftsemi", "rightsemi", "leftanti", "rightanti", "leftmark",
 #'   or "rightmark".
-#' @param select Post-join column selection. Use `NULL` for no modification, which
-#'   may result in duplicate (unqualified) column names. The column may still be
-#'   referred to with a qualifier in advanced usage using [sd_expr_column()].
+#' @param select Post-join column selection. One of
+#'   - `NULL` for no modification, which may result in duplicate (unqualified)
+#'     column names. The column may still be
+#'     referred to with a qualifier in advanced usage using [sd_expr_column()].
+#'   - [sd_join_select_default()] for dplyr-like behaviour (equi-join keys
+#'     removed, intersecting names suffixed)
+#'   - [sd_join_select()] for a custom selection
 #'
 #' @returns An object of class sedonadb_dataframe
 #' @export
@@ -526,7 +530,7 @@ sd_join <- function(
   y,
   by = NULL,
   join_type = "inner",
-  select = NULL
+  select = sd_join_select_default()
 ) {
   x <- as_sedonadb_dataframe(x)
   y <- as_sedonadb_dataframe(y, ctx = x$ctx)
