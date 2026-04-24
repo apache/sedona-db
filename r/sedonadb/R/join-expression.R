@@ -268,21 +268,18 @@ sd_eval_join_expr_inner <- function(expr, join_expr_ctx, env) {
 #' Evaluates the `by` argument to produce a list of join condition expressions.
 #' Supports natural joins (NULL) and explicit conditions via [sd_join_by()].
 #'
-#' @param x_schema Schema for the left table
-#' @param y_schema Schema for the right table
+#' @param join_expr_ctx Object produced by `sd_join_expr_ctx()`
 #' @param by A `sedonadb_join_by` object from [sd_join_by()], or `NULL` for
 #'   a natural join on columns with matching names.
 #' @param ctx A SedonaDB context
 #'
 #' @returns A list of `SedonaDBExpr` objects representing the join conditions
 #' @noRd
-sd_build_join_conditions <- function(x_schema, y_schema, by = NULL, ctx = NULL) {
-  join_expr_ctx <- sd_join_expr_ctx(x_schema, y_schema, ctx = ctx)
-
+sd_build_join_conditions <- function(join_expr_ctx, by = NULL, ctx = NULL) {
   if (is.null(by)) {
     # Natural join: find common column names
-    x_names <- names(x_schema$children)
-    y_names <- names(y_schema$children)
+    x_names <- names(join_expr_ctx$x_schema$children)
+    y_names <- names(join_expr_ctx$y_schema$children)
     common <- intersect(x_names, y_names)
 
     if (length(common) == 0) {

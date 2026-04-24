@@ -208,10 +208,10 @@ test_that("sd_build_join_conditions() works with sd_join_by()", {
     id = nanoarrow::na_int32(),
     y_val = nanoarrow::na_int32()
   ))
+  ctx <- sd_join_expr_ctx(x_schema, y_schema)
 
   conditions <- sd_build_join_conditions(
-    x_schema,
-    y_schema,
+    ctx,
     sd_join_by(x$id == y$id)
   )
 
@@ -228,8 +228,9 @@ test_that("sd_build_join_conditions() creates natural join when by is NULL", {
     id = nanoarrow::na_int32(),
     y_val = nanoarrow::na_int32()
   ))
+  ctx <- sd_join_expr_ctx(x_schema, y_schema)
 
-  conditions <- sd_build_join_conditions(x_schema, y_schema)
+  conditions <- sd_build_join_conditions(ctx)
 
   expect_length(conditions, 1) # Natural join on 'id'
   expect_s3_class(conditions[[1]], "SedonaDBExpr")

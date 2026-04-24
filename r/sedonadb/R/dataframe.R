@@ -516,10 +516,8 @@ sd_summarize <- function(.data, ..., .env = parent.frame()) {
 #' @export
 #'
 #' @examples
-#' library(sedonadb)
-#'
 #' df1 <- data.frame(x = letters[1:10], y = 1:10)
-#' df2 <- data.frame(y = 10:1, z = stringr::words[1:10])
+#' df2 <- data.frame(y = 10:1, z = LETTERS[1:10])
 #' df1 |> sd_join(df2)
 #'
 sd_join <- function(
@@ -527,15 +525,16 @@ sd_join <- function(
   y,
   by = NULL,
   suffix = c(".x", ".y"),
-  join_type = "inner"
+  join_type = "inner",
+  select = NULL
 ) {
   x <- as_sedonadb_dataframe(x)
   y <- as_sedonadb_dataframe(y, ctx = x$ctx)
 
   x_schema <- infer_nanoarrow_schema(x)
   y_schema <- infer_nanoarrow_schema(y)
-
-  join_conditions <- sd_build_join_conditions(x_schema, y_schema, by, ctx = x$ctx)
+  join_expr_ctx <- sd_join_expr_ctx(x_schema, y_schema, ctx = x$ctx)
+  join_conditions <- sd_build_join_conditions(join_expr_ctx, by, ctx = x$ctx)
 
   # TODO: apply suffixes and/or handle aliases for the following selections
 
