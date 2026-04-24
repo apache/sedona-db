@@ -29,6 +29,12 @@ SedonaDB for Python can be installed from [PyPI](https://pypi.org):
 pip install "apache-sedona[db]"
 ```
 
+Or with [conda](https://www.anaconda.com/docs/getting-started/main):
+
+```sh
+conda install sedonadb
+```
+
 ## Example
 
 ```python

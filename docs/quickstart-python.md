@@ -27,6 +27,10 @@ First, install SedonaDB:
 pip install "apache-sedona[db]"
 ```
 
+```sh
+conda install sedonadb
+```
+
 If the import and connection are successful, your installation is complete.
 
 
