@@ -108,6 +108,7 @@ def test_spatial_join_geog_matches_postgis(join_type, on):
         "ST_Within(sjoin_point.geometry, sjoin_polygon.geometry)",
         "ST_Contains(sjoin_polygon.geometry, sjoin_point.geometry)",
         "ST_DWithin(sjoin_point.geometry, sjoin_polygon.geometry, 10.0)",
+        "ST_DWithin(sjoin_point.geometry, sjoin_polygon.geometry, 10)",
         "ST_DWithin(sjoin_point.geometry, sjoin_polygon.geometry, sjoin_point.dist * 10)",
     ],
 )

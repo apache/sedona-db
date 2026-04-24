@@ -18,6 +18,7 @@
 use std::sync::Arc;
 
 use arrow_array::{ArrayRef, Float64Array};
+use arrow_schema::DataType;
 use datafusion_common::{exec_datafusion_err, JoinType, Result, ScalarValue};
 use datafusion_physical_plan::ColumnarValue;
 use geo_index::rtree::util::f64_box_to_f32;
@@ -104,7 +105,10 @@ impl EvaluatedGeometryArrayFactory for GeographyEvaluatedArrayFactory {
             return try_new_evaluated_array_impl(geometry_array, sedona_type, |_bounder| {});
         };
 
-        let result = match distance_columnar_value {
+        // Cast to float if the input was some other numeric
+        let distance_columnar_value = distance_columnar_value.cast_to(&DataType::Float64, None)?;
+
+        let result = match &distance_columnar_value {
             ColumnarValue::Scalar(ScalarValue::Float64(Some(distance))) => {
                 try_new_evaluated_array_impl(geometry_array, sedona_type, |bounder| {
                     bounder.expand_by_distance(*distance);
