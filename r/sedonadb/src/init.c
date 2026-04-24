@@ -296,6 +296,11 @@ SEXP savvy_SedonaDBExpr_negate__impl(SEXP self__) {
   return handle_result(res);
 }
 
+SEXP savvy_SedonaDBExpr_qualified_name__impl(SEXP self__) {
+  SEXP res = savvy_SedonaDBExpr_qualified_name__ffi(self__);
+  return handle_result(res);
+}
+
 SEXP savvy_SedonaDBExprFactory_aggregate_function__impl(SEXP self__,
                                                         SEXP c_arg__name,
                                                         SEXP c_arg__args,
@@ -423,6 +428,8 @@ static const R_CallMethodDef CallEntries[] = {
      (DL_FUNC)&savvy_SedonaDBExpr_display__impl, 1},
     {"savvy_SedonaDBExpr_negate__impl",
      (DL_FUNC)&savvy_SedonaDBExpr_negate__impl, 1},
+    {"savvy_SedonaDBExpr_qualified_name__impl",
+     (DL_FUNC)&savvy_SedonaDBExpr_qualified_name__impl, 1},
     {"savvy_SedonaDBExprFactory_aggregate_function__impl",
      (DL_FUNC)&savvy_SedonaDBExprFactory_aggregate_function__impl, 5},
     {"savvy_SedonaDBExprFactory_any_function__impl",

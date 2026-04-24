@@ -41,6 +41,22 @@ impl SedonaDBExpr {
         format!("{}", self.inner).try_into()
     }
 
+    fn qualified_name(&self) -> savvy::Result<savvy::Sexp> {
+        let (qualifier, name) = self.inner.qualified_name();
+        let mut result = savvy::OwnedStringSexp::new(2)?;
+
+        // Set the qualifier (first element) - NA if None
+        match qualifier {
+            Some(table_ref) => result.set_elt(0, &table_ref.to_string())?,
+            None => result.set_na(0)?,
+        }
+
+        // Set the name (second element)
+        result.set_elt(1, &name)?;
+
+        result.into()
+    }
+
     fn debug_string(&self) -> savvy::Result<savvy::Sexp> {
         format!("{:?}", self.inner).try_into()
     }

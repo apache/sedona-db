@@ -321,6 +321,11 @@ sd_expr_ctx <- function(schema = NULL, env = parent.frame(), ctx = NULL) {
 
   schema <- nanoarrow::as_nanoarrow_schema(schema)
   data_names <- as.character(names(schema$children))
+
+  # Duplicate names can't be referred to with the mask. We could install these
+  # as an active binding to give an error message if they are referred to.
+  ambiguous_names <- unique(data_names[duplicated(data_names)])
+  data_names <- setdiff(data_names, ambiguous_names)
   data <- lapply(data_names, sd_expr_column)
   names(data) <- data_names
 

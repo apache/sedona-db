@@ -4,7 +4,7 @@
 \alias{sd_join}
 \title{Join two SedonaDB DataFrames}
 \usage{
-sd_join(x, y, by = NULL, suffix = c(".x", ".y"), join_type = "inner")
+sd_join(x, y, by = NULL, join_type = "inner", select = NULL)
 }
 \arguments{
 \item{x}{The left dataframe}
@@ -14,12 +14,13 @@ sd_join(x, y, by = NULL, suffix = c(".x", ".y"), join_type = "inner")
 \item{by}{A \code{sedonadb_join_by} object from \code{\link[=sd_join_by]{sd_join_by()}}, or \code{NULL} for
 a natural join on columns with matching names.}
 
-\item{suffix}{A character vector of length 2 specifying suffixes to add
-to overlapping column names from x and y respectively.}
-
-\item{how}{The type of join to perform. One of "inner", "left", "right",
+\item{join_type}{The type of join to perform. One of "inner", "left", "right",
 "full", "leftsemi", "rightsemi", "leftanti", "rightanti", "leftmark",
 or "rightmark".}
+
+\item{select}{Post-join column selection. Use \code{NULL} for no modification, which
+may result in duplicate (unqualified) column names. The column may still be
+referred to with a qualifier in advanced usage using \code{\link[=sd_expr_column]{sd_expr_column()}}.}
 }
 \value{
 An object of class sedonadb_dataframe
@@ -30,10 +31,8 @@ specify join conditions using \code{x$column} and \code{y$column} syntax to
 reference columns from the left and right tables respectively.
 }
 \examples{
-library(sedonadb)
-
 df1 <- data.frame(x = letters[1:10], y = 1:10)
-df2 <- data.frame(y = 10:1, z = stringr::words[1:10])
+df2 <- data.frame(y = 10:1, z = LETTERS[1:10])
 df1 |> sd_join(df2)
 
 }

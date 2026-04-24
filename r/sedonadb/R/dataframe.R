@@ -506,11 +506,12 @@ sd_summarize <- function(.data, ..., .env = parent.frame()) {
 #' @param y The right dataframe (will use the same context as x)
 #' @param by A `sedonadb_join_by` object from [sd_join_by()], or `NULL` for
 #'   a natural join on columns with matching names.
-#' @param suffix A character vector of length 2 specifying suffixes to add
-#'   to overlapping column names from x and y respectively.
 #' @param join_type The type of join to perform. One of "inner", "left", "right",
 #'   "full", "leftsemi", "rightsemi", "leftanti", "rightanti", "leftmark",
 #'   or "rightmark".
+#' @param select Post-join column selection. Use `NULL` for no modification, which
+#'   may result in duplicate (unqualified) column names. The column may still be
+#'   referred to with a qualifier in advanced usage using [sd_expr_column()].
 #'
 #' @returns An object of class sedonadb_dataframe
 #' @export
@@ -524,7 +525,6 @@ sd_join <- function(
   x,
   y,
   by = NULL,
-  suffix = c(".x", ".y"),
   join_type = "inner",
   select = NULL
 ) {
@@ -536,21 +536,30 @@ sd_join <- function(
   join_expr_ctx <- sd_join_expr_ctx(x_schema, y_schema, ctx = x$ctx)
   join_conditions <- sd_build_join_conditions(join_expr_ctx, by, ctx = x$ctx)
 
-  # TODO: apply suffixes and/or handle aliases for the following selections
-
   df <- x$df$join(y$df, join_conditions, join_type, left_alias = "x", right_alias = "y")
-  new_sedonadb_dataframe(x$ctx, df)
-}
+  out <- new_sedonadb_dataframe(x$ctx, df)
 
-#' @export
-print.sedonadb_join_plan <- function(x, ...) {
-  cat("<sedonadb_join_plan>\n")
-  cat("  type:", x$how, "join\n")
-  cat("  conditions:\n")
-  for (cond in x$conditions) {
-    cat("    ", cond$display(), "\n", sep = "")
+  # Apply post-join column selection
+  if (is.null(select)) {
+    # No select specified - return raw join result
+    return(out)
   }
-  invisible(x)
+
+  if (inherits(select, "sedonadb_join_select_default")) {
+    # Default select: remove duplicate equijoin keys, apply suffixes
+    projection <- sd_build_default_select(join_expr_ctx, join_conditions, select$suffix)
+  } else if (inherits(select, "sedonadb_join_select")) {
+    # Custom select: evaluate user expressions
+    projection <- sd_eval_join_select_exprs(select, join_expr_ctx)
+  } else {
+    stop(
+      "`select` must be NULL, sd_join_select_default(), or sd_join_select()",
+      call. = FALSE
+    )
+  }
+
+  # Apply the projection
+  sd_transmute(out, !!!projection)
 }
 
 #' Write DataFrame to (Geo)Parquet files

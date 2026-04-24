@@ -483,6 +483,12 @@ class(`InternalDataFrame`) <- c(
   }
 }
 
+`SedonaDBExpr_qualified_name` <- function(self) {
+  function() {
+    .Call(savvy_SedonaDBExpr_qualified_name__impl, `self`)
+  }
+}
+
 `.savvy_wrap_SedonaDBExpr` <- function(ptr) {
   e <- new.env(parent = emptyenv())
   e$.ptr <- ptr
@@ -491,6 +497,7 @@ class(`InternalDataFrame`) <- c(
   e$`debug_string` <- `SedonaDBExpr_debug_string`(ptr)
   e$`display` <- `SedonaDBExpr_display`(ptr)
   e$`negate` <- `SedonaDBExpr_negate`(ptr)
+  e$`qualified_name` <- `SedonaDBExpr_qualified_name`(ptr)
 
   class(e) <- c("sedonadb::SedonaDBExpr", "SedonaDBExpr", "savvy_sedonadb__sealed")
   e

@@ -235,3 +235,165 @@ test_that("sd_build_join_conditions() creates natural join when by is NULL", {
   expect_length(conditions, 1) # Natural join on 'id'
   expect_s3_class(conditions[[1]], "SedonaDBExpr")
 })
+
+test_that("sd_join_select_default() creates default select spec", {
+  spec <- sd_join_select_default()
+  expect_s3_class(spec, "sedonadb_join_select_default")
+  expect_equal(spec$suffix, c(".x", ".y"))
+
+  # Custom suffix
+  spec2 <- sd_join_select_default(suffix = c("_left", "_right"))
+  expect_equal(spec2$suffix, c("_left", "_right"))
+})
+
+test_that("sd_join_select_default() validates suffix argument", {
+  expect_error(sd_join_select_default(suffix = ".x"), "length 2")
+  expect_error(sd_join_select_default(suffix = c(1, 2)), "character")
+})
+
+test_that("sd_join_select_default() prints nicely", {
+  spec <- sd_join_select_default()
+  expect_snapshot(print(spec))
+
+  spec2 <- sd_join_select_default(suffix = c("_l", "_r"))
+  expect_snapshot(print(spec2))
+})
+
+test_that("sd_join_select() captures column selections", {
+  sel <- sd_join_select(x$id, y$value)
+  expect_s3_class(sel, "sedonadb_join_select")
+  expect_length(sel$exprs, 2)
+
+  # TODO: check non-ambiguous selection
+
+  # With renaming
+  sel2 <- sd_join_select(out_id = x$id, out_val = y$value)
+  expect_length(sel2$exprs, 2)
+  expect_equal(names(sel2$exprs), c("out_id", "out_val"))
+})
+
+test_that("sd_join_select() requires at least one selection", {
+  # TODO: this isn't needed, we can select nothing if we want
+  expect_error(sd_join_select(), "requires at least one")
+})
+
+test_that("sd_join_select() prints nicely", {
+  sel1 <- sd_join_select(x$id, y$value)
+  expect_snapshot(print(sel1))
+
+  sel2 <- sd_join_select(out = x$id, val = y$value)
+  expect_snapshot(print(sel2))
+})
+
+test_that("sd_eval_join_select_exprs() evaluates column references", {
+  x_schema <- nanoarrow::na_struct(list(
+    id = nanoarrow::na_int32(),
+    name = nanoarrow::na_string()
+  ))
+  y_schema <- nanoarrow::na_struct(list(
+    id = nanoarrow::na_int32(),
+    value = nanoarrow::na_double()
+  ))
+  ctx <- sd_join_expr_ctx(x_schema, y_schema)
+
+  expect_snapshot(sd_eval_join_select_exprs(sd_join_select(x$id, y$value), ctx))
+})
+
+test_that("sd_eval_join_select_exprs() handles renaming", {
+  x_schema <- nanoarrow::na_struct(list(
+    id = nanoarrow::na_int32(),
+    name = nanoarrow::na_string()
+  ))
+  y_schema <- nanoarrow::na_struct(list(
+    id = nanoarrow::na_int32(),
+    value = nanoarrow::na_double()
+  ))
+  ctx <- sd_join_expr_ctx(x_schema, y_schema)
+
+  expect_snapshot(sd_eval_join_select_exprs(
+    sd_join_select(my_id = x$id, my_val = y$value, x_name = x$name),
+    ctx
+  ))
+})
+
+test_that("sd_eval_join_select_exprs() errors on ambiguous columns", {
+  x_schema <- nanoarrow::na_struct(list(id = nanoarrow::na_int32()))
+  y_schema <- nanoarrow::na_struct(list(id = nanoarrow::na_int32()))
+  ctx <- sd_join_expr_ctx(x_schema, y_schema)
+
+  sel <- sd_join_select(id) # Ambiguous without qualifier
+  expect_error(
+    sd_eval_join_select_exprs(sel, ctx),
+    "Column 'id' is ambiguous"
+  )
+})
+
+test_that("sd_eval_join_select_exprs() errors on missing columns", {
+  x_schema <- nanoarrow::na_struct(list(id = nanoarrow::na_int32()))
+  y_schema <- nanoarrow::na_struct(list(id = nanoarrow::na_int32()))
+  ctx <- sd_join_expr_ctx(x_schema, y_schema)
+
+  sel <- sd_join_select(x$nonexistent)
+  expect_error(
+    sd_eval_join_select_exprs(sel, ctx),
+    "Column 'nonexistent' not found"
+  )
+})
+
+test_that("sd_eval_join_select_exprs() errors on non-column expressions", {
+  x_schema <- nanoarrow::na_struct(list(id = nanoarrow::na_int32()))
+  y_schema <- nanoarrow::na_struct(list(id = nanoarrow::na_int32()))
+  ctx <- sd_join_expr_ctx(x_schema, y_schema)
+
+  sel <- sd_join_select(x$id + 1)
+  expect_error(
+    sd_eval_join_select_exprs(sel, ctx),
+    "must be column references"
+  )
+})
+
+test_that("sd_build_default_select() removes y-side equijoin keys", {
+  x_schema <- nanoarrow::na_struct(list(
+    id = nanoarrow::na_int32(),
+    x_val = nanoarrow::na_string()
+  ))
+  y_schema <- nanoarrow::na_struct(list(
+    id = nanoarrow::na_int32(),
+    y_val = nanoarrow::na_double()
+  ))
+  ctx <- sd_join_expr_ctx(x_schema, y_schema)
+
+  # Build equijoin condition
+  conditions <- sd_build_join_conditions(ctx)
+
+  result <- sd_build_default_select(ctx, conditions, c(".x", ".y"))
+
+  expect_identical(
+    names(result),
+    c("id", "x_val", "y_val")
+  )
+
+  expect_snapshot(print(result))
+})
+
+test_that("sd_extract_equijoin_keys() extracts simple equality keys", {
+  x_schema <- nanoarrow::na_struct(list(
+    id = nanoarrow::na_int32(),
+    date = nanoarrow::na_date32()
+  ))
+  y_schema <- nanoarrow::na_struct(list(
+    id = nanoarrow::na_int32(),
+    start = nanoarrow::na_date32()
+  ))
+  ctx <- sd_join_expr_ctx(x_schema, y_schema)
+
+  # Multiple conditions: one equality, one inequality
+  jb <- sd_join_by(x$id == y$id, x$date >= y$start)
+  conditions <- sd_eval_join_conditions(jb, ctx)
+
+  keys <- sd_extract_equijoin_keys(conditions)
+
+  # Only the equality condition should be extracted
+  expect_equal(keys$x_cols, "id")
+  expect_equal(keys$y_cols, "id")
+})
