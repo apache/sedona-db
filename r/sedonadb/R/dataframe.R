@@ -508,83 +508,39 @@ sd_summarize <- function(.data, ..., .env = parent.frame()) {
 #'   a natural join on columns with matching names.
 #' @param suffix A character vector of length 2 specifying suffixes to add
 #'   to overlapping column names from x and y respectively.
-#' @param how The type of join to perform: "inner", "left", "right", or "full".
+#' @param how The type of join to perform. One of "inner", "left", "right",
+#'   "full", "leftsemi", "rightsemi", "leftanti", "rightanti", "leftmark",
+#'   or "rightmark".
 #'
 #' @returns An object of class sedonadb_dataframe
+#' @export
 #'
 #' @examples
-#' \dontrun{
-#' # Join on matching id columns
-#' sd_join(orders, customers, sd_join_by(x$customer_id == y$id))
+#' library(sedonadb)
 #'
-#' # Left join with inequality condition
-#' sd_join(events, sessions,
-#'         sd_join_by(x$user_id == y$user_id, x$timestamp >= y$start_time),
-#'         how = "left")
-#' }
+#' df1 <- data.frame(x = letters[1:10], y = 1:10)
+#' df2 <- data.frame(y = 10:1, z = stringr::words[1:10])
+#' df1 |> sd_join(df2)
 #'
 sd_join <- function(
   x,
   y,
   by = NULL,
   suffix = c(".x", ".y"),
-  how = c("inner", "left", "right", "full")
+  join_type = "inner"
 ) {
-  how <- match.arg(how)
   x <- as_sedonadb_dataframe(x)
   y <- as_sedonadb_dataframe(y, ctx = x$ctx)
-
-  ctx <- x$ctx
 
   x_schema <- infer_nanoarrow_schema(x)
   y_schema <- infer_nanoarrow_schema(y)
 
-  # Create join expression context for evaluating join conditions
+  join_conditions <- sd_build_join_conditions(x_schema, y_schema, by, ctx = x$ctx)
 
-  join_expr_ctx <- sd_join_expr_ctx(x_schema, y_schema, ctx = ctx)
+  # TODO: apply suffixes and/or handle aliases for the following selections
 
-  # Evaluate join conditions
-
-  if (is.null(by)) {
-    # Natural join: find common column names
-    x_names <- names(x_schema$children)
-    y_names <- names(y_schema$children)
-    common <- intersect(x_names, y_names)
-
-    if (length(common) == 0) {
-      stop(
-        "No common columns found for natural join. ",
-        "Use sd_join_by() to specify join conditions."
-      )
-    }
-
-    # Build equality conditions for common columns
-    join_conditions <- lapply(common, function(col) {
-      sd_expr_binary(
-        "==",
-        sd_expr_column(col, qualifier = "x", factory = join_expr_ctx$factory),
-        sd_expr_column(col, qualifier = "y", factory = join_expr_ctx$factory),
-        factory = join_expr_ctx$factory
-      )
-    })
-  } else if (inherits(by, "sedonadb_join_by")) {
-    join_conditions <- sd_eval_join_conditions(by, join_expr_ctx)
-  } else {
-    stop("`by` must be NULL (natural join) or a sd_join_by() object")
-  }
-
-  # Return join information for now (actual execution requires Rust join method)
-  structure(
-    list(
-      x = x,
-      y = y,
-      conditions = join_conditions,
-      how = how,
-      suffix = suffix,
-      join_expr_ctx = join_expr_ctx
-    ),
-    class = "sedonadb_join_plan"
-  )
+  df <- x$df$join(y$df, join_conditions, join_type, left_alias = "x", right_alias = "y")
+  new_sedonadb_dataframe(x$ctx, df)
 }
 
 #' @export

@@ -271,6 +271,21 @@ class(`InternalContext`) <- c(
   }
 }
 
+`InternalDataFrame_join` <- function(self) {
+  function(`right`, `on_sexp`, `join_type_str`, `left_alias`, `right_alias`) {
+    `right` <- .savvy_extract_ptr(`right`, "sedonadb::InternalDataFrame")
+    .savvy_wrap_InternalDataFrame(.Call(
+      savvy_InternalDataFrame_join__impl,
+      `self`,
+      `right`,
+      `on_sexp`,
+      `join_type_str`,
+      `left_alias`,
+      `right_alias`
+    ))
+  }
+}
+
 `InternalDataFrame_limit` <- function(self) {
   function(`n`) {
     .savvy_wrap_InternalDataFrame(.Call(savvy_InternalDataFrame_limit__impl, `self`, `n`))
@@ -398,6 +413,7 @@ class(`InternalContext`) <- c(
   e$`compute` <- `InternalDataFrame_compute`(ptr)
   e$`count` <- `InternalDataFrame_count`(ptr)
   e$`filter` <- `InternalDataFrame_filter`(ptr)
+  e$`join` <- `InternalDataFrame_join`(ptr)
   e$`limit` <- `InternalDataFrame_limit`(ptr)
   e$`primary_geometry_column_index` <- `InternalDataFrame_primary_geometry_column_index`(
     ptr

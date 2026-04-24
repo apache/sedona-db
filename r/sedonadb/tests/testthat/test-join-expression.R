@@ -27,14 +27,10 @@ test_that("sd_join_by() captures join conditions", {
 
 test_that("sd_join_by() prints nicely", {
   jb1 <- sd_join_by(x$id == y$id)
-  output1 <- capture.output(print(jb1))
-  expect_true(any(grepl("<sedonadb_join_by>", output1)))
-  expect_true(any(grepl("x\\$id == y\\$id", output1)))
+  expect_snapshot(print(jb1))
 
   jb2 <- sd_join_by(x$id == y$id, x$value > y$threshold)
-  output2 <- capture.output(print(jb2))
-  expect_true(any(grepl("x\\$id == y\\$id", output2)))
-  expect_true(any(grepl("x\\$value > y\\$threshold", output2)))
+  expect_snapshot(print(jb2))
 })
 
 test_that("sd_join_by() requires at least one condition", {
@@ -203,45 +199,38 @@ test_that("table ref $ accessor validates column names", {
   expect_error(ctx$y_ref$nonexistent, "Column 'nonexistent' not found in table 'y'")
 })
 
-test_that("sd_join() creates join plan with sd_join_by()", {
-  x <- data.frame(id = 1:3, x_val = c("a", "b", "c")) |> as_sedonadb_dataframe()
-  y <- data.frame(id = 2:4, y_val = c(10, 20, 30)) |> as_sedonadb_dataframe()
+test_that("sd_build_join_conditions() works with sd_join_by()", {
+  x_schema <- nanoarrow::na_struct(list(
+    id = nanoarrow::na_int32(),
+    x_val = nanoarrow::na_string()
+  ))
+  y_schema <- nanoarrow::na_struct(list(
+    id = nanoarrow::na_int32(),
+    y_val = nanoarrow::na_int32()
+  ))
 
-  plan <- sd_join(x, y, sd_join_by(x$id == y$id))
+  conditions <- sd_build_join_conditions(
+    x_schema,
+    y_schema,
+    sd_join_by(x$id == y$id)
+  )
 
-  expect_s3_class(plan, "sedonadb_join_plan")
-  expect_equal(plan$how, "inner")
-  expect_length(plan$conditions, 1)
+  expect_length(conditions, 1)
+  expect_s3_class(conditions[[1]], "SedonaDBExpr")
 })
 
-test_that("sd_join() creates natural join when by is NULL", {
-  x <- data.frame(id = 1:3, x_val = c("a", "b", "c")) |> as_sedonadb_dataframe()
-  y <- data.frame(id = 2:4, y_val = c(10, 20, 30)) |> as_sedonadb_dataframe()
+test_that("sd_build_join_conditions() creates natural join when by is NULL", {
+  x_schema <- nanoarrow::na_struct(list(
+    id = nanoarrow::na_int32(),
+    x_val = nanoarrow::na_string()
+  ))
+  y_schema <- nanoarrow::na_struct(list(
+    id = nanoarrow::na_int32(),
+    y_val = nanoarrow::na_int32()
+  ))
 
-  plan <- sd_join(x, y)
+  conditions <- sd_build_join_conditions(x_schema, y_schema)
 
-  expect_s3_class(plan, "sedonadb_join_plan")
-  expect_length(plan$conditions, 1)  # Natural join on 'id'
-})
-
-test_that("sd_join() validates join type", {
-  x <- data.frame(id = 1:3) |> as_sedonadb_dataframe()
-  y <- data.frame(id = 2:4) |> as_sedonadb_dataframe()
-
-  expect_s3_class(sd_join(x, y, how = "left"), "sedonadb_join_plan")
-  expect_s3_class(sd_join(x, y, how = "right"), "sedonadb_join_plan")
-  expect_s3_class(sd_join(x, y, how = "full"), "sedonadb_join_plan")
-  expect_error(sd_join(x, y, how = "invalid"))
-})
-
-test_that("sd_join_plan prints nicely", {
-  x <- data.frame(id = 1:3, x_val = c("a", "b", "c")) |> as_sedonadb_dataframe()
-  y <- data.frame(id = 2:4, y_val = c(10, 20, 30)) |> as_sedonadb_dataframe()
-
-  plan <- sd_join(x, y, sd_join_by(x$id == y$id))
-
-  output <- capture.output(print(plan))
-  expect_true(any(grepl("<sedonadb_join_plan>", output)))
-  expect_true(any(grepl("inner join", output)))
-  expect_true(any(grepl("x.id = y.id", output)))
+  expect_length(conditions, 1) # Natural join on 'id'
+  expect_s3_class(conditions[[1]], "SedonaDBExpr")
 })

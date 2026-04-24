@@ -1,3 +1,20 @@
+# sd_join_by() prints nicely
+
+    Code
+      print(jb1)
+    Output
+      <sedonadb_join_by>
+        x$id == y$id
+
+---
+
+    Code
+      print(jb2)
+    Output
+      <sedonadb_join_by>
+        x$id == y$id
+        x$value > y$threshold
+
 # qualified column references produce correct expressions
 
     Code
