@@ -508,7 +508,7 @@ sd_summarize <- function(.data, ..., .env = parent.frame()) {
 #'   a natural join on columns with matching names.
 #' @param suffix A character vector of length 2 specifying suffixes to add
 #'   to overlapping column names from x and y respectively.
-#' @param how The type of join to perform. One of "inner", "left", "right",
+#' @param join_type The type of join to perform. One of "inner", "left", "right",
 #'   "full", "leftsemi", "rightsemi", "leftanti", "rightanti", "leftmark",
 #'   or "rightmark".
 #'
