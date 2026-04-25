@@ -555,7 +555,7 @@ sd_join <- function(
 
   if (inherits(select, "sedonadb_join_select_default")) {
     # Default select: remove duplicate equijoin keys, apply suffixes
-    projection <- sd_build_default_select(join_expr_ctx, join_conditions, select$suffix)
+    projection <- sd_build_default_select(join_expr_ctx, join_conditions, select$suffix, join_type)
   } else if (inherits(select, "sedonadb_join_select")) {
     # Custom select: evaluate user expressions
     projection <- sd_eval_join_select_exprs(select, join_expr_ctx)

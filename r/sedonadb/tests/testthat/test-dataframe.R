@@ -583,3 +583,30 @@ test_that("sd_join() select argument is applied to join results", {
     c("letters_x", "key", "common", "letters_y")
   )
 })
+
+test_that("sd_join() join_type argument is applied to join results", {
+  df1 <- data.frame(letters_x = letters[1:6], key = 1:6)
+  df2 <- data.frame(key = 10:4, letters_y = LETTERS[1:7])
+
+  joined <- df1 |>  sd_join(df2, by = "key", join_type = "left")
+  expect_identical(
+    as.data.frame(joined |> sd_arrange(key)),
+    merge(df1, df2, by = "key", all.x = TRUE, all.y = FALSE)[c("letters_x", "key", "letters_y")]
+  )
+
+  joined <- df1 |>  sd_join(df2, by = "key", join_type = "right")
+  expect_identical(
+    as.data.frame(joined |> sd_arrange(key)),
+    merge(df1, df2, by = "key", all.x = FALSE, all.y = TRUE)[c("letters_x", "key", "letters_y")]
+  )
+
+  joined <- df1 |>  sd_join(df2, by = "key", join_type = "full")
+  expect_identical(
+    as.data.frame(joined |> sd_arrange(key)),
+    merge(df1, df2, by = "key", all.x = TRUE, all.y = TRUE)[c("letters_x", "key", "letters_y")]
+  )
+
+  df1$extra_column <- "foofy"
+  joined <- df1 |>  sd_join(df2, by = "key", join_type = "full")
+  expect_identical(colnames(joined), c("letters_x", "key", "extra_column", "letters_y"))
+})

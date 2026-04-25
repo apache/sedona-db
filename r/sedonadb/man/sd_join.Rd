@@ -17,8 +17,14 @@ sd_join(
 
 \item{y}{The right dataframe (will use the same context as x)}
 
-\item{by}{A \code{sedonadb_join_by} object from \code{\link[=sd_join_by]{sd_join_by()}}, or \code{NULL} for
-a natural join on columns with matching names.}
+\item{by}{Join specification. One of:
+\itemize{
+\item A \code{sedonadb_join_by} object from \code{\link[=sd_join_by]{sd_join_by()}}
+\item A character vector of column names to join on in both tables
+\item A named character vector mapping left-table column names to
+right-table column names, e.g. \code{c(x_val = "y_val")}
+\item \code{NULL} for a natural join on columns with matching names
+}}
 
 \item{join_type}{The type of join to perform. One of "inner", "left", "right",
 "full", "leftsemi", "rightsemi", "leftanti", "rightanti", "leftmark",

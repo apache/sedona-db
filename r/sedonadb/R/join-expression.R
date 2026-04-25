@@ -510,17 +510,22 @@ sd_eval_join_select_expr_inner <- function(expr, join_expr_ctx, env) {
 #' @param join_expr_ctx A `sedonadb_join_expr_ctx` from `sd_join_expr_ctx()`
 #' @param join_conditions List of join condition expressions
 #' @param suffix Character vector of length 2 for left/right suffixes
+#' @param join_type Join type, used for preference of right or left key columns
 #'
 #' @returns A named list of expressions
 #' @noRd
-sd_build_default_select <- function(join_expr_ctx, join_conditions, suffix) {
+sd_build_default_select <- function(join_expr_ctx, join_conditions, suffix, join_type) {
   x_names <- names(join_expr_ctx$x_schema$children)
   y_names <- names(join_expr_ctx$y_schema$children)
 
   # Extract equijoin key pairs (simple x$col == y$col conditions)
-  # and remove them from the y_names
+  # and remove them from the x_names (if right join) or y_names (otherwise)
   equijoin_keys <- sd_extract_equijoin_keys(join_conditions)
-  y_names <- setdiff(y_names, equijoin_keys$y_cols)
+  if (identical(tolower(join_type), "right")) {
+    x_names <- setdiff(x_names, equijoin_keys$x_cols)
+  } else {
+    y_names <- setdiff(y_names, equijoin_keys$y_cols)
+  }
 
   # Calculate names that need suffixing
   common_names <- intersect(x_names, y_names)
@@ -576,6 +581,13 @@ sd_extract_equijoin_keys <- function(join_conditions) {
 
     left <- parsed$left$qualified_name()
     right <- parsed$right$qualified_name()
+
+    # If the left and right sides of the == condition came from the same side,
+    # the join condition is not an equijoin key and should not be removed.
+    if (identical(left[1], right[1])) {
+      next
+    }
+
     switch(
       left[1],
       x = x_cols <- append(x_cols, left[2]),

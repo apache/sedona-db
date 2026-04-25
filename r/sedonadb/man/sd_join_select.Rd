@@ -8,8 +8,10 @@ sd_join_select(...)
 }
 \arguments{
 \item{...}{Named expressions specifying output columns. Each expression
-should reference a column using \code{x$column} or \code{y$column} syntax.
-The name of the argument becomes the output column name. Unnamed
+may reference a column using \code{x$column} or \code{y$column} syntax, or use
+a bare column name when it is unambiguous. If the same column name
+exists on both sides of the join, it must be qualified with \verb{x$} or
+\verb{y$}. The name of the argument becomes the output column name. Unnamed
 arguments use the original column name (without table prefix).}
 }
 \value{
@@ -18,8 +20,10 @@ unevaluated column selection expressions.
 }
 \description{
 Use \code{sd_join_select()} to specify which columns to include in the join
-result and optionally rename them. Columns are referenced using \code{x$column}
-and \code{y$column} syntax to disambiguate columns from the left and right tables.
+result and optionally rename them. Columns may be referenced using
+\code{x$column} and \code{y$column} syntax to disambiguate columns from the left
+and right tables, or by bare column name when the name exists on only
+one side of the join.
 }
 \examples{
 # Select and rename columns
