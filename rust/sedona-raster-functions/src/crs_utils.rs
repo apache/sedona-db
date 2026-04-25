@@ -64,6 +64,34 @@ pub fn crs_transform_wkb(
     Ok(out)
 }
 
+/// Transform a single coordinate pair from one CRS to another.
+///
+/// This is a utility used by raster/spatial functions when only an `(x, y)`
+/// coordinate needs reprojection and full geometry decoding would be unnecessary.
+///
+/// **Behavior**
+/// - Builds a PROJ pipeline for `from_crs` -> `to_crs`.
+/// - Applies the transformation in place and returns the transformed coordinate.
+///
+/// **Errors**
+/// - Returns an error if PROJ cannot build the CRS-to-CRS transform,
+///   or if the coordinate transformation itself fails.
+pub fn crs_transform_coord(
+    engine: &dyn CrsEngine,
+    coord: (f64, f64),
+    from_crs: &str,
+    to_crs: &str,
+) -> Result<(f64, f64)> {
+    let trans = engine
+        .get_transform_crs_to_crs(from_crs, to_crs, None, "")
+        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+    let mut coord = coord;
+    trans
+        .transform_coord(&mut coord)
+        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+    Ok(coord)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

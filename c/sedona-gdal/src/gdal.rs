@@ -171,6 +171,23 @@ impl Gdal {
         vsi::get_vsi_mem_file_bytes_owned(self.api, file_name)
     }
 
+    /// Open a VSI directory for iteration.
+    /// See also [`vsi::open_dir`].
+    pub fn open_vsi_dir(
+        &self,
+        path: &str,
+        recurse_depth: i32,
+        options: Option<&crate::cpl::CslStringList>,
+    ) -> Result<crate::vsi::VsiDir> {
+        crate::vsi::open_dir(self.api, path, recurse_depth, options)
+    }
+
+    /// Return the directory separator used by GDAL for a given VSI path.
+    /// See also [`vsi::get_directory_separator`].
+    pub fn vsi_directory_separator(&self, path: &str) -> Result<String> {
+        crate::vsi::get_directory_separator(self.api, path)
+    }
+
     // -- Raster operations ---------------------------------------------------
 
     /// Create a bare in-memory MEM dataset with GDAL-owned bands.
