@@ -504,8 +504,12 @@ sd_summarize <- function(.data, ..., .env = parent.frame()) {
 #'
 #' @param x The left dataframe
 #' @param y The right dataframe (will use the same context as x)
-#' @param by A `sedonadb_join_by` object from [sd_join_by()], or `NULL` for
-#'   a natural join on columns with matching names.
+#' @param by Join specification. One of:
+#'   - A `sedonadb_join_by` object from [sd_join_by()]
+#'   - A character vector of column names to join on in both tables
+#'   - A named character vector mapping left-table column names to
+#'     right-table column names, e.g. `c(x_val = "y_val")`
+#'   - `NULL` for a natural join on columns with matching names
 #' @param join_type The type of join to perform. One of "inner", "left", "right",
 #'   "full", "leftsemi", "rightsemi", "leftanti", "rightanti", "leftmark",
 #'   or "rightmark".

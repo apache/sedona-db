@@ -75,8 +75,6 @@ print.sedonadb_join_by <- function(x, ...) {
 #' @param y_schema Schema for the right table
 #' @param env The expression environment
 #' @param ctx A SedonaDB context
-#' @param x_qualifier Qualifier for left table columns (default "x")
-#' @param y_qualifier Qualifier for right table columns (default "y")
 #'
 #' @return An object of class sedonadb_join_expr_ctx
 #' @noRd
@@ -226,18 +224,6 @@ sd_eval_join_expr_inner <- function(expr, join_expr_ctx, env) {
       }
     }
 
-    # Check for ambiguous unqualified column reference
-    if (rlang::is_symbol(expr)) {
-      name <- as.character(expr)
-      if (name %in% join_expr_ctx$ambiguous_columns) {
-        stop(
-          sprintf("Column '%s' is ambiguous (exists in both tables). ", name),
-          sprintf("Use x$%s or y$%s to disambiguate.", name, name),
-          call. = FALSE
-        )
-      }
-    }
-
     # Extract function name
     call_name <- rlang::call_name(expr)
 
@@ -382,12 +368,16 @@ print.sedonadb_join_select_default <- function(x, ...) {
 #' Specify custom post-join column selection
 #'
 #' Use `sd_join_select()` to specify which columns to include in the join
-#' result and optionally rename them. Columns are referenced using `x$column`
-#' and `y$column` syntax to disambiguate columns from the left and right tables.
+#' result and optionally rename them. Columns may be referenced using
+#' `x$column` and `y$column` syntax to disambiguate columns from the left
+#' and right tables, or by bare column name when the name exists on only
+#' one side of the join.
 #'
 #' @param ... Named expressions specifying output columns. Each expression
-#'   should reference a column using `x$column` or `y$column` syntax.
-#'   The name of the argument becomes the output column name. Unnamed
+#'   may reference a column using `x$column` or `y$column` syntax, or use
+#'   a bare column name when it is unambiguous. If the same column name
+#'   exists on both sides of the join, it must be qualified with `x$` or
+#'   `y$`. The name of the argument becomes the output column name. Unnamed
 #'   arguments use the original column name (without table prefix).
 #'
 #' @returns An object of class `sedonadb_join_select` containing the
