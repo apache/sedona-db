@@ -5347,6 +5347,7 @@ dependencies = [
  "datafusion-common",
  "datafusion-expr",
  "geo-traits",
+ "geos",
  "glam",
  "rstest",
  "sedona-common",
