@@ -109,7 +109,7 @@ glam = "0.32.0"
 libmimalloc-sys = { version = "0.1", default-features = false }
 log = "^0.4"
 libloading = "0.9"
-lru = "0.16"
+lru = "0.17"
 mimalloc = { version = "0.1", default-features = false }
 num-traits = { version = "0.2", default-features = false, features = ["libm"] }
 object_store = { version = "0.12.4", default-features = false }
