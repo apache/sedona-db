@@ -547,15 +547,17 @@ sd_join <- function(
   df <- x$df$join(y$df, join_conditions, join_type, left_alias = "x", right_alias = "y")
   out <- new_sedonadb_dataframe(x$ctx, df)
 
-  # Apply post-join column selection
+  # Apply post-join column selection if needed
   if (is.null(select)) {
-    # No select specified - return raw join result
-    return(out)
-  }
-
-  if (inherits(select, "sedonadb_join_select_default")) {
+    projection <- NULL
+  } else if (inherits(select, "sedonadb_join_select_default")) {
     # Default select: remove duplicate equijoin keys, apply suffixes
-    projection <- sd_build_default_select(join_expr_ctx, join_conditions, select$suffix, join_type)
+    projection <- sd_build_default_select(
+      join_expr_ctx,
+      join_conditions,
+      select$suffix,
+      join_type
+    )
   } else if (inherits(select, "sedonadb_join_select")) {
     # Custom select: evaluate user expressions
     projection <- sd_eval_join_select_exprs(select, join_expr_ctx)
@@ -566,8 +568,12 @@ sd_join <- function(
     )
   }
 
-  # Apply the projection
-  sd_transmute(out, !!!projection)
+  # NULL return from these functions means that no extra projecting is needed
+  if (is.null(projection)) {
+    out
+  } else {
+    sd_transmute(out, !!!projection)
+  }
 }
 
 #' Write DataFrame to (Geo)Parquet files

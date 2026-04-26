@@ -136,7 +136,7 @@
 # sd_eval_join_select_exprs() evaluates column references
 
     Code
-      sd_eval_join_select_exprs(sd_join_select(x$id, y$value), ctx)
+      sd_eval_join_select_exprs(sd_join_select(x$id, y$value, name), ctx)
     Output
       $id
       <SedonaDBExpr>
@@ -146,12 +146,16 @@
       <SedonaDBExpr>
       y.value
       
+      $name
+      <SedonaDBExpr>
+      x.name
+      
 
 # sd_eval_join_select_exprs() handles renaming
 
     Code
       sd_eval_join_select_exprs(sd_join_select(my_id = x$id, my_val = y$value,
-      x_name = x$name), ctx)
+      x_name = name), ctx)
     Output
       $my_id
       <SedonaDBExpr>
@@ -166,21 +170,75 @@
       x.name
       
 
-# sd_build_default_select() removes y-side equijoin keys
+# sd_build_default_select() handles equijoin keys
 
     Code
-      print(result)
+      sd_build_default_select(ctx, conditions, join_type = "inner")
     Output
-      $id
+      $id_x
       <SedonaDBExpr>
-      x.id
+      x.id_x
       
-      $x_val
+      $x_key
       <SedonaDBExpr>
-      x.x_val
+      x.x_key
       
-      $y_val
+      $id_y
       <SedonaDBExpr>
-      y.y_val
+      y.id_y
+      
+
+---
+
+    Code
+      sd_build_default_select(ctx, conditions, join_type = "left")
+    Output
+      $id_x
+      <SedonaDBExpr>
+      x.id_x
+      
+      $x_key
+      <SedonaDBExpr>
+      x.x_key
+      
+      $id_y
+      <SedonaDBExpr>
+      y.id_y
+      
+
+---
+
+    Code
+      sd_build_default_select(ctx, conditions, join_type = "right")
+    Output
+      $id_x
+      <SedonaDBExpr>
+      x.id_x
+      
+      $x_key
+      <SedonaDBExpr>
+      y.y_key
+      
+      $id_y
+      <SedonaDBExpr>
+      y.id_y
+      
+
+---
+
+    Code
+      sd_build_default_select(ctx, conditions, join_type = "full")
+    Output
+      $id_x
+      <SedonaDBExpr>
+      x.id_x
+      
+      $x_key
+      <SedonaDBExpr>
+      coalesce(x.x_key, y.y_key)
+      
+      $id_y
+      <SedonaDBExpr>
+      y.id_y
       
 

@@ -282,17 +282,10 @@ test_that("sd_join_select() captures column selections", {
   expect_s3_class(sel, "sedonadb_join_select")
   expect_length(sel$exprs, 2)
 
-  # TODO: check non-ambiguous selection
-
   # With renaming
   sel2 <- sd_join_select(out_id = x$id, out_val = y$value)
   expect_length(sel2$exprs, 2)
   expect_equal(names(sel2$exprs), c("out_id", "out_val"))
-})
-
-test_that("sd_join_select() requires at least one selection", {
-  # TODO: this isn't needed, we can select nothing if we want
-  expect_error(sd_join_select(), "requires at least one")
 })
 
 test_that("sd_join_select() prints nicely", {
@@ -314,7 +307,7 @@ test_that("sd_eval_join_select_exprs() evaluates column references", {
   ))
   ctx <- sd_join_expr_ctx(x_schema, y_schema)
 
-  expect_snapshot(sd_eval_join_select_exprs(sd_join_select(x$id, y$value), ctx))
+  expect_snapshot(sd_eval_join_select_exprs(sd_join_select(x$id, y$value, name), ctx))
 })
 
 test_that("sd_eval_join_select_exprs() handles renaming", {
@@ -329,7 +322,7 @@ test_that("sd_eval_join_select_exprs() handles renaming", {
   ctx <- sd_join_expr_ctx(x_schema, y_schema)
 
   expect_snapshot(sd_eval_join_select_exprs(
-    sd_join_select(my_id = x$id, my_val = y$value, x_name = x$name),
+    sd_join_select(my_id = x$id, my_val = y$value, x_name = name),
     ctx
   ))
 })
@@ -370,28 +363,36 @@ test_that("sd_eval_join_select_exprs() errors on non-column expressions", {
   )
 })
 
-test_that("sd_build_default_select() removes y-side equijoin keys", {
+test_that("sd_build_default_select() handles equijoin keys", {
   x_schema <- nanoarrow::na_struct(list(
-    id = nanoarrow::na_int32(),
-    x_val = nanoarrow::na_string()
+    id_x = nanoarrow::na_int32(),
+    x_key = nanoarrow::na_string()
   ))
   y_schema <- nanoarrow::na_struct(list(
-    id = nanoarrow::na_int32(),
-    y_val = nanoarrow::na_double()
+    id_y = nanoarrow::na_int32(),
+    y_key = nanoarrow::na_double()
   ))
   ctx <- sd_join_expr_ctx(x_schema, y_schema)
 
   # Build equijoin condition
-  conditions <- sd_build_join_conditions(ctx)
+  conditions <- sd_build_join_conditions(ctx, by = c("x_key" = "y_key"))
 
-  result <- sd_build_default_select(ctx, conditions, c(".x", ".y"))
+  # For an inner or left join, the y join key should be removed
+  expect_snapshot(sd_build_default_select(ctx, conditions, join_type = "inner"))
+  expect_snapshot(sd_build_default_select(ctx, conditions, join_type = "left"))
 
-  expect_identical(
-    names(result),
-    c("id", "x_val", "y_val")
-  )
+  # For a right join, the x join key should be removed
+  expect_snapshot(sd_build_default_select(ctx, conditions, join_type = "right"))
 
-  expect_snapshot(print(result))
+  # For filtering joins, we don't need any extra projecting by default so they
+  # return NULL
+  expect_null(sd_build_default_select(ctx, conditions, join_type = "leftsemi"))
+  expect_null(sd_build_default_select(ctx, conditions, join_type = "leftanti"))
+  expect_null(sd_build_default_select(ctx, conditions, join_type = "rightsemi"))
+  expect_null(sd_build_default_select(ctx, conditions, join_type = "rightanti"))
+
+  # For full joins we coalesce the input keys
+  expect_snapshot(sd_build_default_select(ctx, conditions, join_type = "full"))
 })
 
 test_that("sd_extract_equijoin_keys() extracts simple equality keys", {

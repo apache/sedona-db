@@ -394,10 +394,6 @@ print.sedonadb_join_select_default <- function(x, ...) {
 sd_join_select <- function(...) {
   exprs <- rlang::enquos(...)
 
-  if (length(exprs) == 0) {
-    stop("sd_join_select() requires at least one column selection")
-  }
-
   structure(
     list(exprs = exprs),
     class = "sedonadb_join_select"
@@ -514,18 +510,28 @@ sd_eval_join_select_expr_inner <- function(expr, join_expr_ctx, env) {
 #'
 #' @returns A named list of expressions
 #' @noRd
-sd_build_default_select <- function(join_expr_ctx, join_conditions, suffix, join_type) {
+sd_build_default_select <- function(
+  join_expr_ctx,
+  join_conditions,
+  suffix = c(".x", ".y"),
+  join_type = "inner"
+) {
+  join_type <- tolower(join_type)
+
+  # We only handle a few types of joins here. Others we return the DataFusion output
+  # which (semi/anti/mark joins).
+  if (!(join_type %in% c("left", "right", "inner", "full"))) {
+    return(NULL)
+  }
+
   x_names <- names(join_expr_ctx$x_schema$children)
   y_names <- names(join_expr_ctx$y_schema$children)
 
   # Extract equijoin key pairs (simple x$col == y$col conditions)
-  # and remove them from the x_names (if right join) or y_names (otherwise)
+  # and remove them from y_names. We do this even for right joins to match
+  # dplyr, which returns the name from the left but the values from the right.
   equijoin_keys <- sd_extract_equijoin_keys(join_conditions)
-  if (identical(tolower(join_type), "right")) {
-    x_names <- setdiff(x_names, equijoin_keys$x_cols)
-  } else {
-    y_names <- setdiff(y_names, equijoin_keys$y_cols)
-  }
+  y_names <- setdiff(y_names, equijoin_keys$y_cols)
 
   # Calculate names that need suffixing
   common_names <- intersect(x_names, y_names)
@@ -549,6 +555,51 @@ sd_build_default_select <- function(join_expr_ctx, join_conditions, suffix, join
     })
   )
   names(exprs) <- c(x_names_out, y_names_out)
+
+  # In the event of a full join, we need to coalesce the x key and y key
+  if (join_type == "full") {
+    # All the equijoin key outputs come from the x side and are in the x position.
+    equijoin_output_indices <- match(equijoin_keys$x_cols, x_names)
+
+    # Construct coalesce(x$col, y$col) expressions
+    key_column_exprs <- lapply(seq_along(equijoin_keys$x_cols), function(i) {
+      x_col <- sd_expr_column(
+        equijoin_keys$x_cols[i],
+        qualifier = "x",
+        factory = join_expr_ctx$factory
+      )
+      y_col <- sd_expr_column(
+        equijoin_keys$y_cols[i],
+        qualifier = "y",
+        factory = join_expr_ctx$factory
+      )
+      sd_expr_scalar_function(
+        "coalesce",
+        list(x_col, y_col),
+        factory = join_expr_ctx$factory
+      )
+    })
+
+    # Replace the key expressions (which were previously a simple x$col reference)
+    exprs[equijoin_output_indices] <- key_column_exprs
+  }
+
+  # In the event of a right join, we need to replace the x equijoin keys with
+  # the column references to the y side of the join because dplyr does this
+  # for some reason.
+  if (join_type == "right") {
+    equijoin_output_indices <- match(equijoin_keys$x_cols, x_names)
+    key_column_exprs <- lapply(equijoin_keys$y_cols, function(name) {
+      sd_expr_column(
+        name,
+        qualifier = "y",
+        factory = join_expr_ctx$factory
+      )
+    })
+
+    exprs[equijoin_output_indices] <- key_column_exprs
+  }
+
   exprs
 }
 
