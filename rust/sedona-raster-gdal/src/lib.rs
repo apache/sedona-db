@@ -15,22 +15,28 @@
 // specific language governing permissions and limitations
 // under the License.
 
-pub mod crs_utils;
-mod executor;
-pub use executor::RasterExecutor;
-pub mod register;
-pub mod rs_band_accessors;
-pub mod rs_bandpath;
-pub mod rs_convexhull;
-pub mod rs_envelope;
-pub mod rs_example;
-pub mod rs_georeference;
-pub mod rs_geotransform;
-pub mod rs_numbands;
-pub mod rs_pixel_functions;
-pub mod rs_rastercoordinate;
-pub mod rs_setsrid;
-pub mod rs_size;
-pub mod rs_spatial_predicates;
-pub mod rs_srid;
-pub mod rs_worldcoordinate;
+//! GDAL integration foundations for Apache SedonaDB raster types.
+//!
+//! This crate provides the lower-level utilities used by future GDAL-backed
+//! raster functions:
+//!
+//! - in-db raster to GDAL MEM dataset conversion
+//! - out-db and mixed raster to GDAL VRT dataset conversion
+//! - GDAL datatype and nodata conversion helpers
+//! - path normalization for GDAL VSI-backed raster sources
+
+pub mod utils;
+
+#[allow(dead_code)]
+mod gdal_common;
+#[allow(dead_code)]
+mod gdal_dataset_provider;
+
+// Re-export main dataset conversion functions
+pub use gdal_common::{
+    band_data_type_to_gdal, bytes_to_f64, gdal_to_band_data_type, gdal_type_byte_size,
+    nodata_bytes_to_f64, nodata_f64_to_bytes,
+};
+
+// Re-export utility functions
+pub use utils::load_as_indb_raster;
