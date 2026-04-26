@@ -7,13 +7,11 @@
       
       
       
-        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/iceberg/">
+        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/release-notes/">
       
       
-        <link rel="prev" href="../delta-lake/">
+        <link rel="prev" href="../contributors-guide/">
       
-      
-        <link rel="next" href="../working-with-parquet-files/">
       
       
         
@@ -24,7 +22,7 @@
     
     
       
-        <title>Iceberg - Apache Sedona</title>
+        <title>Release notes - Apache Sedona</title>
       
     
     
@@ -88,7 +86,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#sedonadb-iceberg" class="md-skip">
+        <a href="#release-notes" class="md-skip">
           Skip to content
         </a>
       
@@ -161,7 +159,7 @@
             <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Iceberg
+              Release notes
             
           </span>
             </div>
@@ -956,8 +954,6 @@
                 
   
   
-    
-  
   
   
     
@@ -973,11 +969,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_6" checked="">
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_6">
         
           
           <label class="md-nav__link" for="__nav_2_6" id="__nav_2_6_label" tabindex="">
@@ -998,7 +994,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_6_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_6_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2_6">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1125,37 +1121,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Iceberg
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../iceberg/" class="md-nav__link">
         
   
   
@@ -1171,70 +1140,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
-      
-        <li class="md-nav__item">
-  <a href="#create-an-iceberg-table-with-geometric-data" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Create an Iceberg table with geometric data
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#read-the-iceberg-table-into-sedonadb-via-arrow" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Read the Iceberg table into SedonaDB via Arrow
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#future-iceberg-geographygeometry-work" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Future Iceberg geography/geometry work
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#create-an-iceberg-table-with-wkb-and-bbox" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Create an Iceberg table with WKB and bbox
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1336,10 +1241,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../release-notes/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Release notes
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1355,6 +1287,176 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+      
+        <li class="md-nav__item">
+  <a href="#sedonadb-030" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SedonaDB 0.3.0
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="SedonaDB 0.3.0">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#highlights" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Highlights
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#new-features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        New Features
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug Fixes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#improvements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Improvements
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sedonadb-020" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SedonaDB 0.2.0
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="SedonaDB 0.2.0">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#highlights_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Highlights
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#new-features_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        New Features
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bug-fixes_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug Fixes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#improvements_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Improvements
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sedonadb-010" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SedonaDB 0.1.0
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="SedonaDB 0.1.0">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#highlights_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Highlights
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1590,46 +1692,152 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
       
         <li class="md-nav__item">
-  <a href="#create-an-iceberg-table-with-geometric-data" class="md-nav__link">
+  <a href="#sedonadb-030" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Create an Iceberg table with geometric data
+        SedonaDB 0.3.0
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="SedonaDB 0.3.0">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#highlights" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Highlights
       
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
-  <a href="#read-the-iceberg-table-into-sedonadb-via-arrow" class="md-nav__link">
+        
+          <li class="md-nav__item">
+  <a href="#new-features" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Read the Iceberg table into SedonaDB via Arrow
+        New Features
       
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
-  <a href="#future-iceberg-geographygeometry-work" class="md-nav__link">
+        
+          <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Future Iceberg geography/geometry work
+        Bug Fixes
       
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
-  <a href="#create-an-iceberg-table-with-wkb-and-bbox" class="md-nav__link">
+        
+          <li class="md-nav__item">
+  <a href="#improvements" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Create an Iceberg table with WKB and bbox
+        Improvements
       
     </span>
   </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sedonadb-020" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SedonaDB 0.2.0
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="SedonaDB 0.2.0">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#highlights_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Highlights
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#new-features_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        New Features
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bug-fixes_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug Fixes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#improvements_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Improvements
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sedonadb-010" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SedonaDB 0.1.0
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="SedonaDB 0.1.0">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#highlights_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Highlights
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1650,7 +1858,7 @@
 
 
   
-    <a href="https://github.com/apache/sedona-db/blob/main/docs/iceberg.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/apache/sedona-db/blob/main/docs/release-notes.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"></path></svg>
     </a>
@@ -1658,226 +1866,175 @@
   
 
 
-<h1 id="sedonadb-iceberg">SedonaDB + Iceberg<a class="headerlink" href="#sedonadb-iceberg" title="Permanent link">¶</a></h1>
-<p>This page demonstrates how to store spatial data in Iceberg tables and how to query them with SedonaDB.</p>
-<p>You will learn how to create an Iceberg table with a well-known text (WKT) or well-known binary (WKB) column in an Iceberg table and some of the advantages of storing geometric data in Iceberg.</p>
-<p>Make sure to run <code>pip install pyiceberg</code> to install the required dependencies for this notebook.</p>
-<p>Let’s start by loading the required dependencies and saving a spatial dataset in an Iceberg table.</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pyiceberg.catalog</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_catalog</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">sedona.db</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">pyarrow</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pa</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
-</code></pre></div>
-<h2 id="create-an-iceberg-table-with-geometric-data">Create an Iceberg table with geometric data<a class="headerlink" href="#create-an-iceberg-table-with-geometric-data" title="Permanent link">¶</a></h2>
-<p>Start by creating the Iceberg warehouse:</p>
-<div class="highlight"><pre><span></span><code><span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="s2">"/tmp/warehouse"</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</code></pre></div>
-<p>Now set up the catalog:</p>
-<div class="highlight"><pre><span></span><code><span class="n">warehouse_path</span> <span class="o">=</span> <span class="s2">"/tmp/warehouse"</span>
-<span class="n">catalog</span> <span class="o">=</span> <span class="n">load_catalog</span><span class="p">(</span>
-    <span class="s2">"default"</span><span class="p">,</span>
-    <span class="o">**</span><span class="p">{</span>
-        <span class="s2">"type"</span><span class="p">:</span> <span class="s2">"sql"</span><span class="p">,</span>
-        <span class="s2">"uri"</span><span class="p">:</span> <span class="sa">f</span><span class="s2">"sqlite:///</span><span class="si">{</span><span class="n">warehouse_path</span><span class="si">}</span><span class="s2">/pyiceberg_catalog.db"</span><span class="p">,</span>
-        <span class="s2">"warehouse"</span><span class="p">:</span> <span class="sa">f</span><span class="s2">"file://</span><span class="si">{</span><span class="n">warehouse_path</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span>
-    <span class="p">},</span>
-<span class="p">)</span>
-</code></pre></div>
-<p>Use SedonaDB to read a Parquet file containing country data into a DataFrame.</p>
-<div class="highlight"><pre><span></span><code><span class="n">sd</span> <span class="o">=</span> <span class="n">sedona</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
+<!--
+ Licensed to the Apache Software Foundation (ASF) under one
+ or more contributor license agreements.  See the NOTICE file
+ distributed with this work for additional information
+ regarding copyright ownership.  The ASF licenses this file
+ to you under the Apache License, Version 2.0 (the
+ "License"); you may not use this file except in compliance
+ with the License.  You may obtain a copy of the License at
 
-<span class="n">countries</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">read_parquet</span><span class="p">(</span>
-    <span class="s2">"https://raw.githubusercontent.com/geoarrow/geoarrow-data/v0.2.0/natural-earth/files/natural-earth_countries_geo.parquet"</span>
-<span class="p">)</span>
-</code></pre></div>
-<p>Convert all the columns to be plain strings because Iceberg doesn’t support geometry columns yet:</p>
-<div class="highlight"><pre><span></span><code><span class="n">countries</span><span class="o">.</span><span class="n">to_view</span><span class="p">(</span><span class="s2">"countries"</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span>
-<span class="n">df</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"""</span>
-<span class="s2">    select </span>
-<span class="s2">        ARROW_CAST(name, 'Utf8') as name, </span>
-<span class="s2">        ARROW_CAST(continent, 'Utf8') as continent, </span>
-<span class="s2">        ST_AsText(geometry) as geometry_wkt </span>
-<span class="s2">    from countries</span>
-<span class="s2">"""</span><span class="p">)</span>
-</code></pre></div>
-<p>The explicit casting with <code>ARROW_CAST</code> is necessary because PyIceberg doesn't support string views.</p>
-<p>Check out the schema of the DataFrame:</p>
-<div class="highlight"><pre><span></span><code><span class="n">df</span><span class="o">.</span><span class="n">schema</span>
-</code></pre></div>
-<div class="codehilite"><pre><span></span><code>SedonaSchema with 3 fields:
-  name: utf8&lt;Utf8&gt;
-  continent: utf8&lt;Utf8&gt;
-  geometry_wkt: utf8&lt;Utf8&gt;
-</code></pre></div>
+   http://www.apache.org/licenses/LICENSE-2.0
 
-<p>Now create a new Iceberg table:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pyiceberg.exceptions</span><span class="w"> </span><span class="kn">import</span> <span class="n">NamespaceAlreadyExistsError</span>
-
-<span class="k">try</span><span class="p">:</span>
-    <span class="n">catalog</span><span class="o">.</span><span class="n">create_namespace</span><span class="p">(</span><span class="s2">"default"</span><span class="p">)</span>
-<span class="k">except</span> <span class="n">NamespaceAlreadyExistsError</span><span class="p">:</span>
-    <span class="k">pass</span>
-
-<span class="k">if</span> <span class="n">catalog</span><span class="o">.</span><span class="n">table_exists</span><span class="p">(</span><span class="s2">"default.countries"</span><span class="p">):</span>
-    <span class="n">catalog</span><span class="o">.</span><span class="n">drop_table</span><span class="p">(</span><span class="s2">"default.countries"</span><span class="p">)</span>
-
-<span class="n">table</span> <span class="o">=</span> <span class="n">catalog</span><span class="o">.</span><span class="n">create_table</span><span class="p">(</span>
-    <span class="s2">"default.countries"</span><span class="p">,</span>
-    <span class="n">schema</span><span class="o">=</span><span class="n">pa</span><span class="o">.</span><span class="n">schema</span><span class="p">(</span><span class="n">df</span><span class="o">.</span><span class="n">schema</span><span class="p">),</span>
-<span class="p">)</span>
-</code></pre></div>
-<p>Append the DataFrame to the table:</p>
-<div class="highlight"><pre><span></span><code><span class="n">table</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">df</span><span class="o">.</span><span class="n">to_arrow_table</span><span class="p">())</span>
-</code></pre></div>
-<p>Now let’s see how to read the data with SedonaDB.</p>
-<h2 id="read-the-iceberg-table-into-sedonadb-via-arrow">Read the Iceberg table into SedonaDB via Arrow<a class="headerlink" href="#read-the-iceberg-table-into-sedonadb-via-arrow" title="Permanent link">¶</a></h2>
-<p>Here’s how to read an Iceberg table into a SedonaDB DataFrame:</p>
-<div class="highlight"><pre><span></span><code><span class="n">table</span> <span class="o">=</span> <span class="n">catalog</span><span class="o">.</span><span class="n">load_table</span><span class="p">(</span><span class="s2">"default.countries"</span><span class="p">)</span>
-<span class="n">arrow_table</span> <span class="o">=</span> <span class="n">table</span><span class="o">.</span><span class="n">scan</span><span class="p">()</span><span class="o">.</span><span class="n">to_arrow</span><span class="p">()</span>
-<span class="n">df</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">create_data_frame</span><span class="p">(</span><span class="n">arrow_table</span><span class="p">)</span>
-</code></pre></div>
-<p>The Iceberg table is first exposed as an arrow table and then read into a SedonaDB DataFrame.</p>
-<p>Now view the contents of the SedonaDB DataFrame:</p>
-<div class="highlight"><pre><span></span><code><span class="n">df</span><span class="o">.</span><span class="n">to_view</span><span class="p">(</span><span class="s2">"my_table"</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span>
-<span class="n">res</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"""</span>
-<span class="s2">SELECT</span>
-<span class="s2">  name,</span>
-<span class="s2">  continent,</span>
-<span class="s2">  ST_GeomFromWKT(geometry_wkt) as geom</span>
-<span class="s2">from my_table</span>
-<span class="s2">"""</span><span class="p">)</span>
-<span class="n">res</span><span class="o">.</span><span class="n">show</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
-</code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌─────────────────────────────┬───────────┬────────────────────────────────────────────────────────┐
-│             name            ┆ continent ┆                          geom                          │
-│             utf8            ┆    utf8   ┆                        geometry                        │
-╞═════════════════════════════╪═══════════╪════════════════════════════════════════════════════════╡
-│ Fiji                        ┆ Oceania   ┆ MULTIPOLYGON(((180 -16.067132663642447,180 -16.555216… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ United Republic of Tanzania ┆ Africa    ┆ POLYGON((33.90371119710453 -0.9500000000000001,34.072… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Western Sahara              ┆ Africa    ┆ POLYGON((-8.665589565454809 27.656425889592356,-8.665… │
-└─────────────────────────────┴───────────┴────────────────────────────────────────────────────────┘
-</code></pre></div>
-
-<p>You can see that the geom column contains the geometry type, which enables spatial analysis of the data.</p>
-<p>The geometry data is stored as WKT, which isn't as efficient as WKB.  The example that follows demonstrates how to store WKB in Iceberg tables.</p>
-<h2 id="future-iceberg-geographygeometry-work">Future Iceberg geography/geometry work<a class="headerlink" href="#future-iceberg-geographygeometry-work" title="Permanent link">¶</a></h2>
-<p>Iceberg added support for geometry and geography columns in the v3 spec.</p>
-<p>The Iceberg v3 implementation has not been released yet, and it the v3 spec hasn't started in Iceberg Rust.  Here is <a href="https://github.com/apache/iceberg-rust/issues/1884">the open issue</a> to add geo support to Iceberg Rust.</p>
-<p>It’s best to manually persist the bbox information of files in your Iceberg table if you’re storing geometric data as WKT or WKB. </p>
-<h2 id="create-an-iceberg-table-with-wkb-and-bbox">Create an Iceberg table with WKB and bbox<a class="headerlink" href="#create-an-iceberg-table-with-wkb-and-bbox" title="Permanent link">¶</a></h2>
-<p>Let’s see how to create an Iceberg table with a WKB and bbox columns to allow for faster spatial analyses.</p>
-<p>Start by creating the cities DataFrame.</p>
-<div class="highlight"><pre><span></span><code><span class="n">cities</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">read_parquet</span><span class="p">(</span>
-    <span class="s2">"https://raw.githubusercontent.com/geoarrow/geoarrow-data/v0.2.0/natural-earth/files/natural-earth_cities_geo.parquet"</span>
-<span class="p">)</span>
-<span class="n">cities</span><span class="o">.</span><span class="n">to_view</span><span class="p">(</span><span class="s2">"cities"</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span>
-</code></pre></div>
-<p>Now write the DataFrame to an Iceberg table with bbox columns:</p>
-<div class="highlight"><pre><span></span><code><span class="n">df</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"""</span>
-<span class="s2">select </span>
-<span class="s2">    ARROW_CAST(name, 'Utf8') as name, </span>
-<span class="s2">    ARROW_CAST(ST_AsBinary(geometry), 'Binary') as geometry_wkb,</span>
-<span class="s2">    ST_XMin(geometry) as bbox_xmin,</span>
-<span class="s2">    ST_YMin(geometry) as bbox_ymin,</span>
-<span class="s2">    ST_XMax(geometry) as bbox_xmax,</span>
-<span class="s2">    ST_YMax(geometry) as bbox_ymax</span>
-<span class="s2">from cities</span>
-<span class="s2">"""</span><span class="p">)</span>
-</code></pre></div>
-<div class="highlight"><pre><span></span><code><span class="k">if</span> <span class="n">catalog</span><span class="o">.</span><span class="n">table_exists</span><span class="p">(</span><span class="s2">"default.cities"</span><span class="p">):</span>
-    <span class="n">catalog</span><span class="o">.</span><span class="n">drop_table</span><span class="p">(</span><span class="s2">"default.cities"</span><span class="p">)</span>
-
-<span class="n">table</span> <span class="o">=</span> <span class="n">catalog</span><span class="o">.</span><span class="n">create_table</span><span class="p">(</span>
-    <span class="s2">"default.cities"</span><span class="p">,</span>
-    <span class="n">schema</span><span class="o">=</span><span class="n">pa</span><span class="o">.</span><span class="n">schema</span><span class="p">(</span><span class="n">df</span><span class="o">.</span><span class="n">schema</span><span class="p">),</span>
-<span class="p">)</span>
-</code></pre></div>
-<div class="highlight"><pre><span></span><code><span class="n">table</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">df</span><span class="o">.</span><span class="n">to_arrow_table</span><span class="p">())</span>
-</code></pre></div>
-<p>Load the <code>cities</code> table into a DataFrame with SedonaDB.</p>
-<div class="highlight"><pre><span></span><code><span class="n">table</span> <span class="o">=</span> <span class="n">catalog</span><span class="o">.</span><span class="n">load_table</span><span class="p">(</span><span class="s2">"default.cities"</span><span class="p">)</span>
-<span class="n">arrow_table</span> <span class="o">=</span> <span class="n">table</span><span class="o">.</span><span class="n">scan</span><span class="p">()</span><span class="o">.</span><span class="n">to_arrow</span><span class="p">()</span>
-<span class="n">df</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">create_data_frame</span><span class="p">(</span><span class="n">arrow_table</span><span class="p">)</span>
-<span class="n">df</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
-</code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌──────────────┬───────────────────────────┬─────────────┬─────────────┬─────────────┬─────────────┐
-│     name     ┆        geometry_wkb       ┆  bbox_xmin  ┆  bbox_ymin  ┆  bbox_xmax  ┆  bbox_ymax  │
-│     utf8     ┆           binary          ┆   float64   ┆   float64   ┆   float64   ┆   float64   │
-╞══════════════╪═══════════════════════════╪═════════════╪═════════════╪═════════════╪═════════════╡
-│ Vatican City ┆ 010100000054e57b4622e828… ┆  12.4533865 ┆  41.9032822 ┆  12.4533865 ┆  41.9032822 │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ San Marino   ┆ 0101000000dcb122b42fe228… ┆  12.4417702 ┆  43.9360958 ┆  12.4417702 ┆  43.9360958 │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Vaduz        ┆ 01010000006dae9ae7880823… ┆   9.5166695 ┆  47.1337238 ┆   9.5166695 ┆  47.1337238 │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Lobamba      ┆ 01010000007bcb8b0233333f… ┆  31.1999971 ┆ -26.4666675 ┆  31.1999971 ┆ -26.4666675 │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Luxembourg   ┆ 0101000000c08d39741f8518… ┆   6.1300028 ┆  49.6116604 ┆   6.1300028 ┆  49.6116604 │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Palikir      ┆ 0101000000b237e796ccc463… ┆ 158.1499743 ┆   6.9166437 ┆ 158.1499743 ┆   6.9166437 │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Majuro       ┆ 010100000027ef2df6286c65… ┆ 171.3800002 ┆   7.1030043 ┆ 171.3800002 ┆   7.1030043 │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Funafuti     ┆ 0101000000be28e6c5ee6666… ┆ 179.2166471 ┆   -8.516652 ┆ 179.2166471 ┆   -8.516652 │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Melekeok     ┆ 0101000000749b70af0cd460… ┆ 134.6265485 ┆   7.4873962 ┆ 134.6265485 ┆   7.4873962 │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Bir Lehlou   ┆ 0101000000f4d3c963174e23… ┆  -9.6525222 ┆  26.1191667 ┆  -9.6525222 ┆  26.1191667 │
-└──────────────┴───────────────────────────┴─────────────┴─────────────┴─────────────┴─────────────┘
-</code></pre></div>
-
-<div class="highlight"><pre><span></span><code><span class="n">arrow_table</span><span class="o">.</span><span class="n">schema</span>
-</code></pre></div>
-<div class="codehilite"><pre><span></span><code>name: string
-geometry_wkb: binary
-bbox_xmin: double
-bbox_ymin: double
-bbox_xmax: double
-bbox_ymax: double
-</code></pre></div>
-
-<p>Read the Iceberg table and filter it to only include cities in the eastern half of North America.</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pyiceberg.expressions</span><span class="w"> </span><span class="kn">import</span> <span class="n">And</span><span class="p">,</span> <span class="n">GreaterThanOrEqual</span><span class="p">,</span> <span class="n">LessThanOrEqual</span>
-
-<span class="n">filter_expr</span> <span class="o">=</span> <span class="n">And</span><span class="p">(</span>
-    <span class="n">GreaterThanOrEqual</span><span class="p">(</span><span class="s2">"bbox_xmax"</span><span class="p">,</span> <span class="o">-</span><span class="mf">97.0</span><span class="p">),</span>
-    <span class="n">LessThanOrEqual</span><span class="p">(</span><span class="s2">"bbox_xmin"</span><span class="p">,</span> <span class="o">-</span><span class="mf">67.0</span><span class="p">),</span>
-    <span class="n">GreaterThanOrEqual</span><span class="p">(</span><span class="s2">"bbox_ymax"</span><span class="p">,</span> <span class="mf">25.0</span><span class="p">),</span>
-    <span class="n">LessThanOrEqual</span><span class="p">(</span><span class="s2">"bbox_ymin"</span><span class="p">,</span> <span class="mf">50.0</span><span class="p">),</span>
-<span class="p">)</span>
-
-<span class="n">arrow_table</span> <span class="o">=</span> <span class="n">table</span><span class="o">.</span><span class="n">scan</span><span class="p">(</span><span class="n">row_filter</span><span class="o">=</span><span class="n">filter_expr</span><span class="p">)</span><span class="o">.</span><span class="n">to_arrow</span><span class="p">()</span>
-</code></pre></div>
-<div class="highlight"><pre><span></span><code><span class="n">df</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">create_data_frame</span><span class="p">(</span><span class="n">arrow_table</span><span class="p">)</span>
-
-<span class="n">df</span><span class="o">.</span><span class="n">to_view</span><span class="p">(</span><span class="s2">"us_east_cities"</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span>
-<span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"select name, ST_GeomFromWKB(geometry_wkb) as geom from us_east_cities"</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
-</code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌──────────────────┬──────────────────────────────────────────────┐
-│       name       ┆                     geom                     │
-│       utf8       ┆                   geometry                   │
-╞══════════════════╪══════════════════════════════════════════════╡
-│ Ottawa           ┆ POINT(-75.7019612 45.4186427)                │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Nassau           ┆ POINT(-77.3500438 25.0833901)                │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Houston          ┆ POINT(-95.34843625672217 29.741272831862542) │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Miami            ┆ POINT(-80.2260519 25.7895566)                │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Atlanta          ┆ POINT(-84.36764186571386 33.73945728378348)  │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Chicago          ┆ POINT(-87.63523655322338 41.847961283364114) │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Toronto          ┆ POINT(-79.38945855491194 43.66464454743429)  │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Washington, D.C. ┆ POINT(-77.0113644 38.9014952)                │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ New York         ┆ POINT(-73.99571754361698 40.72156174972766)  │
-└──────────────────┴──────────────────────────────────────────────┘
-</code></pre></div>
+ Unless required by applicable law or agreed to in writing,
+ software distributed under the License is distributed on an
+ "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ KIND, either express or implied.  See the License for the
+ specific language governing permissions and limitations
+ under the License.
+ --><h1 id="release-notes">Release Notes<a class="headerlink" href="#release-notes" title="Permanent link">¶</a></h1>
+<h2 id="sedonadb-030">SedonaDB 0.3.0<a class="headerlink" href="#sedonadb-030" title="Permanent link">¶</a></h2>
+<h3 id="highlights">Highlights<a class="headerlink" href="#highlights" title="Permanent link">¶</a></h3>
+<ul>
+<li>GPU spatial join library integration</li>
+<li>LAS/LAZ point cloud format support</li>
+<li>Raster function expansion (RS_BandPath, RS_GeoReference, RS_NumBands, RS_ConvexHull, RS_SetSRID, RS_SetCRS)</li>
+<li>Partitioned KNN join for larger-than-memory datasets</li>
+<li>Auto-repartition probe side for balanced spatial join workload</li>
+<li>SedonaFairSpillPool memory pool with CLI memory limit support</li>
+<li>Parameter binding support in Python and R</li>
+<li>GDAL/OGR read and write support via pyogrio</li>
+<li>GeoParquet configuration options via SQL</li>
+</ul>
+<h3 id="new-features">New Features<a class="headerlink" href="#new-features" title="Permanent link">¶</a></h3>
+<ul>
+<li>feat(rust/sedona-pointcloud): Initial LAZ format support (#471)</li>
+<li>feat(rust/sedona-pointcloud): Add laz chunk statistics (#604)</li>
+<li>feat(rust/sedona-pointcloud): Add LAS support (#628)</li>
+<li>feat(c/sedona-libgpuspatial): Add Rust Wrapper (#586)</li>
+<li>feat(c/sedona-libgpuspatial): Refactoring GPU Spatial Join Library (#556)</li>
+<li>feat(rust/sedona-functions): Add raster display support to SD_Format (#591)</li>
+<li>feat(rust/sedona-functions): Implement ST_Force2D, ST_Force3D, ST_Force3DM, ST_Force4D (#606, #620)</li>
+<li>feat(rust/sedona-functions): Implement ST_KNN() simplified call (#667)</li>
+<li>feat(rust/sedona-functions): Add sd_simplifystorage utility (#650)</li>
+<li>feat(rust/sedona-functions): Add item SRID support to geometry constructors (#574)</li>
+<li>feat(rust/sedona-raster-functions): Add RS_BandPath (#603)</li>
+<li>feat(rust/sedona-raster-functions): Add RS_GeoReference (#601)</li>
+<li>feat(rust/sedona-raster-functions): Add RS_NumBands (#602)</li>
+<li>feat(rust/sedona-raster-functions): Add RS_SetSRID/RS_SetCRS with batch-local cache refactoring (#630)</li>
+<li>feat(rust/sedona-raster-functions): Add RS_ConvexHull and item-level CRS to RS_Envelope (#597)</li>
+<li>feat(rust/sedona-geoparquet): Ensure GeoParquet configuration options for read and write can be passed via SQL (#607)</li>
+<li>feat(rust/sedona-geoparquet): Support WKB validation in read_parquet() (#578)</li>
+<li>feat(rust/sedona-spatial-join): Support partitioned KNN join to handle larger than memory object side (#573)</li>
+<li>feat(rust/sedona-spatial-join): Auto-repartition probe side for balancing spatial join workload (#610)</li>
+<li>feat(rust/sedona-spatial-join): Automatic query-side filter pushdown for KNN joins (#641)</li>
+<li>feat(rust/sedona): Add SedonaFairSpillPool memory pool and CLI memory limit support (#599)</li>
+<li>feat(rust/sedona): Auto-configure spilled batch in-memory size threshold based on global memory limit (#680)</li>
+<li>feat(rust/sedona-schema): Improve deserialization of authority/code CRSes (#666)</li>
+<li>feat(rust/sedona-geometry): Let CrsTransform handle M coordinate (#619)</li>
+<li>feat(python/sedonadb): Implement parameter binding (#575)</li>
+<li>feat(python/sedonadb): Handle crs-like objects in parameterized queries (#660)</li>
+<li>feat(python/sedonadb): Expose memory pool and runtime configuration in Python bindings (#608)</li>
+<li>feat(python/sedonadb): Write GDAL/OGR via pyogrio (#632)</li>
+<li>feat(python/sedonadb): Add sort by geometry support in to_parquet() (#642)</li>
+<li>feat(r/sedonadb): Implement GDAL read via sf/arrow in R bindings (#670)</li>
+<li>feat(r/sedonadb): Add R bindings for parameterized queries (#662)</li>
+<li>feat(r/sedonadb): Port Python configuration options changes to R (#658)</li>
+<li>feat(r/sedonadb): Improve DataFrame API for R bindings (#651)</li>
+<li>feat(docs): Add PostGIS integration guide with GeoPandas and ADBC examples (#543)</li>
+</ul>
+<h3 id="bug-fixes">Bug Fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">¶</a></h3>
+<ul>
+<li>fix(rust/sedona-spatial-join): Wrap probe-side repartition in ProbeShuffleExec to prevent optimizer stripping (#677)</li>
+<li>fix(rust/sedona-spatial-join): Prevent filter pushdown past KNN joins (#611)</li>
+<li>fix(rust/sedona-spatial-join): Reimplement planner for spatial join (#562)</li>
+<li>fix(rust/sedona-geoparquet): Ensure that GeoParquet files are always written with PROJJSON CRSes (#669)</li>
+<li>fix(rust/sedona-functions): Ensure WkbView types can be aggregated using the groups accumulator for ST_Envelope_Agg (#656)</li>
+<li>fix(rust/sedona-functions): Propagate NULL for scalar NULL SRID/CRS in ST_SetSRID/ST_SetCRS (#629)</li>
+<li>fix(rust/sedona): Fix panic when displaying very long content (#565)</li>
+<li>fix(rust/sedona): Fix false feature flag (#618)</li>
+<li>fix(raster): RS_Envelope returns axis-aligned bounding box for skewed rasters (#594)</li>
+<li>fix(c/sedona-geos): Support export of geometries with M values from GEOS (#640)</li>
+<li>fix(python/sedonadb): Add pandas &lt; 3.0 Series entry to SPECIAL_CASED_LITERALS (#609)</li>
+</ul>
+<h3 id="improvements">Improvements<a class="headerlink" href="#improvements" title="Permanent link">¶</a></h3>
+<ul>
+<li>docs: Add memory management and spill configuration guide (#679)</li>
+<li>chore(docs/reference/sql): Migrate function documentation defined in Rust into Markdown (#616)</li>
+<li>chore(docs/reference): Migrate sql.md to new functions format (#585)</li>
+<li>chore(rust): Remove documentation field from SedonaScalarUDF and SedonaAggregateUDF (#633)</li>
+<li>refactor(rust/sedona-raster): Pre-downcast band metadata arrays in RasterStructArray (#588)</li>
+<li>refactor(rust/sedona-raster-functions): Extract CachedCrsToSRIDMapping and simplify SRID/CRS logic (#590)</li>
+</ul>
+<h2 id="sedonadb-020">SedonaDB 0.2.0<a class="headerlink" href="#sedonadb-020" title="Permanent link">¶</a></h2>
+<h3 id="highlights_1">Highlights<a class="headerlink" href="#highlights_1" title="Permanent link">¶</a></h3>
+<ul>
+<li>GeoParquet 1.1 write support</li>
+<li>GDAL/OGR format support via pyogrio in Python</li>
+<li>KNN join refactored with new geo-index trait and lock-free shared geometry cache</li>
+<li>New spatial functions: ST_Reverse, ST_Dump, ST_Translate, ST_Points, ST_NPoints, ST_PointN, ST_StartPoint, ST_EndPoint, ST_GeometryN, ST_Azimuth, ST_IsClosed, ST_IsCollection, ST_ZMFlag, ST_Buffer (full params)</li>
+<li>GEOS-backed functions: ST_IsValid, ST_IsValidReason, ST_IsRing, ST_IsSimple, ST_UnaryUnion, ST_Simplify, ST_SimplifyPreserveTopology, ST_Boundary, ST_Snap, ST_Polygonize, ST_MakeValid, ST_MinimumClearance, ST_MinimumClearanceLine</li>
+<li>Raster functions: RS_Width, RS_Height, RS_Example</li>
+<li>R package with FFI support, Parquet write, and runtime PROJ linking</li>
+<li>Python UDFs support</li>
+<li>Example Rust project</li>
+<li>Spatial predicate pruning with Covers filter for ST_Equals, overlaps, and crosses</li>
+<li>DataSourceExec metrics for spatial predicate pruning</li>
+<li>Ordering framework for geometry/geography types</li>
+</ul>
+<h3 id="new-features_1">New Features<a class="headerlink" href="#new-features_1" title="Permanent link">¶</a></h3>
+<ul>
+<li>feat(rust/sedona-geoparquet): GeoParquet 1.1 write support (#175)</li>
+<li>feat(rust/sedona-functions): Implement ST_Reverse, ST_Dump, ST_Translate, ST_Points, ST_NPoints, ST_PointN, ST_StartPoint, ST_EndPoint, ST_GeometryN, ST_IsClosed, ST_IsCollection, ST_ZMFlag, ST_Azimuth (#219, #257, #260, #265, #267, #269, #255, #245, #317, #183)</li>
+<li>feat(rust/sedona-functions): Add SRID argument to ST_Point() (#275)</li>
+<li>feat(rust/sedona-functions): Implement ordering framework for geometry/geography (#360)</li>
+<li>feat(rust/sedona-functions): Add ST_GeometryFromText alias for ST_GeomFromWKT (#213)</li>
+<li>feat(rust/sedona-functions): Implement ST_Crosses and ST_Overlaps predicates (#204)</li>
+<li>feat(c/sedona-geos): Implement ST_IsValid, ST_IsValidReason, ST_IsRing, ST_IsSimple, ST_UnaryUnion, ST_Simplify, ST_SimplifyPreserveTopology, ST_Boundary, ST_Snap, ST_Polygonize (scalar and aggregate), ST_MakeValid, ST_MinimumClearance, ST_MinimumClearanceLine, ST_Reverse (#229, #230, #231, #239, #234, #295, #298, #299, #286, #328, #312, #314, #316, #288)</li>
+<li>feat(c/sedona-geos): Plumb remaining parameters for ST_Buffer (#241)</li>
+<li>feat(rust/sedona-raster-functions): Add RS_Width, RS_Height, RS_Example (#268, #302, #307)</li>
+<li>feat(rust/sedona-raster-functions): Add affine transformation parameter functions (#311)</li>
+<li>feat(rust/sedona-expr): Use Covers filter for ST_Equals for more GeoParquet pruning (#216)</li>
+<li>feat(rust/sedona-expr): Implement SpatialFilter for overlaps and crosses for GeoParquet pruning (#217)</li>
+<li>feat(rust/sedona-datasource): Implement generic RecordBatchReader-based format (#251)</li>
+<li>feat(python/sedonadb): Implement GDAL/OGR formats via pyogrio (#283)</li>
+<li>feat(python/sedonadb): Implement Python UDFs (#228)</li>
+<li>feat(python/sedonadb): Implement DataFrame.columns (#226)</li>
+<li>feat(r/sedonadb): Add FFI support for ScalarUDF and TableProvider (#214)</li>
+<li>feat(r/sedonadb): Add sd_write_parquet() to R bindings (#210)</li>
+<li>feat(r/sedonadb): Add support for runtime linking of PROJ (#166)</li>
+<li>feat(examples/sedonadb-rust): Add example Rust project (#320)</li>
+<li>feat: Add metrics in DataSourceExec related to spatial predicate pruning (#173)</li>
+<li>feat: Refactor KNN join with new geo-index trait and lock-free shared geometry cache (#169)</li>
+</ul>
+<h3 id="bug-fixes_1">Bug Fixes<a class="headerlink" href="#bug-fixes_1" title="Permanent link">¶</a></h3>
+<ul>
+<li>fix(rust/sedona-geoparquet): Don't use ProjectionExec to create GeoParquet 1.1 bounding box columns (#398)</li>
+<li>fix(rust/sedona-expr): Fix GeoParquet pruning when number of final columns is less than the geometry column index (#385)</li>
+<li>fix(rust/sedona-expr): Resolve filter expression bounding box by name and not by index (#384)</li>
+<li>fix(python/sedonadb): Fix GDAL/OGR read on Windows (#371)</li>
+<li>fix(python/sedonadb): Ensure global Parquet options are considered on write (#367)</li>
+<li>fix(python/sedonadb): Fix failing test on MacOS wheel builds (#324)</li>
+<li>fix(rust/sedona-geoparquet): Ensure reading a Parquet file that doesn't exist errors (#366)</li>
+<li>fix(rust/sedona,python/sedonadb): Ensure empty batches are not included in RecordBatchReader output (#207)</li>
+<li>fix: Support projection pushdown for RecordBatchReader provider (#197)</li>
+<li>fix(r/sedonadb): Fix build on Windows for path restriction (#208)</li>
+<li>fix(r/sedonadb): Add -Wno-pedantic to avoid compile error (#181)</li>
+<li>fix(c/sedona-c2geography): Remove outdated feature cxx17 from abseil in vcpkg.json (#235)</li>
+</ul>
+<h3 id="improvements_1">Improvements<a class="headerlink" href="#improvements_1" title="Permanent link">¶</a></h3>
+<ul>
+<li>perf: Optimize RasterStructArray::get to avoid repeatedly extracting arrays from struct array (#306)</li>
+<li>perf(rust/sedona-geometry,rust/sedona-functions): Optimize st_has(z/m) using WKBBytesExecutor + Implement new WKBHeader (#171)</li>
+<li>chore: Upgrade Datafusion (v50) and Arrow (v56) dependencies (#237)</li>
+<li>chore: Add sedona-geo-traits-ext and sedona-geo-generic-alg to the workspace (#203, #194, #195)</li>
+<li>docs: Add delta lake documentation (#238)</li>
+<li>docs: Add benchmark results and fix typos (#142)</li>
+</ul>
+<h2 id="sedonadb-010">SedonaDB 0.1.0<a class="headerlink" href="#sedonadb-010" title="Permanent link">¶</a></h2>
+<p>This is the initial release of SedonaDB, a native Rust implementation of Apache Sedona built on Apache DataFusion and Apache Arrow.</p>
+<h3 id="highlights_2">Highlights<a class="headerlink" href="#highlights_2" title="Permanent link">¶</a></h3>
+<ul>
+<li>Native Rust spatial query engine built on Apache DataFusion</li>
+<li>GeoParquet read support with spatial predicate pushdown</li>
+<li>Spatial join support (range join, KNN join)</li>
+<li>Core spatial functions (ST_Point, ST_Buffer, ST_Contains, ST_Intersects, ST_Within, ST_DWithin, ST_Distance, and more)</li>
+<li>Python bindings (SedonaContext, DataFrame API)</li>
+<li>R bindings</li>
+<li>S2 geography support</li>
+<li>CRS transformation via PROJ</li>
+</ul>
 
 
 
@@ -1898,7 +2055,7 @@ bbox_ymax: double
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"></path></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="December 14, 2025 06:02:44 UTC">December 14, 2025 06:02:44</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="April 20, 2026 18:21:34 UTC">April 20, 2026 18:21:34</span>
   </span>
 
     
