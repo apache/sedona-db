@@ -37,6 +37,8 @@ pub struct GeometrySummary {
     pub collection_count: i64,
 }
 
+// TODO: Bounds here
+
 /// Analyzes a WKB geometry and returns its size, point count, dimensions, and type
 pub fn analyze_geometry(geom: &Wkb) -> Result<GeometrySummary, SedonaGeometryError> {
     // Get size in bytes directly from WKB buffer
