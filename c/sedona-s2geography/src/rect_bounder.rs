@@ -51,6 +51,11 @@ impl RectBounder {
         unsafe { s2geog_call!(S2GeogRectBounderBound(self.ptr, geog.as_ptr())) }
     }
 
+    /// Perform the minimum expansion required to satisfy a distance expansion
+    pub fn expand_by_distance(&mut self, distance_meters: f64) {
+        unsafe { S2GeogRectBounderExpandByDistance(self.ptr, distance_meters) }
+    }
+
     /// Check if the bounder is empty (no geometries or only empty geometries
     /// have been added)
     pub fn is_empty(&self) -> bool {
@@ -138,6 +143,13 @@ mod tests {
         assert!(lo_lat <= 0.0);
         assert!(hi_lng >= 10.0);
         assert!(hi_lat >= 20.0);
+
+        bounder.expand_by_distance(100_000.0); // 100km
+        let expanded = bounder.finish().unwrap().unwrap();
+        assert!(expanded.0 < lo_lng);
+        assert!(expanded.1 < lo_lat);
+        assert!(expanded.2 > hi_lng);
+        assert!(expanded.3 > hi_lat);
 
         bounder.clear();
         assert!(bounder.is_empty());

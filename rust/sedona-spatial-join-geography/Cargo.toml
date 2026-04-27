@@ -14,32 +14,40 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-
 [package]
-name = "sedona-query-planner"
+name = "sedona-spatial-join-geography"
 version.workspace = true
-authors.workspace = true
 license.workspace = true
+keywords.workspace = true
+categories.workspace = true
 homepage.workspace = true
 repository.workspace = true
-description = "Query planner and common traits for spatial join operations in Apache SedonaDB"
+description.workspace = true
+readme.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+arrow = { workspace = true }
+arrow-array = { workspace = true }
 arrow-schema = { workspace = true }
 async-trait = { workspace = true }
 datafusion = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-execution = { workspace = true }
-datafusion-expr = { workspace = true }
-datafusion-optimizer = { workspace = true }
 datafusion-physical-expr = { workspace = true }
 datafusion-physical-plan = { workspace = true }
+geo-index = { workspace = true }
+geo-types = { workspace = true }
+log = { workspace = true }
+parking_lot = { workspace = true }
 sedona-common = { workspace = true }
 sedona-expr = { workspace = true }
+sedona-functions = { workspace = true }
+sedona-query-planner = { workspace = true }
+sedona-s2geography = { workspace = true }
 sedona-schema = { workspace = true }
+sedona-spatial-join = { workspace = true }
+wkb = { workspace = true }
 
 [dev-dependencies]
-arrow = { workspace = true }
-sedona-schema = { workspace = true }

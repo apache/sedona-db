@@ -26,7 +26,8 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 ///
 /// Uses atomic pointers for lock-free operations with proper memory ordering.
 /// Null pointers indicate empty slots.
-pub(crate) struct InitOnceArray<T: Send + Sync> {
+#[derive(Debug)]
+pub struct InitOnceArray<T: Send + Sync> {
     ptrs: Vec<AtomicPtr<T>>,
 }
 
@@ -74,7 +75,7 @@ impl<T: Send + Sync> InitOnceArray<T> {
     /// Returns None if the slot is empty or index is out of bounds.
     ///
     /// # Panics
-    /// Panics if index is out of bounds (internal API, bounds checking is caller's responsibility).
+    /// Panics if index is out of bounds
     pub fn get(&self, index: usize) -> Option<&T> {
         let ptr = self.ptrs[index].load(Ordering::Acquire);
         if ptr.is_null() {
@@ -96,7 +97,7 @@ impl<T: Send + Sync> InitOnceArray<T> {
     /// - boolean indicating whether the returned object is newly created
     ///
     /// # Panics
-    /// Panics if index is out of bounds (internal API, bounds checking is caller's responsibility).
+    /// Panics if index is out of bounds
     pub fn get_or_create(&self, index: usize, f: impl FnOnce() -> Result<T>) -> Result<(&T, bool)> {
         if let Some(value) = self.get(index) {
             return Ok((value, false));
@@ -113,13 +114,11 @@ impl<T: Send + Sync> InitOnceArray<T> {
     }
 
     /// Get the size of the array.
-    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.ptrs.len()
     }
 
     /// Check if the array is empty.
-    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.ptrs.is_empty()
     }

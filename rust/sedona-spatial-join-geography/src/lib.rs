@@ -15,11 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-pub(crate) mod arrow_utils;
-pub(crate) mod bbox_sampler;
-pub(crate) mod disposable_async_cell;
-pub mod init_once_array;
-pub mod internal_benchmark_util;
-pub mod join_utils;
-pub(crate) mod once_fut;
-pub(crate) mod spill;
+mod join_provider;
+pub mod physical_planner;
+mod refiner;
+mod spatial_index_builder;

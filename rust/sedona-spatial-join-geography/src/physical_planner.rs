@@ -17,71 +17,53 @@
 
 use std::sync::Arc;
 
-use crate::join_provider::GpuSpatialJoinProvider;
-use crate::options::GpuOptions;
 use arrow_schema::Schema;
 use datafusion::physical_plan::ExecutionPlan;
-use datafusion_common::{DataFusionError, Result};
+use datafusion_common::Result;
 use datafusion_physical_expr::PhysicalExpr;
-use sedona_query_planner::spatial_join_physical_planner::{
-    PlanSpatialJoinArgs, SpatialJoinPhysicalPlanner,
+use sedona_query_planner::{
+    spatial_join_physical_planner::{PlanSpatialJoinArgs, SpatialJoinPhysicalPlanner},
+    spatial_predicate::{RelationPredicate, SpatialPredicate, SpatialRelationType},
 };
-use sedona_query_planner::spatial_predicate::{
-    RelationPredicate, SpatialPredicate, SpatialRelationType,
+use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
+use sedona_spatial_join::{
+    physical_planner::{repartition_probe_side, should_swap_join_order},
+    SpatialJoinExec,
 };
-use sedona_schema::datatypes::SedonaType;
-use sedona_schema::matchers::ArgMatcher;
-use sedona_spatial_join::physical_planner::should_swap_join_order;
-use sedona_spatial_join::SpatialJoinExec;
 
-/// [SpatialJoinFactory] implementation for the default spatial join
+use crate::join_provider::GeographyJoinProvider;
+
+/// [SpatialJoinPhysicalPlanner] implementation for geography-based spatial joins.
 ///
-/// This struct is the entrypoint to ensuring the SedonaQueryPlanner is able
-/// to instantiate the [ExecutionPlan] implemented in this crate.
+/// This struct provides the entrypoint for the SedonaQueryPlanner to instantiate
+/// geography-aware spatial join execution plans.
 #[derive(Debug)]
-pub struct GpuSpatialJoinPhysicalPlanner;
+pub struct GeographySpatialJoinPhysicalPlanner;
 
-impl GpuSpatialJoinPhysicalPlanner {
-    /// Create a new default join factory
+impl GeographySpatialJoinPhysicalPlanner {
+    /// Create a new geography join planner
     pub fn new() -> Self {
-        Self {}
+        Self
     }
 }
 
-impl Default for GpuSpatialJoinPhysicalPlanner {
+impl Default for GeographySpatialJoinPhysicalPlanner {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl SpatialJoinPhysicalPlanner for GpuSpatialJoinPhysicalPlanner {
+impl SpatialJoinPhysicalPlanner for GeographySpatialJoinPhysicalPlanner {
     fn plan_spatial_join(
         &self,
         args: &PlanSpatialJoinArgs<'_>,
     ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
-        let supported = is_spatial_predicate_supported(
+        if !is_spatial_predicate_supported(
             args.spatial_predicate,
             &args.physical_left.schema(),
             &args.physical_right.schema(),
-        )?;
-        let gpu_options = args
-            .options
-            .extensions
-            .get::<GpuOptions>()
-            .cloned()
-            .unwrap_or_default();
-
-        if !gpu_options.enable {
+        )? {
             return Ok(None);
-        }
-
-        if !supported {
-            if gpu_options.fallback_to_cpu {
-                log::warn!("Falling back to CPU spatial join as the spatial predicate is not supported on GPU");
-                return Ok(None);
-            } else {
-                return Err(DataFusionError::Plan("GPU spatial join is enabled, but the spatial predicate is not supported on GPU".into()));
-            }
         }
 
         let should_swap = !matches!(
@@ -94,17 +76,32 @@ impl SpatialJoinPhysicalPlanner for GpuSpatialJoinPhysicalPlanner {
                 args.physical_right.as_ref(),
             )?;
 
+        // Repartition the probe side when enabled. This breaks spatial locality in sorted/skewed
+        // datasets, leading to more balanced workloads during out-of-core spatial join.
+        // We determine which pre-swap input will be the probe AFTER any potential swap, and
+        // repartition it here. swap_inputs() will then carry the RepartitionExec to the correct
+        // child position.
+        let (physical_left, physical_right) = if args.join_options.repartition_probe_side {
+            repartition_probe_side(
+                args.physical_left.clone(),
+                args.physical_right.clone(),
+                args.spatial_predicate,
+                should_swap,
+            )?
+        } else {
+            (args.physical_left.clone(), args.physical_right.clone())
+        };
+
         let exec = SpatialJoinExec::try_new(
-            args.physical_left.clone(),
-            args.physical_right.clone(),
+            physical_left,
+            physical_right,
             args.spatial_predicate.clone(),
             args.remainder.cloned(),
             args.join_type,
             None,
             args.join_options,
-        )?;
-        let exec =
-            exec.with_spatial_join_provider(Arc::new(GpuSpatialJoinProvider::new(gpu_options)));
+        )?
+        .with_spatial_join_provider(Arc::new(GeographyJoinProvider));
 
         if should_swap {
             exec.swap_inputs().map(Some)
@@ -122,10 +119,10 @@ pub fn is_spatial_predicate_supported(
     fn is_geometry_type_supported(expr: &Arc<dyn PhysicalExpr>, schema: &Schema) -> Result<bool> {
         let return_field = expr.return_field(schema)?;
         let sedona_type = SedonaType::from_storage_field(&return_field)?;
-        Ok(ArgMatcher::is_geometry().match_type(&sedona_type))
+        Ok(ArgMatcher::is_geography().match_type(&sedona_type))
     }
 
-    let both_geometry =
+    let both_geography =
         |left: &Arc<dyn PhysicalExpr>, right: &Arc<dyn PhysicalExpr>| -> Result<bool> {
             Ok(is_geometry_type_supported(left, left_schema)?
                 && is_geometry_type_supported(right, right_schema)?)
@@ -137,21 +134,25 @@ pub fn is_spatial_predicate_supported(
             right,
             relation_type,
         }) => {
-            if !matches!(
+            if !both_geography(left, right)? {
+                return Ok(false);
+            }
+
+            if matches!(
                 relation_type,
                 SpatialRelationType::Intersects
                     | SpatialRelationType::Contains
                     | SpatialRelationType::Within
-                    | SpatialRelationType::Covers
-                    | SpatialRelationType::CoveredBy
-                    | SpatialRelationType::Touches
                     | SpatialRelationType::Equals
             ) {
-                return Ok(false);
+                return Ok(true);
             }
-
-            both_geometry(left, right)
         }
-        SpatialPredicate::Distance(_) | SpatialPredicate::KNearestNeighbors(_) => Ok(false),
+        SpatialPredicate::Distance(d) => {
+            return both_geography(&d.left, &d.right);
+        }
+        _ => {}
     }
+
+    Ok(false)
 }

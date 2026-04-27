@@ -27,7 +27,16 @@ fn main() {
     // MACOS_DEPLOYMENT_TARGET isn't passed through properly but this can probably
     // be solved by setting the environment variable in CI before building a portable
     // target like a Python package.
-    let dst = cmake::Config::new(".").build();
+    let mut cmake_config = cmake::Config::new(".");
+
+    // Use RelWithDebInfo if building release with debug symbols
+    if std::env::var("PROFILE").unwrap_or_default() == "release"
+        && std::env::var("CARGO_PROFILE_RELEASE_DEBUG").is_ok()
+    {
+        cmake_config.define("CMAKE_BUILD_TYPE", "RelWithDebInfo");
+    }
+
+    let dst = cmake_config.build();
 
     // Link the libraries that are easy to enumerate by hand and whose location
     // we control in CMakeLists.txt. s2geography_c and s2geography are always built

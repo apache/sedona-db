@@ -5216,6 +5216,7 @@ dependencies = [
  "sedona-s2geography",
  "sedona-schema",
  "sedona-spatial-join",
+ "sedona-spatial-join-geography",
  "sedona-spatial-join-gpu",
  "sedona-testing",
  "sedona-tg",
@@ -5625,6 +5626,7 @@ dependencies = [
  "datafusion-common",
  "datafusion-execution",
  "datafusion-expr",
+ "datafusion-optimizer",
  "datafusion-physical-expr",
  "datafusion-physical-plan",
  "sedona-common",
@@ -5752,6 +5754,33 @@ dependencies = [
  "tokio",
  "wkb",
  "wkt 0.14.0",
+]
+
+[[package]]
+name = "sedona-spatial-join-geography"
+version = "0.4.0"
+dependencies = [
+ "arrow",
+ "arrow-array",
+ "arrow-schema",
+ "async-trait",
+ "datafusion",
+ "datafusion-common",
+ "datafusion-execution",
+ "datafusion-physical-expr",
+ "datafusion-physical-plan",
+ "geo-index",
+ "geo-types",
+ "log",
+ "parking_lot",
+ "sedona-common",
+ "sedona-expr",
+ "sedona-functions",
+ "sedona-query-planner",
+ "sedona-s2geography",
+ "sedona-schema",
+ "sedona-spatial-join",
+ "wkb",
 ]
 
 [[package]]

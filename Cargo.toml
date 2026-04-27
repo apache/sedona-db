@@ -40,6 +40,7 @@ members = [
     "rust/sedona-raster-functions",
     "rust/sedona-schema",
     "rust/sedona-spatial-join",
+    "rust/sedona-spatial-join-geography",
     "rust/sedona-spatial-join-gpu",
     "rust/sedona-query-planner",
     "rust/sedona-testing",
@@ -91,6 +92,7 @@ datafusion-execution = { version = "51.0.0", default-features = false }
 datafusion-expr = { version = "51.0.0" }
 datafusion-ffi = {  version = "51.0.0" }
 datafusion-functions-nested = { version = "51.0.0" }
+datafusion-optimizer = { version = "51.0.0" }
 datafusion-physical-expr = { version = "51.0.0" }
 datafusion-physical-plan = { version = "51.0.0" }
 datafusion-pruning = { version = "51.0.0" }
@@ -149,6 +151,7 @@ sedona-raster-functions = { version = "0.4.0", path = "rust/sedona-raster-functi
 sedona-schema = { version = "0.4.0", path = "rust/sedona-schema" }
 sedona-spatial-join = { version = "0.4.0", path = "rust/sedona-spatial-join" }
 sedona-spatial-join-gpu = { version = "0.4.0", path = "rust/sedona-spatial-join-gpu" }
+sedona-spatial-join-geography = { version = "0.4.0", path = "rust/sedona-spatial-join-geography" }
 sedona-query-planner = { version = "0.4.0", path = "rust/sedona-query-planner" }
 sedona-testing = { version = "0.4.0", path = "rust/sedona-testing" }
 

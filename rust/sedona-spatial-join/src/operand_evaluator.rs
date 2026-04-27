@@ -51,6 +51,7 @@ pub trait EvaluatedGeometryArrayFactory: fmt::Debug + Send + Sync {
         &self,
         geometry_array: ArrayRef,
         sedona_type: &SedonaType,
+        distance_columnar_value: Option<&ColumnarValue>,
     ) -> Result<EvaluatedGeometryArray>;
 }
 
@@ -60,13 +61,67 @@ pub trait EvaluatedGeometryArrayFactory: fmt::Debug + Send + Sync {
 #[derive(Debug)]
 pub(crate) struct DefaultGeometryArrayFactory;
 
+impl DefaultGeometryArrayFactory {
+    fn expand_evaluated_array_by_distance(
+        &self,
+        result: &mut EvaluatedGeometryArray,
+        distance_columnar_value: &ColumnarValue,
+    ) -> Result<()> {
+        // Expand the vec by distance
+
+        // No timezone conversion needed for distance; pass None as cast_options explicitly.
+        let distance_columnar_value = distance_columnar_value.cast_to(&DataType::Float64, None)?;
+        match &distance_columnar_value {
+            ColumnarValue::Scalar(ScalarValue::Float64(Some(distance))) => {
+                result.rects.iter_mut().for_each(|rect_opt| {
+                    if let Some(rect) = rect_opt {
+                        expand_rect_in_place(rect, *distance);
+                    };
+                });
+            }
+            ColumnarValue::Scalar(ScalarValue::Float64(None)) => {
+                // Distance expression evaluates to NULL, the resulting distance should be NULL as well.
+                // We don't need to modify the rectangles for this case.
+            }
+            ColumnarValue::Array(array) => {
+                if let Some(array) = array.as_any().downcast_ref::<Float64Array>() {
+                    for (geom_idx, rect_opt) in result.rects.iter_mut().enumerate() {
+                        if !array.is_null(geom_idx) {
+                            let dist = array.value(geom_idx);
+                            if let Some(rect) = rect_opt {
+                                expand_rect_in_place(rect, dist);
+                            };
+                        }
+                    }
+                } else {
+                    return sedona_internal_err!("Distance columnar value is not a Float64Array");
+                }
+            }
+            _ => {
+                return sedona_internal_err!("Distance columnar value is not a Float64");
+            }
+        }
+
+        result.distance = Some(distance_columnar_value);
+
+        Ok(())
+    }
+}
+
 impl EvaluatedGeometryArrayFactory for DefaultGeometryArrayFactory {
     fn try_new_evaluated_array(
         &self,
         geometry_array: ArrayRef,
         sedona_type: &SedonaType,
+        distance_columnar_value: Option<&ColumnarValue>,
     ) -> Result<EvaluatedGeometryArray> {
-        EvaluatedGeometryArray::try_new(geometry_array, sedona_type)
+        let mut result = EvaluatedGeometryArray::try_new(geometry_array, sedona_type)?;
+
+        if let Some(distance_columnar_value) = distance_columnar_value {
+            self.expand_evaluated_array_by_distance(&mut result, distance_columnar_value)?;
+        }
+
+        Ok(result)
     }
 }
 
@@ -473,13 +528,18 @@ fn evaluate_with_rects(
     batch: &RecordBatch,
     geom_expr: &Arc<dyn PhysicalExpr>,
     evaluated_array_factory: &dyn EvaluatedGeometryArrayFactory,
+    distance_columnar_value: Option<&ColumnarValue>,
 ) -> Result<EvaluatedGeometryArray> {
     let geometry_columnar_value = geom_expr.evaluate(batch)?;
     let num_rows = batch.num_rows();
     let geometry_array = geometry_columnar_value.to_array(num_rows)?;
     let sedona_type =
         SedonaType::from_storage_field(geom_expr.return_field(&batch.schema())?.as_ref())?;
-    evaluated_array_factory.try_new_evaluated_array(geometry_array, &sedona_type)
+    evaluated_array_factory.try_new_evaluated_array(
+        geometry_array,
+        &sedona_type,
+        distance_columnar_value,
+    )
 }
 
 impl DistanceOperandEvaluator {
@@ -489,56 +549,24 @@ impl DistanceOperandEvaluator {
         geom_expr: &Arc<dyn PhysicalExpr>,
         side: JoinSide,
     ) -> Result<EvaluatedGeometryArray> {
-        let mut result =
-            evaluate_with_rects(batch, geom_expr, self.evaluated_array_factory.as_ref())?;
-
         let should_expand = match side {
             JoinSide::Left => self.inner.distance_side == JoinSide::Left,
             JoinSide::Right => self.inner.distance_side != JoinSide::Left,
             JoinSide::None => unreachable!(),
         };
 
-        if !should_expand {
-            return Ok(result);
-        }
+        let maybe_distance = if should_expand {
+            Some(self.inner.distance.evaluate(batch)?)
+        } else {
+            None
+        };
 
-        // Expand the vec by distance
-        let distance_columnar_value = self.inner.distance.evaluate(batch)?;
-        // No timezone conversion needed for distance; pass None as cast_options explicitly.
-        let distance_columnar_value = distance_columnar_value.cast_to(&DataType::Float64, None)?;
-        match &distance_columnar_value {
-            ColumnarValue::Scalar(ScalarValue::Float64(Some(distance))) => {
-                result.rects.iter_mut().for_each(|rect_opt| {
-                    if let Some(rect) = rect_opt {
-                        expand_rect_in_place(rect, *distance);
-                    };
-                });
-            }
-            ColumnarValue::Scalar(ScalarValue::Float64(None)) => {
-                // Distance expression evaluates to NULL, the resulting distance should be NULL as well.
-                result.rects.clear();
-            }
-            ColumnarValue::Array(array) => {
-                if let Some(array) = array.as_any().downcast_ref::<Float64Array>() {
-                    for (geom_idx, rect_opt) in result.rects.iter_mut().enumerate() {
-                        if !array.is_null(geom_idx) {
-                            let dist = array.value(geom_idx);
-                            if let Some(rect) = rect_opt {
-                                expand_rect_in_place(rect, dist);
-                            };
-                        }
-                    }
-                } else {
-                    return sedona_internal_err!("Distance columnar value is not a Float64Array");
-                }
-            }
-            _ => {
-                return sedona_internal_err!("Distance columnar value is not a Float64");
-            }
-        }
-
-        result.distance = Some(distance_columnar_value);
-        Ok(result)
+        evaluate_with_rects(
+            batch,
+            geom_expr,
+            self.evaluated_array_factory.as_ref(),
+            maybe_distance.as_ref(),
+        )
     }
 }
 
@@ -604,12 +632,22 @@ impl OperandEvaluator for DistanceOperandEvaluator {
 impl OperandEvaluator for RelationOperandEvaluator {
     fn evaluate_build(&self, batch: &RecordBatch) -> Result<EvaluatedGeometryArray> {
         let geom_expr = self.build_side_expr()?;
-        evaluate_with_rects(batch, &geom_expr, self.evaluated_array_factory.as_ref())
+        evaluate_with_rects(
+            batch,
+            &geom_expr,
+            self.evaluated_array_factory.as_ref(),
+            None,
+        )
     }
 
     fn evaluate_probe(&self, batch: &RecordBatch) -> Result<EvaluatedGeometryArray> {
         let geom_expr = self.probe_side_expr()?;
-        evaluate_with_rects(batch, &geom_expr, self.evaluated_array_factory.as_ref())
+        evaluate_with_rects(
+            batch,
+            &geom_expr,
+            self.evaluated_array_factory.as_ref(),
+            None,
+        )
     }
 
     fn build_side_expr(&self) -> Result<Arc<dyn PhysicalExpr>> {
@@ -643,12 +681,22 @@ impl KNNOperandEvaluator {
 impl OperandEvaluator for KNNOperandEvaluator {
     fn evaluate_build(&self, batch: &RecordBatch) -> Result<EvaluatedGeometryArray> {
         let geom_expr = self.build_side_expr()?;
-        evaluate_with_rects(batch, &geom_expr, self.evaluated_array_factory.as_ref())
+        evaluate_with_rects(
+            batch,
+            &geom_expr,
+            self.evaluated_array_factory.as_ref(),
+            None,
+        )
     }
 
     fn evaluate_probe(&self, batch: &RecordBatch) -> Result<EvaluatedGeometryArray> {
         let geom_expr = self.probe_side_expr()?;
-        evaluate_with_rects(batch, &geom_expr, self.evaluated_array_factory.as_ref())
+        evaluate_with_rects(
+            batch,
+            &geom_expr,
+            self.evaluated_array_factory.as_ref(),
+            None,
+        )
     }
 
     fn build_side_expr(&self) -> Result<Arc<dyn PhysicalExpr>> {

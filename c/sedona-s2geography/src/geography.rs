@@ -38,6 +38,7 @@ use crate::utils::S2GeogCError;
 /// required in a thread safe way (although it may result in faster evaluation
 /// to force a build early in a situation where it is known that a lot of
 /// evaluations are about to happen).
+#[derive(Debug)]
 pub struct Geography<'a> {
     ptr: *mut S2Geog,
     _marker: PhantomData<&'a [u8]>,
@@ -125,9 +126,11 @@ impl GeographyFactory {
         Ok(geog)
     }
 
-    /// Internal wrappers around the actual init. This is the function that should be used
-    /// in the event of looping over WKBs from the same arrow array.
-    fn init_from_wkb(&mut self, wkb: &[u8], geog: &mut Geography) -> Result<(), S2GeogCError> {
+    /// Initialize an existing Geography with a new WKB buffer
+    ///
+    /// This is the function that should be used in the event of looping over
+    /// WKBs from the same arrow array.
+    pub fn init_from_wkb(&mut self, wkb: &[u8], geog: &mut Geography) -> Result<(), S2GeogCError> {
         unsafe {
             s2geog_call!(S2GeogFactoryInitFromWkbNonOwning(
                 self.ptr,

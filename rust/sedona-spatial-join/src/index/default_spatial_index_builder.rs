@@ -23,10 +23,10 @@ use std::sync::Arc;
 
 use crate::index::spatial_index::SpatialIndexRef;
 use crate::index::spatial_index_builder::{SpatialIndexBuilder, SpatialJoinBuildMetrics};
+use crate::refine::{DefaultIndexQueryResultRefinerFactory, IndexQueryResultRefinerFactory};
 use crate::{
     evaluated_batch::{evaluated_batch_stream::SendableEvaluatedBatchStream, EvaluatedBatch},
     index::{default_spatial_index::DefaultSpatialIndex, knn_adapter::KnnComponents},
-    refine::create_refiner,
     spatial_predicate::SpatialPredicate,
     utils::join_utils::need_produce_result_in_final,
 };
@@ -53,13 +53,14 @@ const RTREE_MEMORY_ESTIMATE_PER_RECT: usize = 60;
 /// 2. Building the spatial R-tree index
 /// 3. Setting up memory tracking and visited bitmaps
 /// 4. Configuring prepared geometries based on execution mode
-pub(crate) struct DefaultSpatialIndexBuilder {
+pub struct DefaultSpatialIndexBuilder {
     schema: SchemaRef,
     spatial_predicate: SpatialPredicate,
     options: SpatialJoinOptions,
     join_type: JoinType,
     probe_threads_count: usize,
     metrics: SpatialJoinBuildMetrics,
+    refiner_factory: Arc<dyn IndexQueryResultRefinerFactory>,
 
     /// Batches to be indexed
     indexed_batches: Vec<EvaluatedBatch>,
@@ -88,26 +89,39 @@ impl DefaultSpatialIndexBuilder {
             join_type,
             probe_threads_count,
             metrics,
+            refiner_factory: Arc::new(DefaultIndexQueryResultRefinerFactory),
             indexed_batches: Vec::new(),
             stats: GeoStatistics::empty(),
             memory_used: 0,
         })
     }
 
-    pub(crate) fn estimate_extra_memory_usage(
+    pub fn with_refiner_factory(
+        mut self,
+        refiner_factory: Arc<dyn IndexQueryResultRefinerFactory>,
+    ) -> Self {
+        self.refiner_factory = refiner_factory;
+        self
+    }
+
+    pub fn estimate_extra_memory_usage(
         geo_stats: &GeoStatistics,
         spatial_predicate: &SpatialPredicate,
         options: &SpatialJoinOptions,
+        refiner_factory: Arc<dyn IndexQueryResultRefinerFactory>,
     ) -> usize {
         // Estimate the amount of memory needed by the refiner
         let num_geoms = geo_stats.total_geometries().unwrap_or(0) as usize;
-        let refiner = create_refiner(
-            options.spatial_library,
+        let Ok(refiner) = refiner_factory.create_refiner(
             spatial_predicate,
             options.clone(),
             num_geoms,
             geo_stats.clone(),
-        );
+        ) else {
+            // A refiner that fails to construct also consumes no memory
+            return 0;
+        };
+
         let refiner_mem_usage = refiner.estimate_max_memory_usage(geo_stats);
 
         let knn_components_mem_usage =
@@ -232,10 +246,18 @@ impl DefaultSpatialIndexBuilder {
 impl SpatialIndexBuilder for DefaultSpatialIndexBuilder {
     fn finish(&mut self) -> Result<SpatialIndexRef> {
         if self.indexed_batches.is_empty() {
+            let empty_refiner = self.refiner_factory.create_refiner(
+                &self.spatial_predicate,
+                self.options.clone(),
+                0,
+                GeoStatistics::empty(),
+            )?;
+
             return Ok(Arc::new(DefaultSpatialIndex::empty(
                 self.spatial_predicate.clone(),
                 self.schema.clone(),
                 self.options.clone(),
+                empty_refiner,
                 AtomicUsize::new(self.probe_threads_count),
             )));
         }
@@ -251,13 +273,13 @@ impl SpatialIndexBuilder for DefaultSpatialIndexBuilder {
         let geom_idx_vec = self.build_geom_idx_vec(&batch_pos_vec);
         let visited_build_side = self.build_visited_bitmaps()?;
 
-        let refiner = create_refiner(
-            self.options.spatial_library,
+        let refiner = self.refiner_factory.create_refiner(
             &self.spatial_predicate,
             self.options.clone(),
             num_geoms,
             self.stats.clone(),
-        );
+        )?;
+
         self.record_memory_usage(refiner.estimate_max_memory_usage(&self.stats));
 
         let cache_size = batch_pos_vec.len();
