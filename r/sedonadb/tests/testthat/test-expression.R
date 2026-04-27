@@ -26,6 +26,23 @@ test_that("basic expression types can be constructed", {
   expect_snapshot(sd_expr_aggregate_function("sum", list(1L)))
 })
 
+test_that("columns can be inspected", {
+  col <- sd_expr_column("foofy")
+  expect_identical(col$variant_name(), "Column")
+  expect_identical(col$qualified_name(), c(NA_character_, "foofy"))
+
+  qualified_col <- sd_expr_column("foofy", qualifier = "qualified")
+  expect_identical(qualified_col$qualified_name(), c("qualified", "foofy"))
+})
+
+test_that("binary expressions can be inspected", {
+  expr <- sd_expr_binary("==", sd_expr_column("left"), sd_expr_column("right"))
+  parsed <- sd_expr_parse_binary(expr)
+  expect_identical(parsed$op, "=")
+  expect_identical(parsed$left$qualified_name(), c(NA_character_, "left"))
+  expect_identical(parsed$right$qualified_name(), c(NA_character_, "right"))
+})
+
 test_that("casts to a type with extension metadata can't be constructed", {
   expect_error(
     sd_expr_cast(1L, geoarrow::geoarrow_wkb()),
