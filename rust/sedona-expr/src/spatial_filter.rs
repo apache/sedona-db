@@ -490,6 +490,7 @@ fn is_prunable_geospatial_literal(literal: &Literal) -> bool {
 }
 
 fn literal_bounds(literal: &Literal) -> Result<BoundingBox> {
+    // TODO: this is where we bound a geography
     let literal_field = literal.return_field(&Schema::empty())?;
     let sedona_type = SedonaType::from_storage_field(&literal_field)?;
     match &sedona_type {
