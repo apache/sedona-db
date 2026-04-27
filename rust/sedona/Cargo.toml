@@ -81,6 +81,7 @@ sedona-pointcloud = { workspace = true, optional = true }
 sedona-proj = { workspace = true }
 sedona-gdal = { workspace = true }
 sedona-raster-functions = { workspace = true }
+sedona-raster-gdal = { workspace = true }
 sedona-schema = { workspace = true }
 sedona-spatial-join = { workspace = true, optional = true }
 sedona-spatial-join-gpu = { workspace = true, optional = true }

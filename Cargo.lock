@@ -5210,6 +5210,7 @@ dependencies = [
  "sedona-proj",
  "sedona-query-planner",
  "sedona-raster-functions",
+ "sedona-raster-gdal",
  "sedona-s2geography",
  "sedona-schema",
  "sedona-spatial-join",
@@ -5666,6 +5667,23 @@ dependencies = [
  "sedona-tg",
  "serde_json",
  "wkb",
+]
+
+[[package]]
+name = "sedona-raster-gdal"
+version = "0.4.0"
+dependencies = [
+ "arrow-array",
+ "criterion",
+ "datafusion-common",
+ "lru",
+ "sedona-common",
+ "sedona-gdal",
+ "sedona-raster",
+ "sedona-schema",
+ "sedona-testing",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]
