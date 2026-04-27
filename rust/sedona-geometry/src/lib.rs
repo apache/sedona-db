@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 pub mod analyze;
+pub mod bounder;
 pub mod bounding_box;
 pub mod bounds;
 pub mod error;
