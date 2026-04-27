@@ -20,6 +20,8 @@
 # SedonaDB
 
 [![PyPI Version](https://img.shields.io/pypi/v/sedonadb)](https://pypi.org/project/sedonadb/) [![PyPI - Downloads](https://img.shields.io/pypi/dm/sedonadb)](https://pepy.tech/project/sedonadb) [![Downloads](https://static.pepy.tech/personalized-badge/sedonadb?period=total&units=international_system&left_color=black&right_color=brightgreen&left_text=total%20downloads)](https://pepy.tech/project/sedonadb)
+[![Anaconda Version](
+https://anaconda.org/conda-forge/sedonadb/badges/version.svg)](https://anaconda.org/conda-forge/sedonadb) [![Conda Downloads](https://anaconda.org/conda-forge/sedonadb/badges/downloads.svg)](https://anaconda.org/channels/conda-forge/packages/sedonadb/overview)
 
 SedonaDB is an open-source single-node analytical database engine with **geospatial as a first-class citizen**. It aims to deliver the fastest spatial analytics query speed and the most comprehensive function coverage available.
 
@@ -70,10 +72,16 @@ This is a performance benchmark comparing SedonaDB 0.1.0, DuckDB 1.4.0, and GeoP
 
 ## Install
 
-You can install Python SedonaDB with PyPI:
+You can install Python SedonaDB with [PyPI](https://packaging.python.org/en/latest/tutorials/installing-packages/):
 
 ```sh
 pip install "apache-sedona[db]"
+```
+
+Or with [conda](https://www.anaconda.com/docs/getting-started/main):
+
+```sh
+conda install sedonadb
 ```
 
 ## Quick Start
