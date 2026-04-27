@@ -52,9 +52,9 @@ dependencies = [
 
 [[package]]
 name = "adbc_core"
-version = "0.22.0"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8dbe031527c9856a1e2df5e82aa8e568ffaab3be897f70d874477fb42a783bb"
+checksum = "46b169525a7c41670fe95874103c7c6ce713ac699123f81a200bc31f9ad3b02e"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -62,9 +62,9 @@ dependencies = [
 
 [[package]]
 name = "adbc_ffi"
-version = "0.22.0"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3600ae9aec2907516d088189e3b863029280f1953dd0eab903c7f4c862a0ce81"
+checksum = "e6851c2ab953511cf7a244aadcbc0586442fd3c67dfe371457369048880dd513"
 dependencies = [
  "adbc_core",
  "arrow-array",
