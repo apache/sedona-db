@@ -215,10 +215,36 @@ impl GDALDatasetCache {
         let bands = raster.bands();
         let num_bands = bands.len();
 
-        let width = metadata.width() as i32;
-        let height = metadata.height() as i32;
+        let metadata_width = metadata.width();
+        let metadata_height = metadata.height();
+        let width: i32 = metadata_width.try_into().map_err(|_| {
+            exec_datafusion_err!(
+                "Raster width {} exceeds supported GDAL/i32 limit {}",
+                metadata_width,
+                i32::MAX
+            )
+        })?;
+        let height: i32 = metadata_height.try_into().map_err(|_| {
+            exec_datafusion_err!(
+                "Raster height {} exceeds supported GDAL/i32 limit {}",
+                metadata_height,
+                i32::MAX
+            )
+        })?;
+        let vrt_width: usize = metadata_width.try_into().map_err(|_| {
+            exec_datafusion_err!(
+                "Raster width {} exceeds supported GDAL/usize limit",
+                metadata_width
+            )
+        })?;
+        let vrt_height: usize = metadata_height.try_into().map_err(|_| {
+            exec_datafusion_err!(
+                "Raster height {} exceeds supported GDAL/usize limit",
+                metadata_height
+            )
+        })?;
         let mut vrt = gdal
-            .create_vrt(metadata.width() as usize, metadata.height() as usize)
+            .create_vrt(vrt_width, vrt_height)
             .map_err(convert_gdal_err)?;
 
         let geotransform = [
@@ -299,7 +325,7 @@ impl GDALDatasetCache {
 
                     let source_dataset = self.get_or_create_outdb_source(gdal, url, None)?;
 
-                    // If GDALGetGeoTransform(hdsSrc, ogt) fails, we falls back to (0, 1, 0, 0, 0, -1),
+                    // If GDALGetGeoTransform(hdsSrc, ogt) fails, we fall back to (0, 1, 0, 0, 0, -1),
                     // which is the identity transform.
                     let src_geo_transform = source_dataset
                         .geo_transform()
@@ -502,13 +528,13 @@ impl VrtKey {
                     let bytes: [u8; 8] = bytes.try_into().map_err(|_| {
                         exec_datafusion_err!("Invalid nodata byte length for UInt64")
                     })?;
-                    Some(f64::to_bits(u64::from_le_bytes(bytes) as f64))
+                    Some(u64::from_le_bytes(bytes))
                 }
                 (Some(bytes), BandDataType::Int64) => {
                     let bytes: [u8; 8] = bytes.try_into().map_err(|_| {
                         exec_datafusion_err!("Invalid nodata byte length for Int64")
                     })?;
-                    Some(f64::to_bits(i64::from_le_bytes(bytes) as f64))
+                    Some(u64::from_le_bytes(bytes))
                 }
                 (Some(bytes), _) => Some(bytes_to_f64(bytes, &band_type)?.to_bits()),
                 (None, _) => None,

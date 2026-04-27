@@ -83,9 +83,9 @@ pub fn gdal_type_byte_size(gdal_type: GdalDataType) -> usize {
     gdal_type.byte_size()
 }
 
-/// Interprets nodata bytes according to the band data type and returns as f64.
+/// Interprets bytes according to the band data type and returns the value as `f64`.
 ///
-/// Returns None if the nodata_bytes is None or has incorrect length.
+/// Returns an error if `bytes` does not have the expected length for `band_type`.
 pub fn bytes_to_f64(bytes: &[u8], band_type: &BandDataType) -> Result<f64> {
     macro_rules! read_le_f64 {
         ($t:ty, $n:expr) => {{
@@ -198,7 +198,6 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
             .map_err(|e| DataFusionError::External(Box::new(e)))?
     };
 
-    // Set geotransform (safe API)
     // GDAL geotransform: [origin_x, pixel_width, rotation_x, origin_y, rotation_y, pixel_height]
     let geotransform = [
         metadata.upper_left_x(),
