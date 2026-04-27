@@ -163,7 +163,10 @@ sd_join_expr_ctx <- function(
 #' Evaluate join conditions
 #'
 #' Evaluates join condition expressions captured by [sd_join_by()] into
-#' SedonaDB expressions using a join expression context.
+#' SedonaDB expressions using a join expression context. This currently
+#' uses a custom evaluation similar to normal evaluation to ensure better
+#' error messages; however, this should probably be unified into the
+#' normal evaluation to avoid maintaining two seprate paths in the future.
 #'
 #' @param join_by A `sedonadb_join_by` object from [sd_join_by()]
 #' @param join_expr_ctx A `sedonadb_join_expr_ctx` from `sd_join_expr_ctx()`
