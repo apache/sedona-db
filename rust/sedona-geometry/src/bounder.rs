@@ -27,9 +27,49 @@ use crate::{
     types::{GeometryTypeAndDimensions, GeometryTypeAndDimensionsSet},
 };
 
+/// Trait representing a bounds and geometry types accumulator
+///
+/// This trait is to provide an abstraction such that a proper geography implementation
+/// can be implemented and represented dynamically.
+pub trait Bounder {
+    /// Set this bounder to an empty state
+    fn clear(&mut self);
+
+    /// Update this bounder with one WKB-encoded geometry
+    ///
+    /// Parses and accumulates the bounds of one WKB-encoded geometry. This function
+    /// will error for invalid WKB input; however, clients may wish to ignore such
+    /// an error for the purposes of writing statistics.
+    fn update_wkb(&mut self, wkb: &[u8]) -> Result<(), SedonaGeometryError>;
+
+    /// Calculate the final xmin and xmax for geometries encountered by this bounder
+    ///
+    /// The interval returned may wraparound if a hint was set and the input
+    /// encountered by this bounder were exclusively at the far left and far right
+    /// of the input range. See [IntervalTrait] for an in-depth description of
+    /// wraparound intervals.
+    fn x(&self) -> WraparoundInterval;
+
+    /// Calculate the final ymin and ymax for geometries encountered by this bounder
+    fn y(&self) -> Interval;
+
+    /// Calculate the final zmin and zmax for geometries encountered by this bounder
+    fn z(&self) -> Interval;
+
+    /// Calculate the final mmin and mmax values for geometries encountered by this bounder
+    fn m(&self) -> Interval;
+
+    /// Calculate the final geometry type set
+    ///
+    /// Returns a copy of the unique geometry type/dimension combinations encountered
+    /// by this bounder. These identifiers are ISO WKB identifiers (e.g., 1001
+    /// for PointZ). The output is always returned sorted.
+    fn geometry_types(&self) -> &GeometryTypeAndDimensionsSet;
+}
+
 /// Geometry bounder
 ///
-/// Utility to accumulate statistics for geometries as they are written.
+/// Implementation of the [Bounder] for Cartiesion geometry (i.e., not geography).
 /// This bounder is designed to output statistics accumulated according
 /// to the Parquet specification such that the output can be written to
 /// Parquet statistics with minimal modification.
@@ -51,10 +91,6 @@ pub struct GeometryBounder {
     /// Union of all m intervals
     m: Interval,
     /// Unique geometry type codes encountered by the bounder
-    ///
-    /// The integer codes are identical to the ISO WKB geometry type codes and
-    /// are documented as part of the Parquet specification:
-    /// <https://github.com/apache/parquet-format/blob/master/Geospatial.md#geospatial-types>
     geometry_types: GeometryTypeAndDimensionsSet,
     wraparound_hint: Interval,
 }
@@ -94,72 +130,6 @@ impl GeometryBounder {
         }
     }
 
-    /// Calculate the final xmin and xmax for geometries encountered by this bounder
-    ///
-    /// The interval returned may wraparound if a hint was set and the input
-    /// encountered by this bounder were exclusively at the far left and far right
-    /// of the input range. See [IntervalTrait] for an in-depth description of
-    /// wraparound intervals.
-    pub fn x(&self) -> WraparoundInterval {
-        let out_all = Interval::empty()
-            .merge_interval(&self.x_left)
-            .merge_interval(&self.x_mid)
-            .merge_interval(&self.x_right);
-
-        // Check if this even makes sense: if anything is covering the midpoint
-        // of the wraparound hint or the bounds don't make sense for the provided
-        // wraparound hint, just return the Cartesian bounds.
-        if !self.x_mid.is_empty() || !self.wraparound_hint.contains_interval(&out_all) {
-            return out_all.into();
-        }
-
-        // Check if our wraparound bounds are any better than our Cartesian bounds
-        // If the Cartesian bounds are tighter, return them.
-        let out_width = (self.x_left.hi() - self.wraparound_hint.lo())
-            + (self.wraparound_hint.hi() - self.x_right.hi());
-        if out_all.width() < out_width {
-            return out_all.into();
-        }
-
-        // Wraparound!
-        WraparoundInterval::new(self.x_right.lo(), self.x_left.hi())
-    }
-
-    /// Calculate the final ymin and ymax for geometries encountered by this bounder
-    pub fn y(&self) -> Interval {
-        self.y
-    }
-
-    /// Calculate the final zmin and zmax for geometries encountered by this bounder
-    pub fn z(&self) -> Interval {
-        self.z
-    }
-
-    /// Calculate the final mmin and mmax values for geometries encountered by this bounder
-    pub fn m(&self) -> Interval {
-        self.m
-    }
-
-    /// Calculate the final geometry type set
-    ///
-    /// Returns a copy of the unique geometry type/dimension combinations encountered
-    /// by this bounder. These identifiers are ISO WKB identifiers (e.g., 1001
-    /// for PointZ). The output is always returned sorted.
-    pub fn geometry_types(&self) -> &GeometryTypeAndDimensionsSet {
-        &self.geometry_types
-    }
-
-    /// Update this bounder with one WKB-encoded geometry
-    ///
-    /// Parses and accumulates the bounds of one WKB-encoded geometry. This function
-    /// will error for invalid WKB input; however, clients may wish to ignore such
-    /// an error for the purposes of writing statistics.
-    pub fn update_wkb(&mut self, wkb: &[u8]) -> Result<(), SedonaGeometryError> {
-        let wkb = Wkb::try_new(wkb).map_err(|e| SedonaGeometryError::External(Box::new(e)))?;
-        self.update_geometry(&wkb)?;
-        Ok(())
-    }
-
     fn update_geometry(
         &mut self,
         geom: &impl GeometryTrait<T = f64>,
@@ -188,6 +158,65 @@ impl GeometryBounder {
             // Otherwise, merge it with x_mid
             self.x_mid.update_interval(x);
         }
+    }
+}
+
+impl Bounder for GeometryBounder {
+    fn clear(&mut self) {
+        self.x_left = Interval::empty();
+        self.x_mid = Interval::empty();
+        self.x_right = Interval::empty();
+        self.y = Interval::empty();
+        self.z = Interval::empty();
+        self.m = Interval::empty();
+        self.geometry_types = GeometryTypeAndDimensionsSet::default();
+    }
+
+    fn x(&self) -> WraparoundInterval {
+        let out_all = Interval::empty()
+            .merge_interval(&self.x_left)
+            .merge_interval(&self.x_mid)
+            .merge_interval(&self.x_right);
+
+        // Check if this even makes sense: if anything is covering the midpoint
+        // of the wraparound hint or the bounds don't make sense for the provided
+        // wraparound hint, just return the Cartesian bounds.
+        if !self.x_mid.is_empty() || !self.wraparound_hint.contains_interval(&out_all) {
+            return out_all.into();
+        }
+
+        // Check if our wraparound bounds are any better than our Cartesian bounds
+        // If the Cartesian bounds are tighter, return them.
+        let out_width = (self.x_left.hi() - self.wraparound_hint.lo())
+            + (self.wraparound_hint.hi() - self.x_right.hi());
+        if out_all.width() < out_width {
+            return out_all.into();
+        }
+
+        // Wraparound!
+        WraparoundInterval::new(self.x_right.lo(), self.x_left.hi())
+    }
+
+    fn y(&self) -> Interval {
+        self.y
+    }
+
+    fn z(&self) -> Interval {
+        self.z
+    }
+
+    fn m(&self) -> Interval {
+        self.m
+    }
+
+    fn geometry_types(&self) -> &GeometryTypeAndDimensionsSet {
+        &self.geometry_types
+    }
+
+    fn update_wkb(&mut self, wkb: &[u8]) -> Result<(), SedonaGeometryError> {
+        let wkb = Wkb::try_new(wkb).map_err(|e| SedonaGeometryError::External(Box::new(e)))?;
+        self.update_geometry(&wkb)?;
+        Ok(())
     }
 }
 
