@@ -93,12 +93,15 @@ impl Statement for SedonaStatement {
         }
     }
 
-    fn execute(&mut self) -> Result<impl RecordBatchReader + Send> {
+    fn execute(&mut self) -> Result<Box<dyn RecordBatchReader + Send + 'static>> {
         if let Some(query) = self.sql_query.clone() {
             self.runtime.block_on(async {
                 let df = self.ctx.sql(&query).await.map_err(from_datafusion_error)?;
                 let stream = df.execute_stream().await.map_err(from_datafusion_error)?;
-                Ok(SedonaStreamReader::new(self.runtime.clone(), stream))
+                Ok(
+                    Box::new(SedonaStreamReader::new(self.runtime.clone(), stream))
+                        as Box<dyn RecordBatchReader + Send + 'static>,
+                )
             })
         } else {
             Err(Error::with_message_and_status(
