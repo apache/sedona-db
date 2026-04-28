@@ -551,9 +551,19 @@ impl SpatialIndex for DefaultSpatialIndex {
             };
 
             // Sort and dedup candidates to avoid duplicate results when we index one geometry
-            // using several boxes.
+            // using several boxes (e.g., for antimeridian-crossing geometries).
+            // First dedup by data_idx (fast), then dedup by position (handles wraparound case).
             candidates.sort_unstable();
             candidates.dedup();
+
+            // Dedup by position: when a geometry spans the antimeridian, it may be indexed
+            // as two separate boxes with different data_idx values that map to the same position.
+            let mut seen_positions: std::collections::HashSet<(i32, i32)> =
+                std::collections::HashSet::new();
+            candidates.retain(|data_idx| {
+                let pos = self.inner.data_id_to_batch_pos[*data_idx as usize];
+                seen_positions.insert(pos)
+            });
 
             let distance = match dist {
                 Some(dist_array) => distance_value_at(dist_array, row_idx)?,
