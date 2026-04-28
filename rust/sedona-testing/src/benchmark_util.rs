@@ -622,19 +622,9 @@ mod test {
     use datafusion_expr::{ColumnarValue, SimpleScalarUDF};
     use geo_traits::Dimensions;
     use rstest::rstest;
-    use sedona_geometry::{
-        analyze::{analyze_wkb, GeometrySummary},
-        bounds::geo_traits_bounds_xy,
-        types::GeometryTypeAndDimensions,
-    };
-    use wkb::reader::Wkb;
+    use sedona_geometry::{analyze::analyze_wkb, types::GeometryTypeAndDimensions};
 
     use super::*;
-
-    // Shorthand for analyzing a single item
-    fn analyze_geometry(geom: &Wkb) -> GeometrySummary {
-        analyze_wkb(geom, &geo_traits_bounds_xy(geom).unwrap()).unwrap()
-    }
 
     #[test]
     fn arg_spec_scalar() {
@@ -651,7 +641,7 @@ mod test {
 
         if let ScalarValue::Binary(Some(wkb_bytes)) = scalar {
             let wkb = wkb::reader::read_wkb(&wkb_bytes).unwrap();
-            let analysis = analyze_geometry(&wkb);
+            let analysis = analyze_wkb(&wkb).unwrap();
             assert_eq!(analysis.point_count, 1);
             assert_eq!(
                 analysis.geometry_type,
@@ -693,7 +683,7 @@ mod test {
 
             for wkb_bytes in binary_array {
                 let wkb = wkb::reader::read_wkb(wkb_bytes.unwrap()).unwrap();
-                let analysis = analyze_geometry(&wkb);
+                let analysis = analyze_wkb(&wkb).unwrap();
                 assert_eq!(analysis.point_count, point_count);
                 assert_eq!(
                     analysis.geometry_type,

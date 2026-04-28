@@ -51,7 +51,7 @@ impl Bounds2D {
         let y: Interval = y.into();
 
         // For wraparound intervals we need to make the min and max slightly closer to
-        // eachother rather than slightly farther away.
+        // each other rather than slightly farther away.
         let x_float = if x.is_wraparound() {
             let swapped_neg_x_float = f64_interval_to_f32(-x.hi(), -x.lo());
             (-swapped_neg_x_float.1, -swapped_neg_x_float.0)
@@ -62,7 +62,7 @@ impl Bounds2D {
         Self::new_from_raw(x_float, f64_interval_to_f32(y.lo(), y.hi()))
     }
 
-    /// Creatre a new Bounds2D from raw f32 intervals
+    /// Create a new Bounds2D from raw f32 intervals
     pub fn new_from_raw(x: (f32, f32), y: (f32, f32)) -> Self {
         Self { x, y }
     }
