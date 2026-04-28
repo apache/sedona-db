@@ -37,8 +37,6 @@ datafusion-common = { workspace = true }
 datafusion-execution = { workspace = true }
 datafusion-physical-expr = { workspace = true }
 datafusion-physical-plan = { workspace = true }
-geo-index = { workspace = true }
-geo-types = { workspace = true }
 log = { workspace = true }
 parking_lot = { workspace = true }
 sedona-common = { workspace = true }

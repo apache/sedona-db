@@ -31,8 +31,7 @@ use crate::{
     },
     operand_evaluator::EvaluatedGeometryArray,
     partitioning::{
-        partition_slots::PartitionSlots, util::geo_rect_to_bbox, PartitionedSide, SpatialPartition,
-        SpatialPartitioner,
+        partition_slots::PartitionSlots, PartitionedSide, SpatialPartition, SpatialPartitioner,
     },
 };
 use arrow::compute::interleave_record_batch;
@@ -605,26 +604,27 @@ pub(crate) fn assign_rows(
         PartitionedSide::BuildSide => {
             let mut cnt = 0;
             let num_regular_partitions = partitioner.num_regular_partitions() as u32;
-            for rect_opt in batch.geom_array.rects() {
-                let partition = match rect_opt {
-                    Some(rect) => partitioner.partition_no_multi(&geo_rect_to_bbox(rect))?,
-                    None => {
-                        // Round-robin empty geometries through regular partitions to avoid
-                        // overloading a single slot when the build side is mostly empty.
-                        let p = SpatialPartition::Regular(cnt);
-                        cnt = (cnt + 1) % num_regular_partitions;
-                        p
-                    }
+            for rect in batch.geom_array.rects() {
+                let partition = if rect.is_empty() {
+                    // Round-robin empty geometries through regular partitions to avoid
+                    // overloading a single slot when the build side is mostly empty.
+                    let p = SpatialPartition::Regular(cnt);
+                    cnt = (cnt + 1) % num_regular_partitions;
+                    p
+                } else {
+                    partitioner.partition_no_multi(&BoundingBox::xy(rect.x(), rect.y()))?
                 };
                 assignments.push(partition);
             }
         }
         PartitionedSide::ProbeSide => {
-            for rect_opt in batch.geom_array.rects() {
-                let partition = match rect_opt {
-                    Some(rect) => partitioner.partition(&geo_rect_to_bbox(rect))?,
-                    None => SpatialPartition::None,
+            for rect in batch.geom_array.rects() {
+                let partition = if rect.is_empty() {
+                    SpatialPartition::None
+                } else {
+                    partitioner.partition(&BoundingBox::xy(rect.x(), rect.y()))?
                 };
+
                 assignments.push(partition);
             }
         }

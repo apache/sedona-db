@@ -25,15 +25,16 @@ use datafusion_common::{Result, ScalarValue};
 use datafusion_execution::{disk_manager::RefCountedTempFile, runtime_env::RuntimeEnv};
 use datafusion_expr::ColumnarValue;
 use datafusion_physical_plan::metrics::SpillMetrics;
-use geo::{Coord, Rect};
-use geo_traits::CoordTrait;
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_schema::datatypes::SedonaType;
 
 use crate::{
     evaluated_batch::EvaluatedBatch,
     operand_evaluator::EvaluatedGeometryArray,
-    utils::spill::{RecordBatchSpillReader, RecordBatchSpillWriter},
+    utils::{
+        bounds::Bounds2D,
+        spill::{RecordBatchSpillReader, RecordBatchSpillWriter},
+    },
 };
 
 /// Writer for spilling evaluated batches to disk
@@ -153,18 +154,9 @@ impl EvaluatedBatchSpillWriter {
         let mut rect_builder =
             arrow::array::FixedSizeListBuilder::new(arrow::array::Float32Builder::new(), 4);
         for rect_opt in geom_array.rects() {
-            if let Some(rect) = rect_opt {
-                rect_builder.values().append_slice(&[
-                    rect.min().x(),
-                    rect.min().y(),
-                    rect.max().x(),
-                    rect.max().y(),
-                ]);
-                rect_builder.append(true);
-            } else {
-                rect_builder.values().append_nulls(4);
-                rect_builder.append(false);
-            }
+            let (x, y) = rect_opt.clone().into_inner();
+            rect_builder.values().append_slice(&[x.0, x.1, y.0, y.1]);
+            rect_builder.append(true);
         }
         let rect_array = rect_builder.finish();
 
@@ -295,20 +287,20 @@ pub(crate) fn spilled_batch_to_evaluated_batch(
     let rect_vec = (0..rect_array.len())
         .map(|i| {
             if rect_array.is_null(i) {
-                None
+                Bounds2D::empty()
             } else {
                 let child_i = i * 4;
                 unsafe {
-                    Some(Rect::new(
-                        Coord {
-                            x: rect_child_array.value_unchecked(child_i),
-                            y: rect_child_array.value_unchecked(child_i + 1),
-                        },
-                        Coord {
-                            x: rect_child_array.value_unchecked(child_i + 2),
-                            y: rect_child_array.value_unchecked(child_i + 3),
-                        },
-                    ))
+                    Bounds2D::new_from_raw(
+                        (
+                            rect_child_array.value_unchecked(child_i),
+                            rect_child_array.value_unchecked(child_i + 1),
+                        ),
+                        (
+                            rect_child_array.value_unchecked(child_i + 2),
+                            rect_child_array.value_unchecked(child_i + 3),
+                        ),
+                    )
                 }
             }
         })
@@ -598,7 +590,7 @@ mod tests {
 
         // Verify nulls are preserved
         assert_eq!(read_batch.num_rows(), 3);
-        assert!(read_batch.geom_array.rects()[1].is_none()); // Null geometry
+        assert!(read_batch.geom_array.rects()[1].is_empty()); // Null geometry
 
         // Verify distance nulls
         match read_batch.geom_array.distance() {
@@ -720,23 +712,7 @@ mod tests {
         let mut reader = EvaluatedBatchSpillReader::try_new(&temp_file)?;
         let read_batch = reader.next_batch().unwrap()?;
 
-        assert_eq!(read_batch.geom_array.rects().len(), original_rects.len());
-        for (original, read) in original_rects
-            .iter()
-            .zip(read_batch.geom_array.rects().iter())
-        {
-            match (original, read) {
-                (Some(orig_rect), Some(read_rect)) => {
-                    assert_eq!(orig_rect.min().x, read_rect.min().x);
-                    assert_eq!(orig_rect.min().y, read_rect.min().y);
-                    assert_eq!(orig_rect.max().x, read_rect.max().x);
-                    assert_eq!(orig_rect.max().y, read_rect.max().y);
-                }
-                (None, None) => {}
-                _ => panic!("Rect mismatch between original and read"),
-            }
-        }
-
+        assert_eq!(read_batch.geom_array.rects(), original_rects);
         Ok(())
     }
 

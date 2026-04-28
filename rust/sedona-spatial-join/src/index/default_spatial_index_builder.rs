@@ -17,7 +17,7 @@
 
 use arrow::array::BooleanBufferBuilder;
 use arrow_schema::SchemaRef;
-use sedona_common::SpatialJoinOptions;
+use sedona_common::{sedona_internal_err, SpatialJoinOptions};
 use sedona_expr::statistics::GeoStatistics;
 use std::sync::Arc;
 
@@ -145,7 +145,7 @@ impl DefaultSpatialIndexBuilder {
         let num_rects = self
             .indexed_batches
             .iter()
-            .map(|batch| batch.geom_array.rects().iter().flatten().count())
+            .map(|batch| batch.geom_array.rects().len())
             .sum::<usize>();
 
         let mut rtree_builder = RTreeBuilder::<f32>::new(num_rects as u32);
@@ -153,14 +153,19 @@ impl DefaultSpatialIndexBuilder {
 
         for (batch_idx, batch) in self.indexed_batches.iter().enumerate() {
             let rects = batch.geom_array.rects();
-            for (idx, rect_opt) in rects.iter().enumerate() {
-                let Some(rect) = rect_opt else {
-                    continue;
-                };
-                let min = rect.min();
-                let max = rect.max();
-                let data_idx = rtree_builder.add(min.x, min.y, max.x, max.y);
-                batch_pos_vec[data_idx as usize] = (batch_idx as i32, idx as i32);
+            for (idx, rect) in rects.iter().enumerate() {
+                let (left, right) = rect.split();
+                if !left.is_empty() {
+                    let (x, y) = left.into_inner();
+                    let data_idx = rtree_builder.add(x.0, y.0, x.1, y.1);
+                    batch_pos_vec[data_idx as usize] = (batch_idx as i32, idx as i32);
+                }
+
+                if !right.is_empty() {
+                    return sedona_internal_err!(
+                        "Wraparound rectangles are not supported by the default rtree builder"
+                    );
+                }
             }
         }
 

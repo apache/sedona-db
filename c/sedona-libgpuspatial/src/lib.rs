@@ -16,7 +16,6 @@
 // under the License.
 
 use arrow_schema::DataType;
-use geo_types::Rect;
 
 mod error;
 #[cfg(gpu_available)]
@@ -109,6 +108,8 @@ mod sys {
         pub fn clear(&mut self) {
             self.inner.clear()
         }
+
+        // TODO: fix the Rect<f32> here
 
         /// Inserts a batch of bounding boxes into the index.
         /// Each rectangle is represented as a `Rect<f32>` with minimum and maximum x and y coordinates.
@@ -203,13 +204,13 @@ mod sys {
             Err(GpuSpatialError::GpuNotAvailable)
         }
         pub fn clear(&mut self) {}
-        pub fn push_build(&mut self, _r: &[Rect<f32>]) -> Result<()> {
+        pub fn push_build(&mut self, _r: &[(f32, f32, f32, f32)]) -> Result<()> {
             Err(GpuSpatialError::GpuNotAvailable)
         }
         pub fn finish_building(&mut self) -> Result<GpuSpatialIndex> {
             Err(GpuSpatialError::GpuNotAvailable)
         }
-        pub fn probe(&self, _r: &[Rect<f32>]) -> Result<(Vec<u32>, Vec<u32>)> {
+        pub fn probe(&self, _r: &[(f32, f32, f32, f32)]) -> Result<(Vec<u32>, Vec<u32>)> {
             Err(GpuSpatialError::GpuNotAvailable)
         }
     }

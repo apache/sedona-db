@@ -519,13 +519,19 @@ impl SpatialIndex for DefaultSpatialIndex {
         let mut current_row_idx = range.start;
         for row_idx in range {
             current_row_idx = row_idx;
-            let Some(probe_rect) = rects[row_idx] else {
+            let probe_rect = &rects[row_idx];
+            if probe_rect.is_empty() {
                 continue;
-            };
+            }
 
-            let min = probe_rect.min();
-            let max = probe_rect.max();
-            let mut candidates = self.inner.rtree.search(min.x, min.y, max.x, max.y);
+            let (left, right) = probe_rect.split();
+            let (x, y) = left.into_inner();
+            let mut candidates = self.inner.rtree.search(x.0, y.0, x.1, y.1);
+            if !right.is_empty() {
+                let (x, y) = right.into_inner();
+                candidates.extend(self.inner.rtree.search(x.0, y.0, x.1, y.1));
+            }
+
             if candidates.is_empty() {
                 continue;
             }
