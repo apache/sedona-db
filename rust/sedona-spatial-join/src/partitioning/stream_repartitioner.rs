@@ -33,6 +33,7 @@ use crate::{
     partitioning::{
         partition_slots::PartitionSlots, PartitionedSide, SpatialPartition, SpatialPartitioner,
     },
+    utils::bounds::VoidBounder,
 };
 use arrow::compute::interleave_record_batch;
 use arrow_array::RecordBatch;
@@ -44,8 +45,7 @@ use futures::StreamExt;
 use sedona_common::sedona_internal_err;
 use sedona_expr::statistics::GeoStatistics;
 use sedona_functions::st_analyze_agg::AnalyzeAccumulator;
-use sedona_geometry::{bounder::Bounder, interval::IntervalTrait};
-use sedona_geometry::{bounder::GeometryBounder, bounding_box::BoundingBox};
+use sedona_geometry::{bounding_box::BoundingBox, interval::IntervalTrait};
 use sedona_schema::datatypes::WKB_GEOMETRY;
 
 /// Result emitted after a stream is spatially repartitioned.
@@ -304,7 +304,7 @@ pub struct StreamRepartitioner {
     /// The None and Multi partitions should be None when repartitioning the build side.
     spill_registry: Vec<Option<EvaluatedBatchSpillWriter>>,
     /// Geospatial statistics for each spatial partition.
-    geo_stats_accumulators: Vec<AnalyzeAccumulator<GeometryBounder>>,
+    geo_stats_accumulators: Vec<AnalyzeAccumulator<VoidBounder>>,
     /// Number of rows in each spatial partition.
     num_rows: Vec<usize>,
     slot_assignments: Vec<Vec<(usize, usize)>>,
@@ -381,7 +381,7 @@ impl StreamRepartitionerBuilder {
             slots,
             spill_registry: (0..slot_count).map(|_| None).collect(),
             geo_stats_accumulators: (0..slot_count)
-                .map(|_| AnalyzeAccumulator::new(WKB_GEOMETRY, GeometryBounder::empty()))
+                .map(|_| AnalyzeAccumulator::new(WKB_GEOMETRY, VoidBounder))
                 .collect(),
             num_rows: vec![0; slot_count],
             slot_assignments: (0..slot_count).map(|_| Vec::new()).collect(),
@@ -468,7 +468,6 @@ impl StreamRepartitioner {
         self.pending_batches.push(batch);
         let batch_ref = &self.pending_batches[batch_idx];
         assert_eq!(row_assignments.len(), batch_ref.num_rows());
-        let mut bounder = GeometryBounder::empty();
         for (row_idx, partition) in row_assignments.iter().enumerate() {
             let Some(slot_idx) = self.slots.slot(*partition) else {
                 return sedona_internal_err!(
@@ -478,10 +477,10 @@ impl StreamRepartitioner {
                 );
             };
             if let Some(wkb) = batch_ref.geom_array.wkb(row_idx) {
-                bounder.clear();
-                bounder.update_wkb(wkb).unwrap();
-                self.geo_stats_accumulators[slot_idx]
-                    .update_statistics_with_bbox(wkb, &bounder.finish())?;
+                self.geo_stats_accumulators[slot_idx].update_statistics_with_bbox(
+                    wkb,
+                    &batch_ref.geom_array.rects()[row_idx].clone().into(),
+                )?;
             }
             self.slot_assignments[slot_idx].push((batch_idx, row_idx));
             self.num_rows[slot_idx] += 1;

@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::sync::Arc;
+use std::{iter::zip, sync::Arc};
 
 use datafusion::config::SpillCompression;
 use datafusion_common::Result;
@@ -30,7 +30,6 @@ use futures::StreamExt;
 use sedona_common::{sedona_internal_err, SpatialJoinOptions};
 use sedona_expr::statistics::GeoStatistics;
 use sedona_functions::st_analyze_agg::AnalyzeAccumulator;
-use sedona_geometry::bounder::{Bounder, GeometryBounder};
 use sedona_schema::datatypes::WKB_GEOMETRY;
 
 use crate::{
@@ -45,7 +44,10 @@ use crate::{
     join_provider::SpatialJoinProvider,
     operand_evaluator::create_operand_evaluator,
     spatial_predicate::SpatialPredicate,
-    utils::bbox_sampler::{BoundingBoxSampler, BoundingBoxSamples},
+    utils::{
+        bbox_sampler::{BoundingBoxSampler, BoundingBoxSamples},
+        bounds::VoidBounder,
+    },
 };
 
 pub(crate) struct BuildPartition {
@@ -162,9 +164,7 @@ impl BuildSideBatchesCollector {
         let mut total_num_rows = 0;
         let mut total_size_bytes = 0;
 
-        // TODO: reuse the bounds that are already inside the stream instead of re bounding
-        let mut bounder = GeometryBounder::empty();
-        let mut analyzer = AnalyzeAccumulator::new(WKB_GEOMETRY, GeometryBounder::empty());
+        let mut analyzer = AnalyzeAccumulator::new(WKB_GEOMETRY, VoidBounder);
 
         // Reserve memory for holding bbox samples. This should be a small reservation.
         // We simply return error if the reservation cannot be fulfilled, since there's
@@ -177,13 +177,13 @@ impl BuildSideBatchesCollector {
             let _timer = metrics.time_taken.timer();
 
             let geom_array = &build_side_batch.geom_array;
-            for wkb in geom_array.wkbs().iter().flatten() {
-                // TODO: reuse the box
-                bounder.clear();
-                bounder.update_wkb(wkb).unwrap();
-                let summary = analyzer.update_statistics_with_bbox(wkb, &bounder.finish())?;
-                if !summary.bbox.is_empty() {
-                    bbox_sampler.add_bbox(&summary.bbox);
+            for (wkb_opt, rect) in zip(geom_array.wkbs(), geom_array.rects()) {
+                if let Some(wkb) = wkb_opt {
+                    let summary =
+                        analyzer.update_statistics_with_bbox(wkb, &rect.clone().into())?;
+                    if !summary.bbox.is_empty() {
+                        bbox_sampler.add_bbox(&summary.bbox);
+                    }
                 }
             }
 

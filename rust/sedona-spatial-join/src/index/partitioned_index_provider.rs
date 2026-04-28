@@ -403,11 +403,14 @@ impl EvaluatedBatchStream for ReceiverBatchStream {
 
 #[cfg(test)]
 mod tests {
+    use std::iter::zip;
+
     use super::*;
     use crate::join_provider::DefaultSpatialJoinProvider;
     use crate::operand_evaluator::EvaluatedGeometryArray;
     use crate::partitioning::partition_slots::PartitionSlots;
     use crate::utils::bbox_sampler::BoundingBoxSamples;
+    use crate::utils::bounds::VoidBounder;
     use crate::{
         evaluated_batch::{
             evaluated_batch_stream::{
@@ -430,7 +433,6 @@ mod tests {
     use datafusion_physical_plan::metrics::{ExecutionPlanMetricsSet, SpillMetrics};
     use sedona_expr::statistics::GeoStatistics;
     use sedona_functions::st_analyze_agg::AnalyzeAccumulator;
-    use sedona_geometry::bounder::{Bounder, GeometryBounder};
     use sedona_geometry::wkb_factory::wkb_point;
     use sedona_schema::datatypes::WKB_GEOMETRY;
 
@@ -470,13 +472,12 @@ mod tests {
     }
 
     fn geo_stats_from_batches(batches: &[EvaluatedBatch]) -> Result<GeoStatistics> {
-        let mut analyzer = AnalyzeAccumulator::new(WKB_GEOMETRY, GeometryBounder::empty());
-        let mut bounder = GeometryBounder::empty();
+        let mut analyzer = AnalyzeAccumulator::new(WKB_GEOMETRY, VoidBounder);
         for batch in batches {
-            for wkb in batch.geom_array.wkbs().iter().flatten() {
-                bounder.clear();
-                bounder.update_wkb(wkb).unwrap();
-                analyzer.update_statistics_with_bbox(wkb, &bounder.finish())?;
+            for (wkb_opt, rect) in zip(batch.geom_array.wkbs(), batch.geom_array.rects()) {
+                if let Some(wkb) = wkb_opt {
+                    analyzer.update_statistics_with_bbox(wkb, &rect.clone().into())?;
+                }
             }
         }
         Ok(analyzer.finish())
