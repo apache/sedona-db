@@ -641,6 +641,7 @@ mod tests {
     use std::rc::Rc;
     use std::sync::Once;
 
+    use arrow_array::StructArray;
     use sedona_gdal::raster::types::Buffer;
     use sedona_raster::array::RasterStructArray;
     use sedona_raster::builder::RasterBuilder;
@@ -649,6 +650,8 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::gdal_common::with_gdal;
+
+    type TestBand = (BandDataType, Option<Vec<u8>>, Vec<u8>);
 
     static GDAL_INIT: Once = Once::new();
 
@@ -713,6 +716,76 @@ mod tests {
         builder.finish_raster().unwrap();
 
         builder.finish().unwrap()
+    }
+
+    fn build_in_db_raster(
+        metadata: RasterMetadata,
+        crs: Option<&str>,
+        bands: &[TestBand],
+    ) -> StructArray {
+        let mut builder = RasterBuilder::new(1);
+        builder.start_raster(&metadata, crs).unwrap();
+        for (datatype, nodata_value, data) in bands {
+            builder
+                .start_band(BandMetadata {
+                    datatype: *datatype,
+                    nodata_value: nodata_value.clone(),
+                    storage_type: StorageType::InDb,
+                    outdb_url: None,
+                    outdb_band_id: None,
+                })
+                .unwrap();
+            builder.band_data_writer().append_value(data);
+            builder.finish_band().unwrap();
+        }
+        builder.finish_raster().unwrap();
+        builder.finish().unwrap()
+    }
+
+    fn build_mixed_raster(path: &str) -> StructArray {
+        let metadata = RasterMetadata {
+            width: 8,
+            height: 8,
+            upperleft_x: 0.0,
+            upperleft_y: 8.0,
+            scale_x: 1.0,
+            scale_y: -1.0,
+            skew_x: 0.0,
+            skew_y: 0.0,
+        };
+        let mut builder = RasterBuilder::new(1);
+        builder.start_raster(&metadata, Some("EPSG:4326")).unwrap();
+
+        builder
+            .start_band(BandMetadata {
+                datatype: BandDataType::UInt8,
+                nodata_value: Some(vec![255u8]),
+                storage_type: StorageType::InDb,
+                outdb_url: None,
+                outdb_band_id: None,
+            })
+            .unwrap();
+        builder.band_data_writer().append_value(vec![7u8; 8 * 8]);
+        builder.finish_band().unwrap();
+
+        builder
+            .start_band(BandMetadata {
+                datatype: BandDataType::UInt8,
+                nodata_value: Some(vec![0u8]),
+                storage_type: StorageType::OutDbRef,
+                outdb_url: Some(path.to_string()),
+                outdb_band_id: Some(1),
+            })
+            .unwrap();
+        builder.band_data_writer().append_value([]);
+        builder.finish_band().unwrap();
+
+        builder.finish_raster().unwrap();
+        builder.finish().unwrap()
+    }
+
+    fn assert_wgs84_projection_wkt(wkt: &str) {
+        assert!(wkt.contains("AUTHORITY[\"EPSG\",\"4326\"]"));
     }
 
     #[test]
@@ -808,5 +881,148 @@ mod tests {
             first.as_dataset().c_dataset(),
             second.as_dataset().c_dataset()
         );
+    }
+
+    #[test]
+    fn test_provider_returns_empty_dataset_for_zero_band_raster() {
+        ensure_gdal_drivers();
+        let metadata = RasterMetadata {
+            width: 3,
+            height: 2,
+            upperleft_x: 1.0,
+            upperleft_y: 4.0,
+            scale_x: 1.0,
+            scale_y: -1.0,
+            skew_x: 0.0,
+            skew_y: 0.0,
+        };
+        let raster_struct = build_in_db_raster(metadata, Some("EPSG:4326"), &[]);
+        let raster_array = RasterStructArray::new(&raster_struct);
+        let raster = raster_array.get(0).unwrap();
+        let cache = Rc::new(GDALDatasetCache::try_new(4, 4).unwrap());
+
+        let dataset = with_gdal(|gdal| {
+            let provider = GDALDatasetProvider::new(gdal, Rc::clone(&cache));
+            provider.raster_ref_to_gdal(&raster)
+        })
+        .unwrap();
+
+        assert_eq!(dataset.as_dataset().raster_size(), (3, 2));
+        assert_eq!(dataset.as_dataset().raster_count(), 0);
+        assert_wgs84_projection_wkt(&dataset.as_dataset().projection());
+    }
+
+    #[test]
+    fn test_provider_returns_mem_dataset_for_indb_raster() {
+        ensure_gdal_drivers();
+        let metadata = RasterMetadata {
+            width: 2,
+            height: 2,
+            upperleft_x: 0.0,
+            upperleft_y: 2.0,
+            scale_x: 1.0,
+            scale_y: -1.0,
+            skew_x: 0.0,
+            skew_y: 0.0,
+        };
+        let band1 = vec![11u8, 12u8, 13u8, 14u8];
+        let band2 = vec![21u8, 22u8, 23u8, 24u8];
+        let raster_struct = build_in_db_raster(
+            metadata,
+            Some("EPSG:4326"),
+            &[
+                (BandDataType::UInt8, Some(vec![255u8]), band1),
+                (BandDataType::UInt8, Some(vec![0u8]), band2),
+            ],
+        );
+        let raster_array = RasterStructArray::new(&raster_struct);
+        let raster = raster_array.get(0).unwrap();
+        let cache = Rc::new(GDALDatasetCache::try_new(4, 4).unwrap());
+
+        let dataset = with_gdal(|gdal| {
+            let provider = GDALDatasetProvider::new(gdal, Rc::clone(&cache));
+            provider.raster_ref_to_gdal(&raster)
+        })
+        .unwrap();
+
+        let band = dataset
+            .as_dataset()
+            .rasterband(2)
+            .unwrap()
+            .read_as::<u8>((0, 0), (2, 2), (2, 2), None)
+            .unwrap();
+        assert_eq!(dataset.as_dataset().raster_count(), 2);
+        assert_eq!(band.data().to_vec(), vec![21u8, 22u8, 23u8, 24u8]);
+    }
+
+    #[test]
+    fn test_provider_preserves_band_order_for_mixed_raster() {
+        ensure_gdal_drivers();
+        let temp_dir = TempDir::new().unwrap();
+        let path = create_source_tiff(&temp_dir);
+        let raster_struct = build_mixed_raster(&path);
+        let raster_array = RasterStructArray::new(&raster_struct);
+        let raster = raster_array.get(0).unwrap();
+        let cache = Rc::new(GDALDatasetCache::try_new(4, 4).unwrap());
+
+        let dataset = with_gdal(|gdal| {
+            let provider = GDALDatasetProvider::new(gdal, Rc::clone(&cache));
+            provider.raster_ref_to_gdal(&raster)
+        })
+        .unwrap();
+
+        let band1 = dataset
+            .as_dataset()
+            .rasterband(1)
+            .unwrap()
+            .read_as::<u8>((0, 0), (8, 8), (8, 8), None)
+            .unwrap();
+        let band2 = dataset
+            .as_dataset()
+            .rasterband(2)
+            .unwrap()
+            .read_as::<u8>((0, 0), (8, 8), (8, 8), None)
+            .unwrap();
+        assert_eq!(band1.data().to_vec(), vec![7u8; 8 * 8]);
+        assert_eq!(band2.data().to_vec(), vec![1u8; 8 * 8]);
+    }
+
+    #[test]
+    fn test_vrt_key_distinguishes_lossless_uint64_nodata() {
+        let metadata = RasterMetadata {
+            width: 1,
+            height: 1,
+            upperleft_x: 0.0,
+            upperleft_y: 1.0,
+            scale_x: 1.0,
+            scale_y: -1.0,
+            skew_x: 0.0,
+            skew_y: 0.0,
+        };
+        let raster_a = build_in_db_raster(
+            metadata.clone(),
+            None,
+            &[(
+                BandDataType::UInt64,
+                Some((9_007_199_254_740_992u64).to_le_bytes().to_vec()),
+                1u64.to_le_bytes().to_vec(),
+            )],
+        );
+        let raster_b = build_in_db_raster(
+            metadata,
+            None,
+            &[(
+                BandDataType::UInt64,
+                Some((9_007_199_254_740_993u64).to_le_bytes().to_vec()),
+                1u64.to_le_bytes().to_vec(),
+            )],
+        );
+
+        let key_a =
+            super::VrtKey::from_raster(&RasterStructArray::new(&raster_a).get(0).unwrap()).unwrap();
+        let key_b =
+            super::VrtKey::from_raster(&RasterStructArray::new(&raster_b).get(0).unwrap()).unwrap();
+
+        assert!(key_a != key_b);
     }
 }
