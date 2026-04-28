@@ -38,7 +38,7 @@ use geo_index::IndexableNum;
 use parking_lot::Mutex;
 use sedona_expr::statistics::GeoStatistics;
 use sedona_geo::to_geo::item_to_geometry;
-use sedona_geometry::interval::{Interval, IntervalTrait};
+use sedona_geometry::interval::Interval;
 use wkb::reader::Wkb;
 
 use crate::index::spatial_index::DISTANCE_TOLERANCE;
@@ -71,7 +71,7 @@ struct DefaultSpatialIndexInner {
     pub(crate) rtree: RTree<f32>,
 
     /// Absolute bounds of the coordinate system
-    pub(crate) wraparound: Interval,
+    pub(crate) wraparound: Option<Interval>,
 
     /// Indexed batches containing evaluated geometry arrays. It contains the original record
     /// batches and geometry arrays obtained by evaluating the geometry expression on the build side.
@@ -121,7 +121,7 @@ impl DefaultSpatialIndex {
                 options,
                 refiner,
                 rtree,
-                wraparound: Interval::full(),
+                wraparound: None,
                 data_id_to_batch_pos: Vec::new(),
                 indexed_batches: Vec::new(),
                 geom_idx_vec: Vec::new(),
@@ -137,7 +137,7 @@ impl DefaultSpatialIndex {
         options: SpatialJoinOptions,
         refiner: Arc<dyn IndexQueryResultRefiner>,
         rtree: RTree<f32>,
-        wraparound: Interval,
+        wraparound: Option<Interval>,
         indexed_batches: Vec<EvaluatedBatch>,
         data_id_to_batch_pos: Vec<(i32, i32)>,
         geom_idx_vec: Vec<usize>,
@@ -531,13 +531,20 @@ impl SpatialIndex for DefaultSpatialIndex {
                 continue;
             }
 
-            let (left, right) = probe_rect.split(&self.inner.wraparound);
-            let (x, y) = left.into_inner();
-            let mut candidates = self.inner.rtree.search(x.0, y.0, x.1, y.1);
-            if !right.is_empty() {
-                let (x, y) = right.into_inner();
-                candidates.extend(self.inner.rtree.search(x.0, y.0, x.1, y.1));
-            }
+            let mut candidates = if let Some(wraparound) = &self.inner.wraparound {
+                let (left, right) = probe_rect.split(wraparound);
+                let (x, y) = left.into_inner();
+                let mut candidates = self.inner.rtree.search(x.0, y.0, x.1, y.1);
+                if !right.is_empty() {
+                    let (x, y) = right.into_inner();
+                    candidates.extend(self.inner.rtree.search(x.0, y.0, x.1, y.1));
+                }
+
+                candidates
+            } else {
+                let (x, y) = probe_rect.clone().into_inner();
+                self.inner.rtree.search(x.0, y.0, x.1, y.1)
+            };
 
             if candidates.is_empty() {
                 continue;
@@ -553,17 +560,19 @@ impl SpatialIndex for DefaultSpatialIndex {
             // Sort and dedup candidates to avoid duplicate results when we index one geometry
             // using several boxes (e.g., for antimeridian-crossing geometries).
             // First dedup by data_idx (fast), then dedup by position (handles wraparound case).
-            candidates.sort_unstable();
-            candidates.dedup();
+            if self.inner.wraparound.is_some() {
+                candidates.sort_unstable();
+                candidates.dedup();
 
-            // Dedup by position: when a geometry spans the antimeridian, it may be indexed
-            // as two separate boxes with different data_idx values that map to the same position.
-            let mut seen_positions: std::collections::HashSet<(i32, i32)> =
-                std::collections::HashSet::new();
-            candidates.retain(|data_idx| {
-                let pos = self.inner.data_id_to_batch_pos[*data_idx as usize];
-                seen_positions.insert(pos)
-            });
+                // Dedup by position: when a geometry spans the antimeridian, it may be indexed
+                // as two separate boxes with different data_idx values that map to the same position.
+                let mut seen_positions: std::collections::HashSet<(i32, i32)> =
+                    std::collections::HashSet::new();
+                candidates.retain(|data_idx| {
+                    let pos = self.inner.data_id_to_batch_pos[*data_idx as usize];
+                    seen_positions.insert(pos)
+                });
+            }
 
             let distance = match dist {
                 Some(dist_array) => distance_value_at(dist_array, row_idx)?,

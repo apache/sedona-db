@@ -62,7 +62,7 @@ pub struct DefaultSpatialIndexBuilder {
     probe_threads_count: usize,
     metrics: SpatialJoinBuildMetrics,
     refiner_factory: Arc<dyn IndexQueryResultRefinerFactory>,
-    wraparound: Interval,
+    wraparound: Option<Interval>,
 
     /// Batches to be indexed
     indexed_batches: Vec<EvaluatedBatch>,
@@ -91,7 +91,7 @@ impl DefaultSpatialIndexBuilder {
             join_type,
             probe_threads_count,
             metrics,
-            wraparound: Interval::full(),
+            wraparound: None,
             refiner_factory: Arc::new(DefaultIndexQueryResultRefinerFactory),
             indexed_batches: Vec::new(),
             stats: GeoStatistics::empty(),
@@ -108,7 +108,7 @@ impl DefaultSpatialIndexBuilder {
     }
 
     pub fn with_wraparound(mut self, wraparound: impl Into<Interval>) -> Self {
-        self.wraparound = wraparound.into();
+        self.wraparound = Some(wraparound.into());
         self
     }
 

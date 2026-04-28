@@ -59,7 +59,13 @@ fn create_antimeridian_crossing_test_data() -> Result<(TestPartitions, TestParti
     // East side: 170°E to 190°E (equivalent to 170°W)
     let east_bounds = Rect::new(Coord { x: 170.0, y: -10.0 }, Coord { x: 190.0, y: 10.0 });
     // West side: -190° (equivalent to 170°E) to -170° (170°W)
-    let west_bounds = Rect::new(Coord { x: -190.0, y: -10.0 }, Coord { x: -170.0, y: 10.0 });
+    let west_bounds = Rect::new(
+        Coord {
+            x: -190.0,
+            y: -10.0,
+        },
+        Coord { x: -170.0, y: 10.0 },
+    );
 
     let left_data = RandomPartitionedDataBuilder::new()
         .seed(44)
@@ -127,7 +133,9 @@ fn setup_context(options: Option<SpatialJoinOptions>, batch_size: usize) -> Resu
     Ok(ctx)
 }
 
-fn collect_spatial_join_exec(plan: &Arc<dyn datafusion::physical_plan::ExecutionPlan>) -> Result<Vec<&SpatialJoinExec>> {
+fn collect_spatial_join_exec(
+    plan: &Arc<dyn datafusion::physical_plan::ExecutionPlan>,
+) -> Result<Vec<&SpatialJoinExec>> {
     let mut spatial_join_execs = Vec::new();
     plan.apply(|node| {
         if let Some(spatial_join_exec) = node.as_any().downcast_ref::<SpatialJoinExec>() {
@@ -213,7 +221,10 @@ async fn test_spatial_join_query(
     .await?;
 
     // Both should produce the same result
-    assert_eq!(expected, actual, "Optimized join should match nested loop join");
+    assert_eq!(
+        expected, actual,
+        "Optimized join should match nested loop join"
+    );
 
     Ok(actual)
 }

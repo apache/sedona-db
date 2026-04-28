@@ -82,15 +82,11 @@ impl Bounds2D {
             let y = self.y();
             (
                 Self::new(
-                    x_left
-                        .intersection(wraparound)
-                        .unwrap_or(Interval::full()),
+                    x_left.intersection(wraparound).unwrap_or(Interval::full()),
                     y,
                 ),
                 Self::new(
-                    x_right
-                        .intersection(wraparound)
-                        .unwrap_or(Interval::full()),
+                    x_right.intersection(wraparound).unwrap_or(Interval::full()),
                     y,
                 ),
             )
