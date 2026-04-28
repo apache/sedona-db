@@ -461,6 +461,11 @@ impl EvaluatedGeometryArray {
         self.wkbs[idx].as_ref()
     }
 
+    /// Get a single rectangle
+    pub fn rect(&self, idx: usize) -> &Bounds2D {
+        &self.rects[idx]
+    }
+
     pub fn in_mem_size(&self) -> Result<usize> {
         let geom_array_size = get_array_memory_size(&self.geometry_array)?;
 

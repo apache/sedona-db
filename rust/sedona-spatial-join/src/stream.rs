@@ -33,7 +33,6 @@ use futures::stream::StreamExt;
 use futures::{ready, task::Poll, FutureExt};
 use parking_lot::Mutex;
 use sedona_common::{sedona_internal_err, SedonaOptions};
-use sedona_functions::executor::IterGeo;
 use sedona_functions::st_analyze_agg::AnalyzeAccumulator;
 use sedona_schema::datatypes::WKB_GEOMETRY;
 use std::collections::HashMap;
@@ -808,7 +807,7 @@ impl SpatialJoinStream {
             let geom_array = &probe_evaluated_batch.geom_array;
             for (wkb_opt, rect) in zip(geom_array.wkbs(), geom_array.rects()) {
                 if let Some(wkb) = wkb_opt {
-                    analyzer.update_statistics_with_bbox(wkb, &rect.clone().into())?;
+                    analyzer.update_statistics_with_bbox(wkb, &rect.into())?;
                 }
             }
             let stats = analyzer.finish();

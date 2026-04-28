@@ -477,10 +477,8 @@ impl StreamRepartitioner {
                 );
             };
             if let Some(wkb) = batch_ref.geom_array.wkb(row_idx) {
-                self.geo_stats_accumulators[slot_idx].update_statistics_with_bbox(
-                    wkb,
-                    &batch_ref.geom_array.rects()[row_idx].clone().into(),
-                )?;
+                self.geo_stats_accumulators[slot_idx]
+                    .update_statistics_with_bbox(wkb, &batch_ref.geom_array.rect(row_idx).into())?;
             }
             self.slot_assignments[slot_idx].push((batch_idx, row_idx));
             self.num_rows[slot_idx] += 1;

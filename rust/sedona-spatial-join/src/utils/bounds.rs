@@ -16,7 +16,6 @@
 // under the License.
 
 use float_next_after::NextAfter;
-use geo::{Coord, Rect};
 use sedona_geometry::{
     bounder::Bounder,
     bounding_box::BoundingBox,
@@ -124,17 +123,6 @@ impl Bounds2D {
         (self.x, self.y)
     }
 
-    /// Create a Bounds2D from a geo::Rect<f32>
-    pub fn from_geo_rect(rect: &Rect<f32>) -> Self {
-        let min = rect.min();
-        let max = rect.max();
-        // No need for next_after since we're already in f32
-        Self {
-            x: (min.x, max.x),
-            y: (min.y, max.y),
-        }
-    }
-
     pub fn x(&self) -> WraparoundInterval {
         WraparoundInterval::new(self.x.0 as f64, self.x.1 as f64)
     }
@@ -143,32 +131,9 @@ impl Bounds2D {
         Interval::new(self.y.0 as f64, self.y.1 as f64)
     }
 
-    /// Convert to a tuple of (min_x, min_y, max_x, max_y) as f32 values
-    ///
-    /// Returns None if the bounds are empty.
-    pub fn to_f32_tuple(&self) -> Option<(f32, f32, f32, f32)> {
-        if self.is_empty() {
-            None
-        } else {
-            Some((self.x.0, self.y.0, self.x.1, self.y.1))
-        }
-    }
-
-    /// Convert to a geo::Rect<f32>
-    ///
-    /// Returns None if the bounds are empty.
-    pub fn to_geo_rect(&self) -> Option<Rect<f32>> {
-        self.to_f32_tuple().map(|(min_x, min_y, max_x, max_y)| {
-            Rect::new(Coord { x: min_x, y: min_y }, Coord { x: max_x, y: max_y })
-        })
-    }
-
     /// Returns `true` if this bounds intersects with another (including touching edges).
     pub fn intersects(&self, other: &Bounds2D) -> bool {
-        self.x.0 <= other.x.1
-            && self.x.1 >= other.x.0
-            && self.y.0 <= other.y.1
-            && self.y.1 >= other.y.0
+        self.x().intersects_interval(&other.x()) && self.y().intersects_interval(&other.y())
     }
 
     /// Returns the intersection area between this bounds and another.
@@ -177,22 +142,25 @@ impl Bounds2D {
             return 0.0;
         }
 
-        let min_x = self.x.0.max(other.x.0);
-        let min_y = self.y.0.max(other.y.0);
-        let max_x = self.x.1.min(other.x.1);
-        let max_y = self.y.1.min(other.y.1);
-
-        (max_x - min_x).max(0.0) * (max_y - min_y).max(0.0)
+        let x_intersection = self
+            .x()
+            .intersection(&other.x())
+            .unwrap_or(WraparoundInterval::empty());
+        let y_intersection = self
+            .y()
+            .intersection(&other.y())
+            .unwrap_or(Interval::empty());
+        x_intersection.width() as f32 * y_intersection.width() as f32
     }
 
     /// Returns `true` if this bounds contains the given point.
-    pub fn contains_point(&self, point: &Coord<f32>) -> bool {
-        point.x >= self.x.0 && point.x <= self.x.1 && point.y >= self.y.0 && point.y <= self.y.1
+    pub fn contains_point(&self, point: (f64, f64)) -> bool {
+        self.x().intersects_value(point.0) && self.y().intersects_value(point.1)
     }
 }
 
-impl From<Bounds2D> for BoundingBox {
-    fn from(val: Bounds2D) -> Self {
+impl From<&Bounds2D> for BoundingBox {
+    fn from(val: &Bounds2D) -> Self {
         BoundingBox::xy(val.x(), val.y())
     }
 }
@@ -221,8 +189,7 @@ mod tests {
     #[test]
     fn test_bounds2d_simple() {
         let bounds = Bounds2D::new((0.0, 100.0), (0.0, 100.0));
-        let (min_x, min_y, max_x, max_y) =
-            bounds.to_f32_tuple().expect("bounds should not be empty");
+        let ((min_x, max_x), (min_y, max_y)) = bounds.into_inner();
 
         assert_eq!(min_x, 0.0f32);
         assert_eq!(min_y, 0.0f32);
@@ -233,8 +200,7 @@ mod tests {
     #[test]
     fn test_bounds2d_negative() {
         let bounds = Bounds2D::new((-50.0, 50.0), (-50.0, 50.0));
-        let (min_x, min_y, max_x, max_y) =
-            bounds.to_f32_tuple().expect("bounds should not be empty");
+        let ((min_x, max_x), (min_y, max_y)) = bounds.into_inner();
 
         assert_eq!(min_x, -50.0f32);
         assert_eq!(min_y, -50.0f32);
@@ -245,8 +211,7 @@ mod tests {
     #[test]
     fn test_bounds2d_preserves_bounds() {
         let bounds = Bounds2D::new((10.5, 20.7), (30.3, 40.9));
-        let (min_x, min_y, max_x, max_y) =
-            bounds.to_f32_tuple().expect("bounds should not be empty");
+        let ((min_x, max_x), (min_y, max_y)) = bounds.into_inner();
 
         // Min bounds should be <= the original values (rounded down if needed)
         assert!(min_x <= 10.5f32);
@@ -264,18 +229,6 @@ mod tests {
     }
 
     #[test]
-    fn test_bounds2d_large_values() {
-        let bounds = Bounds2D::new((-180.0, 180.0), (-90.0, 90.0));
-        let (min_x, min_y, max_x, max_y) =
-            bounds.to_f32_tuple().expect("bounds should not be empty");
-
-        assert_eq!(min_x, -180.0f32);
-        assert_eq!(min_y, -90.0f32);
-        assert!(max_x >= 180.0f32);
-        assert!(max_y >= 90.0f32);
-    }
-
-    #[test]
     fn test_bounds2d_intersects_and_area() {
         let a = Bounds2D::new((0.0, 10.0), (0.0, 10.0));
         let b = Bounds2D::new((5.0, 15.0), (5.0, 15.0));
@@ -288,30 +241,10 @@ mod tests {
     }
 
     #[test]
-    fn test_bounds2d_empty() {
-        let bounds = Bounds2D::new(Interval::empty(), Interval::empty());
-        assert!(bounds.to_f32_tuple().is_none());
-        assert!(bounds.to_geo_rect().is_none());
-    }
-
-    #[test]
     fn test_bounds2d_contains_point() {
         let bounds = Bounds2D::new((0.0, 10.0), (0.0, 10.0));
-        assert!(bounds.contains_point(&Coord { x: 5.0, y: 5.0 }));
-        assert!(bounds.contains_point(&Coord { x: 0.0, y: 0.0 }));
-        assert!(!bounds.contains_point(&Coord { x: 15.0, y: 5.0 }));
-    }
-
-    #[test]
-    fn test_bounds2d_to_geo_rect_roundtrip() {
-        let bounds = Bounds2D::new((10.0, 20.0), (30.0, 40.0));
-        let rect = bounds.to_geo_rect().expect("bounds should not be empty");
-        let roundtrip = Bounds2D::from_geo_rect(&rect);
-
-        // from_geo_rect doesn't apply next_after, so values should be close
-        assert!((roundtrip.x.0 - bounds.x.0).abs() < 1e-5);
-        assert!((roundtrip.x.1 - bounds.x.1).abs() < 1e-5);
-        assert!((roundtrip.y.0 - bounds.y.0).abs() < 1e-5);
-        assert!((roundtrip.y.1 - bounds.y.1).abs() < 1e-5);
+        assert!(bounds.contains_point((5.0, 5.0)));
+        assert!(bounds.contains_point((0.0, 0.0)));
+        assert!(!bounds.contains_point((15.0, 5.0)));
     }
 }

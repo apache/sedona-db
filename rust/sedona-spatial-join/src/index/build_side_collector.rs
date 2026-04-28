@@ -179,8 +179,7 @@ impl BuildSideBatchesCollector {
             let geom_array = &build_side_batch.geom_array;
             for (wkb_opt, rect) in zip(geom_array.wkbs(), geom_array.rects()) {
                 if let Some(wkb) = wkb_opt {
-                    let summary =
-                        analyzer.update_statistics_with_bbox(wkb, &rect.clone().into())?;
+                    let summary = analyzer.update_statistics_with_bbox(wkb, &rect.into())?;
                     if !summary.bbox.is_empty() {
                         bbox_sampler.add_bbox(&summary.bbox);
                     }
