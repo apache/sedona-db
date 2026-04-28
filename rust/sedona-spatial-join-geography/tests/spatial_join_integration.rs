@@ -265,10 +265,7 @@ async fn test_spatial_join_geog_antimeridian_intersects(
 
 /// Test geography distance join with antimeridian-crossing geometries.
 ///
-/// Tests ST_Distance predicate for geography joins. Unlike range joins (ST_Intersects),
-/// distance joins may have slight differences between optimized and nested loop execution
-/// due to floating-point precision in distance calculations. We verify that both produce
-/// non-empty results with similar counts.
+/// Tests ST_Distance predicate for geography joins.
 #[rstest]
 #[tokio::test]
 async fn test_spatial_join_geog_antimeridian_distance(
@@ -286,49 +283,21 @@ async fn test_spatial_join_geog_antimeridian_distance(
         join_type
     );
 
-    // Run with spatial join optimization
-    let optimized = run_spatial_join_query(
-        &left_schema,
-        &right_schema,
-        left_partitions.clone(),
-        right_partitions.clone(),
-        Some(options.clone()),
-        batch_size,
-        &sql,
-    )
-    .await?;
-
-    // Run without optimization (nested loop)
-    let nested_loop = run_spatial_join_query(
+    let result = test_spatial_join_query(
         &left_schema,
         &right_schema,
         left_partitions,
         right_partitions,
-        None,
+        &options,
         batch_size,
         &sql,
     )
     .await?;
 
-    // Both should produce non-empty results
+    // Should get results for points within 100km of polygons
     assert!(
-        optimized.num_rows() > 0,
-        "Optimized geography distance join should produce non-empty results"
-    );
-    assert!(
-        nested_loop.num_rows() > 0,
-        "Nested loop geography distance join should produce non-empty results"
-    );
-
-    // Results should be reasonably similar (within 10% tolerance for floating-point precision)
-    let diff = (optimized.num_rows() as i64 - nested_loop.num_rows() as i64).abs();
-    let tolerance = (nested_loop.num_rows() as f64 * 0.1).ceil() as i64;
-    assert!(
-        diff <= tolerance,
-        "Result counts should be within 10% tolerance: optimized={}, nested_loop={}, diff={}",
-        optimized.num_rows(),
-        nested_loop.num_rows(),
-        diff
+        result.num_rows() > 0,
+        "Geography distance join across antimeridian should produce non-empty results"
     );
 
     Ok(())
@@ -371,9 +340,6 @@ async fn test_geography_join_types(
 }
 
 /// Test geography join with ST_DWithin predicate.
-///
-/// Similar to distance join tests, we verify functionality without requiring exact
-/// equality due to potential floating-point precision differences.
 #[tokio::test]
 async fn test_geography_join_dwithin() -> Result<()> {
     let ((left_schema, left_partitions), (right_schema, right_partitions)) =
@@ -385,44 +351,19 @@ async fn test_geography_join_dwithin() -> Result<()> {
     // DWithin with 100km distance threshold
     let sql = "SELECT L.id l_id, R.id r_id FROM L JOIN R ON ST_DWithin(L.geometry, R.geometry, 100000) ORDER BY l_id, r_id";
 
-    // Run with spatial join optimization
-    let optimized = run_spatial_join_query(
-        &left_schema,
-        &right_schema,
-        left_partitions.clone(),
-        right_partitions.clone(),
-        Some(options.clone()),
-        batch_size,
-        sql,
-    )
-    .await?;
-
-    // Run without optimization (nested loop)
-    let nested_loop = run_spatial_join_query(
+    let result = test_spatial_join_query(
         &left_schema,
         &right_schema,
         left_partitions,
         right_partitions,
-        None,
+        &options,
         batch_size,
         sql,
     )
     .await?;
 
-    // Both should produce non-empty results
-    assert!(optimized.num_rows() > 0);
-    assert!(nested_loop.num_rows() > 0);
-
-    // Results should be reasonably similar
-    let diff = (optimized.num_rows() as i64 - nested_loop.num_rows() as i64).abs();
-    let tolerance = (nested_loop.num_rows() as f64 * 0.1).ceil() as i64;
-    assert!(
-        diff <= tolerance,
-        "Result counts should be within 10% tolerance: optimized={}, nested_loop={}, diff={}",
-        optimized.num_rows(),
-        nested_loop.num_rows(),
-        diff
-    );
+    // Should get results for geometries within 100km
+    assert!(result.num_rows() > 0);
 
     Ok(())
 }
