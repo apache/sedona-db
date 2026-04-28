@@ -30,7 +30,7 @@ use futures::StreamExt;
 use sedona_common::{sedona_internal_err, SpatialJoinOptions};
 use sedona_expr::statistics::GeoStatistics;
 use sedona_functions::st_analyze_agg::AnalyzeAccumulator;
-use sedona_geometry::bounder::GeometryBounder;
+use sedona_geometry::bounder::{Bounder, GeometryBounder};
 use sedona_schema::datatypes::WKB_GEOMETRY;
 
 use crate::{
@@ -163,8 +163,8 @@ impl BuildSideBatchesCollector {
         let mut total_size_bytes = 0;
 
         // TODO: reuse the bounds that are already inside the stream instead of re bounding
-        let bounder = GeometryBounder::empty();
-        let mut analyzer = AnalyzeAccumulator::new(WKB_GEOMETRY, bounder);
+        let mut bounder = GeometryBounder::empty();
+        let mut analyzer = AnalyzeAccumulator::new(WKB_GEOMETRY, GeometryBounder::empty());
 
         // Reserve memory for holding bbox samples. This should be a small reservation.
         // We simply return error if the reservation cannot be fulfilled, since there's
@@ -178,7 +178,10 @@ impl BuildSideBatchesCollector {
 
             let geom_array = &build_side_batch.geom_array;
             for wkb in geom_array.wkbs().iter().flatten() {
-                let summary = analyzer.update_statistics(wkb)?;
+                // TODO: reuse the box
+                bounder.clear();
+                bounder.update_wkb(wkb).unwrap();
+                let summary = analyzer.update_statistics_with_bbox(wkb, &bounder.finish())?;
                 if !summary.bbox.is_empty() {
                     bbox_sampler.add_bbox(&summary.bbox);
                 }

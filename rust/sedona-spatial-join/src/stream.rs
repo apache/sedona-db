@@ -34,7 +34,7 @@ use futures::{ready, task::Poll, FutureExt};
 use parking_lot::Mutex;
 use sedona_common::{sedona_internal_err, SedonaOptions};
 use sedona_functions::st_analyze_agg::AnalyzeAccumulator;
-use sedona_geometry::bounder::GeometryBounder;
+use sedona_geometry::bounder::{Bounder, GeometryBounder};
 use sedona_schema::datatypes::WKB_GEOMETRY;
 use std::collections::HashMap;
 use std::ops::Range;
@@ -803,9 +803,12 @@ impl SpatialJoinStream {
         // execution mode for evaluating the spatial predicate.
         if spatial_index.need_more_probe_stats() {
             let mut analyzer = AnalyzeAccumulator::new(WKB_GEOMETRY, GeometryBounder::empty());
+            let mut bounder = GeometryBounder::empty();
             let geom_array = &probe_evaluated_batch.geom_array;
             for wkb in geom_array.wkbs().iter().flatten() {
-                analyzer.update_statistics(wkb)?;
+                bounder.clear();
+                bounder.update_wkb(wkb).unwrap();
+                analyzer.update_statistics_with_bbox(wkb, &bounder.finish())?;
             }
             let stats = analyzer.finish();
             spatial_index.merge_probe_stats(stats);

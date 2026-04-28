@@ -222,6 +222,8 @@ impl STAnalyzeAgg {
     }
 }
 
+pub type GeometryAccumulator = AnalyzeAccumulator<GeometryBounder>;
+
 #[derive(Debug)]
 pub struct AnalyzeAccumulator<T> {
     input_type: SedonaType,
@@ -247,11 +249,10 @@ impl<T: Bounder> AnalyzeAccumulator<T> {
             .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
         self.ingest_geometry_summary(&summary);
-
         Ok(summary)
     }
 
-    pub fn update_statistics(&mut self, geom: &Wkb) -> Result<GeometrySummary> {
+    fn update_statistics(&mut self, geom: &Wkb) -> Result<()> {
         self.bounder.clear();
         self.bounder
             .update_wkb(geom)
@@ -260,8 +261,7 @@ impl<T: Bounder> AnalyzeAccumulator<T> {
             .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
         self.ingest_geometry_summary(&summary);
-
-        Ok(summary)
+        Ok(())
     }
 
     fn ingest_geometry_summary(&mut self, summary: &GeometrySummary) {
