@@ -36,6 +36,7 @@ use sedona_expr::item_crs::ItemCrsSedonaAccumulator;
 use sedona_expr::{aggregate_udf::SedonaAccumulator, statistics::GeoStatistics};
 use sedona_geometry::analyze::GeometrySummary;
 use sedona_geometry::bounder::{Bounder, GeometryBounder};
+use sedona_geometry::bounding_box::BoundingBox;
 use sedona_geometry::interval::IntervalTrait;
 use sedona_geometry::types::{GeometryTypeAndDimensions, GeometryTypeAndDimensionsSet};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
@@ -237,9 +238,25 @@ impl<T: Bounder> AnalyzeAccumulator<T> {
         }
     }
 
+    pub fn update_statistics_with_bbox(
+        &mut self,
+        geom: &Wkb,
+        bbox: &BoundingBox,
+    ) -> Result<GeometrySummary> {
+        let summary = sedona_geometry::analyze::analyze_wkb(geom, bbox)
+            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+
+        self.ingest_geometry_summary(&summary);
+
+        Ok(summary)
+    }
+
     pub fn update_statistics(&mut self, geom: &Wkb) -> Result<GeometrySummary> {
-        // Get geometry analysis information
-        let summary = sedona_geometry::analyze::analyze_wkb(geom, &mut self.bounder)
+        self.bounder.clear();
+        self.bounder
+            .update_wkb(geom)
+            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+        let summary = sedona_geometry::analyze::analyze_wkb(geom, &self.bounder.finish())
             .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
         self.ingest_geometry_summary(&summary);

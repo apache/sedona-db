@@ -22,6 +22,7 @@ use geo_traits::{
 use wkb::reader::Wkb;
 
 use crate::{
+    bounding_box::BoundingBox,
     error::SedonaGeometryError,
     interval::{Interval, IntervalTrait, WraparoundInterval},
     types::{GeometryTypeAndDimensions, GeometryTypeAndDimensionsSet},
@@ -63,6 +64,15 @@ pub trait Bounder: std::fmt::Debug + Send + Sync {
 
     /// Calculate the final mmin and mmax values for geometries encountered by this bounder
     fn m(&self) -> Interval;
+
+    /// Finish the results for all dimensions as a [BoundingBox]
+    fn finish(&self) -> BoundingBox {
+        let z = self.z();
+        let m = self.m();
+        let z_opt = if z.is_full() { Some(z) } else { None };
+        let m_opt = if m.is_full() { Some(m) } else { None };
+        BoundingBox::xyzm(self.x(), self.y(), z_opt, m_opt)
+    }
 
     /// Calculate the final geometry type set
     ///
