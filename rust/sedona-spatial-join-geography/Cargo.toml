@@ -49,3 +49,12 @@ sedona-spatial-join = { workspace = true }
 wkb = { workspace = true }
 
 [dev-dependencies]
+arrow-array = { workspace = true }
+datafusion = { workspace = true, features = ["sql"] }
+datafusion-common = { workspace = true }
+datafusion-expr = { workspace = true }
+geo-types = { workspace = true }
+rstest = { workspace = true }
+sedona-geometry = { workspace = true }
+sedona-testing = { workspace = true }
+tokio = { workspace = true, features = ["macros"] }
