@@ -389,50 +389,12 @@ fn strip_scheme_prefix<'a>(value: &'a str, scheme_prefix: &str) -> Option<&'a st
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Once;
 
     use sedona_raster::array::RasterStructArray;
     use sedona_raster::builder::RasterBuilder;
     use sedona_raster::traits::{BandMetadata, RasterMetadata};
     use sedona_schema::raster::StorageType;
-
-    type TestBand = (BandDataType, Option<Vec<u8>>, Vec<u8>);
-
-    static GDAL_INIT: Once = Once::new();
-
-    fn ensure_gdal_drivers() {
-        GDAL_INIT.call_once(|| {
-            with_gdal(|gdal| {
-                let _ = gdal.get_driver_by_name("MEM");
-                Ok(())
-            })
-            .unwrap();
-        });
-    }
-
-    fn build_in_db_raster(
-        metadata: RasterMetadata,
-        crs: Option<&str>,
-        bands: &[TestBand],
-    ) -> arrow_array::StructArray {
-        let mut builder = RasterBuilder::new(1);
-        builder.start_raster(&metadata, crs).unwrap();
-        for (datatype, nodata_value, data) in bands {
-            builder
-                .start_band(BandMetadata {
-                    datatype: *datatype,
-                    nodata_value: nodata_value.clone(),
-                    storage_type: StorageType::InDb,
-                    outdb_url: None,
-                    outdb_band_id: None,
-                })
-                .unwrap();
-            builder.band_data_writer().append_value(data);
-            builder.finish_band().unwrap();
-        }
-        builder.finish_raster().unwrap();
-        builder.finish().unwrap()
-    }
+    use sedona_testing::rasters::{build_in_db_raster, InDbTestBand};
 
     fn single_raster<'a>(
         raster_array: &'a arrow_array::StructArray,
@@ -658,7 +620,6 @@ mod tests {
 
     #[test]
     fn test_raster_ref_to_gdal_empty_preserves_metadata_and_crs() {
-        ensure_gdal_drivers();
         let metadata = RasterMetadata {
             width: 3,
             height: 2,
@@ -688,7 +649,6 @@ mod tests {
 
     #[test]
     fn test_raster_ref_to_gdal_mem_preserves_band_order_data_and_nodata() {
-        ensure_gdal_drivers();
         let metadata = RasterMetadata {
             width: 2,
             height: 2,
@@ -714,17 +674,21 @@ mod tests {
             metadata,
             Some("EPSG:4326"),
             &[
-                (
-                    BandDataType::UInt64,
-                    Some(uint64_nodata.to_le_bytes().to_vec()),
-                    uint64_pixels,
-                ),
-                (BandDataType::UInt8, Some(vec![255u8]), uint8_pixels),
-                (
-                    BandDataType::Int64,
-                    Some(int64_nodata.to_le_bytes().to_vec()),
-                    int64_pixels,
-                ),
+                InDbTestBand {
+                    datatype: BandDataType::UInt64,
+                    nodata_value: Some(uint64_nodata.to_le_bytes().to_vec()),
+                    data: uint64_pixels,
+                },
+                InDbTestBand {
+                    datatype: BandDataType::UInt8,
+                    nodata_value: Some(vec![255u8]),
+                    data: uint8_pixels,
+                },
+                InDbTestBand {
+                    datatype: BandDataType::Int64,
+                    nodata_value: Some(int64_nodata.to_le_bytes().to_vec()),
+                    data: int64_pixels,
+                },
             ],
         );
         let raster = single_raster(&raster_array);
@@ -753,7 +717,6 @@ mod tests {
 
     #[test]
     fn test_raster_ref_to_gdal_mem_rejects_outdb_bands() {
-        ensure_gdal_drivers();
         let mut builder = RasterBuilder::new(1);
         let metadata = RasterMetadata {
             width: 1,

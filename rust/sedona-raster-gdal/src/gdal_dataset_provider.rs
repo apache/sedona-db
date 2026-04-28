@@ -639,7 +639,6 @@ fn compute_vrt_simple_source_windows(
 mod tests {
     use super::{GDALDatasetCache, GDALDatasetProvider};
     use std::rc::Rc;
-    use std::sync::Once;
 
     use arrow_array::StructArray;
     use sedona_gdal::raster::types::Buffer;
@@ -647,24 +646,10 @@ mod tests {
     use sedona_raster::builder::RasterBuilder;
     use sedona_raster::traits::{BandMetadata, RasterMetadata};
     use sedona_schema::raster::{BandDataType, StorageType};
+    use sedona_testing::rasters::{build_in_db_raster, InDbTestBand};
     use tempfile::TempDir;
 
     use crate::gdal_common::with_gdal;
-
-    type TestBand = (BandDataType, Option<Vec<u8>>, Vec<u8>);
-
-    static GDAL_INIT: Once = Once::new();
-
-    fn ensure_gdal_drivers() {
-        GDAL_INIT.call_once(|| {
-            with_gdal(|gdal| {
-                let _ = gdal.get_driver_by_name("GTiff");
-                let _ = gdal.get_driver_by_name("VRT");
-                Ok(())
-            })
-            .unwrap();
-        });
-    }
 
     fn create_source_tiff(temp_dir: &TempDir) -> String {
         let path = temp_dir.path().join("source.tif");
@@ -715,30 +700,6 @@ mod tests {
         builder.finish_band().unwrap();
         builder.finish_raster().unwrap();
 
-        builder.finish().unwrap()
-    }
-
-    fn build_in_db_raster(
-        metadata: RasterMetadata,
-        crs: Option<&str>,
-        bands: &[TestBand],
-    ) -> StructArray {
-        let mut builder = RasterBuilder::new(1);
-        builder.start_raster(&metadata, crs).unwrap();
-        for (datatype, nodata_value, data) in bands {
-            builder
-                .start_band(BandMetadata {
-                    datatype: *datatype,
-                    nodata_value: nodata_value.clone(),
-                    storage_type: StorageType::InDb,
-                    outdb_url: None,
-                    outdb_band_id: None,
-                })
-                .unwrap();
-            builder.band_data_writer().append_value(data);
-            builder.finish_band().unwrap();
-        }
-        builder.finish_raster().unwrap();
         builder.finish().unwrap()
     }
 
@@ -861,7 +822,6 @@ mod tests {
 
     #[test]
     fn test_outdb_vrt_cache_reuse() {
-        ensure_gdal_drivers();
         let temp_dir = TempDir::new().unwrap();
         let path = create_source_tiff(&temp_dir);
         let raster_struct = build_outdb_raster(&path);
@@ -885,7 +845,6 @@ mod tests {
 
     #[test]
     fn test_provider_returns_empty_dataset_for_zero_band_raster() {
-        ensure_gdal_drivers();
         let metadata = RasterMetadata {
             width: 3,
             height: 2,
@@ -914,7 +873,6 @@ mod tests {
 
     #[test]
     fn test_provider_returns_mem_dataset_for_indb_raster() {
-        ensure_gdal_drivers();
         let metadata = RasterMetadata {
             width: 2,
             height: 2,
@@ -931,8 +889,16 @@ mod tests {
             metadata,
             Some("EPSG:4326"),
             &[
-                (BandDataType::UInt8, Some(vec![255u8]), band1),
-                (BandDataType::UInt8, Some(vec![0u8]), band2),
+                InDbTestBand {
+                    datatype: BandDataType::UInt8,
+                    nodata_value: Some(vec![255u8]),
+                    data: band1,
+                },
+                InDbTestBand {
+                    datatype: BandDataType::UInt8,
+                    nodata_value: Some(vec![0u8]),
+                    data: band2,
+                },
             ],
         );
         let raster_array = RasterStructArray::new(&raster_struct);
@@ -957,7 +923,6 @@ mod tests {
 
     #[test]
     fn test_provider_preserves_band_order_for_mixed_raster() {
-        ensure_gdal_drivers();
         let temp_dir = TempDir::new().unwrap();
         let path = create_source_tiff(&temp_dir);
         let raster_struct = build_mixed_raster(&path);
@@ -1002,20 +967,20 @@ mod tests {
         let raster_a = build_in_db_raster(
             metadata.clone(),
             None,
-            &[(
-                BandDataType::UInt64,
-                Some((9_007_199_254_740_992u64).to_le_bytes().to_vec()),
-                1u64.to_le_bytes().to_vec(),
-            )],
+            &[InDbTestBand {
+                datatype: BandDataType::UInt64,
+                nodata_value: Some((9_007_199_254_740_992u64).to_le_bytes().to_vec()),
+                data: 1u64.to_le_bytes().to_vec(),
+            }],
         );
         let raster_b = build_in_db_raster(
             metadata,
             None,
-            &[(
-                BandDataType::UInt64,
-                Some((9_007_199_254_740_993u64).to_le_bytes().to_vec()),
-                1u64.to_le_bytes().to_vec(),
-            )],
+            &[InDbTestBand {
+                datatype: BandDataType::UInt64,
+                nodata_value: Some((9_007_199_254_740_993u64).to_le_bytes().to_vec()),
+                data: 1u64.to_le_bytes().to_vec(),
+            }],
         );
 
         let key_a =
