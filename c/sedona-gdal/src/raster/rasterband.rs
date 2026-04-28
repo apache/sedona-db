@@ -188,6 +188,44 @@ impl<'a> RasterBand<'a> {
         }
     }
 
+    /// Fetch the band's nodata value as `u64`.
+    /// Return `None` if no nodata value is set.
+    pub fn no_data_value_u64(&self) -> Option<u64> {
+        let mut success: i32 = 0;
+        let value = unsafe {
+            call_gdal_api!(
+                self.api,
+                GDALGetRasterNoDataValueAsUInt64,
+                self.c_rasterband,
+                &mut success
+            )
+        };
+        if success != 0 {
+            Some(value)
+        } else {
+            None
+        }
+    }
+
+    /// Fetch the band's nodata value as `i64`.
+    /// Return `None` if no nodata value is set.
+    pub fn no_data_value_i64(&self) -> Option<i64> {
+        let mut success: i32 = 0;
+        let value = unsafe {
+            call_gdal_api!(
+                self.api,
+                GDALGetRasterNoDataValueAsInt64,
+                self.c_rasterband,
+                &mut success
+            )
+        };
+        if success != 0 {
+            Some(value)
+        } else {
+            None
+        }
+    }
+
     /// Set the band's nodata value.
     /// Pass `None` to clear any existing nodata value.
     pub fn set_no_data_value(&self, value: Option<f64>) -> Result<()> {
