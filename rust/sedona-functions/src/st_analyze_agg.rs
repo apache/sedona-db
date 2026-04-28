@@ -26,7 +26,7 @@ use arrow_schema::{DataType, Field, FieldRef};
 use datafusion_common::{
     cast::as_binary_array,
     error::{DataFusionError, Result},
-    ScalarValue,
+    exec_datafusion_err, ScalarValue,
 };
 use datafusion_expr::Volatility;
 use datafusion_expr::{Accumulator, ColumnarValue};
@@ -35,8 +35,8 @@ use sedona_expr::aggregate_udf::{SedonaAccumulatorRef, SedonaAggregateUDF};
 use sedona_expr::item_crs::ItemCrsSedonaAccumulator;
 use sedona_expr::{aggregate_udf::SedonaAccumulator, statistics::GeoStatistics};
 use sedona_geometry::analyze::GeometrySummary;
-use sedona_geometry::bounder::{Bounder, GeometryBounder};
 use sedona_geometry::bounding_box::BoundingBox;
+use sedona_geometry::bounds::geo_traits_bounds_xy;
 use sedona_geometry::interval::IntervalTrait;
 use sedona_geometry::types::{GeometryTypeAndDimensions, GeometryTypeAndDimensionsSet};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
@@ -81,10 +81,7 @@ impl SedonaAccumulator for STAnalyzeAgg {
         args: &[SedonaType],
         _output_type: &SedonaType,
     ) -> Result<Box<dyn Accumulator>> {
-        Ok(Box::new(AnalyzeAccumulator::<GeometryBounder>::new(
-            args[0].clone(),
-            GeometryBounder::empty(),
-        )))
+        Ok(Box::new(AnalyzeAccumulator::new(args[0].clone())))
     }
 
     fn state_fields(&self, _args: &[SedonaType]) -> Result<Vec<FieldRef>> {
@@ -222,21 +219,17 @@ impl STAnalyzeAgg {
     }
 }
 
-pub type GeometryAccumulator = AnalyzeAccumulator<GeometryBounder>;
-
 #[derive(Debug)]
-pub struct AnalyzeAccumulator<T> {
+pub struct AnalyzeAccumulator {
     input_type: SedonaType,
     stats: GeoStatistics,
-    bounder: T,
 }
 
-impl<T: Bounder> AnalyzeAccumulator<T> {
-    pub fn new(input_type: SedonaType, bounder: T) -> Self {
+impl AnalyzeAccumulator {
+    pub fn new(input_type: SedonaType) -> Self {
         Self {
             input_type,
             stats: GeoStatistics::empty(),
-            bounder,
         }
     }
 
@@ -253,12 +246,10 @@ impl<T: Bounder> AnalyzeAccumulator<T> {
     }
 
     fn update_statistics(&mut self, geom: &Wkb) -> Result<()> {
-        self.bounder.clear();
-        self.bounder
-            .update_wkb(geom)
-            .map_err(|e| DataFusionError::External(Box::new(e)))?;
-        let summary = sedona_geometry::analyze::analyze_wkb(geom, &self.bounder.finish())
-            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+        let bbox =
+            geo_traits_bounds_xy(geom).map_err(|e| exec_datafusion_err!("Bounding error: {e}"))?;
+        let summary = sedona_geometry::analyze::analyze_wkb(geom, &bbox)
+            .map_err(|e| exec_datafusion_err!("Analysis error: {e}"))?;
 
         self.ingest_geometry_summary(&summary);
         Ok(())
@@ -388,7 +379,7 @@ impl<T: Bounder> AnalyzeAccumulator<T> {
     }
 }
 
-impl<T: Bounder> Accumulator for AnalyzeAccumulator<T> {
+impl Accumulator for AnalyzeAccumulator {
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
         if values.is_empty() {
             return sedona_internal_err!("No input arrays provided to accumulator");

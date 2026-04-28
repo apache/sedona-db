@@ -33,7 +33,6 @@ use crate::{
     partitioning::{
         partition_slots::PartitionSlots, PartitionedSide, SpatialPartition, SpatialPartitioner,
     },
-    utils::bounds::VoidBounder,
 };
 use arrow::compute::interleave_record_batch;
 use arrow_array::RecordBatch;
@@ -304,7 +303,7 @@ pub struct StreamRepartitioner {
     /// The None and Multi partitions should be None when repartitioning the build side.
     spill_registry: Vec<Option<EvaluatedBatchSpillWriter>>,
     /// Geospatial statistics for each spatial partition.
-    geo_stats_accumulators: Vec<AnalyzeAccumulator<VoidBounder>>,
+    geo_stats_accumulators: Vec<AnalyzeAccumulator>,
     /// Number of rows in each spatial partition.
     num_rows: Vec<usize>,
     slot_assignments: Vec<Vec<(usize, usize)>>,
@@ -381,7 +380,7 @@ impl StreamRepartitionerBuilder {
             slots,
             spill_registry: (0..slot_count).map(|_| None).collect(),
             geo_stats_accumulators: (0..slot_count)
-                .map(|_| AnalyzeAccumulator::new(WKB_GEOMETRY, VoidBounder))
+                .map(|_| AnalyzeAccumulator::new(WKB_GEOMETRY))
                 .collect(),
             num_rows: vec![0; slot_count],
             slot_assignments: (0..slot_count).map(|_| Vec::new()).collect(),

@@ -924,17 +924,14 @@ mod tests {
     use rstest::rstest;
     use sedona_geometry::{
         analyze::{analyze_wkb, GeometrySummary},
-        bounder::{Bounder, GeometryBounder},
-        bounds::wkb_bounds_xy,
+        bounds::{geo_traits_bounds_xy, wkb_bounds_xy},
         interval::IntervalTrait,
     };
     use wkb::reader::Wkb;
 
     // Shorthand for analyzing a single item
     fn analyze_geometry(geom: &Wkb) -> GeometrySummary {
-        let mut bounder = GeometryBounder::empty();
-        bounder.update_wkb(geom).unwrap();
-        analyze_wkb(geom, &bounder.finish()).unwrap()
+        analyze_wkb(geom, &geo_traits_bounds_xy(geom).unwrap()).unwrap()
     }
 
     #[test]

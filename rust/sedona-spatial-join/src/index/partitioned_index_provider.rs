@@ -410,7 +410,6 @@ mod tests {
     use crate::operand_evaluator::EvaluatedGeometryArray;
     use crate::partitioning::partition_slots::PartitionSlots;
     use crate::utils::bbox_sampler::BoundingBoxSamples;
-    use crate::utils::bounds::VoidBounder;
     use crate::{
         evaluated_batch::{
             evaluated_batch_stream::{
@@ -472,7 +471,7 @@ mod tests {
     }
 
     fn geo_stats_from_batches(batches: &[EvaluatedBatch]) -> Result<GeoStatistics> {
-        let mut analyzer = AnalyzeAccumulator::new(WKB_GEOMETRY, VoidBounder);
+        let mut analyzer = AnalyzeAccumulator::new(WKB_GEOMETRY);
         for batch in batches {
             for (wkb_opt, rect) in zip(batch.geom_array.wkbs(), batch.geom_array.rects()) {
                 if let Some(wkb) = wkb_opt {

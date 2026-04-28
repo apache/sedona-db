@@ -53,7 +53,6 @@ use crate::probe::knn_results_merger::KNNResultsMerger;
 use crate::probe::partitioned_stream_provider::PartitionedProbeStreamProvider;
 use crate::probe::ProbeStreamMetrics;
 use crate::spatial_predicate::SpatialPredicate;
-use crate::utils::bounds::VoidBounder;
 use crate::utils::join_utils::{
     adjust_indices_with_visited_info, apply_join_filter_to_indices, build_batch_from_indices,
     get_final_indices_from_bit_map, need_probe_multi_partition_bitmap,
@@ -803,7 +802,7 @@ impl SpatialJoinStream {
         // Update the probe side statistics, which may help the spatial index to select a better
         // execution mode for evaluating the spatial predicate.
         if spatial_index.need_more_probe_stats() {
-            let mut analyzer = AnalyzeAccumulator::new(WKB_GEOMETRY, VoidBounder);
+            let mut analyzer = AnalyzeAccumulator::new(WKB_GEOMETRY);
             let geom_array = &probe_evaluated_batch.geom_array;
             for (wkb_opt, rect) in zip(geom_array.wkbs(), geom_array.rects()) {
                 if let Some(wkb) = wkb_opt {

@@ -84,7 +84,7 @@ pub fn analyze_wkb(geom: &Wkb, bbox: &BoundingBox) -> Result<GeometrySummary, Se
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bounder::{Bounder, GeometryBounder};
+    use crate::bounds::geo_traits_bounds_xy;
     use crate::interval::IntervalTrait;
     use crate::types::GeometryTypeId;
     use crate::wkb_factory;
@@ -92,10 +92,7 @@ mod tests {
 
     // Shorthand for analyzing a single item
     fn analyze_geometry(geom: &Wkb) -> Result<GeometrySummary, SedonaGeometryError> {
-        let mut bounder = GeometryBounder::empty();
-        bounder.update_wkb(geom).unwrap();
-        let bbox = bounder.finish();
-        analyze_wkb(geom, &bbox)
+        analyze_wkb(geom, &geo_traits_bounds_xy(geom).unwrap())
     }
 
     // Helper function to create WKB for tests

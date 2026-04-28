@@ -17,51 +17,9 @@
 
 use float_next_after::NextAfter;
 use sedona_geometry::{
-    bounder::Bounder,
     bounding_box::BoundingBox,
-    error::SedonaGeometryError,
     interval::{Interval, IntervalTrait, WraparoundInterval},
-    types::GeometryTypeAndDimensionsSet,
 };
-
-#[derive(Debug)]
-pub struct VoidBounder;
-
-impl Bounder for VoidBounder {
-    fn clear(&mut self) {}
-
-    fn update_wkb_bytes(&mut self, _wkb: &[u8]) -> Result<(), SedonaGeometryError> {
-        Err(SedonaGeometryError::Invalid(
-            "internal error: can't bound using the void bounder".to_string(),
-        ))
-    }
-
-    fn update_wkb(&mut self, _wkb: &wkb::reader::Wkb) -> Result<(), SedonaGeometryError> {
-        Err(SedonaGeometryError::Invalid(
-            "internal error: can't bound using the void bounder".to_string(),
-        ))
-    }
-
-    fn x(&self) -> WraparoundInterval {
-        WraparoundInterval::full()
-    }
-
-    fn y(&self) -> Interval {
-        Interval::full()
-    }
-
-    fn z(&self) -> Interval {
-        Interval::full()
-    }
-
-    fn m(&self) -> Interval {
-        Interval::full()
-    }
-
-    fn geometry_types(&self) -> &GeometryTypeAndDimensionsSet {
-        panic!("not implemented")
-    }
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Bounds2D {

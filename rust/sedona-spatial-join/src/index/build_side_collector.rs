@@ -44,10 +44,7 @@ use crate::{
     join_provider::SpatialJoinProvider,
     operand_evaluator::create_operand_evaluator,
     spatial_predicate::SpatialPredicate,
-    utils::{
-        bbox_sampler::{BoundingBoxSampler, BoundingBoxSamples},
-        bounds::VoidBounder,
-    },
+    utils::bbox_sampler::{BoundingBoxSampler, BoundingBoxSamples},
 };
 
 pub(crate) struct BuildPartition {
@@ -164,7 +161,7 @@ impl BuildSideBatchesCollector {
         let mut total_num_rows = 0;
         let mut total_size_bytes = 0;
 
-        let mut analyzer = AnalyzeAccumulator::new(WKB_GEOMETRY, VoidBounder);
+        let mut analyzer = AnalyzeAccumulator::new(WKB_GEOMETRY);
 
         // Reserve memory for holding bbox samples. This should be a small reservation.
         // We simply return error if the reservation cannot be fulfilled, since there's
