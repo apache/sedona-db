@@ -176,17 +176,7 @@ fn try_new_evaluated_array_impl(
             let maybe_bounds = bounder.finish().map_err(|e| {
                 exec_datafusion_err!("Failed to finish bounding in evaluated array factory: {e}")
             })?;
-            if let Some((mut min_x, min_y, mut max_x, max_y)) = maybe_bounds {
-                // The evaluated geometry array currently needs Cartesian rectangles; however
-                // we can still recalculate these when we ingest into the index. In the
-                // partitioned join we may want to ensure we can express bounds in a way that
-                // the partitioner understands (if it doesn't already) to do a better job
-                // partitioning wraparounds.
-                if min_x > max_x {
-                    min_x = -180.0;
-                    max_x = 180.0;
-                }
-
+            if let Some((min_x, min_y, max_x, max_y)) = maybe_bounds {
                 rect_vec.push(Bounds2D::new((min_x, max_x), (min_y, max_y)));
             } else {
                 rect_vec.push(Bounds2D::empty());

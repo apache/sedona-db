@@ -17,8 +17,9 @@
 
 use arrow::array::BooleanBufferBuilder;
 use arrow_schema::SchemaRef;
-use sedona_common::{sedona_internal_err, SpatialJoinOptions};
+use sedona_common::SpatialJoinOptions;
 use sedona_expr::statistics::GeoStatistics;
+use sedona_geometry::interval::{Interval, IntervalTrait};
 use std::sync::Arc;
 
 use crate::index::spatial_index::SpatialIndexRef;
@@ -61,6 +62,7 @@ pub struct DefaultSpatialIndexBuilder {
     probe_threads_count: usize,
     metrics: SpatialJoinBuildMetrics,
     refiner_factory: Arc<dyn IndexQueryResultRefinerFactory>,
+    wraparound_hint: Interval,
 
     /// Batches to be indexed
     indexed_batches: Vec<EvaluatedBatch>,
@@ -89,6 +91,7 @@ impl DefaultSpatialIndexBuilder {
             join_type,
             probe_threads_count,
             metrics,
+            wraparound_hint: Interval::full(),
             refiner_factory: Arc::new(DefaultIndexQueryResultRefinerFactory),
             indexed_batches: Vec::new(),
             stats: GeoStatistics::empty(),
@@ -101,6 +104,11 @@ impl DefaultSpatialIndexBuilder {
         refiner_factory: Arc<dyn IndexQueryResultRefinerFactory>,
     ) -> Self {
         self.refiner_factory = refiner_factory;
+        self
+    }
+
+    pub fn with_wraparound_hint(mut self, wraparound_hint: Interval) -> Self {
+        self.wraparound_hint = wraparound_hint;
         self
     }
 
@@ -142,13 +150,22 @@ impl DefaultSpatialIndexBuilder {
     fn build_rtree(&mut self) -> Result<RTreeBuildResult> {
         let build_timer = self.metrics.build_time.timer();
 
-        // Count only non-empty rects since empty ones are not added to the rtree
+        // Each item will add 0 (empty), 1 (regular) or 2 (wraparound)
+        // rectangles to the index.
         let num_rects = self
             .indexed_batches
             .iter()
             .flat_map(|batch| batch.geom_array.rects().iter())
-            .filter(|rect| !rect.is_empty())
-            .count();
+            .map(|rect| {
+                if rect.is_empty() {
+                    0
+                } else if rect.is_wraparound() {
+                    2
+                } else {
+                    1
+                }
+            })
+            .sum();
 
         let mut rtree_builder = RTreeBuilder::<f32>::new(num_rects as u32);
         let mut batch_pos_vec = vec![(-1, -1); num_rects];
@@ -164,9 +181,9 @@ impl DefaultSpatialIndexBuilder {
                 }
 
                 if !right.is_empty() {
-                    return sedona_internal_err!(
-                        "Wraparound rectangles are not supported by the default rtree builder"
-                    );
+                    let (x, y) = right.into_inner();
+                    let data_idx = rtree_builder.add(x.0, y.0, x.1, y.1);
+                    batch_pos_vec[data_idx as usize] = (batch_idx as i32, idx as i32);
                 }
             }
         }
