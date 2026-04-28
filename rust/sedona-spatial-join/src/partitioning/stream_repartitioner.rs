@@ -45,8 +45,8 @@ use futures::StreamExt;
 use sedona_common::sedona_internal_err;
 use sedona_expr::statistics::GeoStatistics;
 use sedona_functions::st_analyze_agg::AnalyzeAccumulator;
-use sedona_geometry::bounding_box::BoundingBox;
 use sedona_geometry::interval::IntervalTrait;
+use sedona_geometry::{bounder::GeometryBounder, bounding_box::BoundingBox};
 use sedona_schema::datatypes::WKB_GEOMETRY;
 
 /// Result emitted after a stream is spatially repartitioned.
@@ -305,7 +305,7 @@ pub struct StreamRepartitioner {
     /// The None and Multi partitions should be None when repartitioning the build side.
     spill_registry: Vec<Option<EvaluatedBatchSpillWriter>>,
     /// Geospatial statistics for each spatial partition.
-    geo_stats_accumulators: Vec<AnalyzeAccumulator>,
+    geo_stats_accumulators: Vec<AnalyzeAccumulator<GeometryBounder>>,
     /// Number of rows in each spatial partition.
     num_rows: Vec<usize>,
     slot_assignments: Vec<Vec<(usize, usize)>>,
@@ -382,7 +382,7 @@ impl StreamRepartitionerBuilder {
             slots,
             spill_registry: (0..slot_count).map(|_| None).collect(),
             geo_stats_accumulators: (0..slot_count)
-                .map(|_| AnalyzeAccumulator::new(WKB_GEOMETRY, WKB_GEOMETRY))
+                .map(|_| AnalyzeAccumulator::new(WKB_GEOMETRY, GeometryBounder::empty()))
                 .collect(),
             num_rows: vec![0; slot_count],
             slot_assignments: (0..slot_count).map(|_| Vec::new()).collect(),

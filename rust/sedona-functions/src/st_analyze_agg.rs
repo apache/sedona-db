@@ -35,6 +35,7 @@ use sedona_expr::aggregate_udf::{SedonaAccumulatorRef, SedonaAggregateUDF};
 use sedona_expr::item_crs::ItemCrsSedonaAccumulator;
 use sedona_expr::{aggregate_udf::SedonaAccumulator, statistics::GeoStatistics};
 use sedona_geometry::analyze::GeometrySummary;
+use sedona_geometry::bounder::{Bounder, GeometryBounder};
 use sedona_geometry::interval::IntervalTrait;
 use sedona_geometry::types::{GeometryTypeAndDimensions, GeometryTypeAndDimensionsSet};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
@@ -77,11 +78,11 @@ impl SedonaAccumulator for STAnalyzeAgg {
     fn accumulator(
         &self,
         args: &[SedonaType],
-        output_type: &SedonaType,
+        _output_type: &SedonaType,
     ) -> Result<Box<dyn Accumulator>> {
-        Ok(Box::new(AnalyzeAccumulator::new(
+        Ok(Box::new(AnalyzeAccumulator::<GeometryBounder>::new(
             args[0].clone(),
-            output_type.clone(),
+            GeometryBounder::empty(),
         )))
     }
 
@@ -221,32 +222,32 @@ impl STAnalyzeAgg {
 }
 
 #[derive(Debug)]
-pub struct AnalyzeAccumulator {
+pub struct AnalyzeAccumulator<T> {
     input_type: SedonaType,
-    _output_type: SedonaType,
     stats: GeoStatistics,
+    bounder: T,
 }
 
-impl AnalyzeAccumulator {
-    pub fn new(input_type: SedonaType, output_type: SedonaType) -> Self {
+impl<T: Bounder> AnalyzeAccumulator<T> {
+    pub fn new(input_type: SedonaType, bounder: T) -> Self {
         Self {
             input_type,
-            _output_type: output_type,
             stats: GeoStatistics::empty(),
+            bounder,
         }
     }
 
-    pub fn update_statistics(&mut self, geom: &Wkb) -> Result<()> {
+    pub fn update_statistics(&mut self, geom: &Wkb) -> Result<GeometrySummary> {
         // Get geometry analysis information
-        let summary = sedona_geometry::analyze::analyze_geometry(geom)
+        let summary = sedona_geometry::analyze::analyze_wkb(geom, &mut self.bounder)
             .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
         self.ingest_geometry_summary(&summary);
 
-        Ok(())
+        Ok(summary)
     }
 
-    pub fn ingest_geometry_summary(&mut self, summary: &GeometrySummary) {
+    fn ingest_geometry_summary(&mut self, summary: &GeometrySummary) {
         // Start with a clone of the current stats
         let mut stats = self.stats.clone();
 
@@ -370,7 +371,7 @@ impl AnalyzeAccumulator {
     }
 }
 
-impl Accumulator for AnalyzeAccumulator {
+impl<T: Bounder> Accumulator for AnalyzeAccumulator<T> {
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
         if values.is_empty() {
             return sedona_internal_err!("No input arrays provided to accumulator");

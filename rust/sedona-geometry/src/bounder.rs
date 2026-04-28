@@ -31,7 +31,7 @@ use crate::{
 ///
 /// This trait is to provide an abstraction such that a proper geography implementation
 /// can be implemented and represented dynamically.
-pub trait Bounder {
+pub trait Bounder: std::fmt::Debug + Send + Sync {
     /// Set this bounder to an empty state
     fn clear(&mut self);
 
@@ -40,7 +40,12 @@ pub trait Bounder {
     /// Parses and accumulates the bounds of one WKB-encoded geometry. This function
     /// will error for invalid WKB input; however, clients may wish to ignore such
     /// an error for the purposes of writing statistics.
-    fn update_wkb(&mut self, wkb: &[u8]) -> Result<(), SedonaGeometryError>;
+    fn update_wkb_bytes(&mut self, wkb: &[u8]) -> Result<(), SedonaGeometryError>;
+
+    /// Update this bounder with one Wkb object from the wkb crate
+    ///
+    /// A possibly more efficient implementation for an already parsed Wkb object.
+    fn update_wkb(&mut self, wkb: &Wkb) -> Result<(), SedonaGeometryError>;
 
     /// Calculate the final xmin and xmax for geometries encountered by this bounder
     ///
@@ -95,6 +100,12 @@ pub struct GeometryBounder {
     wraparound_hint: Interval,
 }
 
+impl Default for GeometryBounder {
+    fn default() -> Self {
+        GeometryBounder::empty()
+    }
+}
+
 impl GeometryBounder {
     /// Create a new, empty bounder that represents empty input
     pub fn empty() -> Self {
@@ -130,7 +141,7 @@ impl GeometryBounder {
         }
     }
 
-    fn update_geometry(
+    fn update_geo_traits(
         &mut self,
         geom: &impl GeometryTrait<T = f64>,
     ) -> Result<(), SedonaGeometryError> {
@@ -213,9 +224,14 @@ impl Bounder for GeometryBounder {
         &self.geometry_types
     }
 
-    fn update_wkb(&mut self, wkb: &[u8]) -> Result<(), SedonaGeometryError> {
+    fn update_wkb_bytes(&mut self, wkb: &[u8]) -> Result<(), SedonaGeometryError> {
         let wkb = Wkb::try_new(wkb).map_err(|e| SedonaGeometryError::External(Box::new(e)))?;
-        self.update_geometry(&wkb)?;
+        self.update_geo_traits(&wkb)?;
+        Ok(())
+    }
+
+    fn update_wkb(&mut self, wkb: &Wkb) -> Result<(), SedonaGeometryError> {
+        self.update_geo_traits(&wkb)?;
         Ok(())
     }
 }
@@ -355,7 +371,7 @@ mod test {
         for wkt_value in wkt_values {
             let wkt: Wkt = Wkt::from_str(wkt_value.as_ref())
                 .map_err(|e| SedonaGeometryError::Invalid(e.to_string()))?;
-            bounder.update_geometry(&wkt)?;
+            bounder.update_geo_traits(&wkt)?;
         }
         Ok(bounder)
     }
@@ -367,7 +383,7 @@ mod test {
         wkb::writer::write_geometry(&mut wkb, &wkt, &Default::default()).unwrap();
 
         let mut bounds = GeometryBounder::empty();
-        bounds.update_wkb(&wkb).unwrap();
+        bounds.update_wkb_bytes(&wkb).unwrap();
 
         assert_eq!(bounds.x(), (0, 2).into());
         assert_eq!(bounds.y(), (1, 3).into());

@@ -15,9 +15,9 @@
 // specific language governing permissions and limitations
 // under the License.
 use crate::{
+    bounder::Bounder,
     bounding_box::BoundingBox,
     error::SedonaGeometryError,
-    interval::IntervalTrait,
     point_count::count_points,
     types::{GeometryTypeAndDimensions, GeometryTypeId},
 };
@@ -37,24 +37,33 @@ pub struct GeometrySummary {
     pub collection_count: i64,
 }
 
-// TODO: Bounds here
-
-/// Analyzes a WKB geometry and returns its size, point count, dimensions, and type
-pub fn analyze_geometry(geom: &Wkb) -> Result<GeometrySummary, SedonaGeometryError> {
+/// Analyzes a WKB geometry and returns its size, point count, dimensions, and type using
+/// a specific [Bounder] implementation. This function calls [Bounder::clear] to ensure
+/// only the target geom is considered.
+pub fn analyze_wkb(
+    geom: &Wkb,
+    bounder: &mut impl Bounder,
+) -> Result<GeometrySummary, SedonaGeometryError> {
     // Get size in bytes directly from WKB buffer
     let size_bytes = geom.buf().len();
-
-    // Get geometry type using as_type() which is public
-    let geometry_type = GeometryTypeAndDimensions::try_from_geom(geom)?;
 
     // Get point count directly using the geometry traits
     let point_count = count_points(geom);
 
-    // Calculate bounding box using geo_traits_update_xy_bounds
-    let mut x = crate::interval::Interval::empty();
-    let mut y = crate::interval::Interval::empty();
-    crate::bounds::geo_traits_update_xy_bounds(geom, &mut x, &mut y)?;
-    let bbox = BoundingBox::xy(x, y);
+    // Calculate bounding box and geometry types using geo_traits_update_xy_bounds
+    bounder.clear();
+    bounder.update_wkb(geom)?;
+    let bbox = BoundingBox::xy(bounder.x(), bounder.y());
+
+    let geometry_type =
+        bounder
+            .geometry_types()
+            .iter()
+            .next()
+            .unwrap_or(GeometryTypeAndDimensions::new(
+                GeometryTypeId::GeometryCollection,
+                geo_traits::Dimensions::Xy,
+            ));
 
     // Determine geometry type counts directly
     let puntal_count = matches!(
@@ -92,9 +101,17 @@ pub fn analyze_geometry(geom: &Wkb) -> Result<GeometrySummary, SedonaGeometryErr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bounder::GeometryBounder;
+    use crate::interval::IntervalTrait;
     use crate::types::GeometryTypeId;
     use crate::wkb_factory;
     use geo_traits::Dimensions;
+
+    // Shorthand for analyzing a single item
+    fn analyze_geometry(geom: &Wkb) -> Result<GeometrySummary, SedonaGeometryError> {
+        let mut bounder = GeometryBounder::empty();
+        analyze_wkb(geom, &mut bounder)
+    }
 
     // Helper function to create WKB for tests
     fn create_test_wkb(geom_type: TestGeometry) -> Wkb<'static> {
