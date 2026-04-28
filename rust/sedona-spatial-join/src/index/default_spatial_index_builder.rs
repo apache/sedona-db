@@ -62,7 +62,7 @@ pub struct DefaultSpatialIndexBuilder {
     probe_threads_count: usize,
     metrics: SpatialJoinBuildMetrics,
     refiner_factory: Arc<dyn IndexQueryResultRefinerFactory>,
-    wraparound_hint: Interval,
+    wraparound: Interval,
 
     /// Batches to be indexed
     indexed_batches: Vec<EvaluatedBatch>,
@@ -91,7 +91,7 @@ impl DefaultSpatialIndexBuilder {
             join_type,
             probe_threads_count,
             metrics,
-            wraparound_hint: Interval::full(),
+            wraparound: Interval::full(),
             refiner_factory: Arc::new(DefaultIndexQueryResultRefinerFactory),
             indexed_batches: Vec::new(),
             stats: GeoStatistics::empty(),
@@ -107,8 +107,8 @@ impl DefaultSpatialIndexBuilder {
         self
     }
 
-    pub fn with_wraparound_hint(mut self, wraparound_hint: Interval) -> Self {
-        self.wraparound_hint = wraparound_hint;
+    pub fn with_wraparound(mut self, wraparound: impl Into<Interval>) -> Self {
+        self.wraparound = wraparound.into();
         self
     }
 
@@ -173,7 +173,7 @@ impl DefaultSpatialIndexBuilder {
         for (batch_idx, batch) in self.indexed_batches.iter().enumerate() {
             let rects = batch.geom_array.rects();
             for (idx, rect) in rects.iter().enumerate() {
-                let (left, right) = rect.split();
+                let (left, right) = rect.split(&Interval::new(-180.0, 180.0));
                 if !left.is_empty() {
                     let (x, y) = left.into_inner();
                     let data_idx = rtree_builder.add(x.0, y.0, x.1, y.1);
@@ -329,6 +329,7 @@ impl SpatialIndexBuilder for DefaultSpatialIndexBuilder {
             self.options.clone(),
             refiner,
             rtree,
+            self.wraparound,
             self.indexed_batches
                 .drain(0..self.indexed_batches.len())
                 .collect(),

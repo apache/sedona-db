@@ -38,6 +38,7 @@ use geo_index::IndexableNum;
 use parking_lot::Mutex;
 use sedona_expr::statistics::GeoStatistics;
 use sedona_geo::to_geo::item_to_geometry;
+use sedona_geometry::interval::{Interval, IntervalTrait};
 use wkb::reader::Wkb;
 
 use crate::index::spatial_index::DISTANCE_TOLERANCE;
@@ -68,6 +69,9 @@ struct DefaultSpatialIndexInner {
     /// the original geometry batch index and row index, or translated using `prepared_geom_idx_vec`
     /// to get the prepared geometries array index.
     pub(crate) rtree: RTree<f32>,
+
+    /// Absolute bounds of the coordinate system
+    pub(crate) wraparound: Interval,
 
     /// Indexed batches containing evaluated geometry arrays. It contains the original record
     /// batches and geometry arrays obtained by evaluating the geometry expression on the build side.
@@ -117,6 +121,7 @@ impl DefaultSpatialIndex {
                 options,
                 refiner,
                 rtree,
+                wraparound: Interval::full(),
                 data_id_to_batch_pos: Vec::new(),
                 indexed_batches: Vec::new(),
                 geom_idx_vec: Vec::new(),
@@ -132,6 +137,7 @@ impl DefaultSpatialIndex {
         options: SpatialJoinOptions,
         refiner: Arc<dyn IndexQueryResultRefiner>,
         rtree: RTree<f32>,
+        wraparound: Interval,
         indexed_batches: Vec<EvaluatedBatch>,
         data_id_to_batch_pos: Vec<(i32, i32)>,
         geom_idx_vec: Vec<usize>,
@@ -145,6 +151,7 @@ impl DefaultSpatialIndex {
                 options,
                 refiner,
                 rtree,
+                wraparound,
                 data_id_to_batch_pos,
                 indexed_batches,
                 geom_idx_vec,
@@ -524,7 +531,7 @@ impl SpatialIndex for DefaultSpatialIndex {
                 continue;
             }
 
-            let (left, right) = probe_rect.split();
+            let (left, right) = probe_rect.split(&self.inner.wraparound);
             let (x, y) = left.into_inner();
             let mut candidates = self.inner.rtree.search(x.0, y.0, x.1, y.1);
             if !right.is_empty() {

@@ -76,19 +76,23 @@ impl Bounds2D {
     ///
     /// Note that one or both of the outputs may be empty or contain infinite
     /// bounds.
-    pub fn split(&self) -> (Bounds2D, Bounds2D) {
+    pub fn split(&self, wraparound: &Interval) -> (Bounds2D, Bounds2D) {
         if self.is_wraparound() {
-            let x_left = (-f32::INFINITY, self.x.1);
-            let x_right = (self.x.0, f32::INFINITY);
+            let (x_left, x_right) = self.x().split();
+            let y = self.y();
             (
-                Self {
-                    x: x_left,
-                    y: self.y,
-                },
-                Self {
-                    x: x_right,
-                    y: self.y,
-                },
+                Self::new(
+                    x_left
+                        .intersection(wraparound)
+                        .unwrap_or(Interval::full()),
+                    y,
+                ),
+                Self::new(
+                    x_right
+                        .intersection(wraparound)
+                        .unwrap_or(Interval::full()),
+                    y,
+                ),
             )
         } else {
             (self.clone(), Self::empty())
