@@ -142,11 +142,13 @@ impl DefaultSpatialIndexBuilder {
     fn build_rtree(&mut self) -> Result<RTreeBuildResult> {
         let build_timer = self.metrics.build_time.timer();
 
+        // Count only non-empty rects since empty ones are not added to the rtree
         let num_rects = self
             .indexed_batches
             .iter()
-            .map(|batch| batch.geom_array.rects().len())
-            .sum::<usize>();
+            .flat_map(|batch| batch.geom_array.rects().iter())
+            .filter(|rect| !rect.is_empty())
+            .count();
 
         let mut rtree_builder = RTreeBuilder::<f32>::new(num_rects as u32);
         let mut batch_pos_vec = vec![(-1, -1); num_rects];
