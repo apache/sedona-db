@@ -53,7 +53,7 @@ type TestPartitions = (SchemaRef, Vec<Vec<RecordBatch>>);
 /// geometries would be disjoint, but on a sphere they should intersect.
 ///
 /// - Left data (polygons): bounds [170, -10, 190, 10] - east of the antimeridian
-/// - Right data (points): bounds [-190, -10, -170, 10] - west of the antimeridian
+/// - Right data (polygons): bounds [-190, -10, -170, 10] - west of the antimeridian
 fn create_antimeridian_crossing_test_data() -> Result<(TestPartitions, TestPartitions)> {
     // Bounding boxes that cross the antimeridian
     // East side: 170°E to 190°E (equivalent to 170°W)
@@ -84,7 +84,7 @@ fn create_antimeridian_crossing_test_data() -> Result<(TestPartitions, TestParti
         .num_partitions(4)
         .batches_per_partition(2)
         .rows_per_batch(25)
-        .geometry_type(GeometryTypeId::Point)
+        .geometry_type(GeometryTypeId::Polygon)
         .sedona_type(WKB_GEOGRAPHY)
         .bounds(west_bounds)
         .size_range((0.1, 5.0))
