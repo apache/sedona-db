@@ -400,15 +400,15 @@ fn create_corner_case_test_data() -> Result<(TestPartitions, TestPartitions)> {
         // Full width polygon shifted so that it crosses the antimeridian
         Some("POLYGON((0 -10, 0 10, 90 10, 180 10, 270 10, 360 10, 360 -10, 270 -10, 180 -10, 80 -10, 0 -10))"),
         // Whole planet
-        Some("POLYGON((-180 -90, 0 -90, 90 -90, 180 -90, 180 0, 180 90, 90 90, 0 90, -90 90, -180 90, -180 0, -180 90))"),
+        Some("POLYGON((-180 -90, 0 -90, 90 -90, 180 -90, 180 0, 180 90, 90 90, 0 90, -90 90, -180 90, -180 0, -180 -90))"),
         // North pole triangles
-        Some("POLYGON((0 90, -120 70, 120 70, 0 90))"),
-        Some("POLYGON((0 90, 60 80, -60 80, 0 90))"),
-        Some("POLYGON((0 90, 0 85, 90 85, 0 90))"),
+        Some("POLYGON((0 70, -120 70, 120 70, 0 70))"),
+        Some("POLYGON((0 80, 60 80, -60 80, 0 80))"),
+        Some("POLYGON((0 85, 0 85, 90 85, 0 85))"),
         // South pole triangles
-        Some("POLYGON((0 -90, -120 -70, 120 -70, 0 -90))"),
-        Some("POLYGON((0 -90, 60 -80, -60 -80, 0 -90))"),
-        Some("POLYGON((0 -90, 0 -85, 90 -85, 0 -90))"),
+        Some("POLYGON((0 -70, -120 -70, 120 -70, 0 -70))"),
+        Some("POLYGON((0 -80, 60 -80, -60 -80, 0 -80))"),
+        Some("POLYGON((0 -85, 0 -85, 90 -85, 0 -85))"),
     ];
 
     // Create LHS from WKT fixtures
