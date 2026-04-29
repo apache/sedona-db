@@ -35,3 +35,62 @@ test_that("select() works for sedonadb_dataframe", {
     tibble::tibble(TWO = "two")
   )
 })
+
+test_that("sd_join() defaults match dplyr join defaults", {
+  df1 <- data.frame(key_x = 1:6, letters = letters[1:6])
+  df2 <- data.frame(key_y = 10:4, letters = LETTERS[1:7])
+
+  expect_identical(
+    sd_join(df1, df2, by = c("key_x" = "key_y"), join_type = "inner") |>
+      sd_arrange(key_x) |>
+      as.data.frame(),
+    dplyr::inner_join(df1, df2, by = c("key_x" = "key_y")) |>
+      dplyr::arrange(key_x) |>
+      as.data.frame()
+  )
+
+  expect_identical(
+    sd_join(df1, df2, by = c("key_x" = "key_y"), join_type = "left") |>
+      sd_arrange(key_x) |>
+      as.data.frame(),
+    dplyr::left_join(df1, df2, by = c("key_x" = "key_y")) |>
+      dplyr::arrange(key_x) |>
+      as.data.frame()
+  )
+
+  expect_identical(
+    sd_join(df1, df2, by = c("key_x" = "key_y"), join_type = "right") |>
+      sd_arrange(key_x) |>
+      as.data.frame(),
+    dplyr::right_join(df1, df2, by = c("key_x" = "key_y")) |>
+      dplyr::arrange(key_x) |>
+      as.data.frame()
+  )
+
+  expect_identical(
+    sd_join(df1, df2, by = c("key_x" = "key_y"), join_type = "full") |>
+      sd_arrange(key_x) |>
+      as.data.frame(),
+    dplyr::full_join(df1, df2, by = c("key_x" = "key_y")) |>
+      dplyr::arrange(key_x) |>
+      as.data.frame()
+  )
+
+  expect_identical(
+    sd_join(df1, df2, by = c("key_x" = "key_y"), join_type = "leftanti") |>
+      sd_arrange(key_x) |>
+      as.data.frame(),
+    dplyr::anti_join(df1, df2, by = c("key_x" = "key_y")) |>
+      dplyr::arrange(key_x) |>
+      as.data.frame()
+  )
+
+  expect_identical(
+    sd_join(df1, df2, by = c("key_x" = "key_y"), join_type = "leftsemi") |>
+      sd_arrange(key_x) |>
+      as.data.frame(),
+    dplyr::semi_join(df1, df2, by = c("key_x" = "key_y")) |>
+      dplyr::arrange(key_x) |>
+      as.data.frame()
+  )
+})

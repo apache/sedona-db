@@ -22,7 +22,7 @@ use datafusion_expr::{
     expr::{AggregateFunction, FieldMetadata, NullTreatment, ScalarFunction},
     BinaryExpr, Cast, Expr, Operator,
 };
-use savvy::{savvy, savvy_err, EnvironmentSexp};
+use savvy::{savvy, savvy_err, EnvironmentSexp, NullSexp};
 use sedona::context::SedonaContext;
 
 use crate::{
@@ -39,6 +39,22 @@ pub struct SedonaDBExpr {
 impl SedonaDBExpr {
     fn display(&self) -> savvy::Result<savvy::Sexp> {
         format!("{}", self.inner).try_into()
+    }
+
+    fn qualified_name(&self) -> savvy::Result<savvy::Sexp> {
+        let (qualifier, name) = self.inner.qualified_name();
+        let mut result = savvy::OwnedStringSexp::new(2)?;
+
+        // Set the qualifier (first element) - NA if None
+        match qualifier {
+            Some(table_ref) => result.set_elt(0, &table_ref.to_string())?,
+            None => result.set_na(0)?,
+        }
+
+        // Set the name (second element)
+        result.set_elt(1, &name)?;
+
+        result.into()
     }
 
     fn debug_string(&self) -> savvy::Result<savvy::Sexp> {
@@ -69,6 +85,31 @@ impl SedonaDBExpr {
     fn negate(&self) -> savvy::Result<SedonaDBExpr> {
         let inner = Expr::Negative(Box::new(self.inner.clone()));
         Ok(Self { inner })
+    }
+
+    fn variant_name(&self) -> savvy::Result<savvy::Sexp> {
+        self.inner.variant_name().try_into()
+    }
+
+    fn parse_binary(&self) -> savvy::Result<savvy::Sexp> {
+        match &self.inner {
+            Expr::BinaryExpr(e) => {
+                let op = savvy::OwnedStringSexp::try_from_scalar(e.op.to_string())?;
+                let left = SedonaDBExpr {
+                    inner: e.left.as_ref().clone(),
+                };
+                let right = SedonaDBExpr {
+                    inner: e.right.as_ref().clone(),
+                };
+
+                let mut result = savvy::OwnedListSexp::new(3, true)?;
+                result.set_name_and_value(0, "op", op)?;
+                result.set_name_and_value(1, "left", savvy::Sexp::try_from(left)?)?;
+                result.set_name_and_value(2, "right", savvy::Sexp::try_from(right)?)?;
+                result.into()
+            }
+            _ => Ok(NullSexp.into()),
+        }
     }
 }
 

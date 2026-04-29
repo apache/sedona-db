@@ -10,6 +10,7 @@
 \alias{sd_expr_aggregate_function}
 \alias{sd_expr_cast}
 \alias{sd_expr_alias}
+\alias{sd_expr_parse_binary}
 \alias{as_sd_expr}
 \alias{is_sd_expr}
 \alias{sd_expr_factory}
@@ -45,6 +46,8 @@ sd_expr_aggregate_function(
 sd_expr_cast(expr, type, factory = sd_expr_factory())
 
 sd_expr_alias(expr, alias, factory = sd_expr_factory())
+
+sd_expr_parse_binary(expr)
 
 as_sd_expr(x, factory = sd_expr_factory())
 

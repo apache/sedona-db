@@ -23,6 +23,7 @@ use datafusion::config::ConfigField;
 use datafusion::prelude::DataFrame;
 use datafusion_common::Column;
 use datafusion_expr::utils::conjunction;
+use datafusion_expr::JoinType;
 use datafusion_expr::{select_expr::SelectExpr, Expr, SortExpr};
 use datafusion_ffi::table_provider::FFI_TableProvider;
 use savvy::{savvy, savvy_err, sexp, IntoExtPtrSexp, Result};
@@ -364,6 +365,24 @@ impl InternalDataFrame {
         let group_by_exprs = SedonaDBExprFactory::exprs(group_by_exprs_sexp)?;
 
         let inner = self.inner.clone().aggregate(group_by_exprs, exprs)?;
+        Ok(new_data_frame(inner, self.runtime.clone()))
+    }
+
+    fn join(
+        &self,
+        right: &InternalDataFrame,
+        on_sexp: savvy::Sexp,
+        join_type_str: &str,
+        left_alias: &str,
+        right_alias: &str,
+    ) -> savvy::Result<InternalDataFrame> {
+        let on = SedonaDBExprFactory::exprs(on_sexp)?;
+        let join_type: JoinType = join_type_str.parse()?;
+        let inner = self.inner.clone().alias(left_alias)?.join_on(
+            right.inner.clone().alias(right_alias)?,
+            join_type,
+            on,
+        )?;
         Ok(new_data_frame(inner, self.runtime.clone()))
     }
 
