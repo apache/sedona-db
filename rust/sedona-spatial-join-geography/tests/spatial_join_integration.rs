@@ -22,8 +22,8 @@
 
 use std::sync::Arc;
 
-use arrow_array::RecordBatch;
-use arrow_schema::SchemaRef;
+use arrow_array::{Int32Array, RecordBatch};
+use arrow_schema::{Field, Schema, SchemaRef};
 use datafusion::{
     catalog::{MemTable, TableProvider},
     execution::SessionStateBuilder,
@@ -43,6 +43,7 @@ use sedona_query_planner::{
 use sedona_schema::datatypes::WKB_GEOGRAPHY;
 use sedona_spatial_join::SpatialJoinExec;
 use sedona_spatial_join_geography::physical_planner::GeographySpatialJoinPhysicalPlanner;
+use sedona_testing::create::create_array_storage;
 use sedona_testing::datagen::RandomPartitionedDataBuilder;
 
 type TestPartitions = (SchemaRef, Vec<Vec<RecordBatch>>);
@@ -375,6 +376,169 @@ async fn test_geography_join_dwithin() -> Result<()> {
 
     // Should get results for geometries within 100km
     assert!(result.num_rows() > 0);
+
+    Ok(())
+}
+
+/// Creates test data for geography corner cases: full-width polygons and polar triangles.
+///
+/// These are edge cases that stress the spatial index bounding calculations:
+/// - Full-width polygons spanning 360 degrees longitude
+/// - Polar triangles touching the north/south poles
+/// - Polygons crossing the antimeridian with coordinates > 180 or < -180
+///
+/// Returns (lhs_data, rhs_data) where:
+/// - lhs: Corner case fixtures (full-width polygons, polar triangles)
+/// - rhs: Random antimeridian-crossing polygons
+fn create_corner_case_test_data() -> Result<(TestPartitions, TestPartitions)> {
+    // WKT fixtures for edge cases: full-width polygons and polar triangles
+    let wkt_fixtures: Vec<Option<&str>> = vec![
+        // Full-width polygons (spanning 360 degrees longitude, with intermediate points)
+        Some("POLYGON((-180 -10, -180 10, -90 10, 0 10, 90 10, 180 10, 180 -10, 90 -10, 0 -10, -90 -10, -180 -10))"),
+        Some("POLYGON((-180 20, -180 40, -90 40, 0 40, 90 40, 180 40, 180 20, 90 20, 0 20, -90 20, -180 20))"),
+        Some("POLYGON((-180 -45, -90 -30, 0 -45, 90 -30, 180 -45, 90 -60, 0 -45, -90 -60, -180 -45))"),
+        // Full width polygon shifted so that it crosses the antimeridian
+        Some("POLYGON((0 -10, 0 10, 90 10, 180 10, 270 10, 360 10, 360 -10, 270 -10, 180 -10, 80 -10, 0 -10))"),
+        // Whole planet
+        Some("POLYGON((-180 -90, 0 -90, 90 -90, 180 -90, 180 0, 180 90, 90 90, 0 90, -90 90, -180 90, -180 0, -180 90))"),
+        // North pole triangles
+        Some("POLYGON((0 90, -120 70, 120 70, 0 90))"),
+        Some("POLYGON((0 90, 60 80, -60 80, 0 90))"),
+        Some("POLYGON((0 90, 0 85, 90 85, 0 90))"),
+        // South pole triangles
+        Some("POLYGON((0 -90, -120 -70, 120 -70, 0 -90))"),
+        Some("POLYGON((0 -90, 60 -80, -60 -80, 0 -90))"),
+        Some("POLYGON((0 -90, 0 -85, 90 -85, 0 -90))"),
+    ];
+
+    // Create LHS from WKT fixtures
+    let lhs_geometry = create_array_storage(&wkt_fixtures, &WKB_GEOGRAPHY);
+    let lhs_ids: Vec<i32> = (0..wkt_fixtures.len() as i32).collect();
+    let lhs_id_array = Arc::new(Int32Array::from(lhs_ids));
+
+    let lhs_schema = Arc::new(Schema::new(vec![
+        Field::new("id", arrow_schema::DataType::Int32, false),
+        WKB_GEOGRAPHY.to_storage_field("geometry", true)?,
+    ]));
+
+    let lhs_batch = RecordBatch::try_new(lhs_schema.clone(), vec![lhs_id_array, lhs_geometry])?;
+
+    // Create RHS from random antimeridian-crossing polygons
+    // Bounds [160, -90, 200, 90] to get lots of antimeridian crossing geometries
+    let antimeridian_bounds = Rect::new(Coord { x: 160.0, y: -90.0 }, Coord { x: 200.0, y: 90.0 });
+
+    let (rhs_schema, rhs_partitions) = RandomPartitionedDataBuilder::new()
+        .seed(4326)
+        .num_partitions(2)
+        .batches_per_partition(2)
+        .rows_per_batch(125)
+        .geometry_type(GeometryTypeId::Polygon)
+        .sedona_type(WKB_GEOGRAPHY)
+        .bounds(antimeridian_bounds)
+        .size_range((1.0, 5.0))
+        .polygon_hole_rate(0.5)
+        .null_rate(0.0)
+        .build()?;
+
+    Ok((
+        (lhs_schema, vec![vec![lhs_batch]]),
+        (rhs_schema, rhs_partitions),
+    ))
+}
+
+/// Test geography spatial join corner cases with ST_Intersects.
+///
+/// Tests that the optimized spatial join produces the same results as the
+/// nested loop join for corner case geometries (full-width polygons, polar
+/// triangles, antimeridian-crossing polygons).
+#[rstest]
+#[tokio::test]
+async fn test_spatial_join_geography_corner_case_intersects(
+    #[values(
+        "ST_Intersects(L.geometry, R.geometry)",
+        "ST_Intersects(R.geometry, L.geometry)"
+    )]
+    predicate: &str,
+) -> Result<()> {
+    let ((left_schema, left_partitions), (right_schema, right_partitions)) =
+        create_corner_case_test_data()?;
+
+    let options = SpatialJoinOptions {
+        spatial_join_reordering: false, // Test both sides explicitly
+        ..Default::default()
+    };
+    let batch_size = 30;
+
+    let sql = format!(
+        "SELECT L.id l_id, R.id r_id FROM L INNER JOIN R ON {} ORDER BY l_id, r_id",
+        predicate
+    );
+
+    let result = test_spatial_join_query(
+        &left_schema,
+        &right_schema,
+        left_partitions,
+        right_partitions,
+        &options,
+        batch_size,
+        &sql,
+    )
+    .await?;
+
+    // Should produce non-empty results
+    assert!(
+        result.num_rows() > 0,
+        "Intersects join should produce results for corner case geometries"
+    );
+
+    Ok(())
+}
+
+/// Test geography spatial join corner cases with ST_Distance predicate.
+///
+/// Unlike ST_Intersects, the distance-based join with a large threshold should
+/// produce matching results between optimized and fallback paths because the
+/// bounding box expansion accounts for the distance threshold.
+#[rstest]
+#[tokio::test]
+async fn test_spatial_join_geography_corner_case_distance(
+    #[values(
+        "ST_Distance(L.geometry, R.geometry) < 10000000",
+        "ST_Distance(R.geometry, L.geometry) < 10000000"
+    )]
+    predicate: &str,
+) -> Result<()> {
+    let ((left_schema, left_partitions), (right_schema, right_partitions)) =
+        create_corner_case_test_data()?;
+
+    let options = SpatialJoinOptions {
+        spatial_join_reordering: false, // Test both sides explicitly
+        ..Default::default()
+    };
+    let batch_size = 30;
+
+    let sql = format!(
+        "SELECT L.id l_id, R.id r_id FROM L INNER JOIN R ON {} ORDER BY l_id, r_id",
+        predicate
+    );
+
+    // This should pass - distance joins should match between optimized and fallback
+    let result = test_spatial_join_query(
+        &left_schema,
+        &right_schema,
+        left_partitions,
+        right_partitions,
+        &options,
+        batch_size,
+        &sql,
+    )
+    .await?;
+
+    // Should produce non-empty results
+    assert!(
+        result.num_rows() > 0,
+        "Distance join should produce results for corner case geometries"
+    );
 
     Ok(())
 }
