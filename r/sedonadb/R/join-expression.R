@@ -410,6 +410,7 @@ print.sedonadb_join_select <- function(x, ...) {
 #' @returns A named list of expressions
 #' @noRd
 sd_eval_join_select_exprs <- function(join_select, join_expr_ctx) {
+  ensure_translations_registered()
   stopifnot(inherits(join_select, "sedonadb_join_select"))
 
   exprs <- lapply(join_select$exprs, function(quo) {
