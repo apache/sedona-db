@@ -42,7 +42,7 @@ pub fn analyze_wkb(geom: &Wkb) -> Result<GeometrySummary, SedonaGeometryError> {
     // Get point count directly using the geometry traits
     let point_count = count_points(geom);
 
-    // Calculate bounding box and geometry types using geo_traits_update_xy_bounds
+    // Derive geometry type and dimensions from the geometry
     let geometry_type = GeometryTypeAndDimensions::try_from_geom(geom)?;
 
     // Determine geometry type counts directly

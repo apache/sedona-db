@@ -195,7 +195,7 @@ impl SpatialIndexBuilder for GPUSpatialIndexBuilder {
                 .map(|x| x.batch.num_rows())
                 .sum(),
         );
-        let empty_rect = (f32::NAN, f32::NAN, f32::NAN, f32::NAN);
+        let empty_rect = [f32::NAN, f32::NAN, f32::NAN, f32::NAN];
 
         refiner
             .init_build_schema(sedona_type.storage_type())
@@ -213,7 +213,7 @@ impl SpatialIndexBuilder for GPUSpatialIndexBuilder {
                     native_rects.push(empty_rect);
                 } else {
                     let (x, y) = rect.clone().into_inner();
-                    native_rects.push((x.0, y.0, x.1, y.1));
+                    native_rects.push([x.0, y.0, x.1, y.1]);
                 }
                 data_id_to_batch_pos.push((batch_idx as i32, idx as i32));
             }

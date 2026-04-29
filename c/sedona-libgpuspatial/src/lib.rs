@@ -114,7 +114,7 @@ mod sys {
         /// This method accumulates these rectangles until `finish_building` is called to finalize the index.
         /// The method can be called multiple times to insert data in batches before finalizing. The values
         /// in rects are ordered (xmin, ymin, xmax, ymax).
-        pub fn push_build(&mut self, rects: &[(f32, f32, f32, f32)]) -> Result<()> {
+        pub fn push_build(&mut self, rects: &[[f32; 4]]) -> Result<()> {
             // Re-interpreting rects as a flat f32 array (xmin, ymin, xmax, ymax)
             let raw_ptr = rects.as_ptr() as *const f32;
             self.inner.push_build(raw_ptr, rects.len() as u32)
@@ -127,7 +127,7 @@ mod sys {
 
         /// Probes the spatial index with a batch of rectangles and returns pairs of matching indices from the build and probe sets.
         ///  The values in rects are ordered (xmin, ymin, xmax, ymax).
-        pub fn probe(&self, rects: &[(f32, f32, f32, f32)]) -> Result<(Vec<u32>, Vec<u32>)> {
+        pub fn probe(&self, rects: &[[f32; 4]]) -> Result<(Vec<u32>, Vec<u32>)> {
             let raw_ptr = rects.as_ptr() as *const f32;
             self.inner.probe(raw_ptr, rects.len() as u32)
         }
@@ -204,13 +204,13 @@ mod sys {
             Err(GpuSpatialError::GpuNotAvailable)
         }
         pub fn clear(&mut self) {}
-        pub fn push_build(&mut self, _r: &[(f32, f32, f32, f32)]) -> Result<()> {
+        pub fn push_build(&mut self, _r: &[[f32; 4]]) -> Result<()> {
             Err(GpuSpatialError::GpuNotAvailable)
         }
         pub fn finish_building(&mut self) -> Result<GpuSpatialIndex> {
             Err(GpuSpatialError::GpuNotAvailable)
         }
-        pub fn probe(&self, _r: &[(f32, f32, f32, f32)]) -> Result<(Vec<u32>, Vec<u32>)> {
+        pub fn probe(&self, _r: &[[f32; 4]]) -> Result<(Vec<u32>, Vec<u32>)> {
             Err(GpuSpatialError::GpuNotAvailable)
         }
     }

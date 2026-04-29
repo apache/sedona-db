@@ -179,7 +179,7 @@ impl SpatialIndex for GPUSpatialIndex {
         }
         let index = &self.index.as_ref();
 
-        let empty_rect = (f32::NAN, f32::NAN, f32::NAN, f32::NAN);
+        let empty_rect = [f32::NAN, f32::NAN, f32::NAN, f32::NAN];
         let rects: Vec<_> = range
             .clone()
             .map(|row_idx| {
@@ -188,7 +188,7 @@ impl SpatialIndex for GPUSpatialIndex {
                     empty_rect
                 } else {
                     let (x, y) = bounds.clone().into_inner();
-                    (x.0, y.0, x.1, y.1)
+                    [x.0, y.0, x.1, y.1]
                 }
             })
             .collect();
