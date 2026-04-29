@@ -560,29 +560,35 @@ impl SpatialIndex for DefaultSpatialIndex {
                 continue;
             }
 
+            // Deduplicate the data_idx themselves. This can happen if the same build rectangle
+            // intersects both the left and right probe rectangles.
+            if probe_rect.is_wraparound() {
+                candidates.sort_unstable();
+                candidates.dedup();
+            }
+
+            // Deduplicate candidates arising from distinct data_idx in candidates that resolve
+            // to the same build batch positions due to multiple rectangles for the same item
+            // in the tree.
+            if self.inner.wraparound.is_some() {
+                let mut indexed_candidates: Vec<_> = candidates
+                    .iter()
+                    .map(|&data_idx| (self.inner.data_id_to_batch_pos[data_idx as usize], data_idx))
+                    .collect();
+                indexed_candidates.sort_unstable_by_key(|(pos, _)| *pos);
+                indexed_candidates.dedup_by_key(|(pos, _)| *pos);
+                candidates = indexed_candidates
+                    .into_iter()
+                    .map(|(_, data_idx)| data_idx)
+                    .collect();
+            }
+
             let Some(probe_wkb) = evaluated_batch.geom_array.wkb(row_idx) else {
                 return sedona_internal_err!(
                     "Failed to get WKB for row {} in evaluated batch",
                     row_idx
                 );
             };
-
-            // Sort and dedup candidates to avoid duplicate results when we index one geometry
-            // using several boxes (e.g., for antimeridian-crossing geometries).
-            // First dedup by data_idx (fast), then dedup by position (handles wraparound case).
-            if self.inner.wraparound.is_some() {
-                candidates.sort_unstable();
-                candidates.dedup();
-
-                // Dedup by position: when a geometry spans the antimeridian, it may be indexed
-                // as two separate boxes with different data_idx values that map to the same position.
-                let mut seen_positions: std::collections::HashSet<(i32, i32)> =
-                    std::collections::HashSet::new();
-                candidates.retain(|data_idx| {
-                    let pos = self.inner.data_id_to_batch_pos[*data_idx as usize];
-                    seen_positions.insert(pos)
-                });
-            }
 
             let distance = match dist {
                 Some(dist_array) => distance_value_at(dist_array, row_idx)?,
