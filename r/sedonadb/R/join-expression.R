@@ -112,33 +112,16 @@ sd_join_expr_ctx <- function(
   x_ref <- structure(x_cols, class = "sedonadb_table_ref", qualifier = x_qualifier)
   y_ref <- structure(y_cols, class = "sedonadb_table_ref", qualifier = y_qualifier)
 
-  # The data mask contains x and y as table references
-  data <- list(x = x_ref, y = y_ref)
-
   # Also include unqualified column references for unambiguous columns
-  all_names <- unique(c(x_names, y_names))
   ambiguous <- intersect(x_names, y_names)
-
-  for (name in all_names) {
-    if (!(name %in% ambiguous)) {
-      # Unambiguous column - add to data mask
-      if (name %in% x_names) {
-        data[[name]] <- x_cols[[name]]
-      } else {
-        data[[name]] <- y_cols[[name]]
-      }
-    }
-  }
+  data <- c(x_cols[setdiff(x_names, ambiguous)], y_cols[setdiff(y_names, ambiguous)])
 
   structure(
     list(
       factory = factory,
       x_schema = x_schema,
       y_schema = y_schema,
-      x_qualifier = x_qualifier,
-      y_qualifier = y_qualifier,
-      x_ref = x_ref,
-      y_ref = y_ref,
+      table_refs = list(x = x_ref, y = y_ref),
       ambiguous_columns = ambiguous,
       data = rlang::as_data_mask(data),
       env = env,
@@ -148,8 +131,7 @@ sd_join_expr_ctx <- function(
   )
 }
 
-#' @export
-`$.sedonadb_table_ref` <- function(x, name) {
+get_from_table_ref <- function(x, name) {
   if (!(name %in% names(x))) {
     qualifier <- attr(x, "qualifier")
     stop(
@@ -166,7 +148,7 @@ sd_join_expr_ctx <- function(
 #' SedonaDB expressions using a join expression context. This currently
 #' uses a custom evaluation similar to normal evaluation to ensure better
 #' error messages; however, this should probably be unified into the
-#' normal evaluation to avoid maintaining two seprate paths in the future.
+#' normal evaluation to avoid maintaining two separate paths in the future.
 #'
 #' @param join_by A `sedonadb_join_by` object from [sd_join_by()]
 #' @param join_expr_ctx A `sedonadb_join_expr_ctx` from `sd_join_expr_ctx()`
@@ -220,10 +202,9 @@ sd_eval_join_expr_inner <- function(expr, join_expr_ctx, env) {
 
       # Check if this is x$col or y$col pattern
       if (rlang::is_symbol(lhs) && as.character(lhs) %in% c("x", "y")) {
-        table_ref <- rlang::eval_tidy(lhs, data = join_expr_ctx$data, env = env)
+        table_ref <- join_expr_ctx$table_refs[[as.character(lhs)]]
         col_name <- as.character(rhs)
-        # Use the $ S3 method to get proper error handling for missing columns
-        return(`$.sedonadb_table_ref`(table_ref, col_name))
+        return(get_from_table_ref(table_ref, col_name))
       }
     }
 
@@ -436,10 +417,7 @@ sd_eval_join_select_exprs <- function(join_select, join_expr_ctx) {
     env <- rlang::quo_get_env(quo)
 
     rlang::try_fetch(
-      {
-        # Evaluate the expression to get a column reference
-        sd_eval_join_select_expr_inner(expr, join_expr_ctx, env)
-      },
+      sd_eval_join_expr_inner(expr, join_expr_ctx, env),
       error = function(e) {
         rlang::abort(
           sprintf(
@@ -455,49 +433,6 @@ sd_eval_join_select_exprs <- function(join_select, join_expr_ctx) {
   is_unnamed <- names(exprs) == ""
   names(exprs)[is_unnamed] <- lapply(exprs[is_unnamed], function(e) e$qualified_name()[2])
   exprs
-}
-
-#' Evaluate a single join select expression
-#'
-#' @param expr An unevaluated R expression
-#' @param join_expr_ctx A join expression context
-#' @param env The expression environment
-#'
-#' @returns A `SedonaDBExpr` column expression
-#' @noRd
-sd_eval_join_select_expr_inner <- function(expr, join_expr_ctx, env) {
-  if (rlang::is_call(expr, "$")) {
-    # x$col or y$col syntax
-    lhs <- expr[[2]]
-    rhs <- expr[[3]]
-
-    if (rlang::is_symbol(lhs) && as.character(lhs) %in% c("x", "y")) {
-      table_ref <- rlang::eval_tidy(lhs, data = join_expr_ctx$data, env = env)
-      col_name <- as.character(rhs)
-      return(`$.sedonadb_table_ref`(table_ref, col_name))
-    }
-  }
-
-  if (rlang::is_symbol(expr)) {
-    name <- as.character(expr)
-    if (name %in% join_expr_ctx$ambiguous_columns) {
-      stop(
-        sprintf("Column '%s' is ambiguous (exists in both tables). ", name),
-        sprintf("Use x$%s or y$%s to disambiguate.", name, name),
-        call. = FALSE
-      )
-    }
-    # Unambiguous column reference
-    return(rlang::eval_tidy(expr, data = join_expr_ctx$data, env = env))
-  }
-
-  # For select, we only allow column references, not arbitrary expressions
-
-  stop(
-    "sd_join_select() expressions must be column references ",
-    "(e.g., x$col or y$col), not arbitrary expressions",
-    call. = FALSE
-  )
 }
 
 #' Build default column selection for join result

@@ -50,8 +50,8 @@ test_that("sd_join_expr_ctx() creates qualified column references", {
   ctx <- sd_join_expr_ctx(x_schema, y_schema)
 
   # Check that x and y table refs are stored in the context
-  expect_s3_class(ctx$x_ref, "sedonadb_table_ref")
-  expect_s3_class(ctx$y_ref, "sedonadb_table_ref")
+  expect_s3_class(ctx$table_refs$x, "sedonadb_table_ref")
+  expect_s3_class(ctx$table_refs$y, "sedonadb_table_ref")
 
   # Check that ambiguous columns are tracked
   expect_equal(ctx$ambiguous_columns, "id")
@@ -70,8 +70,8 @@ test_that("qualified column references produce correct expressions", {
   ctx <- sd_join_expr_ctx(x_schema, y_schema)
 
   # Access qualified columns via table ref stored in context
-  x_id <- ctx$x_ref$id
-  y_id <- ctx$y_ref$id
+  x_id <- ctx$table_refs$x$id
+  y_id <- ctx$table_refs$y$id
 
   expect_s3_class(x_id, "SedonaDBExpr")
   expect_s3_class(y_id, "SedonaDBExpr")
@@ -103,13 +103,6 @@ test_that("unambiguous columns can be referenced without qualifier", {
   # These should have the appropriate qualifiers
   expect_match(x_only_expr$display(), "x.x_only")
   expect_match(y_only_expr$display(), "y.y_only")
-
-  # x and y table refs should also be accessible
-  x_ref <- rlang::eval_tidy(quote(x), data = ctx$data)
-  y_ref <- rlang::eval_tidy(quote(y), data = ctx$data)
-
-  expect_s3_class(x_ref, "sedonadb_table_ref")
-  expect_s3_class(y_ref, "sedonadb_table_ref")
 })
 
 test_that("sd_eval_join_conditions() evaluates equality conditions", {
@@ -196,14 +189,20 @@ test_that("missing column references produce helpful errors", {
   )
 })
 
-test_that("table ref $ accessor validates column names", {
+test_that("table ref accessor validates column names", {
   x_schema <- nanoarrow::na_struct(list(id = nanoarrow::na_int32()))
   y_schema <- nanoarrow::na_struct(list(id = nanoarrow::na_int32()))
 
   ctx <- sd_join_expr_ctx(x_schema, y_schema)
 
-  expect_error(ctx$x_ref$nonexistent, "Column 'nonexistent' not found in table 'x'")
-  expect_error(ctx$y_ref$nonexistent, "Column 'nonexistent' not found in table 'y'")
+  expect_error(
+    get_from_table_ref(ctx$table_refs$x, "nonexistent"),
+    "Column 'nonexistent' not found in table 'x'"
+  )
+  expect_error(
+    get_from_table_ref(ctx$table_refs$y, "nonexistent"),
+    "Column 'nonexistent' not found in table 'y'"
+  )
 })
 
 test_that("sd_build_join_conditions() works with sd_join_by()", {
@@ -348,18 +347,6 @@ test_that("sd_eval_join_select_exprs() errors on missing columns", {
   expect_error(
     sd_eval_join_select_exprs(sel, ctx),
     "Column 'nonexistent' not found"
-  )
-})
-
-test_that("sd_eval_join_select_exprs() errors on non-column expressions", {
-  x_schema <- nanoarrow::na_struct(list(id = nanoarrow::na_int32()))
-  y_schema <- nanoarrow::na_struct(list(id = nanoarrow::na_int32()))
-  ctx <- sd_join_expr_ctx(x_schema, y_schema)
-
-  sel <- sd_join_select(x$id + 1)
-  expect_error(
-    sd_eval_join_select_exprs(sel, ctx),
-    "must be column references"
   )
 })
 
