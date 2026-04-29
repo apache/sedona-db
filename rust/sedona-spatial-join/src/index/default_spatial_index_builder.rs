@@ -17,7 +17,7 @@
 
 use arrow::array::BooleanBufferBuilder;
 use arrow_schema::SchemaRef;
-use sedona_common::SpatialJoinOptions;
+use sedona_common::{sedona_internal_err, SpatialJoinOptions};
 use sedona_expr::statistics::GeoStatistics;
 use sedona_geometry::interval::{Interval, IntervalTrait};
 use std::sync::Arc;
@@ -166,6 +166,7 @@ impl DefaultSpatialIndexBuilder {
 
         // Each item will add 0 (empty), 1 (regular) or 2 (wraparound)
         // rectangles to the index.
+        let mut wraparound_count = 0;
         let num_rects = self
             .indexed_batches
             .iter()
@@ -174,6 +175,7 @@ impl DefaultSpatialIndexBuilder {
                 if rect.is_empty() {
                     0
                 } else if rect.is_wraparound() {
+                    wraparound_count += 1;
                     2
                 } else {
                     1
@@ -184,22 +186,42 @@ impl DefaultSpatialIndexBuilder {
         let mut rtree_builder = RTreeBuilder::<f32>::new(num_rects as u32);
         let mut batch_pos_vec = vec![(-1, -1); num_rects];
 
+        // Check that if we did have wraparounds we have wraparound bounds against which
+        // to intersect them to get finite rectangles for the tree.
+        let wraparound = self.wraparound.unwrap_or(Interval::empty());
+        if self.wraparound.is_none() && wraparound_count > 0 {
+            return sedona_internal_err!(
+                "Spatial index wraparound hint was None but evaluated arrays contained wraparounds"
+            );
+        }
+
+        let mut num_added = 0;
         for (batch_idx, batch) in self.indexed_batches.iter().enumerate() {
             let rects = batch.geom_array.rects();
             for (idx, rect) in rects.iter().enumerate() {
-                let (left, right) = rect.split(&self.wraparound.unwrap_or(Interval::empty()));
+                let (left, right) = rect.split(&wraparound);
                 if !left.is_empty() {
                     let (x, y) = left.into_inner();
                     let data_idx = rtree_builder.add(x.0, y.0, x.1, y.1);
                     batch_pos_vec[data_idx as usize] = (batch_idx as i32, idx as i32);
+                    num_added += 1;
                 }
 
                 if !right.is_empty() {
                     let (x, y) = right.into_inner();
                     let data_idx = rtree_builder.add(x.0, y.0, x.1, y.1);
                     batch_pos_vec[data_idx as usize] = (batch_idx as i32, idx as i32);
+                    num_added += 1;
                 }
             }
+        }
+
+        // If the wraparound was misconfigured, either left or right may be unexpectedly
+        // empty and the wrong number of rectangles would have been added.
+        if num_added != num_rects {
+            return sedona_internal_err!(
+                "Expected {num_rects} rectangles for RTree build but got {num_added}"
+            );
         }
 
         let rtree = rtree_builder.finish::<HilbertSort>();

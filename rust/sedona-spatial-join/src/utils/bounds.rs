@@ -39,7 +39,7 @@ impl Bounds2D {
 
     /// Returns true if this rectangle is empty
     pub fn is_empty(&self) -> bool {
-        self.x().is_empty() && self.y().is_empty()
+        self.x().is_empty() || self.y().is_empty()
     }
 
     /// Create a new Bounds2D from f64 intervals
