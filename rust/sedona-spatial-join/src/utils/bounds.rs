@@ -97,7 +97,7 @@ impl Bounds2D {
 
     /// Decompose this object into raw x and y intervals
     ///
-    /// Note that the x interval may wrap such that xin > xmax.
+    /// Note that the x interval may wrap such that xmin > xmax.
     pub fn into_inner(self) -> ((f32, f32), (f32, f32)) {
         (self.x, self.y)
     }

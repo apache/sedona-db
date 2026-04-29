@@ -21,7 +21,7 @@ use crate::{
 };
 use wkb::reader::Wkb;
 
-/// Captures the size, bounds, and type-derived counts for a single geometry.
+/// Captures the size and type-derived counts for a single geometry.
 /// Used as the per-geometry input that eventually feeds aggregated `GeoStatistics`.
 #[derive(Debug, Clone)]
 pub struct GeometrySummary {
@@ -34,8 +34,7 @@ pub struct GeometrySummary {
     pub collection_count: i64,
 }
 
-/// Analyzes a WKB geometry and returns its size, point count, dimensions, and type using
-/// a specific [BoundingBox]. This allows geography types or precalculated bounds to be used.
+/// Analyzes a WKB geometry and returns its size, point count, and dimensions
 pub fn analyze_wkb(geom: &Wkb) -> Result<GeometrySummary, SedonaGeometryError> {
     // Get size in bytes directly from WKB buffer
     let size_bytes = geom.buf().len();

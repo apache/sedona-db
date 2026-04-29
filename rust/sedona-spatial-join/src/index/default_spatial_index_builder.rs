@@ -99,6 +99,10 @@ impl DefaultSpatialIndexBuilder {
         })
     }
 
+    /// Specify the factory to use when creating a refiner
+    ///
+    /// This can be used by join extensions to provide support for other data types like
+    /// geography.
     pub fn with_refiner_factory(
         mut self,
         refiner_factory: Arc<dyn IndexQueryResultRefinerFactory>,
@@ -107,6 +111,16 @@ impl DefaultSpatialIndexBuilder {
         self
     }
 
+    /// Specify the absolute bounds of the rectangles that will be inserted into the tree
+    ///
+    /// When set, this must accurately reflect the range of x values in the evaluated
+    /// geometry array's rectangles. This is used by the geography join because those
+    /// rectangles are always within -180..180. When wraparound bounds are encountered,
+    /// this is used to constrain them to finite values in the x direction and insert
+    /// multiple rectangles into the tree.
+    ///
+    /// When self.wraparound is None, inserting wraparound bounds will result in invalid
+    /// results.
     pub fn with_wraparound(mut self, wraparound: impl Into<Interval>) -> Self {
         self.wraparound = Some(wraparound.into());
         self
@@ -173,7 +187,7 @@ impl DefaultSpatialIndexBuilder {
         for (batch_idx, batch) in self.indexed_batches.iter().enumerate() {
             let rects = batch.geom_array.rects();
             for (idx, rect) in rects.iter().enumerate() {
-                let (left, right) = rect.split(&Interval::new(-180.0, 180.0));
+                let (left, right) = rect.split(&self.wraparound.unwrap_or(Interval::empty()));
                 if !left.is_empty() {
                     let (x, y) = left.into_inner();
                     let data_idx = rtree_builder.add(x.0, y.0, x.1, y.1);

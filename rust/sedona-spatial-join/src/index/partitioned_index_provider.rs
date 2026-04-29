@@ -403,8 +403,6 @@ impl EvaluatedBatchStream for ReceiverBatchStream {
 
 #[cfg(test)]
 mod tests {
-    use std::iter::zip;
-
     use super::*;
     use crate::join_provider::DefaultSpatialJoinProvider;
     use crate::operand_evaluator::EvaluatedGeometryArray;
@@ -434,6 +432,7 @@ mod tests {
     use sedona_functions::st_analyze_agg::AnalyzeAccumulator;
     use sedona_geometry::wkb_factory::wkb_point;
     use sedona_schema::datatypes::WKB_GEOMETRY;
+    use std::iter::zip;
 
     use crate::evaluated_batch::spill::EvaluatedBatchSpillWriter;
     use crate::partitioning::stream_repartitioner::{SpilledPartition, SpilledPartitions};

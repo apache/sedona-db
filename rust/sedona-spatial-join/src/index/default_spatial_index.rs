@@ -71,6 +71,12 @@ struct DefaultSpatialIndexInner {
     pub(crate) rtree: RTree<f32>,
 
     /// Absolute bounds of the coordinate system
+    ///
+    /// If this value should be `None` if each input feature has exactly one item in the tree and
+    /// each probe input is guaranteed to have non-wraparound bounds. This is the case when using
+    /// non-wraparound bounds like those computed by the default evaluated geometry array
+    /// constructor. If this is some, it must contain the bounds of any rectangle in the tree. This
+    /// is needed to split probe rectangles into finite queries when querying the tree.
     pub(crate) wraparound: Option<Interval>,
 
     /// Indexed batches containing evaluated geometry arrays. It contains the original record

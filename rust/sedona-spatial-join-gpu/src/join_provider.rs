@@ -131,13 +131,7 @@ impl EvaluatedGeometryArrayFactory for DefaultGeometryArrayFactory {
                     let y_float = y.lo() as f32;
                     Bounds2D::new_from_raw((x_float, x_float), (y_float, y_float))
                 } else {
-                    Bounds2D::empty()
-                    // let (min_x, min_y, max_x, max_y) =
-                    //     f64_box_to_f32(min.x, min.y, max.x, max.y);
-                    // Some(Rect::new(
-                    //     coord!(x: min_x, y: min_y),
-                    //     coord!(x: max_x, y: max_y),
-                    // ))
+                    bounds
                 }
             } else {
                 Bounds2D::empty()
