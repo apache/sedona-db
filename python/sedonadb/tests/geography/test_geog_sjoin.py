@@ -18,6 +18,8 @@
 import json
 
 import pandas as pd
+import pyarrow as pa
+import geoarrow.pyarrow as ga
 import pytest
 import sedonadb
 from sedonadb.testing import PostGIS, SedonaDB, skip_if_not_exists
@@ -451,3 +453,96 @@ def test_spatial_join_countries_self_intersects(geoarrow_data):
             .reset_index(drop=True)
         )
         pd.testing.assert_frame_equal(sedonadb_results, postgis_results)
+
+
+@pytest.mark.parametrize(
+    "on",
+    [
+        "ST_Intersects(lhs.geog, rhs.geog)",
+        "ST_Intersects(rhs.geog, lhs.geog)",
+        "ST_Distance(lhs.geog, rhs.geog) < 10000000",
+        "ST_Distance(rhs.geog, lhs.geog) < 10000000",
+    ],
+)
+def test_spatial_join_geography_corner_case(on):
+    sd = sedonadb.connect()
+
+    # This ensures we can test these inputs both on the build and the probe side
+    sd.sql("SET sedona.spatial_join.spatial_join_reordering = false")
+
+    # WKT fixtures for some edge cases: full-width polygons and polar triangles
+    wkt_fixtures = [
+        # Full-width polygons (spanning 360 degrees longitude, with intermediate points)
+        "POLYGON((-180 -10, -180 10, -90 10, 0 10, 90 10, 180 10, 180 -10, 90 -10, 0 -10, -90 -10, -180 -10))",
+        "POLYGON((-180 20, -180 40, -90 40, 0 40, 90 40, 180 40, 180 20, 90 20, 0 20, -90 20, -180 20))",
+        "POLYGON((-180 -45, -90 -30, 0 -45, 90 -30, 180 -45, 90 -60, 0 -45, -90 -60, -180 -45))",
+        # Full width polygon shifted so that it crosses the antimeridian
+        "POLYGON((0 -10, 0 10, 90 10, 180 10, 270 10, 360 10, 360 -10, 270 -10, 180 -10, 80 -10, 0 -10))",
+        # Whole planet
+        "POLYGON((-180 -90, 0 -90, 90 -90, 180 -90, 180 0, 180 90, 90 90, 0 90, -90 90, -180 90, -180 0, -180 90))",
+        # North pole triangles
+        "POLYGON((0 90, -120 70, 120 70, 0 90))",
+        "POLYGON((0 90, 60 80, -60 80, 0 90))",
+        "POLYGON((0 90, 0 85, 90 85, 0 90))",
+        # South pole triangles
+        "POLYGON((0 -90, -120 -70, 120 -70, 0 -90))",
+        "POLYGON((0 -90, 60 -80, -60 -80, 0 -90))",
+        "POLYGON((0 -90, 0 -85, 90 -85, 0 -90))",
+    ]
+    tab = pa.table(
+        {
+            "id": range(len(wkt_fixtures)),
+            "geometry": ga.with_edge_type(
+                ga.as_wkb(wkt_fixtures), ga.EdgeType.SPHERICAL
+            ),
+        }
+    )
+
+    # Ensure we get lots of antimeridian crossing geometries in our random sample
+    sd.funcs.table.sd_random_geometry(
+        "Polygon",
+        500,
+        bounds=[160, -90, 200, 90],
+        hole_rate=0.5,
+        size=5,
+        seed=4326,
+    ).to_view("antimeridian_polygons_geom")
+
+    # Convert random geometry to geography for rhs
+    sd.sql("""
+        SELECT id, ST_SetSRID(ST_GeogFromWKB(ST_AsBinary(geometry)), 4326) AS geog
+        FROM antimeridian_polygons_geom
+    """).to_view("rhs")
+
+    # Create lhs from fixtures (already has spherical edges)
+    sd.create_data_frame(tab).to_view("fixtures_raw")
+    sd.sql("""
+        SELECT id, ST_SetSRID(geometry, 4326) AS geog
+        FROM fixtures_raw
+    """).to_view("lhs")
+
+    # Build the join query
+    sql = f"""
+        SELECT lhs.id AS id0, rhs.id AS id1
+        FROM lhs INNER JOIN rhs
+        ON {on}
+        ORDER BY id0, id1
+    """
+
+    # Run with spatial join enabled (optimized path)
+    sd.sql("SET sedona.spatial_join.enable = true")
+    optimized_results = sd.sql(sql).to_pandas()
+
+    # Run with spatial join disabled (nested loop fallback)
+    sd.sql("SET sedona.spatial_join.enable = false")
+    fallback_results = sd.sql(sql).to_pandas()
+
+    # Both should produce results (the fixtures intersect with the random polygons)
+    assert len(optimized_results) > 0
+    assert len(fallback_results) > 0
+
+    # Check exact equality of returned indices
+    pd.testing.assert_frame_equal(
+        optimized_results.reset_index(drop=True),
+        fallback_results.reset_index(drop=True),
+    )
