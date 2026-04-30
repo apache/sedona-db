@@ -41,7 +41,9 @@ use datafusion_catalog::{memory::DataSourceExec, Session};
 use datafusion_common::{plan_err, GetExt, Result, Statistics};
 use datafusion_datasource_parquet::metadata::DFParquetMetadata;
 use datafusion_execution::cache::cache_manager::FileMetadataCache;
-use datafusion_physical_expr::{projection::ProjectionExprs, LexRequirement, PhysicalExpr};
+use datafusion_physical_expr::{
+    expressions::Column, projection::ProjectionExprs, LexRequirement, PhysicalExpr,
+};
 use datafusion_physical_plan::{
     filter_pushdown::FilterPushdownPropagation, metrics::ExecutionPlanMetricsSet, ExecutionPlan,
 };
@@ -560,6 +562,31 @@ impl FileSource for GeoParquetFileSource {
         &self,
         projection: &ProjectionExprs,
     ) -> Result<Option<Arc<dyn FileSource>>> {
+        // DataFusion 52 has a "bug" where field metadata (like ARROW:extension:name)
+        // is stripped when evaluating embedded projections in ParquetOpener. This is
+        // probably only a bug for us because we are wrapping the reader which normally
+        // does not produce fields with extension types, so raw column references will
+        // never have extension metadata in the upstream DataFusion version.
+        //
+        // We work around this by only accepting projection pushdown for simple column
+        // selections (which preserves column pruning performance). Projections containing
+        // UDFs or other expressions are rejected, forcing them to be evaluated at a
+        // ProjectionExec above the scan where the batch schema has correct metadata.
+
+        let all_columns = projection.as_ref().iter().all(|proj_expr| {
+            proj_expr
+                .expr
+                .as_any()
+                .downcast_ref::<Column>()
+                .map(|column| column.name() == proj_expr.alias)
+                .unwrap_or(false)
+        });
+
+        if !all_columns {
+            // Projection contains non-column expressions; reject pushdown to avoid metadata bug
+            return Ok(None);
+        }
+
         let inner_result = self.inner.try_pushdown_projection(projection)?;
         match inner_result {
             Some(updated_inner) => {
