@@ -119,9 +119,8 @@ impl PhysicalExpr for MetadataPreservingColumn {
         children: Vec<Arc<dyn PhysicalExpr>>,
     ) -> Result<Arc<dyn PhysicalExpr>> {
         if children.len() != 1 {
-            return sedona_internal_err!("unexpected children size");
+            return sedona_internal_err!("MetadataPreservingColumn expects exactly one child");
         }
-
         Ok(Arc::new(Self {
             inner: children[0].clone(),
             field: self.field.clone(),

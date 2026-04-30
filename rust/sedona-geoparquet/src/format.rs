@@ -21,7 +21,7 @@ use std::{
     sync::Arc,
 };
 
-use arrow_schema::{Schema, SchemaRef};
+use arrow_schema::{FieldRef, Schema, SchemaRef};
 use async_trait::async_trait;
 use datafusion::{
     config::{ConfigField, ConfigOptions},
@@ -38,6 +38,7 @@ use datafusion::{
     },
 };
 use datafusion_catalog::{memory::DataSourceExec, Session};
+use datafusion_common::tree_node::{Transformed, TreeNode, TreeNodeRecursion};
 use datafusion_common::{plan_err, GetExt, Result, Statistics};
 use datafusion_datasource_parquet::metadata::DFParquetMetadata;
 use datafusion_execution::cache::cache_manager::FileMetadataCache;
@@ -57,6 +58,7 @@ use sedona_schema::extension_type::ExtensionType;
 use crate::{
     file_opener::{storage_schema_contains_geo, GeoParquetFileOpener, GeoParquetFileOpenerMetrics},
     metadata::{GeoParquetColumnEncoding, GeoParquetMetadata},
+    metadata_preserving_column::MetadataPreservingColumn,
     options::TableGeoParquetOptions,
     writer::create_geoparquet_writer_physical_plan,
 };
@@ -562,31 +564,21 @@ impl FileSource for GeoParquetFileSource {
         &self,
         projection: &ProjectionExprs,
     ) -> Result<Option<Arc<dyn FileSource>>> {
-        // DataFusion 52 has a "bug" where field metadata (like ARROW:extension:name)
+        // DataFusion 52 has an issue where field metadata (like ARROW:extension:name)
         // is stripped when evaluating embedded projections in ParquetOpener. This is
         // because the batch schema comes from the parquet reader (which doesn't have
         // extension metadata), and Column::return_field() looks up fields from that schema.
         //
-        // We work around this by only accepting projection pushdown for simple column
-        // selections (which preserves column pruning performance). Projections containing
-        // UDFs or other expressions are rejected, forcing them to be evaluated at a
-        // ProjectionExec above the scan where the batch schema has correct metadata.
+        // We fix this by wrapping Column expressions with MetadataPreservingColumn,
+        // which stores the correct field from the table schema and returns it from
+        // return_field() regardless of the input schema.
+        let table_schema = self.inner.table_schema().table_schema();
+        let transformed_projection =
+            wrap_columns_with_metadata_preserving(projection.clone(), table_schema)?;
 
-        let all_columns = projection.as_ref().iter().all(|proj_expr| {
-            proj_expr
-                .expr
-                .as_any()
-                .downcast_ref::<Column>()
-                .map(|column| column.name() == proj_expr.alias)
-                .unwrap_or(false)
-        });
-
-        if !all_columns {
-            // Projection contains non-column expressions; reject pushdown to avoid metadata bug
-            return Ok(None);
-        }
-
-        let inner_result = self.inner.try_pushdown_projection(projection)?;
+        let inner_result = self
+            .inner
+            .try_pushdown_projection(&transformed_projection)?;
         match inner_result {
             Some(updated_inner) => {
                 let mut updated_source = Self::try_from_file_source(
@@ -620,6 +612,39 @@ impl FileSource for GeoParquetFileSource {
     fn file_type(&self) -> &str {
         self.inner.file_type()
     }
+}
+
+/// Wrap Column expressions in a projection with MetadataPreservingColumn.
+///
+/// This ensures that field metadata (like GeoArrow extension types) is preserved
+/// when the projection is evaluated, even when the input schema lacks metadata.
+fn wrap_columns_with_metadata_preserving(
+    projection: ProjectionExprs,
+    table_schema: &Schema,
+) -> Result<ProjectionExprs> {
+    projection.try_map_exprs(|expr| wrap_expr_columns(expr, table_schema))
+}
+
+/// Recursively wrap all Column expressions in an expression tree with MetadataPreservingColumn.
+fn wrap_expr_columns(
+    expr: Arc<dyn PhysicalExpr>,
+    table_schema: &Schema,
+) -> Result<Arc<dyn PhysicalExpr>> {
+    expr.transform_down(|node| {
+        if let Some(column) = node.as_any().downcast_ref::<Column>() {
+            let field: FieldRef = Arc::new(table_schema.field(column.index()).clone());
+            let wrapped = Arc::new(MetadataPreservingColumn::new(column.clone(), field));
+            // Use Jump to skip visiting children - the wrapped Column is now a child
+            // of MetadataPreservingColumn and we don't want to wrap it again
+            return Ok(Transformed::new(
+                wrapped as Arc<dyn PhysicalExpr>,
+                true,
+                TreeNodeRecursion::Jump,
+            ));
+        }
+        Ok(Transformed::no(node))
+    })
+    .map(|t| t.data)
 }
 
 #[cfg(test)]
