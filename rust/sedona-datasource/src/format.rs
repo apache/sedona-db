@@ -33,7 +33,9 @@ use datafusion::{
 };
 use datafusion_catalog::{memory::DataSourceExec, Session};
 use datafusion_common::{not_impl_err, plan_err, DataFusionError, GetExt, Result, Statistics};
-use datafusion_physical_expr::{LexOrdering, LexRequirement, PhysicalExpr};
+use datafusion_physical_expr::{
+    projection::ProjectionExprs, LexOrdering, LexRequirement, PhysicalExpr,
+};
 use datafusion_physical_plan::{
     filter_pushdown::{FilterPushdownPropagation, PushedDown},
     metrics::ExecutionPlanMetricsSet,
@@ -196,32 +198,30 @@ impl FileFormat for ExternalFileFormat {
         not_impl_err!("writing not yet supported for ExternalFileFormat")
     }
 
-    fn file_source(&self) -> Arc<dyn FileSource> {
-        Arc::new(ExternalFileSource::new(self.spec.clone()))
+    fn file_source(&self, table_schema: TableSchema) -> Arc<dyn FileSource> {
+        Arc::new(ExternalFileSource::new(self.spec.clone(), table_schema))
     }
 }
 
 #[derive(Debug, Clone)]
 struct ExternalFileSource {
     spec: Arc<dyn ExternalFormatSpec>,
+    table_schema: TableSchema,
     batch_size: Option<usize>,
-    file_schema: Option<TableSchema>,
-    file_projection: Option<Vec<usize>>,
+    projection: Option<ProjectionExprs>,
     filters: Vec<Arc<dyn PhysicalExpr>>,
     metrics: ExecutionPlanMetricsSet,
-    projected_statistics: Option<Statistics>,
 }
 
 impl ExternalFileSource {
-    pub fn new(spec: Arc<dyn ExternalFormatSpec>) -> Self {
+    pub fn new(spec: Arc<dyn ExternalFormatSpec>, table_schema: TableSchema) -> Self {
         Self {
             spec,
+            table_schema,
             batch_size: None,
-            file_schema: None,
-            file_projection: None,
+            projection: None,
             filters: Vec::new(),
             metrics: ExecutionPlanMetricsSet::default(),
-            projected_statistics: None,
         }
     }
 }
@@ -232,7 +232,9 @@ impl FileSource for ExternalFileSource {
         store: Arc<dyn ObjectStore>,
         base_config: &FileScanConfig,
         _partition: usize,
-    ) -> Arc<dyn FileOpener> {
+    ) -> Result<Arc<dyn FileOpener>> {
+        let file_projection = self.projection.as_ref().map(|p| p.column_indices());
+
         let args = OpenReaderArgs {
             src: Object {
                 store: Some(store.clone()),
@@ -241,15 +243,15 @@ impl FileSource for ExternalFileSource {
                 range: None,
             },
             batch_size: self.batch_size,
-            file_schema: self.file_schema.as_ref().map(|s| s.file_schema().clone()),
-            file_projection: self.file_projection.clone(),
+            file_schema: Some(self.table_schema.file_schema().clone()),
+            file_projection,
             filters: self.filters.clone(),
         };
 
-        Arc::new(ExternalFileOpener {
+        Ok(Arc::new(ExternalFileOpener {
             spec: self.spec.clone(),
             args,
-        })
+        }))
     }
 
     fn try_pushdown_filters(
@@ -275,6 +277,20 @@ impl FileSource for ExternalFileSource {
         .with_updated_node(Arc::new(source)))
     }
 
+    fn try_pushdown_projection(
+        &self,
+        projection: &ProjectionExprs,
+    ) -> Result<Option<Arc<dyn FileSource>>> {
+        Ok(Some(Arc::new(Self {
+            projection: Some(projection.clone()),
+            ..self.clone()
+        })))
+    }
+
+    fn projection(&self) -> Option<&ProjectionExprs> {
+        self.projection.as_ref()
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -286,36 +302,12 @@ impl FileSource for ExternalFileSource {
         })
     }
 
-    fn with_schema(&self, schema: TableSchema) -> Arc<dyn FileSource> {
-        Arc::new(Self {
-            file_schema: Some(schema),
-            ..self.clone()
-        })
-    }
-
-    fn with_projection(&self, config: &FileScanConfig) -> Arc<dyn FileSource> {
-        Arc::new(Self {
-            file_projection: config.file_column_projection_indices(),
-            ..self.clone()
-        })
-    }
-
-    fn with_statistics(&self, statistics: Statistics) -> Arc<dyn FileSource> {
-        Arc::new(Self {
-            projected_statistics: Some(statistics),
-            ..self.clone()
-        })
-    }
-
     fn metrics(&self) -> &ExecutionPlanMetricsSet {
         &self.metrics
     }
 
-    fn statistics(&self) -> Result<Statistics> {
-        let statistics = &self.projected_statistics;
-        Ok(statistics
-            .clone()
-            .expect("projected_statistics must be set"))
+    fn table_schema(&self) -> &TableSchema {
+        &self.table_schema
     }
 
     fn file_type(&self) -> &str {
@@ -333,7 +325,7 @@ impl FileSource for ExternalFileSource {
             SupportsRepartition::None => Ok(None),
             SupportsRepartition::ByRange => {
                 // Default implementation
-                if config.file_compression_type.is_compressed() || config.new_lines_in_values {
+                if config.file_compression_type.is_compressed() {
                     return Ok(None);
                 }
 
@@ -403,8 +395,8 @@ mod test {
         let spec = Arc::new(EchoSpec::default());
         let factory = ExternalFormatFactory::new(spec.clone());
 
-        // Register the format
-        let mut state = SessionStateBuilder::new().build();
+        // Register the format - use new_with_default_features to get default catalogs
+        let mut state = SessionStateBuilder::new_with_default_features().build();
         state.register_file_format(Arc::new(factory), true).unwrap();
         SessionContext::new_with_state(state).enable_url_table()
     }
@@ -529,8 +521,9 @@ mod test {
         let (temp_dir, files) = create_echo_spec_temp_dir();
 
         // Select using just the filename and ensure we get a result
+        // Quote the path to prevent it from being parsed as a multi-part identifier
         let batches_item0 = ctx
-            .table(files[0].to_string_lossy().to_string())
+            .table(format!("\"{}\"" , files[0].to_string_lossy()))
             .await
             .unwrap()
             .collect()
@@ -542,7 +535,7 @@ mod test {
 
         // With a glob we should get all the files
         let batches = ctx
-            .table(format!("{}/*.echospec", temp_dir.path().to_string_lossy()))
+            .table(format!("\"{}/*.echospec\"", temp_dir.path().to_string_lossy()))
             .await
             .unwrap()
             .collect()
@@ -560,8 +553,9 @@ mod test {
         let (temp_dir, _files) = create_echo_spec_temp_dir();
 
         // Ensure that if we pass
+        // Quote the path to prevent it from being parsed as a multi-part identifier
         let batches = ctx
-            .table(format!("{}/*.echospec", temp_dir.path().to_string_lossy()))
+            .table(format!("\"{}/*.echospec\"", temp_dir.path().to_string_lossy()))
             .await
             .unwrap()
             .filter(col("src").like(lit("%item0%")))
