@@ -41,7 +41,9 @@ use datafusion_catalog::{memory::DataSourceExec, Session};
 use datafusion_common::{plan_err, GetExt, Result, Statistics};
 use datafusion_datasource_parquet::metadata::DFParquetMetadata;
 use datafusion_execution::cache::cache_manager::FileMetadataCache;
-use datafusion_physical_expr::{LexRequirement, PhysicalExpr};
+use datafusion_physical_expr::{
+    projection::ProjectionExprs, LexRequirement, PhysicalExpr,
+};
 use datafusion_physical_plan::{
     filter_pushdown::FilterPushdownPropagation, metrics::ExecutionPlanMetricsSet, ExecutionPlan,
 };
@@ -364,9 +366,9 @@ impl FileFormat for GeoParquetFormat {
         )
     }
 
-    fn file_source(&self) -> Arc<dyn FileSource> {
+    fn file_source(&self, table_schema: TableSchema) -> Arc<dyn FileSource> {
         let mut source =
-            GeoParquetFileSource::try_from_file_source(self.inner().file_source(), None, None)
+            GeoParquetFileSource::try_from_file_source(self.inner().file_source(table_schema), None, None)
                 .unwrap();
         source.options = self.options.clone();
         Arc::new(source)
@@ -392,9 +394,9 @@ pub struct GeoParquetFileSource {
 
 impl GeoParquetFileSource {
     /// Create a new file source based on [TableParquetOptions]
-    pub fn new(options: TableGeoParquetOptions) -> Self {
+    pub fn new(table_schema: TableSchema, options: TableGeoParquetOptions) -> Self {
         Self {
-            inner: ParquetSource::new(options.inner.clone()),
+            inner: ParquetSource::new(table_schema).with_table_parquet_options(options.inner.clone()),
             metadata_size_hint: None,
             predicate: None,
             options,
@@ -518,16 +520,16 @@ impl FileSource for GeoParquetFileSource {
         object_store: Arc<dyn ObjectStore>,
         base_config: &FileScanConfig,
         partition: usize,
-    ) -> Arc<dyn FileOpener> {
+    ) -> Result<Arc<dyn FileOpener>> {
         let inner_opener =
             self.inner
-                .create_file_opener(object_store.clone(), base_config, partition);
+                .create_file_opener(object_store.clone(), base_config, partition)?;
 
         if !storage_schema_contains_geo(base_config.file_schema()) {
-            return inner_opener;
+            return Ok(inner_opener);
         }
 
-        Arc::new(GeoParquetFileOpener {
+        Ok(Arc::new(GeoParquetFileOpener {
             inner: inner_opener,
             object_store,
             metadata_size_hint: self.metadata_size_hint,
@@ -539,7 +541,7 @@ impl FileSource for GeoParquetFileSource {
             metrics: GeoParquetFileOpenerMetrics::new(self.inner.metrics()),
             options: self.options.clone(),
             metadata_cache: self.metadata_cache.clone(),
-        })
+        }))
     }
 
     fn try_pushdown_filters(
@@ -579,37 +581,28 @@ impl FileSource for GeoParquetFileSource {
         Arc::new(source)
     }
 
-    fn with_schema(&self, schema: TableSchema) -> Arc<dyn FileSource> {
-        let mut source = Self::from_file_source(
-            self.inner.with_schema(schema),
-            self.metadata_size_hint,
-            self.predicate.clone(),
-        );
-        source.options = self.options.clone();
-        source.metadata_cache = self.metadata_cache.clone();
-        Arc::new(source)
+    fn try_pushdown_projection(
+        &self,
+        projection: &ProjectionExprs,
+    ) -> Result<Option<Arc<dyn FileSource>>> {
+        let inner_result = self.inner.try_pushdown_projection(projection)?;
+        match inner_result {
+            Some(updated_inner) => {
+                let mut updated_source = Self::try_from_file_source(
+                    updated_inner,
+                    self.metadata_size_hint,
+                    self.predicate.clone(),
+                )?;
+                updated_source.options = self.options.clone();
+                updated_source.metadata_cache = self.metadata_cache.clone();
+                Ok(Some(Arc::new(updated_source)))
+            }
+            None => Ok(None),
+        }
     }
 
-    fn with_projection(&self, config: &FileScanConfig) -> Arc<dyn FileSource> {
-        let mut source = Self::from_file_source(
-            self.inner.with_projection(config),
-            self.metadata_size_hint,
-            self.predicate.clone(),
-        );
-        source.options = self.options.clone();
-        source.metadata_cache = self.metadata_cache.clone();
-        Arc::new(source)
-    }
-
-    fn with_statistics(&self, statistics: Statistics) -> Arc<dyn FileSource> {
-        let mut source = Self::from_file_source(
-            self.inner.with_statistics(statistics),
-            self.metadata_size_hint,
-            self.predicate.clone(),
-        );
-        source.options = self.options.clone();
-        source.metadata_cache = self.metadata_cache.clone();
-        Arc::new(source)
+    fn projection(&self) -> Option<&ProjectionExprs> {
+        self.inner.projection()
     }
 
     fn metrics(&self) -> &ExecutionPlanMetricsSet {
@@ -619,8 +612,8 @@ impl FileSource for GeoParquetFileSource {
         self.inner.metrics()
     }
 
-    fn statistics(&self) -> Result<Statistics> {
-        self.inner.statistics()
+    fn table_schema(&self) -> &TableSchema {
+        self.inner.table_schema()
     }
 
     fn file_type(&self) -> &str {
@@ -634,10 +627,11 @@ mod test {
     use std::ops::Deref;
 
     use arrow_array::RecordBatch;
-    use arrow_schema::DataType;
+    use arrow_schema::{DataType, Field, Schema};
     use datafusion::config::TableParquetOptions;
     use datafusion::datasource::physical_plan::ParquetSource;
-    use datafusion::datasource::schema_adapter::{SchemaAdapter, SchemaAdapterFactory};
+    use datafusion::datasource::schema_adapter::SchemaAdapterFactory;
+    use datafusion::datasource::table_schema::TableSchema;
     use datafusion::{
         execution::SessionStateBuilder,
         prelude::{col, ParquetReadOptions, SessionContext},
@@ -936,8 +930,14 @@ mod test {
 
     #[tokio::test]
     async fn test_with_predicate() {
+        // Create a test schema
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("test", DataType::Int32, false),
+        ]));
+        let table_schema = TableSchema::new(schema, vec![]);
+
         // Create a parquet source with the correct constructor signature
-        let parquet_source = ParquetSource::new(TableParquetOptions::default());
+        let parquet_source = ParquetSource::new(table_schema);
 
         // Create a simple predicate (column > 0)
         let column = Arc::new(Column::new("test", 0));
@@ -953,39 +953,6 @@ mod test {
         assert!(geo_source_with_predicate.inner.filter().is_some());
     }
 
-    #[tokio::test]
-    async fn test_with_schema_adapter_factory() {
-        // Create a parquet source with the correct constructor signature
-        let parquet_source = ParquetSource::new(TableParquetOptions::default());
-
-        // Create a simple schema adapter factory
-        #[derive(Debug)]
-        struct MockSchemaAdapterFactory;
-
-        impl SchemaAdapterFactory for MockSchemaAdapterFactory {
-            fn create(
-                &self,
-                _projected_table_schema: SchemaRef,
-                _table_schema: SchemaRef,
-            ) -> Box<dyn SchemaAdapter> {
-                // Since we never use the result, we can return unimplemented
-                // We only want to test that the method chains properly
-                unimplemented!()
-            }
-        }
-
-        let schema_adapter_factory: Arc<dyn SchemaAdapterFactory> =
-            Arc::new(MockSchemaAdapterFactory);
-
-        // Create GeoParquetFileSource and apply schema adapter factory
-        let geo_source =
-            GeoParquetFileSource::try_from_file_source(Arc::new(parquet_source), None, None)
-                .unwrap();
-        let geo_source_with_adapter =
-            geo_source.with_schema_adapter_factory(schema_adapter_factory);
-        assert!(geo_source_with_adapter
-            .inner
-            .schema_adapter_factory()
-            .is_some());
-    }
+    // Note: test_with_schema_adapter_factory removed because SchemaAdapterFactory
+    // has been deprecated and removed in DataFusion 52. Use PhysicalExprAdapterFactory instead.
 }
