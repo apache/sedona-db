@@ -564,9 +564,8 @@ impl FileSource for GeoParquetFileSource {
     ) -> Result<Option<Arc<dyn FileSource>>> {
         // DataFusion 52 has a "bug" where field metadata (like ARROW:extension:name)
         // is stripped when evaluating embedded projections in ParquetOpener. This is
-        // probably only a bug for us because we are wrapping the reader which normally
-        // does not produce fields with extension types, so raw column references will
-        // never have extension metadata in the upstream DataFusion version.
+        // because the batch schema comes from the parquet reader (which doesn't have
+        // extension metadata), and Column::return_field() looks up fields from that schema.
         //
         // We work around this by only accepting projection pushdown for simple column
         // selections (which preserves column pruning performance). Projections containing
