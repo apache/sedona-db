@@ -67,14 +67,14 @@ categories = ["science::geo", "database"]
 adbc_core = ">=0.22.0"
 adbc_ffi = ">=0.22.0"
 approx = "0.5"
-arrow = { version = "58.1.0", features = ["prettyprint", "ffi", "chrono-tz"] }
-arrow-array = { version = "58.1.0" }
-arrow-buffer = { version = "57.0.0" }
-arrow-cast = { version = "58.1.0" }
-arrow-data = { version = "57.0.0" }
-arrow-ipc = { version = "58.1.0" }
-arrow-json = { version = "58.1.0" }
-arrow-schema = { version = "57.0.0" }
+arrow = { version = "57.1.0", features = ["prettyprint", "ffi", "chrono-tz"] }
+arrow-array = { version = "57.1.0" }
+arrow-buffer = { version = "57.1.0" }
+arrow-cast = { version = "57.1.0" }
+arrow-data = { version = "57.1.0" }
+arrow-ipc = { version = "57.1.0" }
+arrow-json = { version = "57.1.0" }
+arrow-schema = { version = "57.1.0" }
 async-trait = { version = "0.1.87" }
 bytemuck = "1.25"
 byteorder = "1"
@@ -117,7 +117,7 @@ num-traits = { version = "0.2", default-features = false, features = ["libm"] }
 object_store = { version = "0.12.4", default-features = false }
 once_cell = "1.20"
 parking_lot = "0.12"
-parquet = { version = "58.1.0", default-features = false, features = ["arrow", "async", "object_store"] }
+parquet = { version = "57.1.0", default-features = false, features = ["arrow", "async", "object_store"] }
 pin-project-lite = "0.2"
 rand = "0.10"
 regex = "1.12"

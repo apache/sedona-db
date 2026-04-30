@@ -290,40 +290,19 @@ version = "57.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb372a7cbcac02a35d3fb7b3fc1f969ec078e871f9bb899bf00a2e1809bec8a3"
 dependencies = [
- "arrow-arith 57.1.0",
+ "arrow-arith",
  "arrow-array 57.3.0",
  "arrow-buffer 57.3.0",
- "arrow-cast 57.3.0",
- "arrow-csv 57.1.0",
+ "arrow-cast",
+ "arrow-csv",
  "arrow-data 57.3.0",
- "arrow-ipc 57.3.0",
- "arrow-json 57.3.0",
- "arrow-ord 57.3.0",
- "arrow-row 57.1.0",
+ "arrow-ipc",
+ "arrow-json",
+ "arrow-ord",
+ "arrow-row",
  "arrow-schema 57.3.0",
- "arrow-select 57.3.0",
- "arrow-string 57.1.0",
-]
-
-[[package]]
-name = "arrow"
-version = "58.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d441fdda254b65f3e9025910eb2c2066b6295d9c8ed409522b8d2ace1ff8574c"
-dependencies = [
- "arrow-arith 58.1.0",
- "arrow-array 58.1.0",
- "arrow-buffer 58.1.0",
- "arrow-cast 58.1.0",
- "arrow-csv 58.1.0",
- "arrow-data 58.1.0",
- "arrow-ipc 58.1.0",
- "arrow-json 58.1.0",
- "arrow-ord 58.1.0",
- "arrow-row 58.1.0",
- "arrow-schema 58.1.0",
- "arrow-select 58.1.0",
- "arrow-string 58.1.0",
+ "arrow-select",
+ "arrow-string",
 ]
 
 [[package]]
@@ -336,20 +315,6 @@ dependencies = [
  "arrow-buffer 57.3.0",
  "arrow-data 57.3.0",
  "arrow-schema 57.3.0",
- "chrono",
- "num-traits",
-]
-
-[[package]]
-name = "arrow-arith"
-version = "58.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ced5406f8b720cc0bc3aa9cf5758f93e8593cda5490677aa194e4b4b383f9a59"
-dependencies = [
- "arrow-array 58.1.0",
- "arrow-buffer 58.1.0",
- "arrow-data 58.1.0",
- "arrow-schema 58.1.0",
  "chrono",
  "num-traits",
 ]
@@ -384,7 +349,6 @@ dependencies = [
  "arrow-data 58.1.0",
  "arrow-schema 58.1.0",
  "chrono",
- "chrono-tz",
  "half",
  "hashbrown 0.16.1",
  "num-complex",
@@ -425,31 +389,9 @@ dependencies = [
  "arrow-array 57.3.0",
  "arrow-buffer 57.3.0",
  "arrow-data 57.3.0",
- "arrow-ord 57.3.0",
+ "arrow-ord",
  "arrow-schema 57.3.0",
- "arrow-select 57.3.0",
- "atoi",
- "base64",
- "chrono",
- "comfy-table",
- "half",
- "lexical-core",
- "num-traits",
- "ryu",
-]
-
-[[package]]
-name = "arrow-cast"
-version = "58.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0127816c96533d20fc938729f48c52d3e48f99717e7a0b5ade77d742510736d"
-dependencies = [
- "arrow-array 58.1.0",
- "arrow-buffer 58.1.0",
- "arrow-data 58.1.0",
- "arrow-ord 58.1.0",
- "arrow-schema 58.1.0",
- "arrow-select 58.1.0",
+ "arrow-select",
  "atoi",
  "base64",
  "chrono",
@@ -467,23 +409,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2275877a0e5e7e7c76954669366c2aa1a829e340ab1f612e647507860906fb6b"
 dependencies = [
  "arrow-array 57.3.0",
- "arrow-cast 57.3.0",
+ "arrow-cast",
  "arrow-schema 57.3.0",
- "chrono",
- "csv",
- "csv-core",
- "regex",
-]
-
-[[package]]
-name = "arrow-csv"
-version = "58.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ca025bd0f38eeecb57c2153c0123b960494138e6a957bbda10da2b25415209fe"
-dependencies = [
- "arrow-array 58.1.0",
- "arrow-cast 58.1.0",
- "arrow-schema 58.1.0",
  "chrono",
  "csv",
  "csv-core",
@@ -526,24 +453,10 @@ dependencies = [
  "arrow-buffer 57.3.0",
  "arrow-data 57.3.0",
  "arrow-schema 57.3.0",
- "arrow-select 57.3.0",
+ "arrow-select",
  "flatbuffers",
  "lz4_flex",
  "zstd",
-]
-
-[[package]]
-name = "arrow-ipc"
-version = "58.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "609a441080e338147a84e8e6904b6da482cefb957c5cdc0f3398872f69a315d0"
-dependencies = [
- "arrow-array 58.1.0",
- "arrow-buffer 58.1.0",
- "arrow-data 58.1.0",
- "arrow-schema 58.1.0",
- "arrow-select 58.1.0",
- "flatbuffers",
 ]
 
 [[package]]
@@ -554,33 +467,9 @@ checksum = "0ff8357658bedc49792b13e2e862b80df908171275f8e6e075c460da5ee4bf86"
 dependencies = [
  "arrow-array 57.3.0",
  "arrow-buffer 57.3.0",
- "arrow-cast 57.3.0",
+ "arrow-cast",
  "arrow-data 57.3.0",
  "arrow-schema 57.3.0",
- "chrono",
- "half",
- "indexmap 2.13.0",
- "itoa",
- "lexical-core",
- "memchr",
- "num-traits",
- "ryu",
- "serde_core",
- "serde_json",
- "simdutf8",
-]
-
-[[package]]
-name = "arrow-json"
-version = "58.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ead0914e4861a531be48fe05858265cf854a4880b9ed12618b1d08cba9bebc8"
-dependencies = [
- "arrow-array 58.1.0",
- "arrow-buffer 58.1.0",
- "arrow-cast 58.1.0",
- "arrow-data 58.1.0",
- "arrow-schema 58.1.0",
  "chrono",
  "half",
  "indexmap 2.13.0",
@@ -604,20 +493,7 @@ dependencies = [
  "arrow-buffer 57.3.0",
  "arrow-data 57.3.0",
  "arrow-schema 57.3.0",
- "arrow-select 57.3.0",
-]
-
-[[package]]
-name = "arrow-ord"
-version = "58.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "763a7ba279b20b52dad300e68cfc37c17efa65e68623169076855b3a9e941ca5"
-dependencies = [
- "arrow-array 58.1.0",
- "arrow-buffer 58.1.0",
- "arrow-data 58.1.0",
- "arrow-schema 58.1.0",
- "arrow-select 58.1.0",
+ "arrow-select",
 ]
 
 [[package]]
@@ -630,19 +506,6 @@ dependencies = [
  "arrow-buffer 57.3.0",
  "arrow-data 57.3.0",
  "arrow-schema 57.3.0",
- "half",
-]
-
-[[package]]
-name = "arrow-row"
-version = "58.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e14fe367802f16d7668163ff647830258e6e0aeea9a4d79aaedf273af3bdcd3e"
-dependencies = [
- "arrow-array 58.1.0",
- "arrow-buffer 58.1.0",
- "arrow-data 58.1.0",
- "arrow-schema 58.1.0",
  "half",
 ]
 
@@ -681,20 +544,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "arrow-select"
-version = "58.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "78694888660a9e8ac949853db393af2a8b8fc82c19ce333132dfa2e72cc1a7fe"
-dependencies = [
- "ahash",
- "arrow-array 58.1.0",
- "arrow-buffer 58.1.0",
- "arrow-data 58.1.0",
- "arrow-schema 58.1.0",
- "num-traits",
-]
-
-[[package]]
 name = "arrow-string"
 version = "57.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -704,24 +553,7 @@ dependencies = [
  "arrow-buffer 57.3.0",
  "arrow-data 57.3.0",
  "arrow-schema 57.3.0",
- "arrow-select 57.3.0",
- "memchr",
- "num-traits",
- "regex",
- "regex-syntax",
-]
-
-[[package]]
-name = "arrow-string"
-version = "58.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61e04a01f8bb73ce54437514c5fd3ee2aa3e8abe4c777ee5cc55853b1652f79e"
-dependencies = [
- "arrow-array 58.1.0",
- "arrow-buffer 58.1.0",
- "arrow-data 58.1.0",
- "arrow-schema 58.1.0",
- "arrow-select 58.1.0",
+ "arrow-select",
  "memchr",
  "num-traits",
  "regex",
@@ -1862,7 +1694,7 @@ version = "52.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7541353e77dc7262b71ca27be07d8393661737e3a73b5d1b1c6f7d814c64fa2a"
 dependencies = [
- "arrow 57.1.0",
+ "arrow",
  "arrow-schema 57.3.0",
  "async-trait",
  "bytes",
@@ -1899,9 +1731,9 @@ dependencies = [
  "itertools 0.14.0",
  "liblzma",
  "log",
- "object_store 0.12.4",
+ "object_store",
  "parking_lot",
- "parquet 57.3.0",
+ "parquet",
  "rand 0.9.2",
  "regex",
  "sqlparser",
@@ -1918,7 +1750,7 @@ version = "52.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9997731f90fa5398ef831ad0e69600f92c861b79c0d38bd1a29b6f0e3a0ce4c8"
 dependencies = [
- "arrow 57.1.0",
+ "arrow",
  "async-trait",
  "dashmap",
  "datafusion-common",
@@ -1932,7 +1764,7 @@ dependencies = [
  "futures",
  "itertools 0.14.0",
  "log",
- "object_store 0.12.4",
+ "object_store",
  "parking_lot",
  "tokio",
 ]
@@ -1943,7 +1775,7 @@ version = "52.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b30a3dd50dec860c9559275c8d97d9de602e611237a6ecfbda0b3b63b872352"
 dependencies = [
- "arrow 57.1.0",
+ "arrow",
  "async-trait",
  "datafusion-catalog",
  "datafusion-common",
@@ -1957,7 +1789,7 @@ dependencies = [
  "futures",
  "itertools 0.14.0",
  "log",
- "object_store 0.12.4",
+ "object_store",
 ]
 
 [[package]]
@@ -1968,16 +1800,16 @@ checksum = "d551054acec0398ca604512310b77ce05c46f66e54b54d48200a686e385cca4e"
 dependencies = [
  "ahash",
  "apache-avro",
- "arrow 57.1.0",
- "arrow-ipc 57.3.0",
+ "arrow",
+ "arrow-ipc",
  "chrono",
  "half",
  "hashbrown 0.16.1",
  "indexmap 2.13.0",
  "libc",
  "log",
- "object_store 0.12.4",
- "parquet 57.3.0",
+ "object_store",
+ "parquet",
  "paste",
  "recursive",
  "sqlparser",
@@ -2002,7 +1834,7 @@ version = "52.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27d2668f51b3b30befae2207472569e37807fdedd1d14da58acc6f8ca6257eae"
 dependencies = [
- "arrow 57.1.0",
+ "arrow",
  "async-compression",
  "async-trait",
  "bytes",
@@ -2023,7 +1855,7 @@ dependencies = [
  "itertools 0.14.0",
  "liblzma",
  "log",
- "object_store 0.12.4",
+ "object_store",
  "rand 0.9.2",
  "tokio",
  "tokio-util",
@@ -2037,8 +1869,8 @@ version = "52.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e02e1b3e3a8ec55f1f62de4252b0407c8567363d056078769a197e24fc834a0f"
 dependencies = [
- "arrow 57.1.0",
- "arrow-ipc 57.3.0",
+ "arrow",
+ "arrow-ipc",
  "async-trait",
  "bytes",
  "datafusion-common",
@@ -2051,7 +1883,7 @@ dependencies = [
  "datafusion-session",
  "futures",
  "itertools 0.14.0",
- "object_store 0.12.4",
+ "object_store",
  "tokio",
 ]
 
@@ -2062,7 +1894,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "541d447bb3c9ae30b38607f6fba43947fc768041968cbd9f04ed4b22c0dd1ce5"
 dependencies = [
  "apache-avro",
- "arrow 57.1.0",
+ "arrow",
  "async-trait",
  "bytes",
  "datafusion-common",
@@ -2072,7 +1904,7 @@ dependencies = [
  "datafusion-session",
  "futures",
  "num-traits",
- "object_store 0.12.4",
+ "object_store",
 ]
 
 [[package]]
@@ -2081,7 +1913,7 @@ version = "52.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b559d7bf87d4f900f847baba8509634f838d9718695389e903604cdcccdb01f3"
 dependencies = [
- "arrow 57.1.0",
+ "arrow",
  "async-trait",
  "bytes",
  "datafusion-common",
@@ -2093,7 +1925,7 @@ dependencies = [
  "datafusion-physical-plan",
  "datafusion-session",
  "futures",
- "object_store 0.12.4",
+ "object_store",
  "regex",
  "tokio",
 ]
@@ -2104,7 +1936,7 @@ version = "52.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "250e2d7591ba8b638f063854650faa40bca4e8bd4059b2ece8836f6388d02db4"
 dependencies = [
- "arrow 57.1.0",
+ "arrow",
  "async-trait",
  "bytes",
  "datafusion-common",
@@ -2116,7 +1948,7 @@ dependencies = [
  "datafusion-physical-plan",
  "datafusion-session",
  "futures",
- "object_store 0.12.4",
+ "object_store",
  "tokio",
 ]
 
@@ -2126,7 +1958,7 @@ version = "52.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b043149f2c3557ca94abc58de40f68a8d412ff53365c06126ed234f8596399d"
 dependencies = [
- "arrow 57.1.0",
+ "arrow",
  "async-trait",
  "bytes",
  "datafusion-common",
@@ -2144,9 +1976,9 @@ dependencies = [
  "futures",
  "itertools 0.14.0",
  "log",
- "object_store 0.12.4",
+ "object_store",
  "parking_lot",
- "parquet 57.3.0",
+ "parquet",
  "tokio",
 ]
 
@@ -2162,7 +1994,7 @@ version = "52.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc45d23c516ed8d3637751e44e09e21b45b3f58b473c802dddd1f1ad4fe435ff"
 dependencies = [
- "arrow 57.1.0",
+ "arrow",
  "async-trait",
  "chrono",
  "dashmap",
@@ -2170,7 +2002,7 @@ dependencies = [
  "datafusion-expr",
  "futures",
  "log",
- "object_store 0.12.4",
+ "object_store",
  "parking_lot",
  "rand 0.9.2",
  "tempfile",
@@ -2183,7 +2015,7 @@ version = "52.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63dd30526d2db4fda6440806a41e4676334a94bc0596cc9cc2a0efed20ef2c44"
 dependencies = [
- "arrow 57.1.0",
+ "arrow",
  "async-trait",
  "chrono",
  "datafusion-common",
@@ -2206,7 +2038,7 @@ version = "52.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1b486b5f6255d40976b88bb83813b0d035a8333e0ec39864824e78068cf42fa6"
 dependencies = [
- "arrow 57.1.0",
+ "arrow",
  "datafusion-common",
  "indexmap 2.13.0",
  "itertools 0.14.0",
@@ -2220,7 +2052,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "26b04181cffefd632e57acfc233ed239626863682dd8bb30ab366293f441bba8"
 dependencies = [
  "abi_stable",
- "arrow 57.1.0",
+ "arrow",
  "arrow-schema 57.3.0",
  "async-ffi",
  "async-trait",
@@ -2249,7 +2081,7 @@ version = "52.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "07356c94118d881130dd0ffbff127540407d969c8978736e324edcd6c41cd48f"
 dependencies = [
- "arrow 57.1.0",
+ "arrow",
  "arrow-buffer 57.3.0",
  "base64",
  "blake2",
@@ -2281,7 +2113,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b644f9cf696df9233ce6958b9807666d78563b56f923267474dd6c07795f1f8f"
 dependencies = [
  "ahash",
- "arrow 57.1.0",
+ "arrow",
  "datafusion-common",
  "datafusion-doc",
  "datafusion-execution",
@@ -2302,7 +2134,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1de2deaaabe8923ce9ea9f29c47bbb4ee14f67ea2fe1ab5398d9bbebcf86e56"
 dependencies = [
  "ahash",
- "arrow 57.1.0",
+ "arrow",
  "datafusion-common",
  "datafusion-expr-common",
  "datafusion-physical-expr-common",
@@ -2314,8 +2146,8 @@ version = "52.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "552f8d92e4331ee91d23c02d12bb6acf32cbfd5215117e01c0fb63cd4b15af1a"
 dependencies = [
- "arrow 57.1.0",
- "arrow-ord 57.3.0",
+ "arrow",
+ "arrow-ord",
  "datafusion-common",
  "datafusion-doc",
  "datafusion-execution",
@@ -2337,7 +2169,7 @@ version = "52.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "970fd0cdd3df8802b9a9975ff600998289ba9d46682a4f7285cba4820c9ada78"
 dependencies = [
- "arrow 57.1.0",
+ "arrow",
  "async-trait",
  "datafusion-catalog",
  "datafusion-common",
@@ -2353,7 +2185,7 @@ version = "52.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40b4c21a7c8a986a1866c0a87ab756d0bbf7b5f41f306009fa2d9af79c52ed31"
 dependencies = [
- "arrow 57.1.0",
+ "arrow",
  "datafusion-common",
  "datafusion-doc",
  "datafusion-expr",
@@ -2392,7 +2224,7 @@ version = "52.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff9aa82b240252a88dee118372f9b9757c545ab9e53c0736bebab2e7da0ef1f2"
 dependencies = [
- "arrow 57.1.0",
+ "arrow",
  "chrono",
  "datafusion-common",
  "datafusion-expr",
@@ -2413,7 +2245,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d48022b8af9988c1d852644f9e8b5584c490659769a550c5e8d39457a1da0a5"
 dependencies = [
  "ahash",
- "arrow 57.1.0",
+ "arrow",
  "datafusion-common",
  "datafusion-expr",
  "datafusion-expr-common",
@@ -2436,7 +2268,7 @@ version = "52.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ae7a8abc0b4fe624000972a9b145b30b7f1b680bffaa950ea53f78d9b21c27c3"
 dependencies = [
- "arrow 57.1.0",
+ "arrow",
  "datafusion-common",
  "datafusion-expr",
  "datafusion-functions",
@@ -2452,7 +2284,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "147253ca3e6b9d59c162de64c02800973018660e13340dd1886dd038d17ac429"
 dependencies = [
  "ahash",
- "arrow 57.1.0",
+ "arrow",
  "chrono",
  "datafusion-common",
  "datafusion-expr-common",
@@ -2468,7 +2300,7 @@ version = "52.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "689156bb2282107b6239db8d7ef44b4dab10a9b33d3491a0c74acac5e4fedd72"
 dependencies = [
- "arrow 57.1.0",
+ "arrow",
  "datafusion-common",
  "datafusion-execution",
  "datafusion-expr",
@@ -2488,8 +2320,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68253dc0ee5330aa558b2549c9b0da5af9fc17d753ae73022939014ad616fc28"
 dependencies = [
  "ahash",
- "arrow 57.1.0",
- "arrow-ord 57.3.0",
+ "arrow",
+ "arrow-ord",
  "arrow-schema 57.3.0",
  "async-trait",
  "datafusion-common",
@@ -2518,7 +2350,7 @@ version = "52.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f5ab57d0b5a368258fff1d828f1619a10541fa5c4ec4930a383deb3a23204c8"
 dependencies = [
- "arrow 57.1.0",
+ "arrow",
  "chrono",
  "datafusion-catalog",
  "datafusion-catalog-listing",
@@ -2535,7 +2367,7 @@ dependencies = [
  "datafusion-physical-expr-common",
  "datafusion-physical-plan",
  "datafusion-proto-common",
- "object_store 0.12.4",
+ "object_store",
  "prost",
 ]
 
@@ -2545,7 +2377,7 @@ version = "52.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bd21d2c804802ca4b1719191dfe8e3d0860686649de6375ddc9237f85beb82b3"
 dependencies = [
- "arrow 57.1.0",
+ "arrow",
  "datafusion-common",
  "prost",
 ]
@@ -2556,7 +2388,7 @@ version = "52.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fcad240a54d0b1d3e8f668398900260a53122d522b2102ab57218590decacd6"
 dependencies = [
- "arrow 57.1.0",
+ "arrow",
  "datafusion-common",
  "datafusion-datasource",
  "datafusion-expr-common",
@@ -2587,7 +2419,7 @@ version = "52.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be53e9eb55db0fbb8980bb6d87f2435b0524acf4c718ed54a57cabbb299b2ab3"
 dependencies = [
- "arrow 57.1.0",
+ "arrow",
  "bigdecimal",
  "chrono",
  "datafusion-common",
@@ -4337,29 +4169,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "object_store"
-version = "0.13.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "622acbc9100d3c10e2ee15804b0caa40e55c933d5aa53814cd520805b7958a49"
-dependencies = [
- "async-trait",
- "bytes",
- "chrono",
- "futures-channel",
- "futures-core",
- "futures-util",
- "http 1.4.0",
- "humantime 2.3.0",
- "itertools 0.14.0",
- "parking_lot",
- "percent-encoding",
- "thiserror 2.0.17",
- "url",
- "wasm-bindgen-futures",
- "web-time",
-]
-
-[[package]]
 name = "once_cell"
 version = "1.21.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4446,11 +4255,11 @@ dependencies = [
  "ahash",
  "arrow-array 57.3.0",
  "arrow-buffer 57.3.0",
- "arrow-cast 57.3.0",
+ "arrow-cast",
  "arrow-data 57.3.0",
- "arrow-ipc 57.3.0",
+ "arrow-ipc",
  "arrow-schema 57.3.0",
- "arrow-select 57.3.0",
+ "arrow-select",
  "base64",
  "brotli",
  "bytes",
@@ -4463,42 +4272,10 @@ dependencies = [
  "num-bigint",
  "num-integer",
  "num-traits",
- "object_store 0.12.4",
+ "object_store",
  "paste",
  "seq-macro",
  "simdutf8",
- "snap",
- "thrift",
- "tokio",
- "twox-hash",
- "zstd",
-]
-
-[[package]]
-name = "parquet"
-version = "58.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d3f9f2205199603564127932b89695f52b62322f541d0fc7179d57c2e1c9877"
-dependencies = [
- "ahash",
- "arrow-array 58.1.0",
- "arrow-buffer 58.1.0",
- "arrow-data 58.1.0",
- "arrow-ipc 58.1.0",
- "arrow-schema 58.1.0",
- "arrow-select 58.1.0",
- "base64",
- "bytes",
- "chrono",
- "futures",
- "half",
- "hashbrown 0.16.1",
- "num-bigint",
- "num-integer",
- "num-traits",
- "object_store 0.13.2",
- "paste",
- "seq-macro",
  "snap",
  "thrift",
  "tokio",
@@ -5473,7 +5250,7 @@ dependencies = [
 name = "sedona"
 version = "0.4.0"
 dependencies = [
- "arrow-array 58.1.0",
+ "arrow-array 57.3.0",
  "arrow-schema 57.3.0",
  "async-trait",
  "aws-config",
@@ -5487,7 +5264,7 @@ dependencies = [
  "futures",
  "geo-traits",
  "geo-types",
- "object_store 0.12.4",
+ "object_store",
  "parking_lot",
  "regex",
  "rstest",
@@ -5525,7 +5302,7 @@ version = "0.4.0"
 dependencies = [
  "adbc_core",
  "adbc_ffi",
- "arrow-array 58.1.0",
+ "arrow-array 57.3.0",
  "arrow-schema 57.3.0",
  "datafusion",
  "futures",
@@ -5537,7 +5314,7 @@ dependencies = [
 name = "sedona-cli"
 version = "0.4.0"
 dependencies = [
- "arrow 58.1.0",
+ "arrow",
  "async-trait",
  "clap",
  "datafusion",
@@ -5571,7 +5348,7 @@ dependencies = [
 name = "sedona-datasource"
 version = "0.4.0"
 dependencies = [
- "arrow-array 58.1.0",
+ "arrow-array 57.3.0",
  "arrow-schema 57.3.0",
  "async-trait",
  "datafusion",
@@ -5581,7 +5358,7 @@ dependencies = [
  "datafusion-physical-expr",
  "datafusion-physical-plan",
  "futures",
- "object_store 0.12.4",
+ "object_store",
  "regex",
  "sedona-common",
  "sedona-expr",
@@ -5595,7 +5372,7 @@ dependencies = [
 name = "sedona-expr"
 version = "0.4.0"
 dependencies = [
- "arrow-array 58.1.0",
+ "arrow-array 57.3.0",
  "arrow-buffer 57.3.0",
  "arrow-schema 57.3.0",
  "datafusion-common",
@@ -5615,7 +5392,7 @@ dependencies = [
 name = "sedona-extension"
 version = "0.4.0"
 dependencies = [
- "arrow-array 58.1.0",
+ "arrow-array 57.3.0",
  "arrow-schema 57.3.0",
  "datafusion-common",
  "datafusion-expr",
@@ -5630,9 +5407,9 @@ dependencies = [
 name = "sedona-functions"
 version = "0.4.0"
 dependencies = [
- "arrow-array 58.1.0",
+ "arrow-array 57.3.0",
  "arrow-buffer 57.3.0",
- "arrow-json 58.1.0",
+ "arrow-json",
  "arrow-schema 57.3.0",
  "criterion",
  "datafusion",
@@ -5667,7 +5444,7 @@ dependencies = [
 name = "sedona-geo"
 version = "0.4.0"
 dependencies = [
- "arrow-array 58.1.0",
+ "arrow-array 57.3.0",
  "arrow-schema 57.3.0",
  "criterion",
  "datafusion-common",
@@ -5730,7 +5507,7 @@ dependencies = [
 name = "sedona-geoarrow-c"
 version = "0.4.0"
 dependencies = [
- "arrow-array 58.1.0",
+ "arrow-array 57.3.0",
  "arrow-schema 57.3.0",
  "cc",
  "criterion",
@@ -5767,7 +5544,7 @@ dependencies = [
 name = "sedona-geoparquet"
 version = "0.4.0"
 dependencies = [
- "arrow-array 58.1.0",
+ "arrow-array 57.3.0",
  "arrow-schema 57.3.0",
  "async-trait",
  "bytes",
@@ -5783,8 +5560,8 @@ dependencies = [
  "float_next_after 2.0.0",
  "futures",
  "geo-traits",
- "object_store 0.12.4",
- "parquet 58.1.0",
+ "object_store",
+ "parquet",
  "rstest",
  "sedona-common",
  "sedona-expr",
@@ -5805,7 +5582,7 @@ dependencies = [
 name = "sedona-geos"
 version = "0.4.0"
 dependencies = [
- "arrow-array 58.1.0",
+ "arrow-array 57.3.0",
  "arrow-schema 57.3.0",
  "bytemuck",
  "byteorder",
@@ -5830,7 +5607,7 @@ dependencies = [
 name = "sedona-libgpuspatial"
 version = "0.4.0"
 dependencies = [
- "arrow-array 58.1.0",
+ "arrow-array 57.3.0",
  "arrow-schema 57.3.0",
  "bindgen",
  "cmake",
@@ -5849,9 +5626,9 @@ dependencies = [
 name = "sedona-pointcloud"
 version = "0.4.0"
 dependencies = [
- "arrow-array 58.1.0",
+ "arrow-array 57.3.0",
  "arrow-buffer 57.3.0",
- "arrow-ipc 58.1.0",
+ "arrow-ipc",
  "arrow-schema 57.3.0",
  "async-stream",
  "async-trait",
@@ -5871,7 +5648,7 @@ dependencies = [
  "las",
  "las-crs",
  "laz",
- "object_store 0.12.4",
+ "object_store",
  "rayon",
  "sedona",
  "sedona-expr",
@@ -5885,7 +5662,7 @@ name = "sedona-proj"
 version = "0.4.0"
 dependencies = [
  "approx",
- "arrow-array 58.1.0",
+ "arrow-array 57.3.0",
  "arrow-schema 57.3.0",
  "criterion",
  "datafusion-common",
@@ -5910,7 +5687,7 @@ dependencies = [
 name = "sedona-query-planner"
 version = "0.4.0"
 dependencies = [
- "arrow 58.1.0",
+ "arrow",
  "arrow-schema 57.3.0",
  "async-trait",
  "datafusion",
@@ -5930,7 +5707,7 @@ name = "sedona-raster"
 version = "0.4.0"
 dependencies = [
  "approx",
- "arrow-array 58.1.0",
+ "arrow-array 57.3.0",
  "arrow-buffer 57.3.0",
  "arrow-schema 57.3.0",
  "sedona-common",
@@ -5942,7 +5719,7 @@ dependencies = [
 name = "sedona-raster-functions"
 version = "0.4.0"
 dependencies = [
- "arrow-array 58.1.0",
+ "arrow-array 57.3.0",
  "arrow-buffer 57.3.0",
  "arrow-schema 57.3.0",
  "criterion",
@@ -5966,7 +5743,7 @@ dependencies = [
 name = "sedona-s2geography"
 version = "0.4.0"
 dependencies = [
- "arrow-array 58.1.0",
+ "arrow-array 57.3.0",
  "arrow-schema 57.3.0",
  "cmake",
  "criterion",
@@ -5990,7 +5767,7 @@ dependencies = [
 name = "sedona-schema"
 version = "0.4.0"
 dependencies = [
- "arrow-array 58.1.0",
+ "arrow-array 57.3.0",
  "arrow-schema 57.3.0",
  "criterion",
  "datafusion-common",
@@ -6003,8 +5780,8 @@ dependencies = [
 name = "sedona-spatial-join"
 version = "0.4.0"
 dependencies = [
- "arrow 58.1.0",
- "arrow-array 58.1.0",
+ "arrow",
+ "arrow-array 57.3.0",
  "arrow-schema 57.3.0",
  "async-trait",
  "criterion",
@@ -6051,8 +5828,8 @@ dependencies = [
 name = "sedona-spatial-join-geography"
 version = "0.4.0"
 dependencies = [
- "arrow 58.1.0",
- "arrow-array 58.1.0",
+ "arrow",
+ "arrow-array 57.3.0",
  "arrow-schema 57.3.0",
  "async-trait",
  "datafusion",
@@ -6078,8 +5855,8 @@ dependencies = [
 name = "sedona-spatial-join-gpu"
 version = "0.4.0"
 dependencies = [
- "arrow 58.1.0",
- "arrow-array 58.1.0",
+ "arrow",
+ "arrow-array 57.3.0",
  "arrow-schema 57.3.0",
  "async-trait",
  "criterion",
@@ -6112,8 +5889,8 @@ dependencies = [
 name = "sedona-testing"
 version = "0.4.0"
 dependencies = [
- "arrow-array 58.1.0",
- "arrow-cast 58.1.0",
+ "arrow-array 57.3.0",
+ "arrow-cast",
  "arrow-schema 57.3.0",
  "criterion",
  "datafusion-common",
@@ -6123,7 +5900,7 @@ dependencies = [
  "geo",
  "geo-traits",
  "geo-types",
- "parquet 58.1.0",
+ "parquet",
  "rand 0.10.1",
  "rstest",
  "sedona-common",
@@ -6139,7 +5916,7 @@ dependencies = [
 name = "sedona-tg"
 version = "0.4.0"
 dependencies = [
- "arrow-array 58.1.0",
+ "arrow-array 57.3.0",
  "arrow-schema 57.3.0",
  "cc",
  "criterion",
@@ -6161,7 +5938,7 @@ name = "sedonadb"
 version = "0.4.0"
 dependencies = [
  "adbc_core",
- "arrow-array 58.1.0",
+ "arrow-array 57.3.0",
  "arrow-schema 57.3.0",
  "async-trait",
  "datafusion",
@@ -6191,7 +5968,7 @@ dependencies = [
 name = "sedonadbr"
 version = "0.4.0"
 dependencies = [
- "arrow-array 58.1.0",
+ "arrow-array 57.3.0",
  "arrow-schema 57.3.0",
  "datafusion",
  "datafusion-common",
