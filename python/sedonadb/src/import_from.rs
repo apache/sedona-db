@@ -28,10 +28,7 @@ use arrow_schema::{Field, Schema};
 use datafusion::catalog::TableProvider;
 use datafusion_common::{metadata::ScalarAndMetadata, ScalarValue};
 use datafusion_expr::{expr::FieldMetadata, ScalarUDF, ScalarUDFImpl};
-use datafusion_ffi::{
-    table_provider::FFI_TableProvider,
-    udf::FFI_ScalarUDF,
-};
+use datafusion_ffi::{table_provider::FFI_TableProvider, udf::FFI_ScalarUDF};
 use pyo3::{
     types::{PyAnyMethods, PyCapsule, PyCapsuleMethods},
     Bound, PyAny, Python,

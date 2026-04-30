@@ -21,8 +21,8 @@ use arrow_array::{RecordBatchIterator, RecordBatchReader};
 use datafusion::catalog::MemTable;
 use datafusion::config::ConfigField;
 use datafusion::prelude::{DataFrame, SessionContext};
-use datafusion_execution::TaskContextProvider;
 use datafusion_common::Column;
+use datafusion_execution::TaskContextProvider;
 use datafusion_expr::utils::conjunction;
 use datafusion_expr::{select_expr::SelectExpr, Expr, SortExpr};
 use datafusion_ffi::table_provider::FFI_TableProvider;
@@ -129,8 +129,13 @@ impl InternalDataFrame {
         // Literal true is because the TableProvider that wraps this DataFrame
         // can support filters being pushed down.
         let ctx = Arc::new(SessionContext::new()) as Arc<dyn TaskContextProvider>;
-        let ffi_provider =
-            FFI_TableProvider::new(provider, true, Some(self.runtime.handle().clone()), &ctx, None);
+        let ffi_provider = FFI_TableProvider::new(
+            provider,
+            true,
+            Some(self.runtime.handle().clone()),
+            &ctx,
+            None,
+        );
 
         let mut ffi_xptr = FFITableProviderR(ffi_provider).into_external_pointer();
         unsafe { savvy_ffi::Rf_protect(ffi_xptr.0) };

@@ -25,10 +25,7 @@ use arrow_array::{
 use arrow_schema::{Field, Schema};
 use datafusion::catalog::TableProvider;
 use datafusion_expr::{ScalarUDF, ScalarUDFImpl};
-use datafusion_ffi::{
-    table_provider::FFI_TableProvider,
-    udf::FFI_ScalarUDF,
-};
+use datafusion_ffi::{table_provider::FFI_TableProvider, udf::FFI_ScalarUDF};
 use savvy::{savvy_err, IntoExtPtrSexp};
 
 pub fn import_schema(mut xptr: savvy::Sexp) -> savvy::Result<Schema> {

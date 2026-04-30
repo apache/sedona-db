@@ -523,7 +523,7 @@ mod test {
         // Select using just the filename and ensure we get a result
         // Quote the path to prevent it from being parsed as a multi-part identifier
         let batches_item0 = ctx
-            .table(format!("\"{}\"" , files[0].to_string_lossy()))
+            .table(format!("\"{}\"", files[0].to_string_lossy()))
             .await
             .unwrap()
             .collect()
@@ -535,7 +535,10 @@ mod test {
 
         // With a glob we should get all the files
         let batches = ctx
-            .table(format!("\"{}/*.echospec\"", temp_dir.path().to_string_lossy()))
+            .table(format!(
+                "\"{}/*.echospec\"",
+                temp_dir.path().to_string_lossy()
+            ))
             .await
             .unwrap()
             .collect()
@@ -555,7 +558,10 @@ mod test {
         // Ensure that if we pass
         // Quote the path to prevent it from being parsed as a multi-part identifier
         let batches = ctx
-            .table(format!("\"{}/*.echospec\"", temp_dir.path().to_string_lossy()))
+            .table(format!(
+                "\"{}/*.echospec\"",
+                temp_dir.path().to_string_lossy()
+            ))
             .await
             .unwrap()
             .filter(col("src").like(lit("%item0%")))
