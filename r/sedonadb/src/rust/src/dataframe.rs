@@ -17,8 +17,10 @@
 
 use arrow_array::ffi::FFI_ArrowSchema;
 use arrow_array::ffi_stream::FFI_ArrowArrayStream;
-use arrow_array::{RecordBatchIterator, RecordBatchReader};
+use arrow_array::{RecordBatch, RecordBatchIterator, RecordBatchReader};
+use arrow_schema::SchemaRef;
 use datafusion::catalog::MemTable;
+use std::collections::HashMap;
 use datafusion::config::ConfigField;
 use datafusion::prelude::{DataFrame, SessionContext};
 use datafusion_execution::TaskContextProvider;
@@ -141,13 +143,24 @@ impl InternalDataFrame {
     }
 
     fn compute(&self, ctx: &InternalContext) -> Result<InternalDataFrame> {
-        let schema = self.inner.schema();
+        // Strip metadata from the schema to ensure consistency with batch schemas.
+        // While metadata is supported in theory, it causes schema equivalence issues
+        // in MemTable: https://github.com/apache/sedona-db/issues/477.
+        let schema = strip_schema_metadata(self.inner.schema().as_arrow().clone().into());
         let batches =
             wait_for_future_captured_r(&self.runtime, self.inner.clone().collect_partitioned())??;
-        let provider = Arc::new(MemTable::try_new(
-            schema.as_arrow().clone().into(),
-            batches,
-        )?);
+        // Recreate each batch with the stripped schema to ensure all batches
+        // have the exact same schema reference.
+        let batches = batches
+            .into_iter()
+            .map(|partition| {
+                partition
+                    .into_iter()
+                    .map(|batch| RecordBatch::try_new(schema.clone(), batch.columns().to_vec()))
+                    .collect::<std::result::Result<Vec<_>, _>>()
+            })
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let provider = Arc::new(MemTable::try_new(schema, batches)?);
         let inner = ctx.inner.ctx.read_table(provider)?;
         Ok(new_data_frame(inner, self.runtime.clone()))
     }
@@ -373,5 +386,14 @@ impl InternalDataFrame {
         let param_values = SedonaDBExprFactory::param_values(params_sexp)?;
         let inner = self.inner.clone().with_param_values(param_values)?;
         Ok(new_data_frame(inner, self.runtime.clone()))
+    }
+}
+
+/// Strips metadata from a SchemaRef if present, returning the schema without metadata.
+fn strip_schema_metadata(schema_ref: SchemaRef) -> SchemaRef {
+    if schema_ref.metadata().is_empty() {
+        schema_ref
+    } else {
+        Arc::new(schema_ref.as_ref().clone().with_metadata(HashMap::new()))
     }
 }

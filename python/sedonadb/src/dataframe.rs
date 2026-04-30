@@ -148,10 +148,24 @@ impl InternalDataFrame {
         py: Python<'py>,
         ctx: &InternalContext,
     ) -> Result<Self, PySedonaError> {
-        let schema = self.inner.schema();
+        // Strip metadata from the schema to ensure consistency with batch schemas.
+        // While metadata is supported in theory, it causes schema equivalence issues
+        // in MemTable: https://github.com/apache/sedona-db/issues/477.
+        let schema = strip_schema_metadata(self.inner.schema().as_arrow().clone().into());
         let partitions =
             wait_for_future(py, &self.runtime, self.inner.clone().collect_partitioned())??;
-        let provider = MemTable::try_new(schema.as_arrow().clone().into(), partitions)?;
+        // Recreate each batch with the stripped schema to ensure all batches
+        // have the exact same schema reference.
+        let partitions = partitions
+            .into_iter()
+            .map(|partition| {
+                partition
+                    .into_iter()
+                    .map(|batch| RecordBatch::try_new(schema.clone(), batch.columns().to_vec()))
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let provider = MemTable::try_new(schema, partitions)?;
 
         Ok(Self::new(
             ctx.inner.ctx.read_table(Arc::new(provider))?,
@@ -169,9 +183,15 @@ impl InternalDataFrame {
         let df = self.inner.clone();
         let batches = wait_for_future(py, &self.runtime, async move {
             let mut stream = df.execute_stream().await?;
-            let schema = stream.schema();
+            // Strip metadata from the schema to ensure consistency with batch schemas.
+            // While metadata is supported in theory, it causes schema equivalence issues
+            // when iterating batches: https://github.com/apache/sedona-db/issues/477.
+            let schema = strip_schema_metadata(stream.schema());
             let mut batches = Vec::new();
             while let Some(batch) = stream.try_next().await? {
+                // Recreate each batch with the stripped schema to ensure all batches
+                // have the exact same schema reference.
+                let batch = RecordBatch::try_new(schema.clone(), batch.columns().to_vec())?;
                 batches.push(batch);
             }
 
@@ -477,4 +497,13 @@ fn check_py_requested_schema<'py>(
         }
     }
     Ok(())
+}
+
+/// Strips metadata from a SchemaRef if present, returning the schema without metadata.
+fn strip_schema_metadata(schema_ref: SchemaRef) -> SchemaRef {
+    if schema_ref.metadata().is_empty() {
+        schema_ref
+    } else {
+        Arc::new(schema_ref.as_ref().clone().with_metadata(HashMap::new()))
+    }
 }
