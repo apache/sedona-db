@@ -5302,6 +5302,7 @@ dependencies = [
  "datafusion",
  "datafusion-catalog",
  "datafusion-common",
+ "datafusion-datasource",
  "datafusion-execution",
  "datafusion-physical-expr",
  "datafusion-physical-plan",

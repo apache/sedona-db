@@ -33,6 +33,7 @@ use datafusion::{
 };
 use datafusion_catalog::{memory::DataSourceExec, Session};
 use datafusion_common::{not_impl_err, plan_err, DataFusionError, GetExt, Result, Statistics};
+use datafusion_datasource::projection::{ProjectionOpener, SplitProjection};
 use datafusion_physical_expr::{
     projection::ProjectionExprs, LexOrdering, LexRequirement, PhysicalExpr,
 };
@@ -208,7 +209,8 @@ struct ExternalFileSource {
     spec: Arc<dyn ExternalFormatSpec>,
     table_schema: TableSchema,
     batch_size: Option<usize>,
-    projection: Option<ProjectionExprs>,
+    /// Split projection: file_indices for column pruning, ProjectionOpener for the rest
+    split_projection: Option<SplitProjection>,
     filters: Vec<Arc<dyn PhysicalExpr>>,
     metrics: ExecutionPlanMetricsSet,
 }
@@ -219,7 +221,7 @@ impl ExternalFileSource {
             spec,
             table_schema,
             batch_size: None,
-            projection: None,
+            split_projection: None,
             filters: Vec::new(),
             metrics: ExecutionPlanMetricsSet::default(),
         }
@@ -233,7 +235,11 @@ impl FileSource for ExternalFileSource {
         base_config: &FileScanConfig,
         _partition: usize,
     ) -> Result<Arc<dyn FileOpener>> {
-        let file_projection = self.projection.as_ref().map(|p| p.column_indices());
+        // Use file_indices from SplitProjection for column pruning
+        let file_projection = self
+            .split_projection
+            .as_ref()
+            .map(|sp| sp.file_indices.clone());
 
         let args = OpenReaderArgs {
             src: Object {
@@ -248,10 +254,21 @@ impl FileSource for ExternalFileSource {
             filters: self.filters.clone(),
         };
 
-        Ok(Arc::new(ExternalFileOpener {
+        let inner_opener: Arc<dyn FileOpener> = Arc::new(ExternalFileOpener {
             spec: self.spec.clone(),
             args,
-        }))
+        });
+
+        // Wrap with ProjectionOpener to handle reordering/expressions
+        if let Some(split_projection) = &self.split_projection {
+            ProjectionOpener::try_new(
+                split_projection.clone(),
+                inner_opener,
+                self.table_schema.file_schema(),
+            )
+        } else {
+            Ok(inner_opener)
+        }
     }
 
     fn try_pushdown_filters(
@@ -281,14 +298,19 @@ impl FileSource for ExternalFileSource {
         &self,
         projection: &ProjectionExprs,
     ) -> Result<Option<Arc<dyn FileSource>>> {
+        // Use SplitProjection to handle any projection:
+        // - file_indices provides column pruning (always works)
+        // - ProjectionOpener handles reordering/expressions/renames after reading
+        let split_projection = SplitProjection::new(self.table_schema.file_schema(), projection);
+
         Ok(Some(Arc::new(Self {
-            projection: Some(projection.clone()),
+            split_projection: Some(split_projection),
             ..self.clone()
         })))
     }
 
     fn projection(&self) -> Option<&ProjectionExprs> {
-        self.projection.as_ref()
+        self.split_projection.as_ref().map(|sp| &sp.source)
     }
 
     fn as_any(&self) -> &dyn Any {
