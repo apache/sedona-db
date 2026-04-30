@@ -124,8 +124,12 @@ pub fn bytes_to_f64(bytes: &[u8], band_type: &BandDataType) -> Result<f64> {
         BandDataType::Int16 => read_le_f64!(i16, 2),
         BandDataType::UInt32 => read_le_f64!(u32, 4),
         BandDataType::Int32 => read_le_f64!(i32, 4),
-        BandDataType::UInt64 => read_le_f64!(u64, 8),
-        BandDataType::Int64 => read_le_f64!(i64, 8),
+        BandDataType::UInt64 => exec_err!(
+            "Cannot convert UInt64 nodata value to f64 without potential precision loss; please handle UInt64 specially"
+        ),
+        BandDataType::Int64 => exec_err!(
+            "Cannot convert Int64 nodata value to f64 without potential precision loss; please handle Int64 specially"
+        ),
         BandDataType::Float32 => read_le_f64!(f32, 4),
         BandDataType::Float64 => read_le_f64!(f64, 8),
     }
@@ -484,19 +488,23 @@ mod tests {
             -7.0
         );
 
-        // UInt64
+        // UInt64 should fail explicitly because conversion to f64 is lossy.
         let val: u64 = 42;
-        assert_eq!(
-            bytes_to_f64(&val.to_le_bytes(), &BandDataType::UInt64).unwrap(),
-            42.0
-        );
+        let err = bytes_to_f64(&val.to_le_bytes(), &BandDataType::UInt64)
+            .err()
+            .unwrap();
+        assert!(err.to_string().contains(
+            "Cannot convert UInt64 nodata value to f64 without potential precision loss"
+        ));
 
-        // Int64
+        // Int64 should fail explicitly because conversion to f64 is lossy.
         let val: i64 = -42;
-        assert_eq!(
-            bytes_to_f64(&val.to_le_bytes(), &BandDataType::Int64).unwrap(),
-            -42.0
-        );
+        let err = bytes_to_f64(&val.to_le_bytes(), &BandDataType::Int64)
+            .err()
+            .unwrap();
+        assert!(err
+            .to_string()
+            .contains("Cannot convert Int64 nodata value to f64 without potential precision loss"));
 
         // Float32
         let val: f32 = -9999.0;
