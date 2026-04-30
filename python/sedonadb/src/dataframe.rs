@@ -25,8 +25,9 @@ use arrow_schema::{Schema, SchemaRef};
 use datafusion::catalog::MemTable;
 use datafusion::config::ConfigField;
 use datafusion::logical_expr::SortExpr;
-use datafusion::prelude::DataFrame;
+use datafusion::prelude::{DataFrame, SessionContext};
 use datafusion_common::{Column, DataFusionError, ParamValues};
+use datafusion_execution::TaskContextProvider;
 use datafusion_expr::{ExplainFormat, ExplainOption, Expr};
 use datafusion_ffi::table_provider::FFI_TableProvider;
 use futures::lock::Mutex;
@@ -390,8 +391,14 @@ impl InternalDataFrame {
     ) -> Result<Bound<'py, PyCapsule>, PySedonaError> {
         let name = cr"datafusion_table_provider".into();
         let provider = self.inner.clone().into_view();
-        let ffi_provider =
-            FFI_TableProvider::new(provider, true, Some(self.runtime.handle().clone()));
+        let ctx = Arc::new(SessionContext::new()) as Arc<dyn TaskContextProvider>;
+        let ffi_provider = FFI_TableProvider::new(
+            provider,
+            true,
+            Some(self.runtime.handle().clone()),
+            &ctx,
+            None,
+        );
         Ok(PyCapsule::new(py, ffi_provider, Some(name))?)
     }
 }
