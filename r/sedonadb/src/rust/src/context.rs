@@ -17,8 +17,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use arrow_array::{RecordBatch, RecordBatchReader};
-use arrow_schema::{ArrowError, SchemaRef};
+use arrow_array::RecordBatchReader;
+use arrow_schema::ArrowError;
 use datafusion::catalog::{MemTable, TableProvider};
 use datafusion_ffi::udf::FFI_ScalarUDF;
 use savvy::{savvy, savvy_err, IntoExtPtrSexp, OwnedStringSexp, Result};
@@ -116,16 +116,8 @@ impl InternalContext {
         // Some readers are sensitive to being collected on the R thread or not, so
         // provide the option to collect everything immediately.
         let provider: Arc<dyn TableProvider> = if collect_now {
-            // Strip metadata from the schema to ensure consistency with batch schemas.
-            // While metadata is supported in theory, it causes schema equivalence issues
-            // in MemTable: https://github.com/apache/sedona-db/issues/477.
-            let schema = strip_schema_metadata(stream_reader.schema());
-            let batches = stream_reader
-                .map(|batch| {
-                    let batch = batch?;
-                    RecordBatch::try_new(schema.clone(), batch.columns().to_vec())
-                })
-                .collect::<std::result::Result<Vec<_>, ArrowError>>()?;
+            let schema = stream_reader.schema();
+            let batches = stream_reader.collect::<std::result::Result<Vec<_>, ArrowError>>()?;
             Arc::new(MemTable::try_new(schema, vec![batches])?)
         } else {
             Arc::new(RecordBatchReaderProvider::new(Box::new(stream_reader)))
@@ -177,14 +169,5 @@ impl InternalContext {
         let scalar_udf = import_scalar_udf(scalar_udf_xptr)?;
         self.inner.ctx.register_udf(scalar_udf);
         Ok(())
-    }
-}
-
-/// Strips metadata from a SchemaRef if present, returning the schema without metadata.
-fn strip_schema_metadata(schema_ref: SchemaRef) -> SchemaRef {
-    if schema_ref.metadata().is_empty() {
-        schema_ref
-    } else {
-        Arc::new(schema_ref.as_ref().clone().with_metadata(HashMap::new()))
     }
 }
