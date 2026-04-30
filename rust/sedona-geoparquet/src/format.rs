@@ -41,9 +41,7 @@ use datafusion_catalog::{memory::DataSourceExec, Session};
 use datafusion_common::{plan_err, GetExt, Result, Statistics};
 use datafusion_datasource_parquet::metadata::DFParquetMetadata;
 use datafusion_execution::cache::cache_manager::FileMetadataCache;
-use datafusion_physical_expr::{
-    projection::ProjectionExprs, LexRequirement, PhysicalExpr,
-};
+use datafusion_physical_expr::{projection::ProjectionExprs, LexRequirement, PhysicalExpr};
 use datafusion_physical_plan::{
     filter_pushdown::FilterPushdownPropagation, metrics::ExecutionPlanMetricsSet, ExecutionPlan,
 };
@@ -61,7 +59,6 @@ use crate::{
     writer::create_geoparquet_writer_physical_plan,
 };
 use datafusion::datasource::physical_plan::ParquetSource;
-use datafusion::datasource::schema_adapter::SchemaAdapterFactory;
 
 /// GeoParquet FormatFactory
 ///
@@ -367,9 +364,12 @@ impl FileFormat for GeoParquetFormat {
     }
 
     fn file_source(&self, table_schema: TableSchema) -> Arc<dyn FileSource> {
-        let mut source =
-            GeoParquetFileSource::try_from_file_source(self.inner().file_source(table_schema), None, None)
-                .unwrap();
+        let mut source = GeoParquetFileSource::try_from_file_source(
+            self.inner().file_source(table_schema),
+            None,
+            None,
+        )
+        .unwrap();
         source.options = self.options.clone();
         Arc::new(source)
     }
@@ -396,7 +396,8 @@ impl GeoParquetFileSource {
     /// Create a new file source based on [TableParquetOptions]
     pub fn new(table_schema: TableSchema, options: TableGeoParquetOptions) -> Self {
         Self {
-            inner: ParquetSource::new(table_schema).with_table_parquet_options(options.inner.clone()),
+            inner: ParquetSource::new(table_schema)
+                .with_table_parquet_options(options.inner.clone()),
             metadata_size_hint: None,
             predicate: None,
             options,
@@ -471,32 +472,6 @@ impl GeoParquetFileSource {
             inner: self.inner.with_predicate(predicate.clone()),
             metadata_size_hint: self.metadata_size_hint,
             predicate: Some(predicate),
-            options: self.options.clone(),
-            metadata_cache: self.metadata_cache.clone(),
-        }
-    }
-
-    /// Apply a [SchemaAdapterFactory] to the inner [ParquetSource]
-    pub fn with_schema_adapter_factory(
-        &self,
-        schema_adapter_factory: Arc<dyn SchemaAdapterFactory>,
-    ) -> Self {
-        let inner = self
-            .inner
-            .clone()
-            .with_schema_adapter_factory(schema_adapter_factory)
-            .expect("with_schema_adapter_factory failed");
-
-        let parquet_source = inner
-            .as_any()
-            .downcast_ref::<ParquetSource>()
-            .expect("GeoParquetFileSource constructed with non ParquetSource inner")
-            .clone();
-
-        Self {
-            inner: parquet_source,
-            metadata_size_hint: self.metadata_size_hint,
-            predicate: self.predicate.clone(),
             options: self.options.clone(),
             metadata_cache: self.metadata_cache.clone(),
         }
@@ -623,14 +598,11 @@ impl FileSource for GeoParquetFileSource {
 
 #[cfg(test)]
 mod test {
-    use std::fmt::Debug;
     use std::ops::Deref;
 
     use arrow_array::RecordBatch;
     use arrow_schema::{DataType, Field, Schema};
-    use datafusion::config::TableParquetOptions;
     use datafusion::datasource::physical_plan::ParquetSource;
-    use datafusion::datasource::schema_adapter::SchemaAdapterFactory;
     use datafusion::datasource::table_schema::TableSchema;
     use datafusion::{
         execution::SessionStateBuilder,
@@ -931,9 +903,11 @@ mod test {
     #[tokio::test]
     async fn test_with_predicate() {
         // Create a test schema
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("test", DataType::Int32, false),
-        ]));
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "test",
+            DataType::Int32,
+            false,
+        )]));
         let table_schema = TableSchema::new(schema, vec![]);
 
         // Create a parquet source with the correct constructor signature
@@ -952,7 +926,4 @@ mod test {
         let geo_source_with_predicate = geo_source.with_predicate(predicate);
         assert!(geo_source_with_predicate.inner.filter().is_some());
     }
-
-    // Note: test_with_schema_adapter_factory removed because SchemaAdapterFactory
-    // has been deprecated and removed in DataFusion 52. Use PhysicalExprAdapterFactory instead.
 }
