@@ -1193,10 +1193,11 @@ mod test {
         let ctx = setup_context();
         let df = ctx.table(&example).await.unwrap();
 
-        let options = TableGeoParquetOptions {
+        let mut options = TableGeoParquetOptions {
             geoparquet_version: GeoParquetVersion::V2_0,
             ..Default::default()
         };
+        options.inner = options.inner.with_skip_arrow_metadata(true);
 
         let logical_types = test_dataframe_roundtrip(&ctx, df, options).await;
         let logical_type = logical_types.get("geometry").unwrap().clone().unwrap();
@@ -1214,10 +1215,11 @@ mod test {
         let ctx = setup_context();
         let df = ctx.table(&example).await.unwrap();
 
-        let options = TableGeoParquetOptions {
+        let mut options = TableGeoParquetOptions {
             geoparquet_version: GeoParquetVersion::V2_0,
             ..Default::default()
         };
+        options.inner = options.inner.with_skip_arrow_metadata(true);
 
         let logical_types = test_dataframe_roundtrip(&ctx, df, options).await;
         let logical_type = logical_types.get("geometry").unwrap().clone().unwrap();
@@ -1236,10 +1238,11 @@ mod test {
         let ctx = setup_context();
         let df = ctx.table(&example).await.unwrap();
 
-        let options = TableGeoParquetOptions {
+        let mut options = TableGeoParquetOptions {
             geoparquet_version: GeoParquetVersion::V2_0,
             ..Default::default()
         };
+        options.inner = options.inner.with_skip_arrow_metadata(true);
 
         let logical_types = test_dataframe_roundtrip(&ctx, df, options).await;
         let logical_type = logical_types.get("geometry").unwrap().clone().unwrap();
@@ -1251,6 +1254,28 @@ mod test {
                     parsed.unwrap().to_authority_code().unwrap(),
                     Some("EPSG:32618".to_string())
                 );
+            }
+            unknown => panic!("Unexpected logical type {unknown:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn geoparquet_omitted_basic() {
+        let example = test_geoparquet("example", "geometry").unwrap();
+        let ctx = setup_context();
+        let df = ctx.table(&example).await.unwrap();
+
+        let mut options = TableGeoParquetOptions {
+            geoparquet_version: GeoParquetVersion::Omitted,
+            ..Default::default()
+        };
+        options.inner = options.inner.with_skip_arrow_metadata(true);
+
+        let logical_types = test_dataframe_roundtrip(&ctx, df, options).await;
+        let logical_type = logical_types.get("geometry").unwrap().clone().unwrap();
+        match logical_type {
+            LogicalType::Geometry { crs } => {
+                assert!(crs.is_none());
             }
             unknown => panic!("Unexpected logical type {unknown:?}"),
         }

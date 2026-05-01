@@ -464,7 +464,7 @@ def test_write_geoparquet_unknown(con):
 
 
 def test_write_geoparquet_geography(con, geoarrow_data):
-    # Checks a read and write of geography (rounctrip, since nobody else can read/write)
+    # Checks a read and write of geography (roundtrip, since nobody else can read/write)
     path = (
         geoarrow_data
         / "natural-earth"
@@ -481,6 +481,62 @@ def test_write_geoparquet_geography(con, geoarrow_data):
 
         table_roundtrip = con.read_parquet(tmp_parquet).to_arrow_table()
         assert table_roundtrip == table
+
+
+def test_write_geoparquet_2_0(con, geoarrow_data):
+    # Checks a read and write of geography (roundtrip, since nobody else can read/write)
+    path = (
+        geoarrow_data
+        / "natural-earth"
+        / "files"
+        / "natural-earth_countries_geo.parquet"
+    )
+    skip_if_not_exists(path)
+
+    table = con.read_parquet(path).to_arrow_table()
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp_parquet = Path(td) / "tmp.parquet"
+        con.create_data_frame(table).to_parquet(tmp_parquet, geoparquet_version="2.0")
+
+        table_roundtrip = con.read_parquet(tmp_parquet).to_arrow_table()
+        assert table_roundtrip == table
+
+        # Check for metadata and logical type
+        file = parquet.ParquetFile(tmp_parquet)
+        file_kv_metadata = file.metadata.metadata
+        assert b"geo" in file_kv_metadata
+        geo_metadata = json.loads(file_kv_metadata[b"geo"])
+        assert geo_metadata["version"] == "2.0.0"
+
+        file.metadata.schema.column(2).logical_type.to_json() == '{"Type": "Geometry"}'
+
+
+def test_write_geoparquet_no_metadata(con, geoarrow_data):
+    # Checks a read and write of geography (roundtrip, since nobody else can read/write)
+    path = (
+        geoarrow_data
+        / "natural-earth"
+        / "files"
+        / "natural-earth_countries_geo.parquet"
+    )
+    skip_if_not_exists(path)
+
+    table = con.read_parquet(path).to_arrow_table()
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp_parquet = Path(td) / "tmp.parquet"
+        con.create_data_frame(table).to_parquet(tmp_parquet, geoparquet_version="none")
+
+        table_roundtrip = con.read_parquet(tmp_parquet).to_arrow_table()
+        assert table_roundtrip == table
+
+        # Check for absent metadata and but correct logical type
+        file = parquet.ParquetFile(tmp_parquet)
+        file_kv_metadata = file.metadata.metadata
+        assert b"geo" not in file_kv_metadata
+
+        file.metadata.schema.column(2).logical_type.to_json() == '{"Type": "Geometry"}'
 
 
 def test_read_parquet_validate_wkb_single_valid_row(con, tmp_path):
