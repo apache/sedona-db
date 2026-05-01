@@ -15,13 +15,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::{any::Any, collections::HashMap, fmt, sync::Arc};
+use std::{any::Any, collections::HashMap, sync::Arc};
 
 use arrow_array::{
     builder::{Float32Builder, NullBufferBuilder},
     ArrayRef, RecordBatch, StructArray,
 };
-use arrow_schema::{DataType, Field, Fields, Schema, SchemaRef};
+use arrow_schema::{DataType, Field, FieldRef, Fields, Schema, SchemaRef};
 use async_trait::async_trait;
 use datafusion::{
     config::TableParquetOptions,
@@ -35,7 +35,9 @@ use datafusion_common::{
     config::ConfigOptions, exec_datafusion_err, exec_err, not_impl_err, DataFusionError, Result,
 };
 use datafusion_execution::{SendableRecordBatchStream, TaskContext};
-use datafusion_expr::{dml::InsertOp, ColumnarValue, ScalarUDF, Volatility};
+use datafusion_expr::{
+    dml::InsertOp, ColumnarValue, ScalarUDF, ScalarUDFImpl, Signature, Volatility,
+};
 use datafusion_physical_expr::{
     expressions::Column, LexRequirement, PhysicalExpr, ScalarFunctionExpr,
 };
@@ -45,7 +47,7 @@ use datafusion_physical_plan::{
 use float_next_after::NextAfter;
 use futures::StreamExt;
 use geo_traits::GeometryTrait;
-use sedona_common::{sedona_internal_err, SedonaOptions};
+use sedona_common::{sedona_internal_err, CrsProviderOption, SedonaOptions};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_functions::executor::WkbExecutor;
 use sedona_geometry::{
@@ -53,7 +55,7 @@ use sedona_geometry::{
     interval::{Interval, IntervalTrait},
 };
 use sedona_schema::{
-    crs::lnglat,
+    crs::{deserialize_crs_from_obj, lnglat, Crs},
     datatypes::{Edges, SedonaType},
     matchers::ArgMatcher,
     schema::SedonaSchema,
@@ -77,39 +79,66 @@ pub fn create_geoparquet_writer_physical_plan(
     }
 
     // If there is no geometry, just use the inner implementation
-    let mut output_geometry_column_indices = conf.output_schema().geometry_column_indices()?;
-    if output_geometry_column_indices.is_empty() {
+    let input_geometry_column_indices = conf.output_schema().geometry_column_indices()?;
+    if input_geometry_column_indices.is_empty() {
         return create_inner_writer(input, conf, order_requirements, options.inner.clone());
     }
 
-    // We have geometry and/or geography! Collect the GeoParquetMetadata we'll need to write
+    // We have geometry and/or geography!
+
+    // Collect the GeoParquetMetadata we'll need to write
     let mut metadata = GeoParquetMetadata::default();
     let mut bbox_columns = HashMap::new();
-    let mut bbox_projection = None;
-    let mut parquet_output_schema = conf.output_schema().clone();
+    let projection;
+    let sedona_options = session_config_options
+        .extensions
+        .get::<SedonaOptions>()
+        .cloned()
+        .unwrap_or_default();
 
     // Check the version
     match options.geoparquet_version {
         GeoParquetVersion::V1_0 => {
             metadata.version = "1.0.0".to_string();
+            projection = project_normalize_geo(
+                &input.schema(),
+                &sedona_options.crs_provider,
+                GeoParquetVersion::V1_0,
+                session_config_options,
+            )?;
         }
         GeoParquetVersion::V1_1 => {
             metadata.version = "1.1.0".to_string();
-            (bbox_projection, bbox_columns) = project_bboxes(
+            (projection, bbox_columns) = project_bboxes(
                 &input,
                 options.overwrite_bbox_columns,
                 session_config_options,
+                &sedona_options.crs_provider,
+                GeoParquetVersion::V1_1,
             )?;
-            parquet_output_schema = compute_final_schema(&bbox_projection, &input.schema())?;
-            output_geometry_column_indices = conf.output_schema.geometry_column_indices()?;
         }
-        _ => {
-            return not_impl_err!(
-                "GeoParquetVersion {:?} is not yet supported",
-                options.geoparquet_version
-            );
+        GeoParquetVersion::V2_0 => {
+            metadata.version = "2.0.0".to_string();
+            projection = project_normalize_geo(
+                &input.schema(),
+                &sedona_options.crs_provider,
+                GeoParquetVersion::V2_0,
+                session_config_options,
+            )?;
+        }
+        GeoParquetVersion::Omitted => {
+            // Sentinel...we'll only write the metadata if there's a version to write
+            metadata.version = "".to_string();
+            projection = project_normalize_geo(
+                &input.schema(),
+                &sedona_options.crs_provider,
+                GeoParquetVersion::Omitted,
+                session_config_options,
+            )?;
         }
     }
+
+    let parquet_output_schema = compute_final_schema(&projection, &input.schema())?;
 
     let field_names = conf
         .output_schema()
@@ -123,93 +152,66 @@ pub fn create_geoparquet_writer_physical_plan(
         metadata.primary_column = field_names[output_geometry_primary].clone();
     }
 
-    // Apply all columns
-    for i in output_geometry_column_indices {
-        let f = conf.output_schema().field(i);
-        let sedona_type = SedonaType::from_storage_field(f)?;
-        let mut column_metadata = GeoParquetColumnMetadata::default();
+    let mut parquet_options = options.inner.clone();
 
-        let (edge_type, crs) = match sedona_type {
-            SedonaType::Wkb(edge_type, crs) | SedonaType::WkbView(edge_type, crs) => {
-                (edge_type, crs)
-            }
-            _ => return sedona_internal_err!("Unexpected type: {sedona_type}"),
-        };
+    // Create the column metadata and finalize the Parquet meatdata if we're omitting the GeoParquet metadata
+    if !metadata.version.is_empty() {
+        for i in input_geometry_column_indices {
+            let f = conf.output_schema().field(i);
+            let sedona_type = SedonaType::from_storage_field(f)?;
+            let mut column_metadata = GeoParquetColumnMetadata::default();
 
-        // Assign edge type if needed
-        match edge_type {
-            Edges::Planar => {}
-            Edges::Spherical => {
-                column_metadata.edges = Some("spherical".to_string());
-            }
-        }
+            let (edge_type, crs) = match sedona_type {
+                SedonaType::Wkb(edge_type, crs) | SedonaType::WkbView(edge_type, crs) => {
+                    (edge_type, crs)
+                }
+                _ => return sedona_internal_err!("Unexpected type: {sedona_type}"),
+            };
 
-        // Assign crs
-        if crs == lnglat() {
-            // Do nothing, lnglat is the meaning of an omitted CRS
-        } else if let Some(crs) = crs {
-            let mut crs_value: Value = crs.to_json().parse().map_err(|e| {
-                exec_datafusion_err!("Failed to parse CRS for column '{}' {e}", f.name())
-            })?;
-
-            // Ensure crs is PROJJSON to ensure this file is not rejected by downstream readers
-            if let Value::String(string) = &crs_value {
-                if let Some(sedona_options) =
-                    session_config_options.extensions.get::<SedonaOptions>()
-                {
-                    let projjson_string = sedona_options.crs_provider.to_projjson(string)?;
-                    crs_value = projjson_string.parse().map_err(|e| {
-                        exec_datafusion_err!(
-                            "Failed to parse CRS for column '{}' from CrsProvider {e}",
-                            f.name()
-                        )
-                    })?;
-                } else {
-                    return sedona_internal_err!("SedonaOptions not available");
+            // Assign edge type if needed
+            match edge_type {
+                Edges::Planar => {}
+                Edges::Spherical => {
+                    column_metadata.edges = Some("spherical".to_string());
                 }
             }
 
-            column_metadata.crs = Some(crs_value);
-        } else {
-            return exec_err!(
-                "Can't write GeoParquet from null CRS\nUse ST_SetSRID({}, ...) to assign it one",
-                f.name()
-            );
+            // Assign crs
+            column_metadata.crs =
+                normalize_crs_for_geoparquet(f.name(), &crs, &sedona_options.crs_provider)?;
+
+            // Add bbox column info, if we added one in project_bboxes()
+            if let Some(bbox_column_name) = bbox_columns.get(f.name()) {
+                column_metadata
+                    .covering
+                    .replace(GeoParquetCovering::bbox_struct_xy(bbox_column_name));
+            }
+
+            // Add to metadata
+            metadata
+                .columns
+                .insert(f.name().to_string(), column_metadata);
         }
 
-        // Add bbox column info, if we added one in project_bboxes()
-        if let Some(bbox_column_name) = bbox_columns.get(f.name()) {
-            column_metadata
-                .covering
-                .replace(GeoParquetCovering::bbox_struct_xy(bbox_column_name));
-        }
-
-        // Add to metadata
-        metadata
-            .columns
-            .insert(f.name().to_string(), column_metadata);
-    }
-
-    // Apply to the Parquet options
-    let mut parquet_options = options.inner.clone();
-    parquet_options.key_value_metadata.insert(
-        "geo".to_string(),
-        Some(
-            serde_json::to_string(&metadata).map_err(|e| {
+        // Add to Parquet key/value metadata
+        parquet_options.key_value_metadata.insert(
+            "geo".to_string(),
+            Some(serde_json::to_string(&metadata).map_err(|e| {
                 exec_datafusion_err!("Failed to serialize GeoParquet metadata: {e}")
-            })?,
-        ),
-    );
+            })?),
+        );
+    }
 
     // Create the sink
     let sink_input_schema = conf.output_schema;
     conf.output_schema = parquet_output_schema.clone();
     let sink = Arc::new(GeoParquetSink {
         inner: ParquetSink::new(conf, parquet_options),
-        projection: bbox_projection,
+        projection,
         sink_input_schema,
         parquet_output_schema,
     });
+
     Ok(Arc::new(DataSinkExec::new(input, sink, order_requirements)) as _)
 }
 
@@ -220,13 +222,13 @@ pub fn create_geoparquet_writer_physical_plan(
 #[derive(Debug)]
 struct GeoParquetSink {
     inner: ParquetSink,
-    projection: Option<Vec<(Arc<dyn PhysicalExpr>, String)>>,
+    projection: Vec<(Arc<dyn PhysicalExpr>, String)>,
     sink_input_schema: SchemaRef,
     parquet_output_schema: SchemaRef,
 }
 
 impl DisplayAs for GeoParquetSink {
-    fn fmt_as(&self, t: DisplayFormatType, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt_as(&self, t: DisplayFormatType, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.inner.fmt_as(t, f)
     }
 }
@@ -246,31 +248,27 @@ impl DataSink for GeoParquetSink {
         data: SendableRecordBatchStream,
         context: &Arc<TaskContext>,
     ) -> Result<u64> {
-        if let Some(projection) = &self.projection {
-            // If we have a projection, apply it here
-            let schema = self.parquet_output_schema.clone();
-            let projection = projection.clone();
+        // Apply the projection and write
+        let schema = self.parquet_output_schema.clone();
+        let projection = self.projection.clone();
 
-            let data = Box::pin(RecordBatchStreamAdapter::new(
-                schema.clone(),
-                data.map(move |batch_result| {
-                    let schema = schema.clone();
+        let data = Box::pin(RecordBatchStreamAdapter::new(
+            schema.clone(),
+            data.map(move |batch_result| {
+                let schema = schema.clone();
 
-                    batch_result.and_then(|batch| {
-                        let mut columns = Vec::with_capacity(projection.len());
-                        for (expr, _) in &projection {
-                            let col = expr.evaluate(&batch)?;
-                            columns.push(col.into_array(batch.num_rows())?);
-                        }
-                        Ok(RecordBatch::try_new(schema.clone(), columns)?)
-                    })
-                }),
-            ));
+                batch_result.and_then(|batch| {
+                    let mut columns = Vec::with_capacity(projection.len());
+                    for (expr, _) in &projection {
+                        let col = expr.evaluate(&batch)?;
+                        columns.push(col.into_array(batch.num_rows())?);
+                    }
+                    Ok(RecordBatch::try_new(schema.clone(), columns)?)
+                })
+            }),
+        ));
 
-            self.inner.write_all(data, context).await
-        } else {
-            self.inner.write_all(data, context).await
-        }
+        self.inner.write_all(data, context).await
     }
 }
 
@@ -287,7 +285,7 @@ fn create_inner_writer(
 }
 
 type ProjectBboxesResult = (
-    Option<Vec<(Arc<dyn PhysicalExpr>, String)>>,
+    Vec<(Arc<dyn PhysicalExpr>, String)>,
     HashMap<String, String>,
 );
 
@@ -316,11 +314,17 @@ fn project_bboxes(
     input: &Arc<dyn ExecutionPlan>,
     overwrite_bbox_columns: bool,
     session_config_options: &Arc<ConfigOptions>,
+    crs_provider: &CrsProviderOption,
+    version: GeoParquetVersion,
 ) -> Result<ProjectBboxesResult> {
     let input_schema = input.schema();
     let matcher = ArgMatcher::is_geometry();
     let bbox_udf: Arc<ScalarUDF> = Arc::new(geoparquet_bbox_udf().into());
     let bbox_udf_name = bbox_udf.name();
+    let normalize_udf = Arc::new(ScalarUDF::new_from_impl(NormalizeForGeoParquet::new(
+        crs_provider.clone(),
+        version,
+    )));
 
     // Calculate and keep track of the expression, name pairs for the bounding box
     // columns we are about to (potentially) create.
@@ -348,12 +352,6 @@ fn project_bboxes(
         }
     }
 
-    // If we don't need to create any bbox columns, don't add an additional
-    // projection at the end of the input plan
-    if bbox_exprs.is_empty() {
-        return Ok((None, HashMap::new()));
-    }
-
     // Create the projection expressions
     let mut exprs = Vec::new();
     for (i, f) in input.schema().fields().iter().enumerate() {
@@ -376,39 +374,80 @@ Use overwrite_bbox_columns = True if this is what was intended.",
             exprs.push((expr, expr_name));
         }
 
-        // Insert the column (whether it does or does not have geometry)
-        let column = Arc::new(Column::new(f.name(), i));
-        exprs.push((column, f.name().clone()));
+        // Insert the column. If this is a geometry column, strip the metadata.
+        let column = Arc::new(Column::new(f.name(), i)) as Arc<dyn PhysicalExpr>;
+        let return_field = normalize_field_for_geoparquet(f, version, crs_provider)?;
+        if &return_field == f {
+            exprs.push((column, f.name().clone()));
+        } else {
+            let expr = Arc::new(ScalarFunctionExpr::new(
+                normalize_udf.name(),
+                normalize_udf.clone(),
+                vec![column],
+                return_field,
+                Arc::clone(session_config_options),
+            )) as Arc<dyn PhysicalExpr>;
+            exprs.push((expr, f.name().to_string()));
+        }
     }
 
     // Flip the bbox_column_names into the form our caller needs it
     let bbox_column_names_by_field = bbox_column_names.drain().map(|(k, v)| (v, k)).collect();
 
-    Ok((Some(exprs), bbox_column_names_by_field))
+    Ok((exprs, bbox_column_names_by_field))
+}
+
+fn project_normalize_geo(
+    input_schema: &Schema,
+    crs_provider: &CrsProviderOption,
+    version: GeoParquetVersion,
+    session_config_options: &Arc<ConfigOptions>,
+) -> Result<Vec<(Arc<dyn PhysicalExpr>, String)>> {
+    let normalize_udf = Arc::new(ScalarUDF::new_from_impl(NormalizeForGeoParquet::new(
+        crs_provider.clone(),
+        version,
+    )));
+    input_schema
+        .fields()
+        .iter()
+        .enumerate()
+        .map(|(i, f)| {
+            let column = Arc::new(Column::new(f.name(), i)) as Arc<dyn PhysicalExpr>;
+            let return_field = normalize_field_for_geoparquet(f, version, crs_provider)?;
+            let expr = if &return_field == f {
+                column
+            } else {
+                Arc::new(ScalarFunctionExpr::new(
+                    normalize_udf.name(),
+                    normalize_udf.clone(),
+                    vec![column],
+                    return_field,
+                    Arc::clone(session_config_options),
+                )) as Arc<dyn PhysicalExpr>
+            };
+            Ok((expr, f.name().to_string()))
+        })
+        .collect()
 }
 
 fn compute_final_schema(
-    bbox_projection: &Option<Vec<(Arc<dyn PhysicalExpr>, String)>>,
+    projection: &Vec<(Arc<dyn PhysicalExpr>, String)>,
     initial_schema: &SchemaRef,
 ) -> Result<SchemaRef> {
-    if let Some(bbox_projection) = bbox_projection {
-        let new_fields = bbox_projection
-            .iter()
-            .map(|(expr, name)| -> Result<Field> {
-                let return_field_ref = expr.return_field(initial_schema)?;
-                Ok(Field::new(
-                    name,
-                    return_field_ref.data_type().clone(),
-                    return_field_ref.is_nullable(),
-                )
-                .with_metadata(return_field_ref.metadata().clone()))
-            })
-            .collect::<Result<Vec<_>>>()?;
+    let new_fields = projection
+        .iter()
+        .map(|(expr, name)| -> Result<Field> {
+            let return_field_ref = expr.return_field(initial_schema)?;
+            Ok(Field::new(
+                name,
+                return_field_ref.data_type().clone(),
+                return_field_ref.is_nullable(),
+            )
+            .with_metadata(return_field_ref.metadata().clone()))
+        })
+        .collect::<Result<Vec<_>>>()?;
 
-        Ok(Arc::new(Schema::new(new_fields)))
-    } else {
-        Ok(initial_schema.clone())
-    }
+    Ok(Arc::new(Schema::new(new_fields)))
 }
 
 fn geoparquet_bbox_udf() -> SedonaScalarUDF {
@@ -530,6 +569,158 @@ fn append_float_bbox(
     }
 
     Ok(())
+}
+
+#[derive(Debug, PartialEq)]
+struct NormalizeForGeoParquet {
+    crs_provider: CrsProviderOption,
+    version: GeoParquetVersion,
+    signature: Signature,
+}
+
+impl NormalizeForGeoParquet {
+    fn new(crs_provider: CrsProviderOption, version: GeoParquetVersion) -> Self {
+        Self {
+            crs_provider,
+            version,
+            signature: Signature::any(1, Volatility::Stable),
+        }
+    }
+}
+
+impl std::hash::Hash for NormalizeForGeoParquet {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.version.hash(state);
+        self.signature.hash(state);
+    }
+}
+
+impl Eq for NormalizeForGeoParquet {}
+
+impl ScalarUDFImpl for NormalizeForGeoParquet {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn name(&self) -> &str {
+        "normalize_for_geoparquet"
+    }
+
+    fn signature(&self) -> &Signature {
+        &self.signature
+    }
+
+    fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
+        sedona_internal_err!("return_type() should not be called")
+    }
+
+    fn return_field_from_args(&self, args: datafusion_expr::ReturnFieldArgs) -> Result<FieldRef> {
+        normalize_field_for_geoparquet(&args.arg_fields[0], self.version, &self.crs_provider)
+    }
+
+    fn invoke_with_args(&self, args: datafusion_expr::ScalarFunctionArgs) -> Result<ColumnarValue> {
+        Ok(args.args[0].clone())
+    }
+}
+
+fn normalize_field_for_geoparquet(
+    field: &FieldRef,
+    version: GeoParquetVersion,
+    crs_provider: &CrsProviderOption,
+) -> Result<FieldRef> {
+    if field.metadata().is_empty() {
+        return Ok(field.clone());
+    }
+
+    let sedona_type = SedonaType::from_storage_field(field)?;
+    match sedona_type {
+        SedonaType::Arrow(DataType::Struct(children)) => {
+            let new_type = DataType::Struct(
+                children
+                    .iter()
+                    .map(|f| normalize_field_for_geoparquet(f, version, crs_provider))
+                    .collect::<Result<_>>()?,
+            );
+            Ok(Arc::new(field.as_ref().clone().with_data_type(new_type)))
+        }
+        SedonaType::Arrow(DataType::List(child)) => {
+            let new_type = DataType::List(normalize_field_for_geoparquet(
+                &child,
+                version,
+                crs_provider,
+            )?);
+            Ok(Arc::new(field.as_ref().clone().with_data_type(new_type)))
+        }
+        SedonaType::Arrow(_) => Ok(field.clone()),
+        SedonaType::Wkb(edges, crs) => match version {
+            // For GeoParquet 1.0 and 1.1, strip the metadata (we write Binary storage)
+            GeoParquetVersion::V1_0 | GeoParquetVersion::V1_1 => Ok(Arc::new(
+                field.as_ref().clone().with_metadata(HashMap::new()),
+            )),
+            // For GeoParquet 2.0 and None, ensure we have projjson CRS output
+            GeoParquetVersion::V2_0 | GeoParquetVersion::Omitted => {
+                let normalized_crs_value =
+                    normalize_crs_for_geoparquet(field.name(), &crs, crs_provider)?;
+                let normalized_crs =
+                    deserialize_crs_from_obj(&normalized_crs_value.unwrap_or(Value::Null))?;
+                Ok(Arc::new(
+                    SedonaType::Wkb(edges, normalized_crs)
+                        .to_storage_field(field.name(), field.is_nullable())?,
+                ))
+            }
+        },
+        SedonaType::WkbView(edges, crs) => match version {
+            // For GeoParquet 1.0 and 1.1, strip the metadata (we write Binary storage)
+            GeoParquetVersion::V1_0 | GeoParquetVersion::V1_1 => Ok(Arc::new(
+                field.as_ref().clone().with_metadata(HashMap::new()),
+            )),
+            // For GeoParquet 2.0 and None, ensure we have projjson CRS output
+            GeoParquetVersion::V2_0 | GeoParquetVersion::Omitted => {
+                let normalized_crs_value =
+                    normalize_crs_for_geoparquet(field.name(), &crs, crs_provider)?;
+                let normalized_crs =
+                    deserialize_crs_from_obj(&normalized_crs_value.unwrap_or(Value::Null))?;
+                Ok(Arc::new(
+                    SedonaType::WkbView(edges, normalized_crs)
+                        .to_storage_field(field.name(), field.is_nullable())?,
+                ))
+            }
+        },
+        _ => exec_err!("Unsupported geometry output to Parquet: {sedona_type}"),
+    }
+}
+
+// Ensure crs is PROJJSON to ensure this file is not rejected by downstream readers
+fn normalize_crs_for_geoparquet(
+    field_name: &str,
+    crs: &Crs,
+    crs_provider: &CrsProviderOption,
+) -> Result<Option<Value>> {
+    if crs == &lnglat() {
+        // Do nothing, lnglat is the meaning of an omitted CRS
+        Ok(None)
+    } else if let Some(crs) = crs {
+        let mut crs_value: Value = crs.to_json().parse().map_err(|e| {
+            exec_datafusion_err!("Failed to parse CRS for column '{}' {e}", field_name)
+        })?;
+
+        if let Value::String(string) = &crs_value {
+            let projjson_string = crs_provider.to_projjson(string)?;
+            crs_value = projjson_string.parse().map_err(|e| {
+                exec_datafusion_err!(
+                    "Failed to parse CRS for column '{}' from CrsProvider {e}",
+                    field_name
+                )
+            })?;
+        }
+
+        Ok(Some(crs_value))
+    } else {
+        exec_err!(
+            "Can't write GeoParquet from null CRS\nUse ST_SetSRID({}, ...) to assign it one",
+            field_name
+        )
+    }
 }
 
 #[cfg(test)]
