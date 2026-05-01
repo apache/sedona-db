@@ -26,7 +26,7 @@ use datafusion_physical_expr::PhysicalExpr;
 use datafusion_pruning::PruningPredicate;
 use futures::StreamExt;
 
-use sedona_expr::spatial_filter::SpatialFilter;
+use sedona_expr::spatial_filter::SpatialFilterFactory;
 use sedona_geometry::bounding_box::BoundingBox;
 
 use crate::las::{
@@ -78,9 +78,10 @@ impl FileOpener for LasOpener {
                 PruningPredicate::try_new(physical_expr, schema.clone()).ok()
             });
 
+            let factory = SpatialFilterFactory::default();
             let spatial_filter = pruning_predicate
                 .as_ref()
-                .and_then(|p| SpatialFilter::try_from_expr(p.orig_expr()).ok());
+                .and_then(|p| factory.try_from_expr(p.orig_expr()).ok());
 
             // file pruning
             if let Some(pruning_predicate) = &pruning_predicate {
