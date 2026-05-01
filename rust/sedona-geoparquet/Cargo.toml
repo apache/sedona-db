@@ -32,6 +32,7 @@ result_large_err = "allow"
 
 [features]
 default = []
+s2geography = ["dep:sedona-s2geography"]
 
 [dev-dependencies]
 sedona-testing = { workspace = true }
@@ -59,10 +60,12 @@ geo-traits = { workspace = true }
 futures = { workspace = true }
 object_store = { workspace = true }
 parquet = { workspace = true }
+parquet-geospatial = { workspace = true }
 sedona-common = { workspace = true }
 sedona-expr = { workspace = true }
 sedona-functions = { workspace = true }
 sedona-geometry = { workspace = true }
+sedona-s2geography = { workspace = true, optional = true }
 sedona-schema = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

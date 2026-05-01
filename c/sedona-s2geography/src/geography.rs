@@ -95,9 +95,14 @@ unsafe impl<'a> Send for Geography<'a> {}
 unsafe impl<'a> Sync for Geography<'a> {}
 
 /// Factory for creating Geography objects from various formats
+#[derive(Debug)]
 pub struct GeographyFactory {
     ptr: *mut S2GeogFactory,
 }
+
+// Safety: const methods are thread safe (although there aren't any const methods)
+unsafe impl Send for GeographyFactory {}
+unsafe impl Sync for GeographyFactory {}
 
 impl GeographyFactory {
     /// Create a new geography factory
