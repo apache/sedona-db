@@ -91,7 +91,6 @@ datafusion-datasource-parquet = { version = "52.5.0" }
 datafusion-execution = { version = "52.5.0", default-features = false }
 datafusion-expr = { version = "52.5.0" }
 datafusion-ffi = {  version = "52.5.0" }
-datafusion-functions-nested = { version = "51.0.0" }
 datafusion-optimizer = { version = "52.5.0" }
 datafusion-physical-expr = { version = "52.5.0" }
 datafusion-physical-plan = { version = "52.5.0" }
