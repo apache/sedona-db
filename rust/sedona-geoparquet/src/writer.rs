@@ -692,7 +692,7 @@ fn serialize_edges_and_crs_with_parquet_bug(
 
     let edges_component = match edges {
         Edges::Planar => None,
-        // This is where we apply the workaround relative to our ususal
+        // This is where we apply the workaround relative to our usual
         // serialize_edges_and_crs().
         Edges::Spherical => Some(r#""algorithm":"spherical""#),
     };

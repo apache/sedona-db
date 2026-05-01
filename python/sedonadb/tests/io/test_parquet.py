@@ -534,7 +534,7 @@ def test_write_geoparquet_no_metadata(con, geoarrow_data):
         # Check for absent metadata and but correct logical type
         file = parquet.ParquetFile(tmp_parquet)
         file_kv_metadata = file.metadata.metadata
-        assert b"geo" not in file_kv_metadata
+        assert file_kv_metadata is None or b"geo" not in file_kv_metadata
 
         file.metadata.schema.column(2).logical_type.to_json() == '{"Type": "Geometry"}'
 
