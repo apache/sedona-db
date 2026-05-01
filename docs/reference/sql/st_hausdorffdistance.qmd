@@ -14,40 +14,25 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+---
+title: ST_HausdorffDistance
+description: Returns the Hausdorff distance between two geometries. This is a measure of how similar two geometries are.
+kernels:
+  - returns: double
+    args:
+      - geom1: geometry
+      - geom2: geometry
+  - returns: double
+    args:
+      - geom1: geometry
+      - geom2: geometry
+      - density_frac: double
+---
 
-mod binary_predicates;
-mod distance;
-mod executor;
-mod geos;
-mod geos_to_wkb;
-mod overlay;
-pub mod register;
-mod st_area;
-mod st_boundary;
-mod st_buffer;
-mod st_centroid;
-mod st_concavehull;
-mod st_convexhull;
-mod st_dwithin;
-mod st_isring;
-mod st_issimple;
-mod st_isvalid;
-mod st_isvalidreason;
-mod st_length;
-mod st_line_merge;
-mod st_makevalid;
-mod st_minimumclearance;
-mod st_minimumclearance_line;
-mod st_nrings;
-mod st_numinteriorrings;
-mod st_numpoints;
-mod st_perimeter;
-mod st_polygonize;
-mod st_polygonize_agg;
-mod st_relate;
-mod st_simplify;
-mod st_simplifypreservetopology;
-mod st_snap;
-mod st_unaryunion;
-pub mod wkb_to_geos;
-mod st_hausdorffdistance;
+## Examples
+
+```sql
+SELECT ST_HausdorffDistance(
+  ST_GeomFromWKT('LINESTRING (0 0, 2 0)'),
+  ST_GeomFromWKT('LINESTRING (0 1, 1 2, 2 1)')
+);

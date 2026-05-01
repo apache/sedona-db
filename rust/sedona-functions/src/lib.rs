@@ -61,4 +61,3 @@ mod st_translate;
 mod st_xyzm;
 mod st_xyzm_minmax;
 mod st_zmflag;
-mod st_hausdorffdistance;

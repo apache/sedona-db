@@ -54,7 +54,6 @@ wkb = { workspace = true }
 wkt = { workspace = true }
 serde_json = { workspace = true }
 glam = { workspace = true }
-geos = { workspace = true, features = ["geo"] }
 
 [[bench]]
 harness = false
