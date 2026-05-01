@@ -537,6 +537,48 @@ def test_write_geoparquet_no_metadata(con, geoarrow_data):
         assert file_kv_metadata is None or b"geo" not in file_kv_metadata
 
         file.metadata.schema.column(2).logical_type.to_json() == '{"Type": "Geometry"}'
+        geo_stats = file.metadata.row_group(0).column(2).geo_statistics
+        assert geo_stats is not None
+        assert geo_stats.geospatial_types == [3, 6]
+        assert geo_stats.xmin <= -180
+        assert geo_stats.xmax >= 180
+
+
+def test_write_geoparquet_geography_no_metadata(con, geoarrow_data):
+    # Checks a read and write of geography (roundtrip, since nobody else can read/write)
+    path = (
+        geoarrow_data
+        / "natural-earth"
+        / "files"
+        / "natural-earth_countries-geography_geo.parquet"
+    )
+    skip_if_not_exists(path)
+
+    table = con.read_parquet(path).to_arrow_table()
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp_parquet = Path(td) / "tmp.parquet"
+        con.create_data_frame(table).to_parquet(tmp_parquet, geoparquet_version="none")
+
+        table_roundtrip = con.read_parquet(tmp_parquet).to_arrow_table()
+        assert table_roundtrip == table
+
+        # Check for absent metadata and but correct logical type
+        file = parquet.ParquetFile(tmp_parquet)
+        file_kv_metadata = file.metadata.metadata
+        assert file_kv_metadata is None or b"geo" not in file_kv_metadata
+
+        file.metadata.schema.column(2).logical_type.to_json() == '{"Type": "Geography"}'
+
+        # We should only have stats if s2geography is enabled
+        geo_stats = file.metadata.row_group(0).column(2).geo_statistics
+        if "s2geography" not in sedonadb.__features__:
+            assert geo_stats is None
+        else:
+            assert geo_stats is not None
+            assert geo_stats.geospatial_types == [3, 6]
+            assert geo_stats.xmin == -180
+            assert geo_stats.xmax == 180
 
 
 def test_read_parquet_validate_wkb_single_valid_row(con, tmp_path):
