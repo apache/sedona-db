@@ -77,7 +77,7 @@ struct GeographyGeoStatsAccumulator {
 impl Default for GeographyGeoStatsAccumulator {
     fn default() -> Self {
         Self {
-            invalid: Default::default(),
+            invalid: false,
             geog_bounder: Default::default(),
             bounder: parquet_geospatial::bounding::GeometryBounder::empty(),
             geography_factory: Default::default(),
@@ -101,7 +101,7 @@ impl GeoStatsAccumulator for GeographyGeoStatsAccumulator {
     }
 
     fn update_wkb(&mut self, wkb: &[u8]) {
-        if !self.invalid {
+        if self.invalid {
             return;
         }
 
