@@ -19,4 +19,5 @@ pub mod format;
 mod metadata;
 pub mod options;
 pub mod provider;
+pub mod statistics_accumulator;
 mod writer;
