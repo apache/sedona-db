@@ -56,6 +56,7 @@ use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use crate::{
     metadata::{GeoParquetColumnEncoding, GeoParquetMetadata},
     options::TableGeoParquetOptions,
+    statistics_accumulator::GeographyLiteralBounder,
 };
 
 #[derive(Clone)]
@@ -136,7 +137,8 @@ impl FileOpener for GeoParquetFileOpener {
 
             if self_clone.enable_pruning {
                 if let Some(predicate) = self_clone.predicate.as_ref() {
-                    let factory = SpatialFilterFactory::default();
+                    let factory = SpatialFilterFactory::default()
+                        .with_bounder(Arc::new(GeographyLiteralBounder));
                     let spatial_filter = factory.try_from_expr(predicate)?;
 
                     if let Some(geoparquet_metadata) = maybe_geoparquet_metadata.as_ref() {
