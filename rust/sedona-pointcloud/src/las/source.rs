@@ -19,8 +19,13 @@ use std::{any::Any, iter, sync::Arc};
 
 use datafusion_common::{config::ConfigOptions, error::DataFusionError};
 use datafusion_datasource::{
-    file::FileSource, file_groups::FileGroupPartitioner, file_scan_config::FileScanConfig,
-    file_stream::FileOpener, source::DataSource, TableSchema,
+    file::FileSource,
+    file_groups::FileGroupPartitioner,
+    file_scan_config::FileScanConfig,
+    file_stream::FileOpener,
+    projection::{ProjectionOpener, SplitProjection},
+    source::DataSource,
+    TableSchema,
 };
 use datafusion_physical_expr::{
     conjunction, projection::ProjectionExprs, LexOrdering, PhysicalExpr,
@@ -47,10 +52,10 @@ pub struct LasSource {
     pub(crate) reader_factory: Option<Arc<LasFileReaderFactory>>,
     /// Batch size configuration
     pub(crate) batch_size: Option<usize>,
-    /// Projection expressions
-    pub(crate) projection: Option<ProjectionExprs>,
     pub(crate) options: LasOptions,
     pub(crate) extension: Extension,
+    /// Projection pushdown
+    pub(crate) split_projection: Option<SplitProjection>,
 }
 
 impl LasSource {
@@ -61,9 +66,9 @@ impl LasSource {
             predicate: Default::default(),
             reader_factory: Default::default(),
             batch_size: Default::default(),
-            projection: Default::default(),
             options: Default::default(),
             extension,
+            split_projection: None,
         }
     }
 
@@ -85,19 +90,12 @@ impl FileSource for LasSource {
         base_config: &FileScanConfig,
         partition: usize,
     ) -> Result<Arc<dyn FileOpener>, DataFusionError> {
-        let projection = self
-            .projection
-            .as_ref()
-            .map(|p| p.column_indices())
-            .unwrap_or_else(|| (0..self.table_schema.file_schema().fields().len()).collect());
-
         let file_reader_factory = self
             .reader_factory
             .clone()
             .unwrap_or_else(|| Arc::new(LasFileReaderFactory::new(object_store, None)));
 
-        Ok(Arc::new(LasOpener {
-            projection: Arc::from(projection),
+        let inner_opener: Arc<dyn FileOpener> = Arc::new(LasOpener {
             batch_size: self.batch_size.expect("Must be set"),
             limit: base_config.limit,
             predicate: self.predicate.clone(),
@@ -105,7 +103,18 @@ impl FileSource for LasSource {
             options: self.options.clone(),
             partition_count: base_config.output_partitioning().partition_count(),
             partition,
-        }))
+        });
+
+        // Wrap with ProjectionOpener to handle reordering/expressions
+        if let Some(split_projection) = &self.split_projection {
+            ProjectionOpener::try_new(
+                split_projection.clone(),
+                inner_opener,
+                self.table_schema.file_schema(),
+            )
+        } else {
+            Ok(inner_opener)
+        }
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -122,14 +131,19 @@ impl FileSource for LasSource {
         &self,
         projection: &ProjectionExprs,
     ) -> Result<Option<Arc<dyn FileSource>>, DataFusionError> {
+        // Use SplitProjection to handle any projection:
+        // - file_indices provides column pruning (always works)
+        // - ProjectionOpener handles reordering/expressions/renames after reading
+        let split_projection = SplitProjection::new(self.table_schema.file_schema(), projection);
+
         Ok(Some(Arc::new(Self {
-            projection: Some(projection.clone()),
+            split_projection: Some(split_projection),
             ..self.clone()
         })))
     }
 
     fn projection(&self) -> Option<&ProjectionExprs> {
-        self.projection.as_ref()
+        self.split_projection.as_ref().map(|sp| &sp.source)
     }
 
     fn metrics(&self) -> &ExecutionPlanMetricsSet {
