@@ -568,13 +568,16 @@ impl FileSource for GeoParquetFileSource {
         // is stripped when evaluating embedded projections in ParquetOpener. This is
         // because the batch schema comes from the parquet reader (which doesn't have
         // extension metadata), and Column::return_field() looks up fields from that schema.
+        // This isn't a bug in DataFusion because we're the ones that advertised the table
+        // schema as having metadata'd expressions in the first place.
         //
         // We fix this by wrapping Column expressions with MetadataPreservingColumn,
         // which stores the correct field from the file schema and returns it from
         // return_field() regardless of the input schema.
-        let file_schema = self.inner.table_schema().file_schema();
-        let transformed_projection =
-            wrap_columns_with_metadata_preserving(projection.clone(), file_schema)?;
+        let transformed_projection = wrap_columns_with_metadata_preserving(
+            projection.clone(),
+            self.inner.table_schema().table_schema(),
+        )?;
 
         let inner_result = self
             .inner
@@ -620,20 +623,22 @@ impl FileSource for GeoParquetFileSource {
 /// when the projection is evaluated, even when the input schema lacks metadata.
 fn wrap_columns_with_metadata_preserving(
     projection: ProjectionExprs,
-    file_schema: &Schema,
+    table_schema: &Schema,
 ) -> Result<ProjectionExprs> {
-    projection.try_map_exprs(|expr| wrap_expr_columns(expr, file_schema))
+    projection.try_map_exprs(|expr| wrap_expr_columns(expr, table_schema))
 }
 
 /// Recursively wrap all Column expressions in an expression tree with MetadataPreservingColumn.
-/// Only wraps columns that have Arrow extension metadata that needs preserving.
+/// Only wraps columns that have Arrow extension metadata that needs preserving because that is
+/// the only metadata we added that the Parquet read may not be aware of.
 fn wrap_expr_columns(
     expr: Arc<dyn PhysicalExpr>,
     file_schema: &Schema,
 ) -> Result<Arc<dyn PhysicalExpr>> {
     expr.transform_down(|node| {
         if let Some(column) = node.as_any().downcast_ref::<Column>() {
-            let field = file_schema.field(column.index());
+            let index = column.index();
+            let field = file_schema.field(index);
             // Only wrap columns that have extension metadata to preserve
             if field.metadata().contains_key("ARROW:extension:name") {
                 let field: FieldRef = Arc::new(field.clone());
