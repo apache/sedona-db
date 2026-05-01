@@ -570,11 +570,11 @@ impl FileSource for GeoParquetFileSource {
         // extension metadata), and Column::return_field() looks up fields from that schema.
         //
         // We fix this by wrapping Column expressions with MetadataPreservingColumn,
-        // which stores the correct field from the table schema and returns it from
+        // which stores the correct field from the file schema and returns it from
         // return_field() regardless of the input schema.
-        let table_schema = self.inner.table_schema().table_schema();
+        let file_schema = self.inner.table_schema().file_schema();
         let transformed_projection =
-            wrap_columns_with_metadata_preserving(projection.clone(), table_schema)?;
+            wrap_columns_with_metadata_preserving(projection.clone(), file_schema)?;
 
         let inner_result = self
             .inner
@@ -620,27 +620,32 @@ impl FileSource for GeoParquetFileSource {
 /// when the projection is evaluated, even when the input schema lacks metadata.
 fn wrap_columns_with_metadata_preserving(
     projection: ProjectionExprs,
-    table_schema: &Schema,
+    file_schema: &Schema,
 ) -> Result<ProjectionExprs> {
-    projection.try_map_exprs(|expr| wrap_expr_columns(expr, table_schema))
+    projection.try_map_exprs(|expr| wrap_expr_columns(expr, file_schema))
 }
 
 /// Recursively wrap all Column expressions in an expression tree with MetadataPreservingColumn.
+/// Only wraps columns that have Arrow extension metadata that needs preserving.
 fn wrap_expr_columns(
     expr: Arc<dyn PhysicalExpr>,
-    table_schema: &Schema,
+    file_schema: &Schema,
 ) -> Result<Arc<dyn PhysicalExpr>> {
     expr.transform_down(|node| {
         if let Some(column) = node.as_any().downcast_ref::<Column>() {
-            let field: FieldRef = Arc::new(table_schema.field(column.index()).clone());
-            let wrapped = Arc::new(MetadataPreservingColumn::new(column.clone(), field));
-            // Use Jump to skip visiting children - the wrapped Column is now a child
-            // of MetadataPreservingColumn and we don't want to wrap it again
-            return Ok(Transformed::new(
-                wrapped as Arc<dyn PhysicalExpr>,
-                true,
-                TreeNodeRecursion::Jump,
-            ));
+            let field = file_schema.field(column.index());
+            // Only wrap columns that have extension metadata to preserve
+            if field.metadata().contains_key("ARROW:extension:name") {
+                let field: FieldRef = Arc::new(field.clone());
+                let wrapped = Arc::new(MetadataPreservingColumn::new(column.clone(), field));
+                // Use Jump to skip visiting children - the wrapped Column is now a child
+                // of MetadataPreservingColumn and we don't want to wrap it again
+                return Ok(Transformed::new(
+                    wrapped as Arc<dyn PhysicalExpr>,
+                    true,
+                    TreeNodeRecursion::Jump,
+                ));
+            }
         }
         Ok(Transformed::no(node))
     })
