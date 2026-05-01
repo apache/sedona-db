@@ -152,7 +152,10 @@ pub fn create_geoparquet_writer_physical_plan(
         metadata.primary_column = field_names[output_geometry_primary].clone();
     }
 
-    let mut parquet_options = options.inner.clone();
+    // We skip writing the arrow metadata because we have to serialize invalid GeoArrow
+    // metadata in some cases to work around a bug in the parquet GeoArrow -> Parquet
+    // logical type conversion.
+    let mut parquet_options = options.inner.clone().with_skip_arrow_metadata(true);
 
     // Create the column metadata and finalize the Parquet meatdata if we're omitting the GeoParquet metadata
     if !metadata.version.is_empty() {
@@ -652,7 +655,7 @@ fn normalize_field_for_geoparquet(
             Ok(Arc::new(field.as_ref().clone().with_data_type(new_type)))
         }
         SedonaType::Arrow(_) => Ok(field.clone()),
-        SedonaType::Wkb(edges, crs) => match version {
+        SedonaType::Wkb(edges, crs) | SedonaType::WkbView(edges, crs) => match version {
             // For GeoParquet 1.0 and 1.1, strip the metadata (we write Binary storage)
             GeoParquetVersion::V1_0 | GeoParquetVersion::V1_1 => Ok(Arc::new(
                 field.as_ref().clone().with_metadata(HashMap::new()),
@@ -663,31 +666,53 @@ fn normalize_field_for_geoparquet(
                     normalize_crs_for_geoparquet(field.name(), &crs, crs_provider)?;
                 let normalized_crs =
                     deserialize_crs_from_obj(&normalized_crs_value.unwrap_or(Value::Null))?;
-                Ok(Arc::new(
-                    SedonaType::Wkb(edges, normalized_crs)
-                        .to_storage_field(field.name(), field.is_nullable())?,
-                ))
-            }
-        },
-        SedonaType::WkbView(edges, crs) => match version {
-            // For GeoParquet 1.0 and 1.1, strip the metadata (we write Binary storage)
-            GeoParquetVersion::V1_0 | GeoParquetVersion::V1_1 => Ok(Arc::new(
-                field.as_ref().clone().with_metadata(HashMap::new()),
-            )),
-            // For GeoParquet 2.0 and None, ensure we have projjson CRS output
-            GeoParquetVersion::V2_0 | GeoParquetVersion::Omitted => {
-                let normalized_crs_value =
-                    normalize_crs_for_geoparquet(field.name(), &crs, crs_provider)?;
-                let normalized_crs =
-                    deserialize_crs_from_obj(&normalized_crs_value.unwrap_or(Value::Null))?;
-                Ok(Arc::new(
-                    SedonaType::WkbView(edges, normalized_crs)
-                        .to_storage_field(field.name(), field.is_nullable())?,
+                Ok(serialize_edges_and_crs_with_parquet_bug(
+                    field,
+                    &normalized_crs,
+                    edges,
                 ))
             }
         },
         _ => exec_err!("Unsupported geometry output to Parquet: {sedona_type}"),
     }
+}
+
+// Due to a bug in the parquet type conversion, we need to serialize invalid metadata for gegraphy
+// fields. The conversion logic expects "algorithm" but the valid GeoArrow metadata we serialize
+// by default is "edges".
+// https://github.com/apache/arrow-rs/blob/f725bc9b955f23772a6a6d8a38c99a8b3f359116/parquet-geospatial/src/types.rs#L64-L66
+fn serialize_edges_and_crs_with_parquet_bug(
+    original_field: &FieldRef,
+    crs: &Crs,
+    edges: Edges,
+) -> FieldRef {
+    let crs_component = crs
+        .as_ref()
+        .map(|crs| format!(r#""crs":{}"#, crs.to_json()));
+
+    let edges_component = match edges {
+        Edges::Planar => None,
+        // This is where we apply the workaround relative to our ususal
+        // serialize_edges_and_crs().
+        Edges::Spherical => Some(r#""algorithm":"spherical""#),
+    };
+
+    let serialized = match (crs_component, edges_component) {
+        (None, None) => "{}".to_string(),
+        (None, Some(edges)) => format!("{{{edges}}}"),
+        (Some(crs), None) => format!("{{{crs}}}"),
+        (Some(crs), Some(edges)) => format!("{{{edges},{crs}}}"),
+    };
+
+    let metadata = HashMap::from([
+        (
+            "ARROW:extension:name".to_string(),
+            "geoarrow.wkb".to_string(),
+        ),
+        ("ARROW:extension:metadata".to_string(), serialized),
+    ]);
+
+    Arc::new(original_field.as_ref().clone().with_metadata(metadata))
 }
 
 // Ensure crs is PROJJSON to ensure this file is not rejected by downstream readers
@@ -740,7 +765,7 @@ mod test {
     use datafusion_common::ScalarValue;
     use datafusion_expr::{Cast, Expr, LogicalPlanBuilder};
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-    use parquet::basic::LogicalType;
+    use parquet::basic::{EdgeInterpolationAlgorithm, LogicalType};
     use sedona_schema::crs::deserialize_crs;
     use sedona_schema::datatypes::WKB_GEOMETRY;
     use sedona_testing::create::create_array;
@@ -1193,11 +1218,10 @@ mod test {
         let ctx = setup_context();
         let df = ctx.table(&example).await.unwrap();
 
-        let mut options = TableGeoParquetOptions {
+        let options = TableGeoParquetOptions {
             geoparquet_version: GeoParquetVersion::V2_0,
             ..Default::default()
         };
-        options.inner = options.inner.with_skip_arrow_metadata(true);
 
         let logical_types = test_dataframe_roundtrip(&ctx, df, options).await;
         let logical_type = logical_types.get("geometry").unwrap().clone().unwrap();
@@ -1215,18 +1239,20 @@ mod test {
         let ctx = setup_context();
         let df = ctx.table(&example).await.unwrap();
 
-        let mut options = TableGeoParquetOptions {
+        let options = TableGeoParquetOptions {
             geoparquet_version: GeoParquetVersion::V2_0,
             ..Default::default()
         };
-        options.inner = options.inner.with_skip_arrow_metadata(true);
 
         let logical_types = test_dataframe_roundtrip(&ctx, df, options).await;
         let logical_type = logical_types.get("geometry").unwrap().clone().unwrap();
         match logical_type {
             LogicalType::Geography { crs, algorithm } => {
                 assert!(crs.is_none());
-                assert!(algorithm.is_none());
+                assert!(
+                    algorithm.is_none()
+                        || matches!(algorithm.unwrap(), EdgeInterpolationAlgorithm::SPHERICAL)
+                );
             }
             unknown => panic!("Unexpected logical type {unknown:?}"),
         }
@@ -1238,11 +1264,10 @@ mod test {
         let ctx = setup_context();
         let df = ctx.table(&example).await.unwrap();
 
-        let mut options = TableGeoParquetOptions {
+        let options = TableGeoParquetOptions {
             geoparquet_version: GeoParquetVersion::V2_0,
             ..Default::default()
         };
-        options.inner = options.inner.with_skip_arrow_metadata(true);
 
         let logical_types = test_dataframe_roundtrip(&ctx, df, options).await;
         let logical_type = logical_types.get("geometry").unwrap().clone().unwrap();
@@ -1265,11 +1290,10 @@ mod test {
         let ctx = setup_context();
         let df = ctx.table(&example).await.unwrap();
 
-        let mut options = TableGeoParquetOptions {
+        let options = TableGeoParquetOptions {
             geoparquet_version: GeoParquetVersion::Omitted,
             ..Default::default()
         };
-        options.inner = options.inner.with_skip_arrow_metadata(true);
 
         let logical_types = test_dataframe_roundtrip(&ctx, df, options).await;
         let logical_type = logical_types.get("geometry").unwrap().clone().unwrap();
