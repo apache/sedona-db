@@ -17,7 +17,6 @@
 mod file_opener;
 pub mod format;
 mod metadata;
-mod metadata_preserving_column;
 pub mod options;
 pub mod provider;
 mod writer;

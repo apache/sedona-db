@@ -75,6 +75,11 @@ impl MetadataPreservingColumn {
             field,
         }
     }
+
+    /// Access the wrapped expression
+    pub fn inner(&self) -> &Arc<dyn PhysicalExpr> {
+        &self.inner
+    }
 }
 
 impl Display for MetadataPreservingColumn {

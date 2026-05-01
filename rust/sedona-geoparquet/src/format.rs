@@ -53,12 +53,12 @@ use object_store::{ObjectMeta, ObjectStore};
 
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 
+use sedona_expr::metadata_preserving_column::MetadataPreservingColumn;
 use sedona_schema::extension_type::ExtensionType;
 
 use crate::{
     file_opener::{storage_schema_contains_geo, GeoParquetFileOpener, GeoParquetFileOpenerMetrics},
     metadata::{GeoParquetColumnEncoding, GeoParquetMetadata},
-    metadata_preserving_column::MetadataPreservingColumn,
     options::TableGeoParquetOptions,
     writer::create_geoparquet_writer_physical_plan,
 };
