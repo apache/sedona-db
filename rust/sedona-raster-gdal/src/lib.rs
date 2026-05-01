@@ -25,8 +25,10 @@
 //! - GDAL datatype and nodata conversion helpers
 //! - path normalization for GDAL VSI-backed raster sources
 
+// Temporary until https://github.com/apache/sedona-db/issues/804 is resolved.
 #[allow(dead_code)]
 mod gdal_common;
+// Temporary until https://github.com/apache/sedona-db/issues/804 is resolved.
 #[allow(dead_code)]
 mod gdal_dataset_provider;
 
