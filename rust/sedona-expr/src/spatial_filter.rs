@@ -14,10 +14,10 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, fmt::Debug, sync::Arc};
 
 use arrow_schema::{DataType, Schema};
-use datafusion_common::{DataFusionError, Result, ScalarValue};
+use datafusion_common::{exec_datafusion_err, DataFusionError, Result, ScalarValue};
 use datafusion_expr::Operator;
 use datafusion_physical_expr::{
     expressions::{BinaryExpr, Column, Literal},
@@ -30,7 +30,10 @@ use sedona_geometry::{
     bounds::wkb_bounds_xy,
     interval::{Interval, IntervalTrait},
 };
-use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher, schema::SedonaSchema};
+use sedona_schema::{
+    datatypes::{Edges, SedonaType},
+    schema::SedonaSchema,
+};
 
 use crate::{
     metadata_preserving_column::MetadataPreservingColumn,
@@ -180,10 +183,26 @@ impl SpatialFilter {
     }
 }
 
-#[derive(Debug, Default, Clone)]
-pub struct SpatialFilterFactory {}
+#[derive(Debug, Clone)]
+pub struct SpatialFilterFactory {
+    literal_bounders: Vec<Arc<dyn LiteralBounder>>,
+}
+
+impl Default for SpatialFilterFactory {
+    fn default() -> Self {
+        Self {
+            literal_bounders: vec![Arc::new(DefaultLiteralBounder)],
+        }
+    }
+}
 
 impl SpatialFilterFactory {
+    /// Add a [LiteralBounder] (e.g., that can handle non-planar edges)
+    pub fn with_bounder(mut self, literal_bounder: Arc<dyn LiteralBounder>) -> Self {
+        self.literal_bounders.push(literal_bounder);
+        self
+    }
+
     /// Construct a SpatialPredicate from a [PhysicalExpr]
     ///
     /// Parses expr to extract known expressions we can evaluate against statistics.
@@ -244,7 +263,7 @@ impl SpatialFilterFactory {
                         if !self.is_prunable_geospatial_literal(literal) {
                             return Ok(Some(SpatialFilter::Unknown));
                         }
-                        match self.literal_bounds(literal) {
+                        match self.literal_bounds(literal, None) {
                             Ok(literal_bounds) => Ok(Some(SpatialFilter::Intersects(
                                 column.clone(),
                                 literal_bounds,
@@ -267,7 +286,7 @@ impl SpatialFilterFactory {
                         if !self.is_prunable_geospatial_literal(literal) {
                             return Ok(Some(SpatialFilter::Unknown));
                         }
-                        match self.literal_bounds(literal) {
+                        match self.literal_bounds(literal, None) {
                             Ok(literal_bounds) => {
                                 Ok(Some(SpatialFilter::Covers(column.clone(), literal_bounds)))
                             }
@@ -289,7 +308,7 @@ impl SpatialFilterFactory {
                         if !self.is_prunable_geospatial_literal(literal) {
                             return Ok(Some(SpatialFilter::Unknown));
                         }
-                        match self.literal_bounds(literal) {
+                        match self.literal_bounds(literal, None) {
                             Ok(literal_bounds) => Ok(Some(SpatialFilter::Intersects(
                                 column.clone(),
                                 literal_bounds,
@@ -302,7 +321,7 @@ impl SpatialFilterFactory {
                         if !self.is_prunable_geospatial_literal(literal) {
                             return Ok(Some(SpatialFilter::Unknown));
                         }
-                        match self.literal_bounds(literal) {
+                        match self.literal_bounds(literal, None) {
                             Ok(literal_bounds) => {
                                 Ok(Some(SpatialFilter::Covers(column.clone(), literal_bounds)))
                             }
@@ -325,7 +344,7 @@ impl SpatialFilterFactory {
                         if !self.is_prunable_geospatial_literal(literal) {
                             return Ok(Some(SpatialFilter::Unknown));
                         }
-                        match self.literal_bounds(literal) {
+                        match self.literal_bounds(literal, None) {
                             Ok(literal_bounds) => {
                                 Ok(Some(SpatialFilter::Covers(column.clone(), literal_bounds)))
                             }
@@ -338,7 +357,7 @@ impl SpatialFilterFactory {
                         if !self.is_prunable_geospatial_literal(literal) {
                             return Ok(Some(SpatialFilter::Unknown));
                         }
-                        match self.literal_bounds(literal) {
+                        match self.literal_bounds(literal, None) {
                             Ok(literal_bounds) => Ok(Some(SpatialFilter::Intersects(
                                 column.clone(),
                                 literal_bounds,
@@ -386,24 +405,27 @@ impl SpatialFilterFactory {
                 if !self.is_prunable_geospatial_literal(literal) {
                     return Ok(Some(SpatialFilter::Unknown));
                 }
-                match (
-                    self.literal_bounds(literal),
-                    distance.value().cast_to(&DataType::Float64)?,
-                ) {
-                    (Ok(literal_bounds), distance_scalar_value) => {
-                        let ScalarValue::Float64(Some(dist)) = distance_scalar_value else {
-                            return Ok(None);
-                        };
-                        if dist.is_nan() || dist < 0.0 {
-                            return Ok(None);
-                        }
-                        let expanded_bounds = literal_bounds.expand_by(dist);
+
+                let ScalarValue::Float64(distance_opt) =
+                    distance.value().cast_to(&DataType::Float64)?
+                else {
+                    return sedona_internal_err!("Unexpected cast result from scalar distance");
+                };
+
+                // TODO: check...some of these cases possibly should return LiteralFalse
+                if let Some(distance) = distance_opt {
+                    if distance.is_nan() || distance < 0.0 {
+                        Ok(None)
+                    } else {
+                        let expanded_bounds = self.literal_bounds(literal, Some(distance))?;
                         Ok(Some(SpatialFilter::Intersects(
                             column.clone(),
                             expanded_bounds,
                         )))
                     }
-                    (Err(e), _) => Err(DataFusionError::External(Box::new(e))),
+                } else {
+                    // Null distance
+                    Ok(None)
                 }
             }
             // Not between a literal and a column
@@ -411,8 +433,6 @@ impl SpatialFilterFactory {
         }
     }
 
-    /// Our current spatial data pruning implementation does not correctly handle geography data.
-    /// We therefore only consider geometry data type for pruning.
     fn is_prunable_geospatial_literal(&self, literal: &Literal) -> bool {
         let Ok(literal_field) = literal.return_field(&Schema::empty()) else {
             return false;
@@ -420,27 +440,83 @@ impl SpatialFilterFactory {
         let Ok(sedona_type) = SedonaType::from_storage_field(&literal_field) else {
             return false;
         };
-        let matcher = ArgMatcher::is_geometry();
-        matcher.match_type(&sedona_type)
+
+        self.literal_bounders
+            .iter()
+            .any(|bounder| bounder.can_bound(&sedona_type))
     }
 
-    fn literal_bounds(&self, literal: &Literal) -> Result<BoundingBox> {
+    fn literal_bounds(&self, literal: &Literal, distance: Option<f64>) -> Result<BoundingBox> {
         let literal_field = literal.return_field(&Schema::empty())?;
         let sedona_type = SedonaType::from_storage_field(&literal_field)?;
+        for bounder in &self.literal_bounders {
+            if bounder.can_bound(&sedona_type) {
+                return bounder.bound_scalar(literal.value(), &sedona_type, distance);
+            }
+        }
+
+        sedona_internal_err!("Can't resolve bounder for type {sedona_type}")
+    }
+}
+
+/// Extendable bounder for literal values
+///
+/// Used to compute the bounds of any literals encountered with pluggable support for extra types.
+pub trait LiteralBounder: Debug {
+    /// Returns true if this bounder can handle the requested type
+    fn can_bound(&self, sedona_type: &SedonaType) -> bool;
+
+    /// Bound a value of the given type
+    fn bound_scalar(
+        &self,
+        value: &ScalarValue,
+        sedona_type: &SedonaType,
+        distance: Option<f64>,
+    ) -> Result<BoundingBox>;
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct DefaultLiteralBounder;
+
+impl LiteralBounder for DefaultLiteralBounder {
+    fn can_bound(&self, sedona_type: &SedonaType) -> bool {
+        matches!(
+            sedona_type,
+            SedonaType::Wkb(Edges::Planar, _) | SedonaType::WkbView(Edges::Planar, _)
+        )
+    }
+
+    fn bound_scalar(
+        &self,
+        value: &ScalarValue,
+        sedona_type: &SedonaType,
+        distance: Option<f64>,
+    ) -> Result<BoundingBox> {
         match &sedona_type {
-            SedonaType::Wkb(_, _) | SedonaType::WkbView(_, _) => match literal.value() {
-                ScalarValue::Binary(maybe_vec) | ScalarValue::BinaryView(maybe_vec) => {
-                    if let Some(vec) = maybe_vec {
-                        return wkb_bounds_xy(vec)
-                            .map_err(|e| DataFusionError::External(Box::new(e)));
+            SedonaType::Wkb(Edges::Planar, _) | SedonaType::WkbView(Edges::Planar, _) => {
+                match value {
+                    ScalarValue::Binary(maybe_vec) | ScalarValue::BinaryView(maybe_vec) => {
+                        if let Some(vec) = maybe_vec {
+                            let out = wkb_bounds_xy(vec).map_err(|e| {
+                                exec_datafusion_err!(
+                                    "Error computing bounds for literal in pruning expression: {e}"
+                                )
+                            })?;
+
+                            if let Some(distance) = distance {
+                                return Ok(out.expand_by(distance));
+                            } else {
+                                return Ok(out);
+                            }
+                        }
                     }
+                    _ => {}
                 }
-                _ => {}
-            },
+            }
             _ => {}
         }
 
-        sedona_internal_err!("Unexpected scalar type in filter expression ({literal:?})")
+        sedona_internal_err!("Unexpected scalar type in filter expression ({sedona_type:?})")
     }
 }
 
@@ -600,7 +676,7 @@ mod test {
             create_scalar(Some("POINT (1 2)"), &WKB_GEOMETRY),
             Some(storage_field.metadata().into()),
         );
-        let bounds = factory.literal_bounds(&literal).unwrap();
+        let bounds = factory.literal_bounds(&literal, None).unwrap();
 
         let stats_no_info = TableGeoStatistics::from(GeoStatistics::unspecified());
         let stats_intersecting = TableGeoStatistics::from(
@@ -626,7 +702,9 @@ mod test {
 
         let unrelated_literal = Literal::new(ScalarValue::Null);
 
-        let err = factory.literal_bounds(&unrelated_literal).unwrap_err();
+        let err = factory
+            .literal_bounds(&unrelated_literal, None)
+            .unwrap_err();
         assert!(err
             .message()
             .contains("Unexpected scalar type in filter expression"));
@@ -640,7 +718,7 @@ mod test {
             create_scalar(Some("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))"), &WKB_GEOMETRY),
             Some(storage_field.metadata().into()),
         );
-        let bounds = factory.literal_bounds(&literal).unwrap();
+        let bounds = factory.literal_bounds(&literal, None).unwrap();
 
         let stats_no_info = TableGeoStatistics::from(GeoStatistics::unspecified());
         let stats_covered = TableGeoStatistics::from(

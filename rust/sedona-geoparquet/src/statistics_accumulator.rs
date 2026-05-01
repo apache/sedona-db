@@ -17,7 +17,7 @@
 
 use std::sync::Arc;
 
-use datafusion_common::Result;
+use datafusion_common::{exec_datafusion_err, Result, ScalarValue};
 use parquet::{
     basic::LogicalType,
     geospatial::accumulator::{
@@ -26,6 +26,9 @@ use parquet::{
     },
     schema::types::ColumnDescPtr,
 };
+use sedona_common::sedona_internal_err;
+use sedona_expr::spatial_filter::LiteralBounder;
+use sedona_schema::datatypes::SedonaType;
 
 pub struct SedonaGeoStatsAccumulatorFactory;
 
@@ -61,6 +64,63 @@ impl GeoStatsAccumulatorFactory for SedonaGeoStatsAccumulatorFactory {
         }
 
         Box::new(VoidGeoStatsAccumulator::default())
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct GeographyLiteralBounder;
+
+impl LiteralBounder for GeographyLiteralBounder {
+    fn can_bound(&self, sedona_type: &SedonaType) -> bool {
+        matches!(
+            sedona_type,
+            SedonaType::Wkb(sedona_schema::datatypes::Edges::Spherical, _)
+                | SedonaType::WkbView(sedona_schema::datatypes::Edges::Spherical, _)
+        )
+    }
+
+    fn bound_scalar(
+        &self,
+        value: &ScalarValue,
+        sedona_type: &SedonaType,
+        distance: Option<f64>,
+    ) -> Result<sedona_geometry::bounding_box::BoundingBox> {
+        match &sedona_type {
+            SedonaType::Wkb(sedona_schema::datatypes::Edges::Spherical, _)
+            | SedonaType::WkbView(sedona_schema::datatypes::Edges::Spherical, _) => match value {
+                ScalarValue::Binary(maybe_vec) | ScalarValue::BinaryView(maybe_vec) => {
+                    if let Some(vec) = maybe_vec {
+                        let mut bounder = sedona_s2geography::rect_bounder::RectBounder::new();
+                        let mut factory = sedona_s2geography::geography::GeographyFactory::new();
+                        let geog = factory.from_wkb(vec).map_err(|e| {
+                            exec_datafusion_err!("Error parsing geography literal: {e}")
+                        })?;
+                        bounder.bound(&geog).map_err(|e| {
+                            exec_datafusion_err!("Error bounding geography literal: {e}")
+                        })?;
+
+                        if let Some(distance) = distance {
+                            bounder.expand_by_distance(distance);
+                        }
+
+                        if let Some((xmin, ymin, xmax, ymax)) = bounder.finish().map_err(|e| {
+                            exec_datafusion_err!("Error finishing geography bounds: {e}")
+                        })? {
+                            return Ok(sedona_geometry::bounding_box::BoundingBox::xy(
+                                (xmin, xmax),
+                                (ymin, ymax),
+                            ));
+                        } else {
+                            return Ok(sedona_geometry::bounding_box::BoundingBox::empty());
+                        }
+                    }
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+
+        sedona_internal_err!("Unexpected scalar type in filter expression ({sedona_type:?})")
     }
 }
 
