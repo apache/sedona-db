@@ -725,6 +725,7 @@ fn normalize_crs_for_geoparquet(
 
 #[cfg(test)]
 mod test {
+    use std::fs::File;
     use std::iter::zip;
     use std::path::Path;
 
@@ -738,6 +739,9 @@ mod test {
     use datafusion_common::cast::{as_float32_array, as_struct_array};
     use datafusion_common::ScalarValue;
     use datafusion_expr::{Cast, Expr, LogicalPlanBuilder};
+    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+    use parquet::basic::LogicalType;
+    use sedona_schema::crs::deserialize_crs;
     use sedona_schema::datatypes::WKB_GEOMETRY;
     use sedona_testing::create::create_array;
     use sedona_testing::data::test_geoparquet;
@@ -756,17 +760,29 @@ mod test {
         SessionContext::new_with_state(state).enable_url_table()
     }
 
-    async fn test_dataframe_roundtrip(ctx: &SessionContext, src: DataFrame) {
+    async fn test_dataframe_roundtrip(
+        ctx: &SessionContext,
+        src: DataFrame,
+        options: TableGeoParquetOptions,
+    ) -> HashMap<String, Option<LogicalType>> {
         let df_batches = src.clone().collect().await.unwrap();
-        test_write_dataframe(
-            ctx,
-            src,
-            df_batches,
-            TableGeoParquetOptions::default(),
-            vec![],
-        )
-        .await
-        .unwrap()
+        test_write_dataframe(ctx, src, df_batches, options, vec![])
+            .await
+            .unwrap()
+    }
+
+    /// Read the Parquet LogicalType for each column in a parquet file
+    fn read_parquet_logical_types(path: &Path) -> HashMap<String, Option<LogicalType>> {
+        let file = File::open(path).unwrap();
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file).unwrap();
+        let metadata = builder.metadata();
+        let schema_descr = metadata.file_metadata().schema_descr();
+
+        schema_descr
+            .columns()
+            .iter()
+            .map(|col| (col.name().to_string(), col.logical_type_ref().cloned()))
+            .collect()
     }
 
     async fn test_write_dataframe_sql(
@@ -774,7 +790,7 @@ mod test {
         sql: &str,
         tmp_parquet: &Path,
         expected_batches: Vec<RecordBatch>,
-    ) -> Result<()> {
+    ) -> Result<HashMap<String, Option<LogicalType>>> {
         ctx.sql(sql).await?.collect().await?;
         test_write_dataframe_common(ctx, tmp_parquet, expected_batches).await
     }
@@ -785,7 +801,7 @@ mod test {
         expected_batches: Vec<RecordBatch>,
         options: TableGeoParquetOptions,
         partition_by: Vec<String>,
-    ) -> Result<()> {
+    ) -> Result<HashMap<String, Option<LogicalType>>> {
         // It's a bit verbose to trigger this without helpers
         let format = GeoParquetFormatFactory::new_with_options(options);
         let file_type = format_as_file_type(Arc::new(format));
@@ -813,7 +829,7 @@ mod test {
         ctx: &SessionContext,
         tmp_parquet: &Path,
         expected_batches: Vec<RecordBatch>,
-    ) -> Result<()> {
+    ) -> Result<HashMap<String, Option<LogicalType>>> {
         let df_parquet_batches = ctx
             .table(tmp_parquet.to_string_lossy().to_string())
             .await
@@ -866,7 +882,11 @@ mod test {
             }
         }
 
-        Ok(())
+        if tmp_parquet.is_dir() {
+            Ok(HashMap::new())
+        } else {
+            Ok(read_parquet_logical_types(tmp_parquet))
+        }
     }
 
     #[tokio::test]
@@ -882,7 +902,7 @@ mod test {
             .select(vec![col("wkt")])
             .unwrap();
 
-        test_dataframe_roundtrip(&ctx, df).await;
+        test_dataframe_roundtrip(&ctx, df, TableGeoParquetOptions::default()).await;
     }
 
     #[tokio::test]
@@ -891,7 +911,9 @@ mod test {
         let ctx = setup_context();
         let df = ctx.table(&example).await.unwrap();
 
-        test_dataframe_roundtrip(&ctx, df).await;
+        let logical_types =
+            test_dataframe_roundtrip(&ctx, df, TableGeoParquetOptions::default()).await;
+        assert!(logical_types.get("geometry").unwrap().is_none());
     }
 
     #[tokio::test]
@@ -900,7 +922,9 @@ mod test {
         let ctx = setup_context();
         let df = ctx.table(&example).await.unwrap();
 
-        test_dataframe_roundtrip(&ctx, df).await;
+        let logical_types =
+            test_dataframe_roundtrip(&ctx, df, TableGeoParquetOptions::default()).await;
+        assert!(logical_types.get("geometry").unwrap().is_none());
     }
 
     #[tokio::test]
@@ -929,14 +953,17 @@ mod test {
             .unwrap();
 
         // Check that we can do this from a DataFrame
-        test_write_dataframe(&ctx, df, df_batches_with_bbox.clone(), options, vec![])
-            .await
-            .unwrap();
+        let logical_types =
+            test_write_dataframe(&ctx, df, df_batches_with_bbox.clone(), options, vec![])
+                .await
+                .unwrap();
+
+        assert!(logical_types.get("geometry").unwrap().is_none());
 
         // Check that we can do this from SQL too
         let tmpdir = tempdir().unwrap();
         let tmp_parquet = tmpdir.path().join("foofy_spatial.parquet");
-        test_write_dataframe_sql(
+        let logical_types = test_write_dataframe_sql(
             &ctx,
             &format!(
                 r#"COPY (
@@ -951,6 +978,8 @@ mod test {
         )
         .await
         .unwrap();
+
+        assert!(logical_types.get("geometry").unwrap().is_none());
     }
 
     #[tokio::test]
@@ -995,9 +1024,12 @@ mod test {
             .await
             .unwrap();
 
-        test_write_dataframe(&ctx, df, df_batches_with_bbox, options, vec![])
+        let logical_types = test_write_dataframe(&ctx, df, df_batches_with_bbox, options, vec![])
             .await
             .unwrap();
+
+        assert!(logical_types.get("geometry").unwrap().is_none());
+        assert!(logical_types.get("geom").unwrap().is_none());
     }
 
     #[tokio::test]
@@ -1153,6 +1185,75 @@ mod test {
         test_write_dataframe(&ctx, df, df_batches_with_bbox, options, vec![])
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn geoparquet_2_0_basic() {
+        let example = test_geoparquet("example", "geometry").unwrap();
+        let ctx = setup_context();
+        let df = ctx.table(&example).await.unwrap();
+
+        let options = TableGeoParquetOptions {
+            geoparquet_version: GeoParquetVersion::V2_0,
+            ..Default::default()
+        };
+
+        let logical_types = test_dataframe_roundtrip(&ctx, df, options).await;
+        let logical_type = logical_types.get("geometry").unwrap().clone().unwrap();
+        match logical_type {
+            LogicalType::Geometry { crs } => {
+                assert!(crs.is_none());
+            }
+            unknown => panic!("Unexpected logical type {unknown:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn geoparquet_2_0_geography() {
+        let example = test_geoparquet("natural-earth", "countries-geography").unwrap();
+        let ctx = setup_context();
+        let df = ctx.table(&example).await.unwrap();
+
+        let options = TableGeoParquetOptions {
+            geoparquet_version: GeoParquetVersion::V2_0,
+            ..Default::default()
+        };
+
+        let logical_types = test_dataframe_roundtrip(&ctx, df, options).await;
+        let logical_type = logical_types.get("geometry").unwrap().clone().unwrap();
+        match logical_type {
+            LogicalType::Geography { crs, algorithm } => {
+                assert!(crs.is_none());
+                assert!(algorithm.is_none());
+            }
+            unknown => panic!("Unexpected logical type {unknown:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn geoparquet_2_0_crs() {
+        let example = test_geoparquet("example-crs", "vermont-utm").unwrap();
+        let ctx = setup_context();
+        let df = ctx.table(&example).await.unwrap();
+
+        let options = TableGeoParquetOptions {
+            geoparquet_version: GeoParquetVersion::V2_0,
+            ..Default::default()
+        };
+
+        let logical_types = test_dataframe_roundtrip(&ctx, df, options).await;
+        let logical_type = logical_types.get("geometry").unwrap().clone().unwrap();
+        match logical_type {
+            LogicalType::Geometry { crs } => {
+                assert!(crs.as_ref().unwrap().starts_with("{"));
+                let parsed = deserialize_crs(crs.as_ref().unwrap()).unwrap();
+                assert_eq!(
+                    parsed.unwrap().to_authority_code().unwrap(),
+                    Some("EPSG:32618".to_string())
+                );
+            }
+            unknown => panic!("Unexpected logical type {unknown:?}"),
+        }
     }
 
     #[test]
