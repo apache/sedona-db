@@ -17,7 +17,7 @@
 
 use std::sync::Arc;
 
-use datafusion_common::{exec_datafusion_err, Result, ScalarValue};
+use datafusion_common::{Result, ScalarValue};
 use parquet::{
     basic::LogicalType,
     geospatial::accumulator::{
@@ -70,6 +70,23 @@ impl GeoStatsAccumulatorFactory for SedonaGeoStatsAccumulatorFactory {
 #[derive(Debug, Default)]
 pub struct GeographyLiteralBounder;
 
+#[cfg(not(feature = "s2geography"))]
+impl LiteralBounder for GeographyLiteralBounder {
+    fn can_bound(&self, _sedona_type: &SedonaType) -> bool {
+        false
+    }
+
+    fn bound_scalar(
+        &self,
+        _value: &ScalarValue,
+        _sedona_type: &SedonaType,
+        _distance: Option<f64>,
+    ) -> Result<sedona_geometry::bounding_box::BoundingBox> {
+        sedona_internal_err!("dummy bound_scalar() should not be called")
+    }
+}
+
+#[cfg(feature = "s2geography")]
 impl LiteralBounder for GeographyLiteralBounder {
     fn can_bound(&self, sedona_type: &SedonaType) -> bool {
         matches!(
@@ -93,10 +110,14 @@ impl LiteralBounder for GeographyLiteralBounder {
                         let mut bounder = sedona_s2geography::rect_bounder::RectBounder::new();
                         let mut factory = sedona_s2geography::geography::GeographyFactory::new();
                         let geog = factory.from_wkb(vec).map_err(|e| {
-                            exec_datafusion_err!("Error parsing geography literal: {e}")
+                            datafusion_common::exec_datafusion_err!(
+                                "Error parsing geography literal: {e}"
+                            )
                         })?;
                         bounder.bound(&geog).map_err(|e| {
-                            exec_datafusion_err!("Error bounding geography literal: {e}")
+                            datafusion_common::exec_datafusion_err!(
+                                "Error bounding geography literal: {e}"
+                            )
                         })?;
 
                         if let Some(distance) = distance {
@@ -104,7 +125,9 @@ impl LiteralBounder for GeographyLiteralBounder {
                         }
 
                         if let Some((xmin, ymin, xmax, ymax)) = bounder.finish().map_err(|e| {
-                            exec_datafusion_err!("Error finishing geography bounds: {e}")
+                            datafusion_common::exec_datafusion_err!(
+                                "Error finishing geography bounds: {e}"
+                            )
                         })? {
                             return Ok(sedona_geometry::bounding_box::BoundingBox::xy(
                                 (xmin, xmax),
