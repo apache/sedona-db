@@ -16,6 +16,7 @@
 # under the License.
 
 import json
+import re
 import tempfile
 from pathlib import Path
 
@@ -655,3 +656,88 @@ def test_read_parquet_validate_wkb_partial_invalid_rows(con, tmp_path):
         con.read_parquet(
             path, geometry_columns=geometry_columns, validate=True
         ).to_arrow_table()
+
+
+def test_prune_geography_parquet():
+    """Test that geography parquet files can be pruned with statistics crossing the antimeridian."""
+    if "s2geography" not in sedonadb.__features__:
+        pytest.skip("Python package built without s2geography")
+
+    con = sedonadb.connect()
+
+    # Create random points crossing the antimeridian (bounds=[170, 10, 190, 30]
+    # which wraps to [170, 10, -170, 30])
+    con.funcs.table.sd_random_geometry(
+        "Point", 100_000, seed=42, bounds=[170, 10, 190, 30]
+    ).to_view("pts", overwrite=True)
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp_parquet = Path(td) / "geog.parquet"
+
+        # Write as geography with small row groups to enable pruning
+        con.sql(
+            "SELECT ST_SetSRID(ST_GeogFromWKB(ST_AsBinary(geometry)), 4326) as geog FROM pts"
+        ).to_parquet(
+            tmp_parquet,
+            geoparquet_version="2.0",
+            max_row_group_size=10_000,
+            sort_by=["geog"],
+        )
+
+        # Verify the parquet file has geography statistics with antimeridian wraparound
+        f = parquet.ParquetFile(tmp_parquet)
+        assert f.metadata.num_row_groups > 1
+
+        # Check that at least one row group has wraparound statistics (xmin > xmax)
+        has_wraparound = False
+        for i in range(f.metadata.num_row_groups):
+            stats = f.metadata.row_group(i).column(0).geo_statistics
+            if stats is not None and stats.xmin > stats.xmax:
+                has_wraparound = True
+                break
+        assert has_wraparound, (
+            "Expected at least one row group with antimeridian wraparound"
+        )
+
+        # Query 1: Query crossing the antimeridian - should match results
+        query_antimeridian = f"""
+            SELECT * FROM "{tmp_parquet}" WHERE
+            ST_Intersects(geog, ST_SetSRID(ST_GeogFromText(
+                'POLYGON ((179 20, -179 20, -179 22, 179 22, 179 20))'
+            ), 4326))
+        """
+        result_count = con.sql(query_antimeridian).count()
+        assert result_count > 0, "Expected results from antimeridian-crossing query"
+
+        # Query 2: Query a small region that should only match some row groups
+        # This queries the far west side (around 170-172 longitude)
+        query_partial = f"""
+            SELECT * FROM "{tmp_parquet}" WHERE
+            ST_Intersects(geog, ST_SetSRID(ST_GeogFromText(
+                'POLYGON ((170 10, 172 10, 172 12, 170 12, 170 10))'
+            ), 4326))
+        """
+
+        # Verify the query returns results
+        result_count = con.sql(query_partial).count()
+        assert result_count > 0, "Expected some results from partial region query"
+
+        # Verify pruning occurred via EXPLAIN ANALYZE
+        explained = con.sql(query_partial).explain("analyze").to_pandas()
+        plan_text = explained.iloc[0, 1]
+
+        # Check that spatial pruning metrics are reported
+        assert "row_groups_spatial_pruned" in plan_text, (
+            "Expected row_groups_spatial_pruned in explain output"
+        )
+
+        # Verify that pruning actually reduced the number of row groups scanned
+        match = re.search(
+            r"row_groups_spatial_pruned=(\d+) total .* (\d+) matched", plan_text
+        )
+        if match:
+            total = int(match.group(1))
+            matched = int(match.group(2))
+            assert matched < total, (
+                f"Expected pruning to reduce row groups: {matched} matched out of {total}"
+            )
