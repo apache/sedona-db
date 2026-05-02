@@ -25,15 +25,10 @@ from sedonadb.testing import geom_or_null, PostGIS, SedonaDB
     [
         (None, 0.0, 1.0, None),
         ("LINESTRING EMPTY", 0.0, 1.0, "LINESTRING EMPTY"),
-
         ("LINESTRING (0 0, 10 0)", 0.2, 0.8, "LINESTRING (2 0, 8 0)"),
-
         ("LINESTRING (0 0, 10 10)", 0.3, 0.6, "LINESTRING (3 3, 6 6)"),
-
         ("LINESTRING (0 0, 10 10)", 0.5, 0.5, "POINT (5 5)"),
-
         ("LINESTRING (0 0, 10 0, 10 10)", 0.25, 0.75, "LINESTRING (5 0, 10 0, 10 5)"),
-
         (
             "LINESTRING Z (0 0 0, 10 10 10)",
             0.5,
@@ -45,17 +40,7 @@ from sedonadb.testing import geom_or_null, PostGIS, SedonaDB
 def test_st_line_substring(eng, geom, start, end, expected):
     eng = eng.create_or_skip()
 
-    if expected is not None:
-        expected = expected.replace(", ", ",")
-        expected = expected.replace(" (", "(")
-
-        if isinstance(eng, PostGIS):
-            
-            expected = expected.replace("Z(", "Z (")
-            expected = expected.replace("M(", "M (")
-            expected = expected.replace("ZM(", "ZM (")
-
     eng.assert_query_result(
-        f"SELECT ST_AsText(ST_LineSubstring({geom_or_null(geom)}, {start}, {end}))",
+        f"SELECT ST_LineSubstring({geom_or_null(geom)}, {start}, {end})",
         expected,
     )

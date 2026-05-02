@@ -18,7 +18,7 @@ use arrow_array::builder::BinaryBuilder;
 use arrow_schema::DataType;
 use datafusion_common::{error::Result, ScalarValue};
 use datafusion_expr::{ColumnarValue, Volatility};
-use geo_traits::{CoordTrait, GeometryTrait, LineStringTrait,GeometryType};
+use geo_traits::{CoordTrait, GeometryTrait, GeometryType, LineStringTrait};
 use sedona_common::sedona_internal_err;
 use sedona_expr::{
     item_crs::ItemCrsKernel,
@@ -48,24 +48,25 @@ impl SedonaScalarKernel for STLineSubstring {
             vec![
                 ArgMatcher::is_geometry(),
                 ArgMatcher::is_numeric(),
-                ArgMatcher::is_numeric()
+                ArgMatcher::is_numeric(),
             ],
             WKB_GEOMETRY,
         );
         matcher.match_args(args)
     }
 
-
-    fn invoke_batch(&self, arg_types: &[SedonaType], args: &[ColumnarValue]) -> Result<ColumnarValue> {
+    fn invoke_batch(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+    ) -> Result<ColumnarValue> {
         let executor = WkbExecutor::new(arg_types, args);
         let mut builder = BinaryBuilder::new();
-
 
         let start_frac: Option<f64> = match &args[1].cast_to(&DataType::Float64, None)? {
             ColumnarValue::Scalar(ScalarValue::Float64(s)) => *s,
             _ => None,
         };
-
 
         let end_frac: Option<f64> = match &args[2].cast_to(&DataType::Float64, None)? {
             ColumnarValue::Scalar(ScalarValue::Float64(e)) => *e,
@@ -96,14 +97,12 @@ impl SedonaScalarKernel for STLineSubstring {
                         let p1 = line.coord(i).unwrap();
                         let p2 = line.coord(i + 1).unwrap();
 
-
                         let dist = ((p2.x() - p1.x()).powi(2) + (p2.y() - p1.y()).powi(2)).sqrt();
                         total_length += dist;
                         cumulative_distances.push(total_length);
                     }
                     let start_dist = s_frac * total_length;
                     let end_dist = e_frac * total_length;
-
 
                     for i in 0..(num_coords as usize - 1) {
                         let d1 = cumulative_distances[i];
@@ -113,7 +112,11 @@ impl SedonaScalarKernel for STLineSubstring {
 
                         if start_dist >= d1 && start_dist <= d2 {
                             let segment_len = d2 - d1;
-                            let fraction = if segment_len > 0.0 { (start_dist - d1) / segment_len } else { 0.0 };
+                            let fraction = if segment_len > 0.0 {
+                                (start_dist - d1) / segment_len
+                            } else {
+                                0.0
+                            };
                             new_coords.push(interpolate(p1, p2, fraction));
                         }
 
@@ -123,28 +126,27 @@ impl SedonaScalarKernel for STLineSubstring {
 
                         if end_dist >= d1 && end_dist <= d2 {
                             let segment_len = d2 - d1;
-                            let fraction = if segment_len > 0.0 { (end_dist - d1) / segment_len } else { 0.0 };
+                            let fraction = if segment_len > 0.0 {
+                                (end_dist - d1) / segment_len
+                            } else {
+                                0.0
+                            };
                             new_coords.push(interpolate(p1, p2, fraction));
                         }
                     }
                 }
-
             }
             if !new_coords.is_empty() {
                 // write byte order (1 = little endian)
                 builder.write_all(&[1u8])?;
 
-
                 let type_id: u32 = 2;
                 builder.write_all(&type_id.to_le_bytes())?;
-
 
                 let num_points = new_coords.len() as u32;
                 builder.write_all(&num_points.to_le_bytes())?;
 
-
                 for (x, y) in new_coords {
-
                     builder.write_all(&x.to_le_bytes())?;
                     builder.write_all(&y.to_le_bytes())?;
                 }
