@@ -60,8 +60,13 @@ class Expr:
         return Expr(self._impl.cast(target))
 
     def is_null(self) -> "Expr":
-        """Return a boolean expression that is true where this expression is
-        null (matches both SQL NULL and floating-point NaN)."""
+        """Return a boolean expression that is true where this expression
+        is SQL NULL.
+
+        Note that floating-point NaN is *not* matched by `is_null` — the
+        SQL `IS NULL` predicate only matches NULL. A pandas-style
+        NaN-aware helper is planned on the future `Series` type.
+        """
         return Expr(self._impl.is_null())
 
     def is_not_null(self) -> "Expr":
