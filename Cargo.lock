@@ -2789,7 +2789,7 @@ dependencies = [
  "float_next_after 1.0.0",
  "geo-types",
  "geographiclib-rs",
- "i_overlay",
+ "i_overlay 4.0.7",
  "log",
  "num-traits",
  "robust",
@@ -3291,22 +3291,49 @@ dependencies = [
 ]
 
 [[package]]
+name = "i_float"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36c8fc32799c6cde9c7604188e4ece27acf3ddcb2d40b038113e3f0bc525aac7"
+dependencies = [
+ "libm",
+]
+
+[[package]]
 name = "i_key_sort"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9190f86706ca38ac8add223b2aed8b1330002b5cdbbce28fb58b10914d38fc27"
 
 [[package]]
-name = "i_overlay"
-version = "4.0.6"
+name = "i_key_sort"
+version = "0.10.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fcccbd4e4274e0f80697f5fbc6540fdac533cce02f2081b328e68629cce24f9"
+checksum = "d73d122b937fca067feb0ad74f62388920272b27c356d4df2d0cfdd59e044cf0"
+
+[[package]]
+name = "i_overlay"
+version = "4.0.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "413183068e6e0289e18d7d0a1f661b81546e6918d5453a44570b9ab30cbed1b3"
 dependencies = [
- "i_float",
- "i_key_sort",
- "i_shape",
- "i_tree",
+ "i_float 1.15.0",
+ "i_key_sort 0.6.0",
+ "i_shape 1.14.0",
+ "i_tree 0.16.0",
  "rayon",
+]
+
+[[package]]
+name = "i_overlay"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b0f8ed01b5f7de7c2e5661d9ac807aacb33ad76f591f973d89b58e998f552c34"
+dependencies = [
+ "i_float 2.0.0",
+ "i_key_sort 0.10.3",
+ "i_shape 2.0.0",
+ "i_tree 0.18.0",
 ]
 
 [[package]]
@@ -3315,7 +3342,16 @@ version = "1.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ea154b742f7d43dae2897fcd5ead86bc7b5eefcedd305a7ebf9f69d44d61082"
 dependencies = [
- "i_float",
+ "i_float 1.15.0",
+]
+
+[[package]]
+name = "i_shape"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d12d0501b145b966d1801f90e4fcc20b65b39617055d131efa8699068bb1de1"
+dependencies = [
+ "i_float 2.0.0",
 ]
 
 [[package]]
@@ -3323,6 +3359,12 @@ name = "i_tree"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "35e6d558e6d4c7b82bc51d9c771e7a927862a161a7d87bf2b0541450e0e20915"
+
+[[package]]
+name = "i_tree"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4804bdc1dc124eb7e1aa9e144ecc04096bcf787a10a15fa44af682b51f0f6cce"
 
 [[package]]
 name = "iana-time-zone"
@@ -5405,7 +5447,7 @@ dependencies = [
  "geo",
  "geo-traits",
  "geo-types",
- "i_overlay",
+ "i_overlay 6.0.0",
  "log",
  "num-traits",
  "pretty_env_logger",
