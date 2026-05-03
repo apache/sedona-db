@@ -705,9 +705,12 @@ mod test {
         let err = factory
             .literal_bounds(&unrelated_literal, None)
             .unwrap_err();
-        assert!(err
-            .message()
-            .contains("Unexpected scalar type in filter expression"));
+        assert!(
+            err.message()
+                .contains("Can't resolve bounder for type Null"),
+            "Actual error was:\n{}",
+            err.message()
+        );
     }
 
     #[test]
