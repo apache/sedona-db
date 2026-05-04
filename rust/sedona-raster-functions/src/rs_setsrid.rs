@@ -516,29 +516,21 @@ mod tests {
             let modified = result_array.get(i).unwrap();
 
             // Metadata preserved
-            assert_eq!(original.metadata().width(), modified.metadata().width());
-            assert_eq!(original.metadata().height(), modified.metadata().height());
-            assert_eq!(
-                original.metadata().upper_left_x(),
-                modified.metadata().upper_left_x()
-            );
-            assert_eq!(
-                original.metadata().upper_left_y(),
-                modified.metadata().upper_left_y()
-            );
+            assert_eq!(original.width().unwrap(), modified.width().unwrap());
+            assert_eq!(original.height().unwrap(), modified.height().unwrap());
+            assert_eq!(original.transform()[0], modified.transform()[0]);
+            assert_eq!(original.transform()[3], modified.transform()[3]);
 
             // Band data preserved
-            let orig_bands = original.bands();
-            let mod_bands = modified.bands();
-            assert_eq!(orig_bands.len(), mod_bands.len());
-            for band_idx in 0..orig_bands.len() {
-                let orig_band = orig_bands.band(band_idx + 1).unwrap();
-                let mod_band = mod_bands.band(band_idx + 1).unwrap();
-                assert_eq!(orig_band.data(), mod_band.data());
+            assert_eq!(original.num_bands(), modified.num_bands());
+            for band_idx in 0..original.num_bands() {
+                let orig_band = original.band(band_idx).unwrap();
+                let mod_band = modified.band(band_idx).unwrap();
                 assert_eq!(
-                    orig_band.metadata().data_type().unwrap(),
-                    mod_band.metadata().data_type().unwrap()
+                    orig_band.contiguous_data().unwrap().as_ref(),
+                    mod_band.contiguous_data().unwrap().as_ref()
                 );
+                assert_eq!(orig_band.data_type(), mod_band.data_type());
             }
 
             // CRS changed

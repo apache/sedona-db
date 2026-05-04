@@ -126,9 +126,8 @@ mod tests {
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use sedona_raster::builder::RasterBuilder;
-    use sedona_raster::traits::{BandMetadata, RasterMetadata};
     use sedona_schema::datatypes::RASTER;
-    use sedona_schema::raster::{BandDataType, StorageType};
+    use sedona_schema::raster::BandDataType;
     use sedona_testing::compare::assert_array_equal;
     use sedona_testing::rasters::generate_test_rasters;
     use sedona_testing::testers::ScalarUdfTester;
@@ -224,26 +223,10 @@ mod tests {
     }
 
     fn append_1x1_raster_with_crs(builder: &mut RasterBuilder, crs: Option<&str>) {
-        let raster_metadata = RasterMetadata {
-            width: 1,
-            height: 1,
-            upperleft_x: 0.0,
-            upperleft_y: 0.0,
-            scale_x: 1.0,
-            scale_y: -1.0,
-            skew_x: 0.0,
-            skew_y: 0.0,
-        };
-        builder.start_raster(&raster_metadata, crs).unwrap();
         builder
-            .start_band(BandMetadata {
-                datatype: BandDataType::UInt8,
-                nodata_value: None,
-                storage_type: StorageType::InDb,
-                outdb_url: None,
-                outdb_band_id: None,
-            })
+            .start_raster_2d(1, 1, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, crs)
             .unwrap();
+        builder.start_band_2d(BandDataType::UInt8, None).unwrap();
         builder.band_data_writer().append_value([0u8]);
         builder.finish_band().unwrap();
         builder.finish_raster().unwrap();
