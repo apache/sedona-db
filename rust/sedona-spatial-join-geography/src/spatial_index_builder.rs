@@ -60,7 +60,9 @@ impl GeographySpatialIndexBuilder {
             metrics,
         )?;
         Ok(Self {
-            inner: inner.with_refiner_factory(Arc::new(GeographyRefinerFactory)),
+            inner: inner
+                .with_refiner_factory(Arc::new(GeographyRefinerFactory))
+                .with_wraparound((-180.0, 180.0)),
         })
     }
 }

@@ -38,6 +38,7 @@ use geo_index::IndexableNum;
 use parking_lot::Mutex;
 use sedona_expr::statistics::GeoStatistics;
 use sedona_geo::to_geo::item_to_geometry;
+use sedona_geometry::interval::Interval;
 use wkb::reader::Wkb;
 
 use crate::index::spatial_index::DISTANCE_TOLERANCE;
@@ -68,6 +69,15 @@ struct DefaultSpatialIndexInner {
     /// the original geometry batch index and row index, or translated using `prepared_geom_idx_vec`
     /// to get the prepared geometries array index.
     pub(crate) rtree: RTree<f32>,
+
+    /// Absolute bounds of the coordinate system
+    ///
+    /// This value should be `None` if each input feature has exactly one item in the tree and
+    /// each probe input is guaranteed to have non-wraparound bounds. This is the case when using
+    /// non-wraparound bounds like those computed by the default evaluated geometry array
+    /// constructor. If this is Some, it must contain the bounds of any rectangle in the tree. This
+    /// is needed to split probe rectangles into finite queries when querying the tree.
+    pub(crate) wraparound: Option<Interval>,
 
     /// Indexed batches containing evaluated geometry arrays. It contains the original record
     /// batches and geometry arrays obtained by evaluating the geometry expression on the build side.
@@ -117,6 +127,7 @@ impl DefaultSpatialIndex {
                 options,
                 refiner,
                 rtree,
+                wraparound: None,
                 data_id_to_batch_pos: Vec::new(),
                 indexed_batches: Vec::new(),
                 geom_idx_vec: Vec::new(),
@@ -132,6 +143,7 @@ impl DefaultSpatialIndex {
         options: SpatialJoinOptions,
         refiner: Arc<dyn IndexQueryResultRefiner>,
         rtree: RTree<f32>,
+        wraparound: Option<Interval>,
         indexed_batches: Vec<EvaluatedBatch>,
         data_id_to_batch_pos: Vec<(i32, i32)>,
         geom_idx_vec: Vec<usize>,
@@ -145,6 +157,7 @@ impl DefaultSpatialIndex {
                 options,
                 refiner,
                 rtree,
+                wraparound,
                 data_id_to_batch_pos,
                 indexed_batches,
                 geom_idx_vec,
@@ -519,15 +532,55 @@ impl SpatialIndex for DefaultSpatialIndex {
         let mut current_row_idx = range.start;
         for row_idx in range {
             current_row_idx = row_idx;
-            let Some(probe_rect) = rects[row_idx] else {
+            let probe_rect = &rects[row_idx];
+            if probe_rect.is_empty() {
                 continue;
+            }
+
+            let mut candidates = if let Some(wraparound) = &self.inner.wraparound {
+                let (left, right) = probe_rect.split(wraparound);
+                if left.is_empty() {
+                    return sedona_internal_err!("Probe rectangle split produced empty left split");
+                }
+
+                let (x, y) = left.into_inner();
+                let mut candidates = self.inner.rtree.search(x.0, y.0, x.1, y.1);
+                if !right.is_empty() {
+                    let (x, y) = right.into_inner();
+                    candidates.extend(self.inner.rtree.search(x.0, y.0, x.1, y.1));
+                }
+
+                candidates
+            } else {
+                let (x, y) = probe_rect.clone().into_inner();
+                self.inner.rtree.search(x.0, y.0, x.1, y.1)
             };
 
-            let min = probe_rect.min();
-            let max = probe_rect.max();
-            let mut candidates = self.inner.rtree.search(min.x, min.y, max.x, max.y);
             if candidates.is_empty() {
                 continue;
+            }
+
+            // Deduplicate the data_idx themselves. This can happen if the same build rectangle
+            // intersects both the left and right probe rectangles.
+            if probe_rect.is_wraparound() {
+                candidates.sort_unstable();
+                candidates.dedup();
+            }
+
+            // Deduplicate candidates arising from distinct data_idx in candidates that resolve
+            // to the same build batch positions due to multiple rectangles for the same item
+            // in the tree.
+            if self.inner.wraparound.is_some() {
+                let mut indexed_candidates: Vec<_> = candidates
+                    .iter()
+                    .map(|&data_idx| (self.inner.data_id_to_batch_pos[data_idx as usize], data_idx))
+                    .collect();
+                indexed_candidates.sort_unstable_by_key(|(pos, _)| *pos);
+                indexed_candidates.dedup_by_key(|(pos, _)| *pos);
+                candidates = indexed_candidates
+                    .into_iter()
+                    .map(|(_, data_idx)| data_idx)
+                    .collect();
             }
 
             let Some(probe_wkb) = evaluated_batch.geom_array.wkb(row_idx) else {
@@ -536,11 +589,6 @@ impl SpatialIndex for DefaultSpatialIndex {
                     row_idx
                 );
             };
-
-            // Sort and dedup candidates to avoid duplicate results when we index one geometry
-            // using several boxes.
-            candidates.sort_unstable();
-            candidates.dedup();
 
             let distance = match dist {
                 Some(dist_array) => distance_value_at(dist_array, row_idx)?,

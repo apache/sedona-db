@@ -23,19 +23,19 @@ use arrow_schema::DataType;
 use datafusion_common::{utils::proxy::VecAllocExt, JoinSide, Result, ScalarValue};
 use datafusion_expr::ColumnarValue;
 use datafusion_physical_expr::PhysicalExpr;
-use float_next_after::NextAfter;
-use geo_index::rtree::util::f64_box_to_f32;
-use geo_types::{coord, Rect};
 use sedona_functions::executor::IterGeo;
-use sedona_geo_generic_alg::BoundingRect;
+use sedona_geometry::{
+    bounds::geo_traits_update_xy_bounds,
+    interval::{Interval, IntervalTrait},
+};
 use sedona_schema::datatypes::SedonaType;
 use wkb::reader::Wkb;
 
-use sedona_common::sedona_internal_err;
+use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 
 use crate::{
     spatial_predicate::{DistancePredicate, KNNPredicate, RelationPredicate, SpatialPredicate},
-    utils::arrow_utils::get_array_memory_size,
+    utils::{arrow_utils::get_array_memory_size, bounds::Bounds2D},
 };
 
 /// Factory for [EvaluatedGeometryArray] instances given an evaluated geometry column
@@ -73,11 +73,9 @@ impl DefaultGeometryArrayFactory {
         let distance_columnar_value = distance_columnar_value.cast_to(&DataType::Float64, None)?;
         match &distance_columnar_value {
             ColumnarValue::Scalar(ScalarValue::Float64(Some(distance))) => {
-                result.rects.iter_mut().for_each(|rect_opt| {
-                    if let Some(rect) = rect_opt {
-                        expand_rect_in_place(rect, *distance);
-                    };
-                });
+                for rect in result.rects.iter_mut() {
+                    expand_rect_in_place(rect, *distance);
+                }
             }
             ColumnarValue::Scalar(ScalarValue::Float64(None)) => {
                 // Distance expression evaluates to NULL, the resulting distance should be NULL as well.
@@ -85,12 +83,10 @@ impl DefaultGeometryArrayFactory {
             }
             ColumnarValue::Array(array) => {
                 if let Some(array) = array.as_any().downcast_ref::<Float64Array>() {
-                    for (geom_idx, rect_opt) in result.rects.iter_mut().enumerate() {
+                    for (geom_idx, rect) in result.rects.iter_mut().enumerate() {
                         if !array.is_null(geom_idx) {
                             let dist = array.value(geom_idx);
-                            if let Some(rect) = rect_opt {
-                                expand_rect_in_place(rect, dist);
-                            };
+                            expand_rect_in_place(rect, dist);
                         }
                     }
                 } else {
@@ -169,7 +165,7 @@ pub struct EvaluatedGeometryArray {
     geometry_array: ArrayRef,
     /// The rects of the geometries in the geometry array. The length of this array is equal to the number of geometries.
     /// The rects will be None for empty or null geometries.
-    rects: Vec<Option<Rect<f32>>>,
+    rects: Vec<Bounds2D>,
     /// The distance value produced by evaluating the distance expression.
     distance: Option<ColumnarValue>,
     /// WKBs of the geometries in `geometry_array`. The wkb values reference buffers inside the geometry array,
@@ -185,23 +181,18 @@ impl EvaluatedGeometryArray {
         let num_rows = geometry_array.len();
         let mut rect_vec = Vec::with_capacity(num_rows);
         let mut wkbs = Vec::with_capacity(num_rows);
+        let mut x = Interval::empty();
+        let mut y = Interval::empty();
         geometry_array.iter_as_wkb(sedona_type, num_rows, |wkb_opt| {
-            let rect_opt = if let Some(wkb) = &wkb_opt {
-                if let Some(rect) = wkb.bounding_rect() {
-                    let min = rect.min();
-                    let max = rect.max();
-                    // f64_box_to_f32 will ensure the resulting `f32` box is no smaller than the `f64` box.
-                    let (min_x, min_y, max_x, max_y) = f64_box_to_f32(min.x, min.y, max.x, max.y);
-                    let rect = Rect::new(coord!(x: min_x, y: min_y), coord!(x: max_x, y: max_y));
-                    Some(rect)
-                } else {
-                    None
-                }
+            if let Some(wkb) = &wkb_opt {
+                x = Interval::empty();
+                y = Interval::empty();
+                geo_traits_update_xy_bounds(wkb, &mut x, &mut y)
+                    .map_err(|e| sedona_internal_datafusion_err!("{e}"))?;
+                rect_vec.push(Bounds2D::new(x, y));
             } else {
-                None
-            };
-
-            rect_vec.push(rect_opt);
+                rect_vec.push(Bounds2D::empty())
+            }
 
             // Safety: The wkbs must reference buffers inside the `geometry_array`. Since the `geometry_array` and
             // `wkbs` are both owned by the `EvaluatedGeometryArray`, so they have the same lifetime. We'll never
@@ -223,7 +214,7 @@ impl EvaluatedGeometryArray {
     /// Create a new EvaluatedGeometryArray with precomputed item bounds
     pub fn try_new_with_rects(
         geometry_array: ArrayRef,
-        rect_vec: Vec<Option<Rect<f32>>>,
+        rect_vec: Vec<Bounds2D>,
         sedona_type: &SedonaType,
     ) -> Result<Self> {
         // Safety: The wkbs must reference buffers inside the `geometry_array`. Since the `geometry_array` and
@@ -407,9 +398,9 @@ impl EvaluatedGeometryArray {
         let geometry_array = arrow_interleave(&value_refs, indices)?;
 
         // Gather rects by index — no recomputation.
-        let rects: Vec<Option<Rect<f32>>> = indices
+        let rects: Vec<Bounds2D> = indices
             .iter()
-            .map(|&(batch_idx, row_idx)| geom_arrays[batch_idx].rects[row_idx])
+            .map(|&(batch_idx, row_idx)| geom_arrays[batch_idx].rects[row_idx].clone())
             .collect();
 
         let mut out = Self::try_new_with_rects(geometry_array, rects, sedona_type)?;
@@ -439,7 +430,7 @@ impl EvaluatedGeometryArray {
     }
 
     /// Bounding rectangles of each element in geometry_array
-    pub fn rects(&self) -> &[Option<Rect<f32>>] {
+    pub fn rects(&self) -> &[Bounds2D] {
         &self.rects
     }
 
@@ -468,6 +459,11 @@ impl EvaluatedGeometryArray {
     /// Get a single WKB
     pub fn wkb(&self, idx: usize) -> Option<&Wkb<'_>> {
         self.wkbs[idx].as_ref()
+    }
+
+    /// Get a single rectangle
+    pub fn rect(&self, idx: usize) -> &Bounds2D {
+        &self.rects[idx]
     }
 
     pub fn in_mem_size(&self) -> Result<usize> {
@@ -591,22 +587,8 @@ pub(crate) fn distance_value_at(
     }
 }
 
-fn expand_rect_in_place(rect: &mut Rect<f32>, distance: f64) {
-    let mut min = rect.min();
-    let mut max = rect.max();
-    let mut distance_f32 = distance as f32;
-    // distance_f32 may be smaller than the original f64 value due to loss of precision.
-    // We need to expand the rect using next_after to ensure that the rect expansion
-    // is always inclusive, otherwise we may miss some query results.
-    if (distance_f32 as f64) < distance {
-        distance_f32 = distance_f32.next_after(f32::INFINITY);
-    }
-    min.x -= distance_f32;
-    min.y -= distance_f32;
-    max.x += distance_f32;
-    max.y += distance_f32;
-    rect.set_min(min);
-    rect.set_max(max);
+fn expand_rect_in_place(rect: &mut Bounds2D, distance: f64) {
+    *rect = Bounds2D::new(rect.x().expand_by(distance), rect.y().expand_by(distance));
 }
 
 impl OperandEvaluator for DistanceOperandEvaluator {
@@ -765,9 +747,9 @@ mod test {
 
         assert_eq!(result.geometry_array().len(), 3);
         assert_eq!(result.rects().len(), 3);
-        assert_eq!(result.rects()[0].unwrap().min().x, 10.0);
-        assert_eq!(result.rects()[1].unwrap().min().x, 20.0);
-        assert_eq!(result.rects()[2].unwrap().min().x, 30.0);
+        assert_eq!(result.rects()[0].x().lo(), 10.0);
+        assert_eq!(result.rects()[1].x().lo(), 20.0);
+        assert_eq!(result.rects()[2].x().lo(), 30.0);
 
         let distance = result.distance().as_ref().unwrap();
         match distance {

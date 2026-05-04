@@ -31,8 +31,7 @@ use crate::{
     },
     operand_evaluator::EvaluatedGeometryArray,
     partitioning::{
-        partition_slots::PartitionSlots, util::geo_rect_to_bbox, PartitionedSide, SpatialPartition,
-        SpatialPartitioner,
+        partition_slots::PartitionSlots, PartitionedSide, SpatialPartition, SpatialPartitioner,
     },
 };
 use arrow::compute::interleave_record_batch;
@@ -45,8 +44,7 @@ use futures::StreamExt;
 use sedona_common::sedona_internal_err;
 use sedona_expr::statistics::GeoStatistics;
 use sedona_functions::st_analyze_agg::AnalyzeAccumulator;
-use sedona_geometry::bounding_box::BoundingBox;
-use sedona_geometry::interval::IntervalTrait;
+use sedona_geometry::{bounding_box::BoundingBox, interval::IntervalTrait};
 use sedona_schema::datatypes::WKB_GEOMETRY;
 
 /// Result emitted after a stream is spatially repartitioned.
@@ -382,7 +380,7 @@ impl StreamRepartitionerBuilder {
             slots,
             spill_registry: (0..slot_count).map(|_| None).collect(),
             geo_stats_accumulators: (0..slot_count)
-                .map(|_| AnalyzeAccumulator::new(WKB_GEOMETRY, WKB_GEOMETRY))
+                .map(|_| AnalyzeAccumulator::new(WKB_GEOMETRY))
                 .collect(),
             num_rows: vec![0; slot_count],
             slot_assignments: (0..slot_count).map(|_| Vec::new()).collect(),
@@ -478,7 +476,8 @@ impl StreamRepartitioner {
                 );
             };
             if let Some(wkb) = batch_ref.geom_array.wkb(row_idx) {
-                self.geo_stats_accumulators[slot_idx].update_statistics(wkb)?;
+                self.geo_stats_accumulators[slot_idx]
+                    .update_statistics_with_bbox(wkb, &batch_ref.geom_array.rect(row_idx).into())?;
             }
             self.slot_assignments[slot_idx].push((batch_idx, row_idx));
             self.num_rows[slot_idx] += 1;
@@ -601,26 +600,27 @@ pub(crate) fn assign_rows(
         PartitionedSide::BuildSide => {
             let mut cnt = 0;
             let num_regular_partitions = partitioner.num_regular_partitions() as u32;
-            for rect_opt in batch.geom_array.rects() {
-                let partition = match rect_opt {
-                    Some(rect) => partitioner.partition_no_multi(&geo_rect_to_bbox(rect))?,
-                    None => {
-                        // Round-robin empty geometries through regular partitions to avoid
-                        // overloading a single slot when the build side is mostly empty.
-                        let p = SpatialPartition::Regular(cnt);
-                        cnt = (cnt + 1) % num_regular_partitions;
-                        p
-                    }
+            for rect in batch.geom_array.rects() {
+                let partition = if rect.is_empty() {
+                    // Round-robin empty geometries through regular partitions to avoid
+                    // overloading a single slot when the build side is mostly empty.
+                    let p = SpatialPartition::Regular(cnt);
+                    cnt = (cnt + 1) % num_regular_partitions;
+                    p
+                } else {
+                    partitioner.partition_no_multi(&BoundingBox::xy(rect.x(), rect.y()))?
                 };
                 assignments.push(partition);
             }
         }
         PartitionedSide::ProbeSide => {
-            for rect_opt in batch.geom_array.rects() {
-                let partition = match rect_opt {
-                    Some(rect) => partitioner.partition(&geo_rect_to_bbox(rect))?,
-                    None => SpatialPartition::None,
+            for rect in batch.geom_array.rects() {
+                let partition = if rect.is_empty() {
+                    SpatialPartition::None
+                } else {
+                    partitioner.partition(&BoundingBox::xy(rect.x(), rect.y()))?
                 };
+
                 assignments.push(partition);
             }
         }

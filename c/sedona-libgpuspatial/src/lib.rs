@@ -16,7 +16,6 @@
 // under the License.
 
 use arrow_schema::DataType;
-use geo_types::Rect;
 
 mod error;
 #[cfg(gpu_available)]
@@ -113,9 +112,10 @@ mod sys {
         /// Inserts a batch of bounding boxes into the index.
         /// Each rectangle is represented as a `Rect<f32>` with minimum and maximum x and y coordinates.
         /// This method accumulates these rectangles until `finish_building` is called to finalize the index.
-        /// The method can be called multiple times to insert data in batches before finalizing.
-        pub fn push_build(&mut self, rects: &[Rect<f32>]) -> Result<()> {
-            // Re-interpreting Rect<f32> as flat f32 array (xmin, ymin, xmax, ymax)
+        /// The method can be called multiple times to insert data in batches before finalizing. The values
+        /// in rects are ordered (xmin, ymin, xmax, ymax).
+        pub fn push_build(&mut self, rects: &[[f32; 4]]) -> Result<()> {
+            // Re-interpreting rects as a flat f32 array (xmin, ymin, xmax, ymax)
             let raw_ptr = rects.as_ptr() as *const f32;
             self.inner.push_build(raw_ptr, rects.len() as u32)
         }
@@ -126,7 +126,8 @@ mod sys {
         }
 
         /// Probes the spatial index with a batch of rectangles and returns pairs of matching indices from the build and probe sets.
-        pub fn probe(&self, rects: &[Rect<f32>]) -> Result<(Vec<u32>, Vec<u32>)> {
+        ///  The values in rects are ordered (xmin, ymin, xmax, ymax).
+        pub fn probe(&self, rects: &[[f32; 4]]) -> Result<(Vec<u32>, Vec<u32>)> {
             let raw_ptr = rects.as_ptr() as *const f32;
             self.inner.probe(raw_ptr, rects.len() as u32)
         }
@@ -203,13 +204,13 @@ mod sys {
             Err(GpuSpatialError::GpuNotAvailable)
         }
         pub fn clear(&mut self) {}
-        pub fn push_build(&mut self, _r: &[Rect<f32>]) -> Result<()> {
+        pub fn push_build(&mut self, _r: &[[f32; 4]]) -> Result<()> {
             Err(GpuSpatialError::GpuNotAvailable)
         }
         pub fn finish_building(&mut self) -> Result<GpuSpatialIndex> {
             Err(GpuSpatialError::GpuNotAvailable)
         }
-        pub fn probe(&self, _r: &[Rect<f32>]) -> Result<(Vec<u32>, Vec<u32>)> {
+        pub fn probe(&self, _r: &[[f32; 4]]) -> Result<(Vec<u32>, Vec<u32>)> {
             Err(GpuSpatialError::GpuNotAvailable)
         }
     }
@@ -268,13 +269,16 @@ mod tests {
             Some("POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))"),
             Some("POLYGON ((35 10, 45 45, 15 40, 10 20, 35 10), (20 30, 35 35, 30 20, 20 30))"),
         ];
-        let rects: Vec<Rect<f32>> = polygon_values
+        let rects: Vec<_> = polygon_values
             .iter()
             .map(|w| {
-                Polygon::try_from_wkt_str(w.unwrap())
+                let rect = Polygon::try_from_wkt_str(w.unwrap())
                     .unwrap()
                     .bounding_rect()
-                    .unwrap()
+                    .unwrap();
+                let min = rect.min();
+                let max = rect.max();
+                (min.x, min.y, max.x, max.y)
             })
             .collect();
 
@@ -286,9 +290,14 @@ mod tests {
 
         // 4. Probe (Index is immutable and safe)
         let point_values = &[Some("POINT (30 20)")];
-        let points: Vec<Rect<f32>> = point_values
+        let points: Vec<_> = point_values
             .iter()
-            .map(|w| Point::try_from_wkt_str(w.unwrap()).unwrap().bounding_rect())
+            .map(|w| {
+                let rect = Point::try_from_wkt_str(w.unwrap()).unwrap().bounding_rect();
+                let min = rect.min();
+                let max = rect.max();
+                (min.x, min.y, max.x, max.y)
+            })
             .collect();
 
         let (build_idx, probe_idx) = index.probe(&points).unwrap();

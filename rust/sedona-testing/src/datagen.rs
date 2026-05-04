@@ -922,9 +922,7 @@ mod tests {
     use rand::rngs::StdRng;
     use rand::SeedableRng;
     use rstest::rstest;
-    use sedona_geometry::{
-        analyze::analyze_geometry, bounds::wkb_bounds_xy, interval::IntervalTrait,
-    };
+    use sedona_geometry::{analyze::analyze_wkb, bounds::wkb_bounds_xy, interval::IntervalTrait};
 
     #[test]
     fn test_generate_random_geometry_produces_valid_wkb() {
@@ -1323,7 +1321,7 @@ mod tests {
         for _ in 0..100 {
             let geom = generate_random_wkb(&mut rng, &options).unwrap();
             let wkb = wkb::reader::read_wkb(&geom).unwrap();
-            let analysis = analyze_geometry(&wkb).unwrap();
+            let analysis = analyze_wkb(&wkb).unwrap();
             assert_eq!(analysis.geometry_type.geometry_type(), geom_type);
         }
     }

@@ -25,7 +25,6 @@ use async_trait::async_trait;
 use datafusion_common::Result;
 use datafusion_common::{DataFusionError, JoinType};
 use futures::StreamExt;
-use geo_types::{coord, Rect};
 use parking_lot::Mutex;
 use sedona_common::{sedona_internal_err, SpatialJoinOptions};
 use sedona_expr::statistics::GeoStatistics;
@@ -196,10 +195,7 @@ impl SpatialIndexBuilder for GPUSpatialIndexBuilder {
                 .map(|x| x.batch.num_rows())
                 .sum(),
         );
-        let empty_rect = Rect::new(
-            coord!(x: f32::NAN, y: f32::NAN),
-            coord!(x: f32::NAN, y: f32::NAN),
-        );
+        let empty_rect = [f32::NAN, f32::NAN, f32::NAN, f32::NAN];
 
         refiner
             .init_build_schema(sedona_type.storage_type())
@@ -212,11 +208,12 @@ impl SpatialIndexBuilder for GPUSpatialIndexBuilder {
         for (batch_idx, batch) in self.indexed_batches.iter().enumerate() {
             let rects = batch.geom_array.rects();
 
-            for (idx, rect_opt) in rects.iter().enumerate() {
-                if let Some(rect) = rect_opt {
-                    native_rects.push(*rect);
-                } else {
+            for (idx, rect) in rects.iter().enumerate() {
+                if rect.is_empty() {
                     native_rects.push(empty_rect);
+                } else {
+                    let (x, y) = rect.clone().into_inner();
+                    native_rects.push([x.0, y.0, x.1, y.1]);
                 }
                 data_id_to_batch_pos.push((batch_idx as i32, idx as i32));
             }
