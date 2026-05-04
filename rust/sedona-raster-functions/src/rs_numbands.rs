@@ -61,7 +61,7 @@ impl SedonaScalarKernel for RsNumBands {
             match raster_opt {
                 None => builder.append_null(),
                 Some(raster) => {
-                    let num_bands = raster.bands().len() as u32;
+                    let num_bands = raster.num_bands() as u32;
                     builder.append_value(num_bands);
                 }
             }

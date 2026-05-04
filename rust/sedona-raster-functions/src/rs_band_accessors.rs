@@ -25,7 +25,7 @@ use datafusion_common::cast::as_int32_array;
 use datafusion_common::error::Result;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
-use sedona_raster::traits::RasterRef;
+use sedona_raster::traits::{nodata_bytes_to_f64, RasterRef};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 // ===========================================================================
@@ -120,14 +120,15 @@ fn get_pixel_type(
             Ok(())
         }
         Some(raster) => {
-            let num_bands = raster.bands().len();
+            let num_bands = raster.num_bands();
             if band_index < 1 || band_index > num_bands as i32 {
                 builder.append_null();
                 return Ok(());
             }
-            let band = raster.bands().band(band_index as usize)?;
-            let dt = band.metadata().data_type()?;
-            builder.append_value(dt.pixel_type_name());
+            match raster.band_data_type((band_index - 1) as usize) {
+                Some(dt) => builder.append_value(dt.pixel_type_name()),
+                None => builder.append_null(),
+            }
             Ok(())
         }
     }
@@ -224,16 +225,19 @@ fn get_nodata_value(
             Ok(())
         }
         Some(raster) => {
-            let num_bands = raster.bands().len();
+            let num_bands = raster.num_bands();
             if band_index < 1 || band_index > num_bands as i32 {
                 builder.append_null();
                 return Ok(());
             }
-            let band = raster.bands().band(band_index as usize)?;
-            let band_meta = band.metadata();
-            match band_meta.nodata_value_as_f64()? {
-                None => builder.append_null(),
-                Some(val) => builder.append_value(val),
+            let idx = (band_index - 1) as usize;
+            match (raster.band_nodata(idx), raster.band_data_type(idx)) {
+                (Some(bytes), Some(dt)) => {
+                    let val = nodata_bytes_to_f64(bytes, &dt)
+                        .map_err(datafusion_common::DataFusionError::from)?;
+                    builder.append_value(val);
+                }
+                _ => builder.append_null(),
             }
             Ok(())
         }
@@ -246,30 +250,27 @@ mod tests {
     use arrow_array::{Array, Float64Array, Int32Array, Int64Array, StringArray, StructArray};
     use datafusion_expr::ScalarUDF;
     use sedona_raster::builder::RasterBuilder;
-    use sedona_raster::traits::{BandMetadata, RasterMetadata};
     use sedona_schema::datatypes::RASTER;
-    use sedona_schema::raster::{BandDataType, StorageType};
+    use sedona_schema::raster::BandDataType;
     use sedona_testing::compare::assert_array_equal;
     use sedona_testing::rasters::generate_test_rasters;
     use sedona_testing::testers::ScalarUdfTester;
 
-    /// Build a single-row raster StructArray with custom metadata and band metadata.
+    /// Build a single-row raster StructArray with custom parameters.
     fn build_custom_raster(
-        meta: &RasterMetadata,
-        band_meta: &BandMetadata,
+        width: u64,
+        height: u64,
+        data_type: BandDataType,
+        nodata: Option<&[u8]>,
         data: &[u8],
         crs: Option<&str>,
     ) -> StructArray {
         let mut builder = RasterBuilder::new(1);
-        builder.start_raster(meta, crs).expect("start raster");
         builder
-            .start_band(BandMetadata {
-                datatype: band_meta.datatype,
-                nodata_value: band_meta.nodata_value.clone(),
-                storage_type: band_meta.storage_type,
-                outdb_url: band_meta.outdb_url.clone(),
-                outdb_band_id: band_meta.outdb_band_id,
-            })
+            .start_raster_2d(width, height, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, crs)
+            .expect("start raster");
+        builder
+            .start_band_2d(data_type, nodata)
             .expect("start band");
         builder.band_data_writer().append_value(data);
         builder.finish_band().expect("finish band");
@@ -401,25 +402,9 @@ mod tests {
     #[test]
     fn udf_bandnodatavalue_no_nodata() {
         // Create a raster without nodata
-        let meta = RasterMetadata {
-            width: 2,
-            height: 2,
-            upperleft_x: 0.0,
-            upperleft_y: 0.0,
-            scale_x: 1.0,
-            scale_y: -1.0,
-            skew_x: 0.0,
-            skew_y: 0.0,
-        };
-        let band_meta = BandMetadata {
-            datatype: BandDataType::UInt8,
-            nodata_value: None,
-            storage_type: StorageType::InDb,
-            outdb_url: None,
-            outdb_band_id: None,
-        };
         let data = vec![1u8, 2, 3, 4];
-        let rasters = build_custom_raster(&meta, &band_meta, &data, Some("OGC:CRS84"));
+        let rasters =
+            build_custom_raster(2, 2, BandDataType::UInt8, None, &data, Some("OGC:CRS84"));
 
         let udf: ScalarUDF = rs_bandnodatavalue_udf().into();
         let tester = ScalarUdfTester::new(udf, vec![RASTER]);

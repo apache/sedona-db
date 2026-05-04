@@ -5681,6 +5681,7 @@ dependencies = [
  "approx",
  "arrow-array",
  "arrow-buffer",
+ "arrow-ipc",
  "arrow-schema",
  "sedona-common",
  "sedona-schema",
