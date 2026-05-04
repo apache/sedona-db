@@ -460,6 +460,7 @@ sd_ungroup <- function(.data) {
 #' @param ... Aggregate expressions. These are evaluated in the same way as
 #'   [dplyr::summarise()] except the outer expression must be an aggregate
 #'   expression (e.g., `sum(x) + 1` is not currently possible).
+#' @param .env The calling environment for programmatic usage
 #'
 #' @returns An object of class sedonadb_dataframe
 #' @export
@@ -467,15 +468,14 @@ sd_ungroup <- function(.data) {
 #' @examples
 #' data.frame(x = c(10:1, NA)) |> sd_summarise(x = sum(x, na.rm = TRUE))
 #'
-sd_summarise <- function(.data, ...) {
+sd_summarise <- function(.data, ..., .env = parent.frame()) {
   .data <- as_sedonadb_dataframe(.data)
 
   expr_quos <- rlang::enquos(...)
-  env <- parent.frame()
 
-  expr_ctx <- sd_expr_ctx(infer_nanoarrow_schema(.data), env, ctx = .data$ctx)
+  expr_ctx <- sd_expr_ctx(infer_nanoarrow_schema(.data), .env, ctx = .data$ctx)
   r_exprs <- expr_quos |> rlang::quos_auto_name() |> lapply(rlang::quo_get_expr)
-  sd_exprs <- lapply(r_exprs, sd_eval_expr, expr_ctx = expr_ctx, env = env)
+  sd_exprs <- lapply(r_exprs, sd_eval_expr, expr_ctx = expr_ctx)
 
   # Ensure inputs are given aliases to account for the expected column name
   exprs_names <- names(r_exprs)
@@ -492,8 +492,88 @@ sd_summarise <- function(.data, ...) {
 
 #' @rdname sd_summarise
 #' @export
-sd_summarize <- function(.data, ...) {
-  sd_summarise(.data, ...)
+sd_summarize <- function(.data, ..., .env = parent.frame()) {
+  sd_summarise(.data, ..., .env = .env)
+}
+
+#' Join two SedonaDB DataFrames
+#'
+#' Perform a join operation between two dataframes. Use [sd_join_by()] to
+#' specify join conditions using `x$column` and `y$column` syntax to
+#' reference columns from the left and right tables respectively.
+#'
+#' @param x The left dataframe
+#' @param y The right dataframe (will use the same context as x)
+#' @param by Join specification. One of:
+#'   - A `sedonadb_join_by` object from [sd_join_by()]
+#'   - A character vector of column names to join on in both tables
+#'   - A named character vector mapping left-table column names to
+#'     right-table column names, e.g. `c(x_val = "y_val")`
+#'   - `NULL` for a natural join on columns with matching names
+#' @param join_type The type of join to perform. One of "inner", "left", "right",
+#'   "full", "leftsemi", "rightsemi", "leftanti", "rightanti", "leftmark",
+#'   or "rightmark".
+#' @param select Post-join column selection. One of
+#'   - `NULL` for no modification, which may result in duplicate (unqualified)
+#'     column names. The column may still be
+#'     referred to with a qualifier in advanced usage using [sd_expr_column()].
+#'   - [sd_join_select_default()] for dplyr-like behaviour (equi-join keys
+#'     removed, intersecting names suffixed)
+#'   - [sd_join_select()] for a custom selection
+#'
+#' @returns An object of class sedonadb_dataframe
+#' @export
+#'
+#' @examples
+#' df1 <- data.frame(x = letters[1:10], y = 1:10)
+#' df2 <- data.frame(y = 10:1, z = LETTERS[1:10])
+#' df1 |> sd_join(df2)
+#'
+sd_join <- function(
+  x,
+  y,
+  by = NULL,
+  join_type = "inner",
+  select = sd_join_select_default()
+) {
+  x <- as_sedonadb_dataframe(x)
+  y <- as_sedonadb_dataframe(y, ctx = x$ctx)
+
+  x_schema <- infer_nanoarrow_schema(x)
+  y_schema <- infer_nanoarrow_schema(y)
+  join_expr_ctx <- sd_join_expr_ctx(x_schema, y_schema, ctx = x$ctx)
+  join_conditions <- sd_build_join_conditions(join_expr_ctx, by, ctx = x$ctx)
+
+  df <- x$df$join(y$df, join_conditions, join_type, left_alias = "x", right_alias = "y")
+  out <- new_sedonadb_dataframe(x$ctx, df)
+
+  # Apply post-join column selection if needed
+  if (is.null(select)) {
+    projection <- NULL
+  } else if (inherits(select, "sedonadb_join_select_default")) {
+    # Default select: remove duplicate equijoin keys, apply suffixes
+    projection <- sd_build_default_select(
+      join_expr_ctx,
+      join_conditions,
+      select$suffix,
+      join_type
+    )
+  } else if (inherits(select, "sedonadb_join_select")) {
+    # Custom select: evaluate user expressions
+    projection <- sd_eval_join_select_exprs(select, join_expr_ctx)
+  } else {
+    stop(
+      "`select` must be NULL, sd_join_select_default(), or sd_join_select()",
+      call. = FALSE
+    )
+  }
+
+  # NULL return from these functions means that no extra projecting is needed
+  if (is.null(projection)) {
+    out
+  } else {
+    sd_transmute(out, !!!projection)
+  }
 }
 
 #' Write DataFrame to (Geo)Parquet files

@@ -91,21 +91,23 @@ jobs:
         if: matrix.config.os == 'macos-latest'
         run: brew install geos
 
+      # Dynamically set a short target directory on Windows to bypass 260-char MinGW limits,
+      # while keeping paths standard on Mac/Linux.
+      - name: Configure Target Directory
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            echo "SEDONADB_TARGET_DIR=D:/a/t" >> $GITHUB_ENV
+            echo "CACHE_WORKSPACE=. -> D:/a/t" >> $GITHUB_ENV
+          else
+            echo "SEDONADB_TARGET_DIR=$(pwd)/r/sedonadb/src/rust/target" >> $GITHUB_ENV
+            echo "CACHE_WORKSPACE=. -> r/sedonadb/src/rust/target" >> $GITHUB_ENV
+          fi
+
       - uses: Swatinem/rust-cache@v2
         with:
-          # Update this key to force a new cache
           prefix-key: "r-v4"
-          # The R package uses its own target directory
-          workspaces: ". -> r/sedonadb/src/rust/target"
-
-      # Explicitly specify for Windows, which otherwise chooses a shorter version
-      # to work around a path length limitation when building from longer starting paths.
-      # This allows us to use a common cache configuration for Windows, MacOS, and Linux
-      - name: Set R/Rust target directory
-        if: matrix.config.os == 'windows-latest'
-        run: |
-          echo "SEDONADB_TARGET_DIR=$(pwd -W)/r/sedonadb/src/rust/target" >> $GITHUB_ENV
-        shell: bash
+          workspaces: ${{ env.CACHE_WORKSPACE }}
 
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:

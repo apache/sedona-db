@@ -267,16 +267,14 @@ fn compare_wkb_topologically(
         let expected = wkb::reader::read_wkb(expected_wkb);
         let actual = wkb::reader::read_wkb(actual_wkb);
         match (expected, actual) {
-            (Ok(expected_geom), Ok(actual_geom)) => {
-                if expected_geom.dim() == Dimensions::Xy && actual_geom.dim() == Dimensions::Xy {
-                    let expected_geom = expected_geom.to_geometry();
-                    let actual_geom = actual_geom.to_geometry();
-                    expected_geom.relate(&actual_geom).is_equal_topo()
-                } else {
-                    // geo crate does not support 3D/4D geometry operations, so we fall back to using the result
-                    // of byte-wise comparison
-                    false
-                }
+            // geo crate does not support 3D/4D geometry operations, so we fall back to using the result
+            // of byte-wise comparison
+            (Ok(expected_geom), Ok(actual_geom))
+                if expected_geom.dim() == Dimensions::Xy && actual_geom.dim() == Dimensions::Xy =>
+            {
+                let expected_geom = expected_geom.to_geometry();
+                let actual_geom = actual_geom.to_geometry();
+                expected_geom.relate(&actual_geom).is_equal_topo()
             }
             _ => false,
         }

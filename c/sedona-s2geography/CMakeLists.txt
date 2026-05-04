@@ -27,134 +27,40 @@ set(CMAKE_CXX_STANDARD 17)
 find_package(OpenSSL REQUIRED)
 find_package(absl REQUIRED)
 
-# Use FetchContent to build nanoarrow and geoarrow, being careful to namespace
-# symbols so they don't conflict with other nanoarrows that might be statically
-# linked into the same executable (even though we're careful to align versions
-# within this workspace, we don't have control of anything outside that stack)
-if(POLICY CMP0135)
-  cmake_policy(SET CMP0135 NEW)
-endif()
+# We always want static libraries for the Rust crate
+set(BUILD_SHARED_LIBS
+    OFF
+    CACHE BOOL "" FORCE)
 
-# S2's CMake is pretty awful so we just build the library ourselves. We pin the
-# version of s2geometry for predictability (although it is also available on
-# vcpkg and homebrew).
-add_library(s2
-            s2geometry/src/s2/encoded_s2cell_id_vector.cc
-            s2geometry/src/s2/encoded_s2point_vector.cc
-            s2geometry/src/s2/encoded_s2shape_index.cc
-            s2geometry/src/s2/encoded_string_vector.cc
-            s2geometry/src/s2/id_set_lexicon.cc
-            s2geometry/src/s2/mutable_s2shape_index.cc
-            s2geometry/src/s2/r2rect.cc
-            s2geometry/src/s2/s1angle.cc
-            s2geometry/src/s2/s1chord_angle.cc
-            s2geometry/src/s2/s1interval.cc
-            s2geometry/src/s2/s2boolean_operation.cc
-            s2geometry/src/s2/s2buffer_operation.cc
-            s2geometry/src/s2/s2builder.cc
-            s2geometry/src/s2/s2builder_graph.cc
-            s2geometry/src/s2/s2builderutil_closed_set_normalizer.cc
-            s2geometry/src/s2/s2builderutil_find_polygon_degeneracies.cc
-            s2geometry/src/s2/s2builderutil_get_snapped_winding_delta.cc
-            s2geometry/src/s2/s2builderutil_lax_polygon_layer.cc
-            s2geometry/src/s2/s2builderutil_lax_polyline_layer.cc
-            s2geometry/src/s2/s2builderutil_s2point_vector_layer.cc
-            s2geometry/src/s2/s2builderutil_s2polygon_layer.cc
-            s2geometry/src/s2/s2builderutil_s2polyline_layer.cc
-            s2geometry/src/s2/s2builderutil_s2polyline_vector_layer.cc
-            s2geometry/src/s2/s2builderutil_snap_functions.cc
-            s2geometry/src/s2/s2cap.cc
-            s2geometry/src/s2/s2cell.cc
-            s2geometry/src/s2/s2cell_id.cc
-            s2geometry/src/s2/s2cell_index.cc
-            s2geometry/src/s2/s2cell_union.cc
-            s2geometry/src/s2/s2centroids.cc
-            s2geometry/src/s2/s2closest_cell_query.cc
-            s2geometry/src/s2/s2closest_edge_query.cc
-            s2geometry/src/s2/s2closest_point_query.cc
-            s2geometry/src/s2/s2contains_vertex_query.cc
-            s2geometry/src/s2/s2convex_hull_query.cc
-            s2geometry/src/s2/s2coords.cc
-            s2geometry/src/s2/s2crossing_edge_query.cc
-            s2geometry/src/s2/s2debug.cc
-            s2geometry/src/s2/s2earth.cc
-            s2geometry/src/s2/s2edge_clipping.cc
-            s2geometry/src/s2/s2edge_crosser.cc
-            s2geometry/src/s2/s2edge_crossings.cc
-            s2geometry/src/s2/s2edge_distances.cc
-            s2geometry/src/s2/s2edge_tessellator.cc
-            s2geometry/src/s2/s2error.cc
-            s2geometry/src/s2/s2furthest_edge_query.cc
-            s2geometry/src/s2/s2hausdorff_distance_query.cc
-            s2geometry/src/s2/s2latlng.cc
-            s2geometry/src/s2/s2latlng_rect.cc
-            s2geometry/src/s2/s2latlng_rect_bounder.cc
-            s2geometry/src/s2/s2lax_loop_shape.cc
-            s2geometry/src/s2/s2lax_polygon_shape.cc
-            s2geometry/src/s2/s2lax_polyline_shape.cc
-            s2geometry/src/s2/s2loop.cc
-            s2geometry/src/s2/s2loop_measures.cc
-            s2geometry/src/s2/s2measures.cc
-            s2geometry/src/s2/s2memory_tracker.cc
-            s2geometry/src/s2/s2metrics.cc
-            s2geometry/src/s2/s2max_distance_targets.cc
-            s2geometry/src/s2/s2min_distance_targets.cc
-            s2geometry/src/s2/s2padded_cell.cc
-            s2geometry/src/s2/s2point_compression.cc
-            s2geometry/src/s2/s2point_region.cc
-            s2geometry/src/s2/s2pointutil.cc
-            s2geometry/src/s2/s2polygon.cc
-            s2geometry/src/s2/s2polyline.cc
-            s2geometry/src/s2/s2polyline_alignment.cc
-            s2geometry/src/s2/s2polyline_measures.cc
-            s2geometry/src/s2/s2polyline_simplifier.cc
-            s2geometry/src/s2/s2predicates.cc
-            s2geometry/src/s2/s2projections.cc
-            s2geometry/src/s2/s2r2rect.cc
-            s2geometry/src/s2/s2region.cc
-            s2geometry/src/s2/s2region_term_indexer.cc
-            s2geometry/src/s2/s2region_coverer.cc
-            s2geometry/src/s2/s2region_intersection.cc
-            s2geometry/src/s2/s2region_union.cc
-            s2geometry/src/s2/s2shape_index.cc
-            s2geometry/src/s2/s2shape_index_buffered_region.cc
-            s2geometry/src/s2/s2shape_index_measures.cc
-            s2geometry/src/s2/s2shape_measures.cc
-            s2geometry/src/s2/s2shape_nesting_query.cc
-            s2geometry/src/s2/s2shapeutil_build_polygon_boundaries.cc
-            s2geometry/src/s2/s2shapeutil_coding.cc
-            s2geometry/src/s2/s2shapeutil_contains_brute_force.cc
-            s2geometry/src/s2/s2shapeutil_conversion.cc
-            s2geometry/src/s2/s2shapeutil_edge_iterator.cc
-            s2geometry/src/s2/s2shapeutil_get_reference_point.cc
-            s2geometry/src/s2/s2shapeutil_visit_crossing_edge_pairs.cc
-            s2geometry/src/s2/s2text_format.cc
-            s2geometry/src/s2/s2wedge_relations.cc
-            s2geometry/src/s2/s2winding_operation.cc
-            s2geometry/src/s2/util/bits/bit-interleave.cc
-            s2geometry/src/s2/util/coding/coder.cc
-            s2geometry/src/s2/util/coding/varint.cc
-            s2geometry/src/s2/util/math/exactfloat/exactfloat.cc
-            s2geometry/src/s2/util/math/mathutil.cc
-            s2geometry/src/s2/util/units/length-units.cc)
+# Try to find s2 via find_package first (e.g., from vcpkg which has Windows patches)
+find_package(s2 QUIET)
+
+if(NOT s2_FOUND)
+  # Build s2geometry using its own CMake (v0.12.0 has proper add_subdirectory support).
+  set(BUILD_TESTS
+      OFF
+      CACHE BOOL "" FORCE)
+  set(BUILD_EXAMPLES
+      OFF
+      CACHE BOOL "" FORCE)
+  add_subdirectory(s2geometry)
+  set(S2_BUILT_FROM_SUBDIRECTORY TRUE)
+else()
+  message(STATUS "Found s2 via find_package")
+  set(S2_BUILT_FROM_SUBDIRECTORY FALSE)
+endif()
 
 if(WIN32 AND NOT MSVC)
   # mingw (e.g., R for Windows) needs extra libraries
-  target_compile_definitions(s2 PUBLIC _USE_MATH_DEFINES)
   set(S2_EXTRA_OPENSSL_LIBS
       crypt32
       z
       ws2_32
       gdi32
       crypt32)
-elseif(MSVC)
-  target_compile_definitions(s2 PUBLIC NOMINMAX _USE_MATH_DEFINES)
-  target_compile_options(s2 PUBLIC /J)
-else()
-  target_compile_options(s2 PRIVATE -Wno-attributes -Wno-deprecated-declarations
-                                    -Wno-pedantic)
 endif()
 
+# Abseil libraries needed by the linker_flags discovery target below.
 set(ABSL_LIBRARIES
     absl::base
     absl::btree
@@ -178,41 +84,26 @@ set(ABSL_LIBRARIES
     absl::str_format
     absl::strings
     absl::type_traits
-    absl::utility)
+    absl::utility
+    absl::vlog_is_on)
 
-target_include_directories(s2
-                           PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/s2geometry/src>
-)
-target_link_libraries(s2 ${OPENSSL_LIBRARIES} ${ABSL_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
-
-install(TARGETS s2
-        EXPORT "s2geography-targets"
-        RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
-        ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
-        LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}")
-
-# Build s2geography
-add_library(s2::s2 ALIAS s2)
+# Build s2geography (needs the s2::s2 alias and version info)
+if(S2_BUILT_FROM_SUBDIRECTORY)
+  add_library(s2::s2 ALIAS s2)
+endif()
 set(S2_VERSION_MAJOR 0)
-set(S2_VERSION_MINOR 11)
+set(S2_VERSION_MINOR 13)
 set(S2_VERSION_PATCH 1)
-set(BUILD_SHARED_LIBS OFF)
 add_subdirectory(s2geography)
 
-# Add our glue library
-add_library(geography_glue src/geography_glue.cc)
-target_link_libraries(geography_glue
-                      s2geography
-                      s2
-                      OpenSSL::SSL
-                      OpenSSL::Crypto
-                      ${S2_EXTRA_OPENSSL_LIBS})
-
-install(TARGETS geography_glue
-        EXPORT "geoarrow"
-        RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
-        ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
-        LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}")
+# s2geography's install export set references s2, so we need to include it.
+if(S2_BUILT_FROM_SUBDIRECTORY)
+  install(TARGETS s2
+          EXPORT "s2geography-targets"
+          RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+          ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+          LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}")
+endif()
 
 # Write a file to the binary directory containing the resolved locations
 # of OpenSSL and the libraries we need to link
@@ -257,6 +148,7 @@ if(NOT WIN32)
 
   add_executable(linker_flags "CMakeLists.txt")
   target_link_libraries(linker_flags
+                        s2::s2
                         OpenSSL::SSL
                         OpenSSL::Crypto
                         ${S2_EXTRA_OPENSSL_LIBS}
@@ -276,6 +168,7 @@ int main(int argc, const char** args) {
 }")
   add_executable(linker_flags "${CMAKE_CURRENT_BINARY_DIR}/linker_flags.cc")
   target_link_libraries(linker_flags
+                        s2::s2
                         OpenSSL::SSL
                         OpenSSL::Crypto
                         ${S2_EXTRA_OPENSSL_LIBS}

@@ -27,25 +27,48 @@ fn main() {
     // MACOS_DEPLOYMENT_TARGET isn't passed through properly but this can probably
     // be solved by setting the environment variable in CI before building a portable
     // target like a Python package.
-    let dst = cmake::Config::new(".").build();
+    let mut cmake_config = cmake::Config::new(".");
+
+    // Use RelWithDebInfo if building release with debug symbols
+    if std::env::var("PROFILE").unwrap_or_default() == "release"
+        && std::env::var("CARGO_PROFILE_RELEASE_DEBUG").is_ok()
+    {
+        cmake_config.define("CMAKE_BUILD_TYPE", "RelWithDebInfo");
+    }
+
+    let dst = cmake_config.build();
 
     // Link the libraries that are easy to enumerate by hand and whose location
-    // we control in CMakeLists.txt.
-    let mut lib_dirs = ["geography_glue", "s2geography", "s2"]
-        .map(|lib| find_lib_dir(&dst, lib))
+    // we control in CMakeLists.txt. s2geography_c and s2geography are always built
+    // by our CMake, but s2 may come from find_package (e.g., vcpkg on Windows).
+    let mut lib_dirs = ["s2geography_c", "s2geography"]
+        .map(|lib| find_lib_dir(&dst, lib).unwrap_or_else(|| panic!("Failed to find {lib}")))
         .into_iter()
         .collect::<HashSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
 
+    // s2 may be built by CMake (add_subdirectory) or come from find_package.
+    // If built by CMake, we'll find it here. If from find_package, it will be
+    // included in the linker_flags.txt output.
+    let s2_from_cmake = find_lib_dir(&dst, "s2");
+    if let Some(s2_lib_dir) = &s2_from_cmake {
+        lib_dirs.push(s2_lib_dir.clone());
+    }
+
     lib_dirs.sort();
+    lib_dirs.dedup();
     for lib_dir in lib_dirs {
         println!("cargo:rustc-link-search=native={}", lib_dir.display());
     }
 
-    println!("cargo:rustc-link-lib=static=geography_glue");
+    println!("cargo:rustc-link-lib=static=s2geography_c");
     println!("cargo:rustc-link-lib=static=s2geography");
-    println!("cargo:rustc-link-lib=static=s2");
+    // Only explicitly link s2 if we found it in cmake output.
+    // Otherwise it will be linked via linker_flags.txt.
+    if s2_from_cmake.is_some() {
+        println!("cargo:rustc-link-lib=static=s2");
+    }
 
     // Parse the output we wrote from CMake that is the linker flags
     // that CMake thinks we need for Abseil and OpenSSL.
@@ -138,7 +161,7 @@ fn find_cmake_linker_flags(binary_dir: &Path) -> PathBuf {
     )
 }
 
-fn find_lib_dir(binary_dir: &Path, lib_file: &str) -> PathBuf {
+fn find_lib_dir(binary_dir: &Path, lib_file: &str) -> Option<PathBuf> {
     // Usually lib but could be lib64 (e.g., the Linux used for wheel builds)
     let possible_lib_dirs = ["lib", "lib64", "build/Release"];
     for possible_lib in possible_lib_dirs {
@@ -146,14 +169,11 @@ fn find_lib_dir(binary_dir: &Path, lib_file: &str) -> PathBuf {
         let static_lib_posix = path.join(format!("lib{lib_file}.a"));
         let static_lib_windows = path.join(format!("{lib_file}.lib"));
         if static_lib_posix.exists() || static_lib_windows.exists() {
-            return path;
+            return Some(path);
         }
     }
 
-    panic!(
-        "Can't find library dir for static library '{lib_file}' output at {}",
-        binary_dir.to_string_lossy()
-    )
+    None
 }
 
 // Linker flags scraped from MSBuild are UTF-16 with a byte order mark; linker flags scraped otherwise

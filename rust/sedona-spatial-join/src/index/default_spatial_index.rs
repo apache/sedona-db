@@ -49,7 +49,7 @@ use crate::{
         IndexQueryResult, QueryResultMetrics,
     },
     operand_evaluator::distance_value_at,
-    refine::{create_refiner, IndexQueryResultRefiner},
+    refine::IndexQueryResultRefiner,
     spatial_predicate::SpatialPredicate,
 };
 use arrow::array::BooleanBufferBuilder;
@@ -105,15 +105,9 @@ impl DefaultSpatialIndex {
         spatial_predicate: SpatialPredicate,
         schema: SchemaRef,
         options: SpatialJoinOptions,
+        refiner: Arc<dyn IndexQueryResultRefiner>,
         probe_threads_counter: AtomicUsize,
     ) -> Self {
-        let refiner = create_refiner(
-            options.spatial_library,
-            &spatial_predicate,
-            options.clone(),
-            0,
-            GeoStatistics::empty(),
-        );
         let rtree = RTreeBuilder::<f32>::new(0).finish::<HilbertSort>();
         let knn_components = matches!(spatial_predicate, SpatialPredicate::KNearestNeighbors(_))
             .then(|| KnnComponents::new(0, &[]).unwrap());

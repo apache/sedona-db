@@ -39,7 +39,7 @@ else
     fi
 
     ./bootstrap-vcpkg.sh
-    ./vcpkg install --overlay-triplets="${SEDONADB_DIR}/ci/scripts/custom-triplets" geos abseil openssl
+    ./vcpkg install --overlay-triplets="${SEDONADB_DIR}/ci/scripts/custom-triplets" geos abseil openssl s2geometry
     popd
 
     export CMAKE_TOOLCHAIN_FILE="${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"

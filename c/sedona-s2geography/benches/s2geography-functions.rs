@@ -80,12 +80,101 @@ fn criterion_benchmark(c: &mut Criterion) {
         c,
         &f,
         "s2geography",
+        "st_distance",
+        BenchmarkArgs::ArrayScalar(
+            Transformed(Point.into(), to_geography()),
+            Transformed(Polygon(10).into(), to_geography()),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_distance",
+        BenchmarkArgs::ArrayScalar(
+            Transformed(Point.into(), to_geography()),
+            Transformed(LineString(10).into(), to_geography()),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_distance",
+        BenchmarkArgs::ArrayArray(
+            Transformed(Point.into(), to_geography()),
+            Transformed(Point.into(), to_geography()),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_distance",
+        BenchmarkArgs::ArrayArray(
+            Transformed(Point.into(), to_geography()),
+            Transformed(LineString(10).into(), to_geography()),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_distance",
+        BenchmarkArgs::ArrayArray(
+            Transformed(Point.into(), to_geography()),
+            Transformed(Polygon(10).into(), to_geography()),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_distance",
+        BenchmarkArgs::ArrayArray(
+            Transformed(LineString(10).into(), to_geography()),
+            Transformed(Polygon(10).into(), to_geography()),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_closestpoint",
+        BenchmarkArgs::ArrayArray(
+            Transformed(Point.into(), to_geography()),
+            Transformed(Point.into(), to_geography()),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_closestpoint",
+        BenchmarkArgs::ArrayScalar(
+            Transformed(Point.into(), to_geography()),
+            Transformed(LineString(10).into(), to_geography()),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
         "st_closestpoint",
         BenchmarkArgs::ArrayScalar(
             Transformed(LineString(10).into(), to_geography()),
             Transformed(LineString(10).into(), to_geography()),
         ),
     );
+
     benchmark::scalar(
         c,
         &f,
@@ -119,6 +208,17 @@ fn criterion_benchmark(c: &mut Criterion) {
         ),
     );
 
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_symdifference",
+        BenchmarkArgs::ArrayScalar(
+            Transformed(Polygon(10).into(), to_geography()),
+            Transformed(Polygon(10).into(), to_geography()),
+        ),
+    );
+
     // Predicate functions
     benchmark::scalar(
         c,
@@ -128,6 +228,39 @@ fn criterion_benchmark(c: &mut Criterion) {
         BenchmarkArgs::ScalarArray(
             Transformed(Polygon(10).into(), to_geography()),
             Transformed(Point.into(), to_geography()),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_contains",
+        BenchmarkArgs::ArrayArray(
+            Transformed(Polygon(10).into(), to_geography()),
+            Transformed(Point.into(), to_geography()),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_contains",
+        BenchmarkArgs::ArrayScalar(
+            Transformed(LineString(3).into(), to_geography()),
+            Transformed(Polygon(10).into(), to_geography()),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_contains",
+        BenchmarkArgs::ArrayScalar(
+            Transformed(LineString(10).into(), to_geography()),
+            Transformed(Polygon(10).into(), to_geography()),
         ),
     );
 
@@ -146,10 +279,165 @@ fn criterion_benchmark(c: &mut Criterion) {
         c,
         &f,
         "s2geography",
+        "st_intersects",
+        BenchmarkArgs::ScalarArray(
+            Transformed(Polygon(10).into(), to_geography()),
+            Transformed(Point.into(), to_geography()),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_intersects",
+        BenchmarkArgs::ArrayScalar(
+            Transformed(Point.into(), to_geography()),
+            Transformed(Polygon(500).into(), to_geography()),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_intersects",
+        BenchmarkArgs::ArrayScalar(
+            Transformed(LineString(3).into(), to_geography()),
+            Transformed(Polygon(10).into(), to_geography()),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_intersects",
+        BenchmarkArgs::ArrayScalar(
+            Transformed(LineString(10).into(), to_geography()),
+            Transformed(Polygon(10).into(), to_geography()),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_intersects",
+        BenchmarkArgs::ArrayArray(
+            Transformed(Point.into(), to_geography()),
+            Transformed(Polygon(10).into(), to_geography()),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_intersects",
+        BenchmarkArgs::ArrayArray(
+            Transformed(Polygon(10).into(), to_geography()),
+            Transformed(Point.into(), to_geography()),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_equals",
+        BenchmarkArgs::ArrayArray(
+            Transformed(Point.into(), to_geography()),
+            Transformed(Point.into(), to_geography()),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
         "st_equals",
         BenchmarkArgs::ArrayScalar(
             Transformed(Polygon(10).into(), to_geography()),
             Transformed(Polygon(10).into(), to_geography()),
+        ),
+    );
+
+    // Lines
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_linelocatepoint",
+        BenchmarkArgs::ArrayArray(
+            Transformed(LineString(10).into(), to_geography()),
+            Transformed(Point.into(), to_geography()),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_linelocatepoint",
+        BenchmarkArgs::ArrayArray(
+            Transformed(LineString(100).into(), to_geography()),
+            Transformed(Point.into(), to_geography()),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_lineinterpolatepoint",
+        BenchmarkArgs::ArrayArray(
+            Transformed(LineString(10).into(), to_geography()),
+            Float64(0.0, 1.0),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_lineinterpolatepoint",
+        BenchmarkArgs::ArrayArray(
+            Transformed(LineString(100).into(), to_geography()),
+            Float64(0.0, 1.0),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_reduceprecision",
+        BenchmarkArgs::ArrayScalar(
+            Transformed(LineString(10).into(), to_geography()),
+            Float64(0.1, 0.11),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_reduceprecision",
+        BenchmarkArgs::ArrayScalar(
+            Transformed(Polygon(10).into(), to_geography()),
+            Float64(0.1, 0.11),
+        ),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_reduceprecision",
+        BenchmarkArgs::ArrayScalar(
+            Transformed(PolygonWithHole(10).into(), to_geography()),
+            Float64(0.1, 0.11),
         ),
     );
 }

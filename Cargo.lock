@@ -52,9 +52,9 @@ dependencies = [
 
 [[package]]
 name = "adbc_core"
-version = "0.22.0"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8dbe031527c9856a1e2df5e82aa8e568ffaab3be897f70d874477fb42a783bb"
+checksum = "46b169525a7c41670fe95874103c7c6ce713ac699123f81a200bc31f9ad3b02e"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -62,9 +62,9 @@ dependencies = [
 
 [[package]]
 name = "adbc_ffi"
-version = "0.22.0"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3600ae9aec2907516d088189e3b863029280f1953dd0eab903c7f4c862a0ce81"
+checksum = "e6851c2ab953511cf7a244aadcbc0586442fd3c67dfe371457369048880dd513"
 dependencies = [
  "adbc_core",
  "arrow-array",
@@ -2789,7 +2789,7 @@ dependencies = [
  "float_next_after 1.0.0",
  "geo-types",
  "geographiclib-rs",
- "i_overlay",
+ "i_overlay 4.0.7",
  "log",
  "num-traits",
  "robust",
@@ -3076,6 +3076,12 @@ name = "hashbrown"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
+
+[[package]]
+name = "hashbrown"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4f467dd6dccf739c208452f8014c75c18bb8301b050ad1cfb27153803edb0f51"
 dependencies = [
  "allocator-api2",
  "equivalent",
@@ -3305,10 +3311,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "i_float"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36c8fc32799c6cde9c7604188e4ece27acf3ddcb2d40b038113e3f0bc525aac7"
+dependencies = [
+ "libm",
+]
+
+[[package]]
 name = "i_key_sort"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9190f86706ca38ac8add223b2aed8b1330002b5cdbbce28fb58b10914d38fc27"
+
+[[package]]
+name = "i_key_sort"
+version = "0.10.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d73d122b937fca067feb0ad74f62388920272b27c356d4df2d0cfdd59e044cf0"
 
 [[package]]
 name = "i_overlay"
@@ -3316,11 +3337,23 @@ version = "4.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "413183068e6e0289e18d7d0a1f661b81546e6918d5453a44570b9ab30cbed1b3"
 dependencies = [
- "i_float",
- "i_key_sort",
- "i_shape",
- "i_tree",
+ "i_float 1.15.0",
+ "i_key_sort 0.6.0",
+ "i_shape 1.14.0",
+ "i_tree 0.16.0",
  "rayon",
+]
+
+[[package]]
+name = "i_overlay"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b0f8ed01b5f7de7c2e5661d9ac807aacb33ad76f591f973d89b58e998f552c34"
+dependencies = [
+ "i_float 2.0.0",
+ "i_key_sort 0.10.3",
+ "i_shape 2.0.0",
+ "i_tree 0.18.0",
 ]
 
 [[package]]
@@ -3329,7 +3362,16 @@ version = "1.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ea154b742f7d43dae2897fcd5ead86bc7b5eefcedd305a7ebf9f69d44d61082"
 dependencies = [
- "i_float",
+ "i_float 1.15.0",
+]
+
+[[package]]
+name = "i_shape"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d12d0501b145b966d1801f90e4fcc20b65b39617055d131efa8699068bb1de1"
+dependencies = [
+ "i_float 2.0.0",
 ]
 
 [[package]]
@@ -3337,6 +3379,12 @@ name = "i_tree"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "35e6d558e6d4c7b82bc51d9c771e7a927862a161a7d87bf2b0541450e0e20915"
+
+[[package]]
+name = "i_tree"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4804bdc1dc124eb7e1aa9e144ecc04096bcf787a10a15fa44af682b51f0f6cce"
 
 [[package]]
 name = "iana-time-zone"
@@ -3844,11 +3892,11 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "lru"
-version = "0.16.3"
+version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1dc47f592c06f33f8e3aea9591776ec7c9f9e4124778ff8a3c3b87159f7e593"
+checksum = "8a860605968fce16869fd239cf4237a82f3ac470723415db603b0e8b6c8d4fb9"
 dependencies = [
- "hashbrown 0.16.1",
+ "hashbrown 0.17.0",
 ]
 
 [[package]]
@@ -4677,9 +4725,9 @@ dependencies = [
 
 [[package]]
 name = "rayon"
-version = "1.11.0"
+version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "368f01d005bf8fd9b1206fb6fa653e6c4a81ceb1466406b81792d87c5677a58f"
+checksum = "fb39b166781f92d482534ef4b4b1b2568f42613b53e5b6c160e24cfbfa30926d"
 dependencies = [
  "either",
  "rayon-core",
@@ -5042,9 +5090,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.10"
+version = "0.103.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df33b2b81ac578cabaf06b89b0631153a3f416b0a886e8a7a1707fb51abbd1ef"
+checksum = "61c429a8649f110dddef65e2a5ad240f747e85f7758a6bccc7e5777bd33f756e"
 dependencies = [
  "aws-lc-rs",
  "ring",
@@ -5102,7 +5150,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "040a7df805b77144067dd4f446819bfceda07970360eaee7be47744ce0926eb5"
 dependencies = [
  "cc",
- "savvy-ffi 0.10.0",
+ "savvy-ffi",
  "savvy-macro",
 ]
 
@@ -5115,15 +5163,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
-]
-
-[[package]]
-name = "savvy-ffi"
-version = "0.9.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f81ed9226f1b3f7a3420b1f61d2a2ba72a572edecfa74880abfdd60c7c1b351"
-dependencies = [
- "cc",
 ]
 
 [[package]]
@@ -5247,6 +5286,7 @@ dependencies = [
  "sedona-s2geography",
  "sedona-schema",
  "sedona-spatial-join",
+ "sedona-spatial-join-geography",
  "sedona-spatial-join-gpu",
  "sedona-testing",
  "sedona-tg",
@@ -5438,7 +5478,7 @@ dependencies = [
  "geo",
  "geo-traits",
  "geo-types",
- "i_overlay",
+ "i_overlay 6.0.0",
  "log",
  "num-traits",
  "pretty_env_logger",
@@ -5656,6 +5696,7 @@ dependencies = [
  "datafusion-common",
  "datafusion-execution",
  "datafusion-expr",
+ "datafusion-optimizer",
  "datafusion-physical-expr",
  "datafusion-physical-plan",
  "sedona-common",
@@ -5786,6 +5827,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "sedona-spatial-join-geography"
+version = "0.4.0"
+dependencies = [
+ "arrow",
+ "arrow-array",
+ "arrow-schema",
+ "async-trait",
+ "datafusion",
+ "datafusion-common",
+ "datafusion-execution",
+ "datafusion-physical-expr",
+ "datafusion-physical-plan",
+ "geo-index",
+ "geo-types",
+ "log",
+ "parking_lot",
+ "sedona-common",
+ "sedona-expr",
+ "sedona-functions",
+ "sedona-query-planner",
+ "sedona-s2geography",
+ "sedona-schema",
+ "sedona-spatial-join",
+ "wkb",
+]
+
+[[package]]
 name = "sedona-spatial-join-gpu"
 version = "0.4.0"
 dependencies = [
@@ -5887,6 +5955,7 @@ dependencies = [
  "sedona-adbc",
  "sedona-datasource",
  "sedona-expr",
+ "sedona-gdal",
  "sedona-geometry",
  "sedona-geoparquet",
  "sedona-proj",
@@ -5908,7 +5977,7 @@ dependencies = [
  "datafusion-expr",
  "datafusion-ffi",
  "savvy",
- "savvy-ffi 0.9.2",
+ "savvy-ffi",
  "sedona",
  "sedona-adbc",
  "sedona-expr",
@@ -5998,9 +6067,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with"
-version = "3.18.0"
+version = "3.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd5414fad8e6907dbdd5bc441a50ae8d6e26151a03b1de04d89a5576de61d01f"
+checksum = "f05839ce67618e14a09b286535c0d9c94e85ef25469b0e13cb4f844e5593eb19"
 dependencies = [
  "base64",
  "chrono",
@@ -6017,9 +6086,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with_macros"
-version = "3.18.0"
+version = "3.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3db8978e608f1fe7357e211969fd9abdcae80bac1ba7a3369bb7eb6b404eb65"
+checksum = "cf2ebbe86054f9b45bc3881e865683ccfaccce97b9b4cb53f3039d67f355a334"
 dependencies = [
  "darling",
  "proc-macro2",
@@ -6278,7 +6347,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0136791f7c95b1f6dd99f9cc786b91bb81c3800b639b3478e561ddb7be95e5f1"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.1",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -6422,9 +6491,9 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tokio"
-version = "1.51.1"
+version = "1.52.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f66bf9585cda4b724d3e78ab34b73fb2bbaba9011b9bfdf69dc836382ea13b8c"
+checksum = "b67dee974fe86fd92cc45b7a95fdd2f99a36a6d7b0d431a231178d3d670bbcc6"
 dependencies = [
  "bytes",
  "libc",

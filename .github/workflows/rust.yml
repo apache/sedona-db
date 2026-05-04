@@ -42,8 +42,8 @@ defaults:
     shell: bash -l -eo pipefail {0}
 
 env:
-  # At GEOS updated to 3.14.0
-  VCPKG_REF: 5a01de756c28279ddfdd2b061d1c75710a6255fa
+  # At s2geometry updated to 0.13.0
+  VCPKG_REF: 580d480f750618f8affeb77abbb956e6eeaee0ce
 
 jobs:
   rust:

@@ -44,7 +44,7 @@ proj = ["sedona-proj/proj-sys"]
 gdal = ["sedona-gdal/gdal-sys"]
 spatial-join = ["dep:sedona-spatial-join"]
 gpu = ["dep:sedona-spatial-join-gpu", "sedona-spatial-join-gpu/gpu"]
-s2geography = ["dep:sedona-s2geography"]
+s2geography = ["dep:sedona-s2geography", "dep:sedona-spatial-join-geography"]
 
 [dev-dependencies]
 tempfile = { workspace = true }
@@ -84,6 +84,7 @@ sedona-raster-functions = { workspace = true }
 sedona-schema = { workspace = true }
 sedona-spatial-join = { workspace = true, optional = true }
 sedona-spatial-join-gpu = { workspace = true, optional = true }
+sedona-spatial-join-geography = { workspace = true, optional = true }
 sedona-query-planner = { workspace = true }
 sedona-s2geography = { workspace = true, optional = true }
 sedona-testing = { workspace = true }

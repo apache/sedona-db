@@ -160,7 +160,19 @@ impl SedonaContext {
             planner = planner.with_spatial_join_physical_planner(Arc::new(
                 DefaultSpatialJoinPhysicalPlanner::new(),
             ));
-            // Register the GPU join after the default planer
+
+            // Register the geography join after the default planner
+            // If a query is not supported, it falls back to the default planner.
+            #[cfg(feature = "s2geography")]
+            {
+                use sedona_spatial_join_geography::physical_planner::GeographySpatialJoinPhysicalPlanner;
+
+                planner = planner.with_spatial_join_physical_planner(Arc::new(
+                    GeographySpatialJoinPhysicalPlanner::new(),
+                ));
+            }
+
+            // Register the GPU join after the default planner
             // If a query is not supported, it falls back to the default planner.
             #[cfg(feature = "gpu")]
             {
@@ -252,9 +264,8 @@ impl SedonaContext {
 
         self.register_scalar_kernels(sedona_s2geography::register::scalar_kernels()?.into_iter())?;
 
-        let sd_order_kernel = sd_order_lnglat::OrderLngLat::new(
-            sedona_s2geography::s2geography::s2_cell_id_from_lnglat,
-        );
+        let sd_order_kernel =
+            sd_order_lnglat::OrderLngLat::new(sedona_s2geography::utils::s2_cell_id_from_lnglat);
         self.register_scalar_kernels([("sd_order", sd_order_kernel)].into_iter())?;
 
         Ok(())

@@ -53,8 +53,8 @@ defaults:
 # Expected: ~45-60 minutes first time, ~10-15 minutes cached
 env:
   WORKFLOW_TIMEOUT_MINUTES: 90
-  # At GEOS updated to 3.14.0
-  VCPKG_REF: 5a01de756c28279ddfdd2b061d1c75710a6255fa
+  # At s2geometry updated to 0.13.0
+  VCPKG_REF: 580d480f750618f8affeb77abbb956e6eeaee0ce
 
 jobs:
   rust-gpu-build:
@@ -220,5 +220,5 @@ jobs:
           echo "=== Building libgpuspatial tests ==="
           cd c/sedona-libgpuspatial/libgpuspatial
           mkdir build
-          cmake --preset=default-with-tests -S . -B build
+          cmake --preset=default-with-tests -S . -B build -DCMAKE_CUDA_ARCHITECTURES=75
           cmake --build build --target all

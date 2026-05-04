@@ -17,6 +17,7 @@
 use crate::{error::PySedonaError, udf::sedona_scalar_udf};
 use pyo3::{ffi::Py_uintptr_t, prelude::*};
 use sedona_adbc::AdbcSedonadbDriverInit;
+use sedona_gdal::global::{configure_global_gdal_api, with_global_gdal, GdalApiBuilder};
 use sedona_proj::register::{configure_global_proj_engine, ProjCrsEngineBuilder};
 use std::ffi::c_void;
 
@@ -53,16 +54,14 @@ fn sedona_python_version() -> PyResult<String> {
     Ok(VERSION.to_string())
 }
 
-#[cfg(feature = "s2geography")]
 #[pyfunction]
 fn sedona_python_features() -> PyResult<Vec<String>> {
-    Ok(vec!["s2geography".to_string()])
-}
-
-#[cfg(not(feature = "s2geography"))]
-#[pyfunction]
-fn sedona_python_features() -> PyResult<Vec<String>> {
-    Ok(vec![])
+    Ok(vec![
+        #[cfg(feature = "s2geography")]
+        "s2geography".to_string(),
+        #[cfg(feature = "gpu")]
+        "gpu".to_string(),
+    ])
 }
 
 #[pyfunction]
@@ -95,12 +94,31 @@ fn configure_proj_shared(
     Ok(())
 }
 
+#[pyfunction]
+fn configure_gdal_shared(shared_library_path: String) -> Result<(), PySedonaError> {
+    let builder = GdalApiBuilder::default().with_shared_library(shared_library_path.into());
+    configure_global_gdal_api(builder).map_err(|e| {
+        PySedonaError::SedonaPython(format!("Failed to configure GDAL shared library: {e}"))
+    })?;
+    Ok(())
+}
+
+#[pyfunction]
+fn gdal_version() -> Result<Option<String>, PySedonaError> {
+    match with_global_gdal(|gdal| gdal.version_info("RELEASE_NAME")) {
+        Ok(version) if !version.is_empty() => Ok(Some(version)),
+        _ => Ok(None),
+    }
+}
+
 #[pymodule]
 fn _lib(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "mimalloc")]
     configure_tg_allocator();
 
     m.add_function(wrap_pyfunction!(configure_proj_shared, m)?)?;
+    m.add_function(wrap_pyfunction!(configure_gdal_shared, m)?)?;
+    m.add_function(wrap_pyfunction!(gdal_version, m)?)?;
     m.add_function(wrap_pyfunction!(sedona_adbc_driver_init, m)?)?;
     m.add_function(wrap_pyfunction!(sedona_python_version, m)?)?;
     m.add_function(wrap_pyfunction!(sedona_python_features, m)?)?;

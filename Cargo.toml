@@ -40,6 +40,7 @@ members = [
     "rust/sedona-raster-functions",
     "rust/sedona-schema",
     "rust/sedona-spatial-join",
+    "rust/sedona-spatial-join-geography",
     "rust/sedona-spatial-join-gpu",
     "rust/sedona-query-planner",
     "rust/sedona-testing",
@@ -91,6 +92,7 @@ datafusion-execution = { version = "51.0.0", default-features = false }
 datafusion-expr = { version = "51.0.0" }
 datafusion-ffi = {  version = "51.0.0" }
 datafusion-functions-nested = { version = "51.0.0" }
+datafusion-optimizer = { version = "51.0.0" }
 datafusion-physical-expr = { version = "51.0.0" }
 datafusion-physical-plan = { version = "51.0.0" }
 datafusion-pruning = { version = "51.0.0" }
@@ -109,7 +111,7 @@ glam = "0.32.0"
 libmimalloc-sys = { version = "0.1", default-features = false }
 log = "^0.4"
 libloading = "0.9"
-lru = "0.16"
+lru = "0.18"
 mimalloc = { version = "0.1", default-features = false }
 num-traits = { version = "0.2", default-features = false, features = ["libm"] }
 object_store = { version = "0.12.4", default-features = false }
@@ -126,7 +128,7 @@ serde_json = { version = "1" }
 serde_with = { version = "3" }
 tempfile = { version = "3"}
 thiserror = { version = "2" }
-tokio = { version = "1.51", features = ["macros", "rt", "sync"] }
+tokio = { version = "1.52", features = ["macros", "rt", "sync"] }
 url = "2.5.7"
 wkb = "0.9.2"
 wkt = "0.14.0"
@@ -149,15 +151,16 @@ sedona-raster-functions = { version = "0.4.0", path = "rust/sedona-raster-functi
 sedona-schema = { version = "0.4.0", path = "rust/sedona-schema" }
 sedona-spatial-join = { version = "0.4.0", path = "rust/sedona-spatial-join" }
 sedona-spatial-join-gpu = { version = "0.4.0", path = "rust/sedona-spatial-join-gpu" }
+sedona-spatial-join-geography = { version = "0.4.0", path = "rust/sedona-spatial-join-geography" }
 sedona-query-planner = { version = "0.4.0", path = "rust/sedona-query-planner" }
 sedona-testing = { version = "0.4.0", path = "rust/sedona-testing" }
 
 # C wrapper crates
 sedona-extension = { version = "0.4.0", path = "c/sedona-extension" }
+sedona-gdal = { version = "0.4.0", path = "c/sedona-gdal", default-features = false }
 sedona-geoarrow-c = { version = "0.4.0", path = "c/sedona-geoarrow-c" }
 sedona-geos = { version = "0.4.0", path = "c/sedona-geos" }
-sedona-gdal = { version = "0.4.0", path = "c/sedona-gdal", default-features = false }
+sedona-libgpuspatial = { version = "0.4.0", path = "c/sedona-libgpuspatial" }
 sedona-proj = { version = "0.4.0", path = "c/sedona-proj", default-features = false }
 sedona-s2geography = { version = "0.4.0", path = "c/sedona-s2geography" }
 sedona-tg = { version = "0.4.0", path = "c/sedona-tg" }
-sedona-libgpuspatial  = { version = "0.4.0", path = "c/sedona-libgpuspatial" }

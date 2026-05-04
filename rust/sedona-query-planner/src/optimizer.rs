@@ -21,13 +21,13 @@ use crate::spatial_expr_utils::{
     collect_spatial_predicate_names, find_knn_query_side, KNNJoinQuerySide,
 };
 use datafusion::execution::session_state::SessionStateBuilder;
-use datafusion::optimizer::{ApplyOrder, Optimizer, OptimizerConfig, OptimizerRule};
 use datafusion_common::tree_node::Transformed;
 use datafusion_common::{NullEquality, Result};
 use datafusion_expr::logical_plan::Extension;
 use datafusion_expr::utils::{conjunction, split_conjunction};
 use datafusion_expr::{BinaryExpr, Expr, Operator};
 use datafusion_expr::{Filter, Join, JoinType, LogicalPlan};
+use datafusion_optimizer::{ApplyOrder, Optimizer, OptimizerConfig, OptimizerRule};
 use sedona_common::option::SedonaOptions;
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 

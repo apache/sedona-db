@@ -14,6 +14,10 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-mod geography_glue_bindgen;
+pub mod geography;
+pub mod kernels;
+pub mod operator;
+pub mod rect_bounder;
 pub mod register;
-pub mod s2geography;
+mod s2geography_c_bindgen;
+pub mod utils;

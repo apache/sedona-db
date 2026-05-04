@@ -27,7 +27,7 @@ static S2_SCALAR_KERNELS: OnceLock<Result<Vec<(String, ScalarKernelRef)>>> = Onc
 /// This function is the entrypoint to S2Geography-based scalar kernels suitable for
 /// adding to a FunctionSet.
 pub fn scalar_kernels() -> Result<Vec<(&'static str, ScalarKernelRef)>> {
-    match S2_SCALAR_KERNELS.get_or_init(crate::s2geography::s2_scalar_kernels) {
+    match S2_SCALAR_KERNELS.get_or_init(crate::kernels::s2_scalar_kernels) {
         Ok(kernels) => Ok(kernels
             .iter()
             .map(|(name, kernel)| (name.as_str(), kernel.clone()))

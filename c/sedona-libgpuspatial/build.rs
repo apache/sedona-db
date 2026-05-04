@@ -18,6 +18,31 @@
 use std::env;
 use std::path::{Path, PathBuf};
 
+fn normalize_logging_level(raw: &str) -> Option<&'static str> {
+    match raw.trim().to_ascii_uppercase().as_str() {
+        "TRACE" => Some("TRACE"),
+        "DEBUG" => Some("DEBUG"),
+        "INFO" => Some("INFO"),
+        "WARN" | "WARNING" => Some("WARN"),
+        "ERROR" => Some("ERROR"),
+        "CRITICAL" => Some("CRITICAL"),
+        "OFF" => Some("OFF"),
+        _ => None,
+    }
+}
+
+fn normalize_profiling_flag(raw: &str) -> Option<&'static str> {
+    match raw.trim().to_ascii_uppercase().as_str() {
+        "1" | "ON" | "TRUE" | "YES" => Some("ON"),
+        "0" | "OFF" | "FALSE" | "NO" => Some("OFF"),
+        _ => None,
+    }
+}
+
+fn less_verbose_than_info(level: &str) -> bool {
+    matches!(level, "WARN" | "ERROR" | "CRITICAL" | "OFF")
+}
+
 fn find_cuda_driver_path() -> Option<PathBuf> {
     // 1. Check hardcoded default driver locations (runtime library)
     let default_paths = [
@@ -75,6 +100,9 @@ fn find_cuda_driver_path() -> Option<PathBuf> {
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=libgpuspatial");
+    println!("cargo:rerun-if-env-changed=CMAKE_CUDA_ARCHITECTURES");
+    println!("cargo:rerun-if-env-changed=LIBGPUSPATIAL_LOGGING_LEVEL");
+    println!("cargo:rerun-if-env-changed=GPUSPATIAL_PROFILING");
     println!("cargo::rustc-check-cfg=cfg(gpu_available)");
 
     // Check if gpu feature is enabled
@@ -127,10 +155,29 @@ fn main() {
             "Release"
         };
 
+        let mut logging_level = match env::var("LIBGPUSPATIAL_LOGGING_LEVEL") {
+            Ok(raw) => normalize_logging_level(&raw).unwrap_or("WARN"),
+            Err(_) => "WARN",
+        };
+
+        let profiling_flag = match env::var("GPUSPATIAL_PROFILING") {
+            Ok(raw) => normalize_profiling_flag(&raw).unwrap_or("OFF"),
+            Err(_) => "OFF",
+        };
+
+        if profiling_flag == "ON" && less_verbose_than_info(logging_level) {
+            println!(
+                "cargo:warning=GPUSPATIAL_PROFILING=ON requires at least INFO logs. Overriding LIBGPUSPATIAL_LOGGING_LEVEL from '{}' to 'INFO'.",
+                logging_level
+            );
+            logging_level = "INFO";
+        }
+
         let dst = cmake::Config::new("./libgpuspatial")
             .define("CMAKE_CUDA_ARCHITECTURES", cuda_architectures)
             .define("CMAKE_POLICY_VERSION_MINIMUM", "3.5") // Allow older CMake versions
-            .define("LIBGPUSPATIAL_LOGGING_LEVEL", "WARN") // Set logging level
+            .define("LIBGPUSPATIAL_LOGGING_LEVEL", logging_level)
+            .define("GPUSPATIAL_PROFILING", profiling_flag)
             .define("SPDLOG_FMT_EXTERNAL", "OFF") // Prevent spdlog from using external fmt library
             .build();
         let include_path = dst.join("include");

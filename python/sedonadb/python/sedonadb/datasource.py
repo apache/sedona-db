@@ -144,6 +144,10 @@ class PyogrioFormatSpec(ExternalFormatSpec):
         if ogr_src.endswith(".zip"):
             ogr_src = f"/vsizip/{ogr_src}"
 
+        path_suffix = self._options.get("path_suffix")
+        if path_suffix is not None:
+            ogr_src = f"{ogr_src}/{path_suffix}"
+
         if args.is_projected():
             file_columns = args.file_schema.names
             columns = [file_columns[i] for i in args.file_projection]
@@ -164,10 +168,12 @@ class PyogrioFormatSpec(ExternalFormatSpec):
         else:
             bbox = None
 
+        ogr_kwargs = {**self._options}
+        ogr_kwargs.update(columns=columns, batch_size=batch_size, bbox=bbox)
+        ogr_kwargs.pop("path_suffix", None)
+
         return PyogrioReaderShelter(
-            pyogrio.raw.ogr_open_arrow(
-                ogr_src, {}, columns=columns, batch_size=batch_size, bbox=bbox
-            ),
+            pyogrio.raw.open_arrow(ogr_src, **ogr_kwargs),
             columns,
         )
 
