@@ -228,6 +228,27 @@ mod tests {
             .unwrap();
 
         let band1 = dataset.rasterband(1).unwrap();
+        // GeoTIFF stores a single dataset-level nodata value, so use the same nodata
+        // for both bands in this fixture to keep the assertions format-accurate.
+        band1.set_no_data_value(Some(255.0)).unwrap();
+        let mut buffer1 = Buffer::new((2, 2), vec![10u8, 11, 12, 13]);
+        band1.write((0, 0), (2, 2), &mut buffer1).unwrap();
+
+        let band2 = dataset.rasterband(2).unwrap();
+        band2.set_no_data_value(Some(255.0)).unwrap();
+        let mut buffer2 = Buffer::new((2, 2), vec![100u8, 0, 200, 0]);
+        band2.write((0, 0), (2, 2), &mut buffer2).unwrap();
+    }
+
+    fn build_multi_band_mem_dataset(gdal: &Gdal) -> Dataset {
+        let driver = gdal.get_driver_by_name("MEM").unwrap();
+        let dataset = driver.create("", 2, 2, 2).unwrap();
+        dataset
+            .set_geo_transform(&[10.0, 1.0, 0.0, 20.0, 0.0, -1.0])
+            .unwrap();
+        dataset.set_projection("EPSG:4326").unwrap();
+
+        let band1 = dataset.rasterband(1).unwrap();
         band1.set_no_data_value(Some(0.0)).unwrap();
         let mut buffer1 = Buffer::new((2, 2), vec![10u8, 11, 12, 13]);
         band1.write((0, 0), (2, 2), &mut buffer1).unwrap();
@@ -236,6 +257,8 @@ mod tests {
         band2.set_no_data_value(Some(255.0)).unwrap();
         let mut buffer2 = Buffer::new((2, 2), vec![100u8, 0, 200, 0]);
         band2.write((0, 0), (2, 2), &mut buffer2).unwrap();
+
+        dataset
     }
 
     #[test]
@@ -356,6 +379,31 @@ mod tests {
         assert_eq!(band1.metadata().storage_type().unwrap(), StorageType::InDb);
         assert_eq!(band1.metadata().data_type().unwrap(), BandDataType::UInt8);
         assert_eq!(band1.metadata().nodata_value().unwrap(), [255u8]);
+        assert_eq!(band1.data(), [10u8, 11, 12, 13]);
+
+        assert_eq!(band2.metadata().storage_type().unwrap(), StorageType::InDb);
+        assert_eq!(band2.metadata().data_type().unwrap(), BandDataType::UInt8);
+        assert_eq!(band2.metadata().nodata_value().unwrap(), [255u8]);
+        assert_eq!(band2.data(), [100u8, 0, 200, 0]);
+    }
+
+    #[test]
+    fn dataset_to_indb_raster_preserves_per_band_nodata_for_mem_dataset() {
+        let raster_array = with_gdal(|gdal| {
+            let dataset = build_multi_band_mem_dataset(gdal);
+            dataset_to_indb_raster(&dataset)
+        })
+        .unwrap();
+
+        let raster_struct = RasterStructArray::new(&raster_array);
+        let raster = raster_struct.get(0).unwrap();
+        let band1 = raster.bands().band(1).unwrap();
+        let band2 = raster.bands().band(2).unwrap();
+
+        assert_eq!(raster.bands().len(), 2);
+        assert_eq!(band1.metadata().storage_type().unwrap(), StorageType::InDb);
+        assert_eq!(band1.metadata().data_type().unwrap(), BandDataType::UInt8);
+        assert_eq!(band1.metadata().nodata_value().unwrap(), [0u8]);
         assert_eq!(band1.data(), [10u8, 11, 12, 13]);
 
         assert_eq!(band2.metadata().storage_type().unwrap(), StorageType::InDb);
