@@ -60,8 +60,7 @@ sd_join_by <- function(...) {
 #' @rdname sd_join_by
 #' @export
 sd_join_intersects <- function() {
-  # TODO: .fns$st_intersects() should work here but doesn't
-  sd_join_by(st_intersects(.tables$x$geom(), .tables$y$geom()))
+  sd_join_by(.fns$st_intersects(.tables$x$geom(), .tables$y$geom()))
 }
 
 #' @export
@@ -247,7 +246,11 @@ sd_eval_join_expr_inner <- function(expr, join_expr_ctx, env) {
       }
     }
 
-    # Special handling for x$geom() and y$geom()
+    # Special handling for .fns$fn_name() escape hatch syntax
+    if (rlang::is_call(expr[[1]], "$") && rlang::is_symbol(expr[[1]][[2]], ".fns")) {
+      fn_key <- as.character(expr[[1]][[3]])
+      return(sd_eval_join_datafusion_fn(fn_key, expr, join_expr_ctx, env))
+    }
 
     # Extract function name
     call_name <- rlang::call_name(expr)
@@ -288,6 +291,38 @@ sd_eval_join_expr_inner <- function(expr, join_expr_ctx, env) {
     # Literal or other expression
     rlang::eval_tidy(expr, data = join_expr_ctx$data, env = env)
   }
+}
+
+sd_eval_join_datafusion_fn <- function(fn_key, expr, join_expr_ctx, env) {
+  # Evaluate arguments
+  evaluated_args <- lapply(
+    expr[-1],
+    sd_eval_join_expr_inner,
+    join_expr_ctx = join_expr_ctx,
+    env = env
+  )
+
+  na_rm <- evaluated_args$na.rm
+  evaluated_args$na.rm <- NULL
+
+  if (any(rlang::have_name(evaluated_args))) {
+    stop(
+      sprintf(
+        "Expected unnamed arguments to SedonaDB SQL function but got %s",
+        paste(
+          names(evaluated_args)[rlang::have_name(evaluated_args)],
+          collapse = ", "
+        )
+      )
+    )
+  }
+
+  sd_expr_any_function(
+    fn_key,
+    evaluated_args,
+    na.rm = na_rm,
+    factory = join_expr_ctx$factory
+  )
 }
 
 #' Build join conditions from a `by` specification

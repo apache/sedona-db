@@ -413,3 +413,31 @@ test_that("sd_extract_equijoin_keys() extracts simple equality keys", {
   expect_equal(keys$x_cols, "id_x")
   expect_equal(keys$y_cols, "id_y")
 })
+
+test_that(".fns$st_intersects() is identical to st_intersects() in join conditions", {
+  x_schema <- nanoarrow::na_struct(list(
+    geometry = nanoarrow::na_extension(
+      nanoarrow::na_binary(),
+      "geoarrow.wkb"
+    )
+  ))
+  y_schema <- nanoarrow::na_struct(list(
+    geometry = nanoarrow::na_extension(
+      nanoarrow::na_binary(),
+      "geoarrow.wkb"
+    )
+  ))
+
+  ctx <- sd_join_expr_ctx(x_schema, y_schema)
+
+  # Using bare st_intersects()
+  jb1 <- sd_join_by(st_intersects(x$geometry, y$geometry))
+  conditions1 <- sd_eval_join_conditions(jb1, ctx)
+
+  # Using .fns$st_intersects()
+  jb2 <- sd_join_by(.fns$st_intersects(x$geometry, y$geometry))
+  conditions2 <- sd_eval_join_conditions(jb2, ctx)
+
+  # They should produce identical expressions
+  expect_equal(conditions1[[1]]$display(), conditions2[[1]]$display())
+})
