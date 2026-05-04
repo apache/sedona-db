@@ -357,6 +357,10 @@ pub(crate) struct SedonaGdalApi {
     >,
     pub GDALGetRasterNoDataValue:
         Option<unsafe extern "C" fn(hBand: GDALRasterBandH, pbSuccess: *mut c_int) -> c_double>,
+    pub GDALGetRasterNoDataValueAsUInt64:
+        Option<unsafe extern "C" fn(hBand: GDALRasterBandH, pbSuccess: *mut c_int) -> u64>,
+    pub GDALGetRasterNoDataValueAsInt64:
+        Option<unsafe extern "C" fn(hBand: GDALRasterBandH, pbSuccess: *mut c_int) -> i64>,
     pub GDALSetRasterNoDataValue:
         Option<unsafe extern "C" fn(hBand: GDALRasterBandH, dfValue: c_double) -> CPLErr>,
     pub GDALDeleteRasterNoDataValue: Option<unsafe extern "C" fn(hBand: GDALRasterBandH) -> CPLErr>,

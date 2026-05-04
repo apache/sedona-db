@@ -112,6 +112,8 @@ fn load_all_symbols(lib: &Library, api: &mut SedonaGdalApi) -> Result<(), GdalIn
     load_fn!(lib, api, GDALGetRasterBandYSize);
     load_fn!(lib, api, GDALGetBlockSize);
     load_fn!(lib, api, GDALGetRasterNoDataValue);
+    load_fn!(lib, api, GDALGetRasterNoDataValueAsUInt64);
+    load_fn!(lib, api, GDALGetRasterNoDataValueAsInt64);
     load_fn!(lib, api, GDALSetRasterNoDataValue);
     load_fn!(lib, api, GDALDeleteRasterNoDataValue);
     load_fn!(lib, api, GDALSetRasterNoDataValueAsUInt64);

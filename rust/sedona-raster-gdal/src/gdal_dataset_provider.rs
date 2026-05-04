@@ -34,7 +34,7 @@ use sedona_schema::raster::{BandDataType, StorageType};
 
 use crate::gdal_common::{
     band_data_type_to_gdal, bytes_to_f64, convert_gdal_err, normalize_outdb_source_path,
-    open_gdal_dataset, raster_ref_to_gdal_empty, raster_ref_to_gdal_mem,
+    open_gdal_dataset, raster_ref_to_gdal_empty, raster_ref_to_gdal_mem, ToGdalGeoTransform,
 };
 
 /// A GDAL dataset constructed from a `RasterRef`.
@@ -247,14 +247,7 @@ impl GDALDatasetCache {
             .create_vrt(vrt_width, vrt_height)
             .map_err(convert_gdal_err)?;
 
-        let geotransform = [
-            metadata.upper_left_x(),
-            metadata.scale_x(),
-            metadata.skew_x(),
-            metadata.upper_left_y(),
-            metadata.skew_y(),
-            metadata.scale_y(),
-        ];
+        let geotransform = metadata.to_gdal_geotransform();
         vrt.set_geo_transform(&geotransform)
             .map_err(convert_gdal_err)?;
         if let Some(crs) = raster.crs() {
@@ -508,14 +501,7 @@ impl VrtKey {
         let bands = raster.bands();
         let num_bands = bands.len();
 
-        let geotransform = [
-            metadata.upper_left_x(),
-            metadata.scale_x(),
-            metadata.skew_x(),
-            metadata.upper_left_y(),
-            metadata.skew_y(),
-            metadata.scale_y(),
-        ];
+        let geotransform = metadata.to_gdal_geotransform();
         let geotransform_bits = geotransform.map(f64::to_bits);
 
         let mut band_keys = Vec::with_capacity(num_bands);

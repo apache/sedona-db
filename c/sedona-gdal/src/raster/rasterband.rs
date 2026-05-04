@@ -188,6 +188,44 @@ impl<'a> RasterBand<'a> {
         }
     }
 
+    /// Fetch the band's nodata value as `u64`.
+    /// Return `None` if no nodata value is set.
+    pub fn no_data_value_u64(&self) -> Option<u64> {
+        let mut success: i32 = 0;
+        let value = unsafe {
+            call_gdal_api!(
+                self.api,
+                GDALGetRasterNoDataValueAsUInt64,
+                self.c_rasterband,
+                &mut success
+            )
+        };
+        if success != 0 {
+            Some(value)
+        } else {
+            None
+        }
+    }
+
+    /// Fetch the band's nodata value as `i64`.
+    /// Return `None` if no nodata value is set.
+    pub fn no_data_value_i64(&self) -> Option<i64> {
+        let mut success: i32 = 0;
+        let value = unsafe {
+            call_gdal_api!(
+                self.api,
+                GDALGetRasterNoDataValueAsInt64,
+                self.c_rasterband,
+                &mut success
+            )
+        };
+        if success != 0 {
+            Some(value)
+        } else {
+            None
+        }
+    }
+
     /// Set the band's nodata value.
     /// Pass `None` to clear any existing nodata value.
     pub fn set_no_data_value(&self, value: Option<f64>) -> Result<()> {
@@ -366,6 +404,40 @@ mod tests {
             assert_eq!(rasterband.no_data_value(), Some(1.23));
             assert!(rasterband.set_no_data_value(None).is_ok());
             assert_eq!(rasterband.no_data_value(), None);
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_set_no_data_value_u64() {
+        with_global_gdal_api(|api| {
+            let driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
+            let dataset = driver.create_with_band_type::<u64>("", 20, 10, 1).unwrap();
+            let rasterband = dataset.rasterband(1).unwrap();
+            let nodata = 9_007_199_254_740_993u64;
+
+            assert_eq!(rasterband.no_data_value_u64(), None);
+            assert!(rasterband.set_no_data_value_u64(Some(nodata)).is_ok());
+            assert_eq!(rasterband.no_data_value_u64(), Some(nodata));
+            assert!(rasterband.set_no_data_value_u64(None).is_ok());
+            assert_eq!(rasterband.no_data_value_u64(), None);
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_set_no_data_value_i64() {
+        with_global_gdal_api(|api| {
+            let driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
+            let dataset = driver.create_with_band_type::<i64>("", 20, 10, 1).unwrap();
+            let rasterband = dataset.rasterband(1).unwrap();
+            let nodata = -9_007_199_254_740_993i64;
+
+            assert_eq!(rasterband.no_data_value_i64(), None);
+            assert!(rasterband.set_no_data_value_i64(Some(nodata)).is_ok());
+            assert_eq!(rasterband.no_data_value_i64(), Some(nodata));
+            assert!(rasterband.set_no_data_value_i64(None).is_ok());
+            assert_eq!(rasterband.no_data_value_i64(), None);
         })
         .unwrap();
     }
