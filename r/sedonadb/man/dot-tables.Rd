@@ -5,7 +5,7 @@
 \alias{.tables}
 \title{SedonaDB Table Qualifiers}
 \format{
-An object of class \code{sedonadb_tables} of length 1.
+An object of class \code{sedonadb_tables} of length 2.
 }
 \usage{
 .tables

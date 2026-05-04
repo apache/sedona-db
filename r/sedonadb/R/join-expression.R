@@ -126,8 +126,18 @@ sd_join_expr_ctx <- function(
   names(y_cols) <- y_names
 
   # Create table reference objects that support `$` access
-  x_ref <- structure(x_cols, class = "sedonadb_table_ref", qualifier = x_qualifier)
-  y_ref <- structure(y_cols, class = "sedonadb_table_ref", qualifier = y_qualifier)
+  x_ref <- structure(
+    x_cols,
+    class = "sedonadb_table_ref",
+    qualifier = x_qualifier,
+    schema = x_schema
+  )
+  y_ref <- structure(
+    y_cols,
+    class = "sedonadb_table_ref",
+    qualifier = y_qualifier,
+    schema = y_schema
+  )
 
   # Also include unqualified column references for unambiguous columns
   ambiguous <- intersect(x_names, y_names)
@@ -157,14 +167,6 @@ sd_join_expr_ctx <- function(
 }
 
 get_from_table_ref <- function(x, name) {
-  if (identical(name, "geom")) {
-    # TODO: fix heuristic using geometry_column_indices and
-    # error with the names of the actual geometry columns if
-    # there is more than one
-    force(x)
-    return(function() get_from_table_ref(x, "wkb_geometry"))
-  }
-
   if (!(name %in% names(x))) {
     qualifier <- attr(x, "qualifier")
     stop(
@@ -173,6 +175,78 @@ get_from_table_ref <- function(x, name) {
     )
   }
   x[[name]]
+}
+
+# Get the single geometry column from a table ref, or error if ambiguous
+get_geom_from_table_ref <- function(x) {
+  schema <- attr(x, "schema")
+  qualifier <- attr(x, "qualifier")
+  geom_cols <- get_geometry_columns(schema)
+
+  if (length(geom_cols) == 0) {
+    stop(
+      sprintf("No geometry columns found in table '%s'", qualifier),
+      call. = FALSE
+    )
+  }
+
+  if (length(geom_cols) > 1) {
+    stop(
+      sprintf(
+        "Ambiguous use of %s$geom()\n - Did you mean one of %s",
+        qualifier,
+        paste0(qualifier, "$", geom_cols, collapse = ", ")
+      ),
+      call. = FALSE
+    )
+  }
+
+  get_from_table_ref(x, geom_cols[[1]])
+}
+
+# Find geometry column names in a schema (columns with geoarrow extension type)
+get_geometry_columns <- function(schema) {
+  col_names <- names(schema$children)
+  is_geom <- vapply(
+    schema$children,
+    function(child) {
+      ext_name <- child$metadata[["ARROW:extension:name"]]
+      !is.null(ext_name) && grepl("^geoarrow\\.", ext_name)
+    },
+    logical(1)
+  )
+  col_names[is_geom]
+}
+
+# Match .tables$x$geom(), .tables$y$geom(), x$geom(), or y$geom() call pattern
+# Returns list(table_name, table_ref) or NULL if no match
+match_tables_geom_call <- function(expr, join_expr_ctx) {
+  # Match .tables$x$geom() or .tables$y$geom()
+  if (
+    rlang::is_call(expr[[1]], "$") &&
+      rlang::is_call(expr[[1]][[2]], "$") &&
+      rlang::is_symbol(expr[[1]][[2]][[2]], ".tables") &&
+      as.character(expr[[1]][[2]][[3]]) %in% c("x", "y") &&
+      rlang::is_symbol(expr[[1]][[3]], "geom")
+  ) {
+    table_name <- as.character(expr[[1]][[2]][[3]])
+    table_ref <- join_expr_ctx$table_refs[[table_name]]
+    return(list(table_name = table_name, table_ref = table_ref))
+  }
+
+  # Match x$geom() or y$geom()
+  if (
+    rlang::is_call(expr[[1]], "$") &&
+      rlang::is_symbol(expr[[1]][[2]]) &&
+      as.character(expr[[1]][[2]]) %in% c("x", "y") &&
+      rlang::is_symbol(expr[[1]][[3]], "geom")
+  ) {
+    table_name <- as.character(expr[[1]][[2]])
+    table_ref <- join_expr_ctx$table_refs[[table_name]]
+    return(list(table_name = table_name, table_ref = table_ref))
+  }
+
+  NULL
 }
 
 #' @export
@@ -250,6 +324,13 @@ sd_eval_join_expr_inner <- function(expr, join_expr_ctx, env) {
     if (rlang::is_call(expr[[1]], "$") && rlang::is_symbol(expr[[1]][[2]], ".fns")) {
       fn_key <- as.character(expr[[1]][[3]])
       return(sd_eval_join_datafusion_fn(fn_key, expr, join_expr_ctx, env))
+    }
+
+    # Special handling for .tables$x$geom() and .tables$y$geom() syntax
+    # This returns the single geometry column from the table, or errors if ambiguous
+    tables_geom <- match_tables_geom_call(expr, join_expr_ctx)
+    if (!is.null(tables_geom)) {
+      return(get_geom_from_table_ref(tables_geom$table_ref))
     }
 
     # Extract function name

@@ -441,3 +441,80 @@ test_that(".fns$st_intersects() is identical to st_intersects() in join conditio
   # They should produce identical expressions
   expect_equal(conditions1[[1]]$display(), conditions2[[1]]$display())
 })
+
+test_that("x$geom/x$geom() usage is unambiguous in sd_join_by() evaluation", {
+  x_schema <- nanoarrow::na_struct(list(
+    geom = nanoarrow::na_extension(
+      nanoarrow::na_binary(),
+      "geoarrow.wkb"
+    ),
+    other_geometry = nanoarrow::na_extension(
+      nanoarrow::na_binary(),
+      "geoarrow.wkb"
+    )
+  ))
+  y_schema <- nanoarrow::na_struct(list(
+    geom = nanoarrow::na_extension(
+      nanoarrow::na_binary(),
+      "geoarrow.wkb"
+    )
+  ))
+
+  ctx <- sd_join_expr_ctx(x_schema, y_schema)
+
+  # <.tables>$x$geom should reference the column literally named "geom"
+  expect_snapshot(
+    sd_eval_join_conditions(
+      sd_join_by(st_intersects(.tables$x$geom, .tables$y$geom)),
+      ctx
+    )
+  )
+
+  # Without the .tables pronoun also
+  expect_snapshot(
+    sd_eval_join_conditions(
+      sd_join_by(st_intersects(x$geom, y$geom)),
+      ctx
+    )
+  )
+
+  # For y, which only has a single geometry column, geom() should work
+  expect_snapshot(
+    sd_eval_join_conditions(
+      sd_join_by(st_intersects(x$geom, .tables$y$geom())),
+      ctx
+    )
+  )
+  expect_snapshot(
+    sd_eval_join_conditions(
+      sd_join_by(st_intersects(x$geom, y$geom())),
+      ctx
+    )
+  )
+
+  # For x, which has multiple geometry columns, geom() should error
+  expect_snapshot_error(
+    sd_eval_join_conditions(
+      sd_join_by(st_intersects(.tables$x$geom(), y$geom())),
+      ctx
+    )
+  )
+  expect_snapshot_error(
+    sd_eval_join_conditions(
+      sd_join_by(st_intersects(x$geom(), y$geom())),
+      ctx
+    )
+  )
+})
+
+test_that("x$geom() errors when there are no geometry columns", {
+  x_schema <- nanoarrow::na_struct(list(id = nanoarrow::na_int32()))
+  y_schema <- nanoarrow::na_struct(list(id = nanoarrow::na_int32()))
+  ctx <- sd_join_expr_ctx(x_schema, y_schema)
+  expect_snapshot_error(
+    sd_eval_join_conditions(
+      sd_join_by(st_intersects(x$geom(), y$geom())),
+      ctx
+    )
+  )
+})
