@@ -14,3 +14,8 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+
+from sedonadb.expr.expression import Expr, col, lit
+from sedonadb.expr.literal import Literal
+
+__all__ = ["Expr", "Literal", "col", "lit"]

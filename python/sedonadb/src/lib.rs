@@ -25,6 +25,7 @@ mod context;
 mod dataframe;
 mod datasource;
 mod error;
+mod expr;
 mod import_from;
 mod reader;
 mod runtime;
@@ -123,9 +124,12 @@ fn _lib(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(sedona_python_version, m)?)?;
     m.add_function(wrap_pyfunction!(sedona_python_features, m)?)?;
     m.add_function(wrap_pyfunction!(sedona_scalar_udf, m)?)?;
+    m.add_function(wrap_pyfunction!(expr::expr_col, m)?)?;
+    m.add_function(wrap_pyfunction!(expr::expr_lit, m)?)?;
 
     m.add_class::<context::InternalContext>()?;
     m.add_class::<dataframe::InternalDataFrame>()?;
+    m.add_class::<expr::PyExpr>()?;
     m.add_class::<datasource::PyExternalFormat>()?;
     m.add_class::<datasource::PyProjectedRecordBatchReader>()?;
     m.add("SedonaError", py.get_type::<error::SedonaError>())?;
