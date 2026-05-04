@@ -407,4 +407,38 @@ mod tests {
         })
         .unwrap();
     }
+
+    #[test]
+    fn test_set_no_data_value_u64() {
+        with_global_gdal_api(|api| {
+            let driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
+            let dataset = driver.create_with_band_type::<u64>("", 20, 10, 1).unwrap();
+            let rasterband = dataset.rasterband(1).unwrap();
+            let nodata = 9_007_199_254_740_993u64;
+
+            assert_eq!(rasterband.no_data_value_u64(), None);
+            assert!(rasterband.set_no_data_value_u64(Some(nodata)).is_ok());
+            assert_eq!(rasterband.no_data_value_u64(), Some(nodata));
+            assert!(rasterband.set_no_data_value_u64(None).is_ok());
+            assert_eq!(rasterband.no_data_value_u64(), None);
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_set_no_data_value_i64() {
+        with_global_gdal_api(|api| {
+            let driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
+            let dataset = driver.create_with_band_type::<i64>("", 20, 10, 1).unwrap();
+            let rasterband = dataset.rasterband(1).unwrap();
+            let nodata = -9_007_199_254_740_993i64;
+
+            assert_eq!(rasterband.no_data_value_i64(), None);
+            assert!(rasterband.set_no_data_value_i64(Some(nodata)).is_ok());
+            assert_eq!(rasterband.no_data_value_i64(), Some(nodata));
+            assert!(rasterband.set_no_data_value_i64(None).is_ok());
+            assert_eq!(rasterband.no_data_value_i64(), None);
+        })
+        .unwrap();
+    }
 }

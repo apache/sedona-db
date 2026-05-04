@@ -21,66 +21,33 @@ use arrow_array::StructArray;
 use datafusion_common::error::Result;
 use datafusion_common::exec_datafusion_err;
 use sedona_gdal::dataset::Dataset;
-use sedona_gdal::gdal::Gdal;
-use sedona_gdal::gdal_dyn_bindgen::{GDAL_OF_RASTER, GDAL_OF_READONLY};
-use sedona_gdal::raster::types::DatasetOptions;
 use sedona_gdal::spatial_ref::SpatialRef;
 
 use sedona_raster::builder::RasterBuilder;
-use sedona_raster::traits::{BandMetadata, RasterMetadata};
+use sedona_raster::traits::BandMetadata;
 use sedona_schema::raster::{BandDataType, StorageType};
 
-use crate::gdal_common::gdal_to_band_data_type;
+use crate::gdal_common::{gdal_to_band_data_type, RasterMetadataFromGdalGeoTransform};
 
-/// Load a raster from any GDAL-openable path as an in-db raster `StructArray`.
-///
-/// The `path` can be a regular file path, a `/vsimem/` memory path,
-/// a `/vsicurl/` URL, or any other GDAL virtual filesystem path.
-pub fn load_as_indb_raster(gdal: &Gdal, path: &str) -> Result<StructArray> {
-    // Open dataset from path
-    let dataset = gdal
-        .open_ex_with_options(
-            path,
-            DatasetOptions {
-                open_flags: GDAL_OF_RASTER | GDAL_OF_READONLY,
-                ..Default::default()
-            },
-        )
-        .map_err(|e| exec_datafusion_err!("Failed to open raster from {}: {}", path, e))?;
-
-    // Get raster dimensions
+/// Append a GDAL dataset as a single in-db raster to the provided [`RasterBuilder`].
+pub fn append_as_indb_raster(dataset: &Dataset, builder: &mut RasterBuilder) -> Result<()> {
     let (width, height) = dataset.raster_size();
 
-    // Get geotransform
     let geotransform = dataset
         .geo_transform()
         .map_err(|e| exec_datafusion_err!("Failed to get geotransform: {}", e))?;
 
-    // Build RasterMetadata
-    let metadata = RasterMetadata {
-        width: width as u64,
-        height: height as u64,
-        upperleft_x: geotransform[0],
-        upperleft_y: geotransform[3],
-        scale_x: geotransform[1],
-        scale_y: geotransform[5],
-        skew_x: geotransform[2],
-        skew_y: geotransform[4],
-    };
+    let metadata = geotransform.to_raster_metadata(width, height);
 
-    // Get CRS as PROJJSON if available
     let crs = dataset
         .spatial_ref()
         .ok()
         .and_then(|sr: SpatialRef| sr.to_projjson().ok());
 
-    // Build the raster array
-    let mut builder = RasterBuilder::new(1);
     builder
         .start_raster(&metadata, crs.as_deref())
         .map_err(|e| exec_datafusion_err!("Failed to start raster: {}", e))?;
 
-    // Add bands with in-db data
     let band_count = dataset.raster_count();
     for band_idx in 1..=band_count {
         let band = dataset
@@ -116,8 +83,7 @@ pub fn load_as_indb_raster(gdal: &Gdal, path: &str) -> Result<StructArray> {
             .start_band(band_metadata)
             .map_err(|e| exec_datafusion_err!("Failed to start band: {}", e))?;
 
-        // Read and store band data
-        let band_data = read_band_data(&dataset, band_idx, width, height, band_data_type)?;
+        let band_data = read_band_data(dataset, band_idx, width, height, band_data_type)?;
         builder.band_data_writer().append_value(&band_data);
 
         builder
@@ -128,6 +94,14 @@ pub fn load_as_indb_raster(gdal: &Gdal, path: &str) -> Result<StructArray> {
     builder
         .finish_raster()
         .map_err(|e| exec_datafusion_err!("Failed to finish raster: {}", e))?;
+
+    Ok(())
+}
+
+/// Materialize a single GDAL dataset as an in-db raster `StructArray`.
+pub fn dataset_to_indb_raster(dataset: &Dataset) -> Result<StructArray> {
+    let mut builder = RasterBuilder::new(1);
+    append_as_indb_raster(dataset, &mut builder)?;
 
     builder
         .finish()
@@ -176,12 +150,18 @@ fn read_band_data(
 
 #[cfg(test)]
 mod tests {
-    use super::load_as_indb_raster;
+    use super::{append_as_indb_raster, dataset_to_indb_raster};
     use std::sync::Once;
 
+    use arrow_array::StructArray;
+    use datafusion_common::exec_datafusion_err;
+    use sedona_gdal::dataset::Dataset;
     use sedona_gdal::gdal::Gdal;
+    use sedona_gdal::gdal_dyn_bindgen::{GDAL_OF_RASTER, GDAL_OF_READONLY};
     use sedona_gdal::raster::types::Buffer;
+    use sedona_gdal::raster::types::DatasetOptions;
     use sedona_raster::array::RasterStructArray;
+    use sedona_raster::builder::RasterBuilder;
     use sedona_raster::traits::RasterRef;
     use sedona_schema::raster::{BandDataType, StorageType};
     use tempfile::TempDir;
@@ -199,6 +179,21 @@ mod tests {
             })
             .unwrap();
         });
+    }
+
+    fn open_dataset(gdal: &Gdal, path: &str) -> sedona_gdal::errors::Result<Dataset> {
+        gdal.open_ex_with_options(
+            path,
+            DatasetOptions {
+                open_flags: GDAL_OF_RASTER | GDAL_OF_READONLY,
+                ..Default::default()
+            },
+        )
+    }
+
+    fn load_as_indb_raster(gdal: &Gdal, path: &str) -> datafusion_common::Result<StructArray> {
+        let dataset = open_dataset(gdal, path).map_err(crate::gdal_common::convert_gdal_err)?;
+        dataset_to_indb_raster(&dataset)
     }
 
     fn write_uint64_tiff(gdal: &Gdal, path: &str, nodata: u64, data: Vec<u64>) {
@@ -258,7 +253,7 @@ mod tests {
     }
 
     #[test]
-    fn load_as_indb_raster_reads_single_band_geotiff() {
+    fn dataset_to_indb_raster_reads_single_band_geotiff() {
         ensure_gdal_drivers();
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("byte.tif");
@@ -287,7 +282,7 @@ mod tests {
     }
 
     #[test]
-    fn load_as_indb_raster_preserves_uint64_nodata_and_data() {
+    fn dataset_to_indb_raster_preserves_uint64_nodata_and_data() {
         ensure_gdal_drivers();
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("uint64.tif");
@@ -324,7 +319,7 @@ mod tests {
     }
 
     #[test]
-    fn load_as_indb_raster_preserves_int64_nodata_and_data() {
+    fn dataset_to_indb_raster_preserves_int64_nodata_and_data() {
         ensure_gdal_drivers();
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("int64.tif");
@@ -357,7 +352,7 @@ mod tests {
     }
 
     #[test]
-    fn load_as_indb_raster_preserves_multi_band_data_and_nodata() {
+    fn dataset_to_indb_raster_preserves_multi_band_data_and_nodata() {
         ensure_gdal_drivers();
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("multi.tif");
@@ -385,5 +380,50 @@ mod tests {
         assert_eq!(band2.metadata().data_type().unwrap(), BandDataType::UInt8);
         assert_eq!(band2.metadata().nodata_value().unwrap(), [255u8]);
         assert_eq!(band2.data(), [100u8, 0, 200, 0]);
+    }
+
+    #[test]
+    fn append_as_indb_raster_appends_multiple_rasters() {
+        ensure_gdal_drivers();
+        let temp_dir = TempDir::new().unwrap();
+        let byte_path = temp_dir.path().join("byte.tif");
+        let byte_path_str = byte_path.to_string_lossy().to_string();
+        let multi_path = temp_dir.path().join("multi.tif");
+        let multi_path_str = multi_path.to_string_lossy().to_string();
+
+        with_gdal(|gdal| {
+            write_byte_tiff(gdal, &byte_path_str);
+            write_multi_band_tiff(gdal, &multi_path_str);
+            Ok::<_, datafusion_common::DataFusionError>(())
+        })
+        .unwrap();
+
+        let raster_array = with_gdal(|gdal| {
+            let byte_dataset =
+                open_dataset(gdal, &byte_path_str).map_err(crate::gdal_common::convert_gdal_err)?;
+            let multi_dataset = open_dataset(gdal, &multi_path_str)
+                .map_err(crate::gdal_common::convert_gdal_err)?;
+
+            let mut builder = RasterBuilder::new(2);
+            append_as_indb_raster(&byte_dataset, &mut builder)?;
+            append_as_indb_raster(&multi_dataset, &mut builder)?;
+            builder
+                .finish()
+                .map_err(|e| exec_datafusion_err!("Failed to build raster array: {}", e))
+        })
+        .unwrap();
+
+        let raster_struct = RasterStructArray::new(&raster_array);
+        assert_eq!(raster_struct.len(), 2);
+
+        let first = raster_struct.get(0).unwrap();
+        assert_eq!(first.metadata().width(), 3);
+        assert_eq!(first.metadata().height(), 2);
+        assert_eq!(first.bands().len(), 1);
+
+        let second = raster_struct.get(1).unwrap();
+        assert_eq!(second.metadata().width(), 2);
+        assert_eq!(second.metadata().height(), 2);
+        assert_eq!(second.bands().len(), 2);
     }
 }
