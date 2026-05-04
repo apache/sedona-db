@@ -151,7 +151,6 @@ fn read_band_data(
 #[cfg(test)]
 mod tests {
     use super::{append_as_indb_raster, dataset_to_indb_raster};
-    use std::sync::Once;
 
     use arrow_array::StructArray;
     use datafusion_common::exec_datafusion_err;
@@ -167,19 +166,6 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::gdal_common::with_gdal;
-
-    static GDAL_INIT: Once = Once::new();
-
-    fn ensure_gdal_drivers() {
-        GDAL_INIT.call_once(|| {
-            with_gdal(|gdal| {
-                let _ = gdal.get_driver_by_name("GTiff");
-                let _ = gdal.get_driver_by_name("MEM");
-                Ok(())
-            })
-            .unwrap();
-        });
-    }
 
     fn open_dataset(gdal: &Gdal, path: &str) -> sedona_gdal::errors::Result<Dataset> {
         gdal.open_ex_with_options(
@@ -254,7 +240,6 @@ mod tests {
 
     #[test]
     fn dataset_to_indb_raster_reads_single_band_geotiff() {
-        ensure_gdal_drivers();
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("byte.tif");
         let path_str = path.to_string_lossy().to_string();
@@ -283,7 +268,6 @@ mod tests {
 
     #[test]
     fn dataset_to_indb_raster_preserves_uint64_nodata_and_data() {
-        ensure_gdal_drivers();
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("uint64.tif");
         let path_str = path.to_string_lossy().to_string();
@@ -320,7 +304,6 @@ mod tests {
 
     #[test]
     fn dataset_to_indb_raster_preserves_int64_nodata_and_data() {
-        ensure_gdal_drivers();
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("int64.tif");
         let path_str = path.to_string_lossy().to_string();
@@ -353,7 +336,6 @@ mod tests {
 
     #[test]
     fn dataset_to_indb_raster_preserves_multi_band_data_and_nodata() {
-        ensure_gdal_drivers();
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("multi.tif");
         let path_str = path.to_string_lossy().to_string();
@@ -384,7 +366,6 @@ mod tests {
 
     #[test]
     fn append_as_indb_raster_appends_multiple_rasters() {
-        ensure_gdal_drivers();
         let temp_dir = TempDir::new().unwrap();
         let byte_path = temp_dir.path().join("byte.tif");
         let byte_path_str = byte_path.to_string_lossy().to_string();
