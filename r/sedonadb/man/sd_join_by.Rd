@@ -2,9 +2,12 @@
 % Please edit documentation in R/join-expression.R
 \name{sd_join_by}
 \alias{sd_join_by}
+\alias{sd_join_intersects}
 \title{Specify join conditions}
 \usage{
 sd_join_by(...)
+
+sd_join_intersects()
 }
 \arguments{
 \item{...}{Expressions specifying join conditions. These should be

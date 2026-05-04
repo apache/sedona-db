@@ -57,6 +57,12 @@ sd_join_by <- function(...) {
   )
 }
 
+#' @rdname sd_join_by
+#' @export
+sd_join_intersects <- function() {
+  sd_join_by(.fns$st_intersects(x$geom(), y$geom()))
+}
+
 #' @export
 print.sedonadb_join_by <- function(x, ...) {
   cat("<sedonadb_join_by>\n")
@@ -114,6 +120,9 @@ sd_join_expr_ctx <- function(
 
   # Also include unqualified column references for unambiguous columns
   ambiguous <- intersect(x_names, y_names)
+
+  # TODO: install data pronoun or similar for accessing the table references
+  # directly in programmatic usage (e.g., x$geom(), y$geom())
   data <- c(x_cols[setdiff(x_names, ambiguous)], y_cols[setdiff(y_names, ambiguous)])
 
   structure(
@@ -140,6 +149,11 @@ get_from_table_ref <- function(x, name) {
     )
   }
   x[[name]]
+}
+
+get_geom_from_table_ref <- function(x) {
+  # TODO: use the actual heuristic in rust
+  get_from_table_ref(x, "geometry")
 }
 
 #' Evaluate join conditions
@@ -207,6 +221,9 @@ sd_eval_join_expr_inner <- function(expr, join_expr_ctx, env) {
         return(get_from_table_ref(table_ref, col_name))
       }
     }
+
+    # Special handling for x$geom() and y$geom()
+
 
     # Extract function name
     call_name <- rlang::call_name(expr)
