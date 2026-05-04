@@ -16,34 +16,54 @@
 // under the License.
 use arrow_schema::{DataType, Field, FieldRef, Fields};
 
-/// Schema for storing raster data in Apache Arrow format.
-/// Utilizing nested structs and lists to represent raster metadata and bands.
+/// Schema for storing N-dimensional raster data in Apache Arrow format.
+///
+/// Each raster has a CRS, an affine transform, a list of spatial dimension
+/// names (`spatial_dims`) and sizes (`spatial_shape`), and a list of bands.
+/// Each band is an N-D chunk with named dimensions, a `source_shape`
+/// describing the natural extent of its underlying buffer, and a `view`
+/// describing the visible region of that buffer.
+///
+/// `spatial_dims` + `spatial_shape` are the raster-level source of truth for
+/// the spatial grid — today length 2 (`["x","y"]`, `[width, height]`),
+/// Z-ready for a future 3D phase. All bands must contain every name in
+/// `spatial_dims` in their own `dim_names`, with the band's *visible* size
+/// for that dim matching `spatial_shape`.
+///
+/// Legacy 2D rasters are represented as bands with `dim_names=["y","x"]` and
+/// `source_shape=[height, width]`.
 #[derive(Debug, PartialEq, Clone)]
 pub struct RasterSchema;
+
 impl RasterSchema {
     /// Returns the top-level fields for the raster schema structure.
     pub fn fields() -> Fields {
         Fields::from(vec![
-            Field::new(column::METADATA, Self::metadata_type(), false),
-            Field::new(column::CRS, Self::crs_type(), true), // Optional: may be inferred from data
+            Field::new(column::CRS, Self::crs_type(), true),
+            Field::new(column::TRANSFORM, Self::transform_type(), false),
+            Field::new(column::SPATIAL_DIMS, Self::spatial_dims_type(), false),
+            Field::new(column::SPATIAL_SHAPE, Self::spatial_shape_type(), false),
             Field::new(column::BANDS, Self::bands_type(), true),
         ])
     }
 
-    /// Raster metadata schema
-    pub fn metadata_type() -> DataType {
-        DataType::Struct(Fields::from(vec![
-            // Raster dimensions
-            Field::new(column::WIDTH, DataType::UInt64, false),
-            Field::new(column::HEIGHT, DataType::UInt64, false),
-            // Geospatial transformation parameters
-            Field::new(column::UPPERLEFT_X, DataType::Float64, false),
-            Field::new(column::UPPERLEFT_Y, DataType::Float64, false),
-            Field::new(column::SCALE_X, DataType::Float64, false),
-            Field::new(column::SCALE_Y, DataType::Float64, false),
-            Field::new(column::SKEW_X, DataType::Float64, false),
-            Field::new(column::SKEW_Y, DataType::Float64, false),
-        ]))
+    /// Affine transform schema — 6-element GDAL GeoTransform:
+    /// `[origin_x, scale_x, skew_x, origin_y, skew_y, scale_y]`
+    pub fn transform_type() -> DataType {
+        DataType::List(FieldRef::new(Field::new("item", DataType::Float64, false)))
+    }
+
+    /// Spatial dimension names schema — list of `Utf8View` strings, one per
+    /// spatial axis. Today always `["x","y"]`; becomes `["x","y","z"]` if a
+    /// future phase adds Z support.
+    pub fn spatial_dims_type() -> DataType {
+        DataType::List(FieldRef::new(Field::new("item", DataType::Utf8View, false)))
+    }
+
+    /// Spatial shape schema — list of `Int64` sizes in the same order as
+    /// `spatial_dims`. Today `[width, height]`.
+    pub fn spatial_shape_type() -> DataType {
+        DataType::List(FieldRef::new(Field::new("item", DataType::Int64, false)))
     }
 
     /// Bands list schema
@@ -55,32 +75,62 @@ impl RasterSchema {
         )))
     }
 
-    /// Individual band schema
+    /// Individual band schema — flattened N-D band with dimension metadata.
+    ///
+    /// Out-of-band ("outdb") bands carry two orthogonal identifiers:
+    /// - `outdb_uri` is the *location* (what scheme/registry to dispatch to,
+    ///   e.g. `s3://bucket/file.tif`, `file:///…`, `mem://…`).
+    /// - `outdb_format` is the *format* (how to interpret the bytes, e.g.
+    ///   `"geotiff"`, `"zarr"`). Null format means in-memory — the band's
+    ///   `data` buffer is authoritative.
     pub fn band_type() -> DataType {
         DataType::Struct(Fields::from(vec![
-            Field::new(column::METADATA, Self::band_metadata_type(), false),
-            Field::new(column::DATA, Self::band_data_type(), false),
-        ]))
-    }
-
-    /// Band metadata schema
-    pub fn band_metadata_type() -> DataType {
-        DataType::Struct(Fields::from(vec![
-            Field::new(column::NODATAVALUE, DataType::Binary, true), // Optional: null means no nodata value specified
-            Field::new(column::STORAGE_TYPE, DataType::UInt32, false),
+            Field::new(column::NAME, DataType::Utf8, true),
+            Field::new(column::DIM_NAMES, Self::dim_names_type(), false),
+            Field::new(column::SOURCE_SHAPE, Self::source_shape_type(), false),
             Field::new(column::DATATYPE, DataType::UInt32, false),
-            // OutDb reference fields - only used when storage_type == OutDbRef
-            Field::new(column::OUTDB_URL, DataType::Utf8, true),
-            Field::new(column::OUTDB_BAND_ID, DataType::UInt32, true),
+            Field::new(column::NODATA, DataType::Binary, true),
+            Field::new(column::VIEW, Self::view_type(), true),
+            Field::new(column::OUTDB_URI, DataType::Utf8, true),
+            Field::new(column::OUTDB_FORMAT, DataType::Utf8View, true),
+            Field::new(column::DATA, DataType::BinaryView, false),
         ]))
     }
 
-    /// Band data schema - stores the actual raster pixel data as a binary blob
-    pub fn band_data_type() -> DataType {
-        DataType::BinaryView
+    /// Dimension names list type
+    pub fn dim_names_type() -> DataType {
+        DataType::List(FieldRef::new(Field::new("item", DataType::Utf8, false)))
     }
 
-    /// Coordinate Reference System (CRS) schema - stores CRS as JSON string (PROJ or WKT format)
+    /// Source shape list type — the natural C-order extent of the band's
+    /// `data` buffer (or outdb-resolved source) per dimension. The *visible*
+    /// shape exposed to consumers is derived from `view`:
+    /// `[entry.steps for entry in view]`.
+    pub fn source_shape_type() -> DataType {
+        DataType::List(FieldRef::new(Field::new("item", DataType::UInt64, false)))
+    }
+
+    /// View list type — one entry per dimension in the band's *visible*
+    /// order. Each entry is a `(source_axis, start, step, steps)` quadruple
+    /// describing how the visible axis maps onto the band's source shape.
+    /// The field is nullable: a null view denotes the identity view
+    /// `[(i, 0, 1, source_shape[i]) for i in 0..ndim]` and is the canonical
+    /// representation for any band whose data has not been sliced. See
+    /// `RasterSchema` doc for full semantics.
+    pub fn view_type() -> DataType {
+        DataType::List(FieldRef::new(Field::new(
+            "item",
+            DataType::Struct(Fields::from(vec![
+                Field::new("source_axis", DataType::Int64, false),
+                Field::new("start", DataType::Int64, false),
+                Field::new("step", DataType::Int64, false),
+                Field::new("steps", DataType::Int64, false),
+            ])),
+            false,
+        )))
+    }
+
+    /// Coordinate Reference System (CRS) schema — stores CRS as JSON string
     pub fn crs_type() -> DataType {
         DataType::Utf8View
     }
@@ -116,6 +166,23 @@ impl BandDataType {
         }
     }
 
+    /// Try to convert from a u32 discriminant value.
+    pub fn try_from_u32(value: u32) -> Option<Self> {
+        match value {
+            1 => Some(BandDataType::UInt8),
+            2 => Some(BandDataType::UInt16),
+            3 => Some(BandDataType::Int16),
+            4 => Some(BandDataType::UInt32),
+            5 => Some(BandDataType::Int32),
+            6 => Some(BandDataType::Float32),
+            7 => Some(BandDataType::Float64),
+            8 => Some(BandDataType::UInt64),
+            9 => Some(BandDataType::Int64),
+            10 => Some(BandDataType::Int8),
+            _ => None,
+        }
+    }
+
     /// Java/Sedona-compatible pixel type name (e.g. `"UNSIGNED_8BITS"`).
     pub fn pixel_type_name(&self) -> &'static str {
         match self {
@@ -125,7 +192,6 @@ impl BandDataType {
             BandDataType::Int32 => "SIGNED_32BITS",
             BandDataType::Float32 => "REAL_32BITS",
             BandDataType::Float64 => "REAL_64BITS",
-            // Extra types present in Rust but not in Java Sedona
             BandDataType::UInt32 => "UNSIGNED_32BITS",
             BandDataType::UInt64 => "UNSIGNED_64BITS",
             BandDataType::Int64 => "SIGNED_64BITS",
@@ -134,120 +200,97 @@ impl BandDataType {
     }
 }
 
-/// Storage strategy for raster band data within Apache Arrow arrays.
-///
-/// This enum defines how raster data is physically stored and accessed:
-///
-/// **InDb**: Raster data is embedded directly in the Arrow array as binary blobs.
-///   - Self-contained, no external dependencies, fast access for small-medium rasters
-///   - Increases Arrow array size, memory usage grows and copy times increase with raster size
-///   - Best for: Tiles, thumbnails, processed results, small rasters (<10MB per band)
-///
-/// **OutDbRef**: Raster data is stored externally with references in the Arrow array.
-///   - Keeps Arrow arrays lightweight, supports massive rasters, enables lazy loading
-///   - Requires external storage management, potential for broken references
-///   - Best for: Large satellite imagery, time series data, cloud-native workflows
-///   - Supported backends: S3, GCS, Azure Blob, local filesystem, HTTP endpoints
-#[repr(u16)]
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Copy)]
-pub enum StorageType {
-    InDb = 0,
-    OutDbRef = 1,
-}
-
 /// Hard-coded column indices for performant access to nested struct fields.
 /// These indices must match the exact order defined in the RasterSchema methods.
-///
-/// Using compile-time constants avoids string lookups and provides type safety
-/// when accessing nested struct fields in Arrow arrays.
-pub mod metadata_indices {
-    pub const WIDTH: usize = 0;
-    pub const HEIGHT: usize = 1;
-    pub const UPPERLEFT_X: usize = 2;
-    pub const UPPERLEFT_Y: usize = 3;
-    pub const SCALE_X: usize = 4;
-    pub const SCALE_Y: usize = 5;
-    pub const SKEW_X: usize = 6;
-    pub const SKEW_Y: usize = 7;
-}
-
-pub mod band_metadata_indices {
-    pub const NODATAVALUE: usize = 0;
-    pub const STORAGE_TYPE: usize = 1;
-    pub const DATATYPE: usize = 2;
-    pub const OUTDB_URL: usize = 3;
-    pub const OUTDB_BAND_ID: usize = 4;
+pub mod raster_indices {
+    pub const CRS: usize = 0;
+    pub const TRANSFORM: usize = 1;
+    pub const SPATIAL_DIMS: usize = 2;
+    pub const SPATIAL_SHAPE: usize = 3;
+    pub const BANDS: usize = 4;
 }
 
 pub mod band_indices {
-    pub const METADATA: usize = 0;
-    pub const DATA: usize = 1;
+    pub const NAME: usize = 0;
+    pub const DIM_NAMES: usize = 1;
+    pub const SOURCE_SHAPE: usize = 2;
+    pub const DATA_TYPE: usize = 3;
+    pub const NODATA: usize = 4;
+    pub const VIEW: usize = 5;
+    pub const OUTDB_URI: usize = 6;
+    pub const OUTDB_FORMAT: usize = 7;
+    pub const DATA: usize = 8;
 }
 
-pub mod raster_indices {
-    pub const METADATA: usize = 0;
-    pub const CRS: usize = 1;
-    pub const BANDS: usize = 2;
+/// Field indices within the `view` struct (`(source_axis, start, step, steps)`).
+pub mod band_view_indices {
+    pub const SOURCE_AXIS: usize = 0;
+    pub const START: usize = 1;
+    pub const STEP: usize = 2;
+    pub const STEPS: usize = 3;
 }
 
 /// Column name constants used throughout the raster schema definition.
-/// These string constants ensure consistency across schema creation and field access.
 pub mod column {
-    pub const METADATA: &str = "metadata";
+    // Top-level raster fields
+    pub const CRS: &str = "crs";
+    pub const TRANSFORM: &str = "transform";
+    pub const SPATIAL_DIMS: &str = "spatial_dims";
+    pub const SPATIAL_SHAPE: &str = "spatial_shape";
     pub const BANDS: &str = "bands";
     pub const BAND: &str = "band";
-    pub const DATA: &str = "data";
 
-    // Raster metadata fields
-    pub const WIDTH: &str = "width";
-    pub const HEIGHT: &str = "height";
-    pub const UPPERLEFT_X: &str = "upperleft_x";
-    pub const UPPERLEFT_Y: &str = "upperleft_y";
-    pub const SCALE_X: &str = "scale_x";
-    pub const SCALE_Y: &str = "scale_y";
-    pub const SKEW_X: &str = "skew_x";
-    pub const SKEW_Y: &str = "skew_y";
-
-    // Raster CRS field
-    pub const CRS: &str = "crs";
-    // Band metadata fields
-    pub const NODATAVALUE: &str = "nodata_value";
-    pub const STORAGE_TYPE: &str = "storage_type";
+    // Band fields
+    pub const NAME: &str = "name";
+    pub const DIM_NAMES: &str = "dim_names";
+    pub const SOURCE_SHAPE: &str = "source_shape";
     pub const DATATYPE: &str = "data_type";
-    pub const OUTDB_URL: &str = "outdb_url";
-    pub const OUTDB_BAND_ID: &str = "outdb_band_id";
+    pub const NODATA: &str = "nodata";
+    pub const VIEW: &str = "view";
+    pub const OUTDB_URI: &str = "outdb_uri";
+    pub const OUTDB_FORMAT: &str = "outdb_format";
+    pub const DATA: &str = "data";
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    /// Tests that the top-level raster schema has the expected number and names of fields.
+
     #[test]
     fn test_raster_schema_fields() {
         let fields = RasterSchema::fields();
-        assert_eq!(fields.len(), 3);
-        assert_eq!(fields[0].name(), column::METADATA);
-        assert_eq!(fields[1].name(), column::CRS);
-        assert_eq!(fields[2].name(), column::BANDS);
+        assert_eq!(fields.len(), 5);
+        assert_eq!(fields[0].name(), column::CRS);
+        assert_eq!(fields[1].name(), column::TRANSFORM);
+        assert_eq!(fields[2].name(), column::SPATIAL_DIMS);
+        assert_eq!(fields[3].name(), column::SPATIAL_SHAPE);
+        assert_eq!(fields[4].name(), column::BANDS);
     }
 
-    /// Comprehensive test to verify all hard-coded indices match the actual schema.
-    /// This ensures that performance optimizations using direct index access remain valid
-    /// when the schema structure changes.
     #[test]
     fn test_hardcoded_indices_match_schema() {
         // Test raster-level indices
         let raster_fields = RasterSchema::fields();
-        assert_eq!(raster_fields.len(), 3, "Expected exactly 3 raster fields");
-        assert_eq!(
-            raster_fields[raster_indices::METADATA].name(),
-            column::METADATA,
-            "Raster metadata index mismatch"
-        );
+        assert_eq!(raster_fields.len(), 5, "Expected exactly 5 raster fields");
         assert_eq!(
             raster_fields[raster_indices::CRS].name(),
             column::CRS,
             "Raster CRS index mismatch"
+        );
+        assert_eq!(
+            raster_fields[raster_indices::TRANSFORM].name(),
+            column::TRANSFORM,
+            "Raster TRANSFORM index mismatch"
+        );
+        assert_eq!(
+            raster_fields[raster_indices::SPATIAL_DIMS].name(),
+            column::SPATIAL_DIMS,
+            "Raster SPATIAL_DIMS index mismatch"
+        );
+        assert_eq!(
+            raster_fields[raster_indices::SPATIAL_SHAPE].name(),
+            column::SPATIAL_SHAPE,
+            "Raster SPATIAL_SHAPE index mismatch"
         );
         assert_eq!(
             raster_fields[raster_indices::BANDS].name(),
@@ -255,111 +298,63 @@ mod tests {
             "Raster BANDS index mismatch"
         );
 
-        // Test metadata indices
-        let metadata_type = RasterSchema::metadata_type();
-        if let DataType::Struct(metadata_fields) = metadata_type {
-            assert_eq!(
-                metadata_fields.len(),
-                8,
-                "Expected exactly 8 metadata fields"
-            );
-            assert_eq!(
-                metadata_fields[metadata_indices::WIDTH].name(),
-                column::WIDTH,
-                "Metadata width index mismatch"
-            );
-            assert_eq!(
-                metadata_fields[metadata_indices::HEIGHT].name(),
-                column::HEIGHT,
-                "Metadata height index mismatch"
-            );
-            assert_eq!(
-                metadata_fields[metadata_indices::UPPERLEFT_X].name(),
-                column::UPPERLEFT_X,
-                "Metadata upperleft_x index mismatch"
-            );
-            assert_eq!(
-                metadata_fields[metadata_indices::UPPERLEFT_Y].name(),
-                column::UPPERLEFT_Y,
-                "Metadata upperleft_y index mismatch"
-            );
-            assert_eq!(
-                metadata_fields[metadata_indices::SCALE_X].name(),
-                column::SCALE_X,
-                "Metadata scale_x index mismatch"
-            );
-            assert_eq!(
-                metadata_fields[metadata_indices::SCALE_Y].name(),
-                column::SCALE_Y,
-                "Metadata scale_y index mismatch"
-            );
-            assert_eq!(
-                metadata_fields[metadata_indices::SKEW_X].name(),
-                column::SKEW_X,
-                "Metadata skew_x index mismatch"
-            );
-            assert_eq!(
-                metadata_fields[metadata_indices::SKEW_Y].name(),
-                column::SKEW_Y,
-                "Metadata skew_y index mismatch"
-            );
-        } else {
-            panic!("Expected Struct type for metadata");
-        }
-
-        // Test band metadata indices
-        let band_metadata_type = RasterSchema::band_metadata_type();
-        if let DataType::Struct(band_metadata_fields) = band_metadata_type {
-            assert_eq!(
-                band_metadata_fields.len(),
-                5,
-                "Expected exactly 5 band metadata fields"
-            );
-            assert_eq!(
-                band_metadata_fields[band_metadata_indices::NODATAVALUE].name(),
-                column::NODATAVALUE,
-                "Band metadata nodatavalue index mismatch"
-            );
-            assert_eq!(
-                band_metadata_fields[band_metadata_indices::STORAGE_TYPE].name(),
-                column::STORAGE_TYPE,
-                "Band metadata storage_type index mismatch"
-            );
-            assert_eq!(
-                band_metadata_fields[band_metadata_indices::DATATYPE].name(),
-                column::DATATYPE,
-                "Band metadata datatype index mismatch"
-            );
-            assert_eq!(
-                band_metadata_fields[band_metadata_indices::OUTDB_URL].name(),
-                column::OUTDB_URL,
-                "Band metadata outdb_url index mismatch"
-            );
-            assert_eq!(
-                band_metadata_fields[band_metadata_indices::OUTDB_BAND_ID].name(),
-                column::OUTDB_BAND_ID,
-                "Band metadata outdb_band_id index mismatch"
-            );
-        } else {
-            panic!("Expected Struct type for band metadata");
-        }
-
         // Test band indices
         let band_type = RasterSchema::band_type();
         if let DataType::Struct(band_fields) = band_type {
-            assert_eq!(band_fields.len(), 2, "Expected exactly 2 band fields");
+            assert_eq!(band_fields.len(), 9, "Expected exactly 9 band fields");
+            assert_eq!(band_fields[band_indices::NAME].name(), column::NAME);
             assert_eq!(
-                band_fields[band_indices::METADATA].name(),
-                column::METADATA,
-                "Band metadata index mismatch"
+                band_fields[band_indices::DIM_NAMES].name(),
+                column::DIM_NAMES
             );
             assert_eq!(
-                band_fields[band_indices::DATA].name(),
-                column::DATA,
-                "Band data index mismatch"
+                band_fields[band_indices::SOURCE_SHAPE].name(),
+                column::SOURCE_SHAPE
             );
+            assert_eq!(
+                band_fields[band_indices::DATA_TYPE].name(),
+                column::DATATYPE
+            );
+            assert_eq!(band_fields[band_indices::NODATA].name(), column::NODATA);
+            assert_eq!(band_fields[band_indices::VIEW].name(), column::VIEW);
+            assert!(
+                band_fields[band_indices::VIEW].is_nullable(),
+                "view field must be nullable — null encodes the identity view"
+            );
+            assert_eq!(
+                band_fields[band_indices::OUTDB_URI].name(),
+                column::OUTDB_URI
+            );
+            assert_eq!(
+                band_fields[band_indices::OUTDB_FORMAT].name(),
+                column::OUTDB_FORMAT
+            );
+            assert_eq!(band_fields[band_indices::DATA].name(), column::DATA);
         } else {
             panic!("Expected Struct type for band");
+        }
+    }
+
+    #[test]
+    fn test_view_type_struct_shape() {
+        // The view struct must have exactly 4 Int64 fields in the order
+        // expected by band_view_indices.
+        let DataType::List(item_field) = RasterSchema::view_type() else {
+            panic!("Expected List type for view");
+        };
+        let DataType::Struct(view_fields) = item_field.data_type() else {
+            panic!("Expected Struct type inside view list");
+        };
+        assert_eq!(view_fields.len(), 4);
+        assert_eq!(
+            view_fields[band_view_indices::SOURCE_AXIS].name(),
+            "source_axis"
+        );
+        assert_eq!(view_fields[band_view_indices::START].name(), "start");
+        assert_eq!(view_fields[band_view_indices::STEP].name(), "step");
+        assert_eq!(view_fields[band_view_indices::STEPS].name(), "steps");
+        for f in view_fields.iter() {
+            assert_eq!(f.data_type(), &DataType::Int64);
         }
     }
 
@@ -375,6 +370,48 @@ mod tests {
         assert_eq!(BandDataType::UInt64.byte_size(), 8);
         assert_eq!(BandDataType::Int64.byte_size(), 8);
         assert_eq!(BandDataType::Float64.byte_size(), 8);
+    }
+
+    #[test]
+    fn test_band_data_type_try_from_u32() {
+        assert_eq!(BandDataType::try_from_u32(1), Some(BandDataType::UInt8));
+        assert_eq!(BandDataType::try_from_u32(2), Some(BandDataType::UInt16));
+        assert_eq!(BandDataType::try_from_u32(3), Some(BandDataType::Int16));
+        assert_eq!(BandDataType::try_from_u32(4), Some(BandDataType::UInt32));
+        assert_eq!(BandDataType::try_from_u32(5), Some(BandDataType::Int32));
+        assert_eq!(BandDataType::try_from_u32(6), Some(BandDataType::Float32));
+        assert_eq!(BandDataType::try_from_u32(7), Some(BandDataType::Float64));
+        assert_eq!(BandDataType::try_from_u32(8), Some(BandDataType::UInt64));
+        assert_eq!(BandDataType::try_from_u32(9), Some(BandDataType::Int64));
+        assert_eq!(BandDataType::try_from_u32(10), Some(BandDataType::Int8));
+        assert_eq!(BandDataType::try_from_u32(0), None);
+        assert_eq!(BandDataType::try_from_u32(11), None);
+        assert_eq!(BandDataType::try_from_u32(u32::MAX), None);
+    }
+
+    #[test]
+    fn test_band_data_type_roundtrip_u32() {
+        // Verify that discriminant → try_from_u32 round-trips for all variants
+        let all_types = [
+            BandDataType::UInt8,
+            BandDataType::UInt16,
+            BandDataType::Int16,
+            BandDataType::UInt32,
+            BandDataType::Int32,
+            BandDataType::Float32,
+            BandDataType::Float64,
+            BandDataType::UInt64,
+            BandDataType::Int64,
+            BandDataType::Int8,
+        ];
+        for dt in all_types {
+            let value = dt as u32;
+            assert_eq!(
+                BandDataType::try_from_u32(value),
+                Some(dt),
+                "Round-trip failed for {dt:?} (discriminant {value})"
+            );
+        }
     }
 
     #[test]
