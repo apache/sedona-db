@@ -94,3 +94,45 @@ sd_join <- function(
     sd_transmute(out, !!!projection)
   }
 }
+
+#' @rdname sd_join
+#' @export
+sd_left_join <- function(x, y, by = NULL, select = sd_join_select_default()) {
+  sd_join(x, y, by = by, select = select, join_type = "left")
+}
+
+#' @rdname sd_join
+#' @export
+sd_right_join <- function(x, y, by = NULL, select = sd_join_select_default()) {
+  sd_join(x, y, by = by, select = select, join_type = "right")
+}
+
+#' @rdname sd_join
+#' @export
+sd_inner_join <- function(x, y, by = NULL, select = sd_join_select_default()) {
+  sd_join(x, y, by = by, select = select, join_type = "inner")
+}
+
+#' @rdname sd_join
+#' @export
+sd_full_join <- function(x, y, by = NULL, select = sd_join_select_default()) {
+  sd_join(x, y, by = by, select = select, join_type = "full")
+}
+
+#' @rdname sd_join
+#' @export
+sd_semi_join <- function(x, y, by = NULL) {
+  sd_join(x, y, by = by, join_type = "leftsemi")
+}
+
+#' @rdname sd_join
+#' @export
+sd_anti_join <- function(x, y, by = NULL) {
+  sd_join(x, y, by = by, join_type = "leftanti")
+}
+
+#' @rdname sd_join
+#' @export
+sd_cross_join <- function(x, y, by = NULL) {
+  sd_join(x, y, by = character(), join_type = "inner")
+}
