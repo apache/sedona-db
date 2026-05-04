@@ -17,6 +17,7 @@
 
 pub mod crs_utils;
 mod executor;
+pub use executor::RasterExecutor;
 pub mod register;
 pub mod rs_band_accessors;
 pub mod rs_bandpath;
