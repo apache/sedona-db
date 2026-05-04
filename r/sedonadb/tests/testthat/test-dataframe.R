@@ -304,8 +304,20 @@ test_that("sd_write_parquet validates geoparquet_version parameter", {
   tmp_parquet_file <- tempfile(fileext = ".parquet")
   on.exit(unlink(tmp_parquet_file))
 
-  # GeoParquet 1.0 shouldn't add any columns
+  # GeoParquet 1.0, 2.0, and "none" shouldn't add any columns
   sd_write_parquet(df, tmp_parquet_file, geoparquet_version = "1.0")
+  expect_identical(
+    sd_read_parquet(tmp_parquet_file) |> colnames(),
+    c("geom", "name")
+  )
+
+  sd_write_parquet(df, tmp_parquet_file, geoparquet_version = "2.0")
+  expect_identical(
+    sd_read_parquet(tmp_parquet_file) |> colnames(),
+    c("geom", "name")
+  )
+
+  sd_write_parquet(df, tmp_parquet_file, geoparquet_version = "none")
   expect_identical(
     sd_read_parquet(tmp_parquet_file) |> colnames(),
     c("geom", "name")
@@ -320,7 +332,7 @@ test_that("sd_write_parquet validates geoparquet_version parameter", {
 
   # Invalid version should error
   expect_snapshot_error(
-    sd_write_parquet(df, tmp_parquet_file, geoparquet_version = "2.0"),
+    sd_write_parquet(df, tmp_parquet_file, geoparquet_version = "this is not a version"),
   )
 })
 

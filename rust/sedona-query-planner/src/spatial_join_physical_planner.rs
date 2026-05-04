@@ -228,7 +228,7 @@ fn logical_join_filter_to_physical(
         .unzip();
     let filter_df_fields = filter_df_fields
         .into_iter()
-        .map(|(qualifier, field)| (qualifier.cloned(), Arc::new(field.clone())))
+        .map(|(qualifier, field)| (qualifier.cloned(), field.clone()))
         .collect::<Vec<_>>();
 
     let metadata: HashMap<_, _> = left_df_schema
