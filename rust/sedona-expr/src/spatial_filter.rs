@@ -33,6 +33,7 @@ use sedona_geometry::{
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher, schema::SedonaSchema};
 
 use crate::{
+    metadata_preserving_column::MetadataPreservingColumn,
     statistics::GeoStatistics,
     utils::{parse_distance_predicate, ParsedDistancePredicate},
 };
@@ -508,17 +509,27 @@ fn literal_bounds(literal: &Literal) -> Result<BoundingBox> {
 }
 
 fn parse_args(args: &[Arc<dyn PhysicalExpr>]) -> Vec<ArgRef<'_>> {
-    args.iter()
-        .map(|arg| {
-            if let Some(column) = arg.as_any().downcast_ref::<Column>() {
-                ArgRef::Col(column.clone())
-            } else if let Some(literal) = arg.as_any().downcast_ref::<Literal>() {
-                ArgRef::Lit(literal)
-            } else {
-                ArgRef::Other
-            }
-        })
-        .collect::<Vec<_>>()
+    args.iter().map(parse_arg).collect::<Vec<_>>()
+}
+
+fn parse_arg(arg: &Arc<dyn PhysicalExpr>) -> ArgRef<'_> {
+    if let Some(column_wrapper) = arg.as_any().downcast_ref::<MetadataPreservingColumn>() {
+        return parse_arg(column_wrapper.inner());
+    }
+
+    if let Some(column) = arg.as_any().downcast_ref::<Column>() {
+        ArgRef::Col(column.clone())
+    } else if let Some(column_wrapper) = arg.as_any().downcast_ref::<MetadataPreservingColumn>() {
+        if let Some(column) = column_wrapper.inner().as_any().downcast_ref::<Column>() {
+            ArgRef::Col(column.clone())
+        } else {
+            ArgRef::Other
+        }
+    } else if let Some(literal) = arg.as_any().downcast_ref::<Literal>() {
+        ArgRef::Lit(literal)
+    } else {
+        ArgRef::Other
+    }
 }
 
 #[cfg(test)]

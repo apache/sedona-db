@@ -28,6 +28,7 @@ use datafusion_datasource::{
     file_compression_type::FileCompressionType,
     file_format::{FileFormat, FileFormatFactory},
     file_scan_config::{FileScanConfig, FileScanConfigBuilder},
+    TableSchema,
 };
 use datafusion_physical_plan::ExecutionPlan;
 use futures::{StreamExt, TryStreamExt};
@@ -254,8 +255,8 @@ impl FileFormat for LasFormat {
         Ok(DataSourceExec::from_data_source(conf))
     }
 
-    fn file_source(&self) -> Arc<dyn FileSource> {
-        Arc::new(LasSource::new(self.extension).with_options(self.options.clone()))
+    fn file_source(&self, table_schema: TableSchema) -> Arc<dyn FileSource> {
+        Arc::new(LasSource::new(self.extension, table_schema).with_options(self.options.clone()))
     }
 }
 

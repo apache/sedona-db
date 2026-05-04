@@ -24,11 +24,8 @@ use arrow_array::{
 };
 use arrow_schema::{Field, Schema};
 use datafusion::catalog::TableProvider;
-use datafusion_expr::ScalarUDF;
-use datafusion_ffi::{
-    table_provider::{FFI_TableProvider, ForeignTableProvider},
-    udf::{FFI_ScalarUDF, ForeignScalarUDF},
-};
+use datafusion_expr::{ScalarUDF, ScalarUDFImpl};
+use datafusion_ffi::{table_provider::FFI_TableProvider, udf::FFI_ScalarUDF};
 use savvy::{savvy_err, IntoExtPtrSexp};
 
 pub fn import_schema(mut xptr: savvy::Sexp) -> savvy::Result<Schema> {
@@ -67,15 +64,15 @@ pub fn import_table_provider(
 ) -> savvy::Result<Arc<dyn TableProvider>> {
     let ffi_provider: &FFI_TableProvider =
         import_xptr(&mut provider_xptr, "datafusion_table_provider")?;
-    let provider_impl = ForeignTableProvider::from(ffi_provider);
-    Ok(Arc::new(provider_impl))
+    let provider = Arc::<dyn TableProvider>::from(ffi_provider);
+    Ok(provider)
 }
 
 pub fn import_scalar_udf(mut scalar_udf_xptr: savvy::Sexp) -> savvy::Result<ScalarUDF> {
     let ffi_scalar_udf_ref: &FFI_ScalarUDF =
         import_xptr(&mut scalar_udf_xptr, "datafusion_scalar_udf")?;
-    let scalar_udf_impl = ForeignScalarUDF::try_from(ffi_scalar_udf_ref)?;
-    Ok(scalar_udf_impl.into())
+    let udf_impl: Arc<dyn ScalarUDFImpl> = ffi_scalar_udf_ref.into();
+    Ok(ScalarUDF::new_from_shared_impl(udf_impl))
 }
 
 fn import_xptr<'a, T>(xptr: &'a mut savvy::Sexp, cls: &str) -> savvy::Result<&'a mut T> {

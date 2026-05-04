@@ -25,11 +25,11 @@ repository = "https://github.com/apache/sedona-db"
 description = "Apache SedonaDB Rust Point Cloud API Example"
 readme = "README.md"
 edition = "2021"
-rust-version = "1.86"
+rust-version = "1.88.0"
 
 [workspace]
 
 [dependencies]
 # We use a git dependency here so that we can test these examples
 sedona = { git = "https://github.com/apache/sedona-db.git", package = "sedona", features = ["pointcloud"] }
-tokio = { version = "1.44", features = ["rt-multi-thread"]}
+tokio = { version = "1.52", features = ["rt-multi-thread"]}
