@@ -40,7 +40,7 @@
 
 # sd_write_parquet validates geoparquet_version parameter
 
-    This feature is not implemented: GeoParquetVersion V2_0 is not yet supported
+    Error during planning: Unexpected GeoParquet version string (expected '1.0', '1.1', '2.0', or 'none')
 
 # sd_write_parquet() errors for inappropriately sized options
 

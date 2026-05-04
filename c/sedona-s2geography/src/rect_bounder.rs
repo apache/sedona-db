@@ -31,6 +31,15 @@ pub struct RectBounder {
     ptr: *mut S2GeogRectBounder,
 }
 
+impl std::fmt::Debug for RectBounder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RectBounder")
+            .field("ptr", &self.ptr)
+            .field("finish()", &self.finish())
+            .finish()
+    }
+}
+
 impl RectBounder {
     /// Create a new rect bounder
     pub fn new() -> Self {

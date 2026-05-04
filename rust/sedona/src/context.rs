@@ -188,7 +188,13 @@ impl SedonaContext {
         state_builder = state_builder.with_query_planner(Arc::new(planner));
 
         let mut state = state_builder.build();
+
+        // Register GeoParquet and try to initialize our statistics accumulator. It is OK if this fails
+        // (is likely because we already registered it).
         state.register_file_format(Arc::new(GeoParquetFormatFactory::new()), true)?;
+        let _ =
+            sedona_geoparquet::statistics_accumulator::SedonaGeoStatsAccumulatorFactory::try_init();
+
         #[cfg(feature = "pointcloud")]
         {
             state.register_file_format(Arc::new(LasFormatFactory::new(Extension::Laz)), false)?;

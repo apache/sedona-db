@@ -30,7 +30,7 @@ use sedona_datasource::{
     spec::{ExternalFormatSpec, Object, OpenReaderArgs},
     utility::ProjectedRecordBatchReader,
 };
-use sedona_expr::spatial_filter::SpatialFilter;
+use sedona_expr::spatial_filter::SpatialFilterFactory;
 use sedona_geometry::interval::IntervalTrait;
 
 use crate::{
@@ -284,7 +284,8 @@ impl PyFilter {
         &self,
         column_name: &str,
     ) -> Result<Option<(f64, f64, f64, f64)>, PySedonaError> {
-        let filter = SpatialFilter::try_from_expr(&self.inner)?;
+        let factory = SpatialFilterFactory::default();
+        let filter = factory.try_from_expr(&self.inner)?;
         let filter_bbox = filter.filter_bbox(column_name);
         if filter_bbox.x().is_full() || filter_bbox.y().is_full() {
             Ok(None)

@@ -26,7 +26,7 @@ use datafusion_physical_expr::PhysicalExpr;
 use datafusion_pruning::PruningPredicate;
 use futures::StreamExt;
 
-use sedona_expr::spatial_filter::SpatialFilter;
+use sedona_expr::spatial_filter::SpatialFilterFactory;
 use sedona_geometry::bounding_box::BoundingBox;
 
 use crate::las::{
@@ -36,8 +36,6 @@ use crate::las::{
 };
 
 pub struct LasOpener {
-    /// Column indexes in `table_schema` needed by the query
-    pub projection: Arc<[usize]>,
     /// Optional limit on the number of rows to read
     pub limit: Option<usize>,
     /// Filter predicate for pruning
@@ -56,7 +54,6 @@ pub struct LasOpener {
 
 impl FileOpener for LasOpener {
     fn open(&self, file: PartitionedFile) -> Result<FileOpenFuture, DataFusionError> {
-        let projection = self.projection.clone();
         let limit = self.limit;
         let batch_size = self.batch_size;
         let round_robin = self.options.round_robin_partitioning;
@@ -81,9 +78,10 @@ impl FileOpener for LasOpener {
                 PruningPredicate::try_new(physical_expr, schema.clone()).ok()
             });
 
+            let factory = SpatialFilterFactory::default();
             let spatial_filter = pruning_predicate
                 .as_ref()
-                .and_then(|p| SpatialFilter::try_from_expr(p.orig_expr()).ok());
+                .and_then(|p| factory.try_from_expr(p.orig_expr()).ok());
 
             // file pruning
             if let Some(pruning_predicate) = &pruning_predicate {
@@ -160,11 +158,6 @@ impl FileOpener for LasOpener {
                     let record_batch = file_reader.get_batch(chunk_meta).await?;
                     let num_rows = record_batch.num_rows();
                     row_count += num_rows;
-
-                    // project
-                    let record_batch = record_batch
-                        .project(&projection)
-                        .map_err(|e| DataFusionError::ArrowError(Box::new(e), None))?;
 
                     // adhere to target batch size
                     let mut offset = 0;

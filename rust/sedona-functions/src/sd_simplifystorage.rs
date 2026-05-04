@@ -45,7 +45,7 @@ struct SDSimplifyStorage {}
 impl SedonaScalarKernel for SDSimplifyStorage {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let field = args[0].to_storage_field("", true)?;
-        let new_field = simplify_field(field.into());
+        let new_field = simplify_field(field.into())?;
         Ok(Some(SedonaType::from_storage_field(&new_field)?))
     }
 
@@ -80,41 +80,45 @@ impl SedonaScalarKernel for SDSimplifyStorage {
     }
 }
 
-fn simplify_field(field: FieldRef) -> FieldRef {
+fn simplify_field(field: FieldRef) -> Result<FieldRef> {
     let new_type = match field.data_type() {
         DataType::BinaryView => DataType::Binary,
         DataType::Utf8View => DataType::Utf8,
         DataType::Dictionary(_key_type, value_type) => {
-            simplify_field(value_type.clone().into_nullable_field_ref())
+            simplify_field(value_type.clone().into_nullable_field_ref())?
                 .data_type()
                 .clone()
         }
         DataType::RunEndEncoded(_run_ends, values) => {
-            simplify_field(values.clone()).data_type().clone()
+            simplify_field(values.clone())?.data_type().clone()
         }
         DataType::ListView(field) | DataType::List(field) => {
-            DataType::List(simplify_field(field.clone()))
+            DataType::List(simplify_field(field.clone())?)
         }
         DataType::LargeListView(field) | DataType::LargeList(field) => {
-            DataType::LargeList(simplify_field(field.clone()))
+            DataType::LargeList(simplify_field(field.clone())?)
         }
         DataType::FixedSizeList(field, list_size) => {
-            DataType::FixedSizeList(simplify_field(field.clone()), *list_size)
+            DataType::FixedSizeList(simplify_field(field.clone())?, *list_size)
         }
-        DataType::Struct(fields) => {
-            DataType::Struct(fields.into_iter().cloned().map(simplify_field).collect())
-        }
+        DataType::Struct(fields) => DataType::Struct(
+            fields
+                .into_iter()
+                .cloned()
+                .map(simplify_field)
+                .collect::<Result<_>>()?,
+        ),
         DataType::Union(union_fields, union_mode) => {
             let new_fields = union_fields
                 .iter()
                 .map(|(_, field)| simplify_field(field.clone()))
-                .collect::<Vec<_>>();
+                .collect::<Result<Vec<_>>>()?;
             let new_ids = union_fields.iter().map(|(idx, _)| idx).collect::<Vec<_>>();
-            let new_union_fields = UnionFields::new(new_ids, new_fields);
+            let new_union_fields = UnionFields::try_new(new_ids, new_fields)?;
             DataType::Union(new_union_fields, *union_mode)
         }
         DataType::Map(field, is_ordered) => {
-            DataType::Map(simplify_field(field.clone()), *is_ordered)
+            DataType::Map(simplify_field(field.clone())?, *is_ordered)
         }
         _ => field.data_type().clone(),
     };
@@ -125,12 +129,12 @@ fn simplify_field(field: FieldRef) -> FieldRef {
         field.is_nullable()
     };
 
-    field
+    Ok(field
         .as_ref()
         .clone()
         .with_data_type(new_type)
         .with_nullable(new_nullable)
-        .into()
+        .into())
 }
 
 fn simplify_array(array: &ArrayRef, target: &FieldRef) -> Result<ArrayRef> {

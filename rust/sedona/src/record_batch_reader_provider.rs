@@ -17,7 +17,7 @@
 
 use std::{any::Any, collections::HashMap, fmt::Debug, sync::Arc};
 
-use arrow_array::RecordBatchReader;
+use arrow_array::{RecordBatch, RecordBatchReader};
 use arrow_schema::SchemaRef;
 use async_trait::async_trait;
 use datafusion::execution::context::TaskContext;
@@ -176,7 +176,10 @@ impl RecordBatchReaderExec {
         limit: Option<usize>,
         projection: Option<Vec<usize>>,
     ) -> Result<Self> {
-        let full_schema = reader.schema();
+        // Strip metadata from the schema to ensure consistency with batch schemas.
+        // While metadata is supported in theory, it causes schema equivalence issues
+        // when iterating batches: https://github.com/apache/sedona-db/issues/477.
+        let full_schema = schema_ref_strip_metadata(reader.schema());
         let schema: SchemaRef = if let Some(indices) = projection.as_ref() {
             SchemaRef::new(
                 full_schema
@@ -184,7 +187,7 @@ impl RecordBatchReaderExec {
                     .map_err(DataFusionError::from)?,
             )
         } else {
-            full_schema.clone()
+            full_schema
         };
         let properties = PlanProperties::new(
             EquivalenceProperties::new(schema.clone()),
@@ -269,17 +272,25 @@ impl ExecutionPlan for RecordBatchReaderExec {
             return sedona_internal_err!("Can't scan RecordBatchReader provider more than once");
         };
 
+        // Normalize each batch to use the stripped schema to ensure consistency.
+        let output_schema = self.schema.clone();
+        let normalize_batch = move |batch: RecordBatch| -> Result<RecordBatch> {
+            RecordBatch::try_new(output_schema.clone(), batch.columns().to_vec())
+                .map_err(DataFusionError::from)
+        };
+
         match self.limit {
             Some(limit) => {
                 // Create a row-limited iterator that properly handles row counting
                 let projection = self.projection.clone();
                 let iter = RowLimitedIterator::new(reader, limit).map(move |res| match res {
                     Ok(batch) => {
-                        if let Some(indices) = projection.as_ref() {
-                            batch.project(indices).map_err(|e| e.into())
+                        let batch = if let Some(indices) = projection.as_ref() {
+                            batch.project(indices).map_err(DataFusionError::from)?
                         } else {
-                            Ok(batch)
-                        }
+                            batch
+                        };
+                        normalize_batch(batch)
                     }
                     Err(e) => Err(e),
                 });
@@ -293,11 +304,12 @@ impl ExecutionPlan for RecordBatchReaderExec {
                 let projection = self.projection.clone();
                 let iter = reader.map(move |item| match item {
                     Ok(batch) => {
-                        if let Some(indices) = projection.as_ref() {
-                            batch.project(indices).map_err(|e| e.into())
+                        let batch = if let Some(indices) = projection.as_ref() {
+                            batch.project(indices).map_err(DataFusionError::from)?
                         } else {
-                            Ok(batch)
-                        }
+                            batch
+                        };
+                        normalize_batch(batch)
                     }
                     Err(e) => Err(e.into()),
                 });

@@ -21,7 +21,7 @@ use std::{
     sync::Arc,
 };
 
-use arrow_schema::{Schema, SchemaRef};
+use arrow_schema::{FieldRef, Schema, SchemaRef};
 use async_trait::async_trait;
 use datafusion::{
     config::{ConfigField, ConfigOptions},
@@ -38,10 +38,13 @@ use datafusion::{
     },
 };
 use datafusion_catalog::{memory::DataSourceExec, Session};
+use datafusion_common::tree_node::{Transformed, TreeNode, TreeNodeRecursion};
 use datafusion_common::{plan_err, GetExt, Result, Statistics};
 use datafusion_datasource_parquet::metadata::DFParquetMetadata;
 use datafusion_execution::cache::cache_manager::FileMetadataCache;
-use datafusion_physical_expr::{LexRequirement, PhysicalExpr};
+use datafusion_physical_expr::{
+    expressions::Column, projection::ProjectionExprs, LexRequirement, PhysicalExpr,
+};
 use datafusion_physical_plan::{
     filter_pushdown::FilterPushdownPropagation, metrics::ExecutionPlanMetricsSet, ExecutionPlan,
 };
@@ -50,6 +53,7 @@ use object_store::{ObjectMeta, ObjectStore};
 
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 
+use sedona_expr::metadata_preserving_column::MetadataPreservingColumn;
 use sedona_schema::extension_type::ExtensionType;
 
 use crate::{
@@ -59,7 +63,6 @@ use crate::{
     writer::create_geoparquet_writer_physical_plan,
 };
 use datafusion::datasource::physical_plan::ParquetSource;
-use datafusion::datasource::schema_adapter::SchemaAdapterFactory;
 
 /// GeoParquet FormatFactory
 ///
@@ -364,10 +367,13 @@ impl FileFormat for GeoParquetFormat {
         )
     }
 
-    fn file_source(&self) -> Arc<dyn FileSource> {
-        let mut source =
-            GeoParquetFileSource::try_from_file_source(self.inner().file_source(), None, None)
-                .unwrap();
+    fn file_source(&self, table_schema: TableSchema) -> Arc<dyn FileSource> {
+        let mut source = GeoParquetFileSource::try_from_file_source(
+            self.inner().file_source(table_schema),
+            None,
+            None,
+        )
+        .unwrap();
         source.options = self.options.clone();
         Arc::new(source)
     }
@@ -392,9 +398,10 @@ pub struct GeoParquetFileSource {
 
 impl GeoParquetFileSource {
     /// Create a new file source based on [TableParquetOptions]
-    pub fn new(options: TableGeoParquetOptions) -> Self {
+    pub fn new(table_schema: TableSchema, options: TableGeoParquetOptions) -> Self {
         Self {
-            inner: ParquetSource::new(options.inner.clone()),
+            inner: ParquetSource::new(table_schema)
+                .with_table_parquet_options(options.inner.clone()),
             metadata_size_hint: None,
             predicate: None,
             options,
@@ -474,32 +481,6 @@ impl GeoParquetFileSource {
         }
     }
 
-    /// Apply a [SchemaAdapterFactory] to the inner [ParquetSource]
-    pub fn with_schema_adapter_factory(
-        &self,
-        schema_adapter_factory: Arc<dyn SchemaAdapterFactory>,
-    ) -> Self {
-        let inner = self
-            .inner
-            .clone()
-            .with_schema_adapter_factory(schema_adapter_factory)
-            .expect("with_schema_adapter_factory failed");
-
-        let parquet_source = inner
-            .as_any()
-            .downcast_ref::<ParquetSource>()
-            .expect("GeoParquetFileSource constructed with non ParquetSource inner")
-            .clone();
-
-        Self {
-            inner: parquet_source,
-            metadata_size_hint: self.metadata_size_hint,
-            predicate: self.predicate.clone(),
-            options: self.options.clone(),
-            metadata_cache: self.metadata_cache.clone(),
-        }
-    }
-
     /// Apply a metadata size hint to the inner [ParquetSource]
     pub fn with_metadata_size_hint(&self, hint: usize) -> Self {
         Self {
@@ -518,16 +499,16 @@ impl FileSource for GeoParquetFileSource {
         object_store: Arc<dyn ObjectStore>,
         base_config: &FileScanConfig,
         partition: usize,
-    ) -> Arc<dyn FileOpener> {
+    ) -> Result<Arc<dyn FileOpener>> {
         let inner_opener =
             self.inner
-                .create_file_opener(object_store.clone(), base_config, partition);
+                .create_file_opener(object_store.clone(), base_config, partition)?;
 
         if !storage_schema_contains_geo(base_config.file_schema()) {
-            return inner_opener;
+            return Ok(inner_opener);
         }
 
-        Arc::new(GeoParquetFileOpener {
+        Ok(Arc::new(GeoParquetFileOpener {
             inner: inner_opener,
             object_store,
             metadata_size_hint: self.metadata_size_hint,
@@ -539,7 +520,7 @@ impl FileSource for GeoParquetFileSource {
             metrics: GeoParquetFileOpenerMetrics::new(self.inner.metrics()),
             options: self.options.clone(),
             metadata_cache: self.metadata_cache.clone(),
-        })
+        }))
     }
 
     fn try_pushdown_filters(
@@ -579,37 +560,45 @@ impl FileSource for GeoParquetFileSource {
         Arc::new(source)
     }
 
-    fn with_schema(&self, schema: TableSchema) -> Arc<dyn FileSource> {
-        let mut source = Self::from_file_source(
-            self.inner.with_schema(schema),
-            self.metadata_size_hint,
-            self.predicate.clone(),
-        );
-        source.options = self.options.clone();
-        source.metadata_cache = self.metadata_cache.clone();
-        Arc::new(source)
+    fn try_pushdown_projection(
+        &self,
+        projection: &ProjectionExprs,
+    ) -> Result<Option<Arc<dyn FileSource>>> {
+        // DataFusion 52 has an issue where field metadata (like ARROW:extension:name)
+        // is stripped when evaluating embedded projections in ParquetOpener. This is
+        // because the batch schema comes from the parquet reader (which doesn't have
+        // extension metadata), and Column::return_field() looks up fields from that schema.
+        // This isn't a bug in DataFusion because we're the ones that advertised the table
+        // schema as having metadata'd expressions in the first place.
+        //
+        // We fix this by wrapping Column expressions with MetadataPreservingColumn,
+        // which stores the correct field from the file schema and returns it from
+        // return_field() regardless of the input schema.
+        let transformed_projection = wrap_columns_with_metadata_preserving(
+            projection.clone(),
+            self.inner.table_schema().table_schema(),
+        )?;
+
+        let inner_result = self
+            .inner
+            .try_pushdown_projection(&transformed_projection)?;
+        match inner_result {
+            Some(updated_inner) => {
+                let mut updated_source = Self::try_from_file_source(
+                    updated_inner,
+                    self.metadata_size_hint,
+                    self.predicate.clone(),
+                )?;
+                updated_source.options = self.options.clone();
+                updated_source.metadata_cache = self.metadata_cache.clone();
+                Ok(Some(Arc::new(updated_source)))
+            }
+            None => Ok(None),
+        }
     }
 
-    fn with_projection(&self, config: &FileScanConfig) -> Arc<dyn FileSource> {
-        let mut source = Self::from_file_source(
-            self.inner.with_projection(config),
-            self.metadata_size_hint,
-            self.predicate.clone(),
-        );
-        source.options = self.options.clone();
-        source.metadata_cache = self.metadata_cache.clone();
-        Arc::new(source)
-    }
-
-    fn with_statistics(&self, statistics: Statistics) -> Arc<dyn FileSource> {
-        let mut source = Self::from_file_source(
-            self.inner.with_statistics(statistics),
-            self.metadata_size_hint,
-            self.predicate.clone(),
-        );
-        source.options = self.options.clone();
-        source.metadata_cache = self.metadata_cache.clone();
-        Arc::new(source)
+    fn projection(&self) -> Option<&ProjectionExprs> {
+        self.inner.projection()
     }
 
     fn metrics(&self) -> &ExecutionPlanMetricsSet {
@@ -619,8 +608,8 @@ impl FileSource for GeoParquetFileSource {
         self.inner.metrics()
     }
 
-    fn statistics(&self) -> Result<Statistics> {
-        self.inner.statistics()
+    fn table_schema(&self) -> &TableSchema {
+        self.inner.table_schema()
     }
 
     fn file_type(&self) -> &str {
@@ -628,16 +617,54 @@ impl FileSource for GeoParquetFileSource {
     }
 }
 
+/// Wrap Column expressions in a projection with MetadataPreservingColumn.
+///
+/// This ensures that field metadata (like GeoArrow extension types) is preserved
+/// when the projection is evaluated, even when the input schema lacks metadata.
+fn wrap_columns_with_metadata_preserving(
+    projection: ProjectionExprs,
+    table_schema: &Schema,
+) -> Result<ProjectionExprs> {
+    projection.try_map_exprs(|expr| wrap_expr_columns(expr, table_schema))
+}
+
+/// Recursively wrap all Column expressions in an expression tree with MetadataPreservingColumn.
+/// Only wraps columns that have Arrow extension metadata that needs preserving because that is
+/// the only metadata we added that the Parquet read may not be aware of.
+fn wrap_expr_columns(
+    expr: Arc<dyn PhysicalExpr>,
+    file_schema: &Schema,
+) -> Result<Arc<dyn PhysicalExpr>> {
+    expr.transform_down(|node| {
+        if let Some(column) = node.as_any().downcast_ref::<Column>() {
+            let index = column.index();
+            let field = file_schema.field(index);
+            // Only wrap columns that have extension metadata to preserve
+            if field.metadata().contains_key("ARROW:extension:name") {
+                let field: FieldRef = Arc::new(field.clone());
+                let wrapped = Arc::new(MetadataPreservingColumn::new(column.clone(), field));
+                // Use Jump to skip visiting children - the wrapped Column is now a child
+                // of MetadataPreservingColumn and we don't want to wrap it again
+                return Ok(Transformed::new(
+                    wrapped as Arc<dyn PhysicalExpr>,
+                    true,
+                    TreeNodeRecursion::Jump,
+                ));
+            }
+        }
+        Ok(Transformed::no(node))
+    })
+    .map(|t| t.data)
+}
+
 #[cfg(test)]
 mod test {
-    use std::fmt::Debug;
     use std::ops::Deref;
 
     use arrow_array::RecordBatch;
-    use arrow_schema::DataType;
-    use datafusion::config::TableParquetOptions;
+    use arrow_schema::{DataType, Field, Schema};
     use datafusion::datasource::physical_plan::ParquetSource;
-    use datafusion::datasource::schema_adapter::{SchemaAdapter, SchemaAdapterFactory};
+    use datafusion::datasource::table_schema::TableSchema;
     use datafusion::{
         execution::SessionStateBuilder,
         prelude::{col, ParquetReadOptions, SessionContext},
@@ -936,8 +963,16 @@ mod test {
 
     #[tokio::test]
     async fn test_with_predicate() {
+        // Create a test schema
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "test",
+            DataType::Int32,
+            false,
+        )]));
+        let table_schema = TableSchema::new(schema, vec![]);
+
         // Create a parquet source with the correct constructor signature
-        let parquet_source = ParquetSource::new(TableParquetOptions::default());
+        let parquet_source = ParquetSource::new(table_schema);
 
         // Create a simple predicate (column > 0)
         let column = Arc::new(Column::new("test", 0));
@@ -951,41 +986,5 @@ mod test {
                 .unwrap();
         let geo_source_with_predicate = geo_source.with_predicate(predicate);
         assert!(geo_source_with_predicate.inner.filter().is_some());
-    }
-
-    #[tokio::test]
-    async fn test_with_schema_adapter_factory() {
-        // Create a parquet source with the correct constructor signature
-        let parquet_source = ParquetSource::new(TableParquetOptions::default());
-
-        // Create a simple schema adapter factory
-        #[derive(Debug)]
-        struct MockSchemaAdapterFactory;
-
-        impl SchemaAdapterFactory for MockSchemaAdapterFactory {
-            fn create(
-                &self,
-                _projected_table_schema: SchemaRef,
-                _table_schema: SchemaRef,
-            ) -> Box<dyn SchemaAdapter> {
-                // Since we never use the result, we can return unimplemented
-                // We only want to test that the method chains properly
-                unimplemented!()
-            }
-        }
-
-        let schema_adapter_factory: Arc<dyn SchemaAdapterFactory> =
-            Arc::new(MockSchemaAdapterFactory);
-
-        // Create GeoParquetFileSource and apply schema adapter factory
-        let geo_source =
-            GeoParquetFileSource::try_from_file_source(Arc::new(parquet_source), None, None)
-                .unwrap();
-        let geo_source_with_adapter =
-            geo_source.with_schema_adapter_factory(schema_adapter_factory);
-        assert!(geo_source_with_adapter
-            .inner
-            .schema_adapter_factory()
-            .is_some());
     }
 }

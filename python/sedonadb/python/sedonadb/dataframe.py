@@ -345,7 +345,7 @@ class DataFrame:
         partition_by: Optional[Union[str, Iterable[str]]] = None,
         sort_by: Optional[Union[str, Iterable[str]]] = None,
         single_file_output: Optional[bool] = None,
-        geoparquet_version: Literal["1.0", "1.1", None] = None,
+        geoparquet_version: Literal["1.0", "1.1", "2.0", "none", None] = None,
         overwrite_bbox_columns: Optional[bool] = None,
         max_row_group_size: Optional[int] = None,
         compression: Optional[str] = None,
@@ -383,6 +383,10 @@ class DataFrame:
                 The extra columns will appear just before their geometry column and
                 will be named "[geom_col_name]_bbox" for all geometry columns except
                 "geometry", whose bounding box column name is just "bbox".
+
+                Use GeoParquet 2.0 to write compatible GeoParquet metadata with
+                Parquet-native Geometry and/or Geography data types; use None to omit
+                GeoParquet metadata completely.
             overwrite_bbox_columns: Use `True` to overwrite any bounding box columns
                 that already exist in the input. This is useful in a read -> modify
                 -> write scenario to ensure these columns are up-to-date. If `False`
