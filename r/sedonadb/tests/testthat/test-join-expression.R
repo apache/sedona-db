@@ -174,6 +174,16 @@ test_that("ambiguous column references produce helpful errors", {
   )
 })
 
+test_that(".tables pronoun works in join condition evaluation", {
+  x_schema <- nanoarrow::na_struct(list(id = nanoarrow::na_int32()))
+  y_schema <- nanoarrow::na_struct(list(id = nanoarrow::na_int32()))
+
+  ctx <- sd_join_expr_ctx(x_schema, y_schema)
+  expect_snapshot(
+    sd_eval_join_conditions(sd_join_by(.tables$x$id == .tables$y$id), ctx)
+  )
+})
+
 test_that("missing column references produce helpful errors", {
   x_schema <- nanoarrow::na_struct(list(id = nanoarrow::na_int32()))
   y_schema <- nanoarrow::na_struct(list(id = nanoarrow::na_int32()))

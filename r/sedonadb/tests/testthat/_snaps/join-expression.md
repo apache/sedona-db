@@ -73,6 +73,16 @@
       <SedonaDBExpr>
       x.date >= y.start_date
 
+# .tables pronoun works in join condition evaluation
+
+    Code
+      sd_eval_join_conditions(sd_join_by(.tables$x$id == .tables$y$id), ctx)
+    Output
+      [[1]]
+      <SedonaDBExpr>
+      x.id = y.id
+      
+
 # sd_build_join_conditions() creates natural join when by is NULL
 
     Code

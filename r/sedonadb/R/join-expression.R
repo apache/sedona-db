@@ -60,7 +60,8 @@ sd_join_by <- function(...) {
 #' @rdname sd_join_by
 #' @export
 sd_join_intersects <- function() {
-  sd_join_by(.fns$st_intersects(x$geom(), y$geom()))
+  # TODO: .fns$st_intersects() should work here but doesn't
+  sd_join_by(st_intersects(.tables$x$geom(), .tables$y$geom()))
 }
 
 #' @export
@@ -71,6 +72,17 @@ print.sedonadb_join_by <- function(x, ...) {
   }
   invisible(x)
 }
+
+#' SedonaDB Table Qualifiers
+#'
+#' This object is an escape hatch for referring to the right or left side
+#' of a join when constructing [sd_join_by()] or [sd_join_select()] expressions.
+#'
+#' @export .tables
+.tables <- structure(
+  list(x = list(geom = function() NULL), y = list(geom = function() NULL)),
+  class = "sedonadb_tables"
+)
 
 #' Expression evaluation context for joins
 #'
@@ -121,18 +133,23 @@ sd_join_expr_ctx <- function(
   # Also include unqualified column references for unambiguous columns
   ambiguous <- intersect(x_names, y_names)
 
-  # TODO: install data pronoun or similar for accessing the table references
-  # directly in programmatic usage (e.g., x$geom(), y$geom())
+  # Create data mask with unambiguous columns
   data <- c(x_cols[setdiff(x_names, ambiguous)], y_cols[setdiff(y_names, ambiguous)])
+  data_mask <- rlang::as_data_mask(data)
+
+  # Install .tables pronoun for accessing table references programmatically
+  # (e.g., .tables$x$geom, .tables$y$geom)
+  table_refs <- list(x = x_ref, y = y_ref)
+  rlang::env_bind(data_mask, .tables = rlang::as_data_pronoun(table_refs))
 
   structure(
     list(
       factory = factory,
       x_schema = x_schema,
       y_schema = y_schema,
-      table_refs = list(x = x_ref, y = y_ref),
+      table_refs = table_refs,
       ambiguous_columns = ambiguous,
-      data = rlang::as_data_mask(data),
+      data = data_mask,
       env = env,
       fns = default_fns
     ),
@@ -141,6 +158,14 @@ sd_join_expr_ctx <- function(
 }
 
 get_from_table_ref <- function(x, name) {
+  if (identical(name, "geom")) {
+    # TODO: fix heuristic using geometry_column_indices and
+    # error with the names of the actual geometry columns if
+    # there is more than one
+    force(x)
+    return(function() get_from_table_ref(x, "wkb_geometry"))
+  }
+
   if (!(name %in% names(x))) {
     qualifier <- attr(x, "qualifier")
     stop(
@@ -151,9 +176,9 @@ get_from_table_ref <- function(x, name) {
   x[[name]]
 }
 
-get_geom_from_table_ref <- function(x) {
-  # TODO: use the actual heuristic in rust
-  get_from_table_ref(x, "geometry")
+#' @export
+`$.sedonadb_table_ref` <- function(x, name) {
+  get_from_table_ref(x, name)
 }
 
 #' Evaluate join conditions
@@ -223,7 +248,6 @@ sd_eval_join_expr_inner <- function(expr, join_expr_ctx, env) {
     }
 
     # Special handling for x$geom() and y$geom()
-
 
     # Extract function name
     call_name <- rlang::call_name(expr)
