@@ -18,6 +18,7 @@
 //! Utility functions for loading raster data via GDAL.
 
 use arrow_array::StructArray;
+use arrow_buffer::Buffer;
 use datafusion_common::error::Result;
 use datafusion_common::exec_datafusion_err;
 use sedona_gdal::dataset::Dataset;
@@ -83,8 +84,18 @@ pub fn append_as_indb_raster(dataset: &Dataset, builder: &mut RasterBuilder) -> 
             .start_band(band_metadata)
             .map_err(|e| exec_datafusion_err!("Failed to start band: {}", e))?;
 
-        let band_data = read_band_data(dataset, band_idx, width, height, band_data_type)?;
-        builder.band_data_writer().append_value(&band_data);
+        let band_data = band
+            .read_as_bytes((0, 0), (width, height), (width, height), None)
+            .map_err(|e| exec_datafusion_err!("Failed to read band {} data: {}", band_idx, e))?;
+        let band_data_len = u32::try_from(band_data.len())
+            .map_err(|_| exec_datafusion_err!("Band {} data too large for Arrow view", band_idx))?;
+        let block = builder
+            .band_data_writer()
+            .append_block(Buffer::from_vec(band_data));
+        builder
+            .band_data_writer()
+            .try_append_view(block, 0, band_data_len)
+            .map_err(|e| exec_datafusion_err!("Failed to append band {} data: {}", band_idx, e))?;
 
         builder
             .finish_band()
@@ -106,46 +117,6 @@ pub fn dataset_to_indb_raster(dataset: &Dataset) -> Result<StructArray> {
     builder
         .finish()
         .map_err(|e| exec_datafusion_err!("Failed to build raster: {}", e))
-}
-
-/// Read band data as bytes from a GDAL dataset.
-fn read_band_data(
-    dataset: &Dataset,
-    band_idx: usize,
-    width: usize,
-    height: usize,
-    band_type: BandDataType,
-) -> Result<Vec<u8>> {
-    let band = dataset
-        .rasterband(band_idx)
-        .map_err(|e| exec_datafusion_err!("Failed to get band {}: {}", band_idx, e))?;
-
-    // Read band data based on type
-    macro_rules! read_as {
-        ($T:ty) => {{
-            let buffer = band
-                .read_as::<$T>((0, 0), (width, height), (width, height), None)
-                .map_err(|e| {
-                    exec_datafusion_err!("Failed to read band {} data: {}", band_idx, e)
-                })?;
-            buffer.data().iter().flat_map(|v| v.to_le_bytes()).collect()
-        }};
-    }
-
-    let data: Vec<u8> = match band_type {
-        BandDataType::UInt8 => read_as!(u8),
-        BandDataType::Int8 => read_as!(i8),
-        BandDataType::UInt16 => read_as!(u16),
-        BandDataType::Int16 => read_as!(i16),
-        BandDataType::UInt32 => read_as!(u32),
-        BandDataType::Int32 => read_as!(i32),
-        BandDataType::UInt64 => read_as!(u64),
-        BandDataType::Int64 => read_as!(i64),
-        BandDataType::Float32 => read_as!(f32),
-        BandDataType::Float64 => read_as!(f64),
-    };
-
-    Ok(data)
 }
 
 #[cfg(test)]
@@ -203,6 +174,19 @@ mod tests {
             .unwrap();
         let band = dataset.rasterband(1).unwrap();
         band.set_no_data_value_i64(Some(nodata)).unwrap();
+        let mut buffer = Buffer::new((2, 2), data);
+        band.write((0, 0), (2, 2), &mut buffer).unwrap();
+    }
+
+    fn write_uint16_tiff(gdal: &Gdal, path: &str, nodata: u16, data: Vec<u16>) {
+        let driver = gdal.get_driver_by_name("GTiff").unwrap();
+        let dataset = driver.create_with_band_type::<u16>(path, 2, 2, 1).unwrap();
+        dataset
+            .set_geo_transform(&[0.0, 0.5, 0.0, 1.0, 0.0, -0.5])
+            .unwrap();
+        dataset.set_projection("EPSG:4326").unwrap();
+        let band = dataset.rasterband(1).unwrap();
+        band.set_no_data_value(Some(nodata as f64)).unwrap();
         let mut buffer = Buffer::new((2, 2), data);
         band.write((0, 0), (2, 2), &mut buffer).unwrap();
     }
@@ -355,6 +339,38 @@ mod tests {
             .map(|chunk| i64::from_le_bytes(chunk.try_into().unwrap()))
             .collect();
         assert_eq!(pixels, vec![-1, -2, -3, -4]);
+    }
+
+    #[test]
+    fn dataset_to_indb_raster_preserves_uint16_nodata_and_data() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("uint16.tif");
+        let path_str = path.to_string_lossy().to_string();
+        let nodata = 513u16;
+
+        with_gdal(|gdal| {
+            write_uint16_tiff(gdal, &path_str, nodata, vec![1, 256, 511, 1024]);
+            Ok::<_, datafusion_common::DataFusionError>(())
+        })
+        .unwrap();
+
+        let raster_array = with_gdal(|gdal| load_as_indb_raster(gdal, &path_str)).unwrap();
+        let raster_struct = RasterStructArray::new(&raster_array);
+        let raster = raster_struct.get(0).unwrap();
+        let band = raster.bands().band(1).unwrap();
+
+        assert_eq!(band.metadata().data_type().unwrap(), BandDataType::UInt16);
+        assert_eq!(
+            band.metadata().nodata_value().unwrap(),
+            &nodata.to_le_bytes()
+        );
+
+        let pixels: Vec<u16> = band
+            .data()
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes(chunk.try_into().unwrap()))
+            .collect();
+        assert_eq!(pixels, vec![1, 256, 511, 1024]);
     }
 
     #[test]

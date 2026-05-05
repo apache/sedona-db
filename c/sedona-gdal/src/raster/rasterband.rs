@@ -34,6 +34,13 @@ pub struct RasterBand<'a> {
     _dataset: PhantomData<&'a Dataset>,
 }
 
+struct RasterIoRequest {
+    window: (isize, isize),
+    window_size: (usize, usize),
+    size: (usize, usize),
+    e_resample_alg: Option<ResampleAlg>,
+}
+
 impl<'a> RasterBand<'a> {
     pub(crate) fn new(
         api: &'static GdalApi,
@@ -66,36 +73,70 @@ impl<'a> RasterBand<'a> {
         // for which zeroed memory is a valid bit pattern.
         let mut data: Vec<T> = vec![unsafe { std::mem::zeroed() }; len];
 
-        let resample_alg = e_resample_alg.unwrap_or(ResampleAlg::NearestNeighbour);
-        let mut extra_arg = GDALRasterIOExtraArg {
-            eResampleAlg: resample_alg.to_gdal(),
-            ..GDALRasterIOExtraArg::default()
-        };
-
-        let rv = unsafe {
-            call_gdal_api!(
-                self.api,
-                GDALRasterIOEx,
-                self.c_rasterband,
-                GF_Read,
-                i32::try_from(window.0)?,
-                i32::try_from(window.1)?,
-                i32::try_from(window_size.0)?,
-                i32::try_from(window_size.1)?,
-                data.as_mut_ptr() as *mut std::ffi::c_void,
-                i32::try_from(size.0)?,
-                i32::try_from(size.1)?,
-                T::gdal_ordinal(),
-                0, // nPixelSpace (auto)
-                0, // nLineSpace (auto)
-                &mut extra_arg
-            )
-        };
-        if rv != CE_None {
-            return Err(self.api.last_cpl_err(rv as u32));
-        }
+        self.read_impl(
+            RasterIoRequest {
+                window,
+                window_size,
+                size,
+                e_resample_alg,
+            },
+            data.as_mut_ptr() as *mut std::ffi::c_void,
+            T::gdal_ordinal(),
+        )?;
 
         Ok(Buffer::new(size, data))
+    }
+
+    /// Read a window of this band into a byte buffer using the band's native GDAL data type.
+    ///
+    /// The returned bytes use GDAL's in-memory representation for the current platform.
+    /// If `e_resample_alg` is `None`, use nearest-neighbour resampling.
+    pub fn read_as_bytes(
+        &self,
+        window: (isize, isize),
+        window_size: (usize, usize),
+        size: (usize, usize),
+        e_resample_alg: Option<ResampleAlg>,
+    ) -> Result<Vec<u8>> {
+        let len = self.expected_byte_len(size)?;
+        let mut data = vec![0u8; len];
+        self.read_into_bytes(window, window_size, size, &mut data, e_resample_alg)?;
+        Ok(data)
+    }
+
+    /// Read a window of this band into a caller-provided byte buffer using the band's native
+    /// GDAL data type.
+    ///
+    /// The buffer length must equal `size.0 * size.1 * band_type().byte_size()`.
+    /// If `e_resample_alg` is `None`, use nearest-neighbour resampling.
+    pub fn read_into_bytes(
+        &self,
+        window: (isize, isize),
+        window_size: (usize, usize),
+        size: (usize, usize),
+        data: &mut [u8],
+        e_resample_alg: Option<ResampleAlg>,
+    ) -> Result<()> {
+        let expected_len = self.expected_byte_len(size)?;
+        if data.len() != expected_len {
+            return Err(GdalError::BadArgument(format!(
+                "byte buffer length {} does not match expected size {} for raster window {:?}",
+                data.len(),
+                expected_len,
+                size
+            )));
+        }
+
+        self.read_impl(
+            RasterIoRequest {
+                window,
+                window_size,
+                size,
+                e_resample_alg,
+            },
+            data.as_mut_ptr() as *mut std::ffi::c_void,
+            self.c_band_type(),
+        )
     }
 
     /// Write a buffer to this raster band.
@@ -286,6 +327,57 @@ impl<'a> RasterBand<'a> {
     pub fn api(&self) -> &'static GdalApi {
         self.api
     }
+
+    fn read_impl(
+        &self,
+        request: RasterIoRequest,
+        data_ptr: *mut std::ffi::c_void,
+        buf_type: GDALDataType,
+    ) -> Result<()> {
+        let resample_alg = request
+            .e_resample_alg
+            .unwrap_or(ResampleAlg::NearestNeighbour);
+        let mut extra_arg = GDALRasterIOExtraArg {
+            eResampleAlg: resample_alg.to_gdal(),
+            ..GDALRasterIOExtraArg::default()
+        };
+
+        let rv = unsafe {
+            call_gdal_api!(
+                self.api,
+                GDALRasterIOEx,
+                self.c_rasterband,
+                GF_Read,
+                i32::try_from(request.window.0)?,
+                i32::try_from(request.window.1)?,
+                i32::try_from(request.window_size.0)?,
+                i32::try_from(request.window_size.1)?,
+                data_ptr,
+                i32::try_from(request.size.0)?,
+                i32::try_from(request.size.1)?,
+                buf_type,
+                0,
+                0,
+                &mut extra_arg
+            )
+        };
+        if rv != CE_None {
+            return Err(self.api.last_cpl_err(rv as u32));
+        }
+
+        Ok(())
+    }
+
+    fn expected_byte_len(&self, size: (usize, usize)) -> Result<usize> {
+        let bytes_per_value = self.band_type().byte_size();
+        if bytes_per_value == 0 {
+            return Err(GdalError::BadArgument(
+                "Cannot read bytes for band with unknown GDAL data type".to_string(),
+            ));
+        }
+
+        Ok(size.0 * size.1 * bytes_per_value)
+    }
 }
 
 /// Return the actual block size for a block index.
@@ -323,7 +415,7 @@ mod tests {
     use crate::driver::DriverManager;
     use crate::gdal_dyn_bindgen::*;
     use crate::global::with_global_gdal_api;
-    use crate::raster::types::ResampleAlg;
+    use crate::raster::types::{Buffer, ResampleAlg};
 
     fn fixture(name: &str) -> String {
         sedona_testing::data::test_raster(name).unwrap()
@@ -370,6 +462,102 @@ mod tests {
             // Average resampling; exact values are GDAL-version-dependent, so just
             // verify that the downsampled result has the expected shape and length.
             assert_eq!(rv.data().len(), 4);
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_read_raster_as_bytes_u8() {
+        with_global_gdal_api(|api| {
+            let driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
+            let dataset = driver.create_with_band_type::<u8>("", 2, 3, 1).unwrap();
+            let rasterband = dataset.rasterband(1).unwrap();
+            let mut buffer = Buffer::new((2, 3), vec![7u8, 7, 7, 10, 8, 12]);
+            rasterband.write((0, 0), (2, 3), &mut buffer).unwrap();
+
+            let rv = rasterband
+                .read_as_bytes((0, 0), (2, 3), (2, 3), None)
+                .unwrap();
+            assert_eq!(rv, vec![7u8, 7, 7, 10, 8, 12]);
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_read_raster_as_bytes_u16() {
+        with_global_gdal_api(|api| {
+            let driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
+            let dataset = driver.create_with_band_type::<u16>("", 2, 2, 1).unwrap();
+            let rasterband = dataset.rasterband(1).unwrap();
+            let mut buffer = Buffer::new((2, 2), vec![1u16, 256, 511, 1024]);
+            rasterband.write((0, 0), (2, 2), &mut buffer).unwrap();
+
+            let rv = rasterband
+                .read_as_bytes((0, 0), (2, 2), (2, 2), None)
+                .unwrap();
+            let expected: Vec<u8> = vec![1u16, 256, 511, 1024]
+                .into_iter()
+                .flat_map(|v| v.to_ne_bytes())
+                .collect();
+            assert_eq!(rv, expected);
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_read_into_bytes_matches_read_as_bytes() {
+        with_global_gdal_api(|api| {
+            let driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
+            let dataset = driver.create_with_band_type::<u16>("", 2, 2, 1).unwrap();
+            let rasterband = dataset.rasterband(1).unwrap();
+            let mut buffer = Buffer::new((2, 2), vec![5u16, 6, 7, 8]);
+            rasterband.write((0, 0), (2, 2), &mut buffer).unwrap();
+
+            let expected = rasterband
+                .read_as_bytes((0, 0), (2, 2), (2, 2), None)
+                .unwrap();
+            let mut actual = vec![0u8; expected.len()];
+            rasterband
+                .read_into_bytes((0, 0), (2, 2), (2, 2), &mut actual, None)
+                .unwrap();
+
+            assert_eq!(actual, expected);
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_read_into_bytes_with_wrong_len() {
+        with_global_gdal_api(|api| {
+            let driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
+            let dataset = driver.create_with_band_type::<u16>("", 2, 2, 1).unwrap();
+            let rasterband = dataset.rasterband(1).unwrap();
+            let mut data = vec![0u8; 7];
+
+            let err = rasterband
+                .read_into_bytes((0, 0), (2, 2), (2, 2), &mut data, None)
+                .unwrap_err();
+            assert!(matches!(err, crate::errors::GdalError::BadArgument(_)));
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_read_as_bytes_with_average_resample() {
+        with_global_gdal_api(|api| {
+            let driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
+            let dataset = driver.create_with_band_type::<u8>("", 4, 4, 1).unwrap();
+            let rasterband = dataset.rasterband(1).unwrap();
+            let mut buffer = Buffer::new(
+                (4, 4),
+                vec![1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+            );
+            rasterband.write((0, 0), (4, 4), &mut buffer).unwrap();
+
+            let rv = rasterband
+                .read_as_bytes((0, 0), (4, 4), (2, 2), Some(ResampleAlg::Average))
+                .unwrap();
+            assert_eq!(rv.len(), 4);
         })
         .unwrap();
     }
