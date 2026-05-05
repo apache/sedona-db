@@ -297,6 +297,87 @@ pub trait BandRef {
     }
 }
 
+/// Validate a `[ViewEntry]` against a band's `source_shape`.
+///
+/// Returns `Ok(())` if the view is well-formed under the rules:
+/// - `view.len() == source_shape.len()`.
+/// - `source_axis` values across `view` form a permutation of
+///   `0..source_shape.len()` (no axis duplicated, none missing).
+/// - `steps >= 0`.
+/// - When `steps > 0`: `start ∈ [0, source_shape[source_axis])`, and when
+///   `step != 0` the last addressed element
+///   `start + (steps - 1) * step` is also in that range.
+///
+/// This is the same check the builder runs in `start_band_with_view` and
+/// the reader runs when materialising a band — exposed publicly so future
+/// view-producing functions (slice composition, transpose, etc.) can
+/// validate before they touch a builder.
+pub fn validate_view(view: &[ViewEntry], source_shape: &[u64]) -> Result<(), ArrowError> {
+    let ndim = source_shape.len();
+    if view.len() != ndim {
+        return Err(ArrowError::InvalidArgumentError(format!(
+            "view length ({}) must equal source_shape length ({ndim})",
+            view.len()
+        )));
+    }
+    let mut seen = vec![false; ndim];
+    for (k, v) in view.iter().enumerate() {
+        if v.source_axis < 0 || (v.source_axis as usize) >= ndim {
+            return Err(ArrowError::InvalidArgumentError(format!(
+                "view[{k}].source_axis = {} is out of range [0, {ndim})",
+                v.source_axis
+            )));
+        }
+        let sa = v.source_axis as usize;
+        if seen[sa] {
+            return Err(ArrowError::InvalidArgumentError(format!(
+                "view source_axis values must be a permutation of 0..{ndim}; \
+                 axis {sa} appears more than once"
+            )));
+        }
+        seen[sa] = true;
+
+        if v.steps < 0 {
+            return Err(ArrowError::InvalidArgumentError(format!(
+                "view[{k}].steps = {} must be >= 0",
+                v.steps
+            )));
+        }
+        if v.steps > 0 {
+            let s = source_shape[sa] as i64;
+            if v.start < 0 || v.start >= s {
+                return Err(ArrowError::InvalidArgumentError(format!(
+                    "view[{k}].start = {} is out of range [0, {s}) for source axis {sa}",
+                    v.start
+                )));
+            }
+            if v.step != 0 {
+                // Use checked arithmetic so a malicious or corrupted view
+                // can't silently wrap (steps-1)*step or start+… into an
+                // in-range value and bypass the bound check. Any overflow
+                // is reported as a normal validation error.
+                let last = (v.steps - 1)
+                    .checked_mul(v.step)
+                    .and_then(|d| v.start.checked_add(d))
+                    .ok_or_else(|| {
+                        ArrowError::InvalidArgumentError(format!(
+                            "view[{k}] last-element index overflows i64 for \
+                             start={}, step={}, steps={} on source axis {sa}",
+                            v.start, v.step, v.steps
+                        ))
+                    })?;
+                if last < 0 || last >= s {
+                    return Err(ArrowError::InvalidArgumentError(format!(
+                        "view[{k}] addresses element {last} which is out of range \
+                         [0, {s}) for source axis {sa}"
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Convert raw nodata bytes to f64 given a [`BandDataType`].
 ///
 /// The bytes are expected to be in little-endian order and exactly match the
@@ -402,6 +483,141 @@ mod tests {
             step,
             steps,
         }
+    }
+
+    #[test]
+    fn validate_view_accepts_identity() {
+        let v = [ve(0, 0, 1, 4), ve(1, 0, 1, 5)];
+        validate_view(&v, &[4, 5]).unwrap();
+    }
+
+    #[test]
+    fn validate_view_rejects_length_mismatch() {
+        let v = [ve(0, 0, 1, 4)];
+        let err = validate_view(&v, &[4, 5]).unwrap_err();
+        assert!(err.to_string().contains("must equal"), "got {err}");
+    }
+
+    #[test]
+    fn validate_view_rejects_negative_source_axis() {
+        let v = [ve(-1, 0, 1, 4)];
+        let err = validate_view(&v, &[4]).unwrap_err();
+        assert!(err.to_string().contains("source_axis"), "got {err}");
+    }
+
+    #[test]
+    fn validate_view_rejects_oob_source_axis() {
+        let v = [ve(2, 0, 1, 4)];
+        let err = validate_view(&v, &[4]).unwrap_err();
+        assert!(err.to_string().contains("source_axis"), "got {err}");
+    }
+
+    #[test]
+    fn validate_view_rejects_duplicate_source_axis() {
+        let v = [ve(0, 0, 1, 2), ve(0, 0, 1, 2)];
+        let err = validate_view(&v, &[2, 3]).unwrap_err();
+        assert!(err.to_string().contains("permutation"), "got {err}");
+    }
+
+    #[test]
+    fn validate_view_rejects_negative_steps() {
+        let v = [ve(0, 0, 1, -1)];
+        let err = validate_view(&v, &[4]).unwrap_err();
+        assert!(err.to_string().contains("steps"), "got {err}");
+    }
+
+    #[test]
+    fn validate_view_rejects_negative_start() {
+        let v = [ve(0, -1, 1, 1)];
+        let err = validate_view(&v, &[4]).unwrap_err();
+        assert!(err.to_string().contains("start"), "got {err}");
+    }
+
+    #[test]
+    fn validate_view_rejects_start_at_source_size() {
+        // start == S is one past the end. Forbidden even with steps=1.
+        let v = [ve(0, 4, 1, 1)];
+        let err = validate_view(&v, &[4]).unwrap_err();
+        assert!(err.to_string().contains("start"), "got {err}");
+    }
+
+    #[test]
+    fn validate_view_rejects_negative_step_underrun() {
+        // start=0, step=-1, steps=2 addresses element 0 then -1 → underrun.
+        // The most likely real bug in step != 0 arithmetic.
+        let v = [ve(0, 0, -1, 2)];
+        let err = validate_view(&v, &[4]).unwrap_err();
+        assert!(err.to_string().contains("out of range"), "got {err}");
+    }
+
+    #[test]
+    fn validate_view_accepts_negative_step_full_reverse() {
+        // start=3, step=-1, steps=4 addresses 3,2,1,0 — all in range.
+        let v = [ve(0, 3, -1, 4)];
+        validate_view(&v, &[4]).unwrap();
+    }
+
+    #[test]
+    fn validate_view_accepts_steps_zero_with_unconstrained_start() {
+        // Empty axis short-circuits the bound check on start.
+        let v = [ve(0, 999, 1, 0)];
+        validate_view(&v, &[4]).unwrap();
+    }
+
+    #[test]
+    fn validate_view_steps_one_only_checks_start() {
+        // steps=1, step=999 — only `start` matters; the would-be next index
+        // (start + 1*999) is never addressed and must not be checked.
+        let v = [ve(0, 3, 999, 1)];
+        validate_view(&v, &[4]).unwrap();
+    }
+
+    #[test]
+    fn validate_view_step_zero_broadcast_within_bounds() {
+        // step=0 broadcasts. start ∈ [0, S) is the only check.
+        let v_ok = [ve(0, 3, 0, 100)];
+        validate_view(&v_ok, &[4]).unwrap();
+        let v_bad = [ve(0, 4, 0, 1)];
+        let err = validate_view(&v_bad, &[4]).unwrap_err();
+        assert!(err.to_string().contains("start"), "got {err}");
+    }
+
+    #[test]
+    fn validate_view_permutation_with_slice_ok() {
+        // Mix permutation and slicing — both legal as long as source_axis
+        // values are a permutation and bounds hold per axis.
+        let v = [ve(1, 0, 1, 3), ve(0, 1, 1, 1)];
+        validate_view(&v, &[2, 3]).unwrap();
+    }
+
+    #[test]
+    fn validate_view_rejects_i64_overflow_in_last_element() {
+        // start=10, step=i64::MAX, steps=3 wraps `(steps-1)*step` to a
+        // small negative i64; without checked arithmetic the naive sum
+        // becomes 8 — falsely "in range" for a source of size 100. With
+        // checked arithmetic, validate_view must reject it as overflow.
+        // This was a real bug: in release the wrapped value passed all
+        // bounds; in debug, the multiply would panic.
+        let v = [ve(0, 10, i64::MAX, 3)];
+        let err = validate_view(&v, &[100]).unwrap_err();
+        assert!(
+            err.to_string().contains("overflow"),
+            "expected overflow error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_view_rejects_i64_overflow_in_start_plus_offset() {
+        // (steps-1)*step = i64::MAX - 1 fits in i64. Adding a small,
+        // in-range start of 2 then overflows i64::MAX. The start bound
+        // check passes (2 < 100), so this exercises the checked_add arm
+        // specifically, not the start guard or the checked_mul arm.
+        let v = [ve(0, 2, 1, i64::MAX)];
+        let err = validate_view(&v, &[100]).unwrap_err();
+        assert!(
+            err.to_string().contains("overflow"),
+            "expected overflow error, got: {err}"
+        );
     }
 
     /// Minimal `BandRef` stub: only the inputs `is_2d` actually inspects

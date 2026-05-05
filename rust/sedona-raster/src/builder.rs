@@ -26,6 +26,7 @@ use arrow_buffer::{NullBuffer, OffsetBuffer, ScalarBuffer};
 use arrow_schema::ArrowError;
 use std::sync::Arc;
 
+use crate::traits::ViewEntry;
 use sedona_schema::raster::BandDataType;
 use sedona_schema::raster::RasterSchema;
 
@@ -321,6 +322,151 @@ impl RasterBuilder {
         self.current_raster_bands.push((
             dim_names.iter().map(|s| s.to_string()).collect(),
             shape.to_vec(),
+        ));
+
+        Ok(())
+    }
+
+    /// Start a band with an explicit non-identity view over `source_shape`.
+    ///
+    /// Each `ViewEntry` describes one *visible* axis in `dim_names` order:
+    /// `(source_axis, start, step, steps)`. Validates that:
+    /// - `dim_names`, `source_shape`, and `view` have equal length.
+    /// - Across `view`, `source_axis` values form a permutation of
+    ///   `0..ndim` (no axis duplicated, none missing).
+    /// - For each entry with `steps > 0`: `start` and (when `step != 0`)
+    ///   `start + (steps - 1) * step` are in `[0, source_shape[source_axis])`.
+    /// - `steps >= 0`.
+    ///
+    /// On success, the band's `view` field is written verbatim and its
+    /// `source_shape` is written from `source_shape`. The visible shape
+    /// (== `[v.steps for v in view]`) is what `finish_raster` will compare
+    /// against `spatial_shape`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn start_band_with_view(
+        &mut self,
+        name: Option<&str>,
+        dim_names: &[&str],
+        source_shape: &[u64],
+        view: &[ViewEntry],
+        data_type: BandDataType,
+        nodata: Option<&[u8]>,
+        outdb_uri: Option<&str>,
+        outdb_format: Option<&str>,
+    ) -> Result<(), ArrowError> {
+        let ndim = dim_names.len();
+        if ndim == 0 {
+            return Err(ArrowError::InvalidArgumentError(
+                "start_band_with_view: 0-dimensional bands are not supported".into(),
+            ));
+        }
+        if source_shape.len() != ndim || view.len() != ndim {
+            return Err(ArrowError::InvalidArgumentError(format!(
+                "start_band_with_view: dim_names ({}), source_shape ({}), and view ({}) \
+                 must all have the same length",
+                ndim,
+                source_shape.len(),
+                view.len()
+            )));
+        }
+
+        // Permutation check on source_axis values + per-entry bound checks.
+        let mut seen = vec![false; ndim];
+        for (k, v) in view.iter().enumerate() {
+            if v.source_axis < 0 || (v.source_axis as usize) >= ndim {
+                return Err(ArrowError::InvalidArgumentError(format!(
+                    "view[{k}].source_axis = {} is out of range [0, {ndim})",
+                    v.source_axis
+                )));
+            }
+            let sa = v.source_axis as usize;
+            if seen[sa] {
+                return Err(ArrowError::InvalidArgumentError(format!(
+                    "view source_axis values must be a permutation of 0..{ndim}; \
+                     axis {sa} appears more than once"
+                )));
+            }
+            seen[sa] = true;
+
+            if v.steps < 0 {
+                return Err(ArrowError::InvalidArgumentError(format!(
+                    "view[{k}].steps = {} must be >= 0",
+                    v.steps
+                )));
+            }
+            if v.steps > 0 {
+                let s = source_shape[sa] as i64;
+                if v.start < 0 || v.start >= s {
+                    return Err(ArrowError::InvalidArgumentError(format!(
+                        "view[{k}].start = {} is out of range [0, {s}) for source axis {sa}",
+                        v.start
+                    )));
+                }
+                if v.step != 0 {
+                    let last = v.start + (v.steps - 1) * v.step;
+                    if last < 0 || last >= s {
+                        return Err(ArrowError::InvalidArgumentError(format!(
+                            "view[{k}] addresses element {last} which is out of range \
+                             [0, {s}) for source axis {sa}"
+                        )));
+                    }
+                }
+            }
+        }
+
+        // Write fields.
+        match name {
+            Some(n) => self.band_name.append_value(n),
+            None => self.band_name.append_null(),
+        }
+
+        for dn in dim_names {
+            self.band_dim_names_values.append_value(dn);
+        }
+        let next = *self.band_dim_names_offsets.last().unwrap() + ndim as i32;
+        self.band_dim_names_offsets.push(next);
+
+        for &s in source_shape {
+            self.band_shape_values.append_value(s);
+        }
+        let next = *self.band_shape_offsets.last().unwrap() + ndim as i32;
+        self.band_shape_offsets.push(next);
+
+        self.band_datatype.append_value(data_type as u32);
+
+        match nodata {
+            Some(b) => self.band_nodata.append_value(b),
+            None => self.band_nodata.append_null(),
+        }
+
+        for v in view {
+            self.band_view_source_axis_values
+                .append_value(v.source_axis);
+            self.band_view_start_values.append_value(v.start);
+            self.band_view_step_values.append_value(v.step);
+            self.band_view_steps_values.append_value(v.steps);
+        }
+        let next = *self.band_view_offsets.last().unwrap() + ndim as i32;
+        self.band_view_offsets.push(next);
+        self.band_view_validity.push(true);
+
+        match outdb_uri {
+            Some(uri) => self.band_outdb_uri.append_value(uri),
+            None => self.band_outdb_uri.append_null(),
+        }
+        match outdb_format {
+            Some(format) => self.band_outdb_format.append_value(format),
+            None => self.band_outdb_format.append_null(),
+        }
+
+        self.current_band_count += 1;
+        self.band_data_count_at_start = self.band_data.len();
+
+        // finish_raster compares visible shape against spatial_shape.
+        let visible_shape: Vec<u64> = view.iter().map(|v| v.steps as u64).collect();
+        self.current_raster_bands.push((
+            dim_names.iter().map(|s| s.to_string()).collect(),
+            visible_shape,
         ));
 
         Ok(())
@@ -1141,6 +1287,261 @@ mod tests {
     }
 
     #[test]
+    fn test_start_band_with_view_identity_matches_start_band() {
+        // Identity view through start_band_with_view should produce the same
+        // visible shape and byte strides as the convenience start_band path.
+        let mut builder = RasterBuilder::new(1);
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        builder
+            .start_raster(&transform, &["x", "y"], &[5, 4], None)
+            .unwrap();
+
+        let view = [
+            ViewEntry {
+                source_axis: 0,
+                start: 0,
+                step: 1,
+                steps: 4,
+            },
+            ViewEntry {
+                source_axis: 1,
+                start: 0,
+                step: 1,
+                steps: 5,
+            },
+        ];
+        builder
+            .start_band_with_view(
+                None,
+                &["y", "x"],
+                &[4, 5],
+                &view,
+                BandDataType::UInt8,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        builder.band_data_writer().append_value(vec![0u8; 20]);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+
+        let array = builder.finish().unwrap();
+        let rasters = RasterStructArray::new(&array);
+        let r = rasters.get(0).unwrap();
+        let band = r.band(0).unwrap();
+        assert_eq!(band.shape(), &[4, 5]);
+        assert_eq!(band.raw_source_shape(), &[4, 5]);
+        let buf = band.nd_buffer().unwrap();
+        assert_eq!(buf.strides, &[5, 1]);
+        assert_eq!(buf.offset, 0);
+    }
+
+    #[test]
+    fn test_view_slice_nd_buffer_and_contiguous_data() {
+        // 1D source of size 8 (UInt8), view (start=1, step=2, steps=3) selects
+        // elements at byte offsets 1, 3, 5. Source: 0..8.
+        let mut builder = RasterBuilder::new(1);
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        builder
+            .start_raster(&transform, &["x"], &[3], None)
+            .unwrap();
+
+        let view = [ViewEntry {
+            source_axis: 0,
+            start: 1,
+            step: 2,
+            steps: 3,
+        }];
+        builder
+            .start_band_with_view(
+                None,
+                &["x"],
+                &[8],
+                &view,
+                BandDataType::UInt8,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        builder
+            .band_data_writer()
+            .append_value(vec![0u8, 1, 2, 3, 4, 5, 6, 7]);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+
+        let array = builder.finish().unwrap();
+        let rasters = RasterStructArray::new(&array);
+        let r = rasters.get(0).unwrap();
+        let band = r.band(0).unwrap();
+
+        assert_eq!(band.shape(), &[3]);
+        assert_eq!(band.raw_source_shape(), &[8]);
+        let buf = band.nd_buffer().unwrap();
+        assert_eq!(buf.shape, &[3]);
+        assert_eq!(buf.strides, &[2]);
+        assert_eq!(buf.offset, 1);
+
+        // Materialised contiguous bytes should be [1, 3, 5].
+        let bytes = band.contiguous_data().unwrap();
+        assert_eq!(&*bytes, &[1u8, 3, 5]);
+        assert!(matches!(bytes, std::borrow::Cow::Owned(_)));
+    }
+
+    #[test]
+    fn test_view_broadcast() {
+        // Broadcast: source size 1, step=0 → expose the same byte 4 times.
+        let mut builder = RasterBuilder::new(1);
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        builder
+            .start_raster(&transform, &["x"], &[4], None)
+            .unwrap();
+
+        let view = [ViewEntry {
+            source_axis: 0,
+            start: 0,
+            step: 0,
+            steps: 4,
+        }];
+        builder
+            .start_band_with_view(
+                None,
+                &["x"],
+                &[1],
+                &view,
+                BandDataType::UInt8,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        builder.band_data_writer().append_value(vec![42u8]);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+
+        let array = builder.finish().unwrap();
+        let rasters = RasterStructArray::new(&array);
+        let r = rasters.get(0).unwrap();
+        let band = r.band(0).unwrap();
+
+        let buf = band.nd_buffer().unwrap();
+        assert_eq!(buf.shape, &[4]);
+        assert_eq!(buf.strides, &[0]);
+        assert_eq!(buf.offset, 0);
+
+        let bytes = band.contiguous_data().unwrap();
+        assert_eq!(&*bytes, &[42u8, 42, 42, 42]);
+    }
+
+    #[test]
+    fn test_view_permutation_transpose() {
+        // 2×3 source (UInt8), values 0..6 in C-order:
+        //   row 0: [0, 1, 2]
+        //   row 1: [3, 4, 5]
+        // Transposed view exposes axes (cols, rows) → 3×2:
+        //   row 0: [0, 3]
+        //   row 1: [1, 4]
+        //   row 2: [2, 5]
+        let mut builder = RasterBuilder::new(1);
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        // The transposed visible shape on the spatial axes would conflict with
+        // a 2D spatial grid; declare a single non-spatial dim "i" so the
+        // strict spatial check is trivially satisfied.
+        builder.start_raster(&transform, &[], &[], None).unwrap();
+
+        let view = [
+            // visible axis 0 reads source axis 1 (cols), full extent 3
+            ViewEntry {
+                source_axis: 1,
+                start: 0,
+                step: 1,
+                steps: 3,
+            },
+            // visible axis 1 reads source axis 0 (rows), full extent 2
+            ViewEntry {
+                source_axis: 0,
+                start: 0,
+                step: 1,
+                steps: 2,
+            },
+        ];
+        builder
+            .start_band_with_view(
+                None,
+                &["a", "b"],
+                &[2, 3],
+                &view,
+                BandDataType::UInt8,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        builder
+            .band_data_writer()
+            .append_value(vec![0u8, 1, 2, 3, 4, 5]);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+
+        let array = builder.finish().unwrap();
+        let rasters = RasterStructArray::new(&array);
+        let r = rasters.get(0).unwrap();
+        let band = r.band(0).unwrap();
+
+        assert_eq!(band.shape(), &[3, 2]);
+        assert_eq!(band.raw_source_shape(), &[2, 3]);
+        let buf = band.nd_buffer().unwrap();
+        assert_eq!(buf.strides, &[1, 3]); // visible axis 0 → source col stride; visible axis 1 → source row stride
+
+        let bytes = band.contiguous_data().unwrap();
+        assert_eq!(&*bytes, &[0u8, 3, 1, 4, 2, 5]);
+    }
+
+    #[test]
+    fn test_view_empty_axis() {
+        // steps=0 → empty visible axis. contiguous_data must succeed and
+        // return an empty buffer.
+        let mut builder = RasterBuilder::new(1);
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        builder.start_raster(&transform, &[], &[], None).unwrap();
+
+        let view = [ViewEntry {
+            source_axis: 0,
+            start: 0,
+            step: 1,
+            steps: 0,
+        }];
+        builder
+            .start_band_with_view(
+                None,
+                &["x"],
+                &[8],
+                &view,
+                BandDataType::UInt8,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        builder
+            .band_data_writer()
+            .append_value(vec![0u8, 1, 2, 3, 4, 5, 6, 7]);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+
+        let array = builder.finish().unwrap();
+        let rasters = RasterStructArray::new(&array);
+        let r = rasters.get(0).unwrap();
+        let band = r.band(0).unwrap();
+        assert_eq!(band.shape(), &[0]);
+        let buf = band.nd_buffer().unwrap();
+        assert_eq!(buf.shape, &[0]);
+        let bytes = band.contiguous_data().unwrap();
+        assert!(bytes.is_empty());
+    }
+
+    #[test]
     fn test_start_band_rejects_zero_dim() {
         // 0-D bands carry no spatial extent and no caller has a use for
         // them. start_band must reject an empty dim_names slice eagerly so
@@ -1153,6 +1554,120 @@ mod tests {
             .unwrap_err();
         assert!(
             err.to_string().contains("0-dimensional"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_start_band_with_view_rejects_zero_dim() {
+        // start_band_with_view must apply the same 0-D guard as start_band
+        // — accepting empty dim_names would otherwise bypass it via the
+        // explicit-view path.
+        let mut builder = RasterBuilder::new(1);
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        builder.start_raster(&transform, &[], &[], None).unwrap();
+        let err = builder
+            .start_band_with_view(None, &[], &[], &[], BandDataType::UInt8, None, None, None)
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("0-dimensional"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_view_validation_rejects_out_of_range_start() {
+        let mut builder = RasterBuilder::new(1);
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        builder.start_raster(&transform, &[], &[], None).unwrap();
+        let view = [ViewEntry {
+            source_axis: 0,
+            start: 8,
+            step: 1,
+            steps: 1,
+        }];
+        let err = builder
+            .start_band_with_view(
+                None,
+                &["x"],
+                &[8],
+                &view,
+                BandDataType::UInt8,
+                None,
+                None,
+                None,
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("out of range"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_view_validation_rejects_step_overrun() {
+        let mut builder = RasterBuilder::new(1);
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        builder.start_raster(&transform, &[], &[], None).unwrap();
+        // start=1, step=2, steps=4 → addresses element 1+(4-1)*2 = 7 which is
+        // out of range for a source size of 7.
+        let view = [ViewEntry {
+            source_axis: 0,
+            start: 1,
+            step: 2,
+            steps: 4,
+        }];
+        let err = builder
+            .start_band_with_view(
+                None,
+                &["x"],
+                &[7],
+                &view,
+                BandDataType::UInt8,
+                None,
+                None,
+                None,
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("out of range"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_view_validation_rejects_duplicate_source_axis() {
+        let mut builder = RasterBuilder::new(1);
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        builder.start_raster(&transform, &[], &[], None).unwrap();
+        let view = [
+            ViewEntry {
+                source_axis: 0,
+                start: 0,
+                step: 1,
+                steps: 2,
+            },
+            ViewEntry {
+                source_axis: 0,
+                start: 0,
+                step: 1,
+                steps: 2,
+            },
+        ];
+        let err = builder
+            .start_band_with_view(
+                None,
+                &["a", "b"],
+                &[2, 3],
+                &view,
+                BandDataType::UInt8,
+                None,
+                None,
+                None,
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("permutation"),
             "unexpected error: {err}"
         );
     }
@@ -1201,6 +1716,208 @@ mod tests {
         let bytes = band.contiguous_data().unwrap();
         assert!(matches!(bytes, Cow::Borrowed(_)));
         assert_eq!(&*bytes, pixels.as_slice());
+    }
+
+    #[test]
+    fn test_contiguous_data_explicit_identity_view_is_borrowed() {
+        // Identity expressed *explicitly* through start_band_with_view must be
+        // indistinguishable to consumers from the null-row identity above —
+        // same visible shape, same byte strides, same Cow::Borrowed fast path.
+        use std::borrow::Cow;
+
+        let mut builder = RasterBuilder::new(1);
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        builder
+            .start_raster(&transform, &["x", "y"], &[3, 2], None)
+            .unwrap();
+        let view = [
+            ViewEntry {
+                source_axis: 0,
+                start: 0,
+                step: 1,
+                steps: 2,
+            },
+            ViewEntry {
+                source_axis: 1,
+                start: 0,
+                step: 1,
+                steps: 3,
+            },
+        ];
+        builder
+            .start_band_with_view(
+                None,
+                &["y", "x"],
+                &[2, 3],
+                &view,
+                BandDataType::UInt8,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        let pixels: Vec<u8> = (0..6).collect();
+        builder.band_data_writer().append_value(pixels.clone());
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+
+        let array = builder.finish().unwrap();
+        let rasters = RasterStructArray::new(&array);
+        let r = rasters.get(0).unwrap();
+        let band = r.band(0).unwrap();
+
+        assert_eq!(band.shape(), &[2, 3]);
+        let buf = band.nd_buffer().unwrap();
+        assert_eq!(buf.strides, &[3, 1]);
+        assert_eq!(buf.offset, 0);
+
+        let bytes = band.contiguous_data().unwrap();
+        assert!(matches!(bytes, Cow::Borrowed(_)));
+        assert_eq!(&*bytes, pixels.as_slice());
+    }
+
+    #[test]
+    fn test_contiguous_data_zero_step_broadcast_2d() {
+        // 2D broadcast: source shape [1, 3], view broadcasts axis 0 four
+        // times so the visible region is 4×3. Each visible row must equal the
+        // source's only row.
+        let mut builder = RasterBuilder::new(1);
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        builder.start_raster(&transform, &[], &[], None).unwrap();
+        let view = [
+            ViewEntry {
+                source_axis: 0,
+                start: 0,
+                step: 0,
+                steps: 4,
+            },
+            ViewEntry {
+                source_axis: 1,
+                start: 0,
+                step: 1,
+                steps: 3,
+            },
+        ];
+        builder
+            .start_band_with_view(
+                None,
+                &["row", "col"],
+                &[1, 3],
+                &view,
+                BandDataType::UInt8,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        builder.band_data_writer().append_value(vec![10u8, 20, 30]);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+
+        let array = builder.finish().unwrap();
+        let rasters = RasterStructArray::new(&array);
+        let r = rasters.get(0).unwrap();
+        let band = r.band(0).unwrap();
+
+        let buf = band.nd_buffer().unwrap();
+        assert_eq!(buf.shape, &[4, 3]);
+        // Broadcast row stride is 0; column stride is 1 byte per UInt8.
+        assert_eq!(buf.strides, &[0, 1]);
+        assert_eq!(buf.offset, 0);
+
+        let bytes = band.contiguous_data().unwrap();
+        assert_eq!(&*bytes, &[10u8, 20, 30, 10, 20, 30, 10, 20, 30, 10, 20, 30]);
+    }
+
+    #[test]
+    fn test_contiguous_data_negative_step_full_reverse() {
+        // 1D source [0..8] with start=7, step=-1, steps=8 walks the source
+        // backwards. Byte stride must be negative; offset lands on the last
+        // source element.
+        let mut builder = RasterBuilder::new(1);
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        builder.start_raster(&transform, &[], &[], None).unwrap();
+        let view = [ViewEntry {
+            source_axis: 0,
+            start: 7,
+            step: -1,
+            steps: 8,
+        }];
+        builder
+            .start_band_with_view(
+                None,
+                &["x"],
+                &[8],
+                &view,
+                BandDataType::UInt8,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        builder
+            .band_data_writer()
+            .append_value(vec![0u8, 1, 2, 3, 4, 5, 6, 7]);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+
+        let array = builder.finish().unwrap();
+        let rasters = RasterStructArray::new(&array);
+        let r = rasters.get(0).unwrap();
+        let band = r.band(0).unwrap();
+
+        let buf = band.nd_buffer().unwrap();
+        assert_eq!(buf.shape, &[8]);
+        assert_eq!(buf.strides, &[-1]);
+        assert_eq!(buf.offset, 7);
+
+        let bytes = band.contiguous_data().unwrap();
+        assert_eq!(&*bytes, &[7u8, 6, 5, 4, 3, 2, 1, 0]);
+    }
+
+    #[test]
+    fn test_contiguous_data_negative_step_strided_reverse() {
+        // 1D source [0..8] with start=6, step=-2, steps=3 picks every other
+        // element walking backwards: {6, 4, 2}.
+        let mut builder = RasterBuilder::new(1);
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        builder.start_raster(&transform, &[], &[], None).unwrap();
+        let view = [ViewEntry {
+            source_axis: 0,
+            start: 6,
+            step: -2,
+            steps: 3,
+        }];
+        builder
+            .start_band_with_view(
+                None,
+                &["x"],
+                &[8],
+                &view,
+                BandDataType::UInt8,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        builder
+            .band_data_writer()
+            .append_value(vec![0u8, 1, 2, 3, 4, 5, 6, 7]);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+
+        let array = builder.finish().unwrap();
+        let rasters = RasterStructArray::new(&array);
+        let r = rasters.get(0).unwrap();
+        let band = r.band(0).unwrap();
+
+        let buf = band.nd_buffer().unwrap();
+        assert_eq!(buf.shape, &[3]);
+        assert_eq!(buf.strides, &[-2]);
+        assert_eq!(buf.offset, 6);
+
+        let bytes = band.contiguous_data().unwrap();
+        assert_eq!(&*bytes, &[6u8, 4, 2]);
     }
 
     #[test]
@@ -1284,6 +2001,398 @@ mod tests {
     }
 
     #[test]
+    fn test_contiguous_data_float32_fast_path() {
+        // Multi-byte dtype on the contiguous innermost-axis fast path:
+        // a 2D explicit-identity view over Float32 should still emit
+        // bytes by `extend_from_slice` and produce the exact source
+        // payload back. Catches a regression where the fast path
+        // assumed dtype_size == 1.
+        let mut builder = RasterBuilder::new(1);
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        builder
+            .start_raster(&transform, &["x", "y"], &[3, 2], None)
+            .unwrap();
+        // Slice the outer axis: take rows 0 and 1 of a 3-row source. With
+        // start=0, step=1, steps=2 over an axis of size 3, the view is
+        // not identity, so contiguous_data() materialises through the
+        // fast path. Inner stride = dtype_size = 4 → fast path is taken.
+        let view = [
+            ViewEntry {
+                source_axis: 0,
+                start: 0,
+                step: 1,
+                steps: 2,
+            },
+            ViewEntry {
+                source_axis: 1,
+                start: 0,
+                step: 1,
+                steps: 3,
+            },
+        ];
+        builder
+            .start_band_with_view(
+                None,
+                &["y", "x"],
+                &[3, 3], // 3x3 source
+                &view,
+                BandDataType::Float32,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        let source: Vec<f32> = (0..9).map(|i| i as f32).collect();
+        let source_bytes: Vec<u8> = source.iter().flat_map(|f| f.to_le_bytes()).collect();
+        builder
+            .band_data_writer()
+            .append_value(source_bytes.clone());
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+        let array = builder.finish().unwrap();
+        let rasters = RasterStructArray::new(&array);
+        let r = rasters.get(0).unwrap();
+        let band = r.band(0).unwrap();
+
+        // Visible shape is [2, 3]; the first 6 source floats (rows 0,1) are
+        // exactly the visible pixels — i.e. the first 24 source bytes.
+        let bytes = band.contiguous_data().unwrap();
+        assert!(matches!(bytes, std::borrow::Cow::Owned(_)));
+        assert_eq!(&*bytes, &source_bytes[0..24]);
+    }
+
+    #[test]
+    fn test_contiguous_data_outer_axis_slice_3d() {
+        // 3D source [T=3, Y=2, X=3] of UInt8. View slices T to T=1..3
+        // (start=1, step=1, steps=2), keeps Y and X identity. Innermost
+        // axis is contiguous (step=1, dtype=1) so the fast path emits 6
+        // bytes per outer iteration via extend_from_slice.
+        let mut builder = RasterBuilder::new(1);
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        builder
+            .start_raster(&transform, &["x", "y"], &[3, 2], None)
+            .unwrap();
+        let view = [
+            ViewEntry {
+                source_axis: 0,
+                start: 1,
+                step: 1,
+                steps: 2,
+            },
+            ViewEntry {
+                source_axis: 1,
+                start: 0,
+                step: 1,
+                steps: 2,
+            },
+            ViewEntry {
+                source_axis: 2,
+                start: 0,
+                step: 1,
+                steps: 3,
+            },
+        ];
+        builder
+            .start_band_with_view(
+                None,
+                &["t", "y", "x"],
+                &[3, 2, 3],
+                &view,
+                BandDataType::UInt8,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        let source: Vec<u8> = (0..18).collect();
+        builder.band_data_writer().append_value(source.clone());
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+        let array = builder.finish().unwrap();
+        let rasters = RasterStructArray::new(&array);
+        let r = rasters.get(0).unwrap();
+        let band = r.band(0).unwrap();
+
+        // Visible region = source[6..18] (T=1 and T=2 planes).
+        assert_eq!(band.shape(), &[2, 2, 3]);
+        let bytes = band.contiguous_data().unwrap();
+        assert_eq!(&*bytes, &source[6..18]);
+    }
+
+    #[test]
+    fn test_contiguous_data_strided_inner_falls_back() {
+        // Inner stride != dtype_size forces the elementwise fallback. View
+        // takes every other column on a 1D UInt16 source. Verifies the
+        // slow path still emits correct bytes.
+        let mut builder = RasterBuilder::new(1);
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        builder.start_raster(&transform, &[], &[], None).unwrap();
+        let view = [ViewEntry {
+            source_axis: 0,
+            start: 0,
+            step: 2,
+            steps: 3,
+        }];
+        builder
+            .start_band_with_view(
+                None,
+                &["x"],
+                &[6],
+                &view,
+                BandDataType::UInt16,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        let source: Vec<u16> = vec![10, 20, 30, 40, 50, 60];
+        let source_bytes: Vec<u8> = source.iter().flat_map(|v| v.to_le_bytes()).collect();
+        builder.band_data_writer().append_value(source_bytes);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+        let array = builder.finish().unwrap();
+        let rasters = RasterStructArray::new(&array);
+        let r = rasters.get(0).unwrap();
+        let band = r.band(0).unwrap();
+
+        let bytes = band.contiguous_data().unwrap();
+        let expected: Vec<u8> = [10u16, 30, 50]
+            .iter()
+            .flat_map(|v| v.to_le_bytes())
+            .collect();
+        assert_eq!(&*bytes, expected.as_slice());
+    }
+
+    #[test]
+    fn test_nd_buffer_multidim_non_zero_starts() {
+        // 3D source [T=4, Y=3, X=5], slice T from 1, Y from 1, X identity.
+        // visible = [3, 2, 5]. byte_offset must equal 1*Y*X + 1*X = 1*15 + 1*5 = 20.
+        let mut builder = RasterBuilder::new(1);
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        builder
+            .start_raster(&transform, &["x", "y"], &[5, 2], None)
+            .unwrap();
+        let view = [
+            ViewEntry {
+                source_axis: 0,
+                start: 1,
+                step: 1,
+                steps: 3,
+            },
+            ViewEntry {
+                source_axis: 1,
+                start: 1,
+                step: 1,
+                steps: 2,
+            },
+            ViewEntry {
+                source_axis: 2,
+                start: 0,
+                step: 1,
+                steps: 5,
+            },
+        ];
+        builder
+            .start_band_with_view(
+                None,
+                &["t", "y", "x"],
+                &[4, 3, 5],
+                &view,
+                BandDataType::UInt8,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        builder.band_data_writer().append_value(vec![0u8; 60]);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+        let array = builder.finish().unwrap();
+        let rasters = RasterStructArray::new(&array);
+        let r = rasters.get(0).unwrap();
+        let band = r.band(0).unwrap();
+        let buf = band.nd_buffer().unwrap();
+        assert_eq!(buf.shape, &[3, 2, 5]);
+        assert_eq!(buf.strides, &[15, 5, 1]);
+        assert_eq!(buf.offset, 20);
+    }
+
+    #[test]
+    fn test_nd_buffer_permutation_and_slice_combined() {
+        // 2D source [Y=4, X=3]. View permutes (visible order [X, Y]) and
+        // slices Y from 1, step 2, steps 2. Expected:
+        //   visible_shape = [3, 2]
+        //   byte_strides  = [step_X * stride_X_src, step_Y * stride_Y_src]
+        //                 = [1 * 1, 2 * 3] = [1, 6]
+        //   byte_offset   = start_X * stride_X_src + start_Y * stride_Y_src
+        //                 = 0 * 1 + 1 * 3 = 3
+        let mut builder = RasterBuilder::new(1);
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        builder.start_raster(&transform, &[], &[], None).unwrap();
+        let view = [
+            ViewEntry {
+                source_axis: 1,
+                start: 0,
+                step: 1,
+                steps: 3,
+            }, // X
+            ViewEntry {
+                source_axis: 0,
+                start: 1,
+                step: 2,
+                steps: 2,
+            }, // Y
+        ];
+        builder
+            .start_band_with_view(
+                None,
+                &["x", "y"],
+                &[4, 3],
+                &view,
+                BandDataType::UInt8,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        builder
+            .band_data_writer()
+            .append_value((0u8..12).collect::<Vec<u8>>());
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+        let array = builder.finish().unwrap();
+        let rasters = RasterStructArray::new(&array);
+        let r = rasters.get(0).unwrap();
+        let band = r.band(0).unwrap();
+        let buf = band.nd_buffer().unwrap();
+        assert_eq!(buf.shape, &[3, 2]);
+        assert_eq!(buf.strides, &[1, 6]);
+        assert_eq!(buf.offset, 3);
+
+        // contiguous_data must walk the permuted+strided view correctly.
+        // Visible (X, Y) → source row Y is 0..3=[0,1,2], 3..6=[3,4,5], 6..9=[6,7,8], 9..12=[9,10,11].
+        // We expose Y rows 1 and 3 (start=1 step=2 steps=2). At visible index
+        // (x, y), source value = source[(start_Y + y*2) * 3 + x] = source[(1 + y*2)*3 + x].
+        // Expected, in C-order with X outer and Y inner:
+        //   (x=0,y=0)=src[3]=3,  (x=0,y=1)=src[9]=9,
+        //   (x=1,y=0)=src[4]=4,  (x=1,y=1)=src[10]=10,
+        //   (x=2,y=0)=src[5]=5,  (x=2,y=1)=src[11]=11
+        let bytes = band.contiguous_data().unwrap();
+        assert_eq!(&*bytes, &[3u8, 9, 4, 10, 5, 11]);
+    }
+
+    #[test]
+    fn test_nd_buffer_steps_one_view() {
+        // Degenerate inner view: pick a single element on each axis.
+        // visible_shape == [1, 1]; byte_strides retain their per-axis values
+        // because they're step * source_stride, not skipped on steps==1.
+        let mut builder = RasterBuilder::new(1);
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        builder.start_raster(&transform, &[], &[], None).unwrap();
+        let view = [
+            ViewEntry {
+                source_axis: 0,
+                start: 1,
+                step: 1,
+                steps: 1,
+            },
+            ViewEntry {
+                source_axis: 1,
+                start: 2,
+                step: 1,
+                steps: 1,
+            },
+        ];
+        builder
+            .start_band_with_view(
+                None,
+                &["a", "b"],
+                &[3, 4],
+                &view,
+                BandDataType::UInt8,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        builder
+            .band_data_writer()
+            .append_value((0u8..12).collect::<Vec<u8>>());
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+        let array = builder.finish().unwrap();
+        let rasters = RasterStructArray::new(&array);
+        let r = rasters.get(0).unwrap();
+        let band = r.band(0).unwrap();
+        assert_eq!(band.shape(), &[1, 1]);
+        let buf = band.nd_buffer().unwrap();
+        assert_eq!(buf.shape, &[1, 1]);
+        // step * source_stride per axis: source_stride_a = 4, source_stride_b = 1.
+        // A regression that zeroed out strides when steps==1 would still pass
+        // the shape/offset/data assertions, so pin the strides explicitly.
+        assert_eq!(buf.strides, &[4, 1]);
+        // start_a * source_stride_a + start_b * source_stride_b
+        //  = 1 * 4 + 2 * 1 = 6
+        assert_eq!(buf.offset, 6);
+        let bytes = band.contiguous_data().unwrap();
+        assert_eq!(&*bytes, &[6u8]);
+    }
+
+    #[test]
+    fn test_nd_buffer_multidim_with_zero_axis() {
+        // visible_shape contains a zero axis somewhere in the middle.
+        // contiguous_data returns an empty buffer; nd_buffer returns the
+        // zero-element shape.
+        let mut builder = RasterBuilder::new(1);
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        builder.start_raster(&transform, &[], &[], None).unwrap();
+        let view = [
+            ViewEntry {
+                source_axis: 0,
+                start: 0,
+                step: 1,
+                steps: 3,
+            },
+            ViewEntry {
+                source_axis: 1,
+                start: 0,
+                step: 1,
+                steps: 0,
+            },
+            ViewEntry {
+                source_axis: 2,
+                start: 0,
+                step: 1,
+                steps: 5,
+            },
+        ];
+        builder
+            .start_band_with_view(
+                None,
+                &["a", "b", "c"],
+                &[3, 4, 5],
+                &view,
+                BandDataType::UInt8,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        builder.band_data_writer().append_value(vec![0u8; 60]);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+        let array = builder.finish().unwrap();
+        let rasters = RasterStructArray::new(&array);
+        let r = rasters.get(0).unwrap();
+        let band = r.band(0).unwrap();
+        assert_eq!(band.shape(), &[3, 0, 5]);
+        let buf = band.nd_buffer().unwrap();
+        assert_eq!(buf.shape, &[3, 0, 5]);
+        let bytes = band.contiguous_data().unwrap();
+        assert!(bytes.is_empty());
+    }
+
+    #[test]
     fn test_view_null_round_trips_through_arrow_ipc() {
         // Schema invariant: a band built via start_band serialises with a
         // null view row, and the null must survive an Arrow IPC round-trip.
@@ -1296,8 +2405,9 @@ mod tests {
         use arrow_schema::Schema;
         use std::io::Cursor;
 
-        let mut builder = RasterBuilder::new(1);
+        let mut builder = RasterBuilder::new(2);
         let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        // Raster 0: identity-view band → null view row.
         builder
             .start_raster(&transform, &["x", "y"], &[3, 2], None)
             .unwrap();
@@ -1313,6 +2423,33 @@ mod tests {
             )
             .unwrap();
         builder.band_data_writer().append_value(vec![0u8; 6]);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+        // Raster 1: explicit non-identity view → non-null view row.
+        builder
+            .start_raster(&transform, &["x"], &[3], None)
+            .unwrap();
+        let view = [ViewEntry {
+            source_axis: 0,
+            start: 1,
+            step: 2,
+            steps: 3,
+        }];
+        builder
+            .start_band_with_view(
+                None,
+                &["x"],
+                &[8],
+                &view,
+                BandDataType::UInt8,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        builder
+            .band_data_writer()
+            .append_value(vec![0u8, 1, 2, 3, 4, 5, 6, 7]);
         builder.finish_band().unwrap();
         builder.finish_raster().unwrap();
 
@@ -1341,6 +2478,8 @@ mod tests {
             .downcast_ref::<StructArray>()
             .unwrap();
 
+        // Reach into the restored bands list and confirm the view list
+        // preserves null/non-null per row.
         let bands_list = restored_struct
             .column(sedona_schema::raster::raster_indices::BANDS)
             .as_any()
@@ -1356,14 +2495,21 @@ mod tests {
             .as_any()
             .downcast_ref::<ListArray>()
             .unwrap();
-        assert_eq!(view_list.len(), 1);
+        assert_eq!(view_list.len(), 2);
         assert!(
             view_list.is_null(0),
             "identity-view band must remain a null view row after IPC round-trip"
         );
+        assert!(
+            !view_list.is_null(1),
+            "explicit-view band must remain non-null after IPC round-trip"
+        );
 
+        // Sanity: read paths still produce the expected visible shapes.
         let rasters = RasterStructArray::new(restored_struct);
         let r0 = rasters.get(0).unwrap();
         assert_eq!(r0.band(0).unwrap().shape(), &[2, 3]);
+        let r1 = rasters.get(1).unwrap();
+        assert_eq!(r1.band(0).unwrap().shape(), &[3]);
     }
 }
