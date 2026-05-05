@@ -358,13 +358,16 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
                         arr0.len()
                     );
                 }
+
+                // Hoist the RasterStructArray so its lifetime covers the loop.
+                let scalar_arr1;
                 let r1 = match sv1 {
                     ScalarValue::Struct(arc_struct) => {
-                        let arr1 = RasterStructArray::new(arc_struct.as_ref());
-                        if arr1.is_null(0) {
+                        scalar_arr1 = RasterStructArray::new(arc_struct.as_ref());
+                        if scalar_arr1.is_null(0) {
                             None
                         } else {
-                            Some(arr1.get(0)?)
+                            Some(scalar_arr1.get(0)?)
                         }
                     }
                     ScalarValue::Null => None,
@@ -395,13 +398,16 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
                         arr1.len()
                     );
                 }
+
+                // Hoist the RasterStructArray so its lifetime covers the loop.
+                let scalar_arr0;
                 let r0 = match sv0 {
                     ScalarValue::Struct(arc_struct) => {
-                        let arr0 = RasterStructArray::new(arc_struct.as_ref());
-                        if arr0.is_null(0) {
+                        scalar_arr0 = RasterStructArray::new(arc_struct.as_ref());
+                        if scalar_arr0.is_null(0) {
                             None
                         } else {
-                            Some(arr0.get(0)?)
+                            Some(scalar_arr0.get(0)?)
                         }
                     }
                     ScalarValue::Null => None,
@@ -421,13 +427,15 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
                 Ok(())
             }
             (ColumnarValue::Scalar(sv0), ColumnarValue::Scalar(sv1)) => {
+                // Hoist both RasterStructArrays so their lifetimes cover the loop.
+                let scalar_arr0;
                 let r0 = match sv0 {
                     ScalarValue::Struct(arc_struct) => {
-                        let arr0 = RasterStructArray::new(arc_struct.as_ref());
-                        if arr0.is_null(0) {
+                        scalar_arr0 = RasterStructArray::new(arc_struct.as_ref());
+                        if scalar_arr0.is_null(0) {
                             None
                         } else {
-                            Some(arr0.get(0)?)
+                            Some(scalar_arr0.get(0)?)
                         }
                     }
                     ScalarValue::Null => None,
@@ -435,13 +443,14 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
                         return sedona_internal_err!("Expected Struct scalar for raster");
                     }
                 };
+                let scalar_arr1;
                 let r1 = match sv1 {
                     ScalarValue::Struct(arc_struct) => {
-                        let arr1 = RasterStructArray::new(arc_struct.as_ref());
-                        if arr1.is_null(0) {
+                        scalar_arr1 = RasterStructArray::new(arc_struct.as_ref());
+                        if scalar_arr1.is_null(0) {
                             None
                         } else {
-                            Some(arr1.get(0)?)
+                            Some(scalar_arr1.get(0)?)
                         }
                     }
                     ScalarValue::Null => None,
@@ -724,7 +733,7 @@ mod tests {
                 match raster_opt {
                     None => builder.append_null(),
                     Some(raster) => {
-                        let width = raster.metadata().width();
+                        let width = raster.width().unwrap();
                         builder.append_value(width);
                     }
                 }
@@ -766,7 +775,7 @@ mod tests {
                 match raster_opt {
                     None => builder.append_null(),
                     Some(raster) => {
-                        let width = raster.metadata().width();
+                        let width = raster.width().unwrap();
                         builder.append_value(width);
                     }
                 }
@@ -803,7 +812,7 @@ mod tests {
                 match raster_opt {
                     None => builder.append_null(),
                     Some(raster) => {
-                        let width = raster.metadata().width();
+                        let width = raster.width().unwrap();
                         builder.append_value(width);
                     }
                 }

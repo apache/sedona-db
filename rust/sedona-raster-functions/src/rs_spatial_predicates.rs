@@ -377,8 +377,18 @@ const CONVEXHULL_WKB_SIZE: usize = 93;
 
 /// Create WKB for a convex hull polygon for the raster
 fn write_convexhull_wkb(raster: &dyn RasterRef, out: &mut impl std::io::Write) -> Result<()> {
-    let width = raster.metadata().width() as i64;
-    let height = raster.metadata().height() as i64;
+    let Some(width) = raster.width() else {
+        return Err(DataFusionError::Execution(
+            "Raster has no bands; cannot determine width".into(),
+        ));
+    };
+    let Some(height) = raster.height() else {
+        return Err(DataFusionError::Execution(
+            "Raster has no bands; cannot determine height".into(),
+        ));
+    };
+    let width = width as i64;
+    let height = height as i64;
 
     let (ulx, uly) = to_world_coordinate(raster, 0, 0);
     let (urx, ury) = to_world_coordinate(raster, width, 0);
@@ -401,13 +411,12 @@ mod tests {
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_raster::builder::RasterBuilder;
-    use sedona_raster::traits::{BandMetadata, RasterMetadata};
     use sedona_schema::crs::deserialize_crs;
     use sedona_schema::crs::OGC_CRS84_PROJJSON;
     use sedona_schema::datatypes::Edges;
     use sedona_schema::datatypes::RASTER;
     use sedona_schema::datatypes::WKB_GEOMETRY;
-    use sedona_schema::raster::{BandDataType, StorageType};
+    use sedona_schema::raster::BandDataType;
     use sedona_testing::compare::assert_array_equal;
     use sedona_testing::create::create_array as create_geom_array;
     use sedona_testing::rasters::generate_test_rasters;
@@ -435,26 +444,10 @@ mod tests {
     /// If `crs` is `None`, the raster has no CRS.
     fn build_unit_raster(crs: Option<&str>) -> arrow_array::StructArray {
         let mut builder = RasterBuilder::new(1);
-        let metadata = RasterMetadata {
-            width: 1,
-            height: 1,
-            upperleft_x: 0.0,
-            upperleft_y: 1.0,
-            scale_x: 1.0,
-            scale_y: -1.0,
-            skew_x: 0.0,
-            skew_y: 0.0,
-        };
-        builder.start_raster(&metadata, crs).unwrap();
         builder
-            .start_band(BandMetadata {
-                datatype: BandDataType::UInt8,
-                nodata_value: None,
-                storage_type: StorageType::InDb,
-                outdb_url: None,
-                outdb_band_id: None,
-            })
+            .start_raster_2d(1, 1, 0.0, 1.0, 1.0, -1.0, 0.0, 0.0, crs)
             .unwrap();
+        builder.start_band_2d(BandDataType::UInt8, None).unwrap();
         builder.band_data_writer().append_value([0u8]);
         builder.finish_band().unwrap();
         builder.finish_raster().unwrap();
