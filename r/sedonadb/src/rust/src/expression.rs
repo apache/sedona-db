@@ -108,6 +108,25 @@ impl SedonaDBExpr {
                 result.set_name_and_value(2, "right", savvy::Sexp::try_from(right)?)?;
                 result.into()
             }
+            Expr::ScalarFunction(scalar_function) if scalar_function.args.len() >= 2 => {
+                let op = savvy::OwnedStringSexp::try_from_scalar(scalar_function.name())?;
+                let mut result = savvy::OwnedListSexp::new(4, true)?;
+                let left = SedonaDBExpr {
+                    inner: scalar_function.args[0].clone(),
+                };
+                let right = SedonaDBExpr {
+                    inner: scalar_function.args[1].clone(),
+                };
+                result.set_name_and_value(0, "op", op)?;
+                result.set_name_and_value(1, "left", savvy::Sexp::try_from(left)?)?;
+                result.set_name_and_value(2, "right", savvy::Sexp::try_from(right)?)?;
+                result.set_name_and_value(
+                    3,
+                    "n_other",
+                    savvy::Sexp::try_from(i32::try_from(scalar_function.args.len())? - 2)?,
+                )?;
+                result.into()
+            }
             _ => Ok(NullSexp.into()),
         }
     }

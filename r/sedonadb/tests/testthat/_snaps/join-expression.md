@@ -73,6 +73,16 @@
       <SedonaDBExpr>
       x.date >= y.start_date
 
+# .tables pronoun works in join condition evaluation
+
+    Code
+      sd_eval_join_conditions(sd_join_by(.tables$x$id == .tables$y$id), ctx)
+    Output
+      [[1]]
+      <SedonaDBExpr>
+      x.id = y.id
+      
+
 # sd_build_join_conditions() creates natural join when by is NULL
 
     Code
@@ -241,4 +251,66 @@
       <SedonaDBExpr>
       y.id_y
       
+
+# x$geom/x$geom() usage is unambiguous in sd_join_by() evaluation
+
+    Code
+      sd_eval_join_conditions(sd_join_by(st_intersects(.tables$x$geom, .tables$y$geom)),
+      ctx)
+    Output
+      [[1]]
+      <SedonaDBExpr>
+      st_intersects(x.geom, y.geom)
+      
+
+---
+
+    Code
+      sd_eval_join_conditions(sd_join_by(st_intersects(x$geom, y$geom)), ctx)
+    Output
+      [[1]]
+      <SedonaDBExpr>
+      st_intersects(x.geom, y.geom)
+      
+
+---
+
+    Code
+      sd_eval_join_conditions(sd_join_by(st_intersects(x$geom, .tables$y$geom())),
+      ctx)
+    Output
+      [[1]]
+      <SedonaDBExpr>
+      st_intersects(x.geom, y.geom)
+      
+
+---
+
+    Code
+      sd_eval_join_conditions(sd_join_by(st_intersects(x$geom, y$geom())), ctx)
+    Output
+      [[1]]
+      <SedonaDBExpr>
+      st_intersects(x.geom, y.geom)
+      
+
+---
+
+    Error evaluating join condition `st_intersects(.tables$x$geom(), y$geom())`
+    Caused by error:
+    ! Ambiguous use of x$geom()
+     - Did you mean one of x$geom, x$other_geometry
+
+---
+
+    Error evaluating join condition `st_intersects(x$geom(), y$geom())`
+    Caused by error:
+    ! Ambiguous use of x$geom()
+     - Did you mean one of x$geom, x$other_geometry
+
+# x$geom() errors when there are no geometry columns
+
+    Error evaluating join condition `st_intersects(x$geom(), y$geom())`
+    Caused by error:
+    ! No geometry columns found in table 'x'
 

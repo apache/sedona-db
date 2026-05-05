@@ -174,6 +174,16 @@ test_that("ambiguous column references produce helpful errors", {
   )
 })
 
+test_that(".tables pronoun works in join condition evaluation", {
+  x_schema <- nanoarrow::na_struct(list(id = nanoarrow::na_int32()))
+  y_schema <- nanoarrow::na_struct(list(id = nanoarrow::na_int32()))
+
+  ctx <- sd_join_expr_ctx(x_schema, y_schema)
+  expect_snapshot(
+    sd_eval_join_conditions(sd_join_by(.tables$x$id == .tables$y$id), ctx)
+  )
+})
+
 test_that("missing column references produce helpful errors", {
   x_schema <- nanoarrow::na_struct(list(id = nanoarrow::na_int32()))
   y_schema <- nanoarrow::na_struct(list(id = nanoarrow::na_int32()))
@@ -382,7 +392,7 @@ test_that("sd_build_default_select() handles equijoin keys", {
   expect_snapshot(sd_build_default_select(ctx, conditions, join_type = "full"))
 })
 
-test_that("sd_extract_equijoin_keys() extracts simple equality keys", {
+test_that("sd_extract_simple_join_keys() extracts simple equality keys", {
   x_schema <- nanoarrow::na_struct(list(
     id_x = nanoarrow::na_int32(),
     date = nanoarrow::na_date32()
@@ -393,13 +403,121 @@ test_that("sd_extract_equijoin_keys() extracts simple equality keys", {
   ))
   ctx <- sd_join_expr_ctx(x_schema, y_schema)
 
-  # Multiple conditions: one equality, one inequality
-  jb <- sd_join_by(x$id_x == y$id_y, x$date >= y$start)
+  # Multiple conditions: one equality, one inequality, one with same-table refs
+  jb <- sd_join_by(x$id_x == y$id_y, x$date >= y$start, x$id_x == x$id_x)
   conditions <- sd_eval_join_conditions(jb, ctx)
 
-  keys <- sd_extract_equijoin_keys(conditions)
+  keys <- sd_extract_simple_join_keys(conditions)
 
-  # Only the equality condition should be extracted
-  expect_equal(keys$x_cols, "id_x")
-  expect_equal(keys$y_cols, "id_y")
+  # Only the simple conditions should be extracted
+  expect_equal(keys$x_cols[keys$op == "="], "id_x")
+  expect_equal(keys$y_cols[keys$op == "="], "id_y")
+
+  # But even inequality conditions should be in the list
+  expect_equal(keys$op, c("=", ">="))
+})
+
+test_that(".fns$st_intersects() is identical to st_intersects() in join conditions", {
+  x_schema <- nanoarrow::na_struct(list(
+    geometry = nanoarrow::na_extension(
+      nanoarrow::na_binary(),
+      "geoarrow.wkb"
+    )
+  ))
+  y_schema <- nanoarrow::na_struct(list(
+    geometry = nanoarrow::na_extension(
+      nanoarrow::na_binary(),
+      "geoarrow.wkb"
+    )
+  ))
+
+  ctx <- sd_join_expr_ctx(x_schema, y_schema)
+
+  # Using bare st_intersects()
+  jb1 <- sd_join_by(st_intersects(x$geometry, y$geometry))
+  conditions1 <- sd_eval_join_conditions(jb1, ctx)
+
+  # Using .fns$st_intersects()
+  jb2 <- sd_join_by(.fns$st_intersects(x$geometry, y$geometry))
+  conditions2 <- sd_eval_join_conditions(jb2, ctx)
+
+  # They should produce identical expressions
+  expect_equal(conditions1[[1]]$display(), conditions2[[1]]$display())
+})
+
+test_that("x$geom/x$geom() usage is unambiguous in sd_join_by() evaluation", {
+  x_schema <- nanoarrow::na_struct(list(
+    geom = nanoarrow::na_extension(
+      nanoarrow::na_binary(),
+      "geoarrow.wkb"
+    ),
+    other_geometry = nanoarrow::na_extension(
+      nanoarrow::na_binary(),
+      "geoarrow.wkb"
+    )
+  ))
+  y_schema <- nanoarrow::na_struct(list(
+    geom = nanoarrow::na_extension(
+      nanoarrow::na_binary(),
+      "geoarrow.wkb"
+    )
+  ))
+
+  ctx <- sd_join_expr_ctx(x_schema, y_schema)
+
+  # <.tables>$x$geom should reference the column literally named "geom"
+  expect_snapshot(
+    sd_eval_join_conditions(
+      sd_join_by(st_intersects(.tables$x$geom, .tables$y$geom)),
+      ctx
+    )
+  )
+
+  # Without the .tables pronoun also
+  expect_snapshot(
+    sd_eval_join_conditions(
+      sd_join_by(st_intersects(x$geom, y$geom)),
+      ctx
+    )
+  )
+
+  # For y, which only has a single geometry column, geom() should work
+  expect_snapshot(
+    sd_eval_join_conditions(
+      sd_join_by(st_intersects(x$geom, .tables$y$geom())),
+      ctx
+    )
+  )
+  expect_snapshot(
+    sd_eval_join_conditions(
+      sd_join_by(st_intersects(x$geom, y$geom())),
+      ctx
+    )
+  )
+
+  # For x, which has multiple geometry columns, geom() should error
+  expect_snapshot_error(
+    sd_eval_join_conditions(
+      sd_join_by(st_intersects(.tables$x$geom(), y$geom())),
+      ctx
+    )
+  )
+  expect_snapshot_error(
+    sd_eval_join_conditions(
+      sd_join_by(st_intersects(x$geom(), y$geom())),
+      ctx
+    )
+  )
+})
+
+test_that("x$geom() errors when there are no geometry columns", {
+  x_schema <- nanoarrow::na_struct(list(id = nanoarrow::na_int32()))
+  y_schema <- nanoarrow::na_struct(list(id = nanoarrow::na_int32()))
+  ctx <- sd_join_expr_ctx(x_schema, y_schema)
+  expect_snapshot_error(
+    sd_eval_join_conditions(
+      sd_join_by(st_intersects(x$geom(), y$geom())),
+      ctx
+    )
+  )
 })
