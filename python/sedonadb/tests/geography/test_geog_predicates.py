@@ -21,7 +21,7 @@ Geography predicate tests ported from s2geography predicates_test.cc.
 
 import pytest
 import sedonadb
-from sedonadb.testing import BigQuery, SedonaDB, geog_or_null
+from sedonadb.testing import BigQuery, SedonaDB, PostGIS, geog_or_null
 
 if "s2geography" not in sedonadb.__features__:
     pytest.skip("Python package built without s2geography", allow_module_level=True)
@@ -32,7 +32,7 @@ if "s2geography" not in sedonadb.__features__:
 # -----------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
+@pytest.mark.parametrize("eng", [SedonaDB, BigQuery, PostGIS])
 @pytest.mark.parametrize(
     ("geom1", "geom2", "expected"),
     [
