@@ -37,9 +37,9 @@ if "s2geography" not in sedonadb.__features__:
     ("geom1", "geom2", "expected"),
     [
         # Nulls
-        # pytest.param(None, "POINT EMPTY", None, id="null_intersects"),
-        # pytest.param("POINT EMPTY", None, None, id="intersects_null"),
-        # pytest.param(None, None, None, id="null_intersects_null"),
+        pytest.param(None, "POINT EMPTY", None, id="null_intersects"),
+        pytest.param("POINT EMPTY", None, None, id="intersects_null"),
+        pytest.param(None, None, None, id="null_intersects_null"),
         # Empties
         pytest.param("POINT (0 0)", "POINT EMPTY", False, id="intersects_empty"),
         pytest.param("POINT EMPTY", "POINT (0 0)", False, id="empty_intersects"),
@@ -257,9 +257,9 @@ def test_st_intersects(eng, geom1, geom2, expected):
     ("geom1", "geom2", "expected"),
     [
         # Nulls
-        # pytest.param(None, "POINT EMPTY", None, id="null_contains"),
-        # pytest.param("POINT EMPTY", None, None, id="contains_null"),
-        # pytest.param(None, None, None, id="null_contains_null"),
+        pytest.param(None, "POINT EMPTY", None, id="null_contains"),
+        pytest.param("POINT EMPTY", None, None, id="contains_null"),
+        pytest.param(None, None, None, id="null_contains_null"),
         # Empties
         pytest.param(
             "POLYGON ((0 0, 2 0, 0 2, 0 0))",
@@ -451,8 +451,8 @@ def test_st_contains(eng, geom1, geom2, expected):
             id="polygon_not_within_point",
         ),
         # Null handling
-        # pytest.param(None, "POLYGON ((0 0, 2 0, 0 2, 0 0))", None, id="null_within"),
-        # pytest.param("POINT (0 0)", None, None, id="within_null"),
+        pytest.param(None, "POLYGON ((0 0, 2 0, 0 2, 0 0))", None, id="null_within"),
+        pytest.param("POINT (0 0)", None, None, id="within_null"),
         # Interior linestring within polygon
         pytest.param(
             "LINESTRING (0.25 0.25, 0.5 0.5)",
@@ -501,9 +501,9 @@ def test_st_within(eng, geom1, geom2, expected):
     ("geom1", "geom2", "expected"),
     [
         # Nulls
-        # pytest.param(None, "POINT EMPTY", None, id="null_equals"),
-        # pytest.param("POINT EMPTY", None, None, id="equals_null"),
-        # pytest.param(None, None, None, id="null_equals_null"),
+        pytest.param(None, "POINT EMPTY", None, id="null_equals"),
+        pytest.param("POINT EMPTY", None, None, id="equals_null"),
+        pytest.param(None, None, None, id="null_equals_null"),
         # Empties
         pytest.param("POINT (0 0)", "POINT EMPTY", False, id="equals_empty"),
         pytest.param("POINT EMPTY", "POINT (0 0)", False, id="empty_equals"),
@@ -612,8 +612,8 @@ def test_st_equals(eng, geom1, geom2, expected):
             id="polygon_not_disjoint_interior_point",
         ),
         # Null handling
-        # pytest.param(None, "POLYGON ((0 0, 1 0, 0 1, 0 0))", None, id="null_disjoint"),
-        # pytest.param("POINT (0 0)", None, None, id="disjoint_null"),
+        pytest.param(None, "POLYGON ((0 0, 1 0, 0 1, 0 0))", None, id="null_disjoint"),
+        pytest.param("POINT (0 0)", None, None, id="disjoint_null"),
         # Interior point not disjoint from polygon
         pytest.param(
             "POINT (0.25 0.25)",

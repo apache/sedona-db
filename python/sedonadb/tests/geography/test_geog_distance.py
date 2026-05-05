@@ -37,9 +37,9 @@ if "s2geography" not in sedonadb.__features__:
     ("geom1", "geom2", "expected"),
     [
         # Nulls
-        # pytest.param(None, "POINT EMPTY", None, id="null_distance"),
-        # pytest.param("POINT EMPTY", None, None, id="distance_null"),
-        # pytest.param(None, None, None, id="null_distance_null"),
+        pytest.param(None, "POINT EMPTY", None, id="null_distance"),
+        pytest.param("POINT EMPTY", None, None, id="distance_null"),
+        pytest.param(None, None, None, id="null_distance_null"),
         # Empties
         pytest.param("POINT (0 0)", "POINT EMPTY", None, id="distance_empty"),
         pytest.param("POINT EMPTY", "POINT (0 0)", None, id="empty_distance"),
@@ -318,9 +318,9 @@ def test_st_distance(eng, geom1, geom2, expected):
     ("geom1", "geom2", "distance", "expected"),
     [
         # Nulls
-        # pytest.param(None, "POINT EMPTY", 0.0, None, id="null_dwithin"),
-        # pytest.param("POINT EMPTY", None, 0.0, None, id="dwithin_null"),
-        # pytest.param(None, None, 0.0, None, id="null_dwithin_null"),
+        pytest.param(None, "POINT EMPTY", 0.0, None, id="null_dwithin"),
+        pytest.param("POINT EMPTY", None, 0.0, None, id="dwithin_null"),
+        pytest.param(None, None, 0.0, None, id="null_dwithin_null"),
         # Empties return False
         pytest.param("POINT (0 0)", "POINT EMPTY", 0.0, False, id="dwithin_empty"),
         pytest.param("POINT EMPTY", "POINT (0 0)", 0.0, False, id="empty_dwithin"),
@@ -400,9 +400,9 @@ def test_st_dwithin(eng, geom1, geom2, distance, expected):
     ("geom1", "geom2", "expected"),
     [
         # Nulls
-        # pytest.param(None, "POINT EMPTY", None, id="null_max_distance"),
-        # pytest.param("POINT EMPTY", None, None, id="max_distance_null"),
-        # pytest.param(None, None, None, id="null_max_distance_null"),
+        pytest.param(None, "POINT EMPTY", None, id="null_max_distance"),
+        pytest.param("POINT EMPTY", None, None, id="max_distance_null"),
+        pytest.param(None, None, None, id="null_max_distance_null"),
         # Empties
         pytest.param("POINT (0 0)", "POINT EMPTY", None, id="max_distance_empty"),
         pytest.param("POINT EMPTY", "POINT (0 0)", None, id="empty_max_distance"),
