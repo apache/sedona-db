@@ -319,8 +319,8 @@ def test_st_intersects(eng, geom1, geom2, expected):
         pytest.param(
             "POLYGON ((0 0, 2 0, 0 2, 0 0))",
             "POLYGON ((0 0, 0.5 0, 0 0.5, 0 0))",
-            False,
-            id="polygon_does_not_contain_polygon_boundary",
+            True,
+            id="polygon_contains_interior_polygon",
         ),
         # Interior polygon does not contain Polygon
         pytest.param(
@@ -353,16 +353,30 @@ def test_st_intersects(eng, geom1, geom2, expected):
         # Linestring does not contain point
         pytest.param(
             "LINESTRING (0 0, 1 0)",
-            "POINT (0.5 0)",
+            "POINT (10 10)",
             False,
             id="linestring_not_contains_point",
         ),
         # Linestring does not contain linestring
         pytest.param(
             "LINESTRING (0 0, 2 0)",
-            "LINESTRING (0 0, 1 0)",
+            "LINESTRING (10 10, 11 10)",
             False,
             id="linestring_not_contains_linestring",
+        ),
+        # Linestring contains an interior point
+        pytest.param(
+            "LINESTRING (0 0, 1 0)",
+            "POINT (0.5 0)",
+            True,
+            id="linestring_contains_interior_point",
+        ),
+        # Linestring contains an interior linestring
+        pytest.param(
+            "LINESTRING (0 0, 2 0)",
+            "LINESTRING (0 0, 1 0)",
+            True,
+            id="linestring_contains_interior_linestring",
         ),
         # Polygon does not contain overlapping polygon
         pytest.param(
