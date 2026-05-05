@@ -392,7 +392,7 @@ test_that("sd_build_default_select() handles equijoin keys", {
   expect_snapshot(sd_build_default_select(ctx, conditions, join_type = "full"))
 })
 
-test_that("sd_extract_equijoin_keys() extracts simple equality keys", {
+test_that("sd_extract_simple_join_keys() extracts simple equality keys", {
   x_schema <- nanoarrow::na_struct(list(
     id_x = nanoarrow::na_int32(),
     date = nanoarrow::na_date32()
@@ -403,15 +403,18 @@ test_that("sd_extract_equijoin_keys() extracts simple equality keys", {
   ))
   ctx <- sd_join_expr_ctx(x_schema, y_schema)
 
-  # Multiple conditions: one equality, one inequality
-  jb <- sd_join_by(x$id_x == y$id_y, x$date >= y$start)
+  # Multiple conditions: one equality, one inequality, one with same-table refs
+  jb <- sd_join_by(x$id_x == y$id_y, x$date >= y$start, x$id_x == x$id_x)
   conditions <- sd_eval_join_conditions(jb, ctx)
 
-  keys <- sd_extract_equijoin_keys(conditions)
+  keys <- sd_extract_simple_join_keys(conditions)
 
-  # Only the equality condition should be extracted
-  expect_equal(keys$x_cols, "id_x")
-  expect_equal(keys$y_cols, "id_y")
+  # Only the simple conditions should be extracted
+  expect_equal(keys$x_cols[keys$op == "="], "id_x")
+  expect_equal(keys$y_cols[keys$op == "="], "id_y")
+
+  # But even inequality conditions should be in the list
+  expect_equal(keys$op, c("=", ">="))
 })
 
 test_that(".fns$st_intersects() is identical to st_intersects() in join conditions", {

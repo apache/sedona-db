@@ -16,27 +16,28 @@ sd_join(
   y,
   by = NULL,
   join_type = "inner",
-  select = sd_join_select_default()
+  select = sd_join_select_default(),
+  keep = NULL
 )
 
-sd_left_join(x, y, by = NULL, select = sd_join_select_default())
+sd_left_join(x, y, by = NULL, select = sd_join_select_default(), keep = NULL)
 
-sd_right_join(x, y, by = NULL, select = sd_join_select_default())
+sd_right_join(x, y, by = NULL, select = sd_join_select_default(), keep = NULL)
 
-sd_inner_join(x, y, by = NULL, select = sd_join_select_default())
+sd_inner_join(x, y, by = NULL, select = sd_join_select_default(), keep = NULL)
 
-sd_full_join(x, y, by = NULL, select = sd_join_select_default())
+sd_full_join(x, y, by = NULL, select = sd_join_select_default(), keep = NULL)
 
 sd_semi_join(x, y, by = NULL)
 
 sd_anti_join(x, y, by = NULL)
 
-sd_cross_join(x, y, by = NULL)
+sd_cross_join(x, y, by = NULL, select = sd_join_select_default())
 }
 \arguments{
 \item{x}{The left dataframe}
 
-\item{y}{The right dataframe (will use the same context as x)}
+\item{y}{The right dataframe}
 
 \item{by}{Join specification. One of:
 \itemize{
@@ -60,6 +61,9 @@ referred to with a qualifier in advanced usage using \code{\link[=sd_expr_column
 removed, intersecting names suffixed)
 \item \code{\link[=sd_join_select]{sd_join_select()}} for a custom selection
 }}
+
+\item{keep}{Use \code{TRUE} to keep all key column in an equijoin or spatial join.
+This is only applied when using \code{\link[=sd_join_select_default]{sd_join_select_default()}}.}
 }
 \value{
 An object of class sedonadb_dataframe

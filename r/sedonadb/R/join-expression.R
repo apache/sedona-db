@@ -610,7 +610,8 @@ sd_build_default_select <- function(
   join_expr_ctx,
   join_conditions,
   suffix = c(".x", ".y"),
-  join_type = "inner"
+  join_type = "inner",
+  keep = NULL
 ) {
   join_type <- tolower(join_type)
 
@@ -623,10 +624,42 @@ sd_build_default_select <- function(
   x_names <- names(join_expr_ctx$x_schema$children)
   y_names <- names(join_expr_ctx$y_schema$children)
 
-  # Extract equijoin key pairs (simple x$col == y$col conditions)
-  # and remove them from y_names. We do this even for right joins to match
+  # Extract simple key pairs (x$col == y$col or some_fun(x$col, y$col) conditions)
+  # if keep is not TRUE.
+  if (isTRUE(keep)) {
+    simple_join_keys <- list(x_cols = character(), y_cols = character(), op = character())
+  } else {
+    simple_join_keys <- sd_extract_simple_join_keys(join_conditions)
+  }
+
+  # For the purposes of computing how to choose output columns, we consider
+  # st predicates equijoin keys. We can't do this for a full join (coalescing
+  # things that might not be equal doesn't make sense).
+  if (join_type == "full") {
+    equijoin_ops <- "="
+  } else {
+    equijoin_ops <- c(
+      "=",
+      "st_intersects",
+      "st_contains",
+      "st_within",
+      "st_covers",
+      "st_coveredby",
+      "st_touches",
+      "st_crosses",
+      "st_overlaps",
+      "st_equals"
+    )
+  }
+
+  simple_join_keys_is_eq <- simple_join_keys$op %in% equijoin_ops
+  equijoin_keys <- list(
+    x_cols = simple_join_keys$x_cols[simple_join_keys_is_eq],
+    y_cols = simple_join_keys$y_cols[simple_join_keys_is_eq]
+  )
+
+  # Remove equijoin keys from y_names. We do this even for right joins to match
   # dplyr, which returns the name from the left but the values from the right.
-  equijoin_keys <- sd_extract_equijoin_keys(join_conditions)
   y_names <- setdiff(y_names, equijoin_keys$y_cols)
 
   # Calculate names that need suffixing
@@ -709,7 +742,8 @@ sd_build_default_select <- function(
 #' @returns A list with `x_cols` and `y_cols` character vectors of matching
 #'   column names from each side of equijoin conditions.
 #' @noRd
-sd_extract_equijoin_keys <- function(join_conditions) {
+sd_extract_simple_join_keys <- function(join_conditions) {
+  ops <- character()
   x_cols <- character()
   y_cols <- character()
 
@@ -719,22 +753,23 @@ sd_extract_equijoin_keys <- function(join_conditions) {
     parsed <- sd_expr_parse_binary(cond)
     if (
       is.null(parsed) ||
-        parsed$op != "=" ||
         parsed$left$variant_name() != "Column" ||
         parsed$right$variant_name() != "Column"
     ) {
       next
     }
 
+    op <- parsed$op
     left <- parsed$left$qualified_name()
     right <- parsed$right$qualified_name()
 
-    # If the left and right sides of the == condition came from the same side,
-    # the join condition is not an equijoin key and should not be removed.
+    # If the left and right sides of the join condition came from the same side,
+    # the join condition is not an simple join key and should not be removed.
     if (identical(left[1], right[1])) {
       next
     }
 
+    ops <- append(ops, op)
     switch(
       left[1],
       x = x_cols <- append(x_cols, left[2]),
@@ -747,5 +782,7 @@ sd_extract_equijoin_keys <- function(join_conditions) {
     )
   }
 
-  list(x_cols = x_cols, y_cols = y_cols)
+  list(x_cols = x_cols, y_cols = y_cols, op = ops)
 }
+
+all_spatial_predicates <- c("st_intersects", "st_contains", "st_within", "st_equals")

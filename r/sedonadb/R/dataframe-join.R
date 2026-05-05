@@ -22,7 +22,7 @@
 #' reference columns from the left and right tables respectively.
 #'
 #' @param x The left dataframe
-#' @param y The right dataframe (will use the same context as x)
+#' @param y The right dataframe
 #' @param by Join specification. One of:
 #'   - A `sedonadb_join_by` object from [sd_join_by()]
 #'   - A character vector of column names to join on in both tables
@@ -39,6 +39,8 @@
 #'   - [sd_join_select_default()] for dplyr-like behaviour (equi-join keys
 #'     removed, intersecting names suffixed)
 #'   - [sd_join_select()] for a custom selection
+#' @param keep Use `TRUE` to keep all key column in an equijoin or spatial join.
+#'   This is only applied when using [sd_join_select_default()].
 #'
 #' @returns An object of class sedonadb_dataframe
 #' @export
@@ -53,7 +55,8 @@ sd_join <- function(
   y,
   by = NULL,
   join_type = "inner",
-  select = sd_join_select_default()
+  select = sd_join_select_default(),
+  keep = NULL
 ) {
   x <- as_sedonadb_dataframe(x)
   y <- as_sedonadb_dataframe(y, ctx = x$ctx)
@@ -75,7 +78,8 @@ sd_join <- function(
       join_expr_ctx,
       join_conditions,
       select$suffix,
-      join_type
+      join_type,
+      keep = keep
     )
   } else if (inherits(select, "sedonadb_join_select")) {
     # Custom select: evaluate user expressions
@@ -97,26 +101,50 @@ sd_join <- function(
 
 #' @rdname sd_join
 #' @export
-sd_left_join <- function(x, y, by = NULL, select = sd_join_select_default()) {
-  sd_join(x, y, by = by, select = select, join_type = "left")
+sd_left_join <- function(
+  x,
+  y,
+  by = NULL,
+  select = sd_join_select_default(),
+  keep = NULL
+) {
+  sd_join(x, y, by = by, select = select, join_type = "left", keep = keep)
 }
 
 #' @rdname sd_join
 #' @export
-sd_right_join <- function(x, y, by = NULL, select = sd_join_select_default()) {
-  sd_join(x, y, by = by, select = select, join_type = "right")
+sd_right_join <- function(
+  x,
+  y,
+  by = NULL,
+  select = sd_join_select_default(),
+  keep = NULL
+) {
+  sd_join(x, y, by = by, select = select, join_type = "right", keep = keep)
 }
 
 #' @rdname sd_join
 #' @export
-sd_inner_join <- function(x, y, by = NULL, select = sd_join_select_default()) {
-  sd_join(x, y, by = by, select = select, join_type = "inner")
+sd_inner_join <- function(
+  x,
+  y,
+  by = NULL,
+  select = sd_join_select_default(),
+  keep = NULL
+) {
+  sd_join(x, y, by = by, select = select, join_type = "inner", keep = keep)
 }
 
 #' @rdname sd_join
 #' @export
-sd_full_join <- function(x, y, by = NULL, select = sd_join_select_default()) {
-  sd_join(x, y, by = by, select = select, join_type = "full")
+sd_full_join <- function(
+  x,
+  y,
+  by = NULL,
+  select = sd_join_select_default(),
+  keep = NULL
+) {
+  sd_join(x, y, by = by, select = select, join_type = "full", keep = keep)
 }
 
 #' @rdname sd_join
@@ -133,6 +161,6 @@ sd_anti_join <- function(x, y, by = NULL) {
 
 #' @rdname sd_join
 #' @export
-sd_cross_join <- function(x, y, by = NULL) {
-  sd_join(x, y, by = character(), join_type = "inner")
+sd_cross_join <- function(x, y, by = NULL, select = sd_join_select_default()) {
+  sd_join(x, y, by = character(), select = select, join_type = "inner")
 }
