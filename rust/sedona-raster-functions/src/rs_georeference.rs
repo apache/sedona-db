@@ -158,13 +158,13 @@ fn format_georeference(
     match raster_opt {
         None => builder.append_null(),
         Some(raster) => {
-            let metadata = raster.metadata();
-            let scale_x = metadata.scale_x();
-            let scale_y = metadata.scale_y();
-            let skew_x = metadata.skew_x();
-            let skew_y = metadata.skew_y();
-            let upper_left_x = metadata.upper_left_x();
-            let upper_left_y = metadata.upper_left_y();
+            let t = raster.transform();
+            let scale_x = t[1];
+            let scale_y = t[5];
+            let skew_x = t[2];
+            let skew_y = t[4];
+            let upper_left_x = t[0];
+            let upper_left_y = t[3];
 
             let georeference = match format {
                 GeoReferenceFormat::Gdal => {

@@ -1,0 +1,55 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: RS_Slice
+description: Selects a single index along a dimension, removing that dimension from the output.
+kernels:
+  - returns: raster
+    args:
+    - raster
+    - name: dim_name
+      type: utf8
+      description: Name of the dimension to slice (e.g., 'time').
+    - name: index
+      type: int
+      description: Zero-based index along the dimension.
+---
+
+## Description
+
+Extracts a single slice along a named non-spatial dimension, removing that
+dimension from every band in the output raster. For example, slicing a raster
+with shape `[time=12, y=256, x=256]` on `'time'` at index 5 produces a 2D
+raster with shape `[y=256, x=256]` containing the data at time step 5.
+
+The spatial dimensions (`x_dim` and `y_dim`) cannot be sliced.
+
+Returns an error if the dimension does not exist or the index is out of range.
+
+See also [RS_SliceRange](rs_slicerange.qmd) to extract a range of indices
+while keeping the dimension.
+
+## Examples
+
+```
+-- Extract time step 5 from a [time=12, y, x] raster
+SELECT RS_Slice(raster, 'time', 5);
+
+-- Extract the first pressure level
+SELECT RS_Slice(raster, 'pressure', 0);
+```

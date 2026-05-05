@@ -40,3 +40,4 @@ sedona-schema = { workspace = true }
 [dev-dependencies]
 sedona-testing = { workspace = true }
 approx = { workspace = true }
+arrow-ipc = { workspace = true }
