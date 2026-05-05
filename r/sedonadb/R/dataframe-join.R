@@ -165,6 +165,6 @@ sd_anti_join <- function(x, y, by = NULL) {
 
 #' @rdname sd_join
 #' @export
-sd_cross_join <- function(x, y, by = NULL, select = sd_join_select_default()) {
+sd_cross_join <- function(x, y, select = sd_join_select_default()) {
   sd_join(x, y, by = character(), select = select, join_type = "inner")
 }

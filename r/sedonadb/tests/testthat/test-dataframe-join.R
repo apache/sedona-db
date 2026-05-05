@@ -146,14 +146,26 @@ test_that("sd_join() computes the correct columns for spatial predicate joins", 
     data.frame(dim = 0L)
   )
 
-  # right_join: We should get one geometry column from the logical right side (polygons)
+  # right_join: Keeps both geometry columns by default
   df <- cities |> sd_right_join(countries, by = sd_join_intersects())
   expect_identical(
     colnames(df),
-    c("name.x", "geometry", "name.y", "continent")
+    c("name.x", "geometry.x", "name.y", "continent", "geometry.y")
   )
   expect_identical(
-    df |> sd_transmute(dim = .fns$st_dimension(geometry)) |> head(1) |> as.data.frame(),
+    df |>
+      sd_transmute(dim = .fns$st_dimension(geometry.x)) |>
+      sd_arrange(dim) |>
+      head(1) |>
+      as.data.frame(),
+    data.frame(dim = 0L)
+  )
+  expect_identical(
+    df |>
+      sd_transmute(dim = .fns$st_dimension(geometry.y)) |>
+      sd_arrange(dim) |>
+      head(1) |>
+      as.data.frame(),
     data.frame(dim = 2L)
   )
 
@@ -164,11 +176,19 @@ test_that("sd_join() computes the correct columns for spatial predicate joins", 
     c("name.x", "geometry.x", "name.y", "continent", "geometry.y")
   )
   expect_identical(
-    df |> sd_transmute(dim = .fns$st_dimension(geometry.x)) |> head(1) |> as.data.frame(),
+    df |>
+      sd_transmute(dim = .fns$st_dimension(geometry.x)) |>
+      sd_arrange(dim) |>
+      head(1) |>
+      as.data.frame(),
     data.frame(dim = 0L)
   )
   expect_identical(
-    df |> sd_transmute(dim = .fns$st_dimension(geometry.y)) |> head(1) |> as.data.frame(),
+    df |>
+      sd_transmute(dim = .fns$st_dimension(geometry.y)) |>
+      sd_arrange(dim) |>
+      head(1) |>
+      as.data.frame(),
     data.frame(dim = 2L)
   )
 

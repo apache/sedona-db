@@ -32,7 +32,7 @@ sd_semi_join(x, y, by = NULL)
 
 sd_anti_join(x, y, by = NULL)
 
-sd_cross_join(x, y, by = NULL, select = sd_join_select_default())
+sd_cross_join(x, y, select = sd_join_select_default())
 }
 \arguments{
 \item{x}{The left dataframe}

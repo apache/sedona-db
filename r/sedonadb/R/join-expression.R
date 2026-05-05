@@ -287,7 +287,8 @@ get_geometry_columns <- function(schema) {
 match_tables_geom_call <- function(expr, join_expr_ctx) {
   # Match .tables$x$geom() or .tables$y$geom()
   if (
-    rlang::is_call(expr[[1]], "$") &&
+    length(expr) == 1 &&
+      rlang::is_call(expr[[1]], "$") &&
       rlang::is_call(expr[[1]][[2]], "$") &&
       rlang::is_symbol(expr[[1]][[2]][[2]], ".tables") &&
       as.character(expr[[1]][[2]][[3]]) %in% c("x", "y") &&
@@ -300,7 +301,8 @@ match_tables_geom_call <- function(expr, join_expr_ctx) {
 
   # Match x$geom() or y$geom()
   if (
-    rlang::is_call(expr[[1]], "$") &&
+    length(expr) == 1 &&
+      rlang::is_call(expr[[1]], "$") &&
       rlang::is_symbol(expr[[1]][[2]]) &&
       as.character(expr[[1]][[2]]) %in% c("x", "y") &&
       rlang::is_symbol(expr[[1]][[3]], "geom")
@@ -698,8 +700,11 @@ sd_build_default_select <- function(
 
   # For the purposes of computing how to choose output columns, we consider
   # st predicates equijoin keys. We can't do this for a full join (coalescing
-  # things that might not be equal doesn't make sense).
-  if (join_type == "full") {
+  # things that might not be equal doesn't make sense) and the default dplyr
+  # behaviour for right joins (which still returns the left key column name)
+  # is fishy in the non-equality case. The workaround is to swap the arguments
+  # and use a left join.
+  if (join_type %in% c("full", "right")) {
     equijoin_ops <- "="
   } else {
     equijoin_ops <- c(
