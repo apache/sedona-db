@@ -44,9 +44,7 @@ if "s2geography" not in sedonadb.__features__:
         pytest.param("POINT (0 0)", "POINT EMPTY", None, id="distance_empty"),
         pytest.param("POINT EMPTY", "POINT (0 0)", None, id="empty_distance"),
         # Point x point
-        pytest.param(
-            "POINT (0 0)", "POINT (0 0)", 0.0, id="point_distance_same_point"
-        ),
+        pytest.param("POINT (0 0)", "POINT (0 0)", 0.0, id="point_distance_same_point"),
         pytest.param(
             "POINT (0 0)", "POINT (0 1)", 111195.10117748393, id="point_distance_point"
         ),
