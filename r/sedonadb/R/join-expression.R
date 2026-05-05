@@ -37,6 +37,7 @@
 #'   Multiple conditions are combined with AND. Like dplyr's `join_by()`,
 #'   single columns are parsed as an equijoin condition (e.g., `id` becomes
 #'   `x$id == y$id`).
+#' @param distance For a within-distance join, the distance threshold.
 #'
 #' @returns An object of class `sedonadb_join_by` containing the unevaluated
 #'   join condition expressions.
@@ -57,6 +58,7 @@
 #'
 #' # Spatial joins
 #' sd_join_intersects()
+#' sd_join_dwithin(100)
 #'
 sd_join_by <- function(...) {
   exprs <- rlang::enquos(...)
@@ -125,6 +127,12 @@ sd_join_overlaps <- function() {
 #' @export
 sd_join_equals <- function() {
   sd_join_by(.fns$st_equals(.tables$x$geom(), .tables$y$geom()))
+}
+
+#' @rdname sd_join_by
+#' @export
+sd_join_dwithin <- function(distance) {
+  sd_join_by(.fns$st_dwithin(.tables$x$geom(), .tables$y$geom(), !!distance))
 }
 
 #' @export

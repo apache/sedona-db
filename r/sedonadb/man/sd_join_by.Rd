@@ -11,6 +11,7 @@
 \alias{sd_join_crosses}
 \alias{sd_join_overlaps}
 \alias{sd_join_equals}
+\alias{sd_join_dwithin}
 \title{Specify join conditions}
 \usage{
 sd_join_by(...)
@@ -32,6 +33,8 @@ sd_join_crosses()
 sd_join_overlaps()
 
 sd_join_equals()
+
+sd_join_dwithin(distance)
 }
 \arguments{
 \item{...}{Expressions specifying join conditions. These should be
@@ -41,6 +44,8 @@ or spatial predicate expressions
 Multiple conditions are combined with AND. Like dplyr's \code{join_by()},
 single columns are parsed as an equijoin condition (e.g., \code{id} becomes
 \code{x$id == y$id}).}
+
+\item{distance}{For a within-distance join, the distance threshold.}
 }
 \value{
 An object of class \code{sedonadb_join_by} containing the unevaluated
@@ -76,5 +81,6 @@ sd_join_by(x$value > y$threshold)
 
 # Spatial joins
 sd_join_intersects()
+sd_join_dwithin(100)
 
 }
