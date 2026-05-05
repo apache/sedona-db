@@ -17,10 +17,17 @@
 
 use std::sync::Arc;
 
-use datafusion_common::Result;
-use sedona_common::sedona_internal_datafusion_err;
-use sedona_expr::scalar_udf::ScalarKernelRef;
+use arrow_schema::DataType;
+use datafusion_common::{Result, ScalarValue};
+use datafusion_expr::ColumnarValue;
+use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
+use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
 use sedona_extension::{extension::SedonaCScalarKernel, scalar_kernel::ImportedScalarKernel};
+use sedona_functions::executor::WkbBytesExecutor;
+use sedona_schema::{
+    datatypes::{SedonaType, WKB_GEOGRAPHY},
+    matchers::ArgMatcher,
+};
 
 use crate::{s2geog_check, s2geography_c_bindgen::*};
 
@@ -37,7 +44,7 @@ pub fn s2_scalar_kernels() -> Result<Vec<(String, ScalarKernelRef)>> {
         .map_err(|e| sedona_internal_datafusion_err!("{e}"))?;
     }
 
-    ffi_scalar_kernels
+    let mut kernels = ffi_scalar_kernels
         .into_iter()
         .map(|c_kernel| {
             let imported_kernel = ImportedScalarKernel::try_from(c_kernel)?;
@@ -46,7 +53,149 @@ pub fn s2_scalar_kernels() -> Result<Vec<(String, ScalarKernelRef)>> {
                 Arc::new(imported_kernel) as ScalarKernelRef,
             ))
         })
-        .collect()
+        .collect::<Result<Vec<_>>>()?;
+
+    // A few functions need explicit NULL type matching. This is mostly a DataFusion
+    // thing (NULL can happen when binding parameters) so we handle it here and not
+    // in s2geography.
+
+    // Binary (geography, geography) -> Boolean
+    let binary_bool_fns = [
+        "st_contains",
+        "st_disjoint",
+        "st_equals",
+        "st_intersects",
+        "st_within",
+    ];
+    for fn_name in binary_bool_fns {
+        kernels.push((
+            fn_name.to_string(),
+            Arc::new(NullKernelHelper::new(ArgMatcher::new(
+                vec![ArgMatcher::is_geography(), ArgMatcher::is_null()],
+                SedonaType::Arrow(DataType::Boolean),
+            ))),
+        ));
+        kernels.push((
+            fn_name.to_string(),
+            Arc::new(NullKernelHelper::new(ArgMatcher::new(
+                vec![ArgMatcher::is_null(), ArgMatcher::is_geography()],
+                SedonaType::Arrow(DataType::Boolean),
+            ))),
+        ));
+    }
+
+    // Binary (geography, geography) -> Float64
+    let binary_float_fns = ["st_distance", "st_linelocatepoint", "st_maxdistance"];
+    for fn_name in binary_float_fns {
+        kernels.push((
+            fn_name.to_string(),
+            Arc::new(NullKernelHelper::new(ArgMatcher::new(
+                vec![ArgMatcher::is_geography(), ArgMatcher::is_null()],
+                SedonaType::Arrow(DataType::Float64),
+            ))),
+        ));
+        kernels.push((
+            fn_name.to_string(),
+            Arc::new(NullKernelHelper::new(ArgMatcher::new(
+                vec![ArgMatcher::is_null(), ArgMatcher::is_geography()],
+                SedonaType::Arrow(DataType::Float64),
+            ))),
+        ));
+    }
+
+    // Binary (geography, geography) -> geography
+    let binary_geog_fns = [
+        "st_closestpoint",
+        "st_difference",
+        "st_intersection",
+        "st_longestline",
+        "st_shortestline",
+        "st_symdifference",
+        "st_union",
+    ];
+    for fn_name in binary_geog_fns {
+        kernels.push((
+            fn_name.to_string(),
+            Arc::new(NullKernelHelper::new(ArgMatcher::new(
+                vec![ArgMatcher::is_geography(), ArgMatcher::is_null()],
+                WKB_GEOGRAPHY,
+            ))),
+        ));
+        kernels.push((
+            fn_name.to_string(),
+            Arc::new(NullKernelHelper::new(ArgMatcher::new(
+                vec![ArgMatcher::is_null(), ArgMatcher::is_geography()],
+                WKB_GEOGRAPHY,
+            ))),
+        ));
+    }
+
+    // Ternary (geography, geography, float64) -> Boolean
+    let ternary_bool_fns = ["st_dwithin"];
+    for fn_name in ternary_bool_fns {
+        kernels.push((
+            fn_name.to_string(),
+            Arc::new(NullKernelHelper::new(ArgMatcher::new(
+                vec![
+                    ArgMatcher::is_geography(),
+                    ArgMatcher::is_null(),
+                    ArgMatcher::is_numeric(),
+                ],
+                SedonaType::Arrow(DataType::Boolean),
+            ))),
+        ));
+        kernels.push((
+            fn_name.to_string(),
+            Arc::new(NullKernelHelper::new(ArgMatcher::new(
+                vec![
+                    ArgMatcher::is_null(),
+                    ArgMatcher::is_geography(),
+                    ArgMatcher::is_numeric(),
+                ],
+                SedonaType::Arrow(DataType::Boolean),
+            ))),
+        ));
+    }
+
+    Ok(kernels)
+}
+
+#[derive(Debug)]
+struct NullKernelHelper {
+    matcher: ArgMatcher,
+}
+
+impl NullKernelHelper {
+    fn new(matcher: ArgMatcher) -> Self {
+        Self { matcher }
+    }
+}
+
+impl SedonaScalarKernel for NullKernelHelper {
+    fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
+        self.matcher.match_args(args)
+    }
+
+    fn invoke_batch(
+        &self,
+        _arg_types: &[SedonaType],
+        _args: &[ColumnarValue],
+    ) -> Result<ColumnarValue> {
+        sedona_internal_err!("invoke_batch() should not be called")
+    }
+
+    fn invoke_batch_from_args(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+        return_type: &SedonaType,
+        num_rows: usize,
+        _config_options: Option<&datafusion_common::config::ConfigOptions>,
+    ) -> Result<ColumnarValue> {
+        let executor = WkbBytesExecutor::new(arg_types, args);
+        let scalar_out = ScalarValue::try_new_null(return_type.storage_type())?;
+        executor.finish(scalar_out.to_array_of_size(num_rows)?)
+    }
 }
 
 #[cfg(test)]
@@ -71,13 +220,17 @@ mod test {
     }
 
     fn s2_udf(name: &str) -> SedonaScalarUDF {
+        let mut udf: Option<SedonaScalarUDF> = None;
         for (kernel_name, kernel) in s2_scalar_kernels().unwrap() {
             if name == kernel_name {
-                return SedonaScalarUDF::from_impl(name, kernel);
+                match &mut udf {
+                    Some(u) => u.add_kernels(kernel),
+                    None => udf = Some(SedonaScalarUDF::from_impl(name, kernel)),
+                }
             }
         }
 
-        panic!("Can't find s2_scalar_udf named '{name}'")
+        udf.unwrap_or_else(|| panic!("Can't find s2_scalar_udf named '{name}'"))
     }
 
     #[rstest]
@@ -394,5 +547,50 @@ mod test {
             .invoke_scalar_scalar("POLYGON ((0 0, 0.01 0, 0 0.01, 0 0))", -100000)
             .unwrap();
         tester.assert_scalar_result_equals(result, "POLYGON EMPTY");
+    }
+
+    #[test]
+    fn null_type_matcher() {
+        // Test that the NullKernelHelper matches arguments as intended and produces
+        // either arrays of nulls or a null scalar of the correct type.
+        let udf = s2_udf("st_intersects");
+
+        let point_array = create_array(
+            &[Some("POINT (0.25 0.25)"), Some("POINT (10 10)"), None],
+            &WKB_GEOGRAPHY,
+        );
+        let expected: ArrayRef = arrow_array::create_array!(Boolean, [None, None, None]);
+
+        // Test (geography, Null) signature
+        let tester_geog_null = ScalarUdfTester::new(
+            udf.clone().into(),
+            vec![WKB_GEOGRAPHY, SedonaType::Arrow(DataType::Null)],
+        );
+
+        let result = tester_geog_null
+            .invoke_array_scalar(point_array.clone(), ScalarValue::Null)
+            .unwrap();
+        assert_eq!(&result, &expected);
+
+        let result = tester_geog_null
+            .invoke_scalar_scalar("POINT (0 1)", ScalarValue::Null)
+            .unwrap();
+        assert_eq!(result, ScalarValue::Boolean(None));
+
+        // Test (Null, geography) signature
+        let tester_null_geog = ScalarUdfTester::new(
+            udf.into(),
+            vec![SedonaType::Arrow(DataType::Null), WKB_GEOGRAPHY],
+        );
+
+        let result = tester_null_geog
+            .invoke_scalar_array(ScalarValue::Null, point_array)
+            .unwrap();
+        assert_eq!(&result, &expected);
+
+        let result = tester_null_geog
+            .invoke_scalar_scalar(ScalarValue::Null, "POINT (0 1)")
+            .unwrap();
+        assert_eq!(result, ScalarValue::Boolean(None));
     }
 }
