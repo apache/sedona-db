@@ -20,13 +20,23 @@
 #' Use `sd_join_by()` to specify join conditions for [sd_join()] using
 #' expressions that reference columns from both tables. Table references
 #' are specified using `x$column` and `y$column` syntax to disambiguate
-#' columns from the left and right tables.
+#' columns from the left and right tables, and the special helper `x$geom()`
+#' and `y$geom()` may be used for tables with exactly one geometry column.
+#' Spatial joins can use spatial predicates in the join by expression
+#' (e.g., `sd_join_by(st_intersects(x$geom(), y$geom())`) or the shorthand
+#' `sd_join_intersects()`.
+#'
+#' For programmatic usage, the `.tables` pronoun may be used to unambiguously
+#' refer to a table qualifier (similar to the `.data` pronoun which may be
+#' used in single-table SedonaDB verbs).
 #'
 #' @param ... Expressions specifying join conditions. These should be
 #'   comparison expressions (e.g., `x$id == y$id`, `x$value > y$threshold`)
 #'   or spatial predicate expressions
 #'   (e.g., `st_intersects(x$geometry, y$geometry)`).
-#'   Multiple conditions are combined with AND.
+#'   Multiple conditions are combined with AND. Like dplyr's `join_by()`,
+#'   single columns are parsed as an equijoin condition (e.g., `id` becomes
+#'   `x$id == y$id`).
 #'
 #' @returns An object of class `sedonadb_join_by` containing the unevaluated
 #'   join condition expressions.
@@ -36,11 +46,17 @@
 #' # Equality join on id column
 #' sd_join_by(x$id == y$id)
 #'
+#' # Can use just the column name as a shorthand
+#' sd_join_by(id)
+#'
 #' # Multiple conditions (combined with AND)
 #' sd_join_by(x$id == y$id, x$date >= y$start_date)
 #'
 #' # Inequality join
 #' sd_join_by(x$value > y$threshold)
+#'
+#' # Spatial joins
+#' sd_join_intersects()
 #'
 sd_join_by <- function(...) {
   exprs <- rlang::enquos(...)
@@ -61,6 +77,54 @@ sd_join_by <- function(...) {
 #' @export
 sd_join_intersects <- function() {
   sd_join_by(.fns$st_intersects(.tables$x$geom(), .tables$y$geom()))
+}
+
+#' @rdname sd_join_by
+#' @export
+sd_join_contains <- function() {
+  sd_join_by(.fns$st_contains(.tables$x$geom(), .tables$y$geom()))
+}
+
+#' @rdname sd_join_by
+#' @export
+sd_join_within <- function() {
+  sd_join_by(.fns$st_within(.tables$x$geom(), .tables$y$geom()))
+}
+
+#' @rdname sd_join_by
+#' @export
+sd_join_covers <- function() {
+  sd_join_by(.fns$st_covers(.tables$x$geom(), .tables$y$geom()))
+}
+
+#' @rdname sd_join_by
+#' @export
+sd_join_coveredby <- function() {
+  sd_join_by(.fns$st_coveredby(.tables$x$geom(), .tables$y$geom()))
+}
+
+#' @rdname sd_join_by
+#' @export
+sd_join_touches <- function() {
+  sd_join_by(.fns$st_touches(.tables$x$geom(), .tables$y$geom()))
+}
+
+#' @rdname sd_join_by
+#' @export
+sd_join_crosses <- function() {
+  sd_join_by(.fns$st_crosses(.tables$x$geom(), .tables$y$geom()))
+}
+
+#' @rdname sd_join_by
+#' @export
+sd_join_overlaps <- function() {
+  sd_join_by(.fns$st_overlaps(.tables$x$geom(), .tables$y$geom()))
+}
+
+#' @rdname sd_join_by
+#' @export
+sd_join_equals <- function() {
+  sd_join_by(.fns$st_equals(.tables$x$geom(), .tables$y$geom()))
 }
 
 #' @export

@@ -25,6 +25,10 @@
 #' @param y The right dataframe
 #' @param by Join specification. One of:
 #'   - A `sedonadb_join_by` object from [sd_join_by()]
+#'   - A `sedonadb_join_by` object from [sd_join_intersects()],
+#'     [sd_join_contains()], [sd_join_within()], [sd_join_covers()],
+#'     [sd_join_coveredby()], [sd_join_touches()], [sd_join_crosses()],
+#'     [sd_join_overlaps()], or [sd_join_equals()].
 #'   - A character vector of column names to join on in both tables
 #'   - A named character vector mapping left-table column names to
 #'     right-table column names, e.g. `c(x_val = "y_val")`
