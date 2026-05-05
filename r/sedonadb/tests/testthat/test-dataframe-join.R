@@ -113,3 +113,77 @@ test_that("sd_join() join_type argument is applied to join results", {
   joined <- df1 |> sd_join(df2, by = "key", join_type = "full")
   expect_identical(colnames(joined), c("letters_x", "key", "extra_column", "letters_y"))
 })
+
+test_that("sd_join() computes the correct columns for spatial predicate joins", {
+  cities <- sd_read_parquet(system.file(
+    "files/natural-earth_cities_geo.parquet",
+    package = "sedonadb"
+  ))
+  countries <- sd_read_parquet(system.file(
+    "files/natural-earth_countries_geo.parquet",
+    package = "sedonadb"
+  ))
+
+  # left_join: We should get one geometry column from the logical left side (points)
+  df <- cities |> sd_left_join(countries, by = sd_join_intersects())
+  expect_identical(
+    colnames(df),
+    c("name.x", "geometry", "name.y", "continent")
+  )
+  expect_identical(
+    df |> sd_transmute(dim = .fns$st_dimension(geometry)) |> head(1) |> as.data.frame(),
+    data.frame(dim = 0L)
+  )
+
+  # inner_join: We should get one geometry column from the logical left side (points)
+  df <- cities |> sd_inner_join(countries, by = sd_join_intersects())
+  expect_identical(
+    colnames(df),
+    c("name.x", "geometry", "name.y", "continent")
+  )
+  expect_identical(
+    df |> sd_transmute(dim = .fns$st_dimension(geometry)) |> head(1) |> as.data.frame(),
+    data.frame(dim = 0L)
+  )
+
+  # right_join: We should get one geometry column from the logical right side (polygons)
+  df <- cities |> sd_right_join(countries, by = sd_join_intersects())
+  expect_identical(
+    colnames(df),
+    c("name.x", "geometry", "name.y", "continent")
+  )
+  expect_identical(
+    df |> sd_transmute(dim = .fns$st_dimension(geometry)) |> head(1) |> as.data.frame(),
+    data.frame(dim = 2L)
+  )
+
+  # full_join: Keeps both geometry columns by default
+  df <- cities |> sd_full_join(countries, by = sd_join_intersects())
+  expect_identical(
+    colnames(df),
+    c("name.x", "geometry.x", "name.y", "continent", "geometry.y")
+  )
+  expect_identical(
+    df |> sd_transmute(dim = .fns$st_dimension(geometry.x)) |> head(1) |> as.data.frame(),
+    data.frame(dim = 0L)
+  )
+  expect_identical(
+    df |> sd_transmute(dim = .fns$st_dimension(geometry.y)) |> head(1) |> as.data.frame(),
+    data.frame(dim = 2L)
+  )
+
+  # Any join: Keeps both geometry columns if keep = TRUE
+  df <- cities |> sd_inner_join(countries, by = sd_join_intersects(), keep = TRUE)
+  expect_identical(
+    colnames(df),
+    c("name.x", "geometry.x", "name.y", "continent", "geometry.y")
+  )
+  expect_identical(
+    df |> sd_transmute(dim = .fns$st_dimension(geometry.x)) |> head(1) |> as.data.frame(),
+    data.frame(dim = 0L)
+  )
+  expect_identical(
+    df |> sd_transmute(dim = .fns$st_dimension(geometry.y)) |> head(1) |> as.data.frame(),
+    data.frame(dim = 2L)
+  )
+})
