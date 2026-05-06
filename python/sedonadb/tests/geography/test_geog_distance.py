@@ -829,10 +829,10 @@ def test_st_closestpoint(eng, geom1, geom2, expected):
     ("geom1", "geom2", "expected"),
     [
         pytest.param(
-            "POINT (0 0)", "POINT EMPTY", "POINT EMPTY", id="closestpoint_empty"
+            "POINT (0 0)", "POINT EMPTY", "POINT (nan nan)", id="closestpoint_empty"
         ),
         pytest.param(
-            "POINT EMPTY", "POINT (0 0)", "POINT EMPTY", id="empty_closestpoint"
+            "POINT EMPTY", "POINT (0 0)", "POINT (nan nan)", id="empty_closestpoint"
         ),
     ],
 )
@@ -845,8 +845,8 @@ def test_st_closestpoint_empties(eng, geom1, geom2, expected):
     )
 
 
-# ST_ShortestLine tests - returns the line connecting the closest points
-@pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
+# ST_ShortestLine tests (not supported on BigQuery)
+@pytest.mark.parametrize("eng", [SedonaDB])
 @pytest.mark.parametrize(
     ("geom1", "geom2", "expected"),
     [
@@ -952,8 +952,8 @@ def test_st_shortestline_empties(eng, geom1, geom2, expected):
     )
 
 
-# ST_LongestLine tests - returns the line connecting the farthest points
-@pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
+# ST_LongestLine tests (not supported on BigQuery)
+@pytest.mark.parametrize("eng", [SedonaDB])
 @pytest.mark.parametrize(
     ("geom1", "geom2", "expected"),
     [

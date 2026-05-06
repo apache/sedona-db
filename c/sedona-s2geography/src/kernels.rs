@@ -157,6 +157,50 @@ pub fn s2_scalar_kernels() -> Result<Vec<(String, ScalarKernelRef)>> {
         ));
     }
 
+    // st_buffer(geography, NULL) -> geography
+    kernels.push((
+        "st_buffer".to_string(),
+        Arc::new(NullKernelHelper::new(ArgMatcher::new(
+            vec![ArgMatcher::is_geography(), ArgMatcher::is_null()],
+            WKB_GEOGRAPHY,
+        ))),
+    ));
+
+    // st_reduceprecision(geography, NULL) -> geography
+    kernels.push((
+        "st_reduceprecision".to_string(),
+        Arc::new(NullKernelHelper::new(ArgMatcher::new(
+            vec![ArgMatcher::is_geography(), ArgMatcher::is_null()],
+            WKB_GEOGRAPHY,
+        ))),
+    ));
+
+    // st_buffer(geography, NULL, NULL) -> geography
+    kernels.push((
+        "st_buffer".to_string(),
+        Arc::new(NullKernelHelper::new(ArgMatcher::new(
+            vec![
+                ArgMatcher::is_geography(),
+                ArgMatcher::is_null(),
+                ArgMatcher::is_null(),
+            ],
+            WKB_GEOGRAPHY,
+        ))),
+    ));
+
+    // s2_coveringcellids(NULL) -> List<Int64>
+    kernels.push((
+        "s2_coveringcellids".to_string(),
+        Arc::new(NullKernelHelper::new(ArgMatcher::new(
+            vec![ArgMatcher::is_null()],
+            SedonaType::Arrow(DataType::List(Arc::new(arrow_schema::Field::new(
+                "item",
+                DataType::Int64,
+                true,
+            )))),
+        ))),
+    ));
+
     Ok(kernels)
 }
 

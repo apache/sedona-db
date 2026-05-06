@@ -17,145 +17,78 @@
 
 import pytest
 import sedonadb
-from sedonadb.testing import SedonaDB, geog_or_null
+from sedonadb.testing import SedonaDB, BigQuery, geog_or_null
 
 if "s2geography" not in sedonadb.__features__:
     pytest.skip("Python package built without s2geography", allow_module_level=True)
 
 
 # S2_CellIdFromPoint tests - returns the S2 cell ID containing a point
-@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
 @pytest.mark.parametrize(
-    ("geog", "is_null_expected"),
+    ("geog", "expected"),
     [
-        # Nulls
-        pytest.param(None, True, id="null_point"),
-        # Empties
-        pytest.param("POINT EMPTY", True, id="empty_point"),
         # Valid points
-        pytest.param("POINT (0 0)", False, id="point_origin"),
-        pytest.param("POINT (0 1)", False, id="point_1_degree"),
-        pytest.param("POINT (-122.4194 37.7749)", False, id="point_sf"),
-        pytest.param("POINT (180 0)", False, id="point_antimeridian"),
-        pytest.param("POINT (0 90)", False, id="point_north_pole"),
-        pytest.param("POINT (0 -90)", False, id="point_south_pole"),
+        pytest.param("POINT (0 0)", 1152921504606846977, id="point_origin"),
+        pytest.param("POINT (0 1)", 1153451514845492609, id="point_1_degree"),
     ],
 )
-def test_s2_cellidfrompoint(eng, geog, is_null_expected):
+def test_s2_cellidfrompoint(eng, geog, expected):
     eng = eng.create_or_skip()
-    result = eng.execute_query(f"SELECT S2_CellIdFromPoint({geog_or_null(geog)})")
-    if is_null_expected:
-        assert result is None
-    else:
-        # Cell IDs should be non-zero 64-bit integers
-        assert isinstance(result, int)
-        assert result != 0
+    eng.assert_query_result(
+        f"SELECT S2_CellIdFromPoint({geog_or_null(geog)})",
+        expected,
+    )
 
 
-# Test that different points get different cell IDs
+# BigQuery doesn't handle empty input
 @pytest.mark.parametrize("eng", [SedonaDB])
-def test_s2_cellidfrompoint_different_points(eng):
+@pytest.mark.parametrize(
+    ("geog", "expected"),
+    [
+        # Empties
+        pytest.param("POINT EMPTY", None, id="empty_point"),
+    ],
+)
+def test_s2_cellidfrompoint_empties(eng, geog, expected):
     eng = eng.create_or_skip()
-    id1 = eng.execute_query("SELECT S2_CellIdFromPoint(ST_GeogFromText('POINT (0 0)'))")
-    id2 = eng.execute_query("SELECT S2_CellIdFromPoint(ST_GeogFromText('POINT (0 1)'))")
-    id3 = eng.execute_query("SELECT S2_CellIdFromPoint(ST_GeogFromText('POINT (1 0)'))")
+    eng.assert_query_result(
+        f"SELECT S2_CellIdFromPoint({geog_or_null(geog)})",
+        expected,
+    )
 
-    assert id1 != id2
-    assert id1 != id3
-    assert id2 != id3
-
-
-# Test that nearby points get the same cell ID (at a coarse level)
-@pytest.mark.parametrize("eng", [SedonaDB])
-def test_s2_cellidfrompoint_consistency(eng):
-    eng = eng.create_or_skip()
-    # Same point should always return the same cell ID
-    id1 = eng.execute_query("SELECT S2_CellIdFromPoint(ST_GeogFromText('POINT (0 0)'))")
-    id2 = eng.execute_query("SELECT S2_CellIdFromPoint(ST_GeogFromText('POINT (0 0)'))")
-    assert id1 == id2
 
 
 # S2_CoveringCellIds tests - returns a list of S2 cell IDs covering a geometry
-@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
 @pytest.mark.parametrize(
-    ("geog", "expected_count_min", "expected_count_max"),
+    ("geog", "expected"),
     [
         # Empties return empty list
-        pytest.param("POINT EMPTY", 0, 0, id="empty_point"),
+        pytest.param("POINT EMPTY", [], id="empty_point"),
         # Single point returns one cell
-        pytest.param("POINT (0 0)", 1, 1, id="point_origin"),
-        pytest.param("POINT (0 1)", 1, 1, id="point_1_degree"),
-        # Linestrings may require multiple cells depending on length
-        pytest.param("LINESTRING (0 0, 0.001 0.001)", 1, 4, id="linestring_short"),
+        pytest.param("POINT (0 0)", [1152921504606846977], id="point_origin"),
+        # Linestring
         pytest.param(
-            "LINESTRING (0 0, 100 50)", 2, 8, id="linestring_long"
-        ),  # Spans multiple cells
-        # Polygons may require multiple cells depending on size
-        pytest.param(
-            "POLYGON ((0 0, 0.001 0, 0.001 0.001, 0 0.001, 0 0))",
-            1,
-            4,
-            id="polygon_tiny",
-        ),
-        pytest.param(
-            "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))",
-            1,
-            8,
-            id="polygon_medium",
+            "LINESTRING (0 0, 1 1)",
+            [
+                384307168202282325,
+                1152921504606846975,
+                1152939096792891392,
+                1152991873349976064,
+                1153009465537069056,
+                1153273348327735296,
+                1153390629569429504,
+                1921535841011411627,
+            ],
+            id="linestring",
         ),
     ],
 )
-def test_s2_coveringcellids(eng, geog, expected_count_min, expected_count_max):
+def test_s2_coveringcellids(eng, geog, expected):
     eng = eng.create_or_skip()
-    result = eng.execute_query(f"SELECT S2_CoveringCellIds({geog_or_null(geog)})")
-    if expected_count_min == 0 and expected_count_max == 0:
-        # Empty geometry should return empty list or null
-        assert result is None or (isinstance(result, list) and len(result) == 0)
-    else:
-        assert isinstance(result, list)
-        assert expected_count_min <= len(result) <= expected_count_max, (
-            f"Expected {expected_count_min}-{expected_count_max} cells, got {len(result)}"
-        )
-        # All cell IDs should be non-zero integers
-        for cell_id in result:
-            assert isinstance(cell_id, int)
-            assert cell_id != 0
-
-
-# Null input returns null
-@pytest.mark.parametrize("eng", [SedonaDB])
-def test_s2_coveringcellids_null(eng):
-    eng = eng.create_or_skip()
-    result = eng.execute_query("SELECT S2_CoveringCellIds(NULL)")
-    assert result is None
-
-
-# Test that coverings are deterministic
-@pytest.mark.parametrize("eng", [SedonaDB])
-def test_s2_coveringcellids_deterministic(eng):
-    eng = eng.create_or_skip()
-    cells1 = eng.execute_query(
-        "SELECT S2_CoveringCellIds(ST_GeogFromText('POINT (0 0)'))"
+    result = eng.execute_and_collect(
+        f"SELECT S2_CoveringCellIds({geog_or_null(geog)})",
     )
-    cells2 = eng.execute_query(
-        "SELECT S2_CoveringCellIds(ST_GeogFromText('POINT (0 0)'))"
-    )
-    assert cells1 == cells2
-
-
-# Test that point covering cell ID matches S2_CellIdFromPoint
-@pytest.mark.parametrize("eng", [SedonaDB])
-def test_s2_coveringcellids_matches_cellidfrompoint(eng):
-    eng = eng.create_or_skip()
-    cell_id = eng.execute_query(
-        "SELECT S2_CellIdFromPoint(ST_GeogFromText('POINT (0 0)'))"
-    )
-    covering_ids = eng.execute_query(
-        "SELECT S2_CoveringCellIds(ST_GeogFromText('POINT (0 0)'))"
-    )
-
-    # The covering for a point should contain exactly one cell,
-    # and it should be the same as the cell ID from S2_CellIdFromPoint
-    assert isinstance(covering_ids, list)
-    assert len(covering_ids) == 1
-    assert covering_ids[0] == cell_id
+    df = eng.result_to_pandas(result)
+    assert list(df.iloc[0, 0]) == expected

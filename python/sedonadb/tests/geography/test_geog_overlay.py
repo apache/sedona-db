@@ -34,30 +34,12 @@ if "s2geography" not in sedonadb.__features__:
         pytest.param(None, None, None, id="null_intersection_null"),
         # Point + Point: same
         pytest.param("POINT (0 0)", "POINT (0 0)", "POINT (0 0)", id="point_same"),
-        # Point + Point: different
-        pytest.param(
-            "POINT (0 0)", "POINT (0 1)", "POINT (nan nan)", id="point_different"
-        ),
         # Multipoint + Point: overlap
         pytest.param(
             "MULTIPOINT ((0 0), (1 1))",
             "POINT (0 0)",
             "POINT (0 0)",
             id="multipoint_point_overlap",
-        ),
-        # Multipoint + Point: disjoint
-        pytest.param(
-            "MULTIPOINT ((0 0), (1 1))",
-            "POINT (2 2)",
-            "POINT (nan nan)",
-            id="multipoint_point_disjoint",
-        ),
-        # Linestring + Linestring: disjoint
-        pytest.param(
-            "LINESTRING (0 0, 10 0)",
-            "LINESTRING (0 10, 10 10)",
-            "LINESTRING EMPTY",
-            id="linestring_disjoint",
         ),
         # Linestring + Linestring: same
         pytest.param(
@@ -80,13 +62,6 @@ if "s2geography" not in sedonadb.__features__:
             "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))",
             id="polygon_same",
         ),
-        # Polygon + Polygon: disjoint
-        pytest.param(
-            "POLYGON ((0 0, 5 0, 5 5, 0 5, 0 0))",
-            "POLYGON ((10 10, 15 10, 15 15, 10 15, 10 10))",
-            "POLYGON EMPTY",
-            id="polygon_disjoint",
-        ),
         # Point + Linestring: point at endpoint
         pytest.param(
             "POINT (0 0)",
@@ -94,26 +69,12 @@ if "s2geography" not in sedonadb.__features__:
             "POINT (0 0)",
             id="point_on_linestring",
         ),
-        # Point + Linestring: point off line
-        pytest.param(
-            "POINT (5 5)",
-            "LINESTRING (0 0, 10 0)",
-            "POINT (nan nan)",
-            id="point_off_linestring",
-        ),
         # Point + Polygon: point inside
         pytest.param(
             "POINT (5 5)",
             "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))",
             "POINT (5 5)",
             id="point_inside_polygon",
-        ),
-        # Point + Polygon: point outside
-        pytest.param(
-            "POINT (20 20)",
-            "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))",
-            "POINT (nan nan)",
-            id="point_outside_polygon",
         ),
         # Point + Polygon: point on boundary
         pytest.param(
@@ -128,13 +89,6 @@ if "s2geography" not in sedonadb.__features__:
             "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))",
             "LINESTRING (2 5, 8 5)",
             id="linestring_inside_polygon",
-        ),
-        # Linestring + Polygon: line outside
-        pytest.param(
-            "LINESTRING (20 0, 30 0)",
-            "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))",
-            "LINESTRING EMPTY",
-            id="linestring_outside_polygon",
         ),
     ],
 )
@@ -153,20 +107,20 @@ def test_st_intersection(eng, geom1, geom2, expected):
     ("geom1", "geom2", "expected"),
     [
         pytest.param(
-            "POINT (nan nan)",
-            "POINT (nan nan)",
+            "POINT EMPTY",
+            "POINT EMPTY",
             "GEOMETRYCOLLECTION EMPTY",
             id="both_empty",
         ),
         pytest.param(
-            "POINT (nan nan)",
+            "POINT EMPTY",
             "POINT (0 0)",
             "GEOMETRYCOLLECTION EMPTY",
             id="empty_a_point",
         ),
         pytest.param(
             "POINT (0 0)",
-            "POINT (nan nan)",
+            "POINT EMPTY",
             "GEOMETRYCOLLECTION EMPTY",
             id="empty_b_point",
         ),
@@ -185,6 +139,84 @@ def test_st_intersection(eng, geom1, geom2, expected):
     ],
 )
 def test_st_intersection_empties(eng, geom1, geom2, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_Intersection({geog_or_null(geom1)}, {geog_or_null(geom2)})",
+        expected,
+        wkt_precision=6,
+    )
+
+
+# Results that return EMPTY - BigQuery differs in handling
+@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize(
+    ("geom1", "geom2", "expected"),
+    [
+        # Linestring + Linestring: disjoint
+        pytest.param(
+            "LINESTRING (0 0, 10 0)",
+            "LINESTRING (0 10, 10 10)",
+            "LINESTRING EMPTY",
+            id="linestring_disjoint",
+        ),
+        # Polygon + Polygon: disjoint
+        pytest.param(
+            "POLYGON ((0 0, 5 0, 5 5, 0 5, 0 0))",
+            "POLYGON ((10 10, 15 10, 15 15, 10 15, 10 10))",
+            "POLYGON EMPTY",
+            id="polygon_disjoint",
+        ),
+        # Linestring + Polygon: line outside
+        pytest.param(
+            "LINESTRING (20 0, 30 0)",
+            "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))",
+            "LINESTRING EMPTY",
+            id="linestring_outside_polygon",
+        ),
+    ],
+)
+def test_st_intersection_returns_empty(eng, geom1, geom2, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_Intersection({geog_or_null(geom1)}, {geog_or_null(geom2)})",
+        expected,
+        wkt_precision=6,
+    )
+
+
+# Results that return POINT (nan nan) - BigQuery differs in handling
+@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize(
+    ("geom1", "geom2", "expected"),
+    [
+        # Point + Point: different
+        pytest.param(
+            "POINT (0 0)", "POINT (0 1)", "POINT (nan nan)", id="point_different"
+        ),
+        # Multipoint + Point: disjoint
+        pytest.param(
+            "MULTIPOINT ((0 0), (1 1))",
+            "POINT (2 2)",
+            "POINT (nan nan)",
+            id="multipoint_point_disjoint",
+        ),
+        # Point + Linestring: point off line
+        pytest.param(
+            "POINT (5 5)",
+            "LINESTRING (0 0, 10 0)",
+            "POINT (nan nan)",
+            id="point_off_linestring",
+        ),
+        # Point + Polygon: point outside
+        pytest.param(
+            "POINT (20 20)",
+            "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))",
+            "POINT (nan nan)",
+            id="point_outside_polygon",
+        ),
+    ],
+)
+def test_st_intersection_returns_empty_point(eng, geom1, geom2, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(
         f"SELECT ST_Intersection({geog_or_null(geom1)}, {geog_or_null(geom2)})",
@@ -322,21 +354,21 @@ def test_st_difference_very_far(eng, geom1, geom2, expected):
         pytest.param(
             "POINT (0 0)",
             "POINT (0 1)",
-            "MULTIPOINT ((0 0), (0 1))",
+            "MULTIPOINT (0 0, 0 1)",
             id="point_different",
         ),
         # Multipoint + Point
         pytest.param(
-            "MULTIPOINT ((0 0), (1 1))",
+            "MULTIPOINT (0 0, 1 1)",
             "POINT (2 2)",
-            "MULTIPOINT ((0 0), (1 1), (2 2))",
+            "MULTIPOINT (0 0, 1 1, 2 2)",
             id="multipoint_point",
         ),
         # Multipoint + Point: overlap
         pytest.param(
-            "MULTIPOINT ((0 0), (1 1))",
+            "MULTIPOINT (0 0, 1 1)",
             "POINT (0 0)",
-            "MULTIPOINT ((0 0), (1 1))",
+            "MULTIPOINT (0 0, 1 1)",
             id="multipoint_point_overlap",
         ),
         # Linestring + Linestring: disjoint
@@ -385,20 +417,20 @@ def test_st_union(eng, geom1, geom2, expected):
     ("geom1", "geom2", "expected"),
     [
         pytest.param(
-            "POINT (nan nan)",
-            "POINT (nan nan)",
+            "POINT EMPTY",
+            "POINT EMPTY",
             "POINT (nan nan)",
             id="both_empty",
         ),
         pytest.param(
-            "POINT (nan nan)",
+            "POINT EMPTY",
             "POINT (0 0)",
             "POINT (0 0)",
             id="empty_a_point",
         ),
         pytest.param(
             "POINT (0 0)",
-            "POINT (nan nan)",
+            "POINT EMPTY",
             "POINT (0 0)",
             id="empty_b_point",
         ),
@@ -425,8 +457,8 @@ def test_st_union_empties(eng, geom1, geom2, expected):
     )
 
 
-# ST_SymDifference tests
-@pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
+# ST_SymDifference tests (not implemented on BigQuery)
+@pytest.mark.parametrize("eng", [SedonaDB])
 @pytest.mark.parametrize(
     ("geom1", "geom2", "expected"),
     [
@@ -434,21 +466,12 @@ def test_st_union_empties(eng, geom1, geom2, expected):
         pytest.param(None, "POINT (0 0)", None, id="null_symdifference"),
         pytest.param("POINT (0 0)", None, None, id="symdifference_null"),
         pytest.param(None, None, None, id="null_symdifference_null"),
-        # Point symdiff Point: same -> empty
-        pytest.param("POINT (0 0)", "POINT (0 0)", "POINT (nan nan)", id="point_same"),
         # Point symdiff Point: different
         pytest.param(
             "POINT (0 0)",
             "POINT (0 1)",
-            "MULTIPOINT ((0 0), (0 1))",
+            "MULTIPOINT (0 0, 0 1)",
             id="point_different",
-        ),
-        # Linestring symdiff Linestring: same -> empty
-        pytest.param(
-            "LINESTRING (0 0, 10 0)",
-            "LINESTRING (0 0, 10 0)",
-            "LINESTRING EMPTY",
-            id="linestring_same",
         ),
         # Linestring symdiff Linestring: disjoint
         pytest.param(
@@ -456,13 +479,6 @@ def test_st_union_empties(eng, geom1, geom2, expected):
             "LINESTRING (0 10, 10 10)",
             "MULTILINESTRING ((0 0, 10 0), (0 10, 10 10))",
             id="linestring_disjoint",
-        ),
-        # Polygon symdiff Polygon: same -> empty
-        pytest.param(
-            "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))",
-            "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))",
-            "POLYGON EMPTY",
-            id="polygon_same",
         ),
         # Polygon symdiff Polygon: disjoint
         pytest.param(
@@ -489,20 +505,20 @@ def test_st_symdifference(eng, geom1, geom2, expected):
     ("geom1", "geom2", "expected"),
     [
         pytest.param(
-            "POINT (nan nan)",
-            "POINT (nan nan)",
+            "POINT EMPTY",
+            "POINT EMPTY",
             "POINT (nan nan)",
             id="both_empty",
         ),
         pytest.param(
-            "POINT (nan nan)",
+            "POINT EMPTY",
             "POINT (0 0)",
             "POINT (0 0)",
             id="empty_a",
         ),
         pytest.param(
             "POINT (0 0)",
-            "POINT (nan nan)",
+            "POINT EMPTY",
             "POINT (0 0)",
             id="empty_b",
         ),
@@ -529,15 +545,46 @@ def test_st_symdifference_empties(eng, geom1, geom2, expected):
     )
 
 
+@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize(
+    ("geom1", "geom2", "expected"),
+    [
+         # Point symdiff Point: same -> empty
+        pytest.param("POINT (0 0)", "POINT (0 0)", "POINT (nan nan)", id="point_same"),
+        # Linestring symdiff Linestring: same -> empty
+        pytest.param(
+            "LINESTRING (0 0, 10 0)",
+            "LINESTRING (0 0, 10 0)",
+            "LINESTRING EMPTY",
+            id="linestring_same",
+        ),
+        # Polygon symdiff Polygon: same -> empty
+        pytest.param(
+            "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))",
+            "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))",
+            "POLYGON EMPTY",
+            id="polygon_same",
+        ),
+    ],
+)
+def test_st_symdifference_returns_empty(eng, geom1, geom2, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_SymDifference({geog_or_null(geom1)}, {geog_or_null(geom2)})",
+        expected,
+        wkt_precision=6,
+    )
+
+
 # Far apart geometries (coverings don't intersect) for symdifference
-@pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
+@pytest.mark.parametrize("eng", [SedonaDB])
 @pytest.mark.parametrize(
     ("geom1", "geom2", "expected"),
     [
         pytest.param(
             "POINT (0 0)",
             "POINT (180 0)",
-            "MULTIPOINT ((0 0), (180 0))",
+            "MULTIPOINT (0 0, 180 0)",
             id="point_very_far",
         ),
         pytest.param(
