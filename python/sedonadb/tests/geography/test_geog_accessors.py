@@ -17,9 +17,6 @@
 
 """
 Geography accessor tests ported from s2geography accessors-geog_test.cc.
-
-Note: ST_Area, ST_Length, ST_Perimeter are in test_geog_measures.py as they
-are classified as "Measures" in BigQuery's categorization.
 """
 
 import pytest
@@ -30,57 +27,17 @@ if "s2geography" not in sedonadb.__features__:
     pytest.skip("Python package built without s2geography", allow_module_level=True)
 
 
-# -----------------------------------------------------------------------------
-# ST_Area tests (for backwards compatibility - full suite in test_geog_measures.py)
-# -----------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
-@pytest.mark.parametrize(
-    ("geog", "expected"),
-    [
-        (None, None),
-        ("POINT EMPTY", 0.0),
-        ("LINESTRING EMPTY", 0.0),
-        ("POLYGON EMPTY", 0.0),
-        ("MULTIPOINT EMPTY", 0.0),
-        ("MULTILINESTRING EMPTY", 0.0),
-        ("MULTIPOLYGON EMPTY", 0.0),
-        ("GEOMETRYCOLLECTION EMPTY", 0.0),
-        ("POINT (5 2)", 0.0),
-        ("MULTIPOINT ((0 0), (1 1))", 0.0),
-        ("LINESTRING (0 0, 1 1)", 0.0),
-        ("MULTILINESTRING ((0 0, 1 1), (1 1, 2 2))", 0.0),
-        ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", 12364036567.076418),
-        (
-            "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)), ((10 10, 11 10, 11 11, 10 11, 10 10)))",
-            24521468442.943977,
-        ),
-    ],
-)
-def test_st_area(eng, geog, expected):
-    eng = eng.create_or_skip()
-    eng.assert_query_result(f"SELECT ST_Area({geog_or_null(geog)})", expected)
-
-
-# -----------------------------------------------------------------------------
-# ST_Dimension tests
-# -----------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
 @pytest.mark.parametrize(
     ("geog", "expected"),
     [
         pytest.param(None, None, id="null"),
-        pytest.param("POINT EMPTY", -1, id="point_empty"),
-        pytest.param("LINESTRING EMPTY", -1, id="linestring_empty"),
-        pytest.param("POLYGON EMPTY", -1, id="polygon_empty"),
-        pytest.param("GEOMETRYCOLLECTION EMPTY", -1, id="gc_empty"),
         pytest.param("POINT (0 0)", 0, id="point"),
         pytest.param("MULTIPOINT ((0 0), (1 1))", 0, id="multipoint"),
         pytest.param("LINESTRING (0 0, 1 1)", 1, id="linestring"),
-        pytest.param("MULTILINESTRING ((0 0, 1 1), (2 2, 3 3))", 1, id="multilinestring"),
+        pytest.param(
+            "MULTILINESTRING ((0 0, 1 1), (2 2, 3 3))", 1, id="multilinestring"
+        ),
         pytest.param("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", 2, id="polygon"),
         pytest.param(
             "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)), ((2 2, 3 2, 3 3, 2 3, 2 2)))",
@@ -105,9 +62,23 @@ def test_st_dimension(eng, geog, expected):
     eng.assert_query_result(f"SELECT ST_Dimension({geog_or_null(geog)})", expected)
 
 
-# -----------------------------------------------------------------------------
-# ST_IsEmpty tests
-# -----------------------------------------------------------------------------
+# Run st_dimension empty checks separately because BigQuery doesn't distinguish
+# empties with specific geometry types. PostGIS doesn't support st_dimension()
+# for geography but does distinguish dimensions of empties for geometry and
+# returns GEOMETRYCOLLECTION EMPTY as a dimension of 0 (BigQuery returns -1).
+@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize(
+    ("geog", "expected"),
+    [
+        pytest.param("GEOMETRYCOLLECTION EMPTY", 0, id="gc_empty"),
+        pytest.param("POINT EMPTY", 0, id="point_empty"),
+        pytest.param("LINESTRING EMPTY", 1, id="linestring_empty"),
+        pytest.param("POLYGON EMPTY", 2, id="polygon_empty"),
+    ],
+)
+def test_st_dimension_empty(eng, geog, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_Dimension({geog_or_null(geog)})", expected)
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
@@ -130,11 +101,6 @@ def test_st_dimension(eng, geog, expected):
 def test_st_isempty(eng, geog, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(f"SELECT ST_IsEmpty({geog_or_null(geog)})", expected)
-
-
-# -----------------------------------------------------------------------------
-# ST_NPoints / ST_NumPoints tests
-# -----------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
@@ -162,11 +128,6 @@ def test_st_isempty(eng, geog, expected):
 def test_st_npoints(eng, geog, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(f"SELECT ST_NPoints({geog_or_null(geog)})", expected)
-
-
-# -----------------------------------------------------------------------------
-# ST_NumGeometries tests
-# -----------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
@@ -201,11 +162,6 @@ def test_st_numgeometries(eng, geog, expected):
     eng.assert_query_result(f"SELECT ST_NumGeometries({geog_or_null(geog)})", expected)
 
 
-# -----------------------------------------------------------------------------
-# ST_X / ST_Y tests
-# -----------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
 @pytest.mark.parametrize(
     ("geog", "expected_x", "expected_y"),
@@ -220,13 +176,12 @@ def test_st_numgeometries(eng, geog, expected):
 )
 def test_st_x_y(eng, geog, expected_x, expected_y):
     eng = eng.create_or_skip()
-    eng.assert_query_result(f"SELECT ST_X({geog_or_null(geog)})", expected_x)
-    eng.assert_query_result(f"SELECT ST_Y({geog_or_null(geog)})", expected_y)
-
-
-# -----------------------------------------------------------------------------
-# ST_StartPoint / ST_EndPoint tests
-# -----------------------------------------------------------------------------
+    eng.assert_query_result(
+        f"SELECT ST_X({geog_or_null(geog)})", expected_x, numeric_epsilon=1e-15
+    )
+    eng.assert_query_result(
+        f"SELECT ST_Y({geog_or_null(geog)})", expected_y, numeric_epsilon=1e-15
+    )
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
@@ -258,14 +213,7 @@ def test_st_startpoint_endpoint(eng, geog, expected_start, expected_end):
     eng.assert_query_result(
         f"SELECT ST_StartPoint({geog_or_null(geog)})", expected_start
     )
-    eng.assert_query_result(
-        f"SELECT ST_EndPoint({geog_or_null(geog)})", expected_end
-    )
-
-
-# -----------------------------------------------------------------------------
-# ST_GeometryType tests
-# -----------------------------------------------------------------------------
+    eng.assert_query_result(f"SELECT ST_EndPoint({geog_or_null(geog)})", expected_end)
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
@@ -292,7 +240,6 @@ def test_st_startpoint_endpoint(eng, geog, expected_start, expected_end):
             "ST_GeometryCollection",
             id="gc",
         ),
-        pytest.param("POINT EMPTY", "ST_GeometryCollection", id="point_empty"),
         pytest.param(
             "GEOMETRYCOLLECTION EMPTY", "ST_GeometryCollection", id="gc_empty"
         ),
@@ -303,9 +250,18 @@ def test_st_geometrytype(eng, geog, expected):
     eng.assert_query_result(f"SELECT ST_GeometryType({geog_or_null(geog)})", expected)
 
 
-# -----------------------------------------------------------------------------
-# ST_IsClosed tests
-# -----------------------------------------------------------------------------
+# BigQuery does not propagate the geometry type of empties
+@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize(
+    ("geog", "expected"),
+    [
+        pytest.param("POINT EMPTY", "ST_Point", id="point_empty"),
+        pytest.param("LINESTRING EMPTY", "ST_LineString", id="linestring_empty"),
+    ],
+)
+def test_st_geometrytype_empty(eng, geog, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_GeometryType({geog_or_null(geog)})", expected)
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
@@ -320,8 +276,6 @@ def test_st_geometrytype(eng, geog, expected):
         pytest.param("LINESTRING (0 0, 1 0, 1 1, 0 0)", True, id="linestring_closed"),
         # Open linestring
         pytest.param("LINESTRING (0 0, 1 0, 1 1)", False, id="linestring_open"),
-        # Polygon (always closed)
-        pytest.param("POLYGON ((0 0, 1 0, 1 1, 0 0))", True, id="polygon"),
     ],
 )
 def test_st_isclosed(eng, geog, expected):
@@ -329,9 +283,19 @@ def test_st_isclosed(eng, geog, expected):
     eng.assert_query_result(f"SELECT ST_IsClosed({geog_or_null(geog)})", expected)
 
 
-# -----------------------------------------------------------------------------
-# ST_IsCollection tests
-# -----------------------------------------------------------------------------
+# BigQuery doesn't consider a Polygon closed but PostGIS and SedonaDB does for
+# geometry
+@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize(
+    ("geog", "expected"),
+    [
+        # Polygon (always closed)
+        pytest.param("POLYGON ((0 0, 1 0, 1 1, 0 0))", True, id="polygon"),
+    ],
+)
+def test_st_isclosed_polygon(eng, geog, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_IsClosed({geog_or_null(geog)})", expected)
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
@@ -340,7 +304,6 @@ def test_st_isclosed(eng, geog, expected):
     [
         pytest.param(None, None, id="null"),
         pytest.param("POINT EMPTY", False, id="point_empty"),
-        pytest.param("GEOMETRYCOLLECTION EMPTY", False, id="gc_empty"),
         pytest.param("POINT (0 0)", False, id="point"),
         pytest.param("LINESTRING (0 0, 1 1)", False, id="linestring"),
         pytest.param("POLYGON ((0 0, 1 0, 1 1, 0 0))", False, id="polygon"),
@@ -361,5 +324,19 @@ def test_st_isclosed(eng, geog, expected):
     ],
 )
 def test_st_iscollection(eng, geog, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_IsCollection({geog_or_null(geog)})", expected)
+
+
+# BigQuery doesn't consider an empty geometry collection to be a collection but
+# PostGIS and SedonaDB do for geometry
+@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize(
+    ("geog", "expected"),
+    [
+        pytest.param("GEOMETRYCOLLECTION EMPTY", True, id="gc_empty"),
+    ],
+)
+def test_st_iscollection_geometrycollection_emtpy(eng, geog, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(f"SELECT ST_IsCollection({geog_or_null(geog)})", expected)
