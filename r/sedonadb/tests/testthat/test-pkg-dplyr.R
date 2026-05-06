@@ -93,8 +93,16 @@ test_that("sd_join() defaults match dplyr join defaults", {
       dplyr::arrange(key_x) |>
       as.data.frame()
   )
-})
 
+  expect_identical(
+    sd_cross_join(df1, df2) |>
+      sd_arrange(key_x) |>
+      as.data.frame(),
+    dplyr::cross_join(df1, df2) |>
+      dplyr::arrange(key_x) |>
+      as.data.frame()
+  )
+})
 
 test_that("sd_join(keep = TRUE) behaviour matches dplyr join", {
   df1 <- data.frame(key_x = 1:6, letters = letters[1:6])

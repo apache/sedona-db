@@ -23,7 +23,7 @@
 #' columns from the left and right tables, and the special helper `x$geom()`
 #' and `y$geom()` may be used for tables with exactly one geometry column.
 #' Spatial joins can use spatial predicates in the join by expression
-#' (e.g., `sd_join_by(st_intersects(x$geom(), y$geom())`) or the shorthand
+#' (e.g., `sd_join_by(st_intersects(x$geom(), y$geom()))`) or the shorthand
 #' `sd_join_intersects()`.
 #'
 #' For programmatic usage, the `.tables` pronoun may be used to unambiguously
@@ -702,8 +702,10 @@ sd_build_default_select <- function(
   # if keep is not TRUE.
   if (isTRUE(keep)) {
     simple_join_keys <- list(x_cols = character(), y_cols = character(), op = character())
-  } else {
+  } else if (identical(keep, FALSE) || is.null(keep)) {
     simple_join_keys <- sd_extract_simple_join_keys(join_conditions)
+  } else {
+    stop("keep must be TRUE, FALSE, or NULL")
   }
 
   # For the purposes of computing how to choose output columns, we consider
@@ -861,5 +863,3 @@ sd_extract_simple_join_keys <- function(join_conditions) {
 
   list(x_cols = x_cols, y_cols = y_cols, op = ops)
 }
-
-all_spatial_predicates <- c("st_intersects", "st_contains", "st_within", "st_equals")

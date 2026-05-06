@@ -62,12 +62,15 @@ or "rightmark".}
 column names. The column may still be
 referred to with a qualifier in advanced usage using \code{\link[=sd_expr_column]{sd_expr_column()}}.
 \item \code{\link[=sd_join_select_default]{sd_join_select_default()}} for dplyr-like behaviour (equi-join keys
-removed, intersecting names suffixed)
+or spatial join keys removed for inner/left joins, intersecting names
+suffixed)
 \item \code{\link[=sd_join_select]{sd_join_select()}} for a custom selection
 }}
 
-\item{keep}{Use \code{TRUE} to keep all key column in an equijoin or spatial join.
-This is only applied when using \code{\link[=sd_join_select_default]{sd_join_select_default()}}.}
+\item{keep}{Use \code{TRUE} to keep all key columns in an equijoin or spatial join.
+This is only applied when using \code{\link[=sd_join_select_default]{sd_join_select_default()}} for left/inner
+joins and right equijoins (full joins and right spatial joins always keep
+spatial join keys).}
 }
 \value{
 An object of class sedonadb_dataframe

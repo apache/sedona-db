@@ -41,10 +41,13 @@
 #'     column names. The column may still be
 #'     referred to with a qualifier in advanced usage using [sd_expr_column()].
 #'   - [sd_join_select_default()] for dplyr-like behaviour (equi-join keys
-#'     removed, intersecting names suffixed)
+#'     or spatial join keys removed for inner/left joins, intersecting names
+#'     suffixed)
 #'   - [sd_join_select()] for a custom selection
-#' @param keep Use `TRUE` to keep all key column in an equijoin or spatial join.
-#'   This is only applied when using [sd_join_select_default()].
+#' @param keep Use `TRUE` to keep all key columns in an equijoin or spatial join.
+#'   This is only applied when using [sd_join_select_default()] for left/inner
+#'   joins and right equijoins (full joins and right spatial joins always keep
+#'   spatial join keys).
 #'
 #' @returns An object of class sedonadb_dataframe
 #' @export
@@ -62,8 +65,12 @@ sd_join <- function(
   select = sd_join_select_default(),
   keep = NULL
 ) {
-  x <- as_sedonadb_dataframe(x)
-  y <- as_sedonadb_dataframe(y, ctx = x$ctx)
+  if (inherits(y, "sedonadb_dataframe")) {
+    x <- as_sedonadb_dataframe(x, ctx = x$ctx)
+  } else {
+    x <- as_sedonadb_dataframe(x)
+    y <- as_sedonadb_dataframe(y, ctx = x$ctx)
+  }
 
   x_schema <- infer_nanoarrow_schema(x)
   y_schema <- infer_nanoarrow_schema(y)

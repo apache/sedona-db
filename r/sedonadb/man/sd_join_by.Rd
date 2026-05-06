@@ -58,7 +58,7 @@ are specified using \code{x$column} and \code{y$column} syntax to disambiguate
 columns from the left and right tables, and the special helper \code{x$geom()}
 and \code{y$geom()} may be used for tables with exactly one geometry column.
 Spatial joins can use spatial predicates in the join by expression
-(e.g., \verb{sd_join_by(st_intersects(x$geom(), y$geom())}) or the shorthand
+(e.g., \code{sd_join_by(st_intersects(x$geom(), y$geom()))}) or the shorthand
 \code{sd_join_intersects()}.
 }
 \details{

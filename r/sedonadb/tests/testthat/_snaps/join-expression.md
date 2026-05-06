@@ -161,6 +161,25 @@
       x.name
       
 
+# sd_eval_join_select_exprs() evaluates column references with .table pronoun
+
+    Code
+      sd_eval_join_select_exprs(sd_join_select(.tables$x$id, .tables$y$value, name),
+      ctx)
+    Output
+      $id
+      <SedonaDBExpr>
+      x.id
+      
+      $value
+      <SedonaDBExpr>
+      y.value
+      
+      $name
+      <SedonaDBExpr>
+      x.name
+      
+
 # sd_eval_join_select_exprs() handles renaming
 
     Code

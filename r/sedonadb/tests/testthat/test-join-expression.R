@@ -319,6 +319,22 @@ test_that("sd_eval_join_select_exprs() evaluates column references", {
   expect_snapshot(sd_eval_join_select_exprs(sd_join_select(x$id, y$value, name), ctx))
 })
 
+test_that("sd_eval_join_select_exprs() evaluates column references with .table pronoun", {
+  x_schema <- nanoarrow::na_struct(list(
+    id = nanoarrow::na_int32(),
+    name = nanoarrow::na_string()
+  ))
+  y_schema <- nanoarrow::na_struct(list(
+    id = nanoarrow::na_int32(),
+    value = nanoarrow::na_double()
+  ))
+  ctx <- sd_join_expr_ctx(x_schema, y_schema)
+
+  expect_snapshot(
+    sd_eval_join_select_exprs(sd_join_select(.tables$x$id, .tables$y$value, name), ctx)
+  )
+})
+
 test_that("sd_eval_join_select_exprs() handles renaming", {
   x_schema <- nanoarrow::na_struct(list(
     id = nanoarrow::na_int32(),
