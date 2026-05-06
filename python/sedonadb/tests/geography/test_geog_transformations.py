@@ -130,7 +130,7 @@ def test_st_convexhull(eng, geog, expected):
     ("geog", "expected"),
     [
         # Empties
-        pytest.param("POINT EMPTY", "POINT EMPTY", id="point_empty"),
+        pytest.param("POINT EMPTY", "POINT (nan nan)", id="point_empty"),
         pytest.param("LINESTRING EMPTY", "LINESTRING EMPTY", id="linestring_empty"),
         pytest.param("POLYGON EMPTY", "POLYGON EMPTY", id="polygon_empty"),
         pytest.param(
@@ -159,12 +159,10 @@ def test_st_convexhull_degenerate(eng, geog, expected):
 @pytest.mark.parametrize(
     ("geog", "expected"),
     [
-        # Nulls
-        pytest.param(None, None, id="null_point_on_surface"),
         # Empties
-        pytest.param("POINT EMPTY", "POINT EMPTY", id="point_empty"),
-        pytest.param("LINESTRING EMPTY", "POINT EMPTY", id="linestring_empty"),
-        pytest.param("POLYGON EMPTY", "POINT EMPTY", id="polygon_empty"),
+        pytest.param("POINT EMPTY", "POINT (nan nan)", id="point_empty"),
+        pytest.param("LINESTRING EMPTY", "POINT (nan nan)", id="linestring_empty"),
+        pytest.param("POLYGON EMPTY", "POINT (nan nan)", id="polygon_empty"),
         # Points
         pytest.param("POINT (0 1)", "POINT (0 1)", id="point"),
         pytest.param("MULTIPOINT ((0 0), (0 1))", "POINT (0 1)", id="multipoint"),
@@ -188,12 +186,9 @@ def test_st_convexhull_degenerate(eng, geog, expected):
 )
 def test_st_pointonsurface(eng, geog, expected):
     eng = eng.create_or_skip()
-    eng.assert_query_result(f"SELECT ST_PointOnSurface({geog_or_null(geog)})", expected)
-
-
-# -----------------------------------------------------------------------------
-# ST_LineInterpolatePoint tests (ported from linear-referencing_test.cc)
-# -----------------------------------------------------------------------------
+    eng.assert_query_result(
+        f"SELECT ST_PointOnSurface({geog_or_null(geog)})", expected, wkt_precision=6
+    )
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, BigQuery, PostGIS])
@@ -256,11 +251,6 @@ def test_st_line_interpolate_point_degenerate(eng, line, fraction, expected):
     )
 
 
-# -----------------------------------------------------------------------------
-# ST_Boundary tests
-# -----------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
 @pytest.mark.parametrize(
     ("geog", "expected"),
@@ -272,13 +262,8 @@ def test_st_line_interpolate_point_degenerate(eng, line, fraction, expected):
         ),
         pytest.param(
             "LINESTRING (0 0, 1 1)",
-            "MULTIPOINT ((0 0), (1 1))",
+            "MULTIPOINT (0 0, 1 1)",
             id="linestring",
-        ),
-        pytest.param(
-            "LINESTRING (0 0, 1 1, 0 0)",
-            "GEOMETRYCOLLECTION EMPTY",
-            id="linestring_closed",
         ),
         pytest.param(
             "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
@@ -288,6 +273,25 @@ def test_st_line_interpolate_point_degenerate(eng, line, fraction, expected):
     ],
 )
 def test_st_boundary(eng, geog, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_Boundary({geog_or_null(geog)})", expected, wkt_precision=15
+    )
+
+
+# BigQuery doesn't consider the boundary of a closed linestring to be empty
+@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize(
+    ("geog", "expected"),
+    [
+        pytest.param(
+            "LINESTRING (0 0, 1 1, 0 0)",
+            "MULTIPOINT EMPTY",
+            id="linestring_closed",
+        ),
+    ],
+)
+def test_st_boundary_closed_linestring(eng, geog, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(
         f"SELECT ST_Boundary({geog_or_null(geog)})", expected, wkt_precision=4

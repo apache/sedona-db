@@ -83,7 +83,7 @@ def test_st_asbinary(eng, geom, expected):
     eng.assert_query_result(f"SELECT ST_AsBinary({geog_or_null(geom)})", expected)
 
 
-# BigQuery reformats its input such that it does not ususally roundtrip WKT input
+# BigQuery reformats its input such that it does not usually roundtrip WKT input
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
     "geom",
