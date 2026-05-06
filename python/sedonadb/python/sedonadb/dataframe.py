@@ -385,7 +385,7 @@ class DataFrame:
                 "geometry", whose bounding box column name is just "bbox".
 
                 Use GeoParquet 2.0 to write compatible GeoParquet metadata with
-                Parquet-native Geometry and/or Geography data types; use None to omit
+                Parquet-native Geometry and/or Geography data types; use "none" to omit
                 GeoParquet metadata completely.
             overwrite_bbox_columns: Use `True` to overwrite any bounding box columns
                 that already exist in the input. This is useful in a read -> modify
