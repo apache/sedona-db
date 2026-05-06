@@ -15,10 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::sync::Arc;
+use std::{iter::zip, sync::Arc};
 
 use datafusion::config::SpillCompression;
-use datafusion_common::{DataFusionError, Result};
+use datafusion_common::Result;
 use datafusion_common_runtime::JoinSet;
 use datafusion_execution::{
     memory_pool::MemoryReservation, runtime_env::RuntimeEnv, SendableRecordBatchStream,
@@ -160,7 +160,8 @@ impl BuildSideBatchesCollector {
         let mut in_mem_batches: Vec<EvaluatedBatch> = Vec::new();
         let mut total_num_rows = 0;
         let mut total_size_bytes = 0;
-        let mut analyzer = AnalyzeAccumulator::new(WKB_GEOMETRY, WKB_GEOMETRY);
+
+        let mut analyzer = AnalyzeAccumulator::new(WKB_GEOMETRY);
 
         // Reserve memory for holding bbox samples. This should be a small reservation.
         // We simply return error if the reservation cannot be fulfilled, since there's
@@ -173,13 +174,13 @@ impl BuildSideBatchesCollector {
             let _timer = metrics.time_taken.timer();
 
             let geom_array = &build_side_batch.geom_array;
-            for wkb in geom_array.wkbs().iter().flatten() {
-                let summary = sedona_geometry::analyze::analyze_geometry(wkb)
-                    .map_err(|e| DataFusionError::External(Box::new(e)))?;
-                if !summary.bbox.is_empty() {
-                    bbox_sampler.add_bbox(&summary.bbox);
+            for (wkb_opt, rect) in zip(geom_array.wkbs(), geom_array.rects()) {
+                if let Some(wkb) = wkb_opt {
+                    analyzer.update_statistics_with_bbox(wkb, &rect.into())?;
+                    if !rect.is_empty() {
+                        bbox_sampler.add_bbox(&rect.into());
+                    }
                 }
-                analyzer.ingest_geometry_summary(&summary);
             }
 
             let num_rows = build_side_batch.num_rows();

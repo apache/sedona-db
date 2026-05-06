@@ -1,3 +1,4 @@
+---
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
 # distributed with this work for additional information
@@ -15,30 +16,19 @@
 # specific language governing permissions and limitations
 # under the License.
 
-[package]
-name = "sedonadbr"
-version = { workspace = true }
-publish = false
-edition = "2021"
+title: ST_Normalize
+description: Returns the geometry in its canonical form.
+kernels:
+  - returns: geometry
+    args: [geometry]
+---
 
-[lib]
-crate-type = ["staticlib", "lib"]
+## Examples
 
-[dependencies]
-arrow-schema = { workspace = true }
-arrow-array = { workspace = true }
-datafusion = { workspace = true }
-datafusion-common = { workspace = true }
-datafusion-execution = { workspace = true }
-datafusion-expr = { workspace = true }
-datafusion-ffi = { workspace = true }
-savvy = "*"
-savvy-ffi = "*"
-sedona = { workspace = true }
-sedona-adbc = { workspace = true }
-sedona-expr = { workspace = true }
-sedona-geoparquet = { workspace = true }
-sedona-proj = { workspace = true }
-sedona-schema = { workspace = true }
-thiserror = { workspace = true }
-tokio = { workspace = true }
+```sql
+SELECT ST_AsText(
+  ST_Normalize(
+    ST_GeomFromWKT('POLYGON((10 10, 10 0, 0 0, 0 10, 10 10))')
+  )
+);
+```

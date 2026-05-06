@@ -21,7 +21,6 @@ use arrow_array::{ArrayRef, RecordBatch};
 use arrow_schema::SchemaRef;
 use async_trait::async_trait;
 use datafusion_common::{DataFusionError, Result};
-use geo_types::{coord, Rect};
 use parking_lot::Mutex;
 use sedona_common::ExecutionMode;
 use sedona_expr::statistics::GeoStatistics;
@@ -180,13 +179,18 @@ impl SpatialIndex for GPUSpatialIndex {
         }
         let index = &self.index.as_ref();
 
-        let empty_rect = Rect::new(
-            coord!(x: f32::NAN, y: f32::NAN),
-            coord!(x: f32::NAN, y: f32::NAN),
-        );
+        let empty_rect = [f32::NAN, f32::NAN, f32::NAN, f32::NAN];
         let rects: Vec<_> = range
             .clone()
-            .map(|row_idx| evaluated_batch.geom_array.rects()[row_idx].unwrap_or(empty_rect))
+            .map(|row_idx| {
+                let bounds = &evaluated_batch.geom_array.rects()[row_idx];
+                if bounds.is_empty() {
+                    empty_rect
+                } else {
+                    let (x, y) = bounds.clone().into_inner();
+                    [x.0, y.0, x.1, y.1]
+                }
+            })
             .collect();
 
         let (mut gpu_build_indices, mut gpu_probe_indices) =

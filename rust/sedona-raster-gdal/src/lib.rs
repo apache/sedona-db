@@ -31,7 +31,11 @@ mod gdal_common;
 // Temporary until https://github.com/apache/sedona-db/issues/804 is resolved.
 #[allow(dead_code)]
 mod gdal_dataset_provider;
+
 mod utils;
+
+#[cfg(test)]
+mod source_uri;
 
 // Re-export main dataset conversion functions
 pub use gdal_common::{

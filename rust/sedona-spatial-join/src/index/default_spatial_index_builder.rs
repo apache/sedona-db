@@ -17,8 +17,9 @@
 
 use arrow::array::BooleanBufferBuilder;
 use arrow_schema::SchemaRef;
-use sedona_common::SpatialJoinOptions;
+use sedona_common::{sedona_internal_err, SpatialJoinOptions};
 use sedona_expr::statistics::GeoStatistics;
+use sedona_geometry::interval::{Interval, IntervalTrait};
 use std::sync::Arc;
 
 use crate::index::spatial_index::SpatialIndexRef;
@@ -61,6 +62,7 @@ pub struct DefaultSpatialIndexBuilder {
     probe_threads_count: usize,
     metrics: SpatialJoinBuildMetrics,
     refiner_factory: Arc<dyn IndexQueryResultRefinerFactory>,
+    wraparound: Option<Interval>,
 
     /// Batches to be indexed
     indexed_batches: Vec<EvaluatedBatch>,
@@ -89,6 +91,7 @@ impl DefaultSpatialIndexBuilder {
             join_type,
             probe_threads_count,
             metrics,
+            wraparound: None,
             refiner_factory: Arc::new(DefaultIndexQueryResultRefinerFactory),
             indexed_batches: Vec::new(),
             stats: GeoStatistics::empty(),
@@ -96,11 +99,30 @@ impl DefaultSpatialIndexBuilder {
         })
     }
 
+    /// Specify the factory to use when creating a refiner
+    ///
+    /// This can be used by join extensions to provide support for other data types like
+    /// geography.
     pub fn with_refiner_factory(
         mut self,
         refiner_factory: Arc<dyn IndexQueryResultRefinerFactory>,
     ) -> Self {
         self.refiner_factory = refiner_factory;
+        self
+    }
+
+    /// Specify the absolute bounds of the rectangles that will be inserted into the tree
+    ///
+    /// When set, this must accurately reflect the range of x values in the evaluated
+    /// geometry array's rectangles. This is used by the geography join because those
+    /// rectangles are always within -180..180. When wraparound bounds are encountered,
+    /// this is used to constrain them to finite values in the x direction and insert
+    /// multiple rectangles into the tree.
+    ///
+    /// When self.wraparound is None, inserting wraparound bounds will result in invalid
+    /// results.
+    pub fn with_wraparound(mut self, wraparound: impl Into<Interval>) -> Self {
+        self.wraparound = Some(wraparound.into());
         self
     }
 
@@ -142,26 +164,64 @@ impl DefaultSpatialIndexBuilder {
     fn build_rtree(&mut self) -> Result<RTreeBuildResult> {
         let build_timer = self.metrics.build_time.timer();
 
+        // Each item will add 0 (empty), 1 (regular) or 2 (wraparound)
+        // rectangles to the index.
+        let mut wraparound_count = 0;
         let num_rects = self
             .indexed_batches
             .iter()
-            .map(|batch| batch.geom_array.rects().iter().flatten().count())
-            .sum::<usize>();
+            .flat_map(|batch| batch.geom_array.rects().iter())
+            .map(|rect| {
+                if rect.is_empty() {
+                    0
+                } else if rect.is_wraparound() {
+                    wraparound_count += 1;
+                    2
+                } else {
+                    1
+                }
+            })
+            .sum();
 
         let mut rtree_builder = RTreeBuilder::<f32>::new(num_rects as u32);
         let mut batch_pos_vec = vec![(-1, -1); num_rects];
 
+        // Check that if we did have wraparounds we have wraparound bounds against which
+        // to intersect them to get finite rectangles for the tree.
+        let wraparound = self.wraparound.unwrap_or(Interval::empty());
+        if self.wraparound.is_none() && wraparound_count > 0 {
+            return sedona_internal_err!(
+                "Spatial index wraparound hint was None but evaluated arrays contained wraparounds"
+            );
+        }
+
+        let mut num_added = 0;
         for (batch_idx, batch) in self.indexed_batches.iter().enumerate() {
             let rects = batch.geom_array.rects();
-            for (idx, rect_opt) in rects.iter().enumerate() {
-                let Some(rect) = rect_opt else {
-                    continue;
-                };
-                let min = rect.min();
-                let max = rect.max();
-                let data_idx = rtree_builder.add(min.x, min.y, max.x, max.y);
-                batch_pos_vec[data_idx as usize] = (batch_idx as i32, idx as i32);
+            for (idx, rect) in rects.iter().enumerate() {
+                let (left, right) = rect.split(&wraparound);
+                if !left.is_empty() {
+                    let (x, y) = left.into_inner();
+                    let data_idx = rtree_builder.add(x.0, y.0, x.1, y.1);
+                    batch_pos_vec[data_idx as usize] = (batch_idx as i32, idx as i32);
+                    num_added += 1;
+                }
+
+                if !right.is_empty() {
+                    let (x, y) = right.into_inner();
+                    let data_idx = rtree_builder.add(x.0, y.0, x.1, y.1);
+                    batch_pos_vec[data_idx as usize] = (batch_idx as i32, idx as i32);
+                    num_added += 1;
+                }
             }
+        }
+
+        // If the wraparound was misconfigured, either left or right may be unexpectedly
+        // empty and the wrong number of rectangles would have been added.
+        if num_added != num_rects {
+            return sedona_internal_err!(
+                "Expected {num_rects} rectangles for RTree build but got {num_added}"
+            );
         }
 
         let rtree = rtree_builder.finish::<HilbertSort>();
@@ -305,6 +365,7 @@ impl SpatialIndexBuilder for DefaultSpatialIndexBuilder {
             self.options.clone(),
             refiner,
             rtree,
+            self.wraparound,
             self.indexed_batches
                 .drain(0..self.indexed_batches.len())
                 .collect(),

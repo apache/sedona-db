@@ -21,8 +21,6 @@ use arrow_array::{ArrayRef, Float64Array};
 use arrow_schema::DataType;
 use datafusion_common::{exec_datafusion_err, JoinType, Result, ScalarValue};
 use datafusion_physical_plan::ColumnarValue;
-use geo_index::rtree::util::f64_box_to_f32;
-use geo_types::{coord, Rect};
 use sedona_common::sedona_internal_err;
 use sedona_expr::statistics::GeoStatistics;
 use sedona_functions::executor::IterGeo;
@@ -38,6 +36,7 @@ use sedona_spatial_join::{
     },
     join_provider::SpatialJoinProvider,
     operand_evaluator::{EvaluatedGeometryArray, EvaluatedGeometryArrayFactory},
+    utils::bounds::Bounds2D,
     SpatialJoinOptions, SpatialPredicate,
 };
 
@@ -177,28 +176,16 @@ fn try_new_evaluated_array_impl(
             let maybe_bounds = bounder.finish().map_err(|e| {
                 exec_datafusion_err!("Failed to finish bounding in evaluated array factory: {e}")
             })?;
-            if let Some((mut min_x, min_y, mut max_x, max_y)) = maybe_bounds {
-                // The evaluated geometry array currently needs Cartesian rectangles; however
-                // we can still recalculate these when we ingest into the index. In the
-                // partitioned join we may want to ensure we can express bounds in a way that
-                // the partitioner understands (if it doesn't already) to do a better job
-                // partitioning wraparounds.
-                if min_x > max_x {
-                    min_x = -180.0;
-                    max_x = 180.0;
-                }
-
-                let (min_x, min_y, max_x, max_y) = f64_box_to_f32(min_x, min_y, max_x, max_y);
-                let rect = Rect::new(coord!(x: min_x, y: min_y), coord!(x: max_x, y: max_y));
-                rect_vec.push(Some(rect));
+            if let Some((min_x, min_y, max_x, max_y)) = maybe_bounds {
+                rect_vec.push(Bounds2D::new((min_x, max_x), (min_y, max_y)));
             } else {
-                rect_vec.push(None);
+                rect_vec.push(Bounds2D::empty());
             }
         } else {
             // Also call the bounder modifier here to ensure it's called exactly once for every
             // element
             modify_bounder(&mut bounder);
-            rect_vec.push(None);
+            rect_vec.push(Bounds2D::empty());
         }
 
         Ok(())
