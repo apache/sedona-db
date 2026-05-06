@@ -157,7 +157,7 @@ pub fn create_geoparquet_writer_physical_plan(
     // logical type conversion.
     let mut parquet_options = options.inner.clone().with_skip_arrow_metadata(true);
 
-    // Create the column metadata and finalize the Parquet meatdata if we're omitting the GeoParquet metadata
+    // Create the column metadata and finalize the Parquet metadata if not we're omitting it
     if !metadata.version.is_empty() {
         for i in input_geometry_column_indices {
             let f = conf.output_schema().field(i);
@@ -677,10 +677,11 @@ fn normalize_field_for_geoparquet(
     }
 }
 
-// Due to a bug in the parquet type conversion, we need to serialize invalid metadata for gegraphy
+// Due to a bug in the parquet type conversion, we need to serialize invalid metadata for geography
 // fields. The conversion logic expects "algorithm" but the valid GeoArrow metadata we serialize
 // by default is "edges".
 // https://github.com/apache/arrow-rs/blob/f725bc9b955f23772a6a6d8a38c99a8b3f359116/parquet-geospatial/src/types.rs#L64-L66
+// https://github.com/apache/arrow-rs/issues/9929
 fn serialize_edges_and_crs_with_parquet_bug(
     original_field: &FieldRef,
     crs: &Crs,

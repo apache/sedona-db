@@ -190,10 +190,19 @@ impl SedonaContext {
         let mut state = state_builder.build();
 
         // Register GeoParquet and try to initialize our statistics accumulator. It is OK if this fails
-        // (is likely because we already registered it).
+        // because we already registered it, but we propagate other errors for safety.
         state.register_file_format(Arc::new(GeoParquetFormatFactory::new()), true)?;
-        let _ =
+        let init_result =
             sedona_geoparquet::statistics_accumulator::SedonaGeoStatsAccumulatorFactory::try_init();
+        if let Err(init_err) = init_result {
+            if !matches!(init_err, DataFusionError::ParquetError(_))
+                || !init_err
+                    .to_string()
+                    .contains("GeoStatsAccumulatorFactory already set")
+            {
+                return Err(init_err);
+            }
+        }
 
         #[cfg(feature = "pointcloud")]
         {

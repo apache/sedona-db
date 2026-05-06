@@ -100,7 +100,8 @@ pub struct GeographyFactory {
     ptr: *mut S2GeogFactory,
 }
 
-// Safety: const methods are thread safe (although there aren't any const methods)
+// Safety: can be sent between threads (&mut self ensures unique ownership
+// when this is used in an Arc<dyn ...> struct)
 unsafe impl Send for GeographyFactory {}
 unsafe impl Sync for GeographyFactory {}
 

@@ -509,7 +509,10 @@ def test_write_geoparquet_2_0(con, geoarrow_data):
         geo_metadata = json.loads(file_kv_metadata[b"geo"])
         assert geo_metadata["version"] == "2.0.0"
 
-        file.metadata.schema.column(2).logical_type.to_json() == '{"Type": "Geometry"}'
+        assert (
+            file.metadata.schema.column(2).logical_type.to_json()
+            == '{"Type": "Geometry"}'
+        )
 
 
 def test_write_geoparquet_no_metadata(con, geoarrow_data):
@@ -536,7 +539,10 @@ def test_write_geoparquet_no_metadata(con, geoarrow_data):
         file_kv_metadata = file.metadata.metadata
         assert file_kv_metadata is None or b"geo" not in file_kv_metadata
 
-        file.metadata.schema.column(2).logical_type.to_json() == '{"Type": "Geometry"}'
+        assert (
+            file.metadata.schema.column(2).logical_type.to_json()
+            == '{"Type": "Geometry"}'
+        )
         geo_stats = file.metadata.row_group(0).column(2).geo_statistics
         assert geo_stats is not None
         assert geo_stats.geospatial_types == [3, 6]
@@ -568,7 +574,10 @@ def test_write_geoparquet_geography_no_metadata(con, geoarrow_data):
         file_kv_metadata = file.metadata.metadata
         assert file_kv_metadata is None or b"geo" not in file_kv_metadata
 
-        file.metadata.schema.column(2).logical_type.to_json() == '{"Type": "Geography"}'
+        assert (
+            file.metadata.schema.column(2).logical_type.to_json()
+            == '{"Type": "Geography"}'
+        )
 
         # We should only have stats if s2geography is enabled
         geo_stats = file.metadata.row_group(0).column(2).geo_statistics
