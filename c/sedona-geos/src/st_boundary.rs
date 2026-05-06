@@ -27,7 +27,7 @@ use sedona_expr::{
 };
 use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
 use sedona_schema::{
-    datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY},
+    datatypes::{SedonaType, WKB_GEOMETRY},
     matchers::ArgMatcher,
 };
 
@@ -36,24 +36,17 @@ use crate::geos_to_wkb::write_geos_geometry;
 
 /// ST_Boundary() implementation using the geos crate
 pub fn st_boundary_impl() -> Vec<ScalarKernelRef> {
-    ItemCrsKernel::wrap_impl(vec![
-        Arc::new(STBoundary {
-            matcher: ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY),
-        }),
-        Arc::new(STBoundary {
-            matcher: ArgMatcher::new(vec![ArgMatcher::is_geography()], WKB_GEOGRAPHY),
-        }),
-    ])
+    ItemCrsKernel::wrap_impl(STBoundary {})
 }
 
 #[derive(Debug)]
-struct STBoundary {
-    matcher: ArgMatcher,
-}
+struct STBoundary {}
 
 impl SedonaScalarKernel for STBoundary {
     fn return_type(&self, args: &[SedonaType]) -> datafusion_common::Result<Option<SedonaType>> {
-        self.matcher.match_args(args)
+        let matcher = ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY);
+
+        matcher.match_args(args)
     }
 
     fn invoke_batch(

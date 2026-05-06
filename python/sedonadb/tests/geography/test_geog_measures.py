@@ -15,14 +15,6 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""
-Geography measures tests ported from s2geography accessors-geog_test.cc
-and linear-referencing_test.cc.
-
-This file tests functions in the BigQuery "Measures" category
-(except ST_Distance which has its own file due to complexity).
-"""
-
 import pytest
 import sedonadb
 from sedonadb.testing import BigQuery, SedonaDB, PostGIS, geog_or_null

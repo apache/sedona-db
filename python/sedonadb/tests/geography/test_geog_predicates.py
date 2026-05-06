@@ -15,21 +15,12 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""
-Geography predicate tests ported from s2geography predicates_test.cc.
-"""
-
 import pytest
 import sedonadb
 from sedonadb.testing import BigQuery, SedonaDB, PostGIS, geog_or_null
 
 if "s2geography" not in sedonadb.__features__:
     pytest.skip("Python package built without s2geography", allow_module_level=True)
-
-
-# -----------------------------------------------------------------------------
-# ST_Intersects tests
-# -----------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, BigQuery, PostGIS])
@@ -247,11 +238,6 @@ def test_st_intersects(eng, geom1, geom2, expected):
     )
 
 
-# -----------------------------------------------------------------------------
-# ST_Contains tests
-# -----------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
 @pytest.mark.parametrize(
     ("geom1", "geom2", "expected"),
@@ -412,11 +398,6 @@ def test_st_contains(eng, geom1, geom2, expected):
     )
 
 
-# -----------------------------------------------------------------------------
-# ST_Within tests
-# -----------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
 @pytest.mark.parametrize(
     ("geom1", "geom2", "expected"),
@@ -482,11 +463,6 @@ def test_st_within(eng, geom1, geom2, expected):
         f"SELECT ST_Within({geog_or_null(geom1)}, {geog_or_null(geom2)})",
         expected,
     )
-
-
-# -----------------------------------------------------------------------------
-# ST_Equals tests
-# -----------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
@@ -578,11 +554,6 @@ def test_st_equals(eng, geom1, geom2, expected):
         f"SELECT ST_Equals({geog_or_null(geom1)}, {geog_or_null(geom2)})",
         expected,
     )
-
-
-# -----------------------------------------------------------------------------
-# ST_Disjoint tests
-# -----------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, BigQuery])

@@ -15,10 +15,6 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""
-Geography accessor tests ported from s2geography accessors-geog_test.cc.
-"""
-
 import pytest
 import sedonadb
 from sedonadb.testing import BigQuery, SedonaDB, geog_or_null

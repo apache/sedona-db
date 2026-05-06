@@ -15,21 +15,12 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""
-Geography distance tests ported from s2geography distance_test.cc.
-"""
-
 import pytest
 import sedonadb
 from sedonadb.testing import BigQuery, SedonaDB, geog_or_null
 
 if "s2geography" not in sedonadb.__features__:
     pytest.skip("Python package built without s2geography", allow_module_level=True)
-
-
-# -----------------------------------------------------------------------------
-# ST_Distance tests
-# -----------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
@@ -308,11 +299,6 @@ def test_st_distance(eng, geom1, geom2, expected):
     )
 
 
-# -----------------------------------------------------------------------------
-# ST_DWithin tests
-# -----------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
 @pytest.mark.parametrize(
     ("geom1", "geom2", "distance", "expected"),
@@ -388,11 +374,6 @@ def test_st_dwithin(eng, geom1, geom2, distance, expected):
         f"SELECT ST_DWithin({geog_or_null(geom1)}, {geog_or_null(geom2)}, {distance})",
         expected,
     )
-
-
-# -----------------------------------------------------------------------------
-# ST_MaxDistance tests
-# -----------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
@@ -670,11 +651,6 @@ def test_st_max_distance(eng, geom1, geom2, expected):
         expected,
         numeric_epsilon=1e-2,
     )
-
-
-# -----------------------------------------------------------------------------
-# Z/M/ZM coordinate tests (SedonaDB only)
-# -----------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(

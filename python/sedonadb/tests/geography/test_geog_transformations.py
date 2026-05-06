@@ -15,12 +15,6 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""
-Geography transformation tests ported from s2geography accessors-geog_test.cc.
-
-This file tests functions in the BigQuery "Transformations" category.
-"""
-
 import pytest
 from sedonadb.testing import BigQuery, PostGIS, SedonaDB, geog_or_null, val_or_null
 import sedonadb
@@ -248,51 +242,4 @@ def test_st_line_interpolate_point_degenerate(eng, line, fraction, expected):
         f"SELECT ST_LineInterpolatePoint({geog_or_null(line)}, {val_or_null(fraction)})",
         expected,
         wkt_precision=15,
-    )
-
-
-@pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
-@pytest.mark.parametrize(
-    ("geog", "expected"),
-    [
-        pytest.param(None, None, id="null"),
-        pytest.param("POINT (0 0)", "GEOMETRYCOLLECTION EMPTY", id="point"),
-        pytest.param(
-            "MULTIPOINT ((0 0), (1 1))", "GEOMETRYCOLLECTION EMPTY", id="multipoint"
-        ),
-        pytest.param(
-            "LINESTRING (0 0, 1 1)",
-            "MULTIPOINT (0 0, 1 1)",
-            id="linestring",
-        ),
-        pytest.param(
-            "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
-            "LINESTRING (0 0, 1 0, 1 1, 0 1, 0 0)",
-            id="polygon",
-        ),
-    ],
-)
-def test_st_boundary(eng, geog, expected):
-    eng = eng.create_or_skip()
-    eng.assert_query_result(
-        f"SELECT ST_Boundary({geog_or_null(geog)})", expected, wkt_precision=15
-    )
-
-
-# BigQuery doesn't consider the boundary of a closed linestring to be empty
-@pytest.mark.parametrize("eng", [SedonaDB])
-@pytest.mark.parametrize(
-    ("geog", "expected"),
-    [
-        pytest.param(
-            "LINESTRING (0 0, 1 1, 0 0)",
-            "MULTIPOINT EMPTY",
-            id="linestring_closed",
-        ),
-    ],
-)
-def test_st_boundary_closed_linestring(eng, geog, expected):
-    eng = eng.create_or_skip()
-    eng.assert_query_result(
-        f"SELECT ST_Boundary({geog_or_null(geog)})", expected, wkt_precision=4
     )
