@@ -33,8 +33,12 @@ class Expr:
     when the expression is consumed (for example, by `DataFrame.select()` or
     `DataFrame.filter()`).
 
-    Construct an `Expr` with `col(name)`. Plain Python values composed with an
-    `Expr` via operators are coerced to literal expressions automatically.
+    Construct an `Expr` with `col(name)`. Methods that accept values
+    alongside `Expr` arguments (e.g. `isin`) coerce plain Python values to
+    literal expressions automatically. Operator overloading
+    (`col("x") + 1`, `col("x") > 0`, etc.) is not part of this PR; it
+    arrives in a follow-up that will extend the same coercion path to
+    arithmetic, comparison, and boolean operators.
     """
 
     __slots__ = ("_impl",)
