@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-from sedonadb.expr.expression import Expr, col, lit
-from sedonadb.expr.literal import Literal
+from sedonadb.expr.expression import Expr, col
+from sedonadb.expr.literal import Literal, lit
 
 __all__ = ["Expr", "Literal", "col", "lit"]

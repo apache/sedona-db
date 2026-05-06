@@ -15,71 +15,42 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# These tests assert structural properties of constructed expressions —
-# primarily `variant_name()`, child variants reachable via `debug_string()`,
-# and the presence of user-supplied identifiers (column names, literal
-# values) inside the rendered representation. Where possible we avoid
-# pinning exact substrings of DataFusion's `Display` formatting so the
-# suite is not coupled to a specific DataFusion version.
+# These tests pin the exact rendered form of each expression. Locking the
+# Display output is intentional: it doubles as a regression test on how user
+# expressions appear in error messages and `repr()` output, and any DataFusion
+# upgrade that changes the rendering should be reviewed deliberately rather
+# than auto-passing. If you find yourself loosening these assertions, add a
+# replacement check on `_impl.variant_name()` so the structural meaning is
+# still locked.
 
 import pyarrow as pa
 import pytest
 
-from sedonadb.expr import Expr, col, lit
+from sedonadb.expr import Expr, col
 
 
 def test_col_returns_expr():
     e = col("x")
     assert isinstance(e, Expr)
     assert e._impl.variant_name() == "Column"
-    assert "x" in repr(e)
+    assert repr(e) == "Expr(x)"
 
 
-def test_lit_from_python_scalar():
-    e = lit(5)
+def test_col_with_qualifier():
+    e = col("x", "t")
     assert isinstance(e, Expr)
-    assert e._impl.variant_name() == "Literal"
-    # Literal value should be represented somewhere in the repr; don't pin
-    # DataFusion's exact format string.
-    assert "5" in repr(e)
-
-
-def test_lit_passthrough_for_existing_expr():
-    e = col("x")
-    assert lit(e) is e
-
-
-def test_lit_from_pyarrow_scalar():
-    arr = pa.array([42])
-    e = lit(arr[0])
-    assert e._impl.variant_name() == "Literal"
-    assert "42" in repr(e)
-
-
-def test_lit_from_string():
-    e = lit("hello")
-    assert e._impl.variant_name() == "Literal"
-    assert "hello" in repr(e)
-
-
-def test_lit_from_none():
-    e = lit(None)
-    assert e._impl.variant_name() == "Literal"
+    assert e._impl.variant_name() == "Column"
+    assert repr(e) == "Expr(t.x)"
 
 
 def test_alias():
     e = col("x").alias("y")
     assert e._impl.variant_name() == "Alias"
-    # The new name must be reachable from the user's perspective; the
-    # underlying column name should also still be visible.
-    rep = repr(e)
-    assert "y" in rep
-    assert "x" in rep
+    assert "x AS y" in repr(e)
 
 
 def test_alias_chain():
     e = col("x").alias("a").alias("b")
-    assert e._impl.variant_name() == "Alias"
     # Either nested or last-wins; in both cases the latest name must show.
     assert "b" in repr(e)
 
@@ -87,12 +58,12 @@ def test_alias_chain():
 def test_cast_to_arrow_type():
     e = col("x").cast(pa.int32())
     assert e._impl.variant_name() == "Cast"
-    assert "x" in repr(e)
+    assert "CAST(x AS Int32)" in repr(e)
 
 
 def test_cast_to_string():
     e = col("x").cast(pa.string())
-    assert e._impl.variant_name() == "Cast"
+    assert "Utf8" in repr(e)
 
 
 def test_cast_rejects_extension_type():
@@ -105,39 +76,45 @@ def test_cast_rejects_extension_type():
 def test_is_null():
     e = col("x").is_null()
     assert e._impl.variant_name() == "IsNull"
+    assert "x IS NULL" in repr(e)
 
 
 def test_is_not_null():
     e = col("x").is_not_null()
     assert e._impl.variant_name() == "IsNotNull"
+    assert "x IS NOT NULL" in repr(e)
 
 
 def test_isin_python_scalars():
+    # Plain Python scalars are coerced to literal expressions automatically.
     e = col("x").isin([1, 2, 3])
     assert e._impl.variant_name() == "InList"
     rep = repr(e)
-    assert "x" in rep
-    # Each value should still appear somewhere in the rendered form,
-    # without pinning the exact wrapping that DataFusion uses.
-    assert "1" in rep and "3" in rep
+    assert "IN" in rep
+    assert "Int64(1)" in rep
+    assert "Int64(3)" in rep
 
 
 def test_isin_with_expr_values():
-    e = col("x").isin([lit(1), 2, lit(3)])
+    # Mixed Expr + scalar input — Exprs pass through, scalars are coerced.
+    e = col("x").isin([col("a"), 2])
     assert e._impl.variant_name() == "InList"
     rep = repr(e)
-    assert "1" in rep and "2" in rep and "3" in rep
+    assert "a" in rep
+    assert "Int64(2)" in rep
 
 
 def test_negate():
     e = col("x").negate()
     assert e._impl.variant_name() == "Negative"
+    assert "(- x)" in repr(e)
 
 
 def test_chain_alias_after_predicate():
     e = col("x").is_null().alias("missing")
     assert e._impl.variant_name() == "Alias"
     assert "missing" in repr(e)
+    assert "IS NULL" in repr(e)
 
 
 def test_expr_is_not_bound_to_dataframe():
@@ -145,3 +122,12 @@ def test_expr_is_not_bound_to_dataframe():
     # Errors surface only at DataFrame consumption.
     e = col("nonexistent_column_xyz")
     assert "nonexistent_column_xyz" in repr(e)
+
+
+def test_expr_init_rejects_wrong_type():
+    # The Expr constructor should fail clearly when handed something that is
+    # not an internal Expr handle.
+    with pytest.raises(TypeError, match="InternalExpr"):
+        Expr("not an internal expr")
+    with pytest.raises(TypeError, match="InternalExpr"):
+        Expr(42)

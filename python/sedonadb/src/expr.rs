@@ -167,16 +167,25 @@ impl PyExpr {
     }
 }
 
-/// Construct an unqualified column reference: `Expr::Column("x")`.
+/// Construct a column reference: `Expr::Column("x")` or `Expr::Column("t.x")`.
 ///
-/// Qualified columns (e.g. `t.x`) are not exposed yet; the Python
-/// `col()` helper takes only a single name. When we add joins and
-/// multi-table references we can grow this to accept an optional
-/// table qualifier, matching the R side's `column(name, qualifier)`.
+/// `qualifier` is the optional table name (e.g. the `t` in `t.x`). It maps to
+/// `Some(table_ref)` on `Column::new` so that disambiguating a column across
+/// multiple input tables in a join is possible without parsing the name as
+/// SQL. When `qualifier` is `None` we use `Column::new_unqualified`, which
+/// behaves like a bare identifier in SQL and resolves against whichever
+/// table's schema introduced the name first.
+///
+/// Mirrors `SedonaDBExprFactory::column(name, qualifier)` in the R bindings.
 #[pyfunction]
-pub fn expr_col(name: &str) -> PyExpr {
+#[pyo3(signature = (name, qualifier=None))]
+pub fn expr_col(name: &str, qualifier: Option<&str>) -> PyExpr {
+    let column = match qualifier {
+        Some(q) => Column::new(Some(q), name),
+        None => Column::new_unqualified(name),
+    };
     PyExpr {
-        inner: Expr::Column(Column::new_unqualified(name)),
+        inner: Expr::Column(column),
     }
 }
 
