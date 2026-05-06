@@ -68,6 +68,11 @@ pub(crate) struct RasterDataset<'a> {
     _gdal_mem_source: Option<Rc<Dataset>>,
     /// External datasets referenced by the VRT; kept alive for the lifetime of this struct.
     _gdal_outdb_sources: Vec<Rc<Dataset>>,
+    /// Reader-allocated band bytes that GDAL pointers in the MEM dataset may
+    /// reference (i.e. bytes returned by `BandRef::contiguous_data()` as
+    /// `Cow::Owned`, moved here without a copy). Kept alive for as long as
+    /// the MEM dataset that holds the pointers.
+    _owned_band_bytes: Vec<Vec<u8>>,
     /// Binds this dataset's lifetime to the borrowed source raster.
     _source_raster: PhantomData<&'a dyn RasterRef>,
 }
@@ -410,6 +415,7 @@ impl<'a> GDALDatasetProvider<'a> {
                 dataset: Rc::new(dataset),
                 _gdal_mem_source: None,
                 _gdal_outdb_sources: Vec::new(),
+                _owned_band_bytes: Vec::new(),
                 _source_raster: PhantomData,
             });
         }
@@ -428,12 +434,12 @@ impl<'a> GDALDatasetProvider<'a> {
             }
         }
 
-        let mut gdal_mem_source = if !indb_band_indices.is_empty() {
-            Some(Rc::new(unsafe {
-                raster_ref_to_gdal_mem(self.gdal, raster, &indb_band_indices)?
-            }))
+        let (mut gdal_mem_source, owned_band_bytes) = if !indb_band_indices.is_empty() {
+            let (mem_ds, owned) =
+                unsafe { raster_ref_to_gdal_mem(self.gdal, raster, &indb_band_indices)? };
+            (Some(Rc::new(mem_ds)), owned)
         } else {
-            None
+            (None, Vec::new())
         };
 
         if !has_outdb {
@@ -442,6 +448,7 @@ impl<'a> GDALDatasetProvider<'a> {
                 dataset,
                 _gdal_mem_source: None,
                 _gdal_outdb_sources: Vec::new(),
+                _owned_band_bytes: owned_band_bytes,
                 _source_raster: PhantomData,
             });
         }
@@ -453,6 +460,7 @@ impl<'a> GDALDatasetProvider<'a> {
                     dataset: Rc::clone(&cached.dataset),
                     _gdal_mem_source: None,
                     _gdal_outdb_sources: cached.outdb_sources.clone(),
+                    _owned_band_bytes: Vec::new(),
                     _source_raster: PhantomData,
                 });
             }
@@ -472,6 +480,7 @@ impl<'a> GDALDatasetProvider<'a> {
                 dataset,
                 _gdal_mem_source: None,
                 _gdal_outdb_sources: outdb_sources,
+                _owned_band_bytes: Vec::new(),
                 _source_raster: PhantomData,
             });
         }
@@ -484,6 +493,7 @@ impl<'a> GDALDatasetProvider<'a> {
             dataset,
             _gdal_mem_source: gdal_mem_source,
             _gdal_outdb_sources: outdb_sources,
+            _owned_band_bytes: owned_band_bytes,
             _source_raster: PhantomData,
         })
     }

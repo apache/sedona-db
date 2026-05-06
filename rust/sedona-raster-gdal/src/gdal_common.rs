@@ -161,16 +161,23 @@ fn resolve_band<R: RasterRef + ?Sized>(
     })
 }
 
-/// This function creates a GDAL dataset backed by the MEM driver that directly
-/// references the band data stored in the [RasterRef]. No data copying occurs -
-/// the GDAL bands point to the same memory as the data buffer held by [RasterRef].
+/// Build a GDAL MEM dataset whose bands point at the bytes held by `raster`.
+///
+/// Each band's bytes come from `BandRef::contiguous_data()`. When that returns
+/// `Cow::Borrowed`, the GDAL band points directly at the StructArray's
+/// backing buffer (zero-copy); the caller must keep `raster` alive for the
+/// dataset's lifetime. When it returns `Cow::Owned` (e.g. a sliced or
+/// permuted view materialized by the reader), the moved `Vec<u8>` is
+/// returned alongside the dataset and the caller must keep it alive too.
 ///
 /// # Arguments
 /// * `raster` - The RasterRef value
 /// * `band_indices` - The indices of the bands to include in the GDAL dataset (1-based)
 ///
 /// # Returns
-/// A [`Dataset`] that provides access to the GDAL dataset.
+/// A pair `(Dataset, Vec<Vec<u8>>)`. The second element holds any
+/// reader-allocated band bytes that GDAL pointers may reference; it must
+/// outlive the dataset.
 ///
 /// # Errors
 /// Returns an error if:
@@ -182,7 +189,7 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
     gdal: &Gdal,
     raster: &R,
     band_indices: &[usize],
-) -> Result<Dataset> {
+) -> Result<(Dataset, Vec<Vec<u8>>)> {
     let width = raster
         .width()
         .ok_or_else(|| exec_datafusion_err!("Raster has no width (spatial_shape missing)"))?
@@ -195,7 +202,12 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
     // Create internal MEM dataset via sedona-gdal shim to avoid open dataset list contention.
     let mut mem_ds_builder = MemDatasetBuilder::new(width, height);
 
-    // Add bands with DATAPOINTER option (zero-copy)
+    // Reader-allocated band bytes (Cow::Owned). Each entry is moved out of
+    // the Cow without a copy and must outlive the dataset, since GDAL holds
+    // a raw pointer into it.
+    let mut owned_band_bytes: Vec<Vec<u8>> = Vec::new();
+
+    // Add bands with DATAPOINTER option.
     //
     // Note: GDALAddBand always appends a new band, so the destination band index
     // is sequential (1..=band_indices.len()), even if the source band indices are
@@ -218,22 +230,20 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
 
         let band_type = band.data_type();
         let gdal_type = band_data_type_to_gdal(&band_type);
-        // contiguous_data() is Cow::Borrowed for is_2d identity views; the
-        // borrow points at the StructArray's backing buffer, which outlives
-        // the dataset (held by the caller). For Cow::Owned the pointer would
-        // dangle the moment the Cow drops, so we reject that case loudly.
         let band_data = band
             .contiguous_data()
             .map_err(|e| arrow_datafusion_err!(e))?;
-        let bytes: &[u8] = match &band_data {
-            Cow::Borrowed(b) => b,
-            Cow::Owned(_) => {
-                return exec_err!(
-                    "Internal: contiguous_data must be borrowed for is_2d bands; got owned"
-                );
+        // For Cow::Borrowed the pointer is into the StructArray (caller keeps
+        // it alive). For Cow::Owned we move the Vec into `owned_band_bytes`
+        // — no extra copy of the reader's materialization — and point GDAL
+        // at it; the Vec is kept alive alongside the returned Dataset.
+        let data_ptr: *const u8 = match band_data {
+            Cow::Borrowed(b) => b.as_ptr(),
+            Cow::Owned(v) => {
+                owned_band_bytes.push(v);
+                owned_band_bytes.last().unwrap().as_ptr()
             }
         };
-        let data_ptr = bytes.as_ptr();
         unsafe {
             mem_ds_builder = mem_ds_builder.add_band(gdal_type, data_ptr as *mut u8);
         }
@@ -298,14 +308,17 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
         }
     }
 
-    Ok(dataset)
+    Ok((dataset, owned_band_bytes))
 }
 
 pub fn raster_ref_to_gdal_empty<R: RasterRef + ?Sized>(gdal: &Gdal, raster: &R) -> Result<Dataset> {
     unsafe {
         // SAFETY: raster_ref_to_gdal_mem is safe to call with an empty band list. The
-        // returned dataset will have zero bands and references no external memory.
-        raster_ref_to_gdal_mem(gdal, raster, &[])
+        // returned dataset has zero bands, references no external memory, and the
+        // owned-bytes Vec is necessarily empty.
+        let (dataset, owned) = raster_ref_to_gdal_mem(gdal, raster, &[])?;
+        debug_assert!(owned.is_empty());
+        Ok(dataset)
     }
 }
 
@@ -782,7 +795,7 @@ mod tests {
         let raster = raster_struct_array.get(0).unwrap();
 
         with_gdal(|gdal| {
-            let dataset = unsafe { raster_ref_to_gdal_mem(gdal, &raster, &[3, 1])? };
+            let (dataset, _owned) = unsafe { raster_ref_to_gdal_mem(gdal, &raster, &[3, 1])? };
             assert_eq!(dataset.raster_size(), (2, 2));
             assert_eq!(dataset.raster_count(), 2);
             assert_eq!(
