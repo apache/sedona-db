@@ -81,3 +81,39 @@ def test_st_geogpoint(eng, x, y, expected):
 def test_st_asbinary(eng, geom, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(f"SELECT ST_AsBinary({geog_or_null(geom)})", expected)
+
+
+# BigQuery reformats its input such that it does not ususally roundtrip WKT input
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    "geom",
+    [
+        "POINT(1 1)",
+        "POINT EMPTY",
+        "LINESTRING(0 0,1 2,3 4)",
+        "LINESTRING EMPTY",
+        "GEOMETRYCOLLECTION(POINT(0 0),POLYGON((0 0,1 0,1 1,0 1,0 0)))",
+    ],
+)
+def test_st_astext(eng, geom):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_AsText({geog_or_null(geom)})", geom)
+
+
+# PostGIS formats its ZM slightly differently so we just test SedonaDB here
+# BigQuery does not support ZM at all
+@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize(
+    "geom",
+    [
+        "POINT Z EMPTY",
+        "POINT M EMPTY",
+        "POINT ZM EMPTY",
+        "POINT Z(0 1 2)",
+        "POINT M(0 1 3)",
+        "POINT ZM(0 1 2 3)",
+    ],
+)
+def test_st_astext_zm(eng, geom):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_AsText({geog_or_null(geom)})", geom)
