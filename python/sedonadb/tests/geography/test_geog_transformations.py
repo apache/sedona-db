@@ -243,3 +243,198 @@ def test_st_line_interpolate_point_degenerate(eng, line, fraction, expected):
         expected,
         wkt_precision=15,
     )
+
+
+# ST_Buffer tests - creates a buffer polygon around a geometry
+@pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
+@pytest.mark.parametrize(
+    ("geog", "distance", "expected_type", "expected_area_min", "expected_area_max"),
+    [
+        # Null
+        pytest.param(None, 100000.0, None, None, None, id="null_buffer"),
+        # Point with positive distance: produces a polygon approximating a circle
+        pytest.param(
+            "POINT (0 0)",
+            100000.0,
+            "ST_Polygon",
+            3e10,
+            3.5e10,
+            id="point_positive_distance",
+        ),
+        # Linestring with positive distance: produces a buffered corridor
+        pytest.param(
+            "LINESTRING (0 0, 1 0)",
+            100000.0,
+            "ST_Polygon",
+            4e10,
+            5e10,
+            id="linestring_positive_distance",
+        ),
+        # Polygon with positive distance: expands the polygon
+        pytest.param(
+            "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
+            100000.0,
+            "ST_Polygon",
+            4e10,
+            5e10,
+            id="polygon_positive_distance",
+        ),
+    ],
+)
+def test_st_buffer(
+    eng, geog, distance, expected_type, expected_area_min, expected_area_max
+):
+    eng = eng.create_or_skip()
+    if expected_type is None:
+        eng.assert_query_result(
+            f"SELECT ST_Buffer({geog_or_null(geog)}, {val_or_null(distance)})",
+            None,
+        )
+    else:
+        # Check the geometry type
+        eng.assert_query_result(
+            f"SELECT ST_GeometryType(ST_Buffer({geog_or_null(geog)}, {val_or_null(distance)}))",
+            expected_type,
+        )
+        # Check the area is in expected range
+        result = eng.execute_query(
+            f"SELECT ST_Area(ST_Buffer({geog_or_null(geog)}, {val_or_null(distance)}))"
+        )
+        assert result is not None
+        assert expected_area_min <= result <= expected_area_max, (
+            f"Area {result} not in expected range [{expected_area_min}, {expected_area_max}]"
+        )
+
+
+# Buffer with zero or negative distance for non-polygon inputs
+@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize(
+    ("geog", "distance", "expected"),
+    [
+        # Empty geometry: always POLYGON EMPTY regardless of distance
+        pytest.param("POINT EMPTY", 0.0, "POLYGON EMPTY", id="empty_point_zero"),
+        pytest.param(
+            "POINT EMPTY", 100000.0, "POLYGON EMPTY", id="empty_point_positive"
+        ),
+        pytest.param(
+            "LINESTRING EMPTY", 100000.0, "POLYGON EMPTY", id="empty_linestring"
+        ),
+        pytest.param("POLYGON EMPTY", 100000.0, "POLYGON EMPTY", id="empty_polygon"),
+        # Point with zero distance: dimension < 2 and distance <= 0
+        pytest.param("POINT (0 0)", 0.0, "POLYGON EMPTY", id="point_zero_distance"),
+        # Point with negative distance: dimension < 2 and distance <= 0
+        pytest.param(
+            "POINT (0 0)", -100000.0, "POLYGON EMPTY", id="point_negative_distance"
+        ),
+        # Linestring with zero distance: dimension < 2 and distance <= 0
+        pytest.param(
+            "LINESTRING (0 0, 10 0)",
+            0.0,
+            "POLYGON EMPTY",
+            id="linestring_zero_distance",
+        ),
+        # Linestring with negative distance: dimension < 2 and distance <= 0
+        pytest.param(
+            "LINESTRING (0 0, 10 0)",
+            -100000.0,
+            "POLYGON EMPTY",
+            id="linestring_negative_distance",
+        ),
+    ],
+)
+def test_st_buffer_empties_and_negatives(eng, geog, distance, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_Buffer({geog_or_null(geog)}, {val_or_null(distance)})",
+        expected,
+    )
+
+
+# ST_ReducePrecision tests - snaps coordinates to a grid
+@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize(
+    ("geog", "grid_size", "expected"),
+    [
+        # Null inputs
+        pytest.param(None, 1.0, None, id="null_geom"),
+        pytest.param("POINT (0 0)", None, None, id="null_grid_size"),
+        pytest.param(None, None, None, id="null_both"),
+        # Point snapping to whole degrees (grid_size = 1.0)
+        pytest.param("POINT (0 0)", 1.0, "POINT (0 0)", id="point_on_grid"),
+        pytest.param("POINT (0.001 0.001)", 1.0, "POINT (0 0)", id="point_not_on_grid"),
+        pytest.param(
+            "POINT (0.001 0.001)", -1, "POINT (0.001 0.001)", id="point_no_snap"
+        ),
+        # Point snapping to 0.1 degree grid (grid_size = 0.1)
+        pytest.param(
+            "POINT (0.1 0.1)", 0.1, "POINT (0.1 0.1)", id="point_tenth_degree_on_grid"
+        ),
+        pytest.param(
+            "POINT (0.12 0.12)", 0.1, "POINT (0.1 0.1)", id="point_tenth_degree_snap"
+        ),
+        # Multipoint: two nearby points snap to same location
+        pytest.param(
+            "MULTIPOINT ((0.001 0.001), (0.002 0.002))",
+            1.0,
+            "POINT (0 0)",
+            id="multipoint_merge",
+        ),
+        # Multipoint: points remain distinct after snapping
+        pytest.param(
+            "MULTIPOINT ((0 0), (10 10))",
+            1.0,
+            "MULTIPOINT ((0 0), (10 10))",
+            id="multipoint_distinct",
+        ),
+        # Linestring: no snapping needed
+        pytest.param(
+            "LINESTRING (0 0, 10 10)",
+            1.0,
+            "LINESTRING (0 0, 10 10)",
+            id="linestring_on_grid",
+        ),
+        # Linestring: endpoints snap to grid
+        pytest.param(
+            "LINESTRING (0.001 0.001, 10.001 10.001)",
+            1.0,
+            "LINESTRING (0 0, 10 10)",
+            id="linestring_snap",
+        ),
+        # Linestring: component collapses because the endpoints snap together
+        pytest.param(
+            "LINESTRING (0.01 0.02, 0.03 0.04)",
+            1.0,
+            "LINESTRING EMPTY",
+            id="linestring_collapse",
+        ),
+        # Linestring: no snapping with negative grid size
+        pytest.param(
+            "LINESTRING (0.001 0.001, 10.001 10.001)",
+            -1,
+            "LINESTRING (0.001 0.001, 10.001 10.001)",
+            id="linestring_no_snap",
+        ),
+        # Polygon: single ring, no snapping
+        pytest.param(
+            "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))",
+            -1,
+            "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))",
+            id="polygon_simple",
+        ),
+        # Polygon: single ring with snapping
+        pytest.param(
+            "POLYGON ((0.001 0.001, 10.001 0.001, 10.001 10.001, "
+            "0.001 10.001, 0.001 0.001))",
+            1.0,
+            "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))",
+            id="polygon_snap",
+        ),
+    ],
+)
+def test_st_reduceprecision(eng, geog, grid_size, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_ReducePrecision({geog_or_null(geog)}, {val_or_null(grid_size)})",
+        expected,
+        wkt_precision=6,
+    )

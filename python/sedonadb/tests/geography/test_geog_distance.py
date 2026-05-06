@@ -749,3 +749,317 @@ def test_st_max_distance_zm(geom1, geom2, expected):
         expected,
         numeric_epsilon=1e-2,
     )
+
+
+# ST_ClosestPoint tests - finds the closest point on geom1 to geom2
+@pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
+@pytest.mark.parametrize(
+    ("geom1", "geom2", "expected"),
+    [
+        # Nulls
+        pytest.param(None, "POINT (0 0)", None, id="null_closestpoint"),
+        pytest.param("POINT (0 0)", None, None, id="closestpoint_null"),
+        pytest.param(None, None, None, id="null_closestpoint_null"),
+        # Point x Point
+        pytest.param(
+            "POINT (0 0)", "POINT (0 0)", "POINT (0 0)", id="point_same_point"
+        ),
+        pytest.param(
+            "POINT (0 0)", "POINT (0 1)", "POINT (0 0)", id="point_different_point"
+        ),
+        # Point x Linestring
+        pytest.param(
+            "POINT (0 0)",
+            "LINESTRING (0 0, 0 1)",
+            "POINT (0 0)",
+            id="point_on_linestring",
+        ),
+        pytest.param(
+            "POINT (1 0)",
+            "LINESTRING (0 0, 0 1)",
+            "POINT (1 0)",
+            id="point_off_linestring",
+        ),
+        # Linestring x Point
+        pytest.param(
+            "LINESTRING (0 0, 0 1)",
+            "POINT (0 0)",
+            "POINT (0 0)",
+            id="linestring_point_on",
+        ),
+        pytest.param(
+            "LINESTRING (0 0, 0 1)",
+            "POINT (1 0)",
+            "POINT (0 0)",
+            id="linestring_point_off",
+        ),
+        # Point x Polygon
+        pytest.param(
+            "POINT (0.25 0.25)",
+            "POLYGON ((0 0, 2 0, 0 2, 0 0))",
+            "POINT (0.25 0.25)",
+            id="point_inside_polygon",
+        ),
+        pytest.param(
+            "POINT (0 0)",
+            "POLYGON ((0 0, 2 0, 0 2, 0 0))",
+            "POINT (0 0)",
+            id="point_on_polygon_boundary",
+        ),
+        pytest.param(
+            "POINT (-1 0)",
+            "POLYGON ((0 0, 2 0, 0 2, 0 0))",
+            "POINT (-1 0)",
+            id="point_outside_polygon",
+        ),
+    ],
+)
+def test_st_closestpoint(eng, geom1, geom2, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_ClosestPoint({geog_or_null(geom1)}, {geog_or_null(geom2)})",
+        expected,
+        wkt_precision=6,
+    )
+
+
+# Empties - BigQuery doesn't return POINT EMPTY consistently
+@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize(
+    ("geom1", "geom2", "expected"),
+    [
+        pytest.param(
+            "POINT (0 0)", "POINT EMPTY", "POINT EMPTY", id="closestpoint_empty"
+        ),
+        pytest.param(
+            "POINT EMPTY", "POINT (0 0)", "POINT EMPTY", id="empty_closestpoint"
+        ),
+    ],
+)
+def test_st_closestpoint_empties(eng, geom1, geom2, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_ClosestPoint({geog_or_null(geom1)}, {geog_or_null(geom2)})",
+        expected,
+        wkt_precision=6,
+    )
+
+
+# ST_ShortestLine tests - returns the line connecting the closest points
+@pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
+@pytest.mark.parametrize(
+    ("geom1", "geom2", "expected"),
+    [
+        # Nulls
+        pytest.param(None, "POINT (0 0)", None, id="null_shortestline"),
+        pytest.param("POINT (0 0)", None, None, id="shortestline_null"),
+        pytest.param(None, None, None, id="null_shortestline_null"),
+        # Point x Point
+        pytest.param(
+            "POINT (0 0)",
+            "POINT (0 0)",
+            "LINESTRING (0 0, 0 0)",
+            id="point_same_point",
+        ),
+        pytest.param(
+            "POINT (0 0)",
+            "POINT (0 1)",
+            "LINESTRING (0 0, 0 1)",
+            id="point_different_point",
+        ),
+        # Point x Linestring
+        pytest.param(
+            "POINT (0 0)",
+            "LINESTRING (0 0, 0 1)",
+            "LINESTRING (0 0, 0 0)",
+            id="point_on_linestring",
+        ),
+        pytest.param(
+            "POINT (1 0)",
+            "LINESTRING (0 0, 0 1)",
+            "LINESTRING (1 0, 0 0)",
+            id="point_off_linestring",
+        ),
+        # Linestring x Point
+        pytest.param(
+            "LINESTRING (0 0, 0 1)",
+            "POINT (0 0)",
+            "LINESTRING (0 0, 0 0)",
+            id="linestring_point_on",
+        ),
+        pytest.param(
+            "LINESTRING (0 0, 0 1)",
+            "POINT (1 0)",
+            "LINESTRING (0 0, 1 0)",
+            id="linestring_point_off",
+        ),
+        # Point x Polygon
+        pytest.param(
+            "POINT (0.25 0.25)",
+            "POLYGON ((0 0, 2 0, 0 2, 0 0))",
+            "LINESTRING (0.25 0.25, 0.25 0.25)",
+            id="point_inside_polygon",
+        ),
+        pytest.param(
+            "POINT (-1 0)",
+            "POLYGON ((0 0, 2 0, 0 2, 0 0))",
+            "LINESTRING (-1 0, 0 0)",
+            id="point_outside_polygon",
+        ),
+        # Linestring x Polygon
+        pytest.param(
+            "LINESTRING (3 3, 4 4)",
+            "POLYGON ((0 0, 2 0, 0 2, 0 0))",
+            "LINESTRING (3 3, 0.998247 1.00221)",
+            id="linestring_outside_polygon",
+        ),
+    ],
+)
+def test_st_shortestline(eng, geom1, geom2, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_ShortestLine({geog_or_null(geom1)}, {geog_or_null(geom2)})",
+        expected,
+        wkt_precision=6,
+    )
+
+
+# Empties - BigQuery doesn't return LINESTRING EMPTY consistently
+@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize(
+    ("geom1", "geom2", "expected"),
+    [
+        pytest.param(
+            "POINT (0 0)",
+            "POINT EMPTY",
+            "LINESTRING EMPTY",
+            id="shortestline_empty",
+        ),
+        pytest.param(
+            "POINT EMPTY",
+            "POINT (0 0)",
+            "LINESTRING EMPTY",
+            id="empty_shortestline",
+        ),
+    ],
+)
+def test_st_shortestline_empties(eng, geom1, geom2, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_ShortestLine({geog_or_null(geom1)}, {geog_or_null(geom2)})",
+        expected,
+        wkt_precision=6,
+    )
+
+
+# ST_LongestLine tests - returns the line connecting the farthest points
+@pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
+@pytest.mark.parametrize(
+    ("geom1", "geom2", "expected"),
+    [
+        # Nulls
+        pytest.param(None, "POINT (0 0)", None, id="null_longestline"),
+        pytest.param("POINT (0 0)", None, None, id="longestline_null"),
+        pytest.param(None, None, None, id="null_longestline_null"),
+        # Point x Point
+        pytest.param(
+            "POINT (0 0)",
+            "POINT (0 0)",
+            "LINESTRING (0 0, 0 0)",
+            id="point_same_point",
+        ),
+        pytest.param(
+            "POINT (0 0)",
+            "POINT (0 1)",
+            "LINESTRING (0 0, 0 1)",
+            id="point_different_point",
+        ),
+        # Point x Linestring
+        pytest.param(
+            "POINT (0 0)",
+            "LINESTRING (0 0, 0 1)",
+            "LINESTRING (0 0, 0 1)",
+            id="point_on_linestring",
+        ),
+        pytest.param(
+            "POINT (1 0)",
+            "LINESTRING (0 0, 0 1)",
+            "LINESTRING (1 0, 0 1)",
+            id="point_off_linestring",
+        ),
+        # Linestring x Point
+        pytest.param(
+            "LINESTRING (0 0, 0 1)",
+            "POINT (0 0)",
+            "LINESTRING (0 1, 0 0)",
+            id="linestring_point_on",
+        ),
+        pytest.param(
+            "LINESTRING (0 0, 0 1)",
+            "POINT (1 0)",
+            "LINESTRING (0 1, 1 0)",
+            id="linestring_point_off",
+        ),
+        # Point x Polygon
+        pytest.param(
+            "POINT (0.25 0.25)",
+            "POLYGON ((0 0, 2 0, 0 2, 0 0))",
+            "LINESTRING (0.25 0.25, 2 0)",
+            id="point_inside_polygon",
+        ),
+        pytest.param(
+            "POINT (0 0)",
+            "POLYGON ((0 0, 2 0, 0 2, 0 0))",
+            "LINESTRING (0 0, 2 0)",
+            id="point_on_polygon_boundary",
+        ),
+        pytest.param(
+            "POINT (-1 0)",
+            "POLYGON ((0 0, 2 0, 0 2, 0 0))",
+            "LINESTRING (-1 0, 2 0)",
+            id="point_outside_polygon",
+        ),
+        # Linestring x Polygon
+        pytest.param(
+            "LINESTRING (3 3, 4 4)",
+            "POLYGON ((0 0, 2 0, 0 2, 0 0))",
+            "LINESTRING (4 4, 0 0)",
+            id="linestring_outside_polygon",
+        ),
+    ],
+)
+def test_st_longestline(eng, geom1, geom2, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_LongestLine({geog_or_null(geom1)}, {geog_or_null(geom2)})",
+        expected,
+        wkt_precision=6,
+    )
+
+
+# Empties - BigQuery doesn't return LINESTRING EMPTY consistently
+@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize(
+    ("geom1", "geom2", "expected"),
+    [
+        pytest.param(
+            "POINT (0 0)",
+            "POINT EMPTY",
+            "LINESTRING EMPTY",
+            id="longestline_empty",
+        ),
+        pytest.param(
+            "POINT EMPTY",
+            "POINT (0 0)",
+            "LINESTRING EMPTY",
+            id="empty_longestline",
+        ),
+    ],
+)
+def test_st_longestline_empties(eng, geom1, geom2, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_LongestLine({geog_or_null(geom1)}, {geog_or_null(geom2)})",
+        expected,
+        wkt_precision=6,
+    )
