@@ -358,7 +358,6 @@ def test_st_line_interpolate_point(eng, line, fraction, expected):
 )
 def test_st_line_interpolate_point_degenerate(eng, line, fraction, expected):
     eng = eng.create_or_skip()
-    eng = eng.create_or_skip()
     eng.assert_query_result(
         f"SELECT ST_LineInterpolatePoint({geog_or_null(line)}, {val_or_null(fraction)})",
         expected,

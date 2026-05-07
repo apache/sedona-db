@@ -155,6 +155,17 @@ pub fn s2_scalar_kernels() -> Result<Vec<(String, ScalarKernelRef)>> {
                 SedonaType::Arrow(DataType::Boolean),
             ))),
         ));
+        kernels.push((
+            fn_name.to_string(),
+            Arc::new(NullKernelHelper::new(ArgMatcher::new(
+                vec![
+                    ArgMatcher::is_geography(),
+                    ArgMatcher::is_geography(),
+                    ArgMatcher::is_null(),
+                ],
+                SedonaType::Arrow(DataType::Boolean),
+            ))),
+        ));
     }
 
     // st_buffer(geography, NULL) -> geography
