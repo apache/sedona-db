@@ -18,7 +18,7 @@ use arrow_array::builder::BinaryBuilder;
 use arrow_schema::DataType;
 use datafusion_common::{error::Result, ScalarValue};
 use datafusion_expr::{ColumnarValue, Volatility};
-use geo_traits::{CoordTrait, GeometryTrait, GeometryType, LineStringTrait};
+use geo_traits::{CoordTrait, Dimensions, GeometryTrait, GeometryType, LineStringTrait};
 use sedona_common::sedona_internal_err;
 use sedona_expr::{
     item_crs::ItemCrsKernel,
@@ -29,7 +29,8 @@ use sedona_schema::{
     matchers::ArgMatcher,
 };
 use std::{io::Write, sync::Arc};
-
+use sedona_geometry::error::SedonaGeometryError;
+use sedona_geometry::wkb_factory::write_wkb_coord_trait;
 use crate::executor::WkbExecutor;
 
 #[derive(Debug)]
@@ -72,16 +73,19 @@ impl SedonaScalarKernel for STLineSubstring {
             ColumnarValue::Scalar(ScalarValue::Float64(e)) => *e,
             _ => None,
         };
-        fn interpolate<C: CoordTrait<T = f64>>(p1: C, p2: C, fraction: f64) -> (f64, f64) {
-            let x = p1.x() + (p2.x() - p1.x()) * fraction;
-            let y = p1.y() + (p2.y() - p1.y()) * fraction;
-            (x, y)
+        unsafe fn interpolate<C: CoordTrait<T = f64>>(p1: C, p2: C, fraction: f64, dim: Dimensions, buf: &mut impl Write) ->  Result<(), SedonaGeometryError> {
+            for i in 0..dim.size() {
+                let v = p1.nth_unchecked(i) + (p2.nth_unchecked(i) - p1.nth_unchecked(i)) * fraction;
+                buf.write_all(&v.to_le_bytes());
+            }
+            Ok(())
         }
-        executor.execute_wkb_void(|maybe_wkb| {
-            let mut new_coords = Vec::new();
+        executor.execute_wkb_void(|maybe_wkb| unsafe {
+            let mut wkb_body = Vec::new();
+            let mut point_count = 0u32;
             if let Some(wkb) = maybe_wkb {
                 if let GeometryType::LineString(line) = wkb.as_type() {
-                    let num_coords = line.num_coords() as i64;
+                    let mut num_coords = line.num_coords() as i64;
 
                     let mut cumulative_distances = Vec::with_capacity(num_coords as usize);
                     let mut total_length = 0.0;
@@ -107,7 +111,7 @@ impl SedonaScalarKernel for STLineSubstring {
                     for i in 0..(num_coords as usize - 1) {
                         let d1 = cumulative_distances[i];
                         let d2 = cumulative_distances[i + 1];
-                        let p1 = line.coord(i).unwrap();
+                        let mut p1 = line.coord(i).unwrap();
                         let p2 = line.coord(i + 1).unwrap();
 
                         if start_dist >= d1 && start_dist <= d2 {
@@ -117,11 +121,13 @@ impl SedonaScalarKernel for STLineSubstring {
                             } else {
                                 0.0
                             };
-                            new_coords.push(interpolate(p1, p2, fraction));
+                            interpolate(p1, p2, fraction,line.dim(), &mut wkb_body);
+                            point_count += 1;
                         }
 
                         if d1 > start_dist && d1 < end_dist {
-                            new_coords.push((p1.x(), p1.y()));
+                            write_wkb_coord_trait(&mut wkb_body, &p1);
+                            point_count += 1;
                         }
 
                         if end_dist >= d1 && end_dist <= d2 {
@@ -131,27 +137,26 @@ impl SedonaScalarKernel for STLineSubstring {
                             } else {
                                 0.0
                             };
-                            new_coords.push(interpolate(p1, p2, fraction));
+                            interpolate(p1, p2, fraction,line.dim(), &mut wkb_body);
+                            point_count += 1;
                         }
                     }
                 }
             }
-            if !new_coords.is_empty() {
-                // write byte order (1 = little endian)
-                builder.write_all(&[1u8])?;
+            if point_count > 0 {
+                // Build the final WKB byte array
+                let mut final_wkb = Vec::new();
 
-                let type_id: u32 = 2;
-                builder.write_all(&type_id.to_le_bytes())?;
+                // Byte order: 1 = Little Endian
+                final_wkb.write_all(&[1u8])?;
+                // Geometry Type: 2 = LineString
+                final_wkb.write_all(&2u32.to_le_bytes())?;
+                // Number of points
+                final_wkb.write_all(&point_count.to_le_bytes())?;
+                // The coordinate data collected in wkb_body
+                final_wkb.write_all(&wkb_body)?;
 
-                let num_points = new_coords.len() as u32;
-                builder.write_all(&num_points.to_le_bytes())?;
-
-                for (x, y) in new_coords {
-                    builder.write_all(&x.to_le_bytes())?;
-                    builder.write_all(&y.to_le_bytes())?;
-                }
-
-                builder.append_value([]);
+                builder.append_value(final_wkb);
             } else {
                 builder.append_null();
             }
