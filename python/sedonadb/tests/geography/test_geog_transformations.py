@@ -288,7 +288,101 @@ def test_st_buffer(eng, geog, distance, expected):
     eng.assert_query_result(
         f"SELECT ST_Area(ST_Buffer({geog_or_null(geog)}, {val_or_null(distance)}))",
         expected,
-        numeric_epsilon=eps
+        numeric_epsilon=eps,
+    )
+
+
+# ST_Buffer tests with num_quad_segs - controls circle approximation quality
+@pytest.mark.parametrize("eng", [SedonaDB, BigQuery, PostGIS])
+@pytest.mark.parametrize(
+    ("geog", "distance", "num_quad_segs", "expected"),
+    [
+        # Point with different num_quad_segs: more segments = closer to true circle
+        pytest.param(
+            "POINT (0 0)",
+            100000.0,
+            4,
+            30614189578.97585,
+            id="point_quad_segs_4",
+        ),
+        pytest.param(
+            "POINT (0 0)",
+            100000.0,
+            8,
+            31213847614.041348,
+            id="point_quad_segs_8",
+        ),
+        pytest.param(
+            "POINT (0 0)",
+            100000.0,
+            16,
+            31364850259.39363,
+            id="point_quad_segs_16",
+        ),
+    ],
+)
+def test_st_buffer_num_quad_segs(eng, geog, distance, num_quad_segs, expected):
+    eng = eng.create_or_skip()
+    if eng.name() == "postgis":
+        eps = 1e-2
+    else:
+        eps = 1e-14
+
+    eng.assert_query_result(
+        f"SELECT ST_Area(ST_Buffer({geog_or_null(geog)}, {val_or_null(distance)}, {num_quad_segs}))",
+        expected,
+        numeric_epsilon=eps,
+    )
+
+
+# ST_Buffer tests with style params - controls buffer shape via string parameters
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geog", "distance", "params", "expected"),
+    [
+        # Endcap styles (for linestrings)
+        pytest.param(
+            "LINESTRING (0 0, 1 0)",
+            100000.0,
+            "endcap=round",
+            53452519026.41781,
+            id="linestring_endcap_round",
+        ),
+        pytest.param(
+            "LINESTRING (0 0, 1 0)",
+            100000.0,
+            "endcap=flat",
+            22238671472.442112,
+            id="linestring_endcap_flat",
+        ),
+        # Side options (for linestrings)
+        pytest.param(
+            "LINESTRING (0 0, 1 0)",
+            100000.0,
+            "side=left",
+            11119335736.221052,
+            id="linestring_side_left",
+        ),
+        pytest.param(
+            "LINESTRING (0 0, 1 0)",
+            100000.0,
+            "side=right",
+            11119335736.221052,
+            id="linestring_side_right",
+        ),
+    ],
+)
+def test_st_buffer_params(eng, geog, distance, params, expected):
+    eng = eng.create_or_skip()
+    if eng.name() == "postgis":
+        eps = 1e-2
+    else:
+        eps = 1e-15
+
+    eng.assert_query_result(
+        f"SELECT ST_Area(ST_Buffer({geog_or_null(geog)}, {val_or_null(distance)}, '{params}'))",
+        expected,
+        numeric_epsilon=eps,
     )
 
 
