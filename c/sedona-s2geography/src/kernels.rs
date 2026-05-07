@@ -175,6 +175,15 @@ pub fn s2_scalar_kernels() -> Result<Vec<(String, ScalarKernelRef)>> {
         ))),
     ));
 
+    // st_simplify(geography, NULL) -> geography
+    kernels.push((
+        "st_simplify".to_string(),
+        Arc::new(NullKernelHelper::new(ArgMatcher::new(
+            vec![ArgMatcher::is_geography(), ArgMatcher::is_null()],
+            WKB_GEOGRAPHY,
+        ))),
+    ));
+
     // st_buffer(geography, NULL, NULL) -> geography
     kernels.push((
         "st_buffer".to_string(),

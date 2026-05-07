@@ -58,7 +58,6 @@ def test_s2_cellidfrompoint_empties(eng, geog, expected):
     )
 
 
-
 # S2_CoveringCellIds tests - returns a list of S2 cell IDs covering a geometry
 @pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
 @pytest.mark.parametrize(

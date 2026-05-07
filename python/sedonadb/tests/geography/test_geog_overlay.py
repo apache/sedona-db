@@ -549,7 +549,7 @@ def test_st_symdifference_empties(eng, geom1, geom2, expected):
 @pytest.mark.parametrize(
     ("geom1", "geom2", "expected"),
     [
-         # Point symdiff Point: same -> empty
+        # Point symdiff Point: same -> empty
         pytest.param("POINT (0 0)", "POINT (0 0)", "POINT (nan nan)", id="point_same"),
         # Linestring symdiff Linestring: same -> empty
         pytest.param(

@@ -74,6 +74,110 @@ def test_st_centroid_extended(eng, geog, expected):
     )
 
 
+# Neither PostGIS nor BigQuery support ZM in their centroid calculation
+@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        # Points with Z
+        pytest.param("POINT Z (0 1 10)", "POINT Z (0 1 10)", id="point_z"),
+        pytest.param(
+            "MULTIPOINT Z ((0 0 10), (0 1 11))",
+            "POINT Z (0 0.5 10.5)",
+            id="multipoint_z",
+        ),
+        # Points with M
+        pytest.param("POINT M (0 1 10)", "POINT M (0 1 10)", id="point_m"),
+        pytest.param(
+            "MULTIPOINT M ((0 0 10), (0 1 11))",
+            "POINT M (0 0.5 10.5)",
+            id="multipoint_m",
+        ),
+        # Points with ZM
+        pytest.param("POINT ZM (0 1 10 20)", "POINT ZM (0 1 10 20)", id="point_zm"),
+        pytest.param(
+            "MULTIPOINT ZM ((0 0 10 20), (0 1 11 21))",
+            "POINT ZM (0 0.5 10.5 20.5)",
+            id="multipoint_zm",
+        ),
+        # Linestrings with Z
+        pytest.param(
+            "LINESTRING Z (0 0 10, 0 1 11)",
+            "POINT Z (0 0.5 10.5)",
+            id="linestring_z",
+        ),
+        pytest.param(
+            "LINESTRING Z (0 0 10, 0 1 11, 0 5 15)",
+            "POINT Z (0 2.5 12.5)",
+            id="linestring_two_segments_z",
+        ),
+        # Linestrings with M
+        pytest.param(
+            "LINESTRING M (0 0 10, 0 1 11)",
+            "POINT M (0 0.5 10.5)",
+            id="linestring_m",
+        ),
+        pytest.param(
+            "LINESTRING M (0 0 10, 0 1 11, 0 5 15)",
+            "POINT M (0 2.5 12.5)",
+            id="linestring_two_segments_m",
+        ),
+        # Linestrings with ZM
+        pytest.param(
+            "LINESTRING ZM (0 0 10 20, 0 1 11 21)",
+            "POINT ZM (0 0.5 10.5 20.5)",
+            id="linestring_zm",
+        ),
+        pytest.param(
+            "LINESTRING ZM (0 0 10 20, 0 1 11 21, 0 5 15 25)",
+            "POINT ZM (0 2.5 12.5 22.5)",
+            id="linestring_two_segments_zm",
+        ),
+        # Polygons with Z
+        pytest.param(
+            "POLYGON Z ((0 0 10, 0 1 10, 1 0 10, 0 0 10))",
+            "POINT Z (0.3333 0.3333 10)",
+            id="triangle_z",
+        ),
+        pytest.param(
+            "POLYGON Z ((0 0 10, 0 2 10, 2 0 10, 0 0 10), "
+            "(0.1 0.1 11, 0.1 0.5 11, 0.5 0.1 11, 0.1 0.1 11))",
+            "POINT Z (0.6849 0.6848 10.0385)",
+            id="polygon_with_hole_z",
+        ),
+        # Polygons with M
+        pytest.param(
+            "POLYGON M ((0 0 10, 0 1 10, 1 0 10, 0 0 10))",
+            "POINT M (0.3333 0.3333 10)",
+            id="triangle_m",
+        ),
+        pytest.param(
+            "POLYGON M ((0 0 10, 0 2 10, 2 0 10, 0 0 10), "
+            "(0.1 0.1 11, 0.1 0.5 11, 0.5 0.1 11, 0.1 0.1 11))",
+            "POINT M (0.6849 0.6848 10.0385)",
+            id="polygon_with_hole_m",
+        ),
+        # Polygons with ZM
+        pytest.param(
+            "POLYGON ZM ((0 0 10 20, 0 1 10 20, 1 0 10 20, 0 0 10 20))",
+            "POINT ZM (0.3333 0.3333 10 20)",
+            id="triangle_zm",
+        ),
+        pytest.param(
+            "POLYGON ZM ((0 0 10 20, 0 2 10 20, 2 0 10 20, 0 0 10 20), "
+            "(0.1 0.1 11 21, 0.1 0.5 11 21, 0.5 0.1 11 21, 0.1 0.1 11 21))",
+            "POINT ZM (0.6849 0.6848 10.0385 20.0385)",
+            id="polygon_with_hole_zm",
+        ),
+    ],
+)
+def test_st_centroid_zm(eng, geom, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_Centroid({geog_or_null(geom)})", expected, wkt_precision=4
+    )
+
+
 @pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
 @pytest.mark.parametrize(
     ("geog", "expected"),
@@ -160,10 +264,26 @@ def test_st_convexhull_degenerate(eng, geog, expected):
         # Points
         pytest.param("POINT (0 1)", "POINT (0 1)", id="point"),
         pytest.param("MULTIPOINT ((0 0), (0 1))", "POINT (0 1)", id="multipoint"),
+        # Points with Z/M/ZM
+        pytest.param("POINT Z (0 1 10)", "POINT Z (0 1 10)", id="point_z"),
+        pytest.param("POINT M (0 1 10)", "POINT M (0 1 10)", id="point_m"),
+        pytest.param("POINT ZM (0 1 10 20)", "POINT ZM (0 1 10 20)", id="point_zm"),
         # Linestrings
         pytest.param("LINESTRING (0 0, 0 1)", "POINT (0 1)", id="linestring"),
         pytest.param(
             "LINESTRING (0 0, 0 1, 0 5)", "POINT (0 1)", id="linestring_three_vertices"
+        ),
+        # Linestrings with Z/M/ZM
+        pytest.param(
+            "LINESTRING Z (0 0 10, 0 1 11)", "POINT Z (0 1 11)", id="linestring_z"
+        ),
+        pytest.param(
+            "LINESTRING M (0 0 10, 0 1 11)", "POINT M (0 1 11)", id="linestring_m"
+        ),
+        pytest.param(
+            "LINESTRING ZM (0 0 10 20, 0 1 11 21)",
+            "POINT ZM (0 1 11 21)",
+            id="linestring_zm",
         ),
         # Polygons
         pytest.param(
@@ -176,6 +296,7 @@ def test_st_convexhull_degenerate(eng, geog, expected):
             "POINT (0.450237 0.450223)",
             id="square",
         ),
+        # Polygons with Z/M/ZM are not yet supported and return a 2D result
     ],
 )
 def test_st_pointonsurface(eng, geog, expected):
@@ -237,6 +358,87 @@ def test_st_line_interpolate_point(eng, line, fraction, expected):
 )
 def test_st_line_interpolate_point_degenerate(eng, line, fraction, expected):
     eng = eng.create_or_skip()
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_LineInterpolatePoint({geog_or_null(line)}, {val_or_null(fraction)})",
+        expected,
+        wkt_precision=15,
+    )
+
+
+# Z/M/ZM support only in SedonaDB
+@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize(
+    ("line", "fraction", "expected"),
+    [
+        # Linestring with Z
+        pytest.param(
+            "LINESTRING Z (0 0 10, 0 2 12)", 0.0, "POINT Z (0 0 10)", id="start_z"
+        ),
+        pytest.param(
+            "LINESTRING Z (0 0 10, 0 2 12)", 1.0, "POINT Z (0 2 12)", id="end_z"
+        ),
+        pytest.param(
+            "LINESTRING Z (0 0 10, 0 2 12)", 0.5, "POINT Z (0 1 11)", id="midpoint_z"
+        ),
+        # Linestring with M
+        pytest.param(
+            "LINESTRING M (0 0 10, 0 2 12)", 0.0, "POINT M (0 0 10)", id="start_m"
+        ),
+        pytest.param(
+            "LINESTRING M (0 0 10, 0 2 12)", 1.0, "POINT M (0 2 12)", id="end_m"
+        ),
+        pytest.param(
+            "LINESTRING M (0 0 10, 0 2 12)", 0.5, "POINT M (0 1 11)", id="midpoint_m"
+        ),
+        # Linestring with ZM
+        pytest.param(
+            "LINESTRING ZM (0 0 10 20, 0 2 12 22)",
+            0.0,
+            "POINT ZM (0 0 10 20)",
+            id="start_zm",
+        ),
+        pytest.param(
+            "LINESTRING ZM (0 0 10 20, 0 2 12 22)",
+            1.0,
+            "POINT ZM (0 2 12 22)",
+            id="end_zm",
+        ),
+        pytest.param(
+            "LINESTRING ZM (0 0 10 20, 0 2 12 22)",
+            0.5,
+            "POINT ZM (0 1 11 21)",
+            id="midpoint_zm",
+        ),
+        # Multi-segment line with Z
+        pytest.param(
+            "LINESTRING Z (0 0 10, 0 1 11, 0 2 12)",
+            0.25,
+            "POINT Z (0 0.5 10.5)",
+            id="multi_seg_quarter_z",
+        ),
+        pytest.param(
+            "LINESTRING Z (0 0 10, 0 1 11, 0 2 12)",
+            0.75,
+            "POINT Z (0 1.5 11.5)",
+            id="multi_seg_three_quarter_z",
+        ),
+        # Multi-segment line with ZM
+        pytest.param(
+            "LINESTRING ZM (0 0 10 20, 0 1 11 21, 0 2 12 22)",
+            0.25,
+            "POINT ZM (0 0.5 10.5 20.5)",
+            id="multi_seg_quarter_zm",
+        ),
+        pytest.param(
+            "LINESTRING ZM (0 0 10 20, 0 1 11 21, 0 2 12 22)",
+            0.75,
+            "POINT ZM (0 1.5 11.5 21.5)",
+            id="multi_seg_three_quarter_zm",
+        ),
+    ],
+)
+def test_st_line_interpolate_point_zm(eng, line, fraction, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(
         f"SELECT ST_LineInterpolatePoint({geog_or_null(line)}, {val_or_null(fraction)})",
@@ -468,4 +670,207 @@ def test_st_reduceprecision(eng, geog, grid_size, expected):
         f"SELECT {fn_name}({geog_or_null(geog)}, {val_or_null(grid_size)})",
         expected,
         wkt_precision=6,
+    )
+
+
+# Z/M/ZM support only in SedonaDB
+@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize(
+    ("geog", "grid_size", "expected"),
+    [
+        # Point with Z
+        pytest.param("POINT Z (0 1 10)", 1.0, "POINT Z (0 1 10)", id="point_on_grid_z"),
+        pytest.param(
+            "POINT Z (0.01 1.01 10)", 1.0, "POINT Z (0 1 10)", id="point_not_on_grid_z"
+        ),
+        pytest.param(
+            "MULTIPOINT Z ((0.01 1.01 10), (0.01 1.01 20))",
+            1.0,
+            "POINT Z (0 1 10)",
+            id="multipoint_merge_z",
+        ),
+        pytest.param(
+            "MULTIPOINT Z ((0.01 1.01 10), (2.01 3.01 20))",
+            1.0,
+            "MULTIPOINT Z (0 1 10, 2 3 20)",
+            id="multipoint_distinct_z",
+        ),
+        # Point with M
+        pytest.param("POINT M (0 1 10)", 1.0, "POINT M (0 1 10)", id="point_on_grid_m"),
+        pytest.param(
+            "POINT M (0.01 1.01 10)", 1.0, "POINT M (0 1 10)", id="point_not_on_grid_m"
+        ),
+        pytest.param(
+            "MULTIPOINT M ((0.01 1.01 10), (0.01 1.01 20))",
+            1.0,
+            "POINT M (0 1 10)",
+            id="multipoint_merge_m",
+        ),
+        pytest.param(
+            "MULTIPOINT M ((0.01 1.01 10), (2.01 3.01 20))",
+            1.0,
+            "MULTIPOINT M (0 1 10, 2 3 20)",
+            id="multipoint_distinct_m",
+        ),
+        # Point with ZM
+        pytest.param(
+            "POINT ZM (0 1 10 100)", 1.0, "POINT ZM (0 1 10 100)", id="point_on_grid_zm"
+        ),
+        pytest.param(
+            "POINT ZM (0.01 1.01 10 100)",
+            1.0,
+            "POINT ZM (0 1 10 100)",
+            id="point_not_on_grid_zm",
+        ),
+        pytest.param(
+            "MULTIPOINT ZM ((0.01 1.01 10 100), (0.01 1.01 20 200))",
+            1.0,
+            "POINT ZM (0 1 10 100)",
+            id="multipoint_merge_zm",
+        ),
+        pytest.param(
+            "MULTIPOINT ZM ((0.01 1.01 10 100), (2.01 3.01 20 200))",
+            1.0,
+            "MULTIPOINT ZM (0 1 10 100, 2 3 20 200)",
+            id="multipoint_distinct_zm",
+        ),
+        # Linestring with Z
+        pytest.param(
+            "LINESTRING Z (0 0 100, 10 10 200)",
+            1.0,
+            "LINESTRING Z (0 0 100, 10 10 200)",
+            id="linestring_z",
+        ),
+        # Linestring with M
+        pytest.param(
+            "LINESTRING M (0 0 100, 10 10 200)",
+            1.0,
+            "LINESTRING M (0 0 100, 10 10 200)",
+            id="linestring_m",
+        ),
+        # Linestring with ZM
+        pytest.param(
+            "LINESTRING ZM (0 0 100 1000, 10 10 200 2000)",
+            1.0,
+            "LINESTRING ZM (0 0 100 1000, 10 10 200 2000)",
+            id="linestring_zm",
+        ),
+        # Multilinestring with Z
+        pytest.param(
+            "MULTILINESTRING Z ((0 0 100, 10 10 200), (20 20 300, 30 30 400))",
+            1.0,
+            "MULTILINESTRING Z ((0 0 100, 10 10 200), (20 20 300, 30 30 400))",
+            id="multilinestring_z",
+        ),
+        # Multilinestring with M
+        pytest.param(
+            "MULTILINESTRING M ((0 0 100, 10 10 200), (20 20 300, 30 30 400))",
+            1.0,
+            "MULTILINESTRING M ((0 0 100, 10 10 200), (20 20 300, 30 30 400))",
+            id="multilinestring_m",
+        ),
+        # Multilinestring with ZM
+        pytest.param(
+            "MULTILINESTRING ZM ((0 0 100 1000, 10 10 200 2000), "
+            "(20 20 300 3000, 30 30 400 4000))",
+            1.0,
+            "MULTILINESTRING ZM ((0 0 100 1000, 10 10 200 2000), "
+            "(20 20 300 3000, 30 30 400 4000))",
+            id="multilinestring_zm",
+        ),
+    ],
+)
+def test_st_reduceprecision_zm(eng, geog, grid_size, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_ReducePrecision({geog_or_null(geog)}, {val_or_null(grid_size)})",
+        expected,
+        wkt_precision=15,
+    )
+
+
+# ST_Simplify tests - simplifies geometry by removing vertices
+@pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
+@pytest.mark.parametrize(
+    ("geog", "tolerance", "expected"),
+    [
+        # Null inputs
+        pytest.param(None, 0.0, None, id="null_geom"),
+        pytest.param("POINT (0 0)", None, None, id="null_tolerance"),
+        # Point: unaffected by simplification (no edges)
+        pytest.param("POINT (0 0)", 0.0, "POINT (0 0)", id="point_zero_tolerance"),
+        pytest.param(
+            "POINT (0 0)", 1000000.0, "POINT (0 0)", id="point_large_tolerance"
+        ),
+        # Multipoint: zero tolerance preserves all points
+        pytest.param(
+            "MULTIPOINT ((0 0), (10 10))",
+            0.0,
+            "MULTIPOINT (0 0, 10 10)",
+            id="multipoint_zero_tolerance",
+        ),
+        # Multipoint: large tolerance merges nearby points
+        pytest.param(
+            "MULTIPOINT ((0 0), (0.001 0.001))",
+            1000000.0,
+            "POINT (0 0)",
+            id="multipoint_merge",
+        ),
+        # Linestring: zero tolerance is identity
+        pytest.param(
+            "LINESTRING (0 0, 10 0)",
+            0.0,
+            "LINESTRING (0 0, 10 0)",
+            id="linestring_zero_tolerance",
+        ),
+        # Linestring: zero tolerance preserves intermediate vertex
+        pytest.param(
+            "LINESTRING (0 0, 5 1, 10 0)",
+            0.0,
+            "LINESTRING (0 0, 5 1, 10 0)",
+            id="linestring_zero_tolerance_3pt",
+        ),
+        # Linestring: large tolerance removes intermediate vertex
+        pytest.param(
+            "LINESTRING (0 0, 5 1, 10 0)",
+            200000.0,
+            "LINESTRING (0 0, 10 0)",
+            id="linestring_simplify",
+        ),
+        # Linestring: small tolerance keeps intermediate vertex
+        pytest.param(
+            "LINESTRING (0 0, 5 1, 10 0)",
+            50000.0,
+            "LINESTRING (0 0, 5 1, 10 0)",
+            id="linestring_keep_vertex",
+        ),
+    ],
+)
+def test_st_simplify(eng, geog, tolerance, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_Simplify({geog_or_null(geog)}, {val_or_null(tolerance)})",
+        expected,
+        wkt_precision=6,
+    )
+
+
+# Z/M/ZM support only in SedonaDB
+@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize(
+    ("geog", "tolerance", "expected"),
+    [
+        pytest.param("POINT Z (0 1 10)", 0.0, "POINT Z (0 1 10)", id="point_z"),
+        pytest.param("POINT M (0 1 10)", 0.0, "POINT M (0 1 10)", id="point_m"),
+        pytest.param(
+            "POINT ZM (0 1 10 100)", 0.0, "POINT ZM (0 1 10 100)", id="point_zm"
+        ),
+    ],
+)
+def test_st_simplify_zm(eng, geog, tolerance, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_Simplify({geog_or_null(geog)}, {val_or_null(tolerance)})",
+        expected,
+        wkt_precision=15,
     )
