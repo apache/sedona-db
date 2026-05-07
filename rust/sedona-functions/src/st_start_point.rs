@@ -73,7 +73,7 @@ impl STStartOrEndPoint {
 
 impl SedonaScalarKernel for STStartOrEndPoint {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        let matcher = ArgMatcher::new(vec![ArgMatcher::is_geometry_or_geography()], WKB_GEOMETRY);
+        let matcher = ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY);
 
         matcher.match_args(args)
     }
