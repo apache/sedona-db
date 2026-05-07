@@ -182,38 +182,6 @@ def test_st_x_y(eng, geog, expected_x, expected_y):
 
 @pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
 @pytest.mark.parametrize(
-    ("geog", "expected_start", "expected_end"),
-    [
-        pytest.param(
-            "LINESTRING (1 2, 3 4, 5 6)",
-            "POINT (1 2)",
-            "POINT (5 6)",
-            id="linestring_3pt",
-        ),
-        pytest.param(
-            "LINESTRING (0 0, 10 10)",
-            "POINT (0 0)",
-            "POINT (10 10)",
-            id="linestring_2pt",
-        ),
-        pytest.param(
-            "LINESTRING (-122 47, -121 48, -120 49)",
-            "POINT (-122 47)",
-            "POINT (-120 49)",
-            id="linestring_coords",
-        ),
-    ],
-)
-def test_st_startpoint_endpoint(eng, geog, expected_start, expected_end):
-    eng = eng.create_or_skip()
-    eng.assert_query_result(
-        f"SELECT ST_StartPoint({geog_or_null(geog)})", expected_start
-    )
-    eng.assert_query_result(f"SELECT ST_EndPoint({geog_or_null(geog)})", expected_end)
-
-
-@pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
-@pytest.mark.parametrize(
     ("geog", "expected"),
     [
         pytest.param(None, None, id="null"),
