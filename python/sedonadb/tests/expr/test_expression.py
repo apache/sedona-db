@@ -89,39 +89,33 @@ def test_isin_python_scalars():
     # Plain Python scalars are coerced to literal expressions automatically.
     e = col("x").isin([1, 2, 3])
     assert e._impl.variant_name() == "InList"
-    rep = repr(e)
-    assert "IN" in rep
-    assert "Int64(1)" in rep
-    assert "Int64(3)" in rep
+    assert repr(e) == "Expr(x IN ([Int64(1), Int64(2), Int64(3)]))"
 
 
 def test_isin_with_expr_values():
     # Mixed Expr + scalar input — Exprs pass through, scalars are coerced.
     e = col("x").isin([col("a"), 2])
     assert e._impl.variant_name() == "InList"
-    rep = repr(e)
-    assert "a" in rep
-    assert "Int64(2)" in rep
+    assert repr(e) == "Expr(x IN ([a, Int64(2)]))"
 
 
 def test_negate():
     e = col("x").negate()
     assert e._impl.variant_name() == "Negative"
-    assert "(- x)" in repr(e)
+    assert repr(e) == "Expr((- x))"
 
 
 def test_chain_alias_after_predicate():
     e = col("x").is_null().alias("missing")
     assert e._impl.variant_name() == "Alias"
-    assert "missing" in repr(e)
-    assert "IS NULL" in repr(e)
+    assert repr(e) == "Expr(x IS NULL AS missing)"
 
 
 def test_expr_is_not_bound_to_dataframe():
     # Constructing an Expr referring to a non-existent column does not error.
     # Errors surface only at DataFrame consumption.
     e = col("nonexistent_column_xyz")
-    assert "nonexistent_column_xyz" in repr(e)
+    assert repr(e) == "Expr(nonexistent_column_xyz)"
 
 
 def test_expr_init_rejects_wrong_type():
