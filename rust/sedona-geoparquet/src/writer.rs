@@ -631,7 +631,7 @@ fn normalize_field_for_geoparquet(
     version: GeoParquetVersion,
     crs_provider: &CrsProviderOption,
 ) -> Result<FieldRef> {
-    if field.metadata().is_empty() {
+    if field.metadata().is_empty() && !field.data_type().is_nested() {
         return Ok(field.clone());
     }
 

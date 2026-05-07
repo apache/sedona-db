@@ -195,11 +195,7 @@ impl SedonaContext {
         let init_result =
             sedona_geoparquet::statistics_accumulator::SedonaGeoStatsAccumulatorFactory::try_init();
         if let Err(init_err) = init_result {
-            if !matches!(init_err, DataFusionError::ParquetError(_))
-                || !init_err
-                    .to_string()
-                    .contains("GeoStatsAccumulatorFactory already set")
-            {
+            if !matches!(init_err, DataFusionError::ParquetError(_)) {
                 return Err(init_err);
             }
         }
