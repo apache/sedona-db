@@ -195,3 +195,36 @@ def test_unhashable():
         {col("x"): 1}
     with pytest.raises(TypeError):
         {col("x")}
+
+
+def test_bool_raises_on_direct_call():
+    with pytest.raises(TypeError, match="truth value"):
+        bool(col("x") > 0)
+
+
+def test_bool_raises_in_if_statement():
+    with pytest.raises(TypeError, match="truth value"):
+        if col("x") > 0:
+            pass
+
+
+def test_bool_raises_for_python_and():
+    # `and` short-circuits via bool(); without the __bool__ guard the AND
+    # would silently drop one side. Same trap as pandas/polars.
+    with pytest.raises(TypeError, match="truth value"):
+        col("x") and col("y")
+
+
+def test_bool_raises_for_python_or():
+    with pytest.raises(TypeError, match="truth value"):
+        col("x") or col("y")
+
+
+def test_bool_raises_for_not():
+    with pytest.raises(TypeError, match="truth value"):
+        not col("x").is_null()
+
+
+def test_len_raises():
+    with pytest.raises(TypeError, match="Expr has no length"):
+        len(col("x"))

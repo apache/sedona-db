@@ -234,6 +234,28 @@ class Expr:
     # returns an `Expr`, not a bool.
     __hash__ = None  # type: ignore[assignment]
 
+    # --- Truthiness / length guards ------------------------------------
+    #
+    # Without these, Python's defaults make `if col("x") > 0: ...`,
+    # `col("x") and col("y")`, and `not col("x").is_null()` silently
+    # evaluate Exprs as truthy or coerce them to bool — dropping the
+    # intended predicate. Same trap pandas/polars/spark/ibis all guard
+    # against. Raise a clear TypeError with guidance instead.
+
+    def __bool__(self) -> bool:
+        raise TypeError(
+            "The truth value of an Expr is ambiguous. Use bitwise operators "
+            "`&`, `|`, `~` for boolean composition (e.g. "
+            "`(col('x') > 0) & (col('y') < 10)`), or pass the Expr to "
+            "`DataFrame.filter()` to evaluate it."
+        )
+
+    def __len__(self) -> int:
+        raise TypeError(
+            "Expr has no length. To count rows in a DataFrame, evaluate "
+            "the Expr against a frame (e.g. `df.filter(expr).count()`)."
+        )
+
 
 def col(name: str, qualifier: Optional[str] = None) -> Expr:
     """Reference a column by name.
