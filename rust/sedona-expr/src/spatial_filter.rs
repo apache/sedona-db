@@ -183,6 +183,7 @@ impl SpatialFilter {
     }
 }
 
+/// Factory for creating [SpatialFilter] objects from expressions
 #[derive(Debug, Clone)]
 pub struct SpatialFilterFactory {
     literal_bounders: Vec<Arc<dyn LiteralBounder>>,
@@ -412,7 +413,6 @@ impl SpatialFilterFactory {
                     return sedona_internal_err!("Unexpected cast result from scalar distance");
                 };
 
-                // TODO: check...some of these cases possibly should return LiteralFalse
                 if let Some(distance) = distance_opt {
                     if distance.is_nan() || distance < 0.0 {
                         Ok(None)

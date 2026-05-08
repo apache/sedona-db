@@ -30,6 +30,7 @@ use sedona_common::sedona_internal_err;
 use sedona_expr::spatial_filter::LiteralBounder;
 use sedona_schema::datatypes::SedonaType;
 
+/// Factory for Parquet GeoStatsAccumulators that can handle Geography
 pub struct SedonaGeoStatsAccumulatorFactory;
 
 impl SedonaGeoStatsAccumulatorFactory {
@@ -67,6 +68,7 @@ impl GeoStatsAccumulatorFactory for SedonaGeoStatsAccumulatorFactory {
     }
 }
 
+/// LiteralBounder implementation capable of bounding geography scalars
 #[derive(Debug, Default)]
 pub struct GeographyLiteralBounder;
 
