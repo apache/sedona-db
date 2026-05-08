@@ -133,10 +133,11 @@ impl LiteralBounder for GeographyLiteralBounder {
                                 (xmin, xmax),
                                 (ymin, ymax),
                             ));
-                        } else {
-                            return Ok(sedona_geometry::bounding_box::BoundingBox::empty());
                         }
                     }
+
+                    // Null scalar or empty geography returns an empty bounding box
+                    return Ok(sedona_geometry::bounding_box::BoundingBox::empty());
                 }
                 _ => {}
             },
@@ -248,5 +249,207 @@ impl GeoStatsAccumulator for GeographyGeoStatsAccumulator {
         Some(Box::new(
             parquet::geospatial::statistics::GeospatialStatistics::new(Some(bbox), geometry_types),
         ))
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use parquet::geospatial::bounding_box::BoundingBox;
+    use parquet_geospatial::testing::{wkb_point_xy, wkb_point_xyzm};
+    use sedona_schema::datatypes::{WKB_GEOGRAPHY, WKB_VIEW_GEOGRAPHY};
+    use sedona_testing::create::create_scalar;
+
+    #[test]
+    fn test_factory() {}
+
+    #[cfg(feature = "s2geography")]
+    #[test]
+    fn test_literal_bounder() {
+        use sedona_geometry::interval::IntervalTrait;
+
+        for sedona_type in [WKB_GEOGRAPHY, WKB_VIEW_GEOGRAPHY] {
+            let bounder = GeographyLiteralBounder;
+            assert!(bounder.can_bound(&sedona_type));
+
+            let scalar = create_scalar(Some("MULTIPOINT ((-179 42), (179 43))"), &sedona_type);
+
+            // Check approximate raw bounds
+            let raw_bounds = bounder.bound_scalar(&scalar, &sedona_type, None).unwrap();
+            assert!(raw_bounds.x().is_wraparound());
+            assert!(raw_bounds.x().lo() > 178.99999 && raw_bounds.x().lo() <= 179.0);
+            assert!(raw_bounds.x().hi() >= -179.0 && raw_bounds.x().hi() < -178.99999);
+            assert!(raw_bounds.y().lo() > 41.0 && raw_bounds.y().lo() <= 42.0);
+            assert!(raw_bounds.y().hi() >= 43.0 && raw_bounds.y().hi() < 44.0);
+
+            // Check that expanded bounds are bigger (100 km ~ 0.9 degrees)
+            let expanded_bounds = bounder
+                .bound_scalar(&scalar, &sedona_type, Some(100000.0))
+                .unwrap();
+            assert!(expanded_bounds.x().is_wraparound());
+            assert!(raw_bounds.x().lo() - expanded_bounds.x().lo() > 0.5);
+            assert!(expanded_bounds.x().hi() - raw_bounds.x().hi() > 0.5);
+            assert!(raw_bounds.y().lo() - expanded_bounds.y().lo() > 0.5);
+            assert!(expanded_bounds.y().hi() - raw_bounds.y().hi() > 0.5);
+
+            let null_scalar = create_scalar(None, &sedona_type);
+            let null_bounds = bounder
+                .bound_scalar(&null_scalar, &sedona_type, None)
+                .unwrap();
+            assert!(null_bounds.is_empty());
+        }
+    }
+
+    #[cfg(not(feature = "s2geography"))]
+    #[test]
+    fn test_literal_bounder() {
+        for sedona_type in [WKB_GEOGRAPHY, WKB_VIEW_GEOGRAPHY] {
+            let scalar = create_scalar(Some("MULTIPOINT ((-179 42), (179 43))"), &sedona_type);
+            let bounder = GeographyLiteralBounder;
+            assert!(!bounder.can_bound(&sedona_type));
+            bounder
+                .bound_scalar(&scalar, &sedona_type, None)
+                .unwrap_err();
+        }
+    }
+
+    #[cfg(feature = "s2geography")]
+    fn assert_bbox_contains(actual: &BoundingBox, expected: &BoundingBox, epsilon: f64) {
+        // actual.xmin should be <= expected.xmin (can be slightly smaller)
+        assert!(
+            expected.get_xmin() - actual.get_xmin() >= 0.0
+                && expected.get_xmin() - actual.get_xmin() < epsilon,
+            "x_min mismatch: actual {} should be <= expected {} (within {})",
+            actual.get_xmin(),
+            expected.get_xmin(),
+            epsilon
+        );
+        // actual.xmax should be >= expected.xmax (can be slightly larger)
+        assert!(
+            actual.get_xmax() - expected.get_xmax() >= 0.0
+                && actual.get_xmax() - expected.get_xmax() < epsilon,
+            "x_max mismatch: actual {} should be >= expected {} (within {})",
+            actual.get_xmax(),
+            expected.get_xmax(),
+            epsilon
+        );
+        // actual.ymin should be <= expected.ymin (can be slightly smaller)
+        assert!(
+            expected.get_ymin() - actual.get_ymin() >= 0.0
+                && expected.get_ymin() - actual.get_ymin() < epsilon,
+            "y_min mismatch: actual {} should be <= expected {} (within {})",
+            actual.get_ymin(),
+            expected.get_ymin(),
+            epsilon
+        );
+        // actual.ymax should be >= expected.ymax (can be slightly larger)
+        assert!(
+            actual.get_ymax() - expected.get_ymax() >= 0.0
+                && actual.get_ymax() - expected.get_ymax() < epsilon,
+            "y_max mismatch: actual {} should be >= expected {} (within {})",
+            actual.get_ymax(),
+            expected.get_ymax(),
+            epsilon
+        );
+
+        assert_eq!(actual.get_zmin(), expected.get_zmin(), "z_min mismatch");
+        assert_eq!(actual.get_zmax(), expected.get_zmax(), "z_max mismatch");
+        assert_eq!(actual.get_mmin(), expected.get_mmin(), "m_min mismatch");
+        assert_eq!(actual.get_mmax(), expected.get_mmax(), "m_max mismatch");
+    }
+
+    #[cfg(feature = "s2geography")]
+    #[test]
+    fn test_geography_accumulator() {
+        // The geography bounder produces slightly expanded bounds compared to the
+        // geometry bounder due to spherical interpolation along geodesics.
+        const EPSILON: f64 = 1e-10;
+        let mut accumulator = GeographyGeoStatsAccumulator::default();
+
+        // A fresh instance should be able to bound input
+        assert!(accumulator.is_valid());
+        accumulator.update_wkb(&wkb_point_xy(1.0, 2.0));
+        accumulator.update_wkb(&wkb_point_xy(11.0, 12.0));
+        let stats = accumulator.finish().unwrap();
+        assert_eq!(stats.geospatial_types().unwrap(), &vec![1]);
+        assert_bbox_contains(
+            stats.bounding_box().unwrap(),
+            &BoundingBox::new(1.0, 11.0, 2.0, 12.0),
+            EPSILON,
+        );
+
+        // finish() should have reset the bounder such that the first values
+        // aren't when computing the next bound of statistics.
+        assert!(accumulator.is_valid());
+        accumulator.update_wkb(&wkb_point_xy(21.0, 22.0));
+        accumulator.update_wkb(&wkb_point_xy(31.0, 32.0));
+        let stats = accumulator.finish().unwrap();
+        assert_eq!(stats.geospatial_types().unwrap(), &vec![1]);
+        assert_bbox_contains(
+            stats.bounding_box().unwrap(),
+            &BoundingBox::new(21.0, 31.0, 22.0, 32.0),
+            EPSILON,
+        );
+
+        // When an accumulator encounters invalid input, it reports is_valid() false
+        // and does not compute subsequent statistics
+        assert!(accumulator.is_valid());
+        accumulator.update_wkb(&wkb_point_xy(41.0, 42.0));
+        accumulator.update_wkb("these bytes are not WKB".as_bytes());
+        assert!(!accumulator.is_valid());
+        assert!(accumulator.finish().is_none());
+
+        // Subsequent rounds of accumulation should work as expected
+        assert!(accumulator.is_valid());
+        accumulator.update_wkb(&wkb_point_xy(41.0, 42.0));
+        accumulator.update_wkb(&wkb_point_xy(51.0, 52.0));
+        let stats = accumulator.finish().unwrap();
+        assert_eq!(stats.geospatial_types().unwrap(), &vec![1]);
+        assert_bbox_contains(
+            stats.bounding_box().unwrap(),
+            &BoundingBox::new(41.0, 51.0, 42.0, 52.0),
+            EPSILON,
+        );
+
+        // Antimeridian-crossing input should result in a wraparound box
+        assert!(accumulator.is_valid());
+        accumulator.update_wkb(&wkb_point_xy(-179.0, 42.0));
+        accumulator.update_wkb(&wkb_point_xy(179.0, 52.0));
+        let stats = accumulator.finish().unwrap();
+        assert!(
+            stats.bounding_box().unwrap().get_xmin() > stats.bounding_box().unwrap().get_xmax()
+        );
+
+        // When there was no input at all (occurs in the all null case), both geometry
+        // types and bounding box will be None. This is because Parquet Thrift statistics
+        // have no mechanism to communicate "empty". (The all null situation may be determined
+        // from the null count in this case).
+        assert!(accumulator.is_valid());
+        let stats = accumulator.finish().unwrap();
+        assert!(stats.geospatial_types().is_none());
+        assert!(stats.bounding_box().is_none());
+
+        // When there was 100% "empty" input (i.e., non-null geometries without
+        // coordinates), there should be statistics with geometry types but no
+        // bounding box.
+        assert!(accumulator.is_valid());
+        accumulator.update_wkb(&wkb_point_xy(f64::NAN, f64::NAN));
+        let stats = accumulator.finish().unwrap();
+        assert_eq!(stats.geospatial_types().unwrap(), &vec![1]);
+        assert!(stats.bounding_box().is_none());
+
+        // If Z and/or M are present, they should be reported in the bounding box
+        assert!(accumulator.is_valid());
+        accumulator.update_wkb(&wkb_point_xyzm(1.0, 2.0, 3.0, 4.0));
+        accumulator.update_wkb(&wkb_point_xyzm(5.0, 6.0, 7.0, 8.0));
+        let stats = accumulator.finish().unwrap();
+        assert_eq!(stats.geospatial_types().unwrap(), &vec![3001]);
+        assert_bbox_contains(
+            stats.bounding_box().unwrap(),
+            &BoundingBox::new(1.0, 5.0, 2.0, 6.0)
+                .with_zrange(3.0, 7.0)
+                .with_mrange(4.0, 8.0),
+            EPSILON,
+        );
     }
 }
