@@ -18,8 +18,10 @@
 from typing import Any, Iterable, Optional
 
 from sedonadb._lib import InternalExpr as _InternalExpr
+from sedonadb._lib import expr_binary as _expr_binary
 from sedonadb._lib import expr_col as _expr_col
 from sedonadb._lib import expr_lit as _expr_lit
+from sedonadb._lib import expr_not as _expr_not
 from sedonadb.expr.literal import Literal
 
 
@@ -33,12 +35,11 @@ class Expr:
     when the expression is consumed (for example, by `DataFrame.select()` or
     `DataFrame.filter()`).
 
-    Construct an `Expr` with `col(name)`. Methods that accept values
-    alongside `Expr` arguments (e.g. `isin`) coerce plain Python values to
-    literal expressions automatically. Operator overloading
-    (`col("x") + 1`, `col("x") > 0`, etc.) is not part of this PR; it
-    arrives in a follow-up that will extend the same coercion path to
-    arithmetic, comparison, and boolean operators.
+    Construct an `Expr` with `col(name)`. Plain Python values composed with
+    an `Expr` via arithmetic, comparison, or boolean operators (`col("x") +
+    1`, `col("x") > 0`, `col("x") & col("y")`) are coerced to literal
+    expressions automatically. The same coercion is also applied by methods
+    that accept value lists (e.g. `isin`).
     """
 
     __slots__ = ("_impl",)
@@ -152,6 +153,87 @@ class Expr:
         """
         return Expr(self._impl.negate())
 
+    # Arithmetic operators -------------------------------------------------
+    #
+    # Each binary dunder routes through the shared `_binary` helper, which
+    # coerces plain Python values to literal Exprs via `_to_expr` and then
+    # calls into the single Rust factory `expr_binary` with a string opcode.
+    # The reflected variants (`__radd__`, `__rsub__`, ...) make
+    # `1 - col("x")` work the same as `col("x") - 1`.
+
+    def __add__(self, other: Any) -> "Expr":
+        return _binary("+", self, other)
+
+    def __radd__(self, other: Any) -> "Expr":
+        return _binary("+", other, self)
+
+    def __sub__(self, other: Any) -> "Expr":
+        return _binary("-", self, other)
+
+    def __rsub__(self, other: Any) -> "Expr":
+        return _binary("-", other, self)
+
+    def __mul__(self, other: Any) -> "Expr":
+        return _binary("*", self, other)
+
+    def __rmul__(self, other: Any) -> "Expr":
+        return _binary("*", other, self)
+
+    def __truediv__(self, other: Any) -> "Expr":
+        return _binary("/", self, other)
+
+    def __rtruediv__(self, other: Any) -> "Expr":
+        return _binary("/", other, self)
+
+    def __neg__(self) -> "Expr":
+        return self.negate()
+
+    # Comparison operators -------------------------------------------------
+
+    def __eq__(self, other: Any) -> "Expr":  # type: ignore[override]
+        return _binary("==", self, other)
+
+    def __ne__(self, other: Any) -> "Expr":  # type: ignore[override]
+        return _binary("!=", self, other)
+
+    def __lt__(self, other: Any) -> "Expr":
+        return _binary("<", self, other)
+
+    def __le__(self, other: Any) -> "Expr":
+        return _binary("<=", self, other)
+
+    def __gt__(self, other: Any) -> "Expr":
+        return _binary(">", self, other)
+
+    def __ge__(self, other: Any) -> "Expr":
+        return _binary(">=", self, other)
+
+    # Boolean operators ----------------------------------------------------
+    #
+    # `&` / `|` / `~` rather than `and` / `or` / `not` because Python does
+    # not allow overloading the keyword forms — they always coerce to bool.
+
+    def __and__(self, other: Any) -> "Expr":
+        return _binary("&", self, other)
+
+    def __rand__(self, other: Any) -> "Expr":
+        return _binary("&", other, self)
+
+    def __or__(self, other: Any) -> "Expr":
+        return _binary("|", self, other)
+
+    def __ror__(self, other: Any) -> "Expr":
+        return _binary("|", other, self)
+
+    def __invert__(self) -> "Expr":
+        return Expr(_expr_not(self._impl))
+
+    # Defining `__eq__` makes the class unhashable by default. Be explicit
+    # so users see a clear error instead of a confusing one. Expressions are
+    # not meaningful as dict keys / set members anyway because `__eq__`
+    # returns an `Expr`, not a bool.
+    __hash__ = None  # type: ignore[assignment]
+
 
 def col(name: str, qualifier: Optional[str] = None) -> Expr:
     """Reference a column by name.
@@ -188,3 +270,15 @@ def _to_expr(value: Any) -> Expr:
         return value
     arrow_obj = value if isinstance(value, Literal) else Literal(value)
     return Expr(_expr_lit(arrow_obj))
+
+
+def _binary(op: str, lhs: Any, rhs: Any) -> Expr:
+    """Construct a binary Expr, coercing both operands first.
+
+    All `Expr` operator dunders route through this helper. It accepts any
+    Python value on either side, runs both through `_to_expr`, and then
+    calls the single Rust factory `expr_binary` with the operator string.
+    """
+    lhs_expr = _to_expr(lhs)
+    rhs_expr = _to_expr(rhs)
+    return Expr(_expr_binary(op, lhs_expr._impl, rhs_expr._impl))

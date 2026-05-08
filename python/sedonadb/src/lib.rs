@@ -126,6 +126,8 @@ fn _lib(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(sedona_scalar_udf, m)?)?;
     m.add_function(wrap_pyfunction!(expr::expr_col, m)?)?;
     m.add_function(wrap_pyfunction!(expr::expr_lit, m)?)?;
+    m.add_function(wrap_pyfunction!(expr::expr_binary, m)?)?;
+    m.add_function(wrap_pyfunction!(expr::expr_not, m)?)?;
 
     m.add_class::<context::InternalContext>()?;
     m.add_class::<dataframe::InternalDataFrame>()?;

@@ -46,24 +46,23 @@ def test_col_with_qualifier():
 def test_alias():
     e = col("x").alias("y")
     assert e._impl.variant_name() == "Alias"
-    assert "x AS y" in repr(e)
+    assert repr(e) == "Expr(x AS y)"
 
 
 def test_alias_chain():
     e = col("x").alias("a").alias("b")
-    # Either nested or last-wins; in both cases the latest name must show.
-    assert "b" in repr(e)
+    assert repr(e) == "Expr(x AS a AS b)"
 
 
 def test_cast_to_arrow_type():
     e = col("x").cast(pa.int32())
     assert e._impl.variant_name() == "Cast"
-    assert "CAST(x AS Int32)" in repr(e)
+    assert repr(e) == "Expr(CAST(x AS Int32))"
 
 
 def test_cast_to_string():
     e = col("x").cast(pa.string())
-    assert "Utf8" in repr(e)
+    assert repr(e) == "Expr(CAST(x AS Utf8))"
 
 
 def test_cast_rejects_extension_type():
@@ -76,13 +75,13 @@ def test_cast_rejects_extension_type():
 def test_is_null():
     e = col("x").is_null()
     assert e._impl.variant_name() == "IsNull"
-    assert "x IS NULL" in repr(e)
+    assert repr(e) == "Expr(x IS NULL)"
 
 
 def test_is_not_null():
     e = col("x").is_not_null()
     assert e._impl.variant_name() == "IsNotNull"
-    assert "x IS NOT NULL" in repr(e)
+    assert repr(e) == "Expr(x IS NOT NULL)"
 
 
 def test_isin_python_scalars():
@@ -125,3 +124,74 @@ def test_expr_init_rejects_wrong_type():
         Expr("not an internal expr")
     with pytest.raises(TypeError, match="InternalExpr"):
         Expr(42)
+
+
+# --- Binary operators --------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "op,expected",
+    [
+        ("__add__", "Expr(x + Int64(1))"),
+        ("__sub__", "Expr(x - Int64(1))"),
+        ("__mul__", "Expr(x * Int64(1))"),
+        ("__truediv__", "Expr(x / Int64(1))"),
+        ("__eq__", "Expr(x = Int64(1))"),
+        ("__ne__", "Expr(x != Int64(1))"),
+        ("__lt__", "Expr(x < Int64(1))"),
+        ("__le__", "Expr(x <= Int64(1))"),
+        ("__gt__", "Expr(x > Int64(1))"),
+        ("__ge__", "Expr(x >= Int64(1))"),
+    ],
+)
+def test_arithmetic_and_comparison(op, expected):
+    e = getattr(col("x"), op)(1)
+    assert repr(e) == expected
+
+
+def test_reflected_arithmetic():
+    # `1 - col("x")` exercises __rsub__; LHS is the Python int.
+    assert repr(1 - col("x")) == "Expr(Int64(1) - x)"
+    assert repr(2 + col("x")) == "Expr(Int64(2) + x)"
+    assert repr(3 * col("x")) == "Expr(Int64(3) * x)"
+
+
+def test_boolean_and():
+    e = (col("x") > 0) & (col("y") < 10)
+    assert repr(e) == "Expr(x > Int64(0) AND y < Int64(10))"
+
+
+def test_boolean_or():
+    e = (col("x") > 0) | col("y").is_null()
+    assert repr(e) == "Expr(x > Int64(0) OR y IS NULL)"
+
+
+def test_invert():
+    e = ~col("x").is_null()
+    assert e._impl.variant_name() == "Not"
+    assert repr(e) == "Expr(NOT x IS NULL)"
+
+
+def test_unary_minus():
+    e = -col("x")
+    assert e._impl.variant_name() == "Negative"
+    assert repr(e) == "Expr((- x))"
+
+
+def test_expr_op_with_expr():
+    e = col("x") + col("y")
+    assert repr(e) == "Expr(x + y)"
+
+
+def test_chained_operators():
+    e = ((col("x") + 1) * 2).alias("scaled")
+    assert repr(e) == "Expr((x + Int64(1)) * Int64(2) AS scaled)"
+
+
+def test_unhashable():
+    # Expressions are not valid dict keys / set members because __eq__ does
+    # not return a bool. We make this explicit so users get a clear error.
+    with pytest.raises(TypeError):
+        {col("x"): 1}
+    with pytest.raises(TypeError):
+        {col("x")}

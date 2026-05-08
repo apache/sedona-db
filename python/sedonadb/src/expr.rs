@@ -37,7 +37,7 @@
 //! `SedonaDBExprFactory::column` / `::literal`.
 
 use datafusion_common::Column;
-use datafusion_expr::{expr::InList, Cast, Expr};
+use datafusion_expr::{expr::InList, BinaryExpr, Cast, Expr, Operator};
 use pyo3::prelude::*;
 
 use crate::error::PySedonaError;
@@ -209,4 +209,52 @@ pub fn expr_lit(obj: Bound<'_, PyAny>) -> Result<PyExpr, PySedonaError> {
     let (scalar_value, metadata) = import_arrow_scalar(&obj)?.into_inner();
     let inner = Expr::Literal(scalar_value, metadata);
     Ok(PyExpr { inner })
+}
+
+/// Build a binary `Expr` from a string operator and two operands.
+///
+/// All operator dispatch lives in Python (see `_binary` in `expression.py`),
+/// which calls into this single Rust factory with the operator name as a
+/// string. Centralising the operator-to-`Operator` mapping in one place
+/// keeps both Rust and Python code small: adding an operator is a single
+/// `match` arm and a new dunder, rather than a separate factory per op.
+///
+/// Mirrors `SedonaDBExprFactory::binary` in the R bindings.
+#[pyfunction]
+pub fn expr_binary(op: &str, lhs: &PyExpr, rhs: &PyExpr) -> Result<PyExpr, PySedonaError> {
+    let operator = match op {
+        "+" => Operator::Plus,
+        "-" => Operator::Minus,
+        "*" => Operator::Multiply,
+        "/" => Operator::Divide,
+        "==" => Operator::Eq,
+        "!=" => Operator::NotEq,
+        ">" => Operator::Gt,
+        ">=" => Operator::GtEq,
+        "<" => Operator::Lt,
+        "<=" => Operator::LtEq,
+        "&" => Operator::And,
+        "|" => Operator::Or,
+        other => {
+            return Err(PySedonaError::SedonaPython(format!(
+                "Unsupported binary operator '{other}'"
+            )))
+        }
+    };
+
+    let inner = Expr::BinaryExpr(BinaryExpr::new(
+        Box::new(lhs.inner.clone()),
+        operator,
+        Box::new(rhs.inner.clone()),
+    ));
+    Ok(PyExpr { inner })
+}
+
+/// Build a logical-NOT `Expr::Not` over the given expression. Used by the
+/// Python `~expr` (`__invert__`) operator.
+#[pyfunction]
+pub fn expr_not(expr: &PyExpr) -> PyExpr {
+    PyExpr {
+        inner: Expr::Not(Box::new(expr.inner.clone())),
+    }
 }
