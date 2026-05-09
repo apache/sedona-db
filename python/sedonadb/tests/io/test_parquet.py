@@ -504,16 +504,16 @@ def test_write_geoparquet_2_0(con, geoarrow_data):
         assert table_roundtrip == table
 
         # Check for metadata and logical type
-        file = parquet.ParquetFile(tmp_parquet)
-        file_kv_metadata = file.metadata.metadata
-        assert b"geo" in file_kv_metadata
-        geo_metadata = json.loads(file_kv_metadata[b"geo"])
-        assert geo_metadata["version"] == "2.0.0"
+        with parquet.ParquetFile(tmp_parquet) as file:
+            file_kv_metadata = file.metadata.metadata
+            assert b"geo" in file_kv_metadata
+            geo_metadata = json.loads(file_kv_metadata[b"geo"])
+            assert geo_metadata["version"] == "2.0.0"
 
-        assert (
-            file.metadata.schema.column(2).logical_type.to_json()
-            == '{"Type": "Geometry"}'
-        )
+            assert (
+                file.metadata.schema.column(2).logical_type.to_json()
+                == '{"Type": "Geometry"}'
+            )
 
 
 def test_write_geoparquet_no_metadata(con, geoarrow_data):
