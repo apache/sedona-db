@@ -20,7 +20,6 @@ use arrow_schema::DataType;
 use datafusion_common::{error::Result, ScalarValue};
 use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::{CoordTrait, Dimensions, GeometryTrait, GeometryType, LineStringTrait};
-use sedona_common::sedona_internal_err;
 use sedona_expr::{
     item_crs::ItemCrsKernel,
     scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
@@ -83,7 +82,7 @@ impl SedonaScalarKernel for STLineSubstring {
             for i in 0..dim.size() {
                 let v =
                     p1.nth_unchecked(i) + (p2.nth_unchecked(i) - p1.nth_unchecked(i)) * fraction;
-                buf.write_all(&v.to_le_bytes());
+                buf.write_all(&v.to_le_bytes())?;
             }
             Ok(())
         }
@@ -92,7 +91,7 @@ impl SedonaScalarKernel for STLineSubstring {
             let mut point_count = 0u32;
             if let Some(wkb) = maybe_wkb {
                 if let GeometryType::LineString(line) = wkb.as_type() {
-                    let mut num_coords = line.num_coords() as i64;
+                    let num_coords = line.num_coords() as i64;
 
                     let mut cumulative_distances = Vec::with_capacity(num_coords as usize);
                     let mut total_length = 0.0;
@@ -118,7 +117,7 @@ impl SedonaScalarKernel for STLineSubstring {
                     for i in 0..(num_coords as usize - 1) {
                         let d1 = cumulative_distances[i];
                         let d2 = cumulative_distances[i + 1];
-                        let mut p1 = line.coord(i).unwrap();
+                        let p1 = line.coord(i).unwrap();
                         let p2 = line.coord(i + 1).unwrap();
 
                         if start_dist >= d1 && start_dist <= d2 {
