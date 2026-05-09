@@ -17,7 +17,7 @@
 use crate::executor::WkbExecutor;
 use arrow_array::builder::BinaryBuilder;
 use arrow_schema::DataType;
-use datafusion_common::{error::Result, ScalarValue};
+use datafusion_common::{error::Result, DataFusionError, ScalarValue};
 use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::{CoordTrait, Dimensions, GeometryTrait, GeometryType, LineStringTrait};
 use sedona_expr::{
@@ -127,12 +127,12 @@ impl SedonaScalarKernel for STLineSubstring {
                             } else {
                                 0.0
                             };
-                            let _ =interpolate(p1, p2, fraction, line.dim(), &mut wkb_body);
+                            interpolate(p1, p2, fraction, line.dim(), &mut wkb_body).map_err(|e| DataFusionError::Internal(format!("Sedona interpolation failed: {}", e)))?;
                             point_count += 1;
                         }
 
                         if d1 > start_dist && d1 < end_dist {
-                            let _ =write_wkb_coord_trait(&mut wkb_body, &p1);
+                            write_wkb_coord_trait(&mut wkb_body, &p1).map_err(|e| DataFusionError::Internal(format!("WKB write failed: {}", e)))?;
                             point_count += 1;
                         }
 
@@ -143,7 +143,7 @@ impl SedonaScalarKernel for STLineSubstring {
                             } else {
                                 0.0
                             };
-                            let _ =interpolate(p1, p2, fraction, line.dim(), &mut wkb_body);
+                            interpolate(p1, p2, fraction, line.dim(), &mut wkb_body).map_err(|e| DataFusionError::Internal(format!("Sedona interpolation failed: {}", e)))?;
                             point_count += 1;
                         }
                     }
