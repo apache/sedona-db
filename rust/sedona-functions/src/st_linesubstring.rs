@@ -127,12 +127,12 @@ impl SedonaScalarKernel for STLineSubstring {
                             } else {
                                 0.0
                             };
-                            interpolate(p1, p2, fraction, line.dim(), &mut wkb_body);
+                            interpolate(p1, p2, fraction, line.dim(), &mut wkb_body)?;
                             point_count += 1;
                         }
 
                         if d1 > start_dist && d1 < end_dist {
-                            write_wkb_coord_trait(&mut wkb_body, &p1);
+                            write_wkb_coord_trait(&mut wkb_body, &p1)?;
                             point_count += 1;
                         }
 
@@ -143,7 +143,7 @@ impl SedonaScalarKernel for STLineSubstring {
                             } else {
                                 0.0
                             };
-                            interpolate(p1, p2, fraction, line.dim(), &mut wkb_body);
+                            interpolate(p1, p2, fraction, line.dim(), &mut wkb_body)?;
                             point_count += 1;
                         }
                     }
