@@ -72,6 +72,7 @@ impl SedonaScalarKernel for STLineSubstring {
             ColumnarValue::Scalar(ScalarValue::Float64(e)) => *e,
             _ => None,
         };
+
         unsafe fn interpolate<C: CoordTrait<T = f64>>(
             p1: C,
             p2: C,
@@ -86,35 +87,50 @@ impl SedonaScalarKernel for STLineSubstring {
             }
             Ok(())
         }
+
         executor.execute_wkb_void(|maybe_wkb| unsafe {
             let mut wkb_body = Vec::new();
             let mut point_count = 0u32;
+
+            let (s_f, e_f) = match (start_frac, end_frac) {
+                (Some(s), Some(e)) => (s, e),
+                _ => {
+                    builder.append_null();
+                    return Ok(());
+                }
+            };
+
             if let Some(wkb) = maybe_wkb {
                 if let GeometryType::LineString(line) = wkb.as_type() {
-                    let num_coords = line.num_coords() as i64;
+                    let num_coords = line.num_coords();
+                    let dim = line.dim();
 
-                    let mut cumulative_distances = Vec::with_capacity(num_coords as usize);
+                    // 1. Handle Empty Geometry (Fixes Panic)
+                    if num_coords == 0 {
+                        let mut empty_wkb = Vec::with_capacity(9);
+                        empty_wkb.push(1u8); // Little Endian
+                        empty_wkb.extend_from_slice(&2u32.to_le_bytes()); // Type: LineString
+                        empty_wkb.extend_from_slice(&0u32.to_le_bytes()); // Count: 0
+                        builder.append_value(empty_wkb);
+                        return Ok(());
+                    }
+
+                    let mut cumulative_distances = Vec::with_capacity(num_coords);
                     let mut total_length = 0.0;
                     cumulative_distances.push(0.0);
-                    let (s_frac, e_frac) = match (start_frac, end_frac) {
-                        (Some(s), Some(e)) => (s, e),
-                        _ => {
-                            builder.append_null();
-                            return Ok(());
-                        }
-                    };
-                    for i in 0..(num_coords as usize - 1) {
+
+                    for i in 0..(num_coords - 1) {
                         let p1 = line.coord(i).unwrap();
                         let p2 = line.coord(i + 1).unwrap();
-
                         let dist = ((p2.x() - p1.x()).powi(2) + (p2.y() - p1.y()).powi(2)).sqrt();
                         total_length += dist;
                         cumulative_distances.push(total_length);
                     }
-                    let start_dist = s_frac * total_length;
-                    let end_dist = e_frac * total_length;
 
-                    for i in 0..(num_coords as usize - 1) {
+                    let start_dist = s_f * total_length;
+                    let end_dist = e_f * total_length;
+
+                    for i in 0..(num_coords - 1) {
                         let d1 = cumulative_distances[i];
                         let d2 = cumulative_distances[i + 1];
                         let p1 = line.coord(i).unwrap();
@@ -122,47 +138,57 @@ impl SedonaScalarKernel for STLineSubstring {
 
                         if start_dist >= d1 && start_dist <= d2 {
                             let segment_len = d2 - d1;
-                            let fraction = if segment_len > 0.0 {
-                                (start_dist - d1) / segment_len
-                            } else {
-                                0.0
-                            };
-                            interpolate(p1, p2, fraction, line.dim(), &mut wkb_body).map_err(|e| DataFusionError::Internal(format!("Sedona interpolation failed: {}", e)))?;
+                            let fraction = if segment_len > 0.0 { (start_dist - d1) / segment_len } else { 0.0 };
+                            interpolate(p1, p2, fraction, dim, &mut wkb_body).map_err(|e| {
+                                DataFusionError::Internal(format!("Sedona interpolation failed: {}", e))
+                            })?;
                             point_count += 1;
                         }
 
                         if d1 > start_dist && d1 < end_dist {
-                            write_wkb_coord_trait(&mut wkb_body, &p1).map_err(|e| DataFusionError::Internal(format!("WKB write failed: {}", e)))?;
+                            write_wkb_coord_trait(&mut wkb_body, &p1).map_err(|e| {
+                                DataFusionError::Internal(format!("WKB write failed: {}", e))
+                            })?;
                             point_count += 1;
                         }
 
                         if end_dist >= d1 && end_dist <= d2 {
                             let segment_len = d2 - d1;
-                            let fraction = if segment_len > 0.0 {
-                                (end_dist - d1) / segment_len
-                            } else {
-                                0.0
-                            };
-                            interpolate(p1, p2, fraction, line.dim(), &mut wkb_body).map_err(|e| DataFusionError::Internal(format!("Sedona interpolation failed: {}", e)))?;
+                            let fraction = if segment_len > 0.0 { (end_dist - d1) / segment_len } else { 0.0 };
+                            interpolate(p1, p2, fraction, dim, &mut wkb_body).map_err(|e| {
+                                DataFusionError::Internal(format!("Sedona interpolation failed: {}", e))
+                            })?;
                             point_count += 1;
                         }
                     }
+
+                    // 2. Build Header inside the 'line' scope (Fixes "cannot find dim/line")
+                    if point_count > 0 {
+                        let mut final_wkb = Vec::new();
+                        final_wkb.push(1u8); // Little Endian
+
+                        if s_f == e_f {
+                            // POINT Result (Fixes point vs line test)
+                            let p_type: u32 = if dim == Dimensions::Xyz { 1001 } else { 1 };
+                            final_wkb.extend_from_slice(&p_type.to_le_bytes());
+                            let coord_bytes = dim.size() * 8;
+                            if wkb_body.len() >= coord_bytes {
+                                final_wkb.extend_from_slice(&wkb_body[..coord_bytes]);
+                            }
+                        } else {
+                            // LINESTRING Result (Fixes Z-coordinate drop)
+                            let l_type: u32 = if dim == Dimensions::Xyz { 1002 } else { 2 };
+                            final_wkb.extend_from_slice(&l_type.to_le_bytes());
+                            final_wkb.extend_from_slice(&point_count.to_le_bytes());
+                            final_wkb.extend_from_slice(&wkb_body);
+                        }
+                        builder.append_value(final_wkb);
+                    } else {
+                        builder.append_null();
+                    }
+                } else {
+                    builder.append_null();
                 }
-            }
-            if point_count > 0 {
-                // Build the final WKB byte array
-                let mut final_wkb = Vec::new();
-
-                // Byte order: 1 = Little Endian
-                final_wkb.write_all(&[1u8])?;
-                // Geometry Type: 2 = LineString
-                final_wkb.write_all(&2u32.to_le_bytes())?;
-                // Number of points
-                final_wkb.write_all(&point_count.to_le_bytes())?;
-                // The coordinate data collected in wkb_body
-                final_wkb.write_all(&wkb_body)?;
-
-                builder.append_value(final_wkb);
             } else {
                 builder.append_null();
             }
