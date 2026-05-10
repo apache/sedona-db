@@ -264,6 +264,7 @@ impl FileFormat for LasFormat {
 mod test {
     use std::{collections::HashMap, fs::File, sync::Arc};
 
+    use arrow_schema::DataType;
     use datafusion::{execution::SessionStateBuilder, prelude::SessionContext};
     use datafusion_datasource::file_format::FileFormatFactory;
     use las::{point::Format, Builder, Writer};
@@ -304,19 +305,13 @@ mod test {
         let ctx = setup_context();
 
         let df = ctx
-            .sql("SELECT x, y, z FROM 'tests/data/extra.las'")
+            .sql("SELECT classification, x, y, z FROM 'tests/data/extra.las'")
             .await
             .unwrap();
+        let batches = df.collect().await.unwrap();
 
-        assert_eq!(df.schema().fields().len(), 3);
-
-        let ctx = setup_context();
-        let df = ctx
-            .sql("SELECT x, y, z FROM 'tests/data/extra.laz'")
-            .await
-            .unwrap();
-
-        assert_eq!(df.schema().fields().len(), 3);
+        assert_eq!(batches[0].schema().field(0).data_type(), &DataType::UInt8);
+        assert_eq!(batches[0].num_columns(), 4);
     }
 
     #[tokio::test]

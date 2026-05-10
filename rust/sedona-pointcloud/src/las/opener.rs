@@ -36,6 +36,14 @@ use crate::las::{
 };
 
 pub struct LasOpener {
+    /// Partition to read
+    pub partition: usize,
+    /// Target partition count
+    pub partition_count: usize,
+    /// Projection
+    pub projection: Option<Vec<usize>>,
+    /// Target batch size
+    pub batch_size: usize,
     /// Optional limit on the number of rows to read
     pub limit: Option<usize>,
     /// Filter predicate for pruning
@@ -44,23 +52,17 @@ pub struct LasOpener {
     pub file_reader_factory: Arc<LasFileReaderFactory>,
     /// Table options
     pub options: LasOptions,
-    /// Target batch size
-    pub batch_size: usize,
-    /// Target partition count
-    pub partition_count: usize,
-    /// Partition to read
-    pub partition: usize,
 }
 
 impl FileOpener for LasOpener {
     fn open(&self, file: PartitionedFile) -> Result<FileOpenFuture, DataFusionError> {
-        let limit = self.limit;
-        let batch_size = self.batch_size;
-        let round_robin = self.options.round_robin_partitioning;
-        let partition_count = self.partition_count;
         let partition = self.partition;
-
+        let partition_count = self.partition_count;
+        let projection = self.projection.clone();
+        let batch_size = self.batch_size;
+        let limit = self.limit;
         let predicate = self.predicate.clone();
+        let round_robin = self.options.round_robin_partitioning;
 
         let file_reader: Box<LasFileReader> = self
             .file_reader_factory
@@ -157,6 +159,13 @@ impl FileOpener for LasOpener {
                     let record_batch = file_reader.get_batch(chunk_meta).await?;
                     let num_rows = record_batch.num_rows();
                     row_count += num_rows;
+
+                    // project
+                    let record_batch = if let Some(file_indices) = &projection {
+                        record_batch.project(file_indices)?
+                    } else {
+                        record_batch
+                    };
 
                     // adhere to target batch size
                     let mut offset = 0;
