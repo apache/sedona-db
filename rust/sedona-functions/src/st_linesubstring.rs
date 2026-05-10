@@ -138,9 +138,16 @@ impl SedonaScalarKernel for STLineSubstring {
 
                         if start_dist >= d1 && start_dist <= d2 {
                             let segment_len = d2 - d1;
-                            let fraction = if segment_len > 0.0 { (start_dist - d1) / segment_len } else { 0.0 };
+                            let fraction = if segment_len > 0.0 {
+                                (start_dist - d1) / segment_len
+                            } else {
+                                0.0
+                            };
                             interpolate(p1, p2, fraction, dim, &mut wkb_body).map_err(|e| {
-                                DataFusionError::Internal(format!("Sedona interpolation failed: {}", e))
+                                DataFusionError::Internal(format!(
+                                    "Sedona interpolation failed: {}",
+                                    e
+                                ))
                             })?;
                             point_count += 1;
                         }
@@ -154,9 +161,16 @@ impl SedonaScalarKernel for STLineSubstring {
 
                         if end_dist >= d1 && end_dist <= d2 {
                             let segment_len = d2 - d1;
-                            let fraction = if segment_len > 0.0 { (end_dist - d1) / segment_len } else { 0.0 };
+                            let fraction = if segment_len > 0.0 {
+                                (end_dist - d1) / segment_len
+                            } else {
+                                0.0
+                            };
                             interpolate(p1, p2, fraction, dim, &mut wkb_body).map_err(|e| {
-                                DataFusionError::Internal(format!("Sedona interpolation failed: {}", e))
+                                DataFusionError::Internal(format!(
+                                    "Sedona interpolation failed: {}",
+                                    e
+                                ))
                             })?;
                             point_count += 1;
                         }
