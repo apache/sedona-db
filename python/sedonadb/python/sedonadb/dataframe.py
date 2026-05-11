@@ -85,6 +85,50 @@ class DataFrame:
         """
         return self.limit(n)
 
+    def select(self, *exprs) -> "DataFrame":
+        """Project a set of columns or expressions.
+
+        Returns a new lazy `DataFrame` whose columns are exactly the
+        projection. Column-name strings are converted to column references
+        via `sedonadb.expr.col` internally, so `df.select("x", "y")` and
+        `df.select(col("x"), col("y"))` produce the same plan.
+
+        Args:
+            *exprs: One or more arguments. Each argument is either a column
+                name (`str`) or a `sedonadb.expr.Expr`. At least one argument
+                is required.
+
+        Examples:
+
+            >>> from sedonadb.expr import col
+            >>> sd = sedona.db.connect()
+            >>> df = sd.sql("SELECT 1 AS a, 2 AS b")
+            >>> df.select("a", (col("b") + 1).alias("b_plus_1")).show()
+            ┌───────┬──────────┐
+            │   a   │ b_plus_1 │
+            │ int64 │   int64  │
+            ╞═══════╪══════════╡
+            │     1 │        3 │
+            └───────┴──────────┘
+        """
+        from sedonadb.expr import Expr
+        from sedonadb.expr import col as _col
+
+        if not exprs:
+            raise ValueError("select() requires at least one column or expression")
+
+        coerced = []
+        for e in exprs:
+            if isinstance(e, Expr):
+                coerced.append(e._impl)
+            elif isinstance(e, str):
+                coerced.append(_col(e)._impl)
+            else:
+                raise TypeError(
+                    f"select() expects str or Expr arguments, got {type(e).__name__}"
+                )
+        return DataFrame(self._ctx, self._impl.select(coerced), self._options)
+
     def limit(self, n: Optional[int], /, *, offset: int = 0) -> "DataFrame":
         """Limit result to n rows starting at offset
 
