@@ -16,11 +16,6 @@
 # under the License.
 
 from sedonadb.expr.expression import Expr, col
-from sedonadb.expr.literal import Literal
+from sedonadb.expr.literal import Literal, lit
 
-# Note: `lit` is intentionally not re-exported here. It returns a `Literal`
-# (the lazy parameterized-query wrapper), not an `Expr`. Users who need it
-# import it directly from `sedonadb.expr.literal`, matching its role as a
-# SQL-parameter helper rather than part of the Expr construction surface.
-
-__all__ = ["Expr", "Literal", "col"]
+__all__ = ["Expr", "Literal", "col", "lit"]

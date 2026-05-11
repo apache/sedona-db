@@ -15,89 +15,107 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# Tests for DataFrame.select(). Output is materialized to an Arrow table
-# and asserted with exact `column_names` and `to_pylist()` comparisons —
-# substring or partial-match assertions are deliberately avoided so the
-# tests fail loudly on any change in projection semantics.
+# Tests for DataFrame.select(). Each test builds its own input DataFrame
+# inline so the full context of a failure is visible in the failing test
+# function. Output is compared with `pd.testing.assert_frame_equal`, which
+# gives column-by-column diagnostics on mismatch.
 
+import pandas as pd
+import pandas.testing as pdt
 import pytest
 
 from sedonadb._lib import SedonaError
-from sedonadb.expr import col
+from sedonadb.expr import col, lit
 
 
-@pytest.fixture
-def df_xy(con):
-    return con.sql(
-        "SELECT * FROM (VALUES (1, 10), (2, 20), (3, 30), (4, 40)) AS t(x, y)"
+def test_select_by_string(con):
+    df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3, 4], "y": [10, 20, 30, 40]}))
+    out = df.select("x").to_pandas()
+    pdt.assert_frame_equal(out, pd.DataFrame({"x": [1, 2, 3, 4]}))
+
+
+def test_select_multiple_strings(con):
+    df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3, 4], "y": [10, 20, 30, 40]}))
+    out = df.select("x", "y").to_pandas()
+    pdt.assert_frame_equal(
+        out, pd.DataFrame({"x": [1, 2, 3, 4], "y": [10, 20, 30, 40]})
     )
 
 
-def test_select_by_string(df_xy):
-    out = df_xy.select("x").to_arrow_table()
-    assert out.column_names == ["x"]
-    assert out.column("x").to_pylist() == [1, 2, 3, 4]
+def test_select_reorder_columns(con):
+    df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3, 4], "y": [10, 20, 30, 40]}))
+    out = df.select("y", "x").to_pandas()
+    pdt.assert_frame_equal(
+        out, pd.DataFrame({"y": [10, 20, 30, 40], "x": [1, 2, 3, 4]})
+    )
 
 
-def test_select_multiple_strings(df_xy):
-    out = df_xy.select("x", "y").to_arrow_table()
-    assert out.column_names == ["x", "y"]
-    assert out.column("x").to_pylist() == [1, 2, 3, 4]
-    assert out.column("y").to_pylist() == [10, 20, 30, 40]
+def test_select_by_col_expr(con):
+    df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3, 4]}))
+    out = df.select(col("x")).to_pandas()
+    pdt.assert_frame_equal(out, pd.DataFrame({"x": [1, 2, 3, 4]}))
 
 
-def test_select_reorder_columns(df_xy):
-    out = df_xy.select("y", "x").to_arrow_table()
-    assert out.column_names == ["y", "x"]
+def test_select_arithmetic_expr(con):
+    df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3, 4], "y": [10, 20, 30, 40]}))
+    out = df.select((col("x") + col("y")).alias("sum")).to_pandas()
+    pdt.assert_frame_equal(out, pd.DataFrame({"sum": [11, 22, 33, 44]}))
 
 
-def test_select_by_col_expr(df_xy):
-    out = df_xy.select(col("x")).to_arrow_table()
-    assert out.column_names == ["x"]
-    assert out.column("x").to_pylist() == [1, 2, 3, 4]
+def test_select_mix_strings_and_exprs(con):
+    df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3, 4], "y": [10, 20, 30, 40]}))
+    out = df.select("x", (col("y") * 2).alias("y2")).to_pandas()
+    pdt.assert_frame_equal(
+        out, pd.DataFrame({"x": [1, 2, 3, 4], "y2": [20, 40, 60, 80]})
+    )
 
 
-def test_select_arithmetic_expr(df_xy):
-    out = df_xy.select((col("x") + col("y")).alias("sum")).to_arrow_table()
-    assert out.column_names == ["sum"]
-    assert out.column("sum").to_pylist() == [11, 22, 33, 44]
+def test_select_with_aliased_lit(con):
+    df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3]}))
+    out = df.select("x", lit(7).alias("seven")).to_pandas()
+    pdt.assert_frame_equal(
+        out, pd.DataFrame({"x": [1, 2, 3], "seven": [7, 7, 7]})
+    )
 
 
-def test_select_mix_strings_and_exprs(df_xy):
-    out = df_xy.select("x", (col("y") * 2).alias("y2")).to_arrow_table()
-    assert out.column_names == ["x", "y2"]
-    assert out.column("y2").to_pylist() == [20, 40, 60, 80]
+def test_select_with_unaliased_lit(con):
+    # Literal without alias projects under whatever name DataFusion assigns.
+    # We don't pin the auto-generated name (it can change); we just verify
+    # the projected value is correct.
+    df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3]}))
+    out = df.select("x", lit(7)).to_pandas()
+    assert list(out.columns)[0] == "x"
+    assert out["x"].tolist() == [1, 2, 3]
+    assert out.iloc[:, 1].tolist() == [7, 7, 7]
 
 
-def test_select_literal_via_operator_coercion(df_xy):
-    # No public `lit() -> Expr` in this PR; literals reach the plan by being
-    # composed with an Expr via an operator (`_to_expr` coerces the int 7
-    # automatically). Exercises that the scalar coercion path emits a real
-    # literal column rather than silently dropping the right-hand operand.
-    out = df_xy.select((col("x") * 0 + 7).alias("seven")).to_arrow_table()
-    assert out.column("seven").to_pylist() == [7, 7, 7, 7]
-
-
-def test_select_returns_lazy_dataframe(df_xy):
-    out = df_xy.select("x")
+def test_select_returns_lazy_dataframe(con):
+    df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3]}))
+    out = df.select("x")
     # Plan should be lazy until materialization.
     assert hasattr(out, "to_arrow_table")
 
 
-def test_select_empty_raises(df_xy):
+def test_select_empty_raises(con):
+    df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3]}))
     with pytest.raises(ValueError, match="at least one"):
-        df_xy.select()
+        df.select()
 
 
-def test_select_bad_arg_type_raises(df_xy):
-    with pytest.raises(TypeError, match="str or Expr"):
-        df_xy.select(123)
+def test_select_bad_arg_type_raises(con):
+    df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3]}))
+    with pytest.raises(TypeError, match="str, Expr, or Literal"):
+        df.select(123)
 
 
-def test_select_unknown_column_errors_at_plan_build(df_xy):
-    # DataFusion validates column references at plan-build time. The Expr
-    # itself is unbound (col("nonexistent") alone is fine), but selecting
-    # it against a frame that doesn't have that column fails immediately
-    # with the engine's SedonaError type.
-    with pytest.raises(SedonaError, match="nonexistent"):
-        df_xy.select(col("nonexistent"))
+def test_select_unknown_column_lists_valid_columns(con):
+    # When a string names a non-existent column, DataFusion's plan-build
+    # error includes the list of valid field names. Lock that contract so
+    # we notice if a future change drops the helpful suggestion.
+    df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3], "y": [4, 5, 6]}))
+    with pytest.raises(SedonaError) as exc:
+        df.select("nonexistent")
+    msg = str(exc.value)
+    assert "nonexistent" in msg
+    assert "Valid fields" in msg or "valid fields" in msg
+    assert "x" in msg and "y" in msg
