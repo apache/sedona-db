@@ -73,9 +73,7 @@ def test_select_mix_strings_and_exprs(con):
 def test_select_with_aliased_lit(con):
     df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3]}))
     out = df.select("x", lit(7).alias("seven")).to_pandas()
-    pdt.assert_frame_equal(
-        out, pd.DataFrame({"x": [1, 2, 3], "seven": [7, 7, 7]})
-    )
+    pdt.assert_frame_equal(out, pd.DataFrame({"x": [1, 2, 3], "seven": [7, 7, 7]}))
 
 
 def test_select_with_unaliased_lit(con):
