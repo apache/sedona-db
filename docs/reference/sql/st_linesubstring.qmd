@@ -35,4 +35,3 @@ SELECT ST_AsText(
     0.6
   )
 );
-

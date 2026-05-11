@@ -105,16 +105,6 @@ impl SedonaScalarKernel for STLineSubstring {
                     let num_coords = line.num_coords();
                     let dim = line.dim();
 
-                    // 1. Handle Empty Geometry (Fixes Panic)
-                    if num_coords == 0 {
-                        let mut empty_wkb = Vec::with_capacity(9);
-                        empty_wkb.push(1u8); // Little Endian
-                        empty_wkb.extend_from_slice(&2u32.to_le_bytes()); // Type: LineString
-                        empty_wkb.extend_from_slice(&0u32.to_le_bytes()); // Count: 0
-                        builder.append_value(empty_wkb);
-                        return Ok(());
-                    }
-
                     let mut cumulative_distances = Vec::with_capacity(num_coords);
                     let mut total_length = 0.0;
                     cumulative_distances.push(0.0);

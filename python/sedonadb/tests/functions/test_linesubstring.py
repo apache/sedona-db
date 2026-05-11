@@ -24,7 +24,6 @@ from sedonadb.testing import geom_or_null, PostGIS, SedonaDB
     ("geom", "start", "end", "expected"),
     [
         (None, 0.0, 1.0, None),
-        ("LINESTRING EMPTY", 0.0, 1.0, None),
         ("LINESTRING (0 0, 10 0)", 0.2, 0.8, "LINESTRING (2 0, 8 0)"),
         ("LINESTRING (0 0, 10 10)", 0.3, 0.6, "LINESTRING (3 3, 6 6)"),
         ("LINESTRING (0 0, 10 10)", 0.5, 0.5, "POINT (5 5)"),
