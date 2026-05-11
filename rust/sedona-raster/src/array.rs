@@ -118,6 +118,13 @@ impl<'a> BandRef for BandRefImpl<'a> {
     }
 
     fn nd_buffer(&self) -> Result<NdBuffer<'_>, ArrowError> {
+        if !self.is_indb() {
+            return Err(ArrowError::NotYetImplemented(
+                "OutDb byte access via nd_buffer() is not yet implemented; \
+                 backend-specific OutDb resolvers are tracked separately"
+                    .to_string(),
+            ));
+        }
         Ok(NdBuffer {
             buffer: self.data_array.value(self.band_row),
             shape: &self.visible_shape,
@@ -128,6 +135,13 @@ impl<'a> BandRef for BandRefImpl<'a> {
     }
 
     fn contiguous_data(&self) -> Result<Cow<'_, [u8]>, ArrowError> {
+        if !self.is_indb() {
+            return Err(ArrowError::NotYetImplemented(
+                "OutDb byte access via contiguous_data() is not yet implemented; \
+                 backend-specific OutDb resolvers are tracked separately"
+                    .to_string(),
+            ));
+        }
         // Identity-view only today, so the data buffer is already row-major
         // over the visible region.
         Ok(Cow::Borrowed(self.data_array.value(self.band_row)))
