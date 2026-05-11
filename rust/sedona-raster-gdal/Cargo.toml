@@ -43,6 +43,7 @@ sedona-expr = { workspace = true }
 sedona-functions = { workspace = true }
 sedona-gdal = { workspace = true }
 sedona-raster = { workspace = true }
+sedona-raster-functions = { workspace = true }
 sedona-schema = { workspace = true }
 tokio = { workspace = true }
 
