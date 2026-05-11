@@ -233,6 +233,10 @@ impl SedonaContext {
             Arc::new(RandomGeometryFunction::default()),
         );
 
+        for udf in sedona_raster_gdal::all_gdal_udfs() {
+            out.ctx.register_udf(udf.into());
+        }
+
         // Always register default function set
         out.register_function_set(sedona_functions::register::default_function_set());
 

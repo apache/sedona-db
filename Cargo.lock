@@ -6128,14 +6128,19 @@ dependencies = [
 name = "sedona-raster-gdal"
 version = "0.4.0"
 dependencies = [
+ "arrow",
  "arrow-array",
  "arrow-buffer",
+ "arrow-schema",
  "criterion",
  "datafusion-common",
+ "datafusion-expr",
  "lru 0.18.0",
  "sedona-common",
+ "sedona-expr",
  "sedona-gdal",
  "sedona-raster",
+ "sedona-raster-functions",
  "sedona-schema",
  "sedona-testing",
  "tempfile",

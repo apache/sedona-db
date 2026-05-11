@@ -31,13 +31,18 @@ rust-version.workspace = true
 result_large_err = "allow"
 
 [dependencies]
+arrow = { workspace = true }
 arrow-array = { workspace = true }
 arrow-buffer = { workspace = true }
+arrow-schema = { workspace = true }
 datafusion-common = { workspace = true }
+datafusion-expr = { workspace = true }
 lru = { workspace = true }
 sedona-common = { workspace = true }
+sedona-expr = { workspace = true }
 sedona-gdal = { workspace = true }
 sedona-raster = { workspace = true }
+sedona-raster-functions = { workspace = true }
 sedona-schema = { workspace = true }
 
 [dev-dependencies]
