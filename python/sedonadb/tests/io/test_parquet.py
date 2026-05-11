@@ -675,9 +675,10 @@ def test_prune_geography_parquet():
     con = sedonadb.connect()
 
     # Create random points crossing the antimeridian (bounds=[170, 10, 190, 30]
-    # which wraps to [170, 10, -170, 30])
+    # which wraps to [170, 10, -170, 30]). Create a non-trivial number of row groups
+    # so we can check pruning.
     con.funcs.table.sd_random_geometry(
-        "Point", 100_000, seed=42, bounds=[170, 10, 190, 30]
+        "Point", 100_000, seed=59837, bounds=[170, 10, 190, 30]
     ).to_view("pts", overwrite=True)
 
     with tempfile.TemporaryDirectory() as td:
@@ -744,9 +745,13 @@ def test_prune_geography_parquet():
         match = re.search(
             r"row_groups_spatial_pruned=(\d+) total .* (\d+) matched", plan_text
         )
-        if match:
-            total = int(match.group(1))
-            matched = int(match.group(2))
-            assert matched < total, (
-                f"Expected pruning to reduce row groups: {matched} matched out of {total}"
-            )
+
+        # Make sure we actually had a match
+        assert match
+
+        # Check that we actually reduced row groups with spatial pruning
+        total = int(match.group(1))
+        matched = int(match.group(2))
+        assert matched < total, (
+            f"Expected pruning to reduce row groups: {matched} matched out of {total}"
+        )
