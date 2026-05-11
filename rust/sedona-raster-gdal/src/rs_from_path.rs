@@ -17,7 +17,6 @@
 
 //! RS_FromPath UDF - Load out-db raster from file path.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use arrow::compute::cast;
@@ -47,40 +46,16 @@ use crate::gdal_dataset_provider::configure_thread_local_options;
 pub fn rs_from_path_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "rs_frompath",
-        vec![
-            Arc::new(RsFromPath::new(false)),
-            Arc::new(RsFromPath::new(true)),
-        ],
+        vec![Arc::new(RsFromPath)],
         Volatility::Volatile,
     )
 }
 
 #[derive(Debug)]
-pub(crate) struct RsFromPath {
-    with_params: bool,
-}
+pub(crate) struct RsFromPath;
 
 impl RsFromPath {
-    pub(crate) fn new(with_params: bool) -> Self {
-        Self { with_params }
-    }
-
-    #[allow(dead_code)]
-    fn parse_params(params: &str) -> HashMap<String, String> {
-        params
-            .split(';')
-            .filter_map(|pair| {
-                let parts: Vec<&str> = pair.trim().splitn(2, '=').collect();
-                if parts.len() == 2 {
-                    Some((parts[0].trim().to_string(), parts[1].trim().to_string()))
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-
-    fn load_outdb_raster(gdal: &Gdal, path: &str, _params: Option<&str>) -> Result<StructArray> {
+    fn load_outdb_raster(gdal: &Gdal, path: &str) -> Result<StructArray> {
         let gdal_path = normalize_outdb_source_path(path);
         let dataset = gdal
             .open_ex_with_options(
@@ -170,14 +145,7 @@ impl RsFromPath {
 
 impl SedonaScalarKernel for RsFromPath {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        let matchers = if self.with_params {
-            vec![ArgMatcher::is_string(), ArgMatcher::is_string()]
-        } else {
-            vec![ArgMatcher::is_string()]
-        };
-
-        let matcher = ArgMatcher::new(matchers, RASTER);
-        matcher.match_args(args)
+        ArgMatcher::new(vec![ArgMatcher::is_string()], RASTER).match_args(args)
     }
 
     fn invoke_batch(
@@ -199,46 +167,15 @@ impl SedonaScalarKernel for RsFromPath {
         with_gdal(|gdal| {
             configure_thread_local_options(gdal, config_options)?;
 
-            let (paths, params_opt) = match &args[0] {
-                ColumnarValue::Scalar(scalar) => {
-                    let path = scalar.to_array().map_err(|e| {
-                        exec_datafusion_err!("Failed to convert scalar to array: {}", e)
-                    })?;
-                    let params = if self.with_params {
-                        match &args[1] {
-                            ColumnarValue::Scalar(s) => Some(s.to_array().map_err(|e| {
-                                exec_datafusion_err!("Failed to convert params scalar: {}", e)
-                            })?),
-                            ColumnarValue::Array(a) => Some(a.clone()),
-                        }
-                    } else {
-                        None
-                    };
-                    (path, params)
-                }
-                ColumnarValue::Array(array) => {
-                    let params = if self.with_params {
-                        match &args[1] {
-                            ColumnarValue::Scalar(s) => Some(s.to_array().map_err(|e| {
-                                exec_datafusion_err!("Failed to convert params scalar: {}", e)
-                            })?),
-                            ColumnarValue::Array(a) => Some(a.clone()),
-                        }
-                    } else {
-                        None
-                    };
-                    (array.clone(), params)
-                }
+            let paths = match &args[0] {
+                ColumnarValue::Scalar(scalar) => scalar.to_array().map_err(|e| {
+                    exec_datafusion_err!("Failed to convert scalar to array: {}", e)
+                })?,
+                ColumnarValue::Array(array) => array.clone(),
             };
 
             let paths = cast(&paths, &DataType::Utf8)?;
             let path_array = as_string_array(&paths)?;
-
-            let params_casted = params_opt.map(|p| cast(&p, &DataType::Utf8)).transpose()?;
-            let params_array = params_casted
-                .as_ref()
-                .map(|p| as_string_array(p.as_ref()))
-                .transpose()?;
 
             let len = path_array.len();
             if len == 0 {
@@ -262,15 +199,7 @@ impl SedonaScalarKernel for RsFromPath {
                     combined_arrays.push(Arc::new(result));
                 } else {
                     let path = path_array.value(i);
-                    let params = params_array.and_then(|pa| {
-                        if pa.is_null(i) {
-                            None
-                        } else {
-                            Some(pa.value(i))
-                        }
-                    });
-
-                    let raster = Self::load_outdb_raster(gdal, path, params)?;
+                    let raster = Self::load_outdb_raster(gdal, path)?;
                     combined_arrays.push(Arc::new(raster));
                 }
             }
@@ -293,24 +222,102 @@ impl SedonaScalarKernel for RsFromPath {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_parse_params() {
-        let params = "key1=value1;key2=value2";
-        let parsed = RsFromPath::parse_params(params);
-        assert_eq!(parsed.get("key1"), Some(&"value1".to_string()));
-        assert_eq!(parsed.get("key2"), Some(&"value2".to_string()));
-
-        let parsed = RsFromPath::parse_params("");
-        assert!(parsed.is_empty());
-
-        let parsed = RsFromPath::parse_params("option=true");
-        assert_eq!(parsed.get("option"), Some(&"true".to_string()));
-    }
+    use crate::gdal_common::with_gdal;
 
     #[test]
     fn udf_from_path() {
         let udf: datafusion_expr::ScalarUDF = rs_from_path_udf().into();
         assert_eq!(udf.name(), "rs_frompath");
+    }
+
+    #[test]
+    fn test_load_outdb_raster_from_file() {
+        use sedona_testing::data::test_raster;
+
+        let path = test_raster("test4.tiff").expect("test4.tiff should exist");
+
+        let raster = with_gdal(|gdal| RsFromPath::load_outdb_raster(gdal, &path))
+            .expect("Should load raster from path");
+
+        assert_eq!(raster.len(), 1);
+
+        use datafusion_common::cast::{
+            as_list_array, as_string_array, as_string_view_array, as_struct_array, as_uint32_array,
+            as_uint64_array,
+        };
+        use sedona_schema::raster::{
+            band_indices, band_metadata_indices, metadata_indices, raster_indices,
+        };
+
+        let metadata_struct = as_struct_array(raster.column(raster_indices::METADATA)).unwrap();
+        let width = as_uint64_array(metadata_struct.column(metadata_indices::WIDTH))
+            .unwrap()
+            .value(0);
+        let height = as_uint64_array(metadata_struct.column(metadata_indices::HEIGHT))
+            .unwrap()
+            .value(0);
+
+        assert_eq!(width, 10);
+        assert_eq!(height, 10);
+
+        let crs = as_string_view_array(raster.column(raster_indices::CRS)).unwrap();
+        assert!(!crs.is_null(0));
+
+        let bands_list = as_list_array(raster.column(raster_indices::BANDS)).unwrap();
+        let bands_struct = as_struct_array(bands_list.values()).unwrap();
+        let band_metadata_struct =
+            as_struct_array(bands_struct.column(band_indices::METADATA)).unwrap();
+
+        let outdb_url =
+            as_string_array(band_metadata_struct.column(band_metadata_indices::OUTDB_URL)).unwrap();
+        assert!(!outdb_url.is_null(0));
+        assert!(outdb_url.value(0).contains("test4.tiff"));
+
+        let storage_type =
+            as_uint32_array(band_metadata_struct.column(band_metadata_indices::STORAGE_TYPE))
+                .unwrap();
+        assert_eq!(
+            storage_type.value(0),
+            sedona_schema::raster::StorageType::OutDbRef as u32
+        );
+    }
+
+    #[test]
+    fn test_invoke_rs_from_path() {
+        use arrow_array::StringArray;
+        use datafusion_common::cast::{as_struct_array, as_uint64_array};
+        use sedona_expr::scalar_udf::SedonaScalarKernel;
+        use sedona_schema::raster::{metadata_indices, raster_indices};
+        use sedona_testing::data::test_raster;
+
+        let path = test_raster("test4.tiff").expect("test4.tiff should exist");
+
+        let paths = Arc::new(StringArray::from(vec![path.as_str()]));
+        let input = ColumnarValue::Array(paths);
+
+        let kernel = RsFromPath;
+        let result = kernel
+            .invoke_batch_from_args(&[], &[input], &SedonaType::Arrow(DataType::Null), 0, None)
+            .expect("Should invoke successfully");
+
+        match result {
+            ColumnarValue::Array(arr) => {
+                let struct_arr = as_struct_array(&arr).unwrap();
+                assert_eq!(struct_arr.len(), 1);
+
+                let metadata_struct =
+                    as_struct_array(struct_arr.column(raster_indices::METADATA)).unwrap();
+                let width = as_uint64_array(metadata_struct.column(metadata_indices::WIDTH))
+                    .unwrap()
+                    .value(0);
+                let height = as_uint64_array(metadata_struct.column(metadata_indices::HEIGHT))
+                    .unwrap()
+                    .value(0);
+
+                assert_eq!(width, 10);
+                assert_eq!(height, 10);
+            }
+            _ => panic!("Expected array result"),
+        }
     }
 }
