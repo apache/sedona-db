@@ -22,18 +22,13 @@
 
 import pytest
 
-import sedonadb
+from sedonadb._lib import SedonaError
 from sedonadb.expr import col
 
 
 @pytest.fixture
-def sd():
-    return sedonadb.connect()
-
-
-@pytest.fixture
-def df_xy(sd):
-    return sd.sql(
+def df_xy(con):
+    return con.sql(
         "SELECT * FROM (VALUES (1, 10), (2, 20), (3, 30), (4, 40)) AS t(x, y)"
     )
 
@@ -74,10 +69,11 @@ def test_select_mix_strings_and_exprs(df_xy):
     assert out.column("y2").to_pylist() == [20, 40, 60, 80]
 
 
-def test_select_literal_via_isin_path(df_xy):
-    # No public lit() -> Expr in this PR; literals come in via operator
-    # coercion (and inside isin). This test exercises a literal-on-the-LHS
-    # arithmetic operation, where the int is auto-coerced to Expr.
+def test_select_literal_via_operator_coercion(df_xy):
+    # No public `lit() -> Expr` in this PR; literals reach the plan by being
+    # composed with an Expr via an operator (`_to_expr` coerces the int 7
+    # automatically). Exercises that the scalar coercion path emits a real
+    # literal column rather than silently dropping the right-hand operand.
     out = df_xy.select((col("x") * 0 + 7).alias("seven")).to_arrow_table()
     assert out.column("seven").to_pylist() == [7, 7, 7, 7]
 
@@ -101,6 +97,7 @@ def test_select_bad_arg_type_raises(df_xy):
 def test_select_unknown_column_errors_at_plan_build(df_xy):
     # DataFusion validates column references at plan-build time. The Expr
     # itself is unbound (col("nonexistent") alone is fine), but selecting
-    # it against a frame that doesn't have that column fails immediately.
-    with pytest.raises(Exception, match="nonexistent"):
+    # it against a frame that doesn't have that column fails immediately
+    # with the engine's SedonaError type.
+    with pytest.raises(SedonaError, match="nonexistent"):
         df_xy.select(col("nonexistent"))

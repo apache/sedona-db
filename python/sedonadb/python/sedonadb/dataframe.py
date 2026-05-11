@@ -85,7 +85,7 @@ class DataFrame:
         """
         return self.limit(n)
 
-    def select(self, *exprs) -> "DataFrame":
+    def select(self, *exprs: "Expr | str") -> "DataFrame":
         """Project a set of columns or expressions.
 
         Returns a new lazy `DataFrame` whose columns are exactly the
@@ -105,10 +105,10 @@ class DataFrame:
             >>> df = sd.sql("SELECT 1 AS a, 2 AS b")
             >>> df.select("a", (col("b") + 1).alias("b_plus_1")).show()
             ┌───────┬──────────┐
-            │   a   │ b_plus_1 │
-            │ int64 │   int64  │
+            │   a   ┆ b_plus_1 │
+            │ int64 ┆   int64  │
             ╞═══════╪══════════╡
-            │     1 │        3 │
+            │     1 ┆        3 │
             └───────┴──────────┘
         """
         from sedonadb.expr import Expr
