@@ -19,14 +19,13 @@ use sedona_gdal::dataset::Dataset;
 use sedona_gdal::errors::GdalError;
 use sedona_gdal::gdal::Gdal;
 use sedona_gdal::gdal_dyn_bindgen::{GDAL_OF_RASTER, GDAL_OF_READONLY, GDAL_OF_VERBOSE_ERROR};
+use sedona_gdal::geo_transform::GeoTransform;
 use sedona_gdal::mem::MemDatasetBuilder;
 use sedona_gdal::raster::types::DatasetOptions;
 use sedona_gdal::raster::types::GdalDataType;
 
-use std::borrow::Cow;
-
-use sedona_raster::traits::{BandRef, RasterRef};
-use sedona_schema::raster::BandDataType;
+use sedona_raster::traits::{MetadataRef, RasterMetadata, RasterRef, RasterRefBandsExt};
+use sedona_schema::raster::{BandDataType, StorageType};
 
 use datafusion_common::{
     arrow_datafusion_err, exec_datafusion_err, exec_err, DataFusionError, Result,
@@ -41,6 +40,47 @@ where
     match sedona_gdal::global::with_global_gdal(f) {
         Ok(inner_result) => inner_result,
         Err(init_err) => Err(DataFusionError::External(Box::new(init_err))),
+    }
+}
+
+/// Convert raster metadata into GDAL's six-element geo-transform.
+///
+/// GDAL stores geo-transforms as
+/// `[origin_x, pixel_width, rotation_x, origin_y, rotation_y, pixel_height]`.
+pub(crate) trait ToGdalGeoTransform {
+    fn to_gdal_geotransform(&self) -> GeoTransform;
+}
+
+impl<T: MetadataRef + ?Sized> ToGdalGeoTransform for T {
+    fn to_gdal_geotransform(&self) -> GeoTransform {
+        [
+            self.upper_left_x(),
+            self.scale_x(),
+            self.skew_x(),
+            self.upper_left_y(),
+            self.skew_y(),
+            self.scale_y(),
+        ]
+    }
+}
+
+/// Reconstruct raster metadata from a GDAL six-element geo-transform and raster dimensions.
+pub(crate) trait RasterMetadataFromGdalGeoTransform {
+    fn to_raster_metadata(&self, width: usize, height: usize) -> RasterMetadata;
+}
+
+impl RasterMetadataFromGdalGeoTransform for GeoTransform {
+    fn to_raster_metadata(&self, width: usize, height: usize) -> RasterMetadata {
+        RasterMetadata {
+            width: width as u64,
+            height: height as u64,
+            upperleft_x: self[0],
+            upperleft_y: self[3],
+            scale_x: self[1],
+            scale_y: self[5],
+            skew_x: self[2],
+            skew_y: self[4],
+        }
     }
 }
 
@@ -142,78 +182,45 @@ pub(crate) fn convert_gdal_err(e: GdalError) -> DataFusionError {
     DataFusionError::External(Box::new(e))
 }
 
-/// Resolve a 1-based band index into a `BandRef`, translating to the trait's
-/// 0-based API and producing a clear error when out of range or zero. The
-/// 1-based convention is preserved at the public boundary because callers
-/// already construct band-index lists that way.
-fn resolve_band<R: RasterRef + ?Sized>(
-    raster: &R,
-    one_based_index: usize,
-) -> Result<Box<dyn BandRef + '_>> {
-    if one_based_index == 0 {
-        return exec_err!("Band index must be 1-based; got 0");
-    }
-    raster.band(one_based_index - 1).ok_or_else(|| {
-        exec_datafusion_err!(
-            "Band index {one_based_index} is out of range (raster has {} bands)",
-            raster.num_bands()
-        )
-    })
-}
-
-/// Build a GDAL MEM dataset whose bands point at the bytes held by `raster`.
-///
-/// Each band's bytes come from `BandRef::contiguous_data()`. When that returns
-/// `Cow::Borrowed`, the GDAL band points directly at the StructArray's
-/// backing buffer (zero-copy); the caller must keep `raster` alive for the
-/// dataset's lifetime. When it returns `Cow::Owned` (e.g. a sliced or
-/// permuted view materialized by the reader), the moved `Vec<u8>` is
-/// returned alongside the dataset and the caller must keep it alive too.
+/// This function creates a GDAL dataset backed by the MEM driver that directly
+/// references the band data stored in the [RasterRef]. No data copying occurs -
+/// the GDAL bands point to the same memory as the data buffer held by [RasterRef].
 ///
 /// # Arguments
 /// * `raster` - The RasterRef value
 /// * `band_indices` - The indices of the bands to include in the GDAL dataset (1-based)
 ///
 /// # Returns
-/// A pair `(Dataset, Vec<Vec<u8>>)`. The second element holds any
-/// reader-allocated band bytes that GDAL pointers may reference; it must
-/// outlive the dataset.
+/// A [`Dataset`] that provides access to the GDAL dataset.
 ///
 /// # Errors
 /// Returns an error if:
-/// - Any band is N-D (not the legacy `["y","x"]` 2-D shape with identity view)
 /// - Any band uses OutDb storage
 /// - GDAL driver operations fail
 /// - Accessing RasterRef fails
-pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
+pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + RasterRefBandsExt + ?Sized>(
     gdal: &Gdal,
     raster: &R,
     band_indices: &[usize],
-) -> Result<(Dataset, Vec<Vec<u8>>)> {
-    let width = raster
-        .width()
-        .ok_or_else(|| exec_datafusion_err!("Raster has no width (spatial_shape missing)"))?
-        as usize;
-    let height = raster
-        .height()
-        .ok_or_else(|| exec_datafusion_err!("Raster has no height (spatial_shape missing)"))?
-        as usize;
+) -> Result<Dataset> {
+    let metadata = raster.metadata();
+    let bands = raster.bands();
+
+    let width = metadata.width() as usize;
+    let height = metadata.height() as usize;
 
     // Create internal MEM dataset via sedona-gdal shim to avoid open dataset list contention.
     let mut mem_ds_builder = MemDatasetBuilder::new(width, height);
 
-    // Reader-allocated band bytes (Cow::Owned). Each entry is moved out of
-    // the Cow without a copy and must outlive the dataset, since GDAL holds
-    // a raw pointer into it.
-    let mut owned_band_bytes: Vec<Vec<u8>> = Vec::new();
-
-    // Add bands with DATAPOINTER option.
+    // Add bands with DATAPOINTER option (zero-copy)
     //
     // Note: GDALAddBand always appends a new band, so the destination band index
     // is sequential (1..=band_indices.len()), even if the source band indices are
     // sparse (e.g. [1, 3]).
     for &src_band_index in band_indices.iter() {
-        let band = resolve_band(raster, src_band_index)?;
+        let band = bands
+            .band(src_band_index)
+            .map_err(|e| arrow_datafusion_err!(e))?;
 
         if !band.is_2d() {
             return exec_err!(
@@ -222,28 +229,17 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
             );
         }
 
-        if !band.is_indb() {
+        if band.metadata().storage_type()? != StorageType::InDb {
             return Err(DataFusionError::NotImplemented(
                 "OutDb bands are not supported in raster_to_mem_dataset".to_string(),
             ));
         }
 
-        let band_type = band.data_type();
+        let band_metadata = band.metadata();
+        let band_type = band_metadata.data_type()?;
         let gdal_type = band_data_type_to_gdal(&band_type);
-        let band_data = band
-            .contiguous_data()
-            .map_err(|e| arrow_datafusion_err!(e))?;
-        // For Cow::Borrowed the pointer is into the StructArray (caller keeps
-        // it alive). For Cow::Owned we move the Vec into `owned_band_bytes`
-        // — no extra copy of the reader's materialization — and point GDAL
-        // at it; the Vec is kept alive alongside the returned Dataset.
-        let data_ptr: *const u8 = match band_data {
-            Cow::Borrowed(b) => b.as_ptr(),
-            Cow::Owned(v) => {
-                owned_band_bytes.push(v);
-                owned_band_bytes.last().unwrap().as_ptr()
-            }
-        };
+        let band_data = band.data();
+        let data_ptr = band_data.as_ptr();
         unsafe {
             mem_ds_builder = mem_ds_builder.add_band(gdal_type, data_ptr as *mut u8);
         }
@@ -255,12 +251,7 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
             .map_err(|e| DataFusionError::External(Box::new(e)))?
     };
 
-    let geotransform: [f64; 6] = raster.transform().try_into().map_err(|_| {
-        exec_datafusion_err!(
-            "Raster transform must be exactly 6 elements; got {}",
-            raster.transform().len()
-        )
-    })?;
+    let geotransform = metadata.to_gdal_geotransform();
 
     dataset
         .set_geo_transform(&geotransform)
@@ -273,9 +264,12 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
 
     for (dst_band_index, &src_band_index) in band_indices.iter().enumerate() {
         let dst_band_index = dst_band_index + 1;
-        let band = resolve_band(raster, src_band_index)?;
-        let band_type = band.data_type();
-        if let Some(nodata_bytes) = band.nodata() {
+        let band = bands
+            .band(src_band_index)
+            .map_err(|e| arrow_datafusion_err!(e))?;
+        let band_metadata = band.metadata();
+        let band_type = band_metadata.data_type()?;
+        if let Some(nodata_bytes) = band_metadata.nodata_value() {
             let raster_band = dataset
                 .rasterband(dst_band_index)
                 .map_err(convert_gdal_err)?;
@@ -308,17 +302,17 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
         }
     }
 
-    Ok((dataset, owned_band_bytes))
+    Ok(dataset)
 }
 
-pub fn raster_ref_to_gdal_empty<R: RasterRef + ?Sized>(gdal: &Gdal, raster: &R) -> Result<Dataset> {
+pub fn raster_ref_to_gdal_empty<R: RasterRef + RasterRefBandsExt + ?Sized>(
+    gdal: &Gdal,
+    raster: &R,
+) -> Result<Dataset> {
     unsafe {
         // SAFETY: raster_ref_to_gdal_mem is safe to call with an empty band list. The
-        // returned dataset has zero bands, references no external memory, and the
-        // owned-bytes Vec is necessarily empty.
-        let (dataset, owned) = raster_ref_to_gdal_mem(gdal, raster, &[])?;
-        debug_assert!(owned.is_empty());
-        Ok(dataset)
+        // returned dataset will have zero bands and references no external memory.
+        raster_ref_to_gdal_mem(gdal, raster, &[])
     }
 }
 
@@ -444,74 +438,11 @@ fn strip_scheme_prefix<'a>(value: &'a str, scheme_prefix: &str) -> Option<&'a st
 mod tests {
     use super::*;
 
-    use arrow_array::StructArray;
     use sedona_raster::array::RasterStructArray;
     use sedona_raster::builder::RasterBuilder;
-
-    /// Affine: (origin_x, scale_x, skew_x, origin_y, skew_y, scale_y) — same
-    /// element order as the canonical 6-element transform.
-    type Transform2d = (f64, f64, f64, f64, f64, f64);
-
-    /// 2D in-db test band: `(data_type, nodata_bytes_or_none, raw_pixel_bytes)`.
-    type InDbTestBand2d = (BandDataType, Option<Vec<u8>>, Vec<u8>);
-
-    fn build_indb_raster_2d(
-        width: u64,
-        height: u64,
-        transform: Transform2d,
-        crs: Option<&str>,
-        bands: &[InDbTestBand2d],
-    ) -> StructArray {
-        let (origin_x, scale_x, skew_x, origin_y, skew_y, scale_y) = transform;
-        let mut builder = RasterBuilder::new(1);
-        builder
-            .start_raster_2d(
-                width, height, origin_x, origin_y, scale_x, scale_y, skew_x, skew_y, crs,
-            )
-            .unwrap();
-        for (data_type, nodata, data) in bands {
-            builder
-                .start_band_2d(*data_type, nodata.as_deref())
-                .unwrap();
-            builder.band_data_writer().append_value(data);
-            builder.finish_band().unwrap();
-        }
-        builder.finish_raster().unwrap();
-        builder.finish().unwrap()
-    }
-
-    fn build_outdb_raster_2d(
-        width: u64,
-        height: u64,
-        transform: Transform2d,
-        crs: Option<&str>,
-        outdb_uri: &str,
-        data_type: BandDataType,
-        nodata: Option<&[u8]>,
-    ) -> StructArray {
-        let (origin_x, scale_x, skew_x, origin_y, skew_y, scale_y) = transform;
-        let mut builder = RasterBuilder::new(1);
-        builder
-            .start_raster_2d(
-                width, height, origin_x, origin_y, scale_x, scale_y, skew_x, skew_y, crs,
-            )
-            .unwrap();
-        builder
-            .start_band(
-                None,
-                &["y", "x"],
-                &[height, width],
-                data_type,
-                nodata,
-                Some(outdb_uri),
-                Some("geotiff"),
-            )
-            .unwrap();
-        builder.band_data_writer().append_value([]);
-        builder.finish_band().unwrap();
-        builder.finish_raster().unwrap();
-        builder.finish().unwrap()
-    }
+    use sedona_raster::traits::{BandMetadata, RasterMetadata};
+    use sedona_schema::raster::StorageType;
+    use sedona_testing::rasters::{build_in_db_raster, InDbTestBand};
 
     fn read_band_u64(dataset: &Dataset, band_index: usize, size: (usize, usize)) -> Vec<u64> {
         let band = dataset.rasterband(band_index).unwrap();
@@ -529,6 +460,40 @@ mod tests {
         assert!(dataset
             .projection()
             .contains("AUTHORITY[\"EPSG\",\"4326\"]"));
+    }
+
+    #[test]
+    fn test_to_gdal_geotransform() {
+        let metadata = RasterMetadata {
+            width: 3,
+            height: 2,
+            upperleft_x: 10.0,
+            upperleft_y: 20.0,
+            scale_x: 0.5,
+            scale_y: -0.5,
+            skew_x: 0.1,
+            skew_y: -0.2,
+        };
+
+        assert_eq!(
+            metadata.to_gdal_geotransform(),
+            [10.0, 0.5, 0.1, 20.0, -0.2, -0.5]
+        );
+    }
+
+    #[test]
+    fn test_to_raster_metadata() {
+        let geotransform: GeoTransform = [12.5, 0.25, 0.75, -8.0, -0.5, -2.0];
+        let metadata = geotransform.to_raster_metadata(4, 3);
+
+        assert_eq!(metadata.width, 4);
+        assert_eq!(metadata.height, 3);
+        assert_eq!(metadata.upperleft_x, 12.5);
+        assert_eq!(metadata.upperleft_y, -8.0);
+        assert_eq!(metadata.scale_x, 0.25);
+        assert_eq!(metadata.scale_y, -2.0);
+        assert_eq!(metadata.skew_x, 0.75);
+        assert_eq!(metadata.skew_y, -0.5);
     }
 
     #[test]
@@ -735,13 +700,17 @@ mod tests {
 
     #[test]
     fn test_raster_ref_to_gdal_empty_preserves_metadata_and_crs() {
-        let raster_array = build_indb_raster_2d(
-            3,
-            2,
-            (10.0, 0.5, 0.1, 20.0, -0.2, -0.5),
-            Some("EPSG:4326"),
-            &[],
-        );
+        let metadata = RasterMetadata {
+            width: 3,
+            height: 2,
+            upperleft_x: 10.0,
+            upperleft_y: 20.0,
+            scale_x: 0.5,
+            scale_y: -0.5,
+            skew_x: 0.1,
+            skew_y: -0.2,
+        };
+        let raster_array = build_in_db_raster(metadata, Some("EPSG:4326"), &[]);
         let raster_struct_array = RasterStructArray::new(&raster_array);
         let raster = raster_struct_array.get(0).unwrap();
 
@@ -761,6 +730,16 @@ mod tests {
 
     #[test]
     fn test_raster_ref_to_gdal_mem_preserves_band_order_data_and_nodata() {
+        let metadata = RasterMetadata {
+            width: 2,
+            height: 2,
+            upperleft_x: 5.0,
+            upperleft_y: 8.0,
+            scale_x: 2.0,
+            scale_y: -2.0,
+            skew_x: 0.0,
+            skew_y: 0.0,
+        };
         let uint64_pixels = [1u64, 2, 3, 4]
             .into_iter()
             .flat_map(u64::to_le_bytes)
@@ -772,30 +751,32 @@ mod tests {
             .collect::<Vec<_>>();
         let uint64_nodata = 9_007_199_254_740_992u64;
         let int64_nodata = -9_007_199_254_740_992i64;
-        let raster_array = build_indb_raster_2d(
-            2,
-            2,
-            (5.0, 2.0, 0.0, 8.0, 0.0, -2.0),
+        let raster_array = build_in_db_raster(
+            metadata,
             Some("EPSG:4326"),
             &[
-                (
-                    BandDataType::UInt64,
-                    Some(uint64_nodata.to_le_bytes().to_vec()),
-                    uint64_pixels,
-                ),
-                (BandDataType::UInt8, Some(vec![255u8]), uint8_pixels),
-                (
-                    BandDataType::Int64,
-                    Some(int64_nodata.to_le_bytes().to_vec()),
-                    int64_pixels,
-                ),
+                InDbTestBand {
+                    datatype: BandDataType::UInt64,
+                    nodata_value: Some(uint64_nodata.to_le_bytes().to_vec()),
+                    data: uint64_pixels,
+                },
+                InDbTestBand {
+                    datatype: BandDataType::UInt8,
+                    nodata_value: Some(vec![255u8]),
+                    data: uint8_pixels,
+                },
+                InDbTestBand {
+                    datatype: BandDataType::Int64,
+                    nodata_value: Some(int64_nodata.to_le_bytes().to_vec()),
+                    data: int64_pixels,
+                },
             ],
         );
         let raster_struct_array = RasterStructArray::new(&raster_array);
         let raster = raster_struct_array.get(0).unwrap();
 
         with_gdal(|gdal| {
-            let (dataset, _owned) = unsafe { raster_ref_to_gdal_mem(gdal, &raster, &[3, 1])? };
+            let dataset = unsafe { raster_ref_to_gdal_mem(gdal, &raster, &[3, 1])? };
             assert_eq!(dataset.raster_size(), (2, 2));
             assert_eq!(dataset.raster_count(), 2);
             assert_eq!(
@@ -818,15 +799,31 @@ mod tests {
 
     #[test]
     fn test_raster_ref_to_gdal_mem_rejects_outdb_bands() {
-        let raster_array = build_outdb_raster_2d(
-            1,
-            1,
-            (0.0, 1.0, 0.0, 1.0, 0.0, -1.0),
-            None,
-            "/tmp/test.tif",
-            BandDataType::UInt8,
-            Some(&[0u8]),
-        );
+        let mut builder = RasterBuilder::new(1);
+        let metadata = RasterMetadata {
+            width: 1,
+            height: 1,
+            upperleft_x: 0.0,
+            upperleft_y: 1.0,
+            scale_x: 1.0,
+            scale_y: -1.0,
+            skew_x: 0.0,
+            skew_y: 0.0,
+        };
+        builder.start_raster(&metadata, None).unwrap();
+        builder
+            .start_band(BandMetadata {
+                datatype: BandDataType::UInt8,
+                nodata_value: Some(vec![0u8]),
+                storage_type: StorageType::OutDbRef,
+                outdb_url: Some("/tmp/test.tif".to_string()),
+                outdb_band_id: Some(1),
+            })
+            .unwrap();
+        builder.band_data_writer().append_value([]);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+        let raster_array = builder.finish().unwrap();
         let raster_struct_array = RasterStructArray::new(&raster_array);
         let raster = raster_struct_array.get(0).unwrap();
 
@@ -845,7 +842,7 @@ mod tests {
             .start_raster_2d(2, 2, 0.0, 2.0, 1.0, -1.0, 0.0, 0.0, None)
             .unwrap();
         builder
-            .start_band(
+            .start_band_nd(
                 None,
                 &["time", "y", "x"],
                 &[3, 2, 2],

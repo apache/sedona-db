@@ -30,7 +30,7 @@ use arrow_schema::{DataType, Field, FieldRef, Fields};
 /// `spatial_dims` in their own `dim_names`, with the band's *visible* size
 /// for that dim matching `spatial_shape`.
 ///
-/// Legacy 2D rasters are represented as bands with `dim_names=["y","x"]` and
+/// 2D rasters are represented as bands with `dim_names=["y","x"]` and
 /// `source_shape=[height, width]`.
 #[derive(Debug, PartialEq, Clone)]
 pub struct RasterSchema;
@@ -152,6 +152,10 @@ pub enum BandDataType {
     Float64 = 7,
     UInt64 = 8,
     Int64 = 9,
+    // Int8 was added after the original 1-7 set (PR #589) and after the
+    // 64-bit additions at 8-9. The discriminants are an Arrow-column
+    // contract for the `band.data_type` UInt32 column — reordering would
+    // silently misinterpret existing raster data, so new variants append.
     Int8 = 10,
 }
 
@@ -199,6 +203,21 @@ impl BandDataType {
             BandDataType::Int8 => "SIGNED_8BITS",
         }
     }
+}
+
+/// Where a band's pixel data lives.
+///
+/// Restored from the pre-N-D schema to keep downstream code that pattern-
+/// matches on `StorageType::InDb` / `StorageType::OutDbRef` compiling.
+/// The current N-D schema discriminates via `BandRef::is_indb()` (true ↔
+/// `InDb`, false ↔ `OutDbRef`); this enum is the shim over that.
+#[repr(u32)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Copy)]
+pub enum StorageType {
+    /// Band data is materialized into the raster row's `data` Arrow column.
+    InDb = 0,
+    /// Band data lives outside the row and is referenced by `outdb_uri`.
+    OutDbRef = 1,
 }
 
 /// Hard-coded column indices for performant access to nested struct fields.

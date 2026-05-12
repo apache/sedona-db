@@ -22,7 +22,7 @@ use arrow_schema::DataType;
 use datafusion_common::error::Result;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
-use sedona_raster::traits::RasterRef;
+use sedona_raster::traits::RasterRefBandsExt;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 /// RS_NumBands() scalar UDF implementation
@@ -61,7 +61,7 @@ impl SedonaScalarKernel for RsNumBands {
             match raster_opt {
                 None => builder.append_null(),
                 Some(raster) => {
-                    let num_bands = raster.num_bands() as u32;
+                    let num_bands = raster.bands().len() as u32;
                     builder.append_value(num_bands);
                 }
             }

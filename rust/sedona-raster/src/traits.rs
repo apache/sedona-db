@@ -20,7 +20,7 @@ use std::borrow::Cow;
 use arrow_schema::ArrowError;
 use sedona_schema::raster::BandDataType;
 
-/// Zero-copy view into a band's N-D data buffer with layout metadata.
+/// View into a band's N-D data buffer with layout metadata.
 ///
 /// `shape`, `strides`, and `offset` describe the *visible* region in
 /// byte-stride terms — they are computed by composing the band's
@@ -29,11 +29,17 @@ use sedona_schema::raster::BandDataType;
 /// can be zero (broadcast) or negative (reverse iteration), and may not be
 /// C-order. Consumers that need a flat row-major buffer should use
 /// `BandRef::contiguous_data()` instead.
+///
+/// Only `buffer` is tied to the producer's lifetime `'a` (it can be tens of
+/// MBs of pixel data and must not be copied). `shape` and `strides` are
+/// owned `Vec`s — they're tiny (ndim ≤ a handful) so an allocation here is
+/// negligible, and owning them lets an `NdBuffer` outlive the producer's
+/// internal layout cache (e.g. cross-thread, return-by-value).
 #[derive(Debug)]
 pub struct NdBuffer<'a> {
     pub buffer: &'a [u8],
-    pub shape: &'a [u64],
-    pub strides: &'a [i64],
+    pub shape: Vec<u64>,
+    pub strides: Vec<i64>,
     pub offset: u64,
     pub data_type: BandDataType,
 }
@@ -57,6 +63,262 @@ pub struct ViewEntry {
     pub start: i64,
     pub step: i64,
     pub steps: i64,
+}
+
+/// Concrete raster metadata returned by `RasterRef::metadata()`.
+///
+/// Restored from the pre-N-D schema to keep callers that pattern-match on
+/// `metadata.width`, `metadata.upperleft_x`, etc. compiling. Computed
+/// eagerly from `RasterRef::transform()` and `RasterRef::spatial_shape()`.
+///
+/// Panics on construction (`metadata()`) if the raster lacks width or
+/// height — corrupt schemas error through the `width()`/`height()` trait
+/// methods directly; the metadata accessor is the convenience surface.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RasterMetadata {
+    pub width: u64,
+    pub height: u64,
+    pub upperleft_x: f64,
+    pub upperleft_y: f64,
+    pub scale_x: f64,
+    pub scale_y: f64,
+    pub skew_x: f64,
+    pub skew_y: f64,
+}
+
+/// Pre-N-D metadata-accessor trait. Restored so callers from before the
+/// N-D refactor that write `fn foo(metadata: &dyn MetadataRef)` keep
+/// compiling. `RasterMetadata` is the canonical implementor; new code
+/// should reach for `RasterRef::width()? / height()?` instead.
+pub trait MetadataRef {
+    fn width(&self) -> u64;
+    fn height(&self) -> u64;
+    fn upper_left_x(&self) -> f64;
+    fn upper_left_y(&self) -> f64;
+    fn scale_x(&self) -> f64;
+    fn scale_y(&self) -> f64;
+    fn skew_x(&self) -> f64;
+    fn skew_y(&self) -> f64;
+}
+
+impl<T: MetadataRef + ?Sized> MetadataRef for &T {
+    fn width(&self) -> u64 {
+        (**self).width()
+    }
+    fn height(&self) -> u64 {
+        (**self).height()
+    }
+    fn upper_left_x(&self) -> f64 {
+        (**self).upper_left_x()
+    }
+    fn upper_left_y(&self) -> f64 {
+        (**self).upper_left_y()
+    }
+    fn scale_x(&self) -> f64 {
+        (**self).scale_x()
+    }
+    fn scale_y(&self) -> f64 {
+        (**self).scale_y()
+    }
+    fn skew_x(&self) -> f64 {
+        (**self).skew_x()
+    }
+    fn skew_y(&self) -> f64 {
+        (**self).skew_y()
+    }
+}
+
+impl MetadataRef for RasterMetadata {
+    fn width(&self) -> u64 {
+        self.width
+    }
+    fn height(&self) -> u64 {
+        self.height
+    }
+    fn upper_left_x(&self) -> f64 {
+        self.upperleft_x
+    }
+    fn upper_left_y(&self) -> f64 {
+        self.upperleft_y
+    }
+    fn scale_x(&self) -> f64 {
+        self.scale_x
+    }
+    fn scale_y(&self) -> f64 {
+        self.scale_y
+    }
+    fn skew_x(&self) -> f64 {
+        self.skew_x
+    }
+    fn skew_y(&self) -> f64 {
+        self.skew_y
+    }
+}
+
+impl RasterMetadata {
+    pub fn width(&self) -> u64 {
+        self.width
+    }
+    pub fn height(&self) -> u64 {
+        self.height
+    }
+    pub fn upper_left_x(&self) -> f64 {
+        self.upperleft_x
+    }
+    pub fn upper_left_y(&self) -> f64 {
+        self.upperleft_y
+    }
+    pub fn scale_x(&self) -> f64 {
+        self.scale_x
+    }
+    pub fn scale_y(&self) -> f64 {
+        self.scale_y
+    }
+    pub fn skew_x(&self) -> f64 {
+        self.skew_x
+    }
+    pub fn skew_y(&self) -> f64 {
+        self.skew_y
+    }
+}
+
+/// Concrete band metadata returned by `BandRef::metadata()`.
+///
+/// Restored from the pre-N-D schema. The `outdb_url` and `outdb_band_id`
+/// fields are eagerly parsed from the N-D `outdb_uri` (which carries a
+/// `#band=N` fragment in the SedonaDB convention) so callers from the
+/// pre-N-D era keep compiling against the same field names.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BandMetadata {
+    pub nodata_value: Option<Vec<u8>>,
+    pub storage_type: sedona_schema::raster::StorageType,
+    pub datatype: BandDataType,
+    pub outdb_url: Option<String>,
+    pub outdb_band_id: Option<u32>,
+}
+
+impl BandMetadata {
+    pub fn nodata_value(&self) -> Option<&[u8]> {
+        self.nodata_value.as_deref()
+    }
+    /// Returns the storage type. Wrapped in `Result` to match main's
+    /// `BandMetadataRef::storage_type()` signature — our shim
+    /// implementation never errors, but the signature is preserved so
+    /// existing `matches!(band.metadata().storage_type(), Ok(...))`
+    /// patterns from before the N-D refactor keep compiling.
+    pub fn storage_type(&self) -> Result<sedona_schema::raster::StorageType, ArrowError> {
+        Ok(self.storage_type)
+    }
+    /// Returns the band data type. Wrapped in `Result` to match main's
+    /// `BandMetadataRef::data_type()` signature — see `storage_type()`.
+    pub fn data_type(&self) -> Result<BandDataType, ArrowError> {
+        Ok(self.datatype)
+    }
+    pub fn outdb_url(&self) -> Option<&str> {
+        self.outdb_url.as_deref()
+    }
+    pub fn outdb_band_id(&self) -> Option<u32> {
+        self.outdb_band_id
+    }
+    /// Nodata value interpreted as f64. Mirrors the pre-N-D
+    /// `BandMetadataRef::nodata_value_as_f64()`. Uses the lossless
+    /// conversion (errors on i64/u64 magnitudes > 2^53) so the shim
+    /// surface picks up the same correctness fix as
+    /// `BandRef::nodata_as_f64()`.
+    pub fn nodata_value_as_f64(&self) -> Result<Option<f64>, ArrowError> {
+        let bytes = match self.nodata_value.as_deref() {
+            Some(b) => b,
+            None => return Ok(None),
+        };
+        nodata_bytes_to_f64_lossless(bytes, &self.datatype).map(Some)
+    }
+}
+
+/// Parse the SedonaDB `#band=N` fragment out of an out-DB URI.
+/// Returns `(base_url, band_id)`; band_id defaults to 1 if absent.
+/// Duplicated (intentionally — and minimally) from
+/// `sedona-raster-gdal::source_uri` because the shim lives in
+/// `sedona-raster` and can't reach across the crate boundary.
+fn split_outdb_band_fragment(uri: &str) -> (String, u32) {
+    if let Some(hash_pos) = uri.rfind('#') {
+        let (base, fragment) = uri.split_at(hash_pos);
+        let fragment = &fragment[1..]; // skip the '#'
+        if let Some(rest) = fragment.strip_prefix("band=") {
+            if let Ok(n) = rest.parse::<u32>() {
+                return (base.to_string(), n);
+            }
+        }
+    }
+    (uri.to_string(), 1)
+}
+
+/// Iteration view over a raster's bands. Returned by `RasterRef::bands()`.
+///
+/// Wraps a borrowed `&dyn RasterRef` and offers the `len()` / `band(1-based)`
+/// / `iter()` shape that callers used before the N-D refactor. New code can
+/// equivalently use `RasterRef::num_bands()` and `RasterRef::band(0-based)`
+/// directly; both call patterns coexist.
+pub struct Bands<'a> {
+    raster: &'a dyn RasterRef,
+}
+
+/// Extension trait providing `RasterRef::bands()`. Lives outside `RasterRef`
+/// itself because the default body needs to coerce `&Self` to
+/// `&dyn RasterRef`, which can't be expressed in a default trait method
+/// without making the method `Self: Sized`-bound (and then it stops
+/// dispatching through `&dyn RasterRef`). Blanket-implemented for
+/// `T: RasterRef + ?Sized`, so both concrete and trait-object callers can
+/// use `raster.bands()` after a `use RasterRefBandsExt`.
+pub trait RasterRefBandsExt {
+    fn bands(&self) -> Bands<'_>;
+}
+
+impl<T: RasterRef> RasterRefBandsExt for T {
+    fn bands(&self) -> Bands<'_> {
+        Bands { raster: self }
+    }
+}
+
+impl<'r> RasterRefBandsExt for dyn RasterRef + 'r {
+    fn bands(&self) -> Bands<'_> {
+        Bands { raster: self }
+    }
+}
+
+impl<'a> Bands<'a> {
+    /// Number of bands in the raster.
+    pub fn len(&self) -> usize {
+        self.raster.num_bands()
+    }
+
+    /// True iff the raster has zero bands.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Look up a band by **1-based** number. Returns an error rather than
+    /// `None` so callers can use `?`. For 0-based access, use
+    /// `RasterRef::band` directly.
+    pub fn band(&self, number_1based: usize) -> Result<Box<dyn BandRef + 'a>, ArrowError> {
+        if number_1based == 0 {
+            return Err(ArrowError::InvalidArgumentError(
+                "band number is 1-based; got 0".to_string(),
+            ));
+        }
+        self.raster.band(number_1based - 1).ok_or_else(|| {
+            ArrowError::InvalidArgumentError(format!(
+                "Band number {} out of range (raster has {} bands)",
+                number_1based,
+                self.raster.num_bands()
+            ))
+        })
+    }
+
+    /// Iterate over every band in 0-based order.
+    pub fn iter(&self) -> impl Iterator<Item = Box<dyn BandRef + 'a>> + 'a {
+        let raster = self.raster;
+        (0..raster.num_bands()).filter_map(move |i| raster.band(i))
+    }
 }
 
 /// Trait for accessing an N-dimensional raster (top level).
@@ -119,6 +381,37 @@ pub trait RasterRef {
     /// `[origin_x, scale_x, skew_x, origin_y, skew_y, scale_y]`
     fn transform(&self) -> &[f64];
 
+    /// Eagerly-computed concrete metadata view (width, height, geotransform
+    /// scalars). Mirrors the pre-N-D `RasterRef::metadata()` accessor.
+    ///
+    /// Panics if `spatial_shape` lacks width/height or `transform` is the
+    /// wrong length — those are corrupt-schema cases that error cleanly
+    /// through the `width()`/`height()` trait methods, but the metadata
+    /// accessor predates that contract and is kept infallible for caller
+    /// ergonomics.
+    fn metadata(&self) -> RasterMetadata {
+        let width = self
+            .width()
+            .expect("raster has no width (spatial_shape missing); use width()? for error handling");
+        let height = self
+            .height()
+            .expect("raster has no height; use height()? for error handling");
+        let t = self.transform();
+        if t.len() != 6 {
+            panic!("transform must be 6 elements, got {}", t.len());
+        }
+        RasterMetadata {
+            width,
+            height,
+            upperleft_x: t[0],
+            scale_x: t[1],
+            skew_x: t[2],
+            upperleft_y: t[3],
+            skew_y: t[4],
+            scale_y: t[5],
+        }
+    }
+
     /// Spatial dimension names, in order (today `["x","y"]`; a future Z phase
     /// would extend to `["x","y","z"]`). Every band must contain each of these
     /// names in its own `dim_names`, with matching sizes.
@@ -141,15 +434,41 @@ pub trait RasterRef {
     }
 
     /// Width in pixels — size of the X spatial dimension from the top-level
-    /// `spatial_shape`.
-    fn width(&self) -> Option<u64> {
-        self.spatial_shape().first().map(|&v| v as u64)
+    /// `spatial_shape`. Errors if `spatial_shape` is empty or the X size is
+    /// negative; both are invariant violations rather than legitimate "no
+    /// value" states.
+    fn width(&self) -> Result<u64, ArrowError> {
+        let shape = self.spatial_shape();
+        let Some(&v) = shape.first() else {
+            return Err(ArrowError::InvalidArgumentError(
+                "raster has no width (spatial_shape is empty)".to_string(),
+            ));
+        };
+        if v < 0 {
+            return Err(ArrowError::InvalidArgumentError(format!(
+                "raster width must be non-negative, got {v}"
+            )));
+        }
+        Ok(v as u64)
     }
 
     /// Height in pixels — size of the Y spatial dimension from the top-level
-    /// `spatial_shape`.
-    fn height(&self) -> Option<u64> {
-        self.spatial_shape().get(1).map(|&v| v as u64)
+    /// `spatial_shape`. Errors if `spatial_shape` has fewer than two entries
+    /// or the Y size is negative.
+    fn height(&self) -> Result<u64, ArrowError> {
+        let shape = self.spatial_shape();
+        let Some(&v) = shape.get(1) else {
+            return Err(ArrowError::InvalidArgumentError(format!(
+                "raster has no height (spatial_shape has {} entries, need >= 2)",
+                shape.len()
+            )));
+        };
+        if v < 0 {
+            return Err(ArrowError::InvalidArgumentError(format!(
+                "raster height must be non-negative, got {v}"
+            )));
+        }
+        Ok(v as u64)
     }
 
     /// Look up a band by name. Returns None if no band has that name.
@@ -272,6 +591,41 @@ pub trait BandRef {
         self.nd_buffer().is_ok_and(|b| !b.buffer.is_empty())
     }
 
+    /// Eagerly-computed concrete band metadata. Mirrors the pre-N-D
+    /// `BandRef::metadata()` accessor.
+    ///
+    /// `outdb_url` and `outdb_band_id` are parsed from `outdb_uri()`'s
+    /// SedonaDB `#band=N` fragment convention so callers that pattern-match
+    /// on those fields keep compiling.
+    fn metadata(&self) -> BandMetadata {
+        let is_indb = self.is_indb();
+        // Match the pre-N-D contract: outdb_url / outdb_band_id are only
+        // populated when storage_type is OutDbRef. PR-B's schema lets the
+        // URI hint coexist with InDb data; this surface hides that.
+        let (outdb_url, outdb_band_id) = if !is_indb {
+            match self.outdb_uri() {
+                Some(uri) => {
+                    let (base, band) = split_outdb_band_fragment(uri);
+                    (Some(base), Some(band))
+                }
+                None => (None, None),
+            }
+        } else {
+            (None, None)
+        };
+        BandMetadata {
+            nodata_value: self.nodata().map(|b| b.to_vec()),
+            storage_type: if is_indb {
+                sedona_schema::raster::StorageType::InDb
+            } else {
+                sedona_schema::raster::StorageType::OutDbRef
+            },
+            datatype: self.data_type(),
+            outdb_url,
+            outdb_band_id,
+        }
+    }
+
     // -- Data access --
 
     /// Raw backing buffer + visible-region layout. Triggers load for lazy
@@ -288,24 +642,39 @@ pub trait BandRef {
     /// broadcasts, or permutes. Most RS_* functions use this.
     fn contiguous_data(&self) -> Result<Cow<'_, [u8]>, ArrowError>;
 
+    /// Pre-N-D compatibility shim: raw row-major bytes for InDb,
+    /// identity-view bands. Panics on anything else (OutDb, non-identity
+    /// view, or a `contiguous_data` error) — corresponds to main's
+    /// infallible `BandRef::data() -> &[u8]` which only ever ran against
+    /// identity-view InDb bands.
+    fn data(&self) -> &[u8] {
+        // Default impl forwards through nd_buffer's borrowed slice. This
+        // only borrows the underlying band buffer for identity-view InDb
+        // bands; everything else is a corrupt-shape call site.
+        self.nd_buffer()
+            .expect("BandRef::data() requires an in-db band with bytes")
+            .buffer
+    }
+
     /// Nodata value interpreted as f64.
     ///
     /// Returns `Ok(None)` when no nodata value is defined, `Ok(Some(f64))` on
-    /// success, or an error when the raw bytes have an unexpected length.
+    /// success, or an error when the raw bytes have an unexpected length **or**
+    /// when the nodata value cannot be represented exactly in `f64`.
     ///
-    /// # Warning
-    ///
-    /// For 64-bit integer bands (`Int64`, `UInt64`), the conversion to `f64`
-    /// is lossy when the magnitude exceeds 2^53 — values outside
-    /// `[-9_007_199_254_740_992, 9_007_199_254_740_992]` will be rounded to
-    /// the nearest representable double. Use `nodata()` directly to recover
-    /// the exact bytes if you need full integer precision.
+    /// 64-bit integer bands (`Int64`, `UInt64`) error rather than silently
+    /// rounding when the magnitude exceeds 2^53 — values outside
+    /// `[-9_007_199_254_740_992, 9_007_199_254_740_992]` can't round-trip
+    /// through `f64` and a rounded sentinel can collide with a real pixel
+    /// value. Use `nodata()` directly to recover the exact bytes when full
+    /// integer precision matters (e.g. when nodata is the type's extreme
+    /// value like `0xFF…FF`).
     fn nodata_as_f64(&self) -> Result<Option<f64>, ArrowError> {
         let bytes = match self.nodata() {
             Some(b) => b,
             None => return Ok(None),
         };
-        nodata_bytes_to_f64(bytes, &self.data_type()).map(Some)
+        nodata_bytes_to_f64_lossless(bytes, &self.data_type()).map(Some)
     }
 }
 
@@ -358,6 +727,52 @@ pub fn nodata_bytes_to_f64(bytes: &[u8], dt: &BandDataType) -> Result<f64, Arrow
     }
 }
 
+/// Convert raw nodata bytes to f64, erroring on lossy conversion.
+///
+/// Like [`nodata_bytes_to_f64`] but rejects 64-bit integer values whose
+/// magnitude exceeds 2^53, since they can't round-trip through `f64`.
+/// Callers that interpret nodata as a sentinel (e.g. UDFs that compare
+/// pixel == nodata) should prefer this over the lossy variant — a rounded
+/// `0xFFFF_FFFF_FFFF_FFFE` sentinel can silently collide with a real
+/// pixel value.
+pub fn nodata_bytes_to_f64_lossless(bytes: &[u8], dt: &BandDataType) -> Result<f64, ArrowError> {
+    match dt {
+        BandDataType::UInt64 => {
+            let arr: [u8; 8] = bytes.try_into().map_err(|_| {
+                ArrowError::InvalidArgumentError(format!(
+                    "Invalid nodata byte length for UInt64: expected 8, got {}",
+                    bytes.len()
+                ))
+            })?;
+            let v = u64::from_le_bytes(arr);
+            if v > (1u64 << 53) {
+                return Err(ArrowError::InvalidArgumentError(format!(
+                    "UInt64 nodata value {v} cannot be represented exactly as f64 \
+                     (magnitude > 2^53); use the raw nodata bytes instead"
+                )));
+            }
+            Ok(v as f64)
+        }
+        BandDataType::Int64 => {
+            let arr: [u8; 8] = bytes.try_into().map_err(|_| {
+                ArrowError::InvalidArgumentError(format!(
+                    "Invalid nodata byte length for Int64: expected 8, got {}",
+                    bytes.len()
+                ))
+            })?;
+            let v = i64::from_le_bytes(arr);
+            if v.unsigned_abs() > (1u64 << 53) {
+                return Err(ArrowError::InvalidArgumentError(format!(
+                    "Int64 nodata value {v} cannot be represented exactly as f64 \
+                     (magnitude > 2^53); use the raw nodata bytes instead"
+                )));
+            }
+            Ok(v as f64)
+        }
+        _ => nodata_bytes_to_f64(bytes, dt),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -405,6 +820,75 @@ mod tests {
         let val = nodata_bytes_to_f64(&bytes, &BandDataType::Int64).unwrap();
         assert_eq!(val, 9007199254740992.0_f64);
         assert_ne!(val as i64, big);
+    }
+
+    #[test]
+    fn test_nodata_bytes_to_f64_lossless_int64_within_mantissa() {
+        // Boundary: 2^53 is the largest magnitude that round-trips exactly.
+        let safe = 1i64 << 53;
+        let val = nodata_bytes_to_f64_lossless(&safe.to_le_bytes(), &BandDataType::Int64).unwrap();
+        assert_eq!(val as i64, safe);
+
+        let neg_safe = -(1i64 << 53);
+        let val =
+            nodata_bytes_to_f64_lossless(&neg_safe.to_le_bytes(), &BandDataType::Int64).unwrap();
+        assert_eq!(val as i64, neg_safe);
+    }
+
+    #[test]
+    fn test_nodata_bytes_to_f64_lossless_int64_errors_above_mantissa() {
+        let big = (1i64 << 53) + 1;
+        let err =
+            nodata_bytes_to_f64_lossless(&big.to_le_bytes(), &BandDataType::Int64).unwrap_err();
+        assert!(
+            err.to_string().contains("Int64 nodata value"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_nodata_bytes_to_f64_lossless_uint64_sentinel_errors() {
+        // The common sentinel 0xFFFF_FFFF_FFFF_FFFF is exactly the case the
+        // review flagged: lossy variant silently rounds to a value that can
+        // collide with a real pixel; lossless variant errors.
+        let sentinel = u64::MAX;
+        let err = nodata_bytes_to_f64_lossless(&sentinel.to_le_bytes(), &BandDataType::UInt64)
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("UInt64 nodata value"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_nodata_bytes_to_f64_lossless_delegates_for_smaller_types() {
+        // Non-64-bit types pass through to nodata_bytes_to_f64 unchanged.
+        let val = nodata_bytes_to_f64_lossless(&[42], &BandDataType::UInt8).unwrap();
+        assert_eq!(val, 42.0);
+        let val = nodata_bytes_to_f64_lossless(&[0xFE], &BandDataType::Int8).unwrap();
+        assert_eq!(val, -2.0);
+    }
+
+    #[test]
+    fn test_split_outdb_band_fragment_with_band() {
+        let (base, n) = split_outdb_band_fragment("s3://bucket/file.tif#band=42");
+        assert_eq!(base, "s3://bucket/file.tif");
+        assert_eq!(n, 42);
+    }
+
+    #[test]
+    fn test_split_outdb_band_fragment_without_band_defaults_to_1() {
+        let (base, n) = split_outdb_band_fragment("s3://bucket/file.tif");
+        assert_eq!(base, "s3://bucket/file.tif");
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn test_split_outdb_band_fragment_malformed_fragment_defaults_to_1() {
+        // `#band=abc` is malformed; treat the whole string as the base URL.
+        let (base, n) = split_outdb_band_fragment("s3://bucket/file.tif#band=abc");
+        assert_eq!(base, "s3://bucket/file.tif#band=abc");
+        assert_eq!(n, 1);
     }
 
     fn ve(source_axis: i64, start: i64, step: i64, steps: i64) -> ViewEntry {

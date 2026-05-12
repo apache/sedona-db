@@ -125,10 +125,12 @@ impl<'a> BandRef for BandRefImpl<'a> {
                     .to_string(),
             ));
         }
+        // shape and strides are owned by NdBuffer (see its doc comment).
+        // Cloning here is cheap — both vecs are O(ndim), a handful of values.
         Ok(NdBuffer {
             buffer: self.data_array.value(self.band_row),
-            shape: &self.visible_shape,
-            strides: &self.byte_strides,
+            shape: self.visible_shape.clone(),
+            strides: self.byte_strides.clone(),
             offset: self.byte_offset,
             data_type: self.data_type,
         })
@@ -556,6 +558,7 @@ impl<'a> RasterStructArray<'a> {
 mod tests {
     use super::*;
     use crate::builder::RasterBuilder;
+    use crate::traits::RasterRefBandsExt;
     use arrow_array::{ArrayRef, ListArray, StructArray, UInt32Array, UInt64Array};
     use arrow_buffer::{OffsetBuffer, ScalarBuffer};
     use arrow_schema::{DataType, Fields};
@@ -570,10 +573,10 @@ mod tests {
         let mut builder = RasterBuilder::new(1);
         let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
         builder
-            .start_raster(&transform, &["x"], &[3], None)
+            .start_raster_nd(&transform, &["x"], &[3], None)
             .unwrap();
         builder
-            .start_band(None, &["x"], &[3], BandDataType::UInt8, None, None, None)
+            .start_band_nd(None, &["x"], &[3], BandDataType::UInt8, None, None, None)
             .unwrap();
         builder.band_data_writer().append_value(vec![0u8, 1, 2]);
         builder.finish_band().unwrap();
@@ -674,10 +677,10 @@ mod tests {
         let mut builder = RasterBuilder::new(1);
         let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
         builder
-            .start_raster(&transform, &["x", "y"], &[3, 2], None)
+            .start_raster_nd(&transform, &["x", "y"], &[3, 2], None)
             .unwrap();
         builder
-            .start_band(
+            .start_band_nd(
                 Some("a"),
                 &["y", "x"],
                 &[2, 3],
@@ -690,7 +693,7 @@ mod tests {
         builder.band_data_writer().append_value(vec![0u8; 12]);
         builder.finish_band().unwrap();
         builder
-            .start_band(
+            .start_band_nd(
                 Some("b"),
                 &["y", "x"],
                 &[2, 3],
@@ -731,6 +734,39 @@ mod tests {
         assert_eq!(band0.outdb_uri(), Some("s3://bucket/a.tif"));
         assert_eq!(band0.outdb_format(), Some("GTiff"));
         assert_eq!(band0.nodata(), Some(&[0xFFu8, 0xFE][..]));
+
+        // bands() view: 1-based band(N), len, is_empty, iter — same shape as
+        // pre-N-D callers expect. Exercise via the concrete type and via a
+        // `&dyn RasterRef` to confirm both dispatch paths work.
+        let bands = r.bands();
+        assert_eq!(bands.len(), 2);
+        assert!(!bands.is_empty());
+        assert_eq!(bands.band(1).unwrap().data_type(), BandDataType::UInt16);
+        assert_eq!(bands.band(2).unwrap().data_type(), BandDataType::Float32);
+        assert!(bands.band(0).is_err()); // 0 is invalid (1-based)
+        assert!(bands.band(3).is_err()); // out of range
+        assert_eq!(bands.iter().count(), 2);
+        let dyn_r: &dyn RasterRef = &r;
+        assert_eq!(dyn_r.bands().len(), 2);
+
+        // metadata() shim: concrete RasterMetadata/BandMetadata values.
+        let m = r.metadata();
+        assert_eq!(m.width(), 3);
+        assert_eq!(m.height(), 2);
+        assert_eq!(m.upper_left_x(), 0.0);
+        assert_eq!(m.scale_x(), 1.0);
+        let b0 = r.band(0).unwrap();
+        let bm0 = b0.metadata();
+        assert_eq!(bm0.data_type().unwrap(), BandDataType::UInt16);
+        assert_eq!(
+            bm0.storage_type().unwrap(),
+            sedona_schema::raster::StorageType::InDb
+        );
+        assert_eq!(bm0.nodata_value(), Some(&[0xFFu8, 0xFE][..]));
+        // Band 0 is InDb (has bytes), so outdb_* are hidden via the shim
+        // even though the row carries an outdb_uri hint.
+        assert!(bm0.outdb_url().is_none());
+        assert!(bm0.outdb_band_id().is_none());
     }
 
     // ---- Important #9: multi-band, multi-raster identity ----
@@ -746,20 +782,20 @@ mod tests {
 
         // Raster 0: three identity bands.
         builder
-            .start_raster(&transform, &["x"], &[3], None)
+            .start_raster_nd(&transform, &["x"], &[3], None)
             .unwrap();
         builder
-            .start_band(None, &["x"], &[3], BandDataType::UInt8, None, None, None)
+            .start_band_nd(None, &["x"], &[3], BandDataType::UInt8, None, None, None)
             .unwrap();
         builder.band_data_writer().append_value(vec![10u8, 20, 30]);
         builder.finish_band().unwrap();
         builder
-            .start_band(None, &["x"], &[3], BandDataType::UInt8, None, None, None)
+            .start_band_nd(None, &["x"], &[3], BandDataType::UInt8, None, None, None)
             .unwrap();
         builder.band_data_writer().append_value(vec![40u8, 50, 60]);
         builder.finish_band().unwrap();
         builder
-            .start_band(None, &["x"], &[3], BandDataType::UInt8, None, None, None)
+            .start_band_nd(None, &["x"], &[3], BandDataType::UInt8, None, None, None)
             .unwrap();
         builder
             .band_data_writer()
@@ -769,17 +805,17 @@ mod tests {
 
         // Raster 1: two identity bands of a different shape.
         builder
-            .start_raster(&transform, &["x"], &[4], None)
+            .start_raster_nd(&transform, &["x"], &[4], None)
             .unwrap();
         builder
-            .start_band(None, &["x"], &[4], BandDataType::UInt8, None, None, None)
+            .start_band_nd(None, &["x"], &[4], BandDataType::UInt8, None, None, None)
             .unwrap();
         builder
             .band_data_writer()
             .append_value(vec![42u8, 43, 44, 45]);
         builder.finish_band().unwrap();
         builder
-            .start_band(None, &["x"], &[4], BandDataType::UInt8, None, None, None)
+            .start_band_nd(None, &["x"], &[4], BandDataType::UInt8, None, None, None)
             .unwrap();
         builder.band_data_writer().append_value(vec![1u8, 2, 3, 4]);
         builder.finish_band().unwrap();
@@ -837,10 +873,10 @@ mod tests {
         let mut builder = RasterBuilder::new(2);
         let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
         builder
-            .start_raster(&transform, &["x"], &[3], None)
+            .start_raster_nd(&transform, &["x"], &[3], None)
             .unwrap();
         builder
-            .start_band(
+            .start_band_nd(
                 Some("a"),
                 &["x"],
                 &[3],

@@ -31,25 +31,52 @@ use sedona_schema::raster::RasterSchema;
 
 use arrow_schema::DataType;
 
-/// Builder for constructing N-D raster arrays.
+/// Builder for constructing raster arrays with zero-copy band data writing
 ///
-/// # Usage
+/// Required steps to build a raster:
+/// 1. Create a RasterBuilder with a specified capacity
+/// 2. For each raster to add:
+///    - Call `start_raster` with the appropriate metadata, CRS
+///    - For each band in the raster:
+///       - Call `start_band` with the band metadata
+///       - Use `band_data_writer` to get a BinaryViewBuilder and write the band data
+///       - Call `finish_band` to complete the band
+///    - Call `finish_raster` to complete the raster
+/// 3. After all rasters are added, call `finish` to get the final StructArray
 ///
+/// Example usage:
 /// ```
+/// use sedona_raster::traits::{RasterMetadata, BandMetadata};
+/// use sedona_schema::raster::{StorageType, BandDataType};
 /// use sedona_raster::builder::RasterBuilder;
-/// use sedona_schema::raster::BandDataType;
 ///
 /// let mut builder = RasterBuilder::new(1);
+/// let metadata = RasterMetadata {
+///     width: 100, height: 100,
+///     upperleft_x: 0.0, upperleft_y: 0.0,
+///     scale_x: 1.0, scale_y: -1.0,
+///     skew_x: 0.0, skew_y: 0.0,
+/// };
+/// // Start a raster from RasterMetadata struct
+/// builder.start_raster(&metadata, Some("EPSG:4326")).unwrap();
 ///
-/// // 2D raster convenience: sets transform, spatial_dims=["x","y"], spatial_shape=[w,h]
-/// builder.start_raster_2d(100, 100, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, Some("EPSG:4326")).unwrap();
-///
-/// // 2D band convenience: sets dim_names=["y","x"], shape=[h,w], contiguous strides
-/// builder.start_band_2d(BandDataType::UInt8, Some(&[0u8])).unwrap();
-/// builder.band_data_writer().append_value(&vec![0u8; 10000]);
+/// // Add a band:
+/// let band_metadata = BandMetadata {
+///     nodata_value: Some(vec![0u8]),
+///     storage_type: StorageType::InDb,
+///     datatype: BandDataType::UInt8,
+///     outdb_url: None,
+///     outdb_band_id: None,
+/// };
+/// builder.start_band(band_metadata).unwrap();
+/// let band_writer = builder.band_data_writer();
+/// band_writer.append_value(&vec![/* band data bytes */]);
 /// builder.finish_band().unwrap();
+///
+/// // Finish the raster
 /// builder.finish_raster().unwrap();
 ///
+/// // Get the final StructArray
 /// let raster_array = builder.finish().unwrap();
 /// ```
 pub struct RasterBuilder {
@@ -159,7 +186,7 @@ impl RasterBuilder {
     /// length 2, e.g. `["x","y"]`). `spatial_shape` gives their sizes in the
     /// same order. Every band added to this raster must contain each name in
     /// `spatial_dims` within its own `dim_names`, with matching size.
-    pub fn start_raster(
+    pub fn start_raster_nd(
         &mut self,
         transform: &[f64; 6],
         spatial_dims: &[&str],
@@ -206,7 +233,7 @@ impl RasterBuilder {
         self.current_raster_bands.clear();
         // Preserve legacy current_width/current_height for start_band_2d (set
         // by start_raster_2d). Callers using this direct entry point drive
-        // their own shapes via start_band.
+        // their own shapes via start_band_nd.
         self.current_width = 0;
         self.current_height = 0;
 
@@ -216,7 +243,10 @@ impl RasterBuilder {
     /// Convenience: start a 2D raster with the legacy 8-parameter interface.
     ///
     /// Sets `spatial_dims=["x","y"]`, `spatial_shape=[width, height]`, and
-    /// builds the 6-element GDAL transform from the individual parameters.
+    /// Build the 6-element GDAL transform from the individual parameters
+    /// and start a 2-D raster. The N-D entry point is
+    /// [`Self::start_raster_nd`]; the main-compatible metadata-taking entry
+    /// is [`Self::start_raster_2d`].
     #[allow(clippy::too_many_arguments)]
     pub fn start_raster_2d(
         &mut self,
@@ -231,10 +261,31 @@ impl RasterBuilder {
         crs: Option<&str>,
     ) -> Result<(), ArrowError> {
         let transform = [origin_x, scale_x, skew_x, origin_y, skew_y, scale_y];
-        self.start_raster(&transform, &["x", "y"], &[width as i64, height as i64], crs)?;
+        self.start_raster_nd(&transform, &["x", "y"], &[width as i64, height as i64], crs)?;
         self.current_width = width;
         self.current_height = height;
         Ok(())
+    }
+
+    /// Start a 2-D raster from a `&dyn MetadataRef`. Matches the pre-N-D
+    /// signature so callers from before the refactor keep compiling without
+    /// changing argument lists.
+    pub fn start_raster(
+        &mut self,
+        metadata: &dyn crate::traits::MetadataRef,
+        crs: Option<&str>,
+    ) -> Result<(), ArrowError> {
+        self.start_raster_2d(
+            metadata.width(),
+            metadata.height(),
+            metadata.upper_left_x(),
+            metadata.upper_left_y(),
+            metadata.scale_x(),
+            metadata.scale_y(),
+            metadata.skew_x(),
+            metadata.skew_y(),
+            crs,
+        )
     }
 
     /// Start a new band with explicit N-D parameters.
@@ -245,7 +296,7 @@ impl RasterBuilder {
     /// `"zarr"`). A null `outdb_format` means the band is in-memory — the
     /// band's `data` buffer is authoritative.
     #[allow(clippy::too_many_arguments)]
-    pub fn start_band(
+    pub fn start_band_nd(
         &mut self,
         name: Option<&str>,
         dim_names: &[&str],
@@ -257,12 +308,12 @@ impl RasterBuilder {
     ) -> Result<(), ArrowError> {
         if dim_names.is_empty() {
             return Err(ArrowError::InvalidArgumentError(
-                "start_band: 0-dimensional bands are not supported".into(),
+                "start_band_nd: 0-dimensional bands are not supported".into(),
             ));
         }
         if dim_names.len() != shape.len() {
             return Err(ArrowError::InvalidArgumentError(format!(
-                "start_band: dim_names ({}) and shape ({}) must have the same length",
+                "start_band_nd: dim_names ({}) and shape ({}) must have the same length",
                 dim_names.len(),
                 shape.len(),
             )));
@@ -328,7 +379,8 @@ impl RasterBuilder {
 
     /// Convenience: start a 2D band with `dim_names=["y","x"]` and `shape=[height, width]`.
     ///
-    /// Must be called after `start_raster_2d` which sets the current width/height.
+    /// Must be called after `start_raster_2d` / `start_raster_2d` which sets
+    /// the current width/height.
     pub fn start_band_2d(
         &mut self,
         data_type: BandDataType,
@@ -339,13 +391,40 @@ impl RasterBuilder {
                 "start_band_2d requires prior start_raster_2d (width and height are 0)".into(),
             ));
         }
-        self.start_band(
+        self.start_band_nd(
             None,
             &["y", "x"],
             &[self.current_height, self.current_width],
             data_type,
             nodata,
             None,
+            None,
+        )
+    }
+
+    /// Start a 2-D band from a concrete [`BandMetadata`] struct. Matches
+    /// the pre-N-D signature so callers from before the refactor keep
+    /// compiling. For OutDb bands the `outdb_url` + `outdb_band_id` are
+    /// recombined into the SedonaDB `<url>#band=N` URI convention.
+    pub fn start_band(&mut self, metadata: crate::traits::BandMetadata) -> Result<(), ArrowError> {
+        if self.current_width == 0 && self.current_height == 0 {
+            return Err(ArrowError::InvalidArgumentError(
+                "start_band requires prior start_raster / start_raster_2d (width and height are 0)"
+                    .into(),
+            ));
+        }
+        let outdb_uri = match (metadata.outdb_url.as_deref(), metadata.outdb_band_id) {
+            (Some(url), Some(band_id)) => Some(format!("{url}#band={band_id}")),
+            (Some(url), None) => Some(url.to_string()),
+            _ => None,
+        };
+        self.start_band_nd(
+            None,
+            &["y", "x"],
+            &[self.current_height, self.current_width],
+            metadata.datatype,
+            metadata.nodata_value.as_deref(),
+            outdb_uri.as_deref(),
             None,
         )
     }
@@ -357,13 +436,13 @@ impl RasterBuilder {
 
     /// Finish writing the current band.
     ///
-    /// Validates that exactly one data value was appended since `start_band()`.
+    /// Validates that exactly one data value was appended since `start_band_nd()`.
     pub fn finish_band(&mut self) -> Result<(), ArrowError> {
         let current_count = self.band_data.len();
         if current_count != self.band_data_count_at_start + 1 {
             return Err(ArrowError::InvalidArgumentError(
                 format!(
-                    "Expected exactly one band data value per band, but got {} appended since start_band()",
+                    "Expected exactly one band data value per band, but got {} appended since start_band_nd()",
                     current_count - self.band_data_count_at_start
                 ),
             ));
@@ -373,7 +452,7 @@ impl RasterBuilder {
 
     /// Finish all bands for the current raster.
     ///
-    /// Strictly validates every band added since `start_raster`: each name in
+    /// Strictly validates every band added since `start_raster_nd`: each name in
     /// the top-level `spatial_dims` must appear in the band's own `dim_names`
     /// with a size matching the corresponding entry in `spatial_shape`.
     pub fn finish_raster(&mut self) -> Result<(), ArrowError> {
@@ -606,6 +685,12 @@ mod tests {
     use super::*;
     use crate::array::RasterStructArray;
     use crate::traits::RasterRef;
+    use arrow_array::RecordBatch;
+    use arrow_ipc::reader::StreamReader;
+    use arrow_ipc::writer::StreamWriter;
+    use arrow_schema::Schema;
+    use std::borrow::Cow;
+    use std::io::Cursor;
 
     #[test]
     fn test_roundtrip_2d_raster() {
@@ -635,8 +720,8 @@ mod tests {
         assert_eq!(rasters.len(), 1);
 
         let r = rasters.get(0).unwrap();
-        assert_eq!(r.width(), Some(10));
-        assert_eq!(r.height(), Some(20));
+        assert_eq!(r.width().unwrap(), 10);
+        assert_eq!(r.height().unwrap(), 20);
         assert_eq!(r.transform(), &[100.0, 1.0, 0.25, 200.0, 0.5, -2.0]);
         assert_eq!(r.x_dim(), "x");
         assert_eq!(r.y_dim(), "y");
@@ -716,12 +801,12 @@ mod tests {
         let mut builder = RasterBuilder::new(1);
         let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
         builder
-            .start_raster(&transform, &["x", "y"], &[5, 4], None)
+            .start_raster_nd(&transform, &["x", "y"], &[5, 4], None)
             .unwrap();
 
         // 3D band: [time=3, y=4, x=5]
         builder
-            .start_band(
+            .start_band_nd(
                 Some("temperature"),
                 &["time", "y", "x"],
                 &[3, 4, 5],
@@ -762,7 +847,7 @@ mod tests {
         let mut builder = RasterBuilder::new(1);
         let transform = [10.0, 0.01, 0.0, 50.0, 0.0, -0.01];
         builder
-            .start_raster(
+            .start_raster_nd(
                 &transform,
                 &["longitude", "latitude"],
                 &[360, 180],
@@ -770,7 +855,7 @@ mod tests {
             )
             .unwrap();
         builder
-            .start_band(
+            .start_band_nd(
                 Some("sst"),
                 &["latitude", "longitude"],
                 &[180, 360],
@@ -792,8 +877,8 @@ mod tests {
         assert_eq!(r.x_dim(), "longitude");
         assert_eq!(r.y_dim(), "latitude");
         // width = size of "longitude" dim, height = size of "latitude" dim
-        assert_eq!(r.width(), Some(360));
-        assert_eq!(r.height(), Some(180));
+        assert_eq!(r.width().unwrap(), 360);
+        assert_eq!(r.height().unwrap(), 180);
     }
 
     #[test]
@@ -802,12 +887,12 @@ mod tests {
         let mut builder = RasterBuilder::new(1);
         let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
         builder
-            .start_raster(&transform, &["x", "y"], &[64, 64], None)
+            .start_raster_nd(&transform, &["x", "y"], &[64, 64], None)
             .unwrap();
 
         // Band 0: 3D [time=12, y=64, x=64]
         builder
-            .start_band(
+            .start_band_nd(
                 Some("temperature"),
                 &["time", "y", "x"],
                 &[12, 64, 64],
@@ -823,7 +908,7 @@ mod tests {
 
         // Band 1: 2D [y=64, x=64]
         builder
-            .start_band(
+            .start_band_nd(
                 Some("elevation"),
                 &["y", "x"],
                 &[64, 64],
@@ -844,8 +929,8 @@ mod tests {
 
         assert_eq!(r.num_bands(), 2);
         // width/height derived from band(0) which is 3D
-        assert_eq!(r.width(), Some(64));
-        assert_eq!(r.height(), Some(64));
+        assert_eq!(r.width().unwrap(), 64);
+        assert_eq!(r.height().unwrap(), 64);
 
         let b0 = r.band(0).unwrap();
         assert_eq!(b0.ndim(), 3);
@@ -865,10 +950,10 @@ mod tests {
         let mut builder = RasterBuilder::new(1);
         let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
         builder
-            .start_raster(&transform, &["x", "y"], &[32, 32], None)
+            .start_raster_nd(&transform, &["x", "y"], &[32, 32], None)
             .unwrap();
         builder
-            .start_band(
+            .start_band_nd(
                 None,
                 &["time", "pressure", "y", "x"],
                 &[6, 10, 32, 32],
@@ -901,8 +986,6 @@ mod tests {
 
     #[test]
     fn test_contiguous_data_is_borrowed() {
-        use std::borrow::Cow;
-
         let mut builder = RasterBuilder::new(1);
         builder
             .start_raster_2d(4, 4, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, None)
@@ -933,10 +1016,10 @@ mod tests {
 
         // Raster 0 — UInt8: element size = 1, shape [3, 4] → strides [4, 1]
         builder
-            .start_raster(&transform, &["x", "y"], &[4, 3], None)
+            .start_raster_nd(&transform, &["x", "y"], &[4, 3], None)
             .unwrap();
         builder
-            .start_band(
+            .start_band_nd(
                 None,
                 &["y", "x"],
                 &[3, 4],
@@ -952,10 +1035,10 @@ mod tests {
 
         // Raster 1 — Float64: element size = 8, shape [2, 3, 5] → strides [120, 40, 8]
         builder
-            .start_raster(&transform, &["x", "y"], &[5, 3], None)
+            .start_raster_nd(&transform, &["x", "y"], &[5, 3], None)
             .unwrap();
         builder
-            .start_band(
+            .start_band_nd(
                 None,
                 &["z", "y", "x"],
                 &[2, 3, 5],
@@ -974,10 +1057,10 @@ mod tests {
         // Raster 2 — UInt16: element size = 2, shape [10] → strides [2].
         // Only has an "x" dim, so declare spatial_dims=["x"].
         builder
-            .start_raster(&transform, &["x"], &[10], None)
+            .start_raster_nd(&transform, &["x"], &[10], None)
             .unwrap();
         builder
-            .start_band(None, &["x"], &[10], BandDataType::UInt16, None, None, None)
+            .start_band_nd(None, &["x"], &[10], BandDataType::UInt16, None, None, None)
             .unwrap();
         builder.band_data_writer().append_value(vec![0u8; 20]);
         builder.finish_band().unwrap();
@@ -1007,7 +1090,7 @@ mod tests {
         let mut builder = RasterBuilder::new(1);
         let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
         builder
-            .start_raster(&transform, &["x", "y"], &[64, 32], None)
+            .start_raster_nd(&transform, &["x", "y"], &[64, 32], None)
             .unwrap();
         builder.finish_raster().unwrap();
 
@@ -1016,8 +1099,8 @@ mod tests {
         let r = rasters.get(0).unwrap();
 
         assert_eq!(r.num_bands(), 0);
-        assert_eq!(r.width(), Some(64));
-        assert_eq!(r.height(), Some(32));
+        assert_eq!(r.width().unwrap(), 64);
+        assert_eq!(r.height().unwrap(), 32);
     }
 
     #[test]
@@ -1025,12 +1108,12 @@ mod tests {
         let mut builder = RasterBuilder::new(1);
         let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
         builder
-            .start_raster(&transform, &["x", "y"], &[4, 4], None)
+            .start_raster_nd(&transform, &["x", "y"], &[4, 4], None)
             .unwrap();
 
         // Named band
         builder
-            .start_band(
+            .start_band_nd(
                 Some("temperature"),
                 &["y", "x"],
                 &[4, 4],
@@ -1065,10 +1148,10 @@ mod tests {
         let mut builder = RasterBuilder::new(1);
         let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
         builder
-            .start_raster(&transform, &["longitude", "latitude"], &[360, 180], None)
+            .start_raster_nd(&transform, &["longitude", "latitude"], &[360, 180], None)
             .unwrap();
         builder
-            .start_band(
+            .start_band_nd(
                 None,
                 &["latitude", "longitude"],
                 &[180, 360],
@@ -1092,8 +1175,8 @@ mod tests {
         assert_eq!(r.spatial_shape(), &[360, 180]);
         assert_eq!(r.x_dim(), "longitude");
         assert_eq!(r.y_dim(), "latitude");
-        assert_eq!(r.width(), Some(360));
-        assert_eq!(r.height(), Some(180));
+        assert_eq!(r.width().unwrap(), 360);
+        assert_eq!(r.height().unwrap(), 180);
     }
 
     #[test]
@@ -1103,7 +1186,7 @@ mod tests {
         let mut builder = RasterBuilder::new(1);
         let transform = [10.0, 1.0, 0.0, 20.0, 0.0, -1.0];
         builder
-            .start_raster(&transform, &["x", "y"], &[128, 64], Some("EPSG:3857"))
+            .start_raster_nd(&transform, &["x", "y"], &[128, 64], Some("EPSG:3857"))
             .unwrap();
         builder.finish_raster().unwrap();
 
@@ -1114,8 +1197,8 @@ mod tests {
         assert_eq!(r.num_bands(), 0);
         assert_eq!(r.spatial_dims(), vec!["x", "y"]);
         assert_eq!(r.spatial_shape(), &[128, 64]);
-        assert_eq!(r.width(), Some(128));
-        assert_eq!(r.height(), Some(64));
+        assert_eq!(r.width().unwrap(), 128);
+        assert_eq!(r.height().unwrap(), 64);
         assert_eq!(r.crs(), Some("EPSG:3857"));
     }
 
@@ -1124,11 +1207,11 @@ mod tests {
         let mut builder = RasterBuilder::new(1);
         let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
         builder
-            .start_raster(&transform, &["x", "y"], &[4, 4], None)
+            .start_raster_nd(&transform, &["x", "y"], &[4, 4], None)
             .unwrap();
         // Band is missing "y" entirely.
         builder
-            .start_band(None, &["x"], &[4], BandDataType::UInt8, None, None, None)
+            .start_band_nd(None, &["x"], &[4], BandDataType::UInt8, None, None, None)
             .unwrap();
         builder.band_data_writer().append_value(vec![0u8; 4]);
         builder.finish_band().unwrap();
@@ -1143,13 +1226,13 @@ mod tests {
     #[test]
     fn test_start_band_rejects_zero_dim() {
         // 0-D bands carry no spatial extent and no caller has a use for
-        // them. start_band must reject an empty dim_names slice eagerly so
+        // them. start_band_nd must reject an empty dim_names slice eagerly so
         // the malformed band never reaches the buffer layer.
         let mut builder = RasterBuilder::new(1);
         let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
-        builder.start_raster(&transform, &[], &[], None).unwrap();
+        builder.start_raster_nd(&transform, &[], &[], None).unwrap();
         let err = builder
-            .start_band(None, &[], &[], BandDataType::UInt8, None, None, None)
+            .start_band_nd(None, &[], &[], BandDataType::UInt8, None, None, None)
             .unwrap_err();
         assert!(
             err.to_string().contains("0-dimensional"),
@@ -1162,15 +1245,13 @@ mod tests {
         // Canonical identity: the row's view list is null, and the read path
         // synthesises the identity view. Should still hand the underlying
         // bytes back without copying.
-        use std::borrow::Cow;
-
         let mut builder = RasterBuilder::new(1);
         let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
         builder
-            .start_raster(&transform, &["x", "y"], &[3, 2], None)
+            .start_raster_nd(&transform, &["x", "y"], &[3, 2], None)
             .unwrap();
         builder
-            .start_band(
+            .start_band_nd(
                 None,
                 &["y", "x"],
                 &[2, 3],
@@ -1213,10 +1294,10 @@ mod tests {
         let mut builder = RasterBuilder::new(1);
         let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
         builder
-            .start_raster(&transform, &["x", "y"], &[2, 2], None)
+            .start_raster_nd(&transform, &["x", "y"], &[2, 2], None)
             .unwrap();
         builder
-            .start_band(
+            .start_band_nd(
                 None,
                 &["y", "x"],
                 &[2, 2],
@@ -1258,11 +1339,11 @@ mod tests {
         let mut builder = RasterBuilder::new(1);
         let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
         builder
-            .start_raster(&transform, &["x", "y"], &[4, 4], None)
+            .start_raster_nd(&transform, &["x", "y"], &[4, 4], None)
             .unwrap();
         // Band has "x" and "y" but x-size disagrees with top-level shape.
         builder
-            .start_band(
+            .start_band_nd(
                 None,
                 &["y", "x"],
                 &[4, 8],
@@ -1285,24 +1366,19 @@ mod tests {
 
     #[test]
     fn test_view_null_round_trips_through_arrow_ipc() {
-        // Schema invariant: a band built via start_band serialises with a
+        // Schema invariant: a band built via start_band_nd serialises with a
         // null view row, and the null must survive an Arrow IPC round-trip.
         // If a future change accidentally writes a non-null empty list
         // instead, downstream readers (DuckDB, PyArrow, sedona-py) will
         // disagree about whether the view is identity.
-        use arrow_array::RecordBatch;
-        use arrow_ipc::reader::StreamReader;
-        use arrow_ipc::writer::StreamWriter;
-        use arrow_schema::Schema;
-        use std::io::Cursor;
 
         let mut builder = RasterBuilder::new(1);
         let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
         builder
-            .start_raster(&transform, &["x", "y"], &[3, 2], None)
+            .start_raster_nd(&transform, &["x", "y"], &[3, 2], None)
             .unwrap();
         builder
-            .start_band(
+            .start_band_nd(
                 None,
                 &["y", "x"],
                 &[2, 3],

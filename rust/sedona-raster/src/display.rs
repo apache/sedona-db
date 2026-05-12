@@ -18,7 +18,8 @@
 use std::fmt;
 
 use crate::affine_transformation::to_world_coordinate;
-use crate::traits::RasterRef;
+use crate::traits::{RasterRef, RasterRefBandsExt};
+use sedona_schema::raster::StorageType;
 
 /// Wrapper for formatting a raster reference as a human-readable string.
 ///
@@ -56,10 +57,12 @@ pub struct RasterDisplay<'a>(pub &'a dyn RasterRef);
 impl fmt::Display for RasterDisplay<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let raster = self.0;
+        let metadata = raster.metadata();
+        let bands = raster.bands();
 
-        let width = raster.width().unwrap_or(0);
-        let height = raster.height().unwrap_or(0);
-        let nbands = raster.num_bands();
+        let width = metadata.width();
+        let height = metadata.height();
+        let nbands = bands.len();
 
         // Compute axis-aligned bounding box from 4 corners in world coordinates.
         // This handles both skewed and non-skewed rasters correctly.
@@ -75,12 +78,13 @@ impl fmt::Display for RasterDisplay<'_> {
         let ymin = uly.min(ury).min(lry).min(lly);
         let ymax = uly.max(ury).max(lry).max(lly);
 
-        let t = raster.transform();
-        let skew_x = t[2];
-        let skew_y = t[4];
+        let skew_x = metadata.skew_x();
+        let skew_y = metadata.skew_y();
         let has_skew = skew_x != 0.0 || skew_y != 0.0;
 
-        let has_outdb = (0..nbands).any(|i| raster.band(i).is_some_and(|b| !b.is_indb()));
+        let has_outdb = bands
+            .iter()
+            .any(|band| matches!(band.metadata().storage_type(), Ok(StorageType::OutDbRef)));
 
         // Write: [WxH/nbands] @ [xmin ymin xmax ymax]
         write!(
@@ -88,7 +92,7 @@ impl fmt::Display for RasterDisplay<'_> {
             "[{width}x{height}/{nbands}] @ [{xmin} {ymin} {xmax} {ymax}]"
         )?;
 
-        // Conditionally append skew info
+        // Conditionally append skew info when the raster is rotated/skewed
         if has_skew {
             write!(f, " skew=({skew_x}, {skew_y})")?;
         }
@@ -146,6 +150,7 @@ mod tests {
 
     #[test]
     fn display_write_to_fmt_write() {
+        // Verify RasterDisplay works with any fmt::Write target (e.g., String)
         let rasters = generate_test_rasters(1, None).unwrap();
         let raster_array = RasterStructArray::new(&rasters);
         let raster = raster_array.get(0).unwrap();
