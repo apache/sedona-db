@@ -59,6 +59,13 @@ if "s2geography" not in sedonadb.__features__:
             111195.10117748393,
             id="point_distance_linestring_off",
         ),
+        # Point x linestring (point very close to north pole)
+        pytest.param(
+            "POINT (0 90)",
+            "LINESTRING (-90 80, 90 80)",
+            3.2132460550887776e-10,
+            id="point_distance_linestring_on_north_pole",
+        ),
         # Linestring x point (point on linestring)
         pytest.param(
             "LINESTRING (0 0, 0 1)",
@@ -296,6 +303,7 @@ def test_st_distance(eng, geom1, geom2, expected):
     eng.assert_query_result(
         f"SELECT ST_Distance({geog_or_null(geom1)}, {geog_or_null(geom2)})",
         expected,
+        numeric_epsilon=1e-15,
     )
 
 
@@ -559,13 +567,6 @@ def test_st_dwithin(eng, geom1, geom2, distance, expected):
             20015118.21194711,
             id="polygon_max_distance_polygon_poles_rev",
         ),
-        # Linestring x linestring (antipodal crossing)
-        pytest.param(
-            "LINESTRING (-90 -80, 90 -80)",
-            "LINESTRING (0 80, 180 80)",
-            20015118.022076216,
-            id="linestring_max_distance_linestring_poles",
-        ),
         # Linestring x polygon (antipodal crossing)
         pytest.param(
             "LINESTRING (-90 -80, 90 -80)",
@@ -649,10 +650,35 @@ def test_st_max_distance(eng, geom1, geom2, expected):
     eng.assert_query_result(
         f"SELECT ST_MaxDistance({geog_or_null(geom1)}, {geog_or_null(geom2)})",
         expected,
-        numeric_epsilon=1e-2,
+        numeric_epsilon=1e-15,
     )
 
 
+# Separate test for an antipodal linestring pair because we need a wider tolerance
+# for BigQuery here but it's an important case to capture
+@pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
+@pytest.mark.parametrize(
+    ("geom1", "geom2", "expected"),
+    [
+        # Linestring x linestring (antipodal crossing)
+        pytest.param(
+            "LINESTRING (-90 -80, 90 -80)",
+            "LINESTRING (0 80, 180 80)",
+            20015118.022076216,
+            id="linestring_max_distance_linestring_poles",
+        ),
+    ],
+)
+def test_st_max_distance_antipodal_linestring(eng, geom1, geom2, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_MaxDistance({geog_or_null(geom1)}, {geog_or_null(geom2)})",
+        expected,
+        numeric_epsilon=1e-8,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB])
 @pytest.mark.parametrize(
     ("geom1", "geom2", "expected"),
     [
@@ -707,8 +733,8 @@ def test_st_max_distance(eng, geom1, geom2, expected):
         ),
     ],
 )
-def test_st_distance_zm(geom1, geom2, expected):
-    eng = SedonaDB.create_or_skip()
+def test_st_distance_zm(eng, geom1, geom2, expected):
+    eng = eng.create_or_skip()
     eng.assert_query_result(
         f"SELECT ST_Distance({geog_or_null(geom1)}, {geog_or_null(geom2)})",
         expected,
@@ -716,6 +742,7 @@ def test_st_distance_zm(geom1, geom2, expected):
     )
 
 
+@pytest.mark.parametrize("eng", [SedonaDB])
 @pytest.mark.parametrize(
     ("geom1", "geom2", "expected"),
     [
@@ -742,8 +769,8 @@ def test_st_distance_zm(geom1, geom2, expected):
         ),
     ],
 )
-def test_st_max_distance_zm(geom1, geom2, expected):
-    eng = SedonaDB.create_or_skip()
+def test_st_max_distance_zm(eng, geom1, geom2, expected):
+    eng = eng.create_or_skip()
     eng.assert_query_result(
         f"SELECT ST_MaxDistance({geog_or_null(geom1)}, {geog_or_null(geom2)})",
         expected,

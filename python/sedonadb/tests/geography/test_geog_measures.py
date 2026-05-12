@@ -70,15 +70,8 @@ if "s2geography" not in sedonadb.__features__:
 )
 def test_st_area(eng, geog, expected):
     eng = eng.create_or_skip()
-    # Use reduced precision for PostGIS because it is calculating true ellipsoidal area
-    # and not the spherical approximation
-    if eng.name() == "postgis":
-        eps = 1e-2
-    else:
-        eps = 1e-15
-
     eng.assert_query_result(
-        f"SELECT ST_Area({geog_or_null(geog)})", expected, numeric_epsilon=eps
+        f"SELECT ST_Area({geog_or_null(geog)})", expected, numeric_epsilon=eng.geography_distance_epsilon()
     )
 
 
@@ -116,15 +109,8 @@ def test_st_area(eng, geog, expected):
 )
 def test_st_length(eng, geog, expected):
     eng = eng.create_or_skip()
-    # Use reduced precision for PostGIS because it is calculating true ellipsoidal length
-    # and not the spherical approximation
-    if eng.name() == "postgis":
-        eps = 1e-2
-    else:
-        eps = 1e-15
-
     eng.assert_query_result(
-        f"SELECT ST_Length({geog_or_null(geog)})", expected, numeric_epsilon=eps
+        f"SELECT ST_Length({geog_or_null(geog)})", expected, numeric_epsilon=eng.geography_distance_epsilon()
     )
 
 
@@ -186,15 +172,8 @@ def test_st_length_geometrycollection(eng, geog, expected):
 )
 def test_st_perimeter(eng, geog, expected):
     eng = eng.create_or_skip()
-    # Use reduced precision for PostGIS because it is calculating true ellipsoidal length
-    # and not the spherical approximation
-    if eng.name() == "postgis":
-        eps = 1e-2
-    else:
-        eps = 1e-15
-
     eng.assert_query_result(
-        f"SELECT ST_Perimeter({geog_or_null(geog)})", expected, numeric_epsilon=eps
+        f"SELECT ST_Perimeter({geog_or_null(geog)})", expected, numeric_epsilon=eng.geography_distance_epsilon()
     )
 
 
@@ -214,15 +193,8 @@ def test_st_perimeter(eng, geog, expected):
 )
 def test_st_perimeter_geometrycollection(eng, geog, expected):
     eng = eng.create_or_skip()
-    # Use reduced precision for PostGIS because it is calculating true ellipsoidal length
-    # and not the spherical approximation
-    if eng.name() == "postgis":
-        eps = 1e-2
-    else:
-        eps = 1e-15
-
     eng.assert_query_result(
-        f"SELECT ST_Perimeter({geog_or_null(geog)})", expected, numeric_epsilon=eps
+        f"SELECT ST_Perimeter({geog_or_null(geog)})", expected, numeric_epsilon=eng.geography_distance_epsilon()
     )
 
 
@@ -263,17 +235,10 @@ def test_st_perimeter_geometrycollection(eng, geog, expected):
 )
 def test_st_line_locate_point(eng, line, point, expected):
     eng = eng.create_or_skip()
-    # Use reduced precision for PostGIS because it is calculating true ellipsoidal length
-    # and not the spherical approximation
-    if eng.name() == "postgis":
-        eps = 1e-2
-    else:
-        eps = 1e-16
-
     eng.assert_query_result(
         f"SELECT ST_LineLocatePoint({geog_or_null(line)}, {geog_or_null(point)})",
         expected,
-        numeric_epsilon=eps,
+        numeric_epsilon=eng.geography_distance_epsilon(),
     )
 
 

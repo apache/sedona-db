@@ -55,6 +55,27 @@ if "s2geography" not in sedonadb.__features__:
             "POINT (0 0)",
             id="linestring_crossing",
         ),
+        # Linestring + Linestring: touching
+        pytest.param(
+            "LINESTRING (0 0, 0 10)",
+            "LINESTRING (0 10, 0 15)",
+            "POINT (0 10)",
+            id="linestring_touching",
+        ),
+        # Linestring + Polygon: touching
+        pytest.param(
+            "POLYGON ((0 0, 5 0, 5 5, 0 5, 0 0))",
+            "LINESTRING (0 0, -10 0)",
+            "POINT (0 0)",
+            id="linestring_touching_polygon",
+        ),
+        # Linestring + Polygon: overlapping
+        pytest.param(
+            "POLYGON ((0 -5, 5 0, 0 5, 0 -5))",
+            "LINESTRING (2.5 0, -10 0)",
+            "LINESTRING (2.5 0, 0 0)",
+            id="linestring_overlapping_polygon",
+        ),
         # Polygon + Polygon: same
         pytest.param(
             "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))",
@@ -89,6 +110,13 @@ if "s2geography" not in sedonadb.__features__:
             "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))",
             "LINESTRING (2 5, 8 5)",
             id="linestring_inside_polygon",
+        ),
+        # Polygon + Polygon: overlapping
+        pytest.param(
+            "POLYGON ((0 -5, 5 -5, 5 5, 0 5, 0 -5))",
+            "POLYGON ((-2.5 -2.5, 2.5 -2.5, 2.5 2.5, -2.5 2.5, -2.5 -2.5))",
+            "POLYGON ((0 2.502379, 0 -2.502379, 2.5 -2.5, 2.5 2.5, 0 2.502379))",
+            id="polygon_overlapping_polygon",
         ),
     ],
 )
@@ -250,6 +278,48 @@ def test_st_intersection_returns_empty_point(eng, geom1, geom2, expected):
             "POLYGON ((0 0, 5 0, 5 5, 0 5, 0 0))",
             id="polygon_disjoint",
         ),
+        # Linestring + Linestring: touching
+        pytest.param(
+            "LINESTRING (0 0, 0 10)",
+            "LINESTRING (0 10, 0 15)",
+            "LINESTRING (0 0, 0 10)",
+            id="linestring_touching",
+        ),
+        # Polygon - Linestring: touching
+        pytest.param(
+            "POLYGON ((0 0, 5 0, 5 5, 0 5, 0 0))",
+            "LINESTRING (0 0, -10 0)",
+            "POLYGON ((0 0, 5 0, 5 5, 0 5, 0 0))",
+            id="linestring_touching_polygon",
+        ),
+        # Polygon - Linestring: overlapping edge
+        pytest.param(
+            "POLYGON ((0 0, 5 0, 5 5, 0 5, 0 0))",
+            "LINESTRING (2.5 0, -10 0)",
+            "POLYGON ((0 0, 2.5 0, 5 0, 5 5, 0 5, 0 0))",
+            id="polygon_overlapping_linestring_edge",
+        ),
+        # Polygon - Linestring: overlapping
+        pytest.param(
+            "POLYGON ((0 -5, 5 0, 0 5, 0 -5))",
+            "LINESTRING (2.5 0, -10 0)",
+            "POLYGON ((0 -5, 5 0, 0 5, 0 0, 0 -5))",
+            id="polygon_overlapping_linestring",
+        ),
+        # Linestring - Polygon: overlapping
+        pytest.param(
+            "LINESTRING (2.5 0, -10 0)",
+            "POLYGON ((0 -5, 5 0, 0 5, 0 -5))",
+            "LINESTRING (0 0, -10 0)",
+            id="linestring_overlapping_polygon",
+        ),
+        # Polygon + Polygon: overlapping
+        pytest.param(
+            "POLYGON ((0 -5, 5 -5, 5 5, 0 5, 0 -5))",
+            "POLYGON ((-2.5 -2.5, 2.5 -2.5, 2.5 2.5, -2.5 2.5, -2.5 -2.5))",
+            "POLYGON ((2.5 2.5, 2.5 -2.5, 0 -2.502379, 0 -5, 5 -5, 5 5, 0 5, 0 2.502379, 2.5 2.5))",
+            id="polygon_overlapping_polygon",
+        ),
     ],
 )
 def test_st_difference(eng, geom1, geom2, expected):
@@ -385,6 +455,41 @@ def test_st_difference_very_far(eng, geom1, geom2, expected):
             "LINESTRING (0 0, 10 0)",
             id="linestring_same",
         ),
+        # Linestring + Linestring: touching
+        pytest.param(
+            "LINESTRING (0 0, 0 10)",
+            "LINESTRING (0 10, 0 15)",
+            "LINESTRING (0 0, 0 10, 0 15)",
+            id="linestring_touching",
+        ),
+        # Linestring + Linestring: overlap
+        pytest.param(
+            "LINESTRING (0 0, 0 10)",
+            "LINESTRING (0 5, 0 15)",
+            "LINESTRING (0 0, 0 5, 0 10, 0 15)",
+            id="linestring_overlap",
+        ),
+        # Linestring + Polygon: touching
+        pytest.param(
+            "POLYGON ((0 0, 5 0, 5 5, 0 5, 0 0))",
+            "LINESTRING (0 0, -10 0)",
+            "GEOMETRYCOLLECTION (LINESTRING (0 0, -10 0), POLYGON ((0 0, 5 0, 5 5, 0 5, 0 0)))",
+            id="linestring_touching_polygon",
+        ),
+        # Linestring + Polygon: overlapping edge
+        pytest.param(
+            "POLYGON ((0 0, 5 0, 5 5, 0 5, 0 0))",
+            "LINESTRING (2.5 0, -10 0)",
+            "GEOMETRYCOLLECTION (LINESTRING (0 0, -10 0), POLYGON ((0 0, 2.5 0, 5 0, 5 5, 0 5, 0 0)))",
+            id="linestring_overlapping_polygon_edge",
+        ),
+        # Linestring + Polygon: overlapping
+        pytest.param(
+            "POLYGON ((0 -5, 5 0, 0 5, 0 -5))",
+            "LINESTRING (2.5 0, -10 0)",
+            "GEOMETRYCOLLECTION (LINESTRING (0 0, -10 0), POLYGON ((0 -5, 5 0, 0 5, 0 0, 0 -5)))",
+            id="linestring_overlapping_polygon",
+        ),
         # Polygon + Polygon: disjoint
         pytest.param(
             "POLYGON ((0 0, 5 0, 5 5, 0 5, 0 0))",
@@ -399,6 +504,13 @@ def test_st_difference_very_far(eng, geom1, geom2, expected):
             "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))",
             "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))",
             id="polygon_same",
+        ),
+        # Polygon + Polygon: overlapping
+        pytest.param(
+            "POLYGON ((0 -5, 5 -5, 5 5, 0 5, 0 -5))",
+            "POLYGON ((-2.5 -2.5, 2.5 -2.5, 2.5 2.5, -2.5 2.5, -2.5 -2.5))",
+            "POLYGON ((-2.5 -2.5, 0 -2.502379, 0 -5, 5 -5, 5 5, 0 5, 0 2.502379, -2.5 2.5, -2.5 -2.5))",
+            id="polygon_overlapping_polygon",
         ),
     ],
 )
@@ -487,6 +599,48 @@ def test_st_union_empties(eng, geom1, geom2, expected):
             "MULTIPOLYGON (((0 0, 5 0, 5 5, 0 5, 0 0)), "
             "((10 10, 15 10, 15 15, 10 15, 10 10)))",
             id="polygon_disjoint",
+        ),
+        # Linestring + Linestring: touching
+        pytest.param(
+            "LINESTRING (0 0, 0 10)",
+            "LINESTRING (0 10, 0 15)",
+            "LINESTRING (0 0, 0 10, 0 15)",
+            id="linestring_touching",
+        ),
+        # Linestring + Linestring: overlap
+        pytest.param(
+            "LINESTRING (0 0, 0 10)",
+            "LINESTRING (0 5, 0 15)",
+            "LINESTRING (0 0, 0 5, 0 10, 0 15)",
+            id="linestring_overlap",
+        ),
+        # Linestring + Polygon: touching
+        pytest.param(
+            "POLYGON ((0 0, 5 0, 5 5, 0 5, 0 0))",
+            "LINESTRING (0 0, -10 0)",
+            "GEOMETRYCOLLECTION (LINESTRING (0 0, -10 0), POLYGON ((0 0, 5 0, 5 5, 0 5, 0 0)))",
+            id="linestring_touching_polygon",
+        ),
+        # Linestring + Polygon: overlapping edge
+        pytest.param(
+            "POLYGON ((0 0, 5 0, 5 5, 0 5, 0 0))",
+            "LINESTRING (2.5 0, -10 0)",
+            "GEOMETRYCOLLECTION (LINESTRING (0 0, -10 0), POLYGON ((0 0, 2.5 0, 5 0, 5 5, 0 5, 0 0)))",
+            id="linestring_overlapping_polygon_edge",
+        ),
+        # Linestring + Polygon: overlapping
+        pytest.param(
+            "POLYGON ((0 -5, 5 0, 0 5, 0 -5))",
+            "LINESTRING (2.5 0, -10 0)",
+            "GEOMETRYCOLLECTION (LINESTRING (0 0, -10 0), POLYGON ((0 -5, 5 0, 0 5, 0 0, 0 -5)))",
+            id="linestring_overlapping_polygon",
+        ),
+        # Polygon + Polygon: overlapping
+        pytest.param(
+            "POLYGON ((0 -5, 5 -5, 5 5, 0 5, 0 -5))",
+            "POLYGON ((-2.5 -2.5, 2.5 -2.5, 2.5 2.5, -2.5 2.5, -2.5 -2.5))",
+            "MULTIPOLYGON (((2.5 2.5, 2.5 -2.5, 0 -2.502379, 0 -5, 5 -5, 5 5, 0 5, 0 2.502379, 2.5 2.5)), ((-2.5 -2.5, 0 -2.502379, 0 2.502379, -2.5 2.5, -2.5 -2.5)))",
+            id="polygon_overlapping_polygon",
         ),
     ],
 )

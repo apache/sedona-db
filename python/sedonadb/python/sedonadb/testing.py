@@ -125,6 +125,10 @@ class DBEngine:
                 f"Failed to create engine tester {cls.name()}: {e}\n{cls.install_hint()}"
             )
 
+    def geography_distance_epsilon(self) -> float:
+        """Relative numeric_epsilon to use when comparing results to the SedonaDB value"""
+        return 1e-16
+
     def val_or_null(self, arg: Any) -> str:
         """Format SQL expression for a value or NULL"""
         return val_or_null(arg)
@@ -470,6 +474,12 @@ class PostGIS(DBEngine):
             "- Run `docker compose up postgis` to start a test PostGIS runtime"
         )
 
+    # Use reduced precision when comparing geography to SedonaDB asserted results
+    # because PostGIS uses an ellispoidal model and SedonaDB and BigQuery use
+    # spherical ones
+    def geography_distance_epsilon(self) -> float:
+        return 1e-2
+
     def val_or_null(self, arg):
         if isinstance(arg, bytes):
             return f"'\\x{arg.hex()}'::bytea"
@@ -755,6 +765,10 @@ class BigQuery(DBEngine):
             "- Run `gcloud auth application-default login` to authenticate\n"
             "- Set SEDONADB_BIGQUERY_TEST_PROJECT_ID to a valid BigQuery project identifier"
         )
+
+    # Use slightly reduced precision because BigQuery snaps vertices on input slightly
+    def geography_distance_epsilon(self) -> float:
+        return 1e-15
 
     def val_or_null(self, arg):
         if isinstance(arg, bytes):
