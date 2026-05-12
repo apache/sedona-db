@@ -41,6 +41,13 @@ if "s2geography" not in sedonadb.__features__:
             True,
             id="polygon_intersects_point",
         ),
+        # Point x wraparound polygon
+        pytest.param(
+            "POLYGON ((179 0, -179 0, 179 2, 179 0))",
+            "POINT (-180 0.25)",
+            True,
+            id="wraparound_polygon_intersects_point",
+        ),
         pytest.param(
             "POINT (0.25 0.25)",
             "POLYGON ((0 0, 2 0, 0 2, 0 0))",
@@ -266,6 +273,13 @@ def test_st_intersects(eng, geom1, geom2, expected):
             True,
             id="polygon_contains_point",
         ),
+        # Point x wraparound polygon
+        pytest.param(
+            "POLYGON ((179 0, -179 0, 179 2, 179 0))",
+            "POINT (-180 0.25)",
+            True,
+            id="wraparound_polygon_contains_point",
+        ),
         # Point does not contain anything
         pytest.param(
             "POINT (0.25 0.25)",
@@ -409,6 +423,13 @@ def test_st_contains(eng, geom1, geom2, expected):
             "POLYGON ((0 0, 2 0, 0 2, 0 0))",
             True,
             id="point_within_polygon",
+        ),
+        # Point within wraparound polygon
+        pytest.param(
+            "POLYGON ((179 0, -179 0, 179 2, 179 0))",
+            "POINT (-180 0.25)",
+            True,
+            id="point_within_wraparound_polygon",
         ),
         # Point not within polygon (outside)
         pytest.param(
