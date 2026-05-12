@@ -303,7 +303,7 @@ def test_st_distance(eng, geom1, geom2, expected):
     eng.assert_query_result(
         f"SELECT ST_Distance({geog_or_null(geom1)}, {geog_or_null(geom2)})",
         expected,
-        numeric_epsilon=1e-15,
+        numeric_epsilon=eng.geography_distance_epsilon(),
     )
 
 
@@ -650,7 +650,7 @@ def test_st_max_distance(eng, geom1, geom2, expected):
     eng.assert_query_result(
         f"SELECT ST_MaxDistance({geog_or_null(geom1)}, {geog_or_null(geom2)})",
         expected,
-        numeric_epsilon=1e-15,
+        numeric_epsilon=eng.geography_distance_epsilon(),
     )
 
 
@@ -738,7 +738,7 @@ def test_st_distance_zm(eng, geom1, geom2, expected):
     eng.assert_query_result(
         f"SELECT ST_Distance({geog_or_null(geom1)}, {geog_or_null(geom2)})",
         expected,
-        numeric_epsilon=1e-2,
+        numeric_epsilon=eng.geography_distance_epsilon(),
     )
 
 
@@ -774,7 +774,7 @@ def test_st_max_distance_zm(eng, geom1, geom2, expected):
     eng.assert_query_result(
         f"SELECT ST_MaxDistance({geog_or_null(geom1)}, {geog_or_null(geom2)})",
         expected,
-        numeric_epsilon=1e-2,
+        numeric_epsilon=eng.geography_distance_epsilon(),
     )
 
 

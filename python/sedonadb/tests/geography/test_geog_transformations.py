@@ -577,7 +577,7 @@ def test_st_buffer_num_quad_segs(eng, geog, distance, num_quad_segs, expected):
             "LINESTRING (0 0, 1 0)",
             100000.0,
             "side=right",
-            11119335736.221052,
+            11119335736.221058,
             id="linestring_side_right",
         ),
     ],

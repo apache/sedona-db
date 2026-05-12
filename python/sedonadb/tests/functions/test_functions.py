@@ -434,7 +434,7 @@ def test_st_scale_3d(eng, geom, sx, sy, sz, expected):
 def test_st_rotate(eng, geom, angle, expected):
     eng = eng.create_or_skip()
     query = f"SELECT ST_Rotate({geom_or_null(geom)}, {val_or_null(angle)})"
-    eng.assert_query_result(query, expected, wkt_precision=1e-12)
+    eng.assert_query_result(query, expected, wkt_precision=12)
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
@@ -449,7 +449,7 @@ def test_st_rotate(eng, geom, angle, expected):
 def test_st_rotate_x(eng, geom, angle, expected):
     eng = eng.create_or_skip()
     query = f"SELECT ST_RotateX({geom_or_null(geom)}, {val_or_null(angle)})"
-    eng.assert_query_result(query, expected, wkt_precision=1e-12)
+    eng.assert_query_result(query, expected, wkt_precision=12)
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
@@ -464,7 +464,7 @@ def test_st_rotate_x(eng, geom, angle, expected):
 def test_st_rotate_y(eng, geom, angle, expected):
     eng = eng.create_or_skip()
     query = f"SELECT ST_RotateY({geom_or_null(geom)}, {val_or_null(angle)})"
-    eng.assert_query_result(query, expected, wkt_precision=1e-12)
+    eng.assert_query_result(query, expected, wkt_precision=12)
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
@@ -746,7 +746,7 @@ def test_st_buffer_style_parameters(
     eng.assert_query_result(
         f"SELECT ST_Area(ST_Buffer({geom_or_null(geom)}, {val_or_null(dist)}, {val_or_null(buffer_style_parameters)}))",
         expected_area,
-        numeric_epsilon=1e-9,
+        numeric_epsilon=eng.geography_distance_epsilon(),
     )
 
 

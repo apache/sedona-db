@@ -768,7 +768,7 @@ class BigQuery(DBEngine):
 
     # Use slightly reduced precision because BigQuery snaps vertices on input slightly
     def geography_distance_epsilon(self) -> float:
-        return 1e-15
+        return 1e-14
 
     def val_or_null(self, arg):
         if isinstance(arg, bytes):

@@ -426,8 +426,8 @@ def test_st_contains(eng, geom1, geom2, expected):
         ),
         # Point within wraparound polygon
         pytest.param(
-            "POLYGON ((179 0, -179 0, 179 2, 179 0))",
             "POINT (-180 0.25)",
+            "POLYGON ((179 0, -179 0, 179 2, 179 0))",
             True,
             id="point_within_wraparound_polygon",
         ),
