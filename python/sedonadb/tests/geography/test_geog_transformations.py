@@ -59,6 +59,11 @@ def test_st_centroid(eng, geom, expected):
         pytest.param(
             "LINESTRING (0 0, 0 1, 0 5)", "POINT (0 2.5)", id="linestring_two_segments"
         ),
+        pytest.param(
+            "LINESTRING (-90 80, -90 85, 90 80)",
+            "POINT (-31.7828668356 90)",
+            id="linestring_crossing_pole",
+        ),
         # Polygons
         pytest.param(
             "POLYGON ((0 0, 0 1, 1 0, 0 0))",
@@ -475,21 +480,30 @@ def test_st_line_interpolate_point_zm(eng, line, fraction, expected):
             88052039626.29015,
             id="polygon_positive_distance",
         ),
+        # Polygon with negative distance shrinks the polygon
+        pytest.param(
+            "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
+            -10000.0,
+            8316265500.336526,
+            id="polygon_negative_distance",
+        ),
+        # Polygon with negative distance that shrinks the polygon all the way
+        pytest.param(
+            "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
+            -100000.0,
+            0.0,
+            id="polygon_negative_distance_shrink_all_the_way",
+        ),
     ],
 )
 def test_st_buffer(eng, geog, distance, expected):
     eng = eng.create_or_skip()
-    if eng.name() == "postgis":
-        eps = 1e-2
-    else:
-        eps = 1e-15
-
     # Check the area because it is tricky to check the actual value and here we
     # are mostly checking for plugged-in ness.
     eng.assert_query_result(
         f"SELECT ST_Area(ST_Buffer({geog_or_null(geog)}, {val_or_null(distance)}))",
         expected,
-        numeric_epsilon=eps,
+        numeric_epsilon=eng.geography_distance_epsilon(),
     )
 
 
@@ -524,15 +538,10 @@ def test_st_buffer(eng, geog, distance, expected):
 )
 def test_st_buffer_num_quad_segs(eng, geog, distance, num_quad_segs, expected):
     eng = eng.create_or_skip()
-    if eng.name() == "postgis":
-        eps = 1e-2
-    else:
-        eps = 1e-14
-
     eng.assert_query_result(
         f"SELECT ST_Area(ST_Buffer({geog_or_null(geog)}, {val_or_null(distance)}, {num_quad_segs}))",
         expected,
-        numeric_epsilon=eps,
+        numeric_epsilon=eng.geography_distance_epsilon(),
     )
 
 
@@ -575,15 +584,10 @@ def test_st_buffer_num_quad_segs(eng, geog, distance, num_quad_segs, expected):
 )
 def test_st_buffer_params(eng, geog, distance, params, expected):
     eng = eng.create_or_skip()
-    if eng.name() == "postgis":
-        eps = 1e-2
-    else:
-        eps = 1e-15
-
     eng.assert_query_result(
         f"SELECT ST_Area(ST_Buffer({geog_or_null(geog)}, {val_or_null(distance)}, '{params}'))",
         expected,
-        numeric_epsilon=eps,
+        numeric_epsilon=eng.geography_distance_epsilon(),
     )
 
 
