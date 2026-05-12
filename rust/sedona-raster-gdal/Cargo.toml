@@ -54,5 +54,5 @@ tokio = { workspace = true, features = ["rt-multi-thread"] }
 
 [[bench]]
 harness = false
-name = "rs_from_path"
-path = "benches/rs_from_path.rs"
+name = "rs_frompath"
+path = "benches/rs_frompath.rs"
