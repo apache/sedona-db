@@ -141,6 +141,65 @@ class DataFrame:
                 )
         return DataFrame(self._ctx, self._impl.select(coerced), self._options)
 
+    def filter(self, *exprs: "Expr") -> "DataFrame":
+        """Filter rows by one or more boolean expressions.
+
+        Multiple expressions are combined with logical AND, so
+        `df.filter(a, b)` is equivalent to `df.filter(a & b)` and to
+        `df.filter(a).filter(b)` (the planner sees one conjunction in
+        the first two forms and two filter nodes in the third).
+
+        Only `Expr` arguments are accepted. Strings are not interpreted
+        as SQL predicates (that is a separate feature). Bare `Literal`
+        values are also rejected — `filter(lit(True))` is almost
+        certainly a typo; if you really mean a constant predicate, wrap
+        a column expression like `col("flag") == lit(True)`.
+
+        Args:
+            *exprs: One or more boolean `sedonadb.expr.Expr` predicates.
+                At least one argument is required.
+
+        Examples:
+
+            >>> from sedonadb.expr import col
+            >>> sd = sedona.db.connect()
+            >>> df = sd.sql("SELECT * FROM (VALUES (1), (2), (3), (4)) AS t(x)")
+            >>> df.filter(col("x") > 2).show()
+            ┌───────┐
+            │   x   │
+            │ int64 │
+            ╞═══════╡
+            │     3 │
+            ├╌╌╌╌╌╌╌┤
+            │     4 │
+            └───────┘
+        """
+        from sedonadb.expr import Expr, Literal
+
+        if not exprs:
+            raise ValueError("filter() requires at least one predicate")
+
+        for e in exprs:
+            if isinstance(e, Literal):
+                raise TypeError(
+                    "filter() does not accept Literal arguments. "
+                    "filter(lit(value)) is almost always a typo; if you really "
+                    "want a constant predicate, wrap a column expression like "
+                    "col('flag') == lit(value)."
+                )
+            if not isinstance(e, Expr):
+                raise TypeError(
+                    f"filter() expects Expr arguments, got {type(e).__name__}"
+                )
+
+        return DataFrame(
+            self._ctx,
+            self._impl.filter([e._impl for e in exprs]),
+            self._options,
+        )
+
+    where = filter
+
     def limit(self, n: Optional[int], /, *, offset: int = 0) -> "DataFrame":
         """Limit result to n rows starting at offset
 
