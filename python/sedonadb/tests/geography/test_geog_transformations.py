@@ -233,6 +233,7 @@ def test_st_convexhull(eng, geog, expected):
     ("geog", "expected"),
     [
         # Empties
+        # Currently geoarrow returns POINT (nan, nan) instead of POINT EMPTY
         pytest.param("POINT EMPTY", "POINT (nan nan)", id="point_empty"),
         pytest.param("LINESTRING EMPTY", "LINESTRING EMPTY", id="linestring_empty"),
         pytest.param("POLYGON EMPTY", "POLYGON EMPTY", id="polygon_empty"),
@@ -263,6 +264,7 @@ def test_st_convexhull_degenerate(eng, geog, expected):
     ("geog", "expected"),
     [
         # Empties
+        # Currently geoarrow returns POINT (nan, nan) instead of POINT EMPTY
         pytest.param("POINT EMPTY", "POINT (nan nan)", id="point_empty"),
         pytest.param("LINESTRING EMPTY", "POINT (nan nan)", id="linestring_empty"),
         pytest.param("POLYGON EMPTY", "POINT (nan nan)", id="polygon_empty"),
