@@ -3813,6 +3813,61 @@ performance and optimization.</p>
 <div class="doc doc-object doc-function">
 
 
+<h4 id="sedonadb.dataframe.DataFrame.select" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">select</span>
+
+
+<a href="#sedonadb.dataframe.DataFrame.select" class="headerlink" title="Permanent link">¶</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">select</span><span class="p">(</span><span class="o">*</span><span class="n">exprs</span><span class="p">:</span> <span class="n"><span title="sedonadb.expr.Expr">Expr</span></span> <span class="o">|</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span> <span class="o">|</span> <span class="n"><span title="sedonadb.expr.Literal">Literal</span></span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Project a set of columns or expressions.</p>
+<p>Returns a new lazy <code>DataFrame</code> whose columns are exactly the
+projection. Column-name strings are converted to column references
+via <code>sedonadb.expr.col</code> internally, so <code>df.select("x", "y")</code> and
+<code>df.select(col("x"), col("y"))</code> produce the same plan. Literals
+produced by <code>sedonadb.expr.lit()</code> are also accepted; use
+<code>lit(value).alias(name)</code> to give the literal column a name.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+            <b><code>*exprs</code></b>
+              (<code><span title="sedonadb.expr.Expr">Expr</span> | <a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a> | <span title="sedonadb.expr.Literal">Literal</span></code>, default:
+                  <code>()</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>One or more arguments. Each argument is either a column
+name (<code>str</code>), a <code>sedonadb.expr.Expr</code>, or a <code>sedonadb.expr.Literal</code>.
+At least one argument is required.</p>
+          </div>
+        </li>
+    </ul>
+        <p>Examples:</p>
+<div class="codehilite"><pre><span></span><code><span class="o">&gt;&gt;&gt;</span> <span class="kn">from</span><span class="w"> </span><span class="nn">sedonadb.expr</span><span class="w"> </span><span class="kn">import</span> <span class="n">col</span><span class="p">,</span> <span class="n">lit</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">sd</span> <span class="o">=</span> <span class="n">sedona</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">df</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SELECT 1 AS a, 2 AS b"</span><span class="p">)</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">df</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="s2">"a"</span><span class="p">,</span> <span class="p">(</span><span class="n">col</span><span class="p">(</span><span class="s2">"b"</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">"b_plus_1"</span><span class="p">))</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+<span class="err">┌───────┬──────────┐</span>
+<span class="err">│</span>   <span class="n">a</span>   <span class="err">┆</span> <span class="n">b_plus_1</span> <span class="err">│</span>
+<span class="err">│</span> <span class="n">int64</span> <span class="err">┆</span>   <span class="n">int64</span>  <span class="err">│</span>
+<span class="err">╞═══════╪══════════╡</span>
+<span class="err">│</span>     <span class="mi">1</span> <span class="err">┆</span>        <span class="mi">3</span> <span class="err">│</span>
+<span class="err">└───────┴──────────┘</span>
+</code></pre></div>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
 <h4 id="sedonadb.dataframe.DataFrame.show" class="doc doc-heading">
             <span class="doc doc-object-name doc-function-name">show</span>
 
