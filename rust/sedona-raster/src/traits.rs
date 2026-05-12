@@ -88,7 +88,7 @@ pub struct RasterMetadata {
 
 /// Pre-N-D metadata-accessor trait. Restored so callers from before the
 /// N-D refactor that write `fn foo(metadata: &dyn MetadataRef)` keep
-/// compiling. `RasterMetadata` is the canonical implementor; new code
+/// compiling. `RasterMetadata` is the canonical implementer; new code
 /// should reach for `RasterRef::width()? / height()?` instead.
 pub trait MetadataRef {
     /// Width of the raster in pixels
@@ -298,7 +298,7 @@ pub trait RasterRef {
     fn band(&self, index: usize) -> Option<Box<dyn BandRef + '_>>;
 
     /// 1-based band-access view used by callers from before the N-D
-    /// refactor. Implementors typically write `Bands::new(self)`.
+    /// refactor. Implementers typically write `Bands::new(self)`.
     fn bands(&self) -> Bands<'_>;
 
     /// Band name (e.g., Zarr variable name). None for unnamed bands.
