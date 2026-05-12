@@ -71,7 +71,9 @@ if "s2geography" not in sedonadb.__features__:
 def test_st_area(eng, geog, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(
-        f"SELECT ST_Area({geog_or_null(geog)})", expected, numeric_epsilon=eng.geography_distance_epsilon()
+        f"SELECT ST_Area({geog_or_null(geog)})",
+        expected,
+        numeric_epsilon=eng.geography_distance_epsilon(),
     )
 
 
@@ -110,7 +112,9 @@ def test_st_area(eng, geog, expected):
 def test_st_length(eng, geog, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(
-        f"SELECT ST_Length({geog_or_null(geog)})", expected, numeric_epsilon=eng.geography_distance_epsilon()
+        f"SELECT ST_Length({geog_or_null(geog)})",
+        expected,
+        numeric_epsilon=eng.geography_distance_epsilon(),
     )
 
 
@@ -173,7 +177,9 @@ def test_st_length_geometrycollection(eng, geog, expected):
 def test_st_perimeter(eng, geog, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(
-        f"SELECT ST_Perimeter({geog_or_null(geog)})", expected, numeric_epsilon=eng.geography_distance_epsilon()
+        f"SELECT ST_Perimeter({geog_or_null(geog)})",
+        expected,
+        numeric_epsilon=eng.geography_distance_epsilon(),
     )
 
 
@@ -194,7 +200,9 @@ def test_st_perimeter(eng, geog, expected):
 def test_st_perimeter_geometrycollection(eng, geog, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(
-        f"SELECT ST_Perimeter({geog_or_null(geog)})", expected, numeric_epsilon=eng.geography_distance_epsilon()
+        f"SELECT ST_Perimeter({geog_or_null(geog)})",
+        expected,
+        numeric_epsilon=eng.geography_distance_epsilon(),
     )
 
 
