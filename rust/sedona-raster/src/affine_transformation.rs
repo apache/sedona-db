@@ -36,7 +36,7 @@ pub struct AffineMatrix {
 impl AffineMatrix {
     /// Build an `AffineMatrix` from any `MetadataRef` implementer.
     #[inline]
-    pub fn from_metadata<M: MetadataRef>(m: M) -> Self {
+    pub fn from_metadata(m: &dyn MetadataRef) -> Self {
         Self {
             offset_x: m.upper_left_x(),
             offset_y: m.upper_left_y(),
@@ -108,7 +108,7 @@ pub fn rotation(raster: &dyn RasterRef) -> f64 {
 /// * `y` - Y coordinate in pixel space (row)
 #[inline]
 pub fn to_world_coordinate(raster: &dyn RasterRef, x: i64, y: i64) -> (f64, f64) {
-    AffineMatrix::from_metadata(raster.metadata()).transform(x as f64, y as f64)
+    AffineMatrix::from_metadata(&raster.metadata()).transform(x as f64, y as f64)
 }
 
 /// Performs the inverse affine transformation to convert world coordinates back to raster pixel coordinates.
@@ -124,14 +124,14 @@ pub fn to_raster_coordinate(
     world_y: f64,
 ) -> Result<(i64, i64), ArrowError> {
     let (rx, ry) =
-        AffineMatrix::from_metadata(raster.metadata()).inv_transform(world_x, world_y)?;
+        AffineMatrix::from_metadata(&raster.metadata()).inv_transform(world_x, world_y)?;
     Ok((rx as i64, ry as i64))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::traits::{BandRef, RasterMetadata};
+    use crate::traits::{BandRef, Bands, RasterMetadata};
     use approx::assert_relative_eq;
     use std::f64::consts::FRAC_1_SQRT_2;
     use std::f64::consts::PI;
@@ -143,6 +143,9 @@ mod tests {
     impl RasterRef for TestRaster {
         fn num_bands(&self) -> usize {
             0
+        }
+        fn bands(&self) -> Bands<'_> {
+            Bands::new(self)
         }
         fn band(&self, _index: usize) -> Option<Box<dyn BandRef + '_>> {
             None

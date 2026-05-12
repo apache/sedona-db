@@ -19,7 +19,7 @@ use datafusion_common::Result;
 use fastrand::Rng;
 use sedona_raster::array::RasterStructArray;
 use sedona_raster::builder::RasterBuilder;
-use sedona_raster::traits::{BandMetadata, RasterMetadata, RasterRef, RasterRefBandsExt};
+use sedona_raster::traits::{BandMetadata, RasterMetadata, RasterRef};
 use sedona_schema::crs::lnglat;
 use sedona_schema::raster::{BandDataType, StorageType};
 
@@ -580,8 +580,7 @@ mod tests {
     fn test_raster_equal() {
         let raster_array1 =
             generate_tiled_rasters((256, 256), (1, 1), BandDataType::UInt8, Some(43)).unwrap();
-        let rsa = RasterStructArray::new(&raster_array1);
-        let raster1 = rsa.get(0).unwrap();
+        let raster1 = RasterStructArray::new(&raster_array1).get(0).unwrap();
 
         // Assert that the rasters are equal to themselves
         assert_raster_equal(&raster1, &raster1);
@@ -595,10 +594,8 @@ mod tests {
         let raster_array2 =
             generate_tiled_rasters((128, 128), (1, 1), BandDataType::UInt8, Some(47)).unwrap();
 
-        let rsa1 = RasterStructArray::new(&raster_array1);
-        let rsa2 = RasterStructArray::new(&raster_array2);
-        let raster1 = rsa1.get(0).unwrap();
-        let raster2 = rsa2.get(0).unwrap();
+        let raster1 = RasterStructArray::new(&raster_array1).get(0).unwrap();
+        let raster2 = RasterStructArray::new(&raster_array2).get(0).unwrap();
         assert_raster_equal(&raster1, &raster2);
     }
 
@@ -640,9 +637,8 @@ mod tests {
     fn test_raster_different_metadata() {
         let raster_array =
             generate_tiled_rasters((128, 128), (2, 1), BandDataType::UInt8, Some(43)).unwrap();
-        let rsa = RasterStructArray::new(&raster_array);
-        let raster1 = rsa.get(0).unwrap();
-        let raster2 = rsa.get(1).unwrap();
+        let raster1 = RasterStructArray::new(&raster_array).get(0).unwrap();
+        let raster2 = RasterStructArray::new(&raster_array).get(1).unwrap();
         assert_raster_equal(&raster1, &raster2);
     }
 }

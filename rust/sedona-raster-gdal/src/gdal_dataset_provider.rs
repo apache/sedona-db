@@ -29,7 +29,7 @@ use sedona_gdal::geo_transform::{GeoTransform, GeoTransformEx};
 use sedona_gdal::raster::types::GdalDataType;
 
 use sedona_common::SedonaOptions;
-use sedona_raster::traits::{RasterRef, RasterRefBandsExt};
+use sedona_raster::traits::RasterRef;
 use sedona_schema::raster::{BandDataType, StorageType};
 
 use crate::gdal_common::{
@@ -205,7 +205,7 @@ impl GDALDatasetCache {
         }
     }
 
-    fn build_vrt_from_sources<R: RasterRef + RasterRefBandsExt + ?Sized>(
+    fn build_vrt_from_sources<R: RasterRef + ?Sized>(
         &self,
         gdal: &Gdal,
         raster: &R,
@@ -397,7 +397,7 @@ impl<'a> GDALDatasetProvider<'a> {
         Self { gdal, cache }
     }
 
-    pub fn raster_ref_to_gdal<'b, R: RasterRef + RasterRefBandsExt + ?Sized>(
+    pub fn raster_ref_to_gdal<'b, R: RasterRef + ?Sized>(
         &self,
         raster: &'b R,
     ) -> Result<RasterDataset<'b>> {
@@ -504,7 +504,7 @@ struct VrtKey {
 }
 
 impl VrtKey {
-    fn from_raster<R: RasterRef + RasterRefBandsExt + ?Sized>(raster: &R) -> Result<Self> {
+    fn from_raster<R: RasterRef + ?Sized>(raster: &R) -> Result<Self> {
         let metadata = raster.metadata();
         let bands = raster.bands();
         let num_bands = bands.len();

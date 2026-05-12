@@ -101,8 +101,7 @@ mod tests {
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use sedona_raster::array::RasterStructArray;
-    use sedona_raster::traits::{RasterRef, RasterRefBandsExt};
-    use sedona_schema::raster::StorageType;
+    use sedona_raster::traits::RasterRef;
 
     #[test]
     fn udf_size() {

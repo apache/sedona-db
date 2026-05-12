@@ -23,7 +23,7 @@ use arrow_array::{
 };
 use arrow_schema::ArrowError;
 
-use crate::traits::{BandRef, NdBuffer, RasterRef, ViewEntry};
+use crate::traits::{BandRef, Bands, NdBuffer, RasterRef, ViewEntry};
 use sedona_schema::raster::{band_indices, raster_indices, BandDataType};
 
 // ---------------------------------------------------------------------------
@@ -155,46 +155,66 @@ impl<'a> BandRef for BandRefImpl<'a> {
 // ---------------------------------------------------------------------------
 
 /// Arrow-backed implementation of RasterRef for a single raster row.
+///
+/// Holds flat references to the underlying Arrow arrays so the impl does
+/// not borrow from a `RasterStructArray` wrapper. That keeps
+/// `RasterStructArray::get(&self, ...)` callable without a `&'a self`
+/// constraint, which would otherwise force callers to hoist the
+/// `RasterStructArray` into a `let` binding.
 pub struct RasterRefImpl<'a> {
-    raster_struct_array: &'a RasterStructArray<'a>,
+    crs_array: &'a StringViewArray,
+    transform_list: &'a ListArray,
+    transform_values: &'a Float64Array,
+    spatial_dims_list: &'a ListArray,
+    spatial_dims_values: &'a StringViewArray,
+    spatial_shape_list: &'a ListArray,
+    spatial_shape_values: &'a Int64Array,
+    bands_list: &'a ListArray,
+    band_name_array: &'a StringArray,
+    band_dim_names_list: &'a ListArray,
+    band_dim_names_values: &'a StringArray,
+    band_source_shape_list: &'a ListArray,
+    band_source_shape_values: &'a UInt64Array,
+    band_datatype_array: &'a UInt32Array,
+    band_nodata_array: &'a BinaryArray,
+    band_view_list: &'a ListArray,
+    band_outdb_uri_array: &'a StringArray,
+    band_outdb_format_array: &'a StringViewArray,
+    band_data_array: &'a BinaryViewArray,
     raster_index: usize,
 }
 
 impl<'a> RasterRefImpl<'a> {
     /// Returns the raw CRS string reference with the array's lifetime.
     pub fn crs_str_ref(&self) -> Option<&'a str> {
-        if self
-            .raster_struct_array
-            .crs_array
-            .is_null(self.raster_index)
-        {
+        if self.crs_array.is_null(self.raster_index) {
             None
         } else {
-            Some(self.raster_struct_array.crs_array.value(self.raster_index))
+            Some(self.crs_array.value(self.raster_index))
         }
     }
 }
 
 impl<'a> RasterRef for RasterRefImpl<'a> {
     fn num_bands(&self) -> usize {
-        self.raster_struct_array
-            .bands_list
-            .value_length(self.raster_index) as usize
+        self.bands_list.value_length(self.raster_index) as usize
+    }
+
+    fn bands(&self) -> Bands<'_> {
+        Bands::new(self)
     }
 
     fn band(&self, index: usize) -> Option<Box<dyn BandRef + '_>> {
         if index >= self.num_bands() {
             return None;
         }
-        let start = self.raster_struct_array.bands_list.value_offsets()[self.raster_index] as usize;
+        let start = self.bands_list.value_offsets()[self.raster_index] as usize;
         let band_row = start + index;
 
-        let arr = self.raster_struct_array;
-
         // Read source shape slice.
-        let ss_start = arr.band_source_shape_list.value_offsets()[band_row] as usize;
-        let ss_end = arr.band_source_shape_list.value_offsets()[band_row + 1] as usize;
-        let source_shape: &[u64] = &arr.band_source_shape_values.values()[ss_start..ss_end];
+        let ss_start = self.band_source_shape_list.value_offsets()[band_row] as usize;
+        let ss_end = self.band_source_shape_list.value_offsets()[band_row + 1] as usize;
+        let source_shape: &[u64] = &self.band_source_shape_values.values()[ss_start..ss_end];
 
         // Reject 0-D bands at the read boundary. Schema doesn't forbid them
         // outright but every consumer assumes ndim >= 1.
@@ -205,14 +225,14 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
         // Resolve data type up front; an unknown discriminant is a
         // schema-corruption bug, not user data, so failing the band is
         // appropriate.
-        let data_type_value = arr.band_datatype_array.value(band_row);
+        let data_type_value = self.band_datatype_array.value(band_row);
         let data_type = BandDataType::try_from_u32(data_type_value)?;
 
         // Only the canonical identity view (null view row) is written today.
         // A non-null view row would require the view → byte-stride composition
         // path that is deferred to a follow-up; reject it here so callers see
         // a clean "no band" rather than a panic.
-        if !arr.band_view_list.is_null(band_row) {
+        if !self.band_view_list.is_null(band_row) {
             return None;
         }
         let view_entries: Vec<ViewEntry> = source_shape
@@ -238,14 +258,14 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
         }
 
         Some(Box::new(BandRefImpl {
-            dim_names_list: arr.band_dim_names_list,
-            dim_names_values: arr.band_dim_names_values,
-            source_shape_list: arr.band_source_shape_list,
-            source_shape_values: arr.band_source_shape_values,
-            nodata_array: arr.band_nodata_array,
-            outdb_uri_array: arr.band_outdb_uri_array,
-            outdb_format_array: arr.band_outdb_format_array,
-            data_array: arr.band_data_array,
+            dim_names_list: self.band_dim_names_list,
+            dim_names_values: self.band_dim_names_values,
+            source_shape_list: self.band_source_shape_list,
+            source_shape_values: self.band_source_shape_values,
+            nodata_array: self.band_nodata_array,
+            outdb_uri_array: self.band_outdb_uri_array,
+            outdb_format_array: self.band_outdb_format_array,
+            data_array: self.band_data_array,
             band_row,
             data_type,
             view_entries,
@@ -259,9 +279,9 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
         if index >= self.num_bands() {
             return None;
         }
-        let start = self.raster_struct_array.bands_list.value_offsets()[self.raster_index] as usize;
+        let start = self.bands_list.value_offsets()[self.raster_index] as usize;
         let band_row = start + index;
-        let value = self.raster_struct_array.band_datatype_array.value(band_row);
+        let value = self.band_datatype_array.value(band_row);
         BandDataType::try_from_u32(value)
     }
 
@@ -269,13 +289,12 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
         if index >= self.num_bands() {
             return None;
         }
-        let start = self.raster_struct_array.bands_list.value_offsets()[self.raster_index] as usize;
+        let start = self.bands_list.value_offsets()[self.raster_index] as usize;
         let band_row = start + index;
-        let arr = self.raster_struct_array.band_outdb_uri_array;
-        if arr.is_null(band_row) {
+        if self.band_outdb_uri_array.is_null(band_row) {
             None
         } else {
-            Some(arr.value(band_row))
+            Some(self.band_outdb_uri_array.value(band_row))
         }
     }
 
@@ -283,13 +302,12 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
         if index >= self.num_bands() {
             return None;
         }
-        let start = self.raster_struct_array.bands_list.value_offsets()[self.raster_index] as usize;
+        let start = self.bands_list.value_offsets()[self.raster_index] as usize;
         let band_row = start + index;
-        let arr = self.raster_struct_array.band_outdb_format_array;
-        if arr.is_null(band_row) {
+        if self.band_outdb_format_array.is_null(band_row) {
             None
         } else {
-            Some(arr.value(band_row))
+            Some(self.band_outdb_format_array.value(band_row))
         }
     }
 
@@ -297,13 +315,12 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
         if index >= self.num_bands() {
             return None;
         }
-        let start = self.raster_struct_array.bands_list.value_offsets()[self.raster_index] as usize;
+        let start = self.bands_list.value_offsets()[self.raster_index] as usize;
         let band_row = start + index;
-        let arr = self.raster_struct_array.band_nodata_array;
-        if arr.is_null(band_row) {
+        if self.band_nodata_array.is_null(band_row) {
             None
         } else {
-            Some(arr.value(band_row))
+            Some(self.band_nodata_array.value(band_row))
         }
     }
 
@@ -311,12 +328,12 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
         if index >= self.num_bands() {
             return None;
         }
-        let start = self.raster_struct_array.bands_list.value_offsets()[self.raster_index] as usize;
+        let start = self.bands_list.value_offsets()[self.raster_index] as usize;
         let band_row = start + index;
-        if self.raster_struct_array.band_name_array.is_null(band_row) {
+        if self.band_name_array.is_null(band_row) {
             None
         } else {
-            Some(self.raster_struct_array.band_name_array.value(band_row))
+            Some(self.band_name_array.value(band_row))
         }
     }
 
@@ -325,33 +342,31 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
     }
 
     fn transform(&self) -> &[f64] {
-        let start =
-            self.raster_struct_array.transform_list.value_offsets()[self.raster_index] as usize;
-        let end =
-            self.raster_struct_array.transform_list.value_offsets()[self.raster_index + 1] as usize;
+        let start = self.transform_list.value_offsets()[self.raster_index] as usize;
+        let end = self.transform_list.value_offsets()[self.raster_index + 1] as usize;
         assert!(
             end - start >= 6,
             "transform list must have at least 6 elements for raster {}, got {}",
             self.raster_index,
             end - start
         );
-        &self.raster_struct_array.transform_values.values()[start..start + 6]
+        &self.transform_values.values()[start..start + 6]
     }
 
     fn spatial_dims(&self) -> Vec<&str> {
-        let offsets = self.raster_struct_array.spatial_dims_list.value_offsets();
+        let offsets = self.spatial_dims_list.value_offsets();
         let start = offsets[self.raster_index] as usize;
         let end = offsets[self.raster_index + 1] as usize;
         (start..end)
-            .map(|i| self.raster_struct_array.spatial_dims_values.value(i))
+            .map(|i| self.spatial_dims_values.value(i))
             .collect()
     }
 
     fn spatial_shape(&self) -> &[i64] {
-        let offsets = self.raster_struct_array.spatial_shape_list.value_offsets();
+        let offsets = self.spatial_shape_list.value_offsets();
         let start = offsets[self.raster_index] as usize;
         let end = offsets[self.raster_index + 1] as usize;
-        &self.raster_struct_array.spatial_shape_values.values()[start..end]
+        &self.spatial_shape_values.values()[start..end]
     }
 }
 
@@ -535,14 +550,32 @@ impl<'a> RasterStructArray<'a> {
 
     /// Get a specific raster by index.
     #[inline(always)]
-    pub fn get(&'a self, index: usize) -> Result<RasterRefImpl<'a>, ArrowError> {
+    pub fn get(&self, index: usize) -> Result<RasterRefImpl<'a>, ArrowError> {
         if index >= self.raster_array.len() {
             return Err(ArrowError::InvalidArgumentError(format!(
                 "Invalid raster index: {index}"
             )));
         }
         Ok(RasterRefImpl {
-            raster_struct_array: self,
+            crs_array: self.crs_array,
+            transform_list: self.transform_list,
+            transform_values: self.transform_values,
+            spatial_dims_list: self.spatial_dims_list,
+            spatial_dims_values: self.spatial_dims_values,
+            spatial_shape_list: self.spatial_shape_list,
+            spatial_shape_values: self.spatial_shape_values,
+            bands_list: self.bands_list,
+            band_name_array: self.band_name_array,
+            band_dim_names_list: self.band_dim_names_list,
+            band_dim_names_values: self.band_dim_names_values,
+            band_source_shape_list: self.band_source_shape_list,
+            band_source_shape_values: self.band_source_shape_values,
+            band_datatype_array: self.band_datatype_array,
+            band_nodata_array: self.band_nodata_array,
+            band_view_list: self.band_view_list,
+            band_outdb_uri_array: self.band_outdb_uri_array,
+            band_outdb_format_array: self.band_outdb_format_array,
+            band_data_array: self.band_data_array,
             raster_index: index,
         })
     }
@@ -558,7 +591,6 @@ impl<'a> RasterStructArray<'a> {
 mod tests {
     use super::*;
     use crate::builder::RasterBuilder;
-    use crate::traits::RasterRefBandsExt;
     use arrow_array::{ArrayRef, ListArray, StructArray, UInt32Array, UInt64Array};
     use arrow_buffer::{OffsetBuffer, ScalarBuffer};
     use arrow_schema::{DataType, Fields};

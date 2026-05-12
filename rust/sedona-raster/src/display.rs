@@ -18,7 +18,7 @@
 use std::fmt;
 
 use crate::affine_transformation::to_world_coordinate;
-use crate::traits::{RasterRef, RasterRefBandsExt};
+use crate::traits::RasterRef;
 use sedona_schema::raster::StorageType;
 
 /// Wrapper for formatting a raster reference as a human-readable string.

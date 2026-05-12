@@ -367,7 +367,7 @@ mod tests {
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use sedona_raster::array::RasterStructArray;
-    use sedona_raster::traits::{RasterRef, RasterRefBandsExt};
+    use sedona_raster::traits::RasterRef;
     use sedona_schema::datatypes::RASTER;
     use sedona_testing::rasters::generate_test_rasters;
     use sedona_testing::testers::ScalarUdfTester;

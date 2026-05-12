@@ -24,7 +24,7 @@ use sedona_gdal::mem::MemDatasetBuilder;
 use sedona_gdal::raster::types::DatasetOptions;
 use sedona_gdal::raster::types::GdalDataType;
 
-use sedona_raster::traits::{MetadataRef, RasterMetadata, RasterRef, RasterRefBandsExt};
+use sedona_raster::traits::{MetadataRef, RasterMetadata, RasterRef};
 use sedona_schema::raster::{BandDataType, StorageType};
 
 use datafusion_common::{
@@ -198,7 +198,7 @@ pub(crate) fn convert_gdal_err(e: GdalError) -> DataFusionError {
 /// - Any band uses OutDb storage
 /// - GDAL driver operations fail
 /// - Accessing RasterRef fails
-pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + RasterRefBandsExt + ?Sized>(
+pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
     gdal: &Gdal,
     raster: &R,
     band_indices: &[usize],
@@ -305,10 +305,7 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + RasterRefBandsExt + ?Sized>(
     Ok(dataset)
 }
 
-pub fn raster_ref_to_gdal_empty<R: RasterRef + RasterRefBandsExt + ?Sized>(
-    gdal: &Gdal,
-    raster: &R,
-) -> Result<Dataset> {
+pub fn raster_ref_to_gdal_empty<R: RasterRef + ?Sized>(gdal: &Gdal, raster: &R) -> Result<Dataset> {
     unsafe {
         // SAFETY: raster_ref_to_gdal_mem is safe to call with an empty band list. The
         // returned dataset will have zero bands and references no external memory.
@@ -443,6 +440,12 @@ mod tests {
     use sedona_raster::traits::{BandMetadata, RasterMetadata};
     use sedona_schema::raster::StorageType;
     use sedona_testing::rasters::{build_in_db_raster, InDbTestBand};
+
+    fn single_raster<'a>(
+        raster_array: &'a arrow_array::StructArray,
+    ) -> impl sedona_raster::traits::RasterRef + 'a {
+        RasterStructArray::new(raster_array).get(0).unwrap()
+    }
 
     fn read_band_u64(dataset: &Dataset, band_index: usize, size: (usize, usize)) -> Vec<u64> {
         let band = dataset.rasterband(band_index).unwrap();
@@ -711,8 +714,7 @@ mod tests {
             skew_y: -0.2,
         };
         let raster_array = build_in_db_raster(metadata, Some("EPSG:4326"), &[]);
-        let raster_struct_array = RasterStructArray::new(&raster_array);
-        let raster = raster_struct_array.get(0).unwrap();
+        let raster = single_raster(&raster_array);
 
         with_gdal(|gdal| {
             let dataset = raster_ref_to_gdal_empty(gdal, &raster)?;
@@ -772,8 +774,7 @@ mod tests {
                 },
             ],
         );
-        let raster_struct_array = RasterStructArray::new(&raster_array);
-        let raster = raster_struct_array.get(0).unwrap();
+        let raster = single_raster(&raster_array);
 
         with_gdal(|gdal| {
             let dataset = unsafe { raster_ref_to_gdal_mem(gdal, &raster, &[3, 1])? };
@@ -824,8 +825,7 @@ mod tests {
         builder.finish_band().unwrap();
         builder.finish_raster().unwrap();
         let raster_array = builder.finish().unwrap();
-        let raster_struct_array = RasterStructArray::new(&raster_array);
-        let raster = raster_struct_array.get(0).unwrap();
+        let raster = single_raster(&raster_array);
 
         let err = with_gdal(|gdal| unsafe { raster_ref_to_gdal_mem(gdal, &raster, &[1]) })
             .err()
@@ -858,8 +858,7 @@ mod tests {
         builder.finish_band().unwrap();
         builder.finish_raster().unwrap();
         let raster_array = builder.finish().unwrap();
-        let raster_struct_array = RasterStructArray::new(&raster_array);
-        let raster = raster_struct_array.get(0).unwrap();
+        let raster = single_raster(&raster_array);
 
         let err = with_gdal(|gdal| unsafe { raster_ref_to_gdal_mem(gdal, &raster, &[1]) })
             .err()

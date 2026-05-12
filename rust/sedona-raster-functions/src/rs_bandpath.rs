@@ -23,7 +23,7 @@ use datafusion_common::cast::as_int32_array;
 use datafusion_common::error::Result;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
-use sedona_raster::traits::RasterRefBandsExt;
+use sedona_raster::traits::RasterRef;
 use sedona_schema::raster::StorageType;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 

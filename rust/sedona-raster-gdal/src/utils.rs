@@ -132,7 +132,7 @@ mod tests {
     use sedona_gdal::raster::types::DatasetOptions;
     use sedona_raster::array::RasterStructArray;
     use sedona_raster::builder::RasterBuilder;
-    use sedona_raster::traits::{RasterRef, RasterRefBandsExt};
+    use sedona_raster::traits::RasterRef;
     use sedona_schema::raster::{BandDataType, StorageType};
     use tempfile::TempDir;
 

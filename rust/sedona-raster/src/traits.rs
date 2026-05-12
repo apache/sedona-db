@@ -101,33 +101,6 @@ pub trait MetadataRef {
     fn skew_y(&self) -> f64;
 }
 
-impl<T: MetadataRef + ?Sized> MetadataRef for &T {
-    fn width(&self) -> u64 {
-        (**self).width()
-    }
-    fn height(&self) -> u64 {
-        (**self).height()
-    }
-    fn upper_left_x(&self) -> f64 {
-        (**self).upper_left_x()
-    }
-    fn upper_left_y(&self) -> f64 {
-        (**self).upper_left_y()
-    }
-    fn scale_x(&self) -> f64 {
-        (**self).scale_x()
-    }
-    fn scale_y(&self) -> f64 {
-        (**self).scale_y()
-    }
-    fn skew_x(&self) -> f64 {
-        (**self).skew_x()
-    }
-    fn skew_y(&self) -> f64 {
-        (**self).skew_y()
-    }
-}
-
 impl MetadataRef for RasterMetadata {
     fn width(&self) -> u64 {
         self.width
@@ -262,26 +235,10 @@ pub struct Bands<'a> {
     raster: &'a dyn RasterRef,
 }
 
-/// Extension trait providing `RasterRef::bands()`. Lives outside `RasterRef`
-/// itself because the default body needs to coerce `&Self` to
-/// `&dyn RasterRef`, which can't be expressed in a default trait method
-/// without making the method `Self: Sized`-bound (and then it stops
-/// dispatching through `&dyn RasterRef`). Blanket-implemented for
-/// `T: RasterRef + ?Sized`, so both concrete and trait-object callers can
-/// use `raster.bands()` after a `use RasterRefBandsExt`.
-pub trait RasterRefBandsExt {
-    fn bands(&self) -> Bands<'_>;
-}
-
-impl<T: RasterRef> RasterRefBandsExt for T {
-    fn bands(&self) -> Bands<'_> {
-        Bands { raster: self }
-    }
-}
-
-impl<'r> RasterRefBandsExt for dyn RasterRef + 'r {
-    fn bands(&self) -> Bands<'_> {
-        Bands { raster: self }
+impl<'a> Bands<'a> {
+    /// Wrap a `&dyn RasterRef` for the legacy 1-based band-access surface.
+    pub fn new(raster: &'a dyn RasterRef) -> Self {
+        Self { raster }
     }
 }
 
@@ -331,6 +288,10 @@ pub trait RasterRef {
 
     /// Access a band by 0-based index
     fn band(&self, index: usize) -> Option<Box<dyn BandRef + '_>>;
+
+    /// 1-based band-access view used by callers from before the N-D
+    /// refactor. Implementors typically write `Bands::new(self)`.
+    fn bands(&self) -> Bands<'_>;
 
     /// Band name (e.g., Zarr variable name). None for unnamed bands.
     fn band_name(&self, index: usize) -> Option<&str>;
