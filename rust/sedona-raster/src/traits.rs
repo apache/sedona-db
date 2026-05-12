@@ -256,16 +256,16 @@ impl<'a> Bands<'a> {
     /// Look up a band by **1-based** number. Returns an error rather than
     /// `None` so callers can use `?`. For 0-based access, use
     /// `RasterRef::band` directly.
-    pub fn band(&self, number_1based: usize) -> Result<Box<dyn BandRef + 'a>, ArrowError> {
-        if number_1based == 0 {
-            return Err(ArrowError::InvalidArgumentError(
-                "band number is 1-based; got 0".to_string(),
-            ));
+    pub fn band(&self, number: usize) -> Result<Box<dyn BandRef + 'a>, ArrowError> {
+        if number == 0 {
+            return Err(ArrowError::InvalidArgumentError(format!(
+                "Invalid band number {number}: band numbers must be 1-based"
+            )));
         }
-        self.raster.band(number_1based - 1).ok_or_else(|| {
+        self.raster.band(number - 1).ok_or_else(|| {
             ArrowError::InvalidArgumentError(format!(
-                "Band number {} out of range (raster has {} bands)",
-                number_1based,
+                "Band number {} is out of range: this raster has {} bands",
+                number,
                 self.raster.num_bands()
             ))
         })

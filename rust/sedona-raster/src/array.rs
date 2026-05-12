@@ -89,6 +89,14 @@ impl<'a> BandRef for BandRefImpl<'a> {
         self.data_type
     }
 
+    fn data(&self) -> &[u8] {
+        // Pre-N-D compatibility surface: returns the raw `data` column bytes
+        // verbatim. For InDb identity-view bands this is the row-major buffer
+        // callers from main expect. For OutDb it's `&[]` — same shape as
+        // main, which let callers see "no in-line bytes" without panicking.
+        self.data_array.value(self.band_row)
+    }
+
     fn nodata(&self) -> Option<&[u8]> {
         if self.nodata_array.is_null(self.band_row) {
             None
@@ -591,11 +599,163 @@ impl<'a> RasterStructArray<'a> {
 mod tests {
     use super::*;
     use crate::builder::RasterBuilder;
+    use crate::traits::{BandMetadata, RasterMetadata};
     use arrow_array::{ArrayRef, ListArray, StructArray, UInt32Array, UInt64Array};
     use arrow_buffer::{OffsetBuffer, ScalarBuffer};
     use arrow_schema::{DataType, Fields};
-    use sedona_schema::raster::{band_indices, raster_indices, BandDataType, RasterSchema};
+    use sedona_schema::raster::{
+        band_indices, raster_indices, BandDataType, RasterSchema, StorageType,
+    };
+    use sedona_testing::rasters::generate_test_rasters;
     use std::sync::Arc;
+
+    #[test]
+    fn test_array_basic_functionality() {
+        // Create a simple raster for testing using the correct API
+        let mut builder = RasterBuilder::new(10); // capacity
+
+        let metadata = RasterMetadata {
+            width: 10,
+            height: 10,
+            upperleft_x: 0.0,
+            upperleft_y: 0.0,
+            scale_x: 1.0,
+            scale_y: -1.0,
+            skew_x: 0.0,
+            skew_y: 0.0,
+        };
+
+        let epsg4326 = "EPSG:4326";
+
+        builder.start_raster(&metadata, Some(epsg4326)).unwrap();
+
+        let band_metadata = BandMetadata {
+            nodata_value: Some(vec![255u8]),
+            storage_type: StorageType::InDb,
+            datatype: BandDataType::UInt8,
+            outdb_url: None,
+            outdb_band_id: None,
+        };
+
+        // Add a single band with some test data using the correct API
+        builder.start_band(band_metadata.clone()).unwrap();
+        let test_data = vec![1u8; 100]; // 10x10 raster with value 1
+        builder.band_data_writer().append_value(&test_data);
+        builder.finish_band().unwrap();
+        let result = builder.finish_raster();
+        assert!(result.is_ok());
+
+        let raster_array = builder.finish().unwrap();
+
+        // Test the array
+        let rasters = RasterStructArray::new(&raster_array);
+
+        assert_eq!(rasters.len(), 1);
+        assert!(!rasters.is_empty());
+
+        let raster = rasters.get(0).unwrap();
+        let metadata = raster.metadata();
+
+        assert_eq!(metadata.width(), 10);
+        assert_eq!(metadata.height(), 10);
+        assert_eq!(metadata.scale_x(), 1.0);
+        assert_eq!(metadata.scale_y(), -1.0);
+
+        let bands = raster.bands();
+        assert_eq!(bands.len(), 1);
+        assert!(!bands.is_empty());
+
+        // Access band with 1-based band_number
+        let band = bands.band(1).unwrap();
+        assert_eq!(band.data().len(), 100);
+        assert_eq!(band.data()[0], 1u8);
+
+        let band_meta = band.metadata();
+        assert_eq!(band_meta.storage_type().unwrap(), StorageType::InDb);
+        assert_eq!(band_meta.data_type().unwrap(), BandDataType::UInt8);
+
+        let crs = raster.crs().unwrap();
+        assert_eq!(crs, epsg4326);
+
+        // Test array over bands
+        let band_iter: Vec<_> = bands.iter().collect();
+        assert_eq!(band_iter.len(), 1);
+    }
+
+    #[test]
+    fn test_multi_band_array() {
+        let mut builder = RasterBuilder::new(3);
+
+        let metadata = RasterMetadata {
+            width: 5,
+            height: 5,
+            upperleft_x: 0.0,
+            upperleft_y: 0.0,
+            scale_x: 1.0,
+            scale_y: -1.0,
+            skew_x: 0.0,
+            skew_y: 0.0,
+        };
+
+        builder.start_raster(&metadata, None).unwrap();
+
+        // Add three bands using the correct API
+        for band_idx in 0..3 {
+            let band_metadata = BandMetadata {
+                nodata_value: Some(vec![255u8]),
+                storage_type: StorageType::InDb,
+                datatype: BandDataType::UInt8,
+                outdb_url: None,
+                outdb_band_id: None,
+            };
+
+            builder.start_band(band_metadata).unwrap();
+            let test_data = vec![band_idx as u8; 25]; // 5x5 raster
+            builder.band_data_writer().append_value(&test_data);
+            builder.finish_band().unwrap();
+        }
+
+        let result = builder.finish_raster();
+        assert!(result.is_ok());
+
+        let raster_array = builder.finish().unwrap();
+
+        let rasters = RasterStructArray::new(&raster_array);
+        let raster = rasters.get(0).unwrap();
+        let bands = raster.bands();
+
+        assert_eq!(bands.len(), 3);
+
+        // Test each band has different data
+        // Use 1-based band numbers
+        for i in 0..3 {
+            // Access band with 1-based band_number
+            let band = bands.band(i + 1).unwrap();
+            let expected_value = i as u8;
+            assert!(band.data().iter().all(|&x| x == expected_value));
+        }
+
+        // Test array
+        let band_values: Vec<u8> = bands
+            .iter()
+            .enumerate()
+            .map(|(i, band)| {
+                assert_eq!(band.data()[0], i as u8);
+                band.data()[0]
+            })
+            .collect();
+
+        assert_eq!(band_values, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn test_raster_is_null() {
+        let raster_array = generate_test_rasters(2, Some(1)).unwrap();
+        let rasters = RasterStructArray::new(&raster_array);
+        assert_eq!(rasters.len(), 2);
+        assert!(!rasters.is_null(0));
+        assert!(rasters.is_null(1));
+    }
 
     /// Build a single-raster, single-band raster StructArray with the
     /// canonical identity view. Used as the baseline input to the surgery
