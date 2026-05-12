@@ -26,7 +26,7 @@ use arrow_schema::{DataType, Field, FieldRef};
 use datafusion_common::{
     cast::as_binary_array,
     error::{DataFusionError, Result},
-    ScalarValue,
+    exec_datafusion_err, ScalarValue,
 };
 use datafusion_expr::Volatility;
 use datafusion_expr::{Accumulator, ColumnarValue};
@@ -34,7 +34,9 @@ use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_expr::aggregate_udf::{SedonaAccumulatorRef, SedonaAggregateUDF};
 use sedona_expr::item_crs::ItemCrsSedonaAccumulator;
 use sedona_expr::{aggregate_udf::SedonaAccumulator, statistics::GeoStatistics};
-use sedona_geometry::analyze::GeometrySummary;
+use sedona_geometry::analyze::{analyze_wkb, GeometrySummary};
+use sedona_geometry::bounding_box::BoundingBox;
+use sedona_geometry::bounds::geo_traits_bounds_xy;
 use sedona_geometry::interval::IntervalTrait;
 use sedona_geometry::types::{GeometryTypeAndDimensions, GeometryTypeAndDimensionsSet};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
@@ -77,12 +79,9 @@ impl SedonaAccumulator for STAnalyzeAgg {
     fn accumulator(
         &self,
         args: &[SedonaType],
-        output_type: &SedonaType,
+        _output_type: &SedonaType,
     ) -> Result<Box<dyn Accumulator>> {
-        Ok(Box::new(AnalyzeAccumulator::new(
-            args[0].clone(),
-            output_type.clone(),
-        )))
+        Ok(Box::new(AnalyzeAccumulator::new(args[0].clone())))
     }
 
     fn state_fields(&self, _args: &[SedonaType]) -> Result<Vec<FieldRef>> {
@@ -223,30 +222,34 @@ impl STAnalyzeAgg {
 #[derive(Debug)]
 pub struct AnalyzeAccumulator {
     input_type: SedonaType,
-    _output_type: SedonaType,
     stats: GeoStatistics,
 }
 
 impl AnalyzeAccumulator {
-    pub fn new(input_type: SedonaType, output_type: SedonaType) -> Self {
+    pub fn new(input_type: SedonaType) -> Self {
         Self {
             input_type,
-            _output_type: output_type,
             stats: GeoStatistics::empty(),
         }
     }
 
-    pub fn update_statistics(&mut self, geom: &Wkb) -> Result<()> {
-        // Get geometry analysis information
-        let summary = sedona_geometry::analyze::analyze_geometry(geom)
-            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+    pub fn update_statistics_with_bbox(&mut self, geom: &Wkb, bbox: &BoundingBox) -> Result<()> {
+        let summary = analyze_wkb(geom).map_err(|e| DataFusionError::External(Box::new(e)))?;
 
-        self.ingest_geometry_summary(&summary);
-
+        self.ingest_geometry_summary(&summary, bbox);
         Ok(())
     }
 
-    pub fn ingest_geometry_summary(&mut self, summary: &GeometrySummary) {
+    fn update_statistics(&mut self, geom: &Wkb) -> Result<()> {
+        let bbox =
+            geo_traits_bounds_xy(geom).map_err(|e| exec_datafusion_err!("Bounding error: {e}"))?;
+        let summary = analyze_wkb(geom).map_err(|e| exec_datafusion_err!("Analysis error: {e}"))?;
+
+        self.ingest_geometry_summary(&summary, &bbox);
+        Ok(())
+    }
+
+    fn ingest_geometry_summary(&mut self, summary: &GeometrySummary, bbox: &BoundingBox) {
         // Start with a clone of the current stats
         let mut stats = self.stats.clone();
 
@@ -254,7 +257,7 @@ impl AnalyzeAccumulator {
         stats = self.update_basic_counts(stats, summary.size_bytes);
         stats = self.update_geometry_type_counts(stats, summary);
         stats = self.update_point_count(stats, summary.point_count);
-        stats = self.update_envelope_info(stats, summary);
+        stats = self.update_envelope_info(stats, bbox);
         stats = self.update_geometry_types(stats, summary.geometry_type);
 
         // Assign the updated stats back to self.stats
@@ -300,14 +303,7 @@ impl AnalyzeAccumulator {
     }
 
     // Update envelope dimensions and bounding box
-    fn update_envelope_info(
-        &self,
-        stats: GeoStatistics,
-        analysis: &GeometrySummary,
-    ) -> GeoStatistics {
-        // The bbox is directly available on analysis, not wrapped in an Option
-        let bbox = &analysis.bbox;
-
+    fn update_envelope_info(&self, stats: GeoStatistics, bbox: &BoundingBox) -> GeoStatistics {
         // Calculate envelope width and height from the bbox
         let envelope_width = if bbox.x().is_empty() {
             0.0

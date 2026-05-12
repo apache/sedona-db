@@ -43,6 +43,7 @@ use tokio::runtime::Runtime;
 
 use crate::context::InternalContext;
 use crate::error::PySedonaError;
+use crate::expr::PyExpr;
 use crate::import_from::{import_arrow_scalar, import_arrow_schema};
 use crate::reader::PySedonaStreamReader;
 use crate::runtime::wait_for_future;
@@ -103,6 +104,22 @@ impl InternalDataFrame {
         offset: usize,
     ) -> Result<InternalDataFrame, PySedonaError> {
         let inner = self.inner.clone().limit(offset, limit)?;
+        Ok(InternalDataFrame::new(inner, self.runtime.clone()))
+    }
+
+    /// Project a set of expressions, producing a new lazy `DataFrame`.
+    ///
+    /// The Python side accepts a mix of column-name strings and `Expr`
+    /// objects; strings are converted to column references before being
+    /// handed across the boundary, so this function only sees a
+    /// `Vec<PyExpr>`. Each element is unwrapped into its inner
+    /// `datafusion_expr::Expr` and passed to DataFusion's `DataFrame::select`
+    /// directly — no schema validation here, since DataFusion's plan-build
+    /// step already produces a clear error if a referenced column does not
+    /// exist on the input.
+    fn select(&self, exprs: Vec<PyExpr>) -> Result<InternalDataFrame, PySedonaError> {
+        let exprs: Vec<Expr> = exprs.into_iter().map(|e| e.inner).collect();
+        let inner = self.inner.clone().select(exprs)?;
         Ok(InternalDataFrame::new(inner, self.runtime.clone()))
     }
 

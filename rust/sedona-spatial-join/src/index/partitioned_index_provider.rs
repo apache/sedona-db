@@ -420,7 +420,7 @@ mod tests {
     use arrow_array::{ArrayRef, BinaryArray, Int32Array, RecordBatch};
     use arrow_schema::{DataType, Field, Schema, SchemaRef};
     use datafusion::config::SpillCompression;
-    use datafusion_common::{DataFusionError, Result};
+    use datafusion_common::Result;
     use datafusion_execution::{
         memory_pool::{GreedyMemoryPool, MemoryConsumer, MemoryPool},
         runtime_env::RuntimeEnv,
@@ -430,9 +430,9 @@ mod tests {
     use datafusion_physical_plan::metrics::{ExecutionPlanMetricsSet, SpillMetrics};
     use sedona_expr::statistics::GeoStatistics;
     use sedona_functions::st_analyze_agg::AnalyzeAccumulator;
-    use sedona_geometry::analyze::analyze_geometry;
     use sedona_geometry::wkb_factory::wkb_point;
     use sedona_schema::datatypes::WKB_GEOMETRY;
+    use std::iter::zip;
 
     use crate::evaluated_batch::spill::EvaluatedBatchSpillWriter;
     use crate::partitioning::stream_repartitioner::{SpilledPartition, SpilledPartitions};
@@ -470,12 +470,12 @@ mod tests {
     }
 
     fn geo_stats_from_batches(batches: &[EvaluatedBatch]) -> Result<GeoStatistics> {
-        let mut analyzer = AnalyzeAccumulator::new(WKB_GEOMETRY, WKB_GEOMETRY);
+        let mut analyzer = AnalyzeAccumulator::new(WKB_GEOMETRY);
         for batch in batches {
-            for wkb in batch.geom_array.wkbs().iter().flatten() {
-                let summary =
-                    analyze_geometry(wkb).map_err(|e| DataFusionError::External(Box::new(e)))?;
-                analyzer.ingest_geometry_summary(&summary);
+            for (wkb_opt, rect) in zip(batch.geom_array.wkbs(), batch.geom_array.rects()) {
+                if let Some(wkb) = wkb_opt {
+                    analyzer.update_statistics_with_bbox(wkb, &rect.into())?;
+                }
             }
         }
         Ok(analyzer.finish())

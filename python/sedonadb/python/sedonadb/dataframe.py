@@ -26,6 +26,9 @@ if TYPE_CHECKING:
     import pandas
     import pyarrow
 
+    from sedonadb.expr import Expr
+    from sedonadb.expr import Literal as _SedonaLit
+
 
 class DataFrame:
     """Representation of a (lazy) collection of columns
@@ -84,6 +87,59 @@ class DataFrame:
             └──────┘
         """
         return self.limit(n)
+
+    def select(self, *exprs: "Expr | str | _SedonaLit") -> "DataFrame":
+        """Project a set of columns or expressions.
+
+        Returns a new lazy `DataFrame` whose columns are exactly the
+        projection. Column-name strings are converted to column references
+        via `sedonadb.expr.col` internally, so `df.select("x", "y")` and
+        `df.select(col("x"), col("y"))` produce the same plan. Literals
+        produced by `sedonadb.expr.lit()` are also accepted; use
+        `lit(value).alias(name)` to give the literal column a name.
+
+        Args:
+            *exprs: One or more arguments. Each argument is either a column
+                name (`str`), a `sedonadb.expr.Expr`, or a `sedonadb.expr.Literal`.
+                At least one argument is required.
+
+        Examples:
+
+            >>> from sedonadb.expr import col, lit
+            >>> sd = sedona.db.connect()
+            >>> df = sd.sql("SELECT 1 AS a, 2 AS b")
+            >>> df.select("a", (col("b") + 1).alias("b_plus_1")).show()
+            ┌───────┬──────────┐
+            │   a   ┆ b_plus_1 │
+            │ int64 ┆   int64  │
+            ╞═══════╪══════════╡
+            │     1 ┆        3 │
+            └───────┴──────────┘
+        """
+        from sedonadb.expr import Expr, Literal
+        from sedonadb.expr import col as _col
+        from sedonadb.expr.expression import _to_expr
+
+        if not exprs:
+            raise ValueError("select() requires at least one column or expression")
+
+        coerced = []
+        for e in exprs:
+            if isinstance(e, Expr):
+                coerced.append(e._impl)
+            elif isinstance(e, str):
+                coerced.append(_col(e)._impl)
+            elif isinstance(e, Literal):
+                # `lit(value)` returns Literal; route it through the same
+                # coercion path operators use so the resulting Expr lands
+                # in the plan with metadata preserved.
+                coerced.append(_to_expr(e)._impl)
+            else:
+                raise TypeError(
+                    f"select() expects str, Expr, or Literal arguments, "
+                    f"got {type(e).__name__}"
+                )
+        return DataFrame(self._ctx, self._impl.select(coerced), self._options)
 
     def limit(self, n: Optional[int], /, *, offset: int = 0) -> "DataFrame":
         """Limit result to n rows starting at offset
@@ -345,7 +401,7 @@ class DataFrame:
         partition_by: Optional[Union[str, Iterable[str]]] = None,
         sort_by: Optional[Union[str, Iterable[str]]] = None,
         single_file_output: Optional[bool] = None,
-        geoparquet_version: Literal["1.0", "1.1", None] = None,
+        geoparquet_version: Literal["1.0", "1.1", "2.0", "none", None] = None,
         overwrite_bbox_columns: Optional[bool] = None,
         max_row_group_size: Optional[int] = None,
         compression: Optional[str] = None,
@@ -383,6 +439,10 @@ class DataFrame:
                 The extra columns will appear just before their geometry column and
                 will be named "[geom_col_name]_bbox" for all geometry columns except
                 "geometry", whose bounding box column name is just "bbox".
+
+                Use GeoParquet 2.0 to write compatible GeoParquet metadata with
+                Parquet-native Geometry and/or Geography data types; use "none" to omit
+                GeoParquet metadata completely.
             overwrite_bbox_columns: Use `True` to overwrite any bounding box columns
                 that already exist in the input. This is useful in a read -> modify
                 -> write scenario to ensure these columns are up-to-date. If `False`

@@ -42,6 +42,9 @@ use crate::las::{
 
 #[derive(Clone, Debug)]
 pub struct LasSource {
+    pub(crate) extension: Extension,
+    /// LAS/LAZ reading options
+    pub(crate) options: LasOptions,
     /// Optional metrics
     metrics: ExecutionPlanMetricsSet,
     /// The schema of the file.
@@ -52,23 +55,24 @@ pub struct LasSource {
     pub(crate) reader_factory: Option<Arc<LasFileReaderFactory>>,
     /// Batch size configuration
     pub(crate) batch_size: Option<usize>,
-    pub(crate) options: LasOptions,
-    pub(crate) extension: Extension,
-    /// Projection pushdown
-    pub(crate) split_projection: Option<SplitProjection>,
+    /// Projection to apply to the output.
+    pub(crate) projection: ProjectionExprs,
 }
 
 impl LasSource {
-    pub fn new(extension: Extension, table_schema: TableSchema) -> Self {
+    pub fn new(extension: Extension, table_schema: impl Into<TableSchema>) -> Self {
+        let table_schema = table_schema.into();
+        let projection = SplitProjection::unprojected(&table_schema).source;
+
         Self {
+            extension,
+            options: Default::default(),
             metrics: Default::default(),
             table_schema,
             predicate: Default::default(),
             reader_factory: Default::default(),
             batch_size: Default::default(),
-            options: Default::default(),
-            extension,
-            split_projection: None,
+            projection,
         }
     }
 
@@ -95,30 +99,29 @@ impl FileSource for LasSource {
             .clone()
             .unwrap_or_else(|| Arc::new(LasFileReaderFactory::new(object_store, None)));
 
-        let inner_opener: Arc<dyn FileOpener> = Arc::new(LasOpener {
+        let table_schema = self.table_schema.file_schema();
+        let split_projection = SplitProjection::new(table_schema, &self.projection);
+        let las_opener: Arc<dyn FileOpener> = Arc::new(LasOpener {
+            partition,
+            partition_count: base_config.output_partitioning().partition_count(),
+            projection: Some(split_projection.file_indices.clone()),
             batch_size: self.batch_size.expect("Must be set"),
             limit: base_config.limit,
             predicate: self.predicate.clone(),
             file_reader_factory,
             options: self.options.clone(),
-            partition_count: base_config.output_partitioning().partition_count(),
-            partition,
         });
 
         // Wrap with ProjectionOpener to handle reordering/expressions
-        if let Some(split_projection) = &self.split_projection {
-            ProjectionOpener::try_new(
-                split_projection.clone(),
-                inner_opener,
-                self.table_schema.file_schema(),
-            )
-        } else {
-            Ok(inner_opener)
-        }
+        ProjectionOpener::try_new(split_projection, las_opener, table_schema)
     }
 
     fn as_any(&self) -> &dyn Any {
         self
+    }
+
+    fn table_schema(&self) -> &TableSchema {
+        &self.table_schema
     }
 
     fn with_batch_size(&self, batch_size: usize) -> Arc<dyn FileSource> {
@@ -127,31 +130,12 @@ impl FileSource for LasSource {
         Arc::new(conf)
     }
 
-    fn try_pushdown_projection(
-        &self,
-        projection: &ProjectionExprs,
-    ) -> Result<Option<Arc<dyn FileSource>>, DataFusionError> {
-        // Use SplitProjection to handle any projection:
-        // - file_indices provides column pruning (always works)
-        // - ProjectionOpener handles reordering/expressions/renames after reading
-        let split_projection = SplitProjection::new(self.table_schema.file_schema(), projection);
-
-        Ok(Some(Arc::new(Self {
-            split_projection: Some(split_projection),
-            ..self.clone()
-        })))
-    }
-
     fn projection(&self) -> Option<&ProjectionExprs> {
-        self.split_projection.as_ref().map(|sp| &sp.source)
+        Some(&self.projection)
     }
 
     fn metrics(&self) -> &ExecutionPlanMetricsSet {
         &self.metrics
-    }
-
-    fn table_schema(&self) -> &TableSchema {
-        &self.table_schema
     }
 
     fn file_type(&self) -> &str {
@@ -225,5 +209,14 @@ impl FileSource for LasSource {
             filters.len()
         ])
         .with_updated_node(source))
+    }
+
+    fn try_pushdown_projection(
+        &self,
+        projection: &ProjectionExprs,
+    ) -> Result<Option<Arc<dyn FileSource>>, DataFusionError> {
+        let mut source = self.clone();
+        source.projection = self.projection.try_merge(projection)?;
+        Ok(Some(Arc::new(source)))
     }
 }

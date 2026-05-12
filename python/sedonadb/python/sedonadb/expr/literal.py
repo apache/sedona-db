@@ -48,6 +48,24 @@ class Literal:
     def __repr__(self):
         return f"<Literal>\n{repr(self._value)}"
 
+    def alias(self, name: str):
+        """Give this literal a column name.
+
+        Promotes the literal into an `Expr` (since SedonaDB column naming
+        is an `Expr` concern, not a `Literal` concern) and applies the
+        alias there. Useful when projecting a constant column via
+        `DataFrame.select()`.
+
+        Examples:
+
+            >>> from sedonadb.expr import lit
+            >>> lit(7).alias("seven")
+            Expr(Int64(7) AS seven)
+        """
+        from sedonadb.expr.expression import _to_expr
+
+        return _to_expr(self).alias(name)
+
 
 def lit(value: Any) -> Literal:
     """Create a literal (constant) expression

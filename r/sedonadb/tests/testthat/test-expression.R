@@ -36,9 +36,20 @@ test_that("columns can be inspected", {
 })
 
 test_that("binary expressions can be inspected", {
+  # Check for binops
   expr <- sd_expr_binary("==", sd_expr_column("left"), sd_expr_column("right"))
   parsed <- sd_expr_parse_binary(expr)
   expect_identical(parsed$op, "=")
+  expect_identical(parsed$left$qualified_name(), c(NA_character_, "left"))
+  expect_identical(parsed$right$qualified_name(), c(NA_character_, "right"))
+
+  # Check for calls
+  expr <- sd_expr_scalar_function(
+    "st_intersects",
+    list(sd_expr_column("left"), sd_expr_column("right"))
+  )
+  parsed <- sd_expr_parse_binary(expr)
+  expect_identical(parsed$op, "st_intersects")
   expect_identical(parsed$left$qualified_name(), c(NA_character_, "left"))
   expect_identical(parsed$right$qualified_name(), c(NA_character_, "right"))
 })

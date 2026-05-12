@@ -19,11 +19,12 @@ use sedona_gdal::dataset::Dataset;
 use sedona_gdal::errors::GdalError;
 use sedona_gdal::gdal::Gdal;
 use sedona_gdal::gdal_dyn_bindgen::{GDAL_OF_RASTER, GDAL_OF_READONLY, GDAL_OF_VERBOSE_ERROR};
+use sedona_gdal::geo_transform::GeoTransform;
 use sedona_gdal::mem::MemDatasetBuilder;
 use sedona_gdal::raster::types::DatasetOptions;
 use sedona_gdal::raster::types::GdalDataType;
 
-use sedona_raster::traits::RasterRef;
+use sedona_raster::traits::{MetadataRef, RasterMetadata, RasterRef};
 use sedona_schema::raster::{BandDataType, StorageType};
 
 use datafusion_common::{
@@ -39,6 +40,47 @@ where
     match sedona_gdal::global::with_global_gdal(f) {
         Ok(inner_result) => inner_result,
         Err(init_err) => Err(DataFusionError::External(Box::new(init_err))),
+    }
+}
+
+/// Convert raster metadata into GDAL's six-element geo-transform.
+///
+/// GDAL stores geo-transforms as
+/// `[origin_x, pixel_width, rotation_x, origin_y, rotation_y, pixel_height]`.
+pub(crate) trait ToGdalGeoTransform {
+    fn to_gdal_geotransform(&self) -> GeoTransform;
+}
+
+impl<T: MetadataRef + ?Sized> ToGdalGeoTransform for T {
+    fn to_gdal_geotransform(&self) -> GeoTransform {
+        [
+            self.upper_left_x(),
+            self.scale_x(),
+            self.skew_x(),
+            self.upper_left_y(),
+            self.skew_y(),
+            self.scale_y(),
+        ]
+    }
+}
+
+/// Reconstruct raster metadata from a GDAL six-element geo-transform and raster dimensions.
+pub(crate) trait RasterMetadataFromGdalGeoTransform {
+    fn to_raster_metadata(&self, width: usize, height: usize) -> RasterMetadata;
+}
+
+impl RasterMetadataFromGdalGeoTransform for GeoTransform {
+    fn to_raster_metadata(&self, width: usize, height: usize) -> RasterMetadata {
+        RasterMetadata {
+            width: width as u64,
+            height: height as u64,
+            upperleft_x: self[0],
+            upperleft_y: self[3],
+            scale_x: self[1],
+            scale_y: self[5],
+            skew_x: self[2],
+            skew_y: self[4],
+        }
     }
 }
 
@@ -202,15 +244,7 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
             .map_err(|e| DataFusionError::External(Box::new(e)))?
     };
 
-    // GDAL geotransform: [origin_x, pixel_width, rotation_x, origin_y, rotation_y, pixel_height]
-    let geotransform = [
-        metadata.upper_left_x(),
-        metadata.scale_x(),
-        metadata.skew_x(),
-        metadata.upper_left_y(),
-        metadata.skew_y(),
-        metadata.scale_y(),
-    ];
+    let geotransform = metadata.to_gdal_geotransform();
 
     dataset
         .set_geo_transform(&geotransform)
@@ -422,6 +456,40 @@ mod tests {
         assert!(dataset
             .projection()
             .contains("AUTHORITY[\"EPSG\",\"4326\"]"));
+    }
+
+    #[test]
+    fn test_to_gdal_geotransform() {
+        let metadata = RasterMetadata {
+            width: 3,
+            height: 2,
+            upperleft_x: 10.0,
+            upperleft_y: 20.0,
+            scale_x: 0.5,
+            scale_y: -0.5,
+            skew_x: 0.1,
+            skew_y: -0.2,
+        };
+
+        assert_eq!(
+            metadata.to_gdal_geotransform(),
+            [10.0, 0.5, 0.1, 20.0, -0.2, -0.5]
+        );
+    }
+
+    #[test]
+    fn test_to_raster_metadata() {
+        let geotransform: GeoTransform = [12.5, 0.25, 0.75, -8.0, -0.5, -2.0];
+        let metadata = geotransform.to_raster_metadata(4, 3);
+
+        assert_eq!(metadata.width, 4);
+        assert_eq!(metadata.height, 3);
+        assert_eq!(metadata.upperleft_x, 12.5);
+        assert_eq!(metadata.upperleft_y, -8.0);
+        assert_eq!(metadata.scale_x, 0.25);
+        assert_eq!(metadata.scale_y, -2.0);
+        assert_eq!(metadata.skew_x, 0.75);
+        assert_eq!(metadata.skew_y, -0.5);
     }
 
     #[test]

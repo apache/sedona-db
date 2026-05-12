@@ -27,6 +27,7 @@ use crate::utils::S2GeogCError;
 ///
 /// This struct accumulates bounds from multiple geographies and can compute
 /// the minimum bounding rectangle that contains all of them.
+#[derive(Debug)]
 pub struct RectBounder {
     ptr: *mut S2GeogRectBounder,
 }
