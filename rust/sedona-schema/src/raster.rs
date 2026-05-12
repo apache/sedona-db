@@ -211,7 +211,7 @@ impl BandDataType {
 /// matches on `StorageType::InDb` / `StorageType::OutDbRef` compiling.
 /// The current N-D schema discriminates via `BandRef::is_indb()` (true ↔
 /// `InDb`, false ↔ `OutDbRef`); this enum is the shim over that.
-#[repr(u32)]
+#[repr(u16)]
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Copy)]
 pub enum StorageType {
     /// Band data is materialized into the raster row's `data` Arrow column.

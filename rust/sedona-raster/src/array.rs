@@ -26,10 +26,6 @@ use arrow_schema::ArrowError;
 use crate::traits::{BandRef, Bands, NdBuffer, RasterRef, ViewEntry};
 use sedona_schema::raster::{band_indices, raster_indices, BandDataType};
 
-// ---------------------------------------------------------------------------
-// Band implementation (Arrow-backed)
-// ---------------------------------------------------------------------------
-
 /// Arrow-backed implementation of BandRef for a single band within a raster.
 ///
 /// Today this handles only the canonical identity view: `view_entries` is
@@ -157,10 +153,6 @@ impl<'a> BandRef for BandRefImpl<'a> {
         Ok(Cow::Borrowed(self.data_array.value(self.band_row)))
     }
 }
-
-// ---------------------------------------------------------------------------
-// Raster implementation (Arrow-backed)
-// ---------------------------------------------------------------------------
 
 /// Arrow-backed implementation of RasterRef for a single raster row.
 ///
@@ -377,10 +369,6 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
         &self.spatial_shape_values.values()[start..end]
     }
 }
-
-// ---------------------------------------------------------------------------
-// RasterStructArray — efficient columnar access to rasters
-// ---------------------------------------------------------------------------
 
 /// Access rasters from the Arrow StructArray.
 ///
@@ -823,7 +811,7 @@ mod tests {
         )
     }
 
-    // ---- Critical #2: bad data_type discriminant ----
+    // bad data_type discriminant
 
     #[test]
     fn band_and_band_data_type_return_none_for_unknown_discriminant() {
@@ -836,7 +824,7 @@ mod tests {
         assert!(r.band_data_type(0).is_none());
     }
 
-    // ---- Critical #3 (reader side): empty source_shape ----
+    // empty source_shape
 
     #[test]
     fn band_returns_none_when_source_shape_is_empty() {
@@ -860,7 +848,7 @@ mod tests {
         assert!(rasters.get(0).unwrap().band(0).is_none());
     }
 
-    // ---- Important #7: direct fast-path tests ----
+    // direct fast-path tests
 
     #[test]
     fn raster_ref_fast_paths_return_expected_values() {
@@ -961,7 +949,7 @@ mod tests {
         assert!(bm0.outdb_band_id().is_none());
     }
 
-    // ---- Important #9: multi-band, multi-raster identity ----
+    // multi-band, multi-raster identity
 
     #[test]
     fn multi_raster_identity_views() {
@@ -1053,7 +1041,7 @@ mod tests {
         assert_eq!(r1.band_data_type(1), Some(BandDataType::UInt8));
     }
 
-    // ---- Important #10: null raster row, fast path ----
+    // null raster row, fast path
 
     #[test]
     fn null_raster_row_fast_paths_return_none_after_non_null() {

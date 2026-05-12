@@ -23,13 +23,10 @@ use arrow_array::{
     Array, ArrayRef, ListArray, StructArray,
 };
 use arrow_buffer::{NullBuffer, OffsetBuffer, ScalarBuffer};
-use arrow_schema::ArrowError;
+use arrow_schema::{ArrowError, DataType};
 use std::sync::Arc;
 
-use sedona_schema::raster::BandDataType;
-use sedona_schema::raster::RasterSchema;
-
-use arrow_schema::DataType;
+use sedona_schema::raster::{BandDataType, RasterSchema};
 
 use crate::traits::{BandMetadata, MetadataRef};
 
@@ -242,13 +239,11 @@ impl RasterBuilder {
         Ok(())
     }
 
-    /// Convenience: start a 2D raster with the legacy 8-parameter interface.
-    ///
-    /// Sets `spatial_dims=["x","y"]`, `spatial_shape=[width, height]`, and
-    /// Build the 6-element GDAL transform from the individual parameters
-    /// and start a 2-D raster. The N-D entry point is
-    /// [`Self::start_raster_nd`]; the main-compatible metadata-taking entry
-    /// is [`Self::start_raster_2d`].
+    /// Convenience: start a 2-D raster with positional geotransform parameters.
+    /// Sets `spatial_dims=["x","y"]` and `spatial_shape=[width, height]` and
+    /// builds the 6-element GDAL transform internally. The N-D entry point is
+    /// [`Self::start_raster_nd`]; the metadata-taking entry is
+    /// [`Self::start_raster`].
     #[allow(clippy::too_many_arguments)]
     pub fn start_raster_2d(
         &mut self,

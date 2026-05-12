@@ -74,7 +74,7 @@ pub struct ViewEntry {
 /// Panics on construction (`metadata()`) if the raster lacks width or
 /// height — corrupt schemas error through the `width()`/`height()` trait
 /// methods directly; the metadata accessor is the convenience surface.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct RasterMetadata {
     pub width: u64,
     pub height: u64,
@@ -91,13 +91,21 @@ pub struct RasterMetadata {
 /// compiling. `RasterMetadata` is the canonical implementor; new code
 /// should reach for `RasterRef::width()? / height()?` instead.
 pub trait MetadataRef {
+    /// Width of the raster in pixels
     fn width(&self) -> u64;
+    /// Height of the raster in pixels
     fn height(&self) -> u64;
+    /// X coordinate of the upper-left corner
     fn upper_left_x(&self) -> f64;
+    /// Y coordinate of the upper-left corner
     fn upper_left_y(&self) -> f64;
+    /// X-direction pixel size (scale)
     fn scale_x(&self) -> f64;
+    /// Y-direction pixel size (scale)
     fn scale_y(&self) -> f64;
+    /// X-direction skew/rotation
     fn skew_x(&self) -> f64;
+    /// Y-direction skew/rotation
     fn skew_y(&self) -> f64;
 }
 
@@ -161,7 +169,7 @@ impl RasterMetadata {
 /// fields are eagerly parsed from the N-D `outdb_uri` (which carries a
 /// `#band=N` fragment in the SedonaDB convention) so callers from the
 /// pre-N-D era keep compiling against the same field names.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct BandMetadata {
     pub nodata_value: Option<Vec<u8>>,
     pub storage_type: sedona_schema::raster::StorageType,
