@@ -73,7 +73,7 @@ def test_st_area(eng, geog, expected):
     eng.assert_query_result(
         f"SELECT ST_Area({geog_or_null(geog)})",
         expected,
-        numeric_epsilon=eng.geography_distance_epsilon(),
+        numeric_epsilon=eng.geography_numeric_epsilon(),
     )
 
 
@@ -114,7 +114,7 @@ def test_st_length(eng, geog, expected):
     eng.assert_query_result(
         f"SELECT ST_Length({geog_or_null(geog)})",
         expected,
-        numeric_epsilon=eng.geography_distance_epsilon(),
+        numeric_epsilon=eng.geography_numeric_epsilon(),
     )
 
 
@@ -179,7 +179,7 @@ def test_st_perimeter(eng, geog, expected):
     eng.assert_query_result(
         f"SELECT ST_Perimeter({geog_or_null(geog)})",
         expected,
-        numeric_epsilon=eng.geography_distance_epsilon(),
+        numeric_epsilon=eng.geography_numeric_epsilon(),
     )
 
 
@@ -202,7 +202,7 @@ def test_st_perimeter_geometrycollection(eng, geog, expected):
     eng.assert_query_result(
         f"SELECT ST_Perimeter({geog_or_null(geog)})",
         expected,
-        numeric_epsilon=eng.geography_distance_epsilon(),
+        numeric_epsilon=eng.geography_numeric_epsilon(),
     )
 
 
@@ -246,7 +246,7 @@ def test_st_line_locate_point(eng, line, point, expected):
     eng.assert_query_result(
         f"SELECT ST_LineLocatePoint({geog_or_null(line)}, {geog_or_null(point)})",
         expected,
-        numeric_epsilon=eng.geography_distance_epsilon(),
+        numeric_epsilon=eng.geography_numeric_epsilon(),
     )
 
 

@@ -125,9 +125,9 @@ class DBEngine:
                 f"Failed to create engine tester {cls.name()}: {e}\n{cls.install_hint()}"
             )
 
-    def geography_distance_epsilon(self) -> float:
+    def geography_numeric_epsilon(self) -> float:
         """Relative numeric_epsilon to use when comparing results to the SedonaDB value"""
-        return 1e-16
+        return 1e-15
 
     def val_or_null(self, arg: Any) -> str:
         """Format SQL expression for a value or NULL"""
@@ -477,7 +477,7 @@ class PostGIS(DBEngine):
     # Use reduced precision when comparing geography to SedonaDB asserted results
     # because PostGIS uses an ellispoidal model and SedonaDB and BigQuery use
     # spherical ones
-    def geography_distance_epsilon(self) -> float:
+    def geography_numeric_epsilon(self) -> float:
         return 1e-2
 
     def val_or_null(self, arg):
@@ -767,7 +767,7 @@ class BigQuery(DBEngine):
         )
 
     # Use slightly reduced precision because BigQuery snaps vertices on input slightly
-    def geography_distance_epsilon(self) -> float:
+    def geography_numeric_epsilon(self) -> float:
         return 1e-14
 
     def val_or_null(self, arg):

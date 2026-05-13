@@ -175,12 +175,12 @@ def test_st_x_y(eng, geog, expected_x, expected_y):
     eng.assert_query_result(
         f"SELECT ST_X({geog_or_null(geog)})",
         expected_x,
-        numeric_epsilon=eng.geography_distance_epsilon(),
+        numeric_epsilon=eng.geography_numeric_epsilon(),
     )
     eng.assert_query_result(
         f"SELECT ST_Y({geog_or_null(geog)})",
         expected_y,
-        numeric_epsilon=eng.geography_distance_epsilon(),
+        numeric_epsilon=eng.geography_numeric_epsilon(),
     )
 
 

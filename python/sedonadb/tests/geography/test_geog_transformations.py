@@ -505,7 +505,7 @@ def test_st_buffer(eng, geog, distance, expected):
     eng.assert_query_result(
         f"SELECT ST_Area(ST_Buffer({geog_or_null(geog)}, {val_or_null(distance)}))",
         expected,
-        numeric_epsilon=eng.geography_distance_epsilon(),
+        numeric_epsilon=eng.geography_numeric_epsilon(),
     )
 
 
@@ -543,7 +543,7 @@ def test_st_buffer_num_quad_segs(eng, geog, distance, num_quad_segs, expected):
     eng.assert_query_result(
         f"SELECT ST_Area(ST_Buffer({geog_or_null(geog)}, {val_or_null(distance)}, {num_quad_segs}))",
         expected,
-        numeric_epsilon=eng.geography_distance_epsilon(),
+        numeric_epsilon=eng.geography_numeric_epsilon(),
     )
 
 
@@ -589,7 +589,7 @@ def test_st_buffer_params(eng, geog, distance, params, expected):
     eng.assert_query_result(
         f"SELECT ST_Area(ST_Buffer({geog_or_null(geog)}, {val_or_null(distance)}, '{params}'))",
         expected,
-        numeric_epsilon=eng.geography_distance_epsilon(),
+        numeric_epsilon=eng.geography_numeric_epsilon(),
     )
 
 
