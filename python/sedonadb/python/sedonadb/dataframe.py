@@ -198,8 +198,6 @@ class DataFrame:
             self._options,
         )
 
-    where = filter
-
     def limit(self, n: Optional[int], /, *, offset: int = 0) -> "DataFrame":
         """Limit result to n rows starting at offset
 
