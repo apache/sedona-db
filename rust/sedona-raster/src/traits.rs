@@ -622,7 +622,7 @@ pub trait BandRef {
         // so identity-view bands surface the borrowed in-line bytes,
         // matching the pre-N-D behavior exactly. View-materialized
         // (`Cow::Owned`) bands can't be returned through `&[u8]` because
-        // the owned `Vec` would die at the end of this call — implementors
+        // the owned `Vec` would die at the end of this call — implementers
         // that need view-materialized bytes via `data()` must override and
         // anchor the materialized buffer on `Self`; other consumers should
         // reach for `contiguous_data()` directly.
