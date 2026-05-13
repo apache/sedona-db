@@ -35,7 +35,7 @@ use crate::gdal_common::with_gdal;
 use crate::gdal_dataset_provider::configure_thread_local_options;
 use crate::utils::append_as_outdb_raster;
 
-pub fn rs_from_path_udf() -> SedonaScalarUDF {
+pub fn rs_frompath_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "rs_frompath",
         vec![Arc::new(RsFromPath)],
@@ -103,9 +103,15 @@ mod tests {
     use arrow_array::StringArray;
     use datafusion_common::cast::{as_struct_array, as_uint64_array};
     use datafusion_common::ScalarValue;
+    use datafusion_expr::ScalarUDFImpl;
     use sedona_expr::scalar_udf::SedonaScalarKernel;
     use sedona_schema::raster::{metadata_indices, raster_indices};
     use sedona_testing::data::test_raster;
+
+    #[test]
+    fn test_rs_from_path_udf_name() {
+        assert_eq!(rs_frompath_udf().name(), "rs_frompath");
+    }
 
     fn assert_raster_dimensions(
         result: &ColumnarValue,
@@ -212,5 +218,56 @@ mod tests {
             }
             other => panic!("Expected empty array result, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_invoke_rs_from_path_propagates_nulls() {
+        let path = test_raster("test4.tiff").expect("test4.tiff should exist");
+
+        let input =
+            ColumnarValue::Array(Arc::new(StringArray::from(vec![Some(path.as_str()), None])));
+
+        let result = RsFromPath
+            .invoke_batch_from_args(&[], &[input], &SedonaType::Arrow(DataType::Null), 0, None)
+            .expect("Should invoke successfully for null-containing input");
+
+        match result {
+            ColumnarValue::Array(arr) => {
+                let struct_arr = as_struct_array(&arr).unwrap();
+                assert_eq!(struct_arr.len(), 2);
+                assert!(!struct_arr.is_null(0));
+                assert!(struct_arr.is_null(1));
+
+                let metadata_struct =
+                    as_struct_array(struct_arr.column(raster_indices::METADATA)).unwrap();
+                let actual_width = as_uint64_array(metadata_struct.column(metadata_indices::WIDTH))
+                    .unwrap()
+                    .value(0);
+                let actual_height =
+                    as_uint64_array(metadata_struct.column(metadata_indices::HEIGHT))
+                        .unwrap()
+                        .value(0);
+
+                assert_eq!(actual_width, 10);
+                assert_eq!(actual_height, 10);
+            }
+            other => panic!("Expected array result, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_invoke_rs_from_path_invalid_path_errors() {
+        let missing_path = "/definitely/missing/rs_from_path_test.tif";
+        let input = ColumnarValue::Scalar(ScalarValue::Utf8(Some(missing_path.to_string())));
+
+        let err = RsFromPath
+            .invoke_batch_from_args(&[], &[input], &SedonaType::Arrow(DataType::Null), 0, None)
+            .expect_err("Missing path should return an error");
+
+        let err_message = err.to_string();
+        assert!(err_message.contains(&format!(
+            "Failed to open raster file '{}' (GDAL path '{}')",
+            missing_path, missing_path
+        )));
     }
 }

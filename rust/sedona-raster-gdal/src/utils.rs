@@ -117,7 +117,7 @@ pub fn append_as_outdb_raster(gdal: &Gdal, path: &str, builder: &mut RasterBuild
         )
         .map_err(|e| {
             exec_datafusion_err!(
-                "Failed to open raster file '{}'(GDAL path '{}'): {}",
+                "Failed to open raster file '{}' (GDAL path '{}'): {}",
                 path,
                 gdal_path,
                 e

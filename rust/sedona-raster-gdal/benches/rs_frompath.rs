@@ -56,7 +56,7 @@ fn raster_path_array(names: &[&str], rows: usize) -> ArrayRef {
 }
 
 fn bench_rs_frompath(c: &mut Criterion) {
-    let udf: ScalarUDF = sedona_raster_gdal::rs_from_path_udf().into();
+    let udf: ScalarUDF = sedona_raster_gdal::rs_frompath_udf().into();
     let tester = ScalarUdfTester::new(udf, vec![SedonaType::Arrow(DataType::Utf8)]);
 
     let single_small = raster_path_array(&["test4.tiff"], 1);

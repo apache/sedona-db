@@ -41,9 +41,9 @@ pub use gdal_common::{
     band_data_type_to_gdal, bytes_to_f64, gdal_to_band_data_type, gdal_type_byte_size,
     nodata_bytes_to_f64, nodata_f64_to_bytes,
 };
-pub use rs_frompath::rs_from_path_udf;
+pub use rs_frompath::rs_frompath_udf;
 pub use utils::{append_as_indb_raster, append_as_outdb_raster, dataset_to_indb_raster};
 
 pub fn all_gdal_udfs() -> Vec<sedona_expr::scalar_udf::SedonaScalarUDF> {
-    vec![rs_from_path_udf()]
+    vec![rs_frompath_udf()]
 }
