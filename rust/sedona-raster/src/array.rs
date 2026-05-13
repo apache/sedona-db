@@ -238,7 +238,10 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
         // violation instead of an out-of-range-looking miss.
         assert!(
             self.band_view_list.is_null(band_row),
-            "non-null view row at band {band_row}: view composition is not yet implemented"
+            "{}",
+            sedona_common::sedona_internal_datafusion_err!(
+                "non-null view row at band {band_row}: view composition is not yet implemented"
+            )
         );
         let view_entries: Vec<ViewEntry> = source_shape
             .iter()
