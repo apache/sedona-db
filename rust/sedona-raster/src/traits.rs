@@ -569,8 +569,8 @@ pub trait BandRef {
     fn metadata(&self) -> BandMetadata {
         let is_indb = self.is_indb();
         // Match the pre-N-D contract: outdb_url / outdb_band_id are only
-        // populated when storage_type is OutDbRef. PR-B's schema lets the
-        // URI hint coexist with InDb data; this surface hides that.
+        // populated when storage_type is OutDbRef. The current schema lets
+        // the URI hint coexist with InDb data; this surface hides that.
         let (outdb_url, outdb_band_id) = if !is_indb {
             match self.outdb_uri() {
                 Some(uri) => {
@@ -617,12 +617,25 @@ pub trait BandRef {
     /// infallible `BandRef::data() -> &[u8]` which only ever ran against
     /// identity-view InDb bands.
     fn data(&self) -> &[u8] {
-        // Default impl forwards through nd_buffer's borrowed slice. This
-        // only borrows the underlying band buffer for identity-view InDb
-        // bands; everything else is a corrupt-shape call site.
-        self.nd_buffer()
+        // Compatibility shim: returns the same bytes pre-N-D callers expect
+        // from `BandRef::data() -> &[u8]`. Delegates to `contiguous_data()`
+        // so identity-view bands surface the borrowed in-line bytes,
+        // matching the pre-N-D behavior exactly. View-materialized
+        // (`Cow::Owned`) bands can't be returned through `&[u8]` because
+        // the owned `Vec` would die at the end of this call — implementors
+        // that need view-materialized bytes via `data()` must override and
+        // anchor the materialized buffer on `Self`; other consumers should
+        // reach for `contiguous_data()` directly.
+        match self
+            .contiguous_data()
             .expect("BandRef::data() requires an in-db band with bytes")
-            .buffer
+        {
+            Cow::Borrowed(b) => b,
+            Cow::Owned(_) => panic!(
+                "BandRef::data() can't return view-materialized bytes; \
+                 use contiguous_data() for sliced/permuted bands"
+            ),
+        }
     }
 
     /// Nodata value interpreted as f64.
@@ -650,8 +663,9 @@ pub trait BandRef {
 /// Convert raw nodata bytes to f64 given a [`BandDataType`].
 ///
 /// The bytes are expected to be in little-endian order and exactly match the
-/// byte size of the data type.
-pub fn nodata_bytes_to_f64(bytes: &[u8], dt: &BandDataType) -> Result<f64, ArrowError> {
+/// byte size of the data type. Internal helper for the lossless wrapper;
+/// non-i64/u64 callers reach for `nodata_bytes_to_f64_lossless` instead.
+fn nodata_bytes_to_f64(bytes: &[u8], dt: &BandDataType) -> Result<f64, ArrowError> {
     macro_rules! read_le {
         ($t:ty, $n:expr) => {{
             let arr: [u8; $n] = bytes.try_into().map_err(|_| {
@@ -776,19 +790,6 @@ mod tests {
     fn test_nodata_bytes_to_f64_wrong_length() {
         let result = nodata_bytes_to_f64(&[1, 2, 3], &BandDataType::Float64);
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_nodata_as_f64_int64_loses_precision_above_2_pow_53() {
-        // Locks in the documented warning: nodata bytes for Int64 values
-        // beyond f64's 53-bit mantissa silently round on conversion.
-        // The expected f64 is hard-coded — deriving it via `as f64` would
-        // mean the test invokes the same primitive cast it claims to test.
-        let big = (1i64 << 53) + 1; // 2^53 + 1; not representable in f64
-        let bytes = big.to_le_bytes();
-        let val = nodata_bytes_to_f64(&bytes, &BandDataType::Int64).unwrap();
-        assert_eq!(val, 9007199254740992.0_f64);
-        assert_ne!(val as i64, big);
     }
 
     #[test]

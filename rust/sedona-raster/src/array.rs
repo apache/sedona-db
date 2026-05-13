@@ -86,10 +86,13 @@ impl<'a> BandRef for BandRefImpl<'a> {
     }
 
     fn data(&self) -> &[u8] {
-        // Pre-N-D compatibility surface: returns the raw `data` column bytes
-        // verbatim. For InDb identity-view bands this is the row-major buffer
-        // callers from main expect. For OutDb it's `&[]` — same shape as
-        // main, which let callers see "no in-line bytes" without panicking.
+        // Pre-N-D compatibility surface. Identity-view InDb bands → the
+        // row-major in-line buffer (zero-copy borrow into the StructArray),
+        // matching the pre-N-D behavior exactly. OutDb → `&[]` from the
+        // empty `data` column, no panic. Non-identity views never reach
+        // here — `RasterRefImpl::band()` rejects them upstream so the
+        // raw column bytes always equal the visible bytes for any band
+        // this reader produces.
         self.data_array.value(self.band_row)
     }
 
@@ -230,11 +233,13 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
 
         // Only the canonical identity view (null view row) is written today.
         // A non-null view row would require the view → byte-stride composition
-        // path that is deferred to a follow-up; reject it here so callers see
-        // a clean "no band" rather than a panic.
-        if !self.band_view_list.is_null(band_row) {
-            return None;
-        }
+        // path, which is not yet implemented. Surface it loudly here rather
+        // than silently returning None, so callers see a clear invariant
+        // violation instead of an out-of-range-looking miss.
+        assert!(
+            self.band_view_list.is_null(band_row),
+            "non-null view row at band {band_row}: view composition is not yet implemented"
+        );
         let view_entries: Vec<ViewEntry> = source_shape
             .iter()
             .enumerate()
@@ -249,8 +254,6 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
         let visible_shape: Vec<u64> = source_shape.to_vec();
 
         let dtype_size = data_type.byte_size() as i64;
-        // C-order byte strides over the source_shape:
-        //   byte_strides[k] = dtype_size * Π_{j>k} source_shape[j]
         let mut byte_strides = vec![0i64; source_shape.len()];
         byte_strides[source_shape.len() - 1] = dtype_size;
         for k in (0..source_shape.len() - 1).rev() {
