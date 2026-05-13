@@ -36,5 +36,5 @@ their pixel data into the raster value itself.
 ## Examples
 
 ```sql
-SELECT RS_BandPath(RS_FromPath('/tmp/example.tif'));
+SELECT RS_BandPath(RS_FromPath('../../../submodules/sedona-testing/data/raster/test4.tiff'));
 ```
