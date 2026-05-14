@@ -207,9 +207,12 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
         Bands::new(self)
     }
 
-    fn band(&self, index: usize) -> Option<Box<dyn BandRef + '_>> {
-        if index >= self.num_bands() {
-            return None;
+    fn band(&self, index: usize) -> Result<Box<dyn BandRef + '_>, ArrowError> {
+        let nbands = self.num_bands();
+        if index >= nbands {
+            return Err(ArrowError::InvalidArgumentError(format!(
+                "Band index {index} is out of range: this raster has {nbands} bands"
+            )));
         }
         let start = self.bands_list.value_offsets()[self.raster_index] as usize;
         let band_row = start + index;
@@ -222,27 +225,35 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
         // Reject 0-D bands at the read boundary. Schema doesn't forbid them
         // outright but every consumer assumes ndim >= 1.
         if source_shape.is_empty() {
-            return None;
+            return Err(ArrowError::ExternalError(Box::new(
+                sedona_common::sedona_internal_datafusion_err!(
+                    "band {band_row} has empty source_shape; ndim must be >= 1"
+                ),
+            )));
         }
 
         // Resolve data type up front; an unknown discriminant is a
-        // schema-corruption bug, not user data, so failing the band is
-        // appropriate.
+        // schema-corruption bug, not user data, so failing the band loudly
+        // here is appropriate.
         let data_type_value = self.band_datatype_array.value(band_row);
-        let data_type = BandDataType::try_from_u32(data_type_value)?;
+        let data_type = BandDataType::try_from_u32(data_type_value).ok_or_else(|| {
+            ArrowError::ExternalError(Box::new(sedona_common::sedona_internal_datafusion_err!(
+                "band {band_row} has unknown data_type discriminant {data_type_value}"
+            )))
+        })?;
 
         // Only the canonical identity view (null view row) is written today.
         // A non-null view row would require the view → byte-stride composition
         // path, which is not yet implemented. Surface it loudly here rather
-        // than silently returning None, so callers see a clear invariant
-        // violation instead of an out-of-range-looking miss.
-        assert!(
-            self.band_view_list.is_null(band_row),
-            "{}",
-            sedona_common::sedona_internal_datafusion_err!(
-                "non-null view row at band {band_row}: view composition is not yet implemented"
-            )
-        );
+        // than silently rejecting the band, so callers see the standardised
+        // SedonaDB-internal-error framing.
+        if !self.band_view_list.is_null(band_row) {
+            return Err(ArrowError::ExternalError(Box::new(
+                sedona_common::sedona_internal_datafusion_err!(
+                    "non-null view row at band {band_row}: view composition is not yet implemented"
+                ),
+            )));
+        }
         let view_entries: Vec<ViewEntry> = source_shape
             .iter()
             .enumerate()
@@ -263,7 +274,7 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
             byte_strides[k] = byte_strides[k + 1] * (source_shape[k + 1] as i64);
         }
 
-        Some(Box::new(BandRefImpl {
+        Ok(Box::new(BandRefImpl {
             dim_names_list: self.band_dim_names_list,
             dim_names_values: self.band_dim_names_values,
             source_shape_list: self.band_source_shape_list,
@@ -734,6 +745,7 @@ mod tests {
             .iter()
             .enumerate()
             .map(|(i, band)| {
+                let band = band.unwrap();
                 assert_eq!(band.data()[0], i as u8);
                 band.data()[0]
             })
@@ -820,20 +832,29 @@ mod tests {
     // bad data_type discriminant
 
     #[test]
-    fn band_and_band_data_type_return_none_for_unknown_discriminant() {
+    fn band_and_band_data_type_surface_corruption_for_unknown_discriminant() {
         let array = build_identity_raster();
         let bad_dtype: ArrayRef = Arc::new(UInt32Array::from(vec![0xFFu32]));
         let mutated = replace_band_column(&array, band_indices::DATA_TYPE, bad_dtype);
         let rasters = RasterStructArray::new(&mutated);
         let r = rasters.get(0).unwrap();
-        assert!(r.band(0).is_none());
+        // band() surfaces the corruption through the standardized
+        // SedonaDB-internal-error message routed via ArrowError::ExternalError.
+        // `Box<dyn BandRef>` isn't `Debug`, so unwrap_err doesn't compile —
+        // pull the error out via `.err().unwrap()` on the `Option<E>` side.
+        let err = r.band(0).err().unwrap();
+        assert!(err.to_string().contains("SedonaDB internal error"));
+        assert!(err.to_string().contains("data_type discriminant"));
+        // band_data_type retains its `Option` fast-path shape — corrupt
+        // discriminant collapses to None for consistency with the existing
+        // accessor's contract.
         assert!(r.band_data_type(0).is_none());
     }
 
     // empty source_shape
 
     #[test]
-    fn band_returns_none_when_source_shape_is_empty() {
+    fn band_surfaces_internal_error_when_source_shape_is_empty() {
         let array = build_identity_raster();
         // Replace source_shape with a single empty list row.
         let DataType::List(ss_field) = RasterSchema::source_shape_type() else {
@@ -851,7 +872,9 @@ mod tests {
             Arc::new(empty_source_shape),
         );
         let rasters = RasterStructArray::new(&mutated);
-        assert!(rasters.get(0).unwrap().band(0).is_none());
+        let err = rasters.get(0).unwrap().band(0).err().unwrap();
+        assert!(err.to_string().contains("SedonaDB internal error"));
+        assert!(err.to_string().contains("empty source_shape"));
     }
 
     // direct fast-path tests
@@ -1085,12 +1108,12 @@ mod tests {
         assert_eq!(r0.band_outdb_uri(0), Some("s3://bucket/a.tif"));
 
         // Raster 1 is null with zero bands. Every per-band lookup is
-        // out of range and must return None even though the flat
-        // underlying arrays still hold raster 0's data.
+        // out of range — `band()` surfaces an out-of-range error,
+        // the fast-path accessors return None.
         assert!(rasters.is_null(1));
         let r1 = rasters.get(1).unwrap();
         assert_eq!(r1.num_bands(), 0);
-        assert!(r1.band(0).is_none());
+        assert!(r1.band(0).is_err());
         assert!(r1.band_data_type(0).is_none());
         assert!(r1.band_outdb_uri(0).is_none());
         assert!(r1.band_outdb_format(0).is_none());

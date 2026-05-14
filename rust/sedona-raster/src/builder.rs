@@ -820,6 +820,7 @@ mod tests {
             .iter()
             .enumerate()
             .map(|(i, band)| {
+                let band = band.unwrap();
                 assert_eq!(band.data()[0], i as u8);
                 band.data()[0]
             })

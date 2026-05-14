@@ -270,19 +270,15 @@ impl<'a> Bands<'a> {
                 "Invalid band number {number}: band numbers must be 1-based"
             )));
         }
-        self.raster.band(number - 1).ok_or_else(|| {
-            ArrowError::InvalidArgumentError(format!(
-                "Band number {} is out of range: this raster has {} bands",
-                number,
-                self.raster.num_bands()
-            ))
-        })
+        self.raster.band(number - 1)
     }
 
-    /// Iterate over every band in 0-based order.
-    pub fn iter(&self) -> impl Iterator<Item = Box<dyn BandRef + 'a>> + 'a {
+    /// Iterate over every band in 0-based order. Yields `Result` so that
+    /// a corrupt band surfaces as an error rather than being silently
+    /// dropped from the iteration.
+    pub fn iter(&self) -> impl Iterator<Item = Result<Box<dyn BandRef + 'a>, ArrowError>> + 'a {
         let raster = self.raster;
-        (0..raster.num_bands()).filter_map(move |i| raster.band(i))
+        (0..raster.num_bands()).map(move |i| raster.band(i))
     }
 }
 
@@ -294,8 +290,12 @@ pub trait RasterRef {
     /// Number of bands/variables
     fn num_bands(&self) -> usize;
 
-    /// Access a band by 0-based index
-    fn band(&self, index: usize) -> Option<Box<dyn BandRef + '_>>;
+    /// Access a band by 0-based index. Returns an `ArrowError` when the
+    /// index is out of range or when the underlying schema is malformed
+    /// (unknown data-type discriminant, corrupt view, etc.). The latter
+    /// cases route through `sedona_common::sedona_internal_datafusion_err!`
+    /// so they carry the standardised "SedonaDB internal error" framing.
+    fn band(&self, index: usize) -> Result<Box<dyn BandRef + '_>, ArrowError>;
 
     /// 1-based band-access view used by callers from before the N-D
     /// refactor. Implementers typically write `Bands::new(self)`.
@@ -312,7 +312,10 @@ pub trait RasterRef {
     /// The default implementation delegates to `band(i)`. Backends with a
     /// flat columnar layout should override for the no-allocation fast path.
     fn band_data_type(&self, index: usize) -> Option<BandDataType> {
-        self.band(index).map(|b| b.data_type())
+        // Fast-path accessor: corrupt bands and out-of-range indices both
+        // collapse to `None`. Callers that need to distinguish the two
+        // should use `band(index)` directly.
+        self.band(index).ok().map(|b| b.data_type())
     }
 
     /// Fast path for band outdb URI — reads the `outdb_uri` column without
@@ -440,11 +443,15 @@ pub trait RasterRef {
         Ok(v as u64)
     }
 
-    /// Look up a band by name. Returns None if no band has that name.
-    fn band_by_name(&self, name: &str) -> Option<Box<dyn BandRef + '_>> {
-        (0..self.num_bands())
+    /// Look up a band by name. Returns an error if no band has that
+    /// name or if the matching band is malformed.
+    fn band_by_name(&self, name: &str) -> Result<Box<dyn BandRef + '_>, ArrowError> {
+        let i = (0..self.num_bands())
             .find(|&i| self.band_name(i) == Some(name))
-            .and_then(|i| self.band(i))
+            .ok_or_else(|| {
+                ArrowError::InvalidArgumentError(format!("Band with name '{name}' not found"))
+            })?;
+        self.band(i)
     }
 }
 

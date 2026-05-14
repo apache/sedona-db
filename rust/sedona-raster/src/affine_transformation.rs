@@ -147,8 +147,10 @@ mod tests {
         fn bands(&self) -> Bands<'_> {
             Bands::new(self)
         }
-        fn band(&self, _index: usize) -> Option<Box<dyn BandRef + '_>> {
-            None
+        fn band(&self, index: usize) -> Result<Box<dyn BandRef + '_>, ArrowError> {
+            Err(ArrowError::InvalidArgumentError(format!(
+                "Band index {index} is out of range: this raster has 0 bands"
+            )))
         }
         fn band_name(&self, _index: usize) -> Option<&str> {
             None
