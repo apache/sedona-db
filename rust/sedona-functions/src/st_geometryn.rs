@@ -29,7 +29,7 @@ use sedona_expr::item_crs::ItemCrsKernel;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
 use sedona_schema::{
-    datatypes::{SedonaType, WKB_GEOMETRY},
+    datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY},
     matchers::ArgMatcher,
 };
 use wkb::reader::Wkb;
@@ -40,22 +40,32 @@ use wkb::reader::Wkb;
 pub fn st_geometryn_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_geometryn",
-        ItemCrsKernel::wrap_impl(vec![Arc::new(STGeometryN)]),
+        ItemCrsKernel::wrap_impl(vec![
+            Arc::new(STGeometryN {
+                matcher: ArgMatcher::new(
+                    vec![ArgMatcher::is_geometry(), ArgMatcher::is_integer()],
+                    WKB_GEOMETRY,
+                ),
+            }),
+            Arc::new(STGeometryN {
+                matcher: ArgMatcher::new(
+                    vec![ArgMatcher::is_geography(), ArgMatcher::is_integer()],
+                    WKB_GEOGRAPHY,
+                ),
+            }),
+        ]),
         Volatility::Immutable,
     )
 }
 
 #[derive(Debug)]
-struct STGeometryN;
+struct STGeometryN {
+    matcher: ArgMatcher,
+}
 
 impl SedonaScalarKernel for STGeometryN {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        let matcher = ArgMatcher::new(
-            vec![ArgMatcher::is_geometry(), ArgMatcher::is_integer()],
-            WKB_GEOMETRY,
-        );
-
-        matcher.match_args(args)
+        self.matcher.match_args(args)
     }
 
     fn invoke_batch(
@@ -123,14 +133,14 @@ fn invoke_scalar(geom: &Wkb, index: usize, writer: &mut impl std::io::Write) -> 
 mod tests {
     use datafusion_common::ScalarValue;
     use rstest::rstest;
-    use sedona_schema::datatypes::{WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY_ITEM_CRS};
     use sedona_testing::testers::ScalarUdfTester;
     use sedona_testing::{compare::assert_array_equal, create::create_array};
 
     use super::*;
 
     #[rstest]
-    fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+    fn udf(#[values(WKB_GEOMETRY, WKB_GEOGRAPHY)] sedona_type: SedonaType) {
         let tester = ScalarUdfTester::new(
             st_geometryn_udf().into(),
             vec![
@@ -138,7 +148,7 @@ mod tests {
                 SedonaType::Arrow(arrow_schema::DataType::Int64),
             ],
         );
-        tester.assert_return_type(WKB_GEOMETRY);
+        tester.assert_return_type(sedona_type.clone());
 
         let input_wkt = create_array(
             &[
@@ -264,7 +274,10 @@ mod tests {
     }
 
     #[rstest]
-    fn udf_invoke_item_crs(#[values(WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType) {
+    fn udf_invoke_item_crs(
+        #[values(WKB_GEOMETRY_ITEM_CRS.clone(), WKB_GEOGRAPHY_ITEM_CRS.clone())]
+        sedona_type: SedonaType,
+    ) {
         let tester = ScalarUdfTester::new(
             st_geometryn_udf().into(),
             vec![

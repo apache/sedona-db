@@ -35,7 +35,7 @@ use sedona_geometry::wkb_factory::{
     write_wkb_polygon_ring_header, WKB_MIN_PROBABLE_BYTES,
 };
 use sedona_schema::{
-    datatypes::{SedonaType, WKB_GEOMETRY},
+    datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY},
     matchers::ArgMatcher,
 };
 
@@ -47,19 +47,26 @@ use crate::executor::WkbExecutor;
 pub fn st_reverse_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_reverse",
-        ItemCrsKernel::wrap_impl(vec![Arc::new(STReverse)]),
+        ItemCrsKernel::wrap_impl(vec![
+            Arc::new(STReverse {
+                matcher: ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY),
+            }),
+            Arc::new(STReverse {
+                matcher: ArgMatcher::new(vec![ArgMatcher::is_geography()], WKB_GEOGRAPHY),
+            }),
+        ]),
         Volatility::Immutable,
     )
 }
 
 #[derive(Debug)]
-struct STReverse;
+struct STReverse {
+    matcher: ArgMatcher,
+}
 
 impl SedonaScalarKernel for STReverse {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        let matcher = ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY);
-
-        matcher.match_args(args)
+        self.matcher.match_args(args)
     }
 
     fn invoke_batch(
@@ -184,7 +191,7 @@ where
 mod tests {
     use datafusion_common::ScalarValue;
     use rstest::rstest;
-    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY_ITEM_CRS};
     use sedona_testing::compare::assert_array_equal;
     use sedona_testing::create::create_array;
     use sedona_testing::testers::ScalarUdfTester;
@@ -192,9 +199,9 @@ mod tests {
     use super::*;
 
     #[rstest]
-    fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let tester = ScalarUdfTester::new(st_reverse_udf().into(), vec![sedona_type]);
-        tester.assert_return_type(WKB_GEOMETRY);
+    fn udf(#[values(WKB_GEOMETRY, WKB_GEOGRAPHY)] sedona_type: SedonaType) {
+        let tester = ScalarUdfTester::new(st_reverse_udf().into(), vec![sedona_type.clone()]);
+        tester.assert_return_type(sedona_type.clone());
 
         let result = tester.invoke_scalar("POINT EMPTY").unwrap();
         tester.assert_scalar_result_equals(result, "POINT EMPTY");
@@ -430,7 +437,10 @@ mod tests {
     }
 
     #[rstest]
-    fn udf_invoke_item_crs(#[values(WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType) {
+    fn udf_invoke_item_crs(
+        #[values(WKB_GEOMETRY_ITEM_CRS.clone(), WKB_GEOGRAPHY_ITEM_CRS.clone())]
+        sedona_type: SedonaType,
+    ) {
         let tester = ScalarUdfTester::new(st_reverse_udf().into(), vec![sedona_type.clone()]);
         tester.assert_return_type(sedona_type);
 

@@ -27,7 +27,10 @@ use sedona_geometry::wkb_factory::{
     write_wkb_coord_trait, write_wkb_linestring_header, WKB_MIN_PROBABLE_BYTES,
 };
 use sedona_schema::datatypes::SedonaType;
-use sedona_schema::{datatypes::WKB_GEOMETRY, matchers::ArgMatcher};
+use sedona_schema::{
+    datatypes::{WKB_GEOGRAPHY, WKB_GEOMETRY},
+    matchers::ArgMatcher,
+};
 use wkb::reader::Wkb;
 
 use crate::executor::WkbExecutor;
@@ -38,22 +41,32 @@ use crate::executor::WkbExecutor;
 pub fn st_interiorringn_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_interiorringn",
-        ItemCrsKernel::wrap_impl(vec![Arc::new(STInteriorRingN)]),
+        ItemCrsKernel::wrap_impl(vec![
+            Arc::new(STInteriorRingN {
+                matcher: ArgMatcher::new(
+                    vec![ArgMatcher::is_geometry(), ArgMatcher::is_integer()],
+                    WKB_GEOMETRY,
+                ),
+            }),
+            Arc::new(STInteriorRingN {
+                matcher: ArgMatcher::new(
+                    vec![ArgMatcher::is_geography(), ArgMatcher::is_integer()],
+                    WKB_GEOGRAPHY,
+                ),
+            }),
+        ]),
         datafusion_expr::Volatility::Immutable,
     )
 }
 
 #[derive(Debug)]
-struct STInteriorRingN;
+struct STInteriorRingN {
+    matcher: ArgMatcher,
+}
 
 impl SedonaScalarKernel for STInteriorRingN {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        let matcher = ArgMatcher::new(
-            vec![ArgMatcher::is_geometry(), ArgMatcher::is_integer()],
-            WKB_GEOMETRY,
-        );
-
-        matcher.match_args(args)
+        self.matcher.match_args(args)
     }
 
     fn invoke_batch(
@@ -115,7 +128,7 @@ fn invoke_scalar(geom: &Wkb, index: usize, writer: &mut impl std::io::Write) -> 
 mod tests {
     use datafusion_common::ScalarValue;
     use rstest::rstest;
-    use sedona_schema::datatypes::{WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY_ITEM_CRS};
     use sedona_testing::{
         compare::assert_array_equal, create::create_array, testers::ScalarUdfTester,
     };
@@ -126,18 +139,18 @@ mod tests {
         let tester = ScalarUdfTester::new(
             st_interiorringn_udf().into(),
             vec![
-                sedona_type,
+                sedona_type.clone(),
                 SedonaType::Arrow(arrow_schema::DataType::Int64),
             ],
         );
-        tester.assert_return_type(WKB_GEOMETRY);
+        tester.assert_return_type(sedona_type);
         tester
     }
 
     // 1. Tests for Non-Polygon Geometries (Should return NULL)
     #[rstest]
     fn test_st_interiorringn_non_polygons(
-        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+        #[values(WKB_GEOMETRY, WKB_GEOGRAPHY)] sedona_type: SedonaType,
     ) {
         let tester = setup_tester(sedona_type);
 
@@ -181,7 +194,7 @@ mod tests {
     // 2. Tests for Polygon Edge Cases (No holes, Invalid index)
     #[rstest]
     fn test_st_interiorringn_polygon_edge_cases(
-        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+        #[values(WKB_GEOMETRY, WKB_GEOGRAPHY)] sedona_type: SedonaType,
     ) {
         let tester = setup_tester(sedona_type);
 
@@ -214,7 +227,7 @@ mod tests {
     // 3. Tests for Valid Polygons (Correct Extraction)
     #[rstest]
     fn test_st_interiorringn_valid_polygons(
-        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+        #[values(WKB_GEOMETRY, WKB_GEOGRAPHY)] sedona_type: SedonaType,
     ) {
         let tester = setup_tester(sedona_type);
 
@@ -254,7 +267,7 @@ mod tests {
     // 4. Tests for Invalid/Malformed Polygons (Checking for error/extraction)
     #[rstest]
     fn test_st_interiorringn_invalid_polygons(
-        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+        #[values(WKB_GEOMETRY, WKB_GEOGRAPHY)] sedona_type: SedonaType,
     ) {
         let tester = setup_tester(sedona_type);
 
@@ -284,7 +297,7 @@ mod tests {
 
     #[rstest]
     fn test_st_interiorringn_z_dimensions(
-        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+        #[values(WKB_GEOMETRY, WKB_GEOGRAPHY)] sedona_type: SedonaType,
     ) {
         let tester = setup_tester(sedona_type);
 
@@ -317,7 +330,7 @@ mod tests {
 
     #[rstest]
     fn test_st_interiorringn_m_dimensions(
-        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+        #[values(WKB_GEOMETRY, WKB_GEOGRAPHY)] sedona_type: SedonaType,
     ) {
         let tester = setup_tester(sedona_type);
 
@@ -350,7 +363,7 @@ mod tests {
 
     #[rstest]
     fn test_st_interiorringn_zm_dimensions(
-        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+        #[values(WKB_GEOMETRY, WKB_GEOGRAPHY)] sedona_type: SedonaType,
     ) {
         let tester = setup_tester(sedona_type);
 
@@ -382,7 +395,10 @@ mod tests {
     }
 
     #[rstest]
-    fn udf_invoke_item_crs(#[values(WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType) {
+    fn udf_invoke_item_crs(
+        #[values(WKB_GEOMETRY_ITEM_CRS.clone(), WKB_GEOGRAPHY_ITEM_CRS.clone())]
+        sedona_type: SedonaType,
+    ) {
         let tester = ScalarUdfTester::new(
             st_interiorringn_udf().into(),
             vec![
