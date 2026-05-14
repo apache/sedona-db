@@ -63,6 +63,31 @@ def _env_no_skip():
     return env_no_skip in ("true", "1")
 
 
+def _normalize_geometry_wkt_columns(rows, geometry_indexes):
+    """Canonicalize WKT only for geometry-typed tuple values."""
+    import shapely
+
+    geometry_indexes = set(geometry_indexes)
+    normalized_rows = []
+
+    for row in rows:
+        normalized_row = list(row)
+
+        for i in geometry_indexes:
+            value = normalized_row[i]
+            if not isinstance(value, str):
+                continue
+
+            try:
+                normalized_row[i] = shapely.to_wkt(shapely.from_wkt(value))
+            except (ValueError, TypeError, shapely.errors.GEOSException):
+                pass
+
+        normalized_rows.append(tuple(normalized_row))
+
+    return normalized_rows
+
+
 class DBEngine:
     """Engine-agnostic catalog and SQL engine
 
@@ -288,7 +313,18 @@ class DBEngine:
             result_pandas = self.result_to_pandas(result)
             pandas.testing.assert_frame_equal(result_pandas, expected, **kwargs)
         elif isinstance(expected, list):
+            result_table = self.result_to_table(result)
+            geometry_indexes = {
+                i
+                for i, col in enumerate(result_table.columns)
+                if _type_is_geoarrow(col.type)
+            }
             result_tuples = self.result_to_tuples(result, **kwargs)
+            if geometry_indexes:
+                result_tuples = _normalize_geometry_wkt_columns(
+                    result_tuples, geometry_indexes
+                )
+                expected = _normalize_geometry_wkt_columns(expected, geometry_indexes)
             if result_tuples != expected:
                 raise AssertionError(
                     f"Expected:\n  {expected}\nGot:\n  {result_tuples}"

@@ -130,6 +130,21 @@ def test_assert_result_spatial(eng):
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS, DuckDB])
+def test_assert_result_wkt_normalizes_geometry_only(eng):
+    with eng.create_or_skip() as eng:
+        eng.assert_query_result(
+            "SELECT ST_GeomFromText('POLYGON Z ((0 0 5, 0 1 5, 1 1 5, 1 0 5, 0 0 5))') as geom",
+            "POLYGON Z ((0 0 5,0 1 5,1 1 5,1 0 5,0 0 5))",
+        )
+
+        with pytest.raises(AssertionError):
+            eng.assert_query_result(
+                "SELECT 'POLYGON Z ((0 0 5, 0 1 5, 1 1 5, 1 0 5, 0 0 5))' as geom",
+                "POLYGON Z ((0 0 5,0 1 5,1 1 5,1 0 5,0 0 5))",
+            )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS, DuckDB])
 def test_table_arrow_no_crs(eng):
     with eng.create_or_skip() as eng:
         tab_no_crs = pa.table(
