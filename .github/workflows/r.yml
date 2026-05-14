@@ -74,17 +74,6 @@ jobs:
           rustup toolchain install stable --no-self-update
           rustup default stable
 
-      # The `cargo +nightly build … -Zbuild-std=panic_abort,std` path in
-      # r/sedonadb/src/Makevars.in is only meant to fire for the
-      # wasm32-unknown-emscripten target, but it has been observed firing
-      # intermittently on macos-latest (see #837). Pre-install nightly +
-      # rust-src so a stray invocation doesn't hand `cargo build` to
-      # rustup-init.
-      - name: Pre-install nightly Rust + rust-src (workaround for #837)
-        if: matrix.config.os == 'macos-latest'
-        run: |
-          rustup toolchain install nightly --component rust-src --no-self-update
-
       # Set the default toolchain here so that rust-cache saves/restores
       # the correct target. (The R package will use this target regardless,
       # this just in theory helps the cache)
@@ -119,6 +108,7 @@ jobs:
         with:
           prefix-key: "r-v4"
           workspaces: ${{ env.CACHE_WORKSPACE }}
+          cache-bin: false
 
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:

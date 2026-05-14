@@ -48,6 +48,28 @@ if [ $? -ne 0 ]; then
   exit 1
 fi
 
+# Guard against `cargo` resolving to the rustup-init installer. When the
+# rustup proxy can't find its install state it identifies as "rustup-init"
+# and rejects normal cargo subcommands like `build` and `metadata`, which
+# surfaces as a misleading "unexpected argument 'build'" failure deep in
+# the Make recipe. Fail fast with the real diagnosis. See sedona-db#837.
+case "$CARGO_VERSION" in
+  rustup-init*)
+    echo "-------------- ERROR: CONFIGURATION FAILED --------------------"
+    echo ""
+    echo "'cargo' on PATH is the rustup-init installer, not the rustup"
+    echo "proxy. cargo --version reports:"
+    echo "    $CARGO_VERSION"
+    echo ""
+    echo "Reinstall the stable toolchain with:"
+    echo "    rustup toolchain install stable && rustup default stable"
+    echo ""
+    echo "---------------------------------------------------------------"
+
+    exit 1
+    ;;
+esac
+
 # There's a little chance that rustc is not available on PATH while cargo is.
 # So, just ignore the error case.
 RUSTC_VERSION="$(rustc --version || true)"
