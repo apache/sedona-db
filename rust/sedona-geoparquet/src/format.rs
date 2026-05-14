@@ -41,6 +41,7 @@ use datafusion_catalog::{memory::DataSourceExec, Session};
 use datafusion_common::tree_node::{Transformed, TreeNode, TreeNodeRecursion};
 use datafusion_common::{plan_err, GetExt, Result, Statistics};
 use datafusion_datasource_parquet::metadata::DFParquetMetadata;
+use datafusion_datasource_parquet::{CachedParquetFileReaderFactory, ParquetFileReaderFactory};
 use datafusion_execution::cache::cache_manager::FileMetadataCache;
 use datafusion_physical_expr::{
     expressions::Column, projection::ProjectionExprs, LexRequirement, PhysicalExpr,
@@ -339,8 +340,17 @@ impl FileFormat for GeoParquetFormat {
             source = source.with_metadata_size_hint(metadata_size_hint)
         }
 
+        // Use the CachedParquetFileReaderFactory so the inner ParquetOpener's
+        // metadata fetches go through the file metadata cache.
         let file_metadata_cache = state.runtime_env().cache_manager.get_file_metadata_cache();
+        let object_store = state
+            .runtime_env()
+            .object_store(config.object_store_url.clone())?;
         source.metadata_cache = Some(file_metadata_cache.clone());
+        source = source.with_parquet_file_reader_factory(Arc::new(
+            CachedParquetFileReaderFactory::new(object_store, file_metadata_cache),
+        ));
+
         let conf = FileScanConfigBuilder::from(config)
             .with_source(Arc::new(source))
             .build();
@@ -486,6 +496,20 @@ impl GeoParquetFileSource {
         Self {
             inner: self.inner.clone().with_metadata_size_hint(hint),
             metadata_size_hint: Some(hint),
+            predicate: self.predicate.clone(),
+            options: self.options.clone(),
+            metadata_cache: self.metadata_cache.clone(),
+        }
+    }
+
+    /// Apply a [ParquetFileReaderFactory] to the inner [ParquetSource]
+    pub fn with_parquet_file_reader_factory(
+        &self,
+        factory: Arc<dyn ParquetFileReaderFactory>,
+    ) -> Self {
+        Self {
+            inner: self.inner.clone().with_parquet_file_reader_factory(factory),
+            metadata_size_hint: self.metadata_size_hint,
             predicate: self.predicate.clone(),
             options: self.options.clone(),
             metadata_cache: self.metadata_cache.clone(),
@@ -663,8 +687,10 @@ mod test {
 
     use arrow_array::RecordBatch;
     use arrow_schema::{DataType, Field, Schema};
-    use datafusion::datasource::physical_plan::ParquetSource;
+    use datafusion::datasource::file_format::FileFormat;
+    use datafusion::datasource::physical_plan::{FileScanConfigBuilder, ParquetSource};
     use datafusion::datasource::table_schema::TableSchema;
+    use datafusion::execution::object_store::ObjectStoreUrl;
     use datafusion::{
         execution::SessionStateBuilder,
         prelude::{col, ParquetReadOptions, SessionContext},
@@ -959,6 +985,44 @@ mod test {
             .as_any()
             .downcast_ref::<GeoParquetFormat>()
             .is_some());
+    }
+
+    #[tokio::test]
+    async fn create_physical_plan_installs_cached_reader_factory() {
+        // The inner ParquetOpener uses its own ParquetFileReaderFactory for
+        // metadata fetches; if it is left at DataFusion's default it bypasses
+        // the file metadata cache. create_physical_plan must install a custom
+        // factory so that per-query metadata reads are cached.
+        let ctx = setup_context();
+        let format = GeoParquetFormat::new(TableGeoParquetOptions::default());
+        let schema = Arc::new(Schema::new(vec![WKB_GEOMETRY
+            .to_storage_field("geometry", true)
+            .unwrap()]));
+        let table_schema = TableSchema::new(schema, vec![]);
+        let file_source = format.file_source(table_schema);
+        let conf =
+            FileScanConfigBuilder::new(ObjectStoreUrl::local_filesystem(), file_source).build();
+
+        let plan = format
+            .create_physical_plan(&ctx.state(), conf)
+            .await
+            .unwrap();
+
+        let data_source_exec = plan
+            .as_any()
+            .downcast_ref::<DataSourceExec>()
+            .expect("plan root should be DataSourceExec");
+        let file_scan_conf = data_source_exec
+            .data_source()
+            .as_any()
+            .downcast_ref::<FileScanConfig>()
+            .expect("data source should be FileScanConfig");
+        let geo_source = file_scan_conf
+            .file_source()
+            .as_any()
+            .downcast_ref::<GeoParquetFileSource>()
+            .expect("file source should be GeoParquetFileSource");
+        assert!(geo_source.inner.parquet_file_reader_factory().is_some());
     }
 
     #[tokio::test]
