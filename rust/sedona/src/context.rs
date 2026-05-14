@@ -152,6 +152,7 @@ impl SedonaContext {
             .with_config(session_config);
 
         // Register the spatial join planner extension
+        #[allow(unused_mut)]
         let mut planner = SedonaQueryPlanner::new();
         #[cfg(feature = "spatial-join")]
         {
