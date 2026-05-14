@@ -136,17 +136,19 @@ impl InternalDataFrame {
     /// surface at plan-build time from DataFusion, matching the
     /// behavior of `select`.
     fn filter(&self, exprs: Vec<PyExpr>) -> Result<InternalDataFrame, PySedonaError> {
-        if exprs.is_empty() {
-            return Err(PySedonaError::SedonaPython(
+        // `conjunction` returns None only for an empty iterator; the
+        // `else` arm doubles as defense-in-depth against an empty
+        // predicate list slipping past the Python-side guard.
+        if let Some(combined) =
+            datafusion_expr::utils::conjunction(exprs.into_iter().map(|e| e.inner))
+        {
+            let inner = self.inner.clone().filter(combined)?;
+            Ok(InternalDataFrame::new(inner, self.runtime.clone()))
+        } else {
+            Err(PySedonaError::SedonaPython(
                 "filter() requires at least one predicate".to_string(),
-            ));
+            ))
         }
-        // `conjunction` returns None only for an empty iterator, which we
-        // already rejected above; unwrap is safe.
-        let combined = datafusion_expr::utils::conjunction(exprs.into_iter().map(|e| e.inner))
-            .expect("non-empty predicates checked above");
-        let inner = self.inner.clone().filter(combined)?;
-        Ok(InternalDataFrame::new(inner, self.runtime.clone()))
     }
 
     fn execute<'py>(&self, py: Python<'py>) -> Result<usize, PySedonaError> {
