@@ -39,7 +39,7 @@ struct STNumInteriorRings {}
 impl SedonaScalarKernel for STNumInteriorRings {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(
-            vec![ArgMatcher::is_geometry()],
+            vec![ArgMatcher::is_geometry_or_geography()],
             SedonaType::Arrow(DataType::Int32),
         );
 

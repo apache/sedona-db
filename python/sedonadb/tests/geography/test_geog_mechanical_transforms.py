@@ -16,23 +16,12 @@
 # under the License.
 
 """
-Tests for mechanical geography transformations that output the same type as input.
-
-These functions were recently updated to support geography types in addition to
-geometry types. Tests cover essential cases: null, empty, valid, Z, M, and ZM.
+Tests for mechanical geography transformations whose implementations are shared
+with geometry
 """
 
 import pytest
-import sedonadb
 from sedonadb.testing import SedonaDB, geog_or_null, val_or_null
-
-if "s2geography" not in sedonadb.__features__:
-    pytest.skip("Python package built without s2geography", allow_module_level=True)
-
-
-# =============================================================================
-# ST_FlipCoordinates
-# =============================================================================
 
 
 @pytest.mark.parametrize("eng", [SedonaDB])
@@ -44,9 +33,7 @@ if "s2geography" not in sedonadb.__features__:
         pytest.param("LINESTRING EMPTY", "LINESTRING EMPTY", id="linestring_empty"),
         pytest.param("POLYGON EMPTY", "POLYGON EMPTY", id="polygon_empty"),
         pytest.param("POINT (0 1)", "POINT (1 0)", id="point"),
-        pytest.param(
-            "LINESTRING (0 1, 2 3)", "LINESTRING (1 0, 3 2)", id="linestring"
-        ),
+        pytest.param("LINESTRING (0 1, 2 3)", "LINESTRING (1 0, 3 2)", id="linestring"),
         pytest.param(
             "POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))",
             "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
@@ -62,11 +49,6 @@ def test_st_flipcoordinates(eng, geog, expected):
     eng.assert_query_result(
         f"SELECT ST_FlipCoordinates({geog_or_null(geog)})", expected
     )
-
-
-# =============================================================================
-# ST_Force2D / ST_Force3D
-# =============================================================================
 
 
 @pytest.mark.parametrize("eng", [SedonaDB])
@@ -87,12 +69,8 @@ def test_st_flipcoordinates(eng, geog, expected):
             id="linestring_empty",
         ),
         pytest.param("POINT (0 1)", "POINT (0 1)", "POINT Z (0 1 5)", id="point"),
-        pytest.param(
-            "POINT Z (0 1 9)", "POINT (0 1)", "POINT Z (0 1 9)", id="point_z"
-        ),
-        pytest.param(
-            "POINT M (0 1 9)", "POINT (0 1)", "POINT Z (0 1 5)", id="point_m"
-        ),
+        pytest.param("POINT Z (0 1 9)", "POINT (0 1)", "POINT Z (0 1 9)", id="point_z"),
+        pytest.param("POINT M (0 1 9)", "POINT (0 1)", "POINT Z (0 1 5)", id="point_m"),
         pytest.param(
             "POINT ZM (0 1 9 8)", "POINT (0 1)", "POINT Z (0 1 9)", id="point_zm"
         ),
@@ -102,11 +80,6 @@ def test_st_force_dim(eng, geog, expected_2d, expected_3d):
     eng = eng.create_or_skip()
     eng.assert_query_result(f"SELECT ST_Force2D({geog_or_null(geog)})", expected_2d)
     eng.assert_query_result(f"SELECT ST_Force3D({geog_or_null(geog)}, 5)", expected_3d)
-
-
-# =============================================================================
-# ST_Force3DM
-# =============================================================================
 
 
 @pytest.mark.parametrize("eng", [SedonaDB])
@@ -147,11 +120,6 @@ def test_st_force3dm(eng, geog, m, expected_without_m, expected_with_m):
     eng.assert_query_result(
         f"SELECT ST_Force3DM({geog_or_null(geog)}, {val_or_null(m)})", expected_with_m
     )
-
-
-# =============================================================================
-# ST_Force4D
-# =============================================================================
 
 
 @pytest.mark.parametrize("eng", [SedonaDB])
@@ -212,11 +180,6 @@ def test_st_force4d(eng, geog, z, m, expected_without_defaults, expected_with_de
     )
 
 
-# =============================================================================
-# ST_GeometryN
-# =============================================================================
-
-
 @pytest.mark.parametrize("eng", [SedonaDB])
 @pytest.mark.parametrize(
     ("geog", "index", "expected"),
@@ -266,11 +229,6 @@ def test_st_geometryn(eng, geog, index, expected):
     eng.assert_query_result(
         f"SELECT ST_GeometryN({geog_or_null(geog)}, {val_or_null(index)})", expected
     )
-
-
-# =============================================================================
-# ST_InteriorRingN
-# =============================================================================
 
 
 @pytest.mark.parametrize("eng", [SedonaDB])
@@ -323,11 +281,6 @@ def test_st_interiorringn(eng, geog, index, expected):
     )
 
 
-# =============================================================================
-# ST_Reverse
-# =============================================================================
-
-
 @pytest.mark.parametrize("eng", [SedonaDB])
 @pytest.mark.parametrize(
     ("geog", "expected"),
@@ -346,9 +299,7 @@ def test_st_interiorringn(eng, geog, index, expected):
             "POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))",
             id="polygon",
         ),
-        pytest.param(
-            "MULTIPOINT (1 2, 3 4)", "MULTIPOINT (1 2, 3 4)", id="multipoint"
-        ),
+        pytest.param("MULTIPOINT (1 2, 3 4)", "MULTIPOINT (1 2, 3 4)", id="multipoint"),
         pytest.param(
             "LINESTRING Z (0 0 1, 1 1 2, 2 2 3)",
             "LINESTRING Z (2 2 3, 1 1 2, 0 0 1)",
@@ -369,11 +320,6 @@ def test_st_interiorringn(eng, geog, index, expected):
 def test_st_reverse(eng, geog, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(f"SELECT ST_Reverse({geog_or_null(geog)})", expected)
-
-
-# =============================================================================
-# ST_PointN
-# =============================================================================
 
 
 @pytest.mark.parametrize("eng", [SedonaDB])
@@ -423,20 +369,13 @@ def test_st_pointn(eng, geog, n, expected):
     )
 
 
-# =============================================================================
-# ST_Boundary
-# =============================================================================
-
-
 @pytest.mark.parametrize("eng", [SedonaDB])
 @pytest.mark.parametrize(
     ("geog", "expected"),
     [
         pytest.param(None, None, id="null"),
         pytest.param("POINT (1 2)", "GEOMETRYCOLLECTION EMPTY", id="point"),
-        pytest.param(
-            "LINESTRING (0 0, 1 1)", "MULTIPOINT (0 0, 1 1)", id="linestring"
-        ),
+        pytest.param("LINESTRING (0 0, 1 1)", "MULTIPOINT (0 0, 1 1)", id="linestring"),
         pytest.param(
             "LINESTRING (0 0, 1 1, 0 0)", "MULTIPOINT EMPTY", id="linestring_closed"
         ),
@@ -458,11 +397,6 @@ def test_st_pointn(eng, geog, n, expected):
 def test_st_boundary(eng, geog, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(f"SELECT ST_Boundary({geog_or_null(geog)})", expected)
-
-
-# =============================================================================
-# ST_LineMerge
-# =============================================================================
 
 
 @pytest.mark.parametrize("eng", [SedonaDB])
@@ -524,11 +458,6 @@ def test_st_linemerge_directed(eng, geog, expected):
     )
 
 
-# =============================================================================
-# ST_Normalize
-# =============================================================================
-
-
 @pytest.mark.parametrize("eng", [SedonaDB])
 @pytest.mark.parametrize(
     ("geog", "expected"),
@@ -570,3 +499,147 @@ def test_st_normalize(eng, geog, expected):
     eng.assert_query_result(
         f"SELECT ST_AsText(ST_Normalize({geog_or_null(geog)}))", expected
     )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize(
+    ("geog", "expected"),
+    [
+        pytest.param(None, None, id="null"),
+        pytest.param("POINT EMPTY", 0, id="point_empty"),
+        pytest.param("LINESTRING EMPTY", 0, id="linestring_empty"),
+        pytest.param("POLYGON EMPTY", 0, id="polygon_empty"),
+        pytest.param("MULTIPOLYGON EMPTY", 0, id="multipolygon_empty"),
+        pytest.param("GEOMETRYCOLLECTION EMPTY", 0, id="geometrycollection_empty"),
+        pytest.param("POINT (1 2)", 0, id="point"),
+        pytest.param("LINESTRING (0 0, 1 1, 2 2)", 0, id="linestring"),
+        pytest.param("MULTIPOINT ((0 0), (1 1))", 0, id="multipoint"),
+        pytest.param(
+            "MULTILINESTRING ((0 0, 1 1), (2 2, 3 3))", 0, id="multilinestring"
+        ),
+        pytest.param("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", 1, id="polygon"),
+        pytest.param(
+            "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))",
+            2,
+            id="polygon_with_hole",
+        ),
+        pytest.param(
+            "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (5 5, 5 6, 6 6, 6 5, 5 5))",
+            3,
+            id="polygon_two_holes",
+        ),
+        pytest.param(
+            "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)), ((10 10, 20 10, 20 20, 10 20, 10 10), (12 12, 12 14, 14 14, 14 12, 12 12)))",
+            3,
+            id="multipolygon",
+        ),
+        pytest.param(
+            "POLYGON Z ((0 0 1, 1 0 1, 1 1 1, 0 1 1, 0 0 1))", 1, id="polygon_z"
+        ),
+        pytest.param(
+            "GEOMETRYCOLLECTION(POINT(1 1), POLYGON((0 0, 1 0, 1 1, 0 0)))",
+            1,
+            id="geometrycollection",
+        ),
+    ],
+)
+def test_st_nrings(eng, geog, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_NRings({geog_or_null(geog)})", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize(
+    ("geog", "expected"),
+    [
+        pytest.param(None, None, id="null"),
+        pytest.param("POINT EMPTY", None, id="point_empty"),
+        pytest.param("LINESTRING EMPTY", None, id="linestring_empty"),
+        pytest.param("POLYGON EMPTY", 0, id="polygon_empty"),
+        pytest.param("POINT (1 2)", None, id="point"),
+        pytest.param("LINESTRING (0 0, 1 1, 2 2)", None, id="linestring"),
+        pytest.param("MULTIPOINT ((0 0), (1 1))", None, id="multipoint"),
+        pytest.param(
+            "MULTILINESTRING ((0 0, 0 1, 1 1, 0 0),(0 0, 1 1))",
+            None,
+            id="multilinestring",
+        ),
+        pytest.param("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))", 0, id="polygon_no_holes"),
+        pytest.param(
+            "POLYGON ((0 0,6 0,6 6,0 6,0 0),(2 2,4 2,4 4,2 4,2 2))",
+            1,
+            id="polygon_one_hole",
+        ),
+        pytest.param(
+            "POLYGON ((0 0,10 0,10 6,0 6,0 0), (1 1,2 1,2 5,1 5,1 1),(8 5,8 4,9 4,9 5,8 5))",
+            2,
+            id="polygon_two_holes",
+        ),
+        pytest.param(
+            "MULTIPOLYGON (((0 0, 5 0, 5 5, 0 5, 0 0), (1 1, 2 1, 2 2, 1 2, 1 1)),((10 10, 14 10, 14 14, 10 14, 10 10)))",
+            None,
+            id="multipolygon",
+        ),
+        pytest.param(
+            "GEOMETRYCOLLECTION (POINT (1 2),POLYGON ((0 0, 3 0, 3 3, 0 3, 0 0)))",
+            None,
+            id="geometrycollection",
+        ),
+        pytest.param(
+            "POLYGON Z ((0 0 1, 4 0 1, 4 4 1, 0 4 1, 0 0 1), (1 1 1, 2 1 1, 2 2 1, 1 2 1, 1 1 1))",
+            1,
+            id="polygon_z_one_hole",
+        ),
+        pytest.param(
+            "POLYGON M ((0 0 1, 4 0 1, 4 4 1, 0 4 1, 0 0 1), (1 1 1, 2 1 1, 2 2 1, 1 2 1, 1 1 1))",
+            1,
+            id="polygon_m_one_hole",
+        ),
+        pytest.param(
+            "POLYGON ZM ((0 0 1 2, 4 0 1 2, 4 4 1 2, 0 4 1 2, 0 0 1 2), (1 1 1 2, 2 1 1 2, 2 2 1 2, 1 2 1 2, 1 1 1 2))",
+            1,
+            id="polygon_zm_one_hole",
+        ),
+    ],
+)
+def test_st_numinteriorrings(eng, geog, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_NumInteriorRings({geog_or_null(geog)})", expected
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize(
+    ("geog", "expected"),
+    [
+        pytest.param(None, None, id="null"),
+        pytest.param("POINT EMPTY", None, id="point_empty"),
+        pytest.param("LINESTRING EMPTY", 0, id="linestring_empty"),
+        pytest.param("POLYGON EMPTY", None, id="polygon_empty"),
+        pytest.param("MULTIPOINT EMPTY", None, id="multipoint_empty"),
+        pytest.param("MULTILINESTRING EMPTY", None, id="multilinestring_empty"),
+        pytest.param("MULTIPOLYGON EMPTY", None, id="multipolygon_empty"),
+        pytest.param("GEOMETRYCOLLECTION EMPTY", None, id="geometrycollection_empty"),
+        pytest.param("POINT (1 2)", None, id="point"),
+        pytest.param("LINESTRING (0 0, 1 1, 2 2)", 3, id="linestring"),
+        pytest.param("LINESTRING (0 0, 1 1, 0 0)", 3, id="linestring_closed"),
+        pytest.param("LINESTRING Z (0 0 0, 1 1 1, 2 2 2, 3 3 3)", 4, id="linestring_z"),
+        pytest.param("LINESTRING M (0 0 0, 1 1 1, 2 2 2, 3 3 3)", 4, id="linestring_m"),
+        pytest.param("LINESTRING ZM (0 0 0 2, 1 1 1 4)", 2, id="linestring_zm"),
+        pytest.param("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))", None, id="polygon"),
+        pytest.param(
+            "MULTILINESTRING ((0 0, 0 1, 1 1, 0 0),(0 0, 1 1))",
+            None,
+            id="multilinestring",
+        ),
+        pytest.param(
+            "GEOMETRYCOLLECTION (LINESTRING (0 0, 0 1, 1 1, 0 0))",
+            None,
+            id="geometrycollection",
+        ),
+    ],
+)
+def test_st_numpoints(eng, geog, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_NumPoints({geog_or_null(geog)})", expected)
