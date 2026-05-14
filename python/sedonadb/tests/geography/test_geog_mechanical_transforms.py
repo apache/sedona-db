@@ -643,3 +643,53 @@ def test_st_numinteriorrings(eng, geog, expected):
 def test_st_numpoints(eng, geog, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(f"SELECT ST_NumPoints({geog_or_null(geog)})", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize(
+    ("geog", "expected"),
+    [
+        pytest.param(None, None, id="null"),
+        pytest.param("POINT EMPTY", "MULTIPOINT EMPTY", id="point_empty"),
+        pytest.param("LINESTRING EMPTY", "MULTIPOINT EMPTY", id="linestring_empty"),
+        pytest.param("POLYGON EMPTY", "MULTIPOINT EMPTY", id="polygon_empty"),
+        pytest.param("MULTIPOINT EMPTY", "MULTIPOINT EMPTY", id="multipoint_empty"),
+        pytest.param(
+            "GEOMETRYCOLLECTION EMPTY",
+            "MULTIPOINT EMPTY",
+            id="geometrycollection_empty",
+        ),
+        pytest.param("POINT (1 2)", "MULTIPOINT (1 2)", id="point"),
+        pytest.param(
+            "LINESTRING (1 2, 3 4, 5 6)", "MULTIPOINT (1 2, 3 4, 5 6)", id="linestring"
+        ),
+        pytest.param(
+            "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))",
+            "MULTIPOINT (0 0, 10 0, 10 10, 0 10, 0 0)",
+            id="polygon",
+        ),
+        pytest.param(
+            "MULTIPOINT (1 2, 3 4, 5 6, 7 8)",
+            "MULTIPOINT (1 2, 3 4, 5 6, 7 8)",
+            id="multipoint",
+        ),
+        pytest.param(
+            "LINESTRING Z (1 2 3, 4 5 6, 7 8 9)",
+            "MULTIPOINT Z (1 2 3, 4 5 6, 7 8 9)",
+            id="linestring_z",
+        ),
+        pytest.param(
+            "LINESTRING M (1 2 3, 4 5 6, 7 8 9)",
+            "MULTIPOINT M (1 2 3, 4 5 6, 7 8 9)",
+            id="linestring_m",
+        ),
+        pytest.param(
+            "LINESTRING ZM (1 2 3 4, 5 6 7 8, 9 0 1 2)",
+            "MULTIPOINT ZM (1 2 3 4, 5 6 7 8, 9 0 1 2)",
+            id="linestring_zm",
+        ),
+    ],
+)
+def test_st_points(eng, geog, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_Points({geog_or_null(geog)})", expected)
