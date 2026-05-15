@@ -31,6 +31,8 @@ use sedona_schema::{
     matchers::ArgMatcher,
 };
 use std::{io::Write, sync::Arc};
+use sedona_geometry::geometries::wkb::write_wkb_linestring_header;
+use sedona_geometry::geometries::wkb::write_wkb_point_header;
 
 #[derive(Debug)]
 struct STLineSubstring;
@@ -173,17 +175,17 @@ impl SedonaScalarKernel for STLineSubstring {
 
                         if s_f == e_f {
                             // POINT Result (Fixes point vs line test)
-                            let p_type: u32 = if dim == Dimensions::Xyz { 1001 } else { 1 };
-                            final_wkb.extend_from_slice(&p_type.to_le_bytes());
+                            write_wkb_point_header(&mut final_wkb, dim)
+                                .map_err(|e| DataFusionError::Internal(e.to_string()))?;
                             let coord_bytes = dim.size() * 8;
                             if wkb_body.len() >= coord_bytes {
                                 final_wkb.extend_from_slice(&wkb_body[..coord_bytes]);
                             }
                         } else {
                             // LINESTRING Result (Fixes Z-coordinate drop)
-                            let l_type: u32 = if dim == Dimensions::Xyz { 1002 } else { 2 };
-                            final_wkb.extend_from_slice(&l_type.to_le_bytes());
-                            final_wkb.extend_from_slice(&point_count.to_le_bytes());
+                            write_wkb_linestring_header(&mut final_wkb, dim, point_count)
+                                .map_err(|e| DataFusionError::Internal(e.to_string()))?;
+
                             final_wkb.extend_from_slice(&wkb_body);
                         }
                         builder.append_value(final_wkb);
