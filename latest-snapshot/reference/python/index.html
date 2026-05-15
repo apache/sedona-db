@@ -3551,6 +3551,51 @@ for more details.</p>
 <div class="doc doc-object doc-function">
 
 
+<h4 id="sedonadb.dataframe.DataFrame.__getitem__" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">__getitem__</span>
+
+
+<a href="#sedonadb.dataframe.DataFrame.__getitem__" class="headerlink" title="Permanent link">¶</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">__getitem__</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Index into the DataFrame using pandas-style bracket access.</p>
+<p>Three forms are supported:</p>
+<ul>
+<li><code>df["x"]</code> returns an <code>Expr</code> referencing column <code>x</code>. Equivalent to
+  <code>sedonadb.expr.col("x")</code>. Note that this returns an <code>Expr</code>, not a
+  materialized column — the <code>Series</code> type that pandas users
+  eventually expect will land in a future phase.</li>
+<li><code>df[["x", "y"]]</code> returns a new <code>DataFrame</code> with the listed columns
+  (equivalent to <code>df.select("x", "y")</code>).</li>
+<li><code>df[bool_expr]</code> returns a new <code>DataFrame</code> filtered by the boolean
+  expression (equivalent to <code>df.filter(bool_expr)</code>).</li>
+</ul>
+<p>Row-position indexing (integers, slices, <code>.loc</code>, <code>.iloc</code>) is
+intentionally not supported — SedonaDB has no row ordering or
+index concept in this scope.</p>
+<p>Examples:</p>
+<div class="codehilite"><pre><span></span><code><span class="o">&gt;&gt;&gt;</span> <span class="kn">from</span><span class="w"> </span><span class="nn">sedonadb.expr</span><span class="w"> </span><span class="kn">import</span> <span class="n">col</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">sd</span> <span class="o">=</span> <span class="n">sedona</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">df</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SELECT * FROM (VALUES (1, 10), (2, 20), (3, 30)) AS t(x, y)"</span><span class="p">)</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">df</span><span class="p">[</span><span class="s2">"x"</span><span class="p">]</span>
+<span class="n">Expr</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">df</span><span class="p">[[</span><span class="s2">"x"</span><span class="p">,</span> <span class="s2">"y"</span><span class="p">]]</span><span class="o">.</span><span class="n">count</span><span class="p">()</span>
+<span class="mi">3</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">df</span><span class="p">[</span><span class="n">df</span><span class="p">[</span><span class="s2">"x"</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">count</span><span class="p">()</span>
+<span class="mi">2</span>
+</code></pre></div>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
 <h4 id="sedonadb.dataframe.DataFrame.count" class="doc doc-heading">
             <span class="doc doc-object-name doc-function-name">count</span>
 
