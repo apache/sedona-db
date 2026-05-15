@@ -363,7 +363,7 @@ mod tests {
             ],
         );
 
-        tester.assert_return_type(WKB_GEOGRAPHY);
+        tester.assert_return_type(WKB_GEOGRAPHY_WGS84.clone());
         let result = tester.invoke_scalar_scalar(1.0, 2.0).unwrap();
         tester.assert_scalar_result_equals(result, "POINT (1 2)");
     }

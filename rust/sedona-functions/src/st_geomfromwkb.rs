@@ -340,11 +340,14 @@ mod tests {
         let udf = st_geogfromwkb_udf();
         let tester = ScalarUdfTester::new(udf.into(), vec![SedonaType::Arrow(DataType::Binary)]);
 
-        assert_eq!(tester.return_type().unwrap(), WKB_VIEW_GEOGRAPHY);
+        assert_eq!(
+            tester.return_type().unwrap(),
+            WKB_VIEW_GEOGRAPHY_WGS84.clone()
+        );
 
         assert_scalar_equal(
             &tester.invoke_scalar(POINT12.to_vec()).unwrap(),
-            &create_scalar(Some("POINT (1 2)"), &WKB_VIEW_GEOGRAPHY),
+            &create_scalar(Some("POINT (1 2)"), &WKB_VIEW_GEOGRAPHY_WGS84),
         );
     }
 }
