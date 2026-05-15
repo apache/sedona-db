@@ -83,10 +83,10 @@ pub const WKB_VIEW_GEOGRAPHY: SedonaType = SedonaType::WkbView(Edges::Spherical,
 pub static WKB_GEOGRAPHY_WGS84: LazyLock<SedonaType> =
     LazyLock::new(|| SedonaType::Wkb(Edges::Spherical, lnglat()));
 
-/// Sentinel for [`SedonaType::Wkb`] with spherical edges and longitude, latitude CRS
+/// Sentinel for [`SedonaType::WkbView`] with spherical edges and longitude, latitude CRS
 ///
 /// This constant is useful when defining type signatures as these ignore the Crs when
-/// matching (and `SedonaType::Wkb(...)` is verbose)
+/// matching (and `SedonaType::WkbView(...)` is verbose)
 pub static WKB_VIEW_GEOGRAPHY_WGS84: LazyLock<SedonaType> =
     LazyLock::new(|| SedonaType::WkbView(Edges::Spherical, lnglat()));
 

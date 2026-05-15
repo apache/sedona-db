@@ -500,11 +500,12 @@ impl CoordinateReferenceSystem for AuthorityCode {
         match self.auth_code.as_str() {
             // Default lnglat(). Here we use S2Earth::RadiusMeters() as a constant
             // for consistent results (if we averaged over the ensemble, distance results
-            // may be subtely different between versions as the ensemble is updated).
+            // may be subtly different between versions as the ensemble is updated).
             "OGC:CRS84" | "EPSG:4326" => Ok(Some(GeographicCrsParams {
                 spherical_radius_m: 6371010.0,
             })),
             // NAD83
+            // https://spatialreference.org/ref/epsg/4269/
             "OGC:CRS83" | "EPSG:4269" => {
                 const A: f64 = 6378137.0;
                 const INV_F: f64 = 298.257222101;
@@ -515,7 +516,7 @@ impl CoordinateReferenceSystem for AuthorityCode {
             }
             // NAD27
             // Mean radius = (2a + b) / 3
-            // https://spatialreference.org/ref/epsg/4269/
+            // https://spatialreference.org/ref/epsg/4267/
             "OGC:CRS27" | "EPSG:4267" => {
                 const A: f64 = 6378206.4;
                 const B: f64 = 6356583.8;
@@ -628,7 +629,9 @@ impl CoordinateReferenceSystem for ProjJSON {
         } else if let Some(Value::Object(datum_ensemble)) = obj.get("datum_ensemble") {
             datum_ensemble.get("ellipsoid")
         } else {
-            return exec_err!("PROJJSON GeographiCRS missing datum or datum_ensemble ellipsoid");
+            return exec_err!(
+                "PROJJSON GeographicCRS missing or malformed datum or datum_ensemble ellipsoid"
+            );
         };
 
         let Some(Value::Object(ellipsoid)) = ellipsoid else {

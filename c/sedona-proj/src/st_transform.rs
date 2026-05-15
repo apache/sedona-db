@@ -131,6 +131,8 @@ impl SedonaScalarKernel for STTransform {
             WKB_MIN_PROBABLE_BYTES * executor.num_iterations(),
         );
 
+        let (return_item_type, _) = parse_item_crs_arg_type(return_type)?;
+
         // Optimize the easy case, where we have exactly one transformation and there are no
         // null or missing CRSes to contend with.
         let from_index = inputs.len() - 2;
@@ -144,7 +146,7 @@ impl SedonaScalarKernel for STTransform {
                 // Validate the target CRS is valid for the output type (e.g., geography
                 // requires a geographic CRS)
                 let to_crs_opt: Crs = Some(to_crs.clone());
-                validate_crs_for_type(&to_crs_opt, return_type)?;
+                validate_crs_for_type(&to_crs_opt, &return_item_type)?;
 
                 with_global_proj_engine(|engine| {
                     let crs_transform = engine
@@ -177,7 +179,6 @@ impl SedonaScalarKernel for STTransform {
 
         // Validate the to_crs_array if needed to ensure the output CRS is valid
         // for geography types
-        let (return_item_type, _) = parse_item_crs_arg_type(return_type)?;
         validate_crs_array_for_type(&to_crs_array, &return_item_type)?;
 
         // Iterate over pairs of CRS strings
