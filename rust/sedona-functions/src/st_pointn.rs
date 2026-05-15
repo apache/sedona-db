@@ -181,7 +181,7 @@ mod tests {
                 Some("POINT M (11 12 13)"),
                 Some("POINT ZM (11 12 13 14)"),
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
 
         let result1 = tester_pointn
@@ -197,7 +197,7 @@ mod tests {
                 Some("POINT M (21 22 23)"),
                 Some("POINT ZM (21 22 23 24)"),
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
 
         let result2 = tester_pointn
@@ -213,7 +213,7 @@ mod tests {
                 Some("POINT M (31 32 33)"),
                 Some("POINT ZM (31 32 33 34)"),
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
 
         let result2_tail = tester_pointn
@@ -222,7 +222,7 @@ mod tests {
         assert_array_equal(&result2_tail, &expected2_tail);
 
         // out of range or 0
-        let expected_null = create_array(&[None, None, None, None], &WKB_GEOMETRY);
+        let expected_null = create_array(&[None, None, None, None], &sedona_type);
 
         let result_zero = tester_pointn
             .invoke_array_scalar(input_linestrings.clone(), ScalarValue::Int64(Some(0)))
@@ -270,7 +270,7 @@ mod tests {
             &[
                 None, None, None, None, None, None, None, None, None, None, None, None, None, None,
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
         let result_others = tester_pointn
             .invoke_array_scalar(input_others.clone(), ScalarValue::Int64(Some(2)))

@@ -475,7 +475,7 @@ mod tests {
                 Some("POINT (3 4)"),
                 Some("POINT (8 9)"),
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
 
         let result = tester.invoke_arrays(vec![points]).unwrap();
@@ -510,7 +510,7 @@ mod tests {
                 Some("POINT Z (6 7 0)"),
                 Some("POINT Z (9 10 11)"),
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
 
         let result = tester.invoke_arrays(vec![points]).unwrap();
@@ -560,7 +560,7 @@ mod tests {
                 Some("POINT Z (6 7 9)"),
                 Some("POINT Z (9 10 11)"),
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
 
         let result = tester.invoke_arrays(vec![points, z]).unwrap();
@@ -595,7 +595,7 @@ mod tests {
                 Some("POINT M (6 7 8)"),
                 Some("POINT M (9 10 12)"),
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
 
         let result = tester.invoke_arrays(vec![points]).unwrap();
@@ -645,7 +645,7 @@ mod tests {
                 Some("POINT M (6 7 8)"),
                 Some("POINT M (9 10 12)"),
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
 
         let result = tester.invoke_arrays(vec![points, m]).unwrap();
@@ -682,7 +682,7 @@ mod tests {
                 Some("POINT ZM (6 7 0 8)"),
                 Some("POINT ZM (9 10 11 12)"),
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
 
         let result = tester.invoke_arrays(vec![points]).unwrap();
@@ -748,7 +748,7 @@ mod tests {
                 Some("POINT ZM (6 7 8 8)"),
                 Some("POINT ZM (9 10 11 12)"),
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
 
         let result = tester.invoke_arrays(vec![points, z, m]).unwrap();

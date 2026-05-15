@@ -178,7 +178,7 @@ mod tests {
                 Some("MULTIPOLYGON EMPTY"),
                 Some("GEOMETRYCOLLECTION EMPTY"),
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
         assert_array_equal(&tester.invoke_wkb_array(input_wkt).unwrap(), &expected);
     }

@@ -186,7 +186,7 @@ mod tests {
                 Some("GEOMETRYCOLLECTION(POINT(1 1), GEOMETRYCOLLECTION(LINESTRING(2 2, 3 3)))"), //  n=2 (Nested: GC)
                 Some("GEOMETRYCOLLECTION(POINT(1 1))"), //  n=0 (OOB)
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
 
         let integers = arrow_array::create_array!(
@@ -264,7 +264,7 @@ mod tests {
                 Some("GEOMETRYCOLLECTION(LINESTRING(2 2, 3 3))"), // The WKB of the GC component itself
                 None,
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
 
         assert_array_equal(

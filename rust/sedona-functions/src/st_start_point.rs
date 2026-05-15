@@ -255,7 +255,7 @@ mod tests {
                 None,
                 None,
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
 
         let result_start_point = tester_start_point.invoke_array(input.clone()).unwrap();
@@ -282,7 +282,7 @@ mod tests {
                 None,
                 None,
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
 
         let result_end_point = tester_end_point.invoke_array(input).unwrap();

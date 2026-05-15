@@ -430,7 +430,7 @@ mod tests {
                 Some("GEOMETRYCOLLECTION (POINT M (1 2 3), LINESTRING M (4 5 6, 1 2 3))"),
                 Some("GEOMETRYCOLLECTION (POINT ZM (1 2 3 4), LINESTRING ZM (5 6 7 8, 1 2 3 4))"),
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
 
         assert_array_equal(&tester.invoke_wkb_array(input_wkt).unwrap(), &expected);

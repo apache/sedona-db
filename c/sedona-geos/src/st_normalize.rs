@@ -96,9 +96,7 @@ mod tests {
     use geos::{Geom, Geometry};
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
-    use sedona_schema::datatypes::{
-        WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS,
-    };
+    use sedona_schema::datatypes::{WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY_ITEM_CRS};
     use sedona_testing::testers::ScalarUdfTester;
 
     use super::*;
@@ -143,7 +141,7 @@ mod tests {
                 Some("POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))"),
                 Some("MULTILINESTRING ((3 3, 4 4), (1 1, 2 2))"),
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
         sedona_testing::compare::assert_array_equal(&batch_result, &expected);
     }

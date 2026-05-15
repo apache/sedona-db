@@ -152,7 +152,7 @@ mod tests {
     fn test_st_interiorringn_non_polygons(
         #[values(WKB_GEOMETRY, WKB_GEOGRAPHY)] sedona_type: SedonaType,
     ) {
-        let tester = setup_tester(sedona_type);
+        let tester = setup_tester(sedona_type.clone());
 
         let input_wkt = create_array(
             &[
@@ -165,7 +165,7 @@ mod tests {
                 Some("MULTIPOLYGON (((1 1, 1 3, 3 3, 3 1, 1 1)))"), // MULTIPOLYGON
                 Some("GEOMETRYCOLLECTION (POINT(1 1))"),            // GEOMETRYCOLLECTION
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
         let integers = arrow_array::create_array!(
             Int64,
@@ -182,7 +182,7 @@ mod tests {
         );
         let expected = create_array(
             &[None, None, None, None, None, None, None, None],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
 
         assert_array_equal(
@@ -196,7 +196,7 @@ mod tests {
     fn test_st_interiorringn_polygon_edge_cases(
         #[values(WKB_GEOMETRY, WKB_GEOGRAPHY)] sedona_type: SedonaType,
     ) {
-        let tester = setup_tester(sedona_type);
+        let tester = setup_tester(sedona_type.clone());
 
         let input_wkt = create_array(
             &[
@@ -205,7 +205,7 @@ mod tests {
                 Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"), // Invalid index n=0
                 Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"), // Index n too high (n=2)
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
         let integers = arrow_array::create_array!(Int64, [Some(1), Some(1), Some(0), Some(2)]);
         let expected = create_array(
@@ -215,7 +215,7 @@ mod tests {
                 None, // Invalid index n=0 (Assuming NULL/None on invalid index)
                 None, // Index n too high
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
 
         assert_array_equal(
@@ -229,7 +229,7 @@ mod tests {
     fn test_st_interiorringn_valid_polygons(
         #[values(WKB_GEOMETRY, WKB_GEOGRAPHY)] sedona_type: SedonaType,
     ) {
-        let tester = setup_tester(sedona_type);
+        let tester = setup_tester(sedona_type.clone());
 
         let input_wkt = create_array(
             &[
@@ -240,7 +240,7 @@ mod tests {
                 Some("POLYGON ((0 0, 6 0, 6 6, 0 6, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (4 4, 4 5, 5 5, 5 4, 4 4))"),       // Two holes, n=2
                 Some("POLYGON ((0 0, 6 0, 6 6, 0 6, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (4 4, 4 5, 5 5, 5 4, 4 4))"),       // Two holes, n=3 (too high)
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
         let integers = arrow_array::create_array!(
             Int64,
@@ -255,7 +255,7 @@ mod tests {
                 Some("LINESTRING (4 4, 4 5, 5 5, 5 4, 4 4)"),
                 None,
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
 
         assert_array_equal(
@@ -269,7 +269,7 @@ mod tests {
     fn test_st_interiorringn_invalid_polygons(
         #[values(WKB_GEOMETRY, WKB_GEOGRAPHY)] sedona_type: SedonaType,
     ) {
-        let tester = setup_tester(sedona_type);
+        let tester = setup_tester(sedona_type.clone());
 
         let input_wkt = create_array(
             &[
@@ -277,7 +277,7 @@ mod tests {
                 Some("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (5 5, 5 6, 6 6, 6 5, 5 5))"),                       // External hole
                 Some("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 3, 3 3, 3 1, 1 1), (2 2, 2 2.5, 2.5 2.5, 2.5 2, 2 2))"), // Intersecting holes
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
         let integers = arrow_array::create_array!(Int64, [Some(1), Some(1), Some(2)]);
         let expected = create_array(
@@ -286,7 +286,7 @@ mod tests {
                 Some("LINESTRING (5 5, 5 6, 6 6, 6 5, 5 5)"), // Extraction works even if topologically invalid (external)
                 Some("LINESTRING (2 2, 2 2.5, 2.5 2.5, 2.5 2, 2 2)"), // Extraction works even if topologically invalid (intersecting)
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
 
         assert_array_equal(
@@ -299,7 +299,7 @@ mod tests {
     fn test_st_interiorringn_z_dimensions(
         #[values(WKB_GEOMETRY, WKB_GEOGRAPHY)] sedona_type: SedonaType,
     ) {
-        let tester = setup_tester(sedona_type);
+        let tester = setup_tester(sedona_type.clone());
 
         let input_wkt = create_array(
             &[
@@ -310,7 +310,7 @@ mod tests {
                 // Polygon Z with no hole (Should be NULL)
                 Some("POLYGON Z ((0 0 10, 4 0 10, 4 4 10, 0 4 10, 0 0 10))"),
             ],
-            &WKB_GEOMETRY
+            &sedona_type
         );
         let integers = arrow_array::create_array!(Int64, [Some(1), Some(1), Some(1)]);
         let expected = create_array(
@@ -319,7 +319,7 @@ mod tests {
                 None,
                 None,
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
 
         assert_array_equal(
@@ -332,7 +332,7 @@ mod tests {
     fn test_st_interiorringn_m_dimensions(
         #[values(WKB_GEOMETRY, WKB_GEOGRAPHY)] sedona_type: SedonaType,
     ) {
-        let tester = setup_tester(sedona_type);
+        let tester = setup_tester(sedona_type.clone());
 
         let input_wkt = create_array(
             &[
@@ -343,7 +343,7 @@ mod tests {
                 // Polygon M with no hole (Should be NULL)
                 Some("POLYGON M ((0 0 1, 4 0 2, 4 4 3, 0 4 4, 0 0 5))"),
             ],
-            &WKB_GEOMETRY
+            &sedona_type
         );
         let integers = arrow_array::create_array!(Int64, [Some(1), Some(1), Some(1)]);
         let expected = create_array(
@@ -352,7 +352,7 @@ mod tests {
                 None,
                 None,
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
 
         assert_array_equal(
@@ -365,7 +365,7 @@ mod tests {
     fn test_st_interiorringn_zm_dimensions(
         #[values(WKB_GEOMETRY, WKB_GEOGRAPHY)] sedona_type: SedonaType,
     ) {
-        let tester = setup_tester(sedona_type);
+        let tester = setup_tester(sedona_type.clone());
 
         let input_wkt = create_array(
             &[
@@ -376,7 +376,7 @@ mod tests {
                 // POLYGON ZM EMPTY (Should be NULL)
                 Some("POLYGON ZM EMPTY"),
             ],
-            &WKB_GEOMETRY
+            &sedona_type
         );
         let integers = arrow_array::create_array!(Int64, [Some(1), Some(2), Some(1)]);
         let expected = create_array(
@@ -385,7 +385,7 @@ mod tests {
                 None,
                 None,
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
 
         assert_array_equal(
