@@ -3703,6 +3703,65 @@ performance and optimization.</p>
 <div class="doc doc-object doc-function">
 
 
+<h4 id="sedonadb.dataframe.DataFrame.filter" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">filter</span>
+
+
+<a href="#sedonadb.dataframe.DataFrame.filter" class="headerlink" title="Permanent link">¶</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">filter</span><span class="p">(</span><span class="o">*</span><span class="n">exprs</span><span class="p">:</span> <span class="n"><span title="sedonadb.expr.Expr">Expr</span></span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Filter rows by one or more boolean expressions.</p>
+<p>Multiple expressions are combined with logical AND, so
+<code>df.filter(a, b)</code> is equivalent to <code>df.filter(a &amp; b)</code> and to
+<code>df.filter(a).filter(b)</code> (the planner sees one conjunction in
+the first two forms and two filter nodes in the third).</p>
+<p>Only <code>Expr</code> arguments are accepted. Strings are not interpreted
+as SQL predicates (that is a separate feature). Bare <code>Literal</code>
+values are also rejected — <code>filter(lit(True))</code> is almost
+certainly a typo; if you really mean a constant predicate, wrap
+a column expression like <code>col("flag") == lit(True)</code>.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+            <b><code>*exprs</code></b>
+              (<code><span title="sedonadb.expr.Expr">Expr</span></code>, default:
+                  <code>()</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>One or more boolean <code>sedonadb.expr.Expr</code> predicates.
+At least one argument is required.</p>
+          </div>
+        </li>
+    </ul>
+        <p>Examples:</p>
+<div class="codehilite"><pre><span></span><code><span class="o">&gt;&gt;&gt;</span> <span class="kn">from</span><span class="w"> </span><span class="nn">sedonadb.expr</span><span class="w"> </span><span class="kn">import</span> <span class="n">col</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">sd</span> <span class="o">=</span> <span class="n">sedona</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">df</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SELECT * FROM (VALUES (1), (2), (3), (4)) AS t(x)"</span><span class="p">)</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">df</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">col</span><span class="p">(</span><span class="s2">"x"</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+<span class="err">┌───────┐</span>
+<span class="err">│</span>   <span class="n">x</span>   <span class="err">│</span>
+<span class="err">│</span> <span class="n">int64</span> <span class="err">│</span>
+<span class="err">╞═══════╡</span>
+<span class="err">│</span>     <span class="mi">3</span> <span class="err">│</span>
+<span class="err">├╌╌╌╌╌╌╌┤</span>
+<span class="err">│</span>     <span class="mi">4</span> <span class="err">│</span>
+<span class="err">└───────┘</span>
+</code></pre></div>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
 <h4 id="sedonadb.dataframe.DataFrame.head" class="doc doc-heading">
             <span class="doc doc-object-name doc-function-name">head</span>
 
