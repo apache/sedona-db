@@ -24,6 +24,7 @@ use arrow_schema::DataType;
 use datafusion_common::cast::as_string_array;
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::error::Result;
+use datafusion_common::ScalarValue;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
@@ -56,34 +57,44 @@ impl SedonaScalarKernel for RsFromPath {
         _arg_types: &[SedonaType],
         args: &[ColumnarValue],
         _return_type: &SedonaType,
-        _num_rows: usize,
+        num_rows: usize,
         config_options: Option<&ConfigOptions>,
     ) -> Result<ColumnarValue> {
         with_gdal(|gdal| {
             configure_thread_local_options(gdal, config_options)?;
 
-            let paths = args[0].cast_to(&DataType::Utf8, None)?.into_array(1)?;
+            let num_iterations = args
+                .iter()
+                .find_map(|arg| match arg {
+                    ColumnarValue::Array(array) => Some(array.len()),
+                    ColumnarValue::Scalar(_) => None,
+                })
+                .unwrap_or_else(|| num_rows.max(1));
+
+            let paths = args[0]
+                .cast_to(&DataType::Utf8, None)?
+                .into_array_of_size(num_iterations)?;
             let path_array = as_string_array(&paths)?;
 
-            let len = path_array.len();
-            let mut builder = RasterBuilder::new(len);
-            for i in 0..len {
-                if path_array.is_null(i) {
-                    builder.append_null()?;
-                } else {
-                    let path = path_array.value(i);
+            let mut builder = RasterBuilder::new(path_array.len());
+            for path_opt in path_array {
+                if let Some(path) = path_opt {
                     append_as_outdb_raster(gdal, path, &mut builder)?;
+                } else {
+                    builder.append_null()?;
                 }
             }
 
             let result: Arc<dyn Array> = Arc::new(builder.finish()?);
 
-            match &args[0] {
-                ColumnarValue::Scalar(_) => {
-                    let scalar = datafusion_common::ScalarValue::try_from_array(&result, 0)?;
-                    Ok(ColumnarValue::Scalar(scalar))
-                }
-                ColumnarValue::Array(_) => Ok(ColumnarValue::Array(result)),
+            match args
+                .iter()
+                .any(|arg| matches!(arg, ColumnarValue::Array(_)))
+            {
+                true => Ok(ColumnarValue::Array(result)),
+                false => Ok(ColumnarValue::Scalar(ScalarValue::try_from_array(
+                    &result, 0,
+                )?)),
             }
         })
     }
@@ -102,7 +113,6 @@ mod tests {
     use super::*;
     use arrow_array::StringArray;
     use datafusion_common::cast::{as_struct_array, as_uint64_array};
-    use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDFImpl;
     use sedona_expr::scalar_udf::SedonaScalarKernel;
     use sedona_schema::raster::{metadata_indices, raster_indices};

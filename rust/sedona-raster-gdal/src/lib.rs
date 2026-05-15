@@ -25,6 +25,8 @@
 //! - GDAL datatype and nodata conversion helpers
 //! - path normalization for GDAL VSI-backed raster sources
 
+pub mod register;
+
 mod gdal_common;
 // Temporary until https://github.com/apache/sedona-db/issues/804 is resolved.
 #[allow(dead_code)]
@@ -43,7 +45,3 @@ pub use gdal_common::{
 };
 pub use rs_frompath::rs_frompath_udf;
 pub use utils::{append_as_indb_raster, append_as_outdb_raster, dataset_to_indb_raster};
-
-pub fn all_gdal_udfs() -> Vec<sedona_expr::scalar_udf::SedonaScalarUDF> {
-    vec![rs_frompath_udf()]
-}
