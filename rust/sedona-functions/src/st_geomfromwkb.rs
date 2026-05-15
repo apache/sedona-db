@@ -61,12 +61,14 @@ pub fn st_geomfromwkbunchecked_udf() -> SedonaScalarUDF {
 ///
 /// An implementation of WKB reading using GeoRust's wkb crate.
 pub fn st_geogfromwkb_udf() -> SedonaScalarUDF {
+    let kernel = Arc::new(STGeomFromWKB {
+        validate: true,
+        out_type: WKB_VIEW_GEOGRAPHY,
+    });
+    let sridified_kernel = Arc::new(SRIDifiedKernel::new(kernel.clone()));
     SedonaScalarUDF::new(
         "st_geogfromwkb",
-        vec![Arc::new(STGeomFromWKB {
-            validate: true,
-            out_type: WKB_VIEW_GEOGRAPHY,
-        })],
+        vec![sridified_kernel, kernel],
         Volatility::Immutable,
     )
 }

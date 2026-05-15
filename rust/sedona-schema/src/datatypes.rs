@@ -21,7 +21,7 @@ use serde_json::Value;
 use std::fmt::{Debug, Display};
 use std::sync::LazyLock;
 
-use crate::crs::{deserialize_crs, deserialize_crs_from_obj, Crs};
+use crate::crs::{deserialize_crs, deserialize_crs_from_obj, lnglat, Crs};
 use crate::extension_type::ExtensionType;
 use crate::raster::RasterSchema;
 
@@ -67,13 +67,28 @@ pub const WKB_VIEW_GEOMETRY: SedonaType = SedonaType::WkbView(Edges::Planar, Crs
 /// Sentinel for [`SedonaType::Wkb`] with spherical edges
 ///
 /// This constant is useful when defining type signatures as these ignore the Crs when
-/// matching (and `SedonaType::Wkb(...)` is verbose)
+/// matching (and `SedonaType::Wkb(...)` is verbose). Note that [WKB_GEOGRAPHY_WGS84]
+/// is likely more appropriate in many cases.
 pub const WKB_GEOGRAPHY: SedonaType = SedonaType::Wkb(Edges::Spherical, Crs::None);
 
 /// Sentinel for [`SedonaType::WkbView`] with spherical edges
 ///
 /// See [`WKB_GEOGRAPHY`]
 pub const WKB_VIEW_GEOGRAPHY: SedonaType = SedonaType::WkbView(Edges::Spherical, Crs::None);
+
+/// Sentinel for [`SedonaType::Wkb`] with spherical edges and longitude, latitude CRS
+///
+/// This constant is useful when defining type signatures as these ignore the Crs when
+/// matching (and `SedonaType::Wkb(...)` is verbose)
+pub static WKB_GEOGRAPHY_WGS84: LazyLock<SedonaType> =
+    LazyLock::new(|| SedonaType::Wkb(Edges::Spherical, lnglat()));
+
+/// Sentinel for [`SedonaType::Wkb`] with spherical edges and longitude, latitude CRS
+///
+/// This constant is useful when defining type signatures as these ignore the Crs when
+/// matching (and `SedonaType::Wkb(...)` is verbose)
+pub static WKB_VIEW_GEOGRAPHY_WGS84: LazyLock<SedonaType> =
+    LazyLock::new(|| SedonaType::WkbView(Edges::Spherical, lnglat()));
 
 /// Sentinel for [`SedonaType::Raster`]
 pub const RASTER: SedonaType = SedonaType::Raster;
