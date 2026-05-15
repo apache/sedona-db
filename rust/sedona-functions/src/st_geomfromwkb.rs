@@ -21,7 +21,9 @@ use datafusion_common::error::Result;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_schema::{
-    datatypes::{SedonaType, WKB_GEOMETRY, WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY},
+    datatypes::{
+        SedonaType, WKB_GEOMETRY, WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOGRAPHY_WGS84, WKB_VIEW_GEOMETRY,
+    },
     matchers::ArgMatcher,
 };
 
@@ -61,14 +63,22 @@ pub fn st_geomfromwkbunchecked_udf() -> SedonaScalarUDF {
 ///
 /// An implementation of WKB reading using GeoRust's wkb crate.
 pub fn st_geogfromwkb_udf() -> SedonaScalarUDF {
-    let kernel = Arc::new(STGeomFromWKB {
+    // Inner kernel for SRIDified has no CRS - the SRID argument sets it
+    let inner_kernel = Arc::new(STGeomFromWKB {
         validate: true,
         out_type: WKB_VIEW_GEOGRAPHY,
     });
-    let sridified_kernel = Arc::new(SRIDifiedKernel::new(kernel.clone()));
+    let sridified_kernel = Arc::new(SRIDifiedKernel::new(inner_kernel));
+
+    // Standalone kernel returns WGS84 CRS by default
+    let standalone_kernel = Arc::new(STGeomFromWKB {
+        validate: true,
+        out_type: WKB_VIEW_GEOGRAPHY_WGS84.clone(),
+    });
+
     SedonaScalarUDF::new(
         "st_geogfromwkb",
-        vec![sridified_kernel, kernel],
+        vec![sridified_kernel, standalone_kernel],
         Volatility::Immutable,
     )
 }
