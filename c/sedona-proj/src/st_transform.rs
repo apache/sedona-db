@@ -23,13 +23,13 @@ use datafusion_common::config::ConfigOptions;
 use datafusion_common::{exec_err, DataFusionError, Result, ScalarValue};
 use datafusion_expr::ColumnarValue;
 use sedona_common::sedona_internal_err;
-use sedona_expr::item_crs::make_item_crs;
+use sedona_expr::item_crs::{make_item_crs, parse_item_crs_arg_type};
 use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
 use sedona_functions::executor::WkbExecutor;
 use sedona_geometry::transform::{transform, CrsEngine, CrsTransform};
 use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
 use sedona_schema::crs::{deserialize_crs, Crs};
-use sedona_schema::datatypes::{Edges, SedonaType, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS};
+use sedona_schema::datatypes::{Edges, SedonaType};
 use sedona_schema::matchers::ArgMatcher;
 use std::io::Write;
 use std::iter::zip;
@@ -59,35 +59,52 @@ impl SedonaScalarKernel for STTransform {
         if inputs.len() == 2 {
             match (inputs[0], inputs[1]) {
                 // ScalarCrs output always returns a Wkb output type with concrete Crs
-                (ArgInput::Geo(_), ArgInput::ScalarCrs(scalar_value))
-                | (ArgInput::ItemCrs, ArgInput::ScalarCrs(scalar_value)) => {
-                    Ok(Some(output_type_from_scalar_crs_value(scalar_value)?))
-                }
+                (ArgInput::Geo(edges, _), ArgInput::ScalarCrs(scalar_value))
+                | (ArgInput::ItemCrs(edges), ArgInput::ScalarCrs(scalar_value)) => Ok(Some(
+                    output_type_from_scalar_crs_value(edges, scalar_value)?,
+                )),
 
                 // Geo or ItemCrs with ArrayCrs output always return ItemCrs output
-                (ArgInput::Geo(_), ArgInput::ArrayCrs)
-                | (ArgInput::ItemCrs, ArgInput::ArrayCrs) => {
-                    Ok(Some(WKB_GEOMETRY_ITEM_CRS.clone()))
-                }
+                (ArgInput::Geo(edges, _), ArgInput::ArrayCrs)
+                | (ArgInput::ItemCrs(edges), ArgInput::ArrayCrs) => Ok(Some(
+                    SedonaType::new_item_crs(&SedonaType::Wkb(edges, None))?,
+                )),
                 _ => Ok(None),
             }
         } else if inputs.len() == 3 {
             match (inputs[0], inputs[1], inputs[2]) {
                 // ScalarCrs output always returns a Wkb output type with concrete Crs
-                (ArgInput::Geo(_), ArgInput::ScalarCrs(_), ArgInput::ScalarCrs(scalar_value))
-                | (ArgInput::Geo(_), ArgInput::ArrayCrs, ArgInput::ScalarCrs(scalar_value))
-                | (ArgInput::ItemCrs, ArgInput::ScalarCrs(_), ArgInput::ScalarCrs(scalar_value))
-                | (ArgInput::ItemCrs, ArgInput::ArrayCrs, ArgInput::ScalarCrs(scalar_value)) => {
-                    Ok(Some(output_type_from_scalar_crs_value(scalar_value)?))
-                }
+                (
+                    ArgInput::Geo(edges, _),
+                    ArgInput::ScalarCrs(_),
+                    ArgInput::ScalarCrs(scalar_value),
+                )
+                | (
+                    ArgInput::Geo(edges, _),
+                    ArgInput::ArrayCrs,
+                    ArgInput::ScalarCrs(scalar_value),
+                )
+                | (
+                    ArgInput::ItemCrs(edges),
+                    ArgInput::ScalarCrs(_),
+                    ArgInput::ScalarCrs(scalar_value),
+                )
+                | (
+                    ArgInput::ItemCrs(edges),
+                    ArgInput::ArrayCrs,
+                    ArgInput::ScalarCrs(scalar_value),
+                ) => Ok(Some(output_type_from_scalar_crs_value(
+                    edges,
+                    scalar_value,
+                )?)),
 
                 // Geo or ItemCrs with ArrayCrs output always return ItemCrs output
-                (ArgInput::Geo(_), ArgInput::ScalarCrs(_), ArgInput::ArrayCrs)
-                | (ArgInput::Geo(_), ArgInput::ArrayCrs, ArgInput::ArrayCrs)
-                | (ArgInput::ItemCrs, ArgInput::ScalarCrs(_), ArgInput::ArrayCrs)
-                | (ArgInput::ItemCrs, ArgInput::ArrayCrs, ArgInput::ArrayCrs) => {
-                    Ok(Some(WKB_GEOMETRY_ITEM_CRS.clone()))
-                }
+                (ArgInput::Geo(edges, _), ArgInput::ScalarCrs(_), ArgInput::ArrayCrs)
+                | (ArgInput::Geo(edges, _), ArgInput::ArrayCrs, ArgInput::ArrayCrs)
+                | (ArgInput::ItemCrs(edges), ArgInput::ScalarCrs(_), ArgInput::ArrayCrs)
+                | (ArgInput::ItemCrs(edges), ArgInput::ArrayCrs, ArgInput::ArrayCrs) => Ok(Some(
+                    SedonaType::new_item_crs(&SedonaType::Wkb(edges, None))?,
+                )),
                 _ => Ok(None),
             }
         } else {
@@ -99,7 +116,7 @@ impl SedonaScalarKernel for STTransform {
         &self,
         arg_types: &[SedonaType],
         args: &[ColumnarValue],
-        _return_type: &SedonaType,
+        return_type: &SedonaType,
         _num_rows: usize,
         _config_options: Option<&ConfigOptions>,
     ) -> Result<ColumnarValue> {
@@ -213,7 +230,8 @@ impl SedonaScalarKernel for STTransform {
         let output_geometry = executor.finish(Arc::new(builder.finish()))?;
         if let Some(mut crs_output) = maybe_crs_output {
             let output_crs = executor.finish(Arc::new(crs_output.finish()))?;
-            make_item_crs(&WKB_GEOMETRY, output_geometry, &output_crs, None)
+            let (item_type, _) = parse_item_crs_arg_type(return_type)?;
+            make_item_crs(&item_type, output_geometry, &output_crs, None)
         } else {
             Ok(output_geometry)
         }
@@ -232,11 +250,14 @@ impl SedonaScalarKernel for STTransform {
     }
 }
 
-fn output_type_from_scalar_crs_value(scalar_arg: &ScalarValue) -> Result<SedonaType> {
+fn output_type_from_scalar_crs_value(
+    input_edges: Edges,
+    scalar_arg: &ScalarValue,
+) -> Result<SedonaType> {
     if let Some(crs_str) = parse_crs_from_scalar_crs_value(scalar_arg)? {
-        Ok(SedonaType::Wkb(Edges::Planar, deserialize_crs(&crs_str)?))
+        Ok(SedonaType::Wkb(input_edges, deserialize_crs(&crs_str)?))
     } else {
-        Ok(WKB_GEOMETRY)
+        Ok(SedonaType::Wkb(input_edges, None))
     }
 }
 
@@ -271,13 +292,12 @@ fn invoke_scalar(wkb: &Wkb, trans: &dyn CrsTransform, builder: &mut impl Write) 
 /// Helper to label arguments because we have a lot argument types that are valid
 #[derive(Debug, Clone, Copy)]
 enum ArgInput<'a> {
-    /// Geometry input. This currently only matches geometry and not geography
-    /// because CRS support for geography is less clear at the moment. Must be
+    /// Geometry or geography input. Must be
     /// the first argument (and not supported for other arguments).
-    Geo(&'a Crs),
+    Geo(Edges, &'a Crs),
     /// Item-level CRS input. Must be the first argument if present (not supported
     /// for other arguments).
-    ItemCrs,
+    ItemCrs(Edges),
     /// Scalar CRS input. Supported for second and third arguments. When present
     /// as the last argument (to), this forces type-level CRS output.
     ScalarCrs(&'a ScalarValue),
@@ -290,9 +310,15 @@ enum ArgInput<'a> {
 
 impl<'a> ArgInput<'a> {
     fn from_return_type_arg(arg_type: &'a SedonaType, scalar_arg: Option<&'a ScalarValue>) -> Self {
-        if ArgMatcher::is_item_crs().match_type(arg_type) {
-            Self::ItemCrs
-        } else if ArgMatcher::is_numeric().match_type(arg_type)
+        if let Ok((SedonaType::Wkb(edges, _) | SedonaType::WkbView(edges, _), maybe_crs_type)) =
+            parse_item_crs_arg_type(arg_type)
+        {
+            if maybe_crs_type.is_some() {
+                return Self::ItemCrs(edges);
+            }
+        }
+
+        if ArgMatcher::is_numeric().match_type(arg_type)
             || ArgMatcher::is_string().match_type(arg_type)
         {
             if let Some(scalar_crs) = scalar_arg {
@@ -302,8 +328,8 @@ impl<'a> ArgInput<'a> {
             }
         } else {
             match arg_type {
-                SedonaType::Wkb(Edges::Planar, crs) | SedonaType::WkbView(Edges::Planar, crs) => {
-                    Self::Geo(crs)
+                SedonaType::Wkb(edges, crs) | SedonaType::WkbView(edges, crs) => {
+                    Self::Geo(*edges, crs)
                 }
                 _ => Self::Unsupported,
             }
@@ -311,9 +337,15 @@ impl<'a> ArgInput<'a> {
     }
 
     fn from_arg(arg_type: &'a SedonaType, arg: &'a ColumnarValue) -> Self {
-        if ArgMatcher::is_item_crs().match_type(arg_type) {
-            Self::ItemCrs
-        } else if ArgMatcher::is_numeric().match_type(arg_type)
+        if let Ok((SedonaType::Wkb(edges, _) | SedonaType::WkbView(edges, _), maybe_crs_type)) =
+            parse_item_crs_arg_type(arg_type)
+        {
+            if maybe_crs_type.is_some() {
+                return Self::ItemCrs(edges);
+            }
+        }
+
+        if ArgMatcher::is_numeric().match_type(arg_type)
             || ArgMatcher::is_string().match_type(arg_type)
         {
             match arg {
@@ -322,7 +354,9 @@ impl<'a> ArgInput<'a> {
             }
         } else {
             match arg_type {
-                SedonaType::Wkb(_, crs) | SedonaType::WkbView(_, crs) => Self::Geo(crs),
+                SedonaType::Wkb(edges, crs) | SedonaType::WkbView(edges, crs) => {
+                    Self::Geo(*edges, crs)
+                }
                 _ => Self::Unsupported,
             }
         }
@@ -330,7 +364,7 @@ impl<'a> ArgInput<'a> {
 
     fn crs_constant(&self) -> Result<Option<String>> {
         match self {
-            ArgInput::Geo(crs) => {
+            ArgInput::Geo(_, crs) => {
                 let crs_str = if let Some(crs) = crs {
                     crs.to_crs_string()
                 } else {
@@ -347,7 +381,7 @@ impl<'a> ArgInput<'a> {
     fn crs_array(&self, arg: &ColumnarValue, iterations: usize) -> Result<ArrayRef> {
         if let Some(crs_constant) = self.crs_constant()? {
             ScalarValue::Utf8View(Some(crs_constant)).to_array_of_size(iterations)
-        } else if matches!(self, Self::ItemCrs) {
+        } else if matches!(self, Self::ItemCrs(_)) {
             match arg {
                 ColumnarValue::Array(array) => {
                     let struct_array = as_struct_array(array)?;
@@ -375,7 +409,7 @@ mod tests {
     use sedona_expr::scalar_udf::SedonaScalarUDF;
     use sedona_schema::crs::lnglat;
     use sedona_schema::crs::Crs;
-    use sedona_schema::datatypes::WKB_GEOMETRY;
+    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS};
     use sedona_testing::compare::assert_array_equal;
     use sedona_testing::create::create_array;
     use sedona_testing::create::create_array_item_crs;
