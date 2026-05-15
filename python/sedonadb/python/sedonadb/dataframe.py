@@ -88,6 +88,57 @@ class DataFrame:
         """
         return self.limit(n)
 
+    def __getitem__(self, key):
+        """Index into the DataFrame using pandas-style bracket access.
+
+        Three forms are supported:
+
+        - `df["x"]` returns an `Expr` referencing column `x`. Equivalent to
+          `sedonadb.expr.col("x")`. Note that this returns an `Expr`, not a
+          materialized column — the `Series` type that pandas users
+          eventually expect will land in a future phase.
+        - `df[["x", "y"]]` returns a new `DataFrame` with the listed columns
+          (equivalent to `df.select("x", "y")`).
+        - `df[bool_expr]` returns a new `DataFrame` filtered by the boolean
+          expression (equivalent to `df.filter(bool_expr)`).
+
+        Row-position indexing (integers, slices, `.loc`, `.iloc`) is
+        intentionally not supported — SedonaDB has no row ordering or
+        index concept in this scope.
+
+        Examples:
+
+            >>> from sedonadb.expr import col
+            >>> sd = sedona.db.connect()
+            >>> df = sd.sql("SELECT * FROM (VALUES (1, 10), (2, 20), (3, 30)) AS t(x, y)")
+            >>> df["x"]
+            Expr(x)
+            >>> df[["x", "y"]].count()
+            3
+            >>> df[df["x"] > 1].count()
+            2
+        """
+        from sedonadb.expr import Expr
+        from sedonadb.expr import col as _col
+
+        if isinstance(key, str):
+            return _col(key)
+        if isinstance(key, Expr):
+            return self.filter(key)
+        if isinstance(key, list):
+            for k in key:
+                if not isinstance(k, str):
+                    raise TypeError(
+                        f"DataFrame[list] expects a list of column names, "
+                        f"got {type(k).__name__}"
+                    )
+            return self.select(*key)
+        raise TypeError(
+            f"DataFrame indexing is not supported for {type(key).__name__}. "
+            f"Use df['x'] for a column expression, df[['x', 'y']] to project "
+            f"columns, or df[bool_expr] to filter rows."
+        )
+
     def select(self, *exprs: "Expr | str | _SedonaLit") -> "DataFrame":
         """Project a set of columns or expressions.
 
