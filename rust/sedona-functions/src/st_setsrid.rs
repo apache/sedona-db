@@ -575,7 +575,7 @@ pub fn validate_crs_for_type(crs: &Crs, sedona_type: &SedonaType) -> Result<()> 
 ///
 /// This check is skipped for Geometry but occurs for Geography to ensure the
 /// target types are valid.
-fn validate_crs_array_for_type(crs_array: &ArrayRef, sedona_type: &SedonaType) -> Result<()> {
+pub fn validate_crs_array_for_type(crs_array: &ArrayRef, sedona_type: &SedonaType) -> Result<()> {
     let edges = match sedona_type {
         SedonaType::Wkb(edges, _) | SedonaType::WkbView(edges, _) => edges,
         _ => {
