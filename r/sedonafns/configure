@@ -15,13 +15,9 @@
 # specific language governing permissions and limitations
 # under the License.
 
-.Rproj.user
-.Rhistory
-.Rdata
-.httr-oauth
-.DS_Store
-.quarto
-.cache
-compile_commands.json
-.vscode
-NAMESPACE
+# If we are building from within the repo, bootstrap.R will (1)
+# exist and (2) generate the .R and .Rd files needed
+# Skip if R_SEDONADB_FNS_SKIP_BOOTSTRAP is set to avoid circular loading
+if [ -f bootstrap.R ] && [ -z "$R_SEDONADB_FNS_SKIP_BOOTSTRAP" ]; then
+  $R_HOME/bin/Rscript bootstrap.R
+fi

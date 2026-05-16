@@ -17,4 +17,11 @@
 
 source("tools/update-sd-funcs.R")
 update_sd_funcs()
-roxygen2::roxygenise(".")
+
+local({
+  # Let the configure script know that we don't want to bootstrap or we will
+  # go in circles
+  on.exit(Sys.setenv(R_SEDONADB_FNS_SKIP_BOOTSTRAP = ""))
+  Sys.setenv(R_SEDONADB_FNS_SKIP_BOOTSTRAP = "1")
+  roxygen2::roxygenise(".")
+})
