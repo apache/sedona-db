@@ -65,15 +65,14 @@ impl SedonaScalarKernel for STLineSubstring {
         let executor = WkbExecutor::new(arg_types, args);
         let mut builder = BinaryBuilder::new();
 
-        let start_frac: Option<f64> = match &args[1].cast_to(&DataType::Float64, None)? {
-            ColumnarValue::Scalar(ScalarValue::Float64(s)) => *s,
-            _ => None,
-        };
+        // 1. Convert parameters into clean abstract arrays
+        let batch_rows = executor.num_iterations();
+        let start_array = args[1].cast_to(&DataType::Float64, None)?.to_array(batch_rows)?;
+        let end_array = args[2].cast_to(&DataType::Float64, None)?.to_array(batch_rows)?;
 
-        let end_frac: Option<f64> = match &args[2].cast_to(&DataType::Float64, None)? {
-            ColumnarValue::Scalar(ScalarValue::Float64(e)) => *e,
-            _ => None,
-        };
+        // 2. Downcast them to Arrow Float64Arrays so they can be read by row index
+        let start_floats = start_array.as_any().downcast_ref::<arrow_array::Float64Array>().unwrap();
+        let end_floats = end_array.as_any().downcast_ref::<arrow_array::Float64Array>().unwrap();
 
         unsafe fn interpolate<C: CoordTrait<T = f64>>(
             p1: C,
@@ -89,12 +88,16 @@ impl SedonaScalarKernel for STLineSubstring {
             }
             Ok(())
         }
-
+        let mut row_idx = 0;
         executor.execute_wkb_void(|maybe_wkb| unsafe {
             let mut wkb_body = Vec::new();
             let mut point_count = 0u32;
+            // Fetch the unique start/end fraction values for THIS specific row
+            let s_f_opt = if start_floats.is_null(row_idx) { None } else { Some(start_floats.value(row_idx)) };
+            let e_f_opt = if end_floats.is_null(row_idx) { None } else { Some(end_floats.value(row_idx)) };
+            row_idx += 1; // Increment for the next iteration
 
-            let (s_f, e_f) = match (start_frac, end_frac) {
+            let (s_f, e_f) = match (s_f_opt, e_f_opt) {
                 (Some(s), Some(e)) => (s, e),
                 _ => {
                     builder.append_null();
@@ -168,13 +171,11 @@ impl SedonaScalarKernel for STLineSubstring {
                         }
                     }
 
-                    // 2. Build Header inside the 'line' scope (Fixes "cannot find dim/line")
                     if point_count > 0 {
                         let mut final_wkb = Vec::new();
-                        final_wkb.push(1u8); // Little Endian
 
                         if s_f == e_f {
-                            // POINT Result (Fixes point vs line test)
+                            // POINT Result
                             write_wkb_point_header(&mut final_wkb, dim)
                                 .map_err(|e| DataFusionError::Internal(e.to_string()))?;
                             let coord_bytes = dim.size() * 8;
@@ -182,7 +183,7 @@ impl SedonaScalarKernel for STLineSubstring {
                                 final_wkb.extend_from_slice(&wkb_body[..coord_bytes]);
                             }
                         } else {
-                            // LINESTRING Result (Fixes Z-coordinate drop)
+                            // LINESTRING Result
                             write_wkb_linestring_header(&mut final_wkb, dim, point_count)
                                 .map_err(|e| DataFusionError::Internal(e.to_string()))?;
 
