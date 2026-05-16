@@ -424,7 +424,7 @@ generate_from_qmd <- function(qmd_path, force = FALSE) {
 #' @returns Invisible NULL
 update_sd_funcs <- function(files = NULL, force = FALSE) {
   if (is.null(files)) {
-    qmd_files <- list.files(docs_dir, pattern = "^st_.*\\.qmd$", full.names = TRUE)
+    qmd_files <- list.files(docs_dir, pattern = "^(st|rs)_.*\\.qmd$", full.names = TRUE)
   } else {
     qmd_files <- file.path(docs_dir, paste0(files, ".qmd"))
     missing <- !file.exists(qmd_files)
