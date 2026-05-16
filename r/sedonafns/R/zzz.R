@@ -15,15 +15,51 @@
 # specific language governing permissions and limitations
 # under the License.
 
-call_sd_function <- function() {
-  # Peek into the call stack to get the parent call for the error message
-  # that says this isn't called in a SedonaDB expression context
-  stop("Can't use <function> outside a SedonaDB context")
+call_sd_function_default <- function() {
+  # Get the parent call (the .default method's caller, e.g., sd_length())
+  parent_call <- sys.call(-2)
+  fn_name <- as.character(parent_call[[1]])
+
+  stop(
+    "Can't use `", fn_name, "()` outside a SedonaDB context",
+    call. = FALSE
+  )
 }
 
 .onLoad <- function(...) {
-  # List all functions in the namespace that end with _translation and
-  # register them under sedonafns::st_name and sedonafns::sd_name
-  # this should be done in an on-package-load hook like in sedonadb:::s3_register
-  # so that sedonadb is not strictly necessary
+  register <- function(...) {
+    if (!isNamespaceLoaded("sedonadb")) {
+      return()
+    }
+
+    ns <- asNamespace("sedonafns")
+    all_names <- ls(envir = ns, all.names = TRUE)
+    translation_names <- grep("_translation$", all_names, value = TRUE)
+
+    for (trans_name in translation_names) {
+      # sd_length_translation to sd_length
+      fn_name <- sub("_translation$", "", trans_name)
+      qualified_name <- paste0("sedonafns::", fn_name)
+
+      # Also register st_ variant if this is sd_ function
+      st_name <- sub("^sd_", "st_", fn_name)
+      st_qualified <- paste0("sedonafns::", st_name)
+
+      trans_fn <- get(trans_name, envir = ns)
+      register_fn <- asNamespace("sedonadb")[["sd_register_translation"]]
+      register_fn(qualified_name, trans_fn)
+
+      if (st_name != fn_name) {
+        register_fn(st_qualified, trans_fn)
+      }
+    }
+  }
+
+  # Register when sedonadb loads (if not already loaded)
+  setHook(packageEvent("sedonadb", "onLoad"), register)
+
+  # If sedonadb is already loaded, register now
+  if (isNamespaceLoaded("sedonadb")) {
+    register()
+  }
 }
