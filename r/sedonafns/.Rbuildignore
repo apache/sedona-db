@@ -3,3 +3,4 @@
 ^\.positai$
 ^\.claude$
 ^LICENSE\.md$
+^bootstrap\.R$

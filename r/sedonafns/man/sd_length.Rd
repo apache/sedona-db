@@ -2,7 +2,7 @@
 % Please edit documentation in R/sd_length.R
 \name{sd_length}
 \alias{sd_length}
-\title{Returns the length of a geometry}
+\title{Returns the length of a geometry.}
 \usage{
 sd_length(geom, ...)
 }
@@ -16,9 +16,9 @@ sd_length(geom, ...)
 }
 \description{
 Returns the length of geom. This function only supports LineString,
-MultiLineString, and GeometryCollections containing linear geometries.
-Use ST_Perimeter for polygons.
+MultiLineString, and GeometryCollections containing linear geometries. Use
+ST_Perimeter for polygons.
 }
 \seealso{
-\href{https://sedona.apache.org/sedonadb/latest/reference/sql/st_length/}{SedonaDB SQL documentation for ST_Length()}
+\href{https://sedona.apache.org/sedonadb/latest/reference/sql/st_length/}{ST_LENGTH}
 }

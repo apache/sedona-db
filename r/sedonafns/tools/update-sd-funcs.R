@@ -393,7 +393,7 @@ generate_from_qmd <- function(qmd_path, force = FALSE) {
   output_path <- file.path(output_dir, paste0(sd_name, ".R"))
 
   # Compute hash
-  file_hash <- digest::digest(file = qmd_path, algo = "md5")
+  file_hash <- rlang::hash_file(qmd_path)
 
   # Check if regeneration needed
   if (!force && file.exists(output_path)) {

@@ -11,3 +11,4 @@ RoxygenNote: 7.3.3
 Depends: R (>= 4.1.0)
 Suggests:
     sedonadb
+Config/build/bootstrap: TRUE
