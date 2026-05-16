@@ -15,9 +15,8 @@
 # specific language governing permissions and limitations
 # under the License.
 
-.Rproj.user
-.Rhistory
-.Rdata
-.httr-oauth
-.DS_Store
-.quarto
+linters <- linters_with_defaults(
+  line_length_linter(150)
+)
+
+exclusions <- list()

@@ -21,3 +21,6 @@
 .httr-oauth
 .DS_Store
 .quarto
+.cache
+compile_commands.json
+.vscode

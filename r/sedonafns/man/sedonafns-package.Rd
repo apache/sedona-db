@@ -4,7 +4,7 @@
 \name{sedonafns-package}
 \alias{sedonafns}
 \alias{sedonafns-package}
-\title{sedonafns: Bindings for Apache SedonaDB Functions}
+\title{sedonafns: Apache SedonaDB Function Definitions and Documentation}
 \description{
 Provides function definitions and documentation for use in 'SedonaDB'.
 }

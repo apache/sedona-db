@@ -15,9 +15,15 @@
 # specific language governing permissions and limitations
 # under the License.
 
-.Rproj.user
-.Rhistory
-.Rdata
-.httr-oauth
-.DS_Store
-.quarto
+call_sd_function <- function() {
+  # Peek into the call stack to get the parent call for the error message
+  # that says this isn't called in a SedonaDB expression context
+  stop("Can't use <function> outside a SedonaDB context")
+}
+
+.onLoad <- function(...) {
+  # List all functions in the namespace that end with _translation and
+  # register them under sedonafns::st_name and sedonafns::sd_name
+  # this should be done in an on-package-load hook like in sedonadb:::s3_register
+  # so that sedonadb is not strictly necessary
+}

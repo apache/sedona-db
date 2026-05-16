@@ -1,5 +1,5 @@
 Package: sedonafns
-Title: Bindings for Apache SedonaDB Functions
+Title: Apache SedonaDB Function Definitions and Documentation
 Version: 0.3.0.9000
 Authors@R:
     person("Dewey", "Dunnington", , "dewey@dunnington.ca", role = c("aut", "cre"))
@@ -10,4 +10,4 @@ Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.3
 Depends: R (>= 4.1.0)
 Suggests:
-    sedonadb,
+    sedonadb

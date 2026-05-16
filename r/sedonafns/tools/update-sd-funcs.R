@@ -15,9 +15,11 @@
 # specific language governing permissions and limitations
 # under the License.
 
-.Rproj.user
-.Rhistory
-.Rdata
-.httr-oauth
-.DS_Store
-.quarto
+# List files in here("../../docs/sql/reference/*.qmd") and extract title and params
+# from frontmatter. Description section is currently the only section we pull.
+# No examples yet. Parameter names for some types like geometry and geography are
+# auto generated (e.g., geom, geog with description).
+# For SeeAlso, link to the seondadb docs (e.g., https://sedona.apache.org/sedonadb/latest/reference/sql/st_asbinary/)
+# record the hash of the file in a comment towards the top and only regenerate if the .qmd file changed
+# hard code the default implemenations using the param names
+# run air format at the end
