@@ -21,7 +21,9 @@ call_sd_function_default <- function() {
   fn_name <- as.character(parent_call[[1]])
 
   stop(
-    "Can't use `", fn_name, "()` outside a SedonaDB context",
+    "Can't use `",
+    fn_name,
+    "()` outside a SedonaDB context",
     call. = FALSE
   )
 }
