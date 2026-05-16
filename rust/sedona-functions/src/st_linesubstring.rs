@@ -25,14 +25,13 @@ use sedona_expr::{
     scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
 };
 use sedona_geometry::error::SedonaGeometryError;
-use sedona_geometry::wkb_factory::write_wkb_coord_trait;
+use sedona_geometry::wkb_factory::{write_wkb_coord_trait, write_wkb_linestring_header, write_wkb_point_header};
 use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOMETRY},
     matchers::ArgMatcher,
 };
 use std::{io::Write, sync::Arc};
-use sedona_geometry::geometries::wkb::write_wkb_linestring_header;
-use sedona_geometry::geometries::wkb::write_wkb_point_header;
+use arrow_array::Array;
 
 #[derive(Debug)]
 struct STLineSubstring;
@@ -184,7 +183,7 @@ impl SedonaScalarKernel for STLineSubstring {
                             }
                         } else {
                             // LINESTRING Result
-                            write_wkb_linestring_header(&mut final_wkb, dim, point_count)
+                            write_wkb_linestring_header(&mut final_wkb, dim, point_count as usize)
                                 .map_err(|e| DataFusionError::Internal(e.to_string()))?;
 
                             final_wkb.extend_from_slice(&wkb_body);
@@ -204,5 +203,94 @@ impl SedonaScalarKernel for STLineSubstring {
         })?;
 
         executor.finish(Arc::new(builder.finish()))
+    }
+}
+#[cfg(test)]
+mod tests {
+    use arrow_array::{ArrayRef, Float64Array};
+    use arrow_schema::DataType;
+    use datafusion_common::scalar::ScalarValue;
+    use datafusion_expr::{ColumnarValue, ScalarUDF};
+    use rstest::rstest;
+    use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS};
+    use sedona_testing::{
+        compare::{assert_array_equal, assert_scalar_equal},
+        testers::ScalarUdfTester,
+    };
+    use std::sync::Arc;
+
+    use super::*;
+
+    #[test]
+    fn udf_metadata() {
+        let udf: ScalarUDF = st_line_substring_udf().into();
+        assert_eq!(udf.name(), "st_linesubstring");
+    }
+
+    #[rstest]
+    fn udf(
+        #[values(WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS.clone())]
+        sedona_type: SedonaType,
+    ) {
+        let udf = st_line_substring_udf();
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![
+                sedona_type,
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64)
+            ]
+        );
+
+        let actual_2d = tester.invoke_scalar_scalar_scalar("LINESTRING(0 0, 10 10)", 0.0, 0.5).unwrap();
+        let expected_2d = tester.invoke_wkb_scalar(Some("LINESTRING(0 0, 5 5)")).unwrap();
+        assert_scalar_equal(&actual_2d, &expected_2d);
+
+
+        let actual_z = tester.invoke_scalar_scalar_scalar("LINESTRING Z (0 10 20, 10 20 30)", 0.5, 1.0).unwrap();
+        let expected_z = tester.invoke_wkb_scalar(Some("LINESTRING Z (5 15 25, 10 20 30)")).unwrap();
+        assert_scalar_equal(&actual_z, &expected_z);
+
+        let actual_mid = tester.invoke_scalar_scalar_scalar("LINESTRING Z (0 0 0, 10 10 10)", 0.5, 0.8).unwrap();
+        let expected_mid = tester.invoke_wkb_scalar(Some("LINESTRING Z (5 5 5, 8 8 8)")).unwrap();
+        assert_scalar_equal(&actual_mid, &expected_mid);
+
+
+        let actual_point = tester.invoke_scalar_scalar_scalar("LINESTRING(0 0, 10 10)", 0.5, 0.5).unwrap();
+        let expected_point = tester.invoke_wkb_scalar(Some("POINT(5 5)")).unwrap();
+        assert_scalar_equal(&actual_point, &expected_point);
+
+
+        let geoms_input = tester.invoke_wkb_array(vec![
+            Some("LINESTRING(0 0, 10 10)"),
+            None,
+            Some("LINESTRING(0 0, 10 10)")
+        ]).unwrap();
+
+        let starts_input: ArrayRef = Arc::new(Float64Array::from(vec![Some(0.0), Some(0.0), Some(0.5)]));
+        let ends_input: ArrayRef = Arc::new(Float64Array::from(vec![Some(0.5), Some(1.0), Some(0.5)]));
+
+        let expected_array = tester.invoke_wkb_array(vec![
+            Some("LINESTRING(0 0, 5 5)"),
+            None,
+            Some("POINT(5 5)")
+        ]).unwrap();
+
+        let actual_array = match tester.invoke(vec![
+            ColumnarValue::Array(geoms_input),
+            ColumnarValue::Array(starts_input),
+            ColumnarValue::Array(ends_input)
+        ]).unwrap() {
+            ColumnarValue::Array(arr) => arr,
+            _ => panic!("Expected array block context output"),
+        };
+
+        assert_array_equal(&actual_array, &expected_array);
+    }
+
+    #[test]
+    fn aliases() {
+        let udf: ScalarUDF = st_line_substring_udf().into();
+        assert_eq!(udf.name(), "st_linesubstring");
     }
 }
