@@ -19,15 +19,16 @@ import io
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Literal, Optional, Union
 
+from sedonadb.expr import Expr
+from sedonadb.expr import Literal as _SedonaLit
+from sedonadb.expr import col as _col
+from sedonadb.expr.expression import _to_expr
 from sedonadb.utility import sedona  # noqa: F401
 
 if TYPE_CHECKING:
     import geopandas
     import pandas
     import pyarrow
-
-    from sedonadb.expr import Expr
-    from sedonadb.expr import Literal as _SedonaLit
 
 
 class DataFrame:
@@ -88,58 +89,65 @@ class DataFrame:
         """
         return self.limit(n)
 
-    def __getitem__(self, key):
-        """Index into the DataFrame using pandas-style bracket access.
+    def __getitem__(self, key: Union[str, int]) -> Expr:
+        """Reference a single column by name or position.
 
-        Three forms are supported:
+        Returns an `Expr` referencing the requested column. The
+        return-type is always `Expr` (no `DataFrame ⏐ Expr` union) so that
+        IDEs and type-aware tools can resolve `df["x"].<method>` cleanly.
 
-        - `df["x"]` returns an `Expr` referencing column `x`. Equivalent to
-          `sedonadb.expr.col("x")`. Note that this returns an `Expr`, not a
-          materialized column — the `Series` type that pandas users
-          eventually expect will land in a future phase.
-        - `df[["x", "y"]]` returns a new `DataFrame` with the listed columns
-          (equivalent to `df.select("x", "y")`).
-        - `df[bool_expr]` returns a new `DataFrame` filtered by the boolean
-          expression (equivalent to `df.filter(bool_expr)`).
+        For row filtering use `df.filter(predicate)`. For multi-column
+        projection use `df.select(*cols)`.
 
-        Row-position indexing (integers, slices, `.loc`, `.iloc`) is
-        intentionally not supported — SedonaDB has no row ordering or
-        index concept in this scope.
+        Args:
+            key: A column name (`str`) or a 0-based column position
+                (`int`, negative indices count from the end).
+
+        Raises:
+            KeyError: A string key that does not match any column. The
+                error message lists the available columns.
+            IndexError: An integer index outside the column range.
+            TypeError: Any other key type, including `bool`, `slice`,
+                `list`, and `Expr`. The message points at `select` or
+                `filter` for those use cases.
 
         Examples:
 
-            >>> from sedonadb.expr import col
             >>> sd = sedona.db.connect()
-            >>> df = sd.sql("SELECT * FROM (VALUES (1, 10), (2, 20), (3, 30)) AS t(x, y)")
+            >>> df = sd.sql("SELECT * FROM (VALUES (1, 10), (2, 20)) AS t(x, y)")
             >>> df["x"]
             Expr(x)
-            >>> df[["x", "y"]].count()
-            3
-            >>> df[df["x"] > 1].count()
-            2
+            >>> df[1]
+            Expr(y)
+            >>> df[-1]
+            Expr(y)
         """
-        from sedonadb.expr import Expr
-        from sedonadb.expr import col as _col
+        # `bool` is a subclass of `int`, so guard explicitly — otherwise
+        # `df[True]` would silently mean `df[1]`.
+        if isinstance(key, bool) or not isinstance(key, (str, int)):
+            raise TypeError(
+                f"DataFrame indexing is not supported for "
+                f"{type(key).__name__}. Use df['name'] or df[i] for a "
+                f"column expression; use df.select(*cols) for multi-column "
+                f"projection and df.filter(expr) for row filtering."
+            )
 
+        columns = self._impl.columns()
         if isinstance(key, str):
+            if key not in columns:
+                raise KeyError(
+                    f"Column {key!r} not found. Available columns: {columns}"
+                )
             return _col(key)
-        if isinstance(key, Expr):
-            return self.filter(key)
-        if isinstance(key, list):
-            for k in key:
-                if not isinstance(k, str):
-                    raise TypeError(
-                        f"DataFrame[list] expects a list of column names, "
-                        f"got {type(k).__name__}"
-                    )
-            return self.select(*key)
-        raise TypeError(
-            f"DataFrame indexing is not supported for {type(key).__name__}. "
-            f"Use df['x'] for a column expression, df[['x', 'y']] to project "
-            f"columns, or df[bool_expr] to filter rows."
-        )
+        # int (and not bool, by the guard above)
+        if not -len(columns) <= key < len(columns):
+            raise IndexError(
+                f"Column index {key} is out of range for DataFrame with "
+                f"{len(columns)} columns"
+            )
+        return _col(columns[key])
 
-    def select(self, *exprs: "Expr | str | _SedonaLit") -> "DataFrame":
+    def select(self, *exprs: Union[Expr, str, _SedonaLit]) -> "DataFrame":
         """Project a set of columns or expressions.
 
         Returns a new lazy `DataFrame` whose columns are exactly the
@@ -167,10 +175,6 @@ class DataFrame:
             │     1 ┆        3 │
             └───────┴──────────┘
         """
-        from sedonadb.expr import Expr, Literal
-        from sedonadb.expr import col as _col
-        from sedonadb.expr.expression import _to_expr
-
         if not exprs:
             raise ValueError("select() requires at least one column or expression")
 
@@ -180,7 +184,7 @@ class DataFrame:
                 coerced.append(e._impl)
             elif isinstance(e, str):
                 coerced.append(_col(e)._impl)
-            elif isinstance(e, Literal):
+            elif isinstance(e, _SedonaLit):
                 # `lit(value)` returns Literal; route it through the same
                 # coercion path operators use so the resulting Expr lands
                 # in the plan with metadata preserved.
@@ -192,7 +196,7 @@ class DataFrame:
                 )
         return DataFrame(self._ctx, self._impl.select(coerced), self._options)
 
-    def filter(self, *exprs: "Expr") -> "DataFrame":
+    def filter(self, *exprs: Expr) -> "DataFrame":
         """Filter rows by one or more boolean expressions.
 
         Multiple expressions are combined with logical AND, so
@@ -225,13 +229,11 @@ class DataFrame:
             │     4 │
             └───────┘
         """
-        from sedonadb.expr import Expr, Literal
-
         if not exprs:
             raise ValueError("filter() requires at least one predicate")
 
         for e in exprs:
-            if isinstance(e, Literal):
+            if isinstance(e, _SedonaLit):
                 raise TypeError(
                     "filter() does not accept Literal arguments. "
                     "filter(lit(value)) is almost always a typo; if you really "
