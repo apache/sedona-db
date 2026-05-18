@@ -267,6 +267,12 @@ impl SedonaContext {
         // Always register raster functions
         out.register_function_set(sedona_raster_functions::register::default_function_set());
 
+        // Install the GDAL-backed OutDb byte loader so non-GDAL consumers
+        // (FFI, future numeric kernels) can read pixels out of OutDb
+        // bands via `BandRef::nd_buffer()`. Idempotent across repeated
+        // `SedonaContext::new()` calls in one process.
+        sedona_raster_gdal::register_outdb_loader();
+
         Ok(out)
     }
 

@@ -256,12 +256,14 @@ mod tests {
 
         let arr1 = build_outdb_band_array(&uri_b1, &[2, 2]);
         let r1 = RasterStructArray::new(&arr1);
-        let band_one = r1.get(0).unwrap().band(0).unwrap();
+        let raster_one = r1.get(0).unwrap();
+        let band_one = raster_one.band(0).unwrap();
         assert_eq!(band_one.nd_buffer().unwrap().buffer, band1.as_slice());
 
         let arr2 = build_outdb_band_array(&uri_b2, &[2, 2]);
         let r2 = RasterStructArray::new(&arr2);
-        let band_two = r2.get(0).unwrap().band(0).unwrap();
+        let raster_two = r2.get(0).unwrap();
+        let band_two = raster_two.band(0).unwrap();
         assert_eq!(band_two.nd_buffer().unwrap().buffer, band2.as_slice());
     }
 
