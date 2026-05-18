@@ -21,6 +21,7 @@ use arrow_array::builder::BinaryBuilder;
 use datafusion_common::error::Result;
 use datafusion_common::{cast::as_float64_array, DataFusionError};
 use datafusion_expr::ColumnarValue;
+use geo::concave_hull::ConcaveHullOptions;
 use geo::{ConcaveHull, CoordsIter, Geometry, GeometryCollection, Point, Polygon};
 use geo_traits::to_geo::{ToGeoGeometry, ToGeoPoint};
 use geo_traits::{GeometryCollectionTrait, GeometryTrait, MultiPointTrait, PointTrait};
@@ -41,6 +42,10 @@ use crate::to_geo::item_to_geometry;
 /// Geo returns a Polygon for every concave hull computation
 /// whereas the Geos implementation returns a MultiPolygon for
 /// certain geometries concave hull computation.
+///
+/// Note that this does *not* match the PostGIS implementation.
+/// In particular, the GEOS/PostGIS "pctconvex" parameter, which extends
+/// from 0..1 does not match this kernel's "concavity" (0..Infinity).
 pub fn st_concavehull_impl() -> Vec<ScalarKernelRef> {
     ItemCrsKernel::wrap_impl(STConcaveHull {})
 }
@@ -84,7 +89,11 @@ fn invoke_batch_impl(arg_types: &[SedonaType], args: &[ColumnarValue]) -> Result
     executor.execute_wkb_void(|maybe_wkb| {
         match (maybe_wkb, pct_convex_iter.next().unwrap()) {
             (Some(wkb), Some(pct_convex)) => {
-                invoke_scalar(&wkb, pct_convex, &mut builder)?;
+                let options = ConcaveHullOptions {
+                    concavity: pct_convex,
+                    ..Default::default()
+                };
+                invoke_scalar(&wkb, options, &mut builder)?;
                 builder.append_value([]);
             }
             _ => builder.append_null(),
@@ -96,13 +105,17 @@ fn invoke_batch_impl(arg_types: &[SedonaType], args: &[ColumnarValue]) -> Result
     executor.finish(Arc::new(builder.finish()))
 }
 
-fn invoke_scalar(geom: &Wkb, pct_convex: f64, writer: &mut impl std::io::Write) -> Result<()> {
+fn invoke_scalar(
+    geom: &Wkb,
+    options: ConcaveHullOptions<f64>,
+    writer: &mut impl std::io::Write,
+) -> Result<()> {
     if is_empty::is_geometry_empty(geom).map_err(|e| DataFusionError::Execution(e.to_string()))? {
         write_geometry(writer, &Polygon::<f64>::empty(), &write_opts())
             .map_err(|e| DataFusionError::Execution(e.to_string()))?;
         return Ok(());
     }
-    compute_and_write_hull(&normalize_geometry(geom)?, pct_convex, writer)
+    compute_and_write_hull(&normalize_geometry(geom)?, options, writer)
 }
 
 fn write_opts() -> WriteOptions {
@@ -146,7 +159,7 @@ fn normalize_geometry(geom: &Wkb) -> Result<Geometry> {
 
 fn compute_and_write_hull(
     geom: &Geometry,
-    pct_convex: f64,
+    options: ConcaveHullOptions<f64>,
     writer: &mut impl std::io::Write,
 ) -> Result<()> {
     match geom.as_type() {
@@ -160,27 +173,27 @@ fn compute_and_write_hull(
                     .copied()
                     .collect::<Vec<Point>>(),
             )
-            .concave_hull(pct_convex);
+            .concave_hull_with_options(options);
             write_concave_hull(writer, hull)?;
         }
 
         geo_traits::GeometryType::LineString(ls) => {
-            let hull = ls.concave_hull(pct_convex);
+            let hull = ls.concave_hull_with_options(options);
             write_concave_hull(writer, hull)?;
         }
 
         geo_traits::GeometryType::Polygon(pgn) => {
-            let hull = pgn.concave_hull(pct_convex);
+            let hull = pgn.concave_hull_with_options(options);
             write_concave_hull(writer, hull)?;
         }
 
         geo_traits::GeometryType::MultiLineString(mls) => {
-            let hull = mls.concave_hull(pct_convex);
+            let hull = mls.concave_hull_with_options(options);
             write_concave_hull(writer, hull)?;
         }
 
         geo_traits::GeometryType::MultiPolygon(mpgn) => {
-            let hull = mpgn.concave_hull(pct_convex);
+            let hull = mpgn.concave_hull_with_options(options);
             write_concave_hull(writer, hull)?;
         }
 
@@ -194,7 +207,7 @@ fn compute_and_write_hull(
                 coords.into_iter().map(geo_types::Point::from).collect(),
             );
 
-            let hull = multi_point.concave_hull(pct_convex);
+            let hull = multi_point.concave_hull_with_options(options);
             write_concave_hull(writer, hull)?;
         }
 
@@ -327,11 +340,11 @@ mod tests {
             ),
             (
                 "MULTIPOINT ((0 0), (10 0), (0 10), (10 10), (5 5))",
-                "POLYGON ((10 0, 10 10, 0 10, 0 0, 5 5, 10 0))",
+                "POLYGON ((10 0, 10 10, 0 10, 0 0, 10 0))",
             ),
             (
                 "MULTILINESTRING ((10 10, 20 20, 10 40), (40 40, 30 30, 40 20, 30 10))",
-                "POLYGON ((20 20, 10 40, 30 30, 40 40, 40 20, 30 10, 10 10, 20 20))",
+                "POLYGON ((30 10, 40 20, 40 40, 10 40, 10 10, 30 10))",
             ),
             (
                 "MULTIPOLYGON (((2 2, 2 5, 5 5, 5 2, 2 2)), ((6 3, 8 3, 8 1, 6 1, 6 3)))",
@@ -359,7 +372,7 @@ mod tests {
                         GEOMETRYCOLLECTION (LINESTRING(6 6,7 7), POLYGON((8 8,9 9,10 10,8 8)))\
                     )\
                 )",
-                "POLYGON ((10 10, 1 1, 3 3, 3 3, 4 4, 5 5, 8 8, 9 9, 10 10))",
+                "POLYGON ((10 10, 1 1, 10 10))",
             ),
         ];
 
@@ -418,12 +431,12 @@ mod tests {
             (
                 "MULTILINESTRING ((50 150, 50 200), (50 50, 50 100))",
                 0.1,
-                "POLYGON ((50 200, 50 50, 50 100, 50 150, 50 200))",
+                "POLYGON ((50 200, 50 50, 50 200))",
             ),
             (
                 "MULTILINESTRING ((50 150, 50 200), (50 50, 50 100))",
                 0.2,
-                "POLYGON ((50 200, 50 50, 50 100, 50 150, 50 200))",
+                "POLYGON ((50 200, 50 50, 50 200))",
             ),
             // Test MULTIPOLYGON with different pctconvex values
             (
@@ -436,7 +449,7 @@ mod tests {
                 "MULTIPOLYGON (((26 125, 26 200, 126 200, 126 125, 26 125 ),\
                     ( 51 150, 101 150, 76 175, 51 150 )), (( 151 100, 151 200, 176 175, 151 100 )))",
                 0.4,
-                "POLYGON((151 100,176 175,151 200,26 200,26 125,151 100))"
+                "POLYGON ((151 100, 176 175, 151 200, 126 200, 26 200, 26 125, 126 125, 151 100))"
             ),
             // Test GEOMETRYCOLLECTION with different pctconvex values
             (
@@ -444,14 +457,14 @@ mod tests {
                     GEOMETRYCOLLECTION(POLYGON((3 3,4 4,5 5,3 3)), \
                     GEOMETRYCOLLECTION(LINESTRING(6 6,7 7), POLYGON((8 8,9 9,10 10,8 8)))))",
                 0.1,
-                "POLYGON ((10 10, 1 1, 3 3, 3 3, 4 4, 5 5, 8 8, 9 9, 10 10))"
+                "POLYGON ((10 10, 1 1, 10 10))"
             ),
             (
                 "GEOMETRYCOLLECTION(LINESTRING(1 1,2 2), \
                     GEOMETRYCOLLECTION(POLYGON((3 3,4 4,5 5,3 3)), \
                     GEOMETRYCOLLECTION(LINESTRING(6 6,7 7), POLYGON((8 8,9 9,10 10,8 8)))))",
                 0.6,
-                "POLYGON ((10 10, 1 1, 3 3, 3 3, 4 4, 5 5, 8 8, 9 9, 10 10))"
+                "POLYGON ((10 10, 1 1, 10 10))"
             ),
         ];
 
