@@ -35,7 +35,6 @@ arrow-schema = { workspace = true }
 arrow-array = { workspace = true }
 arrow-buffer = { workspace = true }
 datafusion-common = { workspace = true }
-log = { workspace = true }
 sedona-common = { workspace = true }
 sedona-schema = { workspace = true }
 

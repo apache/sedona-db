@@ -38,9 +38,12 @@ use sedona_schema::raster::BandDataType;
 /// Everything a backend needs to materialise a single OutDb band's bytes.
 ///
 /// `source_shape` is the **raw** source shape in `dim_names` order — the
-/// shape of the buffer the loader must return — *not* the visible shape.
-/// View composition stays inside `BandRefImpl`: the band walks the
-/// returned buffer using the existing stride machinery.
+/// shape of the buffer the loader must produce — *not* the visible shape.
+/// Loaders write into a caller-provided scratch `Vec<u8>` rather than
+/// allocating; the band then borrows from that scratch for the lifetime
+/// of the byte-access call. This lets consumers in scalar-function loops
+/// reuse a single scratch buffer across rasters and (eventually) reserve
+/// memory through DataFusion's memory pool.
 pub struct OutDbLoadRequest<'a> {
     /// External URI (e.g. `file:///tmp/foo.tif#band=1`,
     /// `s3://bucket/cube.zarr#path=/a&slice=0`). Bare paths are also
@@ -61,7 +64,12 @@ pub struct OutDbLoadRequest<'a> {
 }
 
 /// Function-pointer signature for OutDb loaders.
-pub type OutDbBandLoader = fn(&OutDbLoadRequest<'_>) -> Result<Vec<u8>, ArrowError>;
+///
+/// The loader appends exactly `Π source_shape × data_type.byte_size()` bytes
+/// to `scratch`. Callers (`load_outdb`) clear the scratch before calling and
+/// validate the written length on return, so loader implementations only
+/// need to write; they need not check pre-call state nor zero the buffer.
+pub type OutDbBandLoader = fn(&OutDbLoadRequest<'_>, &mut Vec<u8>) -> Result<(), ArrowError>;
 
 static OUTDB_BAND_LOADER: OnceLock<OutDbBandLoader> = OnceLock::new();
 
@@ -74,17 +82,23 @@ pub fn set_outdb_band_loader(f: OutDbBandLoader) {
     let _ = OUTDB_BAND_LOADER.set(f);
 }
 
-/// Dispatch a load request through the installed loader. Returns
-/// `NotYetImplemented` with a clear message if no loader was registered.
-pub(crate) fn load_outdb(req: &OutDbLoadRequest<'_>) -> Result<Vec<u8>, ArrowError> {
-    match OUTDB_BAND_LOADER.get() {
-        Some(loader) => loader(req),
-        None => Err(ArrowError::NotYetImplemented(
+/// Dispatch a load request through the installed loader. Clears `scratch`,
+/// invokes the loader, then verifies the loader wrote the expected number
+/// of bytes. Returns `NotYetImplemented` with a clear message if no loader
+/// was registered.
+pub(crate) fn load_outdb(
+    req: &OutDbLoadRequest<'_>,
+    scratch: &mut Vec<u8>,
+) -> Result<(), ArrowError> {
+    let loader = OUTDB_BAND_LOADER.get().ok_or_else(|| {
+        ArrowError::NotYetImplemented(
             "no OutDb loader registered; sedona-raster-gdal (or another \
              backend) must be initialised before reading OutDb bands"
                 .to_string(),
-        )),
-    }
+        )
+    })?;
+    scratch.clear();
+    loader(req, scratch)
 }
 
 #[cfg(test)]
@@ -99,13 +113,22 @@ mod tests {
     /// `OUTDB_BAND_LOADER` is a `OnceLock` — exactly one registration per
     /// process, so every test that needs OutDb behavior routes through
     /// here and selects a case via the URI it constructs the band with.
-    fn mock_load(req: &OutDbLoadRequest<'_>) -> Result<Vec<u8>, ArrowError> {
+    fn mock_load(req: &OutDbLoadRequest<'_>, scratch: &mut Vec<u8>) -> Result<(), ArrowError> {
         let expected: usize =
             req.source_shape.iter().product::<u64>() as usize * req.data_type.byte_size();
         match req.uri {
-            "mock://zeros" => Ok(vec![0u8; expected]),
-            "mock://pattern" => Ok((0..expected).map(|i| (i & 0xFF) as u8).collect()),
-            "mock://too-small" => Ok(vec![0u8; expected.saturating_sub(1)]),
+            "mock://zeros" => {
+                scratch.resize(expected, 0);
+                Ok(())
+            }
+            "mock://pattern" => {
+                scratch.extend((0..expected).map(|i| (i & 0xFF) as u8));
+                Ok(())
+            }
+            "mock://too-small" => {
+                scratch.resize(expected.saturating_sub(1), 0);
+                Ok(())
+            }
             "mock://error" => Err(ArrowError::ExternalError(Box::new(std::io::Error::other(
                 "mock loader simulated failure",
             )))),
@@ -165,7 +188,8 @@ mod tests {
         let rasters = RasterStructArray::new(&arr);
         let raster = rasters.get(0).unwrap();
         let band = raster.band(0).unwrap();
-        let buf = band.nd_buffer().unwrap();
+        let mut scratch = Vec::new();
+        let buf = band.nd_buffer(&mut scratch).unwrap();
         assert_eq!(buf.buffer, &[0u8, 1, 2, 3, 4, 5]);
         assert_eq!(buf.shape, vec![2, 3]);
         assert_eq!(buf.data_type, BandDataType::UInt8);
@@ -178,33 +202,24 @@ mod tests {
         let rasters = RasterStructArray::new(&arr);
         let raster = rasters.get(0).unwrap();
         let band = raster.band(0).unwrap();
-        let cow = band.contiguous_data().unwrap();
-        assert_eq!(&*cow, &[0u8, 1, 2, 3, 4, 5]);
-    }
-
-    #[test]
-    fn data_returns_loader_bytes_for_outdb_band() {
-        install_mock_loader();
-        let arr = build_outdb_band(Some("mock://pattern"), BandDataType::UInt8, &[2, 3]);
-        let rasters = RasterStructArray::new(&arr);
-        let raster = rasters.get(0).unwrap();
-        let band = raster.band(0).unwrap();
-        assert_eq!(band.data(), &[0u8, 1, 2, 3, 4, 5]);
+        let mut scratch = Vec::new();
+        let data = band.contiguous_data(&mut scratch).unwrap();
+        assert_eq!(data, &[0u8, 1, 2, 3, 4, 5]);
     }
 
     #[test]
     fn is_indb_stays_false_after_loader_runs() {
-        // Pin the schema-vs-runtime reframe: `is_indb()` is the schema
-        // discriminator (Arrow column emptiness), not a runtime
-        // byte-availability check. It must stay false after the loader
-        // has populated `outdb_loaded`.
+        // `is_indb()` is the schema discriminator (Arrow column emptiness),
+        // not a runtime byte-availability check. Must stay false after a
+        // successful byte-access call.
         install_mock_loader();
         let arr = build_outdb_band(Some("mock://zeros"), BandDataType::UInt8, &[2, 3]);
         let rasters = RasterStructArray::new(&arr);
         let raster = rasters.get(0).unwrap();
         let band = raster.band(0).unwrap();
         assert!(!band.is_indb());
-        let _ = band.nd_buffer().unwrap();
+        let mut scratch = Vec::new();
+        let _ = band.nd_buffer(&mut scratch).unwrap();
         assert!(
             !band.is_indb(),
             "is_indb must remain a schema discriminator after the loader runs"
@@ -212,19 +227,29 @@ mod tests {
     }
 
     #[test]
-    fn nd_buffer_is_cached_across_calls() {
-        // Smoke test: repeated nd_buffer() over the same band must
-        // succeed and return identical contents (the OnceCell hides
-        // the second loader call).
+    fn scratch_is_reusable_across_bands() {
+        // Two consecutive OutDb byte-access calls against different bands
+        // must each produce the right bytes through the same scratch —
+        // load_outdb clears scratch on entry so stale data from the
+        // previous band cannot leak into the next.
         install_mock_loader();
-        let arr = build_outdb_band(Some("mock://pattern"), BandDataType::UInt8, &[2, 3]);
-        let rasters = RasterStructArray::new(&arr);
-        let raster = rasters.get(0).unwrap();
-        let band = raster.band(0).unwrap();
-        let a = band.nd_buffer().unwrap();
-        let buf_a = a.buffer.to_vec();
-        let b = band.nd_buffer().unwrap();
-        assert_eq!(buf_a, b.buffer);
+        let zeros = build_outdb_band(Some("mock://zeros"), BandDataType::UInt8, &[2, 3]);
+        let pattern = build_outdb_band(Some("mock://pattern"), BandDataType::UInt8, &[2, 3]);
+        let rasters_z = RasterStructArray::new(&zeros);
+        let rasters_p = RasterStructArray::new(&pattern);
+        let mut scratch = Vec::new();
+        {
+            let r = rasters_z.get(0).unwrap();
+            let band = r.band(0).unwrap();
+            let buf = band.nd_buffer(&mut scratch).unwrap();
+            assert_eq!(buf.buffer, &[0u8; 6]);
+        }
+        {
+            let r = rasters_p.get(0).unwrap();
+            let band = r.band(0).unwrap();
+            let buf = band.nd_buffer(&mut scratch).unwrap();
+            assert_eq!(buf.buffer, &[0u8, 1, 2, 3, 4, 5]);
+        }
     }
 
     #[test]
@@ -235,7 +260,8 @@ mod tests {
         let rasters = RasterStructArray::new(&arr);
         let raster = rasters.get(0).unwrap();
         let band = raster.band(0).unwrap();
-        let err = band.nd_buffer().unwrap_err();
+        let mut scratch = Vec::new();
+        let err = band.nd_buffer(&mut scratch).unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("outdb_uri"),
@@ -250,7 +276,8 @@ mod tests {
         let rasters = RasterStructArray::new(&arr);
         let raster = rasters.get(0).unwrap();
         let band = raster.band(0).unwrap();
-        assert!(band.nd_buffer().is_err());
+        let mut scratch = Vec::new();
+        assert!(band.nd_buffer(&mut scratch).is_err());
     }
 
     #[test]
@@ -260,23 +287,12 @@ mod tests {
         let rasters = RasterStructArray::new(&arr);
         let raster = rasters.get(0).unwrap();
         let band = raster.band(0).unwrap();
-        let err = band.nd_buffer().unwrap_err();
+        let mut scratch = Vec::new();
+        let err = band.nd_buffer(&mut scratch).unwrap_err();
         let msg = err.to_string();
         assert!(
-            msg.contains("buffer") || msg.contains("byte"),
-            "undersized loader output should trip the view-bounds check: {msg}"
+            msg.contains("bytes") || msg.contains("expected"),
+            "undersized loader output should trip the size check: {msg}"
         );
-    }
-
-    #[test]
-    fn data_returns_empty_on_loader_failure() {
-        // `data()` is the legacy infallible accessor — errors collapse
-        // to `&[]`.
-        install_mock_loader();
-        let arr = build_outdb_band(Some("mock://error"), BandDataType::UInt8, &[2, 3]);
-        let rasters = RasterStructArray::new(&arr);
-        let raster = rasters.get(0).unwrap();
-        let band = raster.band(0).unwrap();
-        assert_eq!(band.data(), &[] as &[u8]);
     }
 }

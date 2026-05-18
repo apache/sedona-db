@@ -51,7 +51,8 @@ fn nd_buffer_errors_with_clear_message_when_no_loader_registered() {
     let rasters = RasterStructArray::new(&arr);
     let raster = rasters.get(0).unwrap();
     let band = raster.band(0).unwrap();
-    let err = band.nd_buffer().unwrap_err().to_string();
+    let mut scratch = Vec::new();
+    let err = band.nd_buffer(&mut scratch).unwrap_err().to_string();
     assert!(
         err.contains("no OutDb loader registered"),
         "expected the no-loader diagnostic, got: {err}"

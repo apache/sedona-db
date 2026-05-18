@@ -217,6 +217,16 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
     // Note: GDALAddBand always appends a new band, so the destination band index
     // is sequential (1..=band_indices.len()), even if the source band indices are
     // sparse (e.g. [1, 3]).
+    //
+    // Safety: this loop rejects non-InDb bands above, so `contiguous_data` must
+    // early-return with a zero-copy slice of the Arrow column and leave `scratch`
+    // untouched. The Arrow column outlives the returned dataset (the caller owns
+    // the StructArray driving this loop), so the raw pointer captured into the
+    // builder remains valid for the dataset's lifetime. We assert `scratch` was
+    // not written after each iteration — if a future change relaxes the OutDb
+    // rejection above, the assert fires loudly instead of silently aliasing the
+    // captured pointer into a `scratch` that the next iteration will overwrite.
+    let mut scratch: Vec<u8> = Vec::new();
     for &src_band_index in band_indices.iter() {
         let band = bands
             .band(src_band_index)
@@ -238,10 +248,23 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
         let band_metadata = band.metadata();
         let band_type = band_metadata.data_type()?;
         let gdal_type = band_data_type_to_gdal(&band_type);
-        let band_data = band.data();
+        let band_data = band
+            .contiguous_data(&mut scratch)
+            .map_err(|e| arrow_datafusion_err!(e))?;
         let data_ptr = band_data.as_ptr();
         unsafe {
             mem_ds_builder = mem_ds_builder.add_band(gdal_type, data_ptr as *mut u8);
+        }
+        if !scratch.is_empty() {
+            return Err(DataFusionError::Internal(format!(
+                "raster_ref_to_gdal_mem: contiguous_data wrote {} bytes into scratch \
+                 for band {src_band_index}; this path captures the slice's pointer and \
+                 reuses scratch across iterations, so the band MUST be schema-InDb \
+                 (zero-copy from the Arrow column). Either an InDb band hit the OutDb \
+                 loader path, or a future caller relaxed the OutDb rejection above \
+                 without restructuring to per-band buffers.",
+                scratch.len()
+            )));
         }
     }
 

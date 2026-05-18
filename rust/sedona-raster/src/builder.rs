@@ -687,7 +687,6 @@ mod tests {
     use arrow_ipc::writer::StreamWriter;
     use arrow_schema::Schema;
     use sedona_schema::raster::StorageType;
-    use std::borrow::Cow;
     use std::io::Cursor;
 
     #[test]
@@ -747,8 +746,10 @@ mod tests {
 
         // Access band with 1-based band_number
         let band = bands.band(1).unwrap();
-        assert_eq!(band.data().len(), 100);
-        assert_eq!(band.data()[0], 1u8);
+        let mut scratch = Vec::new();
+        let data = band.contiguous_data(&mut scratch).unwrap();
+        assert_eq!(data.len(), 100);
+        assert_eq!(data[0], 1u8);
 
         let band_meta = band.metadata();
         assert_eq!(band_meta.storage_type().unwrap(), StorageType::InDb);
@@ -808,11 +809,13 @@ mod tests {
 
         // Test each band has different data
         // Use 1-based band numbers
+        let mut scratch = Vec::new();
         for i in 0..3 {
             // Access band with 1-based band_number
             let band = bands.band(i + 1).unwrap();
             let expected_value = i as u8;
-            assert!(band.data().iter().all(|&x| x == expected_value));
+            let data = band.contiguous_data(&mut scratch).unwrap();
+            assert!(data.iter().all(|&x| x == expected_value));
         }
 
         // Test iterator
@@ -821,8 +824,9 @@ mod tests {
             .enumerate()
             .map(|(i, band)| {
                 let band = band.unwrap();
-                assert_eq!(band.data()[0], i as u8);
-                band.data()[0]
+                let data = band.contiguous_data(&mut scratch).unwrap();
+                assert_eq!(data[0], i as u8);
+                data[0]
             })
             .collect();
 
@@ -913,7 +917,10 @@ mod tests {
         let target_band_meta = target_band.metadata();
         assert_eq!(target_band_meta.data_type().unwrap(), BandDataType::UInt16);
         assert!(target_band_meta.nodata_value().is_none());
-        assert_eq!(target_band.data().len(), 2016); // 1008 * 2 bytes per u16
+        assert_eq!(
+            target_band.contiguous_data(&mut Vec::new()).unwrap().len(),
+            2016
+        ); // 1008 * 2 bytes per u16
 
         let result = target_raster.bands().band(0);
         assert!(result.is_err(), "Band number 0 should be invalid");
@@ -1112,7 +1119,10 @@ mod tests {
         assert_eq!(indb_metadata.data_type().unwrap(), BandDataType::UInt8);
         assert!(indb_metadata.outdb_url().is_none());
         assert!(indb_metadata.outdb_band_id().is_none());
-        assert_eq!(indb_band.data().len(), 100);
+        assert_eq!(
+            indb_band.contiguous_data(&mut Vec::new()).unwrap().len(),
+            100
+        );
 
         // Test OutDbRef band
         let outdb_band = bands.band(2).unwrap();
@@ -1127,7 +1137,9 @@ mod tests {
             "s3://mybucket/satellite_image.tif"
         );
         assert_eq!(outdb_metadata.outdb_band_id().unwrap(), 2);
-        assert_eq!(outdb_band.data().len(), 0); // Empty data for OutDbRef
+        // Schema-OutDb: data column is empty (is_indb() is the discriminator);
+        // attempting to materialise here would require a registered loader.
+        assert!(!outdb_band.is_indb());
     }
 
     #[test]
@@ -1182,7 +1194,7 @@ mod tests {
         let result = bands.band(1);
         assert!(result.is_ok());
         let band = result.unwrap();
-        assert_eq!(band.data().len(), 100);
+        assert_eq!(band.contiguous_data(&mut Vec::new()).unwrap().len(), 100);
     }
 
     #[test]
@@ -1227,7 +1239,7 @@ mod tests {
         assert_eq!(band.shape(), &[20, 10]);
         assert_eq!(band.data_type(), BandDataType::UInt8);
         assert_eq!(band.nodata(), Some(&[255u8][..]));
-        assert_eq!(band.contiguous_data().unwrap().len(), 200);
+        assert_eq!(band.contiguous_data(&mut Vec::new()).unwrap().len(), 200);
     }
 
     #[test]
@@ -1329,7 +1341,8 @@ mod tests {
         assert_eq!(band.dim_size("z"), None);
 
         // Verify strides are standard C-order: [4*5*4, 5*4, 4] = [80, 20, 4]
-        let buf = band.nd_buffer().unwrap();
+        let mut scratch = Vec::new();
+        let buf = band.nd_buffer(&mut scratch).unwrap();
         assert_eq!(buf.strides, &[80, 20, 4]);
         assert_eq!(buf.offset, 0);
     }
@@ -1493,10 +1506,12 @@ mod tests {
         let r = rasters.get(0).unwrap();
         let band = r.band(0).unwrap();
 
-        let data = band.contiguous_data().unwrap();
-        // Identity-view bands are always contiguous, so should be Cow::Borrowed
-        assert!(matches!(data, Cow::Borrowed(_)));
+        // Identity-view InDb bands borrow the Arrow column zero-copy; the
+        // scratch buffer is unused (capacity stays at 0).
+        let mut scratch = Vec::new();
+        let data = band.contiguous_data(&mut scratch).unwrap();
         assert_eq!(data.len(), 16);
+        assert_eq!(scratch.len(), 0, "InDb path must not touch scratch");
     }
 
     #[test]
@@ -1562,17 +1577,18 @@ mod tests {
         let array = builder.finish().unwrap();
         let rasters = RasterStructArray::new(&array);
 
+        let mut scratch = Vec::new();
         let r0 = rasters.get(0).unwrap();
         let b0 = r0.band(0).unwrap();
-        assert_eq!(b0.nd_buffer().unwrap().strides, &[4, 1]); // UInt8 [3, 4]
+        assert_eq!(b0.nd_buffer(&mut scratch).unwrap().strides, &[4, 1]); // UInt8 [3, 4]
 
         let r1 = rasters.get(1).unwrap();
         let b1 = r1.band(0).unwrap();
-        assert_eq!(b1.nd_buffer().unwrap().strides, &[120, 40, 8]); // Float64 [2, 3, 5]
+        assert_eq!(b1.nd_buffer(&mut scratch).unwrap().strides, &[120, 40, 8]); // Float64 [2, 3, 5]
 
         let r2 = rasters.get(2).unwrap();
         let b2 = r2.band(0).unwrap();
-        assert_eq!(b2.nd_buffer().unwrap().strides, &[2]); // UInt16 [10]
+        assert_eq!(b2.nd_buffer(&mut scratch).unwrap().strides, &[2]); // UInt16 [10]
     }
 
     #[test]
@@ -1768,13 +1784,13 @@ mod tests {
         assert_eq!(band.shape(), &[2, 3]);
         assert_eq!(band.raw_source_shape(), &[2, 3]);
 
-        let buf = band.nd_buffer().unwrap();
+        let mut scratch = Vec::new();
+        let buf = band.nd_buffer(&mut scratch).unwrap();
         assert_eq!(buf.strides, &[3, 1]);
         assert_eq!(buf.offset, 0);
 
-        let bytes = band.contiguous_data().unwrap();
-        assert!(matches!(bytes, Cow::Borrowed(_)));
-        assert_eq!(&*bytes, pixels.as_slice());
+        let bytes = band.contiguous_data(&mut scratch).unwrap();
+        assert_eq!(bytes, pixels.as_slice());
     }
 
     #[test]

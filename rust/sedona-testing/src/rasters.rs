@@ -475,7 +475,13 @@ pub fn assert_raster_equal(raster1: &impl RasterRef, raster2: &impl RasterRef) {
             "Band outdb band IDs do not match"
         );
 
-        assert_eq!(band1.data(), band2.data(), "Band data does not match");
+        let mut scratch1 = Vec::new();
+        let mut scratch2 = Vec::new();
+        assert_eq!(
+            band1.contiguous_data(&mut scratch1).unwrap(),
+            band2.contiguous_data(&mut scratch2).unwrap(),
+            "Band data does not match",
+        );
     }
 }
 
@@ -513,7 +519,8 @@ mod tests {
             assert_eq!(band_metadata.outdb_url(), None);
             assert_eq!(band_metadata.outdb_band_id(), None);
 
-            let band_data = band.data();
+            let mut scratch = Vec::new();
+            let band_data = band.contiguous_data(&mut scratch).unwrap();
             let expected_pixel_count = (i + 1) * (i + 2); // width * height
 
             // Convert raw bytes back to u16 values for comparison
@@ -550,7 +557,8 @@ mod tests {
                 let band_metadata = band.metadata();
                 assert_eq!(band_metadata.data_type().unwrap(), BandDataType::UInt8);
                 assert_eq!(band_metadata.storage_type().unwrap(), StorageType::InDb);
-                let band_data = band.data();
+                let mut scratch = Vec::new();
+                let band_data = band.contiguous_data(&mut scratch).unwrap();
                 assert_eq!(band_data.len(), 64 * 64); // 4096 pixels
             }
         }
@@ -619,7 +627,10 @@ mod tests {
         let b1 = bands.band(1).unwrap();
         assert_eq!(b1.metadata().data_type().unwrap(), BandDataType::UInt8);
         assert_eq!(b1.metadata().nodata_value(), Some(&[255u8][..]));
-        assert_eq!(b1.data(), &[1u8, 2, 3, 4]);
+        assert_eq!(
+            b1.contiguous_data(&mut Vec::new()).unwrap(),
+            &[1u8, 2, 3, 4]
+        );
 
         // Band 2: UInt16, nodata=0
         let b2 = bands.band(2).unwrap();

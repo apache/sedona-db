@@ -15,8 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::borrow::Cow;
-
 use arrow_schema::ArrowError;
 use sedona_schema::raster::BandDataType;
 
@@ -463,10 +461,6 @@ pub trait RasterRef {
 ///   stride awareness (most RS_* functions, GDAL boundary, serialization).
 /// - `nd_buffer()` — raw buffer + shape + strides + offset for stride-aware
 ///   consumers (numpy zero-copy views, Arrow FFI) that want to avoid copies.
-///
-/// Implementations are **not** required to be `Sync`. Concrete impls may
-/// cache resolved bytes per band via a non-thread-safe interior cell (e.g.
-/// `OnceCell`), so a `&dyn BandRef` must not be shared across threads.
 pub trait BandRef {
     // -- Dimension metadata --
 
@@ -613,46 +607,26 @@ pub trait BandRef {
 
     // -- Data access --
 
-    /// Raw backing buffer + visible-region layout. Triggers load for lazy
-    /// impls. The returned `NdBuffer` describes the band's view in
-    /// byte-stride terms — `shape` is the visible shape, `strides` and
-    /// `offset` are computed by composing the view with the source's
-    /// natural C-order byte strides. Strides may be zero (broadcast) or
-    /// negative (reverse iteration).
-    fn nd_buffer(&self) -> Result<NdBuffer<'_>, ArrowError>;
+    /// Raw backing buffer + visible-region layout.
+    ///
+    /// `scratch` is a caller-owned `Vec<u8>` that the band uses if it has
+    /// to materialise bytes from outside the Arrow column (e.g. an OutDb
+    /// load). InDb identity-view bands ignore `scratch` and borrow the
+    /// column directly. The returned `NdBuffer` borrows from whichever
+    /// source applies — both share the `'s` lifetime, so the caller can
+    /// reuse the same scratch across iterations of a loop without leaking
+    /// stale data between bands. Callers in scratch-managed loops should
+    /// pass the same `Vec<u8>` for every band; its capacity will grow to
+    /// the largest band's source size and then stabilise.
+    fn nd_buffer<'s>(&'s self, scratch: &'s mut Vec<u8>) -> Result<NdBuffer<'s>, ArrowError>;
 
-    /// Contiguous row-major bytes covering the *visible* region. Zero-copy
-    /// (`Cow::Borrowed`) when the view is full identity over a C-order
-    /// source buffer; copies into a new buffer when the view slices,
-    /// broadcasts, or permutes. Most RS_* functions use this.
-    fn contiguous_data(&self) -> Result<Cow<'_, [u8]>, ArrowError>;
-
-    /// Pre-N-D compatibility shim: raw row-major bytes for InDb,
-    /// identity-view bands. Panics on anything else (OutDb, non-identity
-    /// view, or a `contiguous_data` error) — corresponds to main's
-    /// infallible `BandRef::data() -> &[u8]` which only ever ran against
-    /// identity-view InDb bands.
-    fn data(&self) -> &[u8] {
-        // Compatibility shim: returns the same bytes pre-N-D callers expect
-        // from `BandRef::data() -> &[u8]`. Delegates to `contiguous_data()`
-        // so identity-view bands surface the borrowed in-line bytes,
-        // matching the pre-N-D behavior exactly. View-materialized
-        // (`Cow::Owned`) bands can't be returned through `&[u8]` because
-        // the owned `Vec` would die at the end of this call — implementers
-        // that need view-materialized bytes via `data()` must override and
-        // anchor the materialized buffer on `Self`; other consumers should
-        // reach for `contiguous_data()` directly.
-        match self
-            .contiguous_data()
-            .expect("BandRef::data() requires an in-db band with bytes")
-        {
-            Cow::Borrowed(b) => b,
-            Cow::Owned(_) => panic!(
-                "BandRef::data() can't return view-materialized bytes; \
-                 use contiguous_data() for sliced/permuted bands"
-            ),
-        }
-    }
+    /// Contiguous row-major bytes covering the *visible* region.
+    ///
+    /// Returns a slice borrowing from either the Arrow column (InDb,
+    /// zero-copy) or the caller-provided `scratch` (OutDb, written by
+    /// the loader, or any future view-materialised path). Most RS_*
+    /// kernels use this. See `nd_buffer` for the scratch contract.
+    fn contiguous_data<'s>(&'s self, scratch: &'s mut Vec<u8>) -> Result<&'s [u8], ArrowError>;
 
     /// Nodata value interpreted as f64.
     ///
@@ -923,10 +897,13 @@ mod tests {
             // concrete answer satisfies the (now-required) trait method.
             false
         }
-        fn nd_buffer(&self) -> Result<NdBuffer<'_>, ArrowError> {
+        fn nd_buffer<'s>(&'s self, _scratch: &'s mut Vec<u8>) -> Result<NdBuffer<'s>, ArrowError> {
             unimplemented!("not used in is_2d tests")
         }
-        fn contiguous_data(&self) -> Result<Cow<'_, [u8]>, ArrowError> {
+        fn contiguous_data<'s>(
+            &'s self,
+            _scratch: &'s mut Vec<u8>,
+        ) -> Result<&'s [u8], ArrowError> {
             unimplemented!("not used in is_2d tests")
         }
     }

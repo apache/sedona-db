@@ -531,10 +531,15 @@ mod tests {
             let orig_bands = original.bands();
             let mod_bands = modified.bands();
             assert_eq!(orig_bands.len(), mod_bands.len());
+            let mut orig_scratch = Vec::new();
+            let mut mod_scratch = Vec::new();
             for band_idx in 0..orig_bands.len() {
                 let orig_band = orig_bands.band(band_idx + 1).unwrap();
                 let mod_band = mod_bands.band(band_idx + 1).unwrap();
-                assert_eq!(orig_band.data(), mod_band.data());
+                assert_eq!(
+                    orig_band.contiguous_data(&mut orig_scratch).unwrap(),
+                    mod_band.contiguous_data(&mut mod_scratch).unwrap()
+                );
                 assert_eq!(
                     orig_band.metadata().data_type().unwrap(),
                     mod_band.metadata().data_type().unwrap()

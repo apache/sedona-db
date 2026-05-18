@@ -15,8 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::borrow::Cow;
-
 use arrow_array::{
     Array, BinaryArray, BinaryViewArray, Float64Array, Int64Array, ListArray, StringArray,
     StringViewArray, StructArray, UInt32Array, UInt64Array,
@@ -53,43 +51,58 @@ struct BandRefImpl<'a> {
     byte_strides: Vec<i64>,
     /// Byte offset into `data` of the visible region's `[0,...,0]` element.
     byte_offset: u64,
-    /// Lazy in-memory home for bytes that don't live in the Arrow `data`
-    /// column. Populated on first byte-access for schema-OutDb bands by
-    /// `source_bytes()`; remains empty for schema-InDb bands (which borrow
-    /// the Arrow column directly, zero-copy). The cell is needed because
-    /// Arrow buffers are immutable and `Arc`-shared — a loader-returned
-    /// `Vec<u8>` cannot be stashed in `data_array`, so the band owns it
-    /// here for its lifetime. Not a cross-band cache; backend-level
-    /// caching (e.g. `GDALDatasetCache`) lives in the loader crate.
-    outdb_loaded: std::cell::OnceCell<Vec<u8>>,
 }
 
 impl<'a> BandRefImpl<'a> {
-    /// Uniform byte-access for both schema-InDb and schema-OutDb bands.
-    /// Resolves to a `&[u8]` regardless of provenance:
+    /// Overflow-safe expected size of the band's raw byte buffer.
+    /// `Π raw_source_shape × data_type.byte_size()`. A malicious or merely
+    /// huge `source_shape` could wrap silently in unchecked arithmetic; we
+    /// route every step through `checked_mul`/`try_into` and surface a
+    /// clean error.
+    fn expected_byte_count(&self) -> Result<usize, ArrowError> {
+        let elements = self
+            .raw_source_shape()
+            .iter()
+            .try_fold(1u64, |acc, &d| acc.checked_mul(d))
+            .ok_or_else(|| {
+                ArrowError::InvalidArgumentError(format!(
+                    "band {} has source_shape whose product overflows u64",
+                    self.band_row
+                ))
+            })?;
+        let elements_usize: usize = elements.try_into().map_err(|_| {
+            ArrowError::InvalidArgumentError(format!(
+                "band {} has too many elements for usize on this platform",
+                self.band_row
+            ))
+        })?;
+        elements_usize
+            .checked_mul(self.data_type.byte_size())
+            .ok_or_else(|| {
+                ArrowError::InvalidArgumentError(format!(
+                    "band {} byte count overflows usize",
+                    self.band_row
+                ))
+            })
+    }
+
+    /// Resolve the band's bytes through the uniform InDb/OutDb path.
     ///
-    /// - schema-InDb: zero-copy borrow of the Arrow `data` column slice.
-    /// - schema-OutDb: loader bytes, loaded on first call and anchored
-    ///   in `outdb_loaded` with the band's lifetime.
+    /// For schema-InDb bands (`data` column non-empty), returns a zero-copy
+    /// slice of the Arrow column and `scratch` is untouched. For schema-OutDb
+    /// bands (`data` column empty), invokes the process-wide OutDb loader,
+    /// which writes into `scratch`; returns a slice of `scratch`.
     ///
-    /// Callers (`nd_buffer`, `contiguous_data`, `data`) do not branch on
-    /// `is_indb()`; that discriminator is for schema/serialization paths.
-    fn source_bytes(&self) -> Result<&[u8], ArrowError> {
+    /// Callers should pass the same `Vec<u8>` for every band in a loop —
+    /// scratch capacity grows to the largest band's source size and then
+    /// stabilises. The InDb path will leave the scratch contents unchanged
+    /// from the previous call; that's harmless because the returned slice
+    /// points into the Arrow column, not the scratch.
+    fn source_bytes<'s>(&'s self, scratch: &'s mut Vec<u8>) -> Result<&'s [u8], ArrowError> {
         let column = self.data_array.value(self.band_row);
         if !column.is_empty() {
             return Ok(column);
         }
-        if let Some(cached) = self.outdb_loaded.get() {
-            return Ok(cached.as_slice());
-        }
-        // First byte-access against a schema-OutDb band: ask the
-        // process-wide loader for the source bytes, then bounds-check
-        // the returned buffer against the band's source_shape so a
-        // mismatched source produces a clean error instead of an
-        // out-of-bounds index downstream. `OnceCell::get_or_try_init`
-        // is still unstable, so do the equivalent by hand:
-        // `std::cell::OnceCell` is `!Sync`, so only the calling thread
-        // ever observes this cell and `set()` cannot lose a race.
         let uri = self.outdb_uri().ok_or_else(|| {
             ArrowError::ExternalError(Box::new(sedona_common::sedona_internal_datafusion_err!(
                 "OutDb band has empty data column but no outdb_uri"
@@ -103,53 +116,20 @@ impl<'a> BandRefImpl<'a> {
             source_shape: self.raw_source_shape(),
             data_type: self.data_type,
         };
-        let bytes = load_outdb(&req)?;
-        // Overflow-safe: a malicious or merely huge source_shape could
-        // overflow u64 (silently wraps in release) or the usize cast
-        // (truncates on 32-bit), letting an undersized loader return
-        // pass an equality check. Fold with checked_mul and surface a
-        // clean error instead.
-        let elements = self
-            .raw_source_shape()
-            .iter()
-            .try_fold(1u64, |acc, &d| acc.checked_mul(d))
-            .ok_or_else(|| {
-                ArrowError::InvalidArgumentError(format!(
-                    "OutDb band {} has source_shape whose product overflows u64",
-                    self.band_row
-                ))
-            })?;
-        let elements_usize: usize = elements.try_into().map_err(|_| {
-            ArrowError::InvalidArgumentError(format!(
-                "OutDb band {} has too many elements for usize on this platform",
-                self.band_row
-            ))
-        })?;
-        let expected = elements_usize
-            .checked_mul(self.data_type.byte_size())
-            .ok_or_else(|| {
-                ArrowError::InvalidArgumentError(format!(
-                    "OutDb band {} byte count overflows usize",
-                    self.band_row
-                ))
-            })?;
-        if bytes.len() != expected {
+        let expected = self.expected_byte_count()?;
+        load_outdb(&req, scratch)?;
+        if scratch.len() != expected {
             return Err(ArrowError::ExternalError(Box::new(
                 sedona_common::sedona_internal_datafusion_err!(
-                    "OutDb loader returned {} bytes for band {} (uri={}), expected {}",
-                    bytes.len(),
+                    "OutDb loader wrote {} bytes for band {} (uri={}), expected {}",
+                    scratch.len(),
                     self.band_row,
                     uri,
                     expected
                 ),
             )));
         }
-        let _ = self.outdb_loaded.set(bytes);
-        Ok(self
-            .outdb_loaded
-            .get()
-            .expect("outdb_loaded was just set")
-            .as_slice())
+        Ok(scratch.as_slice())
     }
 }
 
@@ -184,30 +164,6 @@ impl<'a> BandRef for BandRefImpl<'a> {
         self.data_type
     }
 
-    fn data(&self) -> &[u8] {
-        // Legacy infallible accessor. For schema-InDb identity bands this
-        // is the row-major buffer borrowed from the Arrow `data` column;
-        // for schema-OutDb bands it returns the loader-anchored bytes
-        // (lazily populated on first call). Errors (no loader registered,
-        // missing outdb_uri, loader failure, bytes-length mismatch)
-        // collapse to `&[]` to preserve the pre-N-D contract — callers
-        // that care must use `nd_buffer()` instead. We log the error so
-        // a missing loader registration produces a diagnostic instead of
-        // a silent empty buffer. Non-identity views are rejected at
-        // construction in `RasterRefImpl::band()`, so we don't need a
-        // strided walk here.
-        match self.source_bytes() {
-            Ok(b) => b,
-            Err(e) => {
-                log::error!(
-                    "BandRefImpl::data() returning empty buffer for band {}: {e}",
-                    self.band_row
-                );
-                &[]
-            }
-        }
-    }
-
     fn nodata(&self) -> Option<&[u8]> {
         if self.nodata_array.is_null(self.band_row) {
             None
@@ -236,14 +192,13 @@ impl<'a> BandRef for BandRefImpl<'a> {
         !self.data_array.value(self.band_row).is_empty()
     }
 
-    fn nd_buffer(&self) -> Result<NdBuffer<'_>, ArrowError> {
+    fn nd_buffer<'s>(&'s self, scratch: &'s mut Vec<u8>) -> Result<NdBuffer<'s>, ArrowError> {
         // shape and strides are owned by NdBuffer (see its doc comment).
         // Cloning here is cheap — both vecs are O(ndim), a handful of values.
         // `source_bytes()` resolves to either the Arrow column (InDb,
-        // zero-copy) or loader bytes (OutDb, lazily populated and
-        // anchored in `outdb_loaded`).
+        // zero-copy) or `scratch` (OutDb, written by the loader on this call).
         Ok(NdBuffer {
-            buffer: self.source_bytes()?,
+            buffer: self.source_bytes(scratch)?,
             shape: self.visible_shape.clone(),
             strides: self.byte_strides.clone(),
             offset: self.byte_offset,
@@ -251,11 +206,11 @@ impl<'a> BandRef for BandRefImpl<'a> {
         })
     }
 
-    fn contiguous_data(&self) -> Result<Cow<'_, [u8]>, ArrowError> {
+    fn contiguous_data<'s>(&'s self, scratch: &'s mut Vec<u8>) -> Result<&'s [u8], ArrowError> {
         // Identity-view only today, so the source bytes (Arrow column for
-        // InDb, loader-anchored buffer for OutDb) are already row-major
+        // InDb, scratch-resident buffer for OutDb) are already row-major
         // over the visible region.
-        Ok(Cow::Borrowed(self.source_bytes()?))
+        self.source_bytes(scratch)
     }
 }
 
@@ -391,7 +346,6 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
             visible_shape,
             byte_strides,
             byte_offset: 0,
-            outdb_loaded: std::cell::OnceCell::new(),
         }))
     }
 
@@ -775,8 +729,10 @@ mod tests {
 
         // Access band with 1-based band_number
         let band = bands.band(1).unwrap();
-        assert_eq!(band.data().len(), 100);
-        assert_eq!(band.data()[0], 1u8);
+        let mut scratch = Vec::new();
+        let data = band.contiguous_data(&mut scratch).unwrap();
+        assert_eq!(data.len(), 100);
+        assert_eq!(data[0], 1u8);
 
         let band_meta = band.metadata();
         assert_eq!(band_meta.storage_type().unwrap(), StorageType::InDb);
@@ -836,11 +792,13 @@ mod tests {
 
         // Test each band has different data
         // Use 1-based band numbers
+        let mut scratch = Vec::new();
         for i in 0..3 {
             // Access band with 1-based band_number
             let band = bands.band(i + 1).unwrap();
             let expected_value = i as u8;
-            assert!(band.data().iter().all(|&x| x == expected_value));
+            let data = band.contiguous_data(&mut scratch).unwrap();
+            assert!(data.iter().all(|&x| x == expected_value));
         }
 
         // Test array
@@ -849,8 +807,9 @@ mod tests {
             .enumerate()
             .map(|(i, band)| {
                 let band = band.unwrap();
-                assert_eq!(band.data()[0], i as u8);
-                band.data()[0]
+                let data = band.contiguous_data(&mut scratch).unwrap();
+                assert_eq!(data[0], i as u8);
+                data[0]
             })
             .collect();
 
@@ -1140,17 +1099,26 @@ mod tests {
         assert_eq!(r0.num_bands(), 3);
         assert_eq!(r0.band(0).unwrap().shape(), &[3]);
         assert_eq!(
-            &*r0.band(0).unwrap().contiguous_data().unwrap(),
+            r0.band(0)
+                .unwrap()
+                .contiguous_data(&mut Vec::new())
+                .unwrap(),
             &[10u8, 20, 30]
         );
         assert_eq!(r0.band(1).unwrap().shape(), &[3]);
         assert_eq!(
-            &*r0.band(1).unwrap().contiguous_data().unwrap(),
+            r0.band(1)
+                .unwrap()
+                .contiguous_data(&mut Vec::new())
+                .unwrap(),
             &[40u8, 50, 60]
         );
         assert_eq!(r0.band(2).unwrap().shape(), &[3]);
         assert_eq!(
-            &*r0.band(2).unwrap().contiguous_data().unwrap(),
+            r0.band(2)
+                .unwrap()
+                .contiguous_data(&mut Vec::new())
+                .unwrap(),
             &[100u8, 101, 102]
         );
 
@@ -1158,12 +1126,18 @@ mod tests {
         assert_eq!(r1.num_bands(), 2);
         assert_eq!(r1.band(0).unwrap().shape(), &[4]);
         assert_eq!(
-            &*r1.band(0).unwrap().contiguous_data().unwrap(),
+            r1.band(0)
+                .unwrap()
+                .contiguous_data(&mut Vec::new())
+                .unwrap(),
             &[42u8, 43, 44, 45]
         );
         assert_eq!(r1.band(1).unwrap().shape(), &[4]);
         assert_eq!(
-            &*r1.band(1).unwrap().contiguous_data().unwrap(),
+            r1.band(1)
+                .unwrap()
+                .contiguous_data(&mut Vec::new())
+                .unwrap(),
             &[1u8, 2, 3, 4]
         );
 

@@ -39,7 +39,7 @@ pub fn register_outdb_loader() {
     sedona_raster::set_outdb_band_loader(loader);
 }
 
-fn gdal_load(req: &OutDbLoadRequest<'_>) -> Result<Vec<u8>, ArrowError> {
+fn gdal_load(req: &OutDbLoadRequest<'_>, scratch: &mut Vec<u8>) -> Result<(), ArrowError> {
     // 2-D `[y, x]` only for v1; higher-rank or transposed OutDb reads
     // need MDArray support and explicit axis mapping, both tracked
     // separately. Matches `raster_ref_to_gdal_mem`'s 2-D constraint in
@@ -86,7 +86,7 @@ fn gdal_load(req: &OutDbLoadRequest<'_>) -> Result<Vec<u8>, ArrowError> {
         // Verify the file's pixel type matches the band metadata's
         // claim BEFORE reading. `read_as_bytes` returns bytes in the
         // file's native type with no conversion — a mismatch would
-        // produce a 2x-or-N/2 byte count and the bounds check in
+        // produce a 2x-or-N/2 byte count and the size check in
         // `source_bytes()` would mis-blame the loader for size rather
         // than naming the dtype mismatch. Catch it cleanly here.
         let file_dtype = gdal_to_band_data_type(band.band_type())?;
@@ -99,10 +99,16 @@ fn gdal_load(req: &OutDbLoadRequest<'_>) -> Result<Vec<u8>, ArrowError> {
                 file_dtype
             ));
         }
+        // Caller (`load_outdb`) cleared scratch on entry; we append the
+        // band's bytes into it. `read_as_bytes` allocates a fresh Vec, so
+        // this is one heap operation per band — when GDAL exposes a
+        // `read_into_bytes(&mut [u8])` we can write directly into scratch
+        // and eliminate it. Tracked separately.
         let bytes = band
             .read_as_bytes((0, 0), (width, height), (width, height), None)
             .map_err(convert_gdal_err)?;
-        Ok(bytes)
+        scratch.extend_from_slice(&bytes);
+        Ok(())
     })
     .map_err(|e| ArrowError::ExternalError(Box::new(e)))
 }
@@ -189,7 +195,8 @@ mod tests {
         let raster = rasters.get(0).unwrap();
         let band = raster.band(0).unwrap();
 
-        let buf = band.nd_buffer().unwrap();
+        let mut scratch = Vec::new();
+        let buf = band.nd_buffer(&mut scratch).unwrap();
         assert_eq!(buf.buffer, expected.as_slice());
         assert_eq!(buf.shape, vec![3, 4]);
         assert!(
@@ -199,7 +206,7 @@ mod tests {
     }
 
     #[test]
-    fn second_call_on_same_band_reuses_cache() {
+    fn repeated_calls_on_same_band_reuse_thread_local_dataset_cache() {
         ensure_registered();
         let tmp = TempDir::new().unwrap();
         let tif_path = tmp.path().join("cached.tif");
@@ -211,12 +218,14 @@ mod tests {
         let raster = rasters.get(0).unwrap();
         let band = raster.band(0).unwrap();
 
-        // First call loads via GDAL; second call must hit the band's
-        // OnceCell (no panic, identical contents). Cross-band caching
-        // is in GDALDatasetCache; cross-call within a single band is
-        // BandRefImpl.outdb_loaded.
-        let a = band.nd_buffer().unwrap().buffer.to_vec();
-        let b = band.nd_buffer().unwrap().buffer.to_vec();
+        // Both calls go through GDAL. Cross-call cheapness comes from the
+        // `GDALDatasetCache` thread-local LRU keeping the source dataset
+        // open across calls; the per-band scratch is owned here and reused
+        // for both reads (same Vec<u8>, same allocation reused). The
+        // returned bytes must match across calls.
+        let mut scratch = Vec::new();
+        let a = band.nd_buffer(&mut scratch).unwrap().buffer.to_vec();
+        let b = band.nd_buffer(&mut scratch).unwrap().buffer.to_vec();
         assert_eq!(a, expected);
         assert_eq!(a, b);
     }
@@ -254,17 +263,24 @@ mod tests {
         let uri_b1 = format!("{tif_str}#band=1");
         let uri_b2 = format!("{tif_str}#band=2");
 
+        let mut scratch = Vec::new();
         let arr1 = build_outdb_band_array(&uri_b1, &[2, 2]);
         let r1 = RasterStructArray::new(&arr1);
         let raster_one = r1.get(0).unwrap();
         let band_one = raster_one.band(0).unwrap();
-        assert_eq!(band_one.nd_buffer().unwrap().buffer, band1.as_slice());
+        assert_eq!(
+            band_one.nd_buffer(&mut scratch).unwrap().buffer,
+            band1.as_slice()
+        );
 
         let arr2 = build_outdb_band_array(&uri_b2, &[2, 2]);
         let r2 = RasterStructArray::new(&arr2);
         let raster_two = r2.get(0).unwrap();
         let band_two = raster_two.band(0).unwrap();
-        assert_eq!(band_two.nd_buffer().unwrap().buffer, band2.as_slice());
+        assert_eq!(
+            band_two.nd_buffer(&mut scratch).unwrap().buffer,
+            band2.as_slice()
+        );
     }
 
     #[test]
@@ -282,7 +298,8 @@ mod tests {
         let rasters = RasterStructArray::new(&arr);
         let raster = rasters.get(0).unwrap();
         let band = raster.band(0).unwrap();
-        let err = band.nd_buffer().unwrap_err().to_string();
+        let mut scratch = Vec::new();
+        let err = band.nd_buffer(&mut scratch).unwrap_err().to_string();
         assert!(
             err.contains("dim_names") && err.contains("\"x\""),
             "expected dim_names rejection naming the offending axes, got: {err}"
@@ -318,7 +335,8 @@ mod tests {
         let rasters = RasterStructArray::new(&arr);
         let raster = rasters.get(0).unwrap();
         let band = raster.band(0).unwrap();
-        let err = band.nd_buffer().unwrap_err().to_string();
+        let mut scratch = Vec::new();
+        let err = band.nd_buffer(&mut scratch).unwrap_err().to_string();
         assert!(
             err.contains("UInt8") && err.contains("UInt16"),
             "expected dtype mismatch naming both types, got: {err}"
@@ -337,7 +355,8 @@ mod tests {
         // Loader propagates GDAL's open-failure as an ArrowError; the
         // exact message is GDAL/version dependent, so just assert that
         // *some* error surfaces rather than a panic or silent empty buffer.
-        assert!(band.nd_buffer().is_err());
+        let mut scratch = Vec::new();
+        assert!(band.nd_buffer(&mut scratch).is_err());
     }
 
     #[test]
@@ -354,6 +373,7 @@ mod tests {
         let rasters = RasterStructArray::new(&arr);
         let raster = rasters.get(0).unwrap();
         let band = raster.band(0).unwrap();
-        assert!(band.nd_buffer().is_err());
+        let mut scratch = Vec::new();
+        assert!(band.nd_buffer(&mut scratch).is_err());
     }
 }

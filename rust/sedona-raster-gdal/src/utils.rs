@@ -270,7 +270,10 @@ mod tests {
         assert_eq!(band.metadata().storage_type().unwrap(), StorageType::InDb);
         assert_eq!(band.metadata().data_type().unwrap(), BandDataType::UInt8);
         assert_eq!(band.metadata().nodata_value().unwrap(), [255u8]);
-        assert_eq!(band.data(), [1u8, 2, 3, 4, 5, 6]);
+        assert_eq!(
+            band.contiguous_data(&mut Vec::new()).unwrap(),
+            [1u8, 2, 3, 4, 5, 6]
+        );
     }
 
     #[test]
@@ -301,8 +304,10 @@ mod tests {
             &nodata.to_le_bytes()
         );
 
+        let mut scratch = Vec::new();
         let pixels: Vec<u64> = band
-            .data()
+            .contiguous_data(&mut scratch)
+            .unwrap()
             .chunks_exact(8)
             .map(|chunk| u64::from_le_bytes(chunk.try_into().unwrap()))
             .collect();
@@ -333,8 +338,10 @@ mod tests {
             &nodata.to_le_bytes()
         );
 
+        let mut scratch = Vec::new();
         let pixels: Vec<i64> = band
-            .data()
+            .contiguous_data(&mut scratch)
+            .unwrap()
             .chunks_exact(8)
             .map(|chunk| i64::from_le_bytes(chunk.try_into().unwrap()))
             .collect();
@@ -365,8 +372,10 @@ mod tests {
             &nodata.to_le_bytes()
         );
 
+        let mut scratch = Vec::new();
         let pixels: Vec<u16> = band
-            .data()
+            .contiguous_data(&mut scratch)
+            .unwrap()
             .chunks_exact(2)
             .map(|chunk| u16::from_le_bytes(chunk.try_into().unwrap()))
             .collect();
@@ -395,12 +404,18 @@ mod tests {
         assert_eq!(band1.metadata().storage_type().unwrap(), StorageType::InDb);
         assert_eq!(band1.metadata().data_type().unwrap(), BandDataType::UInt8);
         assert_eq!(band1.metadata().nodata_value().unwrap(), [255u8]);
-        assert_eq!(band1.data(), [10u8, 11, 12, 13]);
+        assert_eq!(
+            band1.contiguous_data(&mut Vec::new()).unwrap(),
+            [10u8, 11, 12, 13]
+        );
 
         assert_eq!(band2.metadata().storage_type().unwrap(), StorageType::InDb);
         assert_eq!(band2.metadata().data_type().unwrap(), BandDataType::UInt8);
         assert_eq!(band2.metadata().nodata_value().unwrap(), [255u8]);
-        assert_eq!(band2.data(), [100u8, 0, 200, 0]);
+        assert_eq!(
+            band2.contiguous_data(&mut Vec::new()).unwrap(),
+            [100u8, 0, 200, 0]
+        );
     }
 
     #[test]
@@ -420,12 +435,18 @@ mod tests {
         assert_eq!(band1.metadata().storage_type().unwrap(), StorageType::InDb);
         assert_eq!(band1.metadata().data_type().unwrap(), BandDataType::UInt8);
         assert_eq!(band1.metadata().nodata_value().unwrap(), [0u8]);
-        assert_eq!(band1.data(), [10u8, 11, 12, 13]);
+        assert_eq!(
+            band1.contiguous_data(&mut Vec::new()).unwrap(),
+            [10u8, 11, 12, 13]
+        );
 
         assert_eq!(band2.metadata().storage_type().unwrap(), StorageType::InDb);
         assert_eq!(band2.metadata().data_type().unwrap(), BandDataType::UInt8);
         assert_eq!(band2.metadata().nodata_value().unwrap(), [255u8]);
-        assert_eq!(band2.data(), [100u8, 0, 200, 0]);
+        assert_eq!(
+            band2.contiguous_data(&mut Vec::new()).unwrap(),
+            [100u8, 0, 200, 0]
+        );
     }
 
     #[test]
