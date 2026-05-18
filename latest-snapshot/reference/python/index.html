@@ -3556,36 +3556,69 @@ for more details.</p>
 
 
 <a href="#sedonadb.dataframe.DataFrame.__getitem__" class="headerlink" title="Permanent link">¶</a></h4>
-<div class="doc-signature highlight"><pre><span></span><code><span class="nf">__getitem__</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">__getitem__</span><span class="p">(</span><span class="n">key</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Union" href="https://docs.python.org/3/library/typing.html#typing.Union">Union</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span><span class="p">,</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/functions.html#int">int</a></span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n"><span title="sedonadb.expr.Expr">Expr</span></span>
 </code></pre></div>
 
     <div class="doc doc-contents ">
 
-        <p>Index into the DataFrame using pandas-style bracket access.</p>
-<p>Three forms are supported:</p>
-<ul>
-<li><code>df["x"]</code> returns an <code>Expr</code> referencing column <code>x</code>. Equivalent to
-  <code>sedonadb.expr.col("x")</code>. Note that this returns an <code>Expr</code>, not a
-  materialized column — the <code>Series</code> type that pandas users
-  eventually expect will land in a future phase.</li>
-<li><code>df[["x", "y"]]</code> returns a new <code>DataFrame</code> with the listed columns
-  (equivalent to <code>df.select("x", "y")</code>).</li>
-<li><code>df[bool_expr]</code> returns a new <code>DataFrame</code> filtered by the boolean
-  expression (equivalent to <code>df.filter(bool_expr)</code>).</li>
-</ul>
-<p>Row-position indexing (integers, slices, <code>.loc</code>, <code>.iloc</code>) is
-intentionally not supported — SedonaDB has no row ordering or
-index concept in this scope.</p>
-<p>Examples:</p>
-<div class="codehilite"><pre><span></span><code><span class="o">&gt;&gt;&gt;</span> <span class="kn">from</span><span class="w"> </span><span class="nn">sedonadb.expr</span><span class="w"> </span><span class="kn">import</span> <span class="n">col</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">sd</span> <span class="o">=</span> <span class="n">sedona</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">df</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SELECT * FROM (VALUES (1, 10), (2, 20), (3, 30)) AS t(x, y)"</span><span class="p">)</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">df</span><span class="p">[</span><span class="s2">"x"</span><span class="p">]</span>
-<span class="n">Expr</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">df</span><span class="p">[[</span><span class="s2">"x"</span><span class="p">,</span> <span class="s2">"y"</span><span class="p">]]</span><span class="o">.</span><span class="n">count</span><span class="p">()</span>
-<span class="mi">3</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">df</span><span class="p">[</span><span class="n">df</span><span class="p">[</span><span class="s2">"x"</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">count</span><span class="p">()</span>
-<span class="mi">2</span>
+        <p>Reference a single column by name or position.</p>
+<p>Returns an <code>Expr</code> referencing the requested column. The
+return-type is always <code>Expr</code> (no <code>DataFrame ⏐ Expr</code> union) so that
+IDEs and type-aware tools can resolve <code>df["x"].&lt;method&gt;</code> cleanly.</p>
+<p>For row filtering use <code>df.filter(predicate)</code>. For multi-column
+projection use <code>df.select(*cols)</code>.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+            <b><code>key</code></b>
+              (<code><a class="autorefs autorefs-external" title="typing.Union" href="https://docs.python.org/3/library/typing.html#typing.Union">Union</a>[<a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a>, <a class="autorefs autorefs-external" href="https://docs.python.org/3/library/functions.html#int">int</a>]</code>)
+          –
+          <div class="doc-md-description">
+            <p>A column name (<code>str</code>) or a 0-based column position
+(<code>int</code>, negative indices count from the end).</p>
+          </div>
+        </li>
+    </ul>
+
+
+<p><span class="doc-section-title">Raises:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+              <code><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/exceptions.html#KeyError">KeyError</a></code>
+            –
+          <div class="doc-md-description">
+            <p>A string key that does not match any column. The
+error message lists the available columns.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+              <code><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/exceptions.html#IndexError">IndexError</a></code>
+            –
+          <div class="doc-md-description">
+            <p>An integer index outside the column range.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+              <code><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/exceptions.html#TypeError">TypeError</a></code>
+            –
+          <div class="doc-md-description">
+            <p>Any other key type, including <code>bool</code>, <code>slice</code>,
+<code>list</code>, and <code>Expr</code>. The message points at <code>select</code> or
+<code>filter</code> for those use cases.</p>
+          </div>
+        </li>
+    </ul>
+        <p>Examples:</p>
+<div class="codehilite"><pre><span></span><code>&gt;&gt;&gt; sd = sedona.db.connect()
+&gt;&gt;&gt; df = sd.sql("SELECT * FROM (VALUES (1, 10), (2, 20)) AS t(x, y)")
+&gt;&gt;&gt; df["x"]
+Expr(x)
+&gt;&gt;&gt; df[1]
+Expr(y)
+&gt;&gt;&gt; df[-1]
+Expr(y)
 </code></pre></div>
 
 
@@ -3922,7 +3955,7 @@ At least one argument is required.</p>
 
 
 <a href="#sedonadb.dataframe.DataFrame.select" class="headerlink" title="Permanent link">¶</a></h4>
-<div class="doc-signature highlight"><pre><span></span><code><span class="nf">select</span><span class="p">(</span><span class="o">*</span><span class="n">exprs</span><span class="p">:</span> <span class="n"><span title="sedonadb.expr.Expr">Expr</span></span> <span class="o">|</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span> <span class="o">|</span> <span class="n"><span title="sedonadb.expr.Literal">Literal</span></span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></span>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">select</span><span class="p">(</span><span class="o">*</span><span class="n">exprs</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Union" href="https://docs.python.org/3/library/typing.html#typing.Union">Union</a></span><span class="p">[</span><span class="n"><span title="sedonadb.expr.Expr">Expr</span></span><span class="p">,</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span><span class="p">,</span> <span class="n"><span title="sedonadb.expr.Literal">Literal</span></span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></span>
 </code></pre></div>
 
     <div class="doc doc-contents ">
@@ -3940,7 +3973,7 @@ produced by <code>sedonadb.expr.lit()</code> are also accepted; use
     <ul>
         <li class="doc-section-item field-body">
             <b><code>*exprs</code></b>
-              (<code><span title="sedonadb.expr.Expr">Expr</span> | <a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a> | <span title="sedonadb.expr.Literal">Literal</span></code>, default:
+              (<code><a class="autorefs autorefs-external" title="typing.Union" href="https://docs.python.org/3/library/typing.html#typing.Union">Union</a>[<span title="sedonadb.expr.Expr">Expr</span>, <a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a>, <span title="sedonadb.expr.Literal">Literal</span>]</code>, default:
                   <code>()</code>
 )
           –
