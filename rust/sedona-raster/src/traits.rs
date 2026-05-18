@@ -463,6 +463,10 @@ pub trait RasterRef {
 ///   stride awareness (most RS_* functions, GDAL boundary, serialization).
 /// - `nd_buffer()` — raw buffer + shape + strides + offset for stride-aware
 ///   consumers (numpy zero-copy views, Arrow FFI) that want to avoid copies.
+///
+/// Implementations are **not** required to be `Sync`. Concrete impls may
+/// cache resolved bytes per band via a non-thread-safe interior cell (e.g.
+/// `OnceCell`), so a `&dyn BandRef` must not be shared across threads.
 pub trait BandRef {
     // -- Dimension metadata --
 
@@ -558,14 +562,19 @@ pub trait BandRef {
     /// True if this band's bytes live in the `data` buffer (in-database).
     /// False if the bytes must be fetched from `outdb_uri` (out-of-database).
     ///
-    /// The discriminator is whether the `data` buffer is non-empty —
-    /// `outdb_uri` and `outdb_format` are orthogonal location/format hints
-    /// that may be set on either kind of band.
-    fn is_indb(&self) -> bool {
-        // Default: materialize via nd_buffer and check buffer emptiness.
-        // Concrete impls should override with a direct buffer check.
-        self.nd_buffer().is_ok_and(|b| !b.buffer.is_empty())
-    }
+    /// This is a **schema-level** discriminator: "does the Arrow `data`
+    /// column carry these bytes inline?". It is a property of the encoded
+    /// payload, not of runtime byte availability; serialization, FFI
+    /// consumers, and view-construction rejection rely on it. `outdb_uri`
+    /// and `outdb_format` are orthogonal location/format hints that may
+    /// be set on either kind of band.
+    ///
+    /// Concrete impls must check the `data` column's emptiness directly.
+    /// Deriving from `nd_buffer().is_ok_and(...)` is wrong once an OutDb
+    /// loader is installed (it returns loader-resolved bytes for OutDb
+    /// bands, which would misclassify them as InDb), so this method
+    /// intentionally has no default impl.
+    fn is_indb(&self) -> bool;
 
     /// Eagerly-computed concrete band metadata. Mirrors the pre-N-D
     /// `BandRef::metadata()` accessor.
@@ -908,6 +917,11 @@ mod tests {
         }
         fn nodata(&self) -> Option<&[u8]> {
             None
+        }
+        fn is_indb(&self) -> bool {
+            // The is_2d tests do not exercise data provenance; any
+            // concrete answer satisfies the (now-required) trait method.
+            false
         }
         fn nd_buffer(&self) -> Result<NdBuffer<'_>, ArrowError> {
             unimplemented!("not used in is_2d tests")

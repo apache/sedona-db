@@ -19,4 +19,7 @@ pub mod affine_transformation;
 pub mod array;
 pub mod builder;
 pub mod display;
+pub mod outdb_loader;
 pub mod traits;
+
+pub use outdb_loader::{set_outdb_band_loader, OutDbBandLoader, OutDbLoadRequest};

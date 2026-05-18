@@ -23,6 +23,7 @@ use arrow_array::{
 };
 use arrow_schema::ArrowError;
 
+use crate::outdb_loader::{load_outdb, OutDbLoadRequest};
 use crate::traits::{BandRef, Bands, NdBuffer, RasterRef, ViewEntry};
 use sedona_schema::raster::{band_indices, raster_indices, BandDataType};
 
@@ -52,6 +53,104 @@ struct BandRefImpl<'a> {
     byte_strides: Vec<i64>,
     /// Byte offset into `data` of the visible region's `[0,...,0]` element.
     byte_offset: u64,
+    /// Lazy in-memory home for bytes that don't live in the Arrow `data`
+    /// column. Populated on first byte-access for schema-OutDb bands by
+    /// `source_bytes()`; remains empty for schema-InDb bands (which borrow
+    /// the Arrow column directly, zero-copy). The cell is needed because
+    /// Arrow buffers are immutable and `Arc`-shared — a loader-returned
+    /// `Vec<u8>` cannot be stashed in `data_array`, so the band owns it
+    /// here for its lifetime. Not a cross-band cache; backend-level
+    /// caching (e.g. `GDALDatasetCache`) lives in the loader crate.
+    outdb_loaded: std::cell::OnceCell<Vec<u8>>,
+}
+
+impl<'a> BandRefImpl<'a> {
+    /// Uniform byte-access for both schema-InDb and schema-OutDb bands.
+    /// Resolves to a `&[u8]` regardless of provenance:
+    ///
+    /// - schema-InDb: zero-copy borrow of the Arrow `data` column slice.
+    /// - schema-OutDb: loader bytes, loaded on first call and anchored
+    ///   in `outdb_loaded` with the band's lifetime.
+    ///
+    /// Callers (`nd_buffer`, `contiguous_data`, `data`) do not branch on
+    /// `is_indb()`; that discriminator is for schema/serialization paths.
+    fn source_bytes(&self) -> Result<&[u8], ArrowError> {
+        let column = self.data_array.value(self.band_row);
+        if !column.is_empty() {
+            return Ok(column);
+        }
+        if let Some(cached) = self.outdb_loaded.get() {
+            return Ok(cached.as_slice());
+        }
+        // First byte-access against a schema-OutDb band: ask the
+        // process-wide loader for the source bytes, then bounds-check
+        // the returned buffer against the band's source_shape so a
+        // mismatched source produces a clean error instead of an
+        // out-of-bounds index downstream. `OnceCell::get_or_try_init`
+        // is still unstable, so do the equivalent by hand:
+        // `std::cell::OnceCell` is `!Sync`, so only the calling thread
+        // ever observes this cell and `set()` cannot lose a race.
+        let uri = self.outdb_uri().ok_or_else(|| {
+            ArrowError::ExternalError(Box::new(sedona_common::sedona_internal_datafusion_err!(
+                "OutDb band has empty data column but no outdb_uri"
+            )))
+        })?;
+        let dim_names = self.dim_names();
+        let req = OutDbLoadRequest {
+            uri,
+            format: self.outdb_format(),
+            dim_names: &dim_names,
+            source_shape: self.raw_source_shape(),
+            data_type: self.data_type,
+        };
+        let bytes = load_outdb(&req)?;
+        // Overflow-safe: a malicious or merely huge source_shape could
+        // overflow u64 (silently wraps in release) or the usize cast
+        // (truncates on 32-bit), letting an undersized loader return
+        // pass an equality check. Fold with checked_mul and surface a
+        // clean error instead.
+        let elements = self
+            .raw_source_shape()
+            .iter()
+            .try_fold(1u64, |acc, &d| acc.checked_mul(d))
+            .ok_or_else(|| {
+                ArrowError::InvalidArgumentError(format!(
+                    "OutDb band {} has source_shape whose product overflows u64",
+                    self.band_row
+                ))
+            })?;
+        let elements_usize: usize = elements.try_into().map_err(|_| {
+            ArrowError::InvalidArgumentError(format!(
+                "OutDb band {} has too many elements for usize on this platform",
+                self.band_row
+            ))
+        })?;
+        let expected = elements_usize
+            .checked_mul(self.data_type.byte_size())
+            .ok_or_else(|| {
+                ArrowError::InvalidArgumentError(format!(
+                    "OutDb band {} byte count overflows usize",
+                    self.band_row
+                ))
+            })?;
+        if bytes.len() != expected {
+            return Err(ArrowError::ExternalError(Box::new(
+                sedona_common::sedona_internal_datafusion_err!(
+                    "OutDb loader returned {} bytes for band {} (uri={}), expected {}",
+                    bytes.len(),
+                    self.band_row,
+                    uri,
+                    expected
+                ),
+            )));
+        }
+        let _ = self.outdb_loaded.set(bytes);
+        Ok(self
+            .outdb_loaded
+            .get()
+            .expect("outdb_loaded was just set")
+            .as_slice())
+    }
 }
 
 impl<'a> BandRef for BandRefImpl<'a> {
@@ -86,14 +185,27 @@ impl<'a> BandRef for BandRefImpl<'a> {
     }
 
     fn data(&self) -> &[u8] {
-        // Pre-N-D compatibility surface. Identity-view InDb bands → the
-        // row-major in-line buffer (zero-copy borrow into the StructArray),
-        // matching the pre-N-D behavior exactly. OutDb → `&[]` from the
-        // empty `data` column, no panic. Non-identity views never reach
-        // here — `RasterRefImpl::band()` rejects them upstream so the
-        // raw column bytes always equal the visible bytes for any band
-        // this reader produces.
-        self.data_array.value(self.band_row)
+        // Legacy infallible accessor. For schema-InDb identity bands this
+        // is the row-major buffer borrowed from the Arrow `data` column;
+        // for schema-OutDb bands it returns the loader-anchored bytes
+        // (lazily populated on first call). Errors (no loader registered,
+        // missing outdb_uri, loader failure, bytes-length mismatch)
+        // collapse to `&[]` to preserve the pre-N-D contract — callers
+        // that care must use `nd_buffer()` instead. We log the error so
+        // a missing loader registration produces a diagnostic instead of
+        // a silent empty buffer. Non-identity views are rejected at
+        // construction in `RasterRefImpl::band()`, so we don't need a
+        // strided walk here.
+        match self.source_bytes() {
+            Ok(b) => b,
+            Err(e) => {
+                log::error!(
+                    "BandRefImpl::data() returning empty buffer for band {}: {e}",
+                    self.band_row
+                );
+                &[]
+            }
+        }
     }
 
     fn nodata(&self) -> Option<&[u8]> {
@@ -125,17 +237,13 @@ impl<'a> BandRef for BandRefImpl<'a> {
     }
 
     fn nd_buffer(&self) -> Result<NdBuffer<'_>, ArrowError> {
-        if !self.is_indb() {
-            return Err(ArrowError::NotYetImplemented(
-                "OutDb byte access via nd_buffer() is not yet implemented; \
-                 backend-specific OutDb resolvers are tracked separately"
-                    .to_string(),
-            ));
-        }
         // shape and strides are owned by NdBuffer (see its doc comment).
         // Cloning here is cheap — both vecs are O(ndim), a handful of values.
+        // `source_bytes()` resolves to either the Arrow column (InDb,
+        // zero-copy) or loader bytes (OutDb, lazily populated and
+        // anchored in `outdb_loaded`).
         Ok(NdBuffer {
-            buffer: self.data_array.value(self.band_row),
+            buffer: self.source_bytes()?,
             shape: self.visible_shape.clone(),
             strides: self.byte_strides.clone(),
             offset: self.byte_offset,
@@ -144,16 +252,10 @@ impl<'a> BandRef for BandRefImpl<'a> {
     }
 
     fn contiguous_data(&self) -> Result<Cow<'_, [u8]>, ArrowError> {
-        if !self.is_indb() {
-            return Err(ArrowError::NotYetImplemented(
-                "OutDb byte access via contiguous_data() is not yet implemented; \
-                 backend-specific OutDb resolvers are tracked separately"
-                    .to_string(),
-            ));
-        }
-        // Identity-view only today, so the data buffer is already row-major
+        // Identity-view only today, so the source bytes (Arrow column for
+        // InDb, loader-anchored buffer for OutDb) are already row-major
         // over the visible region.
-        Ok(Cow::Borrowed(self.data_array.value(self.band_row)))
+        Ok(Cow::Borrowed(self.source_bytes()?))
     }
 }
 
@@ -289,6 +391,7 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
             visible_shape,
             byte_strides,
             byte_offset: 0,
+            outdb_loaded: std::cell::OnceCell::new(),
         }))
     }
 

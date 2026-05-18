@@ -5777,6 +5777,7 @@ dependencies = [
  "arrow-ipc",
  "arrow-schema",
  "datafusion-common",
+ "log",
  "sedona-common",
  "sedona-schema",
  "sedona-testing",
