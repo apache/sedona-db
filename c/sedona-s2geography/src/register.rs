@@ -39,5 +39,6 @@ pub fn scalar_kernels() -> Result<Vec<(&'static str, ScalarKernelRef)>> {
 fn init_scalar_kernels() -> Result<Vec<(String, ScalarKernelRef)>> {
     let mut kernels = crate::kernels::s2_scalar_kernels()?;
     kernels.extend(crate::st_xy_minmax::st_xy_minmax_kernels());
+    kernels.extend(crate::st_envelope::st_envelope_kernels());
     Ok(kernels)
 }
