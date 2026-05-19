@@ -22,8 +22,32 @@ use geo_traits::{
 use crate::{
     bounding_box::BoundingBox,
     error::SedonaGeometryError,
-    interval::{Interval, IntervalTrait},
+    interval::{Interval, IntervalTrait, WraparoundInterval},
 };
+
+pub trait WkbBounder2D: std::fmt::Debug + Send + Sync {
+    fn update_wkb_bytes(&mut self, wkb_value: &[u8]) -> Result<(), SedonaGeometryError>;
+    fn finish(&mut self) -> (WraparoundInterval, Interval);
+}
+
+#[derive(Debug, Default)]
+pub struct WkbGeometryBounder {
+    x: Interval,
+    y: Interval,
+}
+
+impl WkbBounder2D for WkbGeometryBounder {
+    fn update_wkb_bytes(&mut self, wkb_value: &[u8]) -> Result<(), SedonaGeometryError> {
+        let wkb = wkb::reader::read_wkb(wkb_value)
+            .map_err(|e| SedonaGeometryError::External(Box::new(e)))?;
+        geo_traits_update_xy_bounds(wkb, &mut self.x, &mut self.y)?;
+        Ok(())
+    }
+
+    fn finish(&mut self) -> (WraparoundInterval, Interval) {
+        (self.x.into(), self.y)
+    }
+}
 
 /// Calculate the Cartesian XY bounds of a well-known binary geometry blob
 ///
