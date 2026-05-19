@@ -6,3 +6,4 @@
 ^bootstrap\.R$
 ^configure\.win$
 ^\.lintr\.R$
+^README\.Rmd$
