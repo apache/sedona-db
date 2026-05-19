@@ -45,7 +45,7 @@ autocomplete and inline documentation.
 library(sedonadb)
 library(sedonafns)
 
-sd_read_sf(system.file("shape/nc.shp", package = "sf")) |> 
+sd_read_sf(system.file("shape/nc.shp", package = "sf")) |>
   sd_transmute(
     NAME,
     area = sd_area(wkb_geometry)
