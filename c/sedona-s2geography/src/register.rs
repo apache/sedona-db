@@ -17,6 +17,7 @@
 
 use datafusion_common::Result;
 use sedona_common::sedona_internal_err;
+use sedona_expr::aggregate_udf::SedonaAccumulatorRef;
 use sedona_expr::scalar_udf::ScalarKernelRef;
 use std::sync::OnceLock;
 
@@ -41,4 +42,9 @@ fn init_scalar_kernels() -> Result<Vec<(String, ScalarKernelRef)>> {
     kernels.extend(crate::st_xy_minmax::st_xy_minmax_kernels());
     kernels.extend(crate::st_envelope::st_envelope_kernels());
     Ok(kernels)
+}
+
+/// Returns aggregate kernels for s2geography functions
+pub fn aggregate_kernels() -> Vec<(&'static str, Vec<SedonaAccumulatorRef>)> {
+    vec![("st_envelope_agg", crate::st_envelope_agg::st_envelope_agg_impl())]
 }

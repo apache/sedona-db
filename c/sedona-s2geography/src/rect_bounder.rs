@@ -110,6 +110,10 @@ impl Drop for RectBounder {
 // when accessed through its const methods
 unsafe impl Send for RectBounder {}
 
+// Safety: RectBounder owns its C++ object exclusively and doesn't share state
+// with other instances (mut methods ensure unique ownership)
+unsafe impl Sync for RectBounder {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
