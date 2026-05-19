@@ -112,3 +112,56 @@ class TableFunctions:
         args = {k: v for k, v in args.items() if v is not None}
 
         return self._ctx.sql(f"SELECT * FROM sd_random_geometry('{json.dumps(args)}')")
+
+    def sd_read_zarr(
+        self,
+        uri: str,
+        *,
+        mode: Optional[Literal["indb", "outdb"]] = None,
+        rows_per_batch: Optional[int] = None,
+        num_partitions: Optional[int] = None,
+    ) -> DataFrame:
+        """
+        Read a Zarr group as a DataFrame of N-D rasters.
+
+        Returns a single-column DataFrame ``raster: Raster`` with one row per
+        chunk position in the Zarr group's chunk grid. Each row's bands are
+        the corresponding chunks of each array in the group. All ``RS_*``
+        UDFs operate on the column unchanged.
+
+        Phase 1 supports local filesystem stores only (``file://`` URIs or
+        bare paths); cloud schemes (``s3://`` / ``gs://`` / ``az://`` /
+        ``https://``) error pending the OutDb resolver work.
+
+        Parameters
+        ----------
+        uri : str
+            Zarr group URI. ``file:///path/to/foo.zarr`` or a bare local path.
+        mode : {"indb", "outdb"}, optional
+            ``"indb"`` (default) materializes every chunk's bytes into the
+            Arrow ``data`` column eagerly. ``"outdb"`` emits chunk-anchor
+            URIs only; byte resolution depends on the OutDb resolver being
+            registered (follow-up PR).
+        rows_per_batch : int, optional
+            Chunks per ``RecordBatch`` (default 1024).
+        num_partitions : int, optional
+            Scan partitions. Phase 1 supports only 1; > 1 errors.
+
+        Examples
+        --------
+        >>> sd = sedona.db.connect()
+        >>> sd.funcs.table.sd_read_zarr("file:///path/to/datacube.zarr")  # doctest: +SKIP
+        """
+
+        args = {
+            "mode": mode,
+            "rows_per_batch": rows_per_batch,
+            "num_partitions": num_partitions,
+        }
+        args = {k: v for k, v in args.items() if v is not None}
+
+        if args:
+            return self._ctx.sql(
+                f"SELECT * FROM sd_read_zarr('{uri}', '{json.dumps(args)}')"
+            )
+        return self._ctx.sql(f"SELECT * FROM sd_read_zarr('{uri}')")
