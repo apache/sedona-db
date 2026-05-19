@@ -27,3 +27,4 @@ pub mod reader;
 pub mod record_batch_reader_provider;
 pub mod show;
 pub mod size_parser;
+pub mod zarr_read;
