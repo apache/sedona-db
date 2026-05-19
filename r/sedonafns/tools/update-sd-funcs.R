@@ -251,7 +251,7 @@ generate_roxygen <- function(title, description, fn_name, kernel_info) {
 
   # @seealso
   doc_url <- glue("{docs_base_url}/{fn_name}/")
-  seealso_block <- glue("#' @seealso\n#' [{toupper(fn_name)}]({doc_url})")
+  seealso_block <- glue("#' @seealso\n#' [SedonaDB SQL documentation for {toupper(fn_name)}]({doc_url})")
 
   # @param entries
   param_lines <- vapply(
@@ -261,10 +261,7 @@ generate_roxygen <- function(title, description, fn_name, kernel_info) {
     },
     character(1)
   )
-  param_block <- paste(
-    c(param_lines, "#' @param ... For S3 generic compatibility. Must be empty."),
-    collapse = "\n"
-  )
+  param_block <- paste(param_lines, collapse = "\n")
 
   # @returns
   returns_block <- glue("#' @returns ({kernel_info$returns})")
@@ -288,32 +285,16 @@ generate_roxygen <- function(title, description, fn_name, kernel_info) {
   )
 }
 
-#' Generate the S3 generic function definition
+#' Generate the function definition
 #'
 #' @param sd_name Function name (e.g., "sd_length")
 #' @param args_str Comma-separated argument string
 #' @returns Character string with function definition
-generate_s3_generic <- function(sd_name, args_str) {
-  glue(
-    '
-{sd_name} <- function({args_str}) {{
-    UseMethod("{sd_name}")
-}}
-'
-  )
-}
-
-#' Generate the default method
-#'
-#' @param sd_name Function name (e.g., "sd_length")
-#' @param args_str Comma-separated argument string
-#' @returns Character string with default method
-generate_default_method <- function(sd_name, args_str) {
+generate_function <- function(sd_name, args_str) {
   glue(
     "
-#\' @export
-{sd_name}.default <- function({args_str}) {{
-    call_sd_function_default()
+{sd_name} <- function({args_str}) {{
+  call_sd_function_default()
 }}
 "
   )
@@ -336,11 +317,11 @@ generate_translation <- function(sd_name, fn_name, args) {
   glue(
     '
 {sd_name}_translation <- function({trans_args}) {{
-    sedonadb::sd_expr_any_function(
-        "{fn_name}",
-        {list_args},
-        factory = .ctx$factory
-    )
+  call_sd_translation_default(
+    .ctx,
+    "{fn_name}",
+    {list_args}
+  )
 }}
 '
   )
@@ -357,13 +338,12 @@ generate_r_file <- function(fn_name, frontmatter, description, file_hash) {
   sd_name <- sub("^st_", "sd_", fn_name)
   kernel_info <- parse_kernel_params(frontmatter$kernels)
   title <- frontmatter$description %||% frontmatter$title
-  args_str <- paste(c(kernel_info$args, "..."), collapse = ", ")
+  args_str <- paste(kernel_info$args, collapse = ", ")
 
   # Generate pieces
   # nolint start: object_usage_linter
   roxygen <- generate_roxygen(title, description, fn_name, kernel_info)
-  generic <- generate_s3_generic(sd_name, args_str)
-  default <- generate_default_method(sd_name, args_str)
+  fn_def <- generate_function(sd_name, args_str)
   translation <- generate_translation(sd_name, fn_name, kernel_info$args)
   # nolint end
 
@@ -374,10 +354,9 @@ generate_r_file <- function(fn_name, frontmatter, description, file_hash) {
 
 # Generated from {fn_name}.qmd {file_hash}
 
-{roxygen}{generic}
-{default}
-{translation}
-",
+{roxygen}{fn_def}
+
+{translation}",
     .trim = FALSE
   )
 }
@@ -422,7 +401,7 @@ generate_from_qmd <- function(qmd_path, force = FALSE) {
 #' @param files Character vector of function names (without .qmd) or NULL for all
 #' @param force Force regeneration
 #' @returns Invisible NULL
-update_sd_funcs <- function(files = NULL, force = FALSE) {
+update_sd_funcs <- function(files = NULL, force = TRUE) {
   if (is.null(files)) {
     qmd_files <- list.files(docs_dir, pattern = "^(st|rs)_.*\\.qmd$", full.names = TRUE)
   } else {

@@ -17,7 +17,7 @@
 
 call_sd_function_default <- function() {
   # Get the parent call (the .default method's caller, e.g., sd_length())
-  parent_call <- sys.call(-2)
+  parent_call <- sys.call(-1)
   fn_name <- as.character(parent_call[[1]])
 
   stop(
@@ -25,6 +25,14 @@ call_sd_function_default <- function() {
     fn_name,
     "()` outside a SedonaDB context",
     call. = FALSE
+  )
+}
+
+call_sd_translation_default <- function(.ctx, fn_name, args) {
+  sedonadb::sd_expr_any_function(
+    fn_name,
+    args,
+    factory = .ctx$factory
   )
 }
 
