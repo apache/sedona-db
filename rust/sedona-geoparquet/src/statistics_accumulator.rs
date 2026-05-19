@@ -104,42 +104,43 @@ impl LiteralBounder for GeographyLiteralBounder {
         sedona_type: &SedonaType,
         distance: Option<f64>,
     ) -> Result<sedona_geometry::bounding_box::BoundingBox> {
+        use sedona_geometry::bounds::WkbBounder2D;
+        use sedona_s2geography::rect_bounder::WkbGeographyBounder;
+        use sedona_schema::crs::lnglat;
+
         match &sedona_type {
-            SedonaType::Wkb(sedona_schema::datatypes::Edges::Spherical, _)
-            | SedonaType::WkbView(sedona_schema::datatypes::Edges::Spherical, _) => match value {
+            SedonaType::Wkb(sedona_schema::datatypes::Edges::Spherical, crs)
+            | SedonaType::WkbView(sedona_schema::datatypes::Edges::Spherical, crs) => match value {
                 ScalarValue::Binary(maybe_vec) | ScalarValue::BinaryView(maybe_vec) => {
                     if let Some(vec) = maybe_vec {
-                        let mut bounder = sedona_s2geography::rect_bounder::RectBounder::new();
-                        let mut factory = sedona_s2geography::geography::GeographyFactory::new();
-                        let geog = factory.from_wkb(vec).map_err(|e| {
-                            datafusion_common::exec_datafusion_err!(
-                                "Error parsing geography literal: {e}"
-                            )
-                        })?;
-                        bounder.bound(&geog).map_err(|e| {
+                        let mut bounder = WkbGeographyBounder::default();
+                        bounder.update_wkb_bytes(vec).map_err(|e| {
                             datafusion_common::exec_datafusion_err!(
                                 "Error bounding geography literal: {e}"
                             )
                         })?;
 
                         if let Some(distance) = distance {
-                            bounder.expand_by_distance(distance);
+                            // When we support custom CRSes for geography fully we can remove this
+                            if !crs.is_none() || crs != &lnglat() {
+                                return sedona_internal_err!(
+                                    "Can't expand geography bounds for crs {crs:?}"
+                                );
+                            }
+
+                            bounder.expand_by_distance(distance, None).map_err(|e| {
+                                datafusion_common::exec_datafusion_err!(
+                                    "Error expanding literal bounds: {e}"
+                                )
+                            })?;
                         }
 
-                        if let Some((xmin, ymin, xmax, ymax)) = bounder.finish().map_err(|e| {
-                            datafusion_common::exec_datafusion_err!(
-                                "Error finishing geography bounds: {e}"
-                            )
-                        })? {
-                            return Ok(sedona_geometry::bounding_box::BoundingBox::xy(
-                                (xmin, xmax),
-                                (ymin, ymax),
-                            ));
-                        }
+                        let (x, y) = bounder.finish();
+                        return Ok(sedona_geometry::bounding_box::BoundingBox::xy(x, y));
+                    } else {
+                        // Null scalar
+                        return Ok(sedona_geometry::bounding_box::BoundingBox::empty());
                     }
-
-                    // Null scalar or empty geography returns an empty bounding box
-                    return Ok(sedona_geometry::bounding_box::BoundingBox::empty());
                 }
                 _ => {}
             },
@@ -154,9 +155,8 @@ impl LiteralBounder for GeographyLiteralBounder {
 #[derive(Debug)]
 struct GeographyGeoStatsAccumulator {
     invalid: bool,
-    geog_bounder: sedona_s2geography::rect_bounder::RectBounder,
+    geog_bounder: sedona_s2geography::rect_bounder::WkbGeographyBounder,
     bounder: parquet_geospatial::bounding::GeometryBounder,
-    geography_factory: sedona_s2geography::geography::GeographyFactory,
 }
 
 #[cfg(feature = "s2geography")]
@@ -166,7 +166,6 @@ impl Default for GeographyGeoStatsAccumulator {
             invalid: false,
             geog_bounder: Default::default(),
             bounder: parquet_geospatial::bounding::GeometryBounder::empty(),
-            geography_factory: Default::default(),
         }
     }
 }
@@ -176,7 +175,7 @@ impl GeographyGeoStatsAccumulator {
     fn clear(&mut self) {
         self.invalid = false;
         self.bounder = parquet_geospatial::bounding::GeometryBounder::empty();
-        self.geog_bounder.clear();
+        self.geog_bounder = Default::default();
     }
 }
 
@@ -187,6 +186,8 @@ impl GeoStatsAccumulator for GeographyGeoStatsAccumulator {
     }
 
     fn update_wkb(&mut self, wkb: &[u8]) {
+        use sedona_geometry::bounds::WkbBounder2D;
+
         if self.invalid {
             return;
         }
@@ -197,20 +198,15 @@ impl GeoStatsAccumulator for GeographyGeoStatsAccumulator {
             return;
         }
 
-        let Ok(geog) = self.geography_factory.from_wkb(wkb) else {
-            self.invalid = true;
-            return;
-        };
-
-        if self.geog_bounder.bound(&geog).is_err() {
+        if self.geog_bounder.update_wkb_bytes(wkb).is_err() {
             self.invalid = true;
         }
     }
 
     fn finish(&mut self) -> Option<Box<parquet::geospatial::statistics::GeospatialStatistics>> {
-        use parquet_geospatial::interval::IntervalTrait;
-
         use parquet::geospatial::bounding_box::BoundingBox;
+        use parquet_geospatial::interval::IntervalTrait as ParquetIntervalTrait;
+        use sedona_geometry::{bounds::WkbBounder2D, interval::IntervalTrait};
 
         if self.invalid {
             self.clear();
@@ -225,16 +221,18 @@ impl GeoStatsAccumulator for GeographyGeoStatsAccumulator {
         };
 
         // If we have completely empty bounds, we can still communicate the visited geometry types
-        let Ok(Some(geog_box)) = self.geog_bounder.finish() else {
+        let (x, y) = self.geog_bounder.finish();
+
+        if x.is_empty() || y.is_empty() {
             self.clear();
             return Some(Box::new(
                 parquet::geospatial::statistics::GeospatialStatistics::new(None, geometry_types),
             ));
         };
 
-        // s2geography's rect bounder outputs xmin, ymin, xmax, ymax; BoundingBox::new()
+        // s2geography's rect bounder outputs (x, y) intervals; BoundingBox::new()
         // accepts xmin, xmax, ymin, ymax.
-        let mut bbox = BoundingBox::new(geog_box.0, geog_box.2, geog_box.1, geog_box.3);
+        let mut bbox = BoundingBox::new(x.lo(), x.hi(), y.lo(), y.hi());
 
         // Use the Z, M, and geometry type bounds from the Parquet implementation
         if !self.bounder.z().is_empty() {

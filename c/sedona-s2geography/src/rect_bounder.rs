@@ -18,6 +18,7 @@
 use std::ptr;
 
 use sedona_geometry::bounds::WkbBounder2D;
+use sedona_geometry::error::SedonaGeometryError;
 use sedona_geometry::interval::Interval;
 use sedona_geometry::interval::IntervalTrait;
 use sedona_geometry::interval::WraparoundInterval;
@@ -54,16 +55,13 @@ impl WkbBounder2D for WkbGeographyBounder {
         &mut self,
         x: WraparoundInterval,
         y: Interval,
-    ) -> Result<(), sedona_geometry::error::SedonaGeometryError> {
+    ) -> Result<(), SedonaGeometryError> {
         self.exact_x = self.exact_x.merge_interval(&x);
         self.exact_y = self.exact_y.merge_interval(&y);
         Ok(())
     }
 
-    fn update_wkb_bytes(
-        &mut self,
-        wkb_value: &[u8],
-    ) -> Result<(), sedona_geometry::error::SedonaGeometryError> {
+    fn update_wkb_bytes(&mut self, wkb_value: &[u8]) -> Result<(), SedonaGeometryError> {
         // Special-case the point because the rect bounder will expand the bounds slightly
         // and involves a roundtrip through a 3D point vector that makes this slightly
         // more faithful to the input.
@@ -77,10 +75,35 @@ impl WkbBounder2D for WkbGeographyBounder {
 
         self.factory
             .init_from_wkb(wkb_value, &mut self.geog)
-            .map_err(|e| sedona_geometry::error::SedonaGeometryError::External(Box::new(e)))?;
+            .map_err(|e| SedonaGeometryError::External(Box::new(e)))?;
         self.inner
             .bound(&self.geog)
-            .map_err(|e| sedona_geometry::error::SedonaGeometryError::External(Box::new(e)))?;
+            .map_err(|e| SedonaGeometryError::External(Box::new(e)))?;
+
+        Ok(())
+    }
+
+    fn expand_by_distance(
+        &mut self,
+        distance: f64,
+        radius: Option<f64>,
+    ) -> Result<(), SedonaGeometryError> {
+        if distance > 0.0 {
+            // Union the exact bounds with the inner implementation
+            self.inner.update_rect(
+                self.exact_x.lo(),
+                self.exact_y.lo(),
+                self.exact_x.hi(),
+                self.exact_y.hi(),
+            );
+
+            // If we have an explicit radius, pass it on to s2geography. Otherwise, expand using the default
+            if let Some(radius) = radius {
+                self.inner.expand_by_distance_with_radius(distance, radius);
+            } else {
+                self.inner.expand_by_distance(distance);
+            }
+        }
 
         Ok(())
     }
@@ -138,6 +161,21 @@ impl RectBounder {
     /// Perform the minimum expansion required to satisfy a distance expansion
     pub fn expand_by_distance(&mut self, distance_meters: f64) {
         unsafe { S2GeogRectBounderExpandByDistance(self.ptr, distance_meters) }
+    }
+
+    /// Perform the minimum expansion required to satisfy a distance expansion
+    /// with a custom sphere radius
+    ///
+    /// This is useful when working with non-Earth spheres or custom projections.
+    pub fn expand_by_distance_with_radius(&mut self, distance_meters: f64, radius: f64) {
+        unsafe { S2GeogRectBounderExpandByDistanceWithRadius(self.ptr, distance_meters, radius) }
+    }
+
+    /// Update bounds with a rectangle specified by corners
+    ///
+    /// Coordinates are in degrees: x is longitude, y is latitude.
+    pub fn update_rect(&mut self, x_lo: f64, y_lo: f64, x_hi: f64, y_hi: f64) {
+        unsafe { S2GeogRectBounderUpdateRect(self.ptr, x_lo, y_lo, x_hi, y_hi) }
     }
 
     /// Check if the bounder is empty (no geometries or only empty geometries
@@ -241,5 +279,61 @@ mod tests {
 
         bounder.clear();
         assert!(bounder.is_empty());
+    }
+
+    #[test]
+    fn test_rect_bounder_expand_by_distance_with_radius() {
+        let mut factory = GeographyFactory::new();
+
+        // Test with half Earth's radius - should result in twice the angular expansion
+        let mut bounder = RectBounder::new();
+        bounder
+            .bound(&factory.from_wkt("POINT (10 20)").unwrap())
+            .unwrap();
+
+        let half_earth_radius = 6371000.0 / 2.0; // Half of Earth's radius in meters
+        bounder.expand_by_distance_with_radius(1000.0, half_earth_radius);
+
+        let result = bounder.finish().unwrap().unwrap();
+        let (lo_lng, lo_lat, hi_lng, hi_lat) = result;
+
+        // With half the radius, 1km expands more (~0.018 degrees vs ~0.009 degrees)
+        assert!(lo_lng < 10.0 - 0.016);
+        assert!(hi_lng > 10.0 + 0.016);
+        assert!(lo_lat < 20.0 - 0.016);
+        assert!(hi_lat > 20.0 + 0.016);
+    }
+
+    #[test]
+    fn test_rect_bounder_update_rect() {
+        let mut bounder = RectBounder::new();
+
+        // Update with a rectangle specified by corners
+        bounder.update_rect(-10.0, -20.0, 30.0, 40.0);
+
+        assert!(!bounder.is_empty());
+        let result = bounder.finish().unwrap().unwrap();
+        let (lo_lng, lo_lat, hi_lng, hi_lat) = result;
+
+        // Bounds should match the input rectangle exactly (close to f64 precision)
+        // due to roundtripping through radians
+        assert!((lo_lng - (-10.0)).abs() < f64::EPSILON);
+        assert!((lo_lat - (-20.0)).abs() < f64::EPSILON);
+        assert!((hi_lng - 30.0).abs() < 1.0e-14);
+        assert!((hi_lat - 40.0).abs() < f64::EPSILON);
+
+        // Test wraparound case (crossing antimeridian: x_lo > x_hi)
+        bounder.clear();
+        bounder.update_rect(170.0, -10.0, -170.0, 10.0);
+
+        assert!(!bounder.is_empty());
+        let result = bounder.finish().unwrap().unwrap();
+        let (lo_lng, lo_lat, hi_lng, hi_lat) = result;
+
+        // Wraparound: lo_lng > hi_lng
+        assert!((lo_lng - 170.0).abs() < f64::EPSILON);
+        assert!((lo_lat - (-10.0)).abs() < f64::EPSILON);
+        assert!((hi_lng - (-170.0)).abs() < f64::EPSILON);
+        assert!((hi_lat - 10.0).abs() < f64::EPSILON);
     }
 }

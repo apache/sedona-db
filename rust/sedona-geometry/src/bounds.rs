@@ -40,6 +40,12 @@ pub trait WkbBounder2D: std::fmt::Debug + Send + Sync {
     /// Update this bounder with WKB formatted bytes
     fn update_wkb_bytes(&mut self, wkb_value: &[u8]) -> Result<(), SedonaGeometryError>;
 
+    fn expand_by_distance(
+        &mut self,
+        distance: f64,
+        radius: Option<f64>,
+    ) -> Result<(), SedonaGeometryError>;
+
     /// Finish this bounder into component intervals
     fn finish(&self) -> (WraparoundInterval, Interval);
 
@@ -68,6 +74,22 @@ impl WkbBounder2D for WkbGeometryBounder {
         let wkb = wkb::reader::read_wkb(wkb_value)
             .map_err(|e| SedonaGeometryError::External(Box::new(e)))?;
         geo_traits_update_xy_bounds(wkb, &mut self.x, &mut self.y)?;
+        Ok(())
+    }
+
+    fn expand_by_distance(
+        &mut self,
+        distance: f64,
+        radius: Option<f64>,
+    ) -> Result<(), SedonaGeometryError> {
+        if radius.is_some() {
+            return Err(SedonaGeometryError::Invalid(
+                "WkbGeometryBounder can't expand with radisu".to_string(),
+            ));
+        }
+
+        self.x = self.x.expand_by(distance);
+        self.y = self.y.expand_by(distance);
         Ok(())
     }
 

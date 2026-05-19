@@ -21,7 +21,7 @@ use std::sync::Arc;
 use arrow_array::builder::BinaryBuilder;
 use arrow_array::{Array, ArrayRef, BooleanArray, Float64Array};
 use arrow_schema::{DataType, Field, FieldRef};
-use datafusion_common::{exec_datafusion_err, error::Result, DataFusionError, ScalarValue};
+use datafusion_common::{error::Result, exec_datafusion_err, DataFusionError, ScalarValue};
 use datafusion_expr::{Accumulator, ColumnarValue, EmitTo, GroupsAccumulator};
 use sedona_common::sedona_internal_err;
 use sedona_expr::{
@@ -345,7 +345,8 @@ impl BoundsGroupsAccumulator {
         }
 
         // Ensure we have enough intervals
-        self.xs.resize(total_num_groups, WraparoundInterval::empty());
+        self.xs
+            .resize(total_num_groups, WraparoundInterval::empty());
         self.ys.resize(total_num_groups, Interval::empty());
 
         let arg_types = [self.input_type.clone()];
@@ -430,7 +431,8 @@ impl BoundsGroupsAccumulator {
         debug_assert_eq!(values.len(), 4);
 
         // Ensure we have enough intervals
-        self.xs.resize(total_num_groups, WraparoundInterval::empty());
+        self.xs
+            .resize(total_num_groups, WraparoundInterval::empty());
         self.ys.resize(total_num_groups, Interval::empty());
 
         let xmin_arr = values[0]
@@ -451,9 +453,7 @@ impl BoundsGroupsAccumulator {
             .ok_or_else(|| exec_datafusion_err!("Expected Float64Array for ymax state"))?;
 
         for i in 0..xmin_arr.len() {
-            let should_include = opt_filter
-                .map(|f| f.value(i))
-                .unwrap_or(true);
+            let should_include = opt_filter.map(|f| f.value(i)).unwrap_or(true);
 
             if should_include && !xmin_arr.is_null(i) {
                 let group_id = group_indices[i];
@@ -601,7 +601,11 @@ mod tests {
 
     fn create_udf() -> SedonaAggregateUDF {
         let impls = st_envelope_agg_impl();
-        SedonaAggregateUDF::new("st_envelope_agg", impls, datafusion_expr::Volatility::Immutable)
+        SedonaAggregateUDF::new(
+            "st_envelope_agg",
+            impls,
+            datafusion_expr::Volatility::Immutable,
+        )
     }
 
     /// Helper to extract WKB bytes from a scalar result
