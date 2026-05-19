@@ -14,7 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::{iter::zip, sync::Arc, vec};
+use std::{iter::zip, marker::PhantomData, sync::Arc, vec};
 
 use crate::executor::{WkbBytesExecutor, WkbExecutor};
 use crate::st_envelope::write_envelope;
@@ -50,22 +50,46 @@ use sedona_schema::{
 pub fn st_envelope_agg_udf() -> SedonaAggregateUDF {
     SedonaAggregateUDF::new(
         "st_envelope_agg",
-        ItemCrsSedonaAccumulator::wrap_impl(vec![Arc::new(STEnvelopeAgg {})]),
+        ItemCrsSedonaAccumulator::wrap_impl(vec![Arc::new(
+            STEnvelopeAgg::<WkbGeometryBounder>::new(
+                ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY),
+                true, // groups_accumulator supported for geometry
+            ),
+        )]),
         Volatility::Immutable,
     )
 }
 
+/// Generic ST_Envelope_Agg accumulator that works with any WkbBounder2D implementation
 #[derive(Debug)]
-struct STEnvelopeAgg {}
+pub struct STEnvelopeAgg<T> {
+    matcher: ArgMatcher,
+    supports_groups_accumulator: bool,
+    _phantom: PhantomData<T>,
+}
 
-impl SedonaAccumulator for STEnvelopeAgg {
+impl<T> STEnvelopeAgg<T> {
+    /// Create a new STEnvelopeAgg with a specific ArgMatcher
+    ///
+    /// The `supports_groups_accumulator` flag indicates whether the groups accumulator
+    /// optimization is available. Set to `false` for geography types where the
+    /// optimized implementation is not yet available.
+    pub fn new(matcher: ArgMatcher, supports_groups_accumulator: bool) -> Self {
+        Self {
+            matcher,
+            supports_groups_accumulator,
+            _phantom: Default::default(),
+        }
+    }
+}
+
+impl<T: WkbBounder2D + Default + std::fmt::Debug + 'static> SedonaAccumulator for STEnvelopeAgg<T> {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        let matcher = ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY);
-        matcher.match_args(args)
+        self.matcher.match_args(args)
     }
 
     fn groups_accumulator_supported(&self, _args: &[SedonaType]) -> bool {
-        true
+        self.supports_groups_accumulator
     }
 
     fn groups_accumulator(
@@ -81,9 +105,7 @@ impl SedonaAccumulator for STEnvelopeAgg {
         args: &[SedonaType],
         _output_type: &SedonaType,
     ) -> Result<Box<dyn Accumulator>> {
-        Ok(Box::new(BoundsAccumulator2D::<WkbGeometryBounder>::new(
-            args[0].clone(),
-        )))
+        Ok(Box::new(BoundsAccumulator2D::<T>::new(args[0].clone())))
     }
 
     fn state_fields(&self, _args: &[SedonaType]) -> Result<Vec<FieldRef>> {
@@ -97,13 +119,15 @@ impl SedonaAccumulator for STEnvelopeAgg {
     }
 }
 
+/// A generic accumulator for computing 2D bounds using any WkbBounder2D implementation
 #[derive(Debug)]
-struct BoundsAccumulator2D<T: std::fmt::Debug> {
+pub struct BoundsAccumulator2D<T: std::fmt::Debug> {
     input_type: SedonaType,
     bounder: T,
 }
 
 impl<T: std::fmt::Debug + WkbBounder2D + Default> BoundsAccumulator2D<T> {
+    /// Create a new BoundsAccumulator2D with the given input type
     pub fn new(input_type: SedonaType) -> Self {
         Self {
             input_type,

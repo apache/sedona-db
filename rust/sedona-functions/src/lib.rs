@@ -31,7 +31,7 @@ mod st_collect_agg;
 mod st_dimension;
 mod st_dump;
 pub mod st_envelope;
-mod st_envelope_agg;
+pub mod st_envelope_agg;
 mod st_flipcoordinates;
 mod st_force_dim;
 mod st_geometryn;
