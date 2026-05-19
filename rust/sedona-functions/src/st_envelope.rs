@@ -14,11 +14,14 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::{sync::Arc, vec};
+use std::{marker::PhantomData, sync::Arc, vec};
 
-use crate::executor::WkbExecutor;
+use crate::executor::WkbBytesExecutor;
 use arrow_array::builder::BinaryBuilder;
-use datafusion_common::error::{DataFusionError, Result};
+use datafusion_common::{
+    error::{DataFusionError, Result},
+    exec_datafusion_err,
+};
 use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::GeometryTrait;
 use sedona_common::sedona_internal_err;
@@ -27,7 +30,7 @@ use sedona_expr::{
     scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
 };
 use sedona_geometry::{
-    bounds::geo_traits_bounds_xy,
+    bounds::{WkbBounder2D, WkbGeometryBounder},
     interval::{Interval, IntervalTrait, WraparoundInterval},
     wkb_factory::{
         write_wkb_empty_point, write_wkb_geometrycollection_header, write_wkb_linestring,
@@ -40,7 +43,6 @@ use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOMETRY},
     matchers::ArgMatcher,
 };
-use wkb::reader::Wkb;
 
 /// ST_Envelope() scalar UDF implementation
 ///
@@ -48,15 +50,17 @@ use wkb::reader::Wkb;
 pub fn st_envelope_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_envelope",
-        ItemCrsKernel::wrap_impl(vec![Arc::new(STEnvelope {})]),
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STEnvelope::<WkbGeometryBounder>::default())]),
         Volatility::Immutable,
     )
 }
 
-#[derive(Debug)]
-struct STEnvelope {}
+#[derive(Debug, Default)]
+pub struct STEnvelope<T> {
+    _phantom: PhantomData<T>,
+}
 
-impl SedonaScalarKernel for STEnvelope {
+impl<T: WkbBounder2D + Default> SedonaScalarKernel for STEnvelope<T> {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY);
         matcher.match_args(args)
@@ -67,7 +71,7 @@ impl SedonaScalarKernel for STEnvelope {
         arg_types: &[SedonaType],
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
-        let executor = WkbExecutor::new(arg_types, args);
+        let executor = WkbBytesExecutor::new(arg_types, args);
         let mut builder = BinaryBuilder::with_capacity(
             executor.num_iterations(),
             WKB_MIN_PROBABLE_BYTES * executor.num_iterations(),
@@ -76,7 +80,7 @@ impl SedonaScalarKernel for STEnvelope {
         executor.execute_wkb_void(|maybe_item| {
             match maybe_item {
                 Some(item) => {
-                    invoke_scalar(&item, &mut builder)?;
+                    invoke_scalar::<T>(item, &mut builder)?;
                     builder.append_value([]);
                 }
                 None => builder.append_null(),
@@ -88,10 +92,19 @@ impl SedonaScalarKernel for STEnvelope {
     }
 }
 
-fn invoke_scalar(wkb: &Wkb, writer: &mut impl std::io::Write) -> Result<()> {
-    let bounds = geo_traits_bounds_xy(wkb).map_err(|e| DataFusionError::External(e.into()))?;
+fn invoke_scalar<T: WkbBounder2D + Default>(
+    wkb_value: &[u8],
+    writer: &mut impl std::io::Write,
+) -> Result<()> {
+    let mut bounder = T::default();
+    bounder
+        .update_wkb_bytes(wkb_value)
+        .map_err(|e| exec_datafusion_err!("Error updating bounder: {e}"))?;
+    let (x, y) = bounder.finish();
+    let written = write_envelope(&x, &y, writer)?;
 
-    let written = write_envelope(bounds.x(), bounds.y(), writer)?;
+    let wkb = wkb::reader::read_wkb(wkb_value)
+        .map_err(|e| exec_datafusion_err!("Failed to parse empty WKB: {e}"))?;
 
     if !written {
         let result = match wkb.as_type() {
@@ -124,8 +137,9 @@ fn invoke_scalar(wkb: &Wkb, writer: &mut impl std::io::Write) -> Result<()> {
 }
 
 /// Writes the WKB for an envelope of a geometry given its XY bounds
-/// Returns true if the envelope was written, false otherwise
-/// A return value of false indicates an empty envelope allowing the caller to handle it appropriately
+///
+/// Returns true if the envelope was written, false otherwise. A return value of false
+/// indicates an empty envelope allowing the caller to handle it appropriately.
 pub fn write_envelope(
     x: &WraparoundInterval,
     y: &Interval,

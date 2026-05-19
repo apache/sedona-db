@@ -25,9 +25,23 @@ use crate::{
     interval::{Interval, IntervalTrait, WraparoundInterval},
 };
 
+/// Trait defining an abstract bounder
+///
+/// This trait is used to parameterize geometry implementations such that
+/// they may be reused for geographies (which have different bounding rules).
 pub trait WkbBounder2D: std::fmt::Debug + Send + Sync {
+    /// Update this bounder with precomputed bounds
+    fn update_bounds(
+        &mut self,
+        x: WraparoundInterval,
+        y: Interval,
+    ) -> Result<(), SedonaGeometryError>;
+
+    /// Update this bounder with WKB formatted bytes
     fn update_wkb_bytes(&mut self, wkb_value: &[u8]) -> Result<(), SedonaGeometryError>;
-    fn finish(&mut self) -> (WraparoundInterval, Interval);
+
+    /// Finish this bounder into component intervals
+    fn finish(&self) -> (WraparoundInterval, Interval);
 }
 
 #[derive(Debug, Default)]
@@ -37,6 +51,16 @@ pub struct WkbGeometryBounder {
 }
 
 impl WkbBounder2D for WkbGeometryBounder {
+    fn update_bounds(
+        &mut self,
+        x: WraparoundInterval,
+        y: Interval,
+    ) -> Result<(), SedonaGeometryError> {
+        self.x.update_interval(&x.try_into()?);
+        self.y.update_interval(&y);
+        Ok(())
+    }
+
     fn update_wkb_bytes(&mut self, wkb_value: &[u8]) -> Result<(), SedonaGeometryError> {
         let wkb = wkb::reader::read_wkb(wkb_value)
             .map_err(|e| SedonaGeometryError::External(Box::new(e)))?;
@@ -44,7 +68,7 @@ impl WkbBounder2D for WkbGeometryBounder {
         Ok(())
     }
 
-    fn finish(&mut self) -> (WraparoundInterval, Interval) {
+    fn finish(&self) -> (WraparoundInterval, Interval) {
         (self.x.into(), self.y)
     }
 }

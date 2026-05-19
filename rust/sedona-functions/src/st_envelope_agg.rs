@@ -16,10 +16,11 @@
 // under the License.
 use std::{iter::zip, sync::Arc, vec};
 
-use crate::executor::WkbExecutor;
+use crate::executor::{WkbBytesExecutor, WkbExecutor};
 use crate::st_envelope::write_envelope;
 use arrow_array::{builder::BinaryBuilder, Array, ArrayRef, BooleanArray};
 use arrow_schema::{DataType, Field, FieldRef};
+use datafusion_common::exec_datafusion_err;
 use datafusion_common::{
     cast::as_float64_array,
     error::{DataFusionError, Result},
@@ -31,8 +32,10 @@ use sedona_expr::{
     aggregate_udf::{SedonaAccumulator, SedonaAggregateUDF},
     item_crs::ItemCrsSedonaAccumulator,
 };
+use sedona_geometry::bounds::WkbGeometryBounder;
+use sedona_geometry::interval::WraparoundInterval;
 use sedona_geometry::{
-    bounds::geo_traits_update_xy_bounds,
+    bounds::{geo_traits_update_xy_bounds, WkbBounder2D},
     interval::{Interval, IntervalTrait},
     wkb_factory::WKB_MIN_PROBABLE_BYTES,
 };
@@ -78,7 +81,9 @@ impl SedonaAccumulator for STEnvelopeAgg {
         args: &[SedonaType],
         _output_type: &SedonaType,
     ) -> Result<Box<dyn Accumulator>> {
-        Ok(Box::new(BoundsAccumulator2D::new(args[0].clone())))
+        Ok(Box::new(BoundsAccumulator2D::<WkbGeometryBounder>::new(
+            args[0].clone(),
+        )))
     }
 
     fn state_fields(&self, _args: &[SedonaType]) -> Result<Vec<FieldRef>> {
@@ -93,25 +98,24 @@ impl SedonaAccumulator for STEnvelopeAgg {
 }
 
 #[derive(Debug)]
-struct BoundsAccumulator2D {
+struct BoundsAccumulator2D<T: std::fmt::Debug> {
     input_type: SedonaType,
-    x: Interval,
-    y: Interval,
+    bounder: T,
 }
 
-impl BoundsAccumulator2D {
+impl<T: std::fmt::Debug + WkbBounder2D + Default> BoundsAccumulator2D<T> {
     pub fn new(input_type: SedonaType) -> Self {
         Self {
             input_type,
-            x: Interval::empty(),
-            y: Interval::empty(),
+            bounder: T::default(),
         }
     }
 
     // Create a WKB result based on the current state of the accumulator.
     fn make_wkb_result(&self) -> Result<Option<Vec<u8>>> {
         let mut wkb = Vec::new();
-        let written = write_envelope(&self.x.into(), &self.y, &mut wkb)?;
+        let (x, y) = self.bounder.finish();
+        let written = write_envelope(&x, &y, &mut wkb)?;
         if written {
             Ok(Some(wkb))
         } else {
@@ -136,11 +140,12 @@ impl BoundsAccumulator2D {
     }
 
     // Execute the update operation for the accumulator.
-    fn execute_update(&mut self, executor: WkbExecutor) -> Result<(), DataFusionError> {
+    fn execute_update(&mut self, executor: WkbBytesExecutor) -> Result<(), DataFusionError> {
         executor.execute_wkb_void(|maybe_item| {
             if let Some(item) = maybe_item {
-                geo_traits_update_xy_bounds(item, &mut self.x, &mut self.y)
-                    .map_err(|e| DataFusionError::External(Box::new(e)))?;
+                self.bounder
+                    .update_wkb_bytes(item)
+                    .map_err(|e| exec_datafusion_err!("Error updating bounds: {e}"))?
             }
             Ok(())
         })?;
@@ -148,12 +153,12 @@ impl BoundsAccumulator2D {
     }
 }
 
-impl Accumulator for BoundsAccumulator2D {
+impl<T: std::fmt::Debug + WkbBounder2D + Default> Accumulator for BoundsAccumulator2D<T> {
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
         Self::check_update_input_len(values, 1, "update_batch")?;
         let arg_types = [self.input_type.clone()];
         let args = [ColumnarValue::Array(values[0].clone())];
-        let executor = WkbExecutor::new(&arg_types, &args);
+        let executor = WkbBytesExecutor::new(&arg_types, &args);
         self.execute_update(executor)?;
         Ok(())
     }
@@ -165,25 +170,17 @@ impl Accumulator for BoundsAccumulator2D {
 
     fn state(&mut self) -> Result<Vec<ScalarValue>> {
         // Return 4 Float64 values: xmin, ymin, xmax, ymax
-        if self.x.is_empty() || self.y.is_empty() {
-            Ok(vec![
-                ScalarValue::Float64(None),
-                ScalarValue::Float64(None),
-                ScalarValue::Float64(None),
-                ScalarValue::Float64(None),
-            ])
-        } else {
-            Ok(vec![
-                ScalarValue::Float64(Some(self.x.lo())),
-                ScalarValue::Float64(Some(self.y.lo())),
-                ScalarValue::Float64(Some(self.x.hi())),
-                ScalarValue::Float64(Some(self.y.hi())),
-            ])
-        }
+        let (x, y) = self.bounder.finish();
+        Ok(vec![
+            ScalarValue::Float64(Some(x.lo())),
+            ScalarValue::Float64(Some(y.lo())),
+            ScalarValue::Float64(Some(x.hi())),
+            ScalarValue::Float64(Some(y.hi())),
+        ])
     }
 
     fn size(&self) -> usize {
-        size_of::<BoundsAccumulator2D>()
+        size_of::<BoundsAccumulator2D<T>>()
     }
 
     fn merge_batch(&mut self, states: &[ArrayRef]) -> Result<()> {
@@ -202,10 +199,11 @@ impl Accumulator for BoundsAccumulator2D {
                 let xmax = xmax_arr.value(i);
                 let ymax = ymax_arr.value(i);
 
-                let new_x = Interval::new(xmin, xmax);
+                let new_x = WraparoundInterval::new(xmin, xmax);
                 let new_y = Interval::new(ymin, ymax);
-                self.x = self.x.merge_interval(&new_x);
-                self.y = self.y.merge_interval(&new_y);
+                self.bounder
+                    .update_bounds(new_x, new_y)
+                    .map_err(|e| exec_datafusion_err!("Failed to update bounder: {e}"))?;
             }
         }
 
