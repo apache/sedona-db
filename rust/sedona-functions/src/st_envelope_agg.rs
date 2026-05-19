@@ -19,8 +19,9 @@ use std::{iter::zip, sync::Arc, vec};
 use crate::executor::WkbExecutor;
 use crate::st_envelope::write_envelope;
 use arrow_array::{builder::BinaryBuilder, Array, ArrayRef, BooleanArray};
-use arrow_schema::FieldRef;
+use arrow_schema::{DataType, Field, FieldRef};
 use datafusion_common::{
+    cast::as_float64_array,
     error::{DataFusionError, Result},
     ScalarValue,
 };
@@ -81,9 +82,13 @@ impl SedonaAccumulator for STEnvelopeAgg {
     }
 
     fn state_fields(&self, _args: &[SedonaType]) -> Result<Vec<FieldRef>> {
-        Ok(vec![Arc::new(
-            WKB_GEOMETRY.to_storage_field("envelope", true)?,
-        )])
+        // State is stored as 4 Float64 values: xmin, ymin, xmax, ymax
+        Ok(vec![
+            Arc::new(Field::new("xmin", DataType::Float64, true)),
+            Arc::new(Field::new("ymin", DataType::Float64, true)),
+            Arc::new(Field::new("xmax", DataType::Float64, true)),
+            Arc::new(Field::new("ymax", DataType::Float64, true)),
+        ])
     }
 }
 
@@ -159,8 +164,22 @@ impl Accumulator for BoundsAccumulator2D {
     }
 
     fn state(&mut self) -> Result<Vec<ScalarValue>> {
-        let wkb = self.make_wkb_result()?;
-        Ok(vec![ScalarValue::Binary(wkb)])
+        // Return 4 Float64 values: xmin, ymin, xmax, ymax
+        if self.x.is_empty() || self.y.is_empty() {
+            Ok(vec![
+                ScalarValue::Float64(None),
+                ScalarValue::Float64(None),
+                ScalarValue::Float64(None),
+                ScalarValue::Float64(None),
+            ])
+        } else {
+            Ok(vec![
+                ScalarValue::Float64(Some(self.x.lo())),
+                ScalarValue::Float64(Some(self.y.lo())),
+                ScalarValue::Float64(Some(self.x.hi())),
+                ScalarValue::Float64(Some(self.y.hi())),
+            ])
+        }
     }
 
     fn size(&self) -> usize {
@@ -168,12 +187,28 @@ impl Accumulator for BoundsAccumulator2D {
     }
 
     fn merge_batch(&mut self, states: &[ArrayRef]) -> Result<()> {
-        Self::check_update_input_len(states, 1, "merge_batch")?;
-        let array = &states[0];
-        let args = [ColumnarValue::Array(array.clone())];
-        let arg_types = [WKB_GEOMETRY.clone()];
-        let executor = WkbExecutor::new(&arg_types, &args);
-        self.execute_update(executor)?;
+        Self::check_update_input_len(states, 4, "merge_batch")?;
+
+        // States are 4 Float64 arrays: xmin, ymin, xmax, ymax
+        let xmin_arr = as_float64_array(&states[0])?;
+        let ymin_arr = as_float64_array(&states[1])?;
+        let xmax_arr = as_float64_array(&states[2])?;
+        let ymax_arr = as_float64_array(&states[3])?;
+
+        for i in 0..xmin_arr.len() {
+            if !xmin_arr.is_null(i) {
+                let xmin = xmin_arr.value(i);
+                let ymin = ymin_arr.value(i);
+                let xmax = xmax_arr.value(i);
+                let ymax = ymax_arr.value(i);
+
+                let new_x = Interval::new(xmin, xmax);
+                let new_y = Interval::new(ymin, ymax);
+                self.x = self.x.merge_interval(&new_x);
+                self.y = self.y.merge_interval(&new_y);
+            }
+        }
+
         Ok(())
     }
 }
@@ -291,6 +326,93 @@ impl BoundsGroupsAccumulator2D {
 
         Ok(Arc::new(builder.finish()))
     }
+
+    fn emit_state(&mut self, emit_to: EmitTo) -> Result<Vec<ArrayRef>> {
+        use arrow_array::builder::Float64Builder;
+
+        let emit_size = match emit_to {
+            EmitTo::All => self.xs.len(),
+            EmitTo::First(n) => n,
+        };
+
+        let mut xmin_builder = Float64Builder::with_capacity(emit_size);
+        let mut ymin_builder = Float64Builder::with_capacity(emit_size);
+        let mut xmax_builder = Float64Builder::with_capacity(emit_size);
+        let mut ymax_builder = Float64Builder::with_capacity(emit_size);
+
+        let emit_range = self.offset..(self.offset + emit_size);
+        for (x, y) in zip(&self.xs[emit_range.clone()], &self.ys[emit_range.clone()]) {
+            if x.is_empty() || y.is_empty() {
+                xmin_builder.append_null();
+                ymin_builder.append_null();
+                xmax_builder.append_null();
+                ymax_builder.append_null();
+            } else {
+                xmin_builder.append_value(x.lo());
+                ymin_builder.append_value(y.lo());
+                xmax_builder.append_value(x.hi());
+                ymax_builder.append_value(y.hi());
+            }
+        }
+
+        match emit_to {
+            EmitTo::All => {
+                self.xs = Vec::new();
+                self.ys = Vec::new();
+                self.offset = 0;
+            }
+            EmitTo::First(n) => {
+                self.offset += n;
+            }
+        }
+
+        Ok(vec![
+            Arc::new(xmin_builder.finish()),
+            Arc::new(ymin_builder.finish()),
+            Arc::new(xmax_builder.finish()),
+            Arc::new(ymax_builder.finish()),
+        ])
+    }
+
+    fn merge_state(
+        &mut self,
+        values: &[ArrayRef],
+        group_indices: &[usize],
+        opt_filter: Option<&BooleanArray>,
+        total_num_groups: usize,
+    ) -> Result<()> {
+        debug_assert_eq!(self.offset, 0);
+        debug_assert_eq!(values.len(), 4);
+
+        // State is 4 Float64 arrays: xmin, ymin, xmax, ymax
+        let xmin_arr = as_float64_array(&values[0])?;
+        let ymin_arr = as_float64_array(&values[1])?;
+        let xmax_arr = as_float64_array(&values[2])?;
+        let ymax_arr = as_float64_array(&values[3])?;
+
+        self.xs.resize(total_num_groups, Interval::empty());
+        self.ys.resize(total_num_groups, Interval::empty());
+
+        for (i, &group_id) in group_indices.iter().enumerate() {
+            if opt_filter.is_some_and(|f| !f.value(i)) {
+                continue;
+            }
+
+            if !xmin_arr.is_null(i) {
+                let xmin = xmin_arr.value(i);
+                let ymin = ymin_arr.value(i);
+                let xmax = xmax_arr.value(i);
+                let ymax = ymax_arr.value(i);
+
+                let new_x = Interval::new(xmin, xmax);
+                let new_y = Interval::new(ymin, ymax);
+                self.xs[group_id] = self.xs[group_id].merge_interval(&new_x);
+                self.ys[group_id] = self.ys[group_id].merge_interval(&new_y);
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl GroupsAccumulator for BoundsGroupsAccumulator2D {
@@ -311,7 +433,7 @@ impl GroupsAccumulator for BoundsGroupsAccumulator2D {
     }
 
     fn state(&mut self, emit_to: EmitTo) -> Result<Vec<ArrayRef>> {
-        Ok(vec![self.emit_wkb_result(emit_to)?])
+        self.emit_state(emit_to)
     }
 
     fn merge_batch(
@@ -321,15 +443,7 @@ impl GroupsAccumulator for BoundsGroupsAccumulator2D {
         opt_filter: Option<&arrow_array::BooleanArray>,
         total_num_groups: usize,
     ) -> Result<()> {
-        // In this case, our state is identical to our input values except our geometry
-        // representation is always WKB_GEOMETRY.
-        self.execute_update(
-            values,
-            group_indices,
-            opt_filter,
-            total_num_groups,
-            WKB_GEOMETRY,
-        )
+        self.merge_state(values, group_indices, opt_filter, total_num_groups)
     }
 
     fn evaluate(&mut self, emit_to: EmitTo) -> Result<ArrayRef> {
