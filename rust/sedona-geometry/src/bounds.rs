@@ -42,6 +42,9 @@ pub trait WkbBounder2D: std::fmt::Debug + Send + Sync {
 
     /// Finish this bounder into component intervals
     fn finish(&self) -> (WraparoundInterval, Interval);
+
+    /// Compute the memory used by this instance
+    fn mem_used(&self) -> usize;
 }
 
 #[derive(Debug, Default)]
@@ -70,6 +73,10 @@ impl WkbBounder2D for WkbGeometryBounder {
 
     fn finish(&self) -> (WraparoundInterval, Interval) {
         (self.x.into(), self.y)
+    }
+
+    fn mem_used(&self) -> usize {
+        size_of::<Self>()
     }
 }
 
