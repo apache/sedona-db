@@ -47,17 +47,33 @@ use crate::source_uri::{build_chunk_anchor, group_uri_to_filesystem_path};
 
 /// Open a Zarr group and eagerly fetch every chunk's bytes into the
 /// returned `StructArray`. Each row holds one chunk position's data
-/// across every array in the group.
-pub fn group_to_indb_rasters(group_uri: &str) -> Result<StructArray, ArrowError> {
-    build_rasters(group_uri, Mode::InDb)
+/// across the selected arrays in the group.
+///
+/// `arrays`:
+/// - `None` — read every multi-dimensional array. 1-D arrays (typical
+///   coord variables in xarray-style datacubes) are auto-skipped.
+/// - `Some(names)` — read exactly the named arrays, in the order
+///   returned by the store's listing (which is then sorted by path). An
+///   unknown name errors. 1-D arrays are always rejected (a raster band
+///   needs ≥ 2 dimensions); naming one explicitly errors at parse time
+///   with a clear message.
+pub fn group_to_indb_rasters(
+    group_uri: &str,
+    arrays: Option<&[String]>,
+) -> Result<StructArray, ArrowError> {
+    build_rasters(group_uri, Mode::InDb, arrays)
 }
 
 /// Open a Zarr group and emit one row per chunk position with chunk-anchor
 /// URIs in each band's `outdb_uri`. The `data` column is empty; bytes
 /// resolve on demand through whichever OutDb loader is registered for
-/// the `zarr` format.
-pub fn group_to_outdb_rasters(group_uri: &str) -> Result<StructArray, ArrowError> {
-    build_rasters(group_uri, Mode::OutDb)
+/// the `zarr` format. See [`group_to_indb_rasters`] for the meaning of
+/// `arrays`.
+pub fn group_to_outdb_rasters(
+    group_uri: &str,
+    arrays: Option<&[String]>,
+) -> Result<StructArray, ArrowError> {
+    build_rasters(group_uri, Mode::OutDb, arrays)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,15 +100,19 @@ struct ArrayInfo {
     /// chunk positions and validated to match across arrays.
     chunk_grid_shape: Vec<u64>,
     /// Chunk shape (elements per chunk per dim). Same for every chunk
-    /// position in Phase 1 (no ragged final chunks emitted as separate
-    /// short rows).
+    /// position — ragged final chunks are not emitted as separate short
+    /// rows.
     chunk_shape: Vec<u64>,
     /// Encoded fill value in native-endian byte representation, for the
     /// `nodata` field. None when the array has no fill value declared.
     nodata: Option<Vec<u8>>,
 }
 
-fn build_rasters(group_uri: &str, mode: Mode) -> Result<StructArray, ArrowError> {
+fn build_rasters(
+    group_uri: &str,
+    mode: Mode,
+    arrays_filter: Option<&[String]>,
+) -> Result<StructArray, ArrowError> {
     let fs_path = group_uri_to_filesystem_path(group_uri)?;
     let store = FilesystemStore::new(&fs_path).map_err(|e| {
         ArrowError::ExternalError(Box::new(sedona_internal_datafusion_err!(
@@ -110,6 +130,20 @@ fn build_rasters(group_uri: &str, mode: Mode) -> Result<StructArray, ArrowError>
 
     let geo = GroupGeoMetadata::from_attributes(group.attributes())?;
 
+    // CRS-without-transform is almost always a malformed-metadata bug —
+    // the user thinks they have full georef but downstream spatial joins
+    // will silently use the identity-pixel-coords default. Error loudly
+    // so they fix the metadata rather than getting empty result sets.
+    if geo.crs.is_some() && geo.transform.is_none() {
+        return Err(ArrowError::InvalidArgumentError(format!(
+            "Zarr group at {group_uri} declares a CRS but no `spatial:transform` \
+             attribute; refusing to fall back to the identity transform because \
+             that would silently produce wrong results in spatial joins. Declare \
+             `spatial:transform` on the group or remove the CRS to read this as \
+             a non-georeferenced datacube."
+        )));
+    }
+
     let arrays = group.child_arrays().map_err(|e| {
         ArrowError::ExternalError(Box::new(sedona_internal_datafusion_err!(
             "failed to enumerate child arrays in {group_uri}: {e}"
@@ -121,10 +155,11 @@ fn build_rasters(group_uri: &str, mode: Mode) -> Result<StructArray, ArrowError>
         )));
     }
 
+    let arrays = select_arrays(arrays, arrays_filter, group_uri)?;
     let array_infos = collect_array_infos(arrays)?;
     validate_group_constraints(&array_infos)?;
 
-    // Spatial-dim resolution. Phase 1 supports two configurations:
+    // Spatial-dim resolution. Two configurations are accepted:
     //   - dim_names ends with ["y", "x"] (canonical for georeferenced
     //     2-D and time-series rasters); the spatial extent is the chunk's
     //     last two dims.
@@ -142,9 +177,37 @@ fn build_rasters(group_uri: &str, mode: Mode) -> Result<StructArray, ArrowError>
         .map(|&i| array_infos[0].chunk_shape[i] as i64)
         .collect();
 
-    let group_transform = geo.transform.unwrap_or([0.0, 1.0, 0.0, 0.0, 0.0, -1.0]);
+    let group_transform = match geo.transform {
+        Some(t) => t,
+        None => {
+            // Both `spatial:transform` and `proj:*` are absent (the
+            // CRS-only case errored above). Fall back to identity pixel
+            // coordinates and breadcrumb a warning so spatial-join
+            // surprises are debuggable.
+            log::warn!(
+                "Zarr group at {group_uri} has no `spatial:transform`; falling back \
+                 to the identity pixel-coordinate transform [0, 1, 0, 0, 0, -1]. \
+                 Spatial operations against this raster will use pixel coordinates."
+            );
+            [0.0, 1.0, 0.0, 0.0, 0.0, -1.0]
+        }
+    };
 
-    let total_rows = array_infos[0].chunk_grid_shape.iter().product::<u64>() as usize;
+    // chunk_grid_shape comes from untrusted Zarr metadata; bound-check the
+    // product so a hostile or malformed grid can't drive RasterBuilder
+    // capacity to overflow (and trigger an OOM preallocation).
+    let total_rows = array_infos[0]
+        .chunk_grid_shape
+        .iter()
+        .try_fold(1usize, |acc, &n| {
+            usize::try_from(n).ok().and_then(|n| acc.checked_mul(n))
+        })
+        .ok_or_else(|| {
+            ArrowError::InvalidArgumentError(format!(
+                "chunk grid shape {:?} overflows usize",
+                array_infos[0].chunk_grid_shape
+            ))
+        })?;
     let mut builder = RasterBuilder::new(total_rows);
 
     // Walk the chunk grid in row-major (C-order) order. The outer-most
@@ -169,22 +232,17 @@ fn build_rasters(group_uri: &str, mode: Mode) -> Result<StructArray, ArrowError>
         for info in &array_infos {
             let dim_names_ref: Vec<&str> = info.dim_names.iter().map(String::as_str).collect();
             let nodata_ref = info.nodata.as_deref();
-            let anchor;
-            let (outdb_uri_arg, outdb_format_arg) = match mode {
-                Mode::InDb => (None, None),
-                Mode::OutDb => {
-                    anchor = build_chunk_anchor(group_uri, &info.path, &chunk_indices);
-                    (Some(anchor.as_str()), Some("zarr"))
-                }
-            };
+            // Chunk anchor is provenance metadata; InDb vs OutDb is
+            // discriminated by `data.is_empty()`, not by these fields.
+            let anchor = build_chunk_anchor(group_uri, &info.path, &chunk_indices);
             builder.start_band_nd(
                 Some(info.path.as_str()),
                 &dim_names_ref,
                 &info.chunk_shape,
                 info.data_type,
                 nodata_ref,
-                outdb_uri_arg,
-                outdb_format_arg,
+                Some(anchor.as_str()),
+                Some("zarr"),
             )?;
             match mode {
                 Mode::InDb => {
@@ -224,26 +282,7 @@ fn collect_array_infos(
     for array in arrays {
         let path = array.path().to_string();
         let data_type = zarr_to_band_data_type(array.data_type())?;
-        let dim_names = match array.dimension_names() {
-            Some(names) => names
-                .iter()
-                .enumerate()
-                .map(|(i, n)| {
-                    n.clone().ok_or_else(|| {
-                        ArrowError::InvalidArgumentError(format!(
-                            "array {path}: dimension {i} has no name; Phase 1 requires every \
-                             Zarr array dimension to be named",
-                        ))
-                    })
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-            None => {
-                return Err(ArrowError::InvalidArgumentError(format!(
-                    "array {path}: dimension_names is absent; Phase 1 requires every Zarr \
-                     array to declare dimension_names",
-                )));
-            }
-        };
+        let dim_names = resolve_dim_names(&array, &path)?;
         let chunk_grid_shape = array.chunk_grid_shape().to_vec();
         let chunk_shape = array
             .chunk_shape(&vec![0u64; chunk_grid_shape.len()])
@@ -274,33 +313,155 @@ fn collect_array_infos(
     Ok(out)
 }
 
-/// Enforce Phase 1 group constraints. All arrays must agree on chunk grid
-/// shape, chunk shape, and dimension names. We do NOT enforce shared
-/// element shape (`array.shape()`) because users routinely group
-/// arrays with the same chunk grid but different totals (e.g. a coord
-/// variable with one fewer dim is rejected here anyway by the dim-name
-/// check).
+/// Apply the array-selection rules. 1-D arrays (typical xarray-style
+/// coord variables) are always dropped — a raster band requires at
+/// least 2 dimensions, so reading a 1-D array could never succeed.
+/// - Explicit filter: keep arrays whose path (with leading `/` stripped)
+///   matches one of the requested names. Unknown names error so users
+///   don't silently get an empty group from a typo; naming a 1-D array
+///   errors with a clear message rather than producing a confusing
+///   "no spatial axes" failure downstream.
+/// - No filter: read every multi-dimensional array.
+fn select_arrays(
+    arrays: Vec<Array<FilesystemStore>>,
+    filter: Option<&[String]>,
+    group_uri: &str,
+) -> Result<Vec<Array<FilesystemStore>>, ArrowError> {
+    if let Some(names) = filter {
+        let available: Vec<String> = arrays
+            .iter()
+            .map(|a| a.path().as_str().trim_start_matches('/').to_string())
+            .collect();
+        for requested in names {
+            let needle = requested.trim_start_matches('/');
+            match arrays
+                .iter()
+                .find(|a| a.path().as_str().trim_start_matches('/') == needle)
+            {
+                None => {
+                    return Err(ArrowError::InvalidArgumentError(format!(
+                        "Zarr group at {group_uri} has no array named {requested:?}; \
+                         available arrays: {available:?}"
+                    )));
+                }
+                Some(a) if a.shape().len() < 2 => {
+                    return Err(ArrowError::InvalidArgumentError(format!(
+                        "array {requested:?} has rank {} (shape {:?}); a raster band \
+                         requires at least 2 dimensions and cannot be read.",
+                        a.shape().len(),
+                        a.shape()
+                    )));
+                }
+                Some(_) => {}
+            }
+        }
+        let kept: Vec<_> = arrays
+            .into_iter()
+            .filter(|a| {
+                let path = a.path().as_str().trim_start_matches('/').to_string();
+                names.iter().any(|n| n.trim_start_matches('/') == path)
+            })
+            .collect();
+        return Ok(kept);
+    }
+
+    let kept: Vec<_> = arrays.into_iter().filter(|a| a.shape().len() > 1).collect();
+    if kept.is_empty() {
+        return Err(ArrowError::InvalidArgumentError(format!(
+            "Zarr group at {group_uri} contains only 1-D arrays (typical \
+             xarray-style coord variables); a raster band requires at least \
+             2 dimensions, so this group has nothing readable as a raster"
+        )));
+    }
+    Ok(kept)
+}
+
+/// Resolve dimension names for an array, supporting both Zarr v3
+/// (first-class `dimension_names` field) and Zarr v2 with the xarray
+/// `_ARRAY_DIMENSIONS` attribute. Errors if neither carries a complete
+/// set of named dimensions matching the array's rank.
+fn resolve_dim_names<S: ?Sized>(array: &Array<S>, path: &str) -> Result<Vec<String>, ArrowError> {
+    let rank = array.shape().len();
+
+    if let Some(names) = array.dimension_names() {
+        return names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| {
+                n.clone().ok_or_else(|| {
+                    ArrowError::InvalidArgumentError(format!(
+                        "array {path}: dimension {i} has no name; every Zarr array \
+                         dimension must be named",
+                    ))
+                })
+            })
+            .collect();
+    }
+
+    // Zarr v2 fallback: xarray's `_ARRAY_DIMENSIONS` convention. v2 had no
+    // first-class dimension_names field and zarrs's v2->v3 converter
+    // preserves attributes verbatim without lifting this one.
+    if let Some(value) = array.attributes().get("_ARRAY_DIMENSIONS") {
+        let arr = value.as_array().ok_or_else(|| {
+            ArrowError::InvalidArgumentError(format!(
+                "array {path}: _ARRAY_DIMENSIONS must be a JSON array of strings; got {value}"
+            ))
+        })?;
+        if arr.len() != rank {
+            return Err(ArrowError::InvalidArgumentError(format!(
+                "array {path}: _ARRAY_DIMENSIONS has {} entries but array has rank {rank}",
+                arr.len()
+            )));
+        }
+        return arr
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                v.as_str().map(str::to_string).ok_or_else(|| {
+                    ArrowError::InvalidArgumentError(format!(
+                        "array {path}: _ARRAY_DIMENSIONS[{i}] must be a string; got {v}"
+                    ))
+                })
+            })
+            .collect();
+    }
+
+    Err(ArrowError::InvalidArgumentError(format!(
+        "array {path}: no dimension names found. Zarr v3 arrays must set \
+         `dimension_names`; Zarr v2 arrays must set the `_ARRAY_DIMENSIONS` \
+         attribute (xarray convention)."
+    )))
+}
+
+/// Enforce group constraints. All arrays must agree on chunk grid shape,
+/// chunk shape, and dimension names. We do NOT enforce shared element
+/// shape (`array.shape()`) because users routinely group arrays with
+/// the same chunk grid but different totals (e.g. a coord variable with
+/// one fewer dim is rejected here anyway by the dim-name check).
 fn validate_group_constraints(infos: &[ArrayInfo]) -> Result<(), ArrowError> {
     let first = &infos[0];
     for other in &infos[1..] {
         if other.chunk_grid_shape != first.chunk_grid_shape {
             return Err(ArrowError::InvalidArgumentError(format!(
                 "arrays {} and {} have different chunk grid shapes ({:?} vs {:?}); \
-                 Phase 1 requires a shared chunk grid across the group",
+                 every array in the group must share the same chunk grid. \
+                 Pass `arrays = [...]` to read only compatible arrays.",
                 first.path, other.path, first.chunk_grid_shape, other.chunk_grid_shape
             )));
         }
         if other.chunk_shape != first.chunk_shape {
             return Err(ArrowError::InvalidArgumentError(format!(
                 "arrays {} and {} have different chunk shapes ({:?} vs {:?}); \
-                 Phase 1 requires a shared chunk shape across the group",
+                 every array in the group must share the same chunk shape. \
+                 Pass `arrays = [...]` to read only compatible arrays.",
                 first.path, other.path, first.chunk_shape, other.chunk_shape
             )));
         }
         if other.dim_names != first.dim_names {
             return Err(ArrowError::InvalidArgumentError(format!(
                 "arrays {} and {} have different dimension names ({:?} vs {:?}); \
-                 Phase 1 requires identical dim_names across the group",
+                 every array in the group must declare identical dim_names. \
+                 Pass `arrays = [...]` to read only compatible arrays.",
                 first.path, other.path, first.dim_names, other.dim_names
             )));
         }
@@ -333,13 +494,13 @@ fn resolve_spatial_dim_indices(
     let n = dim_names.len();
     if n < 2 {
         return Err(ArrowError::InvalidArgumentError(format!(
-            "Phase 1 requires at least 2 dimensions to resolve spatial axes; got {dim_names:?}",
+            "at least 2 dimensions are required to resolve spatial axes; got {dim_names:?}",
         )));
     }
     if dim_names[n - 2] != "y" || dim_names[n - 1] != "x" {
         return Err(ArrowError::InvalidArgumentError(format!(
-            "Phase 1 expects the last two dim_names to be [\"y\", \"x\"] when \
-             `spatial:dims` is not declared; got {dim_names:?}",
+            "the last two dim_names must be [\"y\", \"x\"] when `spatial:dims` is \
+             not declared; got {dim_names:?}",
         )));
     }
     Ok(vec![n - 2, n - 1])
@@ -357,8 +518,8 @@ fn compute_row_transform(
     // Translation along x = chunk_x_index × chunk_x_size in pixel-coordinate space,
     // converted to world coordinates via the affine.
     //
-    // Phase 1 assumes spatial_dim_indices == [y_index, x_index] (validated
-    // upstream). Index 0 is the y axis, index 1 is the x axis.
+    // spatial_dim_indices is validated upstream to be [y_index, x_index].
+    // Index 0 is the y axis, index 1 is the x axis.
     let y_axis = spatial_dim_indices[0];
     let x_axis = spatial_dim_indices[1];
     let x_offset = (chunk_indices[x_axis] * chunk_shape[x_axis]) as f64;
@@ -390,9 +551,9 @@ fn advance_chunk_indices(chunk_indices: &mut [u64], chunk_grid_shape: &[u64]) ->
 
 /// Retrieve a single chunk's bytes as a fresh `Vec<u8>`.
 ///
-/// Phase 1 uses `ArrayBytes::Fixed`, so this errors for variable-length
-/// element types — those don't have a `BandDataType` counterpart anyway,
-/// so the dtype check in `collect_array_infos` rejects them upstream.
+/// Uses `ArrayBytes::Fixed`, so this errors for variable-length element
+/// types — those don't have a `BandDataType` counterpart anyway, so the
+/// dtype check in `collect_array_infos` rejects them upstream.
 fn retrieve_chunk_bytes(
     array: &Array<FilesystemStore>,
     chunk_indices: &[u64],
@@ -408,7 +569,7 @@ fn retrieve_chunk_bytes(
         })?;
     let raw = bytes.into_fixed().map_err(|_| {
         ArrowError::InvalidArgumentError(format!(
-            "array {}: variable-length chunk bytes not supported in Phase 1",
+            "array {}: variable-length chunk bytes are not supported",
             array.path()
         ))
     })?;

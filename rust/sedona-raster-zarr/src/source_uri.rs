@@ -20,10 +20,10 @@
 //! Two URI shapes flow through the loader:
 //!
 //! 1. **Group URI** (the loader entry-point argument). Identifies a Zarr
-//!    group on a backend, e.g. `file:///tmp/datacube.zarr`,
-//!    `s3://bucket/datacube.zarr/2024`, or a bare local path. Phase 1
-//!    accepts `file://` and bare-path; cloud schemes ship with the
-//!    resolver.
+//!    group on a backend, e.g. `file:///tmp/datacube.zarr` or a bare
+//!    local path. Cloud schemes (`s3://`, `gs://`, `az://`, `https://`)
+//!    will be accepted by a future revision; today only `file://` and
+//!    bare-path are recognised.
 //! 2. **Chunk anchor URI** (written into a band's `outdb_uri`). Addresses
 //!    one chunk in one array within a group:
 //!    `<store-uri>#array=<array-path>&chunk=<i0>,<i1>,...`. The store URI
@@ -131,9 +131,8 @@ pub fn parse_chunk_anchor(uri: &str) -> Result<ChunkAnchor, ArrowError> {
 
 /// Normalize a user-supplied group URI into a local filesystem path.
 ///
-/// Phase 1 supports `file://` and bare-path URIs only. Cloud schemes
-/// (`s3://`, `gs://`, `az://`, `https://`) error with a clear message
-/// pointing at the resolver work that adds them.
+/// Only `file://` and bare-path URIs are supported. Cloud schemes
+/// (`s3://`, `gs://`, `az://`, `https://`) error with a clear message.
 pub fn group_uri_to_filesystem_path(uri: &str) -> Result<std::path::PathBuf, ArrowError> {
     if let Some(rest) = uri.strip_prefix("file://") {
         return Ok(std::path::PathBuf::from(rest));
@@ -141,8 +140,8 @@ pub fn group_uri_to_filesystem_path(uri: &str) -> Result<std::path::PathBuf, Arr
     for scheme in ["s3://", "gs://", "az://", "https://", "http://"] {
         if uri.starts_with(scheme) {
             return Err(ArrowError::NotYetImplemented(format!(
-                "cloud Zarr stores ({scheme}…) are not supported in this phase; \
-                 use a local filesystem path or `file://` URI for now"
+                "cloud Zarr stores ({scheme}…) are not supported yet; \
+                 use a local filesystem path or `file://` URI"
             )));
         }
     }

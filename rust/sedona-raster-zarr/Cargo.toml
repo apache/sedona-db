@@ -34,6 +34,7 @@ result_large_err = "allow"
 arrow-array = { workspace = true }
 arrow-schema = { workspace = true }
 datafusion-common = { workspace = true }
+log = { workspace = true }
 sedona-common = { workspace = true }
 sedona-raster = { workspace = true }
 sedona-schema = { workspace = true }

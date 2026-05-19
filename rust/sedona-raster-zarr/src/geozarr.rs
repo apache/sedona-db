@@ -21,9 +21,9 @@
 //! mapping) attribute conventions from a Zarr group's attributes, mapping
 //! them onto SedonaDB's per-raster `crs` and `transform` fields.
 //!
-//! Phase 1 expects attributes at the group level and inherits them across
-//! every array. Per-array overrides are rejected by the group-constraint
-//! validator (see `loader`).
+//! Attributes live at the group level and are inherited by every array.
+//! Per-array overrides are rejected by the group-constraint validator
+//! (see `loader`).
 
 use arrow_schema::ArrowError;
 
@@ -49,8 +49,8 @@ impl GroupGeoMetadata {
     /// surfaces from a group) into a `GroupGeoMetadata`.
     ///
     /// Returns `Ok(default-empty)` when none of the conventional keys are
-    /// present — Phase 1 treats geospatial metadata as optional; downstream
-    /// fall-backs in the loader provide identity transforms when needed.
+    /// present — geospatial metadata is optional; downstream fall-backs in
+    /// the loader provide identity transforms when needed.
     pub fn from_attributes(
         attrs: &serde_json::Map<String, serde_json::Value>,
     ) -> Result<Self, ArrowError> {

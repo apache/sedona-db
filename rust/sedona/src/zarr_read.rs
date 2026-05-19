@@ -22,7 +22,7 @@
 //! SELECT * FROM sd_read_zarr('file:///path/to/datacube.zarr');
 //! SELECT count(*) FROM sd_read_zarr(
 //!     'file:///path/to/datacube.zarr',
-//!     '{"mode": "indb", "rows_per_batch": 256}'
+//!     '{"indb": true, "rows_per_batch": 256}'
 //! );
 //! ```
 //!
@@ -30,10 +30,9 @@
 //! position in the Zarr group's chunk grid. All existing `RS_*` UDFs
 //! operate on the column unchanged.
 //!
-//! Phase 1 defaults to `mode = "indb"` so byte-reading kernels work
-//! end-to-end without depending on the (not-yet-registered) OutDb
-//! resolver. The default flips to `outdb` once the format-keyed
-//! dispatcher lands.
+//! `indb` defaults to `true` so byte-reading kernels work end-to-end
+//! without depending on a registered OutDb resolver. The default will
+//! flip to `false` once the format-keyed dispatcher lands.
 
 use std::any::Any;
 use std::sync::Arc;
@@ -65,9 +64,14 @@ use serde::{Deserialize, Serialize};
 /// Accepts one or two string arguments:
 /// - `uri` (required) — Zarr group URI (e.g. `file:///path/to/foo.zarr`).
 /// - `options_json` (optional) — JSON string with any of:
-///     - `mode`: `"indb"` (default) or `"outdb"`
+///     - `indb`: `true` (default) materializes chunk bytes into the
+///       Arrow `data` column eagerly; `false` emits chunk-anchor URIs
+///       only and defers byte resolution to the OutDb loader.
 ///     - `rows_per_batch`: chunks per `RecordBatch` (default 1024)
-///     - `num_partitions`: scan partitions (default 1; > 1 errors in Phase 1)
+///     - `num_partitions`: scan partitions (default 1; > 1 currently errors)
+///     - `arrays`: optional list of array names to read. Default reads
+///       every multi-dimensional array (1-D coord variables are
+///       auto-skipped); an explicit list reads exactly those arrays.
 #[derive(Debug, Default)]
 pub struct ZarrReadFunction {}
 
@@ -107,9 +111,10 @@ fn literal_utf8(expr: &Expr, label: &str) -> Result<String> {
 /// `StructArray` once for the query lifetime; the executor slices it
 /// into `rows_per_batch`-sized `RecordBatch`es.
 ///
-/// Phase 1 builds the StructArray eagerly in `try_new`. For OutDb mode
-/// the array is cheap to construct (chunk anchor URIs only); for InDb
-/// mode it pulls every chunk's bytes through the loader at plan time.
+/// The StructArray is built eagerly in `try_new`. When `indb=false`
+/// the array is cheap to construct (chunk anchor URIs only); when
+/// `indb=true` it pulls every chunk's bytes through the loader at
+/// plan time.
 #[derive(Debug)]
 pub struct ZarrChunkProvider {
     schema: SchemaRef,
@@ -120,24 +125,21 @@ pub struct ZarrChunkProvider {
 impl ZarrChunkProvider {
     fn try_new(uri: &str, options_json: Option<String>) -> Result<Self> {
         let opts = parse_options(options_json.as_deref())?;
-        let mode = opts.mode.as_deref().unwrap_or("indb");
+        let indb = opts.indb.unwrap_or(true);
         let rows_per_batch = opts.rows_per_batch.unwrap_or(1024).max(1);
         let num_partitions = opts.num_partitions.unwrap_or(1);
         if num_partitions != 1 {
             return plan_err!(
-                "sd_read_zarr() Phase 1 supports only num_partitions = 1; got {num_partitions}. \
+                "sd_read_zarr() supports only num_partitions = 1; got {num_partitions}. \
                  Round-robin partitioning lands with the OutDb resolver work."
             );
         }
 
-        let rasters = match mode {
-            "indb" => group_to_indb_rasters(uri).map_err(arrow_to_df_err)?,
-            "outdb" => group_to_outdb_rasters(uri).map_err(arrow_to_df_err)?,
-            other => {
-                return plan_err!(
-                    "sd_read_zarr() mode must be \"indb\" or \"outdb\"; got {other:?}"
-                );
-            }
+        let arrays_filter = opts.arrays.as_deref();
+        let rasters = if indb {
+            group_to_indb_rasters(uri, arrays_filter).map_err(arrow_to_df_err)?
+        } else {
+            group_to_outdb_rasters(uri, arrays_filter).map_err(arrow_to_df_err)?
         };
 
         // Single-column schema: `raster: Raster`. `SedonaType::Raster` adds
@@ -215,7 +217,7 @@ impl ZarrChunkExec {
     fn new(schema: SchemaRef, rasters: StructArray, rows_per_batch: usize) -> Self {
         let properties = PlanProperties::new(
             EquivalenceProperties::new(schema.clone()),
-            // Phase 1: a single partition. Round-robin across multiple
+            // A single partition for now. Round-robin across multiple
             // partitions lands with the OutDb resolver work.
             Partitioning::UnknownPartitioning(1),
             EmissionType::Incremental,
@@ -275,7 +277,7 @@ impl ExecutionPlan for ZarrChunkExec {
         _context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         if partition != 0 {
-            return plan_err!("ZarrChunkExec: only partition 0 exists (Phase 1)");
+            return plan_err!("ZarrChunkExec: only partition 0 exists");
         }
 
         let total = self.rasters.len();
@@ -284,10 +286,10 @@ impl ExecutionPlan for ZarrChunkExec {
         let rasters = self.rasters.clone();
 
         // Build all batches eagerly into a Vec, then turn into a stream.
-        // This is fine for Phase 1: the StructArray is already materialised
-        // in the provider, slicing is O(1), and the only allocation per
-        // batch is the RecordBatch wrapper. Lazy streaming becomes
-        // interesting once the loader itself is lazy.
+        // The StructArray is already materialised in the provider, slicing
+        // is O(1), and the only allocation per batch is the RecordBatch
+        // wrapper. Lazy streaming becomes interesting once the loader
+        // itself is lazy.
         let mut batches = Vec::with_capacity(total.div_ceil(rows_per_batch).max(1));
         let mut offset = 0;
         while offset < total {
@@ -312,9 +314,17 @@ fn arrow_to_df_err(e: arrow_schema::ArrowError) -> DataFusionError {
 
 #[derive(Serialize, Deserialize, Default)]
 struct ZarrReadOptions {
-    mode: Option<String>,
+    /// `true` (default) materializes chunk bytes into the Arrow `data`
+    /// column eagerly; `false` emits chunk-anchor URIs only and defers
+    /// byte resolution to the OutDb loader.
+    indb: Option<bool>,
     rows_per_batch: Option<usize>,
     num_partitions: Option<usize>,
+    /// Explicit array-name filter. `None` reads every multi-dimensional
+    /// array in the group; `Some` reads exactly the listed arrays (in
+    /// the order zarrs's store listing returns them). Unknown names
+    /// error so a typo doesn't silently yield an empty result.
+    arrays: Option<Vec<String>>,
 }
 
 fn parse_options(options_json: Option<&str>) -> Result<ZarrReadOptions> {
@@ -428,7 +438,7 @@ mod tests {
         // walks the chunk grid metadata.
         let df = ctx
             .sql(&format!(
-                r#"SELECT count(*) FROM sd_read_zarr('{uri}', '{{"mode": "outdb"}}')"#,
+                r#"SELECT count(*) FROM sd_read_zarr('{uri}', '{{"indb": false}}')"#,
             ))
             .await
             .unwrap();
@@ -439,24 +449,6 @@ mod tests {
             .downcast_ref::<arrow_array::Int64Array>()
             .unwrap();
         assert_eq!(count_arr.value(0), 2);
-    }
-
-    #[tokio::test]
-    async fn udtf_rejects_unknown_mode() {
-        let tmp = build_fixture();
-        let uri = format!("file://{}", tmp.path().display());
-
-        let ctx = SessionContext::new();
-        ctx.register_udtf("sd_read_zarr", Arc::new(ZarrReadFunction::default()));
-
-        let err = ctx
-            .sql(&format!(
-                r#"SELECT raster FROM sd_read_zarr('{uri}', '{{"mode": "lazy"}}')"#,
-            ))
-            .await
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("\"indb\" or \"outdb\""), "got: {err}");
     }
 
     #[tokio::test]
@@ -475,6 +467,87 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("num_partitions = 1"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn udtf_arrays_filter_threads_through_sql() {
+        // Build a group with one data array + a 1-D coord variable in a
+        // different chunk grid. Without auto-skip this errors; with the
+        // explicit arrays filter the user gets exactly what they asked
+        // for.
+        let tmp = TempDir::new().unwrap();
+        let store = Arc::new(FilesystemStore::new(tmp.path()).unwrap());
+        GroupBuilder::new()
+            .build(store.clone(), "/")
+            .unwrap()
+            .store_metadata()
+            .unwrap();
+        #[allow(deprecated)]
+        {
+            let temperature =
+                ArrayBuilder::new(vec![2u64, 2u64], vec![1u64, 2u64], data_type::uint8(), 0u8)
+                    .dimension_names(Some(["y", "x"]))
+                    .build(store.clone(), "/temperature")
+                    .unwrap();
+            temperature.store_metadata().unwrap();
+            temperature
+                .store_chunk_elements::<u8>(&[0, 0], &[10u8, 11])
+                .unwrap();
+            temperature
+                .store_chunk_elements::<u8>(&[1, 0], &[20u8, 21])
+                .unwrap();
+            let y = ArrayBuilder::new(vec![2u64], vec![2u64], data_type::uint8(), 0u8)
+                .dimension_names(Some(["y"]))
+                .build(store.clone(), "/y")
+                .unwrap();
+            y.store_metadata().unwrap();
+        }
+
+        let uri = format!("file://{}", tmp.path().display());
+        let ctx = SessionContext::new();
+        ctx.register_udtf("sd_read_zarr", Arc::new(ZarrReadFunction::default()));
+
+        // Default behaviour: 1-D coord variable auto-skipped, read succeeds.
+        let df = ctx
+            .sql(&format!("SELECT raster FROM sd_read_zarr('{uri}')"))
+            .await
+            .unwrap();
+        assert_eq!(
+            df.collect()
+                .await
+                .unwrap()
+                .iter()
+                .map(|b| b.num_rows())
+                .sum::<usize>(),
+            2
+        );
+
+        // Explicit filter to the data array — same result.
+        let df = ctx
+            .sql(&format!(
+                r#"SELECT raster FROM sd_read_zarr('{uri}', '{{"arrays":["temperature"]}}')"#
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            df.collect()
+                .await
+                .unwrap()
+                .iter()
+                .map(|b| b.num_rows())
+                .sum::<usize>(),
+            2
+        );
+
+        // Unknown name surfaces as a clear error.
+        let err = ctx
+            .sql(&format!(
+                r#"SELECT raster FROM sd_read_zarr('{uri}', '{{"arrays":["humidity"]}}')"#
+            ))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("humidity"), "got: {err}");
     }
 
     #[tokio::test]

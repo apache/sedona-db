@@ -30,8 +30,7 @@
 //!   fetch on demand through the process-wide OutDb loader (registered
 //!   separately via `sedona-raster`'s loader hook).
 //!
-//! Phase 1 supports local filesystem stores only; cloud backends arrive
-//! with the resolver work.
+//! Local filesystem stores only — `file://` URIs or bare paths.
 
 pub mod dtype;
 pub mod geozarr;

@@ -6160,6 +6160,7 @@ dependencies = [
  "arrow-array",
  "arrow-schema",
  "datafusion-common",
+ "log",
  "sedona-common",
  "sedona-raster",
  "sedona-schema",

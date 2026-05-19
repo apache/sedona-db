@@ -106,7 +106,7 @@ fn build_fixture() -> TempDir {
 fn indb_round_trip_emits_one_row_per_chunk_position() {
     let tmp = build_fixture();
     let uri = format!("file://{}", tmp.path().display());
-    let arr = group_to_indb_rasters(&uri).unwrap();
+    let arr = group_to_indb_rasters(&uri, None).unwrap();
 
     let rasters = RasterStructArray::new(&arr);
     assert_eq!(rasters.len(), 8, "expected 8 chunk rows (2*2*2)");
@@ -135,6 +135,13 @@ fn indb_round_trip_emits_one_row_per_chunk_position() {
         &*pressure.contiguous_data().unwrap(),
         &[100u8, 101, 104, 105]
     );
+    // Chunk anchor is populated on InDb rows too as provenance — the
+    // `data` column carries the bytes, and `outdb_uri` records where
+    // they came from.
+    assert_eq!(pressure.outdb_format(), Some("zarr"));
+    let anchor = pressure.outdb_uri().expect("outdb_uri set on InDb band");
+    assert!(anchor.contains("#array=pressure"), "got: {anchor}");
+    assert!(anchor.contains("&chunk=0,0,0"), "got: {anchor}");
 
     // Temperature has base=0 → same chunk holds {0, 1, 4, 5}.
     let temperature = r0.band(1).unwrap();
@@ -155,7 +162,7 @@ fn indb_round_trip_emits_one_row_per_chunk_position() {
 fn outdb_emits_chunk_anchors() {
     let tmp = build_fixture();
     let uri = format!("file://{}", tmp.path().display());
-    let arr = group_to_outdb_rasters(&uri).unwrap();
+    let arr = group_to_outdb_rasters(&uri, None).unwrap();
 
     let rasters = RasterStructArray::new(&arr);
     assert_eq!(rasters.len(), 8);
@@ -197,8 +204,200 @@ fn errors_on_empty_group() {
         .store_metadata()
         .unwrap();
     let uri = format!("file://{}", tmp.path().display());
-    let err = group_to_indb_rasters(&uri).unwrap_err().to_string();
+    let err = group_to_indb_rasters(&uri, None).unwrap_err().to_string();
     assert!(err.contains("no child arrays"), "got: {err}");
+}
+
+/// Build a group with two 3-D data arrays and 1-D `t`/`y`/`x` coord
+/// variables alongside them — the xarray-on-Zarr pattern. The loader's
+/// default behaviour must drop the coord variables and read only the
+/// data arrays.
+#[allow(deprecated)]
+fn build_xarray_style_fixture() -> TempDir {
+    let tmp = TempDir::new().unwrap();
+    let store = Arc::new(FilesystemStore::new(tmp.path()).unwrap());
+    GroupBuilder::new()
+        .build(store.clone(), "/")
+        .unwrap()
+        .store_metadata()
+        .unwrap();
+
+    // Two 3-D data arrays sharing the same chunk grid.
+    for name in ["temperature", "pressure"] {
+        let arr = ArrayBuilder::new(
+            vec![2u64, 4u64, 4u64],
+            vec![1u64, 2u64, 2u64],
+            data_type::uint8(),
+            0u8,
+        )
+        .dimension_names(Some(["t", "y", "x"]))
+        .build(store.clone(), &format!("/{name}"))
+        .unwrap();
+        arr.store_metadata().unwrap();
+        for t in 0..2u64 {
+            for yc in 0..2u64 {
+                for xc in 0..2u64 {
+                    arr.store_chunk_elements::<u8>(&[t, yc, xc], &[0u8; 4])
+                        .unwrap();
+                }
+            }
+        }
+    }
+
+    // 1-D coord variables. Different chunk grid than the data arrays —
+    // would trip validate_group_constraints if not auto-skipped.
+    for (name, len, dim) in [("t", 2u64, "t"), ("y", 4u64, "y"), ("x", 4u64, "x")] {
+        let arr = ArrayBuilder::new(vec![len], vec![len], data_type::uint8(), 0u8)
+            .dimension_names(Some([dim]))
+            .build(store.clone(), &format!("/{name}"))
+            .unwrap();
+        arr.store_metadata().unwrap();
+    }
+
+    tmp
+}
+
+#[test]
+fn auto_skips_1d_coord_variables() {
+    let tmp = build_xarray_style_fixture();
+    let uri = format!("file://{}", tmp.path().display());
+    let arr = group_to_indb_rasters(&uri, None).unwrap();
+    let rasters = RasterStructArray::new(&arr);
+    // 2*2*2 = 8 chunk positions, with 2 bands per row (pressure, temperature).
+    assert_eq!(rasters.len(), 8);
+    let r0 = rasters.get(0).unwrap();
+    assert_eq!(r0.num_bands(), 2);
+}
+
+#[test]
+fn explicit_arrays_filter_selects_subset() {
+    let tmp = build_xarray_style_fixture();
+    let uri = format!("file://{}", tmp.path().display());
+    let filter = vec!["temperature".to_string()];
+    let arr = group_to_indb_rasters(&uri, Some(&filter)).unwrap();
+    let rasters = RasterStructArray::new(&arr);
+    assert_eq!(rasters.len(), 8);
+    let r0 = rasters.get(0).unwrap();
+    assert_eq!(r0.num_bands(), 1, "only temperature should be read");
+}
+
+#[test]
+fn explicit_arrays_filter_rejects_unknown_name() {
+    let tmp = build_xarray_style_fixture();
+    let uri = format!("file://{}", tmp.path().display());
+    let filter = vec!["humidity".to_string()];
+    let err = group_to_indb_rasters(&uri, Some(&filter))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("humidity"), "got: {err}");
+    assert!(err.contains("no array named"), "got: {err}");
+}
+
+#[test]
+fn errors_when_crs_declared_without_transform() {
+    // CRS-without-transform is almost certainly malformed metadata —
+    // the user thinks they have full georef but downstream spatial
+    // joins would silently use the identity pixel transform. The
+    // loader refuses rather than producing wrong results.
+    let tmp = TempDir::new().unwrap();
+    let store = Arc::new(FilesystemStore::new(tmp.path()).unwrap());
+    let mut group_attrs = serde_json::Map::new();
+    group_attrs.insert("proj:epsg".into(), serde_json::json!(4326));
+    GroupBuilder::new()
+        .attributes(group_attrs)
+        .build(store.clone(), "/")
+        .unwrap()
+        .store_metadata()
+        .unwrap();
+    ArrayBuilder::new(vec![2u64, 2], vec![1u64, 2], data_type::uint8(), 0u8)
+        .dimension_names(Some(["y", "x"]))
+        .build(store.clone(), "/temperature")
+        .unwrap()
+        .store_metadata()
+        .unwrap();
+
+    let uri = format!("file://{}", tmp.path().display());
+    let err = group_to_indb_rasters(&uri, None).unwrap_err().to_string();
+    assert!(err.contains("CRS"), "got: {err}");
+    assert!(err.contains("spatial:transform"), "got: {err}");
+}
+
+#[test]
+fn explicit_arrays_filter_rejects_1d_arrays() {
+    // A user explicitly naming a 1-D array gets a clear "needs 2 dims"
+    // error at parse time, not a confusing downstream spatial-dim
+    // resolution failure.
+    let tmp = build_xarray_style_fixture();
+    let uri = format!("file://{}", tmp.path().display());
+    let filter = vec!["t".to_string()];
+    let err = group_to_indb_rasters(&uri, Some(&filter))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("\"t\""), "got: {err}");
+    assert!(err.contains("rank 1"), "got: {err}");
+    assert!(err.contains("at least 2 dimensions"), "got: {err}");
+}
+
+#[test]
+fn errors_when_group_has_only_1d_arrays() {
+    let tmp = TempDir::new().unwrap();
+    let store = Arc::new(FilesystemStore::new(tmp.path()).unwrap());
+    GroupBuilder::new()
+        .build(store.clone(), "/")
+        .unwrap()
+        .store_metadata()
+        .unwrap();
+    ArrayBuilder::new(vec![4u64], vec![2u64], data_type::uint8(), 0u8)
+        .dimension_names(Some(["x"]))
+        .build(store.clone(), "/x")
+        .unwrap()
+        .store_metadata()
+        .unwrap();
+
+    let uri = format!("file://{}", tmp.path().display());
+    let err = group_to_indb_rasters(&uri, None).unwrap_err().to_string();
+    assert!(err.contains("only 1-D arrays"), "got: {err}");
+}
+
+#[test]
+fn falls_back_to_array_dimensions_attribute() {
+    // Simulates a Zarr v2 array (or any v3 array that lacks a first-class
+    // `dimension_names` field) by leaving `.dimension_names(None)` and
+    // setting xarray's `_ARRAY_DIMENSIONS` attribute instead. The loader
+    // must accept it and treat the attribute as authoritative.
+    let tmp = TempDir::new().unwrap();
+    let store = Arc::new(FilesystemStore::new(tmp.path()).unwrap());
+
+    GroupBuilder::new()
+        .build(store.clone(), "/")
+        .unwrap()
+        .store_metadata()
+        .unwrap();
+
+    let mut attrs = serde_json::Map::new();
+    attrs.insert("_ARRAY_DIMENSIONS".into(), serde_json::json!(["y", "x"]));
+    #[allow(deprecated)]
+    {
+        let array = ArrayBuilder::new(vec![2u64, 2], vec![1u64, 2], data_type::uint8(), 0u8)
+            .attributes(attrs)
+            .build(store.clone(), "/temperature")
+            .unwrap();
+        array.store_metadata().unwrap();
+        array
+            .store_chunk_elements::<u8>(&[0, 0], &[10u8, 11])
+            .unwrap();
+        array
+            .store_chunk_elements::<u8>(&[1, 0], &[20u8, 21])
+            .unwrap();
+    }
+
+    let uri = format!("file://{}", tmp.path().display());
+    let arr = group_to_indb_rasters(&uri, None).unwrap();
+    let rasters = RasterStructArray::new(&arr);
+    assert_eq!(rasters.len(), 2);
+    let r0 = rasters.get(0).unwrap();
+    let band = r0.band(0).unwrap();
+    assert_eq!(&*band.contiguous_data().unwrap(), &[10u8, 11]);
 }
 
 #[test]
@@ -224,7 +423,7 @@ fn errors_on_mismatched_chunk_grids() {
         .unwrap();
 
     let uri = format!("file://{}", tmp.path().display());
-    let err = group_to_indb_rasters(&uri).unwrap_err().to_string();
+    let err = group_to_indb_rasters(&uri, None).unwrap_err().to_string();
     assert!(
         err.contains("chunk") && err.contains("array_a") && err.contains("array_b"),
         "got: {err}"
