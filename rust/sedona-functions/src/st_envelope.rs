@@ -34,9 +34,9 @@ use sedona_geometry::{
     interval::{Interval, IntervalTrait, WraparoundInterval},
     wkb_factory::{
         write_wkb_empty_point, write_wkb_geometrycollection_header, write_wkb_linestring,
-        write_wkb_linestring_header, write_wkb_multilinestring_header, write_wkb_multipoint_header,
-        write_wkb_multipolygon_header, write_wkb_point, write_wkb_polygon,
-        write_wkb_polygon_header, WKB_MIN_PROBABLE_BYTES,
+        write_wkb_linestring_header, write_wkb_multilinestring, write_wkb_multilinestring_header,
+        write_wkb_multipoint_header, write_wkb_multipolygon, write_wkb_multipolygon_header,
+        write_wkb_point, write_wkb_polygon, write_wkb_polygon_header, WKB_MIN_PROBABLE_BYTES,
     },
 };
 use sedona_schema::{
@@ -140,40 +140,77 @@ fn invoke_scalar<T: WkbBounder2D + Default>(
 ///
 /// Returns true if the envelope was written, false otherwise. A return value of false
 /// indicates an empty envelope allowing the caller to handle it appropriately.
+///
+/// When `x.is_wraparound()` is true (indicating the envelope crosses the antimeridian),
+/// this writes a MULTIPOLYGON or MULTILINESTRING split at 180/-180.
 pub fn write_envelope(
     x: &WraparoundInterval,
     y: &Interval,
     out: &mut impl std::io::Write,
 ) -> Result<bool> {
     if x.is_empty() && y.is_empty() {
-        // Return true and let the caller determine how to handle an empty envelope
+        // Return false and let the caller determine how to handle an empty envelope
         return Ok(false);
     }
-    match (x.width() > 0.0, y.width() > 0.0) {
-        // Extent has height and width: return a polygon
-        (true, true) => {
-            write_wkb_polygon(
-                out,
-                [
+
+    // Check for wraparound case (crossing the antimeridian)
+    if x.is_wraparound() {
+        match (true, y.width() > 0.0) {
+            // Wraparound with height: MULTIPOLYGON with two polygons split at 180/-180
+            (true, true) => {
+                let poly1 = vec![
                     (x.lo(), y.lo()),
                     (x.lo(), y.hi()),
+                    (180.0, y.hi()),
+                    (180.0, y.lo()),
+                    (x.lo(), y.lo()),
+                ];
+                let poly2 = vec![
+                    (-180.0, y.lo()),
+                    (-180.0, y.hi()),
                     (x.hi(), y.hi()),
                     (x.hi(), y.lo()),
-                    (x.lo(), y.lo()),
-                ]
-                .into_iter(),
-            )
-            .map_err(|e| DataFusionError::External(e.into()))?;
+                    (-180.0, y.lo()),
+                ];
+                write_wkb_multipolygon(out, [poly1, poly2].into_iter())
+                    .map_err(|e| DataFusionError::External(e.into()))?;
+            }
+            // Wraparound with no height: MULTILINESTRING with two horizontal lines
+            (true, false) => {
+                let line1 = vec![(x.lo(), y.lo()), (180.0, y.lo())];
+                let line2 = vec![(-180.0, y.lo()), (x.hi(), y.lo())];
+                write_wkb_multilinestring(out, [line1, line2].into_iter())
+                    .map_err(|e| DataFusionError::External(e.into()))?;
+            }
+            _ => unreachable!(),
         }
-        (false, true) | (true, false) => {
-            // Extent has only height or width: return a vertical or horizontal line
-            write_wkb_linestring(out, [(x.lo(), y.lo()), (x.hi(), y.hi())].into_iter())
+    } else {
+        match (x.width() > 0.0, y.width() > 0.0) {
+            // Extent has height and width: return a polygon
+            (true, true) => {
+                write_wkb_polygon(
+                    out,
+                    [
+                        (x.lo(), y.lo()),
+                        (x.lo(), y.hi()),
+                        (x.hi(), y.hi()),
+                        (x.hi(), y.lo()),
+                        (x.lo(), y.lo()),
+                    ]
+                    .into_iter(),
+                )
                 .map_err(|e| DataFusionError::External(e.into()))?;
-        }
-        (false, false) => {
-            // Extent has no height or width: return a point
-            write_wkb_point(out, (x.lo(), y.lo()))
-                .map_err(|e| DataFusionError::External(e.into()))?;
+            }
+            (false, true) | (true, false) => {
+                // Extent has only height or width: return a vertical or horizontal line
+                write_wkb_linestring(out, [(x.lo(), y.lo()), (x.hi(), y.hi())].into_iter())
+                    .map_err(|e| DataFusionError::External(e.into()))?;
+            }
+            (false, false) => {
+                // Extent has no height or width: return a point
+                write_wkb_point(out, (x.lo(), y.lo()))
+                    .map_err(|e| DataFusionError::External(e.into()))?;
+            }
         }
     }
     Ok(true)
@@ -182,11 +219,14 @@ pub fn write_envelope(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::{
-        compare::assert_array_equal, create::create_array, testers::ScalarUdfTester,
+        compare::{assert_array_equal, assert_scalar_equal_wkb_geometry},
+        create::create_array,
+        testers::ScalarUdfTester,
     };
 
     #[test]
@@ -242,5 +282,97 @@ mod tests {
 
         let result = tester.invoke_scalar("POINT (1 3)").unwrap();
         tester.assert_scalar_result_equals(result, "POINT (1 3)");
+    }
+
+    #[test]
+    fn write_envelope_empty_returns_false() {
+        let x = WraparoundInterval::empty();
+        let y = Interval::empty();
+        let mut buf = Vec::new();
+        let result = write_envelope(&x, &y, &mut buf).unwrap();
+        assert!(!result);
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn write_envelope_non_wraparound_polygon() {
+        // x and y both have width: should produce a polygon
+        let x = WraparoundInterval::new(0.0, 10.0);
+        let y = Interval::new(0.0, 20.0);
+        let mut buf = Vec::new();
+        let result = write_envelope(&x, &y, &mut buf).unwrap();
+        assert!(result);
+        assert_scalar_equal_wkb_geometry(
+            &ScalarValue::Binary(Some(buf)),
+            Some("POLYGON((0 0,0 20,10 20,10 0,0 0))"),
+        );
+    }
+
+    #[test]
+    fn write_envelope_non_wraparound_horizontal_line() {
+        // x has width, y has no height: horizontal line
+        let x = WraparoundInterval::new(-5.0, 5.0);
+        let y = Interval::new(10.0, 10.0);
+        let mut buf = Vec::new();
+        let result = write_envelope(&x, &y, &mut buf).unwrap();
+        assert!(result);
+        assert_scalar_equal_wkb_geometry(
+            &ScalarValue::Binary(Some(buf)),
+            Some("LINESTRING(-5 10,5 10)"),
+        );
+    }
+
+    #[test]
+    fn write_envelope_non_wraparound_vertical_line() {
+        // x has no width, y has height: vertical line
+        let x = WraparoundInterval::new(5.0, 5.0);
+        let y = Interval::new(-10.0, 10.0);
+        let mut buf = Vec::new();
+        let result = write_envelope(&x, &y, &mut buf).unwrap();
+        assert!(result);
+        assert_scalar_equal_wkb_geometry(
+            &ScalarValue::Binary(Some(buf)),
+            Some("LINESTRING(5 -10,5 10)"),
+        );
+    }
+
+    #[test]
+    fn write_envelope_non_wraparound_point() {
+        // x and y both have no width: point
+        let x = WraparoundInterval::new(5.0, 5.0);
+        let y = Interval::new(10.0, 10.0);
+        let mut buf = Vec::new();
+        let result = write_envelope(&x, &y, &mut buf).unwrap();
+        assert!(result);
+        assert_scalar_equal_wkb_geometry(&ScalarValue::Binary(Some(buf)), Some("POINT(5 10)"));
+    }
+
+    #[test]
+    fn write_envelope_wraparound_multipolygon() {
+        // Wraparound case with height: MULTIPOLYGON split at 180/-180
+        // lo=170, hi=-170 means the interval wraps around the antimeridian
+        let x = WraparoundInterval::new(170.0, -170.0);
+        let y = Interval::new(-10.0, 10.0);
+        let mut buf = Vec::new();
+        let result = write_envelope(&x, &y, &mut buf).unwrap();
+        assert!(result);
+        assert_scalar_equal_wkb_geometry(
+            &ScalarValue::Binary(Some(buf)),
+            Some("MULTIPOLYGON(((170 -10,170 10,180 10,180 -10,170 -10)),((-180 -10,-180 10,-170 10,-170 -10,-180 -10)))"),
+        );
+    }
+
+    #[test]
+    fn write_envelope_wraparound_multilinestring() {
+        // Wraparound case with no height: MULTILINESTRING split at 180/-180
+        let x = WraparoundInterval::new(170.0, -170.0);
+        let y = Interval::new(5.0, 5.0);
+        let mut buf = Vec::new();
+        let result = write_envelope(&x, &y, &mut buf).unwrap();
+        assert!(result);
+        assert_scalar_equal_wkb_geometry(
+            &ScalarValue::Binary(Some(buf)),
+            Some("MULTILINESTRING((170 5,180 5),(-180 5,-170 5))"),
+        );
     }
 }
