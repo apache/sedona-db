@@ -27,7 +27,7 @@ docs_base_url <- "https://sedona.apache.org/sedonadb/latest/reference/sql"
 # Type to parameter name mapping
 type_to_param <- list(
   geometry = "geom",
-  geography = "geog",
+  geography = "geom",
   raster = "rast",
   float64 = "x",
   double = "x",
@@ -141,58 +141,111 @@ type_to_param_name <- function(arg_type, index = 1, needs_suffix = FALSE) {
 #' Parse kernel arguments and generate parameter info
 #'
 #' @param kernels List of kernel definitions from frontmatter
+#' @param fn_name Function name for error messages
 #' @returns List with params (for roxygen) and args (for function signature)
-parse_kernel_params <- function(kernels) {
+parse_kernel_params <- function(kernels, fn_name = "unknown") {
   if (length(kernels) == 0) {
     return(list(params = list(), args = character(), returns = "unknown"))
   }
 
-  # Use first kernel as reference (most common case)
-  kernel <- kernels[[1]]
-  args <- kernel$args
-  returns <- kernel$returns %||% "unknown"
+  # Helper to extract arg info from a single kernel
 
-  # First pass: extract types and count occurrences
-  arg_info <- lapply(args, function(arg) {
-    if (is.character(arg)) {
-      list(type = arg, name = NULL, desc = NULL)
-    } else if (is.list(arg)) {
-      list(type = arg$type %||% "unknown", name = arg$name, desc = arg$description)
-    } else {
-      list(type = "unknown", name = NULL, desc = NULL)
+  extract_kernel_arg_info <- function(kernel_args) {
+    lapply(kernel_args, function(arg) {
+      if (is.character(arg)) {
+        list(type = arg, name = NULL, desc = NULL)
+      } else if (is.list(arg)) {
+        list(
+          type = arg$type %||% "unknown",
+          name = arg$name,
+          desc = arg$description
+        )
+      } else {
+        list(type = "unknown", name = NULL, desc = NULL)
+      }
+    })
+  }
+
+  # Helper to generate arg names for a kernel's args
+  generate_arg_names <- function(arg_info_list) {
+    types <- vapply(arg_info_list, function(x) x$type, character(1))
+    type_totals <- table(types)
+    type_counts <- list()
+    arg_names <- character()
+
+    for (info in arg_info_list) {
+      arg_type <- info$type
+      arg_name <- info$name
+
+      if (is.null(arg_name)) {
+        type_counts[[arg_type]] <- (type_counts[[arg_type]] %||% 0) + 1
+        needs_suffix <- type_totals[[arg_type]] > 1
+        arg_name <- type_to_param_name(arg_type, type_counts[[arg_type]], needs_suffix)
+      }
+
+      arg_names <- c(arg_names, arg_name)
     }
+
+    arg_names
+  }
+
+  # Process all kernels to get their argument names
+  all_kernel_args <- lapply(kernels, function(k) {
+    info <- extract_kernel_arg_info(k$args)
+    generate_arg_names(info)
   })
 
-  # Count types that need disambiguation
-  types <- vapply(arg_info, function(x) x$type, character(1))
-  type_totals <- table(types)
+  # Find the kernel with the most arguments
+  kernel_lengths <- vapply(all_kernel_args, length, integer(1))
+  max_args <- max(kernel_lengths)
 
-  # Second pass: generate names
+  # Validate that argument names align at each position
+  for (pos in seq_len(max_args)) {
+    names_at_pos <- character()
+    for (i in seq_along(all_kernel_args)) {
+      if (pos <= length(all_kernel_args[[i]])) {
+        names_at_pos <- c(names_at_pos, all_kernel_args[[i]][pos])
+      }
+    }
+    unique_names <- unique(names_at_pos)
+    if (length(unique_names) > 1) {
+      stop(
+        "Cannot generate R function for ",
+        fn_name,
+        ": ",
+        "argument names at position ",
+        pos,
+        " do not match across kernels: ",
+        paste(unique_names, collapse = ", "),
+        call. = FALSE
+      )
+    }
+  }
+
+  # Use the kernel with the most arguments as the reference
+  ref_idx <- which.max(kernel_lengths)
+  kernel <- kernels[[ref_idx]]
+  args <- kernel$args
+  returns <- kernels[[1]]$returns %||% "unknown"
+
+  # Extract full info from reference kernel
+  arg_info <- extract_kernel_arg_info(args)
+  arg_names <- all_kernel_args[[ref_idx]]
+
+  # Build params with descriptions
   params <- list()
-  arg_names <- character()
-  type_counts <- list()
-
-  for (info in arg_info) {
-    arg_type <- info$type
-    arg_name <- info$name
+  for (i in seq_along(arg_info)) {
+    info <- arg_info[[i]]
+    arg_name <- arg_names[i]
     arg_desc <- info$desc
 
-    # Generate name if not provided
-    if (is.null(arg_name)) {
-      type_counts[[arg_type]] <- (type_counts[[arg_type]] %||% 0) + 1
-      needs_suffix <- type_totals[[arg_type]] > 1
-      arg_name <- type_to_param_name(arg_type, type_counts[[arg_type]], needs_suffix)
-    }
-
-    # Generate description
     if (is.null(arg_desc)) {
-      arg_desc <- paste0("(", arg_type, "): Input ", arg_type)
+      arg_desc <- paste0("(", info$type, "): Input ", info$type)
     } else {
-      arg_desc <- paste0("(", arg_type, "): ", trimws(arg_desc))
+      arg_desc <- paste0("(", info$type, "): ", trimws(arg_desc))
     }
 
     params[[arg_name]] <- arg_desc
-    arg_names <- c(arg_names, arg_name)
   }
 
   list(params = params, args = arg_names, returns = returns)
@@ -251,7 +304,9 @@ generate_roxygen <- function(title, description, fn_name, kernel_info) {
 
   # @seealso
   doc_url <- glue("{docs_base_url}/{fn_name}/")
-  seealso_block <- glue("#' @seealso\n#' [SedonaDB SQL documentation for {toupper(fn_name)}]({doc_url})")
+  seealso_block <- glue(
+    "#' @seealso\n#' [SedonaDB SQL documentation for {toupper(fn_name)}]({doc_url})"
+  )
 
   # @param entries
   param_lines <- vapply(
@@ -341,7 +396,7 @@ generate_translation <- function(sd_name, fn_name, args) {
 #' @returns Character string with complete R file content
 generate_r_file <- function(fn_name, frontmatter, description, file_hash) {
   sd_name <- sub("^st_", "sd_", fn_name)
-  kernel_info <- parse_kernel_params(frontmatter$kernels)
+  kernel_info <- parse_kernel_params(frontmatter$kernels, fn_name)
   title <- frontmatter$description %||% frontmatter$title
   if (length(kernel_info$args) > 0 && any(nzchar(kernel_info$args))) {
     args_with_defaults <- paste0(kernel_info$args, " = sd_missing_arg()")
@@ -375,7 +430,7 @@ generate_r_file <- function(fn_name, frontmatter, description, file_hash) {
 #'
 #' @param qmd_path Path to the .qmd file
 #' @param force Force regeneration even if hash matches
-#' @returns TRUE if file was generated, FALSE if skipped
+#' @returns List with status ("generated", "skipped", "failed") and error message if failed
 generate_from_qmd <- function(qmd_path, force = FALSE) {
   fn_name <- tools::file_path_sans_ext(basename(qmd_path))
   sd_name <- sub("^st_", "sd_", fn_name)
@@ -390,20 +445,29 @@ generate_from_qmd <- function(qmd_path, force = FALSE) {
     hash_line <- grep("^# Generated from", existing, value = TRUE)[1]
     if (!is.na(hash_line) && grepl(file_hash, hash_line)) {
       message("Skipping ", fn_name, " (unchanged)")
-      return(FALSE)
+      return(list(status = "skipped", fn_name = fn_name))
     }
   }
 
-  # Parse and generate
-  message("Generating ", sd_name, ".R from ", fn_name, ".qmd")
+  # Parse and generate with error handling
+  result <- tryCatch(
+    {
+      message("Generating ", sd_name, ".R from ", fn_name, ".qmd")
 
-  frontmatter <- extract_frontmatter(qmd_path)
-  description <- extract_description_section(qmd_path)
+      frontmatter <- extract_frontmatter(qmd_path)
+      description <- extract_description_section(qmd_path)
 
-  content <- generate_r_file(fn_name, frontmatter, description, file_hash)
+      content <- generate_r_file(fn_name, frontmatter, description, file_hash)
 
-  writeLines(content, output_path)
-  TRUE
+      writeLines(content, output_path)
+      list(status = "generated", fn_name = fn_name)
+    },
+    error = function(e) {
+      list(status = "failed", fn_name = fn_name, error = conditionMessage(e))
+    }
+  )
+
+  result
 }
 
 #' Process specified .qmd files or all st_*.qmd files
@@ -423,13 +487,25 @@ update_sd_funcs <- function(files = NULL, force = TRUE) {
   }
 
   generated <- 0
+  failed <- list()
+
   for (qmd_path in qmd_files) {
-    if (generate_from_qmd(qmd_path, force = force)) {
+    result <- generate_from_qmd(qmd_path, force = force)
+    if (result$status == "generated") {
       generated <- generated + 1
+    } else if (result$status == "failed") {
+      failed <- c(failed, list(result))
     }
   }
 
   message("Generated ", generated, " files")
+
+  if (length(failed) > 0) {
+    message("\nFailed to generate ", length(failed), " files:")
+    for (f in failed) {
+      message("  - ", f$fn_name, ": ", f$error)
+    }
+  }
 
   invisible(NULL)
 }
