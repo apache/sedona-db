@@ -307,8 +307,13 @@ generate_function <- function(sd_name, args_str) {
 #' @param args Character vector of argument names
 #' @returns Character string with translation function
 generate_translation <- function(sd_name, fn_name, args) {
-  trans_args <- paste(c(".ctx", args), collapse = ", ")
-  list_args <- if (length(args) > 0) {
+  if (length(args) > 0 && any(nzchar(args))) {
+    args_with_defaults <- paste0(args, " = sd_missing_arg()")
+    trans_args <- paste(c(".ctx", args_with_defaults), collapse = ", ")
+  } else {
+    trans_args <- ".ctx"
+  }
+  list_args <- if (length(args) > 0 && any(nzchar(args))) {
     paste0("list(", paste(args, collapse = ", "), ")")
   } else {
     "list()"
@@ -338,7 +343,12 @@ generate_r_file <- function(fn_name, frontmatter, description, file_hash) {
   sd_name <- sub("^st_", "sd_", fn_name)
   kernel_info <- parse_kernel_params(frontmatter$kernels)
   title <- frontmatter$description %||% frontmatter$title
-  args_str <- paste(kernel_info$args, collapse = ", ")
+  if (length(kernel_info$args) > 0 && any(nzchar(kernel_info$args))) {
+    args_with_defaults <- paste0(kernel_info$args, " = sd_missing_arg()")
+    args_str <- paste(args_with_defaults, collapse = ", ")
+  } else {
+    args_str <- ""
+  }
 
   # Generate pieces
   # nolint start: object_usage_linter

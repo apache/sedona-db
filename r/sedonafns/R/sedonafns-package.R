@@ -21,3 +21,12 @@
 ## usethis namespace: start
 ## usethis namespace: end
 NULL
+
+
+#' Missing argument sentinel
+#'
+#' @returns An object of class 'sd_missing_arg'
+#' @export
+sd_missing_arg <- function() {
+  structure(list(), class = "sd_missing_arg")
+}

@@ -23,12 +23,35 @@ call_sd_function_default <- function() {
   stop(
     "Can't use `",
     fn_name,
-    "()` outside a SedonaDB context",
+    "()` outside a SedonaDB translation context",
     call. = FALSE
   )
 }
 
 call_sd_translation_default <- function(.ctx, fn_name, args) {
+  is_missing <- vapply(args, inherits, logical(1), "sd_missing_arg")
+
+  # If any are missing, validate and trim
+  if (any(is_missing)) {
+    # Find last non-missing arg
+    last_non_missing <- max(c(0, which(!is_missing)))
+
+    # Check no missing args before non-missing args
+    if (last_non_missing > 0 && any(is_missing[seq_len(last_non_missing)])) {
+      stop(
+        "Missing arguments must be at the end of the argument list",
+        call. = FALSE
+      )
+    }
+
+    # Remove trailing missing args
+    if (last_non_missing == 0) {
+      args <- list()
+    } else {
+      args <- args[seq_len(last_non_missing)]
+    }
+  }
+
   sedonadb::sd_expr_any_function(
     fn_name,
     args,
