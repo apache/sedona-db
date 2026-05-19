@@ -39,11 +39,6 @@ use zarrs_filesystem::FilesystemStore;
 ///
 /// Returns the temp dir (kept alive by the caller so files persist).
 ///
-/// `store_chunk_elements` is deprecated in zarrs 0.23 in favour of
-/// `store_chunk` (which takes raw bytes); the typed convenience wrapper
-/// is still the cleanest path for fixture code so we suppress the
-/// warning here.
-#[allow(deprecated)]
 fn build_fixture() -> TempDir {
     let tmp = TempDir::new().unwrap();
     let store = Arc::new(FilesystemStore::new(tmp.path()).unwrap());
@@ -91,9 +86,7 @@ fn build_fixture() -> TempDir {
                             chunk.push(base.wrapping_add((t * 16 + y * 4 + x) as u8));
                         }
                     }
-                    array
-                        .store_chunk_elements::<u8>(&[t, yc, xc], &chunk)
-                        .unwrap();
+                    array.store_chunk(&[t, yc, xc], chunk).unwrap();
                 }
             }
         }
@@ -212,7 +205,6 @@ fn errors_on_empty_group() {
 /// variables alongside them — the xarray-on-Zarr pattern. The loader's
 /// default behaviour must drop the coord variables and read only the
 /// data arrays.
-#[allow(deprecated)]
 fn build_xarray_style_fixture() -> TempDir {
     let tmp = TempDir::new().unwrap();
     let store = Arc::new(FilesystemStore::new(tmp.path()).unwrap());
@@ -237,8 +229,7 @@ fn build_xarray_style_fixture() -> TempDir {
         for t in 0..2u64 {
             for yc in 0..2u64 {
                 for xc in 0..2u64 {
-                    arr.store_chunk_elements::<u8>(&[t, yc, xc], &[0u8; 4])
-                        .unwrap();
+                    arr.store_chunk(&[t, yc, xc], vec![0u8; 4]).unwrap();
                 }
             }
         }
@@ -376,20 +367,13 @@ fn falls_back_to_array_dimensions_attribute() {
 
     let mut attrs = serde_json::Map::new();
     attrs.insert("_ARRAY_DIMENSIONS".into(), serde_json::json!(["y", "x"]));
-    #[allow(deprecated)]
-    {
-        let array = ArrayBuilder::new(vec![2u64, 2], vec![1u64, 2], data_type::uint8(), 0u8)
-            .attributes(attrs)
-            .build(store.clone(), "/temperature")
-            .unwrap();
-        array.store_metadata().unwrap();
-        array
-            .store_chunk_elements::<u8>(&[0, 0], &[10u8, 11])
-            .unwrap();
-        array
-            .store_chunk_elements::<u8>(&[1, 0], &[20u8, 21])
-            .unwrap();
-    }
+    let array = ArrayBuilder::new(vec![2u64, 2], vec![1u64, 2], data_type::uint8(), 0u8)
+        .attributes(attrs)
+        .build(store.clone(), "/temperature")
+        .unwrap();
+    array.store_metadata().unwrap();
+    array.store_chunk(&[0, 0], vec![10u8, 11]).unwrap();
+    array.store_chunk(&[1, 0], vec![20u8, 21]).unwrap();
 
     let uri = format!("file://{}", tmp.path().display());
     let arr = group_to_indb_rasters(&uri, None).unwrap();

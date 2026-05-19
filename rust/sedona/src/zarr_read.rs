@@ -353,7 +353,6 @@ mod tests {
 
     /// Build a tiny 1-array Zarr group on disk and return the temp dir.
     /// 2×2 UInt8 with chunks [1, 2] → chunk grid [2, 1] = 2 chunk rows.
-    #[allow(deprecated)]
     fn build_fixture() -> TempDir {
         let tmp = TempDir::new().unwrap();
         let store = Arc::new(FilesystemStore::new(tmp.path()).unwrap());
@@ -367,12 +366,8 @@ mod tests {
             .build(store.clone(), "/temperature")
             .unwrap();
         array.store_metadata().unwrap();
-        array
-            .store_chunk_elements::<u8>(&[0, 0], &[10u8, 11])
-            .unwrap();
-        array
-            .store_chunk_elements::<u8>(&[1, 0], &[20u8, 21])
-            .unwrap();
+        array.store_chunk(&[0, 0], vec![10u8, 11]).unwrap();
+        array.store_chunk(&[1, 0], vec![20u8, 21]).unwrap();
         tmp
     }
 
@@ -482,26 +477,19 @@ mod tests {
             .unwrap()
             .store_metadata()
             .unwrap();
-        #[allow(deprecated)]
-        {
-            let temperature =
-                ArrayBuilder::new(vec![2u64, 2u64], vec![1u64, 2u64], data_type::uint8(), 0u8)
-                    .dimension_names(Some(["y", "x"]))
-                    .build(store.clone(), "/temperature")
-                    .unwrap();
-            temperature.store_metadata().unwrap();
-            temperature
-                .store_chunk_elements::<u8>(&[0, 0], &[10u8, 11])
+        let temperature =
+            ArrayBuilder::new(vec![2u64, 2u64], vec![1u64, 2u64], data_type::uint8(), 0u8)
+                .dimension_names(Some(["y", "x"]))
+                .build(store.clone(), "/temperature")
                 .unwrap();
-            temperature
-                .store_chunk_elements::<u8>(&[1, 0], &[20u8, 21])
-                .unwrap();
-            let y = ArrayBuilder::new(vec![2u64], vec![2u64], data_type::uint8(), 0u8)
-                .dimension_names(Some(["y"]))
-                .build(store.clone(), "/y")
-                .unwrap();
-            y.store_metadata().unwrap();
-        }
+        temperature.store_metadata().unwrap();
+        temperature.store_chunk(&[0, 0], vec![10u8, 11]).unwrap();
+        temperature.store_chunk(&[1, 0], vec![20u8, 21]).unwrap();
+        let y = ArrayBuilder::new(vec![2u64], vec![2u64], data_type::uint8(), 0u8)
+            .dimension_names(Some(["y"]))
+            .build(store.clone(), "/y")
+            .unwrap();
+        y.store_metadata().unwrap();
 
         let uri = format!("file://{}", tmp.path().display());
         let ctx = SessionContext::new();
