@@ -19,7 +19,7 @@ import io
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Literal, Optional, Union
 
-from sedonadb.expr import Expr
+from sedonadb.expr import Expr, SortExpr
 from sedonadb.expr import Literal as _SedonaLit
 from sedonadb.expr import col as _col
 from sedonadb.expr.expression import _to_expr
@@ -250,6 +250,73 @@ class DataFrame:
             self._impl.filter([e._impl for e in exprs]),
             self._options,
         )
+
+    def sort(self, *keys: Union[str, Expr, SortExpr]) -> "DataFrame":
+        """Sort rows by one or more keys.
+
+        Each argument is either a column name (`str`), an `Expr`, or a
+        `SortExpr` (built via `Expr.asc()` / `Expr.desc()` or
+        `sedonadb.expr.sort_expr(...)`). Strings and bare `Expr`s
+        auto-promote to ascending sort keys with nulls placed last; for
+        descending order or null-first placement, use the explicit
+        `SortExpr` forms.
+
+        Null placement defaults to "nulls last" for both ascending and
+        descending sorts (overriding DataFusion's SQL-style nulls-first-
+        on-descending). Override via `sort_expr(expr, asc=..., nulls_first=...)`
+        for the SQL behavior.
+
+        Args:
+            *keys: One or more sort keys, in order of priority. At least
+                one is required.
+
+        Examples:
+
+            >>> from sedonadb.expr import col
+            >>> sd = sedona.db.connect()
+            >>> df = sd.sql("SELECT * FROM (VALUES (3), (1), (2)) AS t(x)")
+            >>> df.sort("x").show()
+            ┌───────┐
+            │   x   │
+            │ int64 │
+            ╞═══════╡
+            │     1 │
+            ├╌╌╌╌╌╌╌┤
+            │     2 │
+            ├╌╌╌╌╌╌╌┤
+            │     3 │
+            └───────┘
+            >>> df.sort(col("x").desc()).show()
+            ┌───────┐
+            │   x   │
+            │ int64 │
+            ╞═══════╡
+            │     3 │
+            ├╌╌╌╌╌╌╌┤
+            │     2 │
+            ├╌╌╌╌╌╌╌┤
+            │     1 │
+            └───────┘
+        """
+        if not keys:
+            raise ValueError("sort() requires at least one sort key")
+
+        coerced: List = []
+        for k in keys:
+            if isinstance(k, SortExpr):
+                coerced.append(k._impl)
+            elif isinstance(k, Expr):
+                # Default direction is ascending, nulls last.
+                coerced.append(k.asc()._impl)
+            elif isinstance(k, str):
+                coerced.append(_col(k).asc()._impl)
+            else:
+                raise TypeError(
+                    f"sort() expects str, Expr, or SortExpr arguments, "
+                    f"got {type(k).__name__}"
+                )
+
+        return DataFrame(self._ctx, self._impl.sort(coerced), self._options)
 
     def limit(self, n: Optional[int], /, *, offset: int = 0) -> "DataFrame":
         """Limit result to n rows starting at offset

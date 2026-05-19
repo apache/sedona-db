@@ -26,7 +26,7 @@
 import pyarrow as pa
 import pytest
 
-from sedonadb.expr import Expr, col
+from sedonadb.expr import Expr, SortExpr, col, sort_expr
 
 
 def test_col_returns_expr():
@@ -124,6 +124,59 @@ def test_expr_init_rejects_wrong_type():
         Expr("not an internal expr")
     with pytest.raises(TypeError, match="InternalExpr"):
         Expr(42)
+
+
+# --- Sort expressions --------------------------------------------------------
+
+
+def test_expr_asc_default_returns_sort_expr():
+    s = col("x").asc()
+    assert isinstance(s, SortExpr)
+    assert repr(s) == "SortExpr(x ASC NULLS LAST)"
+
+
+def test_expr_desc_default_returns_sort_expr():
+    s = col("x").desc()
+    assert isinstance(s, SortExpr)
+    assert repr(s) == "SortExpr(x DESC NULLS LAST)"
+
+
+def test_expr_asc_nulls_first():
+    s = col("x").asc(nulls_first=True)
+    assert repr(s) == "SortExpr(x ASC NULLS FIRST)"
+
+
+def test_expr_desc_nulls_first():
+    s = col("x").desc(nulls_first=True)
+    assert repr(s) == "SortExpr(x DESC NULLS FIRST)"
+
+
+def test_sort_expr_factory_default():
+    s = sort_expr(col("x"))
+    assert isinstance(s, SortExpr)
+    assert repr(s) == "SortExpr(x ASC NULLS LAST)"
+
+
+def test_sort_expr_factory_explicit_options():
+    s = sort_expr(col("x"), asc=False, nulls_first=True)
+    assert repr(s) == "SortExpr(x DESC NULLS FIRST)"
+
+
+def test_sort_expr_factory_rejects_non_expr():
+    with pytest.raises(TypeError, match="Expr"):
+        sort_expr("x")
+
+
+def test_sort_expr_init_rejects_wrong_type():
+    with pytest.raises(TypeError, match="InternalSortExpr"):
+        SortExpr("not a sort expr")
+
+
+def test_sort_expr_over_compound_expression():
+    # `.asc()` / `.desc()` on a composed Expr should propagate the
+    # rendered Display all the way through.
+    s = (col("x") + col("y")).desc()
+    assert repr(s) == "SortExpr(x + y DESC NULLS LAST)"
 
 
 # --- Binary operators --------------------------------------------------------

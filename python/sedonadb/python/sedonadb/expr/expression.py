@@ -17,11 +17,15 @@
 
 from typing import Any, Iterable, Optional
 
-from sedonadb._lib import InternalExpr as _InternalExpr
-from sedonadb._lib import expr_binary as _expr_binary
-from sedonadb._lib import expr_col as _expr_col
-from sedonadb._lib import expr_lit as _expr_lit
-from sedonadb._lib import expr_not as _expr_not
+from sedonadb._lib import (
+    InternalExpr as _InternalExpr,
+    InternalSortExpr as _InternalSortExpr,
+    expr_binary as _expr_binary,
+    expr_col as _expr_col,
+    expr_lit as _expr_lit,
+    expr_not as _expr_not,
+    expr_sort_expr as _expr_sort_expr,
+)
 from sedonadb.expr.literal import Literal
 
 
@@ -153,6 +157,38 @@ class Expr:
         """
         return Expr(self._impl.negate())
 
+    def asc(self, nulls_first: bool = False) -> "SortExpr":
+        """Wrap this expression as an ascending sort key.
+
+        Returns a `SortExpr` suitable for `DataFrame.sort(...)`. The
+        `nulls_first` argument controls where null values are placed in
+        the sorted output. The default matches the rest of the SedonaDB
+        Python API: nulls last regardless of direction.
+
+        Args:
+            nulls_first: If `True`, null values come before non-nulls.
+                Defaults to `False` (nulls last).
+
+        Examples:
+
+            >>> from sedonadb.expr import col
+            >>> col("x").asc()
+            SortExpr(x ASC NULLS LAST)
+        """
+        return SortExpr(self._impl.asc(nulls_first))
+
+    def desc(self, nulls_first: bool = False) -> "SortExpr":
+        """Wrap this expression as a descending sort key. See `asc` for
+        the meaning of `nulls_first`.
+
+        Examples:
+
+            >>> from sedonadb.expr import col
+            >>> col("x").desc()
+            SortExpr(x DESC NULLS LAST)
+        """
+        return SortExpr(self._impl.desc(nulls_first))
+
     # Arithmetic operators -------------------------------------------------
     #
     # Each binary dunder routes through the shared `_binary` helper, which
@@ -255,6 +291,65 @@ class Expr:
             "Expr has no length. To count rows in a DataFrame, evaluate "
             "the Expr against a frame (e.g. `df.filter(expr).count()`)."
         )
+
+
+class SortExpr:
+    """A sort key — an `Expr` plus direction and null placement.
+
+    Construct via `Expr.asc()` / `Expr.desc()` for the common case, or
+    via `sedonadb.expr.sort_expr(...)` for full control. Consumed by
+    `DataFrame.sort(*keys)`.
+    """
+
+    __slots__ = ("_impl",)
+
+    def __init__(self, impl):
+        if not isinstance(impl, _InternalSortExpr):
+            raise TypeError(
+                f"SortExpr() expects an internal sort-expression handle "
+                f"(sedonadb._lib.InternalSortExpr); got "
+                f"{type(impl).__name__}. Use Expr.asc(), Expr.desc(), or "
+                f"sedonadb.expr.sort_expr() to construct one."
+            )
+        self._impl = impl
+
+    def __repr__(self) -> str:
+        return f"SortExpr({self._impl!r})"
+
+
+def sort_expr(
+    expr: Expr,
+    asc: bool = True,
+    nulls_first: bool = False,
+) -> SortExpr:
+    """Construct a `SortExpr` with explicit direction and null placement.
+
+    Lower-level than `Expr.asc()` / `Expr.desc()` — use when the caller
+    wants to set both `asc` and `nulls_first` deliberately, for example
+    `sort_expr(col("x"), asc=False, nulls_first=True)` to match SQL's
+    standard nulls-first-on-descending convention.
+
+    Args:
+        expr: The `Expr` to sort by.
+        asc: `True` for ascending, `False` for descending. Defaults to
+            `True`.
+        nulls_first: If `True`, null values come before non-nulls.
+            Defaults to `False` (nulls last).
+
+    Examples:
+
+        >>> from sedonadb.expr import col, sort_expr
+        >>> sort_expr(col("x"))
+        SortExpr(x ASC NULLS LAST)
+        >>> sort_expr(col("x"), asc=False, nulls_first=True)
+        SortExpr(x DESC NULLS FIRST)
+    """
+    if not isinstance(expr, Expr):
+        raise TypeError(
+            f"sort_expr() expects an Expr; got {type(expr).__name__}. "
+            f"Use sedonadb.expr.col(name) to build a column expression."
+        )
+    return SortExpr(_expr_sort_expr(expr._impl, asc, nulls_first))
 
 
 def col(name: str, qualifier: Optional[str] = None) -> Expr:

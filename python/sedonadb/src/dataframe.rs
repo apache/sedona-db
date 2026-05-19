@@ -43,7 +43,7 @@ use tokio::runtime::Runtime;
 
 use crate::context::InternalContext;
 use crate::error::PySedonaError;
-use crate::expr::PyExpr;
+use crate::expr::{PyExpr, PySortExpr};
 use crate::import_from::{import_arrow_scalar, import_arrow_schema};
 use crate::reader::PySedonaStreamReader;
 use crate::runtime::wait_for_future;
@@ -149,6 +149,25 @@ impl InternalDataFrame {
                 "filter() requires at least one predicate".to_string(),
             ))
         }
+    }
+
+    /// Sort rows by the given `SortExpr` keys.
+    ///
+    /// Each key in `sort_exprs` carries its own direction and null
+    /// placement, constructed Python-side via `Expr.asc()`, `Expr.desc()`,
+    /// or `sedonadb.expr.sort_expr(...)`. The Python wrapper auto-promotes
+    /// bare column-name strings and plain `Expr` values to ascending
+    /// `SortExpr` with `nulls_first=false` before they reach this method,
+    /// so we just need to unwrap and pass through.
+    fn sort(&self, sort_exprs: Vec<PySortExpr>) -> Result<InternalDataFrame, PySedonaError> {
+        if sort_exprs.is_empty() {
+            return Err(PySedonaError::SedonaPython(
+                "sort() requires at least one sort key".to_string(),
+            ));
+        }
+        let sort_exprs: Vec<SortExpr> = sort_exprs.into_iter().map(|s| s.inner).collect();
+        let inner = self.inner.clone().sort(sort_exprs)?;
+        Ok(InternalDataFrame::new(inner, self.runtime.clone()))
     }
 
     fn execute<'py>(&self, py: Python<'py>) -> Result<usize, PySedonaError> {

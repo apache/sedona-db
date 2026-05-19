@@ -128,10 +128,12 @@ fn _lib(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(expr::expr_lit, m)?)?;
     m.add_function(wrap_pyfunction!(expr::expr_binary, m)?)?;
     m.add_function(wrap_pyfunction!(expr::expr_not, m)?)?;
+    m.add_function(wrap_pyfunction!(expr::expr_sort_expr, m)?)?;
 
     m.add_class::<context::InternalContext>()?;
     m.add_class::<dataframe::InternalDataFrame>()?;
     m.add_class::<expr::PyExpr>()?;
+    m.add_class::<expr::PySortExpr>()?;
     m.add_class::<datasource::PyExternalFormat>()?;
     m.add_class::<datasource::PyProjectedRecordBatchReader>()?;
     m.add("SedonaError", py.get_type::<error::SedonaError>())?;
