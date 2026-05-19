@@ -188,9 +188,11 @@ fn invoke_scalar_bounds(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
+    use sedona_geometry::{bounds::wkb_bounds_xy, interval::IntervalTrait};
     use sedona_schema::datatypes::{
         WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOGRAPHY,
     };
@@ -207,10 +209,78 @@ mod tests {
         )
     }
 
+    /// Helper to extract WKB bytes from a scalar result
+    fn get_wkb_bytes(result: &ScalarValue) -> &[u8] {
+        match result {
+            ScalarValue::Binary(Some(bytes)) | ScalarValue::LargeBinary(Some(bytes)) => bytes,
+            _ => panic!("Expected binary, got {result:?}"),
+        }
+    }
+
+    /// Helper to assert bounds are approximately equal
+    fn assert_bounds_approx(
+        actual_bounds: &sedona_geometry::bounding_box::BoundingBox,
+        expected_xmin: f64,
+        expected_ymin: f64,
+        expected_xmax: f64,
+        expected_ymax: f64,
+    ) {
+        let actual_xmin = actual_bounds.x().lo();
+        let actual_ymin = actual_bounds.y().lo();
+        let actual_xmax = actual_bounds.x().hi();
+        let actual_ymax = actual_bounds.y().hi();
+
+        assert!(
+            (actual_xmin - expected_xmin).abs() < f64::EPSILON,
+            "xmin: expected {expected_xmin}, got {actual_xmin}"
+        );
+        assert!(
+            (actual_ymin - expected_ymin).abs() < f64::EPSILON,
+            "ymin: expected {expected_ymin}, got {actual_ymin}"
+        );
+        assert!(
+            (actual_xmax - expected_xmax).abs() < f64::EPSILON,
+            "xmax: expected {expected_xmax}, got {actual_xmax}"
+        );
+        assert!(
+            (actual_ymax - expected_ymax).abs() < f64::EPSILON,
+            "ymax: expected {expected_ymax}, got {actual_ymax}"
+        );
+    }
+
     #[test]
     fn udf_metadata() {
         let udf: ScalarUDF = create_udf().into();
         assert_eq!(udf.name(), "st_envelope");
+    }
+
+    #[test]
+    fn udf_invoke_scalar() {
+        let tester = ScalarUdfTester::new(create_udf().into(), vec![WKB_GEOGRAPHY]);
+
+        // Test with a polygon
+        let result = tester
+            .invoke_scalar("POLYGON ((1 2, 1 22, 11 22, 11 2, 1 2))")
+            .unwrap();
+        let wkb_bytes = get_wkb_bytes(&result);
+        let bounds = wkb_bounds_xy(wkb_bytes).expect("Failed to get bounds");
+
+        assert_bounds_approx(&bounds, 1.0, 1.9999999999999747, 11.0, 22.0759758928044);
+
+        // Test with a linestring crossing the antimeridian - should return MULTIPOLYGON
+        let result = tester
+            .invoke_scalar("LINESTRING (170 10, -170 20)")
+            .unwrap();
+        let wkb_bytes = get_wkb_bytes(&result);
+        let bounds = wkb_bounds_xy(wkb_bytes).expect("Failed to get bounds");
+
+        assert_bounds_approx(
+            &bounds,
+            -180.0,
+            9.999999999999975,
+            180.0,
+            20.000000000000025,
+        );
     }
 
     #[rstest]
