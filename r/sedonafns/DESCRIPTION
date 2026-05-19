@@ -10,5 +10,13 @@ Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.3
 Depends: R (>= 4.1.0)
 Suggests:
-    sedonadb
+    sedonadb,
+    testthat (>= 3.0.0)
 Config/build/bootstrap: TRUE
+Config/Needs/build:
+    glue,
+    here,
+    rlang,
+    roxygen2,
+    yaml
+Config/testthat/edition: 3

@@ -7,3 +7,4 @@
 ^configure\.win$
 ^\.lintr\.R$
 ^README\.Rmd$
+^configure$

@@ -113,6 +113,7 @@ jobs:
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
           needs: check
+          extra-packages: any::glue, any::rlang, any::yaml, any::roxygen2
           working-directory: r/sedonadb
           cache: false
 
@@ -120,6 +121,10 @@ jobs:
         run: |
           R CMD INSTALL r/sedonadb --preclean
 
-      - name: Test R Package
+      - name: Test sedonadb R Package
         run: |
           R -e 'library(testthat); test_local("r/sedonadb", MultiReporter$new(list(CheckReporter$new(), LocationReporter$new())))'
+
+      - name: Test sedonafns R Package
+        run: |
+          R -e 'library(testthat); test_local("r/sedonafns", MultiReporter$new(list(CheckReporter$new(), LocationReporter$new())))'
