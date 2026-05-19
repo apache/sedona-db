@@ -191,7 +191,9 @@ mod tests {
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
-    use sedona_schema::datatypes::{WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_VIEW_GEOGRAPHY};
+    use sedona_schema::datatypes::{
+        WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOGRAPHY,
+    };
     use sedona_testing::{
         compare::assert_array_equal, create::create_array, testers::ScalarUdfTester,
     };
@@ -219,6 +221,7 @@ mod tests {
         let input_wkt = vec![
             None,
             Some("POINT EMPTY"),
+            Some("POINT (0 1)"),
             Some("LINESTRING EMPTY"),
             Some("POLYGON EMPTY"),
             Some("MULTIPOINT EMPTY"),
@@ -230,6 +233,7 @@ mod tests {
             &[
                 None,
                 Some("POINT EMPTY"),
+                Some("POINT (0 1)"),
                 Some("POINT EMPTY"),
                 Some("POINT EMPTY"),
                 Some("POINT EMPTY"),
@@ -245,9 +249,10 @@ mod tests {
     #[rstest]
     fn udf_invoke_item_crs(#[values(WKB_GEOGRAPHY_ITEM_CRS.clone())] sedona_type: SedonaType) {
         let tester = ScalarUdfTester::new(create_udf().into(), vec![sedona_type.clone()]);
-        tester.assert_return_type(sedona_type);
+        // ST_Envelope returns geometry (planar), not geography, even for geography input
+        tester.assert_return_type(WKB_GEOMETRY_ITEM_CRS.clone());
 
-        let result = tester.invoke_scalar("POINT EMPTY").unwrap();
-        tester.assert_scalar_result_equals(result, "POINT EMPTY");
+        let result = tester.invoke_scalar("POINT (1 3)").unwrap();
+        tester.assert_scalar_result_equals(result, "POINT (1 3)");
     }
 }
