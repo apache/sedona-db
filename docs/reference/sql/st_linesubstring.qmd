@@ -16,13 +16,17 @@
 // under the License.
 ---
 title: ST_LineSubstring
-description: Returns a linestring being a substring of the input one starting and ending at the given fractions of total 2d length. Second and third arguments are double precision values between 0 and 1.
+description: Returns a linestring being a substring of the input one starting and ending at the given fractions of total 2d length.
 kernels:
   - returns: geometry
     args:
-      - geometry: geometry
-      - start_fraction: double
-      - end_fraction: double
+      - geometry
+      - name: start_fraction
+        type: double
+        description: The fraction from which the returned line will start (between 0 and 1)
+      - name: end_fraction
+        type: double
+        description: The fraction from which the returned line will end (between 0 and 1)
 ---
 
 ## Examples

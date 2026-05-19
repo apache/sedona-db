@@ -23,6 +23,9 @@ from sedonadb.testing import geom_or_null, PostGIS, SedonaDB
 @pytest.mark.parametrize(
     ("geom", "start", "end", "expected"),
     [
+        ("LINESTRING EMPTY", 0.0, 1.0, "LINESTRING EMPTY"),
+        ("LINESTRING EMPTY", None, 1.0, "LINESTRING EMPTY"),
+        ("LINESTRING EMPTY", 0.0, None, "LINESTRING EMPTY"),
         (None, 0.0, 1.0, None),
         ("LINESTRING(0 0, 10 10)", None, 1.0, None),  # Start fraction is NULL -> Output is NULL
         ("LINESTRING(0 0, 10 10)", 0.0, None, None),  # End fraction is NULL -> Output is NULL

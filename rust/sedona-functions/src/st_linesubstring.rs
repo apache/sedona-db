@@ -103,11 +103,17 @@ impl SedonaScalarKernel for STLineSubstring {
                     return Ok(());
                 }
             };
-
             if let Some(wkb) = maybe_wkb {
                 if let GeometryType::LineString(line) = wkb.as_type() {
                     let num_coords = line.num_coords();
                     let dim = line.dim();
+                    if num_coords == 0 {
+                        let mut final_wkb = Vec::new();
+                        write_wkb_linestring_header(&mut final_wkb, dim, 0)
+                            .map_err(|e| DataFusionError::Internal(e.to_string()))?;
+                        builder.append_value(final_wkb);
+                        return Ok(());
+                    }
 
                     let mut cumulative_distances = Vec::with_capacity(num_coords);
                     let mut total_length = 0.0;
@@ -198,7 +204,6 @@ impl SedonaScalarKernel for STLineSubstring {
             } else {
                 builder.append_null();
             }
-
             Ok(())
         })?;
 
@@ -260,11 +265,15 @@ mod tests {
         let expected_point = tester.invoke_wkb_scalar(Some("POINT(5 5)")).unwrap();
         assert_scalar_equal(&actual_point, &expected_point);
 
+        let actual_empty = tester.invoke_scalar_scalar_scalar("LINESTRING EMPTY", 0.0, 1.0).unwrap();
+        let expected_empty = tester.invoke_wkb_scalar(Some("LINESTRING EMPTY")).unwrap();
+        assert_scalar_equal(&actual_empty, &expected_empty);
 
         let geoms_input = tester.invoke_wkb_array(vec![
             Some("LINESTRING(0 0, 10 10)"),
             None,
-            Some("LINESTRING(0 0, 10 10)")
+            Some("LINESTRING(0 0, 10 10)"),
+            Some("LINESTRING EMPTY")
         ]).unwrap();
 
         let starts_input: ArrayRef = Arc::new(Float64Array::from(vec![Some(0.0), Some(0.0), Some(0.5)]));
@@ -273,17 +282,11 @@ mod tests {
         let expected_array = tester.invoke_wkb_array(vec![
             Some("LINESTRING(0 0, 5 5)"),
             None,
-            Some("POINT(5 5)")
+            Some("POINT(5 5)"),
+            Some("LINESTRING EMPTY")
         ]).unwrap();
 
-        let actual_array = match tester.invoke(vec![
-            ColumnarValue::Array(geoms_input),
-            ColumnarValue::Array(starts_input),
-            ColumnarValue::Array(ends_input)
-        ]).unwrap() {
-            ColumnarValue::Array(arr) => arr,
-            _ => panic!("Expected array block context output"),
-        };
+        let actual_array = tester.invoke_arrays(vec![geoms_input, starts_input, ends_input]).unwrap();
 
         assert_array_equal(&actual_array, &expected_array);
     }
