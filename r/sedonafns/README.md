@@ -33,13 +33,14 @@ You can install the development version of sedonafns from
 
 ``` r
 # install.packages("pak")
-pak::pak("apache/sedona-db")
+pak::pak("apache/sedona-db/r/sedonafns")
 ```
 
 ## Example
 
 You can use `sd_xxx()` functions in SedonaDB pipelines and benefit from
-autocomplete and inline documentation.
+autocomplete and inline documentation. We use `sd_` instead of `st_` as
+a prefix to avoid name collisions with the **sf** package.
 
 ``` r
 library(sedonadb)

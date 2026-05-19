@@ -142,14 +142,19 @@ type_to_param_name <- function(arg_type, index = 1, needs_suffix = FALSE) {
 #'
 #' @param kernels List of kernel definitions from frontmatter
 #' @param fn_name Function name for error messages
-#' @returns List with params (for roxygen) and args (for function signature)
+#' @returns List with params (for roxygen), args (for function signature),
+#'   returns, variadic flag, and kernel_signatures if variadic
 parse_kernel_params <- function(kernels, fn_name = "unknown") {
   if (length(kernels) == 0) {
-    return(list(params = list(), args = character(), returns = "unknown"))
+    return(list(
+      params = list(),
+      args = character(),
+      returns = "unknown",
+      variadic = FALSE
+    ))
   }
 
   # Helper to extract arg info from a single kernel
-
   extract_kernel_arg_info <- function(kernel_args) {
     lapply(kernel_args, function(arg) {
       if (is.character(arg)) {
@@ -189,17 +194,16 @@ parse_kernel_params <- function(kernels, fn_name = "unknown") {
     arg_names
   }
 
-  # Process all kernels to get their argument names
-  all_kernel_args <- lapply(kernels, function(k) {
-    info <- extract_kernel_arg_info(k$args)
-    generate_arg_names(info)
-  })
+  # Process all kernels to get their argument info and names
+  all_kernel_info <- lapply(kernels, function(k) extract_kernel_arg_info(k$args))
+  all_kernel_args <- lapply(all_kernel_info, generate_arg_names)
 
   # Find the kernel with the most arguments
   kernel_lengths <- vapply(all_kernel_args, length, integer(1))
   max_args <- max(kernel_lengths)
 
-  # Validate that argument names align at each position
+  # Check if argument names conflict at any position
+  has_conflict <- FALSE
   for (pos in seq_len(max_args)) {
     names_at_pos <- character()
     for (i in seq_along(all_kernel_args)) {
@@ -209,27 +213,35 @@ parse_kernel_params <- function(kernels, fn_name = "unknown") {
     }
     unique_names <- unique(names_at_pos)
     if (length(unique_names) > 1) {
-      stop(
-        "Cannot generate R function for ",
-        fn_name,
-        ": ",
-        "argument names at position ",
-        pos,
-        " do not match across kernels: ",
-        paste(unique_names, collapse = ", "),
-        call. = FALSE
-      )
+      has_conflict <- TRUE
+      break
     }
   }
 
-  # Use the kernel with the most arguments as the reference
-  ref_idx <- which.max(kernel_lengths)
-  kernel <- kernels[[ref_idx]]
-  args <- kernel$args
   returns <- kernels[[1]]$returns %||% "unknown"
 
-  # Extract full info from reference kernel
-  arg_info <- extract_kernel_arg_info(args)
+  # If conflicts, use variadic mode with ... and document kernel signatures
+  if (has_conflict) {
+    # Build signature strings for documentation
+    kernel_signatures <- vapply(seq_along(all_kernel_args), function(i) {
+      args <- all_kernel_args[[i]]
+      types <- vapply(all_kernel_info[[i]], function(x) x$type, character(1))
+      # Format as "arg1 (type1), arg2 (type2), ..."
+      paste(paste0(args, " (", types, ")"), collapse = ", ")
+    }, character(1))
+
+    return(list(
+      params = list(),
+      args = character(),
+      returns = returns,
+      variadic = TRUE,
+      kernel_signatures = kernel_signatures
+    ))
+  }
+
+  # No conflicts - use the kernel with the most arguments as reference
+  ref_idx <- which.max(kernel_lengths)
+  arg_info <- all_kernel_info[[ref_idx]]
   arg_names <- all_kernel_args[[ref_idx]]
 
   # Build params with descriptions
@@ -248,7 +260,12 @@ parse_kernel_params <- function(kernels, fn_name = "unknown") {
     params[[arg_name]] <- arg_desc
   }
 
-  list(params = params, args = arg_names, returns = returns)
+  list(
+    params = params,
+    args = arg_names,
+    returns = returns,
+    variadic = FALSE
+  )
 }
 
 #' Wrap text to specified width with roxygen prefix
@@ -309,14 +326,25 @@ generate_roxygen <- function(title, description, fn_name, kernel_info) {
   )
 
   # @param entries
-  param_lines <- vapply(
-    names(kernel_info$params),
-    function(name) {
-      glue("#' @param {name} {kernel_info$params[[name]]}")
-    },
-    character(1)
-  )
-  param_block <- paste(param_lines, collapse = "\n")
+  if (isTRUE(kernel_info$variadic)) {
+    # Variadic mode: document ... with bulleted list of supported combinations
+    bullet_lines <- paste0("#' - ", kernel_info$kernel_signatures)
+    param_block <- paste0(
+      "#' @param ... Supported combinations:\n",
+      paste(bullet_lines, collapse = "\n")
+    )
+  } else if (length(kernel_info$params) > 0) {
+    param_lines <- vapply(
+      names(kernel_info$params),
+      function(name) {
+        glue("#' @param {name} {kernel_info$params[[name]]}")
+      },
+      character(1)
+    )
+    param_block <- paste(param_lines, collapse = "\n")
+  } else {
+    param_block <- ""
+  }
 
   # @returns
   returns_block <- glue("#' @returns ({kernel_info$returns})")
@@ -360,18 +388,19 @@ generate_function <- function(sd_name, args_str) {
 #' @param sd_name Function name (e.g., "sd_length")
 #' @param fn_name Original SQL function name (e.g., "st_length")
 #' @param args Character vector of argument names
+#' @param variadic Whether to use ... for arguments
 #' @returns Character string with translation function
-generate_translation <- function(sd_name, fn_name, args) {
-  if (length(args) > 0 && any(nzchar(args))) {
+generate_translation <- function(sd_name, fn_name, args, variadic = FALSE) {
+  if (variadic) {
+    trans_args <- ".ctx, ..."
+    list_args <- "list(...)"
+  } else if (length(args) > 0 && any(nzchar(args))) {
     args_with_defaults <- paste0(args, " = sd_missing_arg()")
     trans_args <- paste(c(".ctx", args_with_defaults), collapse = ", ")
+    list_args <- paste0("list(", paste(args, collapse = ", "), ")")
   } else {
     trans_args <- ".ctx"
-  }
-  list_args <- if (length(args) > 0 && any(nzchar(args))) {
-    paste0("list(", paste(args, collapse = ", "), ")")
-  } else {
-    "list()"
+    list_args <- "list()"
   }
 
   glue(
@@ -398,7 +427,11 @@ generate_r_file <- function(fn_name, frontmatter, description, file_hash) {
   sd_name <- sub("^st_", "sd_", fn_name)
   kernel_info <- parse_kernel_params(frontmatter$kernels, fn_name)
   title <- frontmatter$description %||% frontmatter$title
-  if (length(kernel_info$args) > 0 && any(nzchar(kernel_info$args))) {
+
+  # Determine argument string based on variadic mode
+  if (isTRUE(kernel_info$variadic)) {
+    args_str <- "..."
+  } else if (length(kernel_info$args) > 0 && any(nzchar(kernel_info$args))) {
     args_with_defaults <- paste0(kernel_info$args, " = sd_missing_arg()")
     args_str <- paste(args_with_defaults, collapse = ", ")
   } else {
@@ -409,7 +442,12 @@ generate_r_file <- function(fn_name, frontmatter, description, file_hash) {
   # nolint start: object_usage_linter
   roxygen <- generate_roxygen(title, description, fn_name, kernel_info)
   fn_def <- generate_function(sd_name, args_str)
-  translation <- generate_translation(sd_name, fn_name, kernel_info$args)
+  translation <- generate_translation(
+    sd_name,
+    fn_name,
+    kernel_info$args,
+    variadic = isTRUE(kernel_info$variadic)
+  )
   # nolint end
 
   # Assemble full file
