@@ -50,20 +50,32 @@ use sedona_schema::{
 pub fn st_envelope_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_envelope",
-        ItemCrsKernel::wrap_impl(vec![Arc::new(STEnvelope::<WkbGeometryBounder>::default())]),
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STEnvelope::<WkbGeometryBounder>::new(
+            ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY),
+        ))]),
         Volatility::Immutable,
     )
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct STEnvelope<T> {
+    matcher: ArgMatcher,
     _phantom: PhantomData<T>,
+}
+
+impl<T> STEnvelope<T> {
+    /// Create a new ST_Envelope implementation with a specific ArgMatcher
+    pub fn new(matcher: ArgMatcher) -> Self {
+        Self {
+            matcher,
+            _phantom: Default::default(),
+        }
+    }
 }
 
 impl<T: WkbBounder2D + Default> SedonaScalarKernel for STEnvelope<T> {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        let matcher = ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY);
-        matcher.match_args(args)
+        self.matcher.match_args(args)
     }
 
     fn invoke_batch(
