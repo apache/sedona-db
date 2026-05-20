@@ -223,7 +223,7 @@ mod tests {
         testers::ScalarUdfTester,
     };
     use std::sync::Arc;
-
+    use sedona_testing::create::create_array;
     use super::*;
 
     #[test]
@@ -269,12 +269,14 @@ mod tests {
         let expected_empty = tester.invoke_wkb_scalar(Some("LINESTRING EMPTY")).unwrap();
         assert_scalar_equal(&actual_empty, &expected_empty);
 
-        let geoms_input = tester.invoke_wkb_array(vec![
-            Some("LINESTRING(0 0, 10 10)"),
-            None,
-            Some("LINESTRING(0 0, 10 10)"),
-            Some("LINESTRING EMPTY")
-        ]).unwrap();
+        let geoms_input = create_array(
+            &[
+                Some("LINESTRING(0 0, 10 10)"),
+                None,
+                Some("LINESTRING(0 0, 10 10)")
+            ],
+            &WKB_GEOMETRY,
+        );
 
         let starts_input: ArrayRef = Arc::new(Float64Array::from(vec![Some(0.0), Some(0.0), Some(0.5)]));
         let ends_input: ArrayRef = Arc::new(Float64Array::from(vec![Some(0.5), Some(1.0), Some(0.5)]));
