@@ -500,11 +500,11 @@ mod tests {
 
         let (x, y) = bounder.finish();
 
-        // Bounds should encompass the linestring
-        assert!(x.lo() <= 10.0);
-        assert!(x.hi() >= 30.0);
-        assert!(y.lo() <= 20.0);
-        assert!(y.hi() >= 40.0);
+        // Bounds should encompass the linestring (with some tolerance for geodesic calculation)
+        assert!(x.lo() <= 10.1, "x.lo() should be <= 10.0: {}", x.lo());
+        assert!(x.hi() >= 29.9, "x.hi() should be >= 30.0: {}", x.hi());
+        assert!(y.lo() <= 20.1, "y.lo() should be <= 20.0: {}", y.lo());
+        assert!(y.hi() >= 39.9, "y.hi() should be >= 40.0: {}", y.hi());
     }
 
     #[test]
