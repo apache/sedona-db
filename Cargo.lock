@@ -6404,6 +6404,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sedonadb-zarr"
+version = "0.4.0"
+dependencies = [
+ "pyo3",
+ "sedona-raster-zarr",
+ "sedonadb",
+]
+
+[[package]]
 name = "sedonadbr"
 version = "0.4.0"
 dependencies = [

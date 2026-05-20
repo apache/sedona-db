@@ -23,7 +23,10 @@ edition = "2021"
 
 [lib]
 name = "_lib"
-crate-type = ["cdylib"]
+# `cdylib` is what maturin packages into the Python wheel. `rlib` is
+# what plugin crates (e.g. `python/sedonadb-zarr`) link against so they
+# can extract `InternalContext` from Python objects via PyO3.
+crate-type = ["cdylib", "rlib"]
 
 [features]
 default = ["mimalloc"]

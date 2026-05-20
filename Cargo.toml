@@ -25,6 +25,7 @@ members = [
     "c/sedona-s2geography",
     "c/sedona-tg",
     "python/sedonadb",
+    "python/sedonadb-zarr",
     "r/sedonadb/src/rust",
     "rust/sedona-adbc",
     "rust/sedona-datasource",
@@ -161,6 +162,10 @@ sedona-spatial-join-gpu = { version = "0.4.0", path = "rust/sedona-spatial-join-
 sedona-spatial-join-geography = { version = "0.4.0", path = "rust/sedona-spatial-join-geography" }
 sedona-query-planner = { version = "0.4.0", path = "rust/sedona-query-planner" }
 sedona-testing = { version = "0.4.0", path = "rust/sedona-testing" }
+
+# Python extension crates exposed as rlib so plugin packages can extract
+# PyO3 classes (e.g. `InternalContext`) via PyO3's downcast machinery.
+sedonadb = { version = "0.4.0", path = "python/sedonadb", default-features = false }
 
 # C wrapper crates
 sedona-extension = { version = "0.4.0", path = "c/sedona-extension" }

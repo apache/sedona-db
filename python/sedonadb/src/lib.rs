@@ -21,7 +21,10 @@ use sedona_gdal::global::{configure_global_gdal_api, with_global_gdal, GdalApiBu
 use sedona_proj::register::{configure_global_proj_engine, ProjCrsEngineBuilder};
 use std::ffi::c_void;
 
-mod context;
+// `context` is `pub` so plugin crates (e.g. `python/sedonadb-zarr`)
+// linking the rlib can extract `InternalContext` from Python objects.
+// The other modules stay private — they're internal-detail.
+pub mod context;
 mod dataframe;
 mod datasource;
 mod error;
