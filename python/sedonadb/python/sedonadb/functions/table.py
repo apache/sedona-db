@@ -117,7 +117,7 @@ class TableFunctions:
         self,
         uri: str,
         *,
-        indb: Optional[bool] = None,
+        load_eager: Optional[bool] = None,
         rows_per_batch: Optional[int] = None,
         num_partitions: Optional[int] = None,
         arrays: Optional[List[str]] = None,
@@ -137,11 +137,14 @@ class TableFunctions:
         ----------
         uri : str
             Zarr group URI. ``file:///path/to/foo.zarr`` or a bare local path.
-        indb : bool, optional
+        load_eager : bool, optional
             ``True`` (default) materializes every chunk's bytes into the
             Arrow ``data`` column eagerly. ``False`` emits chunk-anchor
             URIs only; byte resolution depends on the OutDb resolver
-            being registered (follow-up PR).
+            being registered (follow-up PR). Long-term, ``load_eager =
+            True`` will trigger the planner to inject an async
+            ``RS_EnsureLoaded`` over the scan output rather than
+            fetching at plan time.
         rows_per_batch : int, optional
             Chunks per ``RecordBatch`` (default 1024).
         num_partitions : int, optional
@@ -165,7 +168,7 @@ class TableFunctions:
         """
 
         args = {
-            "indb": indb,
+            "load_eager": load_eager,
             "rows_per_batch": rows_per_batch,
             "num_partitions": num_partitions,
             "arrays": arrays,

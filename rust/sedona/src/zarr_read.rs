@@ -22,7 +22,7 @@
 //! SELECT * FROM sd_read_zarr('file:///path/to/datacube.zarr');
 //! SELECT count(*) FROM sd_read_zarr(
 //!     'file:///path/to/datacube.zarr',
-//!     '{"indb": true, "rows_per_batch": 256}'
+//!     '{"load_eager": true, "rows_per_batch": 256}'
 //! );
 //! ```
 //!
@@ -30,9 +30,11 @@
 //! position in the Zarr group's chunk grid. All existing `RS_*` UDFs
 //! operate on the column unchanged.
 //!
-//! `indb` defaults to `true` so byte-reading kernels work end-to-end
-//! without depending on a registered OutDb resolver. The default will
-//! flip to `false` once the format-keyed dispatcher lands.
+//! `load_eager` defaults to `true` so byte-reading kernels work end-to-end
+//! without depending on a registered OutDb resolver. When the async
+//! `RS_EnsureLoaded` UDF lands, `load_eager = true` will be reinterpreted
+//! as the planner auto-injecting that UDF over the scan output instead
+//! of fetching at plan time.
 
 use std::any::Any;
 use std::sync::Arc;
@@ -64,9 +66,12 @@ use serde::{Deserialize, Serialize};
 /// Accepts one or two string arguments:
 /// - `uri` (required) — Zarr group URI (e.g. `file:///path/to/foo.zarr`).
 /// - `options_json` (optional) — JSON string with any of:
-///     - `indb`: `true` (default) materializes chunk bytes into the
-///       Arrow `data` column eagerly; `false` emits chunk-anchor URIs
-///       only and defers byte resolution to the OutDb loader.
+///     - `load_eager`: `true` (default) materializes chunk bytes into
+///       the Arrow `data` column eagerly; `false` emits chunk-anchor
+///       URIs only and defers byte resolution to the OutDb loader.
+///       Long-term, `load_eager = true` will instead trigger the
+///       planner to inject an async `RS_EnsureLoaded` over the scan
+///       output rather than fetching at plan time.
 ///     - `rows_per_batch`: chunks per `RecordBatch` (default 1024)
 ///     - `num_partitions`: scan partitions (default 1; > 1 currently errors)
 ///     - `arrays`: optional list of array names to read. Default reads
@@ -125,7 +130,7 @@ pub struct ZarrChunkProvider {
 impl ZarrChunkProvider {
     fn try_new(uri: &str, options_json: Option<String>) -> Result<Self> {
         let opts = parse_options(options_json.as_deref())?;
-        let indb = opts.indb.unwrap_or(true);
+        let load_eager = opts.load_eager.unwrap_or(true);
         let rows_per_batch = opts.rows_per_batch.unwrap_or(1024).max(1);
         let num_partitions = opts.num_partitions.unwrap_or(1);
         if num_partitions != 1 {
@@ -136,7 +141,7 @@ impl ZarrChunkProvider {
         }
 
         let arrays_filter = opts.arrays.as_deref();
-        let rasters = if indb {
+        let rasters = if load_eager {
             group_to_indb_rasters(uri, arrays_filter).map_err(arrow_to_df_err)?
         } else {
             group_to_outdb_rasters(uri, arrays_filter).map_err(arrow_to_df_err)?
@@ -316,8 +321,11 @@ fn arrow_to_df_err(e: arrow_schema::ArrowError) -> DataFusionError {
 struct ZarrReadOptions {
     /// `true` (default) materializes chunk bytes into the Arrow `data`
     /// column eagerly; `false` emits chunk-anchor URIs only and defers
-    /// byte resolution to the OutDb loader.
-    indb: Option<bool>,
+    /// byte resolution to the OutDb loader. Long-term, `load_eager =
+    /// true` will trigger the planner to inject an async
+    /// `RS_EnsureLoaded` over the scan output rather than fetching at
+    /// plan time.
+    load_eager: Option<bool>,
     rows_per_batch: Option<usize>,
     num_partitions: Option<usize>,
     /// Explicit array-name filter. `None` reads every multi-dimensional
@@ -433,7 +441,7 @@ mod tests {
         // walks the chunk grid metadata.
         let df = ctx
             .sql(&format!(
-                r#"SELECT count(*) FROM sd_read_zarr('{uri}', '{{"indb": false}}')"#,
+                r#"SELECT count(*) FROM sd_read_zarr('{uri}', '{{"load_eager": false}}')"#,
             ))
             .await
             .unwrap();
