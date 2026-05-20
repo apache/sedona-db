@@ -256,7 +256,6 @@ impl GeoStatsAccumulator for GeographyGeoStatsAccumulator {
 mod test {
     use super::*;
     use parquet::geospatial::bounding_box::BoundingBox;
-    use parquet_geospatial::testing::{wkb_point_xy, wkb_point_xyzm};
     use sedona_schema::datatypes::{WKB_GEOGRAPHY, WKB_VIEW_GEOGRAPHY};
     use sedona_testing::create::create_scalar;
 
@@ -361,6 +360,8 @@ mod test {
     #[cfg(feature = "s2geography")]
     #[test]
     fn test_geography_accumulator() {
+        use parquet_geospatial::testing::{wkb_point_xy, wkb_point_xyzm};
+
         // The geography bounder produces slightly expanded bounds compared to the
         // geometry bounder due to spherical interpolation along geodesics.
         const EPSILON: f64 = 1e-10;

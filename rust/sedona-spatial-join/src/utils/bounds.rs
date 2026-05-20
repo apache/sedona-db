@@ -107,6 +107,16 @@ impl Bounds2D {
         WraparoundInterval::new(self.x.0 as f64, self.x.1 as f64)
     }
 
+    /// Return the x [Interval] for these bounds, converting any wraparound
+    /// into the full interval
+    pub fn x_no_wraparound(&self) -> Interval {
+        if self.is_wraparound() {
+            Interval::full()
+        } else {
+            Interval::new(self.x.0 as f64, self.x.1 as f64)
+        }
+    }
+
     /// Return the y [Interval] for these bounds
     pub fn y(&self) -> Interval {
         Interval::new(self.y.0 as f64, self.y.1 as f64)
@@ -121,11 +131,16 @@ impl Bounds2D {
     pub fn intersects_point(&self, point: (f64, f64)) -> bool {
         self.x().intersects_value(point.0) && self.y().intersects_value(point.1)
     }
-}
 
-impl From<&Bounds2D> for BoundingBox {
-    fn from(val: &Bounds2D) -> Self {
-        BoundingBox::xy(val.x(), val.y())
+    /// Convert these bounds into a [BoundingBox] preserving wraparound
+    pub fn bounding_box(&self) -> BoundingBox {
+        BoundingBox::xy(self.x(), self.y())
+    }
+
+    /// Convert these bounds into a [BoundingBox] converting wraparound into
+    /// a full interval
+    pub fn bounding_box_no_wraparound(&self) -> BoundingBox {
+        BoundingBox::xy(self.x_no_wraparound(), self.y())
     }
 }
 
@@ -273,5 +288,64 @@ mod tests {
         assert!(!bounds.intersects_point((0.0, 5.0)));
         // Point outside (wrong y)
         assert!(!bounds.intersects_point((175.0, 15.0)));
+    }
+
+    #[test]
+    fn test_bounds2d_bounding_box() {
+        // Regular (non-wraparound) bounds
+        let bounds = Bounds2D::new((10.0, 20.0), (30.0, 40.0));
+        let bbox = bounds.bounding_box();
+
+        assert!(bbox.x().intersects_value(10.0));
+        assert!(bbox.x().intersects_value(20.0));
+        assert!(bbox.y().intersects_value(30.0));
+        assert!(bbox.y().intersects_value(40.0));
+        assert!(!bbox.x().intersects_value(5.0));
+        assert!(!bbox.x().intersects_value(25.0));
+    }
+
+    #[test]
+    fn test_bounds2d_bounding_box_wraparound() {
+        // Wraparound bounds crossing the antimeridian
+        let bounds = Bounds2D::new(WraparoundInterval::new(170.0, -170.0), (0.0, 10.0));
+        let bbox = bounds.bounding_box();
+
+        // Should preserve wraparound - x interval should contain values on both sides
+        assert!(bbox.x().intersects_value(175.0));
+        assert!(bbox.x().intersects_value(-175.0));
+        assert!(bbox.x().intersects_value(180.0));
+        assert!(bbox.x().intersects_value(-180.0));
+        // Should not contain values in the gap
+        assert!(!bbox.x().intersects_value(0.0));
+        assert!(!bbox.x().intersects_value(100.0));
+    }
+
+    #[test]
+    fn test_bounds2d_bounding_box_no_wraparound() {
+        // Regular bounds - should behave same as bounding_box()
+        let bounds = Bounds2D::new((10.0, 20.0), (30.0, 40.0));
+        let bbox = bounds.bounding_box_no_wraparound();
+
+        assert!(bbox.x().intersects_value(10.0));
+        assert!(bbox.x().intersects_value(20.0));
+        assert!(bbox.y().intersects_value(30.0));
+        assert!(bbox.y().intersects_value(40.0));
+    }
+
+    #[test]
+    fn test_bounds2d_bounding_box_no_wraparound_converts_wraparound() {
+        // Wraparound bounds - should convert to full interval
+        let bounds = Bounds2D::new(WraparoundInterval::new(170.0, -170.0), (0.0, 10.0));
+        let bbox = bounds.bounding_box_no_wraparound();
+
+        // Should contain all x values (full interval)
+        assert!(bbox.x().intersects_value(175.0));
+        assert!(bbox.x().intersects_value(-175.0));
+        assert!(bbox.x().intersects_value(0.0)); // This would fail with bounding_box()
+        assert!(bbox.x().intersects_value(100.0)); // This would fail with bounding_box()
+
+        // Y should still be constrained
+        assert!(bbox.y().intersects_value(5.0));
+        assert!(!bbox.y().intersects_value(15.0));
     }
 }

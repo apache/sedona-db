@@ -92,7 +92,7 @@ impl WkbBounder2D for WkbGeometryBounder {
     ) -> Result<(), SedonaGeometryError> {
         if radius.is_some() {
             return Err(SedonaGeometryError::Invalid(
-                "WkbGeometryBounder can't expand with radisu".to_string(),
+                "WkbGeometryBounder can't expand with radius".to_string(),
             ));
         }
 

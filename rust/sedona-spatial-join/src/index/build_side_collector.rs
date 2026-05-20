@@ -177,9 +177,14 @@ impl BuildSideBatchesCollector {
             let geom_array = &build_side_batch.geom_array;
             for (wkb_opt, rect) in zip(geom_array.wkbs(), geom_array.rects()) {
                 if let Some(wkb) = wkb_opt {
-                    analyzer.update_statistics_with_bbox(wkb, &rect.into())?;
+                    // We're using a geometry analyzer to get approximate statistics and
+                    // the geometry analyzer can't handle wraparound intervals
+                    analyzer.update_statistics_with_bbox(
+                        wkb,
+                        &rect.bounding_box_no_wraparound(),
+                    )?;
                     if !rect.is_empty() {
-                        bbox_sampler.add_bbox(&rect.into());
+                        bbox_sampler.add_bbox(&rect.bounding_box());
                     }
                 }
             }
