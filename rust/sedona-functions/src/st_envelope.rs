@@ -89,10 +89,11 @@ impl<T: WkbBounder2D + Default> SedonaScalarKernel for STEnvelope<T> {
             WKB_MIN_PROBABLE_BYTES * executor.num_iterations(),
         );
 
+        let mut bounder = T::default();
         executor.execute_wkb_void(|maybe_item| {
             match maybe_item {
                 Some(item) => {
-                    invoke_scalar::<T>(item, &mut builder)?;
+                    invoke_scalar(item, &mut bounder, &mut builder)?;
                     builder.append_value([]);
                 }
                 None => builder.append_null(),
@@ -104,11 +105,12 @@ impl<T: WkbBounder2D + Default> SedonaScalarKernel for STEnvelope<T> {
     }
 }
 
-fn invoke_scalar<T: WkbBounder2D + Default>(
+fn invoke_scalar(
     wkb_value: &[u8],
+    bounder: &mut impl WkbBounder2D,
     writer: &mut impl std::io::Write,
 ) -> Result<()> {
-    let mut bounder = T::default();
+    bounder.clear();
     bounder
         .update_wkb_bytes(wkb_value)
         .map_err(|e| exec_datafusion_err!("Error updating bounder: {e}"))?;

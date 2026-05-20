@@ -30,6 +30,9 @@ use crate::{
 /// This trait is used to parameterize geometry implementations such that
 /// they may be reused for geographies (which have different bounding rules).
 pub trait WkbBounder2D: std::fmt::Debug + Send + Sync {
+    /// Reset these bounds to an empty state
+    fn clear(&mut self);
+
     /// Update this bounder with precomputed bounds
     fn update_bounds(
         &mut self,
@@ -60,6 +63,11 @@ pub struct WkbGeometryBounder {
 }
 
 impl WkbBounder2D for WkbGeometryBounder {
+    fn clear(&mut self) {
+        self.x = Interval::empty();
+        self.y = Interval::empty();
+    }
+
     fn update_bounds(
         &mut self,
         x: WraparoundInterval,

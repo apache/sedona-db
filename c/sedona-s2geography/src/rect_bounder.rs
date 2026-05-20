@@ -48,6 +48,10 @@ pub struct WkbGeographyBounder {
 }
 
 impl WkbBounder2D for WkbGeographyBounder {
+    fn clear(&mut self) {
+        self.inner.clear();
+    }
+
     fn update_bounds(
         &mut self,
         x: WraparoundInterval,
