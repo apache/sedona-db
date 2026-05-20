@@ -179,10 +179,8 @@ impl BuildSideBatchesCollector {
                 if let Some(wkb) = wkb_opt {
                     // We're using a geometry analyzer to get approximate statistics and
                     // the geometry analyzer can't handle wraparound intervals
-                    analyzer.update_statistics_with_bbox(
-                        wkb,
-                        &rect.bounding_box_no_wraparound(),
-                    )?;
+                    analyzer
+                        .update_statistics_with_bbox(wkb, &rect.bounding_box_no_wraparound())?;
                     if !rect.is_empty() {
                         bbox_sampler.add_bbox(&rect.bounding_box());
                     }
