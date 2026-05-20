@@ -122,7 +122,7 @@ impl LiteralBounder for GeographyLiteralBounder {
 
                         if let Some(distance) = distance {
                             // When we support custom CRSes for geography fully we can remove this
-                            if !crs.is_none() || crs != &lnglat() {
+                            if crs.is_some() && crs != &lnglat() {
                                 return sedona_internal_err!(
                                     "Can't expand geography bounds for crs {crs:?}"
                                 );
