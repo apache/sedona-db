@@ -72,7 +72,9 @@ use serde::{Deserialize, Serialize};
 ///       Long-term, `load_eager = true` will instead trigger the
 ///       planner to inject an async `RS_EnsureLoaded` over the scan
 ///       output rather than fetching at plan time.
-///     - `rows_per_batch`: chunks per `RecordBatch` (default 1024)
+///     - `rows_per_batch`: chunks per `RecordBatch`. Defaults to the
+///       session's configured batch size (`SessionConfig::batch_size`,
+///       typically 8192) when unset.
 ///     - `num_partitions`: scan partitions (default 1; > 1 currently errors)
 ///     - `arrays`: optional list of array names to read. Default reads
 ///       every multi-dimensional array (1-D coord variables are
@@ -124,14 +126,16 @@ fn literal_utf8(expr: &Expr, label: &str) -> Result<String> {
 pub struct ZarrChunkProvider {
     schema: SchemaRef,
     rasters: StructArray,
-    rows_per_batch: usize,
+    /// `None` defers to the session's `SessionConfig::batch_size` at
+    /// execute time. Set explicitly via the `rows_per_batch` JSON option.
+    rows_per_batch: Option<usize>,
 }
 
 impl ZarrChunkProvider {
     fn try_new(uri: &str, options_json: Option<String>) -> Result<Self> {
         let opts = parse_options(options_json.as_deref())?;
         let load_eager = opts.load_eager.unwrap_or(true);
-        let rows_per_batch = opts.rows_per_batch.unwrap_or(1024).max(1);
+        let rows_per_batch = opts.rows_per_batch.map(|n| n.max(1));
         let num_partitions = opts.num_partitions.unwrap_or(1);
         if num_partitions != 1 {
             return plan_err!(
@@ -214,12 +218,12 @@ impl TableProvider for ZarrChunkProvider {
 struct ZarrChunkExec {
     schema: SchemaRef,
     rasters: StructArray,
-    rows_per_batch: usize,
+    rows_per_batch: Option<usize>,
     properties: PlanProperties,
 }
 
 impl ZarrChunkExec {
-    fn new(schema: SchemaRef, rasters: StructArray, rows_per_batch: usize) -> Self {
+    fn new(schema: SchemaRef, rasters: StructArray, rows_per_batch: Option<usize>) -> Self {
         let properties = PlanProperties::new(
             EquivalenceProperties::new(schema.clone()),
             // A single partition for now. Round-robin across multiple
@@ -239,12 +243,18 @@ impl ZarrChunkExec {
 
 impl DisplayAs for ZarrChunkExec {
     fn fmt_as(&self, _t: DisplayFormatType, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(
-            f,
-            "ZarrChunkExec: rows={}, rows_per_batch={}",
-            self.rasters.len(),
-            self.rows_per_batch,
-        )
+        match self.rows_per_batch {
+            Some(n) => write!(
+                f,
+                "ZarrChunkExec: rows={}, rows_per_batch={n}",
+                self.rasters.len()
+            ),
+            None => write!(
+                f,
+                "ZarrChunkExec: rows={}, rows_per_batch=session_default",
+                self.rasters.len()
+            ),
+        }
     }
 }
 
@@ -279,14 +289,20 @@ impl ExecutionPlan for ZarrChunkExec {
     fn execute(
         &self,
         partition: usize,
-        _context: Arc<TaskContext>,
+        context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         if partition != 0 {
             return plan_err!("ZarrChunkExec: only partition 0 exists");
         }
 
         let total = self.rasters.len();
-        let rows_per_batch = self.rows_per_batch;
+        // Defer the default to the session's batch size so users can
+        // tune via SessionConfig instead of relying on a hard-coded
+        // constant baked into this UDTF.
+        let rows_per_batch = self
+            .rows_per_batch
+            .unwrap_or_else(|| context.session_config().batch_size())
+            .max(1);
         let schema = self.schema.clone();
         let rasters = self.rasters.clone();
 

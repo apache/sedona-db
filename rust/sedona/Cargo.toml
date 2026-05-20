@@ -54,9 +54,10 @@ sedona-raster = { workspace = true }
 zarrs = { workspace = true, features = ["filesystem", "gzip", "zstd", "crc32c", "sharding", "transpose"] }
 zarrs_filesystem = { workspace = true }
 
-# See sedona-raster-zarr/Cargo.toml — `blosc` is gated off Windows to avoid
-# a libwinpthreads/c-blosc symbol collision in the R `sedonadb.dll` link.
-[target.'cfg(not(target_os = "windows"))'.dev-dependencies]
+# See sedona-raster-zarr/Cargo.toml — `blosc` is gated off the Windows
+# MinGW (gnu) toolchain only to avoid a libwinpthreads/c-blosc symbol
+# collision in the R `sedonadb.dll` link. MSVC Windows users get blosc.
+[target.'cfg(not(all(target_os = "windows", target_env = "gnu")))'.dev-dependencies]
 zarrs = { workspace = true, features = ["blosc"] }
 
 [dependencies]

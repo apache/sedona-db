@@ -16,6 +16,10 @@
 # under the License.
 
 
+import numpy as np
+import pytest
+
+
 def test_random_geometry(con):
     df = con.funcs.table.sd_random_geometry("Point", 5, seed=99873)
 
@@ -27,13 +31,11 @@ def test_random_geometry(con):
 
 
 def test_read_zarr(con, tmp_path):
-    # Skip cleanly if the optional `zarr` Python lib isn't installed —
-    # the binding is exercised by the Rust-side integration tests; this
-    # test only verifies the Python wrapper threads arguments through.
-    import pytest
-
+    # `zarr` is an optional fixture dep — skip if not installed. The
+    # loader itself is exercised by the Rust-side integration tests;
+    # this test verifies the Python wrapper threads arguments through
+    # and materialises a raster row into Python.
     zarr = pytest.importorskip("zarr")
-    np = pytest.importorskip("numpy")
 
     # Build a 2x2 UInt8 array with two chunks, dim_names=["y","x"], inside
     # a group at the temp path. Matches the minimal shape sd_read_zarr
@@ -48,10 +50,19 @@ def test_read_zarr(con, tmp_path):
     )
     arr[:] = np.array([[10, 11], [20, 21]], dtype=np.uint8)
 
-    # Default-mode (InDb) read — every chunk materialized into the
-    # Arrow `data` column.
+    # Default-mode (load_eager=True) read — every chunk materialized
+    # into the Arrow `data` column. Materialise through Arrow so we
+    # can inspect the resulting Raster struct.
     df = con.funcs.table.sd_read_zarr(f"file://{tmp_path}")
-    assert df.count() == 2
+    arrow_tab = df.to_arrow_table()
+    assert arrow_tab.num_rows == 2
+    assert arrow_tab.column_names == ["raster"]
+    raster = arrow_tab["raster"][0].as_py()
+    assert isinstance(raster, dict)
+    # The Raster struct exposes at least these top-level fields; their
+    # exact contents are covered by the Rust tests.
+    for field in ("transform", "bands"):
+        assert field in raster, f"raster row missing {field!r}: {sorted(raster)}"
 
     # Options thread through: rows_per_batch slices the output.
     df = con.funcs.table.sd_read_zarr(f"file://{tmp_path}", rows_per_batch=1)
