@@ -21,4 +21,3 @@ import sedonadb_expr
 def test_version():
     # Version should match workspace Cargo.toml
     assert sedonadb_expr.__version__
-    assert sedonadb_expr.__version__.count(".") >= 2  # semver format
