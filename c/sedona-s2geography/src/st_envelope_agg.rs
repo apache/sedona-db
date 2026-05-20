@@ -43,7 +43,11 @@ mod tests {
         SedonaType, WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS,
         WKB_VIEW_GEOGRAPHY,
     };
-    use sedona_testing::{compare::assert_scalar_equal_wkb_geometry, testers::AggregateUdfTester};
+    use sedona_testing::{
+        compare::{assert_array_equal, assert_scalar_equal_wkb_geometry},
+        create::create_array,
+        testers::AggregateUdfTester,
+    };
 
     fn create_udf() -> SedonaAggregateUDF {
         SedonaAggregateUDF::new(
@@ -93,16 +97,54 @@ mod tests {
         let tester = AggregateUdfTester::new(create_udf().into(), vec![sedona_type.clone()]);
         assert_eq!(tester.return_type().unwrap(), WKB_GEOMETRY);
 
-        // Test grouped aggregation using the tester's grouped method
-        let batches = vec![
-            vec![Some("POINT (0 1)"), None, Some("POINT (2 3)")],
-            vec![Some("POINT (4 5)"), None, Some("POINT (6 7)")],
-        ];
-        // Just test that it works - the actual grouped_accumulate is disabled for geography
-        assert_scalar_equal_wkb_geometry(
-            &tester.aggregate_wkt(batches).unwrap(),
-            Some("POLYGON((0 1, 0 7, 6 7, 6 1, 0 1))"),
+        // Six elements, four groups, with one all null group and one partially null group
+        let group_indices = vec![0, 3, 1, 1, 0, 2];
+        let array0 = create_array(
+            &[Some("POINT (0 1)"), None, Some("POINT (2 3)")],
+            &sedona_type,
         );
+        let array1 = create_array(
+            &[Some("POINT (4 5)"), None, Some("POINT (6 7)")],
+            &sedona_type,
+        );
+        let batches = vec![array0, array1];
+
+        let expected = create_array(
+            &[
+                // First element only + a null
+                Some("POINT (0 1)"),
+                // Middle two elements
+                Some("POLYGON((2 3, 2 5, 4 5, 4 3, 2 3))"),
+                // Last element only
+                Some("POINT (6 7)"),
+                // Only null
+                None,
+            ],
+            &WKB_GEOMETRY,
+        );
+        let result = tester
+            .aggregate_groups(&batches, group_indices.clone(), None, vec![])
+            .unwrap();
+        assert_array_equal(&result, &expected);
+
+        // We should get the same answer even with a sequence of partial emits
+        let result = tester
+            .aggregate_groups(&batches, group_indices.clone(), None, vec![1, 1, 1, 1])
+            .unwrap();
+        assert_array_equal(&result, &expected);
+
+        // Also check with a filter (in this case, filter out all values except
+        // the middle two elements).
+        let filter = vec![false, false, true, true, false, false];
+        let expected = create_array(
+            &[None, Some("POLYGON((2 3, 2 5, 4 5, 4 3, 2 3))"), None, None],
+            &WKB_GEOMETRY,
+        );
+
+        let result = tester
+            .aggregate_groups(&batches, group_indices.clone(), Some(&filter), vec![])
+            .unwrap();
+        assert_array_equal(&result, &expected);
     }
 
     #[rstest]
