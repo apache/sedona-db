@@ -336,6 +336,17 @@ impl<T: WkbBounder2D + Default + std::fmt::Debug> AnalyzeAccumulator<T> {
         // Calculate envelope width and height from the bbox
         let envelope_width = if bbox.x().is_empty() {
             0.0
+        } else if bbox.x().is_wraparound() {
+            // This analyzer only uses a bounder that produces wraparound intervals
+            // for geography types, which are bounded to -180, 180 in normal usage
+            let (left, right) = bbox.x().split();
+            left.intersection(&(-180.0, 180.0).into())
+                .unwrap_or_default()
+                .width()
+                + right
+                    .intersection(&(-180.0, 180.0).into())
+                    .unwrap_or_default()
+                    .width()
         } else {
             bbox.x().width()
         };

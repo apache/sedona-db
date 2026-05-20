@@ -76,11 +76,11 @@ mod tests {
 
         // Basic point analysis
         let result = tester
-            .aggregate_wkt(vec![vec![Some("POINT(0 0)"), Some("POINT(1 1)")]])
+            .aggregate_wkt(vec![vec![Some("POINT(179 0)"), Some("POINT(-179 1)")]])
             .unwrap();
         assert!(matches!(result, ScalarValue::Struct(_)));
 
-        // Check that count is correct
+        // Check that count is correct and bbox width is reasonable
         if let ScalarValue::Struct(struct_array) = result {
             let count_array = struct_array.column_by_name("count").unwrap();
             let count_arr = count_array
@@ -88,6 +88,26 @@ mod tests {
                 .downcast_ref::<arrow_array::Int64Array>()
                 .unwrap();
             assert_eq!(count_arr.value(0), 2);
+
+            // Check bbox width - for points at 179 and -179 longitude,
+            // a geodesic bbox should wrap around the antimeridian with small width (~2 degrees)
+            let minx = struct_array
+                .column_by_name("minx")
+                .unwrap()
+                .as_any()
+                .downcast_ref::<arrow_array::Float64Array>()
+                .unwrap()
+                .value(0);
+            let maxx = struct_array
+                .column_by_name("maxx")
+                .unwrap()
+                .as_any()
+                .downcast_ref::<arrow_array::Float64Array>()
+                .unwrap()
+                .value(0);
+            let bbox_width = maxx - minx;
+            // Width should be small (crossing antimeridian), not ~358 degrees
+            assert!(bbox_width < 10.0, "bbox width should be small for antimeridian crossing, got {}", bbox_width);
         }
 
         // Empty input
