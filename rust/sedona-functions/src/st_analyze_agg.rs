@@ -241,7 +241,7 @@ impl<T> STAnalyzeAgg<T> {
 pub struct AnalyzeAccumulator<T: std::fmt::Debug> {
     input_type: SedonaType,
     stats: GeoStatistics,
-    _phantom: PhantomData<T>,
+    bounder: T,
 }
 
 impl<T: WkbBounder2D + Default + std::fmt::Debug> AnalyzeAccumulator<T> {
@@ -249,19 +249,20 @@ impl<T: WkbBounder2D + Default + std::fmt::Debug> AnalyzeAccumulator<T> {
         Self {
             input_type,
             stats: GeoStatistics::empty(),
-            _phantom: Default::default(),
+            bounder: Default::default(),
         }
     }
 
     pub fn update_statistics_with_bbox(&mut self, geom: &Wkb, bbox: &BoundingBox) -> Result<()> {
         let summary = analyze_wkb(geom).map_err(|e| DataFusionError::External(Box::new(e)))?;
 
-        self.ingest_geometry_summary(&summary, bbox);
+        self.ingest_geometry_summary(&summary, bbox)?;
         Ok(())
     }
 
     fn update_statistics(&mut self, wkb_bytes: &[u8]) -> Result<()> {
-        // Use the generic bounder to compute bounds
+        // Use the generic bounder to compute bounds (we need individual item bounds for
+        // the analysis)
         let mut bounder = T::default();
         bounder
             .update_wkb_bytes(wkb_bytes)
@@ -274,11 +275,15 @@ impl<T: WkbBounder2D + Default + std::fmt::Debug> AnalyzeAccumulator<T> {
             .map_err(|e| exec_datafusion_err!("WKB parse error: {e}"))?;
         let summary = analyze_wkb(&wkb).map_err(|e| exec_datafusion_err!("Analysis error: {e}"))?;
 
-        self.ingest_geometry_summary(&summary, &bbox);
+        self.ingest_geometry_summary(&summary, &bbox)?;
         Ok(())
     }
 
-    fn ingest_geometry_summary(&mut self, summary: &GeometrySummary, bbox: &BoundingBox) {
+    fn ingest_geometry_summary(
+        &mut self,
+        summary: &GeometrySummary,
+        bbox: &BoundingBox,
+    ) -> Result<()> {
         // Start with a clone of the current stats
         let mut stats = self.stats.clone();
 
@@ -289,12 +294,24 @@ impl<T: WkbBounder2D + Default + std::fmt::Debug> AnalyzeAccumulator<T> {
         stats = self.update_envelope_info(stats, bbox);
         stats = self.update_geometry_types(stats, summary.geometry_type);
 
+        // Update the bounder with the bbox info
+        self.bounder
+            .update_bounds(*bbox.x(), *bbox.y())
+            .map_err(|e| exec_datafusion_err!("Error updating bounds: {e}"))?;
+
         // Assign the updated stats back to self.stats
         self.stats = stats;
+
+        Ok(())
     }
 
-    pub fn finish(self) -> GeoStatistics {
-        self.stats
+    pub fn finish(&self) -> GeoStatistics {
+        let (x, y) = self.bounder.finish();
+        if !x.is_empty() && !y.is_empty() {
+            self.stats.clone().with_bbox(Some(BoundingBox::xy(x, y)))
+        } else {
+            self.stats.clone()
+        }
     }
 
     // Update basic counts (total geometries and size)
@@ -360,19 +377,9 @@ impl<T: WkbBounder2D + Default + std::fmt::Debug> AnalyzeAccumulator<T> {
         let total_width = stats.total_envelope_width().unwrap_or(0.0) + envelope_width;
         let total_height = stats.total_envelope_height().unwrap_or(0.0) + envelope_height;
 
-        let stats = stats
+        stats
             .with_total_envelope_width(total_width)
-            .with_total_envelope_height(total_height);
-
-        // Update bounding box
-        let existing_bbox = stats.bbox();
-        if let Some(current_bbox) = existing_bbox {
-            let mut updated_bbox = bbox.clone();
-            updated_bbox.update_box(current_bbox);
-            stats.with_bbox(Some(updated_bbox))
-        } else {
-            stats.with_bbox(Some(bbox.clone()))
-        }
+            .with_total_envelope_height(total_height)
     }
 
     // Update geometry types
@@ -419,7 +426,7 @@ impl<T: WkbBounder2D + Default + std::fmt::Debug> Accumulator for AnalyzeAccumul
     }
 
     fn evaluate(&mut self) -> Result<ScalarValue> {
-        let field_array_pairs = STAnalyzeAgg::<T>::output_arrays(self.stats.clone());
+        let field_array_pairs = STAnalyzeAgg::<T>::output_arrays(self.finish());
 
         // Create the struct array with field values
         let struct_array = StructArray::from(field_array_pairs);
@@ -458,7 +465,8 @@ impl<T: WkbBounder2D + Default + std::fmt::Debug> Accumulator for AnalyzeAccumul
         }
 
         // Serialize the statistics to JSON
-        let scalar = self.stats.to_scalar_value()?;
+        // Use finish() to include the bbox from the bounder
+        let scalar = self.finish().to_scalar_value()?;
         Ok(vec![scalar])
     }
 
@@ -482,6 +490,13 @@ impl<T: WkbBounder2D + Default + std::fmt::Debug> Accumulator for AnalyzeAccumul
 
             // Use the merge method to combine statistics
             self.stats.merge(&other_stats);
+
+            // Merge the boxes separately
+            if let Some(bbox) = other_stats.bbox() {
+                self.bounder
+                    .update_bounds(*bbox.x(), *bbox.y())
+                    .map_err(|e| exec_datafusion_err!("Failed to merge bounds: {e}"))?;
+            }
         }
 
         Ok(())

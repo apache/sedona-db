@@ -53,7 +53,10 @@ impl WkbBounder2D for WkbGeographyBounder {
         x: WraparoundInterval,
         y: Interval,
     ) -> Result<(), SedonaGeometryError> {
-        self.inner.update_rect(x.lo(), y.lo(), x.hi(), y.hi());
+        if !x.is_empty() && !y.is_empty() {
+            self.inner.update_rect(x.lo(), y.lo(), x.hi(), y.hi());
+        }
+
         Ok(())
     }
 
