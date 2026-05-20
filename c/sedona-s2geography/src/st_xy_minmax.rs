@@ -24,10 +24,11 @@ use datafusion_expr::ColumnarValue;
 use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
 use sedona_functions::executor::WkbBytesExecutor;
+use sedona_geometry::bounds::WkbBounder2D;
+use sedona_geometry::interval::IntervalTrait;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
-use crate::geography::{Geography, GeographyFactory};
-use crate::rect_bounder::RectBounder;
+use crate::rect_bounder::WkbGeographyBounder;
 
 /// Returns a vector of (function_name, kernel) tuples for XY min/max functions
 pub fn st_xy_minmax_kernels() -> Vec<(String, ScalarKernelRef)> {
@@ -86,22 +87,12 @@ impl SedonaScalarKernel for STXyMinMax {
     ) -> Result<ColumnarValue> {
         let executor = WkbBytesExecutor::new(arg_types, args);
         let mut builder = Float64Builder::with_capacity(executor.num_iterations());
-        let mut factory = GeographyFactory::new();
-        let mut geog = Geography::new();
-        let mut bounder = RectBounder::new();
+        let mut bounder = WkbGeographyBounder::default();
 
         executor.execute_wkb_void(|maybe_wkb| {
             match maybe_wkb {
                 Some(wkb) => {
-                    factory
-                        .init_from_wkb(wkb, &mut geog)
-                        .map_err(|e| exec_datafusion_err!("Error parsing geography: {e}"))?;
-                    builder.append_option(invoke_scalar(
-                        &geog,
-                        &mut bounder,
-                        self.dim,
-                        self.is_max,
-                    )?);
+                    builder.append_option(invoke_scalar(wkb, &mut bounder, self.dim, self.is_max)?);
                 }
                 None => builder.append_null(),
             }
@@ -113,8 +104,8 @@ impl SedonaScalarKernel for STXyMinMax {
 }
 
 fn invoke_scalar(
-    geog: &Geography,
-    bounder: &mut RectBounder,
+    wkb: &[u8],
+    bounder: &mut WkbGeographyBounder,
     dim: &'static str,
     is_max: bool,
 ) -> Result<Option<f64>> {
@@ -123,23 +114,20 @@ fn invoke_scalar(
 
     // Add the geography to the bounder
     bounder
-        .bound(geog)
+        .update_wkb_bytes(wkb)
         .map_err(|e| exec_datafusion_err!("Error bounding geography: {e}"))?;
 
     // Get the bounding rectangle
-    let Some((xmin, ymin, xmax, ymax)) = bounder
-        .finish()
-        .map_err(|e| exec_datafusion_err!("Error finishing bounds: {e}"))?
-    else {
-        // Empty geography
+    let (x, y) = bounder.finish();
+    if x.is_empty() || y.is_empty() {
         return Ok(None);
-    };
+    }
 
     match (dim, is_max) {
-        ("x", false) => Ok(Some(xmin)),
-        ("x", true) => Ok(Some(xmax)),
-        ("y", false) => Ok(Some(ymin)),
-        ("y", true) => Ok(Some(ymax)),
+        ("x", false) => Ok(Some(x.lo())),
+        ("x", true) => Ok(Some(x.hi())),
+        ("y", false) => Ok(Some(y.lo())),
+        ("y", true) => Ok(Some(y.hi())),
         _ => sedona_internal_err!("unexpected dim: {dim}"),
     }
 }
