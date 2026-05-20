@@ -94,9 +94,7 @@ def test_format_spec_via_read_format(zarr_group):
     # which uses ExternalFormatSpec.open_reader -> PyZarrChunkReader's
     # __arrow_c_stream__ to plumb data through.
     con = sedonadb.connect()
-    df = con.read_format(
-        sedonadb_zarr.ZarrFormatSpec(), f"file://{zarr_group}"
-    )
+    df = con.read_format(sedonadb_zarr.ZarrFormatSpec(), f"file://{zarr_group}")
     arrow_tab = df.to_arrow_table()
     assert arrow_tab.num_rows == 2
     assert arrow_tab.column_names == ["raster"]

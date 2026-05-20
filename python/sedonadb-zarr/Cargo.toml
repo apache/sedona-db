@@ -22,7 +22,12 @@ publish = false
 edition = "2021"
 
 [lib]
-name = "_lib"
+# rustc crate name. Distinct from `sedonadb`'s `_lib` to avoid the
+# rustdoc output-path collision on `cargo doc --workspace`. Maturin
+# renames the compiled cdylib to match `module-name` in
+# `pyproject.toml` (`sedonadb_zarr._lib`), so the Python import path
+# is unaffected by this name.
+name = "sedonadb_zarr_lib"
 crate-type = ["cdylib"]
 
 [dependencies]
