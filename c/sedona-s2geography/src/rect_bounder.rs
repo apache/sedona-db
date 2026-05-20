@@ -253,10 +253,10 @@ mod tests {
 
         let mut bounder = RectBounder::new();
         bounder
-            .bound(&factory.from_wkt("POINT (0 0)").unwrap())
+            .bound(&factory.from_wkt("POINT (179 0)").unwrap())
             .unwrap();
         bounder
-            .bound(&factory.from_wkt("POINT (10 20)").unwrap())
+            .bound(&factory.from_wkt("POINT (-179 20)").unwrap())
             .unwrap();
 
         assert!(!bounder.is_empty());
@@ -264,11 +264,12 @@ mod tests {
         assert!(result.is_some());
         let (lo_lng, lo_lat, hi_lng, hi_lat) = result.unwrap();
 
-        // Bounding box should encompass both points
-        assert!(lo_lng <= 0.0);
-        assert!(lo_lat <= 0.0);
-        assert!(hi_lng >= 10.0);
-        assert!(hi_lat >= 20.0);
+        // Wraparound bounding box crossing the antimeridian
+        // lo_lng > hi_lng indicates the interval wraps around
+        assert!(lo_lng > 178.9, "lo_lng should be near 179: {lo_lng}");
+        assert!(hi_lng < -178.9, "hi_lng should be near -179: {hi_lng}");
+        assert!(lo_lat <= 0.0, "lo_lat should be <= 0: {lo_lat}");
+        assert!(hi_lat >= 20.0, "hi_lat should be >= 20: {hi_lat}");
 
         bounder.expand_by_distance(100_000.0); // 100km
         let expanded = bounder.finish().unwrap().unwrap();
@@ -335,5 +336,182 @@ mod tests {
         assert!((lo_lat - (-10.0)).abs() < f64::EPSILON);
         assert!((hi_lng - (-170.0)).abs() < f64::EPSILON);
         assert!((hi_lat - 10.0).abs() < f64::EPSILON);
+    }
+
+    // Helper to create WKB point bytes (little-endian)
+    fn make_wkb_point(x: f64, y: f64) -> Vec<u8> {
+        let mut wkb = Vec::with_capacity(21);
+        wkb.push(0x01); // little-endian
+        wkb.extend_from_slice(&1u32.to_le_bytes()); // Point type
+        wkb.extend_from_slice(&x.to_le_bytes());
+        wkb.extend_from_slice(&y.to_le_bytes());
+        wkb
+    }
+
+    // Helper to create WKB linestring bytes (little-endian)
+    fn make_wkb_linestring(coords: &[(f64, f64)]) -> Vec<u8> {
+        let mut wkb = Vec::new();
+        wkb.push(0x01); // little-endian
+        wkb.extend_from_slice(&2u32.to_le_bytes()); // LineString type
+        wkb.extend_from_slice(&(coords.len() as u32).to_le_bytes());
+        for (x, y) in coords {
+            wkb.extend_from_slice(&x.to_le_bytes());
+            wkb.extend_from_slice(&y.to_le_bytes());
+        }
+        wkb
+    }
+
+    #[test]
+    fn test_wkb_geography_bounder_empty() {
+        let bounder = WkbGeographyBounder::default();
+        let (x, y) = bounder.finish();
+        assert!(x.is_empty());
+        assert!(y.is_empty());
+    }
+
+    #[test]
+    fn test_wkb_geography_bounder_multiple_points() {
+        let mut bounder = WkbGeographyBounder::default();
+
+        // Wraparound scenario: points at 179 and -179 longitude
+        bounder
+            .update_wkb_bytes(&make_wkb_point(179.0, 0.0))
+            .unwrap();
+        bounder
+            .update_wkb_bytes(&make_wkb_point(-179.0, 20.0))
+            .unwrap();
+
+        let (x, y) = bounder.finish();
+
+        // Wraparound bounding box crossing the antimeridian
+        // lo > hi indicates the interval wraps around
+        assert!(x.lo() > 178.9, "x.lo() should be near 179: {}", x.lo());
+        assert!(x.hi() < -178.9, "x.hi() should be near -179: {}", x.hi());
+        assert!(y.lo() <= 0.0, "y.lo() should be <= 0: {}", y.lo());
+        assert!(y.hi() >= 20.0, "y.hi() should be >= 20: {}", y.hi());
+    }
+
+    #[test]
+    fn test_wkb_geography_bounder_expand_by_distance() {
+        let mut bounder = WkbGeographyBounder::default();
+
+        // Wraparound scenario
+        bounder
+            .update_wkb_bytes(&make_wkb_point(179.0, 0.0))
+            .unwrap();
+        bounder
+            .update_wkb_bytes(&make_wkb_point(-179.0, 20.0))
+            .unwrap();
+
+        let (x_before, y_before) = bounder.finish();
+
+        bounder.expand_by_distance(100_000.0, None).unwrap(); // 100km
+        let (x_after, y_after) = bounder.finish();
+
+        // Expanded bounds should be larger (further from center)
+        // For wraparound: lo should increase (move east), hi should decrease (move west)
+        assert!(
+            x_after.lo() < x_before.lo(),
+            "x.lo() should expand: {} < {}",
+            x_after.lo(),
+            x_before.lo()
+        );
+        assert!(
+            x_after.hi() > x_before.hi(),
+            "x.hi() should expand: {} > {}",
+            x_after.hi(),
+            x_before.hi()
+        );
+        assert!(
+            y_after.lo() < y_before.lo(),
+            "y.lo() should expand: {} < {}",
+            y_after.lo(),
+            y_before.lo()
+        );
+        assert!(
+            y_after.hi() > y_before.hi(),
+            "y.hi() should expand: {} > {}",
+            y_after.hi(),
+            y_before.hi()
+        );
+    }
+
+    #[test]
+    fn test_wkb_geography_bounder_expand_by_distance_with_radius() {
+        let mut bounder = WkbGeographyBounder::default();
+
+        bounder
+            .update_wkb_bytes(&make_wkb_point(10.0, 20.0))
+            .unwrap();
+
+        let half_earth_radius = 6371000.0 / 2.0; // Half of Earth's radius in meters
+        bounder
+            .expand_by_distance(1000.0, Some(half_earth_radius))
+            .unwrap();
+
+        let (x, y) = bounder.finish();
+
+        // With half the radius, 1km expands more (~0.018 degrees vs ~0.009 degrees)
+        assert!(x.lo() < 10.0 - 0.016);
+        assert!(x.hi() > 10.0 + 0.016);
+        assert!(y.lo() < 20.0 - 0.016);
+        assert!(y.hi() > 20.0 + 0.016);
+    }
+
+    #[test]
+    fn test_wkb_geography_bounder_update_bounds() {
+        let mut bounder = WkbGeographyBounder::default();
+
+        // Update with precalculated bounds
+        bounder
+            .update_bounds((-10.0, 30.0).into(), (-20.0, 40.0).into())
+            .unwrap();
+
+        let (x, y) = bounder.finish();
+
+        // Bounds should match exactly
+        assert_eq!(x.lo(), -10.0);
+        assert_eq!(x.hi(), 30.0);
+        assert_eq!(y.lo(), -20.0);
+        assert_eq!(y.hi(), 40.0);
+
+        // Test wraparound case
+        let mut bounder = WkbGeographyBounder::default();
+        bounder
+            .update_bounds((170.0, -170.0).into(), (-10.0, 10.0).into())
+            .unwrap();
+
+        let (x, y) = bounder.finish();
+
+        // Wraparound: lo > hi
+        assert_eq!(x.lo(), 170.0);
+        assert_eq!(x.hi(), -170.0);
+        assert_eq!(y.lo(), -10.0);
+        assert_eq!(y.hi(), 10.0);
+    }
+
+    #[test]
+    fn test_wkb_geography_bounder_linestring() {
+        let mut bounder = WkbGeographyBounder::default();
+
+        // LineString that doesn't get special-cased like Point does
+        let linestring = make_wkb_linestring(&[(10.0, 20.0), (30.0, 40.0)]);
+        bounder.update_wkb_bytes(&linestring).unwrap();
+
+        let (x, y) = bounder.finish();
+
+        // Bounds should encompass the linestring
+        assert!(x.lo() <= 10.0);
+        assert!(x.hi() >= 30.0);
+        assert!(y.lo() <= 20.0);
+        assert!(y.hi() >= 40.0);
+    }
+
+    #[test]
+    fn test_wkb_geography_bounder_mem_used() {
+        let bounder = WkbGeographyBounder::default();
+        let mem = bounder.mem_used();
+        // Should be at least the size of the struct itself
+        assert!(mem >= size_of::<WkbGeographyBounder>());
     }
 }
