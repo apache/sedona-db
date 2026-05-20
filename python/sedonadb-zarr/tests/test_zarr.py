@@ -101,6 +101,22 @@ def test_format_spec_via_read_format(zarr_group):
     assert arrow_tab.num_rows == 2
     assert arrow_tab.column_names == ["raster"]
 
+    # Inspect the raster cell as a Python dict — every row should carry
+    # transform + bands + the OutDb anchor URI for each band.
+    raster = arrow_tab["raster"][0].as_py()
+    assert isinstance(raster, dict), f"raster row is {type(raster).__name__}"
+    for field in ("transform", "bands"):
+        assert field in raster, f"raster row missing {field!r}: {sorted(raster)}"
+    # Bands list shape: one entry per array in the group (here, one).
+    assert isinstance(raster["bands"], list) and len(raster["bands"]) >= 1
+    band = raster["bands"][0]
+    # `data` is empty (OutDb scan); `outdb_uri` points at this chunk.
+    assert band.get("data") in (None, b"", bytes()), (
+        f"OutDb band should have empty data; got {band.get('data')!r}"
+    )
+    anchor = band.get("outdb_uri")
+    assert anchor and "#array=temperature" in anchor, f"unexpected anchor: {anchor!r}"
+
 
 def test_format_spec_with_arrays_option(zarr_group):
     con = sedonadb.connect()
