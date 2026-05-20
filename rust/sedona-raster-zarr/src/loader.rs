@@ -32,10 +32,11 @@
 
 use std::sync::Arc;
 
-use arrow_array::StructArray;
-use arrow_schema::ArrowError;
+use arrow_array::{RecordBatch, RecordBatchReader};
+use arrow_schema::{ArrowError, Schema, SchemaRef};
 use sedona_common::sedona_internal_datafusion_err;
 use sedona_raster::builder::RasterBuilder;
+use sedona_schema::datatypes::SedonaType;
 use sedona_schema::raster::BandDataType;
 use zarrs::array::{Array, ArrayBytes};
 use zarrs::group::Group;
@@ -45,27 +46,194 @@ use crate::dtype::zarr_to_band_data_type;
 use crate::geozarr::GroupGeoMetadata;
 use crate::source_uri::{build_chunk_anchor, group_uri_to_filesystem_path};
 
-/// Open a Zarr group and emit one row per chunk position with
-/// chunk-anchor URIs in each band's `outdb_uri`. The `data` column is
-/// empty; bytes resolve on demand through whichever OutDb loader is
-/// registered for the `zarr` format. No resolver is registered yet —
-/// downstream byte-consuming kernels (`RS_Value` and similar) will
-/// error until the async resolver lands. Metadata-only operations
-/// (`count(*)`, `RS_Envelope`, `RS_Width`, etc.) work today.
+/// Streaming reader over the chunk grid of a Zarr group.
 ///
-/// `arrays`:
-/// - `None` — read every multi-dimensional array. 1-D arrays (typical
-///   coord variables in xarray-style datacubes) are auto-skipped.
-/// - `Some(names)` — read exactly the named arrays, in the order
-///   returned by the store's listing (which is then sorted by path). An
-///   unknown name errors. 1-D arrays are always rejected (a raster band
-///   needs ≥ 2 dimensions); naming one explicitly errors at parse time
-///   with a clear message.
-pub fn group_to_rasters(
-    group_uri: &str,
-    arrays: Option<&[String]>,
-) -> Result<StructArray, ArrowError> {
-    build_rasters(group_uri, arrays)
+/// Each `next()` call emits one `RecordBatch` containing up to
+/// `batch_size` rows; one row per chunk position. The reader holds the
+/// open group, parsed metadata, and the current chunk-grid position —
+/// metadata parsing happens once in [`ZarrChunkReader::try_new`] and
+/// the per-row work is just transform arithmetic + anchor URI
+/// formatting.
+///
+/// Rows always emit OutDb-style: `data` is empty, `outdb_uri` carries
+/// a chunk anchor that the async OutDb resolver (registered separately)
+/// resolves to bytes on demand.
+pub struct ZarrChunkReader {
+    schema: SchemaRef,
+    group_uri: String,
+    array_infos: Vec<ArrayInfo>,
+    geo: GroupGeoMetadata,
+    group_transform: [f64; 6],
+    spatial_dim_indices: Vec<usize>,
+    /// Owned copy of `array_infos[0].dim_names[i]` for `i` in
+    /// `spatial_dim_indices`. Kept here so `next()` doesn't need to
+    /// rebuild the `&str` slice each row.
+    spatial_dims_names: Vec<String>,
+    chunk_spatial_shape: Vec<i64>,
+    /// Current position in the chunk grid (row-major, C-order).
+    chunk_indices: Vec<u64>,
+    /// Whether the grid has been exhausted.
+    exhausted: bool,
+    batch_size: usize,
+}
+
+impl std::fmt::Debug for ZarrChunkReader {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.debug_struct("ZarrChunkReader")
+            .field("group_uri", &self.group_uri)
+            .field("num_arrays", &self.array_infos.len())
+            .field("chunk_indices", &self.chunk_indices)
+            .field("exhausted", &self.exhausted)
+            .field("batch_size", &self.batch_size)
+            .finish()
+    }
+}
+
+impl ZarrChunkReader {
+    /// Open a Zarr group and prepare a streaming reader over its chunk
+    /// grid. Performs all I/O for metadata up front (open group, parse
+    /// attributes, list arrays, validate constraints) so per-batch work
+    /// is cheap.
+    ///
+    /// `arrays`:
+    /// - `None` — read every multi-dimensional array. 1-D arrays
+    ///   (typical xarray coord variables) are auto-skipped.
+    /// - `Some(names)` — read exactly the named arrays. Unknown names
+    ///   error. 1-D arrays are always rejected (a raster band needs
+    ///   ≥ 2 dimensions); naming one explicitly errors with a clear
+    ///   message.
+    ///
+    /// `batch_size` controls how many chunk rows are emitted per
+    /// `RecordBatch`. Must be ≥ 1; callers typically pass
+    /// `SessionConfig::batch_size` (defaults to 8192).
+    pub fn try_new(
+        group_uri: &str,
+        arrays: Option<&[String]>,
+        batch_size: usize,
+    ) -> Result<Self, ArrowError> {
+        let batch_size = batch_size.max(1);
+        let OpenedGroup {
+            array_infos,
+            geo,
+            group_transform,
+            spatial_dim_indices,
+        } = open_and_validate(group_uri, arrays)?;
+
+        let spatial_dims_names: Vec<String> = spatial_dim_indices
+            .iter()
+            .map(|&i| array_infos[0].dim_names[i].clone())
+            .collect();
+        let chunk_spatial_shape: Vec<i64> = spatial_dim_indices
+            .iter()
+            .map(|&i| array_infos[0].chunk_shape[i] as i64)
+            .collect();
+
+        let raster_field = SedonaType::Raster
+            .to_storage_field("raster", true)
+            .map_err(|e| ArrowError::ExternalError(Box::new(e)))?;
+        let schema = Arc::new(Schema::new(vec![raster_field]));
+
+        let chunk_indices = vec![0u64; array_infos[0].chunk_grid_shape.len()];
+
+        Ok(Self {
+            schema,
+            group_uri: group_uri.to_string(),
+            array_infos,
+            geo,
+            group_transform,
+            spatial_dim_indices,
+            spatial_dims_names,
+            chunk_spatial_shape,
+            chunk_indices,
+            exhausted: false,
+            batch_size,
+        })
+    }
+
+    /// Append one raster row at the current `chunk_indices` to the
+    /// in-progress builder. Does not advance the cursor.
+    fn emit_one_row(&self, builder: &mut RasterBuilder) -> Result<(), ArrowError> {
+        let row_transform = compute_row_transform(
+            &self.group_transform,
+            &self.chunk_indices,
+            &self.array_infos[0].chunk_shape,
+            &self.spatial_dim_indices,
+        );
+        let spatial_dims_ref: Vec<&str> =
+            self.spatial_dims_names.iter().map(String::as_str).collect();
+        let crs_str = self.geo.crs.as_deref();
+        builder.start_raster_nd(
+            &row_transform,
+            &spatial_dims_ref,
+            &self.chunk_spatial_shape,
+            crs_str,
+        )?;
+
+        for info in &self.array_infos {
+            let dim_names_ref: Vec<&str> = info.dim_names.iter().map(String::as_str).collect();
+            let nodata_ref = info.nodata.as_deref();
+            // Every band gets its chunk-anchor URI populated as
+            // provenance metadata. `data.is_empty()` is the InDb/OutDb
+            // discriminator; this reader always emits empty `data` and
+            // defers pixel-byte resolution to the OutDb resolver.
+            let anchor = build_chunk_anchor(&self.group_uri, &info.path, &self.chunk_indices);
+            builder.start_band_nd(
+                Some(info.path.as_str()),
+                &dim_names_ref,
+                &info.chunk_shape,
+                info.data_type,
+                nodata_ref,
+                Some(anchor.as_str()),
+                Some("zarr"),
+            )?;
+            builder.band_data_writer().append_value([0u8; 0]);
+            builder.finish_band()?;
+        }
+        builder.finish_raster()
+    }
+}
+
+impl Iterator for ZarrChunkReader {
+    type Item = Result<RecordBatch, ArrowError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.exhausted {
+            return None;
+        }
+        let mut builder = RasterBuilder::new(self.batch_size);
+        let mut rows_emitted = 0usize;
+        while rows_emitted < self.batch_size {
+            if let Err(e) = self.emit_one_row(&mut builder) {
+                self.exhausted = true;
+                return Some(Err(e));
+            }
+            rows_emitted += 1;
+            if !advance_chunk_indices(
+                &mut self.chunk_indices,
+                &self.array_infos[0].chunk_grid_shape,
+            ) {
+                self.exhausted = true;
+                break;
+            }
+        }
+        if rows_emitted == 0 {
+            return None;
+        }
+        let struct_arr = match builder.finish() {
+            Ok(arr) => arr,
+            Err(e) => return Some(Err(e)),
+        };
+        Some(RecordBatch::try_new(
+            self.schema.clone(),
+            vec![Arc::new(struct_arr)],
+        ))
+    }
+}
+
+impl RecordBatchReader for ZarrChunkReader {
+    fn schema(&self) -> SchemaRef {
+        self.schema.clone()
+    }
 }
 
 /// Per-array metadata extracted once at group open and reused for every
@@ -92,10 +260,21 @@ struct ArrayInfo {
     nodata: Option<Vec<u8>>,
 }
 
-fn build_rasters(
+/// Bundle of group-level state returned by [`open_and_validate`].
+struct OpenedGroup {
+    array_infos: Vec<ArrayInfo>,
+    geo: GroupGeoMetadata,
+    group_transform: [f64; 6],
+    spatial_dim_indices: Vec<usize>,
+}
+
+/// Open the Zarr group, parse and validate group metadata, and return
+/// everything `ZarrChunkReader` needs to iterate without further I/O
+/// (apart from per-chunk byte fetches by future resolvers).
+fn open_and_validate(
     group_uri: &str,
     arrays_filter: Option<&[String]>,
-) -> Result<StructArray, ArrowError> {
+) -> Result<OpenedGroup, ArrowError> {
     let fs_path = group_uri_to_filesystem_path(group_uri)?;
     let store = FilesystemStore::new(&fs_path).map_err(|e| {
         ArrowError::ExternalError(Box::new(sedona_internal_datafusion_err!(
@@ -151,14 +330,6 @@ fn build_rasters(
     // would produce wrong per-row transforms.
     let spatial_dim_indices =
         resolve_spatial_dim_indices(&array_infos[0].dim_names, geo.spatial_dims.as_deref())?;
-    let spatial_dims_names: Vec<&str> = spatial_dim_indices
-        .iter()
-        .map(|&i| array_infos[0].dim_names[i].as_str())
-        .collect();
-    let chunk_spatial_shape: Vec<i64> = spatial_dim_indices
-        .iter()
-        .map(|&i| array_infos[0].chunk_shape[i] as i64)
-        .collect();
 
     let group_transform = match geo.transform {
         Some(t) => t,
@@ -177,9 +348,9 @@ fn build_rasters(
     };
 
     // chunk_grid_shape comes from untrusted Zarr metadata; bound-check the
-    // product so a hostile or malformed grid can't drive RasterBuilder
-    // capacity to overflow (and trigger an OOM preallocation).
-    let total_rows = array_infos[0]
+    // product so a hostile or malformed grid can't make per-batch
+    // RasterBuilder capacity (or downstream consumers) overflow.
+    array_infos[0]
         .chunk_grid_shape
         .iter()
         .try_fold(1usize, |acc, &n| {
@@ -191,55 +362,13 @@ fn build_rasters(
                 array_infos[0].chunk_grid_shape
             ))
         })?;
-    let mut builder = RasterBuilder::new(total_rows);
 
-    // Walk the chunk grid in row-major (C-order) order. The outer-most
-    // axis varies slowest, the innermost fastest — same convention used
-    // for byte strides in `BandRefImpl`.
-    let mut chunk_indices = vec![0u64; array_infos[0].chunk_grid_shape.len()];
-    loop {
-        let row_transform = compute_row_transform(
-            &group_transform,
-            &chunk_indices,
-            &array_infos[0].chunk_shape,
-            &spatial_dim_indices,
-        );
-        let crs_str = geo.crs.as_deref();
-        builder.start_raster_nd(
-            &row_transform,
-            &spatial_dims_names,
-            &chunk_spatial_shape,
-            crs_str,
-        )?;
-
-        for info in &array_infos {
-            let dim_names_ref: Vec<&str> = info.dim_names.iter().map(String::as_str).collect();
-            let nodata_ref = info.nodata.as_deref();
-            // Every band gets its chunk-anchor URI populated as
-            // provenance metadata. `data.is_empty()` is the InDb/OutDb
-            // discriminator; this loader always emits empty `data` and
-            // defers pixel-byte resolution to the OutDb resolver.
-            let anchor = build_chunk_anchor(group_uri, &info.path, &chunk_indices);
-            builder.start_band_nd(
-                Some(info.path.as_str()),
-                &dim_names_ref,
-                &info.chunk_shape,
-                info.data_type,
-                nodata_ref,
-                Some(anchor.as_str()),
-                Some("zarr"),
-            )?;
-            builder.band_data_writer().append_value([0u8; 0]);
-            builder.finish_band()?;
-        }
-        builder.finish_raster()?;
-
-        if !advance_chunk_indices(&mut chunk_indices, &array_infos[0].chunk_grid_shape) {
-            break;
-        }
-    }
-
-    builder.finish()
+    Ok(OpenedGroup {
+        array_infos,
+        geo,
+        group_transform,
+        spatial_dim_indices,
+    })
 }
 
 /// Collect per-array metadata from open zarrs `Array` handles.

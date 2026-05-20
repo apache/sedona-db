@@ -5669,7 +5669,6 @@ dependencies = [
  "sedona-raster",
  "sedona-raster-functions",
  "sedona-raster-gdal",
- "sedona-raster-zarr",
  "sedona-s2geography",
  "sedona-schema",
  "sedona-spatial-join",
@@ -5683,8 +5682,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "url",
- "zarrs",
- "zarrs_filesystem",
 ]
 
 [[package]]
@@ -6159,13 +6156,21 @@ version = "0.4.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
+ "async-trait",
+ "datafusion",
+ "datafusion-catalog",
  "datafusion-common",
+ "datafusion-expr",
+ "futures",
  "log",
  "sedona-common",
+ "sedona-datasource",
  "sedona-raster",
  "sedona-schema",
+ "serde",
  "serde_json",
  "tempfile",
+ "tokio",
  "zarrs",
  "zarrs_filesystem",
 ]

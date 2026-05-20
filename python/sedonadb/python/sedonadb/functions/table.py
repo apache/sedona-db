@@ -16,7 +16,7 @@
 # under the License.
 
 import json
-from typing import Optional, Literal, Union, Tuple, Iterable, List
+from typing import Optional, Literal, Union, Tuple, Iterable
 
 from sedonadb.dataframe import DataFrame
 from sedonadb.utility import sedona  # noqa: F401
@@ -112,71 +112,3 @@ class TableFunctions:
         args = {k: v for k, v in args.items() if v is not None}
 
         return self._ctx.sql(f"SELECT * FROM sd_random_geometry('{json.dumps(args)}')")
-
-    def sd_read_zarr(
-        self,
-        uri: str,
-        *,
-        load_eager: Optional[bool] = None,
-        rows_per_batch: Optional[int] = None,
-        num_partitions: Optional[int] = None,
-        arrays: Optional[List[str]] = None,
-    ) -> DataFrame:
-        """
-        Read a Zarr group as a DataFrame of N-D rasters.
-
-        Returns a single-column DataFrame ``raster: Raster`` with one row per
-        chunk position in the Zarr group's chunk grid. Each row's bands are
-        the corresponding chunks of each array in the group. All ``RS_*``
-        UDFs operate on the column unchanged.
-
-        Only local filesystem stores are supported (``file://`` URIs or
-        bare paths).
-
-        Parameters
-        ----------
-        uri : str
-            Zarr group URI. ``file:///path/to/foo.zarr`` or a bare local path.
-        load_eager : bool, optional
-            ``True`` (default) materializes every chunk's bytes into the
-            Arrow ``data`` column eagerly. ``False`` emits chunk-anchor
-            URIs only; byte resolution depends on the OutDb resolver
-            being registered (follow-up PR). Long-term, ``load_eager =
-            True`` will trigger the planner to inject an async
-            ``RS_EnsureLoaded`` over the scan output rather than
-            fetching at plan time.
-        rows_per_batch : int, optional
-            Chunks per ``RecordBatch`` (default 1024).
-        num_partitions : int, optional
-            Scan partitions. Only ``1`` is supported; ``> 1`` errors.
-        arrays : list of str, optional
-            Names of arrays in the group to read. By default every
-            multi-dimensional array is read; 1-D arrays (typical xarray
-            coord variables) are auto-skipped. Passing an explicit list
-            reads exactly those arrays. 1-D arrays are always rejected
-            (a raster band needs at least 2 dimensions); naming one
-            explicitly errors. Unknown names also error.
-
-        Examples
-        --------
-        >>> sd = sedona.db.connect()
-        >>> sd.funcs.table.sd_read_zarr("file:///path/to/datacube.zarr")  # doctest: +SKIP
-        >>> sd.funcs.table.sd_read_zarr(
-        ...     "file:///path/to/datacube.zarr",
-        ...     arrays=["temperature", "pressure"],
-        ... )  # doctest: +SKIP
-        """
-
-        args = {
-            "load_eager": load_eager,
-            "rows_per_batch": rows_per_batch,
-            "num_partitions": num_partitions,
-            "arrays": arrays,
-        }
-        args = {k: v for k, v in args.items() if v is not None}
-
-        if args:
-            return self._ctx.sql(
-                f"SELECT * FROM sd_read_zarr('{uri}', '{json.dumps(args)}')"
-            )
-        return self._ctx.sql(f"SELECT * FROM sd_read_zarr('{uri}')")

@@ -25,7 +25,6 @@ use crate::{
     catalog::DynamicObjectStoreCatalog,
     random_geometry_provider::RandomGeometryFunction,
     show::{show_batches, DisplayTableOptions},
-    zarr_read::ZarrReadFunction,
 };
 use arrow_array::RecordBatch;
 use async_trait::async_trait;
@@ -233,8 +232,8 @@ impl SedonaContext {
             "sd_random_geometry",
             Arc::new(RandomGeometryFunction::default()),
         );
-        out.ctx
-            .register_udtf("sd_read_zarr", Arc::new(ZarrReadFunction::default()));
+        // Zarr support lives in the `sedonadb-zarr` plugin package;
+        // users opt in via its `register(con)` helper.
 
         // Always register default function set
         out.register_function_set(sedona_functions::register::default_function_set());

@@ -35,17 +35,21 @@
 //! currently errors because no `RS_EnsureLoaded` resolver is registered
 //! for the `zarr` format yet; once the resolver lands, `true` will
 //! trigger the planner to inject the async UDF over the scan output.
+//!
+//! Registration happens via [`register`]; the `sedonadb-zarr` Python
+//! package calls this from its session-setup helper. The `sedona` crate
+//! itself does not register the UDTF — keeping zarr functionality out
+//! of the default bootstrap.
 
 use std::any::Any;
 use std::sync::Arc;
 
-use arrow_array::{Array, RecordBatch, StructArray};
 use arrow_schema::{DataType, Schema, SchemaRef};
 use async_trait::async_trait;
 use datafusion::catalog::{Session, TableFunctionImpl, TableProvider};
 use datafusion::common::Result;
 use datafusion::datasource::TableType;
-use datafusion::execution::context::TaskContext;
+use datafusion::execution::context::{SessionContext, TaskContext};
 use datafusion::physical_expr::EquivalenceProperties;
 use datafusion::physical_plan::execution_plan::{Boundedness, EmissionType};
 use datafusion::physical_plan::expressions::Column;
@@ -57,9 +61,16 @@ use datafusion::physical_plan::{
 };
 use datafusion::prelude::Expr;
 use datafusion_common::{plan_err, DataFusionError, ScalarValue};
-use sedona_raster_zarr::group_to_rasters;
 use sedona_schema::datatypes::SedonaType;
 use serde::{Deserialize, Serialize};
+
+use crate::loader::ZarrChunkReader;
+
+/// Register the `sd_read_zarr` UDTF on a `SessionContext`. Called from
+/// the `sedonadb-zarr` Python package's `register(con)` entry point.
+pub fn register(ctx: &SessionContext) {
+    ctx.register_udtf("sd_read_zarr", Arc::new(ZarrReadFunction::default()));
+}
 
 /// Table function `sd_read_zarr(uri[, options_json])`.
 ///
@@ -113,15 +124,22 @@ fn literal_utf8(expr: &Expr, label: &str) -> Result<String> {
     plan_err!("{label} must be a non-null Utf8 literal; got {expr}")
 }
 
-/// Materialised view backing `sd_read_zarr`. Holds the raster
-/// `StructArray` once for the query lifetime; the executor slices it
-/// into `rows_per_batch`-sized `RecordBatch`es. The StructArray is
-/// built eagerly in `try_new` and is cheap — chunk-anchor URIs only,
-/// no pixel bytes fetched.
+/// `TableProvider` backing `sd_read_zarr`. Holds the URI + options;
+/// the underlying `ZarrChunkReader` is opened fresh per `execute()`
+/// call so each scan streams independently.
+///
+/// Plan-time validation: `try_new` opens the group once and drops the
+/// reader, so problems like "URI doesn't resolve", "no arrays",
+/// "CRS without transform", and "unknown array name in the `arrays`
+/// filter" surface at `ctx.sql(...).await` rather than at collect time.
+/// The cost is one extra group-open per scan; for local files this is
+/// negligible and for cloud it's two GETs — acceptable until lazy-open
+/// becomes a measurable problem.
 #[derive(Debug)]
 pub struct ZarrChunkProvider {
     schema: SchemaRef,
-    rasters: StructArray,
+    uri: String,
+    arrays_filter: Option<Vec<String>>,
     /// `None` defers to the session's `SessionConfig::batch_size` at
     /// execute time. Set explicitly via the `rows_per_batch` JSON option.
     rows_per_batch: Option<usize>,
@@ -149,8 +167,13 @@ impl ZarrChunkProvider {
             );
         }
 
-        let arrays_filter = opts.arrays.as_deref();
-        let rasters = group_to_rasters(uri, arrays_filter).map_err(arrow_to_df_err)?;
+        let arrays_filter = opts.arrays;
+
+        // Validate at plan time by opening the reader once and dropping
+        // it. Surfaces URI / metadata / arrays-filter errors at
+        // ctx.sql() rather than at collect().
+        let _ =
+            ZarrChunkReader::try_new(uri, arrays_filter.as_deref(), 1).map_err(arrow_to_df_err)?;
 
         // Single-column schema: `raster: Raster`. `SedonaType::Raster` adds
         // the `sedona.raster` extension-type metadata so downstream RS_*
@@ -162,7 +185,8 @@ impl ZarrChunkProvider {
 
         Ok(Self {
             schema,
-            rasters,
+            uri: uri.to_string(),
+            arrays_filter,
             rows_per_batch,
         })
     }
@@ -191,7 +215,8 @@ impl TableProvider for ZarrChunkProvider {
     ) -> Result<Arc<dyn ExecutionPlan>> {
         let exec = Arc::new(ZarrChunkExec::new(
             self.schema.clone(),
-            self.rasters.clone(),
+            self.uri.clone(),
+            self.arrays_filter.clone(),
             self.rows_per_batch,
         ));
         // DataFusion requires the scan to honour the projection it asks
@@ -218,13 +243,19 @@ impl TableProvider for ZarrChunkProvider {
 #[derive(Debug)]
 struct ZarrChunkExec {
     schema: SchemaRef,
-    rasters: StructArray,
+    uri: String,
+    arrays_filter: Option<Vec<String>>,
     rows_per_batch: Option<usize>,
     properties: PlanProperties,
 }
 
 impl ZarrChunkExec {
-    fn new(schema: SchemaRef, rasters: StructArray, rows_per_batch: Option<usize>) -> Self {
+    fn new(
+        schema: SchemaRef,
+        uri: String,
+        arrays_filter: Option<Vec<String>>,
+        rows_per_batch: Option<usize>,
+    ) -> Self {
         let properties = PlanProperties::new(
             EquivalenceProperties::new(schema.clone()),
             // A single partition for now. Round-robin across multiple
@@ -235,7 +266,8 @@ impl ZarrChunkExec {
         );
         Self {
             schema,
-            rasters,
+            uri,
+            arrays_filter,
             rows_per_batch,
             properties,
         }
@@ -245,15 +277,11 @@ impl ZarrChunkExec {
 impl DisplayAs for ZarrChunkExec {
     fn fmt_as(&self, _t: DisplayFormatType, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self.rows_per_batch {
-            Some(n) => write!(
-                f,
-                "ZarrChunkExec: rows={}, rows_per_batch={n}",
-                self.rasters.len()
-            ),
+            Some(n) => write!(f, "ZarrChunkExec: uri={}, rows_per_batch={n}", self.uri),
             None => write!(
                 f,
-                "ZarrChunkExec: rows={}, rows_per_batch=session_default",
-                self.rasters.len()
+                "ZarrChunkExec: uri={}, rows_per_batch=session_default",
+                self.uri
             ),
         }
     }
@@ -296,34 +324,25 @@ impl ExecutionPlan for ZarrChunkExec {
             return plan_err!("ZarrChunkExec: only partition 0 exists");
         }
 
-        let total = self.rasters.len();
         // Defer the default to the session's batch size so users can
         // tune via SessionConfig instead of relying on a hard-coded
         // constant baked into this UDTF.
-        let rows_per_batch = self
+        let batch_size = self
             .rows_per_batch
             .unwrap_or_else(|| context.session_config().batch_size())
             .max(1);
-        let schema = self.schema.clone();
-        let rasters = self.rasters.clone();
 
-        // Build all batches eagerly into a Vec, then turn into a stream.
-        // The StructArray is already materialised in the provider, slicing
-        // is O(1), and the only allocation per batch is the RecordBatch
-        // wrapper. Lazy streaming becomes interesting once the loader
-        // itself is lazy.
-        let mut batches = Vec::with_capacity(total.div_ceil(rows_per_batch).max(1));
-        let mut offset = 0;
-        while offset < total {
-            let len = (total - offset).min(rows_per_batch);
-            let slice = rasters.slice(offset, len);
-            let batch = RecordBatch::try_new(schema.clone(), vec![Arc::new(slice)])?;
-            batches.push(Ok(batch));
-            offset += len;
-        }
+        let reader = ZarrChunkReader::try_new(&self.uri, self.arrays_filter.as_deref(), batch_size)
+            .map_err(arrow_to_df_err)?;
 
-        let stream = futures::stream::iter(batches);
-        let adapter = RecordBatchStreamAdapter::new(schema, stream);
+        // The reader is a sync Iterator<Item = Result<RecordBatch, ArrowError>>.
+        // Wrap it in futures::stream::iter to produce a SendableRecordBatchStream.
+        // Each next() walks `batch_size` chunk positions of the chunk grid;
+        // there's no I/O until/unless the OutDb resolver materialises bytes.
+        let stream = futures::stream::iter(
+            reader.map(|r| r.map_err(|e| DataFusionError::External(Box::new(e)))),
+        );
+        let adapter = RecordBatchStreamAdapter::new(self.schema.clone(), stream);
         Ok(Box::pin(adapter))
     }
 }
@@ -364,10 +383,10 @@ fn parse_options(options_json: Option<&str>) -> Result<ZarrReadOptions> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arrow_array::{RecordBatch, StructArray};
     use datafusion::prelude::SessionContext;
     use sedona_raster::array::RasterStructArray;
     use sedona_raster::traits::RasterRef;
-    use std::sync::Arc;
     use tempfile::TempDir;
     use zarrs::array::data_type;
     use zarrs::array::ArrayBuilder;
@@ -400,7 +419,7 @@ mod tests {
         let uri = format!("file://{}", tmp.path().display());
 
         let ctx = SessionContext::new();
-        ctx.register_udtf("sd_read_zarr", Arc::new(ZarrReadFunction::default()));
+        register(&ctx);
 
         let df = ctx
             .sql(&format!("SELECT raster FROM sd_read_zarr('{uri}')"))
@@ -411,9 +430,6 @@ mod tests {
         let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
         assert_eq!(total_rows, 2, "expected 2 chunk rows");
 
-        // Pull the raster column out, hand to RasterStructArray, verify
-        // chunk 0's metadata + anchor. Pixel-byte reading lives behind the
-        // future RS_EnsureLoaded resolver — `data` is empty in OutDb mode.
         let raster_col = batches[0].column(0);
         let struct_arr = raster_col
             .as_any()
@@ -435,7 +451,7 @@ mod tests {
         let uri = format!("file://{}", tmp.path().display());
 
         let ctx = SessionContext::new();
-        ctx.register_udtf("sd_read_zarr", Arc::new(ZarrReadFunction::default()));
+        register(&ctx);
 
         let err = ctx
             .sql(&format!(
@@ -454,7 +470,7 @@ mod tests {
         let uri = format!("file://{}", tmp.path().display());
 
         let ctx = SessionContext::new();
-        ctx.register_udtf("sd_read_zarr", Arc::new(ZarrReadFunction::default()));
+        register(&ctx);
 
         // 2 chunk rows, rows_per_batch=1 → 2 single-row batches.
         let df = ctx
@@ -463,7 +479,7 @@ mod tests {
             ))
             .await
             .unwrap();
-        let batches = df.collect().await.unwrap();
+        let batches: Vec<RecordBatch> = df.collect().await.unwrap();
         assert_eq!(batches.len(), 2);
         assert!(batches.iter().all(|b| b.num_rows() == 1));
     }
@@ -474,14 +490,12 @@ mod tests {
         let uri = format!("file://{}", tmp.path().display());
 
         let ctx = SessionContext::new();
-        ctx.register_udtf("sd_read_zarr", Arc::new(ZarrReadFunction::default()));
+        register(&ctx);
 
-        // OutDb mode: byte fetching is deferred. SELECT count(*) just
-        // walks the chunk grid metadata.
+        // SELECT count(*) just walks the chunk grid metadata; never opens
+        // a chunk file.
         let df = ctx
-            .sql(&format!(
-                r#"SELECT count(*) FROM sd_read_zarr('{uri}', '{{"load_eager": false}}')"#,
-            ))
+            .sql(&format!("SELECT count(*) FROM sd_read_zarr('{uri}')"))
             .await
             .unwrap();
         let batches = df.collect().await.unwrap();
@@ -494,12 +508,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn udtf_rejects_multi_partition_in_phase1() {
+    async fn udtf_rejects_multi_partition() {
         let tmp = build_fixture();
         let uri = format!("file://{}", tmp.path().display());
 
         let ctx = SessionContext::new();
-        ctx.register_udtf("sd_read_zarr", Arc::new(ZarrReadFunction::default()));
+        register(&ctx);
 
         let err = ctx
             .sql(&format!(
@@ -540,7 +554,7 @@ mod tests {
 
         let uri = format!("file://{}", tmp.path().display());
         let ctx = SessionContext::new();
-        ctx.register_udtf("sd_read_zarr", Arc::new(ZarrReadFunction::default()));
+        register(&ctx);
 
         // Default behaviour: 1-D coord variable auto-skipped, read succeeds.
         let df = ctx
@@ -588,7 +602,7 @@ mod tests {
     #[tokio::test]
     async fn udtf_rejects_malformed_options_json() {
         let ctx = SessionContext::new();
-        ctx.register_udtf("sd_read_zarr", Arc::new(ZarrReadFunction::default()));
+        register(&ctx);
 
         let err = ctx
             .sql(r#"SELECT raster FROM sd_read_zarr('file:///nowhere', '{not json}')"#)

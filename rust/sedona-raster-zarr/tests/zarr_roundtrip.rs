@@ -16,7 +16,7 @@
 // under the License.
 
 //! End-to-end fixture test: build a small Zarr group on disk with the
-//! `zarrs` crate, then read it back through `group_to_rasters` and
+//! `zarrs` crate, then read it back through `read_all` and
 //! verify the resulting raster `StructArray`. The loader always emits
 //! OutDb-style rows (empty `data`, populated `outdb_uri`), so these
 //! tests assert on metadata and chunk-anchor URIs rather than pixel
@@ -25,9 +25,29 @@
 
 use std::sync::Arc;
 
+use arrow_array::cast::AsArray;
+use arrow_array::StructArray;
+use arrow_schema::ArrowError;
 use sedona_raster::array::RasterStructArray;
 use sedona_raster::traits::RasterRef;
-use sedona_raster_zarr::group_to_rasters;
+use sedona_raster_zarr::ZarrChunkReader;
+
+/// Drain a `ZarrChunkReader` into a single `StructArray`. Fixtures in
+/// this file are small (≤8 chunk rows) so they fit in one batch with a
+/// generous batch_size. Anything bigger would need `arrow::compute::concat`.
+fn read_all(uri: &str, arrays: Option<&[String]>) -> Result<StructArray, ArrowError> {
+    let reader = ZarrChunkReader::try_new(uri, arrays, 1024)?;
+    let batches: Vec<_> = reader.collect::<Result<Vec<_>, _>>()?;
+    assert!(
+        batches.len() <= 1,
+        "test helper assumes ≤1 batch; got {} — bump batch_size or add concat",
+        batches.len()
+    );
+    let batch = batches.into_iter().next().ok_or_else(|| {
+        ArrowError::InvalidArgumentError("ZarrChunkReader produced zero batches".into())
+    })?;
+    Ok(batch.column(0).as_struct().clone())
+}
 use sedona_schema::raster::BandDataType;
 use tempfile::TempDir;
 use zarrs::array::data_type;
@@ -92,7 +112,7 @@ fn build_fixture() -> TempDir {
 fn round_trip_emits_one_row_per_chunk_position_with_outdb_anchors() {
     let tmp = build_fixture();
     let uri = format!("file://{}", tmp.path().display());
-    let arr = group_to_rasters(&uri, None).unwrap();
+    let arr = read_all(&uri, None).unwrap();
 
     let rasters = RasterStructArray::new(&arr);
     assert_eq!(rasters.len(), 8, "expected 8 chunk rows (2*2*2)");
@@ -148,7 +168,7 @@ fn errors_on_empty_group() {
         .store_metadata()
         .unwrap();
     let uri = format!("file://{}", tmp.path().display());
-    let err = group_to_rasters(&uri, None).unwrap_err().to_string();
+    let err = read_all(&uri, None).unwrap_err().to_string();
     assert!(err.contains("no child arrays"), "got: {err}");
 }
 
@@ -196,7 +216,7 @@ fn build_xarray_style_fixture() -> TempDir {
 fn auto_skips_1d_coord_variables() {
     let tmp = build_xarray_style_fixture();
     let uri = format!("file://{}", tmp.path().display());
-    let arr = group_to_rasters(&uri, None).unwrap();
+    let arr = read_all(&uri, None).unwrap();
     let rasters = RasterStructArray::new(&arr);
     // 2*2*2 = 8 chunk positions, with 2 bands per row (pressure, temperature).
     assert_eq!(rasters.len(), 8);
@@ -209,7 +229,7 @@ fn explicit_arrays_filter_selects_subset() {
     let tmp = build_xarray_style_fixture();
     let uri = format!("file://{}", tmp.path().display());
     let filter = vec!["temperature".to_string()];
-    let arr = group_to_rasters(&uri, Some(&filter)).unwrap();
+    let arr = read_all(&uri, Some(&filter)).unwrap();
     let rasters = RasterStructArray::new(&arr);
     assert_eq!(rasters.len(), 8);
     let r0 = rasters.get(0).unwrap();
@@ -221,9 +241,7 @@ fn explicit_arrays_filter_rejects_unknown_name() {
     let tmp = build_xarray_style_fixture();
     let uri = format!("file://{}", tmp.path().display());
     let filter = vec!["humidity".to_string()];
-    let err = group_to_rasters(&uri, Some(&filter))
-        .unwrap_err()
-        .to_string();
+    let err = read_all(&uri, Some(&filter)).unwrap_err().to_string();
     assert!(err.contains("humidity"), "got: {err}");
     assert!(err.contains("no array named"), "got: {err}");
 }
@@ -252,7 +270,7 @@ fn errors_when_crs_declared_without_transform() {
         .unwrap();
 
     let uri = format!("file://{}", tmp.path().display());
-    let err = group_to_rasters(&uri, None).unwrap_err().to_string();
+    let err = read_all(&uri, None).unwrap_err().to_string();
     assert!(err.contains("CRS"), "got: {err}");
     assert!(err.contains("spatial:transform"), "got: {err}");
 }
@@ -265,9 +283,7 @@ fn explicit_arrays_filter_rejects_1d_arrays() {
     let tmp = build_xarray_style_fixture();
     let uri = format!("file://{}", tmp.path().display());
     let filter = vec!["t".to_string()];
-    let err = group_to_rasters(&uri, Some(&filter))
-        .unwrap_err()
-        .to_string();
+    let err = read_all(&uri, Some(&filter)).unwrap_err().to_string();
     assert!(err.contains("\"t\""), "got: {err}");
     assert!(err.contains("rank 1"), "got: {err}");
     assert!(err.contains("at least 2 dimensions"), "got: {err}");
@@ -290,7 +306,7 @@ fn errors_when_group_has_only_1d_arrays() {
         .unwrap();
 
     let uri = format!("file://{}", tmp.path().display());
-    let err = group_to_rasters(&uri, None).unwrap_err().to_string();
+    let err = read_all(&uri, None).unwrap_err().to_string();
     assert!(err.contains("only 1-D arrays"), "got: {err}");
 }
 
@@ -318,7 +334,7 @@ fn falls_back_to_array_dimensions_attribute() {
     array.store_metadata().unwrap();
 
     let uri = format!("file://{}", tmp.path().display());
-    let arr = group_to_rasters(&uri, None).unwrap();
+    let arr = read_all(&uri, None).unwrap();
     let rasters = RasterStructArray::new(&arr);
     assert_eq!(rasters.len(), 2);
     let r0 = rasters.get(0).unwrap();
@@ -352,7 +368,7 @@ fn errors_on_mismatched_chunk_grids() {
         .unwrap();
 
     let uri = format!("file://{}", tmp.path().display());
-    let err = group_to_rasters(&uri, None).unwrap_err().to_string();
+    let err = read_all(&uri, None).unwrap_err().to_string();
     assert!(
         err.contains("chunk") && err.contains("array_a") && err.contains("array_b"),
         "got: {err}"

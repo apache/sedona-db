@@ -22,12 +22,14 @@
 //! array in the group, mapped onto SedonaDB's canonical N-D raster Arrow
 //! schema.
 //!
-//! Single entry point: [`group_to_rasters`] always emits OutDb-style
-//! rows — `data` is empty, `outdb_uri` carries a chunk anchor that the
-//! async OutDb resolver (registered separately, lands in a follow-up)
-//! turns into pixel bytes on demand. Metadata-only operations
-//! (`count(*)`, `RS_Envelope`, `RS_Width`, …) work today; byte-consuming
-//! kernels require the resolver to be registered.
+//! Single entry point: [`ZarrChunkReader`] is a `RecordBatchReader`
+//! that walks the group's chunk grid lazily, emitting one batch per
+//! `next()` call. Each row carries chunk-anchor URIs in `outdb_uri`;
+//! `data` is empty until the async OutDb resolver (registered
+//! separately, lands in a follow-up) materialises the bytes.
+//! Metadata-only operations (`count(*)`, `RS_Envelope`, `RS_Width`, …)
+//! work today; byte-consuming kernels require the resolver to be
+//! registered.
 //!
 //! Local filesystem stores only — `file://` URIs or bare paths.
 
@@ -36,4 +38,14 @@ pub mod geozarr;
 pub mod loader;
 pub mod source_uri;
 
-pub use loader::group_to_rasters;
+#[cfg(feature = "zarr")]
+pub mod format_spec;
+#[cfg(feature = "zarr")]
+pub mod udtf;
+
+pub use loader::ZarrChunkReader;
+
+#[cfg(feature = "zarr")]
+pub use format_spec::ZarrFormatSpec;
+#[cfg(feature = "zarr")]
+pub use udtf::{register as register_udtf, ZarrReadFunction};
