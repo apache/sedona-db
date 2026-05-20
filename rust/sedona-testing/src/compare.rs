@@ -116,8 +116,12 @@ pub fn assert_scalar_wkb_bounds_approx_equal(
         ScalarValue::Binary(Some(bytes)) | ScalarValue::BinaryView(Some(bytes)) => bytes.clone(),
         ScalarValue::Struct(struct_array) => {
             // Handle ITEM_CRS struct: extract the "item" field
-            let item_col = struct_array.column_by_name("item").expect("Expected 'item' field in struct");
-            match ScalarValue::try_from_array(item_col, 0).expect("Failed to extract scalar from struct") {
+            let item_col = struct_array
+                .column_by_name("item")
+                .expect("Expected 'item' field in struct");
+            match ScalarValue::try_from_array(item_col, 0)
+                .expect("Failed to extract scalar from struct")
+            {
                 ScalarValue::Binary(Some(bytes)) | ScalarValue::BinaryView(Some(bytes)) => bytes,
                 other => panic!("Expected binary in struct 'item' field, got {other:?}"),
             }

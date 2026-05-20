@@ -107,7 +107,11 @@ mod tests {
                 .value(0);
             let bbox_width = maxx - minx;
             // Width should be small (crossing antimeridian), not ~358 degrees
-            assert!(bbox_width < 10.0, "bbox width should be small for antimeridian crossing, got {}", bbox_width);
+            assert!(
+                bbox_width < 10.0,
+                "bbox width should be small for antimeridian crossing, got {}",
+                bbox_width
+            );
         }
 
         // Empty input
