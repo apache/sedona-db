@@ -30,7 +30,6 @@ use crate::rect_bounder::WkbGeographyBounder;
 pub fn st_envelope_agg_impl() -> Vec<SedonaAccumulatorRef> {
     ItemCrsSedonaAccumulator::wrap_impl(vec![Arc::new(STEnvelopeAgg::<WkbGeographyBounder>::new(
         ArgMatcher::new(vec![ArgMatcher::is_geography()], WKB_GEOMETRY),
-        false, // TODO: groups_accumulator not yet supported for geography
     ))])
 }
 

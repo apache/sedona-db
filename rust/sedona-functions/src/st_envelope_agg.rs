@@ -14,9 +14,9 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::{iter::zip, marker::PhantomData, sync::Arc, vec};
+use std::{marker::PhantomData, sync::Arc, vec};
 
-use crate::executor::{WkbBytesExecutor, WkbExecutor};
+use crate::executor::WkbBytesExecutor;
 use crate::st_envelope::write_envelope;
 use arrow_array::{builder::BinaryBuilder, Array, ArrayRef, BooleanArray};
 use arrow_schema::{DataType, Field, FieldRef};
@@ -35,7 +35,7 @@ use sedona_expr::{
 use sedona_geometry::bounds::WkbGeometryBounder;
 use sedona_geometry::interval::WraparoundInterval;
 use sedona_geometry::{
-    bounds::{geo_traits_update_xy_bounds, WkbBounder2D},
+    bounds::WkbBounder2D,
     interval::{Interval, IntervalTrait},
     wkb_factory::WKB_MIN_PROBABLE_BYTES,
 };
@@ -51,10 +51,10 @@ pub fn st_envelope_agg_udf() -> SedonaAggregateUDF {
     SedonaAggregateUDF::new(
         "st_envelope_agg",
         ItemCrsSedonaAccumulator::wrap_impl(vec![Arc::new(
-            STEnvelopeAgg::<WkbGeometryBounder>::new(
-                ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY),
-                true, // groups_accumulator supported for geometry
-            ),
+            STEnvelopeAgg::<WkbGeometryBounder>::new(ArgMatcher::new(
+                vec![ArgMatcher::is_geometry()],
+                WKB_GEOMETRY,
+            )),
         )]),
         Volatility::Immutable,
     )
@@ -64,20 +64,14 @@ pub fn st_envelope_agg_udf() -> SedonaAggregateUDF {
 #[derive(Debug)]
 pub struct STEnvelopeAgg<T> {
     matcher: ArgMatcher,
-    supports_groups_accumulator: bool,
     _phantom: PhantomData<T>,
 }
 
 impl<T> STEnvelopeAgg<T> {
     /// Create a new STEnvelopeAgg with a specific ArgMatcher
-    ///
-    /// The `supports_groups_accumulator` flag indicates whether the groups accumulator
-    /// optimization is available. Set to `false` for geography types where the
-    /// optimized implementation is not yet available.
-    pub fn new(matcher: ArgMatcher, supports_groups_accumulator: bool) -> Self {
+    pub fn new(matcher: ArgMatcher) -> Self {
         Self {
             matcher,
-            supports_groups_accumulator,
             _phantom: Default::default(),
         }
     }
@@ -89,7 +83,7 @@ impl<T: WkbBounder2D + Default + std::fmt::Debug + 'static> SedonaAccumulator fo
     }
 
     fn groups_accumulator_supported(&self, _args: &[SedonaType]) -> bool {
-        self.supports_groups_accumulator
+        true
     }
 
     fn groups_accumulator(
@@ -97,7 +91,9 @@ impl<T: WkbBounder2D + Default + std::fmt::Debug + 'static> SedonaAccumulator fo
         args: &[SedonaType],
         _output_type: &SedonaType,
     ) -> Result<Box<dyn GroupsAccumulator>> {
-        Ok(Box::new(BoundsGroupsAccumulator2D::new(args[0].clone())))
+        Ok(Box::new(BoundsGroupsAccumulator2D::<T>::new(
+            args[0].clone(),
+        )))
     }
 
     fn accumulator(
@@ -236,19 +232,17 @@ impl<T: std::fmt::Debug + WkbBounder2D + Default> Accumulator for BoundsAccumula
 }
 
 #[derive(Debug)]
-struct BoundsGroupsAccumulator2D {
+struct BoundsGroupsAccumulator2D<T: std::fmt::Debug> {
     input_type: SedonaType,
-    xs: Vec<Interval>,
-    ys: Vec<Interval>,
+    bounders: Vec<T>,
     offset: usize,
 }
 
-impl BoundsGroupsAccumulator2D {
+impl<T: WkbBounder2D + Default> BoundsGroupsAccumulator2D<T> {
     pub fn new(input_type: SedonaType) -> Self {
         Self {
             input_type,
-            xs: Vec::new(),
-            ys: Vec::new(),
+            bounders: Vec::new(),
             offset: 0,
         }
     }
@@ -271,9 +265,9 @@ impl BoundsGroupsAccumulator2D {
 
         let arg_types = [input_type.clone()];
         let args = [ColumnarValue::Array(values[0].clone())];
-        let executor = WkbExecutor::new(&arg_types, &args);
-        self.xs.resize(total_num_groups, Interval::empty());
-        self.ys.resize(total_num_groups, Interval::empty());
+        let executor = WkbBytesExecutor::new(&arg_types, &args);
+        self.bounders
+            .resize_with(total_num_groups, Default::default);
         let mut i = 0;
 
         if let Some(filter) = opt_filter {
@@ -283,12 +277,9 @@ impl BoundsGroupsAccumulator2D {
                     let group_id = group_indices[i];
                     i += 1;
                     if let Some(item) = maybe_item {
-                        geo_traits_update_xy_bounds(
-                            item,
-                            &mut self.xs[group_id],
-                            &mut self.ys[group_id],
-                        )
-                        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+                        self.bounders[group_id]
+                            .update_wkb_bytes(item)
+                            .map_err(|e| exec_datafusion_err!("Error updating bounder: {e}"))?;
                     }
                 } else {
                     i += 1;
@@ -301,12 +292,9 @@ impl BoundsGroupsAccumulator2D {
                 let group_id = group_indices[i];
                 i += 1;
                 if let Some(item) = maybe_item {
-                    geo_traits_update_xy_bounds(
-                        item,
-                        &mut self.xs[group_id],
-                        &mut self.ys[group_id],
-                    )
-                    .map_err(|e| DataFusionError::External(Box::new(e)))?;
+                    self.bounders[group_id]
+                        .update_wkb_bytes(item)
+                        .map_err(|e| exec_datafusion_err!("Error updating bounder: {e}"))?;
                 }
 
                 Ok(())
@@ -318,7 +306,7 @@ impl BoundsGroupsAccumulator2D {
 
     fn emit_wkb_result(&mut self, emit_to: EmitTo) -> Result<ArrayRef> {
         let emit_size = match emit_to {
-            EmitTo::All => self.xs.len(),
+            EmitTo::All => self.bounders.len(),
             EmitTo::First(n) => n,
         };
 
@@ -326,8 +314,9 @@ impl BoundsGroupsAccumulator2D {
             BinaryBuilder::with_capacity(emit_size, emit_size * WKB_MIN_PROBABLE_BYTES);
 
         let emit_range = self.offset..(self.offset + emit_size);
-        for (x, y) in zip(&self.xs[emit_range.clone()], &self.ys[emit_range.clone()]) {
-            let written = write_envelope(&(*x).into(), y, &mut builder)?;
+        for bounder in &self.bounders[emit_range.clone()] {
+            let (x, y) = bounder.finish();
+            let written = write_envelope(&x, &y, &mut builder)?;
             if written {
                 builder.append_value([]);
             } else {
@@ -337,8 +326,7 @@ impl BoundsGroupsAccumulator2D {
 
         match emit_to {
             EmitTo::All => {
-                self.xs = Vec::new();
-                self.ys = Vec::new();
+                self.bounders = Vec::new();
                 self.offset = 0;
             }
             EmitTo::First(n) => {
@@ -353,7 +341,7 @@ impl BoundsGroupsAccumulator2D {
         use arrow_array::builder::Float64Builder;
 
         let emit_size = match emit_to {
-            EmitTo::All => self.xs.len(),
+            EmitTo::All => self.bounders.len(),
             EmitTo::First(n) => n,
         };
 
@@ -363,7 +351,8 @@ impl BoundsGroupsAccumulator2D {
         let mut ymax_builder = Float64Builder::with_capacity(emit_size);
 
         let emit_range = self.offset..(self.offset + emit_size);
-        for (x, y) in zip(&self.xs[emit_range.clone()], &self.ys[emit_range.clone()]) {
+        for bounder in &self.bounders[emit_range] {
+            let (x, y) = bounder.finish();
             if x.is_empty() || y.is_empty() {
                 xmin_builder.append_null();
                 ymin_builder.append_null();
@@ -379,8 +368,7 @@ impl BoundsGroupsAccumulator2D {
 
         match emit_to {
             EmitTo::All => {
-                self.xs = Vec::new();
-                self.ys = Vec::new();
+                self.bounders = Vec::new();
                 self.offset = 0;
             }
             EmitTo::First(n) => {
@@ -412,8 +400,8 @@ impl BoundsGroupsAccumulator2D {
         let xmax_arr = as_float64_array(&values[2])?;
         let ymax_arr = as_float64_array(&values[3])?;
 
-        self.xs.resize(total_num_groups, Interval::empty());
-        self.ys.resize(total_num_groups, Interval::empty());
+        self.bounders
+            .resize_with(total_num_groups, Default::default);
 
         for (i, &group_id) in group_indices.iter().enumerate() {
             if opt_filter.is_some_and(|f| !f.value(i)) {
@@ -426,10 +414,9 @@ impl BoundsGroupsAccumulator2D {
                 let xmax = xmax_arr.value(i);
                 let ymax = ymax_arr.value(i);
 
-                let new_x = Interval::new(xmin, xmax);
-                let new_y = Interval::new(ymin, ymax);
-                self.xs[group_id] = self.xs[group_id].merge_interval(&new_x);
-                self.ys[group_id] = self.ys[group_id].merge_interval(&new_y);
+                self.bounders[group_id]
+                    .update_bounds((xmin, xmax).into(), (ymin, ymax).into())
+                    .map_err(|e| exec_datafusion_err!("Error updating bounds state: {e}"))?;
             }
         }
 
@@ -437,7 +424,7 @@ impl BoundsGroupsAccumulator2D {
     }
 }
 
-impl GroupsAccumulator for BoundsGroupsAccumulator2D {
+impl<T: WkbBounder2D + Default> GroupsAccumulator for BoundsGroupsAccumulator2D<T> {
     fn update_batch(
         &mut self,
         values: &[ArrayRef],
@@ -473,9 +460,8 @@ impl GroupsAccumulator for BoundsGroupsAccumulator2D {
     }
 
     fn size(&self) -> usize {
-        size_of::<BoundsGroupsAccumulator2D>()
-            + self.xs.capacity() * size_of::<Interval>()
-            + self.ys.capacity() * size_of::<Interval>()
+        size_of::<BoundsGroupsAccumulator2D<T>>()
+            + self.bounders.iter().map(|b| b.mem_used()).sum::<usize>()
     }
 }
 
