@@ -44,10 +44,13 @@ mod tests {
         WKB_VIEW_GEOGRAPHY,
     };
     use sedona_testing::{
-        compare::{assert_array_equal, assert_scalar_equal_wkb_geometry},
+        compare::{assert_scalar_equal_wkb_geometry, assert_scalar_wkb_bounds_approx_equal},
         create::create_array,
         testers::AggregateUdfTester,
     };
+
+    use arrow_array::Array;
+    use datafusion_common::ScalarValue;
 
     fn create_udf() -> SedonaAggregateUDF {
         SedonaAggregateUDF::new(
@@ -68,25 +71,34 @@ mod tests {
         let tester = AggregateUdfTester::new(create_udf().into(), vec![sedona_type.clone()]);
         assert_eq!(tester.return_type().unwrap(), WKB_GEOMETRY);
 
-        // Finite input with nulls
+        // Finite input with nulls - check bounds approximately due to geodesic expansion
         let batches = vec![
             vec![Some("POINT (0 1)"), None, Some("POINT (2 3)")],
             vec![Some("POINT (4 5)"), None, Some("POINT (6 7)")],
         ];
-        assert_scalar_equal_wkb_geometry(
+        assert_scalar_wkb_bounds_approx_equal(
             &tester.aggregate_wkt(batches).unwrap(),
-            Some("POLYGON((0 1, 0 7, 6 7, 6 1, 0 1))"),
+            0.0,
+            1.0,
+            6.0,
+            7.0,
+            1e-13,
         );
 
         // Empty input
         assert_scalar_equal_wkb_geometry(&tester.aggregate_wkt(vec![]).unwrap(), None);
 
-        // Degenerate output: point
-        assert_scalar_equal_wkb_geometry(
+        // Degenerate output: point. This gets expanded slightly because
+        // of the current bounder and some rounding that happens.
+        assert_scalar_wkb_bounds_approx_equal(
             &tester
                 .aggregate_wkt(vec![vec![Some("POINT (0 1)")]])
                 .unwrap(),
-            Some("POINT (0 1)"),
+            0.0,
+            1.0,
+            0.0,
+            1.0,
+            1e-13,
         );
     }
 
@@ -109,42 +121,49 @@ mod tests {
         );
         let batches = vec![array0, array1];
 
-        let expected = create_array(
-            &[
-                // First element only + a null
-                Some("POINT (0 1)"),
-                // Middle two elements
-                Some("POLYGON((2 3, 2 5, 4 5, 4 3, 2 3))"),
-                // Last element only
-                Some("POINT (6 7)"),
-                // Only null
-                None,
-            ],
-            &WKB_GEOMETRY,
-        );
+        // Helper to check bounds of array element
+        let check_bounds = |result: &arrow_array::ArrayRef,
+                            idx: usize,
+                            expected: Option<(f64, f64, f64, f64)>| {
+            let scalar = ScalarValue::try_from_array(result, idx).unwrap();
+            match expected {
+                None => assert!(scalar.is_null(), "Expected null at index {idx}"),
+                Some((xmin, ymin, xmax, ymax)) => {
+                    assert_scalar_wkb_bounds_approx_equal(&scalar, xmin, ymin, xmax, ymax, 1e-13);
+                }
+            }
+        };
+
         let result = tester
             .aggregate_groups(&batches, group_indices.clone(), None, vec![])
             .unwrap();
-        assert_array_equal(&result, &expected);
+        assert_eq!(result.len(), 4);
+        check_bounds(&result, 0, Some((0.0, 1.0, 0.0, 1.0))); // POINT (0 1) + null
+        check_bounds(&result, 1, Some((2.0, 3.0, 4.0, 5.0))); // POINT (2 3) + POINT (4 5)
+        check_bounds(&result, 2, Some((6.0, 7.0, 6.0, 7.0))); // POINT (6 7)
+        check_bounds(&result, 3, None); // Only null
 
         // We should get the same answer even with a sequence of partial emits
         let result = tester
             .aggregate_groups(&batches, group_indices.clone(), None, vec![1, 1, 1, 1])
             .unwrap();
-        assert_array_equal(&result, &expected);
+        assert_eq!(result.len(), 4);
+        check_bounds(&result, 0, Some((0.0, 1.0, 0.0, 1.0)));
+        check_bounds(&result, 1, Some((2.0, 3.0, 4.0, 5.0)));
+        check_bounds(&result, 2, Some((6.0, 7.0, 6.0, 7.0)));
+        check_bounds(&result, 3, None);
 
         // Also check with a filter (in this case, filter out all values except
         // the middle two elements).
         let filter = vec![false, false, true, true, false, false];
-        let expected = create_array(
-            &[None, Some("POLYGON((2 3, 2 5, 4 5, 4 3, 2 3))"), None, None],
-            &WKB_GEOMETRY,
-        );
-
         let result = tester
             .aggregate_groups(&batches, group_indices.clone(), Some(&filter), vec![])
             .unwrap();
-        assert_array_equal(&result, &expected);
+        assert_eq!(result.len(), 4);
+        check_bounds(&result, 0, None);
+        check_bounds(&result, 1, Some((2.0, 3.0, 4.0, 5.0)));
+        check_bounds(&result, 2, None);
+        check_bounds(&result, 3, None);
     }
 
     #[rstest]

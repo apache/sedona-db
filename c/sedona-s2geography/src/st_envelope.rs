@@ -40,11 +40,10 @@ pub fn st_envelope_kernels() -> Vec<(String, ScalarKernelRef)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
-    use sedona_geometry::{bounds::wkb_bounds_xy, interval::IntervalTrait};
+
     use sedona_schema::{
         crs::lnglat,
         datatypes::{
@@ -53,7 +52,9 @@ mod tests {
         },
     };
     use sedona_testing::{
-        compare::assert_array_equal, create::create_array, testers::ScalarUdfTester,
+        compare::{assert_array_equal, assert_scalar_wkb_bounds_approx_equal},
+        create::create_array,
+        testers::ScalarUdfTester,
     };
 
     fn create_udf() -> SedonaScalarUDF {
@@ -63,45 +64,6 @@ mod tests {
             kernels.into_iter().map(|(_, k)| k).collect(),
             datafusion_expr::Volatility::Immutable,
         )
-    }
-
-    /// Helper to extract WKB bytes from a scalar result
-    fn get_wkb_bytes(result: &ScalarValue) -> &[u8] {
-        match result {
-            ScalarValue::Binary(Some(bytes)) | ScalarValue::LargeBinary(Some(bytes)) => bytes,
-            _ => panic!("Expected binary, got {result:?}"),
-        }
-    }
-
-    /// Helper to assert bounds are approximately equal
-    fn assert_bounds_approx(
-        actual_bounds: &sedona_geometry::bounding_box::BoundingBox,
-        expected_xmin: f64,
-        expected_ymin: f64,
-        expected_xmax: f64,
-        expected_ymax: f64,
-    ) {
-        let actual_xmin = actual_bounds.x().lo();
-        let actual_ymin = actual_bounds.y().lo();
-        let actual_xmax = actual_bounds.x().hi();
-        let actual_ymax = actual_bounds.y().hi();
-
-        assert!(
-            (actual_xmin - expected_xmin).abs() < f64::EPSILON,
-            "xmin: expected {expected_xmin}, got {actual_xmin}"
-        );
-        assert!(
-            (actual_ymin - expected_ymin).abs() < f64::EPSILON,
-            "ymin: expected {expected_ymin}, got {actual_ymin}"
-        );
-        assert!(
-            (actual_xmax - expected_xmax).abs() < f64::EPSILON,
-            "xmax: expected {expected_xmax}, got {actual_xmax}"
-        );
-        assert!(
-            (actual_ymax - expected_ymax).abs() < f64::EPSILON,
-            "ymax: expected {expected_ymax}, got {actual_ymax}"
-        );
     }
 
     #[test]
@@ -118,24 +80,26 @@ mod tests {
         let result = tester
             .invoke_scalar("POLYGON ((1 2, 1 22, 11 22, 11 2, 1 2))")
             .unwrap();
-        let wkb_bytes = get_wkb_bytes(&result);
-        let bounds = wkb_bounds_xy(wkb_bytes).expect("Failed to get bounds");
-
-        assert_bounds_approx(&bounds, 1.0, 1.9999999999999747, 11.0, 22.0759758928044);
+        assert_scalar_wkb_bounds_approx_equal(
+            &result,
+            1.0,
+            1.9999999999999747,
+            11.0,
+            22.0759758928044,
+            f64::EPSILON,
+        );
 
         // Test with a linestring crossing the antimeridian - should return MULTIPOLYGON
         let result = tester
             .invoke_scalar("LINESTRING (170 10, -170 20)")
             .unwrap();
-        let wkb_bytes = get_wkb_bytes(&result);
-        let bounds = wkb_bounds_xy(wkb_bytes).expect("Failed to get bounds");
-
-        assert_bounds_approx(
-            &bounds,
+        assert_scalar_wkb_bounds_approx_equal(
+            &result,
             -180.0,
             9.999999999999975,
             180.0,
             20.000000000000025,
+            f64::EPSILON,
         );
     }
 
@@ -144,10 +108,10 @@ mod tests {
         let tester = ScalarUdfTester::new(create_udf().into(), vec![sedona_type.clone()]);
         tester.assert_return_type(WKB_GEOMETRY);
 
+        // We only test empties here because of the floating point expansion used in the bounder
         let input_wkt = vec![
             None,
             Some("POINT EMPTY"),
-            Some("POINT (0 1)"),
             Some("LINESTRING EMPTY"),
             Some("POLYGON EMPTY"),
             Some("MULTIPOINT EMPTY"),
@@ -159,7 +123,6 @@ mod tests {
             &[
                 None,
                 Some("POINT EMPTY"),
-                Some("POINT (0 1)"),
                 Some("LINESTRING EMPTY"),
                 Some("POLYGON EMPTY"),
                 Some("MULTIPOINT EMPTY"),
@@ -190,7 +153,16 @@ mod tests {
         // ST_Envelope returns geometry (planar), not geography, even for geography input
         tester.assert_return_type(WKB_GEOMETRY_ITEM_CRS.clone());
 
-        let result = tester.invoke_scalar("POINT (1 3)").unwrap();
-        tester.assert_scalar_result_equals(result, "POINT (1 3)");
+        let result = tester
+            .invoke_scalar("POLYGON ((1 2, 1 22, 11 22, 11 2, 1 2))")
+            .unwrap();
+        assert_scalar_wkb_bounds_approx_equal(
+            &result,
+            1.0,
+            1.9999999999999747,
+            11.0,
+            22.0759758928044,
+            f64::EPSILON,
+        );
     }
 }

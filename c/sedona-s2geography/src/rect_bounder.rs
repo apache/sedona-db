@@ -22,7 +22,6 @@ use sedona_geometry::error::SedonaGeometryError;
 use sedona_geometry::interval::Interval;
 use sedona_geometry::interval::IntervalTrait;
 use sedona_geometry::interval::WraparoundInterval;
-use sedona_geometry::wkb_header::WkbHeader;
 
 use crate::geography::Geography;
 use crate::geography::GeographyFactory;
@@ -43,8 +42,6 @@ use crate::utils::S2GeogCError;
 /// the bounds of geodesics).
 #[derive(Debug, Default)]
 pub struct WkbGeographyBounder {
-    exact_x: WraparoundInterval,
-    exact_y: Interval,
     inner: RectBounder,
     factory: GeographyFactory,
     geog: Geography<'static>,
@@ -56,23 +53,11 @@ impl WkbBounder2D for WkbGeographyBounder {
         x: WraparoundInterval,
         y: Interval,
     ) -> Result<(), SedonaGeometryError> {
-        self.exact_x = self.exact_x.merge_interval(&x);
-        self.exact_y = self.exact_y.merge_interval(&y);
+        self.inner.update_rect(x.lo(), y.lo(), x.hi(), y.hi());
         Ok(())
     }
 
     fn update_wkb_bytes(&mut self, wkb_value: &[u8]) -> Result<(), SedonaGeometryError> {
-        // Special-case the point because the rect bounder will expand the bounds slightly
-        // and involves a roundtrip through a 3D point vector that makes this slightly
-        // more faithful to the input.
-        let header = WkbHeader::try_new(wkb_value)?;
-        if header.geometry_type_id()? == sedona_geometry::types::GeometryTypeId::Point {
-            let (x, y) = header.first_xy();
-            self.exact_x = self.exact_x.merge_value(x);
-            self.exact_y = self.exact_y.merge_value(y);
-            return Ok(());
-        }
-
         self.factory
             .init_from_wkb(wkb_value, &mut self.geog)
             .map_err(|e| SedonaGeometryError::External(Box::new(e)))?;
@@ -88,28 +73,18 @@ impl WkbBounder2D for WkbGeographyBounder {
         distance: f64,
         radius: Option<f64>,
     ) -> Result<(), SedonaGeometryError> {
-        if distance > 0.0 {
-            // Union the exact bounds with the inner implementation
-            self.inner.update_rect(
-                self.exact_x.lo(),
-                self.exact_y.lo(),
-                self.exact_x.hi(),
-                self.exact_y.hi(),
-            );
-
-            // If we have an explicit radius, pass it on to s2geography. Otherwise, expand using the default
-            if let Some(radius) = radius {
-                self.inner.expand_by_distance_with_radius(distance, radius);
-            } else {
-                self.inner.expand_by_distance(distance);
-            }
+        // If we have an explicit radius, pass it on to s2geography. Otherwise, expand using the default
+        if let Some(radius) = radius {
+            self.inner.expand_by_distance_with_radius(distance, radius);
+        } else {
+            self.inner.expand_by_distance(distance);
         }
 
         Ok(())
     }
 
     fn finish(&self) -> (WraparoundInterval, Interval) {
-        let (mut x, mut y) = (self.exact_x, self.exact_y);
+        let (mut x, mut y) = (WraparoundInterval::empty(), Interval::empty());
 
         let maybe_result = self.inner.finish();
         debug_assert!(maybe_result.is_ok());
@@ -239,6 +214,7 @@ unsafe impl Sync for RectBounder {}
 mod tests {
     use super::*;
     use crate::geography::GeographyFactory;
+    use sedona_geometry::wkb_factory::wkb_point;
 
     #[test]
     fn test_rect_bounder_empty() {
@@ -338,29 +314,6 @@ mod tests {
         assert!((hi_lat - 10.0).abs() < f64::EPSILON);
     }
 
-    // Helper to create WKB point bytes (little-endian)
-    fn make_wkb_point(x: f64, y: f64) -> Vec<u8> {
-        let mut wkb = Vec::with_capacity(21);
-        wkb.push(0x01); // little-endian
-        wkb.extend_from_slice(&1u32.to_le_bytes()); // Point type
-        wkb.extend_from_slice(&x.to_le_bytes());
-        wkb.extend_from_slice(&y.to_le_bytes());
-        wkb
-    }
-
-    // Helper to create WKB linestring bytes (little-endian)
-    fn make_wkb_linestring(coords: &[(f64, f64)]) -> Vec<u8> {
-        let mut wkb = Vec::new();
-        wkb.push(0x01); // little-endian
-        wkb.extend_from_slice(&2u32.to_le_bytes()); // LineString type
-        wkb.extend_from_slice(&(coords.len() as u32).to_le_bytes());
-        for (x, y) in coords {
-            wkb.extend_from_slice(&x.to_le_bytes());
-            wkb.extend_from_slice(&y.to_le_bytes());
-        }
-        wkb
-    }
-
     #[test]
     fn test_wkb_geography_bounder_empty() {
         let bounder = WkbGeographyBounder::default();
@@ -375,10 +328,10 @@ mod tests {
 
         // Wraparound scenario: points at 179 and -179 longitude
         bounder
-            .update_wkb_bytes(&make_wkb_point(179.0, 0.0))
+            .update_wkb_bytes(&wkb_point((179.0, 0.0)).unwrap())
             .unwrap();
         bounder
-            .update_wkb_bytes(&make_wkb_point(-179.0, 20.0))
+            .update_wkb_bytes(&wkb_point((-179.0, 20.0)).unwrap())
             .unwrap();
 
         let (x, y) = bounder.finish();
@@ -397,10 +350,10 @@ mod tests {
 
         // Wraparound scenario
         bounder
-            .update_wkb_bytes(&make_wkb_point(179.0, 0.0))
+            .update_wkb_bytes(&wkb_point((179.0, 0.0)).unwrap())
             .unwrap();
         bounder
-            .update_wkb_bytes(&make_wkb_point(-179.0, 20.0))
+            .update_wkb_bytes(&wkb_point((-179.0, 20.0)).unwrap())
             .unwrap();
 
         let (x_before, y_before) = bounder.finish();
@@ -441,7 +394,7 @@ mod tests {
         let mut bounder = WkbGeographyBounder::default();
 
         bounder
-            .update_wkb_bytes(&make_wkb_point(10.0, 20.0))
+            .update_wkb_bytes(&wkb_point((10.0, 20.0)).unwrap())
             .unwrap();
 
         let half_earth_radius = 6371000.0 / 2.0; // Half of Earth's radius in meters
@@ -469,11 +422,11 @@ mod tests {
 
         let (x, y) = bounder.finish();
 
-        // Bounds should match exactly
-        assert_eq!(x.lo(), -10.0);
-        assert_eq!(x.hi(), 30.0);
-        assert_eq!(y.lo(), -20.0);
-        assert_eq!(y.hi(), 40.0);
+        // Bounds should match approximately (small floating point error from radians conversion)
+        assert!((x.lo() - (-10.0)).abs() < 1e-13);
+        assert!((x.hi() - 30.0).abs() < 1e-13);
+        assert!((y.lo() - (-20.0)).abs() < 1e-13);
+        assert!((y.hi() - 40.0).abs() < 1e-13);
 
         // Test wraparound case
         let mut bounder = WkbGeographyBounder::default();
@@ -484,27 +437,10 @@ mod tests {
         let (x, y) = bounder.finish();
 
         // Wraparound: lo > hi
-        assert_eq!(x.lo(), 170.0);
-        assert_eq!(x.hi(), -170.0);
-        assert_eq!(y.lo(), -10.0);
-        assert_eq!(y.hi(), 10.0);
-    }
-
-    #[test]
-    fn test_wkb_geography_bounder_linestring() {
-        let mut bounder = WkbGeographyBounder::default();
-
-        // LineString that doesn't get special-cased like Point does
-        let linestring = make_wkb_linestring(&[(10.0, 20.0), (30.0, 40.0)]);
-        bounder.update_wkb_bytes(&linestring).unwrap();
-
-        let (x, y) = bounder.finish();
-
-        // Bounds should encompass the linestring (with some tolerance for geodesic calculation)
-        assert!(x.lo() <= 10.1, "x.lo() should be <= 10.0: {}", x.lo());
-        assert!(x.hi() >= 29.9, "x.hi() should be >= 30.0: {}", x.hi());
-        assert!(y.lo() <= 20.1, "y.lo() should be <= 20.0: {}", y.lo());
-        assert!(y.hi() >= 39.9, "y.hi() should be >= 40.0: {}", y.hi());
+        assert!((x.lo() - 170.0).abs() < 1e-13);
+        assert!((x.hi() - (-170.0)).abs() < 1e-13);
+        assert!((y.lo() - (-10.0)).abs() < 1e-13);
+        assert!((y.hi() - 10.0).abs() < 1e-13);
     }
 
     #[test]
