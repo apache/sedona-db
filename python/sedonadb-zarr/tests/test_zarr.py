@@ -87,3 +87,30 @@ def test_arrays_option_threads_through_sql(zarr_group):
         f"'file://{zarr_group}', '{{\"arrays\":[\"temperature\"]}}')"
     )
     assert df.to_arrow_table().column(0)[0].as_py() == 2
+
+
+def test_format_spec_via_read_format(zarr_group):
+    # The second user-facing surface: `con.read_format(spec, uri)`,
+    # which uses ExternalFormatSpec.open_reader -> PyZarrChunkReader's
+    # __arrow_c_stream__ to plumb data through.
+    con = sedonadb.connect()
+    df = con.read_format(
+        sedonadb_zarr.ZarrFormatSpec(), f"file://{zarr_group}"
+    )
+    arrow_tab = df.to_arrow_table()
+    assert arrow_tab.num_rows == 2
+    assert arrow_tab.column_names == ["raster"]
+
+
+def test_format_spec_with_arrays_option(zarr_group):
+    con = sedonadb.connect()
+    spec = sedonadb_zarr.ZarrFormatSpec().with_options({"arrays": ["temperature"]})
+    df = con.read_format(spec, f"file://{zarr_group}")
+    assert df.to_arrow_table().num_rows == 2
+
+
+def test_format_spec_load_eager_errors(zarr_group):
+    con = sedonadb.connect()
+    spec = sedonadb_zarr.ZarrFormatSpec().with_options({"load_eager": True})
+    with pytest.raises(Exception, match=r"load_eager"):
+        con.read_format(spec, f"file://{zarr_group}").to_arrow_table()

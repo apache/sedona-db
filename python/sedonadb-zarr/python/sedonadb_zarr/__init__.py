@@ -18,8 +18,11 @@
 """Zarr support for SedonaDB.
 
 Activate by calling :func:`register` on a SedonaDB connection. After
-registration, the ``sd_read_zarr`` SQL UDTF reads Zarr groups as
-N-D raster columns:
+registration, two surfaces work:
+
+1. ``con.sql("SELECT * FROM sd_read_zarr('s3://...')")`` — SQL UDTF.
+2. ``con.read_format(ZarrFormatSpec(), uri)`` — DataFrame API via
+   ``ExternalFormatSpec``.
 
 >>> import sedonadb
 >>> import sedonadb_zarr
@@ -32,6 +35,12 @@ applications that don't import ``sedonadb_zarr`` pay no zarr build or
 runtime cost.
 """
 
+import json
+from typing import Any, Mapping, Optional
+
+from sedonadb.datasource import ExternalFormatSpec
+
+from sedonadb_zarr._lib import PyZarrChunkReader
 from sedonadb_zarr._lib import register_udtf as _register_udtf
 
 
@@ -50,8 +59,6 @@ def register(con) -> None:
         the underlying ``InternalContext`` PyO3 handle and registers
         the UDTF on its DataFusion ``SessionContext``.
     """
-    # The `Context` Python object wraps an `InternalContext`; the
-    # attribute name follows sedonadb's internal convention.
     internal_ctx = getattr(con, "_impl", None)
     if internal_ctx is None:
         raise TypeError(
@@ -61,4 +68,49 @@ def register(con) -> None:
     _register_udtf(internal_ctx)
 
 
-__all__ = ["register"]
+class ZarrFormatSpec(ExternalFormatSpec):
+    """`ExternalFormatSpec` for Zarr groups.
+
+    Use with ``con.read_format(spec, uri)``:
+
+    >>> con.read_format(ZarrFormatSpec(), "file:///path/to/foo.zarr")  # doctest: +SKIP
+
+    Supported options (via :meth:`with_options`):
+
+    - ``load_eager`` (``bool``) — ``False`` (default) emits chunk-anchor
+      URIs only; ``True`` currently errors pending the async resolver.
+    - ``arrays`` (``list[str]`` or JSON-string) — explicit subset of
+      group arrays to read.
+    """
+
+    def __init__(self, options: Optional[Mapping[str, Any]] = None):
+        self._options: dict = dict(options) if options else {}
+
+    @property
+    def extension(self) -> str:
+        return ".zarr"
+
+    def with_options(self, options: Mapping[str, Any]) -> "ZarrFormatSpec":
+        merged = {**self._options, **options}
+        return ZarrFormatSpec(merged)
+
+    def open_reader(self, args: Any) -> PyZarrChunkReader:
+        uri = args.src.to_url()
+        if uri is None:
+            raise ValueError(
+                "ZarrFormatSpec: could not resolve a URL from the source object"
+            )
+        if self._options.get("load_eager"):
+            raise NotImplementedError(
+                "ZarrFormatSpec: load_eager=True is not yet supported. "
+                "Pixel-byte materialisation lands with the async RS_EnsureLoaded "
+                "resolver."
+            )
+        arrays = self._options.get("arrays")
+        if isinstance(arrays, str):
+            arrays = json.loads(arrays)
+        batch_size = args.batch_size if args.batch_size is not None else 8192
+        return PyZarrChunkReader(uri, arrays, batch_size)
+
+
+__all__ = ["register", "ZarrFormatSpec", "PyZarrChunkReader"]
