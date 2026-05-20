@@ -14,6 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+use std::marker::PhantomData;
 use std::vec;
 
 use std::{mem::size_of_val, sync::Arc};
@@ -36,13 +37,13 @@ use sedona_expr::item_crs::ItemCrsSedonaAccumulator;
 use sedona_expr::{aggregate_udf::SedonaAccumulator, statistics::GeoStatistics};
 use sedona_geometry::analyze::{analyze_wkb, GeometrySummary};
 use sedona_geometry::bounding_box::BoundingBox;
-use sedona_geometry::bounds::geo_traits_bounds_xy;
+use sedona_geometry::bounds::{WkbBounder2D, WkbGeometryBounder};
 use sedona_geometry::interval::IntervalTrait;
 use sedona_geometry::types::{GeometryTypeAndDimensions, GeometryTypeAndDimensionsSet};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use wkb::reader::Wkb;
 
-use crate::executor::WkbExecutor;
+use crate::executor::WkbBytesExecutor;
 
 /// ST_Analyze_Agg() aggregate UDF
 ///
@@ -57,23 +58,40 @@ pub fn st_analyze_agg_udf() -> SedonaAggregateUDF {
     )
 }
 
-/// ST_Analyze_Agg() implementation
+/// ST_Analyze_Agg() implementation for geometry types
 ///
 /// This wrapper is exposed because it is used by the spatial join implementation.
-pub fn st_analyze_agg_impl() -> SedonaAccumulatorRef {
-    Arc::new(STAnalyzeAgg {})
+pub fn st_analyze_agg_impl() -> Vec<SedonaAccumulatorRef> {
+    vec![Arc::new(STAnalyzeAgg::<WkbGeometryBounder>::new(
+        ArgMatcher::new(vec![ArgMatcher::is_geometry()], output_sedona_type()),
+    ))]
 }
 
+fn output_sedona_type() -> SedonaType {
+    let output_fields = STAnalyzeAgg::<WkbGeometryBounder>::output_fields();
+    SedonaType::Arrow(DataType::Struct(output_fields.into()))
+}
+
+/// Generic ST_Analyze_Agg accumulator that works with any WkbBounder2D implementation
 #[derive(Debug)]
-struct STAnalyzeAgg {}
+pub struct STAnalyzeAgg<T> {
+    matcher: ArgMatcher,
+    _phantom: PhantomData<T>,
+}
 
-impl SedonaAccumulator for STAnalyzeAgg {
+impl<T> STAnalyzeAgg<T> {
+    /// Create a new STAnalyzeAgg with a specific ArgMatcher
+    pub fn new(matcher: ArgMatcher) -> Self {
+        Self {
+            matcher,
+            _phantom: Default::default(),
+        }
+    }
+}
+
+impl<T: WkbBounder2D + Default + std::fmt::Debug + 'static> SedonaAccumulator for STAnalyzeAgg<T> {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        let output_fields = Self::output_fields();
-
-        let r_type = SedonaType::Arrow(DataType::Struct(output_fields.into()));
-        let matcher = ArgMatcher::new(vec![ArgMatcher::is_geometry()], r_type);
-        matcher.match_args(args)
+        self.matcher.match_args(args)
     }
 
     fn accumulator(
@@ -81,7 +99,7 @@ impl SedonaAccumulator for STAnalyzeAgg {
         args: &[SedonaType],
         _output_type: &SedonaType,
     ) -> Result<Box<dyn Accumulator>> {
-        Ok(Box::new(AnalyzeAccumulator::new(args[0].clone())))
+        Ok(Box::new(AnalyzeAccumulator::<T>::new(args[0].clone())))
     }
 
     fn state_fields(&self, _args: &[SedonaType]) -> Result<Vec<FieldRef>> {
@@ -93,7 +111,7 @@ impl SedonaAccumulator for STAnalyzeAgg {
     }
 }
 
-impl STAnalyzeAgg {
+impl<T> STAnalyzeAgg<T> {
     fn create_float64_array(value: Option<f64>) -> Float64Array {
         match value {
             Some(v) => Float64Array::from(vec![v]),
@@ -116,7 +134,7 @@ impl STAnalyzeAgg {
         }
     }
 
-    fn output_fields() -> Vec<Field> {
+    pub fn output_fields() -> Vec<Field> {
         let output_fields = vec![
             Field::new("count", DataType::Int64, true),
             Field::new("minx", DataType::Float64, true),
@@ -192,7 +210,7 @@ impl STAnalyzeAgg {
         };
 
         // Define output fields
-        let fields = STAnalyzeAgg::output_fields();
+        let fields = STAnalyzeAgg::<T>::output_fields();
 
         // Create arrays with proper null handling
         let values = vec![
@@ -220,16 +238,18 @@ impl STAnalyzeAgg {
 }
 
 #[derive(Debug)]
-pub struct AnalyzeAccumulator {
+pub struct AnalyzeAccumulator<T: std::fmt::Debug> {
     input_type: SedonaType,
     stats: GeoStatistics,
+    _phantom: PhantomData<T>,
 }
 
-impl AnalyzeAccumulator {
+impl<T: WkbBounder2D + Default + std::fmt::Debug> AnalyzeAccumulator<T> {
     pub fn new(input_type: SedonaType) -> Self {
         Self {
             input_type,
             stats: GeoStatistics::empty(),
+            _phantom: Default::default(),
         }
     }
 
@@ -240,10 +260,19 @@ impl AnalyzeAccumulator {
         Ok(())
     }
 
-    fn update_statistics(&mut self, geom: &Wkb) -> Result<()> {
-        let bbox =
-            geo_traits_bounds_xy(geom).map_err(|e| exec_datafusion_err!("Bounding error: {e}"))?;
-        let summary = analyze_wkb(geom).map_err(|e| exec_datafusion_err!("Analysis error: {e}"))?;
+    fn update_statistics(&mut self, wkb_bytes: &[u8]) -> Result<()> {
+        // Use the generic bounder to compute bounds
+        let mut bounder = T::default();
+        bounder
+            .update_wkb_bytes(wkb_bytes)
+            .map_err(|e| exec_datafusion_err!("Bounding error: {e}"))?;
+        let (x, y) = bounder.finish();
+        let bbox = BoundingBox::xy(x, y);
+
+        // Parse WKB for analysis
+        let wkb = wkb::reader::read_wkb(wkb_bytes)
+            .map_err(|e| exec_datafusion_err!("WKB parse error: {e}"))?;
+        let summary = analyze_wkb(&wkb).map_err(|e| exec_datafusion_err!("Analysis error: {e}"))?;
 
         self.ingest_geometry_summary(&summary, &bbox);
         Ok(())
@@ -355,10 +384,10 @@ impl AnalyzeAccumulator {
         stats.with_geometry_types(types)
     }
 
-    fn execute_update(&mut self, executor: WkbExecutor) -> Result<()> {
+    fn execute_update(&mut self, executor: WkbBytesExecutor) -> Result<()> {
         executor.execute_wkb_void(|maybe_item| {
             if let Some(item) = maybe_item {
-                self.update_statistics(&item)?;
+                self.update_statistics(item)?;
             }
             Ok(())
         })?;
@@ -366,20 +395,20 @@ impl AnalyzeAccumulator {
     }
 }
 
-impl Accumulator for AnalyzeAccumulator {
+impl<T: WkbBounder2D + Default + std::fmt::Debug> Accumulator for AnalyzeAccumulator<T> {
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
         if values.is_empty() {
             return sedona_internal_err!("No input arrays provided to accumulator");
         }
         let arg_types = [self.input_type.clone()];
         let arg_values = [ColumnarValue::Array(values[0].clone())];
-        let executor = WkbExecutor::new(&arg_types, &arg_values);
+        let executor = WkbBytesExecutor::new(&arg_types, &arg_values);
         self.execute_update(executor)?;
         Ok(())
     }
 
     fn evaluate(&mut self) -> Result<ScalarValue> {
-        let field_array_pairs = STAnalyzeAgg::output_arrays(self.stats.clone());
+        let field_array_pairs = STAnalyzeAgg::<T>::output_arrays(self.stats.clone());
 
         // Create the struct array with field values
         let struct_array = StructArray::from(field_array_pairs);

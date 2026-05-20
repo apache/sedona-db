@@ -46,8 +46,14 @@ fn init_scalar_kernels() -> Result<Vec<(String, ScalarKernelRef)>> {
 
 /// Returns aggregate kernels for s2geography functions
 pub fn aggregate_kernels() -> Vec<(&'static str, Vec<SedonaAccumulatorRef>)> {
-    vec![(
-        "st_envelope_agg",
-        crate::st_envelope_agg::st_envelope_agg_impl(),
-    )]
+    vec![
+        (
+            "st_analyze_agg",
+            crate::st_analyze_agg::st_analyze_agg_impl(),
+        ),
+        (
+            "st_envelope_agg",
+            crate::st_envelope_agg::st_envelope_agg_impl(),
+        ),
+    ]
 }
