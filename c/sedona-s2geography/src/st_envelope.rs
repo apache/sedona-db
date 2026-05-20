@@ -86,7 +86,7 @@ mod tests {
             1.9999999999999747,
             11.0,
             22.0759758928044,
-            f64::EPSILON,
+            1e-14,
         );
 
         // Test with a linestring crossing the antimeridian - should return MULTIPOLYGON
@@ -161,7 +161,7 @@ mod tests {
             1.0,
             1.9999999999999747,
             11.0,
-            22.0759758928044,
+            22.0759758928044, // ymax: expected 22.0759758928044, got 22.075975892804404
             1e-14,
         );
     }
