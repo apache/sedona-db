@@ -211,7 +211,7 @@ dependencies = [
  "bon",
  "bzip2",
  "crc32fast",
- "digest 0.10.7",
+ "digest",
  "liblzma",
  "log",
  "miniz_oxide",
