@@ -463,42 +463,66 @@ def test_st_linemerge_directed(eng, geog, expected):
     ("geog", "expected"),
     [
         pytest.param(None, None, id="null"),
-        pytest.param("POINT EMPTY", "POINT EMPTY", id="point_empty"),
+        pytest.param("POINT EMPTY", "POINT (nan nan)", id="point_empty"),
         pytest.param("LINESTRING EMPTY", "LINESTRING EMPTY", id="linestring_empty"),
-        pytest.param("POINT (1 2)", "POINT(1 2)", id="point"),
+        pytest.param("POINT (1 2)", "POINT (1 2)", id="point"),
         pytest.param(
             "POLYGON ((1 1, 1 0, 0 0, 0 1, 1 1))",
-            "POLYGON((0 0,0 1,1 1,1 0,0 0))",
+            "POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))",
             id="polygon",
         ),
         pytest.param(
             "MULTILINESTRING ((2 2, 1 1), (4 4, 3 3))",
-            "MULTILINESTRING((3 3,4 4),(1 1,2 2))",
+            "MULTILINESTRING ((3 3, 4 4), (1 1, 2 2))",
             id="multilinestring",
         ),
         pytest.param(
             "POLYGON Z ((1 1 5, 1 0 5, 0 0 5, 0 1 5, 1 1 5))",
-            "POLYGON Z((0 0 5,0 1 5,1 1 5,1 0 5,0 0 5))",
+            "POLYGON Z ((0 0 5, 0 1 5, 1 1 5, 1 0 5, 0 0 5))",
             id="polygon_z",
         ),
         pytest.param(
             "POLYGON M ((1 1 7, 1 0 7, 0 0 7, 0 1 7, 1 1 7))",
-            "POLYGON M((0 0 7,0 1 7,1 1 7,1 0 7,0 0 7))",
+            "POLYGON M ((0 0 7, 0 1 7, 1 1 7, 1 0 7, 0 0 7))",
             id="polygon_m",
         ),
         pytest.param(
             "POLYGON ZM ((1 1 5 7, 1 0 5 7, 0 0 5 7, 0 1 5 7, 1 1 5 7))",
-            "POLYGON ZM((0 0 5 7,0 1 5 7,1 1 5 7,1 0 5 7,0 0 5 7))",
+            "POLYGON ZM ((0 0 5 7, 0 1 5 7, 1 1 5 7, 1 0 5 7, 0 0 5 7))",
             id="polygon_zm",
         ),
     ],
 )
 def test_st_normalize(eng, geog, expected):
     eng = eng.create_or_skip()
-    # Use ST_AsText because SedonaDB normalizes WKT output format
-    eng.assert_query_result(
-        f"SELECT ST_AsText(ST_Normalize({geog_or_null(geog)}))", expected
-    )
+    eng.assert_query_result(f"SELECT ST_Normalize({geog_or_null(geog)})", expected)
+
+
+# Verify the behaviour of ST_Normalize() with a polar cap
+@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize(
+    ("geog", "expected"),
+    [
+        pytest.param(
+            "POLYGON ((-120 80, 0 80, 120 80, -120 80))",
+            "POLYGON ((-120 80, 0 80, 120 80, -120 80))",
+            id="polygon_polar",
+        ),
+        pytest.param(
+            "POLYGON ((-120 80, 120 80, 0 80, -120 80))",
+            "POLYGON ((-120 80, 120 80, 0 80, -120 80))",
+            id="polygon_polar_rev",
+        ),
+        pytest.param(
+            "POLYGON ((0 80, 120 80, -120 80, 0 80))",
+            "POLYGON ((-120 80, 0 80, 120 80, -120 80))",
+            id="polygon_polar_rot",
+        ),
+    ],
+)
+def test_st_normalize_polar(eng, geog, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_Normalize({geog_or_null(geog)})", expected)
 
 
 @pytest.mark.parametrize("eng", [SedonaDB])
