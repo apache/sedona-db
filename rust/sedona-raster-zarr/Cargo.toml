@@ -30,38 +30,21 @@ rust-version.workspace = true
 [lints.clippy]
 result_large_err = "allow"
 
-[features]
-# The `zarr` feature gates the SedonaDB integration (ExternalFormatSpec
-# impl, sd_read_zarr UDTF). Without it, the crate exposes only the
-# streaming `ZarrChunkReader` primitive. Default-on so most users get
-# the full integration; downstreams that only want the raw reader can
-# turn it off via `default-features = false`.
-default = ["zarr"]
-zarr = [
-    "dep:async-trait",
-    "dep:datafusion",
-    "dep:datafusion-catalog",
-    "dep:datafusion-expr",
-    "dep:futures",
-    "dep:sedona-datasource",
-    "dep:serde",
-]
-
 [dependencies]
 arrow-array = { workspace = true }
 arrow-schema = { workspace = true }
-async-trait = { workspace = true, optional = true }
-datafusion = { workspace = true, optional = true, features = ["sql"] }
-datafusion-catalog = { workspace = true, optional = true }
+async-trait = { workspace = true }
+datafusion = { workspace = true, features = ["sql"] }
+datafusion-catalog = { workspace = true }
 datafusion-common = { workspace = true }
-datafusion-expr = { workspace = true, optional = true }
-futures = { workspace = true, optional = true }
+datafusion-expr = { workspace = true }
+futures = { workspace = true }
 log = { workspace = true }
 sedona-common = { workspace = true }
-sedona-datasource = { workspace = true, optional = true }
+sedona-datasource = { workspace = true }
 sedona-raster = { workspace = true }
 sedona-schema = { workspace = true }
-serde = { workspace = true, optional = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 zarrs = { workspace = true, features = ["filesystem", "gzip", "zstd", "crc32c", "sharding", "transpose"] }
 zarrs_filesystem = { workspace = true }

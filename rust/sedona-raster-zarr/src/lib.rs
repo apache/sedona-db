@@ -34,18 +34,12 @@
 //! Local filesystem stores only — `file://` URIs or bare paths.
 
 pub mod dtype;
+pub mod format_spec;
 pub mod geozarr;
 pub mod loader;
 pub mod source_uri;
-
-#[cfg(feature = "zarr")]
-pub mod format_spec;
-#[cfg(feature = "zarr")]
 pub mod udtf;
 
-pub use loader::ZarrChunkReader;
-
-#[cfg(feature = "zarr")]
 pub use format_spec::ZarrFormatSpec;
-#[cfg(feature = "zarr")]
+pub use loader::ZarrChunkReader;
 pub use udtf::{register as register_udtf, ZarrReadFunction};
