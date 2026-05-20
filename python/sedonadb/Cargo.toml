@@ -29,7 +29,13 @@ name = "_lib"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = ["mimalloc"]
+# `extension-module` gates the `#[pymodule] fn _lib` symbol. Default-on
+# for the wheel build (maturin uses defaults); plugin crates that link
+# this rlib (e.g. `sedonadb-zarr`) disable it via
+# `default-features = false` to avoid duplicating the `PyInit__lib`
+# symbol in their own cdylib.
+default = ["extension-module", "mimalloc"]
+extension-module = []
 mimalloc = ["dep:mimalloc", "dep:libmimalloc-sys"]
 s2geography = ["sedona/s2geography"]
 gpu = ["sedona/gpu"]

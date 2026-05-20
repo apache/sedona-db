@@ -14,6 +14,17 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
+// When the `extension-module` feature is off (e.g. when plugin crates
+// link this as an rlib for `InternalContext`), the pymodule and its
+// helper `#[pyfunction]`s are gated out, leaving the imports and
+// helpers "unused" from the linker's perspective. They're still
+// reachable as a public Rust API surface.
+#![cfg_attr(
+    not(feature = "extension-module"),
+    allow(dead_code, unused_imports)
+)]
+
 use crate::{error::PySedonaError, udf::sedona_scalar_udf};
 use pyo3::{ffi::Py_uintptr_t, prelude::*};
 use sedona_adbc::AdbcSedonadbDriverInit;
@@ -115,6 +126,12 @@ fn gdal_version() -> Result<Option<String>, PySedonaError> {
     }
 }
 
+// Gated behind `extension-module` so plugin crates (e.g.
+// `sedonadb-zarr`) can take `sedonadb` as an rlib dep without
+// duplicating the `PyInit__lib` symbol in their own cdylib. Plugins
+// set `default-features = false`; maturin's wheel build keeps the
+// default which enables the feature.
+#[cfg(feature = "extension-module")]
 #[pymodule]
 fn _lib(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "mimalloc")]
