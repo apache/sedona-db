@@ -19,10 +19,7 @@
 
 # sedonadb-zarr
 
-Zarr support for [SedonaDB](https://sedona.apache.org/) as an opt-in
-plugin package. Adds the `sd_read_zarr` SQL UDTF that reads Zarr v3
-groups (with sharding, vlen-utf8 dims, etc.) as a column of N-D
-rasters.
+Zarr support for [SedonaDB](https://sedona.apache.org/) as an opt-in plugin package. Reads Zarr v3 groups (with sharding, vlen-utf8 dims, etc.) as a column of N-D rasters via two equivalent surfaces:
 
 ```python
 import sedonadb
@@ -31,27 +28,17 @@ import sedonadb_zarr
 con = sedonadb.connect()
 sedonadb_zarr.register(con)
 
-df = con.sql("SELECT count(*) FROM sd_read_zarr('file:///path/to/foo.zarr')")
-df.show()
+# SQL UDTF:
+con.sql("SELECT count(*) FROM sd_read_zarr('file:///path/to/foo.zarr')").show()
+
+# DataFrame API via ExternalFormatSpec:
+con.read_format(sedonadb_zarr.ZarrFormatSpec(), 'file:///path/to/foo.zarr').show()
 ```
 
-The main `sedonadb` package does not bundle Zarr support — applications
-that don't import `sedonadb_zarr` pay no zarr build or runtime cost.
-
-## Status
-
-- SQL UDTF (`sd_read_zarr`): supported.
-- `ExternalFormatSpec` (`con.read_format(ZarrFormatSpec(), uri)`): the
-  Rust impl exists in `sedona-raster-zarr` and is callable from Rust
-  code; a Python wrapper that exposes it via `con.read_format` is a
-  follow-up.
+The main `sedonadb` package does not bundle Zarr support — applications that don't import `sedonadb_zarr` pay no zarr build or runtime cost.
 
 ## Architecture
 
-This is a maturin-built mixed Rust/Python package. The Rust side is a
-thin shim around `sedona-raster-zarr` that exposes a `register_udtf`
-PyO3 function. The Python side calls it from `register(con)`.
+This is a maturin-built mixed Rust/Python package. The Rust side is a thin shim around `sedona-raster-zarr` that exposes a `register_udtf` PyO3 function and a `PyZarrChunkReader` class implementing `__arrow_c_stream__`. The Python side defines `ZarrFormatSpec(ExternalFormatSpec)` and a `register(con)` helper that wires the UDTF onto a session.
 
-See the [design notes](https://...) (TODO) for the plugin pattern this
-package follows. The same shape applies to future formats (`sedonadb-cog`,
-`sedonadb-icechunk`, …).
+The same plugin shape applies to future formats (`sedonadb-cog`, `sedonadb-icechunk`, …).
