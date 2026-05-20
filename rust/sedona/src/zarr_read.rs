@@ -22,7 +22,7 @@
 //! SELECT * FROM sd_read_zarr('file:///path/to/datacube.zarr');
 //! SELECT count(*) FROM sd_read_zarr(
 //!     'file:///path/to/datacube.zarr',
-//!     '{"load_eager": true, "rows_per_batch": 256}'
+//!     '{"rows_per_batch": 256}'
 //! );
 //! ```
 //!
@@ -30,11 +30,11 @@
 //! position in the Zarr group's chunk grid. All existing `RS_*` UDFs
 //! operate on the column unchanged.
 //!
-//! `load_eager` defaults to `true` so byte-reading kernels work end-to-end
-//! without depending on a registered OutDb resolver. When the async
-//! `RS_EnsureLoaded` UDF lands, `load_eager = true` will be reinterpreted
-//! as the planner auto-injecting that UDF over the scan output instead
-//! of fetching at plan time.
+//! `load_eager` defaults to `false` — every row has empty `data` and a
+//! chunk-anchor URI in `outdb_uri`. Setting `load_eager = true`
+//! currently errors because no `RS_EnsureLoaded` resolver is registered
+//! for the `zarr` format yet; once the resolver lands, `true` will
+//! trigger the planner to inject the async UDF over the scan output.
 
 use std::any::Any;
 use std::sync::Arc;
@@ -57,7 +57,7 @@ use datafusion::physical_plan::{
 };
 use datafusion::prelude::Expr;
 use datafusion_common::{plan_err, DataFusionError, ScalarValue};
-use sedona_raster_zarr::{group_to_indb_rasters, group_to_outdb_rasters};
+use sedona_raster_zarr::group_to_rasters;
 use sedona_schema::datatypes::SedonaType;
 use serde::{Deserialize, Serialize};
 
@@ -66,12 +66,11 @@ use serde::{Deserialize, Serialize};
 /// Accepts one or two string arguments:
 /// - `uri` (required) — Zarr group URI (e.g. `file:///path/to/foo.zarr`).
 /// - `options_json` (optional) — JSON string with any of:
-///     - `load_eager`: `true` (default) materializes chunk bytes into
-///       the Arrow `data` column eagerly; `false` emits chunk-anchor
-///       URIs only and defers byte resolution to the OutDb loader.
-///       Long-term, `load_eager = true` will instead trigger the
-///       planner to inject an async `RS_EnsureLoaded` over the scan
-///       output rather than fetching at plan time.
+///     - `load_eager`: `false` (default) emits chunk-anchor URIs only;
+///       `true` currently errors because no `RS_EnsureLoaded` resolver
+///       is registered for `zarr` yet. Once the resolver lands, `true`
+///       will trigger the planner to inject the async UDF over the
+///       scan output.
 ///     - `rows_per_batch`: chunks per `RecordBatch`. Defaults to the
 ///       session's configured batch size (`SessionConfig::batch_size`,
 ///       typically 8192) when unset.
@@ -116,12 +115,9 @@ fn literal_utf8(expr: &Expr, label: &str) -> Result<String> {
 
 /// Materialised view backing `sd_read_zarr`. Holds the raster
 /// `StructArray` once for the query lifetime; the executor slices it
-/// into `rows_per_batch`-sized `RecordBatch`es.
-///
-/// The StructArray is built eagerly in `try_new`. When `indb=false`
-/// the array is cheap to construct (chunk anchor URIs only); when
-/// `indb=true` it pulls every chunk's bytes through the loader at
-/// plan time.
+/// into `rows_per_batch`-sized `RecordBatch`es. The StructArray is
+/// built eagerly in `try_new` and is cheap — chunk-anchor URIs only,
+/// no pixel bytes fetched.
 #[derive(Debug)]
 pub struct ZarrChunkProvider {
     schema: SchemaRef,
@@ -134,7 +130,16 @@ pub struct ZarrChunkProvider {
 impl ZarrChunkProvider {
     fn try_new(uri: &str, options_json: Option<String>) -> Result<Self> {
         let opts = parse_options(options_json.as_deref())?;
-        let load_eager = opts.load_eager.unwrap_or(true);
+        let load_eager = opts.load_eager.unwrap_or(false);
+        if load_eager {
+            return plan_err!(
+                "sd_read_zarr() load_eager = true is not yet supported. \
+                 Pixel-byte materialisation will be wired up when the async \
+                 RS_EnsureLoaded resolver lands; for now use load_eager = false \
+                 (the default) and operate on metadata (count(*), RS_Envelope, \
+                 RS_Width, etc.)."
+            );
+        }
         let rows_per_batch = opts.rows_per_batch.map(|n| n.max(1));
         let num_partitions = opts.num_partitions.unwrap_or(1);
         if num_partitions != 1 {
@@ -145,11 +150,7 @@ impl ZarrChunkProvider {
         }
 
         let arrays_filter = opts.arrays.as_deref();
-        let rasters = if load_eager {
-            group_to_indb_rasters(uri, arrays_filter).map_err(arrow_to_df_err)?
-        } else {
-            group_to_outdb_rasters(uri, arrays_filter).map_err(arrow_to_df_err)?
-        };
+        let rasters = group_to_rasters(uri, arrays_filter).map_err(arrow_to_df_err)?;
 
         // Single-column schema: `raster: Raster`. `SedonaType::Raster` adds
         // the `sedona.raster` extension-type metadata so downstream RS_*
@@ -335,12 +336,10 @@ fn arrow_to_df_err(e: arrow_schema::ArrowError) -> DataFusionError {
 
 #[derive(Serialize, Deserialize, Default)]
 struct ZarrReadOptions {
-    /// `true` (default) materializes chunk bytes into the Arrow `data`
-    /// column eagerly; `false` emits chunk-anchor URIs only and defers
-    /// byte resolution to the OutDb loader. Long-term, `load_eager =
-    /// true` will trigger the planner to inject an async
-    /// `RS_EnsureLoaded` over the scan output rather than fetching at
-    /// plan time.
+    /// `false` (default) emits chunk-anchor URIs only. `true` currently
+    /// errors — pixel-byte materialisation is pending the async
+    /// `RS_EnsureLoaded` resolver. Once the resolver lands, `true` will
+    /// trigger the planner to inject the async UDF over the scan output.
     load_eager: Option<bool>,
     rows_per_batch: Option<usize>,
     num_partitions: Option<usize>,
@@ -396,7 +395,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn udtf_returns_one_row_per_chunk_position_with_pixel_bytes() {
+    async fn udtf_returns_one_row_per_chunk_position_with_outdb_anchor() {
         let tmp = build_fixture();
         let uri = format!("file://{}", tmp.path().display());
 
@@ -413,7 +412,8 @@ mod tests {
         assert_eq!(total_rows, 2, "expected 2 chunk rows");
 
         // Pull the raster column out, hand to RasterStructArray, verify
-        // chunk 0's bytes round-trip.
+        // chunk 0's metadata + anchor. Pixel-byte reading lives behind the
+        // future RS_EnsureLoaded resolver — `data` is empty in OutDb mode.
         let raster_col = batches[0].column(0);
         let struct_arr = raster_col
             .as_any()
@@ -422,7 +422,30 @@ mod tests {
         let rasters = RasterStructArray::new(struct_arr);
         let r0 = rasters.get(0).unwrap();
         let band = r0.band(0).unwrap();
-        assert_eq!(&*band.contiguous_data().unwrap(), &[10u8, 11]);
+        assert!(!band.is_indb(), "loader emits OutDb rows");
+        assert_eq!(band.outdb_format(), Some("zarr"));
+        let anchor = band.outdb_uri().expect("outdb_uri set");
+        assert!(anchor.contains("#array=temperature"), "got: {anchor}");
+        assert!(anchor.contains("&chunk=0,0"), "got: {anchor}");
+    }
+
+    #[tokio::test]
+    async fn udtf_rejects_load_eager_true() {
+        let tmp = build_fixture();
+        let uri = format!("file://{}", tmp.path().display());
+
+        let ctx = SessionContext::new();
+        ctx.register_udtf("sd_read_zarr", Arc::new(ZarrReadFunction::default()));
+
+        let err = ctx
+            .sql(&format!(
+                r#"SELECT raster FROM sd_read_zarr('{uri}', '{{"load_eager": true}}')"#,
+            ))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("load_eager = true"), "got: {err}");
+        assert!(err.contains("not yet supported"), "got: {err}");
     }
 
     #[tokio::test]

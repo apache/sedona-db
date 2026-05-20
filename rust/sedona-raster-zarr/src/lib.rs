@@ -22,13 +22,12 @@
 //! array in the group, mapped onto SedonaDB's canonical N-D raster Arrow
 //! schema.
 //!
-//! Two entry points:
-//!
-//! - [`group_to_indb_rasters`] — eagerly fetches every chunk's bytes into
-//!   the Arrow `data` column. Suitable for snapshots / small groups.
-//! - [`group_to_outdb_rasters`] — emits chunk-anchor URIs only; bytes
-//!   fetch on demand through the process-wide OutDb loader (registered
-//!   separately via `sedona-raster`'s loader hook).
+//! Single entry point: [`group_to_rasters`] always emits OutDb-style
+//! rows — `data` is empty, `outdb_uri` carries a chunk anchor that the
+//! async OutDb resolver (registered separately, lands in a follow-up)
+//! turns into pixel bytes on demand. Metadata-only operations
+//! (`count(*)`, `RS_Envelope`, `RS_Width`, …) work today; byte-consuming
+//! kernels require the resolver to be registered.
 //!
 //! Local filesystem stores only — `file://` URIs or bare paths.
 
@@ -37,4 +36,4 @@ pub mod geozarr;
 pub mod loader;
 pub mod source_uri;
 
-pub use loader::{group_to_indb_rasters, group_to_outdb_rasters};
+pub use loader::group_to_rasters;

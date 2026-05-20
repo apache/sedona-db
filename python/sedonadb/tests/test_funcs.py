@@ -50,9 +50,10 @@ def test_read_zarr(con, tmp_path):
     )
     arr[:] = np.array([[10, 11], [20, 21]], dtype=np.uint8)
 
-    # Default-mode (load_eager=True) read — every chunk materialized
-    # into the Arrow `data` column. Materialise through Arrow so we
-    # can inspect the resulting Raster struct.
+    # Default read emits OutDb-style rows — `data` is empty,
+    # `outdb_uri` carries a chunk anchor. Pixel-byte resolution is
+    # deferred to the future RS_EnsureLoaded resolver. Materialise
+    # through Arrow so we can inspect the Raster struct.
     df = con.funcs.table.sd_read_zarr(f"file://{tmp_path}")
     arrow_tab = df.to_arrow_table()
     assert arrow_tab.num_rows == 2
@@ -67,3 +68,8 @@ def test_read_zarr(con, tmp_path):
     # Options thread through: rows_per_batch slices the output.
     df = con.funcs.table.sd_read_zarr(f"file://{tmp_path}", rows_per_batch=1)
     assert df.count() == 2
+
+    # load_eager=True is not yet supported — errors with a clear
+    # pointer at the future RS_EnsureLoaded resolver.
+    with pytest.raises(Exception, match="load_eager"):
+        con.funcs.table.sd_read_zarr(f"file://{tmp_path}", load_eager=True).count()

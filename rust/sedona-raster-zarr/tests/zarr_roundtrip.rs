@@ -16,14 +16,18 @@
 // under the License.
 
 //! End-to-end fixture test: build a small Zarr group on disk with the
-//! `zarrs` crate, then read it back through `group_to_*_rasters` and
-//! verify the resulting raster `StructArray`.
+//! `zarrs` crate, then read it back through `group_to_rasters` and
+//! verify the resulting raster `StructArray`. The loader always emits
+//! OutDb-style rows (empty `data`, populated `outdb_uri`), so these
+//! tests assert on metadata and chunk-anchor URIs rather than pixel
+//! bytes. Pixel-byte coverage lives in the loader's unit tests against
+//! `retrieve_chunk_bytes`.
 
 use std::sync::Arc;
 
 use sedona_raster::array::RasterStructArray;
 use sedona_raster::traits::RasterRef;
-use sedona_raster_zarr::{group_to_indb_rasters, group_to_outdb_rasters};
+use sedona_raster_zarr::group_to_rasters;
 use sedona_schema::raster::BandDataType;
 use tempfile::TempDir;
 use zarrs::array::data_type;
@@ -38,7 +42,6 @@ use zarrs_filesystem::FilesystemStore;
 ///   - arrays: "temperature" (UInt8) and "pressure" (UInt8)
 ///
 /// Returns the temp dir (kept alive by the caller so files persist).
-///
 fn build_fixture() -> TempDir {
     let tmp = TempDir::new().unwrap();
     let store = Arc::new(FilesystemStore::new(tmp.path()).unwrap());
@@ -58,7 +61,7 @@ fn build_fixture() -> TempDir {
         .store_metadata()
         .unwrap();
 
-    for (name, base) in [("temperature", 0u8), ("pressure", 100u8)] {
+    for name in ["temperature", "pressure"] {
         let array = ArrayBuilder::new(
             vec![2u64, 4u64, 4u64],
             vec![1u64, 2u64, 2u64],
@@ -70,23 +73,13 @@ fn build_fixture() -> TempDir {
         .unwrap();
         array.store_metadata().unwrap();
 
-        // Fill each chunk with a deterministic pattern so we can verify
-        // the right chunk lands in the right row:
-        //   pixel(t, y, x) = base + (t*16 + y*4 + x)
-        // Each chunk is 1×2×2 = 4 pixels. Chunk (t_idx, y_idx, x_idx)
-        // covers (t_idx, [2*y_idx..2*y_idx+2], [2*x_idx..2*x_idx+2]).
+        // Bytes don't matter for these tests — the loader doesn't read
+        // them. Write zeros so the chunk files exist for any future
+        // resolver fixture.
         for t in 0..2u64 {
             for yc in 0..2u64 {
                 for xc in 0..2u64 {
-                    let mut chunk = Vec::with_capacity(4);
-                    for dy in 0..2u64 {
-                        for dx in 0..2u64 {
-                            let y = yc * 2 + dy;
-                            let x = xc * 2 + dx;
-                            chunk.push(base.wrapping_add((t * 16 + y * 4 + x) as u8));
-                        }
-                    }
-                    array.store_chunk(&[t, yc, xc], chunk).unwrap();
+                    array.store_chunk(&[t, yc, xc], vec![0u8; 4]).unwrap();
                 }
             }
         }
@@ -96,10 +89,10 @@ fn build_fixture() -> TempDir {
 }
 
 #[test]
-fn indb_round_trip_emits_one_row_per_chunk_position() {
+fn round_trip_emits_one_row_per_chunk_position_with_outdb_anchors() {
     let tmp = build_fixture();
     let uri = format!("file://{}", tmp.path().display());
-    let arr = group_to_indb_rasters(&uri, None).unwrap();
+    let arr = group_to_rasters(&uri, None).unwrap();
 
     let rasters = RasterStructArray::new(&arr);
     assert_eq!(rasters.len(), 8, "expected 8 chunk rows (2*2*2)");
@@ -117,59 +110,13 @@ fn indb_round_trip_emits_one_row_per_chunk_position() {
     // Bands are sorted by array path for determinism — `pressure` sorts
     // before `temperature` lexicographically, so band 0 is pressure and
     // band 1 is temperature.
-    //
-    // Pressure has base=100; chunk (t=0, y=0, x=0) covers y∈{0,1}, x∈{0,1}
-    // → pixel offsets {0, 1, 4, 5} → values {100, 101, 104, 105}.
     let pressure = r0.band(0).unwrap();
     assert_eq!(pressure.raw_source_shape(), &[1, 2, 2]);
     assert_eq!(pressure.data_type(), BandDataType::UInt8);
-    assert!(pressure.is_indb());
-    assert_eq!(
-        &*pressure.contiguous_data().unwrap(),
-        &[100u8, 101, 104, 105]
-    );
-    // Chunk anchor is populated on InDb rows too as provenance — the
-    // `data` column carries the bytes, and `outdb_uri` records where
-    // they came from.
-    assert_eq!(pressure.outdb_format(), Some("zarr"));
-    let anchor = pressure.outdb_uri().expect("outdb_uri set on InDb band");
-    assert!(anchor.contains("#array=pressure"), "got: {anchor}");
-    assert!(anchor.contains("&chunk=0,0,0"), "got: {anchor}");
-
-    // Temperature has base=0 → same chunk holds {0, 1, 4, 5}.
-    let temperature = r0.band(1).unwrap();
-    assert_eq!(&*temperature.contiguous_data().unwrap(), &[0u8, 1, 4, 5]);
-
-    // Last row corresponds to chunk (t=1, y=1, x=1). Temperature pixels:
-    //   t=1, y∈{2,3}, x∈{2,3} → 1*16 + y*4 + x → 26, 27, 30, 31.
-    let last = rasters.get(7).unwrap();
-    let last_transform: Vec<f64> = last.transform().to_vec();
-    assert_eq!(last_transform[0], 100.0 + 2.0); // x_off = 2
-    assert_eq!(last_transform[3], 200.0 - 2.0); // y_off = 2, sy = -1
-                                                // band 1 is temperature (per the sort-by-path order above).
-    let last_temp = last.band(1).unwrap();
-    assert_eq!(&*last_temp.contiguous_data().unwrap(), &[26u8, 27, 30, 31]);
-}
-
-#[test]
-fn outdb_emits_chunk_anchors() {
-    let tmp = build_fixture();
-    let uri = format!("file://{}", tmp.path().display());
-    let arr = group_to_outdb_rasters(&uri, None).unwrap();
-
-    let rasters = RasterStructArray::new(&arr);
-    assert_eq!(rasters.len(), 8);
-
-    // OutDb rows have empty data column and chunk anchor URIs.
-    // Bands sort alphabetically by array path: pressure (band 0), then
-    // temperature (band 1).
-    let r0 = rasters.get(0).unwrap();
-    let pressure = r0.band(0).unwrap();
     assert!(
         !pressure.is_indb(),
-        "OutDb band must report is_indb() = false"
+        "loader emits OutDb rows — is_indb() must be false"
     );
-    // "This is zarr" lives in outdb_format, not a URI scheme prefix.
     assert_eq!(pressure.outdb_format(), Some("zarr"));
     let anchor = pressure.outdb_uri().expect("outdb_uri set");
     // Anchor is the group URI verbatim plus a fragment carrying array
@@ -179,8 +126,12 @@ fn outdb_emits_chunk_anchors() {
     assert!(anchor.contains("#array=pressure"), "got: {anchor}");
     assert!(anchor.contains("&chunk=0,0,0"), "got: {anchor}");
 
-    // Last chunk position's temperature band points at chunk (1,1,1).
+    // Last row corresponds to chunk (t=1, y=1, x=1). Anchor + transform
+    // both reflect the translation.
     let last = rasters.get(7).unwrap();
+    let last_transform: Vec<f64> = last.transform().to_vec();
+    assert_eq!(last_transform[0], 100.0 + 2.0); // x_off = 2
+    assert_eq!(last_transform[3], 200.0 - 2.0); // y_off = 2, sy = -1
     let temp = last.band(1).unwrap();
     let anchor = temp.outdb_uri().expect("outdb_uri set");
     assert!(anchor.contains("#array=temperature"), "got: {anchor}");
@@ -197,7 +148,7 @@ fn errors_on_empty_group() {
         .store_metadata()
         .unwrap();
     let uri = format!("file://{}", tmp.path().display());
-    let err = group_to_indb_rasters(&uri, None).unwrap_err().to_string();
+    let err = group_to_rasters(&uri, None).unwrap_err().to_string();
     assert!(err.contains("no child arrays"), "got: {err}");
 }
 
@@ -226,13 +177,6 @@ fn build_xarray_style_fixture() -> TempDir {
         .build(store.clone(), &format!("/{name}"))
         .unwrap();
         arr.store_metadata().unwrap();
-        for t in 0..2u64 {
-            for yc in 0..2u64 {
-                for xc in 0..2u64 {
-                    arr.store_chunk(&[t, yc, xc], vec![0u8; 4]).unwrap();
-                }
-            }
-        }
     }
 
     // 1-D coord variables. Different chunk grid than the data arrays —
@@ -252,7 +196,7 @@ fn build_xarray_style_fixture() -> TempDir {
 fn auto_skips_1d_coord_variables() {
     let tmp = build_xarray_style_fixture();
     let uri = format!("file://{}", tmp.path().display());
-    let arr = group_to_indb_rasters(&uri, None).unwrap();
+    let arr = group_to_rasters(&uri, None).unwrap();
     let rasters = RasterStructArray::new(&arr);
     // 2*2*2 = 8 chunk positions, with 2 bands per row (pressure, temperature).
     assert_eq!(rasters.len(), 8);
@@ -265,7 +209,7 @@ fn explicit_arrays_filter_selects_subset() {
     let tmp = build_xarray_style_fixture();
     let uri = format!("file://{}", tmp.path().display());
     let filter = vec!["temperature".to_string()];
-    let arr = group_to_indb_rasters(&uri, Some(&filter)).unwrap();
+    let arr = group_to_rasters(&uri, Some(&filter)).unwrap();
     let rasters = RasterStructArray::new(&arr);
     assert_eq!(rasters.len(), 8);
     let r0 = rasters.get(0).unwrap();
@@ -277,7 +221,7 @@ fn explicit_arrays_filter_rejects_unknown_name() {
     let tmp = build_xarray_style_fixture();
     let uri = format!("file://{}", tmp.path().display());
     let filter = vec!["humidity".to_string()];
-    let err = group_to_indb_rasters(&uri, Some(&filter))
+    let err = group_to_rasters(&uri, Some(&filter))
         .unwrap_err()
         .to_string();
     assert!(err.contains("humidity"), "got: {err}");
@@ -308,7 +252,7 @@ fn errors_when_crs_declared_without_transform() {
         .unwrap();
 
     let uri = format!("file://{}", tmp.path().display());
-    let err = group_to_indb_rasters(&uri, None).unwrap_err().to_string();
+    let err = group_to_rasters(&uri, None).unwrap_err().to_string();
     assert!(err.contains("CRS"), "got: {err}");
     assert!(err.contains("spatial:transform"), "got: {err}");
 }
@@ -321,7 +265,7 @@ fn explicit_arrays_filter_rejects_1d_arrays() {
     let tmp = build_xarray_style_fixture();
     let uri = format!("file://{}", tmp.path().display());
     let filter = vec!["t".to_string()];
-    let err = group_to_indb_rasters(&uri, Some(&filter))
+    let err = group_to_rasters(&uri, Some(&filter))
         .unwrap_err()
         .to_string();
     assert!(err.contains("\"t\""), "got: {err}");
@@ -346,7 +290,7 @@ fn errors_when_group_has_only_1d_arrays() {
         .unwrap();
 
     let uri = format!("file://{}", tmp.path().display());
-    let err = group_to_indb_rasters(&uri, None).unwrap_err().to_string();
+    let err = group_to_rasters(&uri, None).unwrap_err().to_string();
     assert!(err.contains("only 1-D arrays"), "got: {err}");
 }
 
@@ -372,16 +316,17 @@ fn falls_back_to_array_dimensions_attribute() {
         .build(store.clone(), "/temperature")
         .unwrap();
     array.store_metadata().unwrap();
-    array.store_chunk(&[0, 0], vec![10u8, 11]).unwrap();
-    array.store_chunk(&[1, 0], vec![20u8, 21]).unwrap();
 
     let uri = format!("file://{}", tmp.path().display());
-    let arr = group_to_indb_rasters(&uri, None).unwrap();
+    let arr = group_to_rasters(&uri, None).unwrap();
     let rasters = RasterStructArray::new(&arr);
     assert_eq!(rasters.len(), 2);
     let r0 = rasters.get(0).unwrap();
     let band = r0.band(0).unwrap();
-    assert_eq!(&*band.contiguous_data().unwrap(), &[10u8, 11]);
+    // Anchor URI populated even though the array used the v2 dim-name
+    // fallback — proves the fallback feeds the rest of the pipeline.
+    assert_eq!(band.outdb_format(), Some("zarr"));
+    assert!(band.outdb_uri().unwrap().contains("#array=temperature"));
 }
 
 #[test]
@@ -407,7 +352,7 @@ fn errors_on_mismatched_chunk_grids() {
         .unwrap();
 
     let uri = format!("file://{}", tmp.path().display());
-    let err = group_to_indb_rasters(&uri, None).unwrap_err().to_string();
+    let err = group_to_rasters(&uri, None).unwrap_err().to_string();
     assert!(
         err.contains("chunk") && err.contains("array_a") && err.contains("array_b"),
         "got: {err}"

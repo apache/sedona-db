@@ -45,9 +45,13 @@ use crate::dtype::zarr_to_band_data_type;
 use crate::geozarr::GroupGeoMetadata;
 use crate::source_uri::{build_chunk_anchor, group_uri_to_filesystem_path};
 
-/// Open a Zarr group and eagerly fetch every chunk's bytes into the
-/// returned `StructArray`. Each row holds one chunk position's data
-/// across the selected arrays in the group.
+/// Open a Zarr group and emit one row per chunk position with
+/// chunk-anchor URIs in each band's `outdb_uri`. The `data` column is
+/// empty; bytes resolve on demand through whichever OutDb loader is
+/// registered for the `zarr` format. No resolver is registered yet —
+/// downstream byte-consuming kernels (`RS_Value` and similar) will
+/// error until the async resolver lands. Metadata-only operations
+/// (`count(*)`, `RS_Envelope`, `RS_Width`, etc.) work today.
 ///
 /// `arrays`:
 /// - `None` — read every multi-dimensional array. 1-D arrays (typical
@@ -57,29 +61,11 @@ use crate::source_uri::{build_chunk_anchor, group_uri_to_filesystem_path};
 ///   unknown name errors. 1-D arrays are always rejected (a raster band
 ///   needs ≥ 2 dimensions); naming one explicitly errors at parse time
 ///   with a clear message.
-pub fn group_to_indb_rasters(
+pub fn group_to_rasters(
     group_uri: &str,
     arrays: Option<&[String]>,
 ) -> Result<StructArray, ArrowError> {
-    build_rasters(group_uri, Mode::InDb, arrays)
-}
-
-/// Open a Zarr group and emit one row per chunk position with chunk-anchor
-/// URIs in each band's `outdb_uri`. The `data` column is empty; bytes
-/// resolve on demand through whichever OutDb loader is registered for
-/// the `zarr` format. See [`group_to_indb_rasters`] for the meaning of
-/// `arrays`.
-pub fn group_to_outdb_rasters(
-    group_uri: &str,
-    arrays: Option<&[String]>,
-) -> Result<StructArray, ArrowError> {
-    build_rasters(group_uri, Mode::OutDb, arrays)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Mode {
-    InDb,
-    OutDb,
+    build_rasters(group_uri, arrays)
 }
 
 /// Per-array metadata extracted once at group open and reused for every
@@ -89,8 +75,6 @@ struct ArrayInfo {
     /// Array path within the store, used to build chunk anchor URIs and
     /// surface in band names.
     path: String,
-    /// Open zarrs handle.
-    array: Array<FilesystemStore>,
     /// SedonaDB BandDataType corresponding to this array's zarrs dtype.
     data_type: BandDataType,
     /// Dimension names in array order. Required to be `Some(_)` for every
@@ -110,7 +94,6 @@ struct ArrayInfo {
 
 fn build_rasters(
     group_uri: &str,
-    mode: Mode,
     arrays_filter: Option<&[String]>,
 ) -> Result<StructArray, ArrowError> {
     let fs_path = group_uri_to_filesystem_path(group_uri)?;
@@ -232,8 +215,10 @@ fn build_rasters(
         for info in &array_infos {
             let dim_names_ref: Vec<&str> = info.dim_names.iter().map(String::as_str).collect();
             let nodata_ref = info.nodata.as_deref();
-            // Chunk anchor is provenance metadata; InDb vs OutDb is
-            // discriminated by `data.is_empty()`, not by these fields.
+            // Every band gets its chunk-anchor URI populated as
+            // provenance metadata. `data.is_empty()` is the InDb/OutDb
+            // discriminator; this loader always emits empty `data` and
+            // defers pixel-byte resolution to the OutDb resolver.
             let anchor = build_chunk_anchor(group_uri, &info.path, &chunk_indices);
             builder.start_band_nd(
                 Some(info.path.as_str()),
@@ -244,18 +229,7 @@ fn build_rasters(
                 Some(anchor.as_str()),
                 Some("zarr"),
             )?;
-            match mode {
-                Mode::InDb => {
-                    let bytes = retrieve_chunk_bytes(&info.array, &chunk_indices)?;
-                    builder.band_data_writer().append_value(&bytes);
-                }
-                Mode::OutDb => {
-                    // Schema-OutDb: empty `data` column. Byte resolution
-                    // routes through the OutDb loader when a downstream
-                    // consumer calls contiguous_data / nd_buffer.
-                    builder.band_data_writer().append_value([0u8; 0]);
-                }
-            }
+            builder.band_data_writer().append_value([0u8; 0]);
             builder.finish_band()?;
         }
         builder.finish_raster()?;
@@ -302,7 +276,6 @@ fn collect_array_infos(
         };
         out.push(ArrayInfo {
             path,
-            array,
             data_type,
             dim_names,
             chunk_grid_shape,
@@ -554,6 +527,14 @@ fn advance_chunk_indices(chunk_indices: &mut [u64], chunk_grid_shape: &[u64]) ->
 /// Uses `ArrayBytes::Fixed`, so this errors for variable-length element
 /// types — those don't have a `BandDataType` counterpart anyway, so the
 /// dtype check in `collect_array_infos` rejects them upstream.
+///
+/// This is the only pixel-byte read primitive in the crate. The loader
+/// itself never calls it today — it always emits OutDb anchors — but
+/// the async `RS_EnsureLoaded` resolver (follow-up PR) will. Kept here
+/// rather than dropped because (a) it's tested directly below and (b)
+/// the resolver lives in this crate and wants a sync chunk-fetch
+/// helper as a starting point.
+#[allow(dead_code)]
 fn retrieve_chunk_bytes(
     array: &Array<FilesystemStore>,
     chunk_indices: &[u64],
@@ -579,6 +560,36 @@ fn retrieve_chunk_bytes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+    use zarrs::array::data_type;
+    use zarrs::array::ArrayBuilder;
+
+    /// Direct coverage for `retrieve_chunk_bytes`. The function is the
+    /// only pixel-byte read primitive in the crate today; previously it
+    /// was exercised through `group_to_indb_rasters` integration tests,
+    /// which are gone now that the loader only emits OutDb anchors. The
+    /// follow-up `RS_EnsureLoaded` resolver will call this directly.
+    #[test]
+    fn retrieve_chunk_bytes_returns_decoded_chunk() {
+        let tmp = TempDir::new().unwrap();
+        let store = Arc::new(FilesystemStore::new(tmp.path()).unwrap());
+
+        // 1×4 UInt8 array with chunks of size [1, 2] → chunk grid [1, 2].
+        let arr = ArrayBuilder::new(vec![1u64, 4u64], vec![1u64, 2u64], data_type::uint8(), 0u8)
+            .dimension_names(Some(["y", "x"]))
+            .build(store.clone(), "/band")
+            .unwrap();
+        arr.store_metadata().unwrap();
+        arr.store_chunk(&[0u64, 0u64], vec![10u8, 11u8]).unwrap();
+        arr.store_chunk(&[0u64, 1u64], vec![20u8, 21u8]).unwrap();
+
+        let chunk_0 = retrieve_chunk_bytes(&arr, &[0, 0]).unwrap();
+        assert_eq!(chunk_0, vec![10u8, 11u8]);
+
+        let chunk_1 = retrieve_chunk_bytes(&arr, &[0, 1]).unwrap();
+        assert_eq!(chunk_1, vec![20u8, 21u8]);
+    }
 
     #[test]
     fn advance_chunk_indices_walks_row_major() {
