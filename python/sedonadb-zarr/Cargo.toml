@@ -37,5 +37,7 @@ sedona-raster-zarr = { workspace = true }
 # The sedonadb Python extension; its rustc crate name is `_lib` per
 # the `[lib].name` override in `python/sedonadb/Cargo.toml`. We import
 # it in `src/lib.rs` via the leading `::_lib` syntax to disambiguate
-# from our own crate's `_lib` pymodule.
-sedonadb = { workspace = true }
+# from our own crate's `_lib` pymodule. Inlined here (not via
+# `workspace = true`) to avoid a self-referential workspace dep that
+# trips `cargo metadata` in cibuildwheel's isolated build env.
+sedonadb = { path = "../sedonadb", default-features = false }
