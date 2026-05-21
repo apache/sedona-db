@@ -59,6 +59,43 @@ def test_smoke_register_enables_sql_udtf(zarr_group):
     assert arrow_tab.column(0)[0].as_py() == 2
 
 
+# Each numpy dtype below maps to a different `BandDataType` arm in
+# `rust/sedona-raster-zarr/src/dtype.rs::zarr_to_band_data_type`.
+# Reading any one is a sanity-check on the whole mapping table.
+@pytest.mark.parametrize(
+    "numpy_dtype",
+    [
+        "bool",
+        "int8",
+        "uint8",
+        "int16",
+        "uint16",
+        "int32",
+        "uint32",
+        "int64",
+        "uint64",
+        "float32",
+        "float64",
+    ],
+)
+def test_dtype_mapping_roundtrips(tmp_path, numpy_dtype):
+    zarr = pytest.importorskip("zarr")
+    root = zarr.open_group(str(tmp_path), mode="w")
+    arr = root.create_array(
+        "temperature",
+        shape=(2, 2),
+        chunks=(1, 2),
+        dtype=numpy_dtype,
+        dimension_names=["y", "x"],
+    )
+    arr[:] = np.ones((2, 2), dtype=numpy_dtype)
+
+    con = sedonadb.connect()
+    sedonadb_zarr.register(con)
+    df = con.sql(f"SELECT count(*) FROM sd_read_zarr('file://{tmp_path}')")
+    assert df.to_arrow_table().column(0)[0].as_py() == 2
+
+
 def test_sql_udtf_is_not_registered_before_register_is_called(zarr_group):
     # Importing `sedonadb_zarr` (already done at module top) must NOT
     # register anything globally — registration is per-context and
