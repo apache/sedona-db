@@ -54,16 +54,8 @@ sedona-raster = { workspace = true }
 sedona-schema = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-zarrs = { workspace = true, features = ["filesystem", "gzip", "zstd", "crc32c", "sharding", "transpose"] }
+zarrs = { workspace = true, features = ["filesystem", "gzip", "zstd", "blosc", "crc32c", "sharding", "transpose"] }
 zarrs_filesystem = { workspace = true }
-
-# `blosc` is gated off the Windows MinGW (gnu) toolchain only: c-blosc
-# (statically linked) bundles its own `pthread_create` / `pthread_cond_*`
-# symbols, which conflict with rtools45's `libpthread.a` during the MinGW
-# link of the R `sedonadb.dll`. The MSVC toolchain (Python wheels, etc.)
-# uses a different pthread implementation and is fine.
-[target.'cfg(not(all(target_os = "windows", target_env = "gnu")))'.dependencies]
-zarrs = { workspace = true, features = ["blosc"] }
 
 [dev-dependencies]
 # Umbrella `datafusion` only for tests — they construct a real
