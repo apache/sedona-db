@@ -159,7 +159,11 @@ jobs:
 
       - name: Install dev SedonaDB Python
         env:
-          MATURIN_PEP517_ARGS: "--features s2geography,pyo3/extension-module"
+          # `extension-module` is sedonadb's own feature gating the
+          # `#[pymodule] fn _lib` symbol; required for the wheel to load
+          # as a Python module. Plugin crates linking the rlib leave it
+          # off to avoid `PyInit__lib` duplication.
+          MATURIN_PEP517_ARGS: "--features s2geography,pyo3/extension-module,extension-module"
         run: |
             pip install "python/sedonadb/[geopandas]" -v
 
