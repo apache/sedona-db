@@ -68,19 +68,15 @@ pub async fn external_table(
     }
 
     if spec.list_single_object() {
-        let provider = SingleObjectExternalTable::try_new(spec, table_paths).await?;
+        let provider = SingleObjectExternalTable::try_new(spec, context, table_paths).await?;
         Ok(Arc::new(provider) as Arc<dyn TableProvider>)
     } else {
-        let provider = external_listing_table(spec, context, table_paths, check_extension).await?;
+        let provider = listing_table_provider(spec, context, table_paths, check_extension).await?;
         Ok(Arc::new(provider) as Arc<dyn TableProvider>)
     }
 }
 
-/// Create a [ListingTable] from an [ExternalFormatSpec] and one or more URLs
-///
-/// This can be used to resolve a format specification into a TableProvider that
-/// may be registered with a [SessionContext].
-pub async fn external_listing_table(
+async fn listing_table_provider(
     spec: Arc<dyn ExternalFormatSpec>,
     context: &SessionContext,
     table_paths: Vec<ListingTableUrl>,
@@ -95,10 +91,6 @@ pub async fn external_listing_table(
         options.to_listing_options(&session_config, context.copied_table_options());
 
     let option_extension = listing_options.file_extension.clone();
-
-    if table_paths.is_empty() {
-        return exec_err!("No table paths were provided");
-    }
 
     // check if the file extension matches the expected extension if one is provided
     if !option_extension.is_empty() && options.check_extension {
@@ -186,6 +178,7 @@ pub struct SingleObjectExternalTable {
 impl SingleObjectExternalTable {
     async fn try_new(
         spec: Arc<dyn ExternalFormatSpec>,
+        context: &SessionContext,
         table_paths: Vec<ListingTableUrl>,
     ) -> Result<Self> {
         // All URIs must resolve to the same object store. Mixing
@@ -211,12 +204,14 @@ impl SingleObjectExternalTable {
             .map(|p| (p.object_store(), p.prefix().clone()))
             .collect();
 
-        // Resolve the schema from the first object. Most directory-format
-        // specs (e.g. Zarr) infer a fixed schema irrespective of the
-        // input; the few that hit the store will receive a synthesised
-        // ObjectMeta they can use.
+        // Resolve the ObjectStore from the session's runtime registry,
+        // mirroring what `ListingTable` does internally. Specs whose
+        // `infer_schema` peeks at the store (statting metadata, reading
+        // a header) would otherwise get `None` here only on this path —
+        // a silent asymmetry with the listing branch.
+        let store = context.runtime_env().object_store(&first_store)?;
         let probe = Object {
-            store: None,
+            store: Some(store),
             url: Some(first_store.clone()),
             meta: Some(synthetic_object_meta(&files[0].1)),
             range: None,

@@ -409,7 +409,7 @@ mod test {
     use tempfile::TempDir;
     use url::Url;
 
-    use crate::provider::{external_listing_table, external_table};
+    use crate::provider::external_table;
 
     use super::*;
 
@@ -613,7 +613,7 @@ mod test {
         let (_temp_dir, files) = create_echo_spec_temp_dir();
 
         // Select using a listing table and ensure we get a result
-        let provider = external_listing_table(
+        let provider = external_table(
             spec,
             &ctx,
             files
@@ -625,12 +625,7 @@ mod test {
         .await
         .unwrap();
 
-        let batches = ctx
-            .read_table(Arc::new(provider))
-            .unwrap()
-            .collect()
-            .await
-            .unwrap();
+        let batches = ctx.read_table(provider).unwrap().collect().await.unwrap();
 
         // We should get one value per partition
         assert_eq!(batches.len(), 2);
@@ -648,7 +643,7 @@ mod test {
         let (_temp_dir, files) = create_echo_spec_temp_dir();
 
         // Select using a listing table and ensure we get a result with the option passed
-        let provider = external_listing_table(
+        let provider = external_table(
             spec,
             &ctx,
             files
@@ -661,7 +656,7 @@ mod test {
         .unwrap();
 
         let batches = ctx
-            .read_table(Arc::new(provider))
+            .read_table(provider)
             .unwrap()
             .select(vec![col("batch_size"), col("option_value")])
             .unwrap()
@@ -691,7 +686,7 @@ mod test {
         let (temp_dir, mut files) = create_echo_spec_temp_dir();
 
         // Listing table with no files should error
-        let err = external_listing_table(spec.clone(), &ctx, vec![], true)
+        let err = external_table(spec.clone(), &ctx, vec![], true)
             .await
             .unwrap_err();
         assert_eq!(err.message(), "No table paths were provided");
@@ -705,7 +700,7 @@ mod test {
         files.push(file2);
 
         // With check_extension as true we should get an error
-        let err = external_listing_table(
+        let err = external_table(
             spec.clone(),
             &ctx,
             files
@@ -722,7 +717,7 @@ mod test {
             .ends_with("does not match the expected extension 'echospec'"));
 
         // ...but we should be able to turn off the error
-        external_listing_table(
+        external_table(
             spec,
             &ctx,
             files
