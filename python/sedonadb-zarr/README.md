@@ -19,26 +19,18 @@
 
 # sedonadb-zarr
 
-Zarr support for [SedonaDB](https://sedona.apache.org/) as an opt-in plugin package. Reads Zarr v3 groups (with sharding, vlen-utf8 dims, etc.) as a column of N-D rasters via two equivalent surfaces:
+Zarr support for [SedonaDB](https://sedona.apache.org/) as an opt-in plugin package. Reads Zarr v3 groups (with sharding, vlen-utf8 dims, etc.) as a column of N-D rasters:
 
 ```python
 import sedonadb
 import sedonadb_zarr
 
 con = sedonadb.connect()
-sedonadb_zarr.register(con)
-
-# SQL UDTF:
-con.sql("SELECT count(*) FROM sd_read_zarr('file:///path/to/foo.zarr')").show()
-
-# DataFrame API via ExternalFormatSpec:
-con.read_format(sedonadb_zarr.ZarrFormatSpec(), 'file:///path/to/foo.zarr').show()
+con.read_format(sedonadb_zarr.ZarrFormatSpec(), "file:///path/to/foo.zarr").show()
 ```
 
-The main `sedonadb` package does not bundle Zarr support — applications that don't import `sedonadb_zarr` pay no zarr build or runtime cost.
+The main `sedonadb` package does not bundle Zarr support — applications that don't import `sedonadb_zarr` pay no runtime cost.
 
 ## Architecture
 
-A maturin-built mixed Rust/Python package. The Rust side is a thin shim around `sedona-raster-zarr` that exposes a `ZarrTableFunction` class (via `datafusion-ffi`'s `__datafusion_table_function__` capsule contract) and a `PyZarrChunkReader` class implementing `__arrow_c_stream__`. The Python side defines `ZarrFormatSpec(ExternalFormatSpec)` and a `register(con)` helper that wires the UDTF onto a session.
-
-The same plugin shape applies to future formats (`sedonadb-cog`, `sedonadb-icechunk`, …).
+A maturin-built mixed Rust/Python package. The Rust side is a thin PyO3 shim around `sedona-raster-zarr` exposing `PyZarrChunkReader` (implementing `__arrow_c_stream__`). The Python side defines `ZarrFormatSpec(ExternalFormatSpec)`, which sedonadb consumes via `con.read_format(spec, uri)`. The same plugin shape applies to future formats (`sedonadb-cog`, `sedonadb-icechunk`, …).

@@ -15,80 +15,17 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! `sedonadb-zarr` — Python plugin wiring Zarr support into a
-//! `sedonadb` session via the `datafusion-ffi` UDTF capsule contract
-//! and the Arrow C Stream protocol.
+//! `sedonadb-zarr` — Python plugin exposing Zarr groups to SedonaDB
+//! via the `ExternalFormatSpec` + Arrow C Stream contract.
 
 use std::ffi::CString;
-use std::ptr::NonNull;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use arrow_array::ffi_stream::FFI_ArrowArrayStream;
-use datafusion_catalog::TableFunctionImpl;
-use datafusion_ffi::proto::logical_extension_codec::FFI_LogicalExtensionCodec;
-use datafusion_ffi::udtf::FFI_TableFunction;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyCapsule;
-use sedona_raster_zarr::{ZarrChunkReader, ZarrReadFunction};
-
-const UDTF_CAPSULE_NAME: &std::ffi::CStr = c"datafusion_table_function";
-const CODEC_CAPSULE_NAME: &std::ffi::CStr = c"datafusion_logical_extension_codec";
-
-#[pyclass(name = "ZarrTableFunction", module = "sedonadb_zarr")]
-#[derive(Default, Debug, Clone)]
-pub struct ZarrTableFunction;
-
-#[pymethods]
-impl ZarrTableFunction {
-    #[new]
-    fn new() -> Self {
-        Self
-    }
-
-    fn __datafusion_table_function__<'py>(
-        &self,
-        py: Python<'py>,
-        session: Bound<'py, PyAny>,
-    ) -> PyResult<Bound<'py, PyCapsule>> {
-        let codec = ffi_logical_codec_from_pycapsule(&session)?;
-        let udtf: Arc<dyn TableFunctionImpl> = Arc::new(ZarrReadFunction::default());
-        let provider = FFI_TableFunction::new_with_ffi_codec(udtf, None, codec);
-        let name = CString::new(UDTF_CAPSULE_NAME.to_bytes()).unwrap();
-        PyCapsule::new(py, provider, Some(name))
-    }
-}
-
-/// Accept either a raw codec capsule or an object exposing
-/// `__datafusion_logical_extension_codec__()` (the datafusion-python
-/// contract).
-fn ffi_logical_codec_from_pycapsule(obj: &Bound<'_, PyAny>) -> PyResult<FFI_LogicalExtensionCodec> {
-    let attr_name = "__datafusion_logical_extension_codec__";
-    let capsule = if obj.hasattr(attr_name)? {
-        obj.getattr(attr_name)?.call0()?
-    } else {
-        obj.clone()
-    };
-    let capsule = capsule.downcast::<PyCapsule>().map_err(|e| {
-        PyValueError::new_err(format!(
-            "session capsule must be a PyCapsule (or expose {attr_name}), got {e}"
-        ))
-    })?;
-    let name = capsule
-        .name()?
-        .ok_or_else(|| PyValueError::new_err("session capsule has no name"))?;
-    if name != CODEC_CAPSULE_NAME {
-        return Err(PyValueError::new_err(format!(
-            "session capsule name mismatch: expected {CODEC_CAPSULE_NAME:?}, got {name:?}"
-        )));
-    }
-    let ptr = capsule.pointer() as *mut FFI_LogicalExtensionCodec;
-    let ptr = NonNull::new(ptr)
-        .ok_or_else(|| PyValueError::new_err("session capsule pointer is null"))?;
-    // SAFETY: name-matched above; clone() runs the FFI release hook.
-    let codec = unsafe { ptr.as_ref().clone() };
-    Ok(codec)
-}
+use sedona_raster_zarr::ZarrChunkReader;
 
 /// Single-use `__arrow_c_stream__` wrapper around `ZarrChunkReader`.
 #[pyclass]
@@ -134,7 +71,6 @@ impl PyZarrChunkReader {
 
 #[pymodule]
 fn _lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<ZarrTableFunction>()?;
     m.add_class::<PyZarrChunkReader>()?;
     Ok(())
 }

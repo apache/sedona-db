@@ -6157,13 +6157,7 @@ dependencies = [
  "arrow-array",
  "arrow-schema",
  "async-trait",
- "datafusion",
- "datafusion-catalog",
  "datafusion-common",
- "datafusion-execution",
- "datafusion-expr",
- "datafusion-physical-expr",
- "datafusion-physical-plan",
  "futures",
  "log",
  "sedona-common",
@@ -6411,8 +6405,6 @@ name = "sedonadb-zarr"
 version = "0.4.0"
 dependencies = [
  "arrow-array",
- "datafusion-catalog",
- "datafusion-ffi",
  "pyo3",
  "sedona-raster-zarr",
 ]

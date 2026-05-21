@@ -17,20 +17,12 @@
 
 """Zarr support for SedonaDB.
 
-Activate by calling `register` on a SedonaDB connection. After
-registration, two surfaces work:
-
-1. `con.sql("SELECT * FROM sd_read_zarr('s3://...')")` — SQL UDTF.
-2. `con.read_format(ZarrFormatSpec(), uri)` — DataFrame API via
-   `ExternalFormatSpec`.
-
 ```python
 import sedonadb
 import sedonadb_zarr
 
 con = sedonadb.connect()
-sedonadb_zarr.register(con)
-con.sql("SELECT count(*) FROM sd_read_zarr('file:///path/to/foo.zarr')").show()
+con.read_format(sedonadb_zarr.ZarrFormatSpec(), "file:///path/to/foo.zarr").show()
 ```
 
 Importing `sedonadb_zarr` is opt-in — applications that don't import
@@ -42,25 +34,7 @@ from typing import Any, Mapping, Optional
 
 from sedonadb.datasource import ExternalFormatSpec
 
-from sedonadb_zarr._lib import PyZarrChunkReader, ZarrTableFunction
-
-
-def register(con) -> None:
-    """Attach Zarr SQL support to a SedonaDB connection.
-
-    After this call, `con.sql("SELECT * FROM sd_read_zarr(...)")` works.
-    Idempotent: calling twice re-registers the UDTF without error.
-
-    Args:
-        con: A `sedonadb` connection (returned by `sedonadb.connect()`).
-    """
-    internal_ctx = getattr(con, "_impl", None)
-    if internal_ctx is None:
-        raise TypeError(
-            "sedonadb_zarr.register: could not locate the InternalContext on "
-            f"{type(con).__name__}; expected attribute `_impl`."
-        )
-    internal_ctx.register_udtf_capsule("sd_read_zarr", ZarrTableFunction())
+from sedonadb_zarr._lib import PyZarrChunkReader
 
 
 class ZarrFormatSpec(ExternalFormatSpec):
@@ -108,4 +82,4 @@ class ZarrFormatSpec(ExternalFormatSpec):
         return PyZarrChunkReader(uri, arrays, batch_size)
 
 
-__all__ = ["register", "ZarrFormatSpec", "PyZarrChunkReader"]
+__all__ = ["ZarrFormatSpec", "PyZarrChunkReader"]

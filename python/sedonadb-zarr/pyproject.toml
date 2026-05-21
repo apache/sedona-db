@@ -30,8 +30,7 @@ classifiers = [
 ]
 dynamic = ["version"]
 dependencies = [
-    # `register_udtf_capsule` (and the `__datafusion_table_function__`
-    # contract it consumes) landed in sedonadb 0.4.0.
+    # `ExternalFormatSpec` + `list_single_object` landed in 0.4.0.
     "sedonadb>=0.4.0",
 ]
 

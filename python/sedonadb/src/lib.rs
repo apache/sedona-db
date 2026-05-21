@@ -28,7 +28,6 @@ mod datasource;
 mod error;
 mod expr;
 mod import_from;
-mod plugin;
 mod reader;
 mod runtime;
 mod schema;

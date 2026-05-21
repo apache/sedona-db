@@ -17,14 +17,9 @@
 
 """Tests for the `sedonadb-zarr` plugin.
 
-Three flavours of test together establish the plugin contract:
-
-1. **Smoke**: after `register(con)`, `sd_read_zarr` works as a SQL UDTF.
-2. **Negative**: before `register(con)`, `sd_read_zarr` is *not* a known
-   SQL function. Proves opt-in: importing `sedonadb_zarr` alone doesn't
-   register anything.
-3. **Idempotence**: calling `register(con)` twice doesn't error or
-   double-register pathologically.
+Plugin surface: `ZarrFormatSpec(ExternalFormatSpec)` paired with
+`con.read_format(spec, uri)`. The SQL UDTF form (`sd_read_zarr`) is
+deferred to a follow-up PR.
 """
 
 import numpy as np
@@ -32,98 +27,6 @@ import pytest
 
 import sedonadb
 import sedonadb_zarr
-
-
-@pytest.fixture
-def zarr_group(tmp_path):
-    """Build a tiny 2x2 UInt8 Zarr v3 group with two chunks."""
-    zarr = pytest.importorskip("zarr")
-    root = zarr.open_group(str(tmp_path), mode="w")
-    arr = root.create_array(
-        "temperature",
-        shape=(2, 2),
-        chunks=(1, 2),
-        dtype="uint8",
-        dimension_names=["y", "x"],
-    )
-    arr[:] = np.array([[10, 11], [20, 21]], dtype=np.uint8)
-    return tmp_path
-
-
-def test_smoke_register_enables_sql_udtf(zarr_group):
-    con = sedonadb.connect()
-    sedonadb_zarr.register(con)
-    df = con.sql(f"SELECT count(*) FROM sd_read_zarr('file://{zarr_group}')")
-    arrow_tab = df.to_arrow_table()
-    assert arrow_tab.num_rows == 1
-    assert arrow_tab.column(0)[0].as_py() == 2
-
-
-# Each numpy dtype below maps to a different `BandDataType` arm in
-# `rust/sedona-raster-zarr/src/dtype.rs::zarr_to_band_data_type`.
-# Reading any one is a sanity-check on the whole mapping table.
-@pytest.mark.parametrize(
-    "numpy_dtype",
-    [
-        "bool",
-        "int8",
-        "uint8",
-        "int16",
-        "uint16",
-        "int32",
-        "uint32",
-        "int64",
-        "uint64",
-        "float32",
-        "float64",
-    ],
-)
-def test_dtype_mapping_roundtrips(tmp_path, numpy_dtype):
-    zarr = pytest.importorskip("zarr")
-    root = zarr.open_group(str(tmp_path), mode="w")
-    arr = root.create_array(
-        "temperature",
-        shape=(2, 2),
-        chunks=(1, 2),
-        dtype=numpy_dtype,
-        dimension_names=["y", "x"],
-    )
-    arr[:] = np.ones((2, 2), dtype=numpy_dtype)
-
-    con = sedonadb.connect()
-    sedonadb_zarr.register(con)
-    df = con.sql(f"SELECT count(*) FROM sd_read_zarr('file://{tmp_path}')")
-    assert df.to_arrow_table().column(0)[0].as_py() == 2
-
-
-def test_sql_udtf_is_not_registered_before_register_is_called(zarr_group):
-    # Importing `sedonadb_zarr` (already done at module top) must NOT
-    # register anything globally — registration is per-context and
-    # explicit. A fresh connection without `register(con)` should fail
-    # the SQL with a planner-level "unknown function" error.
-    con = sedonadb.connect()
-    with pytest.raises(Exception, match=r"sd_read_zarr|function|table function"):
-        con.sql(f"SELECT * FROM sd_read_zarr('file://{zarr_group}')")
-
-
-def test_register_is_idempotent(zarr_group):
-    con = sedonadb.connect()
-    sedonadb_zarr.register(con)
-    # Second registration should not error (the underlying datafusion
-    # `register_udtf` overwrites by name, which is fine).
-    sedonadb_zarr.register(con)
-    df = con.sql(f"SELECT count(*) FROM sd_read_zarr('file://{zarr_group}')")
-    assert df.to_arrow_table().num_rows == 1
-
-
-def test_arrays_option_threads_through_sql(zarr_group):
-    con = sedonadb.connect()
-    sedonadb_zarr.register(con)
-    df = con.sql(
-        f"SELECT count(*) FROM sd_read_zarr("
-        f"'file://{zarr_group}', '{{\"arrays\":[\"temperature\"]}}')"
-    )
-    assert df.to_arrow_table().column(0)[0].as_py() == 2
 
 
 def _read_format(con, spec, uri: str):
@@ -142,11 +45,23 @@ def _read_format(con, spec, uri: str):
     )
 
 
+@pytest.fixture
+def zarr_group(tmp_path):
+    """Build a tiny 2x2 UInt8 Zarr v3 group with two chunks."""
+    zarr = pytest.importorskip("zarr")
+    root = zarr.open_group(str(tmp_path), mode="w")
+    arr = root.create_array(
+        "temperature",
+        shape=(2, 2),
+        chunks=(1, 2),
+        dtype="uint8",
+        dimension_names=["y", "x"],
+    )
+    arr[:] = np.array([[10, 11], [20, 21]], dtype=np.uint8)
+    return tmp_path
+
+
 def test_format_spec_via_read_format(zarr_group):
-    # Second user-facing surface: `con.read_format(spec, uri)`. Goes
-    # through `SingleObjectExternalTable` (Zarr groups are directories,
-    # so they bypass DataFusion's listing layer) and ends up driving
-    # the same `ZarrChunkReader` as the SQL UDTF.
     con = sedonadb.connect()
     df = _read_format(con, sedonadb_zarr.ZarrFormatSpec(), f"file://{zarr_group}")
     arrow_tab = df.to_arrow_table()
@@ -180,3 +95,38 @@ def test_format_spec_class_invariants():
     spec2 = spec.with_options({"arrays": ["temperature"]})
     assert spec2 is not spec
     assert spec2._options.get("arrays") == ["temperature"]
+
+
+# Each numpy dtype below maps to a different `BandDataType` arm in
+# `rust/sedona-raster-zarr/src/dtype.rs::zarr_to_band_data_type`.
+@pytest.mark.parametrize(
+    "numpy_dtype",
+    [
+        "bool",
+        "int8",
+        "uint8",
+        "int16",
+        "uint16",
+        "int32",
+        "uint32",
+        "int64",
+        "uint64",
+        "float32",
+        "float64",
+    ],
+)
+def test_dtype_mapping_roundtrips(tmp_path, numpy_dtype):
+    zarr = pytest.importorskip("zarr")
+    root = zarr.open_group(str(tmp_path), mode="w")
+    arr = root.create_array(
+        "temperature",
+        shape=(2, 2),
+        chunks=(1, 2),
+        dtype=numpy_dtype,
+        dimension_names=["y", "x"],
+    )
+    arr[:] = np.ones((2, 2), dtype=numpy_dtype)
+
+    con = sedonadb.connect()
+    df = _read_format(con, sedonadb_zarr.ZarrFormatSpec(), f"file://{tmp_path}")
+    assert df.to_arrow_table().num_rows == 2

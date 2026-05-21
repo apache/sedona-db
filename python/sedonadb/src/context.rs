@@ -16,7 +16,6 @@
 // under the License.
 use std::{collections::HashMap, sync::Arc};
 
-use datafusion::execution::TaskContextProvider;
 use datafusion_expr::ScalarUDFImpl;
 use pyo3::prelude::*;
 use sedona::context::SedonaContext;
@@ -36,10 +35,6 @@ use crate::{
 pub struct InternalContext {
     pub inner: SedonaContext,
     pub runtime: Arc<Runtime>,
-    /// The FFI codec the plugin's `FFI_TableFunction` holds stores
-    /// only a `Weak` to its `TaskContextProvider`; keep the strong
-    /// `Arc` here so registered UDTFs can always upgrade.
-    pub udtf_task_provider: Arc<dyn TaskContextProvider + Send + Sync>,
 }
 
 #[pymethods]
@@ -58,13 +53,10 @@ impl InternalContext {
             .map_err(|e| PySedonaError::SedonaPython(e.to_string()))?;
 
         let inner = wait_for_future(py, &runtime, builder.build())??;
-        let udtf_task_provider: Arc<dyn TaskContextProvider + Send + Sync> =
-            Arc::new(crate::plugin::SessionTaskContextProvider::new(&inner.ctx));
 
         Ok(Self {
             inner,
             runtime: Arc::new(runtime),
-            udtf_task_provider,
         })
     }
 
@@ -207,32 +199,5 @@ impl InternalContext {
             "Expected an object implementing __sedona_internal_udf__ or __datafusion_scalar_udf__"
                 .to_string(),
         ))
-    }
-
-    /// Register a UDTF defined in a separate Python extension
-    /// (e.g. `sedonadb-zarr`). `spec` must expose
-    /// `__datafusion_table_function__(session)`; see
-    /// [`crate::plugin`] for the capsule contract.
-    pub fn register_udtf_capsule(
-        &self,
-        py: Python<'_>,
-        name: &str,
-        spec: Bound<'_, PyAny>,
-    ) -> Result<(), PySedonaError> {
-        use pyo3::types::PyCapsule;
-
-        let session_capsule = crate::plugin::create_session_capsule(py, &self.udtf_task_provider)?;
-        let returned = spec
-            .getattr(crate::plugin::UDTF_ATTR)?
-            .call1((session_capsule,))?;
-        let returned = returned.downcast::<PyCapsule>().map_err(|e| {
-            PySedonaError::SedonaPython(format!(
-                "plugin's {} must return a PyCapsule, got {e}",
-                crate::plugin::UDTF_ATTR
-            ))
-        })?;
-        let udtf = crate::plugin::ffi_table_function_from_capsule(returned)?;
-        self.inner.ctx.register_udtf(name, udtf);
-        Ok(())
     }
 }
