@@ -42,5 +42,8 @@ test = [
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
-module-name = "sedonadb_zarr._lib"
+# `_zarr_lib` rather than `_lib` so the generated PyInit symbol
+# doesn't collide with sedonadb's `_lib` under cargo workspace
+# feature unification. The Python wrapper imports from this path.
+module-name = "sedonadb_zarr._zarr_lib"
 python-source = "python"

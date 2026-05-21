@@ -38,9 +38,7 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyCapsule;
 // `python/sedonadb` compiles its rlib as `_lib` (the lib.name override
-// maturin needs). Our own crate also has `lib.name = "_lib"`, which
-// would collide with the pymodule below — the leading `::` resolves to
-// the extern crate, not our local module.
+// maturin needs).
 use ::_lib::context::InternalContext;
 use sedona_raster_zarr::ZarrChunkReader;
 
@@ -103,8 +101,12 @@ impl PyZarrChunkReader {
     }
 }
 
+// Named `_zarr_lib` (not `_lib`) so the generated `PyInit__zarr_lib`
+// symbol doesn't collide with sedonadb's `PyInit__lib` when cargo's
+// workspace feature unification (e.g. `cargo build --all-features`)
+// brings sedonadb's pymodule into our cdylib's link.
 #[pymodule]
-fn _lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _zarr_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(register_udtf, m)?)?;
     m.add_class::<PyZarrChunkReader>()?;
     Ok(())

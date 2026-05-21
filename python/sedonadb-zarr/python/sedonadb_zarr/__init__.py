@@ -40,8 +40,8 @@ from typing import Any, Mapping, Optional
 
 from sedonadb.datasource import ExternalFormatSpec
 
-from sedonadb_zarr._lib import PyZarrChunkReader
-from sedonadb_zarr._lib import register_udtf as _register_udtf
+from sedonadb_zarr._zarr_lib import PyZarrChunkReader
+from sedonadb_zarr._zarr_lib import register_udtf as _register_udtf
 
 
 def register(con) -> None:
