@@ -40,7 +40,7 @@ from typing import Any, Mapping, Optional
 
 from sedonadb.datasource import ExternalFormatSpec
 
-from sedonadb_zarr._zarr_lib import PyZarrChunkReader, ZarrTableFunction
+from sedonadb_zarr._lib import PyZarrChunkReader, ZarrTableFunction
 
 
 def register(con) -> None:

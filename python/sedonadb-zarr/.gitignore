@@ -14,35 +14,77 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+/target
 
-[build-system]
-requires = ["maturin>=1.8,<2.0"]
-build-backend = "maturin"
+# Byte-compiled / optimized / DLL files
+__pycache__/
+.pytest_cache/
+*.py[cod]
 
-[project]
-name = "sedonadb-zarr"
-readme = "README.md"
-requires-python = ">=3.9"
-classifiers = [
-    "Programming Language :: Rust",
-    "Programming Language :: Python :: Implementation :: CPython",
-    "Programming Language :: Python :: Implementation :: PyPy",
-]
-dynamic = ["version"]
-dependencies = [
-    # `register_udtf_capsule` (and the `__datafusion_table_function__`
-    # contract it consumes) landed in sedonadb 0.4.0.
-    "sedonadb>=0.4.0",
-]
+# C extensions
+*.so
 
-[project.optional-dependencies]
-test = [
-    "pytest",
-    "zarr",
-    "numpy",
-]
+# Distribution / packaging
+.Python
+.venv/
+env/
+bin/
+build/
+develop-eggs/
+dist/
+eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+include/
+man/
+venv/
+*.egg-info/
+.installed.cfg
+*.egg
 
-[tool.maturin]
-features = ["pyo3/extension-module"]
-module-name = "sedonadb_zarr._lib"
-python-source = "python"
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+pip-selfcheck.json
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.coverage
+.cache
+nosetests.xml
+coverage.xml
+
+# Translations
+*.mo
+
+# Mr Developer
+.mr.developer.cfg
+.project
+.pydevproject
+
+# Rope
+.ropeproject
+
+# Django stuff:
+*.log
+*.pot
+
+.DS_Store
+
+# Sphinx documentation
+docs/_build/
+
+# PyCharm
+.idea/
+
+# VSCode
+.vscode/
+
+# Pyenv
+.python-version
+
+uv.lock

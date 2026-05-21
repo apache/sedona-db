@@ -23,29 +23,10 @@ edition = "2021"
 
 [lib]
 name = "_lib"
-# `cdylib` is what maturin packages into the Python wheel. `rlib` is
-# what plugin crates (e.g. `python/sedonadb-zarr`) link against so they
-# can extract `InternalContext` from Python objects via PyO3.
-crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib"]
 
 [features]
-# `extension-module` gates the `#[pymodule] fn _lib` symbol so plugin
-# crates (e.g. `sedonadb-zarr`) can link this as an rlib without
-# duplicating `PyInit__lib` in their own cdylib. NOT a default
-# feature: Cargo's workspace-wide feature unification means a default
-# would force it on for everyone, including the plugin link. Maturin
-# enables it explicitly via `[tool.maturin] features` in
-# `pyproject.toml` for the wheel build.
-#
-# `mimalloc` is back in defaults now that plugin UDTFs cross the cdylib
-# boundary via `datafusion-ffi`. All `RecordBatch` traffic between
-# plugin and host flows through the Arrow C Data/Stream protocol, where
-# each FFI struct carries a `release` callback set by the producing
-# cdylib — so allocations are always freed in the cdylib that made
-# them. The previous segfault was triggered by passing native
-# `Arc<dyn TableProvider>` across cdylibs, which we no longer do.
 default = ["mimalloc"]
-extension-module = []
 mimalloc = ["dep:mimalloc", "dep:libmimalloc-sys"]
 s2geography = ["sedona/s2geography"]
 gpu = ["sedona/gpu"]

@@ -22,12 +22,7 @@ publish = false
 edition = "2021"
 
 [lib]
-# rustc crate name. Distinct from `sedonadb`'s `_lib` to avoid the
-# rustdoc output-path collision on `cargo doc --workspace`. The
-# matching pymodule function in `src/lib.rs` is named `_zarr_lib`
-# so its `PyInit__zarr_lib` symbol doesn't collide with sedonadb's
-# `PyInit__lib` under cargo workspace feature unification.
-name = "_zarr_lib"
+name = "_lib"
 crate-type = ["cdylib"]
 
 [dependencies]

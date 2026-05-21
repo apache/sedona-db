@@ -22,7 +22,7 @@
 //! - [`ZarrTableFunction`] — Python class with
 //!   `__datafusion_table_function__(session)` that returns an
 //!   `FFI_TableFunction` PyCapsule. sedonadb's
-//!   `InternalContext.register_udtf` attaches it under
+//!   `InternalContext.register_udtf_capsule` attaches it under
 //!   `sd_read_zarr`.
 //! - [`PyZarrChunkReader`] — streaming reader producible from Python,
 //!   exposing `__arrow_c_stream__` so it plugs into
@@ -165,12 +165,8 @@ impl PyZarrChunkReader {
     }
 }
 
-// Named `_zarr_lib` (not `_lib`) so the generated `PyInit__zarr_lib`
-// symbol doesn't collide with sedonadb's `PyInit__lib` when cargo's
-// workspace feature unification (e.g. `cargo build --all-features`)
-// brings sedonadb's pymodule into our cdylib's link.
 #[pymodule]
-fn _zarr_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ZarrTableFunction>()?;
     m.add_class::<PyZarrChunkReader>()?;
     Ok(())

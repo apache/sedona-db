@@ -50,10 +50,6 @@ geopandas = [
 ]
 
 [tool.maturin]
-# `extension-module` is a sedonadb feature that gates the
-# `#[pymodule] fn _lib` symbol. Maturin enables it here for the wheel
-# build; cargo workspace test/build runs don't (so plugin crates that
-# link sedonadb's rlib don't get a duplicate `PyInit__lib`).
-features = ["pyo3/extension-module", "extension-module"]
+features = ["pyo3/extension-module"]
 module-name = "sedonadb._lib"
 python-source = "python"
