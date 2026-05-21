@@ -20,10 +20,7 @@
 // helper `#[pyfunction]`s are gated out, leaving the imports and
 // helpers "unused" from the linker's perspective. They're still
 // reachable as a public Rust API surface.
-#![cfg_attr(
-    not(feature = "extension-module"),
-    allow(dead_code, unused_imports)
-)]
+#![cfg_attr(not(feature = "extension-module"), allow(dead_code, unused_imports))]
 
 use crate::{error::PySedonaError, udf::sedona_scalar_udf};
 use pyo3::{ffi::Py_uintptr_t, prelude::*};
