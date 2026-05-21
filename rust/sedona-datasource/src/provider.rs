@@ -150,28 +150,17 @@ impl ReadOptions<'_> for RecordBatchReaderTableOptions {
     }
 }
 
-/// [`TableProvider`] that treats each input URI as one opaque object.
-///
-/// Built when [`ExternalFormatSpec::list_single_object`] is `true`. The
-/// listing layer is bypassed entirely: each URI is synthesised into a
-/// single-element [`PartitionedFile`] whose `object_meta.location` is
-/// the URL's path within the [`ObjectStoreUrl`]. The format's
-/// [`ExternalFileFormat::file_source`] then drives the same scan path
-/// used by [`ListingTable`] — projections, filter pushdown, and
-/// streaming behaviour are identical.
-///
-/// Required for directory-shaped formats like Zarr where the
-/// "object" is the directory itself.
-///
-/// Each URI lands in its own [`FileGroup`], so a multi-URI scan can
-/// produce as many partitions as URIs given enough target partitions.
+/// [`TableProvider`] that treats each input URI as one opaque object,
+/// bypassing the listing layer. Built when
+/// [`ExternalFormatSpec::list_single_object`] is `true` — required for
+/// directory-shaped formats like Zarr. Each URI lands in its own
+/// [`FileGroup`] so multi-URI scans can fan out across partitions.
 #[derive(Debug)]
 pub struct SingleObjectExternalTable {
     spec: Arc<dyn ExternalFormatSpec>,
     schema: SchemaRef,
-    /// Each input URI as (scheme-level object store URL, path within store).
-    /// All entries must share the same object store URL — mixed schemes
-    /// (e.g. `file://` + `s3://`) are rejected.
+    /// `(scheme-level store URL, path within store)`. Mixed-store
+    /// inputs are rejected in `try_new`.
     files: Vec<(ObjectStoreUrl, ObjectPath)>,
 }
 
@@ -181,10 +170,6 @@ impl SingleObjectExternalTable {
         context: &SessionContext,
         table_paths: Vec<ListingTableUrl>,
     ) -> Result<Self> {
-        // All URIs must resolve to the same object store. Mixing
-        // schemes (one file://, one s3://) would force the scan to
-        // dispatch to multiple stores — not supported here. Print
-        // the original URIs so the user sees what they typed.
         let first_store = table_paths[0].object_store();
         for path in table_paths.iter().skip(1) {
             let store = path.object_store();
@@ -204,11 +189,6 @@ impl SingleObjectExternalTable {
             .map(|p| (p.object_store(), p.prefix().clone()))
             .collect();
 
-        // Resolve the ObjectStore from the session's runtime registry,
-        // mirroring what `ListingTable` does internally. Specs whose
-        // `infer_schema` peeks at the store (statting metadata, reading
-        // a header) would otherwise get `None` here only on this path —
-        // a silent asymmetry with the listing branch.
         let store = context.runtime_env().object_store(&first_store)?;
         let probe = Object {
             store: Some(store),
@@ -253,10 +233,8 @@ impl TableProvider for SingleObjectExternalTable {
         let format = ExternalFileFormat::new(self.spec.clone());
         let file_source = format.file_source(table_schema);
 
-        // One FileGroup per URI so DataFusion can fan out across
-        // partitions. Lumping every URI into a single FileGroup would
-        // pin the scan to one partition irrespective of
-        // `target_partitions`.
+        // One FileGroup per URI so multi-URI scans can fan out across
+        // partitions instead of being pinned to one.
         let file_groups: Vec<FileGroup> = self
             .files
             .iter()
@@ -283,13 +261,9 @@ impl TableProvider for SingleObjectExternalTable {
     }
 }
 
-/// Synthesise an [`ObjectMeta`] for a URI we haven't `head`'d.
-///
-/// `size` is set to `u64::MAX` rather than `0`: a zero size signals
-/// "empty file, skip me" to some DataFusion optimisations (file
-/// pruning, size-aware repartitioning), and we never want directory
-/// objects to be skipped. `last_modified` defaults to the unix epoch
-/// because this provider never compares timestamps.
+/// Synthesise an [`ObjectMeta`] without statting. `size = u64::MAX`
+/// rather than `0` so DataFusion's size-aware pruning doesn't treat
+/// the entry as an empty file and skip it.
 fn synthetic_object_meta(location: &ObjectPath) -> ObjectMeta {
     ObjectMeta {
         location: location.clone(),

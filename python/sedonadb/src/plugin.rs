@@ -15,23 +15,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! Host-side plumbing for cross-extension UDTF registration.
+//! Host-side plumbing for cross-extension UDTF registration via
+//! `datafusion-ffi` — the same wire format `datafusion-python` uses.
 //!
-//! Format-specific Python plugins (e.g. `sedonadb-zarr`) build their
-//! UDTF in their own PyO3 extension and hand it across the cdylib
-//! boundary as a [`datafusion_ffi::udtf::FFI_TableFunction`] inside a
-//! [`PyCapsule`] — the same wire format the
-//! `datafusion-python` ecosystem uses for FFI table functions.
-//!
-//! The plugin exposes a `__datafusion_table_function__(session)`
-//! method on its Python-visible spec class. The host calls that method
-//! with a session capsule carrying an [`FFI_LogicalExtensionCodec`];
-//! the plugin uses the codec to construct its `FFI_TableFunction` and
-//! returns it inside a capsule named `"datafusion_table_function"`.
-//! The host then converts the FFI struct into a regular
-//! `Arc<dyn TableFunctionImpl>` (the conversion in `datafusion-ffi`
-//! takes a same-library fast path or wraps a `ForeignTableFunction`
-//! depending on the marker id) and registers it on the session.
+//! The host calls the plugin's `__datafusion_table_function__(session)`
+//! with a session capsule carrying an [`FFI_LogicalExtensionCodec`].
+//! The plugin returns a capsule named `"datafusion_table_function"`
+//! wrapping an [`FFI_TableFunction`], which the host converts to an
+//! `Arc<dyn TableFunctionImpl>` and registers on the session.
 
 use std::sync::Arc;
 
@@ -46,24 +37,11 @@ use std::ptr::NonNull;
 
 use crate::error::PySedonaError;
 
-/// Capsule name carried in the session capsule the host passes to the
-/// plugin. Matches `datafusion-python`'s convention so plugins built
-/// against either ecosystem can register on a sedonadb context.
-pub const CODEC_CAPSULE_NAME: &CStr = c"datafusion_logical_extension_codec";
+const CODEC_CAPSULE_NAME: &CStr = c"datafusion_logical_extension_codec";
+const UDTF_CAPSULE_NAME: &CStr = c"datafusion_table_function";
 
-/// Capsule name returned by the plugin's
-/// `__datafusion_table_function__`. Matches `datafusion-python`.
-pub const UDTF_CAPSULE_NAME: &CStr = c"datafusion_table_function";
+pub(crate) const UDTF_ATTR: &str = "__datafusion_table_function__";
 
-/// Python attribute the host invokes on the plugin's spec class.
-pub const UDTF_ATTR: &str = "__datafusion_table_function__";
-
-/// Adapt a sedonadb [`SessionContext`] to [`TaskContextProvider`].
-///
-/// The plugin's `FFI_TableFunction::call` needs a [`TaskContext`] at
-/// runtime so it can deserialise the argument `Expr`s. We give it
-/// access to ours via this thin wrapper — held as an `Arc` so the FFI
-/// codec can clone it across the boundary.
 #[derive(Debug)]
 pub(crate) struct SessionTaskContextProvider {
     task_ctx: Arc<TaskContext>,
@@ -83,29 +61,22 @@ impl TaskContextProvider for SessionTaskContextProvider {
     }
 }
 
-/// Build a session capsule the host hands to the plugin.
+/// Build the session capsule the host hands to the plugin.
 ///
-/// The capsule carries an [`FFI_LogicalExtensionCodec`] over which the
-/// plugin's `FFI_TableFunction` will serialise expressions. The
-/// codec stores a `Weak<dyn TaskContextProvider>`, so the caller
-/// must keep `provider` alive for as long as the registered UDTF
-/// can be invoked — we expect them to hold it on the session
-/// (see `InternalContext::udtf_task_provider`).
+/// The codec holds a `Weak<dyn TaskContextProvider>`, so `provider`
+/// must outlive any UDTF registered through this capsule — see
+/// `InternalContext::udtf_task_provider`.
 pub(crate) fn create_session_capsule<'py>(
     py: Python<'py>,
     provider: &Arc<dyn TaskContextProvider + Send + Sync>,
 ) -> Result<Bound<'py, PyCapsule>, PySedonaError> {
-    // `FFI_TaskContextProvider` only requires `TaskContextProvider`;
-    // the Send + Sync bounds we carry on the session field are for
-    // PyO3's pyclass sync requirements. Erase them at the boundary.
-    let provider_erased: Arc<dyn TaskContextProvider> = provider.clone();
-    let codec = FFI_LogicalExtensionCodec::new_default(&provider_erased);
+    // FFI_TaskContextProvider's `From` only needs TaskContextProvider;
+    // drop the Send + Sync (carried for pyclass) at the boundary.
+    let provider: Arc<dyn TaskContextProvider> = provider.clone();
+    let codec = FFI_LogicalExtensionCodec::new_default(&provider);
     PyCapsule::new(py, codec, Some(CODEC_CAPSULE_NAME.to_owned())).map_err(PySedonaError::from)
 }
 
-/// Extract an [`FFI_TableFunction`] from the capsule returned by the
-/// plugin's `__datafusion_table_function__` method, and convert it into
-/// a registrable `Arc<dyn TableFunctionImpl>`.
 pub(crate) fn ffi_table_function_from_capsule(
     capsule: &Bound<'_, PyCapsule>,
 ) -> Result<Arc<dyn datafusion::catalog::TableFunctionImpl>, PySedonaError> {
@@ -120,12 +91,8 @@ pub(crate) fn ffi_table_function_from_capsule(
     let ptr = capsule.pointer() as *mut FFI_TableFunction;
     let ptr = NonNull::new(ptr)
         .ok_or_else(|| PySedonaError::SedonaPython("UDTF capsule pointer is null".to_string()))?;
-    // SAFETY: the capsule's payload is an `FFI_TableFunction` (name
-    // matched above). PyO3 keeps the value alive for the lifetime of
-    // the capsule; `clone()` runs the FFI release-aware clone hook so
-    // we end up owning an independent FFI struct, which `From` then
-    // unwraps into an `Arc<dyn TableFunctionImpl>` (same-cdylib fast
-    // path or `ForeignTableFunction` wrapper, depending on marker).
+    // SAFETY: name-matched above; clone() runs the FFI release-aware
+    // hook so we own an independent struct that `From` unwraps.
     let ffi: FFI_TableFunction = unsafe { ptr.as_ref().clone() };
     Ok(ffi.into())
 }

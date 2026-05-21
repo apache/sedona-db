@@ -15,24 +15,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! `sedonadb-zarr` — Python plugin package wiring Zarr support into a
-//! `sedonadb` session.
-//!
-//! Two PyO3-exposed surfaces:
-//! - [`ZarrTableFunction`] — Python class with
-//!   `__datafusion_table_function__(session)` that returns an
-//!   `FFI_TableFunction` PyCapsule. sedonadb's
-//!   `InternalContext.register_udtf_capsule` attaches it under
-//!   `sd_read_zarr`.
-//! - [`PyZarrChunkReader`] — streaming reader producible from Python,
-//!   exposing `__arrow_c_stream__` so it plugs into
-//!   `ExternalFormatSpec.open_reader` (the `con.read_format(spec, uri)`
-//!   surface).
-//!
-//! The Rust side carries no dependency on `sedonadb`'s host extension
-//! — UDTF handoff is via `datafusion-ffi`, which gives an ABI-stable
-//! C-level interface so plugin and host cdylibs don't need to share
-//! anything beyond Arrow C Data/Stream and the FFI structs.
+//! `sedonadb-zarr` — Python plugin wiring Zarr support into a
+//! `sedonadb` session via the `datafusion-ffi` UDTF capsule contract
+//! and the Arrow C Stream protocol.
 
 use std::ffi::CString;
 use std::ptr::NonNull;
@@ -47,17 +32,9 @@ use pyo3::prelude::*;
 use pyo3::types::PyCapsule;
 use sedona_raster_zarr::{ZarrChunkReader, ZarrReadFunction};
 
-/// `c"datafusion_table_function"` capsule name expected by sedonadb's
-/// (and datafusion-python's) host-side UDTF registration.
 const UDTF_CAPSULE_NAME: &std::ffi::CStr = c"datafusion_table_function";
-
-/// Codec capsule name the host passes to us via the `session` argument.
 const CODEC_CAPSULE_NAME: &std::ffi::CStr = c"datafusion_logical_extension_codec";
 
-/// Zarr UDTF surface. The Python plugin instantiates one of these and
-/// hands the instance to sedonadb's `con._impl.register_udtf` (Python
-/// wrapper). Sedonadb then calls `__datafusion_table_function__(session)`
-/// on it to obtain the FFI struct.
 #[pyclass(name = "ZarrTableFunction", module = "sedonadb_zarr")]
 #[derive(Default, Debug, Clone)]
 pub struct ZarrTableFunction;
@@ -82,10 +59,9 @@ impl ZarrTableFunction {
     }
 }
 
-/// Extract an [`FFI_LogicalExtensionCodec`] from a session capsule the
-/// host hands us. Accepts either a raw capsule named
-/// `"datafusion_logical_extension_codec"` or any object exposing
-/// `__datafusion_logical_extension_codec__()` that returns one.
+/// Accept either a raw codec capsule or an object exposing
+/// `__datafusion_logical_extension_codec__()` (the datafusion-python
+/// contract).
 fn ffi_logical_codec_from_pycapsule(obj: &Bound<'_, PyAny>) -> PyResult<FFI_LogicalExtensionCodec> {
     let attr_name = "__datafusion_logical_extension_codec__";
     let capsule = if obj.hasattr(attr_name)? {
@@ -109,21 +85,12 @@ fn ffi_logical_codec_from_pycapsule(obj: &Bound<'_, PyAny>) -> PyResult<FFI_Logi
     let ptr = capsule.pointer() as *mut FFI_LogicalExtensionCodec;
     let ptr = NonNull::new(ptr)
         .ok_or_else(|| PyValueError::new_err("session capsule pointer is null"))?;
-    // SAFETY: capsule name was verified above; PyO3 keeps the value
-    // alive for the lifetime of the capsule. `clone()` runs the FFI
-    // release-aware clone hook so we end up with an independent codec
-    // that outlives this scope.
+    // SAFETY: name-matched above; clone() runs the FFI release hook.
     let codec = unsafe { ptr.as_ref().clone() };
     Ok(codec)
 }
 
-/// Python-callable wrapper around `ZarrChunkReader` that exposes
-/// `__arrow_c_stream__`. Consumed on first call (subsequent calls
-/// error) — matching pyarrow's `RecordBatchReader` convention.
-///
-/// The Python `ZarrFormatSpec.open_reader` returns one of these; the
-/// `ExternalFormatSpec` framework then drives the chunk grid via the
-/// Arrow C stream protocol.
+/// Single-use `__arrow_c_stream__` wrapper around `ZarrChunkReader`.
 #[pyclass]
 pub struct PyZarrChunkReader {
     inner: Mutex<Option<ZarrChunkReader>>,

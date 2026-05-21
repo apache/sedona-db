@@ -17,22 +17,24 @@
 
 """Zarr support for SedonaDB.
 
-Activate by calling :func:`register` on a SedonaDB connection. After
+Activate by calling `register` on a SedonaDB connection. After
 registration, two surfaces work:
 
-1. ``con.sql("SELECT * FROM sd_read_zarr('s3://...')")`` — SQL UDTF.
-2. ``con.read_format(ZarrFormatSpec(), uri)`` — DataFrame API via
-   ``ExternalFormatSpec``.
+1. `con.sql("SELECT * FROM sd_read_zarr('s3://...')")` — SQL UDTF.
+2. `con.read_format(ZarrFormatSpec(), uri)` — DataFrame API via
+   `ExternalFormatSpec`.
 
->>> import sedonadb
->>> import sedonadb_zarr
->>> con = sedonadb.connect()
->>> sedonadb_zarr.register(con)
->>> con.sql("SELECT count(*) FROM sd_read_zarr('file:///path/to/foo.zarr')").show()  # doctest: +SKIP
+```python
+import sedonadb
+import sedonadb_zarr
 
-The plugin is opt-in: SedonaDB itself does not bundle Zarr support, so
-applications that don't import ``sedonadb_zarr`` pay no zarr build or
-runtime cost.
+con = sedonadb.connect()
+sedonadb_zarr.register(con)
+con.sql("SELECT count(*) FROM sd_read_zarr('file:///path/to/foo.zarr')").show()
+```
+
+Importing `sedonadb_zarr` is opt-in — applications that don't import
+it pay no runtime cost.
 """
 
 import json
@@ -46,18 +48,11 @@ from sedonadb_zarr._lib import PyZarrChunkReader, ZarrTableFunction
 def register(con) -> None:
     """Attach Zarr SQL support to a SedonaDB connection.
 
-    After this call, ``con.sql("SELECT * FROM sd_read_zarr(...)")``
-    works. Idempotent — calling twice on the same connection re-
-    registers the UDTF without error.
+    After this call, `con.sql("SELECT * FROM sd_read_zarr(...)")` works.
+    Idempotent: calling twice re-registers the UDTF without error.
 
-    Parameters
-    ----------
-    con
-        A ``sedonadb`` ``Context`` (the object returned by
-        ``sedonadb.connect()``). Internally, this function hands a
-        :class:`ZarrTableFunction` instance to sedonadb's
-        ``register_udtf_capsule``, which uses ``datafusion-ffi``'s
-        ``FFI_TableFunction`` to bridge the cdylib boundary.
+    Args:
+        con: A `sedonadb` connection (returned by `sedonadb.connect()`).
     """
     internal_ctx = getattr(con, "_impl", None)
     if internal_ctx is None:
@@ -71,14 +66,16 @@ def register(con) -> None:
 class ZarrFormatSpec(ExternalFormatSpec):
     """`ExternalFormatSpec` for Zarr groups.
 
-    Use with ``con.read_format(spec, uri)``:
+    Use with `con.read_format(spec, uri)`:
 
-    >>> con.read_format(ZarrFormatSpec(), "file:///path/to/foo.zarr")  # doctest: +SKIP
+    ```python
+    con.read_format(ZarrFormatSpec(), "file:///path/to/foo.zarr")
+    ```
 
-    Supported options (via :meth:`with_options`):
+    Supported `with_options` keys:
 
-    - ``arrays`` (``list[str]`` or JSON-string) — explicit subset of
-      group arrays to read.
+    - `arrays` (`list[str]` or JSON-string) — explicit subset of group
+      arrays to read.
     """
 
     def __init__(self, options: Optional[Mapping[str, Any]] = None):
@@ -90,11 +87,8 @@ class ZarrFormatSpec(ExternalFormatSpec):
 
     @property
     def list_single_object(self) -> bool:
-        # A Zarr group is a directory, not a file. The DataFusion
-        # listing layer would enumerate its contents (zarr.json, chunk
-        # shards, ...), none of which carry the `.zarr` extension. The
-        # Rust `SingleObjectExternalTable` path skips listing and
-        # hands the URI straight to `open_reader`.
+        # Zarr groups are directories; the DataFusion listing layer
+        # returns zero objects at a `.zarr` prefix.
         return True
 
     def with_options(self, options: Mapping[str, Any]) -> "ZarrFormatSpec":

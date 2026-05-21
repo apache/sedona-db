@@ -39,6 +39,6 @@ The main `sedonadb` package does not bundle Zarr support — applications that d
 
 ## Architecture
 
-This is a maturin-built mixed Rust/Python package. The Rust side is a thin shim around `sedona-raster-zarr` that exposes a `register_udtf` PyO3 function and a `PyZarrChunkReader` class implementing `__arrow_c_stream__`. The Python side defines `ZarrFormatSpec(ExternalFormatSpec)` and a `register(con)` helper that wires the UDTF onto a session.
+A maturin-built mixed Rust/Python package. The Rust side is a thin shim around `sedona-raster-zarr` that exposes a `ZarrTableFunction` class (via `datafusion-ffi`'s `__datafusion_table_function__` capsule contract) and a `PyZarrChunkReader` class implementing `__arrow_c_stream__`. The Python side defines `ZarrFormatSpec(ExternalFormatSpec)` and a `register(con)` helper that wires the UDTF onto a session.
 
 The same plugin shape applies to future formats (`sedonadb-cog`, `sedonadb-icechunk`, …).

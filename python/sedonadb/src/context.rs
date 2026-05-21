@@ -36,13 +36,9 @@ use crate::{
 pub struct InternalContext {
     pub inner: SedonaContext,
     pub runtime: Arc<Runtime>,
-    /// Strong reference to the [`TaskContextProvider`] we hand across
-    /// the FFI boundary in [`Self::register_udtf_capsule`]. The FFI
-    /// codec stores a `Weak<dyn TaskContextProvider>`, so dropping
-    /// this would cause `FFI error: TaskContextProvider went out of
-    /// scope` at UDTF call time. Holding it on the session keeps the
-    /// strong ref alive for as long as the registered UDTF can be
-    /// invoked.
+    /// The FFI codec the plugin's `FFI_TableFunction` holds stores
+    /// only a `Weak` to its `TaskContextProvider`; keep the strong
+    /// `Arc` here so registered UDTFs can always upgrade.
     pub udtf_task_provider: Arc<dyn TaskContextProvider + Send + Sync>,
 }
 
@@ -213,18 +209,10 @@ impl InternalContext {
         ))
     }
 
-    /// Register a UDTF (table function) defined in a separate Python
-    /// extension (e.g. `sedonadb-zarr`).
-    ///
-    /// `spec` is the Python object exposing
-    /// `__datafusion_table_function__(session) -> PyCapsule`. The host
-    /// hands the plugin a session capsule carrying an
-    /// `FFI_LogicalExtensionCodec`; the plugin returns a capsule named
-    /// `"datafusion_table_function"` wrapping an
-    /// `FFI_TableFunction`. `datafusion-ffi` handles the actual
-    /// cross-cdylib trait-object conversion — concrete `RecordBatch`
-    /// allocations flow through Arrow C Stream's release callbacks, so
-    /// the plugin and host can use different allocators.
+    /// Register a UDTF defined in a separate Python extension
+    /// (e.g. `sedonadb-zarr`). `spec` must expose
+    /// `__datafusion_table_function__(session)`; see
+    /// [`crate::plugin`] for the capsule contract.
     pub fn register_udtf_capsule(
         &self,
         py: Python<'_>,
