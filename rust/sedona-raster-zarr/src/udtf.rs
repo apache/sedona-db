@@ -30,58 +30,45 @@
 //! position in the Zarr group's chunk grid. All existing `RS_*` UDFs
 //! operate on the column unchanged.
 //!
-//! `load_eager` defaults to `false` — every row has empty `data` and a
-//! chunk-anchor URI in `outdb_uri`. Setting `load_eager = true`
-//! currently errors because no `RS_EnsureLoaded` resolver is registered
-//! for the `zarr` format yet; once the resolver lands, `true` will
-//! trigger the planner to inject the async UDF over the scan output.
+//! Every row has empty `data` and a chunk-anchor URI in `outdb_uri`.
+//! Pixel-byte materialisation lands with the async `RS_EnsureLoaded`
+//! resolver in a follow-up PR; until then every metadata-only query
+//! (`count(*)`, `RS_Envelope`, `RS_Width`, …) works against the
+//! anchor-only rows.
 //!
-//! Registration happens via [`register`]; the `sedonadb-zarr` Python
-//! package calls this from its session-setup helper. The `sedona` crate
-//! itself does not register the UDTF — keeping zarr functionality out
-//! of the default bootstrap.
+//! The `sedonadb-zarr` Python package constructs
+//! `Arc::new(ZarrReadFunction::default())` and hands it to its session
+//! via the plugin capsule. The `sedona` crate itself does not register
+//! the UDTF — keeping zarr functionality out of the default bootstrap.
 
 use std::any::Any;
 use std::sync::Arc;
 
 use arrow_schema::{DataType, Schema, SchemaRef};
 use async_trait::async_trait;
-use datafusion::catalog::{Session, TableFunctionImpl, TableProvider};
-use datafusion::common::Result;
-use datafusion::datasource::TableType;
-use datafusion::execution::context::{SessionContext, TaskContext};
-use datafusion::physical_expr::EquivalenceProperties;
-use datafusion::physical_plan::execution_plan::{Boundedness, EmissionType};
-use datafusion::physical_plan::expressions::Column;
-use datafusion::physical_plan::projection::ProjectionExec;
-use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
-use datafusion::physical_plan::{
-    DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, PhysicalExpr, PlanProperties,
+use datafusion_catalog::{Session, TableFunctionImpl, TableProvider};
+use datafusion_common::{plan_err, DataFusionError, Result, ScalarValue};
+use datafusion_execution::TaskContext;
+use datafusion_expr::{Expr, TableType};
+use datafusion_physical_expr::expressions::Column;
+use datafusion_physical_expr::{EquivalenceProperties, PhysicalExpr};
+use datafusion_physical_plan::execution_plan::{Boundedness, EmissionType};
+use datafusion_physical_plan::projection::ProjectionExec;
+use datafusion_physical_plan::stream::RecordBatchStreamAdapter;
+use datafusion_physical_plan::{
+    DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, PlanProperties,
     SendableRecordBatchStream,
 };
-use datafusion::prelude::Expr;
-use datafusion_common::{plan_err, DataFusionError, ScalarValue};
 use sedona_schema::datatypes::SedonaType;
 use serde::{Deserialize, Serialize};
 
 use crate::loader::ZarrChunkReader;
-
-/// Register the `sd_read_zarr` UDTF on a `SessionContext`. Called from
-/// the `sedonadb-zarr` Python package's `register(con)` entry point.
-pub fn register(ctx: &SessionContext) {
-    ctx.register_udtf("sd_read_zarr", Arc::new(ZarrReadFunction::default()));
-}
 
 /// Table function `sd_read_zarr(uri[, options_json])`.
 ///
 /// Accepts one or two string arguments:
 /// - `uri` (required) — Zarr group URI (e.g. `file:///path/to/foo.zarr`).
 /// - `options_json` (optional) — JSON string with any of:
-///     - `load_eager`: `false` (default) emits chunk-anchor URIs only;
-///       `true` currently errors because no `RS_EnsureLoaded` resolver
-///       is registered for `zarr` yet. Once the resolver lands, `true`
-///       will trigger the planner to inject the async UDF over the
-///       scan output.
 ///     - `rows_per_batch`: chunks per `RecordBatch`. Defaults to the
 ///       session's configured batch size (`SessionConfig::batch_size`,
 ///       typically 8192) when unset.
@@ -148,16 +135,6 @@ pub struct ZarrChunkProvider {
 impl ZarrChunkProvider {
     fn try_new(uri: &str, options_json: Option<String>) -> Result<Self> {
         let opts = parse_options(options_json.as_deref())?;
-        let load_eager = opts.load_eager.unwrap_or(false);
-        if load_eager {
-            return plan_err!(
-                "sd_read_zarr() load_eager = true is not yet supported. \
-                 Pixel-byte materialisation will be wired up when the async \
-                 RS_EnsureLoaded resolver lands; for now use load_eager = false \
-                 (the default) and operate on metadata (count(*), RS_Envelope, \
-                 RS_Width, etc.)."
-            );
-        }
         let rows_per_batch = opts.rows_per_batch.map(|n| n.max(1));
         let num_partitions = opts.num_partitions.unwrap_or(1);
         if num_partitions != 1 {
@@ -355,11 +332,6 @@ fn arrow_to_df_err(e: arrow_schema::ArrowError) -> DataFusionError {
 
 #[derive(Serialize, Deserialize, Default)]
 struct ZarrReadOptions {
-    /// `false` (default) emits chunk-anchor URIs only. `true` currently
-    /// errors — pixel-byte materialisation is pending the async
-    /// `RS_EnsureLoaded` resolver. Once the resolver lands, `true` will
-    /// trigger the planner to inject the async UDF over the scan output.
-    load_eager: Option<bool>,
     rows_per_batch: Option<usize>,
     num_partitions: Option<usize>,
     /// Explicit array-name filter. `None` reads every multi-dimensional
@@ -419,7 +391,10 @@ mod tests {
         let uri = format!("file://{}", tmp.path().display());
 
         let ctx = SessionContext::new();
-        register(&ctx);
+        ctx.register_udtf(
+            "sd_read_zarr",
+            std::sync::Arc::new(ZarrReadFunction::default()),
+        );
 
         let df = ctx
             .sql(&format!("SELECT raster FROM sd_read_zarr('{uri}')"))
@@ -446,31 +421,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn udtf_rejects_load_eager_true() {
-        let tmp = build_fixture();
-        let uri = format!("file://{}", tmp.path().display());
-
-        let ctx = SessionContext::new();
-        register(&ctx);
-
-        let err = ctx
-            .sql(&format!(
-                r#"SELECT raster FROM sd_read_zarr('{uri}', '{{"load_eager": true}}')"#,
-            ))
-            .await
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("load_eager = true"), "got: {err}");
-        assert!(err.contains("not yet supported"), "got: {err}");
-    }
-
-    #[tokio::test]
     async fn udtf_respects_rows_per_batch_option() {
         let tmp = build_fixture();
         let uri = format!("file://{}", tmp.path().display());
 
         let ctx = SessionContext::new();
-        register(&ctx);
+        ctx.register_udtf(
+            "sd_read_zarr",
+            std::sync::Arc::new(ZarrReadFunction::default()),
+        );
 
         // 2 chunk rows, rows_per_batch=1 → 2 single-row batches.
         let df = ctx
@@ -490,7 +449,10 @@ mod tests {
         let uri = format!("file://{}", tmp.path().display());
 
         let ctx = SessionContext::new();
-        register(&ctx);
+        ctx.register_udtf(
+            "sd_read_zarr",
+            std::sync::Arc::new(ZarrReadFunction::default()),
+        );
 
         // SELECT count(*) just walks the chunk grid metadata; never opens
         // a chunk file.
@@ -513,7 +475,10 @@ mod tests {
         let uri = format!("file://{}", tmp.path().display());
 
         let ctx = SessionContext::new();
-        register(&ctx);
+        ctx.register_udtf(
+            "sd_read_zarr",
+            std::sync::Arc::new(ZarrReadFunction::default()),
+        );
 
         let err = ctx
             .sql(&format!(
@@ -554,7 +519,10 @@ mod tests {
 
         let uri = format!("file://{}", tmp.path().display());
         let ctx = SessionContext::new();
-        register(&ctx);
+        ctx.register_udtf(
+            "sd_read_zarr",
+            std::sync::Arc::new(ZarrReadFunction::default()),
+        );
 
         // Default behaviour: 1-D coord variable auto-skipped, read succeeds.
         let df = ctx
@@ -602,7 +570,10 @@ mod tests {
     #[tokio::test]
     async fn udtf_rejects_malformed_options_json() {
         let ctx = SessionContext::new();
-        register(&ctx);
+        ctx.register_udtf(
+            "sd_read_zarr",
+            std::sync::Arc::new(ZarrReadFunction::default()),
+        );
 
         let err = ctx
             .sql(r#"SELECT raster FROM sd_read_zarr('file:///nowhere', '{not json}')"#)

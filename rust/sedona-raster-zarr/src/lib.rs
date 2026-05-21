@@ -42,4 +42,4 @@ pub mod udtf;
 
 pub use format_spec::ZarrFormatSpec;
 pub use loader::ZarrChunkReader;
-pub use udtf::{register as register_udtf, ZarrReadFunction};
+pub use udtf::ZarrReadFunction;

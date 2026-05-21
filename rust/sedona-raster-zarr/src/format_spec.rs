@@ -35,15 +35,11 @@ use crate::loader::ZarrChunkReader;
 /// `ExternalFormatSpec` implementation for Zarr groups.
 ///
 /// Configurable via [`with_options`](ExternalFormatSpec::with_options):
-/// - `load_eager`: boolean. `false` (default) emits chunk-anchor URIs
-///   only. `true` currently errors — pixel-byte materialisation is
-///   pending the async `RS_EnsureLoaded` resolver.
 /// - `arrays`: JSON array of strings, e.g. `'["temperature","pressure"]'`.
 ///   Names a subset of arrays in the group to read; defaults to every
 ///   multi-dimensional array (1-D coord variables auto-skipped).
 #[derive(Debug, Clone, Default)]
 pub struct ZarrFormatSpec {
-    load_eager: bool,
     arrays: Option<Vec<String>>,
 }
 
@@ -68,14 +64,6 @@ impl ExternalFormatSpec for ZarrFormatSpec {
         &self,
         args: &OpenReaderArgs,
     ) -> Result<Box<dyn RecordBatchReader + Send>> {
-        if self.load_eager {
-            return Err(DataFusionError::Plan(
-                "ZarrFormatSpec: load_eager = true is not yet supported. \
-                 Pixel-byte materialisation will be wired up when the async \
-                 RS_EnsureLoaded resolver lands."
-                    .into(),
-            ));
-        }
         let uri = args.src.to_url_string().ok_or_else(|| {
             DataFusionError::Plan(
                 "ZarrFormatSpec: could not resolve a URL string from the source object".into(),
@@ -94,13 +82,6 @@ impl ExternalFormatSpec for ZarrFormatSpec {
         let mut next = self.clone();
         for (k, v) in options {
             match k.as_str() {
-                "load_eager" => {
-                    next.load_eager = v.parse().map_err(|_| {
-                        DataFusionError::Plan(format!(
-                            "ZarrFormatSpec: load_eager must be a boolean; got {v:?}"
-                        ))
-                    })?;
-                }
                 "arrays" => {
                     next.arrays = Some(serde_json::from_str::<Vec<String>>(v).map_err(|e| {
                         DataFusionError::Plan(format!(

@@ -137,13 +137,6 @@ def test_format_spec_with_arrays_option(zarr_group):
     assert df.to_arrow_table().num_rows == 2
 
 
-def test_format_spec_load_eager_errors(zarr_group):
-    con = sedonadb.connect()
-    spec = sedonadb_zarr.ZarrFormatSpec().with_options({"load_eager": True})
-    with pytest.raises(Exception, match=r"load_eager"):
-        _read_format(con, spec, f"file://{zarr_group}").to_arrow_table()
-
-
 def test_format_spec_class_invariants():
     spec = sedonadb_zarr.ZarrFormatSpec()
     assert spec.extension == ".zarr"

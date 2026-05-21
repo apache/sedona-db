@@ -34,10 +34,18 @@ result_large_err = "allow"
 arrow-array = { workspace = true }
 arrow-schema = { workspace = true }
 async-trait = { workspace = true }
-datafusion = { workspace = true, features = ["sql"] }
+# Narrow datafusion sub-crates rather than the umbrella `datafusion`
+# crate — avoids pulling in `datafusion-sql`, `datafusion-optimizer`,
+# `datafusion-functions-*`, etc. that this crate never uses. Compile
+# time and binary size both drop noticeably. The umbrella crate is
+# still pulled in by `dev-dependencies` for the unit tests, which
+# build a real `SessionContext`.
 datafusion-catalog = { workspace = true }
 datafusion-common = { workspace = true }
+datafusion-execution = { workspace = true }
 datafusion-expr = { workspace = true }
+datafusion-physical-expr = { workspace = true }
+datafusion-physical-plan = { workspace = true }
 futures = { workspace = true }
 log = { workspace = true }
 sedona-common = { workspace = true }
@@ -58,5 +66,9 @@ zarrs_filesystem = { workspace = true }
 zarrs = { workspace = true, features = ["blosc"] }
 
 [dev-dependencies]
+# Umbrella `datafusion` only for tests — they construct a real
+# `SessionContext` and execute SQL. Production code is restricted to
+# the narrow sub-crates above.
+datafusion = { workspace = true, features = ["sql"] }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

@@ -38,7 +38,9 @@ use sedona_common::sedona_internal_datafusion_err;
 use sedona_raster::builder::RasterBuilder;
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::raster::BandDataType;
-use zarrs::array::{Array, ArrayBytes};
+use zarrs::array::Array;
+#[cfg(test)]
+use zarrs::array::ArrayBytes;
 use zarrs::group::Group;
 use zarrs_filesystem::FilesystemStore;
 
@@ -659,11 +661,11 @@ fn advance_chunk_indices(chunk_indices: &mut [u64], chunk_grid_shape: &[u64]) ->
 ///
 /// This is the only pixel-byte read primitive in the crate. The loader
 /// itself never calls it today — it always emits OutDb anchors — but
-/// the async `RS_EnsureLoaded` resolver (follow-up PR) will. Kept here
-/// rather than dropped because (a) it's tested directly below and (b)
-/// the resolver lives in this crate and wants a sync chunk-fetch
-/// helper as a starting point.
-#[allow(dead_code)]
+/// the async `RS_EnsureLoaded` resolver (follow-up PR) will. Lives
+/// behind `#[cfg(test)]` until the resolver lands; the unit test below
+/// exercises it so the implementation doesn't bit-rot in the
+/// meantime.
+#[cfg(test)]
 fn retrieve_chunk_bytes(
     array: &Array<FilesystemStore>,
     chunk_indices: &[u64],

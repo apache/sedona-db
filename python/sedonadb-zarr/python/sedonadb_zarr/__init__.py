@@ -79,8 +79,6 @@ class ZarrFormatSpec(ExternalFormatSpec):
 
     Supported options (via :meth:`with_options`):
 
-    - ``load_eager`` (``bool``) — ``False`` (default) emits chunk-anchor
-      URIs only; ``True`` currently errors pending the async resolver.
     - ``arrays`` (``list[str]`` or JSON-string) — explicit subset of
       group arrays to read.
     """
@@ -110,12 +108,6 @@ class ZarrFormatSpec(ExternalFormatSpec):
         if uri is None:
             raise ValueError(
                 "ZarrFormatSpec: could not resolve a URL from the source object"
-            )
-        if self._options.get("load_eager"):
-            raise NotImplementedError(
-                "ZarrFormatSpec: load_eager=True is not yet supported. "
-                "Pixel-byte materialisation lands with the async RS_EnsureLoaded "
-                "resolver."
             )
         arrays = self._options.get("arrays")
         if isinstance(arrays, str):
