@@ -92,6 +92,15 @@ class ZarrFormatSpec(ExternalFormatSpec):
     def extension(self) -> str:
         return ".zarr"
 
+    @property
+    def list_single_object(self) -> bool:
+        # A Zarr group is a directory, not a file. The DataFusion
+        # listing layer would enumerate its contents (zarr.json, chunk
+        # shards, ...), none of which carry the `.zarr` extension. The
+        # Rust `SingleObjectExternalTable` path skips listing and
+        # hands the URI straight to `open_reader`.
+        return True
+
     def with_options(self, options: Mapping[str, Any]) -> "ZarrFormatSpec":
         merged = {**self._options, **options}
         return ZarrFormatSpec(merged)

@@ -23,8 +23,10 @@ use async_trait::async_trait;
 use datafusion::{physical_expr::conjunction, physical_plan::PhysicalExpr};
 use datafusion_common::{DataFusionError, Result};
 use pyo3::{
-    exceptions::PyNotImplementedError, pyclass, pymethods, types::PyCapsule, Bound, PyObject,
-    Python,
+    exceptions::PyNotImplementedError,
+    pyclass, pymethods,
+    types::{PyAnyMethods, PyCapsule},
+    Bound, PyObject, Python,
 };
 use sedona_datasource::{
     spec::{ExternalFormatSpec, Object, OpenReaderArgs},
@@ -47,6 +49,11 @@ use crate::{
 #[derive(Debug)]
 pub struct PyExternalFormat {
     extension: String,
+    /// Cached at construction time. The Python side declares this via
+    /// the `list_single_object` attribute on the spec class (default
+    /// `False`); we snapshot it once to avoid GIL traffic in
+    /// `list_single_object()`, which is called on hot paths.
+    list_single_object: bool,
     py_spec: PyObject,
 }
 
@@ -54,6 +61,7 @@ impl Clone for PyExternalFormat {
     fn clone(&self) -> Self {
         Python::with_gil(|py| Self {
             extension: self.extension.clone(),
+            list_single_object: self.list_single_object,
             py_spec: self.py_spec.clone_ref(py),
         })
     }
@@ -71,8 +79,10 @@ impl PyExternalFormat {
         let new_extension = new_py_spec
             .getattr(py, "extension")?
             .extract::<String>(py)?;
+        let new_list_single_object = read_list_single_object(py, &new_py_spec)?;
         Ok(Self {
             extension: new_extension,
+            list_single_object: new_list_single_object,
             py_spec: new_py_spec,
         })
     }
@@ -143,7 +153,28 @@ impl PyExternalFormat {
     #[new]
     fn new<'py>(py: Python<'py>, py_spec: PyObject) -> Result<Self, PySedonaError> {
         let extension = py_spec.getattr(py, "extension")?.extract::<String>(py)?;
-        Ok(Self { extension, py_spec })
+        let list_single_object = read_list_single_object(py, &py_spec)?;
+        Ok(Self {
+            extension,
+            list_single_object,
+            py_spec,
+        })
+    }
+}
+
+/// Read the `list_single_object` attribute on a Python spec, defaulting
+/// to `false` if the attribute is missing (older spec implementations
+/// that predate the directory-format path).
+fn read_list_single_object<'py>(
+    py: Python<'py>,
+    py_spec: &PyObject,
+) -> Result<bool, PySedonaError> {
+    if py_spec.bind(py).hasattr("list_single_object")? {
+        Ok(py_spec
+            .getattr(py, "list_single_object")?
+            .extract::<bool>(py)?)
+    } else {
+        Ok(false)
     }
 }
 
@@ -151,6 +182,10 @@ impl PyExternalFormat {
 impl ExternalFormatSpec for PyExternalFormat {
     fn extension(&self) -> &str {
         &self.extension
+    }
+
+    fn list_single_object(&self) -> bool {
+        self.list_single_object
     }
 
     fn with_options(

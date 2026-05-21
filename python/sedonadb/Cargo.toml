@@ -42,8 +42,14 @@ crate-type = ["cdylib", "rlib"]
 # global-allocator mismatch corrupts the heap. Concrete Arrow types
 # like `RecordBatch` are monomorphised per-cdylib, so the drop site
 # runs the consumer's allocator regardless of who allocated, and
-# mimalloc-free on a libc-malloc pointer segfaults. Wheel builds that
-# never load plugins can opt in with `--features mimalloc`.
+# mimalloc-free on a libc-malloc pointer segfaults.
+#
+# !! WARNING: opting in with `--features mimalloc` re-introduces the
+# segfault for any user who imports a plugin alongside this wheel.
+# This isn't a perf knob — it's a "I'm shipping a closed binary that
+# will never load a plugin cdylib" knob. The plugin-safe path is to
+# link mimalloc *dynamically* (one shared `libmimalloc.so` for the
+# whole process), which is a packaging change, not a feature flag.
 default = []
 extension-module = []
 mimalloc = ["dep:mimalloc", "dep:libmimalloc-sys"]

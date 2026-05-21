@@ -170,6 +170,9 @@ impl ReadOptions<'_> for RecordBatchReaderTableOptions {
 ///
 /// Required for directory-shaped formats like Zarr where the
 /// "object" is the directory itself.
+///
+/// Each URI lands in its own [`FileGroup`], so a multi-URI scan can
+/// produce as many partitions as URIs given enough target partitions.
 #[derive(Debug)]
 pub struct SingleObjectExternalTable {
     spec: Arc<dyn ExternalFormatSpec>,
@@ -185,23 +188,28 @@ impl SingleObjectExternalTable {
         spec: Arc<dyn ExternalFormatSpec>,
         table_paths: Vec<ListingTableUrl>,
     ) -> Result<Self> {
+        // All URIs must resolve to the same object store. Mixing
+        // schemes (one file://, one s3://) would force the scan to
+        // dispatch to multiple stores — not supported here. Print
+        // the original URIs so the user sees what they typed.
+        let first_store = table_paths[0].object_store();
+        for path in table_paths.iter().skip(1) {
+            let store = path.object_store();
+            if store != first_store {
+                let first_uri = table_paths[0].as_str();
+                let bad_uri = path.as_str();
+                return exec_err!(
+                    "external_table: all URIs in a single-object scan must share the same \
+                     object store; got '{first_uri}' (store '{first_store}') and \
+                     '{bad_uri}' (store '{store}')"
+                );
+            }
+        }
+
         let files: Vec<(ObjectStoreUrl, ObjectPath)> = table_paths
             .iter()
             .map(|p| (p.object_store(), p.prefix().clone()))
             .collect();
-
-        // All URIs must resolve to the same object store. Mixing schemes
-        // (e.g. one file://, one s3://) would force the scan to dispatch
-        // to multiple stores — not supported here.
-        let first_store = files[0].0.clone();
-        for (store, _) in &files[1..] {
-            if store != &first_store {
-                return exec_err!(
-                    "external_table: all URIs in a single-object scan must share the same \
-                     object store; got both '{first_store}' and '{store}'"
-                );
-            }
-        }
 
         // Resolve the schema from the first object. Most directory-format
         // specs (e.g. Zarr) infer a fixed schema irrespective of the
@@ -250,21 +258,27 @@ impl TableProvider for SingleObjectExternalTable {
         let format = ExternalFileFormat::new(self.spec.clone());
         let file_source = format.file_source(table_schema);
 
-        let partitioned_files: Vec<PartitionedFile> = self
+        // One FileGroup per URI so DataFusion can fan out across
+        // partitions. Lumping every URI into a single FileGroup would
+        // pin the scan to one partition irrespective of
+        // `target_partitions`.
+        let file_groups: Vec<FileGroup> = self
             .files
             .iter()
-            .map(|(_, location)| PartitionedFile {
-                object_meta: synthetic_object_meta(location),
-                partition_values: vec![],
-                range: None,
-                extensions: None,
-                statistics: None,
-                metadata_size_hint: None,
+            .map(|(_, location)| {
+                FileGroup::new(vec![PartitionedFile {
+                    object_meta: synthetic_object_meta(location),
+                    partition_values: vec![],
+                    range: None,
+                    extensions: None,
+                    statistics: None,
+                    metadata_size_hint: None,
+                }])
             })
             .collect();
 
         let mut builder = FileScanConfigBuilder::new(object_store_url.clone(), file_source)
-            .with_file_group(FileGroup::new(partitioned_files))
+            .with_file_groups(file_groups)
             .with_limit(limit);
         if let Some(indices) = projection {
             builder = builder.with_projection_indices(Some(indices.clone()))?;
@@ -276,15 +290,16 @@ impl TableProvider for SingleObjectExternalTable {
 
 /// Synthesise an [`ObjectMeta`] for a URI we haven't `head`'d.
 ///
-/// `size: 0` and a zeroed `last_modified` are intentional: this table
-/// provider never lists or stats objects, so DataFusion's downstream
-/// machinery only uses the `location` field. Specs that need real
-/// stats can override via [`ExternalFormatSpec::infer_stats`].
+/// `size` is set to `u64::MAX` rather than `0`: a zero size signals
+/// "empty file, skip me" to some DataFusion optimisations (file
+/// pruning, size-aware repartitioning), and we never want directory
+/// objects to be skipped. `last_modified` defaults to the unix epoch
+/// because this provider never compares timestamps.
 fn synthetic_object_meta(location: &ObjectPath) -> ObjectMeta {
     ObjectMeta {
         location: location.clone(),
         last_modified: Default::default(),
-        size: 0,
+        size: u64::MAX,
         e_tag: None,
         version: None,
     }

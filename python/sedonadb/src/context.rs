@@ -202,46 +202,58 @@ impl InternalContext {
     }
 
     /// Register a UDTF (table function) whose implementation is passed
-    /// through a `PyCapsule` containing an
-    /// `Arc<dyn datafusion::catalog::TableFunctionImpl>`.
+    /// through a `PyCapsule` containing an [`UdtfCapsule`].
     ///
     /// Plugin-handoff API: format-specific Python packages (e.g.
     /// `sedonadb-zarr`) build their UDTF in their own PyO3 extension
     /// and pass it across as an opaque capsule, sidestepping the
     /// cross-extension `#[pyclass]` type-id mismatch.
     ///
-    /// The capsule must be named `"sedonadb.udtf"` and store an
-    /// `Arc<dyn TableFunctionImpl>` as its value. We clone the Arc to
-    /// take our own refcount; the capsule retains its own copy until
-    /// Python GC drops it.
+    /// Two checks gate the dereference: the capsule's name must equal
+    /// [`UDTF_CAPSULE_NAME`] (a public string, so this is mostly an
+    /// ABI tag), and the payload's leading [`UDTF_CAPSULE_MAGIC`]
+    /// sentinel must match (much harder to forge from outside this
+    /// crate). The consumer clones the inner `Arc` to take its own
+    /// refcount; the capsule keeps a parallel refcount until Python
+    /// GC drops it.
+    ///
+    /// [`UdtfCapsule`]: crate::plugin::UdtfCapsule
+    /// [`UDTF_CAPSULE_NAME`]: crate::plugin::UDTF_CAPSULE_NAME
+    /// [`UDTF_CAPSULE_MAGIC`]: crate::plugin::UDTF_CAPSULE_MAGIC
     pub fn register_udtf_capsule(
         &self,
         name: &str,
         capsule: &Bound<'_, pyo3::types::PyCapsule>,
     ) -> Result<(), PySedonaError> {
-        use std::sync::Arc;
+        use crate::plugin::{UdtfCapsule, UDTF_CAPSULE_MAGIC, UDTF_CAPSULE_NAME};
 
-        let expected = c"sedonadb.udtf";
         let actual = capsule
             .name()?
             .ok_or_else(|| PySedonaError::SedonaPython("UDTF capsule has no name".to_string()))?;
-        if actual != expected {
+        if actual != UDTF_CAPSULE_NAME {
             return Err(PySedonaError::SedonaPython(format!(
-                "UDTF capsule name mismatch: expected {expected:?}, got {actual:?}"
+                "UDTF capsule name mismatch: expected {UDTF_CAPSULE_NAME:?}, got {actual:?}"
             )));
         }
-        let ptr = capsule.pointer() as *const Arc<dyn datafusion::catalog::TableFunctionImpl>;
-        if ptr.is_null() {
+        if capsule.pointer().is_null() {
             return Err(PySedonaError::SedonaPython(
                 "UDTF capsule pointer is null".to_string(),
             ));
         }
-        // SAFETY: the capsule's payload is an `Arc<dyn TableFunctionImpl>`
-        // (validated by name above). PyO3 keeps the value alive for the
-        // lifetime of the capsule; we clone the Arc to obtain an
-        // independent refcount that outlives this scope.
-        let udtf = unsafe { (*ptr).clone() };
-        self.inner.ctx.register_udtf(name, udtf);
+        // SAFETY: the capsule's payload is an `UdtfCapsule` (name
+        // matched above). PyO3 keeps the value alive for the
+        // lifetime of the capsule and `reference` is the documented
+        // accessor — equivalent to `pointer().cast::<T>()` but without
+        // betting on `CapsuleContents`'s private field layout.
+        let payload: &UdtfCapsule = unsafe { capsule.reference::<UdtfCapsule>() };
+        if payload.magic != UDTF_CAPSULE_MAGIC {
+            return Err(PySedonaError::SedonaPython(format!(
+                "UDTF capsule magic mismatch: expected {UDTF_CAPSULE_MAGIC:#x}, got {:#x}; \
+                 capsule likely produced by an incompatible build",
+                payload.magic
+            )));
+        }
+        self.inner.ctx.register_udtf(name, payload.udtf.clone());
         Ok(())
     }
 }

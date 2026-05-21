@@ -41,26 +41,29 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyCapsule;
 use sedona_raster_zarr::{ZarrChunkReader, ZarrReadFunction};
+// `sedonadb`'s rustc crate name is `_lib` (set by `[lib].name` so
+// maturin packages it as `sedonadb._lib`); import the plugin handoff
+// types under that name.
+use _lib::plugin::{UdtfCapsule, UDTF_CAPSULE_NAME};
 
-/// Build a PyCapsule carrying an `Arc<dyn TableFunctionImpl>` for the
-/// Zarr UDTF, suitable for handoff to sedonadb's
+/// Build a PyCapsule carrying the Zarr UDTF for handoff to sedonadb's
 /// `InternalContext.register_udtf_capsule`.
 ///
 /// Cross-extension `#[pyclass]` extraction doesn't work in PyO3 (each
 /// cdylib has its own type-id static), so we pass the UDTF
-/// implementation across the extension boundary via an opaque capsule.
-/// The capsule owns the `Arc`; the consumer clones a fresh refcount
-/// before the capsule is dropped.
+/// implementation across the extension boundary via an opaque
+/// [`UdtfCapsule`]. The capsule owns its `Arc`; the consumer clones a
+/// fresh refcount before the capsule is dropped. The payload's leading
+/// magic sentinel lets the consumer fail fast if the capsule's name
+/// has been spoofed.
 #[pyfunction]
 fn zarr_udtf_capsule(py: Python<'_>) -> PyResult<Bound<'_, PyCapsule>> {
     let udtf: Arc<dyn TableFunctionImpl> = Arc::new(ZarrReadFunction::default());
-    let name = CString::new("sedonadb.udtf").unwrap();
-    PyCapsule::new_with_destructor(
-        py,
-        udtf,
-        Some(name),
-        |_v: Arc<dyn TableFunctionImpl>, _ctx| {},
-    )
+    let payload = UdtfCapsule::new(udtf);
+    // CString::new requires owned bytes; reuse the host-side constant
+    // so the name (and its `.vN` ABI tag) lives in exactly one place.
+    let name = CString::new(UDTF_CAPSULE_NAME.to_bytes()).unwrap();
+    PyCapsule::new_with_destructor(py, payload, Some(name), |_v: UdtfCapsule, _ctx| {})
 }
 
 /// Python-callable wrapper around `ZarrChunkReader` that exposes
