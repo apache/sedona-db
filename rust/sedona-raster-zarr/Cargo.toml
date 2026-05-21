@@ -1,0 +1,66 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+[package]
+name = "sedona-raster-zarr"
+version.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description.workspace = true
+readme.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lints.clippy]
+result_large_err = "allow"
+
+[dependencies]
+arrow-array = { workspace = true }
+arrow-schema = { workspace = true }
+async-trait = { workspace = true }
+# Narrow datafusion sub-crates rather than the umbrella `datafusion`
+# crate — avoids pulling in `datafusion-sql`, `datafusion-optimizer`,
+# `datafusion-functions-*`, etc. that this crate never uses. Compile
+# time and binary size both drop noticeably. The umbrella crate is
+# still pulled in by `dev-dependencies` for the unit tests, which
+# build a real `SessionContext`.
+datafusion-catalog = { workspace = true }
+datafusion-common = { workspace = true }
+datafusion-execution = { workspace = true }
+datafusion-expr = { workspace = true }
+datafusion-physical-expr = { workspace = true }
+datafusion-physical-plan = { workspace = true }
+futures = { workspace = true }
+log = { workspace = true }
+sedona-common = { workspace = true }
+sedona-datasource = { workspace = true }
+sedona-raster = { workspace = true }
+sedona-schema = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+zarrs = { workspace = true, features = ["filesystem", "gzip", "zstd", "blosc", "crc32c", "sharding", "transpose"] }
+zarrs_filesystem = { workspace = true }
+
+[dev-dependencies]
+# Umbrella `datafusion` only for tests — they construct a real
+# `SessionContext` and execute SQL. Production code is restricted to
+# the narrow sub-crates above.
+datafusion = { workspace = true, features = ["sql"] }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

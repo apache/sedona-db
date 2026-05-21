@@ -50,6 +50,7 @@ s2geography = ["dep:sedona-s2geography", "dep:sedona-spatial-join-geography", "s
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 rstest = { workspace = true }
+sedona-raster = { workspace = true }
 
 [dependencies]
 arrow-schema = { workspace = true }

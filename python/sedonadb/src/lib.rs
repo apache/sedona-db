@@ -14,6 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
 use crate::{error::PySedonaError, udf::sedona_scalar_udf};
 use pyo3::{ffi::Py_uintptr_t, prelude::*};
 use sedona_adbc::AdbcSedonadbDriverInit;
@@ -27,6 +28,7 @@ mod datasource;
 mod error;
 mod expr;
 mod import_from;
+mod plugin;
 mod reader;
 mod runtime;
 mod schema;
