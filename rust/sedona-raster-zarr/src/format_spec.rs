@@ -122,4 +122,14 @@ impl ExternalFormatSpec for ZarrFormatSpec {
     fn extension(&self) -> &str {
         ".zarr"
     }
+
+    fn list_single_object(&self) -> bool {
+        // A Zarr group is a directory, not a file. The DataFusion
+        // listing layer can't enumerate it as a single object — it
+        // would return the directory's contents (zarr.json, chunk
+        // shards, ...), none of which carry the `.zarr` extension.
+        // Routing through the single-object provider keeps the URI
+        // intact and hands it to `open_reader` directly.
+        true
+    }
 }
