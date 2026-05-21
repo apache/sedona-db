@@ -6408,6 +6408,7 @@ name = "sedonadb-zarr"
 version = "0.4.0"
 dependencies = [
  "arrow-array",
+ "datafusion",
  "pyo3",
  "sedona-raster-zarr",
  "sedonadb",

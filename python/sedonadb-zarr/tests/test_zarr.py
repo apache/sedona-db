@@ -32,6 +32,22 @@ import pytest
 
 import sedonadb
 import sedonadb_zarr
+from sedonadb.dataframe import DataFrame
+
+
+def _read_format(con, spec, uri: str) -> DataFrame:
+    """Bridge ``ExternalFormatSpec`` → DataFrame.
+
+    `sedonadb.SedonaContext` doesn't expose a public ``read_format``
+    helper yet — for now plugin tests call ``_impl.read_external_format``
+    directly. When the public surface lands the body of this helper
+    collapses to ``_read_format(con,spec, uri)``.
+    """
+    return DataFrame(
+        con._impl,
+        con._impl.read_external_format(spec, [uri], False),
+        con.options,
+    )
 
 
 @pytest.fixture
@@ -90,11 +106,11 @@ def test_arrays_option_threads_through_sql(zarr_group):
 
 
 def test_format_spec_via_read_format(zarr_group):
-    # The second user-facing surface: `con.read_format(spec, uri)`,
+    # The second user-facing surface: `_read_format(con,spec, uri)`,
     # which uses ExternalFormatSpec.open_reader -> PyZarrChunkReader's
     # __arrow_c_stream__ to plumb data through.
     con = sedonadb.connect()
-    df = con.read_format(sedonadb_zarr.ZarrFormatSpec(), f"file://{zarr_group}")
+    df = _read_format(con, sedonadb_zarr.ZarrFormatSpec(), f"file://{zarr_group}")
     arrow_tab = df.to_arrow_table()
     assert arrow_tab.num_rows == 2
     assert arrow_tab.column_names == ["raster"]
@@ -119,7 +135,7 @@ def test_format_spec_via_read_format(zarr_group):
 def test_format_spec_with_arrays_option(zarr_group):
     con = sedonadb.connect()
     spec = sedonadb_zarr.ZarrFormatSpec().with_options({"arrays": ["temperature"]})
-    df = con.read_format(spec, f"file://{zarr_group}")
+    df = _read_format(con, spec, f"file://{zarr_group}")
     assert df.to_arrow_table().num_rows == 2
 
 
@@ -127,4 +143,4 @@ def test_format_spec_load_eager_errors(zarr_group):
     con = sedonadb.connect()
     spec = sedonadb_zarr.ZarrFormatSpec().with_options({"load_eager": True})
     with pytest.raises(Exception, match=r"load_eager"):
-        con.read_format(spec, f"file://{zarr_group}").to_arrow_table()
+        _read_format(con, spec, f"file://{zarr_group}").to_arrow_table()

@@ -200,4 +200,48 @@ impl InternalContext {
                 .to_string(),
         ))
     }
+
+    /// Register a UDTF (table function) whose implementation is passed
+    /// through a `PyCapsule` containing an
+    /// `Arc<dyn datafusion::catalog::TableFunctionImpl>`.
+    ///
+    /// Plugin-handoff API: format-specific Python packages (e.g.
+    /// `sedonadb-zarr`) build their UDTF in their own PyO3 extension
+    /// and pass it across as an opaque capsule, sidestepping the
+    /// cross-extension `#[pyclass]` type-id mismatch.
+    ///
+    /// The capsule must be named `"sedonadb.udtf"` and store an
+    /// `Arc<dyn TableFunctionImpl>` as its value. We clone the Arc to
+    /// take our own refcount; the capsule retains its own copy until
+    /// Python GC drops it.
+    pub fn register_udtf_capsule(
+        &self,
+        name: &str,
+        capsule: &Bound<'_, pyo3::types::PyCapsule>,
+    ) -> Result<(), PySedonaError> {
+        use std::sync::Arc;
+
+        let expected = c"sedonadb.udtf";
+        let actual = capsule
+            .name()?
+            .ok_or_else(|| PySedonaError::SedonaPython("UDTF capsule has no name".to_string()))?;
+        if actual != expected {
+            return Err(PySedonaError::SedonaPython(format!(
+                "UDTF capsule name mismatch: expected {expected:?}, got {actual:?}"
+            )));
+        }
+        let ptr = capsule.pointer() as *const Arc<dyn datafusion::catalog::TableFunctionImpl>;
+        if ptr.is_null() {
+            return Err(PySedonaError::SedonaPython(
+                "UDTF capsule pointer is null".to_string(),
+            ));
+        }
+        // SAFETY: the capsule's payload is an `Arc<dyn TableFunctionImpl>`
+        // (validated by name above). PyO3 keeps the value alive for the
+        // lifetime of the capsule; we clone the Arc to obtain an
+        // independent refcount that outlives this scope.
+        let udtf = unsafe { (*ptr).clone() };
+        self.inner.ctx.register_udtf(name, udtf);
+        Ok(())
+    }
 }

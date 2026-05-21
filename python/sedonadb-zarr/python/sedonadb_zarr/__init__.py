@@ -40,8 +40,7 @@ from typing import Any, Mapping, Optional
 
 from sedonadb.datasource import ExternalFormatSpec
 
-from sedonadb_zarr._zarr_lib import PyZarrChunkReader
-from sedonadb_zarr._zarr_lib import register_udtf as _register_udtf
+from sedonadb_zarr._zarr_lib import PyZarrChunkReader, zarr_udtf_capsule
 
 
 def register(con) -> None:
@@ -57,7 +56,9 @@ def register(con) -> None:
         A ``sedonadb`` ``Context`` (the object returned by
         ``sedonadb.connect()``). Internally, this function extracts
         the underlying ``InternalContext`` PyO3 handle and registers
-        the UDTF on its DataFusion ``SessionContext``.
+        the UDTF on its DataFusion ``SessionContext`` via a
+        ``PyCapsule`` handoff — the only viable cross-extension
+        transport for the UDTF trait object.
     """
     internal_ctx = getattr(con, "_impl", None)
     if internal_ctx is None:
@@ -65,7 +66,8 @@ def register(con) -> None:
             "sedonadb_zarr.register: could not locate the InternalContext on "
             f"{type(con).__name__}; expected attribute `_impl`."
         )
-    _register_udtf(internal_ctx)
+    capsule = zarr_udtf_capsule()
+    internal_ctx.register_udtf_capsule("sd_read_zarr", capsule)
 
 
 class ZarrFormatSpec(ExternalFormatSpec):

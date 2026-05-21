@@ -19,8 +19,10 @@
 //! `sedonadb` session.
 //!
 //! Two PyO3-exposed surfaces:
-//! - `register_udtf(internal_ctx)` — attaches the `sd_read_zarr` SQL
-//!   UDTF to a sedonadb session.
+//! - `zarr_udtf_capsule()` — builds a `PyCapsule` carrying the
+//!   `sd_read_zarr` UDTF implementation. The Python wrapper hands it
+//!   to sedonadb's `InternalContext.register_udtf_capsule` to attach
+//!   the SQL function.
 //! - `PyZarrChunkReader` — a streaming reader producible from Python,
 //!   exposing `__arrow_c_stream__` so it plugs into
 //!   `ExternalFormatSpec.open_reader` (the `con.read_format(spec, uri)`
@@ -31,26 +33,34 @@
 //! here is intentionally thin.
 
 use std::ffi::CString;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use arrow_array::ffi_stream::FFI_ArrowArrayStream;
+use datafusion::catalog::TableFunctionImpl;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyCapsule;
-// `python/sedonadb` compiles its rlib as `_lib` (the lib.name override
-// maturin needs).
-use ::_lib::context::InternalContext;
-use sedona_raster_zarr::ZarrChunkReader;
+use sedona_raster_zarr::{ZarrChunkReader, ZarrReadFunction};
 
-/// Attach the `sd_read_zarr` SQL UDTF to a sedonadb session.
+/// Build a PyCapsule carrying an `Arc<dyn TableFunctionImpl>` for the
+/// Zarr UDTF, suitable for handoff to sedonadb's
+/// `InternalContext.register_udtf_capsule`.
 ///
-/// Called from `sedonadb_zarr.register(con)`. After this,
-/// `con.sql("SELECT * FROM sd_read_zarr(...)")` works.
+/// Cross-extension `#[pyclass]` extraction doesn't work in PyO3 (each
+/// cdylib has its own type-id static), so we pass the UDTF
+/// implementation across the extension boundary via an opaque capsule.
+/// The capsule owns the `Arc`; the consumer clones a fresh refcount
+/// before the capsule is dropped.
 #[pyfunction]
-fn register_udtf(internal_ctx: &Bound<'_, InternalContext>) -> PyResult<()> {
-    let ctx = internal_ctx.borrow();
-    sedona_raster_zarr::register_udtf(&ctx.inner.ctx);
-    Ok(())
+fn zarr_udtf_capsule(py: Python<'_>) -> PyResult<Bound<'_, PyCapsule>> {
+    let udtf: Arc<dyn TableFunctionImpl> = Arc::new(ZarrReadFunction::default());
+    let name = CString::new("sedonadb.udtf").unwrap();
+    PyCapsule::new_with_destructor(
+        py,
+        udtf,
+        Some(name),
+        |_v: Arc<dyn TableFunctionImpl>, _ctx| {},
+    )
 }
 
 /// Python-callable wrapper around `ZarrChunkReader` that exposes
@@ -107,7 +117,7 @@ impl PyZarrChunkReader {
 // brings sedonadb's pymodule into our cdylib's link.
 #[pymodule]
 fn _zarr_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(register_udtf, m)?)?;
+    m.add_function(wrap_pyfunction!(zarr_udtf_capsule, m)?)?;
     m.add_class::<PyZarrChunkReader>()?;
     Ok(())
 }

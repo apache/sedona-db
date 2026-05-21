@@ -32,6 +32,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 arrow-array = { workspace = true }
+datafusion = { workspace = true }
 pyo3 = { version = "0.25.1" }
 sedona-raster-zarr = { workspace = true }
 # The sedonadb Python extension; its rustc crate name is `_lib` per
