@@ -121,7 +121,10 @@ jobs:
           pip install -e "python/sedonadb/[test]" -vv
           # The zarr plugin package — installed so its tests in
           # python/sedonadb-zarr/tests/test_zarr.py can be collected by
-          # the `cd python && pytest` step below.
+          # the `cd python && pytest` step below. `s2geography` is a
+          # sedonadb-only feature, so unset MATURIN_PEP517_ARGS to keep
+          # it from leaking into the plugin's maturin build.
+          unset MATURIN_PEP517_ARGS
           pip install -e "python/sedonadb-zarr/[test]" -vv
 
       - name: Download minimal geoarrow-data assets
