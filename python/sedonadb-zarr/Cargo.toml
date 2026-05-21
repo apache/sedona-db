@@ -32,13 +32,12 @@ crate-type = ["cdylib"]
 
 [dependencies]
 arrow-array = { workspace = true }
-datafusion = { workspace = true }
+# UDTF handoff to sedonadb is via `datafusion-ffi`'s `FFI_TableFunction`
+# (the `datafusion-python` pattern). The plugin and host don't share
+# any Rust types directly — concrete `RecordBatch` traffic flows
+# through Arrow C with release callbacks owned by the producing
+# cdylib, so plugin and host can use different allocators.
+datafusion-catalog = { workspace = true }
+datafusion-ffi = { workspace = true }
 pyo3 = { version = "0.25.1" }
 sedona-raster-zarr = { workspace = true }
-# The sedonadb Python extension; its rustc crate name is `_lib` per
-# the `[lib].name` override in `python/sedonadb/Cargo.toml`. We import
-# it in `src/lib.rs` via the leading `::_lib` syntax to disambiguate
-# from our own crate's `_lib` pymodule. Inlined here (not via
-# `workspace = true`) to avoid a self-referential workspace dep that
-# trips `cargo metadata` in cibuildwheel's isolated build env.
-sedonadb = { path = "../sedonadb", default-features = false }

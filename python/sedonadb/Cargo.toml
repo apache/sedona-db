@@ -37,20 +37,14 @@ crate-type = ["cdylib", "rlib"]
 # enables it explicitly via `[tool.maturin] features` in
 # `pyproject.toml` for the wheel build.
 #
-# `mimalloc` is intentionally *not* in `default`: when sedonadb is
-# loaded alongside a plugin cdylib (e.g. `sedonadb-zarr`) the
-# global-allocator mismatch corrupts the heap. Concrete Arrow types
-# like `RecordBatch` are monomorphised per-cdylib, so the drop site
-# runs the consumer's allocator regardless of who allocated, and
-# mimalloc-free on a libc-malloc pointer segfaults.
-#
-# !! WARNING: opting in with `--features mimalloc` re-introduces the
-# segfault for any user who imports a plugin alongside this wheel.
-# This isn't a perf knob — it's a "I'm shipping a closed binary that
-# will never load a plugin cdylib" knob. The plugin-safe path is to
-# link mimalloc *dynamically* (one shared `libmimalloc.so` for the
-# whole process), which is a packaging change, not a feature flag.
-default = []
+# `mimalloc` is back in defaults now that plugin UDTFs cross the cdylib
+# boundary via `datafusion-ffi`. All `RecordBatch` traffic between
+# plugin and host flows through the Arrow C Data/Stream protocol, where
+# each FFI struct carries a `release` callback set by the producing
+# cdylib — so allocations are always freed in the cdylib that made
+# them. The previous segfault was triggered by passing native
+# `Arc<dyn TableProvider>` across cdylibs, which we no longer do.
+default = ["mimalloc"]
 extension-module = []
 mimalloc = ["dep:mimalloc", "dep:libmimalloc-sys"]
 s2geography = ["sedona/s2geography"]

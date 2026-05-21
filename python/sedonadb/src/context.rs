@@ -201,59 +201,38 @@ impl InternalContext {
         ))
     }
 
-    /// Register a UDTF (table function) whose implementation is passed
-    /// through a `PyCapsule` containing an [`UdtfCapsule`].
+    /// Register a UDTF (table function) defined in a separate Python
+    /// extension (e.g. `sedonadb-zarr`).
     ///
-    /// Plugin-handoff API: format-specific Python packages (e.g.
-    /// `sedonadb-zarr`) build their UDTF in their own PyO3 extension
-    /// and pass it across as an opaque capsule, sidestepping the
-    /// cross-extension `#[pyclass]` type-id mismatch.
-    ///
-    /// Two checks gate the dereference: the capsule's name must equal
-    /// [`UDTF_CAPSULE_NAME`] (a public string, so this is mostly an
-    /// ABI tag), and the payload's leading [`UDTF_CAPSULE_MAGIC`]
-    /// sentinel must match (much harder to forge from outside this
-    /// crate). The consumer clones the inner `Arc` to take its own
-    /// refcount; the capsule keeps a parallel refcount until Python
-    /// GC drops it.
-    ///
-    /// [`UdtfCapsule`]: crate::plugin::UdtfCapsule
-    /// [`UDTF_CAPSULE_NAME`]: crate::plugin::UDTF_CAPSULE_NAME
-    /// [`UDTF_CAPSULE_MAGIC`]: crate::plugin::UDTF_CAPSULE_MAGIC
+    /// `spec` is the Python object exposing
+    /// `__datafusion_table_function__(session) -> PyCapsule`. The host
+    /// hands the plugin a session capsule carrying an
+    /// `FFI_LogicalExtensionCodec`; the plugin returns a capsule named
+    /// `"datafusion_table_function"` wrapping an
+    /// `FFI_TableFunction`. `datafusion-ffi` handles the actual
+    /// cross-cdylib trait-object conversion — concrete `RecordBatch`
+    /// allocations flow through Arrow C Stream's release callbacks, so
+    /// the plugin and host can use different allocators.
     pub fn register_udtf_capsule(
         &self,
+        py: Python<'_>,
         name: &str,
-        capsule: &Bound<'_, pyo3::types::PyCapsule>,
+        spec: Bound<'_, PyAny>,
     ) -> Result<(), PySedonaError> {
-        use crate::plugin::{UdtfCapsule, UDTF_CAPSULE_MAGIC, UDTF_CAPSULE_NAME};
+        use pyo3::types::PyCapsule;
 
-        let actual = capsule
-            .name()?
-            .ok_or_else(|| PySedonaError::SedonaPython("UDTF capsule has no name".to_string()))?;
-        if actual != UDTF_CAPSULE_NAME {
-            return Err(PySedonaError::SedonaPython(format!(
-                "UDTF capsule name mismatch: expected {UDTF_CAPSULE_NAME:?}, got {actual:?}"
-            )));
-        }
-        if capsule.pointer().is_null() {
-            return Err(PySedonaError::SedonaPython(
-                "UDTF capsule pointer is null".to_string(),
-            ));
-        }
-        // SAFETY: the capsule's payload is an `UdtfCapsule` (name
-        // matched above). PyO3 keeps the value alive for the
-        // lifetime of the capsule and `reference` is the documented
-        // accessor — equivalent to `pointer().cast::<T>()` but without
-        // betting on `CapsuleContents`'s private field layout.
-        let payload: &UdtfCapsule = unsafe { capsule.reference::<UdtfCapsule>() };
-        if payload.magic != UDTF_CAPSULE_MAGIC {
-            return Err(PySedonaError::SedonaPython(format!(
-                "UDTF capsule magic mismatch: expected {UDTF_CAPSULE_MAGIC:#x}, got {:#x}; \
-                 capsule likely produced by an incompatible build",
-                payload.magic
-            )));
-        }
-        self.inner.ctx.register_udtf(name, payload.udtf.clone());
+        let session_capsule = crate::plugin::create_session_capsule(py, &self.inner.ctx)?;
+        let returned = spec
+            .getattr(crate::plugin::UDTF_ATTR)?
+            .call1((session_capsule,))?;
+        let returned = returned.downcast::<PyCapsule>().map_err(|e| {
+            PySedonaError::SedonaPython(format!(
+                "plugin's {} must return a PyCapsule, got {e}",
+                crate::plugin::UDTF_ATTR
+            ))
+        })?;
+        let udtf = crate::plugin::ffi_table_function_from_capsule(returned)?;
+        self.inner.ctx.register_udtf(name, udtf);
         Ok(())
     }
 }

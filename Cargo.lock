@@ -6411,10 +6411,10 @@ name = "sedonadb-zarr"
 version = "0.4.0"
 dependencies = [
  "arrow-array",
- "datafusion",
+ "datafusion-catalog",
+ "datafusion-ffi",
  "pyo3",
  "sedona-raster-zarr",
- "sedonadb",
 ]
 
 [[package]]
