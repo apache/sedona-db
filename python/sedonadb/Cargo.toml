@@ -36,7 +36,15 @@ crate-type = ["cdylib", "rlib"]
 # would force it on for everyone, including the plugin link. Maturin
 # enables it explicitly via `[tool.maturin] features` in
 # `pyproject.toml` for the wheel build.
-default = ["mimalloc"]
+#
+# `mimalloc` is intentionally *not* in `default`: when sedonadb is
+# loaded alongside a plugin cdylib (e.g. `sedonadb-zarr`) the
+# global-allocator mismatch corrupts the heap. Concrete Arrow types
+# like `RecordBatch` are monomorphised per-cdylib, so the drop site
+# runs the consumer's allocator regardless of who allocated, and
+# mimalloc-free on a libc-malloc pointer segfaults. Wheel builds that
+# never load plugins can opt in with `--features mimalloc`.
+default = []
 extension-module = []
 mimalloc = ["dep:mimalloc", "dep:libmimalloc-sys"]
 s2geography = ["sedona/s2geography"]
