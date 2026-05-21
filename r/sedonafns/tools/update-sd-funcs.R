@@ -39,7 +39,7 @@ type_to_param <- list(
 )
 
 # Apache license header
-lincense_header <- "# Licensed to the Apache Software Foundation (ASF) under one
+license_header <- "# Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
 # distributed with this work for additional information
 # regarding copyright ownership.  The ASF licenses this file
@@ -73,10 +73,6 @@ extract_frontmatter <- function(file_path) {
   }
 
   yaml_text <- paste(lines[(start_idx + 1):(end_idx - 1)], collapse = "\n")
-
-  # Remove license comment from YAML
-  yaml_text <- gsub("#[^\n]*\n", "", yaml_text)
-
   yaml::yaml.load(yaml_text)
 }
 
@@ -453,7 +449,7 @@ generate_r_file <- function(fn_name, frontmatter, description, file_hash) {
   # Assemble full file
   glue(
     "
-{lincense_header}
+{license_header}
 
 # Generated from {fn_name}.qmd {file_hash}
 
