@@ -42,13 +42,6 @@ struct STAsBinary {}
 
 impl SedonaScalarKernel for STAsBinary {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        // If we have WkbView input, return BinaryView to avoid a cast
-        if args.len() == 1 {
-            if let SedonaType::WkbView(_, _) = args[0] {
-                return Ok(Some(SedonaType::Arrow(DataType::BinaryView)));
-            }
-        }
-
         let matcher = ArgMatcher::new(
             vec![ArgMatcher::is_geometry_or_geography()],
             SedonaType::Arrow(DataType::Binary),
@@ -57,15 +50,22 @@ impl SedonaScalarKernel for STAsBinary {
         matcher.match_args(args)
     }
 
-    fn invoke_batch(&self, _: &[SedonaType], args: &[ColumnarValue]) -> Result<ColumnarValue> {
-        // This currently works because our return_type() ensure we didn't need a cast
-        Ok(args[0].clone())
+    fn invoke_batch(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+    ) -> Result<ColumnarValue> {
+        if matches!(arg_types[0], SedonaType::Wkb(_, _)) {
+            Ok(args[0].clone())
+        } else {
+            args[0].clone().cast_to(&DataType::Binary, None)
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use arrow_array::{ArrayRef, BinaryArray, BinaryViewArray};
+    use arrow_array::{ArrayRef, BinaryArray};
     use datafusion_common::scalar::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
@@ -129,15 +129,15 @@ mod tests {
 
         assert_eq!(
             tester.invoke_wkb_scalar(Some("POINT (1 2)")).unwrap(),
-            ScalarValue::BinaryView(Some(POINT12.to_vec()))
+            ScalarValue::Binary(Some(POINT12.to_vec()))
         );
 
         assert_eq!(
             tester.invoke_wkb_scalar(None).unwrap(),
-            ScalarValue::BinaryView(None)
+            ScalarValue::Binary(None)
         );
 
-        let expected_array: BinaryViewArray = [Some(POINT12), None, Some(POINT12)].iter().collect();
+        let expected_array: BinaryArray = [Some(POINT12), None, Some(POINT12)].iter().collect();
         assert_eq!(
             &tester
                 .invoke_wkb_array(vec![Some("POINT (1 2)"), None, Some("POINT (1 2)")])

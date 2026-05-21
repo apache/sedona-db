@@ -631,16 +631,28 @@ impl ThreadSafeDialect {
 #[cfg(test)]
 mod tests {
 
-    use arrow_array::{create_array, ArrayRef, RecordBatchIterator, RecordBatchReader};
+    use std::{fs::File, path::Path, sync::Arc};
+
+    use arrow_array::{
+        create_array, ArrayRef, BinaryViewArray, Int32Array, RecordBatch, RecordBatchIterator,
+        RecordBatchReader,
+    };
     use arrow_schema::{DataType, Field, Schema};
     use datafusion::assert_batches_eq;
+    use datafusion_expr::ScalarUDF;
+    use parquet::{
+        arrow::ArrowWriter,
+        file::{metadata::KeyValue, properties::WriterProperties},
+    };
     use sedona_datasource::spec::{Object, OpenReaderArgs};
+    use sedona_functions::register::default_function_set;
     use sedona_schema::{
         crs::{deserialize_crs, lnglat},
         datatypes::{Edges, SedonaType},
         schema::SedonaSchema,
     };
     use sedona_testing::data::test_geoparquet;
+    use sedona_testing::testers::ScalarUdfTester;
     use tempfile::tempdir;
 
     use super::*;
@@ -774,6 +786,84 @@ mod tests {
             sedona_types[1],
             SedonaType::WkbView(Edges::Planar, lnglat())
         );
+    }
+
+    #[tokio::test]
+    async fn st_asbinary_geoparquet_returns_binary() {
+        let ctx = SedonaContext::new_local_interactive().await.unwrap();
+        let tmpdir = tempdir().unwrap();
+        let tmp_parquet = tmpdir.path().join("single_point.parquet");
+        write_binary_view_geoparquet(&tmp_parquet);
+
+        let df = ctx
+            .read_parquet(
+                tmp_parquet.to_string_lossy().to_string(),
+                GeoParquetReadOptions::default(),
+            )
+            .await
+            .unwrap();
+        let sedona_types = df
+            .schema()
+            .sedona_types()
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
+        assert!(matches!(sedona_types[1], SedonaType::WkbView(_, _)));
+
+        let batches = df.collect().await.unwrap();
+        assert_eq!(
+            *batches[0].schema().field(1).data_type(),
+            DataType::BinaryView
+        );
+
+        let udf: ScalarUDF = default_function_set()
+            .scalar_udf("st_asbinary")
+            .unwrap()
+            .clone()
+            .into();
+        let tester = ScalarUdfTester::new(udf, vec![sedona_types[1].clone()]);
+        let result = tester.invoke_array(batches[0].column(1).clone()).unwrap();
+        assert_eq!(*result.data_type(), DataType::Binary);
+    }
+
+    fn write_binary_view_geoparquet(path: &Path) {
+        const POINT12: [u8; 21] = [
+            0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x3f, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40,
+        ];
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            Field::new("geometry", DataType::BinaryView, true),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(Int32Array::from(vec![1])) as ArrayRef,
+                Arc::new(BinaryViewArray::from_iter_values([POINT12])) as ArrayRef,
+            ],
+        )
+        .unwrap();
+
+        let geo_metadata = r#"{
+            "version": "1.1.0",
+            "primary_column": "geometry",
+            "columns": {
+                "geometry": {
+                    "encoding": "WKB",
+                    "geometry_types": ["Point"]
+                }
+            }
+        }"#;
+        let props = WriterProperties::builder()
+            .set_key_value_metadata(Some(vec![KeyValue {
+                key: "geo".to_string(),
+                value: Some(geo_metadata.to_string()),
+            }]))
+            .build();
+        let file = File::create(path).unwrap();
+        let mut writer = ArrowWriter::try_new(file, schema, Some(props)).unwrap();
+        writer.write(&batch).unwrap();
+        writer.close().unwrap();
     }
 
     #[derive(Debug)]

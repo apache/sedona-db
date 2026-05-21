@@ -47,6 +47,7 @@ gpu = ["dep:sedona-spatial-join-gpu", "sedona-spatial-join-gpu/gpu"]
 s2geography = ["dep:sedona-s2geography", "dep:sedona-spatial-join-geography", "sedona-geoparquet/s2geography"]
 
 [dev-dependencies]
+parquet = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 rstest = { workspace = true }

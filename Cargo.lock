@@ -5327,6 +5327,7 @@ dependencies = [
  "geo-types",
  "object_store",
  "parking_lot",
+ "parquet",
  "regex",
  "rstest",
  "sedona-common",
