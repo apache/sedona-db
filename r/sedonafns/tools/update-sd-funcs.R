@@ -18,6 +18,7 @@
 library(yaml)
 library(here)
 library(glue)
+library(rlang)
 
 # Configuration - paths relative to sedonafns package root
 docs_dir <- here::here("..", "..", "docs", "reference", "sql")
@@ -219,12 +220,16 @@ parse_kernel_params <- function(kernels, fn_name = "unknown") {
   # If conflicts, use variadic mode with ... and document kernel signatures
   if (has_conflict) {
     # Build signature strings for documentation
-    kernel_signatures <- vapply(seq_along(all_kernel_args), function(i) {
-      args <- all_kernel_args[[i]]
-      types <- vapply(all_kernel_info[[i]], function(x) x$type, character(1))
-      # Format as "arg1 (type1), arg2 (type2), ..."
-      paste(paste0(args, " (", types, ")"), collapse = ", ")
-    }, character(1))
+    kernel_signatures <- vapply(
+      seq_along(all_kernel_args),
+      function(i) {
+        args <- all_kernel_args[[i]]
+        types <- vapply(all_kernel_info[[i]], function(x) x$type, character(1))
+        # Format as "arg1 (type1), arg2 (type2), ..."
+        paste(paste0(args, " (", types, ")"), collapse = ", ")
+      },
+      character(1)
+    )
 
     return(list(
       params = list(),
