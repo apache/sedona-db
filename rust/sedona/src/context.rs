@@ -280,6 +280,10 @@ impl SedonaContext {
             sd_order_lnglat::OrderLngLat::new(sedona_s2geography::utils::s2_cell_id_from_lnglat);
         self.register_scalar_kernels([("sd_order", sd_order_kernel)].into_iter())?;
 
+        self.register_aggregate_kernels(
+            sedona_s2geography::register::aggregate_kernels().into_iter(),
+        )?;
+
         Ok(())
     }
 
