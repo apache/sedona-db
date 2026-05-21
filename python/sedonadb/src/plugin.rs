@@ -86,13 +86,20 @@ impl TaskContextProvider for SessionTaskContextProvider {
 /// Build a session capsule the host hands to the plugin.
 ///
 /// The capsule carries an [`FFI_LogicalExtensionCodec`] over which the
-/// plugin's `FFI_TableFunction` will serialise expressions.
+/// plugin's `FFI_TableFunction` will serialise expressions. The
+/// codec stores a `Weak<dyn TaskContextProvider>`, so the caller
+/// must keep `provider` alive for as long as the registered UDTF
+/// can be invoked — we expect them to hold it on the session
+/// (see `InternalContext::udtf_task_provider`).
 pub(crate) fn create_session_capsule<'py>(
     py: Python<'py>,
-    ctx: &SessionContext,
+    provider: &Arc<dyn TaskContextProvider + Send + Sync>,
 ) -> Result<Bound<'py, PyCapsule>, PySedonaError> {
-    let provider: Arc<dyn TaskContextProvider> = Arc::new(SessionTaskContextProvider::new(ctx));
-    let codec = FFI_LogicalExtensionCodec::new_default(&provider);
+    // `FFI_TaskContextProvider` only requires `TaskContextProvider`;
+    // the Send + Sync bounds we carry on the session field are for
+    // PyO3's pyclass sync requirements. Erase them at the boundary.
+    let provider_erased: Arc<dyn TaskContextProvider> = provider.clone();
+    let codec = FFI_LogicalExtensionCodec::new_default(&provider_erased);
     PyCapsule::new(py, codec, Some(CODEC_CAPSULE_NAME.to_owned())).map_err(PySedonaError::from)
 }
 

@@ -16,6 +16,7 @@
 // under the License.
 use std::{collections::HashMap, sync::Arc};
 
+use datafusion::execution::TaskContextProvider;
 use datafusion_expr::ScalarUDFImpl;
 use pyo3::prelude::*;
 use sedona::context::SedonaContext;
@@ -35,6 +36,14 @@ use crate::{
 pub struct InternalContext {
     pub inner: SedonaContext,
     pub runtime: Arc<Runtime>,
+    /// Strong reference to the [`TaskContextProvider`] we hand across
+    /// the FFI boundary in [`Self::register_udtf_capsule`]. The FFI
+    /// codec stores a `Weak<dyn TaskContextProvider>`, so dropping
+    /// this would cause `FFI error: TaskContextProvider went out of
+    /// scope` at UDTF call time. Holding it on the session keeps the
+    /// strong ref alive for as long as the registered UDTF can be
+    /// invoked.
+    pub udtf_task_provider: Arc<dyn TaskContextProvider + Send + Sync>,
 }
 
 #[pymethods]
@@ -53,10 +62,13 @@ impl InternalContext {
             .map_err(|e| PySedonaError::SedonaPython(e.to_string()))?;
 
         let inner = wait_for_future(py, &runtime, builder.build())??;
+        let udtf_task_provider: Arc<dyn TaskContextProvider + Send + Sync> =
+            Arc::new(crate::plugin::SessionTaskContextProvider::new(&inner.ctx));
 
         Ok(Self {
             inner,
             runtime: Arc::new(runtime),
+            udtf_task_provider,
         })
     }
 
@@ -221,7 +233,7 @@ impl InternalContext {
     ) -> Result<(), PySedonaError> {
         use pyo3::types::PyCapsule;
 
-        let session_capsule = crate::plugin::create_session_capsule(py, &self.inner.ctx)?;
+        let session_capsule = crate::plugin::create_session_capsule(py, &self.udtf_task_provider)?;
         let returned = spec
             .getattr(crate::plugin::UDTF_ATTR)?
             .call1((session_capsule,))?;
