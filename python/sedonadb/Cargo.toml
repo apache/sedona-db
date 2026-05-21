@@ -29,12 +29,14 @@ name = "_lib"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-# `extension-module` gates the `#[pymodule] fn _lib` symbol. Default-on
-# for the wheel build (maturin uses defaults); plugin crates that link
-# this rlib (e.g. `sedonadb-zarr`) disable it via
-# `default-features = false` to avoid duplicating the `PyInit__lib`
-# symbol in their own cdylib.
-default = ["extension-module", "mimalloc"]
+# `extension-module` gates the `#[pymodule] fn _lib` symbol so plugin
+# crates (e.g. `sedonadb-zarr`) can link this as an rlib without
+# duplicating `PyInit__lib` in their own cdylib. NOT a default
+# feature: Cargo's workspace-wide feature unification means a default
+# would force it on for everyone, including the plugin link. Maturin
+# enables it explicitly via `[tool.maturin] features` in
+# `pyproject.toml` for the wheel build.
+default = ["mimalloc"]
 extension-module = []
 mimalloc = ["dep:mimalloc", "dep:libmimalloc-sys"]
 s2geography = ["sedona/s2geography"]
