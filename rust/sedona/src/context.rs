@@ -232,8 +232,6 @@ impl SedonaContext {
             "sd_random_geometry",
             Arc::new(RandomGeometryFunction::default()),
         );
-        // Zarr support lives in the `sedonadb-zarr` plugin package;
-        // users opt in via its `register(con)` helper.
 
         // Always register default function set
         out.register_function_set(sedona_functions::register::default_function_set());
