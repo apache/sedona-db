@@ -242,6 +242,7 @@ pub struct AnalyzeAccumulator<T: std::fmt::Debug> {
     input_type: SedonaType,
     stats: GeoStatistics,
     bounder: T,
+    item_bounder: T,
 }
 
 impl<T: WkbBounder2D + Default + std::fmt::Debug> AnalyzeAccumulator<T> {
@@ -250,6 +251,7 @@ impl<T: WkbBounder2D + Default + std::fmt::Debug> AnalyzeAccumulator<T> {
             input_type,
             stats: GeoStatistics::empty(),
             bounder: Default::default(),
+            item_bounder: Default::default(),
         }
     }
 
@@ -262,12 +264,12 @@ impl<T: WkbBounder2D + Default + std::fmt::Debug> AnalyzeAccumulator<T> {
 
     fn update_statistics(&mut self, wkb_bytes: &[u8]) -> Result<()> {
         // Use the generic bounder to compute bounds (we need individual item bounds for
-        // the analysis)
-        let mut bounder = T::default();
-        bounder
+        // some of the analysis)
+        self.item_bounder.clear();
+        self.item_bounder
             .update_wkb_bytes(wkb_bytes)
             .map_err(|e| exec_datafusion_err!("Bounding error: {e}"))?;
-        let (x, y) = bounder.finish();
+        let (x, y) = self.item_bounder.finish();
         let bbox = BoundingBox::xy(x, y);
 
         // Parse WKB for analysis

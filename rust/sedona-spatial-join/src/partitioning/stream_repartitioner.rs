@@ -483,7 +483,7 @@ impl StreamRepartitioner {
                     &batch_ref
                         .geom_array
                         .rect(row_idx)
-                        .bounding_box_no_wraparound(),
+                        .bounding_box_no_wraparound(&(-180.0, 180.0).into()),
                 )?;
             }
             self.slot_assignments[slot_idx].push((batch_idx, row_idx));

@@ -475,8 +475,10 @@ mod tests {
         for batch in batches {
             for (wkb_opt, rect) in zip(batch.geom_array.wkbs(), batch.geom_array.rects()) {
                 if let Some(wkb) = wkb_opt {
-                    analyzer
-                        .update_statistics_with_bbox(wkb, &rect.bounding_box_no_wraparound())?;
+                    analyzer.update_statistics_with_bbox(
+                        wkb,
+                        &rect.bounding_box_no_wraparound(&(-180.0, 180.0).into()),
+                    )?;
                 }
             }
         }

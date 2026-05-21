@@ -109,9 +109,9 @@ impl Bounds2D {
 
     /// Return the x [Interval] for these bounds, converting any wraparound
     /// into the full interval
-    pub fn x_no_wraparound(&self) -> Interval {
+    pub fn x_no_wraparound(&self, global_bounds: &Interval) -> Interval {
         if self.is_wraparound() {
-            Interval::full()
+            *global_bounds
         } else {
             Interval::new(self.x.0 as f64, self.x.1 as f64)
         }
@@ -138,9 +138,9 @@ impl Bounds2D {
     }
 
     /// Convert these bounds into a [BoundingBox] converting wraparound into
-    /// a full interval
-    pub fn bounding_box_no_wraparound(&self) -> BoundingBox {
-        BoundingBox::xy(self.x_no_wraparound(), self.y())
+    /// known global bounds
+    pub fn bounding_box_no_wraparound(&self, global_x_bounds: &Interval) -> BoundingBox {
+        BoundingBox::xy(self.x_no_wraparound(global_x_bounds), self.y())
     }
 }
 
@@ -324,7 +324,7 @@ mod tests {
     fn test_bounds2d_bounding_box_no_wraparound() {
         // Regular bounds - should behave same as bounding_box()
         let bounds = Bounds2D::new((10.0, 20.0), (30.0, 40.0));
-        let bbox = bounds.bounding_box_no_wraparound();
+        let bbox = bounds.bounding_box_no_wraparound(&Interval::full());
 
         assert!(bbox.x().intersects_value(10.0));
         assert!(bbox.x().intersects_value(20.0));
@@ -336,7 +336,7 @@ mod tests {
     fn test_bounds2d_bounding_box_no_wraparound_converts_wraparound() {
         // Wraparound bounds - should convert to full interval
         let bounds = Bounds2D::new(WraparoundInterval::new(170.0, -170.0), (0.0, 10.0));
-        let bbox = bounds.bounding_box_no_wraparound();
+        let bbox = bounds.bounding_box_no_wraparound(&Interval::full());
 
         // Should contain all x values (full interval)
         assert!(bbox.x().intersects_value(175.0));

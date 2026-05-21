@@ -807,8 +807,10 @@ impl SpatialJoinStream {
             let geom_array = &probe_evaluated_batch.geom_array;
             for (wkb_opt, rect) in zip(geom_array.wkbs(), geom_array.rects()) {
                 if let Some(wkb) = wkb_opt {
-                    analyzer
-                        .update_statistics_with_bbox(wkb, &rect.bounding_box_no_wraparound())?;
+                    analyzer.update_statistics_with_bbox(
+                        wkb,
+                        &rect.bounding_box_no_wraparound(&(-180.0, 180.0).into()),
+                    )?;
                 }
             }
             let stats = analyzer.finish();

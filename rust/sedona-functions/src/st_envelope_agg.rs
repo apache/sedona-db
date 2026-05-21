@@ -353,17 +353,10 @@ impl<T: WkbBounder2D + Default> BoundsGroupsAccumulator2D<T> {
         let emit_range = self.offset..(self.offset + emit_size);
         for bounder in &self.bounders[emit_range] {
             let (x, y) = bounder.finish();
-            if x.is_empty() || y.is_empty() {
-                xmin_builder.append_null();
-                ymin_builder.append_null();
-                xmax_builder.append_null();
-                ymax_builder.append_null();
-            } else {
-                xmin_builder.append_value(x.lo());
-                ymin_builder.append_value(y.lo());
-                xmax_builder.append_value(x.hi());
-                ymax_builder.append_value(y.hi());
-            }
+            xmin_builder.append_value(x.lo());
+            ymin_builder.append_value(y.lo());
+            xmax_builder.append_value(x.hi());
+            ymax_builder.append_value(y.hi());
         }
 
         match emit_to {

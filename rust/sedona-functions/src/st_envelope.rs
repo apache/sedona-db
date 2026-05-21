@@ -118,7 +118,7 @@ fn invoke_scalar(
     let written = write_envelope(&x, &y, writer)?;
 
     let wkb = wkb::reader::read_wkb(wkb_value)
-        .map_err(|e| exec_datafusion_err!("Failed to parse empty WKB: {e}"))?;
+        .map_err(|e| exec_datafusion_err!("Failed to parse WKB: {e}"))?;
 
     if !written {
         let result = match wkb.as_type() {

@@ -33,13 +33,9 @@ use crate::utils::S2GeogCError;
 /// High level generic geography bounder implementation
 ///
 /// This bounder implements [WkbBounder2D] for use in generic algorithms that need
-/// rectangle bounds. This bounder is composed of two components: exact bounds
-/// (represented by intervals) and the inexact component (represented by a
-/// [RectBounder]). The inexact component is used to ingest new geometries and
-/// the exact component is used to ingest precalculated bounds. This ensures that
-/// the precalculated bounds are not expanded more than once (the [RectBounder]
-/// expands bounds slightly to account for numerical errors when calculating
-/// the bounds of geodesics).
+/// rectangle bounds. Note that this bounder expands bounds slightly to account for
+/// numerical errors when calculating the bounds of geodesics and converting to/from
+/// radians.
 #[derive(Debug, Default)]
 pub struct WkbGeographyBounder {
     inner: RectBounder,
@@ -95,7 +91,7 @@ impl WkbBounder2D for WkbGeographyBounder {
 
         let maybe_result = self.inner.finish();
         debug_assert!(maybe_result.is_ok());
-        if let Some((xmin, ymin, xmax, ymax)) = self.inner.finish().unwrap_or_default() {
+        if let Some((xmin, ymin, xmax, ymax)) = maybe_result.unwrap_or_default() {
             x = x.merge_interval(&(xmin, xmax).into());
             y = y.merge_interval(&(ymin, ymax).into());
         }
