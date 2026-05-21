@@ -162,7 +162,7 @@ pub fn write_envelope(
     y: &Interval,
     out: &mut impl std::io::Write,
 ) -> Result<bool> {
-    if x.is_empty() && y.is_empty() {
+    if x.is_empty() || y.is_empty() {
         // Return false and let the caller determine how to handle an empty envelope
         return Ok(false);
     }
