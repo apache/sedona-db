@@ -27,9 +27,9 @@
 //!
 //! Local filesystem stores only — `file://` URIs or bare paths.
 
-pub mod dtype;
-pub mod geozarr;
-pub mod loader;
-pub mod source_uri;
+mod dtype;
+mod geozarr;
+mod loader;
+mod source_uri;
 
 pub use loader::ZarrChunkReader;

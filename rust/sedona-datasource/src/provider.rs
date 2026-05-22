@@ -177,9 +177,8 @@ impl SingleObjectExternalTable {
                 let first_uri = table_paths[0].as_str();
                 let bad_uri = path.as_str();
                 return exec_err!(
-                    "external_table: all URIs in a single-object scan must share the same \
-                     object store; got '{first_uri}' (store '{first_store}') and \
-                     '{bad_uri}' (store '{store}')"
+                    "all URIs must share the same object store; got '{first_uri}' \
+                     (store '{first_store}') and '{bad_uri}' (store '{store}')"
                 );
             }
         }
@@ -227,6 +226,11 @@ impl TableProvider for SingleObjectExternalTable {
         _filters: &[Expr],
         limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
+        // `_filters` is dropped: no `supports_filters_pushdown` override
+        // means DataFusion won't claim our scan handles them, and the
+        // filter node above us applies them itself. Spatial-bbox
+        // pushdown (`PyFilter::bounding_box`) therefore doesn't fire
+        // for single-object formats today.
         let (object_store_url, _) = &self.files[0];
 
         let table_schema = TableSchema::new(self.schema.clone(), vec![]);

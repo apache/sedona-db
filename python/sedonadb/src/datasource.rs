@@ -212,7 +212,7 @@ impl ExternalFormatSpec for PyExternalFormat {
     }
 }
 
-/// Wrapper around the [Object] such that the [PyExternalFormatSpec] can pass
+/// Wrapper around the [Object] such that the [PyExternalFormat] can pass
 /// required information into Python method calls
 ///
 /// Currently this only exposes `to_url()`; however, we can and should expose
@@ -230,7 +230,7 @@ impl PyDataSourceObject {
     }
 }
 
-/// Wrapper around the [OpenReaderArgs] such that the [PyExternalFormatSpec] can pass
+/// Wrapper around the [OpenReaderArgs] such that the [PyExternalFormat] can pass
 /// required information into Python method calls
 #[pyclass]
 #[derive(Clone, Debug)]
@@ -299,7 +299,7 @@ impl PyOpenReaderArgs {
     }
 }
 
-/// Wrapper around a PhysicalExpr such that the [PyExternalFormatSpec] can pass
+/// Wrapper around a PhysicalExpr such that the [PyExternalFormat] can pass
 /// required information into Python method calls
 ///
 /// This currently only exposes `bounding_box()`, but in the future could expose

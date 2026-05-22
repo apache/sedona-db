@@ -47,9 +47,10 @@ class ZarrFormatSpec(ExternalFormatSpec):
 
     Supported `with_options` keys:
 
-    - `arrays` (`list[str]` or JSON-string) — explicit subset of group
-      arrays to read.
+    - `arrays` (`list[str]`) — explicit subset of group arrays to read.
     """
+
+    _SUPPORTED_OPTIONS = frozenset({"arrays"})
 
     def __init__(self, options: Optional[Mapping[str, Any]] = None):
         self._options: dict = dict(options) if options else {}
@@ -65,6 +66,12 @@ class ZarrFormatSpec(ExternalFormatSpec):
         return True
 
     def with_options(self, options: Mapping[str, Any]) -> "ZarrFormatSpec":
+        unknown = set(options) - self._SUPPORTED_OPTIONS
+        if unknown:
+            raise ValueError(
+                f"ZarrFormatSpec: unknown option(s) {sorted(unknown)!r}; "
+                f"supported: {sorted(self._SUPPORTED_OPTIONS)!r}"
+            )
         merged = {**self._options, **options}
         return ZarrFormatSpec(merged)
 

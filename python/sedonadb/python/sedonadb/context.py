@@ -359,6 +359,11 @@ class SedonaContext:
         user reads through it via this method. Built-in formats have
         their own dedicated readers (`read_parquet`, `read_pyogrio`).
 
+        Format-specific options are passed via the spec itself using
+        `spec.with_options({...})`, which returns a configured copy.
+        Unlike `read_pyogrio`, this method has no `options=` keyword —
+        each spec class documents its own supported keys.
+
         Args:
             spec: An `ExternalFormatSpec` instance describing how to open
                 the underlying source.
@@ -369,9 +374,10 @@ class SedonaContext:
         Examples:
             >>> import sedonadb_zarr  # doctest: +SKIP
             >>> sd = sedona.db.connect()
-            >>> sd.read_format(  # doctest: +SKIP
-            ...     sedonadb_zarr.ZarrFormatSpec(), "file:///path/to/foo.zarr"
-            ... ).show()
+            >>> spec = sedonadb_zarr.ZarrFormatSpec().with_options(  # doctest: +SKIP
+            ...     {"arrays": ["temperature"]}
+            ... )
+            >>> sd.read_format(spec, "file:///path/to/foo.zarr").show()  # doctest: +SKIP
         """
         if isinstance(table_paths, (str, Path)):
             table_paths = [table_paths]
