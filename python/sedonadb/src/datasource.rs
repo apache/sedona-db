@@ -23,10 +23,8 @@ use async_trait::async_trait;
 use datafusion::{physical_expr::conjunction, physical_plan::PhysicalExpr};
 use datafusion_common::{DataFusionError, Result};
 use pyo3::{
-    exceptions::PyNotImplementedError,
-    pyclass, pymethods,
-    types::{PyAnyMethods, PyCapsule},
-    Bound, PyObject, Python,
+    exceptions::PyNotImplementedError, pyclass, pymethods, types::PyCapsule, Bound, PyObject,
+    Python,
 };
 use sedona_datasource::{
     spec::{ExternalFormatSpec, Object, OpenReaderArgs},
@@ -162,20 +160,19 @@ impl PyExternalFormat {
     }
 }
 
-/// Read the `list_single_object` attribute on a Python spec, defaulting
-/// to `false` if the attribute is missing (older spec implementations
-/// that predate the directory-format path).
+/// Read the `list_single_object` attribute on a Python spec.
+///
+/// Defined on the [`ExternalFormatSpec`] base class (defaults to
+/// `False`), so any spec inheriting from the base carries it. A
+/// duck-typed spec that doesn't inherit will raise `AttributeError`
+/// — that's the intended failure mode.
 fn read_list_single_object<'py>(
     py: Python<'py>,
     py_spec: &PyObject,
 ) -> Result<bool, PySedonaError> {
-    if py_spec.bind(py).hasattr("list_single_object")? {
-        Ok(py_spec
-            .getattr(py, "list_single_object")?
-            .extract::<bool>(py)?)
-    } else {
-        Ok(false)
-    }
+    Ok(py_spec
+        .getattr(py, "list_single_object")?
+        .extract::<bool>(py)?)
 }
 
 #[async_trait]
