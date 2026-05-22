@@ -87,7 +87,8 @@ impl SedonaScalarKernel for STSegmentize {
         let max_segment_length_array = args[1]
             .cast_to(&DataType::Float64, None)?
             .to_array(executor.num_iterations())?;
-        let max_segment_length_values = max_segment_length_array.as_primitive::<arrow_array::types::Float64Type>();
+        let max_segment_length_values =
+            max_segment_length_array.as_primitive::<arrow_array::types::Float64Type>();
 
         let mut idx = 0usize;
         executor.execute_wkb_void(|maybe_wkb| {
@@ -296,8 +297,7 @@ fn write_interpolated_coords<C: CoordTrait<T = f64>>(
 
     if num_segments == 1 {
         // No subdivision needed, just write end coordinate
-        write_wkb_coord_trait(writer, c2)
-            .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+        write_wkb_coord_trait(writer, c2).map_err(|e| DataFusionError::Execution(e.to_string()))?;
     } else {
         // Interpolate intermediate points
         let x1 = c1.x();
@@ -425,10 +425,7 @@ mod tests {
         );
         tester.assert_return_type(WKB_GEOMETRY);
 
-        let geoms = create_array(
-            &[None, Some("POINT (0 0)"), None],
-            &sedona_type,
-        );
+        let geoms = create_array(&[None, Some("POINT (0 0)"), None], &sedona_type);
         let result = tester
             .invoke_arrays(prepare_args(geoms, &[Some(1.0), None, None]))
             .unwrap();
@@ -445,10 +442,7 @@ mod tests {
         );
 
         let geoms = create_array(
-            &[
-                Some("POINT (0 1)"),
-                Some("POINT ZM (0 1 100 200)"),
-            ],
+            &[Some("POINT (0 1)"), Some("POINT ZM (0 1 100 200)")],
             &sedona_type,
         );
         let result = tester
@@ -456,10 +450,7 @@ mod tests {
             .unwrap();
 
         let expected = create_array(
-            &[
-                Some("POINT (0 1)"),
-                Some("POINT ZM (0 1 100 200)"),
-            ],
+            &[Some("POINT (0 1)"), Some("POINT ZM (0 1 100 200)")],
             &WKB_GEOMETRY,
         );
         assert_array_equal(&result, &expected);
@@ -478,7 +469,10 @@ mod tests {
             .unwrap();
 
         // Empty point becomes POINT (nan nan) - check WKB bytes directly
-        let result_arr = result.as_any().downcast_ref::<arrow_array::BinaryArray>().unwrap();
+        let result_arr = result
+            .as_any()
+            .downcast_ref::<arrow_array::BinaryArray>()
+            .unwrap();
         assert!(!result_arr.is_null(0));
         let wkb_bytes = result_arr.value(0);
         // Parse and check it has NaN coordinates using geo_traits
@@ -627,7 +621,10 @@ mod tests {
         );
 
         // Both Z and M values should be linearly interpolated
-        let geoms = create_array(&[Some("LINESTRING ZM (0 0 100 0, 0 2 200 100)")], &sedona_type);
+        let geoms = create_array(
+            &[Some("LINESTRING ZM (0 0 100 0, 0 2 200 100)")],
+            &sedona_type,
+        );
         let result = tester
             .invoke_arrays(prepare_args(geoms, &[Some(1.1)]))
             .unwrap();
@@ -646,10 +643,7 @@ mod tests {
             vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
         );
 
-        let geoms = create_array(
-            &[Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))")],
-            &sedona_type,
-        );
+        let geoms = create_array(&[Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))")], &sedona_type);
         let result = tester
             .invoke_arrays(prepare_args(geoms, &[Some(1e9)]))
             .unwrap();
@@ -669,16 +663,15 @@ mod tests {
         );
 
         // 2x2 square, max segment 1.1 -> each edge split into 2
-        let geoms = create_array(
-            &[Some("POLYGON ((0 0, 0 2, 2 2, 2 0, 0 0))")],
-            &sedona_type,
-        );
+        let geoms = create_array(&[Some("POLYGON ((0 0, 0 2, 2 2, 2 0, 0 0))")], &sedona_type);
         let result = tester
             .invoke_arrays(prepare_args(geoms, &[Some(1.1)]))
             .unwrap();
 
         let expected = create_array(
-            &[Some("POLYGON ((0 0, 0 1, 0 2, 1 2, 2 2, 2 1, 2 0, 1 0, 0 0))")],
+            &[Some(
+                "POLYGON ((0 0, 0 1, 0 2, 1 2, 2 2, 2 1, 2 0, 1 0, 0 0))",
+            )],
             &WKB_GEOMETRY,
         );
         assert_array_equal(&result, &expected);
@@ -707,16 +700,16 @@ mod tests {
     }
 
     #[rstest]
-    fn test_geometrycollection(
-        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
-    ) {
+    fn test_geometrycollection(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
         let tester = ScalarUdfTester::new(
             st_segmentize_udf().into(),
             vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
         );
 
         let geoms = create_array(
-            &[Some("GEOMETRYCOLLECTION (POINT (0 1), LINESTRING (0 0, 0 2))")],
+            &[Some(
+                "GEOMETRYCOLLECTION (POINT (0 1), LINESTRING (0 0, 0 2))",
+            )],
             &sedona_type,
         );
         let result = tester
@@ -724,16 +717,16 @@ mod tests {
             .unwrap();
 
         let expected = create_array(
-            &[Some("GEOMETRYCOLLECTION (POINT (0 1), LINESTRING (0 0, 0 1, 0 2))")],
+            &[Some(
+                "GEOMETRYCOLLECTION (POINT (0 1), LINESTRING (0 0, 0 1, 0 2))",
+            )],
             &WKB_GEOMETRY,
         );
         assert_array_equal(&result, &expected);
     }
 
     #[rstest]
-    fn test_item_crs_preserved(
-        #[values(WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType,
-    ) {
+    fn test_item_crs_preserved(#[values(WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType) {
         let tester = ScalarUdfTester::new(
             st_segmentize_udf().into(),
             vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
