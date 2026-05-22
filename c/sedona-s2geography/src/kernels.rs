@@ -168,32 +168,24 @@ pub fn s2_scalar_kernels() -> Result<Vec<(String, ScalarKernelRef)>> {
         ));
     }
 
-    // st_buffer(geography, NULL) -> geography
-    kernels.push((
-        "st_buffer".to_string(),
-        Arc::new(NullKernelHelper::new(ArgMatcher::new(
-            vec![ArgMatcher::is_geography(), ArgMatcher::is_null()],
-            WKB_GEOGRAPHY,
-        ))),
-    ));
-
-    // st_reduceprecision(geography, NULL) -> geography
-    kernels.push((
-        "st_reduceprecision".to_string(),
-        Arc::new(NullKernelHelper::new(ArgMatcher::new(
-            vec![ArgMatcher::is_geography(), ArgMatcher::is_null()],
-            WKB_GEOGRAPHY,
-        ))),
-    ));
-
-    // st_simplify(geography, NULL) -> geography
-    kernels.push((
-        "st_simplify".to_string(),
-        Arc::new(NullKernelHelper::new(ArgMatcher::new(
-            vec![ArgMatcher::is_geography(), ArgMatcher::is_null()],
-            WKB_GEOGRAPHY,
-        ))),
-    ));
+    // Binary (geography, numeric) -> geography
+    let binary_geog_numeric_fns = [
+        "st_buffer",
+        "st_reduceprecision",
+        "st_segmentize",
+        "st_simplify",
+        "st_tessellategeog",
+        "st_tessellategeom",
+    ];
+    for fn_name in binary_geog_numeric_fns {
+        kernels.push((
+            fn_name.to_string(),
+            Arc::new(NullKernelHelper::new(ArgMatcher::new(
+                vec![ArgMatcher::is_geography(), ArgMatcher::is_null()],
+                WKB_GEOGRAPHY,
+            ))),
+        ));
+    }
 
     // st_buffer(geography, NULL, NULL) -> geography
     kernels.push((
