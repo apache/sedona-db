@@ -20,7 +20,20 @@ import os
 import sys
 from functools import cached_property
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Literal, Optional, Tuple, Union
+from typing import (
+    Any,
+    Dict,
+    Iterable,
+    List,
+    Literal,
+    Optional,
+    TYPE_CHECKING,
+    Tuple,
+    Union,
+)
+
+if TYPE_CHECKING:
+    from sedonadb.datasource import ExternalFormatSpec
 
 from sedonadb._lib import (
     InternalContext,
