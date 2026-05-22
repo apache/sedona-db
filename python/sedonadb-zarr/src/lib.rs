@@ -15,8 +15,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! `sedonadb-zarr` — Python plugin exposing Zarr groups to SedonaDB
-//! via the `ExternalFormatSpec` + Arrow C Stream contract.
+//! PyO3 shim around `sedona-raster-zarr`. Exposes `PyZarrChunkReader`,
+//! a single-use `__arrow_c_stream__` wrapper consumed by the
+//! Python-side `ZarrFormatSpec`.
 
 use std::ffi::CString;
 use std::sync::Mutex;

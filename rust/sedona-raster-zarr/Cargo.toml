@@ -33,12 +33,10 @@ result_large_err = "allow"
 [dependencies]
 arrow-array = { workspace = true }
 arrow-schema = { workspace = true }
-async-trait = { workspace = true }
 datafusion-common = { workspace = true }
 futures = { workspace = true }
 log = { workspace = true }
 sedona-common = { workspace = true }
-sedona-datasource = { workspace = true }
 sedona-raster = { workspace = true }
 sedona-schema = { workspace = true }
 serde = { workspace = true }

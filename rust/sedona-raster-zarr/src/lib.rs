@@ -17,27 +17,19 @@
 
 //! Zarr-backed N-D raster loader for SedonaDB.
 //!
-//! Opens a Zarr group via the `zarrs` crate and emits one raster row per
-//! chunk position. Each row's bands are the corresponding chunks of each
-//! array in the group, mapped onto SedonaDB's canonical N-D raster Arrow
-//! schema.
-//!
-//! Single entry point: [`ZarrChunkReader`] is a `RecordBatchReader`
-//! that walks the group's chunk grid lazily, emitting one batch per
-//! `next()` call. Each row carries chunk-anchor URIs in `outdb_uri`;
-//! `data` is empty until the async OutDb resolver (registered
-//! separately, lands in a follow-up) materialises the bytes.
-//! Metadata-only operations (`count(*)`, `RS_Envelope`, `RS_Width`, …)
-//! work today; byte-consuming kernels require the resolver to be
-//! registered.
+//! [`ZarrChunkReader`] is a `RecordBatchReader` that walks a Zarr
+//! group's chunk grid lazily, emitting one raster row per chunk
+//! position with one band per array. Each row carries a chunk-anchor
+//! URI in `outdb_uri`; the `data` column stays empty. Metadata-only
+//! operations (`count(*)`, `RS_Envelope`, `RS_Width`, …) work directly
+//! against these rows; byte-consuming kernels need an async resolver
+//! that's not part of this crate.
 //!
 //! Local filesystem stores only — `file://` URIs or bare paths.
 
 pub mod dtype;
-pub mod format_spec;
 pub mod geozarr;
 pub mod loader;
 pub mod source_uri;
 
-pub use format_spec::ZarrFormatSpec;
 pub use loader::ZarrChunkReader;

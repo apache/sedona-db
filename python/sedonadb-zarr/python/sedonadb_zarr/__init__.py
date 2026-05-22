@@ -29,7 +29,6 @@ Importing `sedonadb_zarr` is opt-in — applications that don't import
 it pay no runtime cost.
 """
 
-import json
 from typing import Any, Mapping, Optional
 
 from sedonadb.datasource import ExternalFormatSpec
@@ -76,8 +75,6 @@ class ZarrFormatSpec(ExternalFormatSpec):
                 "ZarrFormatSpec: could not resolve a URL from the source object"
             )
         arrays = self._options.get("arrays")
-        if isinstance(arrays, str):
-            arrays = json.loads(arrays)
         batch_size = args.batch_size if args.batch_size is not None else 8192
         return PyZarrChunkReader(uri, arrays, batch_size)
 
