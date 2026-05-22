@@ -25,7 +25,7 @@ use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
 use sedona_extension::{extension::SedonaCScalarKernel, scalar_kernel::ImportedScalarKernel};
 use sedona_functions::executor::WkbBytesExecutor;
 use sedona_schema::{
-    datatypes::{SedonaType, WKB_GEOGRAPHY},
+    datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY},
     matchers::ArgMatcher,
 };
 
@@ -174,8 +174,6 @@ pub fn s2_scalar_kernels() -> Result<Vec<(String, ScalarKernelRef)>> {
         "st_reduceprecision",
         "st_segmentize",
         "st_simplify",
-        "st_tessellategeog",
-        "st_tessellategeom",
     ];
     for fn_name in binary_geog_numeric_fns {
         kernels.push((
@@ -186,6 +184,38 @@ pub fn s2_scalar_kernels() -> Result<Vec<(String, ScalarKernelRef)>> {
             ))),
         ));
     }
+
+    // st_tessellategeog(geometry, numeric) -> geography
+    kernels.push((
+        "st_tessellategeog".to_string(),
+        Arc::new(NullKernelHelper::new(ArgMatcher::new(
+            vec![ArgMatcher::is_geometry(), ArgMatcher::is_null()],
+            WKB_GEOGRAPHY,
+        ))),
+    ));
+    kernels.push((
+        "st_tessellategeog".to_string(),
+        Arc::new(NullKernelHelper::new(ArgMatcher::new(
+            vec![ArgMatcher::is_null(), ArgMatcher::is_numeric()],
+            WKB_GEOGRAPHY,
+        ))),
+    ));
+
+    // st_tessellategeom(geography, numeric) -> geometry
+    kernels.push((
+        "st_tessellategeom".to_string(),
+        Arc::new(NullKernelHelper::new(ArgMatcher::new(
+            vec![ArgMatcher::is_geography(), ArgMatcher::is_null()],
+            WKB_GEOMETRY,
+        ))),
+    ));
+    kernels.push((
+        "st_tessellategeom".to_string(),
+        Arc::new(NullKernelHelper::new(ArgMatcher::new(
+            vec![ArgMatcher::is_null(), ArgMatcher::is_numeric()],
+            WKB_GEOMETRY,
+        ))),
+    ));
 
     // st_buffer(geography, NULL, NULL) -> geography
     kernels.push((
