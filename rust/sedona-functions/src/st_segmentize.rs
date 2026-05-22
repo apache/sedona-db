@@ -22,7 +22,8 @@ use arrow_array::builder::BinaryBuilder;
 use arrow_array::cast::AsArray;
 use arrow_array::Array;
 use arrow_schema::DataType;
-use datafusion_common::{DataFusionError, Result};
+use datafusion_common::exec_datafusion_err;
+use datafusion_common::Result;
 use datafusion_expr::ColumnarValue;
 use datafusion_expr::Volatility;
 use geo_traits::{
@@ -31,6 +32,7 @@ use geo_traits::{
 };
 use sedona_expr::item_crs::ItemCrsKernel;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_geometry::error::SedonaGeometryError;
 use sedona_geometry::wkb_factory::{
     write_wkb_coord_trait, write_wkb_empty_point, write_wkb_geometrycollection_header,
     write_wkb_linestring_header, write_wkb_multilinestring_header, write_wkb_multipoint_header,
@@ -101,7 +103,8 @@ impl SedonaScalarKernel for STSegmentize {
 
             match (maybe_wkb, max_seg_len) {
                 (Some(wkb), Some(max_len)) if max_len > 0.0 => {
-                    segmentize_geometry(&wkb, max_len, &mut builder)?;
+                    segmentize_geometry(&wkb, max_len, &mut builder)
+                        .map_err(|e| exec_datafusion_err!("Segmentize error: {e}"))?;
                     builder.append_value([]);
                 }
                 _ => builder.append_null(),
@@ -118,24 +121,20 @@ fn segmentize_geometry(
     geom: &impl GeometryTrait<T = f64>,
     max_segment_length: f64,
     writer: &mut impl Write,
-) -> Result<()> {
+) -> Result<(), SedonaGeometryError> {
     let dims = geom.dim();
     match geom.as_type() {
         geo_traits::GeometryType::Point(pt) => {
-            if pt.coord().is_some() {
-                write_wkb_point_header(writer, dims)
-                    .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-                write_wkb_coord_trait(writer, &pt.coord().unwrap())
-                    .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+            if let Some(coord) = pt.coord() {
+                write_wkb_point_header(writer, dims)?;
+                write_wkb_coord_trait(writer, &coord)?;
             } else {
-                write_wkb_empty_point(writer, dims)
-                    .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+                write_wkb_empty_point(writer, dims)?;
             }
         }
 
         geo_traits::GeometryType::MultiPoint(multi_point) => {
-            write_wkb_multipoint_header(writer, dims, multi_point.points().count())
-                .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+            write_wkb_multipoint_header(writer, dims, multi_point.points().count())?;
             for pt in multi_point.points() {
                 segmentize_geometry(&pt, max_segment_length, writer)?;
             }
@@ -149,8 +148,7 @@ fn segmentize_geometry(
 
         geo_traits::GeometryType::Polygon(pgn) => {
             let num_rings = pgn.interiors().count() + pgn.exterior().is_some() as usize;
-            write_wkb_polygon_header(writer, dims, num_rings)
-                .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+            write_wkb_polygon_header(writer, dims, num_rings)?;
 
             if let Some(exterior) = pgn.exterior() {
                 let coords: Vec<_> = exterior.coords().collect();
@@ -164,31 +162,28 @@ fn segmentize_geometry(
         }
 
         geo_traits::GeometryType::MultiLineString(mls) => {
-            write_wkb_multilinestring_header(writer, dims, mls.line_strings().count())
-                .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+            write_wkb_multilinestring_header(writer, dims, mls.line_strings().count())?;
             for ls in mls.line_strings() {
                 segmentize_geometry(&ls, max_segment_length, writer)?;
             }
         }
 
         geo_traits::GeometryType::MultiPolygon(mpgn) => {
-            write_wkb_multipolygon_header(writer, dims, mpgn.polygons().count())
-                .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+            write_wkb_multipolygon_header(writer, dims, mpgn.polygons().count())?;
             for pgn in mpgn.polygons() {
                 segmentize_geometry(&pgn, max_segment_length, writer)?;
             }
         }
 
         geo_traits::GeometryType::GeometryCollection(gcn) => {
-            write_wkb_geometrycollection_header(writer, dims, gcn.geometries().count())
-                .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+            write_wkb_geometrycollection_header(writer, dims, gcn.geometries().count())?;
             for geom in gcn.geometries() {
                 segmentize_geometry(&geom, max_segment_length, writer)?;
             }
         }
 
         _ => {
-            return Err(DataFusionError::Execution(
+            return Err(SedonaGeometryError::Invalid(
                 "Unsupported geometry type for segmentize operation".to_string(),
             ));
         }
@@ -202,13 +197,11 @@ fn segmentize_linestring<C: CoordTrait<T = f64>>(
     dims: Dimensions,
     coords: &[C],
     max_segment_length: f64,
-) -> Result<()> {
+) -> Result<(), SedonaGeometryError> {
     // First pass: count output coordinates
     let output_count = count_segmentized_coords(coords, max_segment_length);
 
-    write_wkb_linestring_header(writer, dims, output_count)
-        .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-
+    write_wkb_linestring_header(writer, dims, output_count)?;
     write_segmentized_coords(writer, dims, coords, max_segment_length)
 }
 
@@ -217,12 +210,11 @@ fn segmentize_ring<C: CoordTrait<T = f64>>(
     writer: &mut impl Write,
     coords: &[C],
     max_segment_length: f64,
-) -> Result<()> {
+) -> Result<(), SedonaGeometryError> {
     // First pass: count output coordinates
     let output_count = count_segmentized_coords(coords, max_segment_length);
 
-    write_wkb_polygon_ring_header(writer, output_count)
-        .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+    write_wkb_polygon_ring_header(writer, output_count)?;
 
     // Get dimensions from the first coordinate
     let dims = coords.first().map(|c| c.dim()).unwrap_or(Dimensions::Xy);
@@ -255,14 +247,13 @@ fn write_segmentized_coords<C: CoordTrait<T = f64>>(
     dims: Dimensions,
     coords: &[C],
     max_segment_length: f64,
-) -> Result<()> {
+) -> Result<(), SedonaGeometryError> {
     if coords.is_empty() {
         return Ok(());
     }
 
     // Write first coordinate
-    write_wkb_coord_trait(writer, &coords[0])
-        .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+    write_wkb_coord_trait(writer, &coords[0])?;
 
     // Write remaining segments
     for i in 1..coords.len() {
@@ -292,12 +283,12 @@ fn write_interpolated_coords<C: CoordTrait<T = f64>>(
     c1: &C,
     c2: &C,
     max_segment_length: f64,
-) -> Result<()> {
+) -> Result<(), SedonaGeometryError> {
     let num_segments = calc_num_segments(c1, c2, max_segment_length);
 
     if num_segments == 1 {
         // No subdivision needed, just write end coordinate
-        write_wkb_coord_trait(writer, c2).map_err(|e| DataFusionError::Execution(e.to_string()))?;
+        write_wkb_coord_trait(writer, c2)?;
     } else {
         // Interpolate intermediate points
         let x1 = c1.x();
@@ -326,55 +317,31 @@ fn write_interpolated_coords<C: CoordTrait<T = f64>>(
 
             match dims {
                 Dimensions::Xy => {
-                    writer
-                        .write_all(&x.to_le_bytes())
-                        .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-                    writer
-                        .write_all(&y.to_le_bytes())
-                        .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+                    writer.write_all(&x.to_le_bytes())?;
+                    writer.write_all(&y.to_le_bytes())?;
                 }
                 Dimensions::Xyz => {
                     let z = z1.unwrap() + t * (z2.unwrap() - z1.unwrap());
-                    writer
-                        .write_all(&x.to_le_bytes())
-                        .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-                    writer
-                        .write_all(&y.to_le_bytes())
-                        .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-                    writer
-                        .write_all(&z.to_le_bytes())
-                        .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+                    writer.write_all(&x.to_le_bytes())?;
+                    writer.write_all(&y.to_le_bytes())?;
+                    writer.write_all(&z.to_le_bytes())?;
                 }
                 Dimensions::Xym => {
                     let m = m1.unwrap() + t * (m2.unwrap() - m1.unwrap());
-                    writer
-                        .write_all(&x.to_le_bytes())
-                        .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-                    writer
-                        .write_all(&y.to_le_bytes())
-                        .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-                    writer
-                        .write_all(&m.to_le_bytes())
-                        .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+                    writer.write_all(&x.to_le_bytes())?;
+                    writer.write_all(&y.to_le_bytes())?;
+                    writer.write_all(&m.to_le_bytes())?;
                 }
                 Dimensions::Xyzm => {
                     let z = z1.unwrap() + t * (z2.unwrap() - z1.unwrap());
                     let m = m1.unwrap() + t * (m2.unwrap() - m1.unwrap());
-                    writer
-                        .write_all(&x.to_le_bytes())
-                        .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-                    writer
-                        .write_all(&y.to_le_bytes())
-                        .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-                    writer
-                        .write_all(&z.to_le_bytes())
-                        .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-                    writer
-                        .write_all(&m.to_le_bytes())
-                        .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+                    writer.write_all(&x.to_le_bytes())?;
+                    writer.write_all(&y.to_le_bytes())?;
+                    writer.write_all(&z.to_le_bytes())?;
+                    writer.write_all(&m.to_le_bytes())?;
                 }
                 _ => {
-                    return Err(DataFusionError::Execution(
+                    return Err(SedonaGeometryError::Invalid(
                         "Unsupported dimension for segmentize".to_string(),
                     ));
                 }
