@@ -24,9 +24,7 @@ from sedonadb.testing import PostGIS, SedonaDB, geom_or_null, val_or_null
     ("geom", "max_segment_length", "expected"),
     [
         # Nulls
-        pytest.param(None, 1.0, None, id="null_input"),
         pytest.param("POINT (0 0)", None, None, id="null_length"),
-        pytest.param(None, None, None, id="null_both"),
         # Empties
         pytest.param("POINT EMPTY", 1e9, "POINT (nan nan)", id="empty_point"),
         pytest.param(

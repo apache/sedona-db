@@ -116,6 +116,8 @@ impl SedonaScalarKernel for STSegmentize {
     }
 }
 
+// TODO below works but is not efficient (need to revisit before merging)
+
 /// Segmentize a geometry by densifying segments that exceed max_segment_length
 fn segmentize_geometry(
     geom: &impl GeometryTrait<T = f64>,

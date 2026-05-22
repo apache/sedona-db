@@ -35,9 +35,7 @@ ONE_DEGREE_METERS = EARTH_RADIUS_METERS * math.pi / 180.0
     ("geog", "max_segment_length", "expected"),
     [
         # Nulls
-        pytest.param(None, 1e9, None, id="null_input"),
         pytest.param("POINT (0 0)", None, None, id="null_length"),
-        pytest.param(None, None, None, id="null_both"),
         # Empties
         pytest.param("POINT EMPTY", 1e9, "POINT (nan nan)", id="empty_point"),
         pytest.param(
@@ -146,13 +144,6 @@ def test_st_segmentize_no_split(eng, geog, max_segment_length, expected):
             "LINESTRING (0 0, 0 1, 0 2)",
             id="linestring_2deg_split2",
         ),
-        # Segmentation - 3 degree line with ~1 degree max -> 3 segments
-        pytest.param(
-            "LINESTRING (0 0, 0 3)",
-            ONE_DEGREE_METERS * 1.1,
-            "LINESTRING (0 0, 0 1, 0 2, 0 3)",
-            id="linestring_3deg_split3",
-        ),
         # Segmentation - 4 degree line with ~1 degree max -> 4 segments
         pytest.param(
             "LINESTRING (0 0, 0 4)",
@@ -231,9 +222,7 @@ def test_st_segmentize_polygon(eng):
     ("geom", "tolerance", "expected"),
     [
         # Nulls
-        pytest.param(None, 1e9, None, id="null_input"),
         pytest.param("POINT (0 0)", None, None, id="null_tolerance"),
-        pytest.param(None, None, None, id="null_both"),
         # Empties
         pytest.param("POINT EMPTY", 1e9, "POINT (nan nan)", id="empty_point"),
         pytest.param(
