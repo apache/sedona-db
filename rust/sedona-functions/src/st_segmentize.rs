@@ -1,0 +1,745 @@
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+use std::io::Write;
+use std::sync::Arc;
+
+use arrow_array::builder::BinaryBuilder;
+use arrow_array::cast::AsArray;
+use arrow_array::Array;
+use arrow_schema::DataType;
+use datafusion_common::{DataFusionError, Result};
+use datafusion_expr::ColumnarValue;
+use datafusion_expr::Volatility;
+use geo_traits::{
+    CoordTrait, Dimensions, GeometryCollectionTrait, GeometryTrait, LineStringTrait,
+    MultiLineStringTrait, MultiPointTrait, MultiPolygonTrait, PointTrait, PolygonTrait,
+};
+use sedona_expr::item_crs::ItemCrsKernel;
+use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_geometry::wkb_factory::{
+    write_wkb_coord_trait, write_wkb_empty_point, write_wkb_geometrycollection_header,
+    write_wkb_linestring_header, write_wkb_multilinestring_header, write_wkb_multipoint_header,
+    write_wkb_multipolygon_header, write_wkb_point_header, write_wkb_polygon_header,
+    write_wkb_polygon_ring_header, WKB_MIN_PROBABLE_BYTES,
+};
+use sedona_schema::{
+    datatypes::{SedonaType, WKB_GEOMETRY},
+    matchers::ArgMatcher,
+};
+
+use crate::executor::WkbExecutor;
+
+/// ST_Segmentize() scalar UDF for geometry
+///
+/// Native implementation to densify a geometry by adding intermediate points
+/// along segments that exceed a maximum length. Uses Euclidean (planar) distance.
+/// This matches the behavior of GEOSDensify / PostGIS ST_Segmentize for geometry.
+pub fn st_segmentize_udf() -> SedonaScalarUDF {
+    SedonaScalarUDF::new(
+        "st_segmentize",
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STSegmentize {
+            matcher: ArgMatcher::new(
+                vec![ArgMatcher::is_geometry(), ArgMatcher::is_numeric()],
+                WKB_GEOMETRY,
+            ),
+        })]),
+        Volatility::Immutable,
+    )
+}
+
+#[derive(Debug)]
+struct STSegmentize {
+    matcher: ArgMatcher,
+}
+
+impl SedonaScalarKernel for STSegmentize {
+    fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
+        self.matcher.match_args(args)
+    }
+
+    fn invoke_batch(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+    ) -> Result<ColumnarValue> {
+        let executor = WkbExecutor::new(arg_types, args);
+        let mut builder = BinaryBuilder::with_capacity(
+            executor.num_iterations(),
+            WKB_MIN_PROBABLE_BYTES * executor.num_iterations(),
+        );
+
+        // Get max_segment_length as Float64 array
+        let max_segment_length_array = args[1]
+            .cast_to(&DataType::Float64, None)?
+            .to_array(executor.num_iterations())?;
+        let max_segment_length_values = max_segment_length_array.as_primitive::<arrow_array::types::Float64Type>();
+
+        let mut idx = 0usize;
+        executor.execute_wkb_void(|maybe_wkb| {
+            let max_seg_len = if max_segment_length_values.is_null(idx) {
+                None
+            } else {
+                Some(max_segment_length_values.value(idx))
+            };
+            idx += 1;
+
+            match (maybe_wkb, max_seg_len) {
+                (Some(wkb), Some(max_len)) if max_len > 0.0 => {
+                    segmentize_geometry(&wkb, max_len, &mut builder)?;
+                    builder.append_value([]);
+                }
+                _ => builder.append_null(),
+            }
+            Ok(())
+        })?;
+
+        executor.finish(Arc::new(builder.finish()))
+    }
+}
+
+/// Segmentize a geometry by densifying segments that exceed max_segment_length
+fn segmentize_geometry(
+    geom: &impl GeometryTrait<T = f64>,
+    max_segment_length: f64,
+    writer: &mut impl Write,
+) -> Result<()> {
+    let dims = geom.dim();
+    match geom.as_type() {
+        geo_traits::GeometryType::Point(pt) => {
+            if pt.coord().is_some() {
+                write_wkb_point_header(writer, dims)
+                    .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+                write_wkb_coord_trait(writer, &pt.coord().unwrap())
+                    .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+            } else {
+                write_wkb_empty_point(writer, dims)
+                    .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+            }
+        }
+
+        geo_traits::GeometryType::MultiPoint(multi_point) => {
+            write_wkb_multipoint_header(writer, dims, multi_point.points().count())
+                .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+            for pt in multi_point.points() {
+                segmentize_geometry(&pt, max_segment_length, writer)?;
+            }
+        }
+
+        geo_traits::GeometryType::LineString(ls) => {
+            // Collect coordinates to allow two passes
+            let coords: Vec<_> = ls.coords().collect();
+            segmentize_linestring(writer, dims, &coords, max_segment_length)?;
+        }
+
+        geo_traits::GeometryType::Polygon(pgn) => {
+            let num_rings = pgn.interiors().count() + pgn.exterior().is_some() as usize;
+            write_wkb_polygon_header(writer, dims, num_rings)
+                .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+
+            if let Some(exterior) = pgn.exterior() {
+                let coords: Vec<_> = exterior.coords().collect();
+                segmentize_ring(writer, &coords, max_segment_length)?;
+            }
+
+            for interior in pgn.interiors() {
+                let coords: Vec<_> = interior.coords().collect();
+                segmentize_ring(writer, &coords, max_segment_length)?;
+            }
+        }
+
+        geo_traits::GeometryType::MultiLineString(mls) => {
+            write_wkb_multilinestring_header(writer, dims, mls.line_strings().count())
+                .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+            for ls in mls.line_strings() {
+                segmentize_geometry(&ls, max_segment_length, writer)?;
+            }
+        }
+
+        geo_traits::GeometryType::MultiPolygon(mpgn) => {
+            write_wkb_multipolygon_header(writer, dims, mpgn.polygons().count())
+                .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+            for pgn in mpgn.polygons() {
+                segmentize_geometry(&pgn, max_segment_length, writer)?;
+            }
+        }
+
+        geo_traits::GeometryType::GeometryCollection(gcn) => {
+            write_wkb_geometrycollection_header(writer, dims, gcn.geometries().count())
+                .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+            for geom in gcn.geometries() {
+                segmentize_geometry(&geom, max_segment_length, writer)?;
+            }
+        }
+
+        _ => {
+            return Err(DataFusionError::Execution(
+                "Unsupported geometry type for segmentize operation".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Segmentize a linestring, writing a complete linestring WKB
+fn segmentize_linestring<C: CoordTrait<T = f64>>(
+    writer: &mut impl Write,
+    dims: Dimensions,
+    coords: &[C],
+    max_segment_length: f64,
+) -> Result<()> {
+    // First pass: count output coordinates
+    let output_count = count_segmentized_coords(coords, max_segment_length);
+
+    write_wkb_linestring_header(writer, dims, output_count)
+        .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+
+    write_segmentized_coords(writer, dims, coords, max_segment_length)
+}
+
+/// Segmentize a polygon ring, writing a ring with header
+fn segmentize_ring<C: CoordTrait<T = f64>>(
+    writer: &mut impl Write,
+    coords: &[C],
+    max_segment_length: f64,
+) -> Result<()> {
+    // First pass: count output coordinates
+    let output_count = count_segmentized_coords(coords, max_segment_length);
+
+    write_wkb_polygon_ring_header(writer, output_count)
+        .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+
+    // Get dimensions from the first coordinate
+    let dims = coords.first().map(|c| c.dim()).unwrap_or(Dimensions::Xy);
+
+    write_segmentized_coords(writer, dims, coords, max_segment_length)
+}
+
+/// Count the number of coordinates that will be output after segmentization
+fn count_segmentized_coords<C: CoordTrait<T = f64>>(
+    coords: &[C],
+    max_segment_length: f64,
+) -> usize {
+    if coords.is_empty() {
+        return 0;
+    }
+
+    let mut count = 1usize; // First coordinate
+
+    for i in 1..coords.len() {
+        let num_segments = calc_num_segments(&coords[i - 1], &coords[i], max_segment_length);
+        count += num_segments;
+    }
+
+    count
+}
+
+/// Write segmentized coordinates to the output
+fn write_segmentized_coords<C: CoordTrait<T = f64>>(
+    writer: &mut impl Write,
+    dims: Dimensions,
+    coords: &[C],
+    max_segment_length: f64,
+) -> Result<()> {
+    if coords.is_empty() {
+        return Ok(());
+    }
+
+    // Write first coordinate
+    write_wkb_coord_trait(writer, &coords[0])
+        .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+
+    // Write remaining segments
+    for i in 1..coords.len() {
+        write_interpolated_coords(writer, dims, &coords[i - 1], &coords[i], max_segment_length)?;
+    }
+
+    Ok(())
+}
+
+/// Calculate the number of segments needed for a single edge
+fn calc_num_segments<C: CoordTrait<T = f64>>(c1: &C, c2: &C, max_segment_length: f64) -> usize {
+    let dx = c2.x() - c1.x();
+    let dy = c2.y() - c1.y();
+    let distance = (dx * dx + dy * dy).sqrt();
+
+    if distance <= max_segment_length {
+        1
+    } else {
+        (distance / max_segment_length).ceil() as usize
+    }
+}
+
+/// Write interpolated coordinates between two points (excluding start, including end)
+fn write_interpolated_coords<C: CoordTrait<T = f64>>(
+    writer: &mut impl Write,
+    dims: Dimensions,
+    c1: &C,
+    c2: &C,
+    max_segment_length: f64,
+) -> Result<()> {
+    let num_segments = calc_num_segments(c1, c2, max_segment_length);
+
+    if num_segments == 1 {
+        // No subdivision needed, just write end coordinate
+        write_wkb_coord_trait(writer, c2)
+            .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+    } else {
+        // Interpolate intermediate points
+        let x1 = c1.x();
+        let y1 = c1.y();
+        let x2 = c2.x();
+        let y2 = c2.y();
+
+        // Get Z and M values if present
+        let (z1, z2) = match dims {
+            Dimensions::Xyz | Dimensions::Xyzm => {
+                (Some(c1.nth_or_panic(2)), Some(c2.nth_or_panic(2)))
+            }
+            _ => (None, None),
+        };
+
+        let (m1, m2) = match dims {
+            Dimensions::Xym => (Some(c1.nth_or_panic(2)), Some(c2.nth_or_panic(2))),
+            Dimensions::Xyzm => (Some(c1.nth_or_panic(3)), Some(c2.nth_or_panic(3))),
+            _ => (None, None),
+        };
+
+        for i in 1..=num_segments {
+            let t = i as f64 / num_segments as f64;
+            let x = x1 + t * (x2 - x1);
+            let y = y1 + t * (y2 - y1);
+
+            match dims {
+                Dimensions::Xy => {
+                    writer
+                        .write_all(&x.to_le_bytes())
+                        .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+                    writer
+                        .write_all(&y.to_le_bytes())
+                        .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+                }
+                Dimensions::Xyz => {
+                    let z = z1.unwrap() + t * (z2.unwrap() - z1.unwrap());
+                    writer
+                        .write_all(&x.to_le_bytes())
+                        .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+                    writer
+                        .write_all(&y.to_le_bytes())
+                        .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+                    writer
+                        .write_all(&z.to_le_bytes())
+                        .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+                }
+                Dimensions::Xym => {
+                    let m = m1.unwrap() + t * (m2.unwrap() - m1.unwrap());
+                    writer
+                        .write_all(&x.to_le_bytes())
+                        .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+                    writer
+                        .write_all(&y.to_le_bytes())
+                        .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+                    writer
+                        .write_all(&m.to_le_bytes())
+                        .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+                }
+                Dimensions::Xyzm => {
+                    let z = z1.unwrap() + t * (z2.unwrap() - z1.unwrap());
+                    let m = m1.unwrap() + t * (m2.unwrap() - m1.unwrap());
+                    writer
+                        .write_all(&x.to_le_bytes())
+                        .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+                    writer
+                        .write_all(&y.to_le_bytes())
+                        .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+                    writer
+                        .write_all(&z.to_le_bytes())
+                        .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+                    writer
+                        .write_all(&m.to_le_bytes())
+                        .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+                }
+                _ => {
+                    return Err(DataFusionError::Execution(
+                        "Unsupported dimension for segmentize".to_string(),
+                    ));
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use arrow_schema::DataType;
+    use rstest::rstest;
+    use sedona_schema::datatypes::{WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
+    use sedona_testing::compare::assert_array_equal;
+    use sedona_testing::create::create_array;
+    use sedona_testing::testers::ScalarUdfTester;
+
+    use super::*;
+
+    fn prepare_args(
+        geom_array: Arc<dyn arrow_array::Array>,
+        max_segment_lengths: &[Option<f64>],
+    ) -> Vec<Arc<dyn arrow_array::Array>> {
+        let n = geom_array.len();
+        let values: Vec<Option<f64>> = max_segment_lengths
+            .iter()
+            .cycle()
+            .take(n)
+            .copied()
+            .collect();
+        let max_segment_length_array = arrow_array::Float64Array::from(values);
+        vec![geom_array, Arc::new(max_segment_length_array)]
+    }
+
+    #[test]
+    fn udf_metadata() {
+        let udf: datafusion_expr::ScalarUDF = st_segmentize_udf().into();
+        assert_eq!(udf.name(), "st_segmentize");
+    }
+
+    #[rstest]
+    fn test_null_handling(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+        let tester = ScalarUdfTester::new(
+            st_segmentize_udf().into(),
+            vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
+        );
+        tester.assert_return_type(WKB_GEOMETRY);
+
+        let geoms = create_array(
+            &[None, Some("POINT (0 0)"), None],
+            &sedona_type,
+        );
+        let result = tester
+            .invoke_arrays(prepare_args(geoms, &[Some(1.0), None, None]))
+            .unwrap();
+
+        let expected = create_array(&[None, None, None], &WKB_GEOMETRY);
+        assert_array_equal(&result, &expected);
+    }
+
+    #[rstest]
+    fn test_point_no_change(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+        let tester = ScalarUdfTester::new(
+            st_segmentize_udf().into(),
+            vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
+        );
+
+        let geoms = create_array(
+            &[
+                Some("POINT (0 1)"),
+                Some("POINT ZM (0 1 100 200)"),
+            ],
+            &sedona_type,
+        );
+        let result = tester
+            .invoke_arrays(prepare_args(geoms, &[Some(1e9), Some(1e9)]))
+            .unwrap();
+
+        let expected = create_array(
+            &[
+                Some("POINT (0 1)"),
+                Some("POINT ZM (0 1 100 200)"),
+            ],
+            &WKB_GEOMETRY,
+        );
+        assert_array_equal(&result, &expected);
+    }
+
+    #[rstest]
+    fn test_empty_point(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+        let tester = ScalarUdfTester::new(
+            st_segmentize_udf().into(),
+            vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
+        );
+
+        let geoms = create_array(&[Some("POINT EMPTY")], &sedona_type);
+        let result = tester
+            .invoke_arrays(prepare_args(geoms, &[Some(1e9)]))
+            .unwrap();
+
+        // Empty point becomes POINT (nan nan) - check WKB bytes directly
+        let result_arr = result.as_any().downcast_ref::<arrow_array::BinaryArray>().unwrap();
+        assert!(!result_arr.is_null(0));
+        let wkb_bytes = result_arr.value(0);
+        // Parse and check it has NaN coordinates using geo_traits
+        let wkb = wkb::reader::read_wkb(wkb_bytes).unwrap();
+        use geo_traits::{GeometryTrait, PointTrait};
+        if let geo_traits::GeometryType::Point(pt) = wkb.as_type() {
+            // Empty points have NaN coordinates
+            let coord = pt.coord();
+            if let Some(c) = coord {
+                use geo_traits::CoordTrait;
+                assert!(c.x().is_nan());
+                assert!(c.y().is_nan());
+            } else {
+                // Point is truly empty (no coord)
+                // This is also valid
+            }
+        } else {
+            panic!("Expected Point geometry");
+        }
+    }
+
+    #[rstest]
+    fn test_linestring_no_split(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+    ) {
+        let tester = ScalarUdfTester::new(
+            st_segmentize_udf().into(),
+            vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
+        );
+
+        let geoms = create_array(
+            &[
+                Some("LINESTRING (0 0, 1 0, 2 0)"),
+                Some("LINESTRING EMPTY"),
+                Some("LINESTRING ZM (0 0 10 20, 1 0 30 40, 2 0 50 60)"),
+            ],
+            &sedona_type,
+        );
+        let result = tester
+            .invoke_arrays(prepare_args(geoms, &[Some(1e9), Some(1e9), Some(1e9)]))
+            .unwrap();
+
+        let expected = create_array(
+            &[
+                Some("LINESTRING (0 0, 1 0, 2 0)"),
+                Some("LINESTRING EMPTY"),
+                Some("LINESTRING ZM (0 0 10 20, 1 0 30 40, 2 0 50 60)"),
+            ],
+            &WKB_GEOMETRY,
+        );
+        assert_array_equal(&result, &expected);
+    }
+
+    #[rstest]
+    fn test_linestring_split(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+        let tester = ScalarUdfTester::new(
+            st_segmentize_udf().into(),
+            vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
+        );
+
+        // A line from (0,0) to (0,2) has length 2
+        // With max_segment_length of 1.1, it should be split into 2 segments
+        let geoms = create_array(&[Some("LINESTRING (0 0, 0 2)")], &sedona_type);
+        let result = tester
+            .invoke_arrays(prepare_args(geoms, &[Some(1.1)]))
+            .unwrap();
+
+        let expected = create_array(&[Some("LINESTRING (0 0, 0 1, 0 2)")], &WKB_GEOMETRY);
+        assert_array_equal(&result, &expected);
+    }
+
+    #[rstest]
+    fn test_linestring_split_multiple(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+    ) {
+        let tester = ScalarUdfTester::new(
+            st_segmentize_udf().into(),
+            vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
+        );
+
+        // A line from (0,0) to (0,4) has length 4
+        // With max_segment_length of 1.1, it should be split into 4 segments
+        let geoms = create_array(&[Some("LINESTRING (0 0, 0 4)")], &sedona_type);
+        let result = tester
+            .invoke_arrays(prepare_args(geoms, &[Some(1.1)]))
+            .unwrap();
+
+        let expected = create_array(
+            &[Some("LINESTRING (0 0, 0 1, 0 2, 0 3, 0 4)")],
+            &WKB_GEOMETRY,
+        );
+        assert_array_equal(&result, &expected);
+    }
+
+    #[rstest]
+    fn test_linestring_z_interpolation(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+    ) {
+        let tester = ScalarUdfTester::new(
+            st_segmentize_udf().into(),
+            vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
+        );
+
+        // Z values should be linearly interpolated
+        let geoms = create_array(&[Some("LINESTRING Z (0 0 100, 0 2 200)")], &sedona_type);
+        let result = tester
+            .invoke_arrays(prepare_args(geoms, &[Some(1.1)]))
+            .unwrap();
+
+        let expected = create_array(
+            &[Some("LINESTRING Z (0 0 100, 0 1 150, 0 2 200)")],
+            &WKB_GEOMETRY,
+        );
+        assert_array_equal(&result, &expected);
+    }
+
+    #[rstest]
+    fn test_linestring_m_interpolation(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+    ) {
+        let tester = ScalarUdfTester::new(
+            st_segmentize_udf().into(),
+            vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
+        );
+
+        // M values should be linearly interpolated
+        let geoms = create_array(&[Some("LINESTRING M (0 0 0, 0 2 100)")], &sedona_type);
+        let result = tester
+            .invoke_arrays(prepare_args(geoms, &[Some(1.1)]))
+            .unwrap();
+
+        let expected = create_array(
+            &[Some("LINESTRING M (0 0 0, 0 1 50, 0 2 100)")],
+            &WKB_GEOMETRY,
+        );
+        assert_array_equal(&result, &expected);
+    }
+
+    #[rstest]
+    fn test_linestring_zm_interpolation(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+    ) {
+        let tester = ScalarUdfTester::new(
+            st_segmentize_udf().into(),
+            vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
+        );
+
+        // Both Z and M values should be linearly interpolated
+        let geoms = create_array(&[Some("LINESTRING ZM (0 0 100 0, 0 2 200 100)")], &sedona_type);
+        let result = tester
+            .invoke_arrays(prepare_args(geoms, &[Some(1.1)]))
+            .unwrap();
+
+        let expected = create_array(
+            &[Some("LINESTRING ZM (0 0 100 0, 0 1 150 50, 0 2 200 100)")],
+            &WKB_GEOMETRY,
+        );
+        assert_array_equal(&result, &expected);
+    }
+
+    #[rstest]
+    fn test_polygon_no_split(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+        let tester = ScalarUdfTester::new(
+            st_segmentize_udf().into(),
+            vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
+        );
+
+        let geoms = create_array(
+            &[Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))")],
+            &sedona_type,
+        );
+        let result = tester
+            .invoke_arrays(prepare_args(geoms, &[Some(1e9)]))
+            .unwrap();
+
+        let expected = create_array(
+            &[Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))")],
+            &WKB_GEOMETRY,
+        );
+        assert_array_equal(&result, &expected);
+    }
+
+    #[rstest]
+    fn test_polygon_split(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+        let tester = ScalarUdfTester::new(
+            st_segmentize_udf().into(),
+            vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
+        );
+
+        // 2x2 square, max segment 1.1 -> each edge split into 2
+        let geoms = create_array(
+            &[Some("POLYGON ((0 0, 0 2, 2 2, 2 0, 0 0))")],
+            &sedona_type,
+        );
+        let result = tester
+            .invoke_arrays(prepare_args(geoms, &[Some(1.1)]))
+            .unwrap();
+
+        let expected = create_array(
+            &[Some("POLYGON ((0 0, 0 1, 0 2, 1 2, 2 2, 2 1, 2 0, 1 0, 0 0))")],
+            &WKB_GEOMETRY,
+        );
+        assert_array_equal(&result, &expected);
+    }
+
+    #[rstest]
+    fn test_multilinestring(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+        let tester = ScalarUdfTester::new(
+            st_segmentize_udf().into(),
+            vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
+        );
+
+        let geoms = create_array(
+            &[Some("MULTILINESTRING ((0 0, 0 2), (1 0, 1 2))")],
+            &sedona_type,
+        );
+        let result = tester
+            .invoke_arrays(prepare_args(geoms, &[Some(1.1)]))
+            .unwrap();
+
+        let expected = create_array(
+            &[Some("MULTILINESTRING ((0 0, 0 1, 0 2), (1 0, 1 1, 1 2))")],
+            &WKB_GEOMETRY,
+        );
+        assert_array_equal(&result, &expected);
+    }
+
+    #[rstest]
+    fn test_geometrycollection(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+    ) {
+        let tester = ScalarUdfTester::new(
+            st_segmentize_udf().into(),
+            vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
+        );
+
+        let geoms = create_array(
+            &[Some("GEOMETRYCOLLECTION (POINT (0 1), LINESTRING (0 0, 0 2))")],
+            &sedona_type,
+        );
+        let result = tester
+            .invoke_arrays(prepare_args(geoms, &[Some(1.1)]))
+            .unwrap();
+
+        let expected = create_array(
+            &[Some("GEOMETRYCOLLECTION (POINT (0 1), LINESTRING (0 0, 0 1, 0 2))")],
+            &WKB_GEOMETRY,
+        );
+        assert_array_equal(&result, &expected);
+    }
+
+    #[rstest]
+    fn test_item_crs_preserved(
+        #[values(WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType,
+    ) {
+        let tester = ScalarUdfTester::new(
+            st_segmentize_udf().into(),
+            vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
+        );
+
+        // Item CRS should be preserved in the output type
+        tester.assert_return_type(WKB_GEOMETRY_ITEM_CRS.clone());
+    }
+}
