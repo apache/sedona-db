@@ -15,20 +15,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! Zarr group → N-D raster `StructArray` entry points.
+//! Zarr group → N-D raster streaming reader.
 //!
-//! Both `group_to_indb_rasters` and `group_to_outdb_rasters` produce the
-//! same row shape: one raster row per chunk position, with one band per
-//! array in the group. They differ only in how each row's pixel bytes
-//! are delivered:
-//!
-//! - **InDb** — every chunk is fetched eagerly and copied into the
-//!   Arrow `data` column. Heavy for large datacubes; intended for
-//!   snapshots.
-//! - **OutDb** — `data` is left empty; each band's `outdb_uri` carries a
-//!   chunk anchor (`zarr://<store-uri>/<array-path>#chunk=i0,i1,...`).
-//!   Byte resolution awaits the format-keyed dispatch work in a
-//!   follow-up PR.
+//! [`ZarrChunkReader`] walks the group's chunk grid lazily and emits one
+//! raster row per chunk position, with one band per array in the group.
+//! Each row carries an `outdb_uri` chunk anchor
+//! (`zarr://<store-uri>/<array-path>#chunk=i0,i1,...`); the `data`
+//! column stays empty until the async resolver lands and dereferences
+//! the anchor to bytes on demand.
 
 use std::sync::Arc;
 

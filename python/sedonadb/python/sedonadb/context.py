@@ -333,6 +333,44 @@ class SedonaContext:
             self.options,
         )
 
+    def read_format(
+        self,
+        spec: "ExternalFormatSpec",
+        table_paths: Union[str, Path, Iterable[str]],
+        check_extension: bool = False,
+    ) -> DataFrame:
+        """Read one or more paths using a Python-defined `ExternalFormatSpec`.
+
+        This is the plugin entry point: a format-specific package (e.g.
+        `sedonadb-zarr`) defines an `ExternalFormatSpec` subclass and the
+        user reads through it via this method. Built-in formats have
+        their own dedicated readers (`read_parquet`, `read_pyogrio`).
+
+        Args:
+            spec: An `ExternalFormatSpec` instance describing how to open
+                the underlying source.
+            table_paths: A str, Path, or iterable of paths/URLs.
+            check_extension: When `True`, error if a non-collection path
+                doesn't end in the spec's `extension`. Defaults to `False`.
+
+        Examples:
+            >>> import sedonadb_zarr  # doctest: +SKIP
+            >>> sd = sedona.db.connect()
+            >>> sd.read_format(  # doctest: +SKIP
+            ...     sedonadb_zarr.ZarrFormatSpec(), "file:///path/to/foo.zarr"
+            ... ).show()
+        """
+        if isinstance(table_paths, (str, Path)):
+            table_paths = [table_paths]
+
+        return DataFrame(
+            self._impl,
+            self._impl.read_external_format(
+                spec, [str(path) for path in table_paths], check_extension
+            ),
+            self.options,
+        )
+
     def sql(
         self, sql: str, *, params: Union[List, Tuple, Dict, None] = None
     ) -> DataFrame:
