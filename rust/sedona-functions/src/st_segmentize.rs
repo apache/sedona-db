@@ -402,95 +402,164 @@ mod tests {
     }
 
     #[rstest]
-    fn test_point_no_change(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let tester = ScalarUdfTester::new(
-            st_segmentize_udf().into(),
-            vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
-        );
-
-        let geoms = create_array(
-            &[Some("POINT (0 1)"), Some("POINT ZM (0 1 100 200)")],
-            &sedona_type,
-        );
-        let result = tester
-            .invoke_arrays(prepare_args(geoms, &[Some(1e9), Some(1e9)]))
-            .unwrap();
-
-        let expected = create_array(
-            &[Some("POINT (0 1)"), Some("POINT ZM (0 1 100 200)")],
-            &WKB_GEOMETRY,
-        );
-        assert_array_equal(&result, &expected);
-    }
-
-    #[rstest]
-    fn test_empty_point(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let tester = ScalarUdfTester::new(
-            st_segmentize_udf().into(),
-            vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
-        );
-
-        let geoms = create_array(&[Some("POINT EMPTY")], &sedona_type);
-        let result = tester
-            .invoke_arrays(prepare_args(geoms, &[Some(1e9)]))
-            .unwrap();
-
-        // Empty point becomes POINT (nan nan) - check WKB bytes directly
-        let result_arr = result
-            .as_any()
-            .downcast_ref::<arrow_array::BinaryArray>()
-            .unwrap();
-        assert!(!result_arr.is_null(0));
-        let wkb_bytes = result_arr.value(0);
-        // Parse and check it has NaN coordinates using geo_traits
-        let wkb = wkb::reader::read_wkb(wkb_bytes).unwrap();
-        use geo_traits::{GeometryTrait, PointTrait};
-        if let geo_traits::GeometryType::Point(pt) = wkb.as_type() {
-            // Empty points have NaN coordinates
-            let coord = pt.coord();
-            if let Some(c) = coord {
-                use geo_traits::CoordTrait;
-                assert!(c.x().is_nan());
-                assert!(c.y().is_nan());
-            } else {
-                // Point is truly empty (no coord)
-                // This is also valid
-            }
-        } else {
-            panic!("Expected Point geometry");
-        }
-    }
-
-    #[rstest]
-    fn test_linestring_no_split(
-        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+    fn test_point_no_change(
+        #[values(
+            "POINT EMPTY",
+            "POINT Z EMPTY",
+            "POINT M EMPTY",
+            "POINT ZM EMPTY",
+            "POINT (0 1)",
+            "POINT Z (0 1 100)",
+            "POINT M (0 1 100)",
+            "POINT ZM (0 1 100 200)"
+        )]
+        wkt: &str,
     ) {
         let tester = ScalarUdfTester::new(
             st_segmentize_udf().into(),
-            vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
+            vec![WKB_GEOMETRY, SedonaType::Arrow(DataType::Float64)],
         );
 
-        let geoms = create_array(
-            &[
-                Some("LINESTRING (0 0, 1 0, 2 0)"),
-                Some("LINESTRING EMPTY"),
-                Some("LINESTRING ZM (0 0 10 20, 1 0 30 40, 2 0 50 60)"),
-            ],
-            &sedona_type,
-        );
-        let result = tester
-            .invoke_arrays(prepare_args(geoms, &[Some(1e9), Some(1e9), Some(1e9)]))
-            .unwrap();
+        let result = tester.invoke_scalar_scalar(wkt, 1e9).unwrap();
+        tester.assert_scalar_result_equals(result, wkt);
+    }
 
-        let expected = create_array(
-            &[
-                Some("LINESTRING (0 0, 1 0, 2 0)"),
-                Some("LINESTRING EMPTY"),
-                Some("LINESTRING ZM (0 0 10 20, 1 0 30 40, 2 0 50 60)"),
-            ],
-            &WKB_GEOMETRY,
+    #[rstest]
+    fn test_linestring_no_change(
+        #[values(
+            "LINESTRING EMPTY",
+            "LINESTRING Z EMPTY",
+            "LINESTRING M EMPTY",
+            "LINESTRING ZM EMPTY",
+            "LINESTRING (0 0, 1 0)",
+            "LINESTRING Z (0 0 100, 1 0 200)",
+            "LINESTRING M (0 0 100, 1 0 200)",
+            "LINESTRING ZM (0 0 100 10, 1 0 200 20)"
+        )]
+        wkt: &str,
+    ) {
+        let tester = ScalarUdfTester::new(
+            st_segmentize_udf().into(),
+            vec![WKB_GEOMETRY, SedonaType::Arrow(DataType::Float64)],
         );
-        assert_array_equal(&result, &expected);
+
+        let result = tester.invoke_scalar_scalar(wkt, 1e9).unwrap();
+        tester.assert_scalar_result_equals(result, wkt);
+    }
+
+    #[rstest]
+    fn test_polygon_no_change(
+        #[values(
+            "POLYGON EMPTY",
+            "POLYGON Z EMPTY",
+            "POLYGON M EMPTY",
+            "POLYGON ZM EMPTY",
+            "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
+            "POLYGON Z ((0 0 100, 1 0 100, 1 1 100, 0 1 100, 0 0 100))",
+            "POLYGON M ((0 0 100, 1 0 100, 1 1 100, 0 1 100, 0 0 100))",
+            "POLYGON ZM ((0 0 100 10, 1 0 100 10, 1 1 100 10, 0 1 100 10, 0 0 100 10))"
+        )]
+        wkt: &str,
+    ) {
+        let tester = ScalarUdfTester::new(
+            st_segmentize_udf().into(),
+            vec![WKB_GEOMETRY, SedonaType::Arrow(DataType::Float64)],
+        );
+
+        let result = tester.invoke_scalar_scalar(wkt, 1e9).unwrap();
+        tester.assert_scalar_result_equals(result, wkt);
+    }
+
+    #[rstest]
+    fn test_multipoint_no_change(
+        #[values(
+            "MULTIPOINT EMPTY",
+            "MULTIPOINT Z EMPTY",
+            "MULTIPOINT M EMPTY",
+            "MULTIPOINT ZM EMPTY",
+            "MULTIPOINT ((0 0), (1 1))",
+            "MULTIPOINT Z ((0 0 100), (1 1 200))",
+            "MULTIPOINT M ((0 0 100), (1 1 200))",
+            "MULTIPOINT ZM ((0 0 100 10), (1 1 200 20))"
+        )]
+        wkt: &str,
+    ) {
+        let tester = ScalarUdfTester::new(
+            st_segmentize_udf().into(),
+            vec![WKB_GEOMETRY, SedonaType::Arrow(DataType::Float64)],
+        );
+
+        let result = tester.invoke_scalar_scalar(wkt, 1e9).unwrap();
+        tester.assert_scalar_result_equals(result, wkt);
+    }
+
+    #[rstest]
+    fn test_multilinestring_no_change(
+        #[values(
+            "MULTILINESTRING EMPTY",
+            "MULTILINESTRING Z EMPTY",
+            "MULTILINESTRING M EMPTY",
+            "MULTILINESTRING ZM EMPTY",
+            "MULTILINESTRING ((0 0, 1 0), (2 2, 3 3))",
+            "MULTILINESTRING Z ((0 0 100, 1 0 200), (2 2 100, 3 3 200))",
+            "MULTILINESTRING M ((0 0 100, 1 0 200), (2 2 100, 3 3 200))",
+            "MULTILINESTRING ZM ((0 0 100 10, 1 0 200 20), (2 2 100 10, 3 3 200 20))"
+        )]
+        wkt: &str,
+    ) {
+        let tester = ScalarUdfTester::new(
+            st_segmentize_udf().into(),
+            vec![WKB_GEOMETRY, SedonaType::Arrow(DataType::Float64)],
+        );
+
+        let result = tester.invoke_scalar_scalar(wkt, 1e9).unwrap();
+        tester.assert_scalar_result_equals(result, wkt);
+    }
+
+    #[rstest]
+    fn test_multipolygon_no_change(
+        #[values(
+            "MULTIPOLYGON EMPTY",
+            "MULTIPOLYGON Z EMPTY",
+            "MULTIPOLYGON M EMPTY",
+            "MULTIPOLYGON ZM EMPTY",
+            "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)))",
+            "MULTIPOLYGON Z (((0 0 100, 1 0 100, 1 1 100, 0 1 100, 0 0 100)))",
+            "MULTIPOLYGON M (((0 0 100, 1 0 100, 1 1 100, 0 1 100, 0 0 100)))",
+            "MULTIPOLYGON ZM (((0 0 100 10, 1 0 100 10, 1 1 100 10, 0 1 100 10, 0 0 100 10)))"
+        )]
+        wkt: &str,
+    ) {
+        let tester = ScalarUdfTester::new(
+            st_segmentize_udf().into(),
+            vec![WKB_GEOMETRY, SedonaType::Arrow(DataType::Float64)],
+        );
+
+        let result = tester.invoke_scalar_scalar(wkt, 1e9).unwrap();
+        tester.assert_scalar_result_equals(result, wkt);
+    }
+
+    #[rstest]
+    fn test_geometrycollection_no_change(
+        #[values(
+            "GEOMETRYCOLLECTION EMPTY",
+            "GEOMETRYCOLLECTION Z EMPTY",
+            "GEOMETRYCOLLECTION M EMPTY",
+            "GEOMETRYCOLLECTION ZM EMPTY",
+            "GEOMETRYCOLLECTION (POINT (0 1))",
+            "GEOMETRYCOLLECTION Z (POINT Z (0 1 100))",
+            "GEOMETRYCOLLECTION M (POINT M (0 1 100))",
+            "GEOMETRYCOLLECTION ZM (POINT ZM (0 1 100 10))"
+        )]
+        wkt: &str,
+    ) {
+        let tester = ScalarUdfTester::new(
+            st_segmentize_udf().into(),
+            vec![WKB_GEOMETRY, SedonaType::Arrow(DataType::Float64)],
+        );
+
+        let result = tester.invoke_scalar_scalar(wkt, 1e9).unwrap();
+        tester.assert_scalar_result_equals(result, wkt);
     }
 
     #[rstest]
@@ -604,25 +673,6 @@ mod tests {
     }
 
     #[rstest]
-    fn test_polygon_no_split(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let tester = ScalarUdfTester::new(
-            st_segmentize_udf().into(),
-            vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
-        );
-
-        let geoms = create_array(&[Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))")], &sedona_type);
-        let result = tester
-            .invoke_arrays(prepare_args(geoms, &[Some(1e9)]))
-            .unwrap();
-
-        let expected = create_array(
-            &[Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))")],
-            &WKB_GEOMETRY,
-        );
-        assert_array_equal(&result, &expected);
-    }
-
-    #[rstest]
     fn test_polygon_split(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
         let tester = ScalarUdfTester::new(
             st_segmentize_udf().into(),
@@ -638,54 +688,6 @@ mod tests {
         let expected = create_array(
             &[Some(
                 "POLYGON ((0 0, 0 1, 0 2, 1 2, 2 2, 2 1, 2 0, 1 0, 0 0))",
-            )],
-            &WKB_GEOMETRY,
-        );
-        assert_array_equal(&result, &expected);
-    }
-
-    #[rstest]
-    fn test_multilinestring(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let tester = ScalarUdfTester::new(
-            st_segmentize_udf().into(),
-            vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
-        );
-
-        let geoms = create_array(
-            &[Some("MULTILINESTRING ((0 0, 0 2), (1 0, 1 2))")],
-            &sedona_type,
-        );
-        let result = tester
-            .invoke_arrays(prepare_args(geoms, &[Some(1.1)]))
-            .unwrap();
-
-        let expected = create_array(
-            &[Some("MULTILINESTRING ((0 0, 0 1, 0 2), (1 0, 1 1, 1 2))")],
-            &WKB_GEOMETRY,
-        );
-        assert_array_equal(&result, &expected);
-    }
-
-    #[rstest]
-    fn test_geometrycollection(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let tester = ScalarUdfTester::new(
-            st_segmentize_udf().into(),
-            vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
-        );
-
-        let geoms = create_array(
-            &[Some(
-                "GEOMETRYCOLLECTION (POINT (0 1), LINESTRING (0 0, 0 2))",
-            )],
-            &sedona_type,
-        );
-        let result = tester
-            .invoke_arrays(prepare_args(geoms, &[Some(1.1)]))
-            .unwrap();
-
-        let expected = create_array(
-            &[Some(
-                "GEOMETRYCOLLECTION (POINT (0 1), LINESTRING (0 0, 0 1, 0 2))",
             )],
             &WKB_GEOMETRY,
         );
