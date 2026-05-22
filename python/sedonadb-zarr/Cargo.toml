@@ -24,8 +24,7 @@ edition = "2021"
 [lib]
 name = "_lib"
 crate-type = ["cdylib"]
-# Pure Python extension — no Rust API consumers. Avoids the rustdoc
-# output-path collision with sedonadb's `_lib` on `cargo doc --workspace`.
+# Pure Python extension — no Rust API consumers, so skip rustdoc.
 doc = false
 
 [dependencies]
