@@ -88,6 +88,8 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_srid::st_srid_udf,
         crate::st_start_point::st_end_point_udf,
         crate::st_start_point::st_start_point_udf,
+        crate::st_togeomgeog::st_togeography_udf,
+        crate::st_togeomgeog::st_togeometry_udf,
         crate::st_translate::st_translate_udf,
         crate::st_force_dim::st_force2d_udf,
         crate::st_force_dim::st_force3d_udf,

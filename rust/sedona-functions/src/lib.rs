@@ -58,6 +58,7 @@ mod st_segmentize;
 pub mod st_setsrid;
 mod st_srid;
 mod st_start_point;
+mod st_togeomgeog;
 mod st_translate;
 mod st_xyzm;
 mod st_xyzm_minmax;
