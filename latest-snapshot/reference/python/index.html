@@ -4151,6 +4151,79 @@ if a width is not set by another mechanism.</p>
 <div class="doc doc-object doc-function">
 
 
+<h4 id="sedonadb.dataframe.DataFrame.sort" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">sort</span>
+
+
+<a href="#sedonadb.dataframe.DataFrame.sort" class="headerlink" title="Permanent link">¶</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">sort</span><span class="p">(</span><span class="o">*</span><span class="n">keys</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Union" href="https://docs.python.org/3/library/typing.html#typing.Union">Union</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span><span class="p">,</span> <span class="n"><span title="sedonadb.expr.Expr">Expr</span></span><span class="p">,</span> <span class="n"><span title="sedonadb.expr.SortExpr">SortExpr</span></span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Sort rows by one or more keys.</p>
+<p>Each argument is either a column name (<code>str</code>), an <code>Expr</code>, or a
+<code>SortExpr</code> (built via <code>Expr.asc()</code> / <code>Expr.desc()</code> or
+<code>sedonadb.expr.sort_expr(...)</code>). Strings and bare <code>Expr</code>s
+auto-promote to ascending sort keys with nulls placed last; for
+descending order or null-first placement, use the explicit
+<code>SortExpr</code> forms.</p>
+<p>Null placement defaults to "nulls last" for both ascending and
+descending sorts (overriding DataFusion's SQL-style nulls-first-
+on-descending). Override via <code>sort_expr(expr, asc=..., nulls_first=...)</code>
+for the SQL behavior.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+            <b><code>*keys</code></b>
+              (<code><a class="autorefs autorefs-external" title="typing.Union" href="https://docs.python.org/3/library/typing.html#typing.Union">Union</a>[<a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a>, <span title="sedonadb.expr.Expr">Expr</span>, <span title="sedonadb.expr.SortExpr">SortExpr</span>]</code>, default:
+                  <code>()</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>One or more sort keys, in order of priority. At least
+one is required.</p>
+          </div>
+        </li>
+    </ul>
+        <p>Examples:</p>
+<div class="codehilite"><pre><span></span><code><span class="o">&gt;&gt;&gt;</span> <span class="kn">from</span><span class="w"> </span><span class="nn">sedonadb.expr</span><span class="w"> </span><span class="kn">import</span> <span class="n">col</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">sd</span> <span class="o">=</span> <span class="n">sedona</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">df</span> <span class="o">=</span> <span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SELECT * FROM (VALUES (3), (1), (2)) AS t(x)"</span><span class="p">)</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">df</span><span class="o">.</span><span class="n">sort</span><span class="p">(</span><span class="s2">"x"</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+<span class="err">┌───────┐</span>
+<span class="err">│</span>   <span class="n">x</span>   <span class="err">│</span>
+<span class="err">│</span> <span class="n">int64</span> <span class="err">│</span>
+<span class="err">╞═══════╡</span>
+<span class="err">│</span>     <span class="mi">1</span> <span class="err">│</span>
+<span class="err">├╌╌╌╌╌╌╌┤</span>
+<span class="err">│</span>     <span class="mi">2</span> <span class="err">│</span>
+<span class="err">├╌╌╌╌╌╌╌┤</span>
+<span class="err">│</span>     <span class="mi">3</span> <span class="err">│</span>
+<span class="err">└───────┘</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">df</span><span class="o">.</span><span class="n">sort</span><span class="p">(</span><span class="n">col</span><span class="p">(</span><span class="s2">"x"</span><span class="p">)</span><span class="o">.</span><span class="n">desc</span><span class="p">())</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+<span class="err">┌───────┐</span>
+<span class="err">│</span>   <span class="n">x</span>   <span class="err">│</span>
+<span class="err">│</span> <span class="n">int64</span> <span class="err">│</span>
+<span class="err">╞═══════╡</span>
+<span class="err">│</span>     <span class="mi">3</span> <span class="err">│</span>
+<span class="err">├╌╌╌╌╌╌╌┤</span>
+<span class="err">│</span>     <span class="mi">2</span> <span class="err">│</span>
+<span class="err">├╌╌╌╌╌╌╌┤</span>
+<span class="err">│</span>     <span class="mi">1</span> <span class="err">│</span>
+<span class="err">└───────┘</span>
+</code></pre></div>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
 <h4 id="sedonadb.dataframe.DataFrame.to_arrow_table" class="doc doc-heading">
             <span class="doc doc-object-name doc-function-name">to_arrow_table</span>
 
