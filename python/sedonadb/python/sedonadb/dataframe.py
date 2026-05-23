@@ -318,6 +318,51 @@ class DataFrame:
 
         return DataFrame(self._ctx, self._impl.sort(coerced), self._options)
 
+    def drop(self, *cols: str) -> "DataFrame":
+        """Drop the named columns.
+
+        Returns a new lazy `DataFrame` with each named column removed.
+        Only column-name strings are accepted; expression arguments are
+        rejected because "drop a computed expression" has no meaning at
+        the schema level. Unknown column names raise a `SedonaError` at
+        plan-build time, with the list of valid field names included in
+        the message.
+
+        Args:
+            *cols: One or more column names to drop. At least one is
+                required.
+
+        Examples:
+
+            >>> sd = sedona.db.connect()
+            >>> df = sd.sql("SELECT 1 AS a, 2 AS b, 3 AS c")
+            >>> df.drop("b").show()
+            ┌───────┬───────┐
+            │   a   ┆   c   │
+            │ int64 ┆ int64 │
+            ╞═══════╪═══════╡
+            │     1 ┆     3 │
+            └───────┴───────┘
+        """
+        if not cols:
+            raise ValueError("drop() requires at least one column name")
+
+        for c in cols:
+            if not isinstance(c, str):
+                raise TypeError(f"drop() expects str arguments, got {type(c).__name__}")
+
+        # DataFusion's `drop_columns` silently ignores names not in the
+        # schema — that hides typos. Validate Python-side so the user
+        # gets an immediate KeyError listing the available columns.
+        columns = self._impl.columns()
+        unknown = [c for c in cols if c not in columns]
+        if unknown:
+            raise KeyError(
+                f"Column(s) {unknown} not found. Available columns: {columns}"
+            )
+
+        return DataFrame(self._ctx, self._impl.drop_columns(list(cols)), self._options)
+
     def limit(self, n: Optional[int], /, *, offset: int = 0) -> "DataFrame":
         """Limit result to n rows starting at offset
 

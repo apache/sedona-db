@@ -170,6 +170,25 @@ impl InternalDataFrame {
         Ok(InternalDataFrame::new(inner, self.runtime.clone()))
     }
 
+    /// Drop the named columns, producing a new lazy `DataFrame`.
+    ///
+    /// The Python side guarantees `cols` is non-empty and that every
+    /// element is a string. DataFusion's `drop_columns` accepts `&[&str]`,
+    /// so we materialize a slice of borrowed string references and hand
+    /// it off; the plan-build step raises a `SchemaError` if any name
+    /// doesn't resolve to a column, and that error already includes the
+    /// list of valid field names for the user.
+    fn drop_columns(&self, cols: Vec<String>) -> Result<InternalDataFrame, PySedonaError> {
+        if cols.is_empty() {
+            return Err(PySedonaError::SedonaPython(
+                "drop() requires at least one column name".to_string(),
+            ));
+        }
+        let borrowed: Vec<&str> = cols.iter().map(String::as_str).collect();
+        let inner = self.inner.clone().drop_columns(&borrowed)?;
+        Ok(InternalDataFrame::new(inner, self.runtime.clone()))
+    }
+
     fn execute<'py>(&self, py: Python<'py>) -> Result<usize, PySedonaError> {
         let df = self.inner.clone();
         let count = wait_for_future(py, &self.runtime, async move {
