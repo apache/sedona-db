@@ -27,8 +27,17 @@ kernels:
 
 `ST_AsBinary()` Returns the Well-Known Binary representation of a geometry or geography. This function also has the alias ST_AsWKB.
 
+`ST_AsBinary()` may preserve the underlying Arrow storage type of the input geometry. For example,
+when the input geometry is backed by Arrow `BinaryView` storage, the WKB output may also use
+`BinaryView` storage. If a downstream consumer requires simpler Arrow storage such as `Binary`,
+wrap the result with `sd_simplifystorage()`.
+
 ## Examples
 
 ```sql
 SELECT ST_AsBinary(ST_Point(1.0, 2.0));
+```
+
+```sql
+SELECT sd_simplifystorage(ST_AsBinary(ST_Point(1.0, 2.0)));
 ```

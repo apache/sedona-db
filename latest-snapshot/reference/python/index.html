@@ -2679,6 +2679,81 @@ can run SQL and spatial operations on them.</p>
 <div class="doc doc-object doc-function">
 
 
+<h4 id="sedonadb.context.SedonaContext.read_format" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">read_format</span>
+
+
+<a href="#sedonadb.context.SedonaContext.read_format" class="headerlink" title="Permanent link">¶</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">read_format</span><span class="p">(</span>
+    <span class="n">spec</span><span class="p">:</span> <span class="n"><span title="sedonadb.datasource.ExternalFormatSpec">ExternalFormatSpec</span></span><span class="p">,</span>
+    <span class="n">table_paths</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Union" href="https://docs.python.org/3/library/typing.html#typing.Union">Union</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span><span class="p">,</span> <span class="n"><a class="autorefs autorefs-external" title="pathlib.Path" href="https://docs.python.org/3/library/pathlib.html#pathlib.Path">Path</a></span><span class="p">,</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Iterable" href="https://docs.python.org/3/library/typing.html#typing.Iterable">Iterable</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span><span class="p">]],</span>
+    <span class="n">check_extension</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/functions.html#bool">bool</a></span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Read one or more paths using a Python-defined <code>ExternalFormatSpec</code>.</p>
+<p>This is the plugin entry point: a format-specific package (e.g.
+<code>sedonadb-zarr</code>) defines an <code>ExternalFormatSpec</code> subclass and the
+user reads through it via this method. Built-in formats have
+their own dedicated readers (<code>read_parquet</code>, <code>read_pyogrio</code>).</p>
+<p>Format-specific options are passed via the spec itself using
+<code>spec.with_options({...})</code>, which returns a configured copy.
+Unlike <code>read_pyogrio</code>, this method has no <code>options=</code> keyword —
+each spec class documents its own supported keys.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+            <b><code>spec</code></b>
+              (<code><span title="sedonadb.datasource.ExternalFormatSpec">ExternalFormatSpec</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>An <code>ExternalFormatSpec</code> instance describing how to open
+the underlying source.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>table_paths</code></b>
+              (<code><a class="autorefs autorefs-external" title="typing.Union" href="https://docs.python.org/3/library/typing.html#typing.Union">Union</a>[<a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a>, <a class="autorefs autorefs-external" title="pathlib.Path" href="https://docs.python.org/3/library/pathlib.html#pathlib.Path">Path</a>, <a class="autorefs autorefs-external" title="typing.Iterable" href="https://docs.python.org/3/library/typing.html#typing.Iterable">Iterable</a>[<a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a>]]</code>)
+          –
+          <div class="doc-md-description">
+            <p>A str, Path, or iterable of paths/URLs.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>check_extension</code></b>
+              (<code><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/functions.html#bool">bool</a></code>, default:
+                  <code>False</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>When <code>True</code>, error if a non-collection path
+doesn't end in the spec's <code>extension</code>. Defaults to <code>False</code>.</p>
+          </div>
+        </li>
+    </ul>
+
+
+<p><span class="doc-section-title">Examples:</span></p>
+    <div class="highlight"><pre><span></span><code><span class="gp">&gt;&gt;&gt; </span><span class="kn">import</span><span class="w"> </span><span class="nn">sedonadb_zarr</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">sd</span> <span class="o">=</span> <span class="n">sedona</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">spec</span> <span class="o">=</span> <span class="n">sedonadb_zarr</span><span class="o">.</span><span class="n">ZarrFormatSpec</span><span class="p">()</span><span class="o">.</span><span class="n">with_options</span><span class="p">(</span>
+<span class="gp">... </span>    <span class="p">{</span><span class="s2">"arrays"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"temperature"</span><span class="p">]}</span>
+<span class="gp">... </span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">sd</span><span class="o">.</span><span class="n">read_format</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="s2">"file:///path/to/foo.zarr"</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+</code></pre></div>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
 <h4 id="sedonadb.context.SedonaContext.read_parquet" class="doc doc-heading">
             <span class="doc doc-object-name doc-function-name">read_parquet</span>
 
