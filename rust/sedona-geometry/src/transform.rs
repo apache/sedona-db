@@ -41,6 +41,7 @@ use geo_traits::{
 
 /// Represents a coordinate reference system (CRS) transformation engine.
 pub trait CrsEngine: Debug {
+    /// Resolve a transform from a source CRS to a destination CRS
     fn get_transform_crs_to_crs(
         &self,
         from: &str,
@@ -48,6 +49,12 @@ pub trait CrsEngine: Debug {
         area_of_interest: Option<BoundingBox>,
         options: &str,
     ) -> Result<Rc<dyn CrsTransform>, SedonaGeometryError>;
+
+    /// Resolve a transform where the transform is represented by a pipeline string
+    ///
+    /// The string accepted varies by engine; however, the PROJ engine typically accepts
+    /// strings in the form of an identifier (for a coordinate transform, not a CRS) or
+    /// PROJ4-ish string.
     fn get_transform_pipeline(
         &self,
         pipeline: &str,

@@ -20,7 +20,20 @@ import os
 import sys
 from functools import cached_property
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Literal, Optional, Tuple, Union
+from typing import (
+    Any,
+    Dict,
+    Iterable,
+    List,
+    Literal,
+    Optional,
+    TYPE_CHECKING,
+    Tuple,
+    Union,
+)
+
+if TYPE_CHECKING:
+    from sedonadb.datasource import ExternalFormatSpec
 
 from sedonadb._lib import (
     InternalContext,
@@ -329,6 +342,50 @@ class SedonaContext:
             self._impl,
             self._impl.read_external_format(
                 spec, [str(path) for path in table_paths], False
+            ),
+            self.options,
+        )
+
+    def read_format(
+        self,
+        spec: "ExternalFormatSpec",
+        table_paths: Union[str, Path, Iterable[str]],
+        check_extension: bool = False,
+    ) -> DataFrame:
+        """Read one or more paths using a Python-defined `ExternalFormatSpec`.
+
+        This is the plugin entry point: a format-specific package (e.g.
+        `sedonadb-zarr`) defines an `ExternalFormatSpec` subclass and the
+        user reads through it via this method. Built-in formats have
+        their own dedicated readers (`read_parquet`, `read_pyogrio`).
+
+        Format-specific options are passed via the spec itself using
+        `spec.with_options({...})`, which returns a configured copy.
+        Unlike `read_pyogrio`, this method has no `options=` keyword —
+        each spec class documents its own supported keys.
+
+        Args:
+            spec: An `ExternalFormatSpec` instance describing how to open
+                the underlying source.
+            table_paths: A str, Path, or iterable of paths/URLs.
+            check_extension: When `True`, error if a non-collection path
+                doesn't end in the spec's `extension`. Defaults to `False`.
+
+        Examples:
+            >>> import sedonadb_zarr  # doctest: +SKIP
+            >>> sd = sedona.db.connect()
+            >>> spec = sedonadb_zarr.ZarrFormatSpec().with_options(  # doctest: +SKIP
+            ...     {"arrays": ["temperature"]}
+            ... )
+            >>> sd.read_format(spec, "file:///path/to/foo.zarr").show()  # doctest: +SKIP
+        """
+        if isinstance(table_paths, (str, Path)):
+            table_paths = [table_paths]
+
+        return DataFrame(
+            self._impl,
+            self._impl.read_external_format(
+                spec, [str(path) for path in table_paths], check_extension
             ),
             self.options,
         )

@@ -22,8 +22,93 @@ use geo_traits::{
 use crate::{
     bounding_box::BoundingBox,
     error::SedonaGeometryError,
-    interval::{Interval, IntervalTrait},
+    interval::{Interval, IntervalTrait, WraparoundInterval},
 };
+
+/// Trait defining an abstract bounder
+///
+/// This trait is used to parameterize geometry implementations such that
+/// they may be reused for geographies (which have different bounding rules).
+pub trait WkbBounder2D: std::fmt::Debug + Send + Sync {
+    /// Reset these bounds to an empty state
+    fn clear(&mut self);
+
+    /// Update this bounder with precomputed bounds
+    fn update_bounds(
+        &mut self,
+        x: WraparoundInterval,
+        y: Interval,
+    ) -> Result<(), SedonaGeometryError>;
+
+    /// Update this bounder with WKB formatted bytes
+    fn update_wkb_bytes(&mut self, wkb_value: &[u8]) -> Result<(), SedonaGeometryError>;
+
+    fn expand_by_distance(
+        &mut self,
+        distance: f64,
+        radius: Option<f64>,
+    ) -> Result<(), SedonaGeometryError>;
+
+    /// Finish this bounder into component intervals
+    fn finish(&self) -> (WraparoundInterval, Interval);
+
+    /// Compute the memory used by this instance
+    fn mem_used(&self) -> usize;
+}
+
+#[derive(Debug, Default)]
+pub struct WkbGeometryBounder {
+    x: Interval,
+    y: Interval,
+}
+
+impl WkbBounder2D for WkbGeometryBounder {
+    fn clear(&mut self) {
+        self.x = Interval::empty();
+        self.y = Interval::empty();
+    }
+
+    fn update_bounds(
+        &mut self,
+        x: WraparoundInterval,
+        y: Interval,
+    ) -> Result<(), SedonaGeometryError> {
+        self.x.update_interval(&x.try_into()?);
+        self.y.update_interval(&y);
+        Ok(())
+    }
+
+    fn update_wkb_bytes(&mut self, wkb_value: &[u8]) -> Result<(), SedonaGeometryError> {
+        let wkb = wkb::reader::read_wkb(wkb_value)
+            .map_err(|e| SedonaGeometryError::External(Box::new(e)))?;
+        geo_traits_update_xy_bounds(wkb, &mut self.x, &mut self.y)?;
+        Ok(())
+    }
+
+    fn expand_by_distance(
+        &mut self,
+        distance: f64,
+        radius: Option<f64>,
+    ) -> Result<(), SedonaGeometryError> {
+        if radius.is_some() {
+            return Err(SedonaGeometryError::Invalid(
+                "WkbGeometryBounder can't expand with radius".to_string(),
+            ));
+        }
+
+        self.x = self.x.expand_by(distance);
+        self.y = self.y.expand_by(distance);
+        Ok(())
+    }
+
+    fn finish(&self) -> (WraparoundInterval, Interval) {
+        (self.x.into(), self.y)
+    }
+
+    fn mem_used(&self) -> usize {
+        size_of::<Self>()
+    }
+}
 
 /// Calculate the Cartesian XY bounds of a well-known binary geometry blob
 ///

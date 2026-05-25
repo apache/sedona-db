@@ -50,7 +50,7 @@ use sedona_common::{
     option::add_sedona_option_extension, sedona_internal_datafusion_err, CrsProviderOption,
     SedonaOptions,
 };
-use sedona_datasource::provider::external_listing_table;
+use sedona_datasource::provider::external_table;
 use sedona_datasource::spec::ExternalFormatSpec;
 use sedona_expr::scalar_udf::IntoScalarKernelRefs;
 use sedona_expr::{aggregate_udf::IntoSedonaAccumulatorRefs, function_set::FunctionSet};
@@ -280,6 +280,10 @@ impl SedonaContext {
             sd_order_lnglat::OrderLngLat::new(sedona_s2geography::utils::s2_cell_id_from_lnglat);
         self.register_scalar_kernels([("sd_order", sd_order_kernel)].into_iter())?;
 
+        self.register_aggregate_kernels(
+            sedona_s2geography::register::aggregate_kernels().into_iter(),
+        )?;
+
         Ok(())
     }
 
@@ -412,12 +416,12 @@ impl SedonaContext {
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect::<HashMap<String, String>>();
             let spec = spec.with_options(&options_without_filesystems)?;
-            external_listing_table(spec, &self.ctx, urls, check_extension).await?
+            external_table(spec, &self.ctx, urls, check_extension).await?
         } else {
-            external_listing_table(spec, &self.ctx, urls, check_extension).await?
+            external_table(spec, &self.ctx, urls, check_extension).await?
         };
 
-        self.ctx.read_table(Arc::new(provider))
+        self.ctx.read_table(provider)
     }
 }
 

@@ -430,6 +430,7 @@ mod tests {
     use datafusion_physical_plan::metrics::{ExecutionPlanMetricsSet, SpillMetrics};
     use sedona_expr::statistics::GeoStatistics;
     use sedona_functions::st_analyze_agg::AnalyzeAccumulator;
+    use sedona_geometry::bounds::WkbGeometryBounder;
     use sedona_geometry::wkb_factory::wkb_point;
     use sedona_schema::datatypes::WKB_GEOMETRY;
     use std::iter::zip;
@@ -470,11 +471,14 @@ mod tests {
     }
 
     fn geo_stats_from_batches(batches: &[EvaluatedBatch]) -> Result<GeoStatistics> {
-        let mut analyzer = AnalyzeAccumulator::new(WKB_GEOMETRY);
+        let mut analyzer = AnalyzeAccumulator::<WkbGeometryBounder>::new(WKB_GEOMETRY);
         for batch in batches {
             for (wkb_opt, rect) in zip(batch.geom_array.wkbs(), batch.geom_array.rects()) {
                 if let Some(wkb) = wkb_opt {
-                    analyzer.update_statistics_with_bbox(wkb, &rect.into())?;
+                    analyzer.update_statistics_with_bbox(
+                        wkb,
+                        &rect.bounding_box_no_wraparound(&(-180.0, 180.0).into()),
+                    )?;
                 }
             }
         }

@@ -50,6 +50,20 @@ class ExternalFormatSpec:
         """
         return ""
 
+    @property
+    def list_single_object(self) -> bool:
+        """Whether each URI should be treated as a single opaque object
+
+        Default ``False``: the URI is fed through DataFusion's listing layer,
+        which enumerates files matching :attr:`extension` at the prefix.
+
+        Override to ``True`` for directory-shaped formats (e.g. a Zarr group is
+        a directory, not a file) where the listing layer would return zero
+        matching files. The URI is then passed straight to
+        :meth:`open_reader` as one object.
+        """
+        return False
+
     def with_options(self, options: Mapping[str, Any]):
         """Clone this instance and return a new instance with options applied
 

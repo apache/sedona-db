@@ -39,7 +39,7 @@ struct STNumInteriorRings {}
 impl SedonaScalarKernel for STNumInteriorRings {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(
-            vec![ArgMatcher::is_geometry()],
+            vec![ArgMatcher::is_geometry_or_geography()],
             SedonaType::Arrow(DataType::Int32),
         );
 
@@ -103,7 +103,8 @@ mod tests {
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
     use sedona_schema::datatypes::{
-        SedonaType, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY,
+        SedonaType, WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS,
+        WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY,
     };
     use sedona_testing::compare::assert_array_equal;
     use sedona_testing::testers::ScalarUdfTester;
@@ -112,7 +113,7 @@ mod tests {
 
     #[rstest]
     fn udf(
-        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY, WKB_GEOMETRY_ITEM_CRS.clone())]
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY, WKB_GEOGRAPHY, WKB_VIEW_GEOGRAPHY, WKB_GEOMETRY_ITEM_CRS.clone(), WKB_GEOGRAPHY_ITEM_CRS.clone())]
         sedona_type: SedonaType,
     ) {
         let udf = SedonaScalarUDF::from_impl("st_numinteriorrings", st_num_interior_rings_impl());

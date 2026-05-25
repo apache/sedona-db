@@ -145,6 +145,12 @@ pub struct Interval {
     hi: f64,
 }
 
+impl Default for Interval {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
 impl Interval {
     /// Expand this interval to the union of self and other in place
     ///
@@ -282,6 +288,12 @@ impl IntervalTrait for Interval {
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct WraparoundInterval {
     inner: Interval,
+}
+
+impl Default for WraparoundInterval {
+    fn default() -> Self {
+        Self::empty()
+    }
 }
 
 impl WraparoundInterval {

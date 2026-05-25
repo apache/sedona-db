@@ -24,6 +24,8 @@ edition = "2021"
 [lib]
 name = "_lib"
 crate-type = ["cdylib"]
+# Pure Python extension — no Rust API consumers, so skip rustdoc.
+doc = false
 
 [features]
 default = ["mimalloc"]

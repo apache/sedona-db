@@ -30,6 +30,7 @@ use futures::StreamExt;
 use sedona_common::{sedona_internal_err, SpatialJoinOptions};
 use sedona_expr::statistics::GeoStatistics;
 use sedona_functions::st_analyze_agg::AnalyzeAccumulator;
+use sedona_geometry::bounds::WkbGeometryBounder;
 use sedona_schema::datatypes::WKB_GEOMETRY;
 
 use crate::{
@@ -161,7 +162,7 @@ impl BuildSideBatchesCollector {
         let mut total_num_rows = 0;
         let mut total_size_bytes = 0;
 
-        let mut analyzer = AnalyzeAccumulator::new(WKB_GEOMETRY);
+        let mut analyzer = AnalyzeAccumulator::<WkbGeometryBounder>::new(WKB_GEOMETRY);
 
         // Reserve memory for holding bbox samples. This should be a small reservation.
         // We simply return error if the reservation cannot be fulfilled, since there's
@@ -176,9 +177,14 @@ impl BuildSideBatchesCollector {
             let geom_array = &build_side_batch.geom_array;
             for (wkb_opt, rect) in zip(geom_array.wkbs(), geom_array.rects()) {
                 if let Some(wkb) = wkb_opt {
-                    analyzer.update_statistics_with_bbox(wkb, &rect.into())?;
+                    // We're using a geometry analyzer to get approximate statistics and
+                    // the geometry analyzer can't handle wraparound intervals.
+                    analyzer.update_statistics_with_bbox(
+                        wkb,
+                        &rect.bounding_box_no_wraparound(&(-180.0, 180.0).into()),
+                    )?;
                     if !rect.is_empty() {
-                        bbox_sampler.add_bbox(&rect.into());
+                        bbox_sampler.add_bbox(&rect.bounding_box());
                     }
                 }
             }

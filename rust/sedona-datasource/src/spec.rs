@@ -70,6 +70,24 @@ pub trait ExternalFormatSpec: Debug + Send + Sync {
         ""
     }
 
+    /// Whether each URI should be treated as a single opaque object
+    /// (no `ObjectStore` listing or extension matching).
+    ///
+    /// Default `false`: the URI is fed through DataFusion's
+    /// `ListingTableUrl` and the listing fan-out enumerates matching
+    /// files at the prefix.
+    ///
+    /// Set to `true` for directory-shaped formats like Zarr where the
+    /// "object" is the directory itself, not the files within it. With
+    /// `true`, [`external_table`](crate::provider::external_table)
+    /// skips listing and passes each URI directly to
+    /// [`ExternalFormatSpec::infer_schema`] and
+    /// [`ExternalFormatSpec::open_reader`] as one
+    /// [`Object`].
+    fn list_single_object(&self) -> bool {
+        false
+    }
+
     /// Fill in default options from [TableOptions]
     ///
     /// The TableOptions are a DataFusion concept that provide a means by which

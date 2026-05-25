@@ -28,7 +28,7 @@ use sedona_expr::item_crs::make_item_crs;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
 use sedona_schema::{
-    datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY},
+    datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOGRAPHY_WGS84, WKB_GEOMETRY},
     matchers::ArgMatcher,
 };
 use wkb::writer::{write_geometry, WriteOptions};
@@ -64,11 +64,20 @@ pub fn st_geomfromwkt_udf() -> SedonaScalarUDF {
 /// An implementation of WKT reading using GeoRust's wkt crate.
 /// See [`st_geomfromwkt_udf`] for the corresponding geometry function.
 pub fn st_geogfromwkt_udf() -> SedonaScalarUDF {
+    // Inner kernel for SRIDified has no CRS - the SRID argument sets it
+    let inner_kernel = Arc::new(STGeoFromWKT {
+        out_type: WKB_GEOGRAPHY,
+    });
+    let sridified_kernel = Arc::new(SRIDifiedKernel::new(inner_kernel));
+
+    // Standalone kernel returns WGS84 CRS by default
+    let standalone_kernel = Arc::new(STGeoFromWKT {
+        out_type: WKB_GEOGRAPHY_WGS84.clone(),
+    });
+
     let udf = SedonaScalarUDF::new(
         "st_geogfromwkt",
-        vec![Arc::new(STGeoFromWKT {
-            out_type: WKB_GEOGRAPHY,
-        })],
+        vec![sridified_kernel, standalone_kernel],
         Volatility::Immutable,
     );
     udf.with_aliases(vec!["st_geogfromtext".to_string()])
@@ -444,10 +453,10 @@ mod tests {
     fn geog() {
         let udf = st_geogfromwkt_udf();
         let tester = ScalarUdfTester::new(udf.into(), vec![SedonaType::Arrow(DataType::Utf8)]);
-        assert_eq!(tester.return_type().unwrap(), WKB_GEOGRAPHY);
+        assert_eq!(tester.return_type().unwrap(), *WKB_GEOGRAPHY_WGS84);
         assert_scalar_equal(
             &tester.invoke_scalar("POINT (1 2)").unwrap(),
-            &create_scalar(Some("POINT (1 2)"), &WKB_GEOGRAPHY),
+            &create_scalar(Some("POINT (1 2)"), &WKB_GEOGRAPHY_WGS84),
         );
     }
 

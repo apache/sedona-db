@@ -20,4 +20,8 @@ pub mod operator;
 pub mod rect_bounder;
 pub mod register;
 mod s2geography_c_bindgen;
+mod st_analyze_agg;
+mod st_envelope;
+mod st_envelope_agg;
+mod st_xy_minmax;
 pub mod utils;

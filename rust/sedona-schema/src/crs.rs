@@ -335,6 +335,34 @@ pub trait CoordinateReferenceSystem: Debug {
     /// not be escaped. This is the representation expected as input to PROJ, GDAL,
     /// and Parquet GEOMETRY/GEOGRAPHY representations of CRS.
     fn to_crs_string(&self) -> String;
+
+    /// For Geographic CRSes, return the geographic parameters
+    ///
+    /// For non-geographic CRSes, this must return None. For the purposes of this
+    /// trait, a geographic CRS must be suitable for the Geography type (i.e.,
+    /// units in degrees).
+    fn geographic_params(&self) -> Result<Option<GeographicCrsParams>>;
+}
+
+/// Parameters describing a geographic CRS
+///
+/// These parameters are used for distance calculations on the ellipsoid or sphere
+/// for functions that support it. Notably, this is used for calculations involving
+/// distance in the geography type. Currently this only supports a single parameter
+/// (average spherical radius) but can be expanded to support ellipsoidal parameters
+/// when we have functions that support it.
+pub struct GeographicCrsParams {
+    spherical_radius_m: f64,
+}
+
+impl GeographicCrsParams {
+    /// The average spherical radius in meters for use in spherical geographies
+    ///
+    /// Because geographies with spherical edges approximate distance on the sphere,
+    /// this is the value that will be used to calculate distance in such a case.
+    pub fn spherical_radius(&self) -> f64 {
+        self.spherical_radius_m
+    }
 }
 
 /// Concrete implementation of a default longitude/latitude coordinate reference system
@@ -465,6 +493,40 @@ impl CoordinateReferenceSystem for AuthorityCode {
     fn to_crs_string(&self) -> String {
         self.auth_code.clone()
     }
+
+    /// Hard-code support for several known spherical CRSes so we can support them
+    /// in the geography type
+    fn geographic_params(&self) -> Result<Option<GeographicCrsParams>> {
+        match self.auth_code.as_str() {
+            // Default lnglat(). Here we use S2Earth::RadiusMeters() as a constant
+            // for consistent results (if we averaged over the ensemble, distance results
+            // may be subtly different between versions as the ensemble is updated).
+            "OGC:CRS84" | "EPSG:4326" => Ok(Some(GeographicCrsParams {
+                spherical_radius_m: 6371010.0,
+            })),
+            // NAD83
+            // https://spatialreference.org/ref/epsg/4269/
+            "OGC:CRS83" | "EPSG:4269" => {
+                const A: f64 = 6378137.0;
+                const INV_F: f64 = 298.257222101;
+                const B: f64 = A * (1.0 - 1.0 / INV_F);
+                Ok(Some(GeographicCrsParams {
+                    spherical_radius_m: (2.0 * A + B) / 3.0,
+                }))
+            }
+            // NAD27
+            // Mean radius = (2a + b) / 3
+            // https://spatialreference.org/ref/epsg/4267/
+            "OGC:CRS27" | "EPSG:4267" => {
+                const A: f64 = 6378206.4;
+                const B: f64 = 6356583.8;
+                Ok(Some(GeographicCrsParams {
+                    spherical_radius_m: (2.0 * A + B) / 3.0,
+                }))
+            }
+            _ => Ok(None),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -546,6 +608,78 @@ impl CoordinateReferenceSystem for ProjJSON {
     fn to_crs_string(&self) -> String {
         self.to_json()
     }
+
+    fn geographic_params(&self) -> Result<Option<GeographicCrsParams>> {
+        let Value::Object(obj) = &self.value else {
+            return Ok(None);
+        };
+
+        let Some(Value::String(crs_type)) = obj.get("type") else {
+            return Ok(None);
+        };
+
+        // Only geographic CRSes have geographic params
+        if crs_type != "GeographicCRS" {
+            return Ok(None);
+        }
+
+        // Try datum first, then datum_ensemble
+        let ellipsoid = if let Some(Value::Object(datum)) = obj.get("datum") {
+            datum.get("ellipsoid")
+        } else if let Some(Value::Object(datum_ensemble)) = obj.get("datum_ensemble") {
+            datum_ensemble.get("ellipsoid")
+        } else {
+            return exec_err!(
+                "PROJJSON GeographicCRS missing or malformed datum or datum_ensemble ellipsoid"
+            );
+        };
+
+        let Some(Value::Object(ellipsoid)) = ellipsoid else {
+            return exec_err!("PROJJSON ellipsoid is not an object");
+        };
+
+        // Handle spherical case (radius only)
+        if let Some(Value::Number(radius)) = ellipsoid.get("radius") {
+            let Some(r) = radius.as_f64() else {
+                return exec_err!("PROJJSON radius can't be converted to f64");
+            };
+            return Ok(Some(GeographicCrsParams {
+                spherical_radius_m: r,
+            }));
+        }
+
+        // Get semi_major_axis (required for ellipsoidal case)
+        let Some(Value::Number(semi_major)) = ellipsoid.get("semi_major_axis") else {
+            return exec_err!("PROJJSON ellipsoid missing or malformed semi_major_axis");
+        };
+        let Some(a) = semi_major.as_f64() else {
+            return exec_err!("PROJJSON semi_major_axis can't be converted to f64");
+        };
+
+        // Calculate semi_minor_axis from inverse_flattening or use directly
+        let b = if let Some(Value::Number(inv_f)) = ellipsoid.get("inverse_flattening") {
+            if let Some(inv_f) = inv_f.as_f64() {
+                a * (1.0 - 1.0 / inv_f)
+            } else {
+                return exec_err!("PROJJSON inverse_flattening can't be converted to f64");
+            }
+        } else if let Some(Value::Number(semi_minor)) = ellipsoid.get("semi_minor_axis") {
+            if let Some(b) = semi_minor.as_f64() {
+                b
+            } else {
+                return exec_err!("PROJJSON semi_minor_axis can't be converted to f64");
+            }
+        } else {
+            return exec_err!(
+                "PROJJSON ellipsoid missing or malformed inverse_flattening/semi_minor_axis"
+            );
+        };
+
+        // Mean radius = (2a + b) / 3
+        Ok(Some(GeographicCrsParams {
+            spherical_radius_m: (2.0 * a + b) / 3.0,
+        }))
+    }
 }
 
 pub const OGC_CRS84_PROJJSON: &str = r#"{"$schema":"https://proj.org/schemas/v0.7/projjson.schema.json","type":"GeographicCRS","name":"WGS 84 (CRS84)","datum_ensemble":{"name":"World Geodetic System 1984 ensemble","members":[{"name":"World Geodetic System 1984 (Transit)","id":{"authority":"EPSG","code":1166}},{"name":"World Geodetic System 1984 (G730)","id":{"authority":"EPSG","code":1152}},{"name":"World Geodetic System 1984 (G873)","id":{"authority":"EPSG","code":1153}},{"name":"World Geodetic System 1984 (G1150)","id":{"authority":"EPSG","code":1154}},{"name":"World Geodetic System 1984 (G1674)","id":{"authority":"EPSG","code":1155}},{"name":"World Geodetic System 1984 (G1762)","id":{"authority":"EPSG","code":1156}},{"name":"World Geodetic System 1984 (G2139)","id":{"authority":"EPSG","code":1309}},{"name":"World Geodetic System 1984 (G2296)","id":{"authority":"EPSG","code":1383}}],"ellipsoid":{"name":"WGS 84","semi_major_axis":6378137,"inverse_flattening":298.257223563},"accuracy":"2.0","id":{"authority":"EPSG","code":6326}},"coordinate_system":{"subtype":"ellipsoidal","axis":[{"name":"Geodetic longitude","abbreviation":"Lon","direction":"east","unit":"degree"},{"name":"Geodetic latitude","abbreviation":"Lat","direction":"north","unit":"degree"}]},"scope":"Not known.","area":"World.","bbox":{"south_latitude":-90,"west_longitude":-180,"north_latitude":90,"east_longitude":180},"id":{"authority":"OGC","code":"CRS84"}}"#;
@@ -553,7 +687,14 @@ pub const OGC_CRS84_PROJJSON: &str = r#"{"$schema":"https://proj.org/schemas/v0.
 #[cfg(test)]
 mod test {
     use super::*;
+    /// Projected CRS
     const EPSG_6318_PROJJSON: &str = r#"{"$schema": "https://proj.org/schemas/v0.4/projjson.schema.json","type": "GeographicCRS","name": "NAD83(2011)","datum": {"type": "GeodeticReferenceFrame","name": "NAD83 (National Spatial Reference System 2011)","ellipsoid": {"name": "GRS 1980","semi_major_axis": 6378137,"inverse_flattening": 298.257222101}},"coordinate_system": {"subtype": "ellipsoidal","axis": [{"name": "Geodetic latitude","abbreviation": "Lat","direction": "north","unit": "degree"},{"name": "Geodetic longitude","abbreviation": "Lon","direction": "east","unit": "degree"}]},"scope": "Horizontal component of 3D system.","area": "Puerto Rico - onshore and offshore. United States (USA) onshore and offshore - Alabama; Alaska; Arizona; Arkansas; California; Colorado; Connecticut; Delaware; Florida; Georgia; Idaho; Illinois; Indiana; Iowa; Kansas; Kentucky; Louisiana; Maine; Maryland; Massachusetts; Michigan; Minnesota; Mississippi; Missouri; Montana; Nebraska; Nevada; New Hampshire; New Jersey; New Mexico; New York; North Carolina; North Dakota; Ohio; Oklahoma; Oregon; Pennsylvania; Rhode Island; South Carolina; South Dakota; Tennessee; Texas; Utah; Vermont; Virginia; Washington; West Virginia; Wisconsin; Wyoming. US Virgin Islands - onshore and offshore.", "bbox": {"south_latitude": 14.92,"west_longitude": 167.65,"north_latitude": 74.71,"east_longitude": -63.88},"id": {"authority": "EPSG","code": 6318}}"#;
+
+    /// Mars geographic CRS (only defines 'radius')
+    const IAU_49900_PROJJSON: &str = r#"{"$schema":"https://proj.org/schemas/v0.7/projjson.schema.json","type":"GeographicCRS","name":"Mars (2015) - Sphere / Ocentric","datum":{"type":"GeodeticReferenceFrame","name":"Mars (2015) - Sphere","anchor":"Viking 1 lander: 47.95137 W","ellipsoid":{"name":"Mars (2015) - Sphere","radius":3396190},"prime_meridian":{"name":"Reference Meridian","longitude":0}},"coordinate_system":{"subtype":"ellipsoidal","axis":[{"name":"Geodetic latitude","abbreviation":"Lat","direction":"north","unit":"degree"},{"name":"Geodetic longitude","abbreviation":"Lon","direction":"east","unit":"degree"}]},"id":{"authority":"IAU","code":49900,"version":2015},"remarks":"Use semi-major radius as sphere for interoperability. Source of IAU Coordinate systems: https://doi.org/10.1007/s10569-017-9805-5"}"#;
+
+    /// NAD27 (defines semi_major/semi_minor instead of inverse flattening)
+    const EPSG_4267_PROJJSON: &str = r#"{"$schema":"https://proj.org/schemas/v0.7/projjson.schema.json","type":"GeographicCRS","name":"NAD27","datum":{"type":"GeodeticReferenceFrame","name":"North American Datum 1927","ellipsoid":{"name":"Clarke 1866","semi_major_axis":6378206.4,"semi_minor_axis":6356583.8}},"coordinate_system":{"subtype":"ellipsoidal","axis":[{"name":"Geodetic latitude","abbreviation":"Lat","direction":"north","unit":"degree"},{"name":"Geodetic longitude","abbreviation":"Lon","direction":"east","unit":"degree"}]},"scope":"Geodesy.","area":"North and central America: Antigua and Barbuda - onshore. Bahamas - onshore plus offshore over internal continental shelf only. Belize - onshore. British Virgin Islands - onshore. Canada onshore - Alberta, British Columbia, Manitoba, New Brunswick, Newfoundland and Labrador, Northwest Territories, Nova Scotia, Nunavut, Ontario, Prince Edward Island, Quebec, Saskatchewan and Yukon - plus offshore east coast. Cuba - onshore and offshore. El Salvador - onshore. Guatemala - onshore. Honduras - onshore. Panama - onshore. Puerto Rico - onshore. Mexico - onshore plus offshore east coast. Nicaragua - onshore. United States (USA) onshore and offshore - Alabama, Alaska, Arizona, Arkansas, California, Colorado, Connecticut, Delaware, Florida, Georgia, Idaho, Illinois, Indiana, Iowa, Kansas, Kentucky, Louisiana, Maine, Maryland, Massachusetts, Michigan, Minnesota, Mississippi, Missouri, Montana, Nebraska, Nevada, New Hampshire, New Jersey, New Mexico, New York, North Carolina, North Dakota, Ohio, Oklahoma, Oregon, Pennsylvania, Rhode Island, South Carolina, South Dakota, Tennessee, Texas, Utah, Vermont, Virginia, Washington, West Virginia, Wisconsin and Wyoming - plus offshore . US Virgin Islands - onshore.","bbox":{"south_latitude":7.15,"west_longitude":167.65,"north_latitude":83.17,"east_longitude":-47.74},"id":{"authority":"EPSG","code":4267},"remarks":"Note: this CRS includes longitudes which are POSITIVE EAST. Replaced by NAD27(76) (code 4608) in Ontario, CGQ77 (code 4609) in Quebec, Mexican Datum of 1993 (code 4483) in Mexico, NAD83 (code 4269) in Canada (excl. Ontario & Quebec) & USA."}"#;
 
     #[test]
     fn deserialize() {
@@ -693,5 +834,134 @@ mod test {
         let crs_value = serde_json::Value::String("4269".to_string());
         let new_crs = deserialize_crs_from_obj(&crs_value).unwrap();
         assert_eq!(new_crs.clone().unwrap().srid().unwrap(), Some(4269));
+    }
+
+    #[test]
+    fn geographic_params() {
+        let lnglat = AuthorityCode {
+            auth_code: "OGC:CRS84".to_string(),
+        };
+        let params = lnglat.geographic_params().unwrap().unwrap();
+        assert_eq!(params.spherical_radius(), 6371010.0);
+
+        let auth_code_nad27 = AuthorityCode {
+            auth_code: "EPSG:4267".to_string(),
+        };
+        let params = auth_code_nad27.geographic_params().unwrap().unwrap();
+        assert_eq!(params.spherical_radius(), 6370998.866666667);
+
+        let projjson_nad27 = ProjJSON::from_str(EPSG_4267_PROJJSON).unwrap();
+        let params = projjson_nad27.geographic_params().unwrap().unwrap();
+        assert_eq!(params.spherical_radius(), 6370998.866666667);
+
+        let projjson_wgs84 = ProjJSON::from_str(OGC_CRS84_PROJJSON).unwrap();
+        let params = projjson_wgs84.geographic_params().unwrap().unwrap();
+        assert_eq!(params.spherical_radius(), 6371008.771415059);
+
+        let projjson_mars = ProjJSON::from_str(IAU_49900_PROJJSON).unwrap();
+        let params = projjson_mars.geographic_params().unwrap().unwrap();
+        assert_eq!(params.spherical_radius(), 3396190.0);
+    }
+
+    #[test]
+    fn geographic_params_invalid_projjson() {
+        // Missing type field -> Ok(None)
+        let no_type = ProjJSON::try_new(serde_json::json!({"name": "test"})).unwrap();
+        assert!(no_type.geographic_params().unwrap().is_none());
+
+        // Non-GeographicCRS type -> Ok(None)
+        let projected = ProjJSON::try_new(serde_json::json!({
+            "type": "ProjectedCRS",
+            "name": "test"
+        }))
+        .unwrap();
+        assert!(projected.geographic_params().unwrap().is_none());
+
+        // GeographicCRS missing datum and datum_ensemble -> Error
+        let no_datum = ProjJSON::try_new(serde_json::json!({
+            "type": "GeographicCRS",
+            "name": "test"
+        }))
+        .unwrap();
+        assert!(no_datum.geographic_params().is_err());
+
+        // datum is not an object -> Error (datum_ensemble fallback also fails)
+        let datum_not_object = ProjJSON::try_new(serde_json::json!({
+            "type": "GeographicCRS",
+            "datum": "not an object"
+        }))
+        .unwrap();
+        assert!(datum_not_object.geographic_params().is_err());
+
+        // ellipsoid is not an object -> Error
+        let ellipsoid_not_object = ProjJSON::try_new(serde_json::json!({
+            "type": "GeographicCRS",
+            "datum": {"ellipsoid": "not an object"}
+        }))
+        .unwrap();
+        assert!(ellipsoid_not_object.geographic_params().is_err());
+
+        // ellipsoid missing all axis definitions -> Error
+        let ellipsoid_empty = ProjJSON::try_new(serde_json::json!({
+            "type": "GeographicCRS",
+            "datum": {"ellipsoid": {"name": "empty"}}
+        }))
+        .unwrap();
+        assert!(ellipsoid_empty.geographic_params().is_err());
+
+        // semi_major_axis is not a number -> Error
+        let semi_major_not_number = ProjJSON::try_new(serde_json::json!({
+            "type": "GeographicCRS",
+            "datum": {"ellipsoid": {"semi_major_axis": "not a number"}}
+        }))
+        .unwrap();
+        assert!(semi_major_not_number.geographic_params().is_err());
+
+        // semi_major_axis present but no inverse_flattening or semi_minor_axis -> Error
+        let missing_minor = ProjJSON::try_new(serde_json::json!({
+            "type": "GeographicCRS",
+            "datum": {"ellipsoid": {"semi_major_axis": 6378137}}
+        }))
+        .unwrap();
+        assert!(missing_minor.geographic_params().is_err());
+
+        // inverse_flattening is not a number -> Error
+        let inv_f_not_number = ProjJSON::try_new(serde_json::json!({
+            "type": "GeographicCRS",
+            "datum": {"ellipsoid": {
+                "semi_major_axis": 6378137,
+                "inverse_flattening": "not a number"
+            }}
+        }))
+        .unwrap();
+        assert!(inv_f_not_number.geographic_params().is_err());
+
+        // semi_minor_axis is not a number -> Error
+        let semi_minor_not_number = ProjJSON::try_new(serde_json::json!({
+            "type": "GeographicCRS",
+            "datum": {"ellipsoid": {
+                "semi_major_axis": 6378137,
+                "semi_minor_axis": "not a number"
+            }}
+        }))
+        .unwrap();
+        assert!(semi_minor_not_number.geographic_params().is_err());
+
+        // radius is not a number -> Error
+        let radius_not_number = ProjJSON::try_new(serde_json::json!({
+            "type": "GeographicCRS",
+            "datum": {"ellipsoid": {"radius": "not a number"}}
+        }))
+        .unwrap();
+        assert!(radius_not_number.geographic_params().is_err());
+
+        // datum_ensemble path works when datum is missing
+        let datum_ensemble = ProjJSON::try_new(serde_json::json!({
+            "type": "GeographicCRS",
+            "datum_ensemble": {"ellipsoid": {"radius": 6371000}}
+        }))
+        .unwrap();
+        let params = datum_ensemble.geographic_params().unwrap().unwrap();
+        assert_eq!(params.spherical_radius(), 6371000.0);
     }
 }
