@@ -54,6 +54,7 @@ lines <- readLines(top_cargo_toml)
 lines <- gsub("r/sedonadb/src/rust", "rust", lines, fixed = TRUE)
 # remove unnecessary workspace members
 lines <- gsub('"python/sedonadb",', "", lines, fixed = TRUE)
+lines <- gsub('"python/sedonadb-zarr",', "", lines, fixed = TRUE)
 lines <- gsub('"sedona-cli",', "", lines, fixed = TRUE)
 # remove GPU-related lines (members and workspace dependencies)
 lines <- lines[!grepl("sedona-spatial-join-gpu", lines, fixed = TRUE)]

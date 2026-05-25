@@ -22,7 +22,7 @@ kernels:
   - returns: geometry
     args:
     - geometry
-    - name: n
+    - name: "n"
       type: integer
 ---
 

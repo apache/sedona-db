@@ -25,6 +25,7 @@ members = [
     "c/sedona-s2geography",
     "c/sedona-tg",
     "python/sedonadb",
+    "python/sedonadb-zarr",
     "r/sedonadb/src/rust",
     "rust/sedona-adbc",
     "rust/sedona-datasource",
@@ -39,6 +40,7 @@ members = [
     "rust/sedona-raster",
     "rust/sedona-raster-functions",
     "rust/sedona-raster-gdal",
+    "rust/sedona-raster-zarr",
     "rust/sedona-schema",
     "rust/sedona-spatial-join",
     "rust/sedona-spatial-join-geography",
@@ -107,7 +109,7 @@ geo-traits = "0.3.0"
 geo-types = "0.7.17"
 geojson = "1.0.0"
 geos = { version = "11.1.1", features = ["geo", "v3_12_0"] }
-glam = "0.32.0"
+glam = "0.33.0"
 libmimalloc-sys = { version = "0.1", default-features = false }
 log = "^0.4"
 libloading = "0.9"
@@ -133,6 +135,8 @@ tokio = { version = "1.52", features = ["macros", "rt", "sync"] }
 url = "2.5.7"
 wkb = "0.9.2"
 wkt = "0.14.0"
+zarrs = { version = "0.23", default-features = false }
+zarrs_filesystem = "0.3"
 
 # Workspace path dependencies for internal crates
 sedona = { version = "0.4.0", path = "rust/sedona" }
@@ -150,6 +154,7 @@ sedona-pointcloud = { version = "0.4.0", path = "rust/sedona-pointcloud" }
 sedona-raster = { version = "0.4.0", path = "rust/sedona-raster" }
 sedona-raster-functions = { version = "0.4.0", path = "rust/sedona-raster-functions" }
 sedona-raster-gdal = { version = "0.4.0", path = "rust/sedona-raster-gdal" }
+sedona-raster-zarr = { version = "0.4.0", path = "rust/sedona-raster-zarr" }
 sedona-schema = { version = "0.4.0", path = "rust/sedona-schema" }
 sedona-spatial-join = { version = "0.4.0", path = "rust/sedona-spatial-join" }
 sedona-spatial-join-gpu = { version = "0.4.0", path = "rust/sedona-spatial-join-gpu" }

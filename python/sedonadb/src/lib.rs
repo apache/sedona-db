@@ -14,6 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
 use crate::{error::PySedonaError, udf::sedona_scalar_udf};
 use pyo3::{ffi::Py_uintptr_t, prelude::*};
 use sedona_adbc::AdbcSedonadbDriverInit;
@@ -128,10 +129,12 @@ fn _lib(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(expr::expr_lit, m)?)?;
     m.add_function(wrap_pyfunction!(expr::expr_binary, m)?)?;
     m.add_function(wrap_pyfunction!(expr::expr_not, m)?)?;
+    m.add_function(wrap_pyfunction!(expr::expr_sort_expr, m)?)?;
 
     m.add_class::<context::InternalContext>()?;
     m.add_class::<dataframe::InternalDataFrame>()?;
     m.add_class::<expr::PyExpr>()?;
+    m.add_class::<expr::PySortExpr>()?;
     m.add_class::<datasource::PyExternalFormat>()?;
     m.add_class::<datasource::PyProjectedRecordBatchReader>()?;
     m.add("SedonaError", py.get_type::<error::SedonaError>())?;

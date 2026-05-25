@@ -409,7 +409,7 @@ mod test {
     use tempfile::TempDir;
     use url::Url;
 
-    use crate::provider::external_listing_table;
+    use crate::provider::external_table;
 
     use super::*;
 
@@ -613,7 +613,7 @@ mod test {
         let (_temp_dir, files) = create_echo_spec_temp_dir();
 
         // Select using a listing table and ensure we get a result
-        let provider = external_listing_table(
+        let provider = external_table(
             spec,
             &ctx,
             files
@@ -625,12 +625,7 @@ mod test {
         .await
         .unwrap();
 
-        let batches = ctx
-            .read_table(Arc::new(provider))
-            .unwrap()
-            .collect()
-            .await
-            .unwrap();
+        let batches = ctx.read_table(provider).unwrap().collect().await.unwrap();
 
         // We should get one value per partition
         assert_eq!(batches.len(), 2);
@@ -648,7 +643,7 @@ mod test {
         let (_temp_dir, files) = create_echo_spec_temp_dir();
 
         // Select using a listing table and ensure we get a result with the option passed
-        let provider = external_listing_table(
+        let provider = external_table(
             spec,
             &ctx,
             files
@@ -661,7 +656,7 @@ mod test {
         .unwrap();
 
         let batches = ctx
-            .read_table(Arc::new(provider))
+            .read_table(provider)
             .unwrap()
             .select(vec![col("batch_size"), col("option_value")])
             .unwrap()
@@ -691,7 +686,7 @@ mod test {
         let (temp_dir, mut files) = create_echo_spec_temp_dir();
 
         // Listing table with no files should error
-        let err = external_listing_table(spec.clone(), &ctx, vec![], true)
+        let err = external_table(spec.clone(), &ctx, vec![], true)
             .await
             .unwrap_err();
         assert_eq!(err.message(), "No table paths were provided");
@@ -705,7 +700,7 @@ mod test {
         files.push(file2);
 
         // With check_extension as true we should get an error
-        let err = external_listing_table(
+        let err = external_table(
             spec.clone(),
             &ctx,
             files
@@ -722,7 +717,7 @@ mod test {
             .ends_with("does not match the expected extension 'echospec'"));
 
         // ...but we should be able to turn off the error
-        external_listing_table(
+        external_table(
             spec,
             &ctx,
             files
@@ -733,5 +728,122 @@ mod test {
         )
         .await
         .unwrap();
+    }
+
+    /// Spec for a directory-shaped format whose "object" is the
+    /// directory itself. Used to exercise the
+    /// [`SingleObjectExternalTable`] path through
+    /// [`external_table`].
+    #[derive(Debug, Default, Clone)]
+    struct DirectorySpec;
+
+    #[async_trait]
+    impl ExternalFormatSpec for DirectorySpec {
+        fn extension(&self) -> &str {
+            ".dirfmt"
+        }
+
+        fn list_single_object(&self) -> bool {
+            true
+        }
+
+        fn with_options(
+            &self,
+            _options: &HashMap<String, String>,
+        ) -> Result<Arc<dyn ExternalFormatSpec>> {
+            Ok(Arc::new(self.clone()))
+        }
+
+        async fn infer_schema(&self, location: &Object) -> Result<Schema> {
+            // The single-object provider must synthesise an ObjectMeta
+            // before calling us; assert that contract here.
+            assert!(
+                location.meta.is_some(),
+                "single-object scan must synthesise an ObjectMeta",
+            );
+            Ok(Schema::new(vec![
+                Field::new("uri_path", DataType::Utf8, false),
+                Field::new("row_idx", DataType::Int32, false),
+            ]))
+        }
+
+        async fn open_reader(
+            &self,
+            args: &OpenReaderArgs,
+        ) -> Result<Box<dyn RecordBatchReader + Send>> {
+            let meta = args
+                .src
+                .meta
+                .as_ref()
+                .expect("single-object scan must synthesise an ObjectMeta");
+            let path = meta.location.to_string();
+            let schema = Arc::new(self.infer_schema(&args.src).await?);
+            let mut batch = RecordBatch::try_new(
+                schema.clone(),
+                vec![
+                    Arc::new(StringArray::from(vec![path])),
+                    Arc::new(Int32Array::from(vec![0])),
+                ],
+            )?;
+            if let Some(projection) = &args.file_projection {
+                batch = batch.project(projection)?;
+            }
+            Ok(Box::new(RecordBatchIterator::new([Ok(batch)], schema)))
+        }
+    }
+
+    #[tokio::test]
+    async fn single_object_table_skips_listing() {
+        // The fixture dir is *not* a `.dirfmt` directory and contains
+        // nothing matching that extension. A listing-based provider
+        // would return zero objects and error on schema inference.
+        let spec = Arc::new(DirectorySpec);
+        let temp_dir = TempDir::new().unwrap();
+        let dir_path = temp_dir.path().join("group.dirfmt");
+        std::fs::create_dir(&dir_path).unwrap();
+        // Make the directory non-empty so it looks like a real
+        // directory-shaped artefact, not just a missing entry.
+        std::fs::File::create(dir_path.join("metadata.json"))
+            .unwrap()
+            .write_all(b"{}")
+            .unwrap();
+
+        let ctx = SessionContext::new();
+        let url = ListingTableUrl::parse(dir_path.to_string_lossy()).unwrap();
+        let provider = external_table(spec, &ctx, vec![url], false).await.unwrap();
+
+        let batches = ctx.read_table(provider).unwrap().collect().await.unwrap();
+
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].num_rows(), 1);
+        // The synthesised ObjectMeta::location is the URL path within
+        // the object store — non-empty means we passed the URI through
+        // without trying to list inside it.
+        let path_col = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert!(!path_col.value(0).is_empty());
+        assert!(path_col.value(0).ends_with("group.dirfmt"));
+    }
+
+    #[tokio::test]
+    async fn single_object_table_rejects_mixed_object_stores() {
+        let spec = Arc::new(DirectorySpec);
+        let ctx = SessionContext::new();
+        // Mix file:// + https:// — both parse fine but resolve to
+        // different ObjectStoreUrls, which the single-object provider
+        // doesn't try to span.
+        let url_a = ListingTableUrl::parse("file:///tmp/a.dirfmt").unwrap();
+        let url_b = ListingTableUrl::parse("https://example.com/b.dirfmt").unwrap();
+        let err = external_table(spec, &ctx, vec![url_a, url_b], false)
+            .await
+            .unwrap_err();
+        assert!(
+            err.message().contains("same object store"),
+            "unexpected error: {}",
+            err.message()
+        );
     }
 }
