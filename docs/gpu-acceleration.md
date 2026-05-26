@@ -75,7 +75,7 @@ When `gpu.fallback_to_cpu = false`, unsupported predicates fail the query.
 **Build from source**
 
 For building the Python package from source, you should enable the GPU at build time and configure the CUDA
-environment before running `MATURIN_PEP517_ARGS="--features gpu" pip install`.
+environment before running `MATURIN_PEP517_ARGS="--features='gpu,s2geography,pyo3/extension-module' pip install`.
 
 Common environment variables used by the GPU build:
 

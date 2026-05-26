@@ -77,16 +77,26 @@ ENV MATURIN_PEP517_ARGS="--features s2geography,gpu"
 # Install maturin AND JupyterLab inside the virtual environment
 RUN pip3 install maturin jupyterlab pyproj
 
-# Install the project in editable mode (uses pyproject -> maturin under the hood)
-RUN pip3 install -e "python/sedonadb" -vv
+# Install the project. You may add '-e' to enable the editable mode (uses pyproject -> maturin under the hood) for debug/development purposes
+RUN pip3 install "python/sedonadb" -vv
 
 # Clean up the library path so the container uses the real driver at runtime
 ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64
-
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
+
+# --- SECURITY CONFIGURATION ---
+# Create a non-root user
+RUN useradd -ms /bin/bash jupyteruser
+
+# Change ownership of the workspace and virtual environment to the new user
+RUN chown -R jupyteruser:jupyteruser /workspace /opt/venv
+
+# Switch to the non-root user
+USER jupyteruser
+# ------------------------------
 
 # Expose the default JupyterLab port
 EXPOSE 8888
 
-# Launch JupyterLab by default when the container starts
-CMD ["jupyter", "lab", "--ip=0.0.0.0", "--port=8888", "--no-browser", "--allow-root"]
+# Launch JupyterLab
+CMD ["jupyter", "lab", "--ip=0.0.0.0", "--port=8888", "--no-browser"]
