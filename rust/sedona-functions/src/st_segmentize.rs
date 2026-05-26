@@ -19,30 +19,30 @@ use std::io::Write;
 use std::sync::Arc;
 
 use arrow_array::builder::BinaryBuilder;
-use arrow_array::cast::AsArray;
 use arrow_array::Array;
 use arrow_schema::DataType;
+use datafusion_common::cast::as_float64_array;
 use datafusion_common::exec_datafusion_err;
 use datafusion_common::Result;
 use datafusion_expr::ColumnarValue;
 use datafusion_expr::Volatility;
 use geo_traits::{
     CoordTrait, Dimensions, GeometryCollectionTrait, GeometryTrait, LineStringTrait,
-    MultiLineStringTrait, MultiPointTrait, MultiPolygonTrait, PointTrait, PolygonTrait,
+    MultiLineStringTrait, MultiPolygonTrait, PolygonTrait,
 };
 use sedona_expr::item_crs::ItemCrsKernel;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::error::SedonaGeometryError;
 use sedona_geometry::wkb_factory::{
-    write_wkb_coord_trait, write_wkb_empty_point, write_wkb_geometrycollection_header,
-    write_wkb_linestring_header, write_wkb_multilinestring_header, write_wkb_multipoint_header,
-    write_wkb_multipolygon_header, write_wkb_point_header, write_wkb_polygon_header,
+    write_wkb_coord_trait, write_wkb_geometrycollection_header, write_wkb_linestring_header,
+    write_wkb_multilinestring_header, write_wkb_multipolygon_header, write_wkb_polygon_header,
     write_wkb_polygon_ring_header, WKB_MIN_PROBABLE_BYTES,
 };
 use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOMETRY},
     matchers::ArgMatcher,
 };
+use wkb::reader::Wkb;
 
 use crate::executor::WkbExecutor;
 
@@ -89,8 +89,7 @@ impl SedonaScalarKernel for STSegmentize {
         let max_segment_length_array = args[1]
             .cast_to(&DataType::Float64, None)?
             .to_array(executor.num_iterations())?;
-        let max_segment_length_values =
-            max_segment_length_array.as_primitive::<arrow_array::types::Float64Type>();
+        let max_segment_length_values = as_float64_array(&max_segment_length_array)?;
 
         let mut idx = 0usize;
         executor.execute_wkb_void(|maybe_wkb| {
@@ -103,7 +102,7 @@ impl SedonaScalarKernel for STSegmentize {
 
             match (maybe_wkb, max_seg_len) {
                 (Some(wkb), Some(max_len)) if max_len > 0.0 => {
-                    segmentize_geometry(&wkb, max_len, &mut builder)
+                    segmentize_wkb(&wkb, max_len, &mut builder)
                         .map_err(|e| exec_datafusion_err!("Segmentize error: {e}"))?;
                     builder.append_value([]);
                 }
@@ -116,112 +115,90 @@ impl SedonaScalarKernel for STSegmentize {
     }
 }
 
-// TODO below works but is not efficient (need to revisit before merging)
-
-/// Segmentize a geometry by densifying segments that exceed max_segment_length
-fn segmentize_geometry(
-    geom: &impl GeometryTrait<T = f64>,
+fn segmentize_wkb(
+    geom: &Wkb,
     max_segment_length: f64,
     writer: &mut impl Write,
 ) -> Result<(), SedonaGeometryError> {
     let dims = geom.dim();
     match geom.as_type() {
-        geo_traits::GeometryType::Point(pt) => {
-            if let Some(coord) = pt.coord() {
-                write_wkb_point_header(writer, dims)?;
-                write_wkb_coord_trait(writer, &coord)?;
-            } else {
-                write_wkb_empty_point(writer, dims)?;
-            }
-        }
-
-        geo_traits::GeometryType::MultiPoint(multi_point) => {
-            write_wkb_multipoint_header(writer, dims, multi_point.points().count())?;
-            for pt in multi_point.points() {
-                segmentize_geometry(&pt, max_segment_length, writer)?;
-            }
-        }
-
+        // Points don't need segmentization, copy buffer directly
+        geo_traits::GeometryType::Point(_) => writer.write_all(geom.buf())?,
         geo_traits::GeometryType::LineString(ls) => {
-            // Collect coordinates to allow two passes
-            let coords: Vec<_> = ls.coords().collect();
-            segmentize_linestring(writer, dims, &coords, max_segment_length)?;
+            segmentize_linestring_wkb(ls, dims, max_segment_length, writer)?;
         }
-
         geo_traits::GeometryType::Polygon(pgn) => {
-            let num_rings = pgn.interiors().count() + pgn.exterior().is_some() as usize;
-            write_wkb_polygon_header(writer, dims, num_rings)?;
-
-            if let Some(exterior) = pgn.exterior() {
-                let coords: Vec<_> = exterior.coords().collect();
-                segmentize_ring(writer, &coords, max_segment_length)?;
-            }
-
-            for interior in pgn.interiors() {
-                let coords: Vec<_> = interior.coords().collect();
-                segmentize_ring(writer, &coords, max_segment_length)?;
-            }
+            segmentize_polygon_wkb(pgn, dims, max_segment_length, writer)?;
         }
-
+        geo_traits::GeometryType::MultiPoint(_) => writer.write_all(geom.buf())?,
         geo_traits::GeometryType::MultiLineString(mls) => {
             write_wkb_multilinestring_header(writer, dims, mls.line_strings().count())?;
             for ls in mls.line_strings() {
-                segmentize_geometry(&ls, max_segment_length, writer)?;
+                segmentize_linestring_wkb(ls, dims, max_segment_length, writer)?;
             }
         }
-
         geo_traits::GeometryType::MultiPolygon(mpgn) => {
             write_wkb_multipolygon_header(writer, dims, mpgn.polygons().count())?;
             for pgn in mpgn.polygons() {
-                segmentize_geometry(&pgn, max_segment_length, writer)?;
+                segmentize_polygon_wkb(pgn, dims, max_segment_length, writer)?;
             }
         }
-
-        geo_traits::GeometryType::GeometryCollection(gcn) => {
-            write_wkb_geometrycollection_header(writer, dims, gcn.geometries().count())?;
-            for geom in gcn.geometries() {
-                segmentize_geometry(&geom, max_segment_length, writer)?;
+        geo_traits::GeometryType::GeometryCollection(gc) => {
+            write_wkb_geometrycollection_header(writer, dims, gc.geometries().count())?;
+            for child in gc.geometries() {
+                segmentize_wkb(child, max_segment_length, writer)?;
             }
         }
-
         _ => {
             return Err(SedonaGeometryError::Invalid(
-                "Unsupported geometry type for segmentize operation".to_string(),
+                "unknown geometry type".to_string(),
             ));
         }
     }
     Ok(())
 }
 
-/// Segmentize a linestring, writing a complete linestring WKB
-fn segmentize_linestring<C: CoordTrait<T = f64>>(
-    writer: &mut impl Write,
+fn segmentize_linestring_wkb(
+    ls: &wkb::reader::LineString,
     dims: Dimensions,
-    coords: &[C],
     max_segment_length: f64,
+    writer: &mut impl Write,
 ) -> Result<(), SedonaGeometryError> {
-    // First pass: count output coordinates
-    let output_count = count_segmentized_coords(coords, max_segment_length);
-
+    let coords: Vec<_> = ls.coords().collect();
+    let output_count = count_segmentized_coords(&coords, max_segment_length);
     write_wkb_linestring_header(writer, dims, output_count)?;
-    write_segmentized_coords(writer, dims, coords, max_segment_length)
+    write_segmentized_coords(writer, dims, &coords, max_segment_length)
 }
 
-/// Segmentize a polygon ring, writing a ring with header
-fn segmentize_ring<C: CoordTrait<T = f64>>(
-    writer: &mut impl Write,
-    coords: &[C],
+fn segmentize_polygon_wkb(
+    pgn: &wkb::reader::Polygon,
+    dims: Dimensions,
     max_segment_length: f64,
+    writer: &mut impl Write,
 ) -> Result<(), SedonaGeometryError> {
-    // First pass: count output coordinates
-    let output_count = count_segmentized_coords(coords, max_segment_length);
+    let num_rings = pgn.num_interiors() + pgn.exterior().is_some() as usize;
+    write_wkb_polygon_header(writer, dims, num_rings)?;
 
+    if let Some(exterior) = pgn.exterior() {
+        segmentize_linearring_wkb(exterior, dims, max_segment_length, writer)?;
+    }
+
+    for interior in pgn.interiors() {
+        segmentize_linearring_wkb(interior, dims, max_segment_length, writer)?;
+    }
+    Ok(())
+}
+
+fn segmentize_linearring_wkb(
+    ring: &wkb::reader::LinearRing,
+    dims: Dimensions,
+    max_segment_length: f64,
+    writer: &mut impl Write,
+) -> Result<(), SedonaGeometryError> {
+    let coords: Vec<_> = ring.coords().collect();
+    let output_count = count_segmentized_coords(&coords, max_segment_length);
     write_wkb_polygon_ring_header(writer, output_count)?;
-
-    // Get dimensions from the first coordinate
-    let dims = coords.first().map(|c| c.dim()).unwrap_or(Dimensions::Xy);
-
-    write_segmentized_coords(writer, dims, coords, max_segment_length)
+    write_segmentized_coords(writer, dims, &coords, max_segment_length)
 }
 
 /// Count the number of coordinates that will be output after segmentization
