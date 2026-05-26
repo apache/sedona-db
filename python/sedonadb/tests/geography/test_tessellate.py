@@ -610,3 +610,32 @@ def test_st_tessellategeom_antimeridian(eng, geog, tolerance, expected):
         expected,
         wkt_precision=6,
     )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize(
+    ("geog", "expected"),
+    [
+        pytest.param(None, None, id="null_input"),
+        pytest.param("POINT (0 1)", "POINT (0 1)", id="point"),
+    ],
+)
+def test_st_togeometry(eng, geog, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_ToGeometry({geog_or_null(geog)})", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        pytest.param(None, None, id="null_input"),
+        pytest.param("POINT (0 1)", "POINT (0 1)", id="point"),
+    ],
+)
+def test_st_togeography(eng, geom, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_ToGeography({geom_or_null(geom)})",
+        expected,
+    )

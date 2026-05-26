@@ -37,7 +37,7 @@ geodesic edges as approximated line segments.
 When an edge crosses the antimeridian, the returned coordinates are "wrapped" such that
 the returned longitude is either greater than 180 or less than -180. This helps produce
 valid geometry in more cases (e.g., linestring or polygon crossing the antimeridian);
-however, does not produce valid geometry in the case of a polygon ring that spans
+however, it does not produce valid geometry in the case of a polygon ring that spans
 the full longitude range (e.g., Antarctica).
 
 ## Examples

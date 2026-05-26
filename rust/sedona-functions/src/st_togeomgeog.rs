@@ -17,8 +17,9 @@
 
 use std::sync::Arc;
 
-use datafusion_common::error::Result;
+use datafusion_common::{config::ConfigOptions, Result};
 use datafusion_expr::{ColumnarValue, Volatility};
+use sedona_common::sedona_internal_err;
 use sedona_expr::{
     item_crs::ItemCrsKernel,
     scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
@@ -74,12 +75,13 @@ impl SedonaScalarKernel for STToGeomGeog {
             return Ok(None);
         }
 
-        // Return the input type with the target edges
+        // Return the input type with the target edges. NULL returns the target edge
+        // type with no CRS for the purposes of parameter binding.
         let input_type = &args[0];
         let output_type = match input_type {
             SedonaType::Wkb(_, crs) => SedonaType::Wkb(self.target_edges, crs.clone()),
             SedonaType::WkbView(_, crs) => SedonaType::WkbView(self.target_edges, crs.clone()),
-            _ => return Ok(None),
+            _ => SedonaType::Wkb(self.target_edges, None),
         };
 
         Ok(Some(output_type))
@@ -88,10 +90,22 @@ impl SedonaScalarKernel for STToGeomGeog {
     fn invoke_batch(
         &self,
         _arg_types: &[SedonaType],
-        args: &[ColumnarValue],
+        _args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
-        // Simply clone and return the input - the type change is metadata-only
-        Ok(args[0].clone())
+        sedona_internal_err!("invoke_batch() should not be called")
+    }
+
+    fn invoke_batch_from_args(
+        &self,
+        _arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+        return_type: &SedonaType,
+        _num_rows: usize,
+        _config_options: Option<&ConfigOptions>,
+    ) -> Result<ColumnarValue> {
+        // This is usually a shallow copy but can cast Null into a Binary
+        // for Null inputs
+        args[0].cast_to(return_type.storage_type(), None)
     }
 }
 
