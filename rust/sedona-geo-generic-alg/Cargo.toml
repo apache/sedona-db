@@ -42,7 +42,7 @@ i_overlay = { version = "6.0.0", default-features = false }
 sedona-testing = { workspace = true }
 approx = { workspace = true }
 criterion = { workspace = true }
-pretty_env_logger = "0.4"
+pretty_env_logger = "0.5"
 rand = { workspace = true }
 rand_distr = "0.6.0"
 geo = { workspace = true }
