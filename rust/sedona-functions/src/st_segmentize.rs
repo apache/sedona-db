@@ -15,28 +15,27 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::io::Write;
-use std::sync::Arc;
+use std::{io::Write, sync::Arc};
 
-use arrow_array::builder::BinaryBuilder;
-use arrow_array::Array;
+use arrow_array::{builder::BinaryBuilder, Array};
 use arrow_schema::DataType;
-use datafusion_common::cast::as_float64_array;
-use datafusion_common::exec_datafusion_err;
-use datafusion_common::Result;
-use datafusion_expr::ColumnarValue;
-use datafusion_expr::Volatility;
+use datafusion_common::{cast::as_float64_array, exec_datafusion_err, Result};
+use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::{
     CoordTrait, Dimensions, GeometryCollectionTrait, GeometryTrait, LineStringTrait,
     MultiLineStringTrait, MultiPolygonTrait, PolygonTrait,
 };
-use sedona_expr::item_crs::ItemCrsKernel;
-use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
-use sedona_geometry::error::SedonaGeometryError;
-use sedona_geometry::wkb_factory::{
-    write_wkb_coord_trait, write_wkb_geometrycollection_header, write_wkb_linestring_header,
-    write_wkb_multilinestring_header, write_wkb_multipolygon_header, write_wkb_polygon_header,
-    write_wkb_polygon_ring_header, WKB_MIN_PROBABLE_BYTES,
+use sedona_expr::{
+    item_crs::ItemCrsKernel,
+    scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
+};
+use sedona_geometry::{
+    error::SedonaGeometryError,
+    wkb_factory::{
+        write_wkb_coord_trait, write_wkb_geometrycollection_header, write_wkb_linestring_header,
+        write_wkb_multilinestring_header, write_wkb_multipolygon_header, write_wkb_polygon_header,
+        write_wkb_polygon_ring_header, WKB_MIN_PROBABLE_BYTES,
+    },
 };
 use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOMETRY},
@@ -134,19 +133,19 @@ fn segmentize_wkb(
         }
         geo_traits::GeometryType::MultiPoint(_) => writer.write_all(geom.buf())?,
         geo_traits::GeometryType::MultiLineString(mls) => {
-            write_wkb_multilinestring_header(writer, dims, mls.line_strings().count())?;
+            write_wkb_multilinestring_header(writer, dims, mls.num_line_strings())?;
             for ls in mls.line_strings() {
                 segmentize_linestring_wkb(ls, dims, max_segment_length, scratch, writer)?;
             }
         }
         geo_traits::GeometryType::MultiPolygon(mpgn) => {
-            write_wkb_multipolygon_header(writer, dims, mpgn.polygons().count())?;
+            write_wkb_multipolygon_header(writer, dims, mpgn.num_polygons())?;
             for pgn in mpgn.polygons() {
                 segmentize_polygon_wkb(pgn, dims, max_segment_length, scratch, writer)?;
             }
         }
         geo_traits::GeometryType::GeometryCollection(gc) => {
-            write_wkb_geometrycollection_header(writer, dims, gc.geometries().count())?;
+            write_wkb_geometrycollection_header(writer, dims, gc.num_geometries())?;
             for child in gc.geometries() {
                 segmentize_wkb(child, max_segment_length, scratch, writer)?;
             }

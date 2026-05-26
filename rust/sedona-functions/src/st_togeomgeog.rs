@@ -100,10 +100,11 @@ mod tests {
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
+    use sedona_expr::item_crs::parse_item_crs_arg_type;
     use sedona_schema::{
         crs::lnglat,
         datatypes::{
-            WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS,
+            Edges, WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS,
             WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY,
         },
     };
@@ -218,9 +219,18 @@ mod tests {
     ) {
         let tester = ScalarUdfTester::new(st_togeometry_udf().into(), vec![sedona_type.clone()]);
 
-        // Item CRS types should work and return item CRS types
+        // Item CRS types should work and return item CRS types with Planar edges
         let return_type = tester.return_type().unwrap();
-        assert!(return_type.is_item_crs() || matches!(return_type, SedonaType::Wkb(_, _)));
+        assert!(return_type.is_item_crs());
+        let (item_type, _) = parse_item_crs_arg_type(&return_type).unwrap();
+        assert!(
+            matches!(
+                item_type,
+                SedonaType::Wkb(Edges::Planar, _) | SedonaType::WkbView(Edges::Planar, _)
+            ),
+            "Expected Planar edges, got {:?}",
+            item_type
+        );
     }
 
     #[rstest]
@@ -230,8 +240,17 @@ mod tests {
     ) {
         let tester = ScalarUdfTester::new(st_togeography_udf().into(), vec![sedona_type.clone()]);
 
-        // Item CRS types should work and return item CRS types
+        // Item CRS types should work and return item CRS types with Spherical edges
         let return_type = tester.return_type().unwrap();
-        assert!(return_type.is_item_crs() || matches!(return_type, SedonaType::Wkb(_, _)));
+        assert!(return_type.is_item_crs());
+        let (item_type, _) = parse_item_crs_arg_type(&return_type).unwrap();
+        assert!(
+            matches!(
+                item_type,
+                SedonaType::Wkb(Edges::Spherical, _) | SedonaType::WkbView(Edges::Spherical, _)
+            ),
+            "Expected Spherical edges, got {:?}",
+            item_type
+        );
     }
 }
