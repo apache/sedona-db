@@ -31,14 +31,30 @@ kernels:
 Converts a geography to a geometry while tessellating edges using spherical (geodesic)
 interpolation. The tolerance parameter specifies the maximum deviation in meters
 between the original spherical edge and the tessellated planar approximation. This is
-useful when converting geographies to geometries while preserving the shape of geodesic
-edges as approximated line segments.
+useful when converting geographies to geometries while preserving the shape of
+geodesic edges as approximated line segments.
+
+When an edge crosses the antimeridian, the returned coordinates are "wrapped" such that
+the returned longitude is either greater than 180 or less than -180. This helps produce
+valid geometry in more cases (e.g., linestring or polygon crossing the antimeridian);
+however, does not produce valid geometry in the case of a polygon ring that spans
+the full longitude range (e.g., Antarctica).
 
 ## Examples
 
 ```sql
 SELECT ST_TessellateGeom(
     ST_GeogFromText('LINESTRING (-10 50, 10 50)'),
+    1000
+);
+```
+
+When a linestring crosses the antimeridian, coordinates are wrapped to keep the
+geometry continuous:
+
+```sql
+SELECT ST_TessellateGeom(
+    ST_GeogFromText('LINESTRING (170 70, -175 70, -175 60, 170 60)'),
     1000
 );
 ```
