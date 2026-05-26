@@ -125,7 +125,6 @@ ONE_DEGREE_METERS = EARTH_RADIUS_METERS * math.pi / 180.0
     ],
 )
 def test_st_segmentize_no_split(eng, geog, max_segment_length, expected):
-    """Test ST_Segmentize cases that should not produce additional segments."""
     eng = eng.create_or_skip()
     eng.assert_query_result(
         f"SELECT ST_Segmentize({geog_or_null(geog)}, {val_or_null(max_segment_length)})",
@@ -154,7 +153,6 @@ def test_st_segmentize_no_split(eng, geog, max_segment_length, expected):
     ],
 )
 def test_st_segmentize_linestring_split(eng, geog, max_segment_length, expected):
-    """Test ST_Segmentize splitting linestrings into equal segments."""
     eng = eng.create_or_skip()
     eng.assert_query_result(
         f"SELECT ST_Segmentize({geog_or_null(geog)}, {val_or_null(max_segment_length)})",
@@ -191,7 +189,6 @@ def test_st_segmentize_linestring_split(eng, geog, max_segment_length, expected)
     ],
 )
 def test_st_segmentize_interpolate_zm(eng, geog, max_segment_length, expected):
-    """Test ST_Segmentize linearly interpolates Z and M values."""
     eng = eng.create_or_skip()
     eng.assert_query_result(
         f"SELECT ST_Segmentize({geog_or_null(geog)}, {val_or_null(max_segment_length)})",
@@ -202,11 +199,6 @@ def test_st_segmentize_interpolate_zm(eng, geog, max_segment_length, expected):
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 def test_st_segmentize_polygon(eng):
-    """Test ST_Segmentize on a polygon.
-
-    Note: The midpoint of the edge from (0,2) to (2,2) is at latitude
-    2.000304 due to the great circle path curving slightly poleward.
-    """
     eng = eng.create_or_skip()
     eng.assert_query_result(
         f"SELECT ST_Segmentize("
@@ -352,7 +344,6 @@ def test_st_tessellategeog_no_split(eng, geom, tolerance, expected):
     ],
 )
 def test_st_tessellategeog_linestring_split(eng, geom, tolerance, expected):
-    """Test ST_TessellateGeog splitting linestrings at high latitudes."""
     eng = eng.create_or_skip()
     eng.assert_query_result(
         f"SELECT ST_TessellateGeog({geom_or_null(geom)}, {val_or_null(tolerance)})",
@@ -541,7 +532,6 @@ def test_st_tessellategeom_no_split(eng, geog, tolerance, expected):
     ],
 )
 def test_st_tessellategeom_linestring_split(eng, geog, tolerance, expected):
-    """Test ST_TessellateGeom splitting linestrings at high latitudes."""
     eng = eng.create_or_skip()
     eng.assert_query_result(
         f"SELECT ST_TessellateGeom({geog_or_null(geog)}, {val_or_null(tolerance)})",
@@ -582,7 +572,38 @@ def test_st_tessellategeom_linestring_split(eng, geog, tolerance, expected):
     ],
 )
 def test_st_tessellategeom_interpolate_zm(eng, geog, tolerance, expected):
-    """Test ST_TessellateGeom linearly interpolates Z and M values."""
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_TessellateGeom({geog_or_null(geog)}, {val_or_null(tolerance)})",
+        expected,
+        wkt_precision=6,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize(
+    ("geog", "tolerance", "expected"),
+    [
+        # Linestring across the antimeridian and back: returned longitudes
+        # should return valid geometry with longitudes >180.
+        pytest.param(
+            "LINESTRING (170 70, 175 70, -175 70, -175 -70, 175 -70, 170 -70)",
+            1e9,
+            "LINESTRING (170 70, 175 70, 185 70, 185 0, 185 -70, 175 -70, 170 -70)",
+            id="linestring_antimeridian",
+        ),
+        # Same with ZM coordinates - Z and M should be linearly interpolated
+        pytest.param(
+            "LINESTRING ZM (170 70 10 20, 175 70 30 40, -175 70 50 60, "
+            "-175 -70 70 80, 175 -70 90 100, 170 -70 110 120)",
+            1e9,
+            "LINESTRING ZM (170 70 10 20, 175 70 30 40, 185 70 50 60, "
+            "185 0 60 70, 185 -70 70 80, 175 -70 90 100, 170 -70 110 120)",
+            id="linestring_antimeridian_zm",
+        ),
+    ],
+)
+def test_st_tessellategeom_antimeridian(eng, geog, tolerance, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(
         f"SELECT ST_TessellateGeom({geog_or_null(geog)}, {val_or_null(tolerance)})",

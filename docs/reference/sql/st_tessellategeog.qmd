@@ -30,8 +30,8 @@ kernels:
 
 Converts a geometry to a geography while tessellating edges using spherical (geodesic)
 interpolation. The tolerance parameter specifies the maximum deviation in meters
-between the original edge and the tessellated approximation. This is useful when converting planar geometries to geographies where edges need to
-follow geodesic paths on the sphere.
+between the original edge and the tessellated approximation. This is useful when converting
+planar geometries to geographies where edges need to follow geodesic paths on the sphere.
 
 ## Examples
 

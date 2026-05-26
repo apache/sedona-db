@@ -114,7 +114,6 @@ from sedonadb.testing import PostGIS, SedonaDB, geom_or_null, val_or_null
     ],
 )
 def test_st_segmentize_no_split(eng, geom, max_segment_length, expected):
-    """Test ST_Segmentize cases that should not produce additional segments."""
     eng = eng.create_or_skip()
     eng.assert_query_result(
         f"SELECT ST_Segmentize({geom_or_null(geom)}, {val_or_null(max_segment_length)})",
@@ -194,7 +193,6 @@ def test_st_segmentize_linestring_split(eng, geom, max_segment_length, expected)
     ],
 )
 def test_st_segmentize_interpolate_zm(eng, geom, max_segment_length, expected):
-    """Test ST_Segmentize linearly interpolates Z and M values."""
     eng = eng.create_or_skip()
     eng.assert_query_result(
         f"SELECT ST_Segmentize({geom_or_null(geom)}, {val_or_null(max_segment_length)})",
