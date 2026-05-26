@@ -189,6 +189,34 @@ impl InternalDataFrame {
         Ok(InternalDataFrame::new(inner, self.runtime.clone()))
     }
 
+    /// Rename one or more columns. `mapping` is a list of `(old, new)`
+    /// pairs.
+    ///
+    /// The Python side has already validated that the dict is non-empty,
+    /// that every old-name resolves to a real column in the current
+    /// schema, and that the resulting set of column names is unique
+    /// (no two renames collide on the same target, and no rename targets
+    /// an already-present column name). All this Python-side validation
+    /// is forced by DataFusion's permissive behavior — `with_column_renamed`
+    /// silently no-ops on an unknown old-name, which would hide typos,
+    /// and there's no engine-level uniqueness check on the resulting
+    /// column names.
+    ///
+    /// Internally this fold-applies `with_column_renamed` one pair at a
+    /// time. DataFusion doesn't have a multi-rename helper; the loop is
+    /// O(n) in the number of renames which is dominated by plan-build
+    /// overhead, not the rename itself.
+    fn rename(
+        &self,
+        mapping: Vec<(String, String)>,
+    ) -> Result<InternalDataFrame, PySedonaError> {
+        let mut df = self.inner.clone();
+        for (old, new) in mapping {
+            df = df.with_column_renamed(old, new.as_str())?;
+        }
+        Ok(InternalDataFrame::new(df, self.runtime.clone()))
+    }
+
     fn execute<'py>(&self, py: Python<'py>) -> Result<usize, PySedonaError> {
         let df = self.inner.clone();
         let count = wait_for_future(py, &self.runtime, async move {

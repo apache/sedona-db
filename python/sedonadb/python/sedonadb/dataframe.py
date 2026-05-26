@@ -363,6 +363,73 @@ class DataFrame:
 
         return DataFrame(self._ctx, self._impl.drop_columns(list(cols)), self._options)
 
+    def rename(self, mapping: Dict[str, str]) -> "DataFrame":
+        """Rename one or more columns.
+
+        Takes a single dict mapping old names to new names. Multiple
+        renames in one call are applied as a unit; the resulting set of
+        column names must be unique. Unknown old-names raise a
+        `KeyError` listing the available columns (DataFusion's
+        `with_column_renamed` is permissive and silently no-ops on an
+        unknown name, which would hide typos; we validate Python-side).
+
+        Args:
+            mapping: A `dict[str, str]` mapping current column names to
+                new names. Direction is `{old: new}` — matching Polars
+                and the inner shape of pandas' `rename(columns={...})`.
+
+        Examples:
+
+            >>> sd = sedona.db.connect()
+            >>> df = sd.sql("SELECT 1 AS a, 2 AS b")
+            >>> df.rename({"a": "x"}).show()
+            ┌───────┬───────┐
+            │   x   ┆   b   │
+            │ int64 ┆ int64 │
+            ╞═══════╪═══════╡
+            │     1 ┆     2 │
+            └───────┴───────┘
+        """
+        if not isinstance(mapping, dict):
+            raise TypeError(
+                f"rename() expects a dict[str, str] mapping, "
+                f"got {type(mapping).__name__}"
+            )
+        if not mapping:
+            raise ValueError("rename() requires at least one mapping entry")
+
+        for old, new in mapping.items():
+            if not isinstance(old, str) or not isinstance(new, str):
+                raise TypeError(
+                    f"rename() expects str keys and values, "
+                    f"got {type(old).__name__} -> {type(new).__name__}"
+                )
+
+        # DataFusion's `with_column_renamed` is permissive — it silently
+        # no-ops on an old-name that isn't in the schema. Validate
+        # Python-side and raise a KeyError listing available columns.
+        columns = self._impl.columns()
+        unknown = [old for old in mapping if old not in columns]
+        if unknown:
+            raise KeyError(
+                f"Column(s) {unknown} not found. Available columns: {columns}"
+            )
+
+        # Reject collisions: the resulting set of column names must be
+        # unique. A collision happens when two renames target the same
+        # new-name, or when a rename targets an existing column name that
+        # isn't itself being renamed.
+        kept = [c for c in columns if c not in mapping]
+        result_names = kept + list(mapping.values())
+        if len(result_names) != len(set(result_names)):
+            raise ValueError(
+                f"rename() would produce duplicate column names. "
+                f"After applying {mapping}, columns would be {result_names}."
+            )
+
+        pairs = list(mapping.items())
+        return DataFrame(self._ctx, self._impl.rename(pairs), self._options)
+
     def limit(self, n: Optional[int], /, *, offset: int = 0) -> "DataFrame":
         """Limit result to n rows starting at offset
 
