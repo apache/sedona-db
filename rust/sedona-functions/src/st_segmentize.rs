@@ -91,6 +91,7 @@ impl SedonaScalarKernel for STSegmentize {
             .to_array(executor.num_iterations())?;
         let max_segment_length_values = as_float64_array(&max_segment_length_array)?;
 
+        let mut coords_scratch = Vec::new();
         let mut idx = 0usize;
         executor.execute_wkb_void(|maybe_wkb| {
             let max_seg_len = if max_segment_length_values.is_null(idx) {
@@ -102,7 +103,7 @@ impl SedonaScalarKernel for STSegmentize {
 
             match (maybe_wkb, max_seg_len) {
                 (Some(wkb), Some(max_len)) if max_len > 0.0 => {
-                    segmentize_wkb(&wkb, max_len, &mut builder)
+                    segmentize_wkb(&wkb, max_len, &mut coords_scratch, &mut builder)
                         .map_err(|e| exec_datafusion_err!("Segmentize error: {e}"))?;
                     builder.append_value([]);
                 }
@@ -118,6 +119,7 @@ impl SedonaScalarKernel for STSegmentize {
 fn segmentize_wkb(
     geom: &Wkb,
     max_segment_length: f64,
+    scratch: &mut Vec<u8>,
     writer: &mut impl Write,
 ) -> Result<(), SedonaGeometryError> {
     let dims = geom.dim();
@@ -125,28 +127,28 @@ fn segmentize_wkb(
         // Points don't need segmentization, copy buffer directly
         geo_traits::GeometryType::Point(_) => writer.write_all(geom.buf())?,
         geo_traits::GeometryType::LineString(ls) => {
-            segmentize_linestring_wkb(ls, dims, max_segment_length, writer)?;
+            segmentize_linestring_wkb(ls, dims, max_segment_length, scratch, writer)?;
         }
         geo_traits::GeometryType::Polygon(pgn) => {
-            segmentize_polygon_wkb(pgn, dims, max_segment_length, writer)?;
+            segmentize_polygon_wkb(pgn, dims, max_segment_length, scratch, writer)?;
         }
         geo_traits::GeometryType::MultiPoint(_) => writer.write_all(geom.buf())?,
         geo_traits::GeometryType::MultiLineString(mls) => {
             write_wkb_multilinestring_header(writer, dims, mls.line_strings().count())?;
             for ls in mls.line_strings() {
-                segmentize_linestring_wkb(ls, dims, max_segment_length, writer)?;
+                segmentize_linestring_wkb(ls, dims, max_segment_length, scratch, writer)?;
             }
         }
         geo_traits::GeometryType::MultiPolygon(mpgn) => {
             write_wkb_multipolygon_header(writer, dims, mpgn.polygons().count())?;
             for pgn in mpgn.polygons() {
-                segmentize_polygon_wkb(pgn, dims, max_segment_length, writer)?;
+                segmentize_polygon_wkb(pgn, dims, max_segment_length, scratch, writer)?;
             }
         }
         geo_traits::GeometryType::GeometryCollection(gc) => {
             write_wkb_geometrycollection_header(writer, dims, gc.geometries().count())?;
             for child in gc.geometries() {
-                segmentize_wkb(child, max_segment_length, writer)?;
+                segmentize_wkb(child, max_segment_length, scratch, writer)?;
             }
         }
         _ => {
@@ -158,33 +160,22 @@ fn segmentize_wkb(
     Ok(())
 }
 
-fn segmentize_linestring_wkb(
-    ls: &wkb::reader::LineString,
-    dims: Dimensions,
-    max_segment_length: f64,
-    writer: &mut impl Write,
-) -> Result<(), SedonaGeometryError> {
-    let coords: Vec<_> = ls.coords().collect();
-    let output_count = count_segmentized_coords(&coords, max_segment_length);
-    write_wkb_linestring_header(writer, dims, output_count)?;
-    write_segmentized_coords(writer, dims, &coords, max_segment_length)
-}
-
 fn segmentize_polygon_wkb(
     pgn: &wkb::reader::Polygon,
     dims: Dimensions,
     max_segment_length: f64,
+    scratch: &mut Vec<u8>,
     writer: &mut impl Write,
 ) -> Result<(), SedonaGeometryError> {
     let num_rings = pgn.num_interiors() + pgn.exterior().is_some() as usize;
     write_wkb_polygon_header(writer, dims, num_rings)?;
 
     if let Some(exterior) = pgn.exterior() {
-        segmentize_linearring_wkb(exterior, dims, max_segment_length, writer)?;
+        segmentize_linearring_wkb(exterior, dims, max_segment_length, scratch, writer)?;
     }
 
     for interior in pgn.interiors() {
-        segmentize_linearring_wkb(interior, dims, max_segment_length, writer)?;
+        segmentize_linearring_wkb(interior, dims, max_segment_length, scratch, writer)?;
     }
     Ok(())
 }
@@ -193,53 +184,62 @@ fn segmentize_linearring_wkb(
     ring: &wkb::reader::LinearRing,
     dims: Dimensions,
     max_segment_length: f64,
+    scratch: &mut Vec<u8>,
     writer: &mut impl Write,
 ) -> Result<(), SedonaGeometryError> {
-    let coords: Vec<_> = ring.coords().collect();
-    let output_count = count_segmentized_coords(&coords, max_segment_length);
-    write_wkb_polygon_ring_header(writer, output_count)?;
-    write_segmentized_coords(writer, dims, &coords, max_segment_length)
-}
+    // Process edges into scratch buffer, counting coordinates
+    let coord_count =
+        segmentize_coords_to_scratch(ring.coords(), dims, max_segment_length, scratch)?;
 
-/// Count the number of coordinates that will be output after segmentization
-fn count_segmentized_coords<C: CoordTrait<T = f64>>(
-    coords: &[C],
-    max_segment_length: f64,
-) -> usize {
-    if coords.is_empty() {
-        return 0;
-    }
-
-    let mut count = 1usize; // First coordinate
-
-    for i in 1..coords.len() {
-        let num_segments = calc_num_segments(&coords[i - 1], &coords[i], max_segment_length);
-        count += num_segments;
-    }
-
-    count
-}
-
-/// Write segmentized coordinates to the output
-fn write_segmentized_coords<C: CoordTrait<T = f64>>(
-    writer: &mut impl Write,
-    dims: Dimensions,
-    coords: &[C],
-    max_segment_length: f64,
-) -> Result<(), SedonaGeometryError> {
-    if coords.is_empty() {
-        return Ok(());
-    }
-
-    // Write first coordinate
-    write_wkb_coord_trait(writer, &coords[0])?;
-
-    // Write remaining segments
-    for i in 1..coords.len() {
-        write_interpolated_coords(writer, dims, &coords[i - 1], &coords[i], max_segment_length)?;
-    }
-
+    // Write header with known count, then copy coordinate bytes
+    write_wkb_polygon_ring_header(writer, coord_count)?;
+    writer.write_all(scratch)?;
     Ok(())
+}
+
+fn segmentize_linestring_wkb(
+    ls: &wkb::reader::LineString,
+    dims: Dimensions,
+    max_segment_length: f64,
+    scratch: &mut Vec<u8>,
+    writer: &mut impl Write,
+) -> Result<(), SedonaGeometryError> {
+    // Process edges into scratch buffer, counting coordinates
+    let coord_count = segmentize_coords_to_scratch(ls.coords(), dims, max_segment_length, scratch)?;
+
+    // Write header with known count, then copy coordinate bytes
+    write_wkb_linestring_header(writer, dims, coord_count)?;
+    writer.write_all(scratch)?;
+    Ok(())
+}
+
+/// Process edges one at a time, writing segmentized coordinates into scratch buffer.
+/// Returns the total number of coordinates written.
+fn segmentize_coords_to_scratch<C: CoordTrait<T = f64>>(
+    coords: impl Iterator<Item = C>,
+    dims: Dimensions,
+    max_segment_length: f64,
+    scratch: &mut Vec<u8>,
+) -> Result<usize, SedonaGeometryError> {
+    scratch.clear();
+
+    let mut coord_count = 0usize;
+    let mut prev_coord: Option<C> = None;
+
+    for coord in coords {
+        if let Some(ref prev) = prev_coord {
+            // Process edge from prev to coord
+            coord_count +=
+                write_interpolated_coords(scratch, dims, prev, &coord, max_segment_length)?;
+        } else {
+            // First coordinate - write it directly
+            write_wkb_coord_trait(scratch, &coord)?;
+            coord_count += 1;
+        }
+        prev_coord = Some(coord);
+    }
+
+    Ok(coord_count)
 }
 
 /// Calculate the number of segments needed for a single edge
@@ -255,79 +255,102 @@ fn calc_num_segments<C: CoordTrait<T = f64>>(c1: &C, c2: &C, max_segment_length:
     }
 }
 
-/// Write interpolated coordinates between two points (excluding start, including end)
+/// Write interpolated coordinates between two points (excluding start, including end).
+/// Returns the number of coordinates written.
 fn write_interpolated_coords<C: CoordTrait<T = f64>>(
     writer: &mut impl Write,
     dims: Dimensions,
     c1: &C,
     c2: &C,
     max_segment_length: f64,
-) -> Result<(), SedonaGeometryError> {
+) -> Result<usize, SedonaGeometryError> {
     let num_segments = calc_num_segments(c1, c2, max_segment_length);
 
     if num_segments == 1 {
         // No subdivision needed, just write end coordinate
         write_wkb_coord_trait(writer, c2)?;
     } else {
-        // Interpolate intermediate points
-        let x1 = c1.x();
-        let y1 = c1.y();
-        let x2 = c2.x();
-        let y2 = c2.y();
-
-        // Get Z and M values if present
-        let (z1, z2) = match dims {
-            Dimensions::Xyz | Dimensions::Xyzm => {
-                (Some(c1.nth_or_panic(2)), Some(c2.nth_or_panic(2)))
-            }
-            _ => (None, None),
-        };
-
-        let (m1, m2) = match dims {
-            Dimensions::Xym => (Some(c1.nth_or_panic(2)), Some(c2.nth_or_panic(2))),
-            Dimensions::Xyzm => (Some(c1.nth_or_panic(3)), Some(c2.nth_or_panic(3))),
-            _ => (None, None),
-        };
-
-        for i in 1..=num_segments {
-            let t = i as f64 / num_segments as f64;
-            let x = x1 + t * (x2 - x1);
-            let y = y1 + t * (y2 - y1);
-
-            match dims {
-                Dimensions::Xy => {
-                    writer.write_all(&x.to_le_bytes())?;
-                    writer.write_all(&y.to_le_bytes())?;
-                }
-                Dimensions::Xyz => {
-                    let z = z1.unwrap() + t * (z2.unwrap() - z1.unwrap());
-                    writer.write_all(&x.to_le_bytes())?;
-                    writer.write_all(&y.to_le_bytes())?;
-                    writer.write_all(&z.to_le_bytes())?;
-                }
-                Dimensions::Xym => {
-                    let m = m1.unwrap() + t * (m2.unwrap() - m1.unwrap());
-                    writer.write_all(&x.to_le_bytes())?;
-                    writer.write_all(&y.to_le_bytes())?;
-                    writer.write_all(&m.to_le_bytes())?;
-                }
-                Dimensions::Xyzm => {
-                    let z = z1.unwrap() + t * (z2.unwrap() - z1.unwrap());
-                    let m = m1.unwrap() + t * (m2.unwrap() - m1.unwrap());
-                    writer.write_all(&x.to_le_bytes())?;
-                    writer.write_all(&y.to_le_bytes())?;
-                    writer.write_all(&z.to_le_bytes())?;
-                    writer.write_all(&m.to_le_bytes())?;
-                }
-                _ => {
-                    return Err(SedonaGeometryError::Invalid(
-                        "Unsupported dimension for segmentize".to_string(),
-                    ));
-                }
+        // Branch once on dimension size, then run tight loop
+        match dims.size() {
+            2 => write_interpolated_2d(writer, c1, c2, num_segments)?,
+            3 => write_interpolated_3d(writer, c1, c2, num_segments)?,
+            4 => write_interpolated_4d(writer, c1, c2, num_segments)?,
+            _ => {
+                return Err(SedonaGeometryError::Invalid(
+                    "Unsupported dimension for segmentize".to_string(),
+                ));
             }
         }
     }
 
+    Ok(num_segments)
+}
+
+fn write_interpolated_2d<C: CoordTrait<T = f64>>(
+    writer: &mut impl Write,
+    c1: &C,
+    c2: &C,
+    num_segments: usize,
+) -> Result<(), SedonaGeometryError> {
+    let x1 = c1.x();
+    let y1 = c1.y();
+    let x2 = c2.x();
+    let y2 = c2.y();
+
+    for i in 1..=num_segments {
+        let t = i as f64 / num_segments as f64;
+        writer.write_all(&(x1 + t * (x2 - x1)).to_le_bytes())?;
+        writer.write_all(&(y1 + t * (y2 - y1)).to_le_bytes())?;
+    }
+    Ok(())
+}
+
+fn write_interpolated_3d<C: CoordTrait<T = f64>>(
+    writer: &mut impl Write,
+    c1: &C,
+    c2: &C,
+    num_segments: usize,
+) -> Result<(), SedonaGeometryError> {
+    let x1 = c1.x();
+    let y1 = c1.y();
+    // SAFETY: Only called when dims.size() == 3, so index 2 is valid
+    let d1 = unsafe { c1.nth_unchecked(2) };
+    let x2 = c2.x();
+    let y2 = c2.y();
+    let d2 = unsafe { c2.nth_unchecked(2) };
+
+    for i in 1..=num_segments {
+        let t = i as f64 / num_segments as f64;
+        writer.write_all(&(x1 + t * (x2 - x1)).to_le_bytes())?;
+        writer.write_all(&(y1 + t * (y2 - y1)).to_le_bytes())?;
+        writer.write_all(&(d1 + t * (d2 - d1)).to_le_bytes())?;
+    }
+    Ok(())
+}
+
+fn write_interpolated_4d<C: CoordTrait<T = f64>>(
+    writer: &mut impl Write,
+    c1: &C,
+    c2: &C,
+    num_segments: usize,
+) -> Result<(), SedonaGeometryError> {
+    let x1 = c1.x();
+    let y1 = c1.y();
+    // SAFETY: Only called when dims.size() == 4, so indices 2 and 3 are valid
+    let z1 = unsafe { c1.nth_unchecked(2) };
+    let m1 = unsafe { c1.nth_unchecked(3) };
+    let x2 = c2.x();
+    let y2 = c2.y();
+    let z2 = unsafe { c2.nth_unchecked(2) };
+    let m2 = unsafe { c2.nth_unchecked(3) };
+
+    for i in 1..=num_segments {
+        let t = i as f64 / num_segments as f64;
+        writer.write_all(&(x1 + t * (x2 - x1)).to_le_bytes())?;
+        writer.write_all(&(y1 + t * (y2 - y1)).to_le_bytes())?;
+        writer.write_all(&(z1 + t * (z2 - z1)).to_le_bytes())?;
+        writer.write_all(&(m1 + t * (m2 - m1)).to_le_bytes())?;
+    }
     Ok(())
 }
 
