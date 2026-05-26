@@ -3730,6 +3730,59 @@ Expr(y)
 <div class="doc doc-object doc-function">
 
 
+<h4 id="sedonadb.dataframe.DataFrame.drop" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">drop</span>
+
+
+<a href="#sedonadb.dataframe.DataFrame.drop" class="headerlink" title="Permanent link">¶</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">drop</span><span class="p">(</span><span class="o">*</span><span class="n">cols</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Drop the named columns.</p>
+<p>Returns a new lazy <code>DataFrame</code> with each named column removed.
+Only column-name strings are accepted; expression arguments are
+rejected because "drop a computed expression" has no meaning at
+the schema level. Unknown column names raise a <code>SedonaError</code> at
+plan-build time, with the list of valid field names included in
+the message.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+            <b><code>*cols</code></b>
+              (<code><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></code>, default:
+                  <code>()</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>One or more column names to drop. At least one is
+required.</p>
+          </div>
+        </li>
+    </ul>
+        <p>Examples:</p>
+<div class="codehilite"><pre><span></span><code><span class="o">&gt;&gt;&gt;</span><span class="w"> </span><span class="nv">sd</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nv">sedona</span>.<span class="nv">db</span>.<span class="k">connect</span><span class="ss">()</span>
+<span class="o">&gt;&gt;&gt;</span><span class="w"> </span><span class="nv">df</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nv">sd</span>.<span class="nv">sql</span><span class="ss">(</span><span class="s2">"SELECT 1 AS a, 2 AS b, 3 AS c"</span><span class="ss">)</span>
+<span class="o">&gt;&gt;&gt;</span><span class="w"> </span><span class="nv">df</span>.<span class="nv">drop</span><span class="ss">(</span><span class="s2">"b"</span><span class="ss">)</span>.<span class="k">show</span><span class="ss">()</span>
+┌───────┬───────┐
+│<span class="w">   </span><span class="nv">a</span><span class="w">   </span>┆<span class="w">   </span><span class="nv">c</span><span class="w">   </span>│
+│<span class="w"> </span><span class="nv">int64</span><span class="w"> </span>┆<span class="w"> </span><span class="nv">int64</span><span class="w"> </span>│
+╞═══════╪═══════╡
+│<span class="w">     </span><span class="mi">1</span><span class="w"> </span>┆<span class="w">     </span><span class="mi">3</span><span class="w"> </span>│
+└───────┴───────┘
+</code></pre></div>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
 <h4 id="sedonadb.dataframe.DataFrame.execute" class="doc doc-heading">
             <span class="doc doc-object-name doc-function-name">execute</span>
 
