@@ -23,7 +23,7 @@ kernels:
     args:
     - name: x
       type: double
-    - name: y
+    - name: "y"
       type: double
     - name: z
       type: double

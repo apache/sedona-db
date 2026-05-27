@@ -33,7 +33,10 @@ use datafusion::{
 };
 use datafusion_catalog::{memory::DataSourceExec, Session};
 use datafusion_common::{not_impl_err, plan_err, DataFusionError, GetExt, Result, Statistics};
-use datafusion_physical_expr::{LexOrdering, LexRequirement, PhysicalExpr};
+use datafusion_datasource::projection::{ProjectionOpener, SplitProjection};
+use datafusion_physical_expr::{
+    projection::ProjectionExprs, LexOrdering, LexRequirement, PhysicalExpr,
+};
 use datafusion_physical_plan::{
     filter_pushdown::{FilterPushdownPropagation, PushedDown},
     metrics::ExecutionPlanMetricsSet,
@@ -196,32 +199,31 @@ impl FileFormat for ExternalFileFormat {
         not_impl_err!("writing not yet supported for ExternalFileFormat")
     }
 
-    fn file_source(&self) -> Arc<dyn FileSource> {
-        Arc::new(ExternalFileSource::new(self.spec.clone()))
+    fn file_source(&self, table_schema: TableSchema) -> Arc<dyn FileSource> {
+        Arc::new(ExternalFileSource::new(self.spec.clone(), table_schema))
     }
 }
 
 #[derive(Debug, Clone)]
 struct ExternalFileSource {
     spec: Arc<dyn ExternalFormatSpec>,
+    table_schema: TableSchema,
     batch_size: Option<usize>,
-    file_schema: Option<TableSchema>,
-    file_projection: Option<Vec<usize>>,
+    /// Split projection: file_indices for column pruning, ProjectionOpener for the rest
+    split_projection: Option<SplitProjection>,
     filters: Vec<Arc<dyn PhysicalExpr>>,
     metrics: ExecutionPlanMetricsSet,
-    projected_statistics: Option<Statistics>,
 }
 
 impl ExternalFileSource {
-    pub fn new(spec: Arc<dyn ExternalFormatSpec>) -> Self {
+    pub fn new(spec: Arc<dyn ExternalFormatSpec>, table_schema: TableSchema) -> Self {
         Self {
             spec,
+            table_schema,
             batch_size: None,
-            file_schema: None,
-            file_projection: None,
+            split_projection: None,
             filters: Vec::new(),
             metrics: ExecutionPlanMetricsSet::default(),
-            projected_statistics: None,
         }
     }
 }
@@ -232,7 +234,13 @@ impl FileSource for ExternalFileSource {
         store: Arc<dyn ObjectStore>,
         base_config: &FileScanConfig,
         _partition: usize,
-    ) -> Arc<dyn FileOpener> {
+    ) -> Result<Arc<dyn FileOpener>> {
+        // Use file_indices from SplitProjection for column pruning
+        let file_projection = self
+            .split_projection
+            .as_ref()
+            .map(|sp| sp.file_indices.clone());
+
         let args = OpenReaderArgs {
             src: Object {
                 store: Some(store.clone()),
@@ -241,15 +249,26 @@ impl FileSource for ExternalFileSource {
                 range: None,
             },
             batch_size: self.batch_size,
-            file_schema: self.file_schema.as_ref().map(|s| s.file_schema().clone()),
-            file_projection: self.file_projection.clone(),
+            file_schema: Some(self.table_schema.file_schema().clone()),
+            file_projection,
             filters: self.filters.clone(),
         };
 
-        Arc::new(ExternalFileOpener {
+        let inner_opener: Arc<dyn FileOpener> = Arc::new(ExternalFileOpener {
             spec: self.spec.clone(),
             args,
-        })
+        });
+
+        // Wrap with ProjectionOpener to handle reordering/expressions
+        if let Some(split_projection) = &self.split_projection {
+            ProjectionOpener::try_new(
+                split_projection.clone(),
+                inner_opener,
+                self.table_schema.file_schema(),
+            )
+        } else {
+            Ok(inner_opener)
+        }
     }
 
     fn try_pushdown_filters(
@@ -275,6 +294,25 @@ impl FileSource for ExternalFileSource {
         .with_updated_node(Arc::new(source)))
     }
 
+    fn try_pushdown_projection(
+        &self,
+        projection: &ProjectionExprs,
+    ) -> Result<Option<Arc<dyn FileSource>>> {
+        // Use SplitProjection to handle any projection:
+        // - file_indices provides column pruning (always works)
+        // - ProjectionOpener handles reordering/expressions/renames after reading
+        let split_projection = SplitProjection::new(self.table_schema.file_schema(), projection);
+
+        Ok(Some(Arc::new(Self {
+            split_projection: Some(split_projection),
+            ..self.clone()
+        })))
+    }
+
+    fn projection(&self) -> Option<&ProjectionExprs> {
+        self.split_projection.as_ref().map(|sp| &sp.source)
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -286,36 +324,12 @@ impl FileSource for ExternalFileSource {
         })
     }
 
-    fn with_schema(&self, schema: TableSchema) -> Arc<dyn FileSource> {
-        Arc::new(Self {
-            file_schema: Some(schema),
-            ..self.clone()
-        })
-    }
-
-    fn with_projection(&self, config: &FileScanConfig) -> Arc<dyn FileSource> {
-        Arc::new(Self {
-            file_projection: config.file_column_projection_indices(),
-            ..self.clone()
-        })
-    }
-
-    fn with_statistics(&self, statistics: Statistics) -> Arc<dyn FileSource> {
-        Arc::new(Self {
-            projected_statistics: Some(statistics),
-            ..self.clone()
-        })
-    }
-
     fn metrics(&self) -> &ExecutionPlanMetricsSet {
         &self.metrics
     }
 
-    fn statistics(&self) -> Result<Statistics> {
-        let statistics = &self.projected_statistics;
-        Ok(statistics
-            .clone()
-            .expect("projected_statistics must be set"))
+    fn table_schema(&self) -> &TableSchema {
+        &self.table_schema
     }
 
     fn file_type(&self) -> &str {
@@ -333,7 +347,7 @@ impl FileSource for ExternalFileSource {
             SupportsRepartition::None => Ok(None),
             SupportsRepartition::ByRange => {
                 // Default implementation
-                if config.file_compression_type.is_compressed() || config.new_lines_in_values {
+                if config.file_compression_type.is_compressed() {
                     return Ok(None);
                 }
 
@@ -395,7 +409,7 @@ mod test {
     use tempfile::TempDir;
     use url::Url;
 
-    use crate::provider::external_listing_table;
+    use crate::provider::external_table;
 
     use super::*;
 
@@ -403,8 +417,8 @@ mod test {
         let spec = Arc::new(EchoSpec::default());
         let factory = ExternalFormatFactory::new(spec.clone());
 
-        // Register the format
-        let mut state = SessionStateBuilder::new().build();
+        // Register the format - use new_with_default_features to get default catalogs
+        let mut state = SessionStateBuilder::new_with_default_features().build();
         state.register_file_format(Arc::new(factory), true).unwrap();
         SessionContext::new_with_state(state).enable_url_table()
     }
@@ -529,8 +543,9 @@ mod test {
         let (temp_dir, files) = create_echo_spec_temp_dir();
 
         // Select using just the filename and ensure we get a result
+        // Quote the path to prevent it from being parsed as a multi-part identifier
         let batches_item0 = ctx
-            .table(files[0].to_string_lossy().to_string())
+            .table(format!("\"{}\"", files[0].to_string_lossy()))
             .await
             .unwrap()
             .collect()
@@ -542,7 +557,10 @@ mod test {
 
         // With a glob we should get all the files
         let batches = ctx
-            .table(format!("{}/*.echospec", temp_dir.path().to_string_lossy()))
+            .table(format!(
+                "\"{}/*.echospec\"",
+                temp_dir.path().to_string_lossy()
+            ))
             .await
             .unwrap()
             .collect()
@@ -560,8 +578,12 @@ mod test {
         let (temp_dir, _files) = create_echo_spec_temp_dir();
 
         // Ensure that if we pass
+        // Quote the path to prevent it from being parsed as a multi-part identifier
         let batches = ctx
-            .table(format!("{}/*.echospec", temp_dir.path().to_string_lossy()))
+            .table(format!(
+                "\"{}/*.echospec\"",
+                temp_dir.path().to_string_lossy()
+            ))
             .await
             .unwrap()
             .filter(col("src").like(lit("%item0%")))
@@ -591,7 +613,7 @@ mod test {
         let (_temp_dir, files) = create_echo_spec_temp_dir();
 
         // Select using a listing table and ensure we get a result
-        let provider = external_listing_table(
+        let provider = external_table(
             spec,
             &ctx,
             files
@@ -603,12 +625,7 @@ mod test {
         .await
         .unwrap();
 
-        let batches = ctx
-            .read_table(Arc::new(provider))
-            .unwrap()
-            .collect()
-            .await
-            .unwrap();
+        let batches = ctx.read_table(provider).unwrap().collect().await.unwrap();
 
         // We should get one value per partition
         assert_eq!(batches.len(), 2);
@@ -626,7 +643,7 @@ mod test {
         let (_temp_dir, files) = create_echo_spec_temp_dir();
 
         // Select using a listing table and ensure we get a result with the option passed
-        let provider = external_listing_table(
+        let provider = external_table(
             spec,
             &ctx,
             files
@@ -639,7 +656,7 @@ mod test {
         .unwrap();
 
         let batches = ctx
-            .read_table(Arc::new(provider))
+            .read_table(provider)
             .unwrap()
             .select(vec![col("batch_size"), col("option_value")])
             .unwrap()
@@ -669,7 +686,7 @@ mod test {
         let (temp_dir, mut files) = create_echo_spec_temp_dir();
 
         // Listing table with no files should error
-        let err = external_listing_table(spec.clone(), &ctx, vec![], true)
+        let err = external_table(spec.clone(), &ctx, vec![], true)
             .await
             .unwrap_err();
         assert_eq!(err.message(), "No table paths were provided");
@@ -683,7 +700,7 @@ mod test {
         files.push(file2);
 
         // With check_extension as true we should get an error
-        let err = external_listing_table(
+        let err = external_table(
             spec.clone(),
             &ctx,
             files
@@ -700,7 +717,7 @@ mod test {
             .ends_with("does not match the expected extension 'echospec'"));
 
         // ...but we should be able to turn off the error
-        external_listing_table(
+        external_table(
             spec,
             &ctx,
             files
@@ -711,5 +728,122 @@ mod test {
         )
         .await
         .unwrap();
+    }
+
+    /// Spec for a directory-shaped format whose "object" is the
+    /// directory itself. Used to exercise the
+    /// [`SingleObjectExternalTable`] path through
+    /// [`external_table`].
+    #[derive(Debug, Default, Clone)]
+    struct DirectorySpec;
+
+    #[async_trait]
+    impl ExternalFormatSpec for DirectorySpec {
+        fn extension(&self) -> &str {
+            ".dirfmt"
+        }
+
+        fn list_single_object(&self) -> bool {
+            true
+        }
+
+        fn with_options(
+            &self,
+            _options: &HashMap<String, String>,
+        ) -> Result<Arc<dyn ExternalFormatSpec>> {
+            Ok(Arc::new(self.clone()))
+        }
+
+        async fn infer_schema(&self, location: &Object) -> Result<Schema> {
+            // The single-object provider must synthesise an ObjectMeta
+            // before calling us; assert that contract here.
+            assert!(
+                location.meta.is_some(),
+                "single-object scan must synthesise an ObjectMeta",
+            );
+            Ok(Schema::new(vec![
+                Field::new("uri_path", DataType::Utf8, false),
+                Field::new("row_idx", DataType::Int32, false),
+            ]))
+        }
+
+        async fn open_reader(
+            &self,
+            args: &OpenReaderArgs,
+        ) -> Result<Box<dyn RecordBatchReader + Send>> {
+            let meta = args
+                .src
+                .meta
+                .as_ref()
+                .expect("single-object scan must synthesise an ObjectMeta");
+            let path = meta.location.to_string();
+            let schema = Arc::new(self.infer_schema(&args.src).await?);
+            let mut batch = RecordBatch::try_new(
+                schema.clone(),
+                vec![
+                    Arc::new(StringArray::from(vec![path])),
+                    Arc::new(Int32Array::from(vec![0])),
+                ],
+            )?;
+            if let Some(projection) = &args.file_projection {
+                batch = batch.project(projection)?;
+            }
+            Ok(Box::new(RecordBatchIterator::new([Ok(batch)], schema)))
+        }
+    }
+
+    #[tokio::test]
+    async fn single_object_table_skips_listing() {
+        // The fixture dir is *not* a `.dirfmt` directory and contains
+        // nothing matching that extension. A listing-based provider
+        // would return zero objects and error on schema inference.
+        let spec = Arc::new(DirectorySpec);
+        let temp_dir = TempDir::new().unwrap();
+        let dir_path = temp_dir.path().join("group.dirfmt");
+        std::fs::create_dir(&dir_path).unwrap();
+        // Make the directory non-empty so it looks like a real
+        // directory-shaped artefact, not just a missing entry.
+        std::fs::File::create(dir_path.join("metadata.json"))
+            .unwrap()
+            .write_all(b"{}")
+            .unwrap();
+
+        let ctx = SessionContext::new();
+        let url = ListingTableUrl::parse(dir_path.to_string_lossy()).unwrap();
+        let provider = external_table(spec, &ctx, vec![url], false).await.unwrap();
+
+        let batches = ctx.read_table(provider).unwrap().collect().await.unwrap();
+
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].num_rows(), 1);
+        // The synthesised ObjectMeta::location is the URL path within
+        // the object store — non-empty means we passed the URI through
+        // without trying to list inside it.
+        let path_col = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert!(!path_col.value(0).is_empty());
+        assert!(path_col.value(0).ends_with("group.dirfmt"));
+    }
+
+    #[tokio::test]
+    async fn single_object_table_rejects_mixed_object_stores() {
+        let spec = Arc::new(DirectorySpec);
+        let ctx = SessionContext::new();
+        // Mix file:// + https:// — both parse fine but resolve to
+        // different ObjectStoreUrls, which the single-object provider
+        // doesn't try to span.
+        let url_a = ListingTableUrl::parse("file:///tmp/a.dirfmt").unwrap();
+        let url_b = ListingTableUrl::parse("https://example.com/b.dirfmt").unwrap();
+        let err = external_table(spec, &ctx, vec![url_a, url_b], false)
+            .await
+            .unwrap_err();
+        assert!(
+            err.message().contains("same object store"),
+            "unexpected error: {}",
+            err.message()
+        );
     }
 }

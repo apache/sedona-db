@@ -113,6 +113,8 @@ def deduplicate_common_arg_combinations(expanded_args):
         all_names[:2] = ["geomA", "geomB"]
     elif all_names[:2] == ["geog", "geog"]:
         all_names[:2] = ["geogA", "geogB"]
+    elif all_names[:2] == ["rast", "rast"]:
+        all_names[:2] = ["rastA", "rastB"]
 
     return [
         {

@@ -33,7 +33,7 @@ use crate::{index::IndexQueryResult, spatial_predicate::SpatialPredicate};
 /// geometries that truly satisfy the spatial predicate are returned. Different spatial libraries
 /// (Geo, GEOS, TG) provide their own implementations with varying performance characteristics
 /// and geometric predicate support.
-pub(crate) trait IndexQueryResultRefiner: Send + Sync {
+pub trait IndexQueryResultRefiner: Send + Sync {
     /// Refine index query results by evaluating the exact spatial predicate.
     ///
     /// Takes a probe geometry and a list of candidate build-side geometries from the R-tree
@@ -101,54 +101,60 @@ pub(crate) trait IndexQueryResultRefiner: Send + Sync {
     fn merge_probe_stats(&self, stats: GeoStatistics);
 }
 
+pub trait IndexQueryResultRefinerFactory: Send + Sync + std::fmt::Debug {
+    fn create_refiner(
+        &self,
+        predicate: &SpatialPredicate,
+        options: SpatialJoinOptions,
+        num_build_geoms: usize,
+        build_stats: GeoStatistics,
+    ) -> Result<Arc<dyn IndexQueryResultRefiner>>;
+}
+
 mod exec_mode_selector;
 pub mod geo;
 pub mod geos;
 pub mod tg;
 
-/// Create a spatial predicate refiner for the specified geometry library.
-///
-/// This factory function instantiates the appropriate refiner implementation based on the
-/// selected spatial library backend. Each library provides different trade-offs in terms
-/// of performance, memory usage, and geometric predicate support.
-///
-/// # Arguments
-/// * `library` - The spatial library backend to use for geometric computations
-/// * `predicate` - The spatial predicate to evaluate (e.g., intersects, contains, distance)
-/// * `options` - Configuration options including execution mode and optimization settings
-/// * `num_build_geoms` - Total number of build-side geometries, used to size prepared geometry
-///   caches when using preparation-based execution modes
-/// * `build_stats` - Statistics for the build-side geometries, used to optimize the refine
-///   process.
-///
-/// # Returns
-/// * `Arc<dyn IndexQueryResultRefiner>` - Thread-safe refiner implementation for the specified library
-pub(crate) fn create_refiner(
-    library: SpatialLibrary,
-    predicate: &SpatialPredicate,
-    options: SpatialJoinOptions,
-    num_build_geoms: usize,
-    build_stats: GeoStatistics,
-) -> Arc<dyn IndexQueryResultRefiner> {
-    match library {
-        SpatialLibrary::Geo => Arc::new(geo::GeoRefiner::new(predicate, options, build_stats)),
-        SpatialLibrary::Geos => Arc::new(geos::GeosRefiner::new(
-            predicate,
-            options,
-            num_build_geoms,
-            build_stats,
-        )),
-        SpatialLibrary::Tg => {
-            match tg::TgRefiner::try_new(
+#[derive(Debug)]
+pub(crate) struct DefaultIndexQueryResultRefinerFactory;
+
+impl IndexQueryResultRefinerFactory for DefaultIndexQueryResultRefinerFactory {
+    fn create_refiner(
+        &self,
+        predicate: &SpatialPredicate,
+        options: SpatialJoinOptions,
+        num_build_geoms: usize,
+        build_stats: GeoStatistics,
+    ) -> Result<Arc<dyn IndexQueryResultRefiner>> {
+        match options.spatial_library {
+            SpatialLibrary::Geo => Ok(Arc::new(geo::GeoRefiner::new(
                 predicate,
-                options.clone(),
+                options,
+                build_stats,
+            ))),
+            SpatialLibrary::Geos => Ok(Arc::new(geos::GeosRefiner::new(
+                predicate,
+                options,
                 num_build_geoms,
-                build_stats.clone(),
-            ) {
-                Ok(refiner) => Arc::new(refiner),
-                Err(_) => {
-                    // TG does not support all spatial predicates. Fallback to Geo if TG fails to initialize
-                    Arc::new(geo::GeoRefiner::new(predicate, options, build_stats))
+                build_stats,
+            ))),
+            SpatialLibrary::Tg => {
+                match tg::TgRefiner::try_new(
+                    predicate,
+                    options.clone(),
+                    num_build_geoms,
+                    build_stats.clone(),
+                ) {
+                    Ok(refiner) => Ok(Arc::new(refiner)),
+                    Err(_) => {
+                        // TG does not support all spatial predicates. Fallback to Geo if TG fails to initialize
+                        Ok(Arc::new(geo::GeoRefiner::new(
+                            predicate,
+                            options,
+                            build_stats,
+                        )))
+                    }
                 }
             }
         }

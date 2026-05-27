@@ -210,7 +210,6 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
     /// This is useful when the executor is built from a subset of the original
     /// arguments (e.g. only raster + geometry) but the overall UDF should still
     /// iterate according to other array arguments.
-    #[cfg(test)]
     pub fn new_with_num_iterations(
         arg_types: &'a [SedonaType],
         args: &'b [ColumnarValue],

@@ -41,5 +41,9 @@ pub use sedona_query_planner::probe_shuffle_exec::ProbeShuffleExec;
 // Re-export types needed for external usage (e.g., in Comet)
 pub use spatial_predicate::SpatialPredicate;
 
+// Re-export refiner trait and types for extension crates
+pub use index::IndexQueryResult;
+pub use refine::IndexQueryResultRefiner;
+
 // Re-export option types from sedona-common for convenience
 pub use sedona_common::option::*;

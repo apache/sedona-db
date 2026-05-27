@@ -128,6 +128,19 @@ sd_expr_alias <- function(expr, alias, factory = sd_expr_factory()) {
 
 #' @rdname sd_expr_column
 #' @export
+sd_expr_parse_binary <- function(expr) {
+  result <- expr$parse_binary()
+  if (is.null(result)) {
+    return(NULL)
+  }
+
+  result$left <- .savvy_wrap_SedonaDBExpr(result$left)
+  result$right <- .savvy_wrap_SedonaDBExpr(result$right)
+  result
+}
+
+#' @rdname sd_expr_column
+#' @export
 as_sd_expr <- function(x, factory = sd_expr_factory()) {
   if (inherits(x, "SedonaDBExpr")) {
     x
@@ -321,6 +334,11 @@ sd_expr_ctx <- function(schema = NULL, env = parent.frame(), ctx = NULL) {
 
   schema <- nanoarrow::as_nanoarrow_schema(schema)
   data_names <- as.character(names(schema$children))
+
+  # Duplicate names can't be referred to with the mask. We could install these
+  # as an active binding to give an error message if they are referred to.
+  ambiguous_names <- unique(data_names[duplicated(data_names)])
+  data_names <- setdiff(data_names, ambiguous_names)
   data <- lapply(data_names, sd_expr_column)
   names(data) <- data_names
 

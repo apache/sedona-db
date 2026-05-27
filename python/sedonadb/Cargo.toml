@@ -24,6 +24,8 @@ edition = "2021"
 [lib]
 name = "_lib"
 crate-type = ["cdylib"]
+# Pure Python extension — no Rust API consumers, so skip rustdoc.
+doc = false
 
 [features]
 default = ["mimalloc"]
@@ -38,6 +40,7 @@ arrow-array = { workspace = true }
 async-trait = { workspace = true }
 datafusion = { workspace = true }
 datafusion-common = { workspace = true }
+datafusion-execution = { workspace = true }
 datafusion-expr = { workspace = true }
 datafusion-ffi = { workspace = true }
 futures = { workspace = true }

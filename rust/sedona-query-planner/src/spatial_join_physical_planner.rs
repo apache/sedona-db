@@ -26,7 +26,6 @@ use arrow_schema::Schema;
 
 use datafusion::config::ConfigOptions;
 use datafusion::execution::session_state::SessionState;
-use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_planner::{ExtensionPlanner, PhysicalPlanner};
 use datafusion_common::{plan_err, DFSchema, Result};
 use datafusion_expr::logical_plan::UserDefinedLogicalNode;
@@ -34,6 +33,7 @@ use datafusion_expr::{JoinType, LogicalPlan};
 use datafusion_physical_expr::create_physical_expr;
 use datafusion_physical_plan::joins::utils::JoinFilter;
 use datafusion_physical_plan::joins::NestedLoopJoinExec;
+use datafusion_physical_plan::ExecutionPlan;
 use sedona_common::option::SedonaOptions;
 use sedona_common::{sedona_internal_err, SpatialJoinOptions};
 
@@ -228,7 +228,7 @@ fn logical_join_filter_to_physical(
         .unzip();
     let filter_df_fields = filter_df_fields
         .into_iter()
-        .map(|(qualifier, field)| (qualifier.cloned(), Arc::new(field.clone())))
+        .map(|(qualifier, field)| (qualifier.cloned(), field.clone()))
         .collect::<Vec<_>>();
 
     let metadata: HashMap<_, _> = left_df_schema

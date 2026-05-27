@@ -145,6 +145,12 @@ pub struct Interval {
     hi: f64,
 }
 
+impl Default for Interval {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
 impl Interval {
     /// Expand this interval to the union of self and other in place
     ///
@@ -284,8 +290,18 @@ pub struct WraparoundInterval {
     inner: Interval,
 }
 
+impl Default for WraparoundInterval {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
 impl WraparoundInterval {
-    fn split(&self) -> (Interval, Interval) {
+    /// Split this interval into two non-wraparound intervals
+    ///
+    /// Either left or right may be empty; either left or right may have infinite
+    /// bounds.
+    pub fn split(&self) -> (Interval, Interval) {
         if self.is_wraparound() {
             (
                 Interval {

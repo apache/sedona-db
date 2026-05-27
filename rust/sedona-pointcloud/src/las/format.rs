@@ -28,6 +28,7 @@ use datafusion_datasource::{
     file_compression_type::FileCompressionType,
     file_format::{FileFormat, FileFormatFactory},
     file_scan_config::{FileScanConfig, FileScanConfigBuilder},
+    TableSchema,
 };
 use datafusion_physical_plan::ExecutionPlan;
 use futures::{StreamExt, TryStreamExt};
@@ -254,8 +255,8 @@ impl FileFormat for LasFormat {
         Ok(DataSourceExec::from_data_source(conf))
     }
 
-    fn file_source(&self) -> Arc<dyn FileSource> {
-        Arc::new(LasSource::new(self.extension).with_options(self.options.clone()))
+    fn file_source(&self, table_schema: TableSchema) -> Arc<dyn FileSource> {
+        Arc::new(LasSource::new(self.extension, table_schema).with_options(self.options.clone()))
     }
 }
 
@@ -263,6 +264,7 @@ impl FileFormat for LasFormat {
 mod test {
     use std::{collections::HashMap, fs::File, sync::Arc};
 
+    use arrow_schema::DataType;
     use datafusion::{execution::SessionStateBuilder, prelude::SessionContext};
     use datafusion_datasource::file_format::FileFormatFactory;
     use las::{point::Format, Builder, Writer};
@@ -303,19 +305,13 @@ mod test {
         let ctx = setup_context();
 
         let df = ctx
-            .sql("SELECT x, y, z FROM 'tests/data/extra.las'")
+            .sql("SELECT classification, x, y, z FROM 'tests/data/extra.las'")
             .await
             .unwrap();
+        let batches = df.collect().await.unwrap();
 
-        assert_eq!(df.schema().fields().len(), 3);
-
-        let ctx = setup_context();
-        let df = ctx
-            .sql("SELECT x, y, z FROM 'tests/data/extra.laz'")
-            .await
-            .unwrap();
-
-        assert_eq!(df.schema().fields().len(), 3);
+        assert_eq!(batches[0].schema().field(0).data_type(), &DataType::UInt8);
+        assert_eq!(batches[0].num_columns(), 4);
     }
 
     #[tokio::test]

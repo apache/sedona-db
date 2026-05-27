@@ -31,6 +31,8 @@ repos:
       - id: mixed-line-ending
         args: [--fix=lf]
       - id: trailing-whitespace
+        # R snapshot test files may have arbitrary file endings based on test results
+        exclude: "_snaps"
 
   - repo: https://github.com/codespell-project/codespell
     rev: v2.4.1

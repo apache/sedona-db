@@ -24,7 +24,7 @@ kernels:
     - raster
     - name: x
       type: integer
-    - name: y
+    - name: "y"
       type: integer
 ---
 

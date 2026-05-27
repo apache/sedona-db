@@ -40,6 +40,7 @@ jobs:
       # Run air format
       - run: curl -LsSf https://github.com/posit-dev/air/releases/latest/download/air-installer.sh | sh
       - run: cd r/sedonadb && air format . --check
+      - run: cd r/sedonafns && air format . --check
 
   test:
     runs-on: ${{ matrix.config.os }}
@@ -91,32 +92,44 @@ jobs:
         if: matrix.config.os == 'macos-latest'
         run: brew install geos
 
+      # Dynamically set a short target directory on Windows to bypass 260-char MinGW limits,
+      # while keeping paths standard on Mac/Linux.
+      - name: Configure Target Directory
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            echo "SEDONADB_TARGET_DIR=D:/a/t" >> $GITHUB_ENV
+            echo "CACHE_WORKSPACE=. -> D:/a/t" >> $GITHUB_ENV
+          else
+            echo "SEDONADB_TARGET_DIR=$(pwd)/r/sedonadb/src/rust/target" >> $GITHUB_ENV
+            echo "CACHE_WORKSPACE=. -> r/sedonadb/src/rust/target" >> $GITHUB_ENV
+          fi
+
       - uses: Swatinem/rust-cache@v2
         with:
-          # Update this key to force a new cache
           prefix-key: "r-v4"
-          # The R package uses its own target directory
-          workspaces: ". -> r/sedonadb/src/rust/target"
-
-      # Explicitly specify for Windows, which otherwise chooses a shorter version
-      # to work around a path length limitation when building from longer starting paths.
-      # This allows us to use a common cache configuration for Windows, MacOS, and Linux
-      - name: Set R/Rust target directory
-        if: matrix.config.os == 'windows-latest'
-        run: |
-          echo "SEDONADB_TARGET_DIR=$(pwd -W)/r/sedonadb/src/rust/target" >> $GITHUB_ENV
-        shell: bash
+          workspaces: ${{ env.CACHE_WORKSPACE }}
+          cache-bin: false
 
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
           needs: check
+          extra-packages: any::glue, any::here, any::rlang, any::yaml, any::roxygen2
           working-directory: r/sedonadb
           cache: false
 
-      - name: Install R Package
+      - name: Install sedonadb R Package
         run: |
           R CMD INSTALL r/sedonadb --preclean
 
-      - name: Test R Package
+      - name: Test sedonadb R Package
         run: |
           R -e 'library(testthat); test_local("r/sedonadb", MultiReporter$new(list(CheckReporter$new(), LocationReporter$new())))'
+
+      - name: Install sedonafns R Package
+        run: |
+          R CMD INSTALL r/sedonafns --preclean
+
+      - name: Test sedonafns R Package
+        run: |
+          R -e 'library(testthat); test_local("r/sedonafns", MultiReporter$new(list(CheckReporter$new(), LocationReporter$new())))'

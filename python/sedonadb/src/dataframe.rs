@@ -25,8 +25,9 @@ use arrow_schema::{Schema, SchemaRef};
 use datafusion::catalog::MemTable;
 use datafusion::config::ConfigField;
 use datafusion::logical_expr::SortExpr;
-use datafusion::prelude::DataFrame;
+use datafusion::prelude::{DataFrame, SessionContext};
 use datafusion_common::{Column, DataFusionError, ParamValues};
+use datafusion_execution::TaskContextProvider;
 use datafusion_expr::{ExplainFormat, ExplainOption, Expr};
 use datafusion_ffi::table_provider::FFI_TableProvider;
 use futures::lock::Mutex;
@@ -42,6 +43,7 @@ use tokio::runtime::Runtime;
 
 use crate::context::InternalContext;
 use crate::error::PySedonaError;
+use crate::expr::{PyExpr, PySortExpr};
 use crate::import_from::{import_arrow_scalar, import_arrow_schema};
 use crate::reader::PySedonaStreamReader;
 use crate::runtime::wait_for_future;
@@ -102,6 +104,88 @@ impl InternalDataFrame {
         offset: usize,
     ) -> Result<InternalDataFrame, PySedonaError> {
         let inner = self.inner.clone().limit(offset, limit)?;
+        Ok(InternalDataFrame::new(inner, self.runtime.clone()))
+    }
+
+    /// Project a set of expressions, producing a new lazy `DataFrame`.
+    ///
+    /// The Python side accepts a mix of column-name strings and `Expr`
+    /// objects; strings are converted to column references before being
+    /// handed across the boundary, so this function only sees a
+    /// `Vec<PyExpr>`. Each element is unwrapped into its inner
+    /// `datafusion_expr::Expr` and passed to DataFusion's `DataFrame::select`
+    /// directly — no schema validation here, since DataFusion's plan-build
+    /// step already produces a clear error if a referenced column does not
+    /// exist on the input.
+    fn select(&self, exprs: Vec<PyExpr>) -> Result<InternalDataFrame, PySedonaError> {
+        let exprs: Vec<Expr> = exprs.into_iter().map(|e| e.inner).collect();
+        let inner = self.inner.clone().select(exprs)?;
+        Ok(InternalDataFrame::new(inner, self.runtime.clone()))
+    }
+
+    /// Filter rows by one or more boolean expressions, producing a new
+    /// lazy `DataFrame`.
+    ///
+    /// The Python side guarantees `exprs` is non-empty and that every
+    /// element is an `Expr` (no strings, no Literals — those rejections
+    /// happen at the Python boundary so the error message can point at
+    /// the right alternative). Multiple predicates are combined into a
+    /// single composed `Expr` using DataFusion's `conjunction` helper,
+    /// which yields one conjunction node for the optimizer to reason
+    /// about rather than stacked filter nodes. Column-validity errors
+    /// surface at plan-build time from DataFusion, matching the
+    /// behavior of `select`.
+    fn filter(&self, exprs: Vec<PyExpr>) -> Result<InternalDataFrame, PySedonaError> {
+        // `conjunction` returns None only for an empty iterator; the
+        // `else` arm doubles as defense-in-depth against an empty
+        // predicate list slipping past the Python-side guard.
+        if let Some(combined) =
+            datafusion_expr::utils::conjunction(exprs.into_iter().map(|e| e.inner))
+        {
+            let inner = self.inner.clone().filter(combined)?;
+            Ok(InternalDataFrame::new(inner, self.runtime.clone()))
+        } else {
+            Err(PySedonaError::SedonaPython(
+                "filter() requires at least one predicate".to_string(),
+            ))
+        }
+    }
+
+    /// Sort rows by the given `SortExpr` keys.
+    ///
+    /// Each key in `sort_exprs` carries its own direction and null
+    /// placement, constructed Python-side via `Expr.asc()`, `Expr.desc()`,
+    /// or `sedonadb.expr.sort_expr(...)`. The Python wrapper auto-promotes
+    /// bare column-name strings and plain `Expr` values to ascending
+    /// `SortExpr` with `nulls_first=false` before they reach this method,
+    /// so we just need to unwrap and pass through.
+    fn sort(&self, sort_exprs: Vec<PySortExpr>) -> Result<InternalDataFrame, PySedonaError> {
+        if sort_exprs.is_empty() {
+            return Err(PySedonaError::SedonaPython(
+                "sort() requires at least one sort key".to_string(),
+            ));
+        }
+        let sort_exprs: Vec<SortExpr> = sort_exprs.into_iter().map(|s| s.inner).collect();
+        let inner = self.inner.clone().sort(sort_exprs)?;
+        Ok(InternalDataFrame::new(inner, self.runtime.clone()))
+    }
+
+    /// Drop the named columns, producing a new lazy `DataFrame`.
+    ///
+    /// The Python side guarantees `cols` is non-empty and that every
+    /// element is a string. DataFusion's `drop_columns` accepts `&[&str]`,
+    /// so we materialize a slice of borrowed string references and hand
+    /// it off; the plan-build step raises a `SchemaError` if any name
+    /// doesn't resolve to a column, and that error already includes the
+    /// list of valid field names for the user.
+    fn drop_columns(&self, cols: Vec<String>) -> Result<InternalDataFrame, PySedonaError> {
+        if cols.is_empty() {
+            return Err(PySedonaError::SedonaPython(
+                "drop() requires at least one column name".to_string(),
+            ));
+        }
+        let borrowed: Vec<&str> = cols.iter().map(String::as_str).collect();
+        let inner = self.inner.clone().drop_columns(&borrowed)?;
         Ok(InternalDataFrame::new(inner, self.runtime.clone()))
     }
 
@@ -390,8 +474,14 @@ impl InternalDataFrame {
     ) -> Result<Bound<'py, PyCapsule>, PySedonaError> {
         let name = cr"datafusion_table_provider".into();
         let provider = self.inner.clone().into_view();
-        let ffi_provider =
-            FFI_TableProvider::new(provider, true, Some(self.runtime.handle().clone()));
+        let ctx = Arc::new(SessionContext::new()) as Arc<dyn TaskContextProvider>;
+        let ffi_provider = FFI_TableProvider::new(
+            provider,
+            true,
+            Some(self.runtime.handle().clone()),
+            &ctx,
+            None,
+        );
         Ok(PyCapsule::new(py, ffi_provider, Some(name))?)
     }
 }

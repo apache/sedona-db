@@ -97,6 +97,22 @@ unsafe extern "C" {
         geog: *const S2Geog,
         err: *mut S2GeogError,
     ) -> S2GeogErrorCode;
+    pub fn S2GeogRectBounderExpandByDistance(
+        rect_bounder: *mut S2GeogRectBounder,
+        distance_meters: f64,
+    );
+    pub fn S2GeogRectBounderExpandByDistanceWithRadius(
+        rect_bounder: *mut S2GeogRectBounder,
+        distance_meters: f64,
+        radius: f64,
+    );
+    pub fn S2GeogRectBounderUpdateRect(
+        rect_bounder: *mut S2GeogRectBounder,
+        x_lo: f64,
+        y_lo: f64,
+        x_hi: f64,
+        y_hi: f64,
+    );
     pub fn S2GeogRectBounderIsEmpty(rect_bounder: *mut S2GeogRectBounder) -> u8;
     pub fn S2GeogRectBounderFinish(
         rect_bounder: *mut S2GeogRectBounder,

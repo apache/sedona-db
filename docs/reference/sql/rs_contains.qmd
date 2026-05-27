@@ -24,13 +24,7 @@ kernels:
   - returns: boolean
     args: [geometry, raster]
   - returns: boolean
-    args:
-    - name: rastA
-      type: raster
-      description: Input raster
-    - name: rastB
-      type: raster
-      description: Input raster
+    args: [raster, raster]
 ---
 
 ## Description

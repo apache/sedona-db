@@ -17,8 +17,9 @@
 
 pub(crate) mod arrow_utils;
 pub(crate) mod bbox_sampler;
+pub mod bounds;
 pub(crate) mod disposable_async_cell;
-pub(crate) mod init_once_array;
+pub mod init_once_array;
 pub mod internal_benchmark_util;
 pub mod join_utils;
 pub(crate) mod once_fut;

@@ -434,7 +434,7 @@ def test_st_scale_3d(eng, geom, sx, sy, sz, expected):
 def test_st_rotate(eng, geom, angle, expected):
     eng = eng.create_or_skip()
     query = f"SELECT ST_Rotate({geom_or_null(geom)}, {val_or_null(angle)})"
-    eng.assert_query_result(query, expected, wkt_precision=1e-12)
+    eng.assert_query_result(query, expected, wkt_precision=12)
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
@@ -449,7 +449,7 @@ def test_st_rotate(eng, geom, angle, expected):
 def test_st_rotate_x(eng, geom, angle, expected):
     eng = eng.create_or_skip()
     query = f"SELECT ST_RotateX({geom_or_null(geom)}, {val_or_null(angle)})"
-    eng.assert_query_result(query, expected, wkt_precision=1e-12)
+    eng.assert_query_result(query, expected, wkt_precision=12)
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
@@ -464,7 +464,7 @@ def test_st_rotate_x(eng, geom, angle, expected):
 def test_st_rotate_y(eng, geom, angle, expected):
     eng = eng.create_or_skip()
     query = f"SELECT ST_RotateY({geom_or_null(geom)}, {val_or_null(angle)})"
-    eng.assert_query_result(query, expected, wkt_precision=1e-12)
+    eng.assert_query_result(query, expected, wkt_precision=12)
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
@@ -746,7 +746,7 @@ def test_st_buffer_style_parameters(
     eng.assert_query_result(
         f"SELECT ST_Area(ST_Buffer({geom_or_null(geom)}, {val_or_null(dist)}, {val_or_null(buffer_style_parameters)}))",
         expected_area,
-        numeric_epsilon=1e-9,
+        numeric_epsilon=eng.geography_numeric_epsilon(),
     )
 
 
@@ -2302,6 +2302,89 @@ def test_st_linemerge_directed(eng, geom, expected):
 def test_st_length(eng, geom, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(f"SELECT ST_Length({geom_or_null(geom)})", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        (None, None),
+        ("POINT EMPTY", "POINT EMPTY"),
+        ("LINESTRING EMPTY", "LINESTRING EMPTY"),
+        ("POLYGON EMPTY", "POLYGON EMPTY"),
+        ("MULTIPOINT EMPTY", "MULTIPOINT EMPTY"),
+        ("MULTILINESTRING EMPTY", "MULTILINESTRING EMPTY"),
+        ("MULTIPOLYGON EMPTY", "MULTIPOLYGON EMPTY"),
+        ("GEOMETRYCOLLECTION EMPTY", "GEOMETRYCOLLECTION EMPTY"),
+        ("POINT (0 0)", "POINT (0 0)"),
+        ("LINESTRING (0 0, 1 1)", "LINESTRING (0 0, 1 1)"),
+        (
+            "POLYGON ((1 1, 1 0, 0 0, 0 1, 1 1))",
+            "POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))",
+        ),
+        (
+            "POLYGON ((5 5, 5 0, 0 0, 0 5, 5 5), (4 4, 1 4, 1 1, 4 1, 4 4))",
+            "POLYGON ((0 0, 0 5, 5 5, 5 0, 0 0), (1 1, 4 1, 4 4, 1 4, 1 1))",
+        ),
+        ("MULTIPOINT ((2 2), (1 1), (0 0))", "MULTIPOINT ((2 2), (1 1), (0 0))"),
+        (
+            "MULTILINESTRING ((2 2, 1 1), (4 4, 3 3))",
+            "MULTILINESTRING ((3 3, 4 4), (1 1, 2 2))",
+        ),
+        (
+            "MULTIPOLYGON (((3 3, 3 2, 2 2, 2 3, 3 3)), ((1 1, 1 0, 0 0, 0 1, 1 1)))",
+            "MULTIPOLYGON (((2 2, 2 3, 3 3, 3 2, 2 2)), ((0 0, 0 1, 1 1, 1 0, 0 0)))",
+        ),
+        (
+            "GEOMETRYCOLLECTION (LINESTRING (2 2, 1 1), POLYGON ((1 1, 1 0, 0 0, 0 1, 1 1)), POINT (5 5))",
+            "GEOMETRYCOLLECTION (POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0)), LINESTRING (1 1, 2 2), POINT (5 5))",
+        ),
+        # Already-normalized input should be unchanged
+        (
+            "POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))",
+            "POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))",
+        ),
+        # Z coordinates must survive normalization reordering
+        (
+            "POLYGON Z ((1 1 5, 1 0 5, 0 0 5, 0 1 5, 1 1 5))",
+            "POLYGON Z ((0 0 5, 0 1 5, 1 1 5, 1 0 5, 0 0 5))",
+        ),
+        # SedonaDB preserves M; PostGIS drops it during ST_Normalize in this environment
+        (
+            "POLYGON M ((1 1 7, 1 0 7, 0 0 7, 0 1 7, 1 1 7))",
+            "POLYGON M ((0 0 7, 0 1 7, 1 1 7, 1 0 7, 0 0 7))",
+        ),
+        # SedonaDB preserves ZM; PostGIS drops M during ST_Normalize in this environment
+        (
+            "POLYGON ZM ((1 1 5 7, 1 0 5 7, 0 0 5 7, 0 1 5 7, 1 1 5 7))",
+            "POLYGON ZM ((0 0 5 7, 0 1 5 7, 1 1 5 7, 1 0 5 7, 0 0 5 7))",
+        ),
+    ],
+)
+def test_st_normalize(eng, geom, expected):
+    eng = eng.create_or_skip()
+    if isinstance(eng, PostGIS):
+        # PostGIS drops M during ST_Normalize for these cases in our test environment.
+        if geom == "POLYGON M ((1 1 7, 1 0 7, 0 0 7, 0 1 7, 1 1 7))":
+            expected = "POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))"
+        elif geom == "POLYGON ZM ((1 1 5 7, 1 0 5 7, 0 0 5 7, 0 1 5 7, 1 1 5 7))":
+            expected = "POLYGON Z ((0 0 5, 0 1 5, 1 1 5, 1 0 5, 0 0 5))"
+
+    if isinstance(eng, PostGIS) and expected is not None:
+        # Normalize expected WKT to PostGIS's compact ST_AsText formatting.
+        expected = expected.replace(", ", ",")
+        expected = expected.replace(" (", "(")
+        expected = expected.replace(r"ZM(", r"ZM (")
+        expected = expected.replace(r"M(", r"M (")
+        expected = expected.replace(r"Z(", r"Z (")
+
+    if isinstance(eng, SedonaDB) and expected is not None:
+        expected = expected.replace(", ", ",")
+        expected = expected.replace(" (", "(")
+
+    eng.assert_query_result(
+        f"SELECT ST_AsText(ST_Normalize({geom_or_null(geom)}))", expected
+    )
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])

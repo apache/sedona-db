@@ -20,9 +20,11 @@ use arrow_array::ffi_stream::FFI_ArrowArrayStream;
 use arrow_array::{RecordBatchIterator, RecordBatchReader};
 use datafusion::catalog::MemTable;
 use datafusion::config::ConfigField;
-use datafusion::prelude::DataFrame;
+use datafusion::prelude::{DataFrame, SessionContext};
 use datafusion_common::Column;
+use datafusion_execution::TaskContextProvider;
 use datafusion_expr::utils::conjunction;
+use datafusion_expr::JoinType;
 use datafusion_expr::{select_expr::SelectExpr, Expr, SortExpr};
 use datafusion_ffi::table_provider::FFI_TableProvider;
 use savvy::{savvy, savvy_err, sexp, IntoExtPtrSexp, Result};
@@ -127,8 +129,14 @@ impl InternalDataFrame {
         let provider = self.inner.clone().into_view();
         // Literal true is because the TableProvider that wraps this DataFrame
         // can support filters being pushed down.
-        let ffi_provider =
-            FFI_TableProvider::new(provider, true, Some(self.runtime.handle().clone()));
+        let ctx = Arc::new(SessionContext::new()) as Arc<dyn TaskContextProvider>;
+        let ffi_provider = FFI_TableProvider::new(
+            provider,
+            true,
+            Some(self.runtime.handle().clone()),
+            &ctx,
+            None,
+        );
 
         let mut ffi_xptr = FFITableProviderR(ffi_provider).into_external_pointer();
         unsafe { savvy_ffi::Rf_protect(ffi_xptr.0) };
@@ -364,6 +372,24 @@ impl InternalDataFrame {
         let group_by_exprs = SedonaDBExprFactory::exprs(group_by_exprs_sexp)?;
 
         let inner = self.inner.clone().aggregate(group_by_exprs, exprs)?;
+        Ok(new_data_frame(inner, self.runtime.clone()))
+    }
+
+    fn join(
+        &self,
+        right: &InternalDataFrame,
+        on_sexp: savvy::Sexp,
+        join_type_str: &str,
+        left_alias: &str,
+        right_alias: &str,
+    ) -> savvy::Result<InternalDataFrame> {
+        let on = SedonaDBExprFactory::exprs(on_sexp)?;
+        let join_type: JoinType = join_type_str.parse()?;
+        let inner = self.inner.clone().alias(left_alias)?.join_on(
+            right.inner.clone().alias(right_alias)?,
+            join_type,
+            on,
+        )?;
         Ok(new_data_frame(inner, self.runtime.clone()))
     }
 

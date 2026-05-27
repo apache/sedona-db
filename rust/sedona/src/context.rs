@@ -50,7 +50,7 @@ use sedona_common::{
     option::add_sedona_option_extension, sedona_internal_datafusion_err, CrsProviderOption,
     SedonaOptions,
 };
-use sedona_datasource::provider::external_listing_table;
+use sedona_datasource::provider::external_table;
 use sedona_datasource::spec::ExternalFormatSpec;
 use sedona_expr::scalar_udf::IntoScalarKernelRefs;
 use sedona_expr::{aggregate_udf::IntoSedonaAccumulatorRefs, function_set::FunctionSet};
@@ -152,6 +152,7 @@ impl SedonaContext {
             .with_config(session_config);
 
         // Register the spatial join planner extension
+        #[allow(unused_mut)]
         let mut planner = SedonaQueryPlanner::new();
         #[cfg(feature = "spatial-join")]
         {
@@ -160,7 +161,19 @@ impl SedonaContext {
             planner = planner.with_spatial_join_physical_planner(Arc::new(
                 DefaultSpatialJoinPhysicalPlanner::new(),
             ));
-            // Register the GPU join after the default planer
+
+            // Register the geography join after the default planner
+            // If a query is not supported, it falls back to the default planner.
+            #[cfg(feature = "s2geography")]
+            {
+                use sedona_spatial_join_geography::physical_planner::GeographySpatialJoinPhysicalPlanner;
+
+                planner = planner.with_spatial_join_physical_planner(Arc::new(
+                    GeographySpatialJoinPhysicalPlanner::new(),
+                ));
+            }
+
+            // Register the GPU join after the default planner
             // If a query is not supported, it falls back to the default planner.
             #[cfg(feature = "gpu")]
             {
@@ -176,7 +189,18 @@ impl SedonaContext {
         state_builder = state_builder.with_query_planner(Arc::new(planner));
 
         let mut state = state_builder.build();
+
+        // Register GeoParquet and try to initialize our statistics accumulator. It is OK if this fails
+        // because we already registered it, but we propagate other errors for safety.
         state.register_file_format(Arc::new(GeoParquetFormatFactory::new()), true)?;
+        let init_result =
+            sedona_geoparquet::statistics_accumulator::SedonaGeoStatsAccumulatorFactory::try_init();
+        if let Err(init_err) = init_result {
+            if !matches!(init_err, DataFusionError::ParquetError(_)) {
+                return Err(init_err);
+            }
+        }
+
         #[cfg(feature = "pointcloud")]
         {
             state.register_file_format(Arc::new(LasFormatFactory::new(Extension::Laz)), false)?;
@@ -255,6 +279,10 @@ impl SedonaContext {
         let sd_order_kernel =
             sd_order_lnglat::OrderLngLat::new(sedona_s2geography::utils::s2_cell_id_from_lnglat);
         self.register_scalar_kernels([("sd_order", sd_order_kernel)].into_iter())?;
+
+        self.register_aggregate_kernels(
+            sedona_s2geography::register::aggregate_kernels().into_iter(),
+        )?;
 
         Ok(())
     }
@@ -388,12 +416,12 @@ impl SedonaContext {
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect::<HashMap<String, String>>();
             let spec = spec.with_options(&options_without_filesystems)?;
-            external_listing_table(spec, &self.ctx, urls, check_extension).await?
+            external_table(spec, &self.ctx, urls, check_extension).await?
         } else {
-            external_listing_table(spec, &self.ctx, urls, check_extension).await?
+            external_table(spec, &self.ctx, urls, check_extension).await?
         };
 
-        self.ctx.read_table(Arc::new(provider))
+        self.ctx.read_table(provider)
     }
 }
 

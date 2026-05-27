@@ -45,6 +45,19 @@ config_namespace! {
 
         /// Global [CrsProvider] for CRS metadata operations
         pub crs_provider: CrsProviderOption, default = CrsProviderOption::default()
+
+        /// Options for configuring GDAL usage
+        pub gdal: GdalOptions, default = GdalOptions::default()
+    }
+}
+
+config_namespace! {
+    /// Configuration options for GDAL usage.
+    pub struct GdalOptions {
+        /// CPL_DEBUG controls whether GDAL outputs debug information to stderr.
+        /// This can be helpful for diagnosing issues with GDAL dataset handling,
+        /// but may produce verbose output. Set to true to enable CPL_DEBUG output from GDAL.
+        pub cpl_debug: bool, default = false
     }
 }
 

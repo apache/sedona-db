@@ -27,7 +27,7 @@ use sedona_expr::{
 };
 use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
 use sedona_schema::{
-    datatypes::{SedonaType, WKB_GEOMETRY},
+    datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY},
     matchers::ArgMatcher,
 };
 
@@ -36,17 +36,24 @@ use crate::geos_to_wkb::write_geos_geometry;
 
 /// ST_Boundary() implementation using the geos crate
 pub fn st_boundary_impl() -> Vec<ScalarKernelRef> {
-    ItemCrsKernel::wrap_impl(STBoundary {})
+    ItemCrsKernel::wrap_impl(vec![
+        Arc::new(STBoundary {
+            matcher: ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY),
+        }),
+        Arc::new(STBoundary {
+            matcher: ArgMatcher::new(vec![ArgMatcher::is_geography()], WKB_GEOGRAPHY),
+        }),
+    ])
 }
 
 #[derive(Debug)]
-struct STBoundary {}
+struct STBoundary {
+    matcher: ArgMatcher,
+}
 
 impl SedonaScalarKernel for STBoundary {
     fn return_type(&self, args: &[SedonaType]) -> datafusion_common::Result<Option<SedonaType>> {
-        let matcher = ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY);
-
-        matcher.match_args(args)
+        self.matcher.match_args(args)
     }
 
     fn invoke_batch(
@@ -287,16 +294,16 @@ fn collect_boundary_components(
 mod tests {
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
-    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY_ITEM_CRS};
     use sedona_testing::testers::ScalarUdfTester;
 
     use super::*;
 
     #[rstest]
-    fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+    fn udf(#[values(WKB_GEOMETRY, WKB_GEOGRAPHY)] sedona_type: SedonaType) {
         let udf = SedonaScalarUDF::from_impl("st_boundary", st_boundary_impl());
-        let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type]);
-        tester.assert_return_type(WKB_GEOMETRY);
+        let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone()]);
+        tester.assert_return_type(sedona_type.clone());
 
         let result = tester
             .invoke_scalar(
@@ -372,7 +379,10 @@ mod tests {
     }
 
     #[rstest]
-    fn udf_invoke_item_crs(#[values(WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType) {
+    fn udf_invoke_item_crs(
+        #[values(WKB_GEOMETRY_ITEM_CRS.clone(), WKB_GEOGRAPHY_ITEM_CRS.clone())]
+        sedona_type: SedonaType,
+    ) {
         let udf = SedonaScalarUDF::from_impl("st_boundary", st_boundary_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone()]);
         tester.assert_return_type(sedona_type);

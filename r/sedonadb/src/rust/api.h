@@ -54,6 +54,11 @@ SEXP savvy_InternalDataFrame_collect__ffi(SEXP self__, SEXP c_arg__out);
 SEXP savvy_InternalDataFrame_compute__ffi(SEXP self__, SEXP c_arg__ctx);
 SEXP savvy_InternalDataFrame_count__ffi(SEXP self__);
 SEXP savvy_InternalDataFrame_filter__ffi(SEXP self__, SEXP c_arg__exprs_sexp);
+SEXP savvy_InternalDataFrame_join__ffi(SEXP self__, SEXP c_arg__right,
+                                       SEXP c_arg__on_sexp,
+                                       SEXP c_arg__join_type_str,
+                                       SEXP c_arg__left_alias,
+                                       SEXP c_arg__right_alias);
 SEXP savvy_InternalDataFrame_limit__ffi(SEXP self__, SEXP c_arg__n);
 SEXP savvy_InternalDataFrame_primary_geometry_column_index__ffi(SEXP self__);
 SEXP savvy_InternalDataFrame_select__ffi(SEXP self__, SEXP c_arg__exprs_sexp);
@@ -82,6 +87,9 @@ SEXP savvy_SedonaDBExpr_cast__ffi(SEXP self__, SEXP c_arg__schema_xptr);
 SEXP savvy_SedonaDBExpr_debug_string__ffi(SEXP self__);
 SEXP savvy_SedonaDBExpr_display__ffi(SEXP self__);
 SEXP savvy_SedonaDBExpr_negate__ffi(SEXP self__);
+SEXP savvy_SedonaDBExpr_parse_binary__ffi(SEXP self__);
+SEXP savvy_SedonaDBExpr_qualified_name__ffi(SEXP self__);
+SEXP savvy_SedonaDBExpr_variant_name__ffi(SEXP self__);
 
 // methods and associated functions for SedonaDBExprFactory
 SEXP savvy_SedonaDBExprFactory_aggregate_function__ffi(SEXP self__,

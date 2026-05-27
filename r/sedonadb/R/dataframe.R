@@ -460,6 +460,7 @@ sd_ungroup <- function(.data) {
 #' @param ... Aggregate expressions. These are evaluated in the same way as
 #'   [dplyr::summarise()] except the outer expression must be an aggregate
 #'   expression (e.g., `sum(x) + 1` is not currently possible).
+#' @param .env The calling environment for programmatic usage
 #'
 #' @returns An object of class sedonadb_dataframe
 #' @export
@@ -467,15 +468,14 @@ sd_ungroup <- function(.data) {
 #' @examples
 #' data.frame(x = c(10:1, NA)) |> sd_summarise(x = sum(x, na.rm = TRUE))
 #'
-sd_summarise <- function(.data, ...) {
+sd_summarise <- function(.data, ..., .env = parent.frame()) {
   .data <- as_sedonadb_dataframe(.data)
 
   expr_quos <- rlang::enquos(...)
-  env <- parent.frame()
 
-  expr_ctx <- sd_expr_ctx(infer_nanoarrow_schema(.data), env, ctx = .data$ctx)
+  expr_ctx <- sd_expr_ctx(infer_nanoarrow_schema(.data), .env, ctx = .data$ctx)
   r_exprs <- expr_quos |> rlang::quos_auto_name() |> lapply(rlang::quo_get_expr)
-  sd_exprs <- lapply(r_exprs, sd_eval_expr, expr_ctx = expr_ctx, env = env)
+  sd_exprs <- lapply(r_exprs, sd_eval_expr, expr_ctx = expr_ctx)
 
   # Ensure inputs are given aliases to account for the expected column name
   exprs_names <- names(r_exprs)
@@ -492,8 +492,8 @@ sd_summarise <- function(.data, ...) {
 
 #' @rdname sd_summarise
 #' @export
-sd_summarize <- function(.data, ...) {
-  sd_summarise(.data, ...)
+sd_summarize <- function(.data, ..., .env = parent.frame()) {
+  sd_summarise(.data, ..., .env = .env)
 }
 
 #' Write DataFrame to (Geo)Parquet files

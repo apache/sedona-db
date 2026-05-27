@@ -116,7 +116,7 @@ impl From<TableParquetOptions> for TableGeoParquetOptions {
 }
 
 /// The GeoParquet Version to write for output with spatial columns
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, Hash, PartialEq, Eq)]
 pub enum GeoParquetVersion {
     /// Write GeoParquet 1.0 metadata
     ///

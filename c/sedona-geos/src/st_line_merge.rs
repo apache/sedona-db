@@ -26,31 +26,48 @@ use sedona_expr::{
     scalar_udf::{ScalarKernelRef, SedonaScalarKernel},
 };
 use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
-use sedona_schema::{datatypes::WKB_GEOMETRY, matchers::ArgMatcher};
+use sedona_schema::{
+    datatypes::{WKB_GEOGRAPHY, WKB_GEOMETRY},
+    matchers::ArgMatcher,
+};
 
 use crate::executor::GeosExecutor;
 use crate::geos_to_wkb::write_geos_geometry;
 
 pub fn st_line_merge_impl() -> Vec<ScalarKernelRef> {
-    ItemCrsKernel::wrap_impl(STLineMerge {})
+    ItemCrsKernel::wrap_impl(vec![
+        Arc::new(STLineMerge {
+            matcher: ArgMatcher::new(
+                vec![
+                    ArgMatcher::is_geometry(),
+                    ArgMatcher::optional(ArgMatcher::is_boolean()),
+                ],
+                WKB_GEOMETRY,
+            ),
+        }),
+        Arc::new(STLineMerge {
+            matcher: ArgMatcher::new(
+                vec![
+                    ArgMatcher::is_geography(),
+                    ArgMatcher::optional(ArgMatcher::is_boolean()),
+                ],
+                WKB_GEOGRAPHY,
+            ),
+        }),
+    ])
 }
 
 #[derive(Debug)]
-struct STLineMerge {}
+struct STLineMerge {
+    matcher: ArgMatcher,
+}
 
 impl SedonaScalarKernel for STLineMerge {
     fn return_type(
         &self,
         args: &[sedona_schema::datatypes::SedonaType],
     ) -> datafusion_common::Result<Option<sedona_schema::datatypes::SedonaType>> {
-        let matcher = ArgMatcher::new(
-            vec![
-                ArgMatcher::is_geometry(),
-                ArgMatcher::optional(ArgMatcher::is_boolean()),
-            ],
-            WKB_GEOMETRY,
-        );
-        matcher.match_args(args)
+        self.matcher.match_args(args)
     }
 
     fn invoke_batch(
@@ -120,7 +137,7 @@ mod tests {
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
     use sedona_schema::datatypes::{
-        SedonaType, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY,
+        SedonaType, WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS,
     };
     use sedona_testing::create::create_array;
     use sedona_testing::testers::ScalarUdfTester;
@@ -128,15 +145,15 @@ mod tests {
     use super::*;
 
     #[rstest]
-    fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+    fn udf(#[values(WKB_GEOMETRY, WKB_GEOGRAPHY)] sedona_type: SedonaType) {
         use arrow_schema::DataType;
 
         let udf = SedonaScalarUDF::from_impl("st_linemerge", st_line_merge_impl());
         let tester = ScalarUdfTester::new(
             udf.into(),
-            vec![sedona_type, SedonaType::Arrow(DataType::Boolean)],
+            vec![sedona_type.clone(), SedonaType::Arrow(DataType::Boolean)],
         );
-        tester.assert_return_type(WKB_GEOMETRY);
+        tester.assert_return_type(sedona_type.clone());
 
         let input = vec![
             Some("MULTILINESTRING ((0 0, 1 0), (1 0, 1 1))"),
@@ -185,7 +202,10 @@ mod tests {
     }
 
     #[rstest]
-    fn udf_invoke_item_crs(#[values(WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType) {
+    fn udf_invoke_item_crs(
+        #[values(WKB_GEOMETRY_ITEM_CRS.clone(), WKB_GEOGRAPHY_ITEM_CRS.clone())]
+        sedona_type: SedonaType,
+    ) {
         use arrow_schema::DataType;
 
         let udf = SedonaScalarUDF::from_impl("st_linemerge", st_line_merge_impl());

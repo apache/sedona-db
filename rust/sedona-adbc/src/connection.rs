@@ -23,7 +23,8 @@ use adbc_core::{
     options::{InfoCode, ObjectDepth},
     Connection,
 };
-use sedona::{context::SedonaContext, reader::SedonaStreamReader};
+use arrow_array::RecordBatchReader;
+use sedona::context::SedonaContext;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 
@@ -129,7 +130,7 @@ impl Connection for SedonaConnection {
     fn get_info(
         &self,
         _codes: Option<std::collections::HashSet<InfoCode>>,
-    ) -> Result<SedonaStreamReader> {
+    ) -> Result<Box<dyn RecordBatchReader + Send + 'static>> {
         err_not_implemented!()
     }
 
@@ -141,7 +142,7 @@ impl Connection for SedonaConnection {
         _table_name: Option<&str>,
         _table_type: Option<Vec<&str>>,
         _column_name: Option<&str>,
-    ) -> Result<SedonaStreamReader> {
+    ) -> Result<Box<dyn RecordBatchReader + Send + 'static>> {
         err_not_implemented!()
     }
 
@@ -154,11 +155,11 @@ impl Connection for SedonaConnection {
         err_not_implemented!()
     }
 
-    fn get_table_types(&self) -> Result<SedonaStreamReader> {
+    fn get_table_types(&self) -> Result<Box<dyn RecordBatchReader + Send + 'static>> {
         err_not_implemented!()
     }
 
-    fn get_statistic_names(&self) -> Result<SedonaStreamReader> {
+    fn get_statistic_names(&self) -> Result<Box<dyn RecordBatchReader + Send + 'static>> {
         err_not_implemented!()
     }
 
@@ -168,7 +169,7 @@ impl Connection for SedonaConnection {
         _db_schema: Option<&str>,
         _table_name: Option<&str>,
         _approximate: bool,
-    ) -> Result<SedonaStreamReader> {
+    ) -> Result<Box<dyn RecordBatchReader + Send + 'static>> {
         err_not_implemented!()
     }
 
@@ -180,7 +181,10 @@ impl Connection for SedonaConnection {
         err_not_implemented!()
     }
 
-    fn read_partition(&self, _partition: impl AsRef<[u8]>) -> Result<SedonaStreamReader> {
+    fn read_partition(
+        &self,
+        _partition: impl AsRef<[u8]>,
+    ) -> Result<Box<dyn RecordBatchReader + Send + 'static>> {
         err_not_implemented!()
     }
 }

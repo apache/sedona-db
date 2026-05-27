@@ -117,7 +117,7 @@ impl SpatialJoinPhysicalPlanner for DefaultSpatialJoinPhysicalPlanner {
 ///    fall back to total input size as an estimate.
 /// 3. Do not swap the join order if join reordering is disabled or no relevant
 ///    statistics are available.
-fn should_swap_join_order(
+pub fn should_swap_join_order(
     spatial_join_options: &SpatialJoinOptions,
     left: &dyn ExecutionPlan,
     right: &dyn ExecutionPlan,
@@ -168,7 +168,7 @@ fn should_swap_join_order(
 ///   the current `left` will become `right` (probe) after swap, so we repartition `left`.
 /// - For KNN predicates: `should_swap` is always false, and the probe side is determined by
 ///   `KNNPredicate::probe_side`.
-fn repartition_probe_side(
+pub fn repartition_probe_side(
     mut physical_left: Arc<dyn ExecutionPlan>,
     mut physical_right: Arc<dyn ExecutionPlan>,
     spatial_predicate: &SpatialPredicate,

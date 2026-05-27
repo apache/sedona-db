@@ -30,7 +30,7 @@ use sedona_datasource::{
     spec::{ExternalFormatSpec, Object, OpenReaderArgs},
     utility::ProjectedRecordBatchReader,
 };
-use sedona_expr::spatial_filter::SpatialFilter;
+use sedona_expr::spatial_filter::SpatialFilterFactory;
 use sedona_geometry::interval::IntervalTrait;
 
 use crate::{
@@ -47,6 +47,11 @@ use crate::{
 #[derive(Debug)]
 pub struct PyExternalFormat {
     extension: String,
+    /// Cached at construction time. The Python side declares this via
+    /// the `list_single_object` attribute on the spec class (default
+    /// `False`); we snapshot it once to avoid GIL traffic in
+    /// `list_single_object()`, which is called on hot paths.
+    list_single_object: bool,
     py_spec: PyObject,
 }
 
@@ -54,6 +59,7 @@ impl Clone for PyExternalFormat {
     fn clone(&self) -> Self {
         Python::with_gil(|py| Self {
             extension: self.extension.clone(),
+            list_single_object: self.list_single_object,
             py_spec: self.py_spec.clone_ref(py),
         })
     }
@@ -71,8 +77,10 @@ impl PyExternalFormat {
         let new_extension = new_py_spec
             .getattr(py, "extension")?
             .extract::<String>(py)?;
+        let new_list_single_object = read_list_single_object(py, &new_py_spec)?;
         Ok(Self {
             extension: new_extension,
+            list_single_object: new_list_single_object,
             py_spec: new_py_spec,
         })
     }
@@ -143,14 +151,38 @@ impl PyExternalFormat {
     #[new]
     fn new<'py>(py: Python<'py>, py_spec: PyObject) -> Result<Self, PySedonaError> {
         let extension = py_spec.getattr(py, "extension")?.extract::<String>(py)?;
-        Ok(Self { extension, py_spec })
+        let list_single_object = read_list_single_object(py, &py_spec)?;
+        Ok(Self {
+            extension,
+            list_single_object,
+            py_spec,
+        })
     }
+}
+
+/// Read the `list_single_object` attribute on a Python spec.
+///
+/// Defined on the [`ExternalFormatSpec`] base class (defaults to
+/// `False`), so any spec inheriting from the base carries it. A
+/// duck-typed spec that doesn't inherit will raise `AttributeError`
+/// — that's the intended failure mode.
+fn read_list_single_object<'py>(
+    py: Python<'py>,
+    py_spec: &PyObject,
+) -> Result<bool, PySedonaError> {
+    Ok(py_spec
+        .getattr(py, "list_single_object")?
+        .extract::<bool>(py)?)
 }
 
 #[async_trait]
 impl ExternalFormatSpec for PyExternalFormat {
     fn extension(&self) -> &str {
         &self.extension
+    }
+
+    fn list_single_object(&self) -> bool {
+        self.list_single_object
     }
 
     fn with_options(
@@ -180,7 +212,7 @@ impl ExternalFormatSpec for PyExternalFormat {
     }
 }
 
-/// Wrapper around the [Object] such that the [PyExternalFormatSpec] can pass
+/// Wrapper around the [Object] such that the [PyExternalFormat] can pass
 /// required information into Python method calls
 ///
 /// Currently this only exposes `to_url()`; however, we can and should expose
@@ -198,7 +230,7 @@ impl PyDataSourceObject {
     }
 }
 
-/// Wrapper around the [OpenReaderArgs] such that the [PyExternalFormatSpec] can pass
+/// Wrapper around the [OpenReaderArgs] such that the [PyExternalFormat] can pass
 /// required information into Python method calls
 #[pyclass]
 #[derive(Clone, Debug)]
@@ -267,7 +299,7 @@ impl PyOpenReaderArgs {
     }
 }
 
-/// Wrapper around a PhysicalExpr such that the [PyExternalFormatSpec] can pass
+/// Wrapper around a PhysicalExpr such that the [PyExternalFormat] can pass
 /// required information into Python method calls
 ///
 /// This currently only exposes `bounding_box()`, but in the future could expose
@@ -284,7 +316,8 @@ impl PyFilter {
         &self,
         column_name: &str,
     ) -> Result<Option<(f64, f64, f64, f64)>, PySedonaError> {
-        let filter = SpatialFilter::try_from_expr(&self.inner)?;
+        let factory = SpatialFilterFactory::default();
+        let filter = factory.try_from_expr(&self.inner)?;
         let filter_bbox = filter.filter_bbox(column_name);
         if filter_bbox.x().is_full() || filter_bbox.y().is_full() {
             Ok(None)

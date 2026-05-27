@@ -15,11 +15,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use std::sync::Arc;
+
 use datafusion_physical_plan::metrics::{self, ExecutionPlanMetricsSet, MetricBuilder};
 use sedona_expr::statistics::GeoStatistics;
 
 use crate::evaluated_batch::evaluated_batch_stream::SendableEvaluatedBatchStream;
 use crate::index::spatial_index::SpatialIndexRef;
+use crate::IndexQueryResultRefiner;
 use async_trait::async_trait;
 use datafusion_common::Result;
 
@@ -32,6 +35,10 @@ pub trait SpatialIndexBuilder: Send + Sync {
         stream: SendableEvaluatedBatchStream,
         geo_statistics: GeoStatistics,
     ) -> Result<()>;
+
+    fn create_refiner(&self) -> Result<Option<Arc<dyn IndexQueryResultRefiner>>> {
+        Ok(None)
+    }
 
     /// Finish building and return the completed SpatialIndex.
     fn finish(&mut self) -> Result<SpatialIndexRef>;

@@ -108,7 +108,7 @@ pub fn rotation(raster: &dyn RasterRef) -> f64 {
 /// * `y` - Y coordinate in pixel space (row)
 #[inline]
 pub fn to_world_coordinate(raster: &dyn RasterRef, x: i64, y: i64) -> (f64, f64) {
-    AffineMatrix::from_metadata(raster.metadata()).transform(x as f64, y as f64)
+    AffineMatrix::from_metadata(&raster.metadata()).transform(x as f64, y as f64)
 }
 
 /// Performs the inverse affine transformation to convert world coordinates back to raster pixel coordinates.
@@ -124,14 +124,14 @@ pub fn to_raster_coordinate(
     world_y: f64,
 ) -> Result<(i64, i64), ArrowError> {
     let (rx, ry) =
-        AffineMatrix::from_metadata(raster.metadata()).inv_transform(world_x, world_y)?;
+        AffineMatrix::from_metadata(&raster.metadata()).inv_transform(world_x, world_y)?;
     Ok((rx as i64, ry as i64))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::traits::{MetadataRef, RasterMetadata};
+    use crate::traits::{BandRef, Bands, RasterMetadata};
     use approx::assert_relative_eq;
     use std::f64::consts::FRAC_1_SQRT_2;
     use std::f64::consts::PI;
@@ -141,14 +141,34 @@ mod tests {
     }
 
     impl RasterRef for TestRaster {
-        fn metadata(&self) -> &dyn MetadataRef {
-            &self.metadata
+        fn num_bands(&self) -> usize {
+            0
+        }
+        fn bands(&self) -> Bands<'_> {
+            Bands::new(self)
+        }
+        fn band(&self, index: usize) -> Result<Box<dyn BandRef + '_>, ArrowError> {
+            Err(ArrowError::InvalidArgumentError(format!(
+                "Band index {index} is out of range: this raster has 0 bands"
+            )))
+        }
+        fn band_name(&self, _index: usize) -> Option<&str> {
+            None
         }
         fn crs(&self) -> Option<&str> {
             None
         }
-        fn bands(&self) -> &dyn crate::traits::BandsRef {
-            unimplemented!()
+        fn transform(&self) -> &[f64] {
+            &[]
+        }
+        fn spatial_dims(&self) -> Vec<&str> {
+            vec![]
+        }
+        fn spatial_shape(&self) -> &[i64] {
+            &[]
+        }
+        fn metadata(&self) -> RasterMetadata {
+            self.metadata.clone()
         }
     }
 

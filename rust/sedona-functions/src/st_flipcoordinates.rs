@@ -43,26 +43,26 @@ use wkb::reader::Wkb;
 pub fn st_flipcoordinates_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_flipcoordinates",
-        ItemCrsKernel::wrap_impl(vec![Arc::new(STFlipCoordinates {})]),
+        ItemCrsKernel::wrap_impl(vec![
+            Arc::new(STFlipCoordinates {
+                matcher: ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY),
+            }),
+            Arc::new(STFlipCoordinates {
+                matcher: ArgMatcher::new(vec![ArgMatcher::is_geography()], WKB_GEOGRAPHY),
+            }),
+        ]),
         Volatility::Immutable,
     )
 }
 
 #[derive(Debug)]
-struct STFlipCoordinates {}
+struct STFlipCoordinates {
+    matcher: ArgMatcher,
+}
 
 impl SedonaScalarKernel for STFlipCoordinates {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        let geom_matcher = ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY);
-        let geog_matcher = ArgMatcher::new(vec![ArgMatcher::is_geography()], WKB_GEOGRAPHY);
-        let matched_geom = geom_matcher.match_args(args)?;
-        let matched_geog = geog_matcher.match_args(args)?;
-
-        match (matched_geom, matched_geog) {
-            (Some(geom_result), _) => Ok(Some(geom_result)),
-            (_, Some(geog_result)) => Ok(Some(geog_result)),
-            _ => Ok(None),
-        }
+        self.matcher.match_args(args)
     }
 
     fn invoke_batch(
@@ -120,9 +120,7 @@ mod tests {
     use super::*;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
-    use sedona_schema::crs::lnglat;
-    use sedona_schema::datatypes::SedonaType::Wkb;
-    use sedona_schema::datatypes::{Edges, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY_ITEM_CRS};
     use sedona_testing::{
         compare::assert_array_equal, create::create_array, testers::ScalarUdfTester,
     };
@@ -133,30 +131,12 @@ mod tests {
         assert_eq!(udf.name(), "st_flipcoordinates");
     }
 
-    #[test]
-    fn udf_return_type() {
-        let tester = ScalarUdfTester::new(st_flipcoordinates_udf().into(), vec![WKB_GEOGRAPHY]);
-        tester.assert_return_type(WKB_GEOGRAPHY);
-
-        let tester = ScalarUdfTester::new(st_flipcoordinates_udf().into(), vec![WKB_GEOMETRY]);
-        tester.assert_return_type(WKB_GEOMETRY);
-
-        let tester = ScalarUdfTester::new(st_flipcoordinates_udf().into(), vec![WKB_VIEW_GEOMETRY]);
-        tester.assert_return_type(WKB_GEOMETRY);
-
-        let tester = ScalarUdfTester::new(
-            st_flipcoordinates_udf().into(),
-            vec![Wkb(Edges::Planar, lnglat())],
-        );
-        tester.assert_return_type(Wkb(Edges::Planar, lnglat()));
-    }
-
     #[rstest]
-    fn udf_invoke(
-        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY, WKB_GEOGRAPHY)] sedona_type: SedonaType,
-    ) {
+    fn udf(#[values(WKB_GEOMETRY, WKB_GEOGRAPHY)] sedona_type: SedonaType) {
         let tester =
             ScalarUdfTester::new(st_flipcoordinates_udf().into(), vec![sedona_type.clone()]);
+
+        tester.assert_return_type(sedona_type.clone());
 
         let result = tester.invoke_scalar("POINT (1 3)").unwrap();
         tester.assert_scalar_result_equals(result, "POINT (3 1)");
@@ -198,13 +178,16 @@ mod tests {
                 Some("MULTIPOLYGON EMPTY"),
                 Some("GEOMETRYCOLLECTION EMPTY"),
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
         assert_array_equal(&tester.invoke_wkb_array(input_wkt).unwrap(), &expected);
     }
 
     #[rstest]
-    fn udf_invoke_item_crs(#[values(WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType) {
+    fn udf_invoke_item_crs(
+        #[values(WKB_GEOMETRY_ITEM_CRS.clone(), WKB_GEOGRAPHY_ITEM_CRS.clone())]
+        sedona_type: SedonaType,
+    ) {
         let tester =
             ScalarUdfTester::new(st_flipcoordinates_udf().into(), vec![sedona_type.clone()]);
         tester.assert_return_type(sedona_type);

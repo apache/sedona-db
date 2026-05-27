@@ -5,9 +5,9 @@
 \alias{sd_summarize}
 \title{Aggregate SedonaDB DataFrames to a single row per group}
 \usage{
-sd_summarise(.data, ...)
+sd_summarise(.data, ..., .env = parent.frame())
 
-sd_summarize(.data, ...)
+sd_summarize(.data, ..., .env = parent.frame())
 }
 \arguments{
 \item{.data}{A sedonadb_dataframe or an object that can be coerced to one.}
@@ -15,6 +15,8 @@ sd_summarize(.data, ...)
 \item{...}{Aggregate expressions. These are evaluated in the same way as
 \code{\link[dplyr:summarise]{dplyr::summarise()}} except the outer expression must be an aggregate
 expression (e.g., \code{sum(x) + 1} is not currently possible).}
+
+\item{.env}{The calling environment for programmatic usage}
 }
 \value{
 An object of class sedonadb_dataframe

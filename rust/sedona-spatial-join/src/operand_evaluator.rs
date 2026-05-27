@@ -17,25 +17,25 @@
 use core::fmt;
 use std::{mem::transmute, sync::Arc};
 
-use arrow::compute::interleave as arrow_interleave;
+use arrow::compute::{concat as arrow_concat, interleave as arrow_interleave};
 use arrow_array::{Array, ArrayRef, Float64Array, RecordBatch};
 use arrow_schema::DataType;
 use datafusion_common::{utils::proxy::VecAllocExt, JoinSide, Result, ScalarValue};
 use datafusion_expr::ColumnarValue;
 use datafusion_physical_expr::PhysicalExpr;
-use float_next_after::NextAfter;
-use geo_index::rtree::util::f64_box_to_f32;
-use geo_types::{coord, Rect};
 use sedona_functions::executor::IterGeo;
-use sedona_geo_generic_alg::BoundingRect;
+use sedona_geometry::{
+    bounds::geo_traits_update_xy_bounds,
+    interval::{Interval, IntervalTrait},
+};
 use sedona_schema::datatypes::SedonaType;
 use wkb::reader::Wkb;
 
-use sedona_common::sedona_internal_err;
+use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 
 use crate::{
     spatial_predicate::{DistancePredicate, KNNPredicate, RelationPredicate, SpatialPredicate},
-    utils::arrow_utils::get_array_memory_size,
+    utils::{arrow_utils::get_array_memory_size, bounds::Bounds2D},
 };
 
 /// Factory for [EvaluatedGeometryArray] instances given an evaluated geometry column
@@ -51,6 +51,7 @@ pub trait EvaluatedGeometryArrayFactory: fmt::Debug + Send + Sync {
         &self,
         geometry_array: ArrayRef,
         sedona_type: &SedonaType,
+        distance_columnar_value: Option<&ColumnarValue>,
     ) -> Result<EvaluatedGeometryArray>;
 }
 
@@ -60,13 +61,63 @@ pub trait EvaluatedGeometryArrayFactory: fmt::Debug + Send + Sync {
 #[derive(Debug)]
 pub(crate) struct DefaultGeometryArrayFactory;
 
+impl DefaultGeometryArrayFactory {
+    fn expand_evaluated_array_by_distance(
+        &self,
+        result: &mut EvaluatedGeometryArray,
+        distance_columnar_value: &ColumnarValue,
+    ) -> Result<()> {
+        // Expand the vec by distance
+
+        // No timezone conversion needed for distance; pass None as cast_options explicitly.
+        let distance_columnar_value = distance_columnar_value.cast_to(&DataType::Float64, None)?;
+        match &distance_columnar_value {
+            ColumnarValue::Scalar(ScalarValue::Float64(Some(distance))) => {
+                for rect in result.rects.iter_mut() {
+                    expand_rect_in_place(rect, *distance);
+                }
+            }
+            ColumnarValue::Scalar(ScalarValue::Float64(None)) => {
+                // Distance expression evaluates to NULL, the resulting distance should be NULL as well.
+                // We don't need to modify the rectangles for this case.
+            }
+            ColumnarValue::Array(array) => {
+                if let Some(array) = array.as_any().downcast_ref::<Float64Array>() {
+                    for (geom_idx, rect) in result.rects.iter_mut().enumerate() {
+                        if !array.is_null(geom_idx) {
+                            let dist = array.value(geom_idx);
+                            expand_rect_in_place(rect, dist);
+                        }
+                    }
+                } else {
+                    return sedona_internal_err!("Distance columnar value is not a Float64Array");
+                }
+            }
+            _ => {
+                return sedona_internal_err!("Distance columnar value is not a Float64");
+            }
+        }
+
+        result.distance = Some(distance_columnar_value);
+
+        Ok(())
+    }
+}
+
 impl EvaluatedGeometryArrayFactory for DefaultGeometryArrayFactory {
     fn try_new_evaluated_array(
         &self,
         geometry_array: ArrayRef,
         sedona_type: &SedonaType,
+        distance_columnar_value: Option<&ColumnarValue>,
     ) -> Result<EvaluatedGeometryArray> {
-        EvaluatedGeometryArray::try_new(geometry_array, sedona_type)
+        let mut result = EvaluatedGeometryArray::try_new(geometry_array, sedona_type)?;
+
+        if let Some(distance_columnar_value) = distance_columnar_value {
+            self.expand_evaluated_array_by_distance(&mut result, distance_columnar_value)?;
+        }
+
+        Ok(result)
     }
 }
 
@@ -114,7 +165,7 @@ pub struct EvaluatedGeometryArray {
     geometry_array: ArrayRef,
     /// The rects of the geometries in the geometry array. The length of this array is equal to the number of geometries.
     /// The rects will be None for empty or null geometries.
-    rects: Vec<Option<Rect<f32>>>,
+    rects: Vec<Bounds2D>,
     /// The distance value produced by evaluating the distance expression.
     distance: Option<ColumnarValue>,
     /// WKBs of the geometries in `geometry_array`. The wkb values reference buffers inside the geometry array,
@@ -130,23 +181,18 @@ impl EvaluatedGeometryArray {
         let num_rows = geometry_array.len();
         let mut rect_vec = Vec::with_capacity(num_rows);
         let mut wkbs = Vec::with_capacity(num_rows);
+        let mut x = Interval::empty();
+        let mut y = Interval::empty();
         geometry_array.iter_as_wkb(sedona_type, num_rows, |wkb_opt| {
-            let rect_opt = if let Some(wkb) = &wkb_opt {
-                if let Some(rect) = wkb.bounding_rect() {
-                    let min = rect.min();
-                    let max = rect.max();
-                    // f64_box_to_f32 will ensure the resulting `f32` box is no smaller than the `f64` box.
-                    let (min_x, min_y, max_x, max_y) = f64_box_to_f32(min.x, min.y, max.x, max.y);
-                    let rect = Rect::new(coord!(x: min_x, y: min_y), coord!(x: max_x, y: max_y));
-                    Some(rect)
-                } else {
-                    None
-                }
+            if let Some(wkb) = &wkb_opt {
+                x = Interval::empty();
+                y = Interval::empty();
+                geo_traits_update_xy_bounds(wkb, &mut x, &mut y)
+                    .map_err(|e| sedona_internal_datafusion_err!("{e}"))?;
+                rect_vec.push(Bounds2D::new(x, y));
             } else {
-                None
-            };
-
-            rect_vec.push(rect_opt);
+                rect_vec.push(Bounds2D::empty())
+            }
 
             // Safety: The wkbs must reference buffers inside the `geometry_array`. Since the `geometry_array` and
             // `wkbs` are both owned by the `EvaluatedGeometryArray`, so they have the same lifetime. We'll never
@@ -168,7 +214,7 @@ impl EvaluatedGeometryArray {
     /// Create a new EvaluatedGeometryArray with precomputed item bounds
     pub fn try_new_with_rects(
         geometry_array: ArrayRef,
-        rect_vec: Vec<Option<Rect<f32>>>,
+        rect_vec: Vec<Bounds2D>,
         sedona_type: &SedonaType,
     ) -> Result<Self> {
         // Safety: The wkbs must reference buffers inside the `geometry_array`. Since the `geometry_array` and
@@ -201,49 +247,51 @@ impl EvaluatedGeometryArray {
         self
     }
 
-    /// Build a new `EvaluatedGeometryArray` by interleaving rows from the provided
-    /// source arrays according to `indices`. Each `(batch_idx, row_idx)` pair
-    /// identifies a source array and row.
+    /// Build a new `EvaluatedGeometryArray` by concatenating the provided source arrays in order.
     ///
-    /// The rectangles are gathered directly from the source arrays (no
-    /// recomputation), while the WKB references are recomputed from the
-    /// interleaved Arrow array since their lifetimes are tied to it.
-    pub fn interleave(
-        geom_arrays: &[&EvaluatedGeometryArray],
-        indices: &[(usize, usize)],
-    ) -> Result<Self> {
+    /// The rectangles are appended in source order without recomputation, while the WKB references
+    /// are rebuilt from the concatenated Arrow array since their lifetimes are tied to it.
+    pub fn concat(geom_arrays: &[&EvaluatedGeometryArray]) -> Result<Self> {
         if geom_arrays.is_empty() {
-            return sedona_internal_err!("interleave requires at least one geometry array");
+            return sedona_internal_err!("concat requires at least one geometry array");
         }
 
         let sedona_type = &geom_arrays[0].sedona_type;
+        for geom in geom_arrays.iter().skip(1) {
+            if geom.sedona_type != *sedona_type {
+                return sedona_internal_err!(
+                    "concat requires all geometry arrays to have the same sedona type"
+                );
+            }
+        }
 
-        // Interleave the Arrow geometry arrays.
         let value_refs: Vec<&dyn Array> = geom_arrays
             .iter()
             .map(|g| g.geometry_array.as_ref())
             .collect();
-        let geometry_array = arrow_interleave(&value_refs, indices)?;
+        let geometry_array = arrow_concat(&value_refs)?;
 
-        // Gather rects by index — no recomputation.
-        let rects: Vec<Option<Rect<f32>>> = indices
-            .iter()
-            .map(|&(batch_idx, row_idx)| geom_arrays[batch_idx].rects[row_idx])
-            .collect();
+        let total_len: usize = geom_arrays.iter().map(|g| g.rects.len()).sum();
+        let mut rects = Vec::with_capacity(total_len);
+        for geom in geom_arrays {
+            rects.extend(geom.rects.iter().cloned());
+        }
 
         let mut out = Self::try_new_with_rects(geometry_array, rects, sedona_type)?;
-
-        // Interleave distance columns.
-        out.distance = Self::interleave_distance(geom_arrays, indices)?;
+        out.distance = Self::concat_distance(geom_arrays)?;
 
         Ok(out)
     }
 
-    /// Interleave the optional distance metadata across source geometry arrays.
-    pub(crate) fn interleave_distance(
+    /// Merge optional distance metadata across source geometry arrays using the provided
+    /// array-combining function.
+    fn merge_distance<F>(
         geom_arrays: &[&EvaluatedGeometryArray],
-        indices: &[(usize, usize)],
-    ) -> Result<Option<ColumnarValue>> {
+        build_array: F,
+    ) -> Result<Option<ColumnarValue>>
+    where
+        F: FnOnce(&[&dyn Array]) -> Result<ArrayRef>,
+    {
         let mut first_value: Option<&ColumnarValue> = None;
         let mut needs_array = false;
         let mut all_null = true;
@@ -314,8 +362,61 @@ impl EvaluatedGeometryArray {
         }
 
         let array_refs: Vec<&dyn Array> = arrays.iter().map(|a| a.as_ref()).collect();
-        let array = arrow_interleave(&array_refs, indices)?;
+        let array = build_array(&array_refs)?;
         Ok(Some(ColumnarValue::Array(array)))
+    }
+
+    /// Concatenate the optional distance metadata across source geometry arrays.
+    pub(crate) fn concat_distance(
+        geom_arrays: &[&EvaluatedGeometryArray],
+    ) -> Result<Option<ColumnarValue>> {
+        Self::merge_distance(geom_arrays, |arrays| Ok(arrow_concat(arrays)?))
+    }
+
+    /// Build a new `EvaluatedGeometryArray` by interleaving rows from the provided
+    /// source arrays according to `indices`. Each `(batch_idx, row_idx)` pair
+    /// identifies a source array and row.
+    ///
+    /// The rectangles are gathered directly from the source arrays (no
+    /// recomputation), while the WKB references are recomputed from the
+    /// interleaved Arrow array since their lifetimes are tied to it.
+    pub fn interleave(
+        geom_arrays: &[&EvaluatedGeometryArray],
+        indices: &[(usize, usize)],
+    ) -> Result<Self> {
+        if geom_arrays.is_empty() {
+            return sedona_internal_err!("interleave requires at least one geometry array");
+        }
+
+        let sedona_type = &geom_arrays[0].sedona_type;
+
+        // Interleave the Arrow geometry arrays.
+        let value_refs: Vec<&dyn Array> = geom_arrays
+            .iter()
+            .map(|g| g.geometry_array.as_ref())
+            .collect();
+        let geometry_array = arrow_interleave(&value_refs, indices)?;
+
+        // Gather rects by index — no recomputation.
+        let rects: Vec<Bounds2D> = indices
+            .iter()
+            .map(|&(batch_idx, row_idx)| geom_arrays[batch_idx].rects[row_idx].clone())
+            .collect();
+
+        let mut out = Self::try_new_with_rects(geometry_array, rects, sedona_type)?;
+
+        // Interleave distance columns.
+        out.distance = Self::interleave_distance(geom_arrays, indices)?;
+
+        Ok(out)
+    }
+
+    /// Interleave the optional distance metadata across source geometry arrays.
+    pub(crate) fn interleave_distance(
+        geom_arrays: &[&EvaluatedGeometryArray],
+        indices: &[(usize, usize)],
+    ) -> Result<Option<ColumnarValue>> {
+        Self::merge_distance(geom_arrays, |arrays| Ok(arrow_interleave(arrays, indices)?))
     }
 
     /// Type of geometry_array
@@ -329,7 +430,7 @@ impl EvaluatedGeometryArray {
     }
 
     /// Bounding rectangles of each element in geometry_array
-    pub fn rects(&self) -> &[Option<Rect<f32>>] {
+    pub fn rects(&self) -> &[Bounds2D] {
         &self.rects
     }
 
@@ -358,6 +459,11 @@ impl EvaluatedGeometryArray {
     /// Get a single WKB
     pub fn wkb(&self, idx: usize) -> Option<&Wkb<'_>> {
         self.wkbs[idx].as_ref()
+    }
+
+    /// Get a single rectangle
+    pub fn rect(&self, idx: usize) -> &Bounds2D {
+        &self.rects[idx]
     }
 
     pub fn in_mem_size(&self) -> Result<usize> {
@@ -418,13 +524,18 @@ fn evaluate_with_rects(
     batch: &RecordBatch,
     geom_expr: &Arc<dyn PhysicalExpr>,
     evaluated_array_factory: &dyn EvaluatedGeometryArrayFactory,
+    distance_columnar_value: Option<&ColumnarValue>,
 ) -> Result<EvaluatedGeometryArray> {
     let geometry_columnar_value = geom_expr.evaluate(batch)?;
     let num_rows = batch.num_rows();
     let geometry_array = geometry_columnar_value.to_array(num_rows)?;
     let sedona_type =
         SedonaType::from_storage_field(geom_expr.return_field(&batch.schema())?.as_ref())?;
-    evaluated_array_factory.try_new_evaluated_array(geometry_array, &sedona_type)
+    evaluated_array_factory.try_new_evaluated_array(
+        geometry_array,
+        &sedona_type,
+        distance_columnar_value,
+    )
 }
 
 impl DistanceOperandEvaluator {
@@ -434,56 +545,24 @@ impl DistanceOperandEvaluator {
         geom_expr: &Arc<dyn PhysicalExpr>,
         side: JoinSide,
     ) -> Result<EvaluatedGeometryArray> {
-        let mut result =
-            evaluate_with_rects(batch, geom_expr, self.evaluated_array_factory.as_ref())?;
-
         let should_expand = match side {
             JoinSide::Left => self.inner.distance_side == JoinSide::Left,
             JoinSide::Right => self.inner.distance_side != JoinSide::Left,
             JoinSide::None => unreachable!(),
         };
 
-        if !should_expand {
-            return Ok(result);
-        }
+        let maybe_distance = if should_expand {
+            Some(self.inner.distance.evaluate(batch)?)
+        } else {
+            None
+        };
 
-        // Expand the vec by distance
-        let distance_columnar_value = self.inner.distance.evaluate(batch)?;
-        // No timezone conversion needed for distance; pass None as cast_options explicitly.
-        let distance_columnar_value = distance_columnar_value.cast_to(&DataType::Float64, None)?;
-        match &distance_columnar_value {
-            ColumnarValue::Scalar(ScalarValue::Float64(Some(distance))) => {
-                result.rects.iter_mut().for_each(|rect_opt| {
-                    if let Some(rect) = rect_opt {
-                        expand_rect_in_place(rect, *distance);
-                    };
-                });
-            }
-            ColumnarValue::Scalar(ScalarValue::Float64(None)) => {
-                // Distance expression evaluates to NULL, the resulting distance should be NULL as well.
-                result.rects.clear();
-            }
-            ColumnarValue::Array(array) => {
-                if let Some(array) = array.as_any().downcast_ref::<Float64Array>() {
-                    for (geom_idx, rect_opt) in result.rects.iter_mut().enumerate() {
-                        if !array.is_null(geom_idx) {
-                            let dist = array.value(geom_idx);
-                            if let Some(rect) = rect_opt {
-                                expand_rect_in_place(rect, dist);
-                            };
-                        }
-                    }
-                } else {
-                    return sedona_internal_err!("Distance columnar value is not a Float64Array");
-                }
-            }
-            _ => {
-                return sedona_internal_err!("Distance columnar value is not a Float64");
-            }
-        }
-
-        result.distance = Some(distance_columnar_value);
-        Ok(result)
+        evaluate_with_rects(
+            batch,
+            geom_expr,
+            self.evaluated_array_factory.as_ref(),
+            maybe_distance.as_ref(),
+        )
     }
 }
 
@@ -508,22 +587,8 @@ pub(crate) fn distance_value_at(
     }
 }
 
-fn expand_rect_in_place(rect: &mut Rect<f32>, distance: f64) {
-    let mut min = rect.min();
-    let mut max = rect.max();
-    let mut distance_f32 = distance as f32;
-    // distance_f32 may be smaller than the original f64 value due to loss of precision.
-    // We need to expand the rect using next_after to ensure that the rect expansion
-    // is always inclusive, otherwise we may miss some query results.
-    if (distance_f32 as f64) < distance {
-        distance_f32 = distance_f32.next_after(f32::INFINITY);
-    }
-    min.x -= distance_f32;
-    min.y -= distance_f32;
-    max.x += distance_f32;
-    max.y += distance_f32;
-    rect.set_min(min);
-    rect.set_max(max);
+fn expand_rect_in_place(rect: &mut Bounds2D, distance: f64) {
+    *rect = Bounds2D::new(rect.x().expand_by(distance), rect.y().expand_by(distance));
 }
 
 impl OperandEvaluator for DistanceOperandEvaluator {
@@ -549,12 +614,22 @@ impl OperandEvaluator for DistanceOperandEvaluator {
 impl OperandEvaluator for RelationOperandEvaluator {
     fn evaluate_build(&self, batch: &RecordBatch) -> Result<EvaluatedGeometryArray> {
         let geom_expr = self.build_side_expr()?;
-        evaluate_with_rects(batch, &geom_expr, self.evaluated_array_factory.as_ref())
+        evaluate_with_rects(
+            batch,
+            &geom_expr,
+            self.evaluated_array_factory.as_ref(),
+            None,
+        )
     }
 
     fn evaluate_probe(&self, batch: &RecordBatch) -> Result<EvaluatedGeometryArray> {
         let geom_expr = self.probe_side_expr()?;
-        evaluate_with_rects(batch, &geom_expr, self.evaluated_array_factory.as_ref())
+        evaluate_with_rects(
+            batch,
+            &geom_expr,
+            self.evaluated_array_factory.as_ref(),
+            None,
+        )
     }
 
     fn build_side_expr(&self) -> Result<Arc<dyn PhysicalExpr>> {
@@ -588,12 +663,22 @@ impl KNNOperandEvaluator {
 impl OperandEvaluator for KNNOperandEvaluator {
     fn evaluate_build(&self, batch: &RecordBatch) -> Result<EvaluatedGeometryArray> {
         let geom_expr = self.build_side_expr()?;
-        evaluate_with_rects(batch, &geom_expr, self.evaluated_array_factory.as_ref())
+        evaluate_with_rects(
+            batch,
+            &geom_expr,
+            self.evaluated_array_factory.as_ref(),
+            None,
+        )
     }
 
     fn evaluate_probe(&self, batch: &RecordBatch) -> Result<EvaluatedGeometryArray> {
         let geom_expr = self.probe_side_expr()?;
-        evaluate_with_rects(batch, &geom_expr, self.evaluated_array_factory.as_ref())
+        evaluate_with_rects(
+            batch,
+            &geom_expr,
+            self.evaluated_array_factory.as_ref(),
+            None,
+        )
     }
 
     fn build_side_expr(&self) -> Result<Arc<dyn PhysicalExpr>> {
@@ -627,6 +712,100 @@ mod test {
         let mut geom = EvaluatedGeometryArray::try_new(geom_array, &WKB_GEOMETRY)?;
         geom.distance = distance;
         Ok(geom)
+    }
+
+    #[test]
+    fn concat_empty_input_errors() {
+        let result = EvaluatedGeometryArray::concat(&[]);
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(e
+                .to_string()
+                .contains("concat requires at least one geometry array"));
+        }
+    }
+
+    #[test]
+    fn concat_preserves_order_and_distance() -> Result<()> {
+        use arrow_array::Float64Array;
+
+        let wkbs1 = vec![
+            wkb_point((10.0, 10.0)).unwrap(),
+            wkb_point((20.0, 20.0)).unwrap(),
+        ];
+        let wkbs2 = vec![wkb_point((30.0, 30.0)).unwrap()];
+
+        let array: ArrayRef = Arc::new(Float64Array::from(vec![10.0]));
+        let geom1 = make_geom_array_with_distance(
+            wkbs1,
+            Some(ColumnarValue::Scalar(ScalarValue::Float64(Some(5.0)))),
+        )?;
+        let geom2 = make_geom_array_with_distance(wkbs2, Some(ColumnarValue::Array(array)))?;
+
+        let geom_arrays = vec![&geom1, &geom2];
+        let result = EvaluatedGeometryArray::concat(&geom_arrays)?;
+
+        assert_eq!(result.geometry_array().len(), 3);
+        assert_eq!(result.rects().len(), 3);
+        assert_eq!(result.rects()[0].x().lo(), 10.0);
+        assert_eq!(result.rects()[1].x().lo(), 20.0);
+        assert_eq!(result.rects()[2].x().lo(), 30.0);
+
+        let distance = result.distance().as_ref().unwrap();
+        match distance {
+            ColumnarValue::Array(array) => {
+                let float_array = array.as_any().downcast_ref::<Float64Array>().unwrap();
+                assert_eq!(float_array.len(), 3);
+                assert_eq!(float_array.value(0), 5.0);
+                assert_eq!(float_array.value(1), 5.0);
+                assert_eq!(float_array.value(2), 10.0);
+            }
+            _ => panic!("expected concatenated distance array"),
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn concat_uniform_scalar_distance_stays_scalar() -> Result<()> {
+        let wkbs1 = vec![wkb_point((10.0, 10.0)).unwrap()];
+        let wkbs2 = vec![wkb_point((20.0, 20.0)).unwrap()];
+
+        let scalar = ScalarValue::Float64(Some(7.5));
+        let geom1 =
+            make_geom_array_with_distance(wkbs1, Some(ColumnarValue::Scalar(scalar.clone())))?;
+        let geom2 =
+            make_geom_array_with_distance(wkbs2, Some(ColumnarValue::Scalar(scalar.clone())))?;
+
+        let geom_arrays = vec![&geom1, &geom2];
+        let result = EvaluatedGeometryArray::concat(&geom_arrays)?;
+
+        assert_eq!(result.geometry_array().len(), 2);
+        assert!(matches!(result.distance(), Some(ColumnarValue::Scalar(_))));
+        if let Some(ColumnarValue::Scalar(value)) = result.distance() {
+            assert_eq!(*value, scalar);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn concat_inconsistent_distance_metadata_errors() -> Result<()> {
+        let wkbs1 = vec![wkb_point((10.0, 10.0)).unwrap()];
+        let wkbs2 = vec![wkb_point((20.0, 20.0)).unwrap()];
+
+        let geom1 = make_geom_array_with_distance(
+            wkbs1,
+            Some(ColumnarValue::Scalar(ScalarValue::Float64(Some(5.0)))),
+        )?;
+        let geom2 = make_geom_array_with_distance(wkbs2, None)?;
+
+        let geom_arrays = vec![&geom1, &geom2];
+        let result = EvaluatedGeometryArray::concat(&geom_arrays);
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(e.to_string().contains("Inconsistent distance metadata"));
+        }
+        Ok(())
     }
 
     #[test]

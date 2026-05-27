@@ -313,6 +313,41 @@ def test_dataframe_to_arrow(con):
         df.to_arrow_table(schema=pa.schema({}))
 
 
+def test_dataframe_to_arrow_reader(con):
+    df = con.sql("SELECT 1 as one, ST_GeomFromWKT('POINT (0 1)') as geom")
+
+    reader = df.to_arrow_reader()
+
+    assert reader.read_all().columns == df.to_arrow_table().columns
+
+
+def test_dataframe_arrow_alias(con):
+    df = con.sql("SELECT 1 as one")
+
+    reader = df.arrow()
+
+    assert reader.read_all().columns == df.to_arrow_table().columns
+
+
+def test_dataframe_to_arrow_reader_simplify_storage(con):
+    tab = pa.table(
+        {
+            "s": pa.array(["abcde"], pa.string_view()),
+            "b": pa.array([b"abcde"], pa.binary_view()),
+        }
+    )
+    df = con.create_data_frame(tab)
+
+    default_reader = df.to_arrow_reader()
+    assert default_reader.schema.field("s").type == pa.string_view()
+    assert default_reader.schema.field("b").type == pa.binary_view()
+
+    simplified_reader = df.to_arrow_reader(simplify=True)
+    assert simplified_reader.schema.field("s").type == pa.string()
+    assert simplified_reader.schema.field("b").type == pa.binary()
+    assert simplified_reader.read_all().to_pydict() == tab.to_pydict()
+
+
 def test_dataframe_to_arrow_empty_batches(con, geoarrow_data):
     # It's difficult to trigger this with a simpler example
     # https://github.com/apache/sedona-db/issues/156

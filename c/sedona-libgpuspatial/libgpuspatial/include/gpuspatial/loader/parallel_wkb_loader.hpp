@@ -780,6 +780,9 @@ class ParallelWkbLoader {
     stream.synchronize();
     sw.stop();
     GPUSPATIAL_LOG_INFO("Finish building DeviceGeometries in %.3f ms", sw.ms());
+    // Finish moves internal vectors out of geoms_; recreate a valid empty state so
+    // Parse/Clear can safely reuse this loader instance on later batches.
+    geoms_ = detail::DeviceParsedGeometries<POINT_T, INDEX_T>{};
     return std::move(device_geometries);
   }
 

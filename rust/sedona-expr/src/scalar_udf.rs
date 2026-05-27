@@ -471,9 +471,10 @@ mod tests {
         let udf: ScalarUDF = SedonaScalarUDF::from_impl("simple_cast", SimpleCast {}).into();
         let call = udf.call(vec![lit(10), lit("float32")]);
         let schema = DFSchema::empty();
+        let call_field = call.to_field(&schema).unwrap();
         assert_eq!(
-            call.data_type_and_nullable(&schema).unwrap(),
-            (DataType::Float32, true)
+            (call_field.1.data_type(), call_field.1.is_nullable()),
+            (&DataType::Float32, true)
         );
     }
 

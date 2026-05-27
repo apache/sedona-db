@@ -35,14 +35,14 @@ sedona-geo-traits-ext = { workspace = true }
 log = { workspace = true }
 num-traits = { workspace = true }
 robust = "1.1.0"
-rstar = "0.12.0"
-i_overlay = { version = "4.0.0, < 4.1.0", default-features = false }
+rstar = "0.13.0"
+i_overlay = { version = "6.0.0", default-features = false }
 
 [dev-dependencies]
 sedona-testing = { workspace = true }
 approx = { workspace = true }
 criterion = { workspace = true }
-pretty_env_logger = "0.4"
+pretty_env_logger = "0.5"
 rand = { workspace = true }
 rand_distr = "0.6.0"
 geo = { workspace = true }

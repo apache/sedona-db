@@ -1,0 +1,865 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+#' Specify join conditions
+#'
+#' Use `sd_join_by()` to specify join conditions for [sd_join()] using
+#' expressions that reference columns from both tables. Table references
+#' are specified using `x$column` and `y$column` syntax to disambiguate
+#' columns from the left and right tables, and the special helper `x$geom()`
+#' and `y$geom()` may be used for tables with exactly one geometry column.
+#' Spatial joins can use spatial predicates in the join by expression
+#' (e.g., `sd_join_by(st_intersects(x$geom(), y$geom()))`) or the shorthand
+#' `sd_join_intersects()`.
+#'
+#' For programmatic usage, the `.tables` pronoun may be used to unambiguously
+#' refer to a table qualifier (similar to the `.data` pronoun which may be
+#' used in single-table SedonaDB verbs).
+#'
+#' @param ... Expressions specifying join conditions. These should be
+#'   comparison expressions (e.g., `x$id == y$id`, `x$value > y$threshold`)
+#'   or spatial predicate expressions
+#'   (e.g., `st_intersects(x$geometry, y$geometry)`).
+#'   Multiple conditions are combined with AND. Like dplyr's `join_by()`,
+#'   single columns are parsed as an equijoin condition (e.g., `id` becomes
+#'   `x$id == y$id`).
+#' @param distance For a within-distance join, the distance threshold.
+#'
+#' @returns An object of class `sedonadb_join_by` containing the unevaluated
+#'   join condition expressions.
+#' @export
+#'
+#' @examples
+#' # Equality join on id column
+#' sd_join_by(x$id == y$id)
+#'
+#' # Can use just the column name as a shorthand
+#' sd_join_by(id)
+#'
+#' # Multiple conditions (combined with AND)
+#' sd_join_by(x$id == y$id, x$date >= y$start_date)
+#'
+#' # Inequality join
+#' sd_join_by(x$value > y$threshold)
+#'
+#' # Spatial joins
+#' sd_join_intersects()
+#' sd_join_dwithin(100)
+#'
+sd_join_by <- function(...) {
+  exprs <- rlang::enquos(...)
+
+  if (length(exprs) == 0) {
+    stop("sd_join_by() requires at least one join condition")
+  }
+
+  structure(
+    list(
+      exprs = exprs
+    ),
+    class = "sedonadb_join_by"
+  )
+}
+
+#' @rdname sd_join_by
+#' @export
+sd_join_intersects <- function() {
+  sd_join_by(.fns$st_intersects(.tables$x$geom(), .tables$y$geom()))
+}
+
+#' @rdname sd_join_by
+#' @export
+sd_join_contains <- function() {
+  sd_join_by(.fns$st_contains(.tables$x$geom(), .tables$y$geom()))
+}
+
+#' @rdname sd_join_by
+#' @export
+sd_join_within <- function() {
+  sd_join_by(.fns$st_within(.tables$x$geom(), .tables$y$geom()))
+}
+
+#' @rdname sd_join_by
+#' @export
+sd_join_covers <- function() {
+  sd_join_by(.fns$st_covers(.tables$x$geom(), .tables$y$geom()))
+}
+
+#' @rdname sd_join_by
+#' @export
+sd_join_coveredby <- function() {
+  sd_join_by(.fns$st_coveredby(.tables$x$geom(), .tables$y$geom()))
+}
+
+#' @rdname sd_join_by
+#' @export
+sd_join_touches <- function() {
+  sd_join_by(.fns$st_touches(.tables$x$geom(), .tables$y$geom()))
+}
+
+#' @rdname sd_join_by
+#' @export
+sd_join_crosses <- function() {
+  sd_join_by(.fns$st_crosses(.tables$x$geom(), .tables$y$geom()))
+}
+
+#' @rdname sd_join_by
+#' @export
+sd_join_overlaps <- function() {
+  sd_join_by(.fns$st_overlaps(.tables$x$geom(), .tables$y$geom()))
+}
+
+#' @rdname sd_join_by
+#' @export
+sd_join_equals <- function() {
+  sd_join_by(.fns$st_equals(.tables$x$geom(), .tables$y$geom()))
+}
+
+#' @rdname sd_join_by
+#' @export
+sd_join_dwithin <- function(distance) {
+  sd_join_by(.fns$st_dwithin(.tables$x$geom(), .tables$y$geom(), !!distance))
+}
+
+#' @export
+print.sedonadb_join_by <- function(x, ...) {
+  cat("<sedonadb_join_by>\n")
+  for (i in seq_along(x$exprs)) {
+    cat("  ", rlang::expr_deparse(rlang::quo_get_expr(x$exprs[[i]])), "\n", sep = "")
+  }
+  invisible(x)
+}
+
+#' SedonaDB Table Qualifiers
+#'
+#' This object is an escape hatch for referring to the right or left side
+#' of a join when constructing [sd_join_by()] or [sd_join_select()] expressions.
+#'
+#' @export .tables
+.tables <- structure(
+  list(x = list(geom = function() NULL), y = list(geom = function() NULL)),
+  class = "sedonadb_tables"
+)
+
+#' Expression evaluation context for joins
+#'
+#' Creates a context for evaluating join conditions that can reference columns
+#' from two tables using qualified references (`x$col` and `y$col`).
+#'
+#' @param x_schema Schema for the left table
+#' @param y_schema Schema for the right table
+#' @param env The expression environment
+#' @param ctx A SedonaDB context
+#'
+#' @return An object of class sedonadb_join_expr_ctx
+#' @noRd
+sd_join_expr_ctx <- function(
+  x_schema,
+  y_schema,
+  env = parent.frame(),
+  ctx = NULL
+) {
+  x_schema <- nanoarrow::as_nanoarrow_schema(x_schema)
+  y_schema <- nanoarrow::as_nanoarrow_schema(y_schema)
+
+  x_names <- as.character(names(x_schema$children))
+  y_names <- as.character(names(y_schema$children))
+
+  factory <- sd_expr_factory(ctx = ctx)
+
+  # We hard-code these for the purposes of the join expression
+  x_qualifier <- "x"
+  y_qualifier <- "y"
+
+  # Create qualified column references for both tables
+  # These are accessed via x$col and y$col syntax
+  x_cols <- lapply(x_names, function(name) {
+    sd_expr_column(name, qualifier = x_qualifier, factory = factory)
+  })
+  names(x_cols) <- x_names
+
+  y_cols <- lapply(y_names, function(name) {
+    sd_expr_column(name, qualifier = y_qualifier, factory = factory)
+  })
+  names(y_cols) <- y_names
+
+  # Create table reference objects that support `$` access
+  x_ref <- structure(
+    x_cols,
+    class = "sedonadb_table_ref",
+    qualifier = x_qualifier,
+    schema = x_schema
+  )
+  y_ref <- structure(
+    y_cols,
+    class = "sedonadb_table_ref",
+    qualifier = y_qualifier,
+    schema = y_schema
+  )
+
+  # Also include unqualified column references for unambiguous columns
+  ambiguous <- intersect(x_names, y_names)
+
+  # Create data mask with unambiguous columns
+  data <- c(x_cols[setdiff(x_names, ambiguous)], y_cols[setdiff(y_names, ambiguous)])
+  data_mask <- rlang::as_data_mask(data)
+
+  # Install .tables pronoun for accessing table references programmatically
+  # (e.g., .tables$x$geom, .tables$y$geom)
+  table_refs <- list(x = x_ref, y = y_ref)
+  rlang::env_bind(data_mask, .tables = rlang::as_data_pronoun(table_refs))
+
+  structure(
+    list(
+      factory = factory,
+      x_schema = x_schema,
+      y_schema = y_schema,
+      table_refs = table_refs,
+      ambiguous_columns = ambiguous,
+      data = data_mask,
+      env = env,
+      fns = default_fns
+    ),
+    class = c("sedonadb_join_expr_ctx", "sedonadb_expr_ctx")
+  )
+}
+
+get_from_table_ref <- function(x, name) {
+  if (!(name %in% names(x))) {
+    qualifier <- attr(x, "qualifier")
+    stop(
+      sprintf("Column '%s' not found in table '%s'", name, qualifier),
+      call. = FALSE
+    )
+  }
+  x[[name]]
+}
+
+# Get the single geometry column from a table ref, or error if ambiguous
+get_geom_from_table_ref <- function(x) {
+  schema <- attr(x, "schema")
+  qualifier <- attr(x, "qualifier")
+  geom_cols <- get_geometry_columns(schema)
+
+  if (length(geom_cols) == 0) {
+    stop(
+      sprintf("No geometry columns found in table '%s'", qualifier),
+      call. = FALSE
+    )
+  }
+
+  if (length(geom_cols) > 1) {
+    stop(
+      sprintf(
+        "Ambiguous use of %s$geom()\n - Did you mean one of %s",
+        qualifier,
+        paste0(qualifier, "$", geom_cols, collapse = ", ")
+      ),
+      call. = FALSE
+    )
+  }
+
+  get_from_table_ref(x, geom_cols[[1]])
+}
+
+# Find geometry column names in a schema (columns with geoarrow extension type)
+get_geometry_columns <- function(schema) {
+  col_names <- names(schema$children)
+  is_geom <- vapply(
+    schema$children,
+    function(child) {
+      ext_name <- child$metadata[["ARROW:extension:name"]]
+      !is.null(ext_name) && grepl("^geoarrow\\.", ext_name)
+    },
+    logical(1)
+  )
+  col_names[is_geom]
+}
+
+# Match .tables$x$geom(), .tables$y$geom(), x$geom(), or y$geom() call pattern
+# Returns list(table_name, table_ref) or NULL if no match
+match_tables_geom_call <- function(expr, join_expr_ctx) {
+  # Match .tables$x$geom() or .tables$y$geom()
+  if (
+    length(expr) == 1 &&
+      rlang::is_call(expr[[1]], "$") &&
+      rlang::is_call(expr[[1]][[2]], "$") &&
+      rlang::is_symbol(expr[[1]][[2]][[2]], ".tables") &&
+      as.character(expr[[1]][[2]][[3]]) %in% c("x", "y") &&
+      rlang::is_symbol(expr[[1]][[3]], "geom")
+  ) {
+    table_name <- as.character(expr[[1]][[2]][[3]])
+    table_ref <- join_expr_ctx$table_refs[[table_name]]
+    return(list(table_name = table_name, table_ref = table_ref))
+  }
+
+  # Match x$geom() or y$geom()
+  if (
+    length(expr) == 1 &&
+      rlang::is_call(expr[[1]], "$") &&
+      rlang::is_symbol(expr[[1]][[2]]) &&
+      as.character(expr[[1]][[2]]) %in% c("x", "y") &&
+      rlang::is_symbol(expr[[1]][[3]], "geom")
+  ) {
+    table_name <- as.character(expr[[1]][[2]])
+    table_ref <- join_expr_ctx$table_refs[[table_name]]
+    return(list(table_name = table_name, table_ref = table_ref))
+  }
+
+  NULL
+}
+
+#' @export
+`$.sedonadb_table_ref` <- function(x, name) {
+  get_from_table_ref(x, name)
+}
+
+#' Evaluate join conditions
+#'
+#' Evaluates join condition expressions captured by [sd_join_by()] into
+#' SedonaDB expressions using a join expression context. This currently
+#' uses a custom evaluation similar to normal evaluation to ensure better
+#' error messages; however, this should probably be unified into the
+#' normal evaluation to avoid maintaining two separate paths in the future.
+#'
+#' @param join_by A `sedonadb_join_by` object from [sd_join_by()]
+#' @param join_expr_ctx A `sedonadb_join_expr_ctx` from `sd_join_expr_ctx()`
+#'
+#' @returns A list of `SedonaDBExpr` objects representing the join conditions
+#' @noRd
+sd_eval_join_conditions <- function(join_by, join_expr_ctx) {
+  ensure_translations_registered()
+
+  stopifnot(inherits(join_by, "sedonadb_join_by"))
+
+  lapply(join_by$exprs, function(quo) {
+    expr <- rlang::quo_get_expr(quo)
+    env <- rlang::quo_get_env(quo)
+
+    # Before we even attempt evaluation, we intercept bare names so that
+    # sd_join_by(x, y, z) creates an equijoin
+    if (rlang::is_symbol(expr)) {
+      col <- as.character(expr)
+      return(
+        sd_expr_binary(
+          "==",
+          sd_expr_column(col, qualifier = "x", factory = join_expr_ctx$factory),
+          sd_expr_column(col, qualifier = "y", factory = join_expr_ctx$factory),
+          factory = join_expr_ctx$factory
+        )
+      )
+    }
+
+    rlang::try_fetch(
+      {
+        result <- sd_eval_join_expr_inner(expr, join_expr_ctx, env)
+        as_sd_expr(result, factory = join_expr_ctx$factory)
+      },
+      error = function(e) {
+        rlang::abort(
+          sprintf("Error evaluating join condition %s", rlang::expr_label(expr)),
+          parent = e
+        )
+      }
+    )
+  })
+}
+
+sd_eval_join_expr_inner <- function(expr, join_expr_ctx, env) {
+  if (rlang::is_call(expr)) {
+    # Special handling for x$col and y$col syntax
+    if (rlang::is_call(expr, "$")) {
+      lhs <- expr[[2]]
+      rhs <- expr[[3]]
+
+      # Check if this is x$col or y$col pattern
+      if (rlang::is_symbol(lhs) && as.character(lhs) %in% c("x", "y")) {
+        table_ref <- join_expr_ctx$table_refs[[as.character(lhs)]]
+        col_name <- as.character(rhs)
+        return(get_from_table_ref(table_ref, col_name))
+      }
+    }
+
+    # Special handling for .fns$fn_name() escape hatch syntax
+    if (rlang::is_call(expr[[1]], "$") && rlang::is_symbol(expr[[1]][[2]], ".fns")) {
+      fn_key <- as.character(expr[[1]][[3]])
+      return(sd_eval_join_datafusion_fn(fn_key, expr, join_expr_ctx, env))
+    }
+
+    # Special handling for .tables$x$geom() and .tables$y$geom() syntax
+    # This returns the single geometry column from the table, or errors if ambiguous
+    tables_geom <- match_tables_geom_call(expr, join_expr_ctx)
+    if (!is.null(tables_geom)) {
+      return(get_geom_from_table_ref(tables_geom$table_ref))
+    }
+
+    # Extract function name
+    call_name <- rlang::call_name(expr)
+
+    # If we have a translation, use it (but with join-aware argument evaluation)
+    if (!is.null(call_name) && !is.null(join_expr_ctx$fns[[call_name]])) {
+      # Evaluate arguments with join context
+      evaluated_args <- lapply(
+        expr[-1],
+        sd_eval_join_expr_inner,
+        join_expr_ctx = join_expr_ctx,
+        env = env
+      )
+
+      # Build and evaluate the translated call
+      new_fn_expr <- rlang::call2("$", join_expr_ctx$fns, rlang::sym(call_name))
+      new_call <- rlang::call2(new_fn_expr, join_expr_ctx, !!!evaluated_args)
+      return(rlang::eval_tidy(new_call, data = join_expr_ctx$data, env = env))
+    }
+
+    # Default: evaluate with tidy eval
+    rlang::eval_tidy(expr, data = join_expr_ctx$data, env = env)
+  } else if (rlang::is_symbol(expr)) {
+    # Check for ambiguous column reference
+    name <- as.character(expr)
+    if (name %in% join_expr_ctx$ambiguous_columns) {
+      stop(
+        sprintf(
+          "Column '%s' is ambiguous (exists in both tables). ",
+          name
+        ),
+        sprintf("Use x$%s or y$%s to disambiguate.", name, name),
+        call. = FALSE
+      )
+    }
+    rlang::eval_tidy(expr, data = join_expr_ctx$data, env = env)
+  } else {
+    # Literal or other expression
+    rlang::eval_tidy(expr, data = join_expr_ctx$data, env = env)
+  }
+}
+
+sd_eval_join_datafusion_fn <- function(fn_key, expr, join_expr_ctx, env) {
+  # Evaluate arguments
+  evaluated_args <- lapply(
+    expr[-1],
+    sd_eval_join_expr_inner,
+    join_expr_ctx = join_expr_ctx,
+    env = env
+  )
+
+  na_rm <- evaluated_args$na.rm
+  evaluated_args$na.rm <- NULL
+
+  if (any(rlang::have_name(evaluated_args))) {
+    stop(
+      sprintf(
+        "Expected unnamed arguments to SedonaDB SQL function but got %s",
+        paste(
+          names(evaluated_args)[rlang::have_name(evaluated_args)],
+          collapse = ", "
+        )
+      )
+    )
+  }
+
+  sd_expr_any_function(
+    fn_key,
+    evaluated_args,
+    na.rm = na_rm,
+    factory = join_expr_ctx$factory
+  )
+}
+
+#' Build join conditions from a `by` specification
+#'
+#' Evaluates the `by` argument to produce a list of join condition expressions.
+#' Supports natural joins (NULL) and explicit conditions via [sd_join_by()].
+#'
+#' @param join_expr_ctx Object produced by `sd_join_expr_ctx()`
+#' @param by A `sedonadb_join_by` object from [sd_join_by()], or `NULL` for
+#'   a natural join on columns with matching names.
+#' @param ctx A SedonaDB context
+#'
+#' @returns A list of `SedonaDBExpr` objects representing the join conditions
+#' @noRd
+sd_build_join_conditions <- function(join_expr_ctx, by = NULL, ctx = NULL) {
+  if (is.null(by)) {
+    # Natural join: find common column names
+    x_names <- names(join_expr_ctx$x_schema$children)
+    y_names <- names(join_expr_ctx$y_schema$children)
+    common <- intersect(x_names, y_names)
+
+    if (length(common) == 0) {
+      stop(
+        "No common columns found for natural join. ",
+        "Use sd_join_by() to specify join conditions."
+      )
+    }
+
+    # Message
+    join_by_syms <- vapply(rlang::syms(common), rlang::expr_deparse, character(1))
+    message(sprintf(
+      "Joining with `by = sd_join_by(%s)`",
+      paste0(join_by_syms, collapse = ", ")
+    ))
+
+    # Build equality conditions for common columns
+    join_conditions <- lapply(common, function(col) {
+      sd_expr_binary(
+        "==",
+        sd_expr_column(col, qualifier = "x", factory = join_expr_ctx$factory),
+        sd_expr_column(col, qualifier = "y", factory = join_expr_ctx$factory),
+        factory = join_expr_ctx$factory
+      )
+    })
+  } else if (is.character(by)) {
+    by_unnamed <- !rlang::have_name(by)
+    names(by)[by_unnamed] <- by[by_unnamed]
+    join_conditions <- lapply(seq_along(by), function(i) {
+      sd_expr_binary(
+        "==",
+        sd_expr_column(names(by)[i], qualifier = "x", factory = join_expr_ctx$factory),
+        sd_expr_column(by[i], qualifier = "y", factory = join_expr_ctx$factory),
+        factory = join_expr_ctx$factory
+      )
+    })
+  } else if (inherits(by, "sedonadb_join_by")) {
+    join_conditions <- sd_eval_join_conditions(by, join_expr_ctx)
+  } else {
+    stop("`by` must be NULL (natural join) or a sd_join_by() object")
+  }
+
+  join_conditions
+}
+
+#' Specify default post-join column selection
+#'
+#' Use `sd_join_select_default()` to specify that the join result should
+#' remove duplicate equijoin key columns (keeping the x-side version) and
+#' apply suffixes to any remaining overlapping column names.
+#'
+#' @param suffix A character vector of length 2 specifying suffixes to add
+#'   to overlapping column names from the left (x) and right (y) tables.
+#'
+#' @returns An object of class `sedonadb_join_select_default` specifying
+#'   the default column selection behavior.
+#' @export
+#'
+#' @examples
+#' # Default suffixes
+#' sd_join_select_default()
+#'
+#' # Custom suffixes
+#' sd_join_select_default(suffix = c("_left", "_right"))
+#'
+sd_join_select_default <- function(suffix = c(".x", ".y")) {
+  if (!is.character(suffix) || length(suffix) != 2) {
+    stop("`suffix` must be a character vector of length 2")
+  }
+
+  structure(
+    list(suffix = suffix),
+    class = "sedonadb_join_select_default"
+  )
+}
+
+#' @export
+print.sedonadb_join_select_default <- function(x, ...) {
+  cat("<sedonadb_join_select_default>\n")
+  cat("  suffix: c(\"", x$suffix[1], "\", \"", x$suffix[2], "\")\n", sep = "")
+  invisible(x)
+}
+
+#' Specify custom post-join column selection
+#'
+#' Use `sd_join_select()` to specify which columns to include in the join
+#' result and optionally rename them. Columns may be referenced using
+#' `x$column` and `y$column` syntax to disambiguate columns from the left
+#' and right tables, or by bare column name when the name exists on only
+#' one side of the join.
+#'
+#' @param ... Named expressions specifying output columns. Each expression
+#'   may reference a column using `x$column` or `y$column` syntax, or use
+#'   a bare column name when it is unambiguous. If the same column name
+#'   exists on both sides of the join, it must be qualified with `x$` or
+#'   `y$`. The name of the argument becomes the output column name. Unnamed
+#'   arguments use the original column name (without table prefix).
+#'
+#' @returns An object of class `sedonadb_join_select` containing the
+#'   unevaluated column selection expressions.
+#' @export
+#'
+#' @examples
+#' # Select and rename columns
+#' sd_join_select(id = x$id, left_value = x$value, right_value = y$value)
+#'
+#' # Unnamed arguments keep original column name
+#' sd_join_select(x$id, x$name, y$value)
+#'
+sd_join_select <- function(...) {
+  exprs <- rlang::enquos(...)
+
+  structure(
+    list(exprs = exprs),
+    class = "sedonadb_join_select"
+  )
+}
+
+#' @export
+print.sedonadb_join_select <- function(x, ...) {
+  cat("<sedonadb_join_select>\n")
+  for (i in seq_along(x$exprs)) {
+    name <- names(x$exprs)[i]
+    expr_str <- rlang::expr_deparse(rlang::quo_get_expr(x$exprs[[i]]))
+    if (!is.null(name) && nzchar(name)) {
+      cat("  ", name, " = ", expr_str, "\n", sep = "")
+    } else {
+      cat("  ", expr_str, "\n", sep = "")
+    }
+  }
+  invisible(x)
+}
+
+#' Evaluate custom join select expressions
+#'
+#' Evaluates column selection expressions captured by [sd_join_select()] into
+#' a list of output column specifications.
+#'
+#' @param join_select A `sedonadb_join_select` object from [sd_join_select()]
+#' @param join_expr_ctx A `sedonadb_join_expr_ctx` from `sd_join_expr_ctx()`
+#'
+#' @returns A named list of expressions
+#' @noRd
+sd_eval_join_select_exprs <- function(join_select, join_expr_ctx) {
+  ensure_translations_registered()
+  stopifnot(inherits(join_select, "sedonadb_join_select"))
+
+  exprs <- lapply(join_select$exprs, function(quo) {
+    expr <- rlang::quo_get_expr(quo)
+    env <- rlang::quo_get_env(quo)
+
+    rlang::try_fetch(
+      sd_eval_join_expr_inner(expr, join_expr_ctx, env),
+      error = function(e) {
+        rlang::abort(
+          sprintf(
+            "Error evaluating select expression %s",
+            rlang::expr_label(expr)
+          ),
+          parent = e
+        )
+      }
+    )
+  })
+
+  is_unnamed <- names(exprs) == ""
+  names(exprs)[is_unnamed] <- lapply(exprs[is_unnamed], function(e) e$qualified_name()[2])
+  exprs
+}
+
+#' Build default column selection for join result
+#'
+#' Creates a column selection that:
+#' 1. Removes duplicate equijoin key columns (keeps x-side)
+#' 2. Applies suffixes to remaining overlapping column names
+#'
+#' @param join_expr_ctx A `sedonadb_join_expr_ctx` from `sd_join_expr_ctx()`
+#' @param join_conditions List of join condition expressions
+#' @param suffix Character vector of length 2 for left/right suffixes
+#' @param join_type Join type, used for preference of right or left key columns
+#'
+#' @returns A named list of expressions
+#' @noRd
+sd_build_default_select <- function(
+  join_expr_ctx,
+  join_conditions,
+  suffix = c(".x", ".y"),
+  join_type = "inner",
+  keep = NULL
+) {
+  join_type <- tolower(join_type)
+
+  # We only handle a few types of joins here. Others we return the DataFusion output
+  # which (semi/anti/mark joins).
+  if (!(join_type %in% c("left", "right", "inner", "full"))) {
+    return(NULL)
+  }
+
+  x_names <- names(join_expr_ctx$x_schema$children)
+  y_names <- names(join_expr_ctx$y_schema$children)
+
+  # Extract simple key pairs (x$col == y$col or some_fun(x$col, y$col) conditions)
+  # if keep is not TRUE.
+  if (isTRUE(keep)) {
+    simple_join_keys <- list(x_cols = character(), y_cols = character(), op = character())
+  } else if (identical(keep, FALSE) || is.null(keep)) {
+    simple_join_keys <- sd_extract_simple_join_keys(join_conditions)
+  } else {
+    stop("keep must be TRUE, FALSE, or NULL")
+  }
+
+  # For the purposes of computing how to choose output columns, we consider
+  # st predicates equijoin keys. We can't do this for a full join (coalescing
+  # things that might not be equal doesn't make sense) and the default dplyr
+  # behaviour for right joins (which still returns the left key column name)
+  # is fishy in the non-equality case. The workaround is to swap the arguments
+  # and use a left join.
+  if (join_type %in% c("full", "right")) {
+    equijoin_ops <- "="
+  } else {
+    equijoin_ops <- c(
+      "=",
+      "st_intersects",
+      "st_contains",
+      "st_within",
+      "st_covers",
+      "st_coveredby",
+      "st_touches",
+      "st_crosses",
+      "st_overlaps",
+      "st_equals"
+    )
+  }
+
+  simple_join_keys_is_eq <- simple_join_keys$op %in% equijoin_ops
+  equijoin_keys <- list(
+    x_cols = simple_join_keys$x_cols[simple_join_keys_is_eq],
+    y_cols = simple_join_keys$y_cols[simple_join_keys_is_eq]
+  )
+
+  # Remove equijoin keys from y_names. We do this even for right joins to match
+  # dplyr, which returns the name from the left but the values from the right.
+  y_names <- setdiff(y_names, equijoin_keys$y_cols)
+
+  # Calculate names that need suffixing
+  common_names <- intersect(x_names, y_names)
+  x_name_needs_suffix <- x_names %in% common_names
+  y_name_needs_suffix <- y_names %in% common_names
+
+  # Apply suffixes to column names that need it, but keep a copy of the input
+  # names unchanged since we'll need those to get the original column expr
+  x_names_out <- x_names
+  x_names_out[x_name_needs_suffix] <- paste0(x_names_out[x_name_needs_suffix], suffix[1])
+  y_names_out <- y_names
+  y_names_out[y_name_needs_suffix] <- paste0(y_names_out[y_name_needs_suffix], suffix[2])
+
+  # Create the expressions named with the appropriate output name
+  exprs <- c(
+    lapply(x_names, function(name) {
+      sd_expr_column(name, qualifier = "x", factory = join_expr_ctx$factory)
+    }),
+    lapply(y_names, function(name) {
+      sd_expr_column(name, qualifier = "y", factory = join_expr_ctx$factory)
+    })
+  )
+  names(exprs) <- c(x_names_out, y_names_out)
+
+  # In the event of a full join, we need to coalesce the x key and y key
+  if (join_type == "full") {
+    # All the equijoin key outputs come from the x side and are in the x position.
+    equijoin_output_indices <- match(equijoin_keys$x_cols, x_names)
+
+    # Construct coalesce(x$col, y$col) expressions
+    key_column_exprs <- lapply(seq_along(equijoin_keys$x_cols), function(i) {
+      x_col <- sd_expr_column(
+        equijoin_keys$x_cols[i],
+        qualifier = "x",
+        factory = join_expr_ctx$factory
+      )
+      y_col <- sd_expr_column(
+        equijoin_keys$y_cols[i],
+        qualifier = "y",
+        factory = join_expr_ctx$factory
+      )
+      sd_expr_scalar_function(
+        "coalesce",
+        list(x_col, y_col),
+        factory = join_expr_ctx$factory
+      )
+    })
+
+    # Replace the key expressions (which were previously a simple x$col reference)
+    exprs[equijoin_output_indices] <- key_column_exprs
+  }
+
+  # In the event of a right join, we need to replace the x equijoin keys with
+  # the column references to the y side of the join because dplyr does this
+  # for some reason.
+  if (join_type == "right") {
+    equijoin_output_indices <- match(equijoin_keys$x_cols, x_names)
+    key_column_exprs <- lapply(equijoin_keys$y_cols, function(name) {
+      sd_expr_column(
+        name,
+        qualifier = "y",
+        factory = join_expr_ctx$factory
+      )
+    })
+
+    exprs[equijoin_output_indices] <- key_column_exprs
+  }
+
+  exprs
+}
+
+#' Extract equijoin key column pairs from join conditions
+#'
+#' Identifies simple equality conditions of the form `x$col == y$col` and
+#' returns the column names involved.
+#'
+#' @param join_conditions List of join condition expressions
+#'
+#' @returns A list with `x_cols` and `y_cols` character vectors of matching
+#'   column names from each side of equijoin conditions.
+#' @noRd
+sd_extract_simple_join_keys <- function(join_conditions) {
+  ops <- character()
+  x_cols <- character()
+  y_cols <- character()
+
+  for (cond in join_conditions) {
+    stopifnot(inherits(cond, "SedonaDBExpr"))
+
+    parsed <- sd_expr_parse_binary(cond)
+    if (
+      is.null(parsed) ||
+        parsed$left$variant_name() != "Column" ||
+        parsed$right$variant_name() != "Column"
+    ) {
+      next
+    }
+
+    op <- parsed$op
+    left <- parsed$left$qualified_name()
+    right <- parsed$right$qualified_name()
+
+    # If the left and right sides of the join condition came from the same side,
+    # the join condition is not an simple join key and should not be removed.
+    if (identical(left[1], right[1])) {
+      next
+    }
+
+    ops <- append(ops, op)
+    switch(
+      left[1],
+      x = x_cols <- append(x_cols, left[2]),
+      y = y_cols <- append(y_cols, left[2])
+    )
+    switch(
+      right[1],
+      x = x_cols <- append(x_cols, right[2]),
+      y = y_cols <- append(y_cols, right[2])
+    )
+  }
+
+  list(x_cols = x_cols, y_cols = y_cols, op = ops)
+}

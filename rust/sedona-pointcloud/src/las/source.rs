@@ -17,12 +17,19 @@
 
 use std::{any::Any, iter, sync::Arc};
 
-use datafusion_common::{config::ConfigOptions, error::DataFusionError, Statistics};
+use datafusion_common::{config::ConfigOptions, error::DataFusionError};
 use datafusion_datasource::{
-    file::FileSource, file_groups::FileGroupPartitioner, file_scan_config::FileScanConfig,
-    file_stream::FileOpener, source::DataSource, TableSchema,
+    file::FileSource,
+    file_groups::FileGroupPartitioner,
+    file_scan_config::FileScanConfig,
+    file_stream::FileOpener,
+    projection::{ProjectionOpener, SplitProjection},
+    source::DataSource,
+    TableSchema,
 };
-use datafusion_physical_expr::{conjunction, LexOrdering, PhysicalExpr};
+use datafusion_physical_expr::{
+    conjunction, projection::ProjectionExprs, LexOrdering, PhysicalExpr,
+};
 use datafusion_physical_plan::{
     filter_pushdown::{FilterPushdownPropagation, PushedDown},
     metrics::ExecutionPlanMetricsSet,
@@ -35,32 +42,37 @@ use crate::las::{
 
 #[derive(Clone, Debug)]
 pub struct LasSource {
+    pub(crate) extension: Extension,
+    /// LAS/LAZ reading options
+    pub(crate) options: LasOptions,
     /// Optional metrics
     metrics: ExecutionPlanMetricsSet,
     /// The schema of the file.
-    pub(crate) table_schema: Option<TableSchema>,
+    pub(crate) table_schema: TableSchema,
     /// Optional predicate for row filtering during parquet scan
     pub(crate) predicate: Option<Arc<dyn PhysicalExpr>>,
     /// LAS/LAZ file reader factory
     pub(crate) reader_factory: Option<Arc<LasFileReaderFactory>>,
     /// Batch size configuration
     pub(crate) batch_size: Option<usize>,
-    pub(crate) projected_statistics: Option<Statistics>,
-    pub(crate) options: LasOptions,
-    pub(crate) extension: Extension,
+    /// Projection to apply to the output.
+    pub(crate) projection: ProjectionExprs,
 }
 
 impl LasSource {
-    pub fn new(extension: Extension) -> Self {
+    pub fn new(extension: Extension, table_schema: impl Into<TableSchema>) -> Self {
+        let table_schema = table_schema.into();
+        let projection = SplitProjection::unprojected(&table_schema).source;
+
         Self {
+            extension,
+            options: Default::default(),
             metrics: Default::default(),
-            table_schema: Default::default(),
+            table_schema,
             predicate: Default::default(),
             reader_factory: Default::default(),
             batch_size: Default::default(),
-            projected_statistics: Default::default(),
-            options: Default::default(),
-            extension,
+            projection,
         }
     }
 
@@ -81,30 +93,35 @@ impl FileSource for LasSource {
         object_store: Arc<dyn ObjectStore>,
         base_config: &FileScanConfig,
         partition: usize,
-    ) -> Arc<dyn FileOpener> {
-        let projection = base_config
-            .file_column_projection_indices()
-            .unwrap_or_else(|| (0..base_config.projected_file_schema().fields().len()).collect());
-
+    ) -> Result<Arc<dyn FileOpener>, DataFusionError> {
         let file_reader_factory = self
             .reader_factory
             .clone()
             .unwrap_or_else(|| Arc::new(LasFileReaderFactory::new(object_store, None)));
 
-        Arc::new(LasOpener {
-            projection: Arc::from(projection),
+        let table_schema = self.table_schema.file_schema();
+        let split_projection = SplitProjection::new(table_schema, &self.projection);
+        let las_opener: Arc<dyn FileOpener> = Arc::new(LasOpener {
+            partition,
+            partition_count: base_config.output_partitioning().partition_count(),
+            projection: Some(split_projection.file_indices.clone()),
             batch_size: self.batch_size.expect("Must be set"),
             limit: base_config.limit,
             predicate: self.predicate.clone(),
             file_reader_factory,
             options: self.options.clone(),
-            partition_count: base_config.output_partitioning().partition_count(),
-            partition,
-        })
+        });
+
+        // Wrap with ProjectionOpener to handle reordering/expressions
+        ProjectionOpener::try_new(split_projection, las_opener, table_schema)
     }
 
     fn as_any(&self) -> &dyn Any {
         self
+    }
+
+    fn table_schema(&self) -> &TableSchema {
+        &self.table_schema
     }
 
     fn with_batch_size(&self, batch_size: usize) -> Arc<dyn FileSource> {
@@ -113,38 +130,12 @@ impl FileSource for LasSource {
         Arc::new(conf)
     }
 
-    fn with_schema(&self, schema: TableSchema) -> Arc<dyn FileSource> {
-        let mut conf = self.clone();
-        conf.table_schema = Some(schema);
-        Arc::new(conf)
-    }
-
-    fn with_projection(&self, _config: &FileScanConfig) -> Arc<dyn FileSource> {
-        Arc::new(Self { ..self.clone() })
-    }
-
-    fn with_statistics(&self, statistics: Statistics) -> Arc<dyn FileSource> {
-        let mut conf = self.clone();
-        conf.projected_statistics = Some(statistics);
-        Arc::new(conf)
+    fn projection(&self) -> Option<&ProjectionExprs> {
+        Some(&self.projection)
     }
 
     fn metrics(&self) -> &ExecutionPlanMetricsSet {
         &self.metrics
-    }
-
-    fn statistics(&self) -> Result<Statistics, DataFusionError> {
-        let Some(statistics) = &self.projected_statistics else {
-            return Err(DataFusionError::External(
-                "projected_statistics must be set".into(),
-            ));
-        };
-
-        if self.filter().is_some() {
-            Ok(statistics.clone().to_inexact())
-        } else {
-            Ok(statistics.clone())
-        }
     }
 
     fn file_type(&self) -> &str {
@@ -218,5 +209,14 @@ impl FileSource for LasSource {
             filters.len()
         ])
         .with_updated_node(source))
+    }
+
+    fn try_pushdown_projection(
+        &self,
+        projection: &ProjectionExprs,
+    ) -> Result<Option<Arc<dyn FileSource>>, DataFusionError> {
+        let mut source = self.clone();
+        source.projection = self.projection.try_merge(projection)?;
+        Ok(Some(Arc::new(source)))
     }
 }

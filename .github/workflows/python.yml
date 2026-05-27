@@ -119,6 +119,10 @@ jobs:
           # Keep this export in sync with the export in dev/release/verify-release-candidate.sh
           export MATURIN_PEP517_ARGS="--features s2geography"
           pip install -e "python/sedonadb/[test]" -vv
+          # Unset so `--features s2geography` (sedonadb-only) doesn't
+          # carry into the plugin install.
+          unset MATURIN_PEP517_ARGS
+          pip install -e "python/sedonadb-zarr/[test]" -vv
 
       - name: Download minimal geoarrow-data assets
         run: |

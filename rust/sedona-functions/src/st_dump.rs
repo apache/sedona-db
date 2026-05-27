@@ -19,7 +19,7 @@ use arrow_array::{
     ListArray, StructArray,
 };
 use arrow_schema::{DataType, Field, Fields};
-use datafusion_common::error::Result;
+use datafusion_common::{config::ConfigOptions, Result};
 use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::{
     GeometryCollectionTrait, GeometryTrait, GeometryType, MultiLineStringTrait, MultiPointTrait,
@@ -29,7 +29,7 @@ use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
 use sedona_schema::{
-    datatypes::{SedonaType, WKB_GEOMETRY},
+    datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY},
     matchers::ArgMatcher,
 };
 use std::{io::Write, sync::Arc};
@@ -40,11 +40,24 @@ use crate::executor::WkbExecutor;
 ///
 /// Native implementation to get all the points of a geometry as MULTIPOINT
 pub fn st_dump_udf() -> SedonaScalarUDF {
-    SedonaScalarUDF::new("st_dump", vec![Arc::new(STDump)], Volatility::Immutable)
+    SedonaScalarUDF::new(
+        "st_dump",
+        vec![
+            Arc::new(STDump {
+                matcher: ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY),
+            }),
+            Arc::new(STDump {
+                matcher: ArgMatcher::new(vec![ArgMatcher::is_geography()], WKB_GEOGRAPHY),
+            }),
+        ],
+        Volatility::Immutable,
+    )
 }
 
 #[derive(Debug)]
-struct STDump;
+struct STDump {
+    matcher: ArgMatcher,
+}
 
 // A builder for a list of the structs
 struct STDumpBuilder {
@@ -54,10 +67,11 @@ struct STDumpBuilder {
     struct_offsets_builder: OffsetBufferBuilder<i32>,
     null_builder: NullBufferBuilder,
     parent_path: Vec<u32>,
+    return_type: SedonaType,
 }
 
 impl STDumpBuilder {
-    fn new(num_iter: usize) -> Self {
+    fn new(num_iter: usize, return_type: SedonaType) -> Self {
         let path_array_builder = UInt32Builder::with_capacity(num_iter);
         let path_array_offsets_builder = OffsetBufferBuilder::new(num_iter);
         let geom_builder =
@@ -72,6 +86,7 @@ impl STDumpBuilder {
             struct_offsets_builder,
             null_builder,
             parent_path: Vec::new(), // Reusable buffer to avoid allocation per row
+            return_type,
         }
     }
 
@@ -163,7 +178,7 @@ impl STDumpBuilder {
         self.null_builder.append(false);
     }
 
-    fn finish(mut self) -> ListArray {
+    fn finish(mut self) -> Result<ListArray> {
         let path_array = Arc::new(self.path_array_builder.finish());
         let path_offsets = self.path_array_offsets_builder.finish();
         let geom_array = self.geom_builder.finish();
@@ -171,42 +186,51 @@ impl STDumpBuilder {
         let path_field = Arc::new(Field::new("item", DataType::UInt32, true));
         let path_list = ListArray::new(path_field, path_offsets, path_array, None);
 
-        let fields = Fields::from(vec![
-            Field::new(
-                "path",
-                DataType::List(Arc::new(Field::new("item", DataType::UInt32, true))),
-                true,
-            ),
-            WKB_GEOMETRY.to_storage_field("geom", true).unwrap(),
-        ]);
+        let SedonaType::Arrow(DataType::List(return_list_field)) = self.return_type else {
+            return sedona_internal_err!("Unexpected return type in st_dump()");
+        };
+
+        let DataType::Struct(fields) = return_list_field.data_type() else {
+            return sedona_internal_err!("Unexpected return type");
+        };
+
         let struct_array = StructArray::try_new(
             fields.clone(),
             vec![Arc::new(path_list), Arc::new(geom_array)],
             None,
         )
         .unwrap();
+
         let struct_offsets = self.struct_offsets_builder.finish();
-        let struct_field = Arc::new(Field::new("item", DataType::Struct(fields), true));
         let nulls = self.null_builder.finish();
-        ListArray::new(struct_field, struct_offsets, Arc::new(struct_array), nulls)
+        Ok(ListArray::new(
+            return_list_field,
+            struct_offsets,
+            Arc::new(struct_array),
+            nulls,
+        ))
     }
 }
 
 impl SedonaScalarKernel for STDump {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        let matcher = ArgMatcher::new(vec![ArgMatcher::is_geometry()], geometry_dump_type());
-        matcher.match_args(args)
+        Ok(self
+            .matcher
+            .match_args(args)?
+            .map(|output_type| geometry_dump_type(&output_type)))
     }
 
-    fn invoke_batch(
+    fn invoke_batch_from_args(
         &self,
         arg_types: &[SedonaType],
         args: &[ColumnarValue],
+        return_type: &SedonaType,
+        _num_rows: usize,
+        _config_options: Option<&ConfigOptions>,
     ) -> Result<ColumnarValue> {
         let executor = WkbExecutor::new(arg_types, args);
 
-        let mut builder = STDumpBuilder::new(executor.num_iterations());
-
+        let mut builder = STDumpBuilder::new(executor.num_iterations(), return_type.clone());
         executor.execute_wkb_void(|maybe_wkb| {
             if let Some(wkb) = maybe_wkb {
                 builder.append(&wkb)?;
@@ -217,22 +241,30 @@ impl SedonaScalarKernel for STDump {
             Ok(())
         })?;
 
-        executor.finish(Arc::new(builder.finish()))
+        executor.finish(Arc::new(builder.finish()?))
+    }
+
+    fn invoke_batch(
+        &self,
+        _arg_types: &[SedonaType],
+        _args: &[ColumnarValue],
+    ) -> Result<ColumnarValue> {
+        sedona_internal_err!("invoke_batch() should not be called for st_dump()")
     }
 }
 
-fn geometry_dump_fields() -> Fields {
+fn geometry_dump_fields(geo_type: &SedonaType) -> Fields {
     let path = Field::new(
         "path",
         DataType::List(Field::new("item", DataType::UInt32, true).into()),
         true,
     );
-    let geom = WKB_GEOMETRY.to_storage_field("geom", true).unwrap();
+    let geom = geo_type.to_storage_field("geom", true).unwrap();
     vec![path, geom].into()
 }
 
-fn geometry_dump_type() -> SedonaType {
-    let fields = geometry_dump_fields();
+fn geometry_dump_type(geo_type: &SedonaType) -> SedonaType {
+    let fields = geometry_dump_fields(geo_type);
     let struct_type = DataType::Struct(fields);
 
     SedonaType::Arrow(DataType::List(Field::new("item", struct_type, true).into()))
@@ -243,7 +275,7 @@ mod tests {
     use arrow_array::{Array, ArrayRef, ListArray, StructArray, UInt32Array};
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
-    use sedona_schema::datatypes::WKB_VIEW_GEOMETRY;
+    use sedona_schema::{crs::lnglat, datatypes::Edges};
     use sedona_testing::{
         compare::assert_array_equal, create::create_array, testers::ScalarUdfTester,
     };
@@ -258,7 +290,10 @@ mod tests {
     }
 
     #[rstest]
-    fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+    fn udf(
+        #[values(WKB_GEOMETRY, WKB_GEOGRAPHY, SedonaType::Wkb(Edges::Planar, lnglat()))]
+        sedona_type: SedonaType,
+    ) {
         let tester = ScalarUdfTester::new(st_dump_udf().into(), vec![sedona_type.clone()]);
 
         let input = create_array(
@@ -275,14 +310,26 @@ mod tests {
             &sedona_type,
         );
         let result = tester.invoke_array(input).unwrap();
-        assert_dump_row(&result, 0, &[(&[], Some("POINT (1 2)"))]);
-        assert_dump_row(&result, 1, &[(&[], Some("LINESTRING (1 1, 2 2)"))]);
-        assert_dump_row(&result, 2, &[(&[], Some("POLYGON ((1 1, 2 2, 2 1, 1 1))"))]);
+        assert_dump_row(&result, 0, &[(&[], Some("POINT (1 2)"))], &sedona_type);
+        assert_dump_row(
+            &result,
+            1,
+            &[(&[], Some("LINESTRING (1 1, 2 2)"))],
+            &sedona_type,
+        );
+        assert_dump_row(
+            &result,
+            2,
+            &[(&[], Some("POLYGON ((1 1, 2 2, 2 1, 1 1))"))],
+            &sedona_type,
+        );
         assert_dump_row(
             &result,
             3,
             &[(&[1], Some("POINT (1 1)")), (&[2], Some("POINT (2 2)"))],
+            &sedona_type,
         );
+
         assert_dump_row(
             &result,
             4,
@@ -291,6 +338,7 @@ mod tests {
                 (&[2], Some("LINESTRING EMPTY")),
                 (&[3], Some("LINESTRING (3 3, 4 4)")),
             ],
+            &sedona_type,
         );
         assert_dump_row(
             &result,
@@ -300,6 +348,7 @@ mod tests {
                 (&[2], Some("POLYGON EMPTY")),
                 (&[3], Some("POLYGON ((3 3, 4 4, 4 3, 3 3)))")),
             ],
+            &sedona_type,
         );
         assert_dump_row(
             &result,
@@ -311,6 +360,7 @@ mod tests {
                 (&[2, 3], Some("LINESTRING (3 3, 4 4)")),
                 (&[3], Some("LINESTRING (1 1, 2 2)")),
             ],
+            &sedona_type,
         );
         assert_dump_row(
             &result,
@@ -322,6 +372,7 @@ mod tests {
                 (&[2, 1, 3], Some("LINESTRING (3 3, 4 4)")),
                 (&[2, 2], Some("LINESTRING (1 1, 2 2)")),
             ],
+            &sedona_type,
         );
 
         let null_input = create_array(&[None], &sedona_type);
@@ -329,7 +380,12 @@ mod tests {
         assert_dump_row_null(&result, 0);
     }
 
-    fn assert_dump_row(result: &ArrayRef, row: usize, expected: &[(&[u32], Option<&str>)]) {
+    fn assert_dump_row(
+        result: &ArrayRef,
+        row: usize,
+        expected: &[(&[u32], Option<&str>)],
+        sedona_type: &SedonaType,
+    ) {
         let list_array = result
             .as_ref()
             .as_any()
@@ -377,7 +433,7 @@ mod tests {
 
         let expected_geom_values: Vec<Option<&str>> =
             expected.iter().map(|(_, geom)| *geom).collect();
-        let expected_geom_array = create_array(&expected_geom_values, &WKB_GEOMETRY);
+        let expected_geom_array = create_array(&expected_geom_values, sedona_type);
         assert_array_equal(dumped.column(1), &expected_geom_array);
     }
 

@@ -84,6 +84,7 @@ impl fmt::Display for RasterDisplay<'_> {
 
         let has_outdb = bands
             .iter()
+            .filter_map(Result::ok)
             .any(|band| matches!(band.metadata().storage_type(), Ok(StorageType::OutDbRef)));
 
         // Write: [WxH/nbands] @ [xmin ymin xmax ymax]

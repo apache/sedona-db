@@ -23,6 +23,13 @@ use sedona_raster::traits::{BandMetadata, RasterMetadata, RasterRef};
 use sedona_schema::crs::lnglat;
 use sedona_schema::raster::{BandDataType, StorageType};
 
+/// Describes a single in-db band used by test raster builders.
+pub struct InDbTestBand {
+    pub datatype: BandDataType,
+    pub nodata_value: Option<Vec<u8>>,
+    pub data: Vec<u8>,
+}
+
 /// Generate a StructArray of rasters with sequentially increasing dimensions and pixel values
 /// These tiny rasters are to provide fast, easy and predictable test data for unit tests.
 pub fn generate_test_rasters(
@@ -184,6 +191,31 @@ pub fn build_noninvertible_raster() -> StructArray {
     builder.finish().expect("finish")
 }
 
+/// Builds a single raster with in-db bands from explicit metadata and raw band bytes.
+pub fn build_in_db_raster(
+    metadata: RasterMetadata,
+    crs: Option<&str>,
+    bands: &[InDbTestBand],
+) -> StructArray {
+    let mut builder = RasterBuilder::new(1);
+    builder.start_raster(&metadata, crs).expect("start raster");
+    for band in bands {
+        builder
+            .start_band(BandMetadata {
+                datatype: band.datatype,
+                nodata_value: band.nodata_value.clone(),
+                storage_type: StorageType::InDb,
+                outdb_url: None,
+                outdb_band_id: None,
+            })
+            .expect("start band");
+        builder.band_data_writer().append_value(&band.data);
+        builder.finish_band().expect("finish band");
+    }
+    builder.finish_raster().expect("finish raster");
+    builder.finish().expect("finish")
+}
+
 /// Builds a single-band raster from raw bytes for tests.
 pub fn raster_from_single_band(
     width: usize,
@@ -192,7 +224,6 @@ pub fn raster_from_single_band(
     band_bytes: &[u8],
     crs: Option<&str>,
 ) -> StructArray {
-    let mut builder = RasterBuilder::new(1);
     let metadata = RasterMetadata {
         width: width as u64,
         height: height as u64,
@@ -204,28 +235,21 @@ pub fn raster_from_single_band(
         skew_y: 0.0,
     };
 
-    builder.start_raster(&metadata, crs).expect("start raster");
-    builder
-        .start_band(BandMetadata {
+    build_in_db_raster(
+        metadata,
+        crs,
+        &[InDbTestBand {
             datatype: data_type,
             nodata_value: None,
-            storage_type: StorageType::InDb,
-            outdb_url: None,
-            outdb_band_id: None,
-        })
-        .expect("start band");
-    builder.band_data_writer().append_value(band_bytes);
-    builder.finish_band().expect("finish band");
-    builder.finish_raster().expect("finish raster");
-
-    builder.finish().expect("finish")
+            data: band_bytes.to_vec(),
+        }],
+    )
 }
 
 /// Builds a single raster with 3 bands of different types for testing multi-band operations.
 /// Band 1: UInt8 (nodata=255), Band 2: UInt16 (nodata=0), Band 3: Float32 (no nodata).
 /// Each band is 2x2 pixels.
 pub fn generate_multi_band_raster() -> StructArray {
-    let mut builder = RasterBuilder::new(1);
     let crs = lnglat().unwrap().to_crs_string();
     let metadata = RasterMetadata {
         width: 2,
@@ -237,59 +261,37 @@ pub fn generate_multi_band_raster() -> StructArray {
         skew_x: 0.0,
         skew_y: 0.0,
     };
-    builder.start_raster(&metadata, Some(&crs)).unwrap();
 
-    // Band 1: UInt8, nodata=255
-    builder
-        .start_band(BandMetadata {
-            datatype: BandDataType::UInt8,
-            nodata_value: Some(vec![255u8]),
-            storage_type: StorageType::InDb,
-            outdb_url: None,
-            outdb_band_id: None,
-        })
-        .unwrap();
-    builder
-        .band_data_writer()
-        .append_value([1u8, 2u8, 3u8, 4u8]);
-    builder.finish_band().unwrap();
-
-    // Band 2: UInt16, nodata=0
-    builder
-        .start_band(BandMetadata {
-            datatype: BandDataType::UInt16,
-            nodata_value: Some(vec![0u8, 0u8]),
-            storage_type: StorageType::InDb,
-            outdb_url: None,
-            outdb_band_id: None,
-        })
-        .unwrap();
     let band2_data: Vec<u8> = [100u16, 200u16, 300u16, 400u16]
         .iter()
         .flat_map(|v| v.to_le_bytes())
         .collect();
-    builder.band_data_writer().append_value(&band2_data);
-    builder.finish_band().unwrap();
-
-    // Band 3: Float32, no nodata
-    builder
-        .start_band(BandMetadata {
-            datatype: BandDataType::Float32,
-            nodata_value: None,
-            storage_type: StorageType::InDb,
-            outdb_url: None,
-            outdb_band_id: None,
-        })
-        .unwrap();
     let band3_data: Vec<u8> = [1.5f32, 2.5f32, 3.5f32, 4.5f32]
         .iter()
         .flat_map(|v| v.to_le_bytes())
         .collect();
-    builder.band_data_writer().append_value(&band3_data);
-    builder.finish_band().unwrap();
 
-    builder.finish_raster().unwrap();
-    builder.finish().unwrap()
+    build_in_db_raster(
+        metadata,
+        Some(&crs),
+        &[
+            InDbTestBand {
+                datatype: BandDataType::UInt8,
+                nodata_value: Some(vec![255u8]),
+                data: vec![1u8, 2u8, 3u8, 4u8],
+            },
+            InDbTestBand {
+                datatype: BandDataType::UInt16,
+                nodata_value: Some(vec![0u8, 0u8]),
+                data: band2_data,
+            },
+            InDbTestBand {
+                datatype: BandDataType::Float32,
+                nodata_value: None,
+                data: band3_data,
+            },
+        ],
+    )
 }
 
 /// Determine if this tile contains a corner of the overall grid and return its position

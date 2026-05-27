@@ -25,7 +25,6 @@ use async_trait::async_trait;
 use datafusion_common::Result;
 use datafusion_common::{DataFusionError, JoinType};
 use futures::StreamExt;
-use geo_types::{coord, Rect};
 use parking_lot::Mutex;
 use sedona_common::{sedona_internal_err, SpatialJoinOptions};
 use sedona_expr::statistics::GeoStatistics;
@@ -132,24 +131,13 @@ fn concat_evaluated_batches(batches: &[EvaluatedBatch]) -> Result<EvaluatedBatch
         return sedona_internal_err!("Cannot concatenate empty list of EvaluatedBatches");
     }
 
-    // 1. Concatenate the underlying Arrow RecordBatches
+    // Concatenate the underlying Arrow RecordBatches
     let schema = batches[0].schema();
     let record_batches: Vec<&RecordBatch> = batches.iter().map(|b| &b.batch).collect();
     let concatenated_batch = concat_batches(&schema, record_batches)?;
-
-    // 2. Prepare for Geometry Interleaving
-    // We need to create a list of (batch_index, row_index) for every row in order
-    let mut indices = Vec::with_capacity(concatenated_batch.num_rows());
-    for (batch_idx, batch) in batches.iter().enumerate() {
-        for row_idx in 0..batch.num_rows() {
-            indices.push((batch_idx, row_idx));
-        }
-    }
-
-    // 3. Concatenate Geometry Arrays using the interleave method
+    // Concatenate Geometry Arrays using the interleave method
     let geom_arrays: Vec<&EvaluatedGeometryArray> = batches.iter().map(|b| &b.geom_array).collect();
-
-    let concatenated_geom_array = EvaluatedGeometryArray::interleave(&geom_arrays, &indices)?;
+    let concatenated_geom_array = EvaluatedGeometryArray::concat(&geom_arrays)?;
 
     Ok(EvaluatedBatch {
         batch: concatenated_batch,
@@ -207,10 +195,7 @@ impl SpatialIndexBuilder for GPUSpatialIndexBuilder {
                 .map(|x| x.batch.num_rows())
                 .sum(),
         );
-        let empty_rect = Rect::new(
-            coord!(x: f32::NAN, y: f32::NAN),
-            coord!(x: f32::NAN, y: f32::NAN),
-        );
+        let empty_rect = [f32::NAN, f32::NAN, f32::NAN, f32::NAN];
 
         refiner
             .init_build_schema(sedona_type.storage_type())
@@ -223,11 +208,12 @@ impl SpatialIndexBuilder for GPUSpatialIndexBuilder {
         for (batch_idx, batch) in self.indexed_batches.iter().enumerate() {
             let rects = batch.geom_array.rects();
 
-            for (idx, rect_opt) in rects.iter().enumerate() {
-                if let Some(rect) = rect_opt {
-                    native_rects.push(*rect);
-                } else {
+            for (idx, rect) in rects.iter().enumerate() {
+                if rect.is_empty() {
                     native_rects.push(empty_rect);
+                } else {
+                    let (x, y) = rect.clone().into_inner();
+                    native_rects.push([x.0, y.0, x.1, y.1]);
                 }
                 data_id_to_batch_pos.push((batch_idx as i32, idx as i32));
             }

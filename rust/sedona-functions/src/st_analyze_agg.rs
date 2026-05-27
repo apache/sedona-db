@@ -14,6 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+use std::marker::PhantomData;
 use std::vec;
 
 use std::{mem::size_of_val, sync::Arc};
@@ -26,7 +27,7 @@ use arrow_schema::{DataType, Field, FieldRef};
 use datafusion_common::{
     cast::as_binary_array,
     error::{DataFusionError, Result},
-    ScalarValue,
+    exec_datafusion_err, ScalarValue,
 };
 use datafusion_expr::Volatility;
 use datafusion_expr::{Accumulator, ColumnarValue};
@@ -34,13 +35,15 @@ use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_expr::aggregate_udf::{SedonaAccumulatorRef, SedonaAggregateUDF};
 use sedona_expr::item_crs::ItemCrsSedonaAccumulator;
 use sedona_expr::{aggregate_udf::SedonaAccumulator, statistics::GeoStatistics};
-use sedona_geometry::analyze::GeometrySummary;
+use sedona_geometry::analyze::{analyze_wkb, GeometrySummary};
+use sedona_geometry::bounding_box::BoundingBox;
+use sedona_geometry::bounds::{WkbBounder2D, WkbGeometryBounder};
 use sedona_geometry::interval::IntervalTrait;
 use sedona_geometry::types::{GeometryTypeAndDimensions, GeometryTypeAndDimensionsSet};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use wkb::reader::Wkb;
 
-use crate::executor::WkbExecutor;
+use crate::executor::WkbBytesExecutor;
 
 /// ST_Analyze_Agg() aggregate UDF
 ///
@@ -55,34 +58,48 @@ pub fn st_analyze_agg_udf() -> SedonaAggregateUDF {
     )
 }
 
-/// ST_Analyze_Agg() implementation
+/// ST_Analyze_Agg() implementation for geometry types
 ///
 /// This wrapper is exposed because it is used by the spatial join implementation.
-pub fn st_analyze_agg_impl() -> SedonaAccumulatorRef {
-    Arc::new(STAnalyzeAgg {})
+pub fn st_analyze_agg_impl() -> Vec<SedonaAccumulatorRef> {
+    vec![Arc::new(STAnalyzeAgg::<WkbGeometryBounder>::new(
+        ArgMatcher::new(vec![ArgMatcher::is_geometry()], output_sedona_type()),
+    ))]
 }
 
+fn output_sedona_type() -> SedonaType {
+    let output_fields = STAnalyzeAgg::<WkbGeometryBounder>::output_fields();
+    SedonaType::Arrow(DataType::Struct(output_fields.into()))
+}
+
+/// Generic ST_Analyze_Agg accumulator that works with any WkbBounder2D implementation
 #[derive(Debug)]
-struct STAnalyzeAgg {}
+pub struct STAnalyzeAgg<T> {
+    matcher: ArgMatcher,
+    _phantom: PhantomData<T>,
+}
 
-impl SedonaAccumulator for STAnalyzeAgg {
+impl<T> STAnalyzeAgg<T> {
+    /// Create a new STAnalyzeAgg with a specific ArgMatcher
+    pub fn new(matcher: ArgMatcher) -> Self {
+        Self {
+            matcher,
+            _phantom: Default::default(),
+        }
+    }
+}
+
+impl<T: WkbBounder2D + Default + std::fmt::Debug + 'static> SedonaAccumulator for STAnalyzeAgg<T> {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        let output_fields = Self::output_fields();
-
-        let r_type = SedonaType::Arrow(DataType::Struct(output_fields.into()));
-        let matcher = ArgMatcher::new(vec![ArgMatcher::is_geometry()], r_type);
-        matcher.match_args(args)
+        self.matcher.match_args(args)
     }
 
     fn accumulator(
         &self,
         args: &[SedonaType],
-        output_type: &SedonaType,
+        _output_type: &SedonaType,
     ) -> Result<Box<dyn Accumulator>> {
-        Ok(Box::new(AnalyzeAccumulator::new(
-            args[0].clone(),
-            output_type.clone(),
-        )))
+        Ok(Box::new(AnalyzeAccumulator::<T>::new(args[0].clone())))
     }
 
     fn state_fields(&self, _args: &[SedonaType]) -> Result<Vec<FieldRef>> {
@@ -94,7 +111,7 @@ impl SedonaAccumulator for STAnalyzeAgg {
     }
 }
 
-impl STAnalyzeAgg {
+impl<T> STAnalyzeAgg<T> {
     fn create_float64_array(value: Option<f64>) -> Float64Array {
         match value {
             Some(v) => Float64Array::from(vec![v]),
@@ -117,7 +134,7 @@ impl STAnalyzeAgg {
         }
     }
 
-    fn output_fields() -> Vec<Field> {
+    pub fn output_fields() -> Vec<Field> {
         let output_fields = vec![
             Field::new("count", DataType::Int64, true),
             Field::new("minx", DataType::Float64, true),
@@ -193,7 +210,7 @@ impl STAnalyzeAgg {
         };
 
         // Define output fields
-        let fields = STAnalyzeAgg::output_fields();
+        let fields = STAnalyzeAgg::<T>::output_fields();
 
         // Create arrays with proper null handling
         let values = vec![
@@ -221,32 +238,54 @@ impl STAnalyzeAgg {
 }
 
 #[derive(Debug)]
-pub struct AnalyzeAccumulator {
+pub struct AnalyzeAccumulator<T: std::fmt::Debug> {
     input_type: SedonaType,
-    _output_type: SedonaType,
     stats: GeoStatistics,
+    bounder: T,
+    item_bounder: T,
 }
 
-impl AnalyzeAccumulator {
-    pub fn new(input_type: SedonaType, output_type: SedonaType) -> Self {
+impl<T: WkbBounder2D + Default + std::fmt::Debug> AnalyzeAccumulator<T> {
+    pub fn new(input_type: SedonaType) -> Self {
         Self {
             input_type,
-            _output_type: output_type,
             stats: GeoStatistics::empty(),
+            bounder: Default::default(),
+            item_bounder: Default::default(),
         }
     }
 
-    pub fn update_statistics(&mut self, geom: &Wkb) -> Result<()> {
-        // Get geometry analysis information
-        let summary = sedona_geometry::analyze::analyze_geometry(geom)
-            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+    pub fn update_statistics_with_bbox(&mut self, geom: &Wkb, bbox: &BoundingBox) -> Result<()> {
+        let summary = analyze_wkb(geom).map_err(|e| DataFusionError::External(Box::new(e)))?;
 
-        self.ingest_geometry_summary(&summary);
-
+        self.ingest_geometry_summary(&summary, bbox)?;
         Ok(())
     }
 
-    pub fn ingest_geometry_summary(&mut self, summary: &GeometrySummary) {
+    fn update_statistics(&mut self, wkb_bytes: &[u8]) -> Result<()> {
+        // Use the generic bounder to compute bounds (we need individual item bounds for
+        // some of the analysis)
+        self.item_bounder.clear();
+        self.item_bounder
+            .update_wkb_bytes(wkb_bytes)
+            .map_err(|e| exec_datafusion_err!("Bounding error: {e}"))?;
+        let (x, y) = self.item_bounder.finish();
+        let bbox = BoundingBox::xy(x, y);
+
+        // Parse WKB for analysis
+        let wkb = wkb::reader::read_wkb(wkb_bytes)
+            .map_err(|e| exec_datafusion_err!("WKB parse error: {e}"))?;
+        let summary = analyze_wkb(&wkb).map_err(|e| exec_datafusion_err!("Analysis error: {e}"))?;
+
+        self.ingest_geometry_summary(&summary, &bbox)?;
+        Ok(())
+    }
+
+    fn ingest_geometry_summary(
+        &mut self,
+        summary: &GeometrySummary,
+        bbox: &BoundingBox,
+    ) -> Result<()> {
         // Start with a clone of the current stats
         let mut stats = self.stats.clone();
 
@@ -254,15 +293,27 @@ impl AnalyzeAccumulator {
         stats = self.update_basic_counts(stats, summary.size_bytes);
         stats = self.update_geometry_type_counts(stats, summary);
         stats = self.update_point_count(stats, summary.point_count);
-        stats = self.update_envelope_info(stats, summary);
+        stats = self.update_envelope_info(stats, bbox);
         stats = self.update_geometry_types(stats, summary.geometry_type);
+
+        // Update the bounder with the bbox info
+        self.bounder
+            .update_bounds(*bbox.x(), *bbox.y())
+            .map_err(|e| exec_datafusion_err!("Error updating bounds: {e}"))?;
 
         // Assign the updated stats back to self.stats
         self.stats = stats;
+
+        Ok(())
     }
 
-    pub fn finish(self) -> GeoStatistics {
-        self.stats
+    pub fn finish(&self) -> GeoStatistics {
+        let (x, y) = self.bounder.finish();
+        if !x.is_empty() && !y.is_empty() {
+            self.stats.clone().with_bbox(Some(BoundingBox::xy(x, y)))
+        } else {
+            self.stats.clone()
+        }
     }
 
     // Update basic counts (total geometries and size)
@@ -300,17 +351,21 @@ impl AnalyzeAccumulator {
     }
 
     // Update envelope dimensions and bounding box
-    fn update_envelope_info(
-        &self,
-        stats: GeoStatistics,
-        analysis: &GeometrySummary,
-    ) -> GeoStatistics {
-        // The bbox is directly available on analysis, not wrapped in an Option
-        let bbox = &analysis.bbox;
-
+    fn update_envelope_info(&self, stats: GeoStatistics, bbox: &BoundingBox) -> GeoStatistics {
         // Calculate envelope width and height from the bbox
         let envelope_width = if bbox.x().is_empty() {
             0.0
+        } else if bbox.x().is_wraparound() {
+            // This analyzer only uses a bounder that produces wraparound intervals
+            // for geography types, which are bounded to -180, 180 in normal usage
+            let (left, right) = bbox.x().split();
+            left.intersection(&(-180.0, 180.0).into())
+                .unwrap_or_default()
+                .width()
+                + right
+                    .intersection(&(-180.0, 180.0).into())
+                    .unwrap_or_default()
+                    .width()
         } else {
             bbox.x().width()
         };
@@ -324,19 +379,9 @@ impl AnalyzeAccumulator {
         let total_width = stats.total_envelope_width().unwrap_or(0.0) + envelope_width;
         let total_height = stats.total_envelope_height().unwrap_or(0.0) + envelope_height;
 
-        let stats = stats
+        stats
             .with_total_envelope_width(total_width)
-            .with_total_envelope_height(total_height);
-
-        // Update bounding box
-        let existing_bbox = stats.bbox();
-        if let Some(current_bbox) = existing_bbox {
-            let mut updated_bbox = bbox.clone();
-            updated_bbox.update_box(current_bbox);
-            stats.with_bbox(Some(updated_bbox))
-        } else {
-            stats.with_bbox(Some(bbox.clone()))
-        }
+            .with_total_envelope_height(total_height)
     }
 
     // Update geometry types
@@ -359,10 +404,10 @@ impl AnalyzeAccumulator {
         stats.with_geometry_types(types)
     }
 
-    fn execute_update(&mut self, executor: WkbExecutor) -> Result<()> {
+    fn execute_update(&mut self, executor: WkbBytesExecutor) -> Result<()> {
         executor.execute_wkb_void(|maybe_item| {
             if let Some(item) = maybe_item {
-                self.update_statistics(&item)?;
+                self.update_statistics(item)?;
             }
             Ok(())
         })?;
@@ -370,20 +415,20 @@ impl AnalyzeAccumulator {
     }
 }
 
-impl Accumulator for AnalyzeAccumulator {
+impl<T: WkbBounder2D + Default + std::fmt::Debug> Accumulator for AnalyzeAccumulator<T> {
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
         if values.is_empty() {
             return sedona_internal_err!("No input arrays provided to accumulator");
         }
         let arg_types = [self.input_type.clone()];
         let arg_values = [ColumnarValue::Array(values[0].clone())];
-        let executor = WkbExecutor::new(&arg_types, &arg_values);
+        let executor = WkbBytesExecutor::new(&arg_types, &arg_values);
         self.execute_update(executor)?;
         Ok(())
     }
 
     fn evaluate(&mut self) -> Result<ScalarValue> {
-        let field_array_pairs = STAnalyzeAgg::output_arrays(self.stats.clone());
+        let field_array_pairs = STAnalyzeAgg::<T>::output_arrays(self.finish());
 
         // Create the struct array with field values
         let struct_array = StructArray::from(field_array_pairs);
@@ -422,7 +467,8 @@ impl Accumulator for AnalyzeAccumulator {
         }
 
         // Serialize the statistics to JSON
-        let scalar = self.stats.to_scalar_value()?;
+        // Use finish() to include the bbox from the bounder
+        let scalar = self.finish().to_scalar_value()?;
         Ok(vec![scalar])
     }
 
@@ -446,6 +492,13 @@ impl Accumulator for AnalyzeAccumulator {
 
             // Use the merge method to combine statistics
             self.stats.merge(&other_stats);
+
+            // Merge the boxes separately
+            if let Some(bbox) = other_stats.bbox() {
+                self.bounder
+                    .update_bounds(*bbox.x(), *bbox.y())
+                    .map_err(|e| exec_datafusion_err!("Failed to merge bounds: {e}"))?;
+            }
         }
 
         Ok(())

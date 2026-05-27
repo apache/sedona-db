@@ -428,7 +428,6 @@ mod tests {
     use arrow_array::create_array;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
-    use sedona_schema::datatypes::WKB_VIEW_GEOMETRY;
     use sedona_testing::{
         compare::assert_array_equal, create::create_array, testers::ScalarUdfTester,
     };
@@ -451,9 +450,9 @@ mod tests {
     }
 
     #[rstest]
-    fn udf_2d(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+    fn udf_2d(#[values(WKB_GEOMETRY, WKB_GEOGRAPHY)] sedona_type: SedonaType) {
         let tester = ScalarUdfTester::new(st_force2d_udf().into(), vec![sedona_type.clone()]);
-        tester.assert_return_type(WKB_GEOMETRY);
+        tester.assert_return_type(sedona_type.clone());
 
         let points = create_array(
             &[
@@ -476,7 +475,7 @@ mod tests {
                 Some("POINT (3 4)"),
                 Some("POINT (8 9)"),
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
 
         let result = tester.invoke_arrays(vec![points]).unwrap();
@@ -484,9 +483,9 @@ mod tests {
     }
 
     #[rstest]
-    fn udf_3d_without_z(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+    fn udf_3d_without_z(#[values(WKB_GEOMETRY, WKB_GEOGRAPHY)] sedona_type: SedonaType) {
         let tester = ScalarUdfTester::new(st_force3d_udf().into(), vec![sedona_type.clone()]);
-        tester.assert_return_type(WKB_GEOMETRY);
+        tester.assert_return_type(sedona_type.clone());
 
         let points = create_array(
             &[
@@ -511,7 +510,7 @@ mod tests {
                 Some("POINT Z (6 7 0)"),
                 Some("POINT Z (9 10 11)"),
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
 
         let result = tester.invoke_arrays(vec![points]).unwrap();
@@ -519,12 +518,12 @@ mod tests {
     }
 
     #[rstest]
-    fn udf_3d_with_z(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+    fn udf_3d_with_z(#[values(WKB_GEOMETRY, WKB_GEOGRAPHY)] sedona_type: SedonaType) {
         let tester = ScalarUdfTester::new(
             st_force3d_udf().into(),
             vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
         );
-        tester.assert_return_type(WKB_GEOMETRY);
+        tester.assert_return_type(sedona_type.clone());
 
         let points = create_array(
             &[
@@ -561,7 +560,7 @@ mod tests {
                 Some("POINT Z (6 7 9)"),
                 Some("POINT Z (9 10 11)"),
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
 
         let result = tester.invoke_arrays(vec![points, z]).unwrap();
@@ -569,9 +568,9 @@ mod tests {
     }
 
     #[rstest]
-    fn udf_3dm_without_m(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+    fn udf_3dm_without_m(#[values(WKB_GEOMETRY, WKB_GEOGRAPHY)] sedona_type: SedonaType) {
         let tester = ScalarUdfTester::new(st_force3dm_udf().into(), vec![sedona_type.clone()]);
-        tester.assert_return_type(WKB_GEOMETRY);
+        tester.assert_return_type(sedona_type.clone());
 
         let points = create_array(
             &[
@@ -596,7 +595,7 @@ mod tests {
                 Some("POINT M (6 7 8)"),
                 Some("POINT M (9 10 12)"),
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
 
         let result = tester.invoke_arrays(vec![points]).unwrap();
@@ -604,12 +603,12 @@ mod tests {
     }
 
     #[rstest]
-    fn udf_3dm_with_m(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+    fn udf_3dm_with_m(#[values(WKB_GEOMETRY, WKB_GEOGRAPHY)] sedona_type: SedonaType) {
         let tester = ScalarUdfTester::new(
             st_force3dm_udf().into(),
             vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
         );
-        tester.assert_return_type(WKB_GEOMETRY);
+        tester.assert_return_type(sedona_type.clone());
 
         let points = create_array(
             &[
@@ -646,7 +645,7 @@ mod tests {
                 Some("POINT M (6 7 8)"),
                 Some("POINT M (9 10 12)"),
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
 
         let result = tester.invoke_arrays(vec![points, m]).unwrap();
@@ -654,9 +653,9 @@ mod tests {
     }
 
     #[rstest]
-    fn udf_4d_without_defaults(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+    fn udf_4d_without_defaults(#[values(WKB_GEOMETRY, WKB_GEOGRAPHY)] sedona_type: SedonaType) {
         let tester = ScalarUdfTester::new(st_force4d_udf().into(), vec![sedona_type.clone()]);
-        tester.assert_return_type(WKB_GEOMETRY);
+        tester.assert_return_type(sedona_type.clone());
 
         let points = create_array(
             &[
@@ -683,7 +682,7 @@ mod tests {
                 Some("POINT ZM (6 7 0 8)"),
                 Some("POINT ZM (9 10 11 12)"),
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
 
         let result = tester.invoke_arrays(vec![points]).unwrap();
@@ -691,7 +690,7 @@ mod tests {
     }
 
     #[rstest]
-    fn udf_4d_with_defaults(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+    fn udf_4d_with_defaults(#[values(WKB_GEOMETRY, WKB_GEOGRAPHY)] sedona_type: SedonaType) {
         let tester = ScalarUdfTester::new(
             st_force4d_udf().into(),
             vec![
@@ -700,7 +699,7 @@ mod tests {
                 SedonaType::Arrow(DataType::Float64),
             ],
         );
-        tester.assert_return_type(WKB_GEOMETRY);
+        tester.assert_return_type(sedona_type.clone());
 
         let points = create_array(
             &[
@@ -749,7 +748,7 @@ mod tests {
                 Some("POINT ZM (6 7 8 8)"),
                 Some("POINT ZM (9 10 11 12)"),
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
 
         let result = tester.invoke_arrays(vec![points, z, m]).unwrap();

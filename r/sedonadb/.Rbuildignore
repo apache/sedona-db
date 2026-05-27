@@ -12,3 +12,5 @@
 ^README\.Rmd$
 ^bootstrap\.R$
 ^\.lintr\.R$
+^\.positai$
+^\.claude$

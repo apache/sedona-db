@@ -23,6 +23,7 @@ use datafusion_common::{
     ScalarValue,
 };
 use datafusion_expr::ColumnarValue;
+use sedona_geometry::{bounds::wkb_bounds_xy, interval::IntervalTrait};
 use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY};
 
 use crate::create::create_scalar;
@@ -97,6 +98,60 @@ pub fn assert_array_equal(actual: &ArrayRef, expected: &ArrayRef) {
             unreachable!()
         }
     }
+}
+
+/// Helper to assert the bounds of some [ScalarValue] are approximately equal
+///
+/// This is useful for testing Geography, where there is frequently rounding and expansion.
+/// Supports both plain WKB scalars and ITEM_CRS struct scalars.
+pub fn assert_scalar_wkb_bounds_approx_equal(
+    actual: &ScalarValue,
+    expected_xmin: f64,
+    expected_ymin: f64,
+    expected_xmax: f64,
+    expected_ymax: f64,
+    epsilon: f64,
+) {
+    let wkb_bytes = match actual {
+        ScalarValue::Binary(Some(bytes)) | ScalarValue::BinaryView(Some(bytes)) => bytes.clone(),
+        ScalarValue::Struct(struct_array) => {
+            // Handle ITEM_CRS struct: extract the "item" field
+            let item_col = struct_array
+                .column_by_name("item")
+                .expect("Expected 'item' field in struct");
+            match ScalarValue::try_from_array(item_col, 0)
+                .expect("Failed to extract scalar from struct")
+            {
+                ScalarValue::Binary(Some(bytes)) | ScalarValue::BinaryView(Some(bytes)) => bytes,
+                other => panic!("Expected binary in struct 'item' field, got {other:?}"),
+            }
+        }
+        _ => panic!("Expected binary or struct, got {actual:?}"),
+    };
+
+    let actual_bounds = wkb_bounds_xy(&wkb_bytes).expect("Failed to get bounds");
+
+    let actual_xmin = actual_bounds.x().lo();
+    let actual_ymin = actual_bounds.y().lo();
+    let actual_xmax = actual_bounds.x().hi();
+    let actual_ymax = actual_bounds.y().hi();
+
+    assert!(
+        (actual_xmin - expected_xmin).abs() < epsilon,
+        "xmin: expected {expected_xmin}, got {actual_xmin}"
+    );
+    assert!(
+        (actual_ymin - expected_ymin).abs() < epsilon,
+        "ymin: expected {expected_ymin}, got {actual_ymin}"
+    );
+    assert!(
+        (actual_xmax - expected_xmax).abs() < epsilon,
+        "xmax: expected {expected_xmax}, got {actual_xmax}"
+    );
+    assert!(
+        (actual_ymax - expected_ymax).abs() < epsilon,
+        "ymax: expected {expected_ymax}, got {actual_ymax}"
+    );
 }
 
 /// Assert a [`ScalarValue`] is a WKB_GEOMETRY scalar corresponding to the given WKT

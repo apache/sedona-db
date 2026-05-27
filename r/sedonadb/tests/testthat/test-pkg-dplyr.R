@@ -35,3 +35,112 @@ test_that("select() works for sedonadb_dataframe", {
     tibble::tibble(TWO = "two")
   )
 })
+
+test_that("sd_join() defaults match dplyr join defaults", {
+  df1 <- data.frame(key_x = 1:6, letters = letters[1:6])
+  df2 <- data.frame(key_y = 10:4, letters = LETTERS[1:7])
+
+  expect_identical(
+    sd_inner_join(df1, df2, by = c("key_x" = "key_y")) |>
+      sd_arrange(key_x) |>
+      as.data.frame(),
+    dplyr::inner_join(df1, df2, by = c("key_x" = "key_y")) |>
+      dplyr::arrange(key_x) |>
+      as.data.frame()
+  )
+
+  expect_identical(
+    sd_left_join(df1, df2, by = c("key_x" = "key_y")) |>
+      sd_arrange(key_x) |>
+      as.data.frame(),
+    dplyr::left_join(df1, df2, by = c("key_x" = "key_y")) |>
+      dplyr::arrange(key_x) |>
+      as.data.frame()
+  )
+
+  expect_identical(
+    sd_right_join(df1, df2, by = c("key_x" = "key_y")) |>
+      sd_arrange(key_x) |>
+      as.data.frame(),
+    dplyr::right_join(df1, df2, by = c("key_x" = "key_y")) |>
+      dplyr::arrange(key_x) |>
+      as.data.frame()
+  )
+
+  expect_identical(
+    sd_full_join(df1, df2, by = c("key_x" = "key_y")) |>
+      sd_arrange(key_x) |>
+      as.data.frame(),
+    dplyr::full_join(df1, df2, by = c("key_x" = "key_y")) |>
+      dplyr::arrange(key_x) |>
+      as.data.frame()
+  )
+
+  expect_identical(
+    sd_anti_join(df1, df2, by = c("key_x" = "key_y")) |>
+      sd_arrange(key_x) |>
+      as.data.frame(),
+    dplyr::anti_join(df1, df2, by = c("key_x" = "key_y")) |>
+      dplyr::arrange(key_x) |>
+      as.data.frame()
+  )
+
+  expect_identical(
+    sd_semi_join(df1, df2, by = c("key_x" = "key_y")) |>
+      sd_arrange(key_x) |>
+      as.data.frame(),
+    dplyr::semi_join(df1, df2, by = c("key_x" = "key_y")) |>
+      dplyr::arrange(key_x) |>
+      as.data.frame()
+  )
+
+  expect_identical(
+    sd_cross_join(df1, df2) |>
+      sd_arrange(key_x) |>
+      as.data.frame(),
+    dplyr::cross_join(df1, df2) |>
+      dplyr::arrange(key_x) |>
+      as.data.frame()
+  )
+})
+
+test_that("sd_join(keep = TRUE) behaviour matches dplyr join", {
+  df1 <- data.frame(key_x = 1:6, letters = letters[1:6])
+  df2 <- data.frame(key_y = 10:4, letters = LETTERS[1:7])
+
+  expect_identical(
+    sd_inner_join(df1, df2, by = c("key_x" = "key_y"), keep = TRUE) |>
+      sd_arrange(key_x) |>
+      as.data.frame(),
+    dplyr::inner_join(df1, df2, by = c("key_x" = "key_y"), keep = TRUE) |>
+      dplyr::arrange(key_x) |>
+      as.data.frame()
+  )
+
+  expect_identical(
+    sd_left_join(df1, df2, by = c("key_x" = "key_y"), keep = TRUE) |>
+      sd_arrange(key_x) |>
+      as.data.frame(),
+    dplyr::left_join(df1, df2, by = c("key_x" = "key_y"), keep = TRUE) |>
+      dplyr::arrange(key_x) |>
+      as.data.frame()
+  )
+
+  expect_identical(
+    sd_right_join(df1, df2, by = c("key_x" = "key_y"), keep = TRUE) |>
+      sd_arrange(key_x) |>
+      as.data.frame(),
+    dplyr::right_join(df1, df2, by = c("key_x" = "key_y"), keep = TRUE) |>
+      dplyr::arrange(key_x) |>
+      as.data.frame()
+  )
+
+  expect_identical(
+    sd_full_join(df1, df2, by = c("key_x" = "key_y"), keep = TRUE) |>
+      sd_arrange(key_x) |>
+      as.data.frame(),
+    dplyr::full_join(df1, df2, by = c("key_x" = "key_y"), keep = TRUE) |>
+      dplyr::arrange(key_x) |>
+      as.data.frame()
+  )
+})

@@ -19,12 +19,16 @@ import io
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Literal, Optional, Union
 
+from sedonadb.expr import Expr, SortExpr
+from sedonadb.expr import Literal as _SedonaLit
+from sedonadb.expr import col as _col
+from sedonadb.expr.expression import _to_expr
 from sedonadb.utility import sedona  # noqa: F401
 
 if TYPE_CHECKING:
     import geopandas
     import pandas
-    import pyarrow
+    import pyarrow as pa
 
 
 class DataFrame:
@@ -84,6 +88,280 @@ class DataFrame:
             └──────┘
         """
         return self.limit(n)
+
+    def __getitem__(self, key: Union[str, int]) -> Expr:
+        """Reference a single column by name or position.
+
+        Returns an `Expr` referencing the requested column. The
+        return-type is always `Expr` (no `DataFrame ⏐ Expr` union) so that
+        IDEs and type-aware tools can resolve `df["x"].<method>` cleanly.
+
+        For row filtering use `df.filter(predicate)`. For multi-column
+        projection use `df.select(*cols)`.
+
+        Args:
+            key: A column name (`str`) or a 0-based column position
+                (`int`, negative indices count from the end).
+
+        Raises:
+            KeyError: A string key that does not match any column. The
+                error message lists the available columns.
+            IndexError: An integer index outside the column range.
+            TypeError: Any other key type, including `bool`, `slice`,
+                `list`, and `Expr`. The message points at `select` or
+                `filter` for those use cases.
+
+        Examples:
+
+            >>> sd = sedona.db.connect()
+            >>> df = sd.sql("SELECT * FROM (VALUES (1, 10), (2, 20)) AS t(x, y)")
+            >>> df["x"]
+            Expr(x)
+            >>> df[1]
+            Expr(y)
+            >>> df[-1]
+            Expr(y)
+        """
+        # `bool` is a subclass of `int`, so guard explicitly — otherwise
+        # `df[True]` would silently mean `df[1]`.
+        if isinstance(key, bool) or not isinstance(key, (str, int)):
+            raise TypeError(
+                f"DataFrame indexing is not supported for "
+                f"{type(key).__name__}. Use df['name'] or df[i] for a "
+                f"column expression; use df.select(*cols) for multi-column "
+                f"projection and df.filter(expr) for row filtering."
+            )
+
+        columns = self._impl.columns()
+        if isinstance(key, str):
+            if key not in columns:
+                raise KeyError(
+                    f"Column {key!r} not found. Available columns: {columns}"
+                )
+            return _col(key)
+        # int (and not bool, by the guard above)
+        if not -len(columns) <= key < len(columns):
+            raise IndexError(
+                f"Column index {key} is out of range for DataFrame with "
+                f"{len(columns)} columns"
+            )
+        return _col(columns[key])
+
+    def select(self, *exprs: Union[Expr, str, _SedonaLit]) -> "DataFrame":
+        """Project a set of columns or expressions.
+
+        Returns a new lazy `DataFrame` whose columns are exactly the
+        projection. Column-name strings are converted to column references
+        via `sedonadb.expr.col` internally, so `df.select("x", "y")` and
+        `df.select(col("x"), col("y"))` produce the same plan. Literals
+        produced by `sedonadb.expr.lit()` are also accepted; use
+        `lit(value).alias(name)` to give the literal column a name.
+
+        Args:
+            *exprs: One or more arguments. Each argument is either a column
+                name (`str`), a `sedonadb.expr.Expr`, or a `sedonadb.expr.Literal`.
+                At least one argument is required.
+
+        Examples:
+
+            >>> from sedonadb.expr import col, lit
+            >>> sd = sedona.db.connect()
+            >>> df = sd.sql("SELECT 1 AS a, 2 AS b")
+            >>> df.select("a", (col("b") + 1).alias("b_plus_1")).show()
+            ┌───────┬──────────┐
+            │   a   ┆ b_plus_1 │
+            │ int64 ┆   int64  │
+            ╞═══════╪══════════╡
+            │     1 ┆        3 │
+            └───────┴──────────┘
+        """
+        if not exprs:
+            raise ValueError("select() requires at least one column or expression")
+
+        coerced = []
+        for e in exprs:
+            if isinstance(e, Expr):
+                coerced.append(e._impl)
+            elif isinstance(e, str):
+                coerced.append(_col(e)._impl)
+            elif isinstance(e, _SedonaLit):
+                # `lit(value)` returns Literal; route it through the same
+                # coercion path operators use so the resulting Expr lands
+                # in the plan with metadata preserved.
+                coerced.append(_to_expr(e)._impl)
+            else:
+                raise TypeError(
+                    f"select() expects str, Expr, or Literal arguments, "
+                    f"got {type(e).__name__}"
+                )
+        return DataFrame(self._ctx, self._impl.select(coerced), self._options)
+
+    def filter(self, *exprs: Expr) -> "DataFrame":
+        """Filter rows by one or more boolean expressions.
+
+        Multiple expressions are combined with logical AND, so
+        `df.filter(a, b)` is equivalent to `df.filter(a & b)` and to
+        `df.filter(a).filter(b)` (the planner sees one conjunction in
+        the first two forms and two filter nodes in the third).
+
+        Only `Expr` arguments are accepted. Strings are not interpreted
+        as SQL predicates (that is a separate feature). Bare `Literal`
+        values are also rejected — `filter(lit(True))` is almost
+        certainly a typo; if you really mean a constant predicate, wrap
+        a column expression like `col("flag") == lit(True)`.
+
+        Args:
+            *exprs: One or more boolean `sedonadb.expr.Expr` predicates.
+                At least one argument is required.
+
+        Examples:
+
+            >>> from sedonadb.expr import col
+            >>> sd = sedona.db.connect()
+            >>> df = sd.sql("SELECT * FROM (VALUES (1), (2), (3), (4)) AS t(x)")
+            >>> df.filter(col("x") > 2).show()
+            ┌───────┐
+            │   x   │
+            │ int64 │
+            ╞═══════╡
+            │     3 │
+            ├╌╌╌╌╌╌╌┤
+            │     4 │
+            └───────┘
+        """
+        if not exprs:
+            raise ValueError("filter() requires at least one predicate")
+
+        for e in exprs:
+            if isinstance(e, _SedonaLit):
+                raise TypeError(
+                    "filter() does not accept Literal arguments. "
+                    "filter(lit(value)) is almost always a typo; if you really "
+                    "want a constant predicate, wrap a column expression like "
+                    "col('flag') == lit(value)."
+                )
+            if not isinstance(e, Expr):
+                raise TypeError(
+                    f"filter() expects Expr arguments, got {type(e).__name__}"
+                )
+
+        return DataFrame(
+            self._ctx,
+            self._impl.filter([e._impl for e in exprs]),
+            self._options,
+        )
+
+    def sort(self, *keys: Union[str, Expr, SortExpr]) -> "DataFrame":
+        """Sort rows by one or more keys.
+
+        Each argument is either a column name (`str`), an `Expr`, or a
+        `SortExpr` (built via `Expr.asc()` / `Expr.desc()` or
+        `sedonadb.expr.sort_expr(...)`). Strings and bare `Expr`s
+        auto-promote to ascending sort keys with nulls placed last; for
+        descending order or null-first placement, use the explicit
+        `SortExpr` forms.
+
+        Null placement defaults to "nulls last" for both ascending and
+        descending sorts (overriding DataFusion's SQL-style nulls-first-
+        on-descending). Override via `sort_expr(expr, asc=..., nulls_first=...)`
+        for the SQL behavior.
+
+        Args:
+            *keys: One or more sort keys, in order of priority. At least
+                one is required.
+
+        Examples:
+
+            >>> from sedonadb.expr import col
+            >>> sd = sedona.db.connect()
+            >>> df = sd.sql("SELECT * FROM (VALUES (3), (1), (2)) AS t(x)")
+            >>> df.sort("x").show()
+            ┌───────┐
+            │   x   │
+            │ int64 │
+            ╞═══════╡
+            │     1 │
+            ├╌╌╌╌╌╌╌┤
+            │     2 │
+            ├╌╌╌╌╌╌╌┤
+            │     3 │
+            └───────┘
+            >>> df.sort(col("x").desc()).show()
+            ┌───────┐
+            │   x   │
+            │ int64 │
+            ╞═══════╡
+            │     3 │
+            ├╌╌╌╌╌╌╌┤
+            │     2 │
+            ├╌╌╌╌╌╌╌┤
+            │     1 │
+            └───────┘
+        """
+        if not keys:
+            raise ValueError("sort() requires at least one sort key")
+
+        coerced: List = []
+        for k in keys:
+            if isinstance(k, SortExpr):
+                coerced.append(k._impl)
+            elif isinstance(k, Expr):
+                # Default direction is ascending, nulls last.
+                coerced.append(k.asc()._impl)
+            elif isinstance(k, str):
+                coerced.append(_col(k).asc()._impl)
+            else:
+                raise TypeError(
+                    f"sort() expects str, Expr, or SortExpr arguments, "
+                    f"got {type(k).__name__}"
+                )
+
+        return DataFrame(self._ctx, self._impl.sort(coerced), self._options)
+
+    def drop(self, *cols: str) -> "DataFrame":
+        """Drop the named columns.
+
+        Returns a new lazy `DataFrame` with each named column removed.
+        Only column-name strings are accepted; expression arguments are
+        rejected because "drop a computed expression" has no meaning at
+        the schema level. Unknown column names raise a `SedonaError` at
+        plan-build time, with the list of valid field names included in
+        the message.
+
+        Args:
+            *cols: One or more column names to drop. At least one is
+                required.
+
+        Examples:
+
+            >>> sd = sedona.db.connect()
+            >>> df = sd.sql("SELECT 1 AS a, 2 AS b, 3 AS c")
+            >>> df.drop("b").show()
+            ┌───────┬───────┐
+            │   a   ┆   c   │
+            │ int64 ┆ int64 │
+            ╞═══════╪═══════╡
+            │     1 ┆     3 │
+            └───────┴───────┘
+        """
+        if not cols:
+            raise ValueError("drop() requires at least one column name")
+
+        for c in cols:
+            if not isinstance(c, str):
+                raise TypeError(f"drop() expects str arguments, got {type(c).__name__}")
+
+        # DataFusion's `drop_columns` silently ignores names not in the
+        # schema — that hides typos. Validate Python-side so the user
+        # gets an immediate KeyError listing the available columns.
+        columns = self._impl.columns()
+        unknown = [c for c in cols if c not in columns]
+        if unknown:
+            raise KeyError(
+                f"Column(s) {unknown} not found. Available columns: {columns}"
+            )
+
+        return DataFrame(self._ctx, self._impl.drop_columns(list(cols)), self._options)
 
     def limit(self, n: Optional[int], /, *, offset: int = 0) -> "DataFrame":
         """Limit result to n rows starting at offset
@@ -224,6 +502,41 @@ class DataFrame:
             requested_schema=requested_schema
         )
 
+    def to_arrow_reader(self, *, simplify: bool = False) -> "pa.RecordBatchReader":
+        """Execute and stream results as a PyArrow RecordBatchReader
+
+        Executes the logical plan represented by this object and returns a
+        PyArrow RecordBatchReader. This requires that pyarrow is installed.
+
+        Args:
+            simplify: Use `True` to simplify Arrow storage types at the export
+                boundary, for example `Utf8View` to `Utf8` and `BinaryView` to
+                `Binary`.
+
+        Examples:
+
+            >>> sd = sedona.db.connect()
+            >>> reader = sd.sql(
+            ...     "SELECT ST_Point(0, 1) as geometry"
+            ... ).to_arrow_reader()
+            >>> reader.read_all()
+            pyarrow.Table
+            geometry: extension<geoarrow.wkb<WkbType>> not null
+            ----
+            geometry: [[01010000000000000000000000000000000000F03F]]
+
+        """
+        import geoarrow.pyarrow  # noqa: F401
+        import pyarrow as pa
+
+        return pa.RecordBatchReader.from_stream(
+            self._impl.to_stream(self._ctx, simplify=simplify)
+        )
+
+    def arrow(self, *, simplify: bool = False) -> "pa.RecordBatchReader":
+        """Alias of `to_arrow_reader()`"""
+        return self.to_arrow_reader(simplify=simplify)
+
     def to_view(self, name: str, overwrite: bool = False):
         """Create a view based on the query represented by this object
 
@@ -275,7 +588,7 @@ class DataFrame:
     def __datafusion_table_provider__(self):
         return self._impl.__datafusion_table_provider__()
 
-    def to_arrow_table(self, schema: Any = None) -> "pyarrow.Table":
+    def to_arrow_table(self, schema: Any = None) -> "pa.Table":
         """Execute and collect results as a PyArrow Table
 
         Executes the logical plan represented by this object and returns a
@@ -345,7 +658,7 @@ class DataFrame:
         partition_by: Optional[Union[str, Iterable[str]]] = None,
         sort_by: Optional[Union[str, Iterable[str]]] = None,
         single_file_output: Optional[bool] = None,
-        geoparquet_version: Literal["1.0", "1.1", None] = None,
+        geoparquet_version: Literal["1.0", "1.1", "2.0", "none", None] = None,
         overwrite_bbox_columns: Optional[bool] = None,
         max_row_group_size: Optional[int] = None,
         compression: Optional[str] = None,
@@ -383,6 +696,10 @@ class DataFrame:
                 The extra columns will appear just before their geometry column and
                 will be named "[geom_col_name]_bbox" for all geometry columns except
                 "geometry", whose bounding box column name is just "bbox".
+
+                Use GeoParquet 2.0 to write compatible GeoParquet metadata with
+                Parquet-native Geometry and/or Geography data types; use "none" to omit
+                GeoParquet metadata completely.
             overwrite_bbox_columns: Use `True` to overwrite any bounding box columns
                 that already exist in the input. This is useful in a read -> modify
                 -> write scenario to ensure these columns are up-to-date. If `False`
