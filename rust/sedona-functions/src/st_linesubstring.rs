@@ -113,6 +113,12 @@ impl SedonaScalarKernel for STLineSubstring {
                 return exec_err!("end_fraction must be between 0.0 and 1.0 (got {e_f}");
             }
 
+            if e_f < s_f {
+                return exec_err!(
+                    "end_fraction must be greater than start_fraction (got {e_f} < {s_f})"
+                );
+            }
+
             invoke_scalar(
                 line,
                 s_f,
