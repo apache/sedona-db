@@ -71,27 +71,14 @@ pub mod spill;
 mod tests {
     use super::*;
     use crate::utils::arrow_utils::get_array_memory_size;
-    use arrow_array::{ArrayRef, BinaryArray, Int32Array};
+    use arrow_array::{ArrayRef, Int32Array};
     use arrow_schema::{DataType, Field, Schema};
     use sedona_schema::datatypes::WKB_GEOMETRY;
+    use sedona_testing::create::create_array;
     use std::sync::Arc;
 
-    fn point_wkb(x: f64, y: f64) -> Vec<u8> {
-        let mut out = Vec::with_capacity(21);
-        out.push(1);
-        out.extend_from_slice(&1_u32.to_le_bytes());
-        out.extend_from_slice(&x.to_le_bytes());
-        out.extend_from_slice(&y.to_le_bytes());
-        out
-    }
-
     fn geometry_array() -> ArrayRef {
-        let point1 = point_wkb(1.0, 2.0);
-        let point2 = point_wkb(3.0, 4.0);
-        Arc::new(BinaryArray::from(vec![
-            Some(point1.as_slice()),
-            Some(point2.as_slice()),
-        ]))
+        create_array(&[Some("POINT (1 2)"), Some("POINT (3 4)")], &WKB_GEOMETRY)
     }
 
     fn batch_with_geometry(geom: ArrayRef) -> Result<RecordBatch> {
