@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use arrow_array::builder::BinaryBuilder;
 use arrow_schema::DataType;
-use datafusion_common::{error::Result, exec_err, DataFusionError};
+use datafusion_common::{cast::as_float64_array, error::Result, DataFusionError};
 use datafusion_expr::ColumnarValue;
 use geo::algorithm::buffer::{Buffer, BufferStyle};
 use geo_types::Polygon;
@@ -65,29 +65,22 @@ impl SedonaScalarKernel for STBuffer {
         arg_types: &[SedonaType],
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
-        // Extract the constant scalar value before looping over the input geometries
-        let params: Option<BufferStyle<f64>>;
-        let arg1 = args[1].cast_to(&DataType::Float64, None)?;
-        if let ColumnarValue::Scalar(scalar_arg) = &arg1 {
-            if scalar_arg.is_null() {
-                params = None;
-            } else {
-                let distance = f64::try_from(scalar_arg.clone())?;
-                params = Some(BufferStyle::new(distance));
-            }
-        } else {
-            return exec_err!("Invalid distance: {:?}", args[1]);
-        }
-
         let executor = WkbExecutor::new(arg_types, args);
         let mut builder = BinaryBuilder::with_capacity(
             executor.num_iterations(),
             WKB_MIN_PROBABLE_BYTES * executor.num_iterations(),
         );
+
+        let distance_value = args[1]
+            .cast_to(&DataType::Float64, None)?
+            .to_array(executor.num_iterations())?;
+        let distance_array = as_float64_array(&distance_value)?;
+        let mut distance_iter = distance_array.iter();
+
         executor.execute_wkb_void(|maybe_wkb| {
-            match (maybe_wkb, params.clone()) {
-                (Some(wkb), Some(params)) => {
-                    invoke_scalar(&wkb, params, &mut builder)?;
+            match (maybe_wkb, distance_iter.next().unwrap()) {
+                (Some(wkb), Some(distance)) => {
+                    invoke_scalar(&wkb, BufferStyle::new(distance), &mut builder)?;
                     builder.append_value([]);
                 }
                 _ => builder.append_null(),
@@ -140,7 +133,7 @@ fn invoke_scalar(
 
 #[cfg(test)]
 mod tests {
-    use arrow_array::ArrayRef;
+    use arrow_array::{ArrayRef, Float64Array};
     use datafusion_common::ScalarValue;
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
@@ -182,6 +175,39 @@ mod tests {
         );
         let buffer_result = tester
             .invoke_wkb_array_scalar(input_wkt, input_dist)
+            .unwrap();
+        let envelope_result = envelope_tester.invoke_array(buffer_result).unwrap();
+        assert_array_equal(&envelope_result, &expected_envelope);
+    }
+
+    #[rstest]
+    fn test_array_distance(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+        let udf = SedonaScalarUDF::from_impl("st_buffer", st_buffer_impl());
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
+        );
+
+        // Check the envelope of the buffers
+        let envelope_udf = sedona_functions::st_envelope::st_envelope_udf();
+        let envelope_tester = ScalarUdfTester::new(envelope_udf.into(), vec![WKB_GEOMETRY]);
+
+        let input_wkt = vec![
+            Some("POINT (0 0)"),
+            Some("POINT (10 10)"),
+            Some("POINT (0 0)"),
+        ];
+        let input_dist: ArrayRef = Arc::new(Float64Array::from(vec![Some(1.0), Some(2.0), None]));
+        let expected_envelope: ArrayRef = create_array(
+            &[
+                Some("POLYGON((-1 -1, -1 1, 1 1, 1 -1, -1 -1))"),
+                Some("POLYGON((8 8, 8 12, 12 12, 12 8, 8 8))"),
+                None,
+            ],
+            &WKB_GEOMETRY,
+        );
+        let buffer_result = tester
+            .invoke_array_array(create_array(&input_wkt, &sedona_type), input_dist)
             .unwrap();
         let envelope_result = envelope_tester.invoke_array(buffer_result).unwrap();
         assert_array_equal(&envelope_result, &expected_envelope);
