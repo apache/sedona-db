@@ -5630,6 +5630,7 @@ name = "sedona"
 version = "0.4.0"
 dependencies = [
  "arrow-array",
+ "arrow-buffer",
  "arrow-schema",
  "async-trait",
  "aws-config",
@@ -5659,6 +5660,7 @@ dependencies = [
  "sedona-pointcloud",
  "sedona-proj",
  "sedona-query-planner",
+ "sedona-raster",
  "sedona-raster-functions",
  "sedona-raster-gdal",
  "sedona-s2geography",

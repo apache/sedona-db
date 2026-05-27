@@ -89,6 +89,18 @@ pub struct OutDbLoaderRegistry {
     loaders: HashMap<String, Arc<dyn AsyncByteLoader>>,
 }
 
+impl std::fmt::Debug for OutDbLoaderRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Show registered format keys but hide the opaque loader impls
+        // (which don't carry a meaningful Debug surface).
+        let mut keys: Vec<&str> = self.loaders.keys().map(String::as_str).collect();
+        keys.sort();
+        f.debug_struct("OutDbLoaderRegistry")
+            .field("formats", &keys)
+            .finish()
+    }
+}
+
 impl OutDbLoaderRegistry {
     /// Construct an empty registry. Compiled-in backends (`sedona-raster-gdal`
     /// under the `gdal` feature) register themselves from `SedonaContext::new`;
