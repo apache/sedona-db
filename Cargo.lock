@@ -5640,6 +5640,7 @@ dependencies = [
  "datafusion-common",
  "datafusion-expr",
  "datafusion-ffi",
+ "datafusion-optimizer",
  "dirs",
  "futures",
  "geo-traits",

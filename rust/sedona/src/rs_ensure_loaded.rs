@@ -60,10 +60,20 @@ pub struct RsEnsureLoaded {
 impl RsEnsureLoaded {
     pub fn new(registry: Arc<RwLock<OutDbLoaderRegistry>>) -> Self {
         Self {
-            // user_defined signature so DataFusion delegates argument
-            // type resolution to `return_field_from_args`; we just want
-            // "takes one Raster, returns one Raster"
-            signature: Signature::user_defined(Volatility::Volatile),
+            // `any(1, ...)` accepts whatever single-arg type the caller
+            // passes; we validate "argument is a Raster Struct" in
+            // `return_type` and at runtime. Using `Signature::any` (vs.
+            // `Signature::user_defined`) sidesteps DataFusion's
+            // `coerce_types` call path, which `AsyncScalarUDF` doesn't
+            // delegate to the inner impl.
+            //
+            // `Stable` (not `Volatile`) so DataFusion's CSE pass can
+            // deduplicate identical RS_EnsureLoaded(col) calls injected
+            // by the analyzer rule. Semantic: within a single query the
+            // byte materialisation is deterministic for fixed inputs;
+            // across queries the underlying storage may change, so the
+            // result isn't `Immutable`.
+            signature: Signature::any(1, Volatility::Stable),
             registry,
         }
     }

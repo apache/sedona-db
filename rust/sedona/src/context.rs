@@ -19,6 +19,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
+use crate::ensure_loaded_analyzer::EnsureLoadedAnalyzerRule;
 use crate::exec::create_plan_from_sql;
 use crate::object_storage::ensure_object_store_registered_with_options;
 use crate::rs_ensure_loaded::RsEnsureLoaded;
@@ -243,13 +244,26 @@ impl SedonaContext {
         // this constructor or via `SedonaContext::register_outdb_loader`
         // after construction; the UDF instance below closes over the same
         // Arc, so registrations are immediately visible at query time.
-        {
+        let ensure_loaded_udf = {
             use datafusion_expr::async_udf::AsyncScalarUDF;
             let udf = AsyncScalarUDF::new(Arc::new(RsEnsureLoaded::new(Arc::clone(
                 &out.outdb_registry,
             ))));
-            out.ctx.register_udf(udf.into_scalar_udf());
-        }
+            let udf = Arc::new(udf.into_scalar_udf());
+            out.ctx.register_udf((*udf).clone());
+            udf
+        };
+
+        // Register the analyzer rule that wraps raster args of
+        // `needs_bytes` UDFs with `RS_EnsureLoaded`. The rule holds an
+        // Arc clone of the same UDF so the wraps it injects route
+        // through the same async dispatcher (and thus the same
+        // per-session registry) as any explicit `RS_EnsureLoaded(...)`
+        // already written by the user.
+        out.ctx
+            .state_ref()
+            .write()
+            .add_analyzer_rule(Arc::new(EnsureLoadedAnalyzerRule::new(ensure_loaded_udf)));
 
         // Register table functions
         out.ctx.register_udtf(

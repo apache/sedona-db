@@ -17,6 +17,7 @@
 mod catalog;
 pub mod context;
 pub mod context_builder;
+pub mod ensure_loaded_analyzer;
 mod exec;
 pub mod memory_pool;
 mod object_storage;
