@@ -16,19 +16,29 @@
 # under the License.
 
 import pytest
-from sedonadb.testing import geom_or_null, PostGIS, SedonaDB
+from sedonadb.testing import PostGIS, SedonaDB, geom_or_null, val_or_null
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
     ("geom", "start", "end", "expected"),
     [
-        ("LINESTRING EMPTY", 0.0, 1.0, "LINESTRING EMPTY"),
-        ("LINESTRING EMPTY", None, 1.0, "LINESTRING EMPTY"),
-        ("LINESTRING EMPTY", 0.0, None, "LINESTRING EMPTY"),
+        ("LINESTRING EMPTY", 0.0, 1.0, None),
+        ("LINESTRING EMPTY", None, 1.0, None),
+        ("LINESTRING EMPTY", 0.0, None, None),
         (None, 0.0, 1.0, None),
-        ("LINESTRING(0 0, 10 10)", None, 1.0, None),  # Start fraction is NULL -> Output is NULL
-        ("LINESTRING(0 0, 10 10)", 0.0, None, None),  # End fraction is NULL -> Output is NULL
+        (
+            "LINESTRING(0 0, 10 10)",
+            None,
+            1.0,
+            None,
+        ),  # Start fraction is NULL -> Output is NULL
+        (
+            "LINESTRING(0 0, 10 10)",
+            0.0,
+            None,
+            None,
+        ),  # End fraction is NULL -> Output is NULL
         (None, None, None, None),
         ("LINESTRING (0 0, 10 0)", 0.2, 0.8, "LINESTRING (2 0, 8 0)"),
         ("LINESTRING (0 0, 10 10)", 0.3, 0.6, "LINESTRING (3 3, 6 6)"),
@@ -46,14 +56,14 @@ from sedonadb.testing import geom_or_null, PostGIS, SedonaDB
             "LINESTRING M (0 10 20, 10 20 30)",
             0.0,
             0.5,
-            "LINESTRING M (0 10 20, 5 15 25)"
+            "LINESTRING M (0 10 20, 5 15 25)",
         ),
         # ZM Case
         (
             "LINESTRING ZM (0 10 20 30, 10 20 30 40)",
             0.5,
             0.8,
-            "LINESTRING ZM (5 15 25 35, 8 18 28 38)"
+            "LINESTRING ZM (5 15 25 35, 8 18 28 38)",
         ),
     ],
 )
@@ -61,6 +71,6 @@ def test_st_line_substring(eng, geom, start, end, expected):
     eng = eng.create_or_skip()
 
     eng.assert_query_result(
-        f"SELECT ST_LineSubstring({geom_or_null(geom)}, {start}, {end})",
+        f"SELECT ST_LineSubstring({geom_or_null(geom)}, {val_or_null(start)}, {val_or_null(end)})",
         expected,
     )

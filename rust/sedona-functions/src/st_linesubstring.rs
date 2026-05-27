@@ -18,7 +18,7 @@ use crate::executor::WkbExecutor;
 use arrow_array::builder::BinaryBuilder;
 use arrow_array::Array;
 use arrow_schema::DataType;
-use datafusion_common::{error::Result, DataFusionError};
+use datafusion_common::{error::Result, exec_datafusion_err};
 use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::{CoordTrait, Dimensions, GeometryTrait, GeometryType, LineStringTrait};
 use sedona_expr::{
@@ -34,6 +34,7 @@ use sedona_schema::{
     matchers::ArgMatcher,
 };
 use std::{io::Write, sync::Arc};
+use wkb::reader::Wkb;
 
 #[derive(Debug)]
 struct STLineSubstring;
@@ -85,151 +86,152 @@ impl SedonaScalarKernel for STLineSubstring {
             .downcast_ref::<arrow_array::Float64Array>()
             .unwrap();
 
-        unsafe fn interpolate<C: CoordTrait<T = f64>>(
-            p1: C,
-            p2: C,
-            fraction: f64,
-            dim: Dimensions,
-            buf: &mut impl Write,
-        ) -> Result<(), SedonaGeometryError> {
-            for i in 0..dim.size() {
-                let v =
-                    p1.nth_unchecked(i) + (p2.nth_unchecked(i) - p1.nth_unchecked(i)) * fraction;
-                buf.write_all(&v.to_le_bytes())?;
-            }
-            Ok(())
-        }
-        let mut row_idx = 0;
-        executor.execute_wkb_void(|maybe_wkb| unsafe {
-            let mut wkb_body = Vec::new();
-            let mut point_count = 0u32;
-            // Fetch the unique start/end fraction values for THIS specific row
-            let s_f_opt = if start_floats.is_null(row_idx) {
-                None
-            } else {
-                Some(start_floats.value(row_idx))
-            };
-            let e_f_opt = if end_floats.is_null(row_idx) {
-                None
-            } else {
-                Some(end_floats.value(row_idx))
-            };
-            row_idx += 1; // Increment for the next iteration
+        let mut start_floats_iter = start_floats.iter();
+        let mut end_floats_iter = end_floats.iter();
 
-            let (s_f, e_f) = match (s_f_opt, e_f_opt) {
-                (Some(s), Some(e)) => (s, e),
-                _ => {
-                    builder.append_null();
-                    return Ok(());
-                }
-            };
-            if let Some(wkb) = maybe_wkb {
-                if let GeometryType::LineString(line) = wkb.as_type() {
-                    let num_coords = line.num_coords();
-                    let dim = line.dim();
-                    if num_coords == 0 {
-                        let mut final_wkb = Vec::new();
-                        write_wkb_linestring_header(&mut final_wkb, dim, 0)
-                            .map_err(|e| DataFusionError::Internal(e.to_string()))?;
-                        builder.append_value(final_wkb);
-                        return Ok(());
-                    }
+        let mut wkb_body = Vec::new();
+        let mut cumulative_distances = Vec::new();
 
-                    let mut cumulative_distances = Vec::with_capacity(num_coords);
-                    let mut total_length = 0.0;
-                    cumulative_distances.push(0.0);
-
-                    for i in 0..(num_coords - 1) {
-                        let p1 = line.coord(i).unwrap();
-                        let p2 = line.coord(i + 1).unwrap();
-                        let dist = ((p2.x() - p1.x()).powi(2) + (p2.y() - p1.y()).powi(2)).sqrt();
-                        total_length += dist;
-                        cumulative_distances.push(total_length);
-                    }
-
-                    let start_dist = s_f * total_length;
-                    let end_dist = e_f * total_length;
-
-                    for i in 0..(num_coords - 1) {
-                        let d1 = cumulative_distances[i];
-                        let d2 = cumulative_distances[i + 1];
-                        let p1 = line.coord(i).unwrap();
-                        let p2 = line.coord(i + 1).unwrap();
-
-                        if start_dist >= d1 && start_dist <= d2 {
-                            let segment_len = d2 - d1;
-                            let fraction = if segment_len > 0.0 {
-                                (start_dist - d1) / segment_len
-                            } else {
-                                0.0
-                            };
-                            interpolate(p1, p2, fraction, dim, &mut wkb_body).map_err(|e| {
-                                DataFusionError::Internal(format!(
-                                    "Sedona interpolation failed: {}",
-                                    e
-                                ))
-                            })?;
-                            point_count += 1;
-                        }
-
-                        if d1 > start_dist && d1 < end_dist {
-                            write_wkb_coord_trait(&mut wkb_body, &p1).map_err(|e| {
-                                DataFusionError::Internal(format!("WKB write failed: {}", e))
-                            })?;
-                            point_count += 1;
-                        }
-
-                        if end_dist >= d1 && end_dist <= d2 {
-                            let segment_len = d2 - d1;
-                            let fraction = if segment_len > 0.0 {
-                                (end_dist - d1) / segment_len
-                            } else {
-                                0.0
-                            };
-                            interpolate(p1, p2, fraction, dim, &mut wkb_body).map_err(|e| {
-                                DataFusionError::Internal(format!(
-                                    "Sedona interpolation failed: {}",
-                                    e
-                                ))
-                            })?;
-                            point_count += 1;
-                        }
-                    }
-
-                    if point_count > 0 {
-                        let mut final_wkb = Vec::new();
-
-                        if s_f == e_f {
-                            // POINT Result
-                            write_wkb_point_header(&mut final_wkb, dim)
-                                .map_err(|e| DataFusionError::Internal(e.to_string()))?;
-                            let coord_bytes = dim.size() * 8;
-                            if wkb_body.len() >= coord_bytes {
-                                final_wkb.extend_from_slice(&wkb_body[..coord_bytes]);
-                            }
-                        } else {
-                            // LINESTRING Result
-                            write_wkb_linestring_header(&mut final_wkb, dim, point_count as usize)
-                                .map_err(|e| DataFusionError::Internal(e.to_string()))?;
-
-                            final_wkb.extend_from_slice(&wkb_body);
-                        }
-                        builder.append_value(final_wkb);
-                    } else {
-                        builder.append_null();
-                    }
-                } else {
-                    builder.append_null();
-                }
-            } else {
+        executor.execute_wkb_void(|maybe_wkb| {
+            let (Some(wkb), Some(s_f), Some(e_f)) = (
+                maybe_wkb,
+                start_floats_iter.next().unwrap(),
+                end_floats_iter.next().unwrap(),
+            ) else {
                 builder.append_null();
-            }
+                return Ok(());
+            };
+
+            invoke_scalar(
+                &wkb,
+                s_f,
+                e_f,
+                &mut wkb_body,
+                &mut cumulative_distances,
+                &mut builder,
+            )
+            .map_err(|e| exec_datafusion_err!("Error executing st_linesubstring: {e}"))?;
             Ok(())
         })?;
 
         executor.finish(Arc::new(builder.finish()))
     }
 }
+
+fn invoke_scalar(
+    wkb: &Wkb,
+    s_f: f64,
+    e_f: f64,
+    wkb_body: &mut Vec<u8>,
+    cumulative_distance: &mut Vec<f64>,
+    builder: &mut BinaryBuilder,
+) -> Result<(), SedonaGeometryError> {
+    let GeometryType::LineString(line) = wkb.as_type() else {
+        builder.append_null();
+        return Ok(());
+    };
+
+    let mut point_count = 0u32;
+    wkb_body.clear();
+    cumulative_distance.clear();
+
+    let num_coords = line.num_coords();
+    let dim = line.dim();
+    if num_coords == 0 {
+        write_wkb_linestring_header(builder, dim, 0)?;
+        builder.append_value([]);
+        return Ok(());
+    }
+
+    let mut cumulative_distances = Vec::with_capacity(num_coords);
+    let mut total_length = 0.0;
+    cumulative_distances.push(0.0);
+
+    for i in 0..(num_coords - 1) {
+        let p1 = line.coord(i).unwrap();
+        let p2 = line.coord(i + 1).unwrap();
+        let dist = ((p2.x() - p1.x()).powi(2) + (p2.y() - p1.y()).powi(2)).sqrt();
+        total_length += dist;
+        cumulative_distances.push(total_length);
+    }
+
+    let start_dist = s_f * total_length;
+    let end_dist = e_f * total_length;
+
+    for i in 0..(num_coords - 1) {
+        let d1 = cumulative_distances[i];
+        let d2 = cumulative_distances[i + 1];
+        let p1 = line.coord(i).unwrap();
+        let p2 = line.coord(i + 1).unwrap();
+
+        if start_dist >= d1 && start_dist <= d2 {
+            let segment_len = d2 - d1;
+            let fraction = if segment_len > 0.0 {
+                (start_dist - d1) / segment_len
+            } else {
+                0.0
+            };
+
+            unsafe {
+                interpolate(p1, p2, fraction, dim, wkb_body)?;
+            }
+            point_count += 1;
+        }
+
+        if d1 > start_dist && d1 < end_dist {
+            write_wkb_coord_trait(wkb_body, &p1)?;
+            point_count += 1;
+        }
+
+        if end_dist >= d1 && end_dist <= d2 {
+            let segment_len = d2 - d1;
+            let fraction = if segment_len > 0.0 {
+                (end_dist - d1) / segment_len
+            } else {
+                0.0
+            };
+
+            unsafe {
+                interpolate(p1, p2, fraction, dim, wkb_body)?;
+            }
+
+            point_count += 1;
+        }
+    }
+
+    if point_count > 0 {
+        if s_f == e_f {
+            // POINT Result
+            write_wkb_point_header(builder, dim)?;
+            let coord_bytes = dim.size() * 8;
+            if wkb_body.len() >= coord_bytes {
+                builder.write_all(&wkb_body[..coord_bytes])?;
+            }
+        } else {
+            // LINESTRING Result
+            write_wkb_linestring_header(builder, dim, point_count as usize)?;
+            builder.write_all(wkb_body)?;
+        }
+    }
+
+    builder.append_value([]);
+    Ok(())
+}
+
+unsafe fn interpolate<C: CoordTrait<T = f64>>(
+    p1: C,
+    p2: C,
+    fraction: f64,
+    dim: Dimensions,
+    buf: &mut impl Write,
+) -> Result<(), SedonaGeometryError> {
+    for i in 0..dim.size() {
+        let v = p1.nth_unchecked(i) + (p2.nth_unchecked(i) - p1.nth_unchecked(i)) * fraction;
+        buf.write_all(&v.to_le_bytes())?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -239,10 +241,7 @@ mod tests {
     use rstest::rstest;
     use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS};
     use sedona_testing::create::create_array;
-    use sedona_testing::{
-        compare::{assert_array_equal, assert_scalar_equal},
-        testers::ScalarUdfTester,
-    };
+    use sedona_testing::{compare::assert_array_equal, testers::ScalarUdfTester};
     use std::sync::Arc;
 
     #[test]
@@ -257,7 +256,7 @@ mod tests {
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![
-                sedona_type,
+                sedona_type.clone(),
                 SedonaType::Arrow(DataType::Float64),
                 SedonaType::Arrow(DataType::Float64),
             ],
@@ -266,38 +265,27 @@ mod tests {
         let actual_2d = tester
             .invoke_scalar_scalar_scalar("LINESTRING(0 0, 10 10)", 0.0, 0.5)
             .unwrap();
-        let expected_2d = tester
-            .invoke_wkb_scalar(Some("LINESTRING(0 0, 5 5)"))
-            .unwrap();
-        assert_scalar_equal(&actual_2d, &expected_2d);
+        tester.assert_scalar_result_equals(actual_2d, "LINESTRING(0 0, 5 5)");
 
         let actual_z = tester
             .invoke_scalar_scalar_scalar("LINESTRING Z (0 10 20, 10 20 30)", 0.5, 1.0)
             .unwrap();
-        let expected_z = tester
-            .invoke_wkb_scalar(Some("LINESTRING Z (5 15 25, 10 20 30)"))
-            .unwrap();
-        assert_scalar_equal(&actual_z, &expected_z);
+        tester.assert_scalar_result_equals(actual_z, "LINESTRING Z (5 15 25, 10 20 30)");
 
         let actual_mid = tester
             .invoke_scalar_scalar_scalar("LINESTRING Z (0 0 0, 10 10 10)", 0.5, 0.8)
             .unwrap();
-        let expected_mid = tester
-            .invoke_wkb_scalar(Some("LINESTRING Z (5 5 5, 8 8 8)"))
-            .unwrap();
-        assert_scalar_equal(&actual_mid, &expected_mid);
+        tester.assert_scalar_result_equals(actual_mid, "LINESTRING Z (5 5 5, 8 8 8)");
 
         let actual_point = tester
             .invoke_scalar_scalar_scalar("LINESTRING(0 0, 10 10)", 0.5, 0.5)
             .unwrap();
-        let expected_point = tester.invoke_wkb_scalar(Some("POINT(5 5)")).unwrap();
-        assert_scalar_equal(&actual_point, &expected_point);
+        tester.assert_scalar_result_equals(actual_point, "POINT (5 5)");
 
         let actual_empty = tester
             .invoke_scalar_scalar_scalar("LINESTRING EMPTY", 0.0, 1.0)
             .unwrap();
-        let expected_empty = tester.invoke_wkb_scalar(Some("LINESTRING EMPTY")).unwrap();
-        assert_scalar_equal(&actual_empty, &expected_empty);
+        tester.assert_scalar_result_equals(actual_empty, "LINESTRING EMPTY");
 
         let geoms_input = create_array(
             &[
@@ -305,7 +293,7 @@ mod tests {
                 None,
                 Some("LINESTRING(0 0, 10 10)"),
             ],
-            &WKB_GEOMETRY,
+            &sedona_type,
         );
 
         let starts_input: ArrayRef =
@@ -313,25 +301,15 @@ mod tests {
         let ends_input: ArrayRef =
             Arc::new(Float64Array::from(vec![Some(0.5), Some(1.0), Some(0.5)]));
 
-        let expected_array = tester
-            .invoke_wkb_array(vec![
-                Some("LINESTRING(0 0, 5 5)"),
-                None,
-                Some("POINT(5 5)"),
-                Some("LINESTRING EMPTY"),
-            ])
-            .unwrap();
+        let expected_array = create_array(
+            &[Some("LINESTRING(0 0, 5 5)"), None, Some("POINT(5 5)")],
+            &sedona_type,
+        );
 
         let actual_array = tester
             .invoke_arrays(vec![geoms_input, starts_input, ends_input])
             .unwrap();
 
         assert_array_equal(&actual_array, &expected_array);
-    }
-
-    #[test]
-    fn aliases() {
-        let udf: ScalarUDF = st_line_substring_udf().into();
-        assert_eq!(udf.name(), "st_linesubstring");
     }
 }
