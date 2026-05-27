@@ -28,7 +28,7 @@ use crate::{
     error::PySedonaError,
     import_from::{import_ffi_scalar_udf, import_table_provider_from_any},
     runtime::wait_for_future,
-    udf::PySedonaScalarUdf,
+    udf::{PyAggregateUdf, PyScalarUdf, PySedonaScalarUdf},
 };
 
 #[pyclass]
@@ -158,16 +158,74 @@ impl InternalContext {
         Ok(())
     }
 
-    pub fn scalar_udf(&self, name: &str) -> Result<PySedonaScalarUdf, PySedonaError> {
+    pub fn scalar_udf<'py>(
+        &self,
+        py: Python<'py>,
+        name: &str,
+    ) -> Result<Bound<'py, PyAny>, PySedonaError> {
         if let Some(sedona_scalar_udf) = self.inner.functions.scalar_udf(name) {
-            Ok(PySedonaScalarUdf {
-                inner: sedona_scalar_udf.clone(),
-            })
+            Ok(Bound::new(
+                py,
+                PySedonaScalarUdf {
+                    inner: sedona_scalar_udf.clone(),
+                },
+            )?
+            .into_any())
+        } else if let Some(scalar_udf) = self.inner.ctx.state().scalar_functions().get(name) {
+            Ok(Bound::new(
+                py,
+                PyScalarUdf {
+                    inner: scalar_udf.clone(),
+                },
+            )?
+            .into_any())
         } else {
             Err(PySedonaError::SedonaPython(format!(
-                "Sedona scalar UDF with name {name} was not found"
+                "Scalar UDF with name {name} was not found"
             )))
         }
+    }
+
+    pub fn aggregate_udf<'py>(
+        &self,
+        py: Python<'py>,
+        name: &str,
+    ) -> Result<Bound<'py, PyAny>, PySedonaError> {
+        if let Some(aggregate_udf) = self.inner.ctx.state().aggregate_functions().get(name) {
+            Ok(Bound::new(
+                py,
+                PyAggregateUdf {
+                    inner: aggregate_udf.clone(),
+                },
+            )?
+            .into_any())
+        } else {
+            Err(PySedonaError::SedonaPython(format!(
+                "Aggregate UDF with name {name} was not found"
+            )))
+        }
+    }
+
+    pub fn list_scalar_udfs(&self) -> Result<Vec<String>, PySedonaError> {
+        Ok(self
+            .inner
+            .ctx
+            .state()
+            .scalar_functions()
+            .keys()
+            .cloned()
+            .collect())
+    }
+
+    pub fn list_aggregate_udfs(&self) -> Result<Vec<String>, PySedonaError> {
+        Ok(self
+            .inner
+            .ctx
+            .state()
+            .aggregate_functions()
+            .keys()
+            .cloned()
+            .collect())
     }
 
     pub fn register_udf(&mut self, udf: Bound<PyAny>) -> Result<(), PySedonaError> {

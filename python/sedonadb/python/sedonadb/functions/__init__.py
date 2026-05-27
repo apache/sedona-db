@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from sedonadb.functions.table import TableFunctions
+    from sedonadb.functions.scalar_aggregate import ScalarFunctions, AggregateFunctions
 
 
 class Functions:
@@ -38,3 +39,17 @@ class Functions:
         from sedonadb.functions.table import TableFunctions
 
         return TableFunctions(self._ctx)
+
+    @cached_property
+    def scalar(self) -> "ScalarFunctions":
+        """Access SedonaDB Scalar functions"""
+        from sedonadb.functions.scalar_aggregate import ScalarFunctions
+
+        return ScalarFunctions(self._ctx)
+
+    @cached_property
+    def aggregate(self) -> "AggregateFunctions":
+        """Access SedonaDB Aggregate functions"""
+        from sedonadb.functions.scalar_aggregate import AggregateFunctions
+
+        return AggregateFunctions(self._ctx)

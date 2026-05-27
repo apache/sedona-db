@@ -24,7 +24,7 @@ use arrow_array::{
 use arrow_schema::Field;
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::{Result, ScalarValue};
-use datafusion_expr::{ColumnarValue, ScalarUDF, Volatility};
+use datafusion_expr::{AggregateUDF, ColumnarValue, ScalarUDF, Volatility};
 use datafusion_ffi::udf::FFI_ScalarUDF;
 use pyo3::{
     pyclass, pyfunction, pymethods,
@@ -36,9 +36,93 @@ use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 use crate::{
     error::PySedonaError,
+    expr::PyExpr,
     import_from::{check_pycapsule, import_arg_matcher, import_arrow_array, import_sedona_type},
     schema::PySedonaType,
 };
+
+/// General [ScalarUDF] wrapper
+///
+/// This wrapper wraps a de-Sedona-fied scalar function. Sedona scalar functions
+/// implement overloading such that registration adds to existing overloads instead
+/// of replacing a function with a given name. This struct is primarily used to
+/// generate an Expr scalar function call.
+#[pyclass]
+#[derive(Clone)]
+pub struct PyScalarUdf {
+    pub inner: Arc<ScalarUDF>,
+}
+
+#[pymethods]
+impl PyScalarUdf {
+    fn call(&self, args: Vec<PyExpr>) -> Result<PyExpr, PySedonaError> {
+        let expr_args = args.iter().map(|arg| arg.inner.clone()).collect();
+        let result = self.inner.call(expr_args);
+        Ok(PyExpr::new(result))
+    }
+
+    fn __datafusion_scalar_udf__<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> Result<Bound<'py, PyCapsule>, PySedonaError> {
+        let capsule_name = CString::new("datafusion_scalar_udf").unwrap();
+        let ffi_scalar_udf = FFI_ScalarUDF::from(self.inner.clone());
+        Ok(PyCapsule::new(py, ffi_scalar_udf, Some(capsule_name))?)
+    }
+}
+
+/// General [AggregateUDF] wrapper
+///
+/// This wrapper wraps a de-Sedona-fied aggregate function. Sedona aggregate functions
+/// implement overloading such that registration adds to existing overloads instead
+/// of replacing a function with a given name. This struct is primarily used to
+/// generate an Expr aggregate function call.
+#[pyclass]
+#[derive(Clone)]
+pub struct PyAggregateUdf {
+    pub inner: Arc<AggregateUDF>,
+}
+
+#[pymethods]
+impl PyAggregateUdf {
+    fn call(&self, args: Vec<PyExpr>) -> Result<PyExpr, PySedonaError> {
+        let expr_args = args.iter().map(|arg| arg.inner.clone()).collect();
+        let result = self.inner.call(expr_args);
+        Ok(PyExpr::new(result))
+    }
+}
+
+/// SedonaScalarUdf wrapper
+///
+/// This wrapper wraps something that is very specifically a *SedonaScalarUDF*. These
+/// UDFs implement overloading such that multiple implementations of a single function
+/// can be combined instead of replaced. This struct is primarily used to represent
+/// a Python-implemented user-defined function before registration.
+#[pyclass]
+#[derive(Clone)]
+pub struct PySedonaScalarUdf {
+    pub inner: SedonaScalarUDF,
+}
+
+#[pymethods]
+impl PySedonaScalarUdf {
+    fn call(&self, args: Vec<PyExpr>) -> Result<PyExpr, PySedonaError> {
+        let expr_args = args.iter().map(|arg| arg.inner.clone()).collect();
+        let scalar_udf: ScalarUDF = self.inner.clone().into();
+        let result = scalar_udf.call(expr_args);
+        Ok(PyExpr::new(result))
+    }
+
+    fn __datafusion_scalar_udf__<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> Result<Bound<'py, PyCapsule>, PySedonaError> {
+        let capsule_name = CString::new("datafusion_scalar_udf").unwrap();
+        let scalar_udf: ScalarUDF = self.inner.clone().into();
+        let ffi_scalar_udf = FFI_ScalarUDF::from(Arc::new(scalar_udf));
+        Ok(PyCapsule::new(py, ffi_scalar_udf, Some(capsule_name))?)
+    }
+}
 
 #[pyfunction]
 pub fn sedona_scalar_udf<'py>(
@@ -221,25 +305,6 @@ impl SedonaScalarKernel for PySedonaScalarKernel {
         Ok(ColumnarValue::Scalar(ScalarValue::try_from_array(
             &result, 0,
         )?))
-    }
-}
-
-#[pyclass]
-#[derive(Clone)]
-pub struct PySedonaScalarUdf {
-    pub inner: SedonaScalarUDF,
-}
-
-#[pymethods]
-impl PySedonaScalarUdf {
-    fn __datafusion_scalar_udf__<'py>(
-        &self,
-        py: Python<'py>,
-    ) -> Result<Bound<'py, PyCapsule>, PySedonaError> {
-        let capsule_name = CString::new("datafusion_scalar_udf").unwrap();
-        let scalar_udf: ScalarUDF = self.inner.clone().into();
-        let ffi_scalar_udf = FFI_ScalarUDF::from(Arc::new(scalar_udf));
-        Ok(PyCapsule::new(py, ffi_scalar_udf, Some(capsule_name))?)
     }
 }
 
