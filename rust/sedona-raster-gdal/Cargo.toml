@@ -33,16 +33,19 @@ result_large_err = "allow"
 [dependencies]
 arrow-array = { workspace = true }
 arrow-buffer = { workspace = true }
+arrow-schema = { workspace = true }
+async-trait = { workspace = true }
 datafusion-common = { workspace = true }
 lru = { workspace = true }
 sedona-common = { workspace = true }
 sedona-gdal = { workspace = true }
 sedona-raster = { workspace = true }
 sedona-schema = { workspace = true }
+tokio = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
 sedona-gdal = { workspace = true, features = ["gdal-sys"] }
 sedona-testing = { workspace = true }
 tempfile = { workspace = true }
-tokio = { workspace = true, features = ["rt-multi-thread"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

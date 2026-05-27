@@ -187,7 +187,7 @@ impl GDALDatasetCache {
         })
     }
 
-    fn get_or_create_outdb_source(
+    pub(crate) fn get_or_create_outdb_source(
         &self,
         gdal: &Gdal,
         path: &str,

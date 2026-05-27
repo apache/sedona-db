@@ -265,6 +265,18 @@ impl SedonaContext {
             .write()
             .add_analyzer_rule(Arc::new(EnsureLoadedAnalyzerRule::new(ensure_loaded_udf)));
 
+        // Register the GDAL OutDb byte loader. `sedona-raster-gdal` is a
+        // mandatory dep on `sedona`, but libgdal itself is dlopen'd
+        // lazily by `sedona-gdal` (workspace-default-features = false),
+        // so this registration is safe on systems without libgdal —
+        // the loader's `load()` call will surface a clean "libgdal not
+        // found" error when first invoked, but registration and import
+        // succeed regardless.
+        out.register_outdb_loader(
+            sedona_raster_gdal::GDAL_FORMAT,
+            Arc::new(sedona_raster_gdal::GdalLoader::new()),
+        );
+
         // Register table functions
         out.ctx.register_udtf(
             "sd_random_geometry",
@@ -722,18 +734,21 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn outdb_registry_starts_empty_and_accepts_loader_registration() {
+    async fn outdb_registry_has_gdal_at_bootstrap_and_accepts_plugin_registration() {
         use arrow_buffer::Buffer;
         use sedona_raster::outdb_loader::{AsyncByteLoader, OutDbLoadRequest};
 
         let ctx = SedonaContext::new();
+        // GDAL is always registered at bootstrap (compiled-in backend).
+        // Plugin backends like Zarr add themselves later via
+        // `register_outdb_loader`.
+        let initial_formats = ctx.registered_outdb_formats();
         assert!(
-            ctx.registered_outdb_formats().is_empty(),
-            "fresh SedonaContext should start with no OutDb backends registered"
+            initial_formats.contains(&"gdal".to_string()),
+            "fresh SedonaContext should register the GDAL backend at bootstrap; got {initial_formats:?}"
         );
 
-        // Mock loader exercises register_outdb_loader without needing GDAL
-        // or any real I/O backend in scope for this test.
+        // Mock plugin-style registration on top of the bootstrap state.
         #[derive(Debug)]
         struct MockLoader;
         #[async_trait]
@@ -745,13 +760,13 @@ mod tests {
                 Ok(Buffer::from_vec(Vec::<u8>::new()))
             }
         }
-
         ctx.register_outdb_loader("mock", Arc::new(MockLoader));
-        let formats = ctx.registered_outdb_formats();
-        assert_eq!(formats, vec!["mock".to_string()]);
+        let mut after = ctx.registered_outdb_formats();
+        after.sort();
+        assert!(after.contains(&"gdal".to_string()));
+        assert!(after.contains(&"mock".to_string()));
 
-        // RS_EnsureLoaded is registered as a UDF at session bootstrap and
-        // available by name.
+        // RS_EnsureLoaded is registered as a UDF at session bootstrap.
         let udf = ctx
             .ctx
             .state()

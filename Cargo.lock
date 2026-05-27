@@ -6135,6 +6135,8 @@ version = "0.4.0"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
+ "arrow-schema",
+ "async-trait",
  "criterion",
  "datafusion-common",
  "lru 0.18.0",

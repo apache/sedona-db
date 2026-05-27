@@ -32,14 +32,14 @@ mod gdal_common;
 #[allow(dead_code)]
 mod gdal_dataset_provider;
 
-mod utils;
-
-#[cfg(test)]
+mod outdb_loader;
 mod source_uri;
+mod utils;
 
 // Re-export main dataset conversion functions
 pub use gdal_common::{
     band_data_type_to_gdal, bytes_to_f64, gdal_to_band_data_type, gdal_type_byte_size,
     nodata_bytes_to_f64, nodata_f64_to_bytes,
 };
+pub use outdb_loader::{GdalLoader, GDAL_FORMAT};
 pub use utils::{append_as_indb_raster, dataset_to_indb_raster};
