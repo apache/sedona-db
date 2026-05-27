@@ -40,10 +40,15 @@ from sedonadb.testing import PostGIS, SedonaDB, geom_or_null, val_or_null
             None,
         ),  # End fraction is NULL -> Output is NULL
         (None, None, None, None),
+        # Zero-length linestring
+        ("LINESTRING (0 0, 0 0)", 0.0, 1.0, "POINT (0 0)"),
         # Single segment
         ("LINESTRING (0 0, 10 0)", 0.0, 1.0, "LINESTRING (0 0, 10 0)"),
         ("LINESTRING (0 0, 10 0)", 0.2, 0.8, "LINESTRING (2 0, 8 0)"),
         ("LINESTRING (0 0, 10 10)", 0.5, 0.5, "POINT (5 5)"),
+        # Multi segment with degenerate edges
+        ("LINESTRING (0 0, 0 0, 10 0)", 0.0, 1.0, "LINESTRING (0 0, 10 0)"),
+        ("LINESTRING (0 0, 10 0, 10 0)", 0.0, 1.0, "LINESTRING (0 0, 10 0)"),
         # Multi segment (3 equal segments, each length 10, total 30)
         # (1) Entire linestring
         (

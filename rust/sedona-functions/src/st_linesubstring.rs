@@ -106,11 +106,11 @@ impl SedonaScalarKernel for STLineSubstring {
             };
 
             if !(0.0..=1.0).contains(&s_f) {
-                return exec_err!("start_fraction must be between 0.0 and 1.0 (got {s_f}");
+                return exec_err!("start_fraction must be between 0.0 and 1.0 (got {s_f})");
             }
 
             if !(0.0..=1.0).contains(&e_f) {
-                return exec_err!("end_fraction must be between 0.0 and 1.0 (got {e_f}");
+                return exec_err!("end_fraction must be between 0.0 and 1.0 (got {e_f})");
             }
 
             if e_f < s_f {
@@ -189,7 +189,7 @@ fn invoke_scalar(
         let d2 = cumulative_distances[i + 1];
         let (p1, p2) = unsafe { (line.coord_unchecked(i), line.coord_unchecked(i + 1)) };
 
-        if start_dist >= d1 && start_dist < d2 {
+        if start_dist >= d1 && start_dist <= d2 {
             let segment_len = d2 - d1;
             let fraction = if segment_len > 0.0 {
                 (start_dist - d1) / segment_len
@@ -201,14 +201,12 @@ fn invoke_scalar(
                 interpolate(&p1, &p2, fraction, dim, wkb_body)?;
             }
             point_count += 1;
-        }
-
-        if d1 > start_dist && d1 < end_dist {
+        } else if d1 > start_dist && d1 < end_dist {
             write_wkb_coord_trait(wkb_body, &p1)?;
             point_count += 1;
         }
 
-        if end_dist > d1 && end_dist <= d2 {
+        if end_dist > d1 && end_dist <= d2 && s_f != e_f {
             let segment_len = d2 - d1;
             let fraction = if segment_len > 0.0 {
                 (end_dist - d1) / segment_len
@@ -224,22 +222,20 @@ fn invoke_scalar(
         }
     }
 
-    if point_count > 0 {
-        if s_f == e_f {
-            // POINT Result
-            write_wkb_point_header(builder, dim)?;
-            let coord_bytes = dim.size() * size_of::<f64>();
-            if wkb_body.len() >= coord_bytes {
-                builder.write_all(&wkb_body[..coord_bytes])?;
-            }
-        } else {
-            // LINESTRING Result
-            write_wkb_linestring_header(builder, dim, point_count as usize)?;
-            builder.write_all(wkb_body)?;
-        }
+    if point_count == 1 {
+        // POINT Result (e.g., from degenerate lienstring or s_f == e_f)
+        write_wkb_point_header(builder, dim)?;
+        builder.write_all(wkb_body)?;
+        builder.append_value([]);
+    } else if point_count > 0 {
+        // LINESTRING Result
+        write_wkb_linestring_header(builder, dim, point_count as usize)?;
+        builder.write_all(wkb_body)?;
+        builder.append_value([]);
+    } else {
+        builder.append_null();
     }
 
-    builder.append_value([]);
     Ok(())
 }
 
