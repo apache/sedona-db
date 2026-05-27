@@ -16,8 +16,9 @@
 // under the License.
 use crate::executor::WkbExecutor;
 use arrow_array::builder::BinaryBuilder;
+use arrow_array::Array;
 use arrow_schema::DataType;
-use datafusion_common::{error::Result, DataFusionError, ScalarValue};
+use datafusion_common::{error::Result, DataFusionError};
 use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::{CoordTrait, Dimensions, GeometryTrait, GeometryType, LineStringTrait};
 use sedona_expr::{
@@ -25,13 +26,14 @@ use sedona_expr::{
     scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
 };
 use sedona_geometry::error::SedonaGeometryError;
-use sedona_geometry::wkb_factory::{write_wkb_coord_trait, write_wkb_linestring_header, write_wkb_point_header};
+use sedona_geometry::wkb_factory::{
+    write_wkb_coord_trait, write_wkb_linestring_header, write_wkb_point_header,
+};
 use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOMETRY},
     matchers::ArgMatcher,
 };
 use std::{io::Write, sync::Arc};
-use arrow_array::Array;
 
 #[derive(Debug)]
 struct STLineSubstring;
@@ -66,12 +68,22 @@ impl SedonaScalarKernel for STLineSubstring {
 
         // 1. Convert parameters into clean abstract arrays
         let batch_rows = executor.num_iterations();
-        let start_array = args[1].cast_to(&DataType::Float64, None)?.to_array(batch_rows)?;
-        let end_array = args[2].cast_to(&DataType::Float64, None)?.to_array(batch_rows)?;
+        let start_array = args[1]
+            .cast_to(&DataType::Float64, None)?
+            .to_array(batch_rows)?;
+        let end_array = args[2]
+            .cast_to(&DataType::Float64, None)?
+            .to_array(batch_rows)?;
 
         // 2. Downcast them to Arrow Float64Arrays so they can be read by row index
-        let start_floats = start_array.as_any().downcast_ref::<arrow_array::Float64Array>().unwrap();
-        let end_floats = end_array.as_any().downcast_ref::<arrow_array::Float64Array>().unwrap();
+        let start_floats = start_array
+            .as_any()
+            .downcast_ref::<arrow_array::Float64Array>()
+            .unwrap();
+        let end_floats = end_array
+            .as_any()
+            .downcast_ref::<arrow_array::Float64Array>()
+            .unwrap();
 
         unsafe fn interpolate<C: CoordTrait<T = f64>>(
             p1: C,
@@ -92,8 +104,16 @@ impl SedonaScalarKernel for STLineSubstring {
             let mut wkb_body = Vec::new();
             let mut point_count = 0u32;
             // Fetch the unique start/end fraction values for THIS specific row
-            let s_f_opt = if start_floats.is_null(row_idx) { None } else { Some(start_floats.value(row_idx)) };
-            let e_f_opt = if end_floats.is_null(row_idx) { None } else { Some(end_floats.value(row_idx)) };
+            let s_f_opt = if start_floats.is_null(row_idx) {
+                None
+            } else {
+                Some(start_floats.value(row_idx))
+            };
+            let e_f_opt = if end_floats.is_null(row_idx) {
+                None
+            } else {
+                Some(end_floats.value(row_idx))
+            };
             row_idx += 1; // Increment for the next iteration
 
             let (s_f, e_f) = match (s_f_opt, e_f_opt) {
@@ -212,19 +232,18 @@ impl SedonaScalarKernel for STLineSubstring {
 }
 #[cfg(test)]
 mod tests {
+    use super::*;
     use arrow_array::{ArrayRef, Float64Array};
     use arrow_schema::DataType;
-    use datafusion_common::scalar::ScalarValue;
-    use datafusion_expr::{ColumnarValue, ScalarUDF};
+    use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS};
+    use sedona_testing::create::create_array;
     use sedona_testing::{
         compare::{assert_array_equal, assert_scalar_equal},
         testers::ScalarUdfTester,
     };
     use std::sync::Arc;
-    use sedona_testing::create::create_array;
-    use super::*;
 
     #[test]
     fn udf_metadata() {
@@ -233,39 +252,50 @@ mod tests {
     }
 
     #[rstest]
-    fn udf(
-        #[values(WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS.clone())]
-        sedona_type: SedonaType,
-    ) {
+    fn udf(#[values(WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType) {
         let udf = st_line_substring_udf();
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![
                 sedona_type,
                 SedonaType::Arrow(DataType::Float64),
-                SedonaType::Arrow(DataType::Float64)
-            ]
+                SedonaType::Arrow(DataType::Float64),
+            ],
         );
 
-        let actual_2d = tester.invoke_scalar_scalar_scalar("LINESTRING(0 0, 10 10)", 0.0, 0.5).unwrap();
-        let expected_2d = tester.invoke_wkb_scalar(Some("LINESTRING(0 0, 5 5)")).unwrap();
+        let actual_2d = tester
+            .invoke_scalar_scalar_scalar("LINESTRING(0 0, 10 10)", 0.0, 0.5)
+            .unwrap();
+        let expected_2d = tester
+            .invoke_wkb_scalar(Some("LINESTRING(0 0, 5 5)"))
+            .unwrap();
         assert_scalar_equal(&actual_2d, &expected_2d);
 
-
-        let actual_z = tester.invoke_scalar_scalar_scalar("LINESTRING Z (0 10 20, 10 20 30)", 0.5, 1.0).unwrap();
-        let expected_z = tester.invoke_wkb_scalar(Some("LINESTRING Z (5 15 25, 10 20 30)")).unwrap();
+        let actual_z = tester
+            .invoke_scalar_scalar_scalar("LINESTRING Z (0 10 20, 10 20 30)", 0.5, 1.0)
+            .unwrap();
+        let expected_z = tester
+            .invoke_wkb_scalar(Some("LINESTRING Z (5 15 25, 10 20 30)"))
+            .unwrap();
         assert_scalar_equal(&actual_z, &expected_z);
 
-        let actual_mid = tester.invoke_scalar_scalar_scalar("LINESTRING Z (0 0 0, 10 10 10)", 0.5, 0.8).unwrap();
-        let expected_mid = tester.invoke_wkb_scalar(Some("LINESTRING Z (5 5 5, 8 8 8)")).unwrap();
+        let actual_mid = tester
+            .invoke_scalar_scalar_scalar("LINESTRING Z (0 0 0, 10 10 10)", 0.5, 0.8)
+            .unwrap();
+        let expected_mid = tester
+            .invoke_wkb_scalar(Some("LINESTRING Z (5 5 5, 8 8 8)"))
+            .unwrap();
         assert_scalar_equal(&actual_mid, &expected_mid);
 
-
-        let actual_point = tester.invoke_scalar_scalar_scalar("LINESTRING(0 0, 10 10)", 0.5, 0.5).unwrap();
+        let actual_point = tester
+            .invoke_scalar_scalar_scalar("LINESTRING(0 0, 10 10)", 0.5, 0.5)
+            .unwrap();
         let expected_point = tester.invoke_wkb_scalar(Some("POINT(5 5)")).unwrap();
         assert_scalar_equal(&actual_point, &expected_point);
 
-        let actual_empty = tester.invoke_scalar_scalar_scalar("LINESTRING EMPTY", 0.0, 1.0).unwrap();
+        let actual_empty = tester
+            .invoke_scalar_scalar_scalar("LINESTRING EMPTY", 0.0, 1.0)
+            .unwrap();
         let expected_empty = tester.invoke_wkb_scalar(Some("LINESTRING EMPTY")).unwrap();
         assert_scalar_equal(&actual_empty, &expected_empty);
 
@@ -273,22 +303,28 @@ mod tests {
             &[
                 Some("LINESTRING(0 0, 10 10)"),
                 None,
-                Some("LINESTRING(0 0, 10 10)")
+                Some("LINESTRING(0 0, 10 10)"),
             ],
             &WKB_GEOMETRY,
         );
 
-        let starts_input: ArrayRef = Arc::new(Float64Array::from(vec![Some(0.0), Some(0.0), Some(0.5)]));
-        let ends_input: ArrayRef = Arc::new(Float64Array::from(vec![Some(0.5), Some(1.0), Some(0.5)]));
+        let starts_input: ArrayRef =
+            Arc::new(Float64Array::from(vec![Some(0.0), Some(0.0), Some(0.5)]));
+        let ends_input: ArrayRef =
+            Arc::new(Float64Array::from(vec![Some(0.5), Some(1.0), Some(0.5)]));
 
-        let expected_array = tester.invoke_wkb_array(vec![
-            Some("LINESTRING(0 0, 5 5)"),
-            None,
-            Some("POINT(5 5)"),
-            Some("LINESTRING EMPTY")
-        ]).unwrap();
+        let expected_array = tester
+            .invoke_wkb_array(vec![
+                Some("LINESTRING(0 0, 5 5)"),
+                None,
+                Some("POINT(5 5)"),
+                Some("LINESTRING EMPTY"),
+            ])
+            .unwrap();
 
-        let actual_array = tester.invoke_arrays(vec![geoms_input, starts_input, ends_input]).unwrap();
+        let actual_array = tester
+            .invoke_arrays(vec![geoms_input, starts_input, ends_input])
+            .unwrap();
 
         assert_array_equal(&actual_array, &expected_array);
     }
