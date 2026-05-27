@@ -334,4 +334,71 @@ mod tests {
 
         assert_array_equal(&actual_array, &expected_array);
     }
+
+    #[test]
+    fn udf_errors() {
+        let udf = st_line_substring_udf();
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![
+                WKB_GEOMETRY,
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+            ],
+        );
+
+        let assert_error_contains = |wkt: &str, start: f64, end: f64, expected_msg: &str| {
+            let result = tester.invoke_scalar_scalar_scalar(wkt, start, end);
+            assert!(result.is_err());
+            let err_msg = result.unwrap_err().to_string();
+            assert!(
+                err_msg.contains(expected_msg),
+                "Expected error containing '{expected_msg}', got: {err_msg}"
+            );
+        };
+
+        // start_fraction out of range
+        assert_error_contains(
+            "LINESTRING(0 0, 10 10)",
+            -0.5,
+            0.5,
+            "start_fraction must be between 0.0 and 1.0",
+        );
+        assert_error_contains(
+            "LINESTRING(0 0, 10 10)",
+            1.5,
+            0.5,
+            "start_fraction must be between 0.0 and 1.0",
+        );
+
+        // end_fraction out of range
+        assert_error_contains(
+            "LINESTRING(0 0, 10 10)",
+            0.0,
+            -0.5,
+            "end_fraction must be between 0.0 and 1.0",
+        );
+        assert_error_contains(
+            "LINESTRING(0 0, 10 10)",
+            0.0,
+            1.5,
+            "end_fraction must be between 0.0 and 1.0",
+        );
+
+        // end_fraction < start_fraction
+        assert_error_contains(
+            "LINESTRING(0 0, 10 10)",
+            0.8,
+            0.2,
+            "end_fraction must be greater than start_fraction",
+        );
+
+        // non-linestring input
+        assert_error_contains(
+            "POINT(5 5)",
+            0.0,
+            0.5,
+            "Can't compute substring of non-line input",
+        );
+    }
 }
