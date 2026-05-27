@@ -40,12 +40,8 @@
 
 use arrow_schema::ArrowError;
 
-/// Parts of a chunk-anchor URI.
-///
-/// `#[cfg(test)]`: no production consumer yet. The async byte
-/// resolver (separate follow-up) will parse `outdb_uri` values back
-/// into this struct.
-#[cfg(test)]
+/// Parts of a chunk-anchor URI. The async OutDb byte loader parses
+/// `outdb_uri` values back into this struct.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChunkAnchor {
     /// Original store URI for the *group* (e.g. `file:///tmp/foo.zarr`,
@@ -80,10 +76,6 @@ pub fn build_chunk_anchor(store_uri: &str, array_path: &str, chunk_indices: &[u6
 ///
 /// Strict: rejects URIs that don't carry both `array=` and `chunk=`
 /// fragment parameters with valid values.
-///
-/// `#[cfg(test)]`: pairs with [`ChunkAnchor`]; resurrected when the
-/// async byte resolver lands.
-#[cfg(test)]
 pub fn parse_chunk_anchor(uri: &str) -> Result<ChunkAnchor, ArrowError> {
     let (store_uri, fragment) = uri.split_once('#').ok_or_else(|| {
         ArrowError::InvalidArgumentError(format!(

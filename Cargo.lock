@@ -6154,7 +6154,9 @@ name = "sedona-raster-zarr"
 version = "0.4.0"
 dependencies = [
  "arrow-array",
+ "arrow-buffer",
  "arrow-schema",
+ "async-trait",
  "datafusion-common",
  "futures",
  "log",

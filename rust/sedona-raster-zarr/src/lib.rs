@@ -30,6 +30,8 @@
 mod dtype;
 mod geozarr;
 mod loader;
+mod outdb_loader;
 mod source_uri;
 
 pub use loader::ZarrChunkReader;
+pub use outdb_loader::{ZarrLoader, ZARR_FORMAT};
