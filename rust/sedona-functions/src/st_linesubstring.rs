@@ -18,7 +18,7 @@ use crate::executor::WkbExecutor;
 use arrow_array::builder::BinaryBuilder;
 use arrow_array::Array;
 use arrow_schema::DataType;
-use datafusion_common::{error::Result, exec_datafusion_err};
+use datafusion_common::{error::Result, exec_datafusion_err, exec_err};
 use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::{CoordTrait, Dimensions, GeometryTrait, GeometryType, LineStringTrait};
 use sedona_expr::{
@@ -34,7 +34,6 @@ use sedona_schema::{
     matchers::ArgMatcher,
 };
 use std::{io::Write, sync::Arc};
-use wkb::reader::Wkb;
 
 #[derive(Debug)]
 struct STLineSubstring;
@@ -102,8 +101,20 @@ impl SedonaScalarKernel for STLineSubstring {
                 return Ok(());
             };
 
+            let GeometryType::LineString(line) = wkb.as_type() else {
+                return exec_err!("Can't compute substring of non-line input");
+            };
+
+            if !(0.0..=1.0).contains(&s_f) {
+                return exec_err!("start_fraction must be between 0.0 and 1.0 (got {s_f}");
+            }
+
+            if !(0.0..=1.0).contains(&e_f) {
+                return exec_err!("end_fraction must be between 0.0 and 1.0 (got {e_f}");
+            }
+
             invoke_scalar(
-                &wkb,
+                line,
                 s_f,
                 e_f,
                 &mut wkb_body,
@@ -119,27 +130,23 @@ impl SedonaScalarKernel for STLineSubstring {
 }
 
 fn invoke_scalar(
-    wkb: &Wkb,
+    line: &impl LineStringTrait<T = f64>,
     s_f: f64,
     e_f: f64,
     wkb_body: &mut Vec<u8>,
     cumulative_distance: &mut Vec<f64>,
     builder: &mut BinaryBuilder,
 ) -> Result<(), SedonaGeometryError> {
-    let GeometryType::LineString(line) = wkb.as_type() else {
-        builder.append_null();
-        return Ok(());
-    };
-
     let mut point_count = 0u32;
     wkb_body.clear();
     cumulative_distance.clear();
 
     let num_coords = line.num_coords();
     let dim = line.dim();
+
+    // Empty input returns NULL here
     if num_coords == 0 {
-        write_wkb_linestring_header(builder, dim, 0)?;
-        builder.append_value([]);
+        builder.append_null();
         return Ok(());
     }
 
@@ -164,7 +171,7 @@ fn invoke_scalar(
         let p1 = line.coord(i).unwrap();
         let p2 = line.coord(i + 1).unwrap();
 
-        if start_dist >= d1 && start_dist <= d2 {
+        if start_dist >= d1 && start_dist < d2 {
             let segment_len = d2 - d1;
             let fraction = if segment_len > 0.0 {
                 (start_dist - d1) / segment_len
@@ -173,7 +180,7 @@ fn invoke_scalar(
             };
 
             unsafe {
-                interpolate(p1, p2, fraction, dim, wkb_body)?;
+                interpolate(&p1, &p2, fraction, dim, wkb_body)?;
             }
             point_count += 1;
         }
@@ -183,7 +190,7 @@ fn invoke_scalar(
             point_count += 1;
         }
 
-        if end_dist >= d1 && end_dist <= d2 {
+        if end_dist > d1 && end_dist <= d2 {
             let segment_len = d2 - d1;
             let fraction = if segment_len > 0.0 {
                 (end_dist - d1) / segment_len
@@ -192,7 +199,7 @@ fn invoke_scalar(
             };
 
             unsafe {
-                interpolate(p1, p2, fraction, dim, wkb_body)?;
+                interpolate(&p1, &p2, fraction, dim, wkb_body)?;
             }
 
             point_count += 1;
@@ -219,8 +226,8 @@ fn invoke_scalar(
 }
 
 unsafe fn interpolate<C: CoordTrait<T = f64>>(
-    p1: C,
-    p2: C,
+    p1: &C,
+    p2: &C,
     fraction: f64,
     dim: Dimensions,
     buf: &mut impl Write,

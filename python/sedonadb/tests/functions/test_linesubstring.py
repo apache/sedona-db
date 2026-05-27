@@ -40,10 +40,57 @@ from sedonadb.testing import PostGIS, SedonaDB, geom_or_null, val_or_null
             None,
         ),  # End fraction is NULL -> Output is NULL
         (None, None, None, None),
+        # Single segment
+        ("LINESTRING (0 0, 10 0)", 0.0, 1.0, "LINESTRING (0 0, 10 0)"),
         ("LINESTRING (0 0, 10 0)", 0.2, 0.8, "LINESTRING (2 0, 8 0)"),
-        ("LINESTRING (0 0, 10 10)", 0.3, 0.6, "LINESTRING (3 3, 6 6)"),
         ("LINESTRING (0 0, 10 10)", 0.5, 0.5, "POINT (5 5)"),
-        ("LINESTRING (0 0, 10 0, 10 10)", 0.25, 0.75, "LINESTRING (5 0, 10 0, 10 5)"),
+        # Multi segment (3 equal segments, each length 10, total 30)
+        # (1) Entire linestring
+        (
+            "LINESTRING (0 0, 10 0, 10 10, 0 10)",
+            0.0,
+            1.0,
+            "LINESTRING (0 0, 10 0, 10 10, 0 10)",
+        ),
+        # (2) Exactly the first segment (0 to 1/3)
+        (
+            "LINESTRING (0 0, 10 0, 10 10, 0 10)",
+            0.0,
+            1.0 / 3.0,
+            "LINESTRING (0 0, 10 0)",
+        ),
+        # (3) Exactly the middle segment (1/3 to 2/3)
+        (
+            "LINESTRING (0 0, 10 0, 10 10, 0 10)",
+            1.0 / 3.0,
+            2.0 / 3.0,
+            "LINESTRING (10 0, 10 10)",
+        ),
+        # (4) Exactly the last segment (2/3 to 1)
+        (
+            "LINESTRING (0 0, 10 0, 10 10, 0 10)",
+            2.0 / 3.0,
+            1.0,
+            "LINESTRING (10 10, 0 10)",
+        ),
+        # (5) Part of the first segment (0 to 1/6 = halfway through first segment)
+        (
+            "LINESTRING (0 0, 10 0, 10 10, 0 10)",
+            0.0,
+            1.0 / 6.0,
+            "LINESTRING (0 0, 5 0)",
+        ),
+        # (6) Part of the middle segment (0.4 to 0.6, both within middle segment)
+        ("LINESTRING (0 0, 10 0, 10 10, 0 10)", 0.4, 0.6, "LINESTRING (10 2, 10 8)"),
+        # (7) Part of the last segment (0.75 to 0.9, both within last segment)
+        ("LINESTRING (0 0, 10 0, 10 10, 0 10)", 0.75, 0.9, "LINESTRING (7.5 10, 3 10)"),
+        # (8) Part of first, entire middle, part of last (1/6 to 5/6)
+        (
+            "LINESTRING (0 0, 10 0, 10 10, 0 10)",
+            1.0 / 6.0,
+            5.0 / 6.0,
+            "LINESTRING (5 0, 10 0, 10 10, 5 10)",
+        ),
         # Z Case
         (
             "LINESTRING Z (0 0 0, 10 10 10)",
@@ -69,7 +116,6 @@ from sedonadb.testing import PostGIS, SedonaDB, geom_or_null, val_or_null
 )
 def test_st_line_substring(eng, geom, start, end, expected):
     eng = eng.create_or_skip()
-
     eng.assert_query_result(
         f"SELECT ST_LineSubstring({geom_or_null(geom)}, {val_or_null(start)}, {val_or_null(end)})",
         expected,
