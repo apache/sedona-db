@@ -6094,10 +6094,12 @@ dependencies = [
  "arrow-buffer",
  "arrow-ipc",
  "arrow-schema",
+ "async-trait",
  "datafusion-common",
  "sedona-common",
  "sedona-schema",
  "sedona-testing",
+ "tokio",
 ]
 
 [[package]]
