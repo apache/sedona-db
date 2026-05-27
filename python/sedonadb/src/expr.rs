@@ -36,6 +36,7 @@
 //! role of `SedonaDBExpr` and `expr_col` / `expr_lit` mirror
 //! `SedonaDBExprFactory::column` / `::literal`.
 
+use datafusion::functions_aggregate::expr_fn::{avg, count, max, min, sum};
 use datafusion_common::Column;
 use datafusion_expr::{expr::InList, BinaryExpr, Cast, Expr, Operator, SortExpr};
 use pyo3::prelude::*;
@@ -163,6 +164,45 @@ impl PyExpr {
     fn negate(&self) -> Self {
         Self {
             inner: Expr::Negative(Box::new(self.inner.clone())),
+        }
+    }
+
+    /// Aggregate this expression with SUM. Valid only inside an
+    /// aggregation context (`DataFrame.agg` / `group_by().agg()`); as a
+    /// standalone `Expr` it is just an unbound aggregate node.
+    fn sum(&self) -> Self {
+        Self {
+            inner: sum(self.inner.clone()),
+        }
+    }
+
+    /// Aggregate this expression with COUNT.
+    fn count(&self) -> Self {
+        Self {
+            inner: count(self.inner.clone()),
+        }
+    }
+
+    /// Aggregate this expression with AVG (mean). DataFusion names the
+    /// underlying function `avg`; we expose it Python-side as `mean` to
+    /// match the pandas/Polars vocabulary.
+    fn mean(&self) -> Self {
+        Self {
+            inner: avg(self.inner.clone()),
+        }
+    }
+
+    /// Aggregate this expression with MIN.
+    fn min(&self) -> Self {
+        Self {
+            inner: min(self.inner.clone()),
+        }
+    }
+
+    /// Aggregate this expression with MAX.
+    fn max(&self) -> Self {
+        Self {
+            inner: max(self.inner.clone()),
         }
     }
 

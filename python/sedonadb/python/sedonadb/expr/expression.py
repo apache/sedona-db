@@ -157,6 +157,69 @@ class Expr:
         """
         return Expr(self._impl.negate())
 
+    # Aggregate expressions ------------------------------------------------
+    #
+    # These build aggregate nodes (SUM, COUNT, AVG, MIN, MAX). They are
+    # meaningful only inside an aggregation context — `DataFrame.agg(...)`
+    # or `DataFrame.group_by(...).agg(...)` — which land in follow-up PRs.
+    # As standalone expressions they are valid AST nodes but cannot be
+    # evaluated by `select` / `filter`.
+
+    def sum(self) -> "Expr":
+        """Aggregate this expression with SUM.
+
+        Examples:
+
+            >>> from sedonadb.expr import col
+            >>> col("x").sum()
+            Expr(sum(x))
+        """
+        return Expr(self._impl.sum())
+
+    def count(self) -> "Expr":
+        """Aggregate this expression with COUNT.
+
+        Examples:
+
+            >>> from sedonadb.expr import col
+            >>> col("x").count()
+            Expr(count(x))
+        """
+        return Expr(self._impl.count())
+
+    def mean(self) -> "Expr":
+        """Aggregate this expression with AVG (mean).
+
+        Examples:
+
+            >>> from sedonadb.expr import col
+            >>> col("x").mean()
+            Expr(avg(x))
+        """
+        return Expr(self._impl.mean())
+
+    def min(self) -> "Expr":
+        """Aggregate this expression with MIN.
+
+        Examples:
+
+            >>> from sedonadb.expr import col
+            >>> col("x").min()
+            Expr(min(x))
+        """
+        return Expr(self._impl.min())
+
+    def max(self) -> "Expr":
+        """Aggregate this expression with MAX.
+
+        Examples:
+
+            >>> from sedonadb.expr import col
+            >>> col("x").max()
+            Expr(max(x))
+        """
+        return Expr(self._impl.max())
+
     def asc(self, nulls_first: bool = False) -> "SortExpr":
         """Wrap this expression as an ascending sort key.
 

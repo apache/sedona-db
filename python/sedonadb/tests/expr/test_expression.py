@@ -126,6 +126,31 @@ def test_expr_init_rejects_wrong_type():
         Expr(42)
 
 
+# --- Aggregate expressions ---------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "method,expected",
+    [
+        ("sum", "Expr(sum(x))"),
+        ("count", "Expr(count(x))"),
+        ("mean", "Expr(avg(x))"),
+        ("min", "Expr(min(x))"),
+        ("max", "Expr(max(x))"),
+    ],
+)
+def test_aggregate_expression_repr(method, expected):
+    e = getattr(col("x"), method)()
+    assert isinstance(e, Expr)
+    assert repr(e) == expected
+
+
+def test_aggregate_over_compound_expression():
+    # An aggregate over a composed expression should wrap the whole thing.
+    e = (col("x") + col("y")).sum()
+    assert repr(e) == "Expr(sum(x + y))"
+
+
 # --- Sort expressions --------------------------------------------------------
 
 
