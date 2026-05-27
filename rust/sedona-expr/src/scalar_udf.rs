@@ -71,6 +71,13 @@ pub struct SedonaScalarUDF {
     signature: Signature,
     kernels: Vec<ScalarKernelRef>,
     aliases: Vec<String>,
+    /// Class-level metadata: does this UDF read raster pixel bytes from
+    /// any of its inputs? The optimiser/analyzer rule for `RS_EnsureLoaded`
+    /// uses this to decide whether to wrap raster arguments. Default
+    /// `false`; set via [`SedonaScalarUDF::with_needs_bytes`] at
+    /// construction time for UDFs whose kernels call
+    /// `BandRef::nd_buffer()` / `BandRef::contiguous_data()`.
+    needs_bytes: bool,
 }
 
 impl PartialEq for SedonaScalarUDF {
@@ -191,17 +198,35 @@ impl SedonaScalarUDF {
             signature,
             kernels,
             aliases: vec![],
+            needs_bytes: false,
         }
     }
 
     /// Add aliases to an existing SedonaScalarUDF
     pub fn with_aliases(self, aliases: Vec<String>) -> SedonaScalarUDF {
+        Self { aliases, ..self }
+    }
+
+    /// Mark this UDF as one whose kernels read raster pixel bytes from
+    /// their inputs. The optimiser/analyzer rule for `RS_EnsureLoaded`
+    /// reads this to decide whether to wrap raster arguments with the
+    /// async byte-materialisation UDF.
+    ///
+    /// Class-level by convention: each UDF is constructed once per session,
+    /// and the flag reflects a fixed property of the underlying kernels
+    /// (does the implementation call `BandRef::nd_buffer()` / etc.). Do not
+    /// flip this between registrations of the same UDF — kernel behaviour
+    /// is the source of truth.
+    pub fn with_needs_bytes(self) -> SedonaScalarUDF {
         Self {
-            name: self.name,
-            signature: self.signature,
-            kernels: self.kernels,
-            aliases,
+            needs_bytes: true,
+            ..self
         }
+    }
+
+    /// Returns whether this UDF reads raster pixel bytes from its inputs.
+    pub fn needs_bytes(&self) -> bool {
+        self.needs_bytes
     }
 
     /// Create a SedonaScalarUDF from a single kernel
@@ -333,6 +358,24 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn needs_bytes_defaults_false_and_flips_via_builder() {
+        let udf = SedonaScalarUDF::new("u", vec![], Volatility::Immutable);
+        assert!(!udf.needs_bytes());
+
+        let annotated = udf.with_needs_bytes();
+        assert!(annotated.needs_bytes());
+    }
+
+    #[test]
+    fn needs_bytes_survives_with_aliases() {
+        let udf = SedonaScalarUDF::new("u", vec![], Volatility::Immutable)
+            .with_needs_bytes()
+            .with_aliases(vec!["u_alias".to_string()]);
+        assert!(udf.needs_bytes());
+        assert_eq!(udf.aliases(), &["u_alias".to_string()]);
+    }
 
     #[test]
     fn udf_empty() -> Result<()> {
