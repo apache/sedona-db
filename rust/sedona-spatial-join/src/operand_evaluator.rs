@@ -468,7 +468,10 @@ impl EvaluatedGeometryArray {
 
     pub fn in_mem_size(&self) -> Result<usize> {
         let geom_array_size = get_array_memory_size(&self.geometry_array)?;
+        Ok(geom_array_size + self.evaluation_overhead_in_mem_size()?)
+    }
 
+    pub(crate) fn evaluation_overhead_in_mem_size(&self) -> Result<usize> {
         let distance_in_mem_size = match &self.distance {
             Some(ColumnarValue::Array(array)) => get_array_memory_size(array)?,
             _ => 8,
@@ -478,7 +481,7 @@ impl EvaluatedGeometryArray {
         // should be small, so the inaccuracy does not matter too much.
         let wkb_vec_size = self.wkbs.allocated_size();
 
-        Ok(geom_array_size + self.rects.allocated_size() + distance_in_mem_size + wkb_vec_size)
+        Ok(self.rects.allocated_size() + distance_in_mem_size + wkb_vec_size)
     }
 }
 

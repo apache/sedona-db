@@ -36,13 +36,23 @@ pub struct EvaluatedBatch {
 
 impl EvaluatedBatch {
     pub fn in_mem_size(&self) -> Result<usize> {
-        // NOTE: sometimes `geom_array` will reuse the memory of `batch`, especially when
-        // the expression for evaluating the geometry is a simple column reference. In this case,
-        // the in_mem_size will be overestimated. It is a conservative estimation so there's no risk
-        // of running out of memory because of underestimation.
         let record_batch_size = get_record_batch_memory_size(&self.batch)?;
-        let geom_array_size = self.geom_array.in_mem_size()?;
-        Ok(record_batch_size + geom_array_size)
+
+        // If the geometry expression was a simple input column reference, DataFusion returns the
+        // same Arrow array that is already owned by `batch`. Count that buffer once and only add the
+        // evaluated metadata (bounds, distance, WKB handles) here.
+        if self.geometry_array_is_batch_column() {
+            Ok(record_batch_size + self.geom_array.evaluation_overhead_in_mem_size()?)
+        } else {
+            Ok(record_batch_size + self.geom_array.in_mem_size()?)
+        }
+    }
+
+    fn geometry_array_is_batch_column(&self) -> bool {
+        self.batch
+            .columns()
+            .iter()
+            .any(|array| std::sync::Arc::ptr_eq(array, self.geom_array.geometry_array()))
     }
 
     pub fn schema(&self) -> SchemaRef {
@@ -56,3 +66,77 @@ impl EvaluatedBatch {
 
 pub mod evaluated_batch_stream;
 pub mod spill;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::utils::arrow_utils::get_array_memory_size;
+    use arrow_array::{ArrayRef, BinaryArray, Int32Array};
+    use arrow_schema::{DataType, Field, Schema};
+    use sedona_schema::datatypes::WKB_GEOMETRY;
+    use std::sync::Arc;
+
+    fn point_wkb(x: f64, y: f64) -> Vec<u8> {
+        let mut out = Vec::with_capacity(21);
+        out.push(1);
+        out.extend_from_slice(&1_u32.to_le_bytes());
+        out.extend_from_slice(&x.to_le_bytes());
+        out.extend_from_slice(&y.to_le_bytes());
+        out
+    }
+
+    fn geometry_array() -> ArrayRef {
+        let point1 = point_wkb(1.0, 2.0);
+        let point2 = point_wkb(3.0, 4.0);
+        Arc::new(BinaryArray::from(vec![
+            Some(point1.as_slice()),
+            Some(point2.as_slice()),
+        ]))
+    }
+
+    fn batch_with_geometry(geom: ArrayRef) -> Result<RecordBatch> {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            WKB_GEOMETRY.to_storage_field("geom", true)?,
+        ]));
+        RecordBatch::try_new(
+            schema,
+            vec![Arc::new(Int32Array::from(vec![1, 2])) as ArrayRef, geom],
+        )
+        .map_err(Into::into)
+    }
+
+    #[test]
+    fn in_mem_size_does_not_double_count_reused_geometry_column() -> Result<()> {
+        let geom = geometry_array();
+        let batch = batch_with_geometry(Arc::clone(&geom))?;
+        let geom_array = EvaluatedGeometryArray::try_new(geom, &WKB_GEOMETRY)?;
+        let evaluated_batch = EvaluatedBatch { batch, geom_array };
+
+        let expected = get_record_batch_memory_size(&evaluated_batch.batch)?
+            + evaluated_batch
+                .geom_array
+                .evaluation_overhead_in_mem_size()?;
+
+        assert_eq!(evaluated_batch.in_mem_size()?, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn in_mem_size_counts_computed_geometry_array() -> Result<()> {
+        let input_geom = geometry_array();
+        let evaluated_geom = geometry_array();
+        let batch = batch_with_geometry(input_geom)?;
+        let geom_array = EvaluatedGeometryArray::try_new(evaluated_geom, &WKB_GEOMETRY)?;
+        let evaluated_batch = EvaluatedBatch { batch, geom_array };
+
+        let expected = get_record_batch_memory_size(&evaluated_batch.batch)?
+            + get_array_memory_size(evaluated_batch.geom_array.geometry_array())?
+            + evaluated_batch
+                .geom_array
+                .evaluation_overhead_in_mem_size()?;
+
+        assert_eq!(evaluated_batch.in_mem_size()?, expected);
+        Ok(())
+    }
+}
