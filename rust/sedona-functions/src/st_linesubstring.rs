@@ -140,29 +140,27 @@ fn invoke_scalar(
     s_f: f64,
     e_f: f64,
     wkb_body: &mut Vec<u8>,
-    cumulative_distance: &mut Vec<f64>,
+    cumulative_distances: &mut Vec<f64>,
     builder: &mut BinaryBuilder,
 ) -> Result<(), SedonaGeometryError> {
     let mut point_count = 0u32;
     wkb_body.clear();
-    cumulative_distance.clear();
+    cumulative_distances.clear();
 
     let num_coords = line.num_coords();
     let dim = line.dim();
 
-    // Empty input returns NULL here
-    if num_coords == 0 {
+    // Empty or degenerate input returns NULL here
+    if num_coords <= 1 {
         builder.append_null();
         return Ok(());
     }
 
-    let mut cumulative_distances = Vec::with_capacity(num_coords);
     let mut total_length = 0.0;
     cumulative_distances.push(0.0);
 
     for i in 0..(num_coords - 1) {
-        let p1 = line.coord(i).unwrap();
-        let p2 = line.coord(i + 1).unwrap();
+        let (p1, p2) = unsafe { (line.coord_unchecked(i), line.coord_unchecked(i + 1)) };
         let dist = ((p2.x() - p1.x()).powi(2) + (p2.y() - p1.y()).powi(2)).sqrt();
         total_length += dist;
         cumulative_distances.push(total_length);
@@ -171,11 +169,25 @@ fn invoke_scalar(
     let start_dist = s_f * total_length;
     let end_dist = e_f * total_length;
 
-    for i in 0..(num_coords - 1) {
+    // Use binary search to find the segment range to scan.
+    // For start: find the segment containing start_dist (where d[i] <= start_dist < d[i+1])
+    // For end: find the segment containing end_dist (where d[i] < end_dist <= d[i+1])
+    let num_segments = num_coords - 1;
+
+    let first_segment = cumulative_distances
+        .partition_point(|&d| d <= start_dist)
+        .saturating_sub(1)
+        .min(num_segments - 1);
+
+    let last_segment = cumulative_distances
+        .partition_point(|&d| d < end_dist)
+        .saturating_sub(1)
+        .min(num_segments - 1);
+
+    for i in first_segment..=last_segment {
         let d1 = cumulative_distances[i];
         let d2 = cumulative_distances[i + 1];
-        let p1 = line.coord(i).unwrap();
-        let p2 = line.coord(i + 1).unwrap();
+        let (p1, p2) = unsafe { (line.coord_unchecked(i), line.coord_unchecked(i + 1)) };
 
         if start_dist >= d1 && start_dist < d2 {
             let segment_len = d2 - d1;
@@ -216,7 +228,7 @@ fn invoke_scalar(
         if s_f == e_f {
             // POINT Result
             write_wkb_point_header(builder, dim)?;
-            let coord_bytes = dim.size() * 8;
+            let coord_bytes = dim.size() * size_of::<f64>();
             if wkb_body.len() >= coord_bytes {
                 builder.write_all(&wkb_body[..coord_bytes])?;
             }
@@ -250,6 +262,7 @@ mod tests {
     use super::*;
     use arrow_array::{ArrayRef, Float64Array};
     use arrow_schema::DataType;
+    use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS};
@@ -298,7 +311,7 @@ mod tests {
         let actual_empty = tester
             .invoke_scalar_scalar_scalar("LINESTRING EMPTY", 0.0, 1.0)
             .unwrap();
-        tester.assert_scalar_result_equals(actual_empty, "LINESTRING EMPTY");
+        tester.assert_scalar_result_equals(actual_empty, ScalarValue::Null);
 
         let geoms_input = create_array(
             &[
