@@ -62,6 +62,14 @@ class Functions:
             KeyError(f"Can't find scalar or aggregate function '{key}'")
 
     def __dir__(self):
-        return sorted(
+        return (
+            self._ctx._impl.list_scalar_udfs()
+            + self._ctx._impl.list_aggregate_udfs()
+            + super().__dir__()
+        )
+
+    def _ipython_key_completions_(self):
+        """Enable tab completion for f["name"] in IPython/Jupyter."""
+        return (
             self._ctx._impl.list_scalar_udfs() + self._ctx._impl.list_aggregate_udfs()
         )

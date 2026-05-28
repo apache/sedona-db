@@ -121,13 +121,13 @@ class DataFrame:
         Examples:
 
             >>> sd = sedona.db.connect()
-            >>> df = sd.sql("SELECT * FROM (VALUES (1, 10), (2, 20)) AS t(x, y)")
+            >>> df = sd.sql("SELECT * FROM (VALUES (1, 10), (2, 20)) AS t(x, y)").alias("t")
             >>> df["x"]
-            Expr(x)
+            Expr(t.x)
             >>> df[1]
-            Expr(y)
+            Expr(t.y)
             >>> df[-1]
-            Expr(y)
+            Expr(t.y)
         """
         # `bool` is a subclass of `int`, so guard explicitly — otherwise
         # `df[True]` would silently mean `df[1]`.
@@ -176,6 +176,10 @@ class DataFrame:
         """
         return self.columns + super().__dir__()
 
+    def _ipython_key_completions_(self):
+        """Enable tab completion for f["name"] in IPython/Jupyter."""
+        return self.columns
+
     def select(self, *exprs: Union[Expr, str, _SedonaLit]) -> "DataFrame":
         """Project a set of columns or expressions.
 
@@ -193,10 +197,9 @@ class DataFrame:
 
         Examples:
 
-            >>> from sedonadb.expr import col, lit
             >>> sd = sedona.db.connect()
             >>> df = sd.sql("SELECT 1 AS a, 2 AS b")
-            >>> df.select("a", (col("b") + 1).alias("b_plus_1")).show()
+            >>> df.select("a", (df.b + 1).alias("b_plus_1")).show()
             ┌───────┬──────────┐
             │   a   ┆ b_plus_1 │
             │ int64 ┆   int64  │
@@ -245,10 +248,9 @@ class DataFrame:
 
         Examples:
 
-            >>> from sedonadb.expr import col
             >>> sd = sedona.db.connect()
             >>> df = sd.sql("SELECT * FROM (VALUES (1), (2), (3), (4)) AS t(x)")
-            >>> df.filter(col("x") > 2).show()
+            >>> df.filter(df.x > 2).show()
             ┌───────┐
             │   x   │
             │ int64 │
@@ -301,7 +303,6 @@ class DataFrame:
 
         Examples:
 
-            >>> from sedonadb.expr import col
             >>> sd = sedona.db.connect()
             >>> df = sd.sql("SELECT * FROM (VALUES (3), (1), (2)) AS t(x)")
             >>> df.sort("x").show()
@@ -315,7 +316,7 @@ class DataFrame:
             ├╌╌╌╌╌╌╌┤
             │     3 │
             └───────┘
-            >>> df.sort(col("x").desc()).show()
+            >>> df.sort(sd.col("x").desc()).show()
             ┌───────┐
             │   x   │
             │ int64 │
