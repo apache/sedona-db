@@ -387,17 +387,29 @@ class ScalarUdf:
             )
         self._impl = impl
 
+    def __repr__(self) -> str:
+        return f"ScalarUdf({self._impl!r})"
+
     def __call__(self, *args: Any) -> Expr:
         return Expr(self._impl.call([_to_expr(arg)._impl for arg in args]))
 
 
 class AggregateUdf:
+    """Concrete aggregate function that can generate call expressions
+
+    The primary purpose of an AggregateUdf is to generate expressions for use in
+    the Python expression API.
+    """
+
     def __init__(self, impl):
         if type(impl).__name__ not in ("PyAggregateUdf",):
             raise TypeError(
                 "AggregateUdf must be constructed from internal aggregate UDF wrapper"
             )
         self._impl = impl
+
+    def __repr__(self) -> str:
+        return f"AggregateUdf({self._impl!r})"
 
     def __call__(self, *args: Any) -> Expr:
         return Expr(self._impl.call([_to_expr(arg)._impl for arg in args]))

@@ -134,3 +134,13 @@ def test_funcs_getattr_not_found_raises_attribute_error(con):
 def test_funcs_getitem_not_found_raises_key_error(con):
     with pytest.raises(KeyError, match="Can't find scalar or aggregate function"):
         con.funcs["nonexistent_function_xyz"]
+
+
+def test_scalar_udf_repr(con):
+    st_area = con.funcs.st_area
+    assert repr(st_area) == "ScalarUdf(st_area)"
+
+
+def test_aggregate_udf_repr(con):
+    st_collect_agg = con.funcs.st_collect_agg
+    assert repr(st_collect_agg) == "AggregateUdf(st_collect_agg)"

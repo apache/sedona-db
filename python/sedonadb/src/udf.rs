@@ -24,7 +24,7 @@ use arrow_array::{
 use arrow_schema::Field;
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::{Result, ScalarValue};
-use datafusion_expr::{AggregateUDF, ColumnarValue, ScalarUDF, Volatility};
+use datafusion_expr::{AggregateUDF, ColumnarValue, ScalarUDF, ScalarUDFImpl, Volatility};
 use datafusion_ffi::udf::FFI_ScalarUDF;
 use pyo3::{
     pyclass, pyfunction, pymethods,
@@ -55,6 +55,14 @@ pub struct PyScalarUdf {
 
 #[pymethods]
 impl PyScalarUdf {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn __repr__(&self) -> String {
+        self.inner.name().to_string()
+    }
+
     fn call(&self, args: Vec<PyExpr>) -> Result<PyExpr, PySedonaError> {
         let expr_args = args.iter().map(|arg| arg.inner.clone()).collect();
         let result = self.inner.call(expr_args);
@@ -85,6 +93,14 @@ pub struct PyAggregateUdf {
 
 #[pymethods]
 impl PyAggregateUdf {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn __repr__(&self) -> String {
+        self.inner.name().to_string()
+    }
+
     fn call(&self, args: Vec<PyExpr>) -> Result<PyExpr, PySedonaError> {
         let expr_args = args.iter().map(|arg| arg.inner.clone()).collect();
         let result = self.inner.call(expr_args);
@@ -106,6 +122,14 @@ pub struct PySedonaScalarUdf {
 
 #[pymethods]
 impl PySedonaScalarUdf {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn __repr__(&self) -> String {
+        self.inner.name().to_string()
+    }
+
     fn call(&self, args: Vec<PyExpr>) -> Result<PyExpr, PySedonaError> {
         let expr_args = args.iter().map(|arg| arg.inner.clone()).collect();
         let scalar_udf: ScalarUDF = self.inner.clone().into();
