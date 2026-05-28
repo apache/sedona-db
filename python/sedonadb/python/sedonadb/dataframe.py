@@ -286,7 +286,7 @@ class DataFrame:
         return self.columns + super().__dir__()
 
     def _ipython_key_completions_(self):
-        """Enable tab completion for f["name"] in IPython/Jupyter."""
+        """Enable tab completion for df["col"] in IPython/Jupyter."""
         return self.columns
 
     def select(
