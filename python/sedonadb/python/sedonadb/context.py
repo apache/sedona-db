@@ -44,6 +44,11 @@ from sedonadb._lib import (
 from sedonadb._options import Options
 from sedonadb.dataframe import DataFrame, _create_data_frame
 from sedonadb.functions import Functions
+from sedonadb.expr.expression import (
+    Expr,
+    col as col_expr,
+)
+from sedonadb.expr.literal import lit as lit_expr, Literal as LiteralExpr
 from sedonadb.utility import sedona  # noqa: F401
 
 
@@ -485,6 +490,53 @@ class SedonaContext:
     def funcs(self) -> Functions:
         """Access Python wrappers for SedonaDB functions"""
         return Functions(self)
+
+    def col(name: str, qualifier: Optional[str] = None) -> Expr:
+        """Reference a column by name.
+
+        Args:
+            name: The column name to reference.
+            qualifier: An optional table qualifier (e.g. `"t"` for `t.x`). Useful
+                when the same column name appears in multiple input tables of a
+                join. Defaults to `None`, which leaves the column unqualified and
+                lets the planner resolve against the surrounding schema.
+
+        Examples:
+
+            >>> sd = sedona.db.connect()
+            >>> sd.col("x")
+            Expr(x)
+            >>> sd.col("x", "t")
+            Expr(t.x)
+        """
+        return col_expr(name, qualifier=qualifier)
+
+    def lit(value: Any) -> LiteralExpr:
+        """Create a literal (constant) expression
+
+        Creates a `Literal` object around value, or returns value if it is
+        already a `Literal`. This is the primary function that should be used
+        to wrap an arbitrary Python object a constant to prepare it as input
+        to any SedonaDB logical expression context (e.g., parameterized SQL).
+
+        Literal values can be created from a variety of Python objects whose
+        representation as a scalar constant is unambiguous. Any object that
+        is accepted by `pyarrow.array([...])` is supported in addition to:
+
+        - Shapely geometries become SedonaDB geometry objects.
+        - GeoSeries objects of length 1 become SedonaDB geometries
+        with CRS preserved.
+        - GeoDataFrame objects with a single column and single row become
+        SedonaDB geometries with CRS preserved.
+        - Pandas DataFrame objects with a single column and single row
+        are converted using `pa.array()`.
+        - SedonaDB DataFrame objects that evaluate to a single column and
+        row become a scalar value according to the single represented
+        value.
+        - pyproj CRS objects become PROJJSON strings (e.g., so they may be used
+        in `ST_SetCRS()`, `ST_Point()`, or `ST_GeomFromWKT()`).
+        """
+        return lit_expr(value)
 
 
 def connect() -> SedonaContext:

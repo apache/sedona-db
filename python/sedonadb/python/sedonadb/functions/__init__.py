@@ -23,8 +23,6 @@ from sedonadb.expr.expression import ScalarUdf, AggregateUdf
 
 if TYPE_CHECKING:
     from sedonadb.functions.table import TableFunctions
-    from sedonadb.functions.scalar import ScalarFunctions
-    from sedonadb.functions.aggregate import AggregateFunctions
 
 
 class Functions:
@@ -43,20 +41,6 @@ class Functions:
         from sedonadb.functions.table import TableFunctions
 
         return TableFunctions(self._ctx)
-
-    @cached_property
-    def scalar(self) -> "ScalarFunctions":
-        """Access SedonaDB Scalar functions"""
-        from sedonadb.functions.scalar import ScalarFunctions
-
-        return ScalarFunctions(self._ctx)
-
-    @cached_property
-    def aggregate(self) -> "AggregateFunctions":
-        """Access SedonaDB Aggregate functions"""
-        from sedonadb.functions.aggregate import AggregateFunctions
-
-        return AggregateFunctions(self._ctx)
 
     def __getattr__(self, name) -> Union["ScalarUdf", "AggregateUdf"]:
         try:
