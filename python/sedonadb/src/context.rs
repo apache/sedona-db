@@ -163,7 +163,8 @@ impl InternalContext {
         py: Python<'py>,
         name: &str,
     ) -> Result<Bound<'py, PyAny>, PySedonaError> {
-        if let Some(sedona_scalar_udf) = self.inner.functions.scalar_udf(name) {
+        let name_lower = name.to_lowercase();
+        if let Some(sedona_scalar_udf) = self.inner.functions.scalar_udf(&name_lower) {
             Ok(Bound::new(
                 py,
                 PySedonaScalarUdf {
@@ -171,7 +172,8 @@ impl InternalContext {
                 },
             )?
             .into_any())
-        } else if let Some(scalar_udf) = self.inner.ctx.state().scalar_functions().get(name) {
+        } else if let Some(scalar_udf) = self.inner.ctx.state().scalar_functions().get(&name_lower)
+        {
             Ok(Bound::new(
                 py,
                 PyScalarUdf {
@@ -191,7 +193,14 @@ impl InternalContext {
         py: Python<'py>,
         name: &str,
     ) -> Result<Bound<'py, PyAny>, PySedonaError> {
-        if let Some(aggregate_udf) = self.inner.ctx.state().aggregate_functions().get(name) {
+        let name_lower = name.to_lowercase();
+        if let Some(aggregate_udf) = self
+            .inner
+            .ctx
+            .state()
+            .aggregate_functions()
+            .get(&name_lower)
+        {
             Ok(Bound::new(
                 py,
                 PyAggregateUdf {

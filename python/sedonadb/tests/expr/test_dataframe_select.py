@@ -117,3 +117,36 @@ def test_select_unknown_column_lists_valid_columns(con):
     assert "nonexistent" in msg
     assert "Valid fields" in msg or "valid fields" in msg
     assert "x" in msg and "y" in msg
+
+
+def test_select_with_kwargs(con):
+    df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3], "y": [10, 20, 30]}))
+    out = df.select(z=col("x") + col("y")).to_pandas()
+    pdt.assert_frame_equal(out, pd.DataFrame({"z": [11, 22, 33]}))
+
+
+def test_select_mix_positional_and_kwargs(con):
+    df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3], "y": [10, 20, 30]}))
+    out = df.select("x", z=col("y") * 2).to_pandas()
+    pdt.assert_frame_equal(out, pd.DataFrame({"x": [1, 2, 3], "z": [20, 40, 60]}))
+
+
+def test_select_kwarg_with_string_column(con):
+    # Keyword arg with a string value should rename the column
+    df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3]}))
+    out = df.select(renamed=col("x")).to_pandas()
+    pdt.assert_frame_equal(out, pd.DataFrame({"renamed": [1, 2, 3]}))
+
+
+def test_select_kwarg_with_lit(con):
+    df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3]}))
+    out = df.select("x", constant=lit(42)).to_pandas()
+    pdt.assert_frame_equal(
+        out, pd.DataFrame({"x": [1, 2, 3], "constant": [42, 42, 42]})
+    )
+
+
+def test_select_bad_kwarg_type_raises(con):
+    df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3]}))
+    with pytest.raises(TypeError, match="keyword arguments"):
+        df.select(bad=123)
