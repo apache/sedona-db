@@ -16,11 +16,15 @@
 # under the License.
 
 from functools import cached_property
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Union
+
+from sedonadb._lib import SedonaError
+from sedonadb.expr.expression import ScalarUdf, AggregateUdf
 
 if TYPE_CHECKING:
     from sedonadb.functions.table import TableFunctions
-    from sedonadb.functions.scalar_aggregate import ScalarFunctions, AggregateFunctions
+    from sedonadb.functions.scalar import ScalarFunctions
+    from sedonadb.functions.aggregate import AggregateFunctions
 
 
 class Functions:
@@ -43,13 +47,32 @@ class Functions:
     @cached_property
     def scalar(self) -> "ScalarFunctions":
         """Access SedonaDB Scalar functions"""
-        from sedonadb.functions.scalar_aggregate import ScalarFunctions
+        from sedonadb.functions.scalar import ScalarFunctions
 
         return ScalarFunctions(self._ctx)
 
     @cached_property
     def aggregate(self) -> "AggregateFunctions":
         """Access SedonaDB Aggregate functions"""
-        from sedonadb.functions.scalar_aggregate import AggregateFunctions
+        from sedonadb.functions.aggregate import AggregateFunctions
 
         return AggregateFunctions(self._ctx)
+
+    def __getattr__(self, name) -> Union["ScalarUdf", "AggregateUdf"]:
+        try:
+            return ScalarUdf(self._ctx._impl.scalar_udf(name))
+        except SedonaError:
+            pass
+
+        try:
+            return AggregateUdf(self._ctx._impl.aggregate_udf(name))
+        except SedonaError:
+            pass
+
+        return AttributeError(f"Can't find scalar or aggregate function '{name}'")
+
+    def __getitem__(self, key) -> Union["ScalarUdf", "AggregateUdf"]:
+        try:
+            return self.__getattr__(key)
+        except AttributeError:
+            KeyError(f"Can't find scalar or aggregate function '{key}'")

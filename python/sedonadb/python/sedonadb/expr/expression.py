@@ -373,6 +373,36 @@ def col(name: str, qualifier: Optional[str] = None) -> Expr:
     return Expr(_expr_col(name, qualifier))
 
 
+class ScalarUdf:
+    """Concrete scalar function that can generate call expressions
+
+    The primary purpose of a ScalarUdf is to generate expressions for use in
+    the Python expression API.
+    """
+
+    def __init__(self, impl):
+        if type(impl).__name__ not in ("PySedonaScalarUdf", "PyScalarUdf"):
+            raise TypeError(
+                "ScalarUdf must be constructed from internal scalar UDF wrapper"
+            )
+        self._impl = impl
+
+    def __call__(self, *args: Any) -> Expr:
+        return Expr(self._impl.call([_to_expr(arg)._impl for arg in args]))
+
+
+class AggregateUdf:
+    def __init__(self, impl):
+        if type(impl).__name__ not in ("PyAggregateUdf",):
+            raise TypeError(
+                "AggregateUdf must be constructed from internal aggregate UDF wrapper"
+            )
+        self._impl = impl
+
+    def __call__(self, *args: Any) -> Expr:
+        return Expr(self._impl.call([_to_expr(arg)._impl for arg in args]))
+
+
 def _to_expr(value: Any) -> Expr:
     """Coerce a Python value to an `Expr`.
 
