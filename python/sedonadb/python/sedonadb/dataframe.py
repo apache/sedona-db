@@ -147,6 +147,34 @@ class DataFrame:
             )
         return _col(columns[key])
 
+    def __getattr__(self, name):
+        try:
+            return self[name]
+        except KeyError as e:
+            raise AttributeError(str(e))
+
+    @property
+    def geom(self) -> Expr:
+        """Return the geometry column expression
+
+        Returns an expression pointing to the unique geometry column of this DataFrame.
+        An error is raised if there are zero or multiple geometry columns.
+        """
+        geometry_columns = self._impl.geometry_columns()
+        if not geometry_columns:
+            raise AttributeError("Table has no geometry columns")
+
+        if len(geometry_columns) > 1:
+            cols = ", ".join(geometry_columns)
+            raise ValueError(
+                f"Table has more than one geometry column. Available geometry columns: {cols}"
+            )
+
+        return self[geometry_columns[0]]
+
+    def __dir__(self):
+        return self.columns + super().__dir__()
+
     def select(self, *exprs: Union[Expr, str, _SedonaLit]) -> "DataFrame":
         """Project a set of columns or expressions.
 

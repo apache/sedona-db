@@ -491,7 +491,7 @@ class SedonaContext:
         """Access Python wrappers for SedonaDB functions"""
         return Functions(self)
 
-    def col(name: str, qualifier: Optional[str] = None) -> Expr:
+    def col(self, name: str, qualifier: Optional[str] = None) -> Expr:
         """Reference a column by name.
 
         Args:
@@ -511,7 +511,7 @@ class SedonaContext:
         """
         return col_expr(name, qualifier=qualifier)
 
-    def lit(value: Any) -> LiteralExpr:
+    def lit(self, value: Any) -> LiteralExpr:
         """Create a literal (constant) expression
 
         Creates a `Literal` object around value, or returns value if it is

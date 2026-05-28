@@ -60,3 +60,8 @@ class Functions:
             return self.__getattr__(key)
         except AttributeError:
             KeyError(f"Can't find scalar or aggregate function '{key}'")
+
+    def __dir__(self):
+        return sorted(
+            self._ctx._impl.list_scalar_udfs() + self._ctx._impl.list_aggregate_udfs()
+        )
