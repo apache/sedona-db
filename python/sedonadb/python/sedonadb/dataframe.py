@@ -284,7 +284,9 @@ class DataFrame:
         return self.columns
 
     def select(
-        self, *exprs: Union[Expr, str, _SedonaLit], **kwargs: Union[Expr, str, _SedonaLit]
+        self,
+        *exprs: Union[Expr, str, _SedonaLit],
+        **kwargs: Union[Expr, str, _SedonaLit],
     ) -> "DataFrame":
         """Project a set of columns or expressions.
 
