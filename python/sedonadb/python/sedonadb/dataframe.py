@@ -193,6 +193,12 @@ class DataFrame:
         return self.limit(n)
 
     def alias(self, name: str) -> "DataFrame":
+        """Qualify all columns of this DataFrame with a given name
+
+        Returns a DataFrame where all columns are qualified to disambiguate
+        references in join expressions. This is the equivalent of aliasing a subquery
+        in SQL (`(SELECT * FROM df) AS name`).
+        """
         return DataFrame(
             self._ctx,
             self._impl.alias(name),
