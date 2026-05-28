@@ -89,6 +89,13 @@ class DataFrame:
         """
         return self.limit(n)
 
+    def alias(self, name: str) -> "DataFrame":
+        return DataFrame(
+            self._ctx,
+            self._impl.alias(name),
+            self._options,
+        )
+
     def __getitem__(self, key: Union[str, int]) -> Expr:
         """Reference a single column by name or position.
 
@@ -124,55 +131,49 @@ class DataFrame:
         """
         # `bool` is a subclass of `int`, so guard explicitly — otherwise
         # `df[True]` would silently mean `df[1]`.
-        if isinstance(key, bool) or not isinstance(key, (str, int)):
+        if isinstance(key, bool):
             raise TypeError(
-                f"DataFrame indexing is not supported for "
-                f"{type(key).__name__}. Use df['name'] or df[i] for a "
-                f"column expression; use df.select(*cols) for multi-column "
-                f"projection and df.filter(expr) for row filtering."
+                "DataFrame indexing is not supported for bool. "
+                "Use df['name'] or df[i] for a column expression; "
+                "use df.select(*cols) for multi-column projection "
+                "and df.filter(expr) for row filtering."
             )
-
-        columns = self._impl.columns()
-        if isinstance(key, str):
-            if key not in columns:
-                raise KeyError(
-                    f"Column {key!r} not found. Available columns: {columns}"
-                )
-            return _col(key)
-        # int (and not bool, by the guard above)
-        if not -len(columns) <= key < len(columns):
-            raise IndexError(
-                f"Column index {key} is out of range for DataFrame with "
-                f"{len(columns)} columns"
+        if isinstance(key, list):
+            raise TypeError(
+                "DataFrame indexing with a list is not supported. "
+                "Use df.select(*cols) for multi-column projection."
             )
-        return _col(columns[key])
+        if isinstance(key, Expr):
+            raise TypeError(
+                "DataFrame indexing with an Expr is not supported. "
+                "Use df.filter(expr) for row filtering."
+            )
+        if isinstance(key, slice):
+            raise TypeError(
+                "DataFrame slicing is not supported. "
+                "Use df.limit(n) or df.limit(n, offset=k)."
+            )
+        inner_expr = self._impl.qualified_column_expr(key)
+        return Expr(inner_expr)
 
     def __getattr__(self, name):
+        """Syntactic sugar for column access
+
+        Allows columns to be accessed like `t.geometry` for columns
+        that do not collide with existing attributes. Programmatic usage
+        should use `sd.col()` or `t["col"]`.
+        """
         try:
             return self[name]
         except KeyError as e:
             raise AttributeError(str(e))
 
-    @property
-    def geom(self) -> Expr:
-        """Return the geometry column expression
-
-        Returns an expression pointing to the unique geometry column of this DataFrame.
-        An error is raised if there are zero or multiple geometry columns.
-        """
-        geometry_columns = self._impl.geometry_columns()
-        if not geometry_columns:
-            raise AttributeError("Table has no geometry columns")
-
-        if len(geometry_columns) > 1:
-            cols = ", ".join(geometry_columns)
-            raise ValueError(
-                f"Table has more than one geometry column. Available geometry columns: {cols}"
-            )
-
-        return self[geometry_columns[0]]
-
     def __dir__(self):
+        """List attributes of this object
+
+        This is primarily intended to power autocomplete, so columns
+        are placed first.
+        """
         return self.columns + super().__dir__()
 
     def select(self, *exprs: Union[Expr, str, _SedonaLit]) -> "DataFrame":

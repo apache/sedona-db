@@ -98,6 +98,52 @@ impl InternalDataFrame {
         Ok(names)
     }
 
+    fn qualified_column_expr(&self, py: Python<'_>, key: PyObject) -> Result<PyExpr, PyErr> {
+        let num_fields = self.inner.schema().fields().len();
+        let all_names = || self.inner.schema().field_names();
+
+        let index = if let Ok(i) = key.extract::<isize>(py) {
+            // Handle negative indices (Python-style)
+            let resolved = if i < 0 { (num_fields as isize) + i } else { i };
+            if resolved < 0 || resolved >= num_fields as isize {
+                return Err(pyo3::exceptions::PyIndexError::new_err(format!(
+                    "Column index out of range (schema has {num_fields} columns)"
+                )));
+            }
+            resolved as usize
+        } else if let Ok(name) = key.extract::<String>(py) {
+            self.inner
+                .schema()
+                .fields()
+                .iter()
+                .position(|f| f.name() == &name)
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyKeyError::new_err(format!(
+                        "Column '{}' not found. Available columns: {:?}",
+                        name,
+                        all_names()
+                    ))
+                })?
+        } else {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "Column key must be an integer index or string name",
+            ));
+        };
+
+        let (relation, field) = self.inner.schema().qualified_field(index);
+        let expr = Expr::Column(Column {
+            relation: relation.cloned(),
+            name: field.name().to_string(),
+            spans: Default::default(),
+        });
+        Ok(PyExpr::new(expr))
+    }
+
+    fn alias(&self, alias: &str) -> Result<InternalDataFrame, PySedonaError> {
+        let inner = self.inner.clone().alias(alias)?;
+        Ok(InternalDataFrame::new(inner, self.runtime.clone()))
+    }
+
     fn limit(
         &self,
         limit: Option<usize>,
