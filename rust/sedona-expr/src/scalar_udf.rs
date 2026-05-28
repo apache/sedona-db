@@ -211,12 +211,6 @@ impl SedonaScalarUDF {
     /// their inputs. The optimiser/analyzer rule for `RS_EnsureLoaded`
     /// reads this to decide whether to wrap raster arguments with the
     /// async byte-materialisation UDF.
-    ///
-    /// Class-level by convention: each UDF is constructed once per session,
-    /// and the flag reflects a fixed property of the underlying kernels
-    /// (does the implementation call `BandRef::nd_buffer()` / etc.). Do not
-    /// flip this between registrations of the same UDF — kernel behaviour
-    /// is the source of truth.
     pub fn with_needs_bytes(self) -> SedonaScalarUDF {
         Self {
             needs_bytes: true,

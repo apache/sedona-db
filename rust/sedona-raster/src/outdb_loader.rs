@@ -56,7 +56,7 @@ pub struct OutDbLoadRequest<'a> {
     pub data_type: BandDataType,
 }
 
-/// Backend trait. Implementors live in format-specific crates
+/// Backend trait. Implementers live in format-specific crates
 /// (`sedona-raster-gdal`, `sedona-raster-zarr`, …) and are registered
 /// against an [`OutDbLoaderRegistry`] under a format key matching the
 /// band's `outdb_format` column.
