@@ -15,8 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# These tests verify that calling scalar and aggregate functions via
-# ctx.funcs produces the expected Expr repr output.
+import pytest
 
 from sedonadb.expr import Expr
 from sedonadb.expr.expression import ScalarUdf, AggregateUdf
@@ -125,3 +124,13 @@ def test_funcs_getitem_access(con):
 
     e = sum(con.col("x"))
     assert repr(e) == "Expr(sum(x))"
+
+
+def test_funcs_getattr_not_found_raises_attribute_error(con):
+    with pytest.raises(AttributeError, match="Can't find scalar or aggregate function"):
+        con.funcs.nonexistent_function_xyz
+
+
+def test_funcs_getitem_not_found_raises_key_error(con):
+    with pytest.raises(KeyError, match="Can't find scalar or aggregate function"):
+        con.funcs["nonexistent_function_xyz"]

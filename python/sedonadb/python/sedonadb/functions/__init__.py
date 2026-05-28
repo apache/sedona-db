@@ -53,13 +53,13 @@ class Functions:
         except SedonaError:
             pass
 
-        return AttributeError(f"Can't find scalar or aggregate function '{name}'")
+        raise AttributeError(f"Can't find scalar or aggregate function '{name}'")
 
     def __getitem__(self, key) -> Union["ScalarUdf", "AggregateUdf"]:
         try:
             return self.__getattr__(key)
         except AttributeError:
-            KeyError(f"Can't find scalar or aggregate function '{key}'")
+            raise KeyError(f"Can't find scalar or aggregate function '{key}'")
 
     def __dir__(self):
         return (

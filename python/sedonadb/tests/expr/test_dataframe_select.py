@@ -134,7 +134,7 @@ def test_select_mix_positional_and_kwargs(con):
 def test_select_kwarg_with_string_column(con):
     # Keyword arg with a string value should rename the column
     df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3]}))
-    out = df.select(renamed=col("x")).to_pandas()
+    out = df.select(renamed="x").to_pandas()
     pdt.assert_frame_equal(out, pd.DataFrame({"renamed": [1, 2, 3]}))
 
 
