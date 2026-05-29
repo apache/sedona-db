@@ -33,3 +33,4 @@ mod loader;
 mod source_uri;
 
 pub use loader::ZarrChunkReader;
+pub use source_uri::open_storage_from_uri;

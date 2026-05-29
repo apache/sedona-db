@@ -36,11 +36,13 @@ use zarrs::array::Array;
 #[cfg(test)]
 use zarrs::array::ArrayBytes;
 use zarrs::group::Group;
-use zarrs_filesystem::FilesystemStore;
+use zarrs::storage::{
+    AsyncReadableListableStorage, AsyncReadableListableStorageTraits, StorePrefix,
+};
 
 use crate::dtype::zarr_to_band_data_type;
 use crate::geozarr::GroupGeoMetadata;
-use crate::source_uri::{build_chunk_anchor, group_uri_to_filesystem_path};
+use crate::source_uri::build_chunk_anchor;
 
 /// Streaming reader over the chunk grid of a Zarr group.
 ///
@@ -102,7 +104,8 @@ impl ZarrChunkReader {
     /// `batch_size` controls how many chunk rows are emitted per
     /// `RecordBatch`. Must be ≥ 1; callers typically pass
     /// `SessionConfig::batch_size` (defaults to 8192).
-    pub fn try_new(
+    pub async fn try_new(
+        storage: AsyncReadableListableStorage,
         group_uri: &str,
         arrays: Option<&[String]>,
         batch_size: usize,
@@ -113,7 +116,7 @@ impl ZarrChunkReader {
             geo,
             group_transform,
             spatial_dim_indices,
-        } = open_and_validate(group_uri, arrays)?;
+        } = open_and_validate(storage, group_uri, arrays).await?;
 
         let spatial_dims_names: Vec<String> = spatial_dim_indices
             .iter()
@@ -267,20 +270,12 @@ struct OpenedGroup {
 /// Open the Zarr group, parse and validate group metadata, and return
 /// everything `ZarrChunkReader` needs to iterate without further I/O
 /// (apart from per-chunk byte fetches by future resolvers).
-fn open_and_validate(
+async fn open_and_validate(
+    storage: AsyncReadableListableStorage,
     group_uri: &str,
     arrays_filter: Option<&[String]>,
 ) -> Result<OpenedGroup, ArrowError> {
-    let fs_path = group_uri_to_filesystem_path(group_uri)?;
-    let store = FilesystemStore::new(&fs_path).map_err(|e| {
-        ArrowError::ExternalError(Box::new(sedona_internal_datafusion_err!(
-            "failed to open Zarr filesystem store at {}: {e}",
-            fs_path.display()
-        )))
-    })?;
-    let storage: Arc<FilesystemStore> = Arc::new(store);
-
-    let group = Group::open(storage.clone(), "/").map_err(|e| {
+    let group = Group::async_open(storage.clone(), "/").await.map_err(|e| {
         ArrowError::ExternalError(Box::new(sedona_internal_datafusion_err!(
             "failed to open Zarr group at {group_uri}: {e}"
         )))
@@ -302,18 +297,55 @@ fn open_and_validate(
         )));
     }
 
-    let arrays = group.child_arrays().map_err(|e| {
-        ArrowError::ExternalError(Box::new(sedona_internal_datafusion_err!(
-            "failed to enumerate child arrays in {group_uri}: {e}"
-        )))
-    })?;
-    if arrays.is_empty() {
-        return Err(ArrowError::InvalidArgumentError(format!(
-            "Zarr group at {group_uri} has no child arrays"
-        )));
-    }
+    let arrays = match arrays_filter {
+        // Explicit filter: open each named array directly, skipping the
+        // listing step. This is the only viable path against backends
+        // that don't expose directory listing (plain HTTPS without
+        // WebDAV, S3-via-HttpStore) and is strictly less I/O than
+        // list-then-filter when the user already knows what they want.
+        // A 1-D array named explicitly is a user error — surface it
+        // immediately rather than letting the spatial-dim resolver
+        // fail with a confusing message downstream.
+        Some(names) => {
+            let arrays = open_named_arrays(&storage, names, group_uri).await?;
+            for (name, array) in names.iter().zip(arrays.iter()) {
+                if array.shape().len() < 2 {
+                    return Err(ArrowError::InvalidArgumentError(format!(
+                        "array {name:?} has rank {} (shape {:?}); a raster band \
+                         requires at least 2 dimensions and cannot be read.",
+                        array.shape().len(),
+                        array.shape()
+                    )));
+                }
+            }
+            arrays
+        }
+        // Discovery: list direct children of the group and try to open
+        // each as an array. Per-array open failures are logged + skipped
+        // rather than poisoning the whole group, so a single malformed
+        // sibling (e.g. ITS_LIVE's U-typed coord variables with null
+        // fill values) doesn't take the whole read offline. 1-D arrays
+        // (typical xarray coord variables) are silently dropped so a
+        // canonical xarray layout reads cleanly.
+        None => {
+            let arrays = enumerate_child_arrays(&storage, group_uri).await?;
+            if arrays.is_empty() {
+                return Err(ArrowError::InvalidArgumentError(format!(
+                    "Zarr group at {group_uri} has no child arrays"
+                )));
+            }
+            let kept: Vec<_> = arrays.into_iter().filter(|a| a.shape().len() > 1).collect();
+            if kept.is_empty() {
+                return Err(ArrowError::InvalidArgumentError(format!(
+                    "Zarr group at {group_uri} contains only 1-D arrays (typical \
+                     xarray-style coord variables); a raster band requires at least \
+                     2 dimensions, so this group has nothing readable as a raster"
+                )));
+            }
+            kept
+        }
+    };
 
-    let arrays = select_arrays(arrays, arrays_filter, group_uri)?;
     let array_infos = collect_array_infos(arrays)?;
     validate_group_constraints(&array_infos)?;
 
@@ -367,6 +399,67 @@ fn open_and_validate(
     })
 }
 
+/// Open arrays at the explicit paths requested by the caller, skipping
+/// the group listing step entirely. Used when `arrays_filter` is `Some`
+/// — the canonical path for backends that can't list (plain HTTPS / S3
+/// behind HttpStore) and a strict subset of work for any other backend.
+async fn open_named_arrays(
+    storage: &AsyncReadableListableStorage,
+    names: &[String],
+    group_uri: &str,
+) -> Result<Vec<Array<dyn AsyncReadableListableStorageTraits>>, ArrowError> {
+    let mut out = Vec::with_capacity(names.len());
+    for name in names {
+        let normalized = name.trim_start_matches('/');
+        let path = format!("/{normalized}");
+        let array = Array::async_open(storage.clone(), &path)
+            .await
+            .map_err(|e| {
+                ArrowError::InvalidArgumentError(format!(
+                    "Zarr group at {group_uri} has no array named {name:?} \
+                     (or its metadata could not be parsed): {e}"
+                ))
+            })?;
+        out.push(array);
+    }
+    Ok(out)
+}
+
+/// List the direct children of the group and try to open each as an
+/// array. Per-array open failures are logged at warn level and the
+/// child is skipped — a single malformed sibling array (e.g. an
+/// xarray-style coord variable with a dtype zarrs can't yet parse)
+/// can no longer poison the whole group. Subgroups are filtered out by
+/// the same `Array::async_open`-error skip, so the externally
+/// observable behaviour matches the old `Group::child_arrays()`
+/// contract for well-formed groups while being permissive about
+/// partial breakage.
+async fn enumerate_child_arrays(
+    storage: &AsyncReadableListableStorage,
+    group_uri: &str,
+) -> Result<Vec<Array<dyn AsyncReadableListableStorageTraits>>, ArrowError> {
+    let listing = storage.list_dir(&StorePrefix::root()).await.map_err(|e| {
+        ArrowError::ExternalError(Box::new(sedona_internal_datafusion_err!(
+            "failed to list child nodes of Zarr group at {group_uri}: {e}"
+        )))
+    })?;
+    let mut arrays = Vec::with_capacity(listing.prefixes().len());
+    for child in listing.prefixes() {
+        let raw = child.as_str().trim_end_matches('/');
+        if raw.is_empty() {
+            continue;
+        }
+        let path = format!("/{raw}");
+        match Array::async_open(storage.clone(), &path).await {
+            Ok(array) => arrays.push(array),
+            Err(e) => log::warn!(
+                "skipping Zarr child {path} in {group_uri}: not openable as an array ({e})"
+            ),
+        }
+    }
+    Ok(arrays)
+}
+
 /// Collect per-array metadata from open zarrs `Array` handles.
 ///
 /// Sorts arrays by path so band ordering across rows is deterministic
@@ -374,7 +467,7 @@ fn open_and_validate(
 /// filesystem stores currently happen to enumerate alphabetically, but
 /// that's not part of the contract we want consumers to rely on).
 fn collect_array_infos(
-    mut arrays: Vec<Array<FilesystemStore>>,
+    mut arrays: Vec<Array<dyn AsyncReadableListableStorageTraits>>,
 ) -> Result<Vec<ArrayInfo>, ArrowError> {
     arrays.sort_by(|a, b| a.path().as_str().cmp(b.path().as_str()));
     let mut out = Vec::with_capacity(arrays.len());
@@ -409,69 +502,6 @@ fn collect_array_infos(
         });
     }
     Ok(out)
-}
-
-/// Apply the array-selection rules. 1-D arrays (typical xarray-style
-/// coord variables) are always dropped — a raster band requires at
-/// least 2 dimensions, so reading a 1-D array could never succeed.
-/// - Explicit filter: keep arrays whose path (with leading `/` stripped)
-///   matches one of the requested names. Unknown names error so users
-///   don't silently get an empty group from a typo; naming a 1-D array
-///   errors with a clear message rather than producing a confusing
-///   "no spatial axes" failure downstream.
-/// - No filter: read every multi-dimensional array.
-fn select_arrays(
-    arrays: Vec<Array<FilesystemStore>>,
-    filter: Option<&[String]>,
-    group_uri: &str,
-) -> Result<Vec<Array<FilesystemStore>>, ArrowError> {
-    if let Some(names) = filter {
-        let available: Vec<String> = arrays
-            .iter()
-            .map(|a| a.path().as_str().trim_start_matches('/').to_string())
-            .collect();
-        for requested in names {
-            let needle = requested.trim_start_matches('/');
-            match arrays
-                .iter()
-                .find(|a| a.path().as_str().trim_start_matches('/') == needle)
-            {
-                None => {
-                    return Err(ArrowError::InvalidArgumentError(format!(
-                        "Zarr group at {group_uri} has no array named {requested:?}; \
-                         available arrays: {available:?}"
-                    )));
-                }
-                Some(a) if a.shape().len() < 2 => {
-                    return Err(ArrowError::InvalidArgumentError(format!(
-                        "array {requested:?} has rank {} (shape {:?}); a raster band \
-                         requires at least 2 dimensions and cannot be read.",
-                        a.shape().len(),
-                        a.shape()
-                    )));
-                }
-                Some(_) => {}
-            }
-        }
-        let kept: Vec<_> = arrays
-            .into_iter()
-            .filter(|a| {
-                let path = a.path().as_str().trim_start_matches('/').to_string();
-                names.iter().any(|n| n.trim_start_matches('/') == path)
-            })
-            .collect();
-        return Ok(kept);
-    }
-
-    let kept: Vec<_> = arrays.into_iter().filter(|a| a.shape().len() > 1).collect();
-    if kept.is_empty() {
-        return Err(ArrowError::InvalidArgumentError(format!(
-            "Zarr group at {group_uri} contains only 1-D arrays (typical \
-             xarray-style coord variables); a raster band requires at least \
-             2 dimensions, so this group has nothing readable as a raster"
-        )));
-    }
-    Ok(kept)
 }
 
 /// Resolve dimension names for an array, supporting both Zarr v3
@@ -660,10 +690,10 @@ fn advance_chunk_indices(chunk_indices: &mut [u64], chunk_grid_shape: &[u64]) ->
 /// exercises it so the implementation doesn't bit-rot in the
 /// meantime.
 #[cfg(test)]
-fn retrieve_chunk_bytes(
-    array: &Array<FilesystemStore>,
-    chunk_indices: &[u64],
-) -> Result<Vec<u8>, ArrowError> {
+fn retrieve_chunk_bytes<S>(array: &Array<S>, chunk_indices: &[u64]) -> Result<Vec<u8>, ArrowError>
+where
+    S: ?Sized + zarrs::storage::ReadableStorageTraits + 'static,
+{
     let bytes = array
         .retrieve_chunk::<ArrayBytes<'static>>(chunk_indices)
         .map_err(|e| {
@@ -689,6 +719,7 @@ mod tests {
     use tempfile::TempDir;
     use zarrs::array::data_type;
     use zarrs::array::ArrayBuilder;
+    use zarrs_filesystem::FilesystemStore;
 
     /// Direct coverage for `retrieve_chunk_bytes`. The function is the
     /// only pixel-byte read primitive in the crate today; previously it
