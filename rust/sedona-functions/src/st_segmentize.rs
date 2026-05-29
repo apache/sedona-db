@@ -327,10 +327,10 @@ fn write_interpolated_3d<C: CoordTrait<T = f64>>(
     let x1 = c1.x();
     let y1 = c1.y();
     // SAFETY: Only called when dims.size() == 3, so index 2 is valid
-    let d1 = unsafe { c1.nth_unchecked(2) };
+    let d1 = c1.nth_or_panic(2);
     let x2 = c2.x();
     let y2 = c2.y();
-    let d2 = unsafe { c2.nth_unchecked(2) };
+    let d2 = c2.nth_or_panic(2);
 
     for i in 1..=num_segments {
         let t = i as f64 / num_segments as f64;
@@ -350,12 +350,12 @@ fn write_interpolated_4d<C: CoordTrait<T = f64>>(
     let x1 = c1.x();
     let y1 = c1.y();
     // SAFETY: Only called when dims.size() == 4, so indices 2 and 3 are valid
-    let z1 = unsafe { c1.nth_unchecked(2) };
-    let m1 = unsafe { c1.nth_unchecked(3) };
+    let z1 = c1.nth_or_panic(2);
+    let m1 = c1.nth_or_panic(3);
     let x2 = c2.x();
     let y2 = c2.y();
-    let z2 = unsafe { c2.nth_unchecked(2) };
-    let m2 = unsafe { c2.nth_unchecked(3) };
+    let z2 = c2.nth_or_panic(2);
+    let m2 = c2.nth_or_panic(3);
 
     for i in 1..=num_segments {
         let t = i as f64 / num_segments as f64;
