@@ -27,10 +27,14 @@
 //! verbatim, surfacing a clear error when the column is empty.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use arrow_buffer::Buffer;
 use arrow_schema::ArrowError;
+use datafusion_common::config::{
+    ConfigEntry, ConfigExtension, ConfigField, ExtensionOptions, Visit,
+};
+use datafusion_common::{config_err, Result as DFResult};
 use sedona_schema::raster::BandDataType;
 
 /// Everything a backend needs to materialise a single OutDb band's bytes.
@@ -135,6 +139,162 @@ impl OutDbLoaderRegistry {
     /// True if any loader is registered.
     pub fn is_empty(&self) -> bool {
         self.loaders.is_empty()
+    }
+}
+
+/// `ConfigField`-shaped wrapper around the shared registry handle.
+///
+/// Mirrors `sedona_common::option::CrsProviderOption` so the registry
+/// can live inside a `ConfigOptions` extension and stay reachable from
+/// `AsyncScalarUDFImpl::invoke_async_with_args` (which only receives
+/// `Arc<ConfigOptions>`). The inner `Arc<RwLock<...>>` is cloned
+/// between the `SedonaContext` (mutable register API) and the config
+/// extension (read at UDF dispatch time); both observe the same
+/// underlying lock.
+#[derive(Debug, Clone)]
+pub struct OutDbLoaderRegistryOption(Arc<RwLock<OutDbLoaderRegistry>>);
+
+impl OutDbLoaderRegistryOption {
+    /// Wrap an existing shared registry handle.
+    pub fn new(inner: Arc<RwLock<OutDbLoaderRegistry>>) -> Self {
+        Self(inner)
+    }
+
+    /// Clone the inner Arc for callers that need their own owning handle
+    /// (e.g. `SedonaContext::register_outdb_loader` needs to write
+    /// through the same lock that the config extension exposes for
+    /// reads).
+    pub fn handle(&self) -> Arc<RwLock<OutDbLoaderRegistry>> {
+        Arc::clone(&self.0)
+    }
+}
+
+impl Default for OutDbLoaderRegistryOption {
+    fn default() -> Self {
+        Self(Arc::new(RwLock::new(OutDbLoaderRegistry::new())))
+    }
+}
+
+impl PartialEq for OutDbLoaderRegistryOption {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl ConfigField for OutDbLoaderRegistryOption {
+    fn visit<V: Visit>(&self, v: &mut V, key: &str, description: &'static str) {
+        let snapshot = match self.0.read() {
+            Ok(g) => g.formats().map(String::from).collect::<Vec<_>>(),
+            Err(p) => p
+                .into_inner()
+                .formats()
+                .map(String::from)
+                .collect::<Vec<_>>(),
+        };
+        v.some(
+            key,
+            format!("OutDbLoaderRegistry {{ formats: {snapshot:?} }}"),
+            description,
+        );
+    }
+
+    fn set(&mut self, key: &str, _value: &str) -> DFResult<()> {
+        config_err!("Can't set {key} from SQL")
+    }
+}
+
+/// `ConfigExtension` that stashes the per-session
+/// [`OutDbLoaderRegistry`] inside a `ConfigOptions`. Registered into
+/// the session's `ConfigOptions` at `SedonaContext::new_from_context`
+/// time; consumed by the `RS_EnsureLoaded` async UDF at dispatch time
+/// via `args.config_options.extensions.get::<OutDbLoaderConfig>()`.
+///
+/// The PREFIX namespace is `sedona.outdb_loader` — kept separate from
+/// `sedona`'s main `SedonaOptions` extension because this lives in
+/// `sedona-raster` (which is upstream of `sedona-common` in the
+/// dependency graph) and adding a field to `SedonaOptions` would
+/// require an undesirable circular dep.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct OutDbLoaderConfig {
+    pub registry: OutDbLoaderRegistryOption,
+}
+
+impl OutDbLoaderConfig {
+    /// Build a config extension that closes over an existing shared
+    /// registry handle. Use this rather than `default()` when wiring
+    /// from `SedonaContext::new_from_context` so the context's mutable
+    /// `register_outdb_loader` API writes to the same `RwLock` the
+    /// config extension exposes for reads.
+    pub fn from_handle(registry: Arc<RwLock<OutDbLoaderRegistry>>) -> Self {
+        Self {
+            registry: OutDbLoaderRegistryOption::new(registry),
+        }
+    }
+}
+
+impl ConfigExtension for OutDbLoaderConfig {
+    const PREFIX: &'static str = "sedona.outdb_loader";
+}
+
+impl ConfigField for OutDbLoaderConfig {
+    fn visit<V: Visit>(&self, v: &mut V, key_prefix: &str, _description: &'static str) {
+        let key = if key_prefix.is_empty() {
+            "registry".to_string()
+        } else {
+            format!("{key_prefix}.registry")
+        };
+        self.registry
+            .visit(v, &key, "Registered OutDb byte loaders");
+    }
+
+    fn set(&mut self, key: &str, _value: &str) -> DFResult<()> {
+        config_err!("Can't set {key} from SQL")
+    }
+}
+
+impl ExtensionOptions for OutDbLoaderConfig {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+
+    fn cloned(&self) -> Box<dyn ExtensionOptions> {
+        Box::new(self.clone())
+    }
+
+    fn set(&mut self, key: &str, value: &str) -> DFResult<()> {
+        <Self as ConfigField>::set(self, key, value)
+    }
+
+    fn entries(&self) -> Vec<ConfigEntry> {
+        struct EntryCollector(Vec<ConfigEntry>);
+        impl Visit for EntryCollector {
+            fn some<V: std::fmt::Display>(
+                &mut self,
+                key: &str,
+                value: V,
+                description: &'static str,
+            ) {
+                self.0.push(ConfigEntry {
+                    key: key.to_string(),
+                    value: Some(value.to_string()),
+                    description,
+                });
+            }
+            fn none(&mut self, key: &str, description: &'static str) {
+                self.0.push(ConfigEntry {
+                    key: key.to_string(),
+                    value: None,
+                    description,
+                });
+            }
+        }
+        let mut collector = EntryCollector(vec![]);
+        self.visit(&mut collector, Self::PREFIX, "");
+        collector.0
     }
 }
 

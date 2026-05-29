@@ -26,7 +26,6 @@
 //! through unchanged. Other band/raster metadata is preserved verbatim.
 
 use std::any::Any;
-use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, RwLock};
 
@@ -34,31 +33,44 @@ use arrow_array::{Array, ArrayRef, StructArray};
 use arrow_buffer::Buffer;
 use arrow_schema::DataType;
 use async_trait::async_trait;
+use datafusion_common::config::ConfigOptions;
 use datafusion_common::{plan_err, DataFusionError, Result};
 use datafusion_expr::async_udf::AsyncScalarUDFImpl;
 use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
 use sedona_common::sedona_internal_datafusion_err;
 use sedona_raster::array::RasterStructArray;
 use sedona_raster::builder::RasterBuilder;
-use sedona_raster::outdb_loader::{AsyncByteLoader, OutDbLoadRequest, OutDbLoaderRegistry};
+use sedona_raster::outdb_loader::{
+    AsyncByteLoader, OutDbLoadRequest, OutDbLoaderConfig, OutDbLoaderRegistry,
+};
 use sedona_raster::traits::RasterRef;
 
-/// Constant exposed so callers (the analyzer rule from a later commit,
-/// and tests that need to reference the UDF by name) don't drift on
-/// spelling.
+/// Constant exposed so callers (the analyzer rule, and tests that need
+/// to reference the UDF by name) don't drift on spelling.
 pub const RS_ENSURE_LOADED_NAME: &str = "rs_ensureloaded";
 
-/// Async UDF that resolves OutDb bands by dispatching through an
-/// [`OutDbLoaderRegistry`]. Owns an `Arc<RwLock<…>>` clone of the
-/// session's registry; lookups happen under a brief read lock, then
-/// the actual I/O runs without holding the lock.
+/// Async UDF that resolves OutDb bands by dispatching through the
+/// [`OutDbLoaderRegistry`] stashed in `ConfigOptions` as a
+/// [`OutDbLoaderConfig`] extension. The UDF instance itself is
+/// session-agnostic — it pulls the registry handle out of
+/// `args.config_options.extensions.get::<OutDbLoaderConfig>()` at
+/// dispatch time. This matches DataFusion's
+/// `AsyncScalarUDFImpl::invoke_async_with_args` surface (only
+/// `Arc<ConfigOptions>` is reachable from the async fn) and mirrors how
+/// `CrsProvider` flows through the session's options.
+#[derive(Debug)]
 pub struct RsEnsureLoaded {
     signature: Signature,
-    registry: Arc<RwLock<OutDbLoaderRegistry>>,
+}
+
+impl Default for RsEnsureLoaded {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl RsEnsureLoaded {
-    pub fn new(registry: Arc<RwLock<OutDbLoaderRegistry>>) -> Self {
+    pub fn new() -> Self {
         Self {
             // `any(1, ...)` accepts whatever single-arg type the caller
             // passes; we validate "argument is a Raster Struct" in
@@ -74,44 +86,56 @@ impl RsEnsureLoaded {
             // across queries the underlying storage may change, so the
             // result isn't `Immutable`.
             signature: Signature::any(1, Volatility::Stable),
-            registry,
         }
-    }
-
-    fn registry_get(&self, format: &str) -> Result<Arc<dyn AsyncByteLoader>> {
-        let guard = self
-            .registry
-            .read()
-            .map_err(|e| sedona_internal_datafusion_err!("OutDb registry lock poisoned: {e}"))?;
-        if let Some(loader) = guard.get(format) {
-            return Ok(loader);
-        }
-        // Build a diagnostic that lists registered formats so users
-        // know what plugins are loaded.
-        let registered: Vec<String> = guard.formats().map(String::from).collect();
-        let registered_msg = if registered.is_empty() {
-            "no OutDb loaders are registered in this session".to_string()
-        } else {
-            format!("registered formats: {}", registered.join(", "))
-        };
-        Err(DataFusionError::Plan(format!(
-            "no OutDb loader registered for format '{format}' — {registered_msg}"
-        )))
     }
 }
 
-impl fmt::Debug for RsEnsureLoaded {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("RsEnsureLoaded")
-            .field("registry", &*self.registry.read().map_err(|_| fmt::Error)?)
-            .finish()
-    }
+/// Pull the shared registry handle out of a `ConfigOptions`. Returns a
+/// helpful error if the [`OutDbLoaderConfig`] extension isn't installed
+/// — that only happens if a caller bypasses `SedonaContext::new` to
+/// build their own session, in which case naming the extension is the
+/// right diagnostic.
+fn registry_handle_from_config(config: &ConfigOptions) -> Result<Arc<RwLock<OutDbLoaderRegistry>>> {
+    config
+        .extensions
+        .get::<OutDbLoaderConfig>()
+        .map(|cfg| cfg.registry.handle())
+        .ok_or_else(|| {
+            sedona_internal_datafusion_err!(
+                "OutDbLoaderConfig is not registered in this session's ConfigOptions; \
+                 RS_EnsureLoaded cannot dispatch without it. Use SedonaContext::new() \
+                 or insert the extension manually."
+            )
+        })
 }
 
-// One RsEnsureLoaded per session by construction — equality and hash are
-// by identity (i.e. by name). DataFusion needs these to deduplicate
-// `ScalarUDF` instances in the function registry; the actual `registry`
-// field is per-session and shouldn't participate in identity.
+fn lookup_loader(
+    registry: &Arc<RwLock<OutDbLoaderRegistry>>,
+    format: &str,
+) -> Result<Arc<dyn AsyncByteLoader>> {
+    let guard = registry
+        .read()
+        .map_err(|e| sedona_internal_datafusion_err!("OutDb registry lock poisoned: {e}"))?;
+    if let Some(loader) = guard.get(format) {
+        return Ok(loader);
+    }
+    // Build a diagnostic that lists registered formats so users know
+    // which plugins are loaded.
+    let registered: Vec<String> = guard.formats().map(String::from).collect();
+    let registered_msg = if registered.is_empty() {
+        "no OutDb loaders are registered in this session".to_string()
+    } else {
+        format!("registered formats: {}", registered.join(", "))
+    };
+    Err(DataFusionError::Plan(format!(
+        "no OutDb loader registered for format '{format}' — {registered_msg}"
+    )))
+}
+
+// One RsEnsureLoaded per session by construction — equality and hash
+// are by identity (i.e. by name). DataFusion needs these to deduplicate
+// `ScalarUDF` instances in the function registry; the struct holds no
+// per-session state of its own.
 impl PartialEq for RsEnsureLoaded {
     fn eq(&self, _other: &Self) -> bool {
         true
@@ -180,10 +204,8 @@ impl AsyncScalarUDFImpl for RsEnsureLoaded {
             }
         };
 
-        let output = ensure_loaded(&input_array, &self.registry, |format| {
-            self.registry_get(format)
-        })
-        .await?;
+        let registry = registry_handle_from_config(&args.config_options)?;
+        let output = ensure_loaded(&input_array, |format| lookup_loader(&registry, format)).await?;
 
         Ok(ColumnarValue::Array(output))
     }
@@ -198,11 +220,7 @@ impl AsyncScalarUDFImpl for RsEnsureLoaded {
 /// owned metadata, dispatch, and move on. Parallel fan-out is a follow-up
 /// optimisation that doesn't change the trait surface or the registry
 /// contract.
-async fn ensure_loaded<F>(
-    input_array: &ArrayRef,
-    _registry: &Arc<RwLock<OutDbLoaderRegistry>>,
-    mut lookup: F,
-) -> Result<ArrayRef>
+async fn ensure_loaded<F>(input_array: &ArrayRef, mut lookup: F) -> Result<ArrayRef>
 where
     F: FnMut(&str) -> Result<Arc<dyn AsyncByteLoader>>,
 {
@@ -503,7 +521,7 @@ mod tests {
         let loader_dyn: Arc<dyn AsyncByteLoader> = loader.clone();
         let reg = registry_with("mock", loader_dyn);
 
-        let out = ensure_loaded(&input, &reg, |fmt| {
+        let out = ensure_loaded(&input, |fmt| {
             reg.read()
                 .unwrap()
                 .get(fmt)
@@ -541,7 +559,7 @@ mod tests {
         let loader_dyn: Arc<dyn AsyncByteLoader> = loader.clone();
         let reg = registry_with("mock", loader_dyn);
 
-        let out = ensure_loaded(&input, &reg, |fmt| {
+        let out = ensure_loaded(&input, |fmt| {
             reg.read()
                 .unwrap()
                 .get(fmt)
@@ -568,7 +586,7 @@ mod tests {
         let reg: Arc<RwLock<OutDbLoaderRegistry>> =
             Arc::new(RwLock::new(OutDbLoaderRegistry::new()));
 
-        let err = ensure_loaded(&input, &reg, |fmt| {
+        let err = ensure_loaded(&input, |fmt| {
             reg.read().unwrap().get(fmt).ok_or_else(|| {
                 datafusion_common::DataFusionError::Plan(format!(
                     "no OutDb loader registered for format '{fmt}'"
@@ -606,7 +624,7 @@ mod tests {
         let loader_dyn: Arc<dyn AsyncByteLoader> = Arc::new(ShortLoader);
         let reg = registry_with("mock", loader_dyn);
 
-        let err = ensure_loaded(&input, &reg, |fmt| {
+        let err = ensure_loaded(&input, |fmt| {
             reg.read()
                 .unwrap()
                 .get(fmt)
@@ -647,7 +665,7 @@ mod tests {
         let loader_dyn: Arc<dyn AsyncByteLoader> = Arc::new(RecordingLoader::default());
         let reg = registry_with("mock", loader_dyn);
 
-        let out = ensure_loaded(&input, &reg, |fmt| {
+        let out = ensure_loaded(&input, |fmt| {
             reg.read()
                 .unwrap()
                 .get(fmt)

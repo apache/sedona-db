@@ -72,7 +72,7 @@ use sedona_spatial_join_gpu::options::GpuOptions;
 use sedona_query_planner::{
     optimizer::register_spatial_join_logical_optimizer, query_planner::SedonaQueryPlanner,
 };
-use sedona_raster::outdb_loader::{AsyncByteLoader, OutDbLoaderRegistry};
+use sedona_raster::outdb_loader::{AsyncByteLoader, OutDbLoaderConfig, OutDbLoaderRegistry};
 
 /// Sedona SessionContext wrapper
 ///
@@ -237,18 +237,35 @@ impl SedonaContext {
             outdb_registry: Arc::new(RwLock::new(OutDbLoaderRegistry::new())),
         };
 
-        // Register the RS_EnsureLoaded async UDF, bound to this session's
-        // OutDb loader registry. Compiled-in backends (`sedona-raster-gdal`
-        // under the `gdal` feature) and plugin crates (`sedona-raster-zarr`,
-        // …) register their loaders into `out.outdb_registry` either from
-        // this constructor or via `SedonaContext::register_outdb_loader`
-        // after construction; the UDF instance below closes over the same
-        // Arc, so registrations are immediately visible at query time.
+        // Stash a clone of the shared registry handle inside
+        // `ConfigOptions` via the `OutDbLoaderConfig` extension. The
+        // RS_EnsureLoaded async UDF reads from there at dispatch time —
+        // `AsyncScalarUDFImpl::invoke_async_with_args` only receives
+        // `Arc<ConfigOptions>`, so this is the path that keeps the
+        // registry reachable at the UDF's invocation site. Mirrors how
+        // `CrsProviderOption` works inside `SedonaOptions`.
+        //
+        // Writes through `SedonaContext::register_outdb_loader` (which
+        // mutates the Arc held in `out.outdb_registry`) are immediately
+        // visible to UDF reads through this config extension because
+        // both handles share the same `RwLock`.
+        out.ctx
+            .state_ref()
+            .write()
+            .config_mut()
+            .options_mut()
+            .extensions
+            .insert(OutDbLoaderConfig::from_handle(Arc::clone(
+                &out.outdb_registry,
+            )));
+
+        // Register the RS_EnsureLoaded async UDF. It pulls the registry
+        // out of `args.config_options` at dispatch time, so it doesn't
+        // need to close over the Arc itself — the UDF instance is
+        // session-agnostic.
         let ensure_loaded_udf = {
             use datafusion_expr::async_udf::AsyncScalarUDF;
-            let udf = AsyncScalarUDF::new(Arc::new(RsEnsureLoaded::new(Arc::clone(
-                &out.outdb_registry,
-            ))));
+            let udf = AsyncScalarUDF::new(Arc::new(RsEnsureLoaded::new()));
             let udf = Arc::new(udf.into_scalar_udf());
             out.ctx.register_udf((*udf).clone());
             udf

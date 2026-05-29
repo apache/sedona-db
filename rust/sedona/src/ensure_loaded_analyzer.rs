@@ -177,8 +177,6 @@ fn expr_is_raster(expr: &Expr, schema: &DFSchemaRef) -> bool {
 mod tests {
     use super::*;
 
-    use std::sync::RwLock;
-
     use arrow_schema::DataType;
     use datafusion_common::tree_node::TreeNodeRecursion;
     use datafusion_common::DFSchema;
@@ -186,7 +184,6 @@ mod tests {
     use datafusion_expr::{col, Volatility};
     use sedona_common::sedona_internal_datafusion_err;
     use sedona_expr::scalar_udf::{ScalarKernelRef, SimpleSedonaScalarKernel};
-    use sedona_raster::outdb_loader::OutDbLoaderRegistry;
     use sedona_schema::matchers::ArgMatcher;
 
     use crate::rs_ensure_loaded::RsEnsureLoaded;
@@ -194,8 +191,7 @@ mod tests {
     /// Build a ScalarUDF wrapping our RsEnsureLoaded impl. Same shape as
     /// the one `SedonaContext::new_from_context` will register.
     fn build_ensure_loaded_udf() -> Arc<ScalarUDF> {
-        let registry = Arc::new(RwLock::new(OutDbLoaderRegistry::new()));
-        let async_udf = AsyncScalarUDF::new(Arc::new(RsEnsureLoaded::new(registry)));
+        let async_udf = AsyncScalarUDF::new(Arc::new(RsEnsureLoaded::new()));
         Arc::new(async_udf.into_scalar_udf())
     }
 
