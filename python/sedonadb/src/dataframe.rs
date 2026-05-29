@@ -235,6 +235,28 @@ impl InternalDataFrame {
         Ok(InternalDataFrame::new(inner, self.runtime.clone()))
     }
 
+    /// Aggregate the rows of the DataFrame, optionally partitioned by
+    /// `group_exprs`. Both inputs are `Vec<PyExpr>` so the same Rust
+    /// method serves global aggregation (`group_exprs` empty, called
+    /// from `DataFrame.agg`) and grouped aggregation.
+    ///
+    /// The Python side guarantees `agg_exprs` is non-empty and that
+    /// every entry is an `Expr` (vs. a string or other type). It does
+    /// not verify that each entry is an aggregate-shaped expression —
+    /// e.g. `col("x")` would pass the Python `isinstance` check but is
+    /// not a valid aggregate. DataFusion's plan-build catches that case
+    /// with a clear error, so we don't reimplement the check here.
+    fn aggregate(
+        &self,
+        group_exprs: Vec<PyExpr>,
+        agg_exprs: Vec<PyExpr>,
+    ) -> Result<InternalDataFrame, PySedonaError> {
+        let group_exprs: Vec<Expr> = group_exprs.into_iter().map(|e| e.inner).collect();
+        let agg_exprs: Vec<Expr> = agg_exprs.into_iter().map(|e| e.inner).collect();
+        let inner = self.inner.clone().aggregate(group_exprs, agg_exprs)?;
+        Ok(InternalDataFrame::new(inner, self.runtime.clone()))
+    }
+
     fn execute<'py>(&self, py: Python<'py>) -> Result<usize, PySedonaError> {
         let df = self.inner.clone();
         let count = wait_for_future(py, &self.runtime, async move {

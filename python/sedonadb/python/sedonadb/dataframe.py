@@ -539,6 +539,63 @@ class DataFrame:
 
         return DataFrame(self._ctx, self._impl.drop_columns(list(cols)), self._options)
 
+    def agg(self, *exprs: Expr, **named_exprs: Expr) -> "DataFrame":
+        """Aggregate the entire DataFrame to a single row.
+
+        Aggregate expressions can be passed positionally or as keyword
+        arguments. With keyword arguments the keyword becomes the
+        output column name — `df.agg(total=sd.funcs.sum(sd.col("x")))`
+        is shorthand for
+        `df.agg(sd.funcs.sum(sd.col("x")).alias("total"))`. The two
+        forms can be mixed in a single call.
+
+        Args:
+            *exprs: Positional aggregate expressions.
+            **named_exprs: Keyword aggregate expressions; each keyword
+                is applied as the output alias of the corresponding
+                expression.
+
+        Examples:
+
+            >>> sd = sedona.db.connect()
+            >>> df = sd.sql("SELECT * FROM (VALUES (1), (2), (3), (4)) AS t(x)")
+            >>> df.agg(sd.funcs.sum(sd.col("x")).alias("total")).show()
+            ┌───────┐
+            │ total │
+            │ int64 │
+            ╞═══════╡
+            │    10 │
+            └───────┘
+            >>> df.agg(total=sd.funcs.sum(sd.col("x"))).show()
+            ┌───────┐
+            │ total │
+            │ int64 │
+            ╞═══════╡
+            │    10 │
+            └───────┘
+        """
+        if not exprs and not named_exprs:
+            raise ValueError("agg() requires at least one aggregate expression")
+
+        for e in exprs:
+            if not isinstance(e, Expr):
+                raise TypeError(f"agg() expects Expr arguments, got {type(e).__name__}")
+
+        all_exprs: List[Expr] = list(exprs)
+        for name, e in named_exprs.items():
+            if not isinstance(e, Expr):
+                raise TypeError(
+                    f"agg() expects Expr keyword values, got {type(e).__name__} "
+                    f"for keyword {name!r}"
+                )
+            all_exprs.append(e.alias(name))
+
+        return DataFrame(
+            self._ctx,
+            self._impl.aggregate([], [e._impl for e in all_exprs]),
+            self._options,
+        )
+
     def limit(self, n: Optional[int], /, *, offset: int = 0) -> "DataFrame":
         """Limit result to n rows starting at offset
 
