@@ -29,6 +29,8 @@ use sedona_schema::{
     matchers::ArgMatcher,
 };
 
+use crate::st_setsrid::validate_crs_for_type;
+
 /// ST_ToGeometry() scalar UDF
 ///
 /// Converts a geography to a geometry by changing the edge interpretation from
@@ -78,11 +80,16 @@ impl SedonaScalarKernel for STToGeomGeog {
         // Return the input type with the target edges. NULL returns the target edge
         // type with no CRS for the purposes of parameter binding.
         let input_type = &args[0];
-        let output_type = match input_type {
-            SedonaType::Wkb(_, crs) => SedonaType::Wkb(self.target_edges, crs.clone()),
-            SedonaType::WkbView(_, crs) => SedonaType::WkbView(self.target_edges, crs.clone()),
-            _ => SedonaType::Wkb(self.target_edges, None),
+        let (output_type, crs) = match input_type {
+            SedonaType::Wkb(_, crs) => (SedonaType::Wkb(self.target_edges, crs.clone()), crs),
+            SedonaType::WkbView(_, crs) => {
+                (SedonaType::WkbView(self.target_edges, crs.clone()), crs)
+            }
+            _ => (SedonaType::Wkb(self.target_edges, None), &None),
         };
+
+        // Check that the CRS is valid for the output type
+        validate_crs_for_type(crs, &output_type)?;
 
         Ok(Some(output_type))
     }
@@ -116,7 +123,7 @@ mod tests {
     use rstest::rstest;
     use sedona_expr::item_crs::parse_item_crs_arg_type;
     use sedona_schema::{
-        crs::lnglat,
+        crs::{deserialize_crs, lnglat},
         datatypes::{
             Edges, WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS,
             WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY,
@@ -224,6 +231,19 @@ mod tests {
         // CRS should be preserved when converting
         let expected_type = SedonaType::Wkb(Edges::Spherical, lnglat());
         tester.assert_return_type(expected_type);
+    }
+
+    #[rstest]
+    fn st_togeography_invalid_crs() {
+        let geom_with_crs = SedonaType::Wkb(Edges::Planar, deserialize_crs("EPSG:3857").unwrap());
+        let tester = ScalarUdfTester::new(st_togeography_udf().into(), vec![geom_with_crs.clone()]);
+
+        // CRS should be preserved when converting
+        let err = tester.return_type().unwrap_err();
+        assert_eq!(
+            err.message(),
+            "Can't assign non-geographic CRS epsg:3857 to column of type Wkb(epsg:3857, Spherical)"
+        );
     }
 
     #[rstest]

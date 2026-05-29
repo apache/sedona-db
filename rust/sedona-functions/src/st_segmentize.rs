@@ -19,7 +19,7 @@ use std::{io::Write, sync::Arc};
 
 use arrow_array::{builder::BinaryBuilder, Array};
 use arrow_schema::DataType;
-use datafusion_common::{cast::as_float64_array, exec_datafusion_err, Result};
+use datafusion_common::{cast::as_float64_array, exec_datafusion_err, exec_err, Result};
 use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::{
     CoordTrait, Dimensions, GeometryCollectionTrait, GeometryTrait, LineStringTrait,
@@ -101,7 +101,11 @@ impl SedonaScalarKernel for STSegmentize {
             idx += 1;
 
             match (maybe_wkb, max_seg_len) {
-                (Some(wkb), Some(max_len)) if max_len > 0.0 => {
+                (Some(wkb), Some(max_len)) => {
+                    if !max_len.is_finite() || max_len <= 0.0 {
+                        return exec_err!("max_segment_length must be finite and >= 0");
+                    }
+
                     segmentize_wkb(&wkb, max_len, &mut coords_scratch, &mut builder)
                         .map_err(|e| exec_datafusion_err!("Segmentize error: {e}"))?;
                     builder.append_value([]);
@@ -264,6 +268,16 @@ fn write_interpolated_coords<C: CoordTrait<T = f64>>(
     max_segment_length: f64,
 ) -> Result<usize, SedonaGeometryError> {
     let num_segments = calc_num_segments(c1, c2, max_segment_length);
+
+    // Sanity check the number of segments to avoid mayhem
+    const MAX_SEGMENTS_PER_EDGE: usize = 65536;
+    if num_segments > MAX_SEGMENTS_PER_EDGE {
+        return Err(SedonaGeometryError::Invalid(
+            "Can't add more than 65536 segments to a single edge in ST_Segmentize(). \
+             Use a larger max_segment_length or nested calls to ST_Segmentize()."
+                .to_string(),
+        ));
+    }
 
     if num_segments == 1 {
         // No subdivision needed, just write end coordinate
@@ -704,5 +718,32 @@ mod tests {
 
         // Item CRS should be preserved in the output type
         tester.assert_return_type(WKB_GEOMETRY_ITEM_CRS.clone());
+    }
+
+    #[test]
+    fn test_error_invalid_max_segment_length() {
+        let tester = ScalarUdfTester::new(
+            st_segmentize_udf().into(),
+            vec![WKB_GEOMETRY, SedonaType::Arrow(DataType::Float64)],
+        );
+
+        // Zero max_segment_length
+        let err = tester
+            .invoke_scalar_scalar("LINESTRING (0 0, 0 1)", 0.0)
+            .unwrap_err();
+        assert!(err.message().contains("max_segment_length must be finite"));
+
+        // Negative max_segment_length
+        let err = tester
+            .invoke_scalar_scalar("LINESTRING (0 0, 0 1)", -1.0)
+            .unwrap_err();
+        assert!(err.message().contains("max_segment_length must be finite"));
+
+        // Edge of length 100000 with max_segment_length of 1.0 would require 100000 segments,
+        // which exceeds the MAX_SEGMENTS_PER_EDGE limit of 65536
+        let err = tester
+            .invoke_scalar_scalar("LINESTRING (0 0, 0 100000)", 1.0)
+            .unwrap_err();
+        assert!(err.message().contains("Can't add more than 65536 segments"));
     }
 }

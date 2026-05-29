@@ -24,6 +24,11 @@ kernels:
     - geometry
     - name: max_segment_length
       type: double
+  - returns: geography
+    args:
+    - geography
+    - name: max_segment_length
+      type: double
 ---
 
 ## Description

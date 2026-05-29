@@ -123,6 +123,17 @@ def test_st_segmentize_no_split(eng, geom, max_segment_length, expected):
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize("max_segment_length", [0, -1])
+def test_st_segmentize_invalid_seg_length(eng, max_segment_length):
+    eng = eng.create_or_skip()
+
+    with pytest.raises(Exception, match="(invalid max_distance|must be finite and)"):
+        eng.execute_and_collect(
+            f"SELECT ST_Segmentize(ST_GeomFromText('LINESTRING (0 0, 1 1)'), {max_segment_length})"
+        )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
     ("geom", "max_segment_length", "expected"),
     [

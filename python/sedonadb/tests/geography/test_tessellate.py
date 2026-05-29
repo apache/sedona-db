@@ -392,6 +392,20 @@ def test_st_tessellategeog_interpolate_zm(eng, geom, tolerance, expected):
 
 
 @pytest.mark.parametrize("eng", [SedonaDB])
+def test_st_tessellategeog_invalid_tolerance(eng):
+    eng = eng.create_or_skip()
+    with pytest.raises(Exception, match="must be finite and greater than 0"):
+        eng.execute_and_collect(
+            "SELECT ST_TessellateGeog(ST_GeomFromText('POINT (0 1)'), 0)",
+        )
+
+    with pytest.raises(Exception, match="must be finite and greater than 0"):
+        eng.execute_and_collect(
+            "SELECT ST_TessellateGeog(ST_GeomFromText('POINT (0 1)'), -1)",
+        )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB])
 @pytest.mark.parametrize(
     ("geog", "tolerance", "expected"),
     [
@@ -613,6 +627,20 @@ def test_st_tessellategeom_antimeridian(eng, geog, tolerance, expected):
 
 
 @pytest.mark.parametrize("eng", [SedonaDB])
+def test_st_tessellategeom_invalid_tolerance(eng):
+    eng = eng.create_or_skip()
+    with pytest.raises(Exception, match="must be finite and greater than 0"):
+        eng.execute_and_collect(
+            "SELECT ST_TessellateGeom(ST_GeogFromText('POINT (0 1)'), 0)",
+        )
+
+    with pytest.raises(Exception, match="must be finite and greater than 0"):
+        eng.execute_and_collect(
+            "SELECT ST_TessellateGeom(ST_GeogFromText('POINT (0 1)'), -1)",
+        )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB])
 @pytest.mark.parametrize(
     ("geog", "expected"),
     [
@@ -623,6 +651,18 @@ def test_st_tessellategeom_antimeridian(eng, geog, tolerance, expected):
 def test_st_togeometry(eng, geog, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(f"SELECT ST_ToGeometry({geog_or_null(geog)})", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB])
+def test_st_togeometry_crs(eng):
+    import pyproj
+
+    eng = eng.create_or_skip()
+    result = eng.execute_and_collect(
+        "SELECT ST_ToGeometry(ST_GeomFromText('POINT (0 1)', 'EPSG:4267'))",
+    )
+    tab = eng.result_to_table(result)
+    assert tab.schema.field(0).type.crs == pyproj.CRS("EPSG:4267")
 
 
 @pytest.mark.parametrize("eng", [SedonaDB])
@@ -639,3 +679,31 @@ def test_st_togeography(eng, geom, expected):
         f"SELECT ST_ToGeography({geom_or_null(geom)})",
         expected,
     )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB])
+def test_st_togeography_crs(eng):
+    import pyproj
+
+    eng = eng.create_or_skip()
+    result = eng.execute_and_collect(
+        "SELECT ST_ToGeography(ST_GeogFromText('POINT (0 1)', 'EPSG:4267'))",
+    )
+    tab = eng.result_to_table(result)
+    assert tab.schema.field(0).type.crs == pyproj.CRS("EPSG:4267")
+
+    with pytest.raises(Exception, match="Can't assign non-geographic CRS"):
+        eng.execute_and_collect(
+            "SELECT ST_ToGeography(ST_GeogFromText('POINT (0 1)', 'EPSG:3857'))",
+        )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize("max_segment_length", [0, -1])
+def test_st_segmentize_invalid_seg_length(eng, max_segment_length):
+    eng = eng.create_or_skip()
+
+    with pytest.raises(Exception, match="(must be positive|must be finite and)"):
+        eng.execute_and_collect(
+            f"SELECT ST_Segmentize(ST_GeogFromText('LINESTRING (0 0, 1 1)'), {max_segment_length})"
+        )

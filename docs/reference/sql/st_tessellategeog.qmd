@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_TessellateGeog
-description: Tessellates a geometry into a geography using spherical interpolation.
+description: Converts a geometry to geography, densifying edges to approximate planar lines as geodesic segments.
 kernels:
   - returns: geography
     args:
