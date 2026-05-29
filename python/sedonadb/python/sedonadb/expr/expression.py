@@ -34,6 +34,10 @@ if TYPE_CHECKING:
     from sedonadb.functions import Functions
 
 
+if TYPE_CHECKING:
+    from sedonadb_expr._generated.geo_methods import GeoMethods
+
+
 class Expr:
     """A column expression.
 
@@ -211,6 +215,12 @@ class Expr:
             SortExpr(x DESC NULLS LAST)
         """
         return SortExpr(self._impl.desc(nulls_first))
+
+    @property
+    def geo(self) -> "GeoMethods[Expr]":
+        from sedonadb_expr import GeoMethods
+
+        return GeoMethods(self)
 
     # Arithmetic operators -------------------------------------------------
     #

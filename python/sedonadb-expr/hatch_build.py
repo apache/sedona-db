@@ -104,6 +104,4 @@ __version__ = "{version}"
 
         functions_file.write_text("\n".join(functions_content))
 
-        self.app.display_info(
-            f"Generated {len(functions)} function definitions"
-        )
+        self.app.display_info(f"Generated {len(functions)} function definitions")

@@ -16,5 +16,7 @@
 # under the License.
 
 from sedonadb_expr._version import __version__
+from sedonadb_expr._generated.geo_functions import GeoFunctions
+from sedonadb_expr._generated.geo_methods import GeoMethods
 
-__all__ = ["__version__"]
+__all__ = ["__version__", "GeoFunctions", "GeoMethods"]

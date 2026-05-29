@@ -32,9 +32,7 @@ def get_version() -> str:
     cargo_toml = here.parent.parent / "Cargo.toml"
 
     if not cargo_toml.exists():
-        raise FileNotFoundError(
-            f"Could not find workspace Cargo.toml at {cargo_toml}"
-        )
+        raise FileNotFoundError(f"Could not find workspace Cargo.toml at {cargo_toml}")
 
     content = cargo_toml.read_text()
 
