@@ -52,7 +52,7 @@ GEO_TYPES = {"geometry", "geography"}
 
 DOCS_BASE_URL = "https://sedona.apache.org/sedonadb/latest/reference/sql"
 
-LICENSE_HEADER = '''\
+LICENSE_HEADER = """\
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
 # distributed with this work for additional information
@@ -69,7 +69,7 @@ LICENSE_HEADER = '''\
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-'''
+"""
 
 
 class ArgInfo:
@@ -99,7 +99,9 @@ class KernelInfo:
         self.args = args if args is not None else []
         self.returns = returns
         self.variadic = variadic
-        self.kernel_signatures = kernel_signatures if kernel_signatures is not None else []
+        self.kernel_signatures = (
+            kernel_signatures if kernel_signatures is not None else []
+        )
 
 
 class FunctionInfo:
@@ -203,7 +205,9 @@ def extract_description_section(file_path: Path) -> str | None:
     return desc_text if desc_text else None
 
 
-def type_to_param_name(arg_type: str, index: int = 0, needs_suffix: bool = False) -> str:
+def type_to_param_name(
+    arg_type: str, index: int = 0, needs_suffix: bool = False
+) -> str:
     """Generate parameter name from type."""
     base_name = TYPE_TO_PARAM.get(arg_type, "arg")
     if needs_suffix:
@@ -249,7 +253,9 @@ def generate_arg_names(arg_info_list: list[ArgInfo]) -> list[str]:
         if arg_name is None:
             type_counts[arg_type] = type_counts.get(arg_type, 0) + 1
             needs_suffix = type_totals.get(arg_type, 0) > 1
-            arg_name = type_to_param_name(arg_type, type_counts[arg_type] - 1, needs_suffix)
+            arg_name = type_to_param_name(
+                arg_type, type_counts[arg_type] - 1, needs_suffix
+            )
 
         arg_names.append(arg_name)
 
@@ -329,7 +335,9 @@ def parse_qmd_file(qmd_path: Path) -> FunctionInfo | None:
         args = kernel.get("args", [])
         if args:
             first_arg = args[0]
-            first_type = first_arg if isinstance(first_arg, str) else first_arg.get("type", "")
+            first_type = (
+                first_arg if isinstance(first_arg, str) else first_arg.get("type", "")
+            )
             if first_type in GEO_TYPES:
                 is_geo_method = True
                 break
@@ -471,14 +479,18 @@ def generate_geo_methods_py(functions: list[FunctionInfo]) -> str:
 
         docstring = generate_method_docstring(func)
 
-        lines.extend([
-            "",
-            f"    def {method_name}({params}) -> ExprT:",
-            f"        {docstring}",
-        ])
+        lines.extend(
+            [
+                "",
+                f"    def {method_name}({params}) -> ExprT:",
+                f"        {docstring}",
+            ]
+        )
 
         if call_args:
-            lines.append(f'        return self._expr._call("{method_name}", {call_args})')
+            lines.append(
+                f'        return self._expr._call("{method_name}", {call_args})'
+            )
         else:
             lines.append(f'        return self._expr._call("{method_name}")')
 
@@ -516,13 +528,15 @@ def generate_geo_functions_py(functions: list[FunctionInfo]) -> str:
 
         docstring = generate_function_docstring(func)
 
-        lines.extend([
-            "",
-            "    @property",
-            f"    def {prop_name}(self) -> Callable[..., ExprT]:",
-            f"        {docstring}",
-            f'        return self._factory["{prop_name}"]',
-        ])
+        lines.extend(
+            [
+                "",
+                "    @property",
+                f"    def {prop_name}(self) -> Callable[..., ExprT]:",
+                f"        {docstring}",
+                f'        return self._factory["{prop_name}"]',
+            ]
+        )
 
     lines.append("")
     return "\n".join(lines)
