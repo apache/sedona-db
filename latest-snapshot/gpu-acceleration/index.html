@@ -951,6 +951,78 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Example">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#check-gpu-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Check GPU environment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#install-required-packages-for-the-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Install required packages for the example
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#download-datasets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Download datasets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#create-sedonadb-context-and-load-datasets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Create sedonadb context and load datasets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#define-query" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Define query
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compare-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Compare Results
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1758,6 +1830,78 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Example">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#check-gpu-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Check GPU environment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#install-required-packages-for-the-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Install required packages for the example
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#download-datasets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Download datasets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#create-sedonadb-context-and-load-datasets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Create sedonadb context and load datasets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#define-query" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Define query
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compare-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Compare Results
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1849,30 +1993,39 @@ path targets both phases:</p>
 <p>When <code>gpu.fallback_to_cpu = true</code> (default), unsupported predicates fall back to CPU spatial join.
 When <code>gpu.fallback_to_cpu = false</code>, unsupported predicates fail the query.</p>
 <h2 id="install-from-source-with-the-gpu-feature">Install from Source with the GPU Feature<a class="headerlink" href="#install-from-source-with-the-gpu-feature" title="Permanent link">¶</a></h2>
-<p>If you build the Python package from source, enable GPU at build time and configure the CUDA
-environment before running <code>MATURIN_PEP517_ARGS="--features gpu" pip install</code>.</p>
+<p><strong>Build from source</strong></p>
+<p>For building the Python package from source, you should enable the GPU at build time and configure the CUDA
+environment before running <code>MATURIN_PEP517_ARGS="--features='gpu,s2geography,pyo3/extension-module' pip install</code>.</p>
 <p>Common environment variables used by the GPU build:</p>
 <ul>
 <li><code>CUDA_HOME</code>: points to your CUDA toolkit root.</li>
 <li>
-<p><code>CMAKE_CUDA_ARCHITECTURES</code>: CUDA SM targets (default falls back to <code>86;89</code> if not set). Change this according to your GPU architecture.</p>
+<p><code>CMAKE_CUDA_ARCHITECTURES</code>: CUDA SM targets (default falls back to <code>86</code> if not set; You can specify multiple arcs, e.g., "86;89"). Change this according to your <a href="https://developer.nvidia.com/cuda/gpus">GPU models</a>. <strong>Otherwise, it requires JIT to compile kernels, making the first-time run very slow!</strong></p>
 </li>
 <li>
 <p><code>LIBGPUSPATIAL_LOGGING_LEVEL</code>: Logging level, including <code>TRACE</code>, <code>DEBUG</code>, <code>INFO</code>, <code>WARN</code>, <code>ERROR</code>, <code>CRITICAL</code>.</p>
 </li>
 <li><code>GPUSPATIAL_PROFILING=ON</code>: Profiling mode (<code>ON</code>, <code>OFF</code>) to compile profiling instrumentation.</li>
 </ul>
+<p><strong>Using Docker</strong></p>
+<p>We also provide a Dockerfile for the users. Make sure you have installed Docker, the NVIDIA Driver, and NVIDIA Container Toolkit by <code>sudo nvidia-ctk runtime configure --runtime=docker</code>. Then, you may run <code>docker build -f docker/sedonadb-gpu.dockerfile --build-arg CMAKE_CUDA_ARCHITECTURES="Your GPU compute capability" -t sedonadb-gpu .</code> to build an image. Finally, you may run <code>docker run -it --rm --gpus all -p 8888:8888 sedonadb-gpu</code> to start a JupyterLab instance.</p>
+<blockquote>
+<p><strong>Note:</strong> This Docker image is currently source-built directly from the repository's active codebase and is not tied to a released SedonaDB GPU wheel yet. This is to support development and early testing before an official SedonaDB GPU wheel is published.</p>
+</blockquote>
 <h2 id="enable-gpu-join-with-sql-set">Enable GPU Join with SQL <code>SET</code><a class="headerlink" href="#enable-gpu-join-with-sql-set" title="Permanent link">¶</a></h2>
 <p>The GPU join is disabled by default even if you enabled the GPU feature at build time. To enable GPU acceleration for spatial joins, set the <code>gpu.enable</code> option to <code>true</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">sedonadb</span>
 
 <span class="n">ctx</span> <span class="o">=</span> <span class="n">sedonadb</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
 
-<span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SET gpu.enable = true"</span><span class="p">)</span>
+<span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SET gpu.enable = true"</span><span class="p">)</span><span class="o">.</span><span class="n">execute</span><span class="p">()</span>
 </code></pre></div>
+<div class="codehilite"><pre><span></span><code>&lt;sedonadb.dataframe.DataFrame object at 0x70b85c1b7850&gt;
+</code></pre></div>
+
 <h2 id="performance-tuning-and-special-cautions">Performance Tuning and Special Cautions<a class="headerlink" href="#performance-tuning-and-special-cautions" title="Permanent link">¶</a></h2>
 <p>To keep the GPU efficiently utilized, use larger execution batches:</p>
-<div class="highlight"><pre><span></span><code><span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SET datafusion.execution.batch_size = 100000"</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SET datafusion.execution.batch_size = 100000"</span><span class="p">)</span><span class="o">.</span><span class="n">execute</span><span class="p">()</span>
 </code></pre></div>
 <p>Important guidance:</p>
 <ul>
@@ -1904,12 +2057,13 @@ environment before running <code>MATURIN_PEP517_ARGS="--features gpu" pip instal
 <span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SET gpu.memory_pool_init_percentage = 60"</span><span class="p">)</span>
 <span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SET gpu.pipeline_batches = 2"</span><span class="p">)</span>
 <span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SET gpu.compress_bvh = false"</span><span class="p">)</span>
-<span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SET datafusion.execution.batch_size = 100000"</span><span class="p">)</span>
+<span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SET datafusion.execution.batch_size = 100000"</span><span class="p">)</span><span class="o">.</span><span class="n">execute</span><span class="p">()</span>
 </code></pre></div>
 <h2 id="example">Example<a class="headerlink" href="#example" title="Permanent link">¶</a></h2>
+<h3 id="check-gpu-environment">Check GPU environment<a class="headerlink" href="#check-gpu-environment" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="err">!</span><span class="n">nvidia</span><span class="o">-</span><span class="n">smi</span>
 </code></pre></div>
-<div class="codehilite"><pre><span></span><code><span class="c">Mon Apr 20 19:26:08 2026       </span>
+<div class="codehilite"><pre><span></span><code><span class="c">Tue May 26 20:49:41 2026       </span>
 <span class="nb">+-----------------------------------------------------------------------------------------+</span>
 <span class="c">| NVIDIA</span><span class="nb">-</span><span class="c">SMI 580</span><span class="nt">.</span><span class="c">105</span><span class="nt">.</span><span class="c">08             Driver Version: 580</span><span class="nt">.</span><span class="c">105</span><span class="nt">.</span><span class="c">08     CUDA Version: 13</span><span class="nt">.</span><span class="c">0     |</span>
 <span class="nb">+-----------------------------------------+------------------------+----------------------+</span>
@@ -1918,7 +2072,7 @@ environment before running <code>MATURIN_PEP517_ARGS="--features gpu" pip instal
 <span class="c">|                                         |                        |               MIG M</span><span class="nt">.</span><span class="c"> |</span>
 <span class="c">|=========================================</span><span class="nb">+</span><span class="c">========================</span><span class="nb">+</span><span class="c">======================|</span>
 <span class="c">|   0  NVIDIA L4                      On  |   00000000:31:00</span><span class="nt">.</span><span class="c">0 Off |                    0 |</span>
-<span class="c">| N/A   36C    P8             19W /   72W |       0MiB /  23034MiB |      0%      Default |</span>
+<span class="c">| N/A   41C    P0             28W /   72W |   11610MiB /  23034MiB |      0%      Default |</span>
 <span class="c">|                                         |                        |                  N/A |</span>
 <span class="nb">+-----------------------------------------+------------------------+----------------------+</span>
 
@@ -1927,10 +2081,14 @@ environment before running <code>MATURIN_PEP517_ARGS="--features gpu" pip instal
 <span class="c">|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |</span>
 <span class="c">|        ID   ID                                                               Usage      |</span>
 <span class="c">|=========================================================================================|</span>
-<span class="c">|  No running processes found                                                             |</span>
+<span class="c">|    0   N/A  N/A           20603      C   </span><span class="nt">...</span><span class="c">a3/envs/sedona/bin/python3</span><span class="nt">.</span><span class="c">11      11602MiB |</span>
 <span class="nb">+-----------------------------------------------------------------------------------------+</span>
 </code></pre></div>
 
+<h3 id="install-required-packages-for-the-example">Install required packages for the example<a class="headerlink" href="#install-required-packages-for-the-example" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="n">huggingface_hub</span> <span class="n">rasterio</span> <span class="n">pyogrio</span>
+</code></pre></div>
+<h3 id="download-datasets">Download datasets<a class="headerlink" href="#download-datasets" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">huggingface_hub</span><span class="w"> </span><span class="kn">import</span> <span class="n">snapshot_download</span>
 
 <span class="n">snapshot_download</span><span class="p">(</span>
@@ -1947,21 +2105,19 @@ environment before running <code>MATURIN_PEP517_ARGS="--features gpu" pip instal
 <span class="n">Fetching</span><span class="w"> </span><span class="mi">8</span><span class="w"> </span><span class="n">files</span><span class="p">:</span><span class="w">   </span><span class="mi">0</span><span class="o">%|</span><span class="w">          </span><span class="o">|</span><span class="w"> </span><span class="mi">0</span><span class="o">/</span><span class="mi">8</span><span class="w"> </span><span class="p">[</span><span class="mi">00</span><span class="p">:</span><span class="mi">00</span><span class="o">&lt;</span><span class="err">?</span><span class="p">,</span><span class="w"> </span><span class="err">?</span><span class="n">it</span><span class="o">/</span><span class="n">s</span><span class="p">]</span>
 
 
-<span class="n">Warning</span><span class="p">:</span><span class="w"> </span><span class="n">You</span><span class="w"> </span><span class="n">are</span><span class="w"> </span><span class="n">sending</span><span class="w"> </span><span class="n">unauthenticated</span><span class="w"> </span><span class="n">requests</span><span class="w"> </span><span class="n">to</span><span class="w"> </span><span class="n">the</span><span class="w"> </span><span class="n">HF</span><span class="w"> </span><span class="n">Hub</span><span class="o">.</span><span class="w"> </span><span class="n">Please</span><span class="w"> </span><span class="n">set</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="n">HF_TOKEN</span><span class="w"> </span><span class="n">to</span><span class="w"> </span><span class="n">enable</span><span class="w"> </span><span class="n">higher</span><span class="w"> </span><span class="n">rate</span><span class="w"> </span><span class="n">limits</span><span class="w"> </span><span class="ow">and</span><span class="w"> </span><span class="n">faster</span><span class="w"> </span><span class="n">downloads</span><span class="o">.</span>
-
-
 
 
 
 <span class="s1">'/mnt/data/sedona-db/docs/hf-data'</span>
 </code></pre></div>
 
+<h3 id="create-sedonadb-context-and-load-datasets">Create sedonadb context and load datasets<a class="headerlink" href="#create-sedonadb-context-and-load-datasets" title="Permanent link">¶</a></h3>
 <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">sedonadb</span>
 
 <span class="n">ctx</span> <span class="o">=</span> <span class="n">sedonadb</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
 <span class="n">ctx</span><span class="o">.</span><span class="n">options</span><span class="o">.</span><span class="n">memory_limit</span> <span class="o">=</span> <span class="s2">"unlimited"</span>
-</code></pre></div>
-<div class="highlight"><pre><span></span><code><span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"""</span>
+
+<span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"""</span>
 <span class="s2">    CREATE EXTERNAL TABLE zone</span>
 <span class="s2">    STORED AS PARQUET</span>
 <span class="s2">    LOCATION 'hf-data/v0.1.0/sf1/zone/'</span>
@@ -1970,144 +2126,108 @@ environment before running <code>MATURIN_PEP517_ARGS="--features gpu" pip instal
 <span class="s2">    CREATE EXTERNAL TABLE trip</span>
 <span class="s2">    STORED AS PARQUET</span>
 <span class="s2">    LOCATION 'hf-data/v0.1.0/sf1/trip/'</span>
-<span class="s2">"""</span><span class="p">)</span>
+<span class="s2">"""</span><span class="p">)</span><span class="o">.</span><span class="n">execute</span><span class="p">()</span>
 </code></pre></div>
-<div class="codehilite"><pre><span></span><code>&lt;sedonadb.dataframe.DataFrame object at 0x7ff5213d96d0&gt;
+<div class="codehilite"><pre><span></span><code><span class="mf">0</span>
 </code></pre></div>
 
+<h3 id="define-query">Define query<a class="headerlink" href="#define-query" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Define the query once to ensure both executions use the exact same logic</span>
+<span class="n">query</span> <span class="o">=</span> <span class="s2">"""</span>
+<span class="s2">SELECT COUNT(*) AS cross_zone_trip_count</span>
+<span class="s2">FROM trip t</span>
+<span class="s2">    JOIN zone pickup_zone</span>
+<span class="s2">        ON ST_Within(ST_GeomFromWKB(t.t_pickuploc), ST_GeomFromWKB(pickup_zone.z_boundary))</span>
+<span class="s2">    JOIN zone dropoff_zone</span>
+<span class="s2">        ON ST_Within(ST_GeomFromWKB(t.t_dropoffloc), ST_GeomFromWKB(dropoff_zone.z_boundary))</span>
+<span class="s2">WHERE pickup_zone.z_zonekey != dropoff_zone.z_zonekey</span>
+<span class="s2">"""</span>
+</code></pre></div>
+<p>First, we will run this query using the standard CPU execution to establish our baseline correctness and get a sense of the standard execution time.</p>
 <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">tqdm.notebook</span><span class="w"> </span><span class="kn">import</span> <span class="n">tqdm</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">IPython.display</span><span class="w"> </span><span class="kn">import</span> <span class="n">display</span><span class="p">,</span> <span class="n">HTML</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">ipywidgets</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">widgets</span>
 
+<span class="nb">print</span><span class="p">(</span><span class="s2">"Executing on CPU (Baseline)..."</span><span class="p">)</span>
+<span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SET gpu.enable = false"</span><span class="p">)</span>  <span class="c1"># Disable the GPU feature</span>
+<span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SET datafusion.execution.batch_size = 8192"</span><span class="p">)</span>  <span class="c1"># Default configuration</span>
 
-<span class="k">def</span><span class="w"> </span><span class="nf">interactive_spatial_benchmark</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">runs</span><span class="o">=</span><span class="mi">6</span><span class="p">):</span>
-    <span class="n">query</span> <span class="o">=</span> <span class="s2">"""</span>
-<span class="s2">    SELECT COUNT(*) AS cross_zone_trip_count</span>
-<span class="s2">    FROM trip t</span>
-<span class="s2">        JOIN zone pickup_zone</span>
-<span class="s2">            ON ST_Within(ST_GeomFromWKB(t.t_pickuploc), ST_GeomFromWKB(pickup_zone.z_boundary))</span>
-<span class="s2">        JOIN zone dropoff_zone</span>
-<span class="s2">            ON ST_Within(ST_GeomFromWKB(t.t_dropoffloc), ST_GeomFromWKB(dropoff_zone.z_boundary))</span>
-<span class="s2">    WHERE pickup_zone.z_zonekey != dropoff_zone.z_zonekey</span>
-<span class="s2">    """</span>
+<span class="n">runs</span> <span class="o">=</span> <span class="mi">5</span>
+<span class="n">cpu_times</span> <span class="o">=</span> <span class="p">[]</span>
+<span class="n">cpu_count</span> <span class="o">=</span> <span class="mi">0</span>
 
-    <span class="n">modes</span> <span class="o">=</span> <span class="p">[(</span><span class="s2">"CPU"</span><span class="p">,</span> <span class="s2">"false"</span><span class="p">),</span> <span class="p">(</span><span class="s2">"GPU"</span><span class="p">,</span> <span class="s2">"true"</span><span class="p">)]</span>
-    <span class="n">averages</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">runs</span><span class="p">):</span>
+    <span class="n">start_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+    <span class="n">cpu_df</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="n">query</span><span class="p">)</span><span class="o">.</span><span class="n">to_pandas</span><span class="p">()</span>
+    <span class="n">elapsed</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">start_time</span>
 
-    <span class="c1"># 1. Create a scrollable widget to catch the verbose `.show()` output</span>
-    <span class="n">log_output</span> <span class="o">=</span> <span class="n">widgets</span><span class="o">.</span><span class="n">Output</span><span class="p">(</span>
-        <span class="n">layout</span><span class="o">=</span><span class="p">{</span><span class="s2">"border"</span><span class="p">:</span> <span class="s2">"1px solid #ccc"</span><span class="p">,</span> <span class="s2">"height"</span><span class="p">:</span> <span class="s2">"150px"</span><span class="p">,</span> <span class="s2">"overflow_y"</span><span class="p">:</span> <span class="s2">"auto"</span><span class="p">}</span>
-    <span class="p">)</span>
-    <span class="n">display</span><span class="p">(</span><span class="n">HTML</span><span class="p">(</span><span class="s2">"&lt;h3&gt;🚀 Running Spatial Benchmark...&lt;/h3&gt;"</span><span class="p">))</span>
-    <span class="n">display</span><span class="p">(</span><span class="n">log_output</span><span class="p">)</span>
+    <span class="n">cpu_times</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">elapsed</span><span class="p">)</span>
+    <span class="n">cpu_count</span> <span class="o">=</span> <span class="n">cpu_df</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  Run </span><span class="si">{</span><span class="n">i</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">elapsed</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> seconds"</span><span class="p">)</span>
 
-    <span class="c1"># 2. Execute the Benchmark</span>
-    <span class="k">for</span> <span class="n">mode_name</span><span class="p">,</span> <span class="n">gpu_flag</span> <span class="ow">in</span> <span class="n">modes</span><span class="p">:</span>
-        <span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="sa">f</span><span class="s2">"SET gpu.enable = </span><span class="si">{</span><span class="n">gpu_flag</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
-        <span class="k">if</span> <span class="n">gpu_flag</span><span class="p">:</span>
-            <span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span>
-                <span class="s2">"SET datafusion.execution.batch_size = 2000000"</span>
-            <span class="p">)</span>  <span class="c1"># Increase batch size</span>
-        <span class="k">else</span><span class="p">:</span>
-            <span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SET datafusion.execution.batch_size = 8192"</span><span class="p">)</span>  <span class="c1"># Default</span>
-        <span class="n">execution_times</span> <span class="o">=</span> <span class="p">[]</span>
-
-        <span class="c1"># Display a Jupyter-native progress bar</span>
-        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">tqdm</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="n">runs</span><span class="p">),</span> <span class="n">desc</span><span class="o">=</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">mode_name</span><span class="si">}</span><span class="s2"> Executions"</span><span class="p">):</span>
-            <span class="n">start_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
-
-            <span class="n">result</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
-
-            <span class="c1"># Execute physical plan and catch the output inside our widget</span>
-            <span class="k">with</span> <span class="n">log_output</span><span class="p">:</span>
-                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"--- </span><span class="si">{</span><span class="n">mode_name</span><span class="si">}</span><span class="s2"> Run </span><span class="si">{</span><span class="n">i</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="si">}</span><span class="s2"> ---"</span><span class="p">)</span>
-                <span class="n">result</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
-
-            <span class="n">elapsed</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">start_time</span>
-
-            <span class="c1"># Record everything except the first run (warmup)</span>
-            <span class="k">if</span> <span class="n">i</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
-                <span class="n">execution_times</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">elapsed</span><span class="p">)</span>
-
-        <span class="c1"># Calculate average</span>
-        <span class="n">averages</span><span class="p">[</span><span class="n">mode_name</span><span class="p">]</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">execution_times</span><span class="p">)</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">execution_times</span><span class="p">)</span>
-
-    <span class="c1"># 3. Clean up the UI</span>
-    <span class="n">log_output</span><span class="o">.</span><span class="n">clear_output</span><span class="p">()</span>
-    <span class="n">log_output</span><span class="o">.</span><span class="n">layout</span><span class="o">.</span><span class="n">display</span> <span class="o">=</span> <span class="s2">"none"</span>
-
-    <span class="c1"># 4. Generate Table Results</span>
-    <span class="n">cpu_avg</span> <span class="o">=</span> <span class="n">averages</span><span class="p">[</span><span class="s2">"CPU"</span><span class="p">]</span>
-    <span class="n">gpu_avg</span> <span class="o">=</span> <span class="n">averages</span><span class="p">[</span><span class="s2">"GPU"</span><span class="p">]</span>
-
-    <span class="c1"># Calculate speedup (using CPU as the 1.0x baseline)</span>
-    <span class="n">cpu_speedup</span> <span class="o">=</span> <span class="mf">1.0</span>
-    <span class="n">gpu_speedup</span> <span class="o">=</span> <span class="n">cpu_avg</span> <span class="o">/</span> <span class="n">gpu_avg</span> <span class="k">if</span> <span class="n">gpu_avg</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="mi">0</span>
-
-    <span class="c1"># Color code the GPU speedup (green if faster, red if slower)</span>
-    <span class="n">gpu_color</span> <span class="o">=</span> <span class="s2">"green"</span> <span class="k">if</span> <span class="n">gpu_speedup</span> <span class="o">&gt;=</span> <span class="mf">1.0</span> <span class="k">else</span> <span class="s2">"red"</span>
-
-    <span class="n">html_table</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"""</span>
-<span class="s2">    &lt;table style="width: 60%; text-align: center; border-collapse: collapse; font-family: sans-serif; margin-top: 15px;"&gt;</span>
-<span class="s2">        &lt;tr style="background-color: #f8f9fa; border-bottom: 2px solid #dee2e6;"&gt;</span>
-<span class="s2">            &lt;th style="padding: 12px; border: 1px solid #dee2e6;"&gt;Mode&lt;/th&gt;</span>
-<span class="s2">            &lt;th style="padding: 12px; border: 1px solid #dee2e6;"&gt;Average Time (s)&lt;/th&gt;</span>
-<span class="s2">            &lt;th style="padding: 12px; border: 1px solid #dee2e6;"&gt;Speedup&lt;/th&gt;</span>
-<span class="s2">        &lt;/tr&gt;</span>
-<span class="s2">        &lt;tr&gt;</span>
-<span class="s2">            &lt;td style="padding: 12px; border: 1px solid #dee2e6;"&gt;&lt;b&gt;CPU&lt;/b&gt; (Baseline)&lt;/td&gt;</span>
-<span class="s2">            &lt;td style="padding: 12px; border: 1px solid #dee2e6;"&gt;</span><span class="si">{</span><span class="n">cpu_avg</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&lt;/td&gt;</span>
-<span class="s2">            &lt;td style="padding: 12px; border: 1px solid #dee2e6;"&gt;</span><span class="si">{</span><span class="n">cpu_speedup</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">x&lt;/td&gt;</span>
-<span class="s2">        &lt;/tr&gt;</span>
-<span class="s2">        &lt;tr&gt;</span>
-<span class="s2">            &lt;td style="padding: 12px; border: 1px solid #dee2e6;"&gt;&lt;b&gt;GPU&lt;/b&gt;&lt;/td&gt;</span>
-<span class="s2">            &lt;td style="padding: 12px; border: 1px solid #dee2e6;"&gt;</span><span class="si">{</span><span class="n">gpu_avg</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&lt;/td&gt;</span>
-<span class="s2">            &lt;td style="padding: 12px; border: 1px solid #dee2e6; color: </span><span class="si">{</span><span class="n">gpu_color</span><span class="si">}</span><span class="s2">; font-weight: bold;"&gt;</span><span class="si">{</span><span class="n">gpu_speedup</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">x&lt;/td&gt;</span>
-<span class="s2">        &lt;/tr&gt;</span>
-<span class="s2">    &lt;/table&gt;</span>
-<span class="s2">    """</span>
-
-    <span class="n">display</span><span class="p">(</span><span class="n">HTML</span><span class="p">(</span><span class="s2">"&lt;h3&gt;📊 Benchmark Results (Averaged over 5 runs)&lt;/h3&gt;"</span><span class="p">))</span>
-    <span class="n">display</span><span class="p">(</span><span class="n">HTML</span><span class="p">(</span><span class="n">html_table</span><span class="p">))</span>
-
-
-<span class="c1"># --- Execution Block ---</span>
-<span class="c1"># Run the interactive function with your Sedona Context</span>
-<span class="n">interactive_spatial_benchmark</span><span class="p">(</span><span class="n">ctx</span><span class="p">)</span>
+<span class="n">cpu_avg_time</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">cpu_times</span><span class="p">)</span> <span class="o">/</span> <span class="n">runs</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">"-"</span> <span class="o">*</span> <span class="mi">30</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"CPU Average Time: </span><span class="si">{</span><span class="n">cpu_avg_time</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> seconds | Rows: </span><span class="si">{</span><span class="n">cpu_count</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </code></pre></div>
-<h3>🚀 Running Spatial Benchmark...</h3>
-
-<div class="codehilite"><pre><span></span><code><span class="nx">Output</span><span class="p">(</span><span class="nx">layout</span><span class="o">=</span><span class="nx">Layout</span><span class="p">(</span><span class="nx">border_bottom</span><span class="o">=</span><span class="s1">'1px solid #ccc'</span><span class="p">,</span><span class="w"> </span><span class="nx">border_left</span><span class="o">=</span><span class="s1">'1px solid #ccc'</span><span class="p">,</span><span class="w"> </span><span class="nx">border_right</span><span class="o">=</span><span class="err">'</span><span class="mf">1</span><span class="nx">px</span><span class="w"> </span><span class="nx">solid</span><span class="w"> </span><span class="n">#cc</span><span class="err">…</span>
-
-
-
-<span class="nx">CPU</span><span class="w"> </span><span class="nx">Executions</span><span class="o">:</span><span class="w">   </span><span class="mf">0</span><span class="o">%|</span><span class="w">          </span><span class="o">|</span><span class="w"> </span><span class="mf">0</span><span class="o">/</span><span class="mf">6</span><span class="w"> </span><span class="p">[</span><span class="mo">00</span><span class="o">:</span><span class="mo">00</span><span class="cp">&lt;?</span><span class="p">,</span> <span class="o">?</span><span class="nx">it</span><span class="o">/</span><span class="nx">s</span><span class="p">]</span>
-
-
-
-<span class="nx">GPU</span> <span class="nx">Executions</span><span class="o">:</span>   <span class="mi">0</span><span class="o">%|</span>          <span class="o">|</span> <span class="mi">0</span><span class="o">/</span><span class="mi">6</span> <span class="p">[</span><span class="mo">00</span><span class="o">:</span><span class="mo">00</span><span class="o">&lt;?</span><span class="p">,</span> <span class="o">?</span><span class="nx">it</span><span class="o">/</span><span class="nx">s</span><span class="p">]</span>
+<div class="codehilite"><pre><span></span><code>Executing on CPU (Baseline)...
+  Run 1: 7.7795 seconds
+  Run 2: 6.8287 seconds
+  Run 3: 7.0688 seconds
+  Run 4: 7.2434 seconds
+  Run 5: 7.1739 seconds
+------------------------------
+CPU Average Time: 7.2189 seconds | Rows: 176391
 </code></pre></div>
 
-<h3>📊 Benchmark Results (Averaged over 5 runs)</h3>
+<p>Next, we enable GPU execution. We also increase the batch size, which is a crucial optimization step to ensure we are feeding enough data to the GPU to maximize its parallel processing capabilities.</p>
+<div class="highlight"><pre><span></span><code><span class="nb">print</span><span class="p">(</span><span class="s2">"Executing on GPU (Accelerated)..."</span><span class="p">)</span>
+<span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SET gpu.enable = true"</span><span class="p">)</span>
+<span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SET datafusion.execution.batch_size = 1000000"</span><span class="p">)</span>  <span class="c1"># Optimized for GPU throughput</span>
 
-<table style="width: 60%; text-align: center; border-collapse: collapse; font-family: sans-serif; margin-top: 15px;">
-    <tbody><tr style="background-color: #f8f9fa; border-bottom: 2px solid #dee2e6;">
-        <th style="padding: 12px; border: 1px solid #dee2e6;">Mode</th>
-        <th style="padding: 12px; border: 1px solid #dee2e6;">Average Time (s)</th>
-        <th style="padding: 12px; border: 1px solid #dee2e6;">Speedup</th>
-    </tr>
-    <tr>
-        <td style="padding: 12px; border: 1px solid #dee2e6;"><b>CPU</b> (Baseline)</td>
-        <td style="padding: 12px; border: 1px solid #dee2e6;">21.5221</td>
-        <td style="padding: 12px; border: 1px solid #dee2e6;">1.00x</td>
-    </tr>
-    <tr>
-        <td style="padding: 12px; border: 1px solid #dee2e6;"><b>GPU</b></td>
-        <td style="padding: 12px; border: 1px solid #dee2e6;">2.8889</td>
-        <td style="padding: 12px; border: 1px solid #dee2e6; color: green; font-weight: bold;">7.45x</td>
-    </tr>
-</tbody></table>
+<span class="n">runs</span> <span class="o">=</span> <span class="mi">5</span>
+<span class="n">gpu_times</span> <span class="o">=</span> <span class="p">[]</span>
+<span class="n">gpu_count</span> <span class="o">=</span> <span class="mi">0</span>
+
+<span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">runs</span><span class="p">):</span>
+    <span class="n">start_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+    <span class="n">gpu_df</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="n">query</span><span class="p">)</span><span class="o">.</span><span class="n">to_pandas</span><span class="p">()</span>
+    <span class="n">elapsed</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">start_time</span>
+
+    <span class="n">gpu_times</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">elapsed</span><span class="p">)</span>
+    <span class="n">gpu_count</span> <span class="o">=</span> <span class="n">gpu_df</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  Run </span><span class="si">{</span><span class="n">i</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">elapsed</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> seconds"</span><span class="p">)</span>
+
+<span class="n">gpu_avg_time</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">gpu_times</span><span class="p">)</span> <span class="o">/</span> <span class="n">runs</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">"-"</span> <span class="o">*</span> <span class="mi">30</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"GPU Average Time: </span><span class="si">{</span><span class="n">gpu_avg_time</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> seconds | Rows: </span><span class="si">{</span><span class="n">gpu_count</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</code></pre></div>
+<div class="codehilite"><pre><span></span><code>Executing on GPU (Accelerated)...
+  Run 1: 3.2582 seconds
+  Run 2: 3.3126 seconds
+  Run 3: 3.0703 seconds
+  Run 4: 3.2604 seconds
+  Run 5: 3.1418 seconds
+------------------------------
+GPU Average Time: 3.2087 seconds | Rows: 176391
+</code></pre></div>
+
+<h3 id="compare-results">Compare Results<a class="headerlink" href="#compare-results" title="Permanent link">¶</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Validate correctness</span>
+<span class="n">match_status</span> <span class="o">=</span> <span class="s2">"✅ Match"</span> <span class="k">if</span> <span class="n">cpu_count</span> <span class="o">==</span> <span class="n">gpu_count</span> <span class="k">else</span> <span class="s2">"❌ Mismatch"</span>
+
+<span class="c1"># Calculate speedup based on the new averages</span>
+<span class="n">speedup</span> <span class="o">=</span> <span class="n">cpu_avg_time</span> <span class="o">/</span> <span class="n">gpu_avg_time</span> <span class="k">if</span> <span class="n">gpu_avg_time</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="mi">0</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">"--- Query Validation (Based on Averages) ---"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Row Count Validated : </span><span class="si">{</span><span class="n">gpu_count</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="n">match_status</span><span class="si">}</span><span class="s2">)"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Average CPU Time    : </span><span class="si">{</span><span class="n">cpu_avg_time</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">s"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Average GPU Time    : </span><span class="si">{</span><span class="n">gpu_avg_time</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">s"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Calculated Speedup  : </span><span class="si">{</span><span class="n">speedup</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">x"</span><span class="p">)</span>
+</code></pre></div>
+<div class="codehilite"><pre><span></span><code><span class="gd">--- Query Validation (Based on Averages) ---</span>
+Row Count Validated : 176391 (✅ Match)
+Average CPU Time    : 7.2189s
+Average GPU Time    : 3.2087s
+Calculated Speedup  : 2.25x
+</code></pre></div>
 
 <h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">¶</a></h2>
 <ol>
@@ -2134,7 +2254,7 @@ environment before running <code>MATURIN_PEP517_ARGS="--features gpu" pip instal
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"></path></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="April 21, 2026 18:13:05 UTC">April 21, 2026 18:13:05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="May 30, 2026 05:37:36 UTC">May 30, 2026 05:37:36</span>
   </span>
 
     
