@@ -573,6 +573,10 @@
          <lastmod>2026-05-30</lastmod>
     </url>
     <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/st_segmentize/</loc>
+         <lastmod>2026-05-30</lastmod>
+    </url>
+    <url>
          <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/st_setcrs/</loc>
          <lastmod>2026-05-30</lastmod>
     </url>
@@ -602,6 +606,22 @@
     </url>
     <url>
          <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/st_symdifference/</loc>
+         <lastmod>2026-05-30</lastmod>
+    </url>
+    <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/st_tessellategeog/</loc>
+         <lastmod>2026-05-30</lastmod>
+    </url>
+    <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/st_tessellategeom/</loc>
+         <lastmod>2026-05-30</lastmod>
+    </url>
+    <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/st_togeography/</loc>
+         <lastmod>2026-05-30</lastmod>
+    </url>
+    <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/st_togeometry/</loc>
          <lastmod>2026-05-30</lastmod>
     </url>
     <url>
