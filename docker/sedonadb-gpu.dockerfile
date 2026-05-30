@@ -64,7 +64,8 @@ ENV CMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake
 ENV PKG_CONFIG_PATH=$VCPKG_ROOT/installed/x64-linux/lib/pkgconfig
 ENV CC=clang-18
 ENV CXX=clang++-18
-ENV CMAKE_CUDA_ARCHITECTURES="86"
+ARG CMAKE_CUDA_ARCHITECTURES=native
+ENV CMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES}
 ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs:${LD_LIBRARY_PATH}
 
 # Create and activate virtual environment
