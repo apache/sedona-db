@@ -64,7 +64,7 @@ ENV CMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake
 ENV PKG_CONFIG_PATH=$VCPKG_ROOT/installed/x64-linux/lib/pkgconfig
 ENV CC=clang-18
 ENV CXX=clang++-18
-ARG CMAKE_CUDA_ARCHITECTURES=native
+ARG CMAKE_CUDA_ARCHITECTURES="86"
 ENV CMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES}
 ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs:${LD_LIBRARY_PATH}
 
@@ -76,7 +76,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 ENV MATURIN_PEP517_ARGS="--features s2geography,gpu"
 
 # Install maturin AND JupyterLab inside the virtual environment
-RUN pip3 install maturin jupyterlab pyproj
+RUN pip3 install maturin jupyterlab pyproj geoarrow-pyarrow pandas
 
 # Install the project. You may add '-e' to enable the editable mode (uses pyproject -> maturin under the hood) for debug/development purposes
 RUN pip3 install "python/sedonadb" -vv

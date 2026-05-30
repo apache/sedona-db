@@ -80,17 +80,16 @@ environment before running `MATURIN_PEP517_ARGS="--features='gpu,s2geography,pyo
 Common environment variables used by the GPU build:
 
 - `CUDA_HOME`: points to your CUDA toolkit root.
-- `CMAKE_CUDA_ARCHITECTURES`: CUDA SM targets (default falls back to `native` to auto-detect the host GPU architecture). Change this according to your [GPU models](https://developer.nvidia.com/cuda/gpus).
+- `CMAKE_CUDA_ARCHITECTURES`: CUDA SM targets (default falls back to `86` if not set; You can specify multiple arcs, e.g., "86;89"). Change this according to your [GPU models](https://developer.nvidia.com/cuda/gpus). **Otherwise, it requires JIT to compile kernels, making the first-time run very slow!**
 
 - `LIBGPUSPATIAL_LOGGING_LEVEL`: Logging level, including `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`, `CRITICAL`.
 - `GPUSPATIAL_PROFILING=ON`: Profiling mode (`ON`, `OFF`) to compile profiling instrumentation.
 
 **Using Docker**
 
-We also provide a Dockerfile for the users. Make sure you have installed Docker, the NVIDIA Driver, and NVIDIA Container Toolkit by `sudo nvidia-ctk runtime configure --runtime=docker`. Then, you may run `docker build -f docker/sedonadb-gpu.dockerfile --build-arg CMAKE_CUDA_ARCHITECTURES="native" -t sedonadb-gpu .` to build an image (defaults to `native` to auto-detect the host's GPU architecture, or you can specify target architectures like `"86;89"`). Finally, you may run `docker run -it --rm --gpus all -p 8888:8888 sedonadb-gpu` to start a JupyterLab instance.
+We also provide a Dockerfile for the users. Make sure you have installed Docker, the NVIDIA Driver, and NVIDIA Container Toolkit by `sudo nvidia-ctk runtime configure --runtime=docker`. Then, you may run `docker build -f docker/sedonadb-gpu.dockerfile --build-arg CMAKE_CUDA_ARCHITECTURES="Your GPU compute capability" -t sedonadb-gpu .` to build an image. Finally, you may run `docker run -it --rm --gpus all -p 8888:8888 sedonadb-gpu` to start a JupyterLab instance.
 
-> [!NOTE]
-> This Docker image is currently source-built directly from the repository's active codebase and is not tied to a released SedonaDB GPU wheel yet. This is to support development and early testing before an official SedonaDB GPU wheel is published.
+> **Note:** This Docker image is currently source-built directly from the repository's active codebase and is not tied to a released SedonaDB GPU wheel yet. This is to support development and early testing before an official SedonaDB GPU wheel is published.
 
 ## Enable GPU Join with SQL `SET`
 
