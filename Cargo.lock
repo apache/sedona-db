@@ -6137,6 +6137,7 @@ dependencies = [
  "lru 0.18.0",
  "sedona-common",
  "sedona-expr",
+ "sedona-functions",
  "sedona-gdal",
  "sedona-raster",
  "sedona-schema",

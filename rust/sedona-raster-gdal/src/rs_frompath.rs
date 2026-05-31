@@ -24,10 +24,10 @@ use arrow_schema::DataType;
 use datafusion_common::cast::as_string_array;
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::error::Result;
-use datafusion_common::ScalarValue;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_functions::executor::WkbBytesExecutor;
 use sedona_raster::builder::RasterBuilder;
 use sedona_schema::datatypes::{SedonaType, RASTER};
 use sedona_schema::matchers::ArgMatcher;
@@ -54,26 +54,19 @@ impl SedonaScalarKernel for RsFromPath {
 
     fn invoke_batch_from_args(
         &self,
-        _arg_types: &[SedonaType],
+        arg_types: &[SedonaType],
         args: &[ColumnarValue],
         _return_type: &SedonaType,
-        num_rows: usize,
+        _num_rows: usize,
         config_options: Option<&ConfigOptions>,
     ) -> Result<ColumnarValue> {
         with_gdal(|gdal| {
             configure_thread_local_options(gdal, config_options)?;
-
-            let num_iterations = args
-                .iter()
-                .find_map(|arg| match arg {
-                    ColumnarValue::Array(array) => Some(array.len()),
-                    ColumnarValue::Scalar(_) => None,
-                })
-                .unwrap_or_else(|| num_rows.max(1));
+            let executor = WkbBytesExecutor::new(arg_types, args);
 
             let paths = args[0]
                 .cast_to(&DataType::Utf8, None)?
-                .into_array_of_size(num_iterations)?;
+                .into_array_of_size(executor.num_iterations())?;
             let path_array = as_string_array(&paths)?;
 
             let mut builder = RasterBuilder::new(path_array.len());
@@ -86,16 +79,7 @@ impl SedonaScalarKernel for RsFromPath {
             }
 
             let result: Arc<dyn Array> = Arc::new(builder.finish()?);
-
-            match args
-                .iter()
-                .any(|arg| matches!(arg, ColumnarValue::Array(_)))
-            {
-                true => Ok(ColumnarValue::Array(result)),
-                false => Ok(ColumnarValue::Scalar(ScalarValue::try_from_array(
-                    &result, 0,
-                )?)),
-            }
+            executor.finish(result)
         })
     }
 
@@ -113,6 +97,7 @@ mod tests {
     use super::*;
     use arrow_array::{StringArray, StructArray};
     use datafusion_common::cast::as_struct_array;
+    use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDFImpl;
     use sedona_raster::array::RasterStructArray;
     use sedona_raster::traits::RasterRef;
@@ -258,5 +243,23 @@ mod tests {
             "Failed to open raster file '{}' (GDAL path '{}')",
             missing_path, missing_path
         )));
+    }
+
+    #[test]
+    fn test_invoke_rs_from_path_scalar_ignores_num_rows_for_shape() {
+        let path = test_raster("test4.tiff").expect("test4.tiff should exist");
+
+        let result = RsFromPath
+            .invoke_batch_from_args(
+                &[],
+                &[ColumnarValue::Scalar(ScalarValue::Utf8(Some(path)))],
+                &SedonaType::Arrow(DataType::Null),
+                32,
+                None,
+            )
+            .expect("Should invoke successfully for scalar path with larger num_rows");
+
+        assert!(matches!(result, ColumnarValue::Scalar(_)));
+        assert_raster_dimensions(&result, 1, 10, 10);
     }
 }

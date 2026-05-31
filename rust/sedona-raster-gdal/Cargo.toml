@@ -39,6 +39,7 @@ datafusion-expr = { workspace = true }
 lru = { workspace = true }
 sedona-common = { workspace = true }
 sedona-expr = { workspace = true }
+sedona-functions = { workspace = true }
 sedona-gdal = { workspace = true }
 sedona-raster = { workspace = true }
 sedona-schema = { workspace = true }
