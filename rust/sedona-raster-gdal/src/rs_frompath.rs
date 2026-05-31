@@ -111,11 +111,11 @@ impl SedonaScalarKernel for RsFromPath {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::StringArray;
-    use datafusion_common::cast::{as_struct_array, as_uint64_array};
+    use arrow_array::{StringArray, StructArray};
+    use datafusion_common::cast::as_struct_array;
     use datafusion_expr::ScalarUDFImpl;
-    use sedona_expr::scalar_udf::SedonaScalarKernel;
-    use sedona_schema::raster::{metadata_indices, raster_indices};
+    use sedona_raster::array::RasterStructArray;
+    use sedona_raster::traits::RasterRef;
     use sedona_testing::data::test_raster;
 
     #[test]
@@ -129,42 +129,29 @@ mod tests {
         width: u64,
         height: u64,
     ) {
+        fn assert_struct_array_dimensions(
+            struct_arr: &StructArray,
+            expected_len: usize,
+            width: u64,
+            height: u64,
+        ) {
+            let raster_array = RasterStructArray::new(struct_arr);
+            assert_eq!(raster_array.len(), expected_len);
+
+            for idx in 0..expected_len {
+                let raster = raster_array.get(idx).unwrap();
+                assert_eq!(raster.metadata().width(), width);
+                assert_eq!(raster.metadata().height(), height);
+            }
+        }
+
         match result {
             ColumnarValue::Array(arr) => {
                 let struct_arr = as_struct_array(arr).unwrap();
-                assert_eq!(struct_arr.len(), expected_len);
-
-                let metadata_struct =
-                    as_struct_array(struct_arr.column(raster_indices::METADATA)).unwrap();
-                for idx in 0..expected_len {
-                    let actual_width =
-                        as_uint64_array(metadata_struct.column(metadata_indices::WIDTH))
-                            .unwrap()
-                            .value(idx);
-                    let actual_height =
-                        as_uint64_array(metadata_struct.column(metadata_indices::HEIGHT))
-                            .unwrap()
-                            .value(idx);
-
-                    assert_eq!(actual_width, width);
-                    assert_eq!(actual_height, height);
-                }
+                assert_struct_array_dimensions(struct_arr, expected_len, width, height);
             }
             ColumnarValue::Scalar(ScalarValue::Struct(struct_arr)) => {
-                assert_eq!(struct_arr.len(), 1);
-
-                let metadata_struct =
-                    as_struct_array(struct_arr.column(raster_indices::METADATA)).unwrap();
-                let actual_width = as_uint64_array(metadata_struct.column(metadata_indices::WIDTH))
-                    .unwrap()
-                    .value(0);
-                let actual_height =
-                    as_uint64_array(metadata_struct.column(metadata_indices::HEIGHT))
-                        .unwrap()
-                        .value(0);
-
-                assert_eq!(actual_width, width);
-                assert_eq!(actual_height, height);
+                assert_struct_array_dimensions(struct_arr, expected_len, width, height);
             }
             other => panic!("Unexpected result: {other:?}"),
         }
@@ -248,18 +235,10 @@ mod tests {
                 assert!(!struct_arr.is_null(0));
                 assert!(struct_arr.is_null(1));
 
-                let metadata_struct =
-                    as_struct_array(struct_arr.column(raster_indices::METADATA)).unwrap();
-                let actual_width = as_uint64_array(metadata_struct.column(metadata_indices::WIDTH))
-                    .unwrap()
-                    .value(0);
-                let actual_height =
-                    as_uint64_array(metadata_struct.column(metadata_indices::HEIGHT))
-                        .unwrap()
-                        .value(0);
-
-                assert_eq!(actual_width, 10);
-                assert_eq!(actual_height, 10);
+                let raster_array = RasterStructArray::new(struct_arr);
+                let raster = raster_array.get(0).unwrap();
+                assert_eq!(raster.metadata().width(), 10);
+                assert_eq!(raster.metadata().height(), 10);
             }
             other => panic!("Expected array result, got {other:?}"),
         }

@@ -180,11 +180,7 @@ pub fn dataset_to_indb_raster(dataset: &Dataset) -> Result<StructArray> {
 mod tests {
     use super::{append_as_indb_raster, append_as_outdb_raster, dataset_to_indb_raster};
 
-    use arrow_array::{Array, StructArray};
-    use datafusion_common::cast::{
-        as_binary_array, as_list_array, as_string_array, as_string_view_array, as_struct_array,
-        as_uint32_array, as_uint64_array,
-    };
+    use arrow_array::StructArray;
     use datafusion_common::exec_datafusion_err;
     use sedona_gdal::dataset::Dataset;
     use sedona_gdal::gdal::Gdal;
@@ -194,10 +190,7 @@ mod tests {
     use sedona_raster::array::RasterStructArray;
     use sedona_raster::builder::RasterBuilder;
     use sedona_raster::traits::RasterRef;
-    use sedona_schema::raster::{
-        band_indices, band_metadata_indices, metadata_indices, raster_indices, BandDataType,
-        StorageType,
-    };
+    use sedona_schema::raster::{BandDataType, StorageType};
     use sedona_testing::data::test_raster;
     use tempfile::TempDir;
 
@@ -349,36 +342,20 @@ mod tests {
         let path = test_raster("test4.tiff").expect("test4.tiff should exist");
 
         let raster = with_gdal(|gdal| load_as_outdb_raster(gdal, &path)).unwrap();
-        assert_eq!(raster.len(), 1);
+        let raster_struct = RasterStructArray::new(&raster);
+        assert_eq!(raster_struct.len(), 1);
 
-        let metadata_struct = as_struct_array(raster.column(raster_indices::METADATA)).unwrap();
-        let width = as_uint64_array(metadata_struct.column(metadata_indices::WIDTH))
-            .unwrap()
-            .value(0);
-        let height = as_uint64_array(metadata_struct.column(metadata_indices::HEIGHT))
-            .unwrap()
-            .value(0);
+        let raster = raster_struct.get(0).unwrap();
+        assert_eq!(raster.metadata().width(), 10);
+        assert_eq!(raster.metadata().height(), 10);
+        assert!(raster.crs().is_some());
 
-        assert_eq!(width, 10);
-        assert_eq!(height, 10);
-
-        let crs = as_string_view_array(raster.column(raster_indices::CRS)).unwrap();
-        assert!(!crs.is_null(0));
-
-        let bands_list = as_list_array(raster.column(raster_indices::BANDS)).unwrap();
-        let bands_struct = as_struct_array(bands_list.values()).unwrap();
-        let band_metadata_struct =
-            as_struct_array(bands_struct.column(band_indices::METADATA)).unwrap();
-
-        let outdb_url =
-            as_string_array(band_metadata_struct.column(band_metadata_indices::OUTDB_URL)).unwrap();
-        assert!(!outdb_url.is_null(0));
-        assert!(outdb_url.value(0).contains("test4.tiff"));
-
-        let storage_type =
-            as_uint32_array(band_metadata_struct.column(band_metadata_indices::STORAGE_TYPE))
-                .unwrap();
-        assert_eq!(storage_type.value(0), StorageType::OutDbRef as u32);
+        let band = raster.bands().band(1).unwrap();
+        assert_eq!(
+            band.metadata().storage_type().unwrap(),
+            StorageType::OutDbRef
+        );
+        assert!(band.metadata().outdb_url().unwrap().contains("test4.tiff"));
     }
 
     #[test]
@@ -395,15 +372,14 @@ mod tests {
         .unwrap();
 
         let raster = with_gdal(|gdal| load_as_outdb_raster(gdal, &path_str)).unwrap();
-        let bands_list = as_list_array(raster.column(raster_indices::BANDS)).unwrap();
-        let bands_struct = as_struct_array(bands_list.values()).unwrap();
-        let band_metadata_struct =
-            as_struct_array(bands_struct.column(band_indices::METADATA)).unwrap();
-        let nodata_values =
-            as_binary_array(band_metadata_struct.column(band_metadata_indices::NODATAVALUE))
-                .unwrap();
+        let raster_struct = RasterStructArray::new(&raster);
+        let raster = raster_struct.get(0).unwrap();
+        let band = raster.bands().band(1).unwrap();
 
-        assert_eq!(nodata_values.value(0), nodata.to_le_bytes());
+        assert_eq!(
+            band.metadata().nodata_value().unwrap(),
+            nodata.to_le_bytes()
+        );
     }
 
     #[test]
@@ -420,15 +396,14 @@ mod tests {
         .unwrap();
 
         let raster = with_gdal(|gdal| load_as_outdb_raster(gdal, &path_str)).unwrap();
-        let bands_list = as_list_array(raster.column(raster_indices::BANDS)).unwrap();
-        let bands_struct = as_struct_array(bands_list.values()).unwrap();
-        let band_metadata_struct =
-            as_struct_array(bands_struct.column(band_indices::METADATA)).unwrap();
-        let nodata_values =
-            as_binary_array(band_metadata_struct.column(band_metadata_indices::NODATAVALUE))
-                .unwrap();
+        let raster_struct = RasterStructArray::new(&raster);
+        let raster = raster_struct.get(0).unwrap();
+        let band = raster.bands().band(1).unwrap();
 
-        assert_eq!(nodata_values.value(0), nodata.to_le_bytes());
+        assert_eq!(
+            band.metadata().nodata_value().unwrap(),
+            nodata.to_le_bytes()
+        );
     }
 
     #[test]
