@@ -33,15 +33,12 @@ For geography, returns the geodesic perimeter in **meters**.
 
 ## Examples
 
-### Geometry
 
 ```sql
 SELECT ST_Perimeter(ST_GeomFromWKT('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))'));
 ```
 
-### Geography
 
 ```sql
 SELECT ST_Perimeter(ST_GeogFromWKT('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))'));
--- Returns: 444763.46872762055 (approximately 445 km)
 ```

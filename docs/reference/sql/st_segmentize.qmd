@@ -44,7 +44,6 @@ Points are added so that each resulting segment is no longer than `max_segment_l
 
 ## Examples
 
-### Geometry
 
 ```sql
 SELECT ST_Segmentize(
@@ -53,7 +52,6 @@ SELECT ST_Segmentize(
 );
 ```
 
-### Geography
 
 ```sql
 -- Densify a geography linestring with max segment length of 100km

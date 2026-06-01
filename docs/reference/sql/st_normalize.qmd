@@ -31,7 +31,6 @@ For geography, ST_Normalize normalizes coordinates such that longitudes are in t
 
 ## Examples
 
-### Geometry
 
 ```sql
 SELECT ST_AsText(
@@ -41,9 +40,7 @@ SELECT ST_AsText(
 );
 ```
 
-### Geography
 
 ```sql
 SELECT ST_Normalize(ST_GeogFromWKT('POINT (360 45)'));
--- Returns: POINT (0 45)
 ```

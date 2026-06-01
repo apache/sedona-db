@@ -27,7 +27,6 @@ kernels:
 
 ## Examples
 
-### Geometry
 
 ```sql
 SELECT ST_Union(
@@ -36,7 +35,6 @@ SELECT ST_Union(
 );
 ```
 
-### Geography
 
 For geography, the union is computed using spherical geometry.
 

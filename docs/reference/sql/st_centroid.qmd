@@ -27,21 +27,20 @@ kernels:
 
 ## Description
 
-For geography, the centroid is calculated using spherical geometry. The result is a point on the sphere that represents the center of mass.
+For geography, the centroid is calculated using spherical geometry.
 
 ## Examples
 
-### Geometry
 
 ```sql
 SELECT ST_Centroid(
-  ST_GeomFromWKT('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))')
+  ST_GeomFromWKT('LINESTRING (-64 45, 52 8)')
 );
 ```
 
-### Geography
 
 ```sql
-SELECT ST_Centroid(ST_GeogFromWKT('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))'));
--- Returns the geographic center of the polygon
+SELECT ST_Centroid(
+  ST_GeogFromWKT('LINESTRING (-64 45, 52 8)')
+);
 ```

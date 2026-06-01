@@ -33,7 +33,6 @@ For geography, the fraction is computed based on geodesic distances.
 
 ## Examples
 
-### Geometry
 
 ```sql
 SELECT ST_LineLocatePoint(
@@ -42,12 +41,10 @@ SELECT ST_LineLocatePoint(
 );
 ```
 
-### Geography
 
 ```sql
 SELECT ST_LineLocatePoint(
     ST_GeogFromWKT('LINESTRING (0 0, 0 1)'),
     ST_GeogPoint(0, 0.5)
 );
--- Returns: 0.5
 ```

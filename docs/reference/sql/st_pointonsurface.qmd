@@ -33,7 +33,6 @@ For geography types, the returned point is a geography.
 
 ## Examples
 
-### Geometry
 
 ```sql
 SELECT ST_AsText(ST_PointOnSurface(
@@ -46,10 +45,8 @@ SELECT ST_AsText(ST_PointOnSurface(
 SELECT ST_AsText(ST_PointOnSurface(
     ST_GeomFromText('LINESTRING (0 0, 5 5, 10 0)')
 ));
--- Returns: POINT(5 5)
 ```
 
-### Geography
 
 ```sql
 SELECT ST_AsText(ST_PointOnSurface(

@@ -35,7 +35,6 @@ SELECT ST_IsEmpty(ST_GeomFromWKT('POLYGON EMPTY'));
 SELECT ST_IsEmpty(ST_Point(1.0, 2.0));
 ```
 
-### Geography
 
 ```sql
 SELECT ST_IsEmpty(ST_GeogFromWKT('POINT EMPTY'));

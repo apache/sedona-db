@@ -34,7 +34,6 @@ SELECT ST_Intersects(
 ) AS val;
 ```
 
-### Geography
 
 For geography, ST_Intersects uses spherical geometry calculations. Edges between vertices are interpreted as geodesics (great circle arcs), which means polygons that span the antimeridian are handled correctly.
 
@@ -43,5 +42,4 @@ SELECT ST_Intersects(
     ST_GeogFromWKT('POLYGON ((179 0, -179 0, 179 2, 179 0))'),
     ST_GeogPoint(-180, 0.25)
 ) AS val;
--- Returns: true (wraparound polygon)
 ```

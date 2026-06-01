@@ -27,7 +27,6 @@ kernels:
 
 ## Examples
 
-### Geometry
 
 ```sql
 SELECT ST_SymDifference(
@@ -36,7 +35,6 @@ SELECT ST_SymDifference(
 );
 ```
 
-### Geography
 
 For geography, the symmetric difference is computed using spherical geometry.
 

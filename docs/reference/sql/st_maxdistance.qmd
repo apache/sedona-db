@@ -31,7 +31,6 @@ For geography, returns the maximum geodesic distance in **meters** between any p
 
 ## Examples
 
-### Geometry
 
 ```sql
 SELECT ST_MaxDistance(
@@ -40,7 +39,6 @@ SELECT ST_MaxDistance(
 ) AS val;
 ```
 
-### Geography
 
 ```sql
 SELECT ST_MaxDistance(

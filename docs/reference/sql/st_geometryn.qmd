@@ -44,12 +44,10 @@ SELECT ST_GeometryN(
 );
 ```
 
-### Geography
 
 ```sql
 SELECT ST_GeometryN(
     ST_GeogFromWKT('MULTIPOINT ((1 1), (2 2), (3 3))'),
     2
 );
--- Returns: POINT (2 2)
 ```

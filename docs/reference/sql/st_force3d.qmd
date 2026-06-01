@@ -53,9 +53,7 @@ SELECT ST_Force3D(ST_GeomFromWKT('POINT (1 2)'));
 SELECT ST_Force3D(ST_GeomFromWKT('POINT Z (1 2 3)'), 10.0);
 ```
 
-### Geography
 
 ```sql
 SELECT ST_Force3D(ST_GeogFromWKT('POINT (0 1)'), 5);
--- Returns: POINT Z (0 1 5)
 ```

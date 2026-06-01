@@ -41,7 +41,6 @@ This function may produce invalid geometries; use `ST_SimplifyPreserveTopology` 
 
 ## Examples
 
-### Geometry
 
 ```sql
 SELECT ST_Simplify(
@@ -52,7 +51,6 @@ SELECT ST_Simplify(
 );
 ```
 
-### Geography
 
 ```sql
 SELECT ST_Simplify(

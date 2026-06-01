@@ -33,13 +33,11 @@ For geography, returns the geodesic distance between two geographies in **meters
 
 ## Examples
 
-### Geometry
 
 ```sql
 SELECT ST_Distance(ST_Point(0, 0), ST_Point(1, 1));
 ```
 
-### Geography
 
 ```sql
 -- Distance between two points in meters
@@ -47,5 +45,4 @@ SELECT ST_Distance(
     ST_GeogPoint(0, 0),
     ST_GeogPoint(0, 1)
 );
--- Returns: 111195.10117748393 (approximately 111 km, or 1 degree latitude)
 ```

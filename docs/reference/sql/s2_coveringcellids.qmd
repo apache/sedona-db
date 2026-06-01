@@ -25,11 +25,9 @@ kernels:
 
 ## Description
 
-Returns an array of 64-bit S2 cell IDs that form a covering of the given geography. A covering is a set of cells that completely contains the geography with minimal overlap.
+Returns an array of 64-bit S2 cell IDs that form a covering of the given geography. A covering is a set of cells that completely contains the geography with minimal overlap. For a point, returns an array with a single cell ID. For empty geometries, returns an empty array.
 
 This is useful for spatial indexing and efficient spatial queries. The returned cells may be at different S2 levels depending on the size and shape of the geography.
-
-For a point, returns an array with a single cell ID. For empty geometries, returns an empty array.
 
 ## Examples
 

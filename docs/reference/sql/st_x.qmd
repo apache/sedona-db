@@ -33,12 +33,9 @@ Returns NULL for non-point geometries or NULL input.
 
 ```sql
 SELECT ST_X(ST_Point(-74.0060, 40.7128));
--- Returns: -74.006
 ```
 
-### Geography
 
 ```sql
 SELECT ST_X(ST_GeogPoint(-122.5, 47.3));
--- Returns: -122.5
 ```

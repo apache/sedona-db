@@ -38,7 +38,6 @@ SELECT ST_Equals(
 );
 ```
 
-### Geography
 
 ```sql
 SELECT ST_Equals(

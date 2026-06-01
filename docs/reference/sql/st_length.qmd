@@ -35,15 +35,12 @@ For geography, returns the geodesic length in **meters**.
 
 ## Examples
 
-### Geometry
 
 ```sql
 SELECT ST_Length(ST_GeomFromWKT('LINESTRING(0 0, 10 0)'));
 ```
 
-### Geography
 
 ```sql
 SELECT ST_Length(ST_GeogFromWKT('LINESTRING (0 0, 0 1)'));
--- Returns: 111195.10117748393 (approximately 111 km)
 ```

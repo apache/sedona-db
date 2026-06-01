@@ -27,7 +27,6 @@ kernels:
 
 ## Examples
 
-### Geometry
 
 ```sql
 SELECT ST_LineMerge(
@@ -35,11 +34,9 @@ SELECT ST_LineMerge(
 );
 ```
 
-### Geography
 
 ```sql
 SELECT ST_LineMerge(
     ST_GeogFromWKT('MULTILINESTRING ((0 0, 1 0), (1 0, 1 1))')
 );
--- Returns: LINESTRING (0 0, 1 0, 1 1)
 ```

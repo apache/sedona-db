@@ -33,21 +33,16 @@ Returns 0 for non-polygon geometry types (points, lines).
 
 ## Examples
 
-### Geometry
 
 ```sql
 SELECT ST_NRings(ST_GeomFromText('POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))'));
--- Returns: 1
 ```
 
 ```sql
 SELECT ST_NRings(ST_GeomFromText('POLYGON ((0 0, 0 10, 10 10, 10 0, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))'));
--- Returns: 2
 ```
 
-### Geography
 
 ```sql
 SELECT ST_NRings(ST_GeogFromWKT('POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))'));
--- Returns: 1
 ```

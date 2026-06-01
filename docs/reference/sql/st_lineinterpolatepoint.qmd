@@ -39,18 +39,15 @@ For geography, the interpolation is computed using geodesic distances along the 
 
 ## Examples
 
-### Geometry
 
 ```sql
 SELECT ST_LineInterpolatePoint(ST_GeomFromWKT('LINESTRING(25 50, 100 125, 150 190)'), 0.2);
 ```
 
-### Geography
 
 ```sql
 SELECT ST_LineInterpolatePoint(
     ST_GeogFromWKT('LINESTRING (0 0, 0 1)'),
     0.5
 );
--- Returns: POINT (0 0.5)
 ```

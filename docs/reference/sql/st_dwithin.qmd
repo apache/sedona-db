@@ -47,7 +47,6 @@ SELECT ST_DWithin(
 );
 ```
 
-### Geography
 
 ```sql
 -- Check if two geographies are within 100km of each other

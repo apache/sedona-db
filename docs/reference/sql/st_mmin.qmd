@@ -27,16 +27,12 @@ kernels:
 
 ## Examples
 
-### Geometry
 
 ```sql
 SELECT ST_MMin(ST_GeomFromWKT('LINESTRING ZM (1 2 3 4, 5 6 7 8)'));
--- Returns: 4
 ```
 
-### Geography
 
 ```sql
 SELECT ST_MMin(ST_GeogFromWKT('POINT M (10 20 30)'));
--- Returns: 30
 ```

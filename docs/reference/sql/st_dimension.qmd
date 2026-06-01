@@ -45,8 +45,6 @@ SELECT ST_Dimension(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'));
 SELECT ST_Dimension(ST_Point(1.0, 2.0));
 ```
 
-### Geography
-
 ```sql
 SELECT ST_Dimension(ST_GeogFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'));
 ```

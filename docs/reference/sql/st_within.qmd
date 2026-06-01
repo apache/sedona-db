@@ -39,7 +39,6 @@ SELECT ST_Within(
 );
 ```
 
-### Geography
 
 For geography, ST_Within uses spherical geometry calculations.
 

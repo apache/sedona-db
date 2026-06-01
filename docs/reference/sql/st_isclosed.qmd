@@ -43,7 +43,6 @@ SELECT ST_IsClosed(
 );
 ```
 
-### Geography
 
 ```sql
 SELECT ST_IsClosed(

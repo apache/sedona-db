@@ -43,7 +43,6 @@ kernels:
     - geography
     - name: distance
       type: float64
-      description: Radius of the buffer in meters
   - returns: geography
     args:
     - geography
@@ -51,7 +50,6 @@ kernels:
       type: float64
     - name: num_quad_segs
       type: integer
-      description: Number of segments per quadrant for circle approximation
   - returns: geography
     args:
     - geography
@@ -59,12 +57,11 @@ kernels:
       type: float64
     - name: params
       type: string
-      description: Space-separated `key=value` buffer parameters
 ---
 
 ## Description
 
-For geography, the distance is specified in **meters**. The buffer is computed on the sphere, producing a geodetically accurate result. Negative distances are supported for polygon inputs to shrink the polygon.
+For geography, the distance is specified in meters. The buffer is computed on the sphere, producing a geodetically accurate result. Negative distances are supported for polygon inputs to shrink the polygon.
 
 ## Examples
 
@@ -104,4 +101,13 @@ df = sd.sql("SELECT *, ST_Buffer(geom, 1.0, 'quad_segs=2') AS result FROM input"
 
 ax = df.geom.plot(alpha=0.5)
 df.result.plot(ax=ax, facecolor='none', edgecolor='red')
+```
+
+For geography, the distance is specified in meters:
+
+```sql
+SELECT ST_Buffer(
+  ST_GeomFromText('POINT (-64 45)'),
+  1000
+) AS geom;
 ```
