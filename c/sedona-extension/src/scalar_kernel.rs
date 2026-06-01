@@ -43,7 +43,6 @@ use crate::extension::{ffi_arrow_schema_is_valid, SedonaCScalarKernel, SedonaCSc
 pub struct ImportedScalarKernel {
     inner: SedonaCScalarKernel,
     function_name: Option<String>,
-    metadata: std::collections::HashMap<String, String>,
 }
 
 impl Debug for ImportedScalarKernel {
@@ -71,12 +70,9 @@ impl TryFrom<SedonaCScalarKernel> for ImportedScalarKernel {
                     )
                 };
 
-                let metadata = import_metadata(&value)?;
-
                 Ok(Self {
                     inner: value,
                     function_name: name,
-                    metadata,
                 })
             }
             _ => sedona_internal_err!("Can't import released or uninitialized SedonaCScalarKernel"),
@@ -84,42 +80,9 @@ impl TryFrom<SedonaCScalarKernel> for ImportedScalarKernel {
     }
 }
 
-/// Read and parse the optional JSON metadata callback of an imported
-/// kernel. A NULL callback or NULL/empty string yields an empty map;
-/// malformed JSON is a hard error so a producer/consumer mismatch
-/// surfaces at import rather than silently dropping planner metadata.
-fn import_metadata(
-    value: &SedonaCScalarKernel,
-) -> Result<std::collections::HashMap<String, String>> {
-    let Some(metadata_fn) = value.metadata else {
-        return Ok(std::collections::HashMap::new());
-    };
-    let ptr = unsafe { metadata_fn(value) };
-    if ptr.is_null() {
-        return Ok(std::collections::HashMap::new());
-    }
-    let json = unsafe { CStr::from_ptr(ptr) }.to_string_lossy();
-    if json.is_empty() {
-        return Ok(std::collections::HashMap::new());
-    }
-    serde_json::from_str(&json).map_err(|e| {
-        DataFusionError::External(
-            format!("failed to parse imported scalar kernel metadata JSON {json:?}: {e}").into(),
-        )
-    })
-}
-
 impl ImportedScalarKernel {
     pub fn function_name(&self) -> Option<&str> {
         self.function_name.as_deref()
-    }
-
-    /// Class-level UDF metadata carried across the FFI boundary. Apply
-    /// these entries to the [`SedonaScalarUDF`] assembled from this
-    /// kernel (e.g. via `SedonaScalarUDF::with_metadata`) so
-    /// planner-visible flags survive the cdylib hop.
-    pub fn metadata(&self) -> &std::collections::HashMap<String, String> {
-        &self.metadata
     }
 }
 
@@ -371,10 +334,6 @@ impl CScalarKernelImplWrapper {
 pub struct ExportedScalarKernel {
     inner: ScalarKernelRef,
     function_name: Option<CString>,
-    /// Class-level UDF metadata, pre-serialised to a JSON object string
-    /// and held as a `CString` so the C `metadata` accessor can hand out
-    /// a stable pointer for the kernel's lifetime. `None` when empty.
-    metadata_json: Option<CString>,
 }
 
 impl From<ScalarKernelRef> for ExportedScalarKernel {
@@ -382,7 +341,6 @@ impl From<ScalarKernelRef> for ExportedScalarKernel {
         ExportedScalarKernel {
             inner: value,
             function_name: None,
-            metadata_json: None,
         }
     }
 }
@@ -392,7 +350,6 @@ impl From<ExportedScalarKernel> for SedonaCScalarKernel {
         let box_value = Box::new(value);
         Self {
             function_name: Some(c_factory_function_name),
-            metadata: Some(c_factory_metadata),
             new_impl: Some(c_factory_new_impl),
             release: Some(c_factory_release),
             private_data: Box::leak(box_value) as *mut ExportedScalarKernel as *mut c_void,
@@ -408,27 +365,6 @@ impl ExportedScalarKernel {
     pub fn with_function_name(self, function_name: impl AsRef<str>) -> Self {
         Self {
             function_name: Some(CString::from_str(function_name.as_ref()).unwrap()),
-            ..self
-        }
-    }
-
-    /// Attach class-level UDF metadata to this exported kernel.
-    ///
-    /// The map is serialised to a JSON object string that crosses the FFI
-    /// boundary via the `metadata` callback; the importer parses it back
-    /// and applies it to the assembled [`SedonaScalarUDF`]. This is how a
-    /// plugin-defined function declares planner-visible flags such as
-    /// [`sedona_expr::scalar_udf::NEEDS_PIXELS_METADATA_KEY`].
-    pub fn with_metadata(self, metadata: &std::collections::HashMap<String, String>) -> Self {
-        let metadata_json = if metadata.is_empty() {
-            None
-        } else {
-            // serde_json on a string→string map never fails to serialise.
-            let json = serde_json::to_string(metadata).expect("serialise UDF metadata map");
-            Some(CString::new(json).expect("metadata JSON has no interior NUL"))
-        };
-        Self {
-            metadata_json,
             ..self
         }
     }
@@ -449,22 +385,6 @@ unsafe extern "C" fn c_factory_function_name(self_: *const SedonaCScalarKernel) 
         .unwrap();
     if let Some(function_name) = &private_data.function_name {
         function_name.as_ptr()
-    } else {
-        null()
-    }
-}
-
-/// C callable wrapper exposing the exported kernel's JSON metadata.
-unsafe extern "C" fn c_factory_metadata(self_: *const SedonaCScalarKernel) -> *const c_char {
-    assert!(!self_.is_null());
-    let self_ref = self_.as_ref().unwrap();
-
-    assert!(!self_ref.private_data.is_null());
-    let private_data = (self_ref.private_data as *mut ExportedScalarKernel)
-        .as_ref()
-        .unwrap();
-    if let Some(metadata_json) = &private_data.metadata_json {
-        metadata_json.as_ptr()
     } else {
         null()
     }
@@ -838,45 +758,6 @@ mod test {
         let ffi_kernel = SedonaCScalarKernel::from(exported_kernel);
         let imported_kernel = ImportedScalarKernel::try_from(ffi_kernel).unwrap();
         assert_eq!(imported_kernel.function_name(), Some("foofy"));
-    }
-
-    #[test]
-    fn kernel_metadata_roundtrips() {
-        use sedona_expr::scalar_udf::NEEDS_PIXELS_METADATA_KEY;
-        use std::collections::HashMap;
-
-        let kernel = SimpleSedonaScalarKernel::new_ref(
-            ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY),
-            Arc::new(|_, args| Ok(args[0].clone())),
-        );
-
-        // No metadata set -> imported kernel reports an empty map.
-        let ffi_kernel = SedonaCScalarKernel::from(ExportedScalarKernel::from(kernel.clone()));
-        let imported = ImportedScalarKernel::try_from(ffi_kernel).unwrap();
-        assert!(imported.metadata().is_empty());
-
-        // Set metadata on export; it should survive the FFI round trip
-        // and be applicable to a UDF assembled from the imported kernel.
-        let mut metadata = HashMap::new();
-        metadata.insert(NEEDS_PIXELS_METADATA_KEY.to_string(), "true".to_string());
-        metadata.insert("custom".to_string(), "value".to_string());
-
-        let exported = ExportedScalarKernel::from(kernel.clone()).with_metadata(&metadata);
-        let ffi_kernel = SedonaCScalarKernel::from(exported);
-        let imported = ImportedScalarKernel::try_from(ffi_kernel).unwrap();
-        assert_eq!(imported.metadata(), &metadata);
-
-        // Applying the imported metadata to a UDF lights up needs_bytes().
-        let mut udf =
-            SedonaScalarUDF::new("from_ffi", vec![Arc::new(imported)], Volatility::Immutable);
-        for (k, v) in metadata {
-            udf = udf.with_metadata(k, v);
-        }
-        assert!(udf.needs_bytes());
-        assert_eq!(
-            udf.metadata().get("custom").map(String::as_str),
-            Some("value")
-        );
     }
 
     #[test]

@@ -37,4 +37,3 @@ sedona-common = { workspace = true }
 sedona-expr = { workspace = true }
 sedona-schema = { workspace = true }
 sedona-testing = { path = "../../rust/sedona-testing" }
-serde_json = { workspace = true }
