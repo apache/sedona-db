@@ -16,57 +16,44 @@
 # specific language governing permissions and limitations
 # under the License.
 
-title: ST_Force4D
-description: Forces a geometry or geography into a XYZM coordinate model with optional Z and M values.
+title: ST_PointOnSurface
+description: Returns a point guaranteed to lie on the surface of a geometry or geography.
 kernels:
   - returns: geometry
     args: [geometry]
-  - returns: geometry
-    args:
-    - geometry
-    - name: z
-      type: double
-  - returns: geometry
-    args:
-    - geometry
-    - name: z
-      type: double
-    - name: m
-      type: double
   - returns: geography
     args: [geography]
-  - returns: geography
-    args:
-    - geography
-    - name: z
-      type: double
-  - returns: geography
-    args:
-    - geography
-    - name: z
-      type: double
-    - name: m
-      type: double
 ---
 
 ## Description
 
-If the geometry already has Z and M values they are preserved; otherwise optional `z` and `m` arguments (both default 0) are used.
+Returns a point that is guaranteed to be inside the geometry or geography (or on its boundary for linear geometries). Unlike `ST_Centroid`, which may return a point outside of concave shapes, `ST_PointOnSurface` always returns a point that lies on or within the geometry.
+
+For geography types, the returned point is a geography.
 
 ## Examples
 
+### Geometry
+
 ```sql
-SELECT ST_Force4D(ST_GeomFromWKT('POINT (1 2)'), 10.0, 20.0);
+SELECT ST_AsText(ST_PointOnSurface(
+    ST_GeomFromText('POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 3, 3 3, 3 1, 1 1))')
+));
+-- Returns a point on the polygon (outside the hole)
 ```
 
 ```sql
-SELECT ST_Force4D(ST_GeomFromWKT('POINT (1 2)'), 10.0);
+SELECT ST_AsText(ST_PointOnSurface(
+    ST_GeomFromText('LINESTRING (0 0, 5 5, 10 0)')
+));
+-- Returns: POINT(5 5)
 ```
 
-```sql
-SELECT ST_Force4D(ST_GeomFromWKT('POINT (1 2)'));
-```
+### Geography
 
 ```sql
-SELECT ST_Force4D(ST_GeomFromWKT('POINT ZM (1 2 3 4)'), 10.0, 20.0);
+SELECT ST_AsText(ST_PointOnSurface(
+    ST_GeogFromWKT('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))')
+));
+-- Returns a point on the polygon surface
 ```

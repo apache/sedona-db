@@ -17,11 +17,16 @@
 # under the License.
 
 title: ST_GeometryN
-description: Returns the 0-based Nth geometry if the geometry is a GEOMETRYCOLLECTION, (MULTI)POINT, (MULTI)LINESTRING, MULTICURVE or (MULTI)POLYGON.
+description: Returns the 1-based Nth geometry if the geometry is a GEOMETRYCOLLECTION, (MULTI)POINT, (MULTI)LINESTRING, MULTICURVE or (MULTI)POLYGON.
 kernels:
   - returns: geometry
     args:
     - geometry
+    - name: "n"
+      type: integer
+  - returns: geography
+    args:
+    - geography
     - name: "n"
       type: integer
 ---
@@ -37,4 +42,14 @@ SELECT ST_GeometryN(
     ST_GeomFromText('MULTIPOINT((1 2), (3 4), (5 6), (8 9))'),
     1
 );
+```
+
+### Geography
+
+```sql
+SELECT ST_GeometryN(
+    ST_GeogFromWKT('MULTIPOINT ((1 1), (2 2), (3 3))'),
+    2
+);
+-- Returns: POINT (2 2)
 ```

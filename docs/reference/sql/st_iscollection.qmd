@@ -17,10 +17,12 @@
 # under the License.
 
 title: ST_IsCollection
-description: Returns TRUE if the geometry type of the input is a geometry collection type.
+description: Returns TRUE if the geometry or geography type of the input is a collection type.
 kernels:
   - returns: boolean
     args: [geometry]
+  - returns: boolean
+    args: [geography]
 ---
 
 ## Description
@@ -40,4 +42,10 @@ SELECT ST_IsCollection(ST_GeomFromText('MULTIPOINT(0 0, 6 6)'));
 
 ```sql
 SELECT ST_IsCollection(ST_GeomFromText('POINT(5 5)'));
+```
+
+### Geography
+
+```sql
+SELECT ST_IsCollection(ST_GeogFromWKT('MULTIPOINT ((0 0), (1 1))'));
 ```

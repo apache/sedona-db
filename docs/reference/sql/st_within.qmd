@@ -21,6 +21,8 @@ description: Returns true if A is completely inside B.
 kernels:
   - returns: boolean
     args: [geometry, geometry]
+  - returns: boolean
+    args: [geography, geography]
 ---
 
 ## Description
@@ -34,5 +36,16 @@ of `ST_Contains`: `ST_Within(A, B)` is equivalent to `ST_Contains(B, A)`.
 SELECT ST_Within(
     ST_GeomFromWKT('POINT(1 1)'),
     ST_GeomFromWKT('POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))')
+);
+```
+
+### Geography
+
+For geography, ST_Within uses spherical geometry calculations.
+
+```sql
+SELECT ST_Within(
+    ST_GeogPoint(0.25, 0.25),
+    ST_GeogFromWKT('POLYGON ((0 0, 2 0, 0 2, 0 0))')
 );
 ```

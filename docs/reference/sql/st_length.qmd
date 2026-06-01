@@ -17,18 +17,33 @@
 # under the License.
 
 title: ST_Length
-description: Returns the length of a geometry.
+description: Returns the length of a geometry or geography.
 kernels:
   - returns: double
     args: [geometry]
+  - returns: double
+    args: [geography]
 ---
 
 ## Description
 
 Returns the length of geom. This function only supports LineString, MultiLineString, and GeometryCollections containing linear geometries. Use ST_Perimeter for polygons.
 
+For geometry, returns the length in the units of the coordinate reference system.
+
+For geography, returns the geodesic length in **meters**.
+
 ## Examples
+
+### Geometry
 
 ```sql
 SELECT ST_Length(ST_GeomFromWKT('LINESTRING(0 0, 10 0)'));
+```
+
+### Geography
+
+```sql
+SELECT ST_Length(ST_GeogFromWKT('LINESTRING (0 0, 0 1)'));
+-- Returns: 111195.10117748393 (approximately 111 km)
 ```

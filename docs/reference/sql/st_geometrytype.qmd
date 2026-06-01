@@ -17,10 +17,12 @@
 # under the License.
 
 title: ST_GeometryType
-description: Returns the type of a geometry.
+description: Returns the type of a geometry or geography.
 kernels:
   - returns: string
     args: [geometry]
+  - returns: string
+    args: [geography]
 ---
 
 ## Description
@@ -37,4 +39,11 @@ SELECT ST_GeometryType(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'));
 
 ```sql
 SELECT ST_GeometryType(ST_Point(1.0, 2.0));
+```
+
+### Geography
+
+```sql
+SELECT ST_GeometryType(ST_GeogFromWKT('LINESTRING (0 0, 1 1)'));
+-- Returns: 'ST_LineString'
 ```

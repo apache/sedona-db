@@ -21,16 +21,31 @@ description: Returns the distance between two geometries or geographies.
 kernels:
   - returns: double
     args: [geometry, geometry]
+  - returns: double
+    args: [geography, geography]
 ---
 
 ## Description
 
-Returns the 2D Cartesian (planar) distance between two geometries, in the units
-of the coordinate reference system. For geographic distance calculations, use
-`ST_DistanceSphere` or `ST_DistanceSpheroid`.
+For geometry, returns the 2D Cartesian (planar) distance between two geometries, in the units of the coordinate reference system.
+
+For geography, returns the geodesic distance between two geographies in **meters**, calculated on a spherical Earth model.
 
 ## Examples
 
+### Geometry
+
 ```sql
 SELECT ST_Distance(ST_Point(0, 0), ST_Point(1, 1));
+```
+
+### Geography
+
+```sql
+-- Distance between two points in meters
+SELECT ST_Distance(
+    ST_GeogPoint(0, 0),
+    ST_GeogPoint(0, 1)
+);
+-- Returns: 111195.10117748393 (approximately 111 km, or 1 degree latitude)
 ```

@@ -24,6 +24,11 @@ kernels:
     - geometry
     - name: "n"
       type: integer
+  - returns: geography
+    args:
+    - geography
+    - name: "n"
+      type: integer
 ---
 
 ## Description

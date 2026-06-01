@@ -17,10 +17,12 @@
 # under the License.
 
 title: ST_X
-description: Returns the X coordinate of the point, or NULL if not available.
+description: Returns the X coordinate (longitude for geography) of the point, or NULL if not available.
 kernels:
   - returns: double
     args: [geometry]
+  - returns: double
+    args: [geography]
 ---
 
 ## Description
@@ -32,4 +34,11 @@ Returns NULL for non-point geometries or NULL input.
 ```sql
 SELECT ST_X(ST_Point(-74.0060, 40.7128));
 -- Returns: -74.006
+```
+
+### Geography
+
+```sql
+SELECT ST_X(ST_GeogPoint(-122.5, 47.3));
+-- Returns: -122.5
 ```

@@ -21,6 +21,8 @@ description: Returns true if geomA contains geomB.
 kernels:
   - returns: boolean
     args: [geometry, geometry]
+  - returns: boolean
+    args: [geography, geography]
 ---
 
 ## Description
@@ -34,4 +36,16 @@ SELECT ST_Contains(
     ST_GeomFromText('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))'),
     ST_Point(0.25, 0.25)
 ) AS val;
+```
+
+### Geography
+
+For geography, ST_Contains uses spherical geometry. A geography polygon contains a point only if the point is strictly in the interior (boundary points return false).
+
+```sql
+SELECT ST_Contains(
+    ST_GeogFromWKT('POLYGON ((0 0, 2 0, 0 2, 0 0))'),
+    ST_GeogPoint(0.25, 0.25)
+) AS val;
+-- Returns: true
 ```

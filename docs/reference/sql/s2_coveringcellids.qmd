@@ -16,36 +16,23 @@
 # specific language governing permissions and limitations
 # under the License.
 
-title: ST_AsBinary
-description: Converts a geometry or geography to Well-Known Binary (WKB) format.
+title: S2_CoveringCellIds
+description: Returns an array of S2 cell IDs that cover the given geography.
 kernels:
-  - returns: binary
-    args: [geometry]
-  - returns: binary
+  - returns: array
     args: [geography]
 ---
 
 ## Description
 
-`ST_AsBinary()` Returns the Well-Known Binary representation of a geometry or geography. This function also has the alias ST_AsWKB.
+Returns an array of 64-bit S2 cell IDs that form a covering of the given geography. A covering is a set of cells that completely contains the geography with minimal overlap.
 
-`ST_AsBinary()` may preserve the underlying Arrow storage type of the input geometry. For example,
-when the input geometry is backed by Arrow `BinaryView` storage, the WKB output may also use
-`BinaryView` storage. If a downstream consumer requires simpler Arrow storage such as `Binary`,
-wrap the result with `sd_simplifystorage()`.
+This is useful for spatial indexing and efficient spatial queries. The returned cells may be at different S2 levels depending on the size and shape of the geography.
+
+For a point, returns an array with a single cell ID. For empty geometries, returns an empty array.
 
 ## Examples
 
 ```sql
-SELECT ST_AsBinary(ST_Point(1.0, 2.0));
-```
-
-```sql
-SELECT sd_simplifystorage(ST_AsBinary(ST_Point(1.0, 2.0)));
-```
-
-### Geography
-
-```sql
-SELECT ST_AsBinary(ST_GeogFromWKT('POINT (1 1)'));
+SELECT S2_CoveringCellIds(ST_GeogFromWKT('LINESTRING (0 0, 1 1)'));
 ```

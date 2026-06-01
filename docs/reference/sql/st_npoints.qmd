@@ -17,10 +17,12 @@
 # under the License.
 
 title: ST_NPoints
-description: Returns the number of points of the geometry.
+description: Returns the number of points of the geometry or geography.
 kernels:
   - returns: integer
     args: [geometry]
+  - returns: integer
+    args: [geography]
 ---
 
 ## Description
@@ -32,5 +34,13 @@ Returns the total number of coordinate points in the geometry, counting all vert
 ```sql
 SELECT ST_NPoints(
   ST_GeomFromText('LINESTRING (1 2, 3 4, 5 6)')
+);
+```
+
+### Geography
+
+```sql
+SELECT ST_NPoints(
+  ST_GeogFromWKT('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))')
 );
 ```

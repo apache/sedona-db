@@ -17,10 +17,12 @@
 # under the License.
 
 title: ST_Boundary
-description: Returns the closure of the combinatorial boundary of this Geometry.
+description: Returns the closure of the combinatorial boundary of this Geometry or Geography.
 kernels:
   - returns: geometry
     args: [geometry]
+  - returns: geography
+    args: [geography]
 ---
 
 ## Description
@@ -31,4 +33,10 @@ For a polygon, the boundary is the exterior and interior rings; for a linestring
 
 ```sql
 SELECT ST_Boundary(ST_GeomFromWKT('POLYGON((1 1,0 0, -1 1, 1 1))'));
+```
+
+### Geography
+
+```sql
+SELECT ST_Boundary(ST_GeogFromWKT('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))'));
 ```

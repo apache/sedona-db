@@ -21,6 +21,8 @@ description: Returns true if the LINESTRING start and end point are the same.
 kernels:
   - returns: boolean
     args: [geometry]
+  - returns: boolean
+    args: [geography]
 ---
 
 ## Description
@@ -38,5 +40,13 @@ SELECT ST_IsClosed(
 ```sql
 SELECT ST_IsClosed(
   ST_GeomFromText('LINESTRING(0 0, 1 1, 1 0)')
+);
+```
+
+### Geography
+
+```sql
+SELECT ST_IsClosed(
+  ST_GeogFromWKT('LINESTRING (0 0, 1 0, 1 1, 0 0)')
 );
 ```

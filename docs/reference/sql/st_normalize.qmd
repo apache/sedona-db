@@ -17,13 +17,21 @@
 # under the License.
 
 title: ST_Normalize
-description: Returns the geometry in its canonical form.
+description: Returns the geometry or geography in its canonical form.
 kernels:
   - returns: geometry
     args: [geometry]
+  - returns: geography
+    args: [geography]
 ---
 
+## Description
+
+For geography, ST_Normalize normalizes coordinates such that longitudes are in the range [-180, 180) and optionally snaps points near the poles.
+
 ## Examples
+
+### Geometry
 
 ```sql
 SELECT ST_AsText(
@@ -31,4 +39,11 @@ SELECT ST_AsText(
     ST_GeomFromWKT('POLYGON((10 10, 10 0, 0 0, 0 10, 10 10))')
   )
 );
+```
+
+### Geography
+
+```sql
+SELECT ST_Normalize(ST_GeogFromWKT('POINT (360 45)'));
+-- Returns: POINT (0 45)
 ```

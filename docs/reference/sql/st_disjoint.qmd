@@ -21,6 +21,8 @@ description: Returns true if geomA is disjoint from geomB.
 kernels:
   - returns: boolean
     args: [geometry, geometry]
+  - returns: boolean
+    args: [geography, geography]
 ---
 
 ## Description
@@ -34,4 +36,14 @@ SELECT ST_Disjoint(
     ST_Point(0.25, 0.25),
     ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')
 ) AS val;
+```
+
+### Geography
+
+```sql
+SELECT ST_Disjoint(
+    ST_GeogFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'),
+    ST_GeogFromWKT('POLYGON ((30 30, 31 30, 30 31, 30 30))')
+) AS val;
+-- Returns: true (distant polygons)
 ```

@@ -16,36 +16,40 @@
 # specific language governing permissions and limitations
 # under the License.
 
-title: ST_AsBinary
-description: Converts a geometry or geography to Well-Known Binary (WKB) format.
+title: ST_NumInteriorRings
+description: Returns the number of interior rings (holes) in a polygon geometry or geography.
 kernels:
-  - returns: binary
+  - returns: integer
     args: [geometry]
-  - returns: binary
+  - returns: integer
     args: [geography]
 ---
 
 ## Description
 
-`ST_AsBinary()` Returns the Well-Known Binary representation of a geometry or geography. This function also has the alias ST_AsWKB.
+Returns the number of interior rings (holes) in a polygon. For a polygon without holes, returns 0. For multipolygons, returns the number of interior rings in the first polygon.
 
-`ST_AsBinary()` may preserve the underlying Arrow storage type of the input geometry. For example,
-when the input geometry is backed by Arrow `BinaryView` storage, the WKB output may also use
-`BinaryView` storage. If a downstream consumer requires simpler Arrow storage such as `Binary`,
-wrap the result with `sd_simplifystorage()`.
+Alias: `ST_NumInteriorRing`.
+
+Returns NULL for non-polygon geometry types.
 
 ## Examples
 
+### Geometry
+
 ```sql
-SELECT ST_AsBinary(ST_Point(1.0, 2.0));
+SELECT ST_NumInteriorRings(ST_GeomFromText('POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))'));
+-- Returns: 0
 ```
 
 ```sql
-SELECT sd_simplifystorage(ST_AsBinary(ST_Point(1.0, 2.0)));
+SELECT ST_NumInteriorRings(ST_GeomFromText('POLYGON ((0 0, 0 10, 10 10, 10 0, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))'));
+-- Returns: 1
 ```
 
 ### Geography
 
 ```sql
-SELECT ST_AsBinary(ST_GeogFromWKT('POINT (1 1)'));
+SELECT ST_NumInteriorRings(ST_GeogFromWKT('POLYGON ((0 0, 0 10, 10 10, 10 0, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))'));
+-- Returns: 1
 ```

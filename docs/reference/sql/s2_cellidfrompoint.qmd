@@ -16,36 +16,23 @@
 # specific language governing permissions and limitations
 # under the License.
 
-title: ST_AsBinary
-description: Converts a geometry or geography to Well-Known Binary (WKB) format.
+title: S2_CellIdFromPoint
+description: Returns the S2 cell ID containing the given point geography at the maximum S2 level (30).
 kernels:
-  - returns: binary
-    args: [geometry]
-  - returns: binary
+  - returns: int64
     args: [geography]
 ---
 
 ## Description
 
-`ST_AsBinary()` Returns the Well-Known Binary representation of a geometry or geography. This function also has the alias ST_AsWKB.
+Returns the 64-bit S2 cell ID at level 30 (the finest resolution) that contains the given point geography. This is useful for spatial indexing and cell-based operations.
 
-`ST_AsBinary()` may preserve the underlying Arrow storage type of the input geometry. For example,
-when the input geometry is backed by Arrow `BinaryView` storage, the WKB output may also use
-`BinaryView` storage. If a downstream consumer requires simpler Arrow storage such as `Binary`,
-wrap the result with `sd_simplifystorage()`.
+S2 cells are a hierarchical spatial indexing system that divides the sphere into cells at different levels. Level 0 has 6 face cells, and each subsequent level divides cells into 4 children, up to level 30.
+
+Returns NULL for empty point geometries.
 
 ## Examples
 
 ```sql
-SELECT ST_AsBinary(ST_Point(1.0, 2.0));
-```
-
-```sql
-SELECT sd_simplifystorage(ST_AsBinary(ST_Point(1.0, 2.0)));
-```
-
-### Geography
-
-```sql
-SELECT ST_AsBinary(ST_GeogFromWKT('POINT (1 1)'));
+SELECT S2_CellIdFromPoint(ST_GeogPoint(-64, 45));
 ```
