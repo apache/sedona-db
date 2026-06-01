@@ -19,7 +19,6 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use crate::ensure_loaded_analyzer::EnsureLoadedAnalyzerRule;
 use crate::exec::create_plan_from_sql;
 use crate::object_storage::ensure_object_store_registered_with_options;
 use crate::rs_ensure_loaded::RsEnsureLoaded;
@@ -70,7 +69,8 @@ use sedona_pointcloud::las::{
 use sedona_spatial_join_gpu::options::GpuOptions;
 
 use sedona_query_planner::{
-    optimizer::register_spatial_join_logical_optimizer, query_planner::SedonaQueryPlanner,
+    optimizer::{register_ensure_loaded_optimizer, register_spatial_join_logical_optimizer},
+    query_planner::SedonaQueryPlanner,
 };
 use sedona_raster::outdb_loader::{AsyncByteLoader, OutDbLoaderConfig, OutDbLoaderRegistry};
 
@@ -195,6 +195,7 @@ impl SedonaContext {
         }
 
         state_builder = register_spatial_join_logical_optimizer(state_builder)?;
+        state_builder = register_ensure_loaded_optimizer(state_builder)?;
         state_builder = state_builder.with_query_planner(Arc::new(planner));
 
         let mut state = state_builder.build();
@@ -262,25 +263,15 @@ impl SedonaContext {
         // Register the RS_EnsureLoaded async UDF. It pulls the registry
         // out of `args.config_options` at dispatch time, so it doesn't
         // need to close over the Arc itself — the UDF instance is
-        // session-agnostic.
-        let ensure_loaded_udf = {
+        // session-agnostic. The logical optimizer rule registered above
+        // (`register_ensure_loaded_optimizer`) resolves this UDF from the
+        // function registry at rewrite time, so it must be registered
+        // before any query is planned.
+        {
             use datafusion_expr::async_udf::AsyncScalarUDF;
             let udf = AsyncScalarUDF::new(Arc::new(RsEnsureLoaded::new()));
-            let udf = Arc::new(udf.into_scalar_udf());
-            out.ctx.register_udf((*udf).clone());
-            udf
+            out.ctx.register_udf(udf.into_scalar_udf());
         };
-
-        // Register the analyzer rule that wraps raster args of
-        // `needs_bytes` UDFs with `RS_EnsureLoaded`. The rule holds an
-        // Arc clone of the same UDF so the wraps it injects route
-        // through the same async dispatcher (and thus the same
-        // per-session registry) as any explicit `RS_EnsureLoaded(...)`
-        // already written by the user.
-        out.ctx
-            .state_ref()
-            .write()
-            .add_analyzer_rule(Arc::new(EnsureLoadedAnalyzerRule::new(ensure_loaded_udf)));
 
         // Register the GDAL OutDb byte loader. `sedona-raster-gdal` is a
         // mandatory dep on `sedona`, but libgdal itself is dlopen'd

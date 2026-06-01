@@ -60,6 +60,15 @@ impl<T: SedonaScalarKernel + 'static> IntoScalarKernelRefs for Vec<Arc<T>> {
     }
 }
 
+/// Canonical name of the `RS_EnsureLoaded` async UDF.
+///
+/// Lives here (rather than next to the UDF impl) because two crates that
+/// can't depend on each other both need it: the UDF implementation in
+/// `sedona`, and the logical optimizer rule in `sedona-query-planner`
+/// that wraps `needs_bytes` raster args with it. Both depend on
+/// `sedona-expr`, so this is their common home.
+pub const RS_ENSURE_LOADED_NAME: &str = "rs_ensureloaded";
+
 /// Top-level scalar user-defined function
 ///
 /// This struct implements datafusion's ScalarUDF and implements kernel dispatch

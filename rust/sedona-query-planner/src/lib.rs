@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+pub mod ensure_loaded;
 mod logical_plan_node;
 pub mod optimizer;
 pub mod probe_shuffle_exec;

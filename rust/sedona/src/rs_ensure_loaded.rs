@@ -47,9 +47,11 @@ use sedona_raster::outdb_loader::{
 };
 use sedona_raster::traits::RasterRef;
 
-/// Constant exposed so callers (the analyzer rule, and tests that need
-/// to reference the UDF by name) don't drift on spelling.
-pub const RS_ENSURE_LOADED_NAME: &str = "rs_ensureloaded";
+/// Re-exported from `sedona-expr` (its canonical home — see
+/// [`sedona_expr::scalar_udf::RS_ENSURE_LOADED_NAME`]) so existing
+/// `crate::rs_ensure_loaded::RS_ENSURE_LOADED_NAME` references keep
+/// resolving.
+pub use sedona_expr::scalar_udf::RS_ENSURE_LOADED_NAME;
 
 /// Async UDF that resolves OutDb bands by dispatching through the
 /// [`OutDbLoaderRegistry`] stashed in `ConfigOptions` as a
