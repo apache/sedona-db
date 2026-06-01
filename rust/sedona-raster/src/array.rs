@@ -247,6 +247,12 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
         // path, which is not yet implemented. Surface it loudly here rather
         // than silently rejecting the band, so callers see the standardised
         // SedonaDB-internal-error framing.
+        //
+        // This rejection is also the guardrail keeping `RS_EnsureLoaded`
+        // correct: it drops `view()` on rebuild, so it would corrupt a
+        // viewed band. When this comes off (view composition), the loader
+        // request/response must round-trip the view — tracked in
+        // <https://github.com/apache/sedona-db/issues/897>.
         if !self.band_view_list.is_null(band_row) {
             return Err(ArrowError::ExternalError(Box::new(
                 sedona_common::sedona_internal_datafusion_err!(

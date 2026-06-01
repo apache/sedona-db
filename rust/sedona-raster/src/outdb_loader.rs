@@ -43,6 +43,14 @@ use sedona_schema::raster::BandDataType;
 /// metadata. The lifetime is the request's, not the loader's — borrowed
 /// fields point into the input `RecordBatch` and stay valid for the
 /// duration of the [`AsyncByteLoader::load`] future.
+///
+/// This request carries no band *view*: it always asks for the full
+/// `source_shape`, and `load` returns a bare `Buffer`. Once non-identity
+/// views become constructible, the request must carry the desired view
+/// and the response must report the realized `(buffer, source_shape,
+/// view)` so a loader can range-read a sub-window and the caller can tell
+/// what it got. Tracked in
+/// <https://github.com/apache/sedona-db/issues/897>.
 #[derive(Debug, Clone, Copy)]
 pub struct OutDbLoadRequest<'a> {
     /// Anchor URI from the band's `outdb_uri` column. Bare paths and
