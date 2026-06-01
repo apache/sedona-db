@@ -115,6 +115,7 @@ pub fn st_npoints_udf() -> SedonaScalarUDF {
         ItemCrsKernel::wrap_impl(vec![Arc::new(STNPoints)]),
         Volatility::Immutable,
     )
+    .with_aliases(vec!["st_numpoints".to_string()])
 }
 
 #[derive(Debug)]
