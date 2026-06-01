@@ -596,6 +596,50 @@ class DataFrame:
             self._options,
         )
 
+    def group_by(self, *keys: Union[str, Expr]) -> "GroupedDataFrame":
+        """Group rows by one or more keys for aggregation.
+
+        Returns a `GroupedDataFrame` whose `.agg(...)` method runs the
+        aggregation. Strings are auto-promoted to column references
+        (same pattern as `sort`); arbitrary `Expr` values are accepted
+        as computed group keys.
+
+        Args:
+            *keys: One or more `str` column names or `Expr` group keys.
+                At least one is required.
+
+        Examples:
+
+            >>> sd = sedona.db.connect()
+            >>> df = sd.sql(
+            ...     "SELECT * FROM (VALUES ('a', 1), ('a', 2), ('b', 3)) AS t(k, v)"
+            ... )
+            >>> df.group_by("k").agg(total=sd.funcs.sum(sd.col("v"))).sort("k").show()
+            ┌──────┬───────┐
+            │   k  ┆ total │
+            │ utf8 ┆ int64 │
+            ╞══════╪═══════╡
+            │ a    ┆     3 │
+            ├╌╌╌╌╌╌┼╌╌╌╌╌╌╌┤
+            │ b    ┆     3 │
+            └──────┴───────┘
+        """
+        if not keys:
+            raise ValueError("group_by() requires at least one key")
+
+        coerced: List[Expr] = []
+        for k in keys:
+            if isinstance(k, Expr):
+                coerced.append(k)
+            elif isinstance(k, str):
+                coerced.append(_col(k))
+            else:
+                raise TypeError(
+                    f"group_by() expects str or Expr arguments, got {type(k).__name__}"
+                )
+
+        return GroupedDataFrame(self, coerced)
+
     def limit(self, n: Optional[int], /, *, offset: int = 0) -> "DataFrame":
         """Limit result to n rows starting at offset
 
@@ -1224,6 +1268,57 @@ def _scan_default(ctx_impl, obj, schema, options):
 
 def _scan_collected_default(ctx_impl, obj, schema, options):
     return _scan_default(ctx_impl, obj, schema, options).to_memtable()
+
+
+class GroupedDataFrame:
+    """A `DataFrame` partitioned by one or more group keys.
+
+    Produced by `DataFrame.group_by(...)`. The class exists as a step
+    in the chain to simplify aggregation expressions.
+    """
+
+    __slots__ = ("_df", "_group_exprs")
+
+    def __init__(self, df: DataFrame, group_exprs: List[Expr]):
+        self._df = df
+        self._group_exprs = group_exprs
+
+    def agg(self, *exprs: Expr, **named_exprs: Expr) -> DataFrame:
+        """Aggregate within each group.
+
+        Same signature as `DataFrame.agg`: positional aggregate `Expr`s
+        and/or keyword aggregates where the keyword is the output
+        column name.
+
+        Args:
+            *exprs: Positional aggregate expressions.
+            **named_exprs: Keyword aggregate expressions; each keyword
+                becomes the output alias.
+        """
+        if not exprs and not named_exprs:
+            raise ValueError("agg() requires at least one aggregate expression")
+
+        for e in exprs:
+            if not isinstance(e, Expr):
+                raise TypeError(f"agg() expects Expr arguments, got {type(e).__name__}")
+
+        all_exprs: List[Expr] = list(exprs)
+        for name, e in named_exprs.items():
+            if not isinstance(e, Expr):
+                raise TypeError(
+                    f"agg() expects Expr keyword values, got {type(e).__name__} "
+                    f"for keyword {name!r}"
+                )
+            all_exprs.append(e.alias(name))
+
+        return DataFrame(
+            self._df._ctx,
+            self._df._impl.aggregate(
+                [g._impl for g in self._group_exprs],
+                [e._impl for e in all_exprs],
+            ),
+            self._df._options,
+        )
 
 
 def _scan_geopandas(ctx_impl, obj, schema, options):
