@@ -187,6 +187,15 @@ struct SedonaCScalarKernel {
   /// appropriate function when passing this kernel across a boundary.
   const char* (*function_name)(const struct SedonaCScalarKernel* self);
 
+  /// \brief Class-level UDF metadata
+  ///
+  /// Optional. Returns a JSON object string mapping string keys to string
+  /// values (e.g. "{\"needs_pixels\":\"true\"}"), describing the function
+  /// this kernel belongs to. The importer parses it and applies it to the
+  /// assembled user-defined function. Return NULL (or leave this callback
+  /// NULL) when the kernel carries no metadata.
+  const char* (*metadata)(const struct SedonaCScalarKernel* self);
+
   /// \brief Initialize a new implementation struct
   ///
   /// This callback is thread safe and may be called concurrently from any

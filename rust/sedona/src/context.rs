@@ -21,7 +21,6 @@ use std::{
 
 use crate::exec::create_plan_from_sql;
 use crate::object_storage::ensure_object_store_registered_with_options;
-use crate::rs_ensure_loaded::RsEnsureLoaded;
 use crate::{
     catalog::DynamicObjectStoreCatalog,
     random_geometry_provider::RandomGeometryFunction,
@@ -65,6 +64,7 @@ use sedona_pointcloud::las::{
     format::{Extension, LasFormatFactory},
     options::{GeometryEncoding, LasExtraBytes, LasOptions},
 };
+use sedona_raster_functions::rs_ensure_loaded::RsEnsureLoaded;
 #[cfg(feature = "gpu")]
 use sedona_spatial_join_gpu::options::GpuOptions;
 
@@ -779,7 +779,7 @@ mod tests {
             .ctx
             .state()
             .scalar_functions()
-            .get(crate::rs_ensure_loaded::RS_ENSURE_LOADED_NAME)
+            .get(sedona_raster_functions::rs_ensure_loaded::RS_ENSURE_LOADED_NAME)
             .cloned();
         assert!(
             udf.is_some(),

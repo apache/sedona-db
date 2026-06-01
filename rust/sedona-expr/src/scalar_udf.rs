@@ -14,7 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::{any::Any, fmt::Debug, sync::Arc};
+use std::{any::Any, collections::HashMap, fmt::Debug, sync::Arc};
 
 use arrow_schema::{DataType, FieldRef};
 use datafusion_common::config::ConfigOptions;
@@ -64,10 +64,19 @@ impl<T: SedonaScalarKernel + 'static> IntoScalarKernelRefs for Vec<Arc<T>> {
 ///
 /// Lives here (rather than next to the UDF impl) because two crates that
 /// can't depend on each other both need it: the UDF implementation in
-/// `sedona`, and the logical optimizer rule in `sedona-query-planner`
-/// that wraps `needs_bytes` raster args with it. Both depend on
+/// `sedona-raster-functions`, and the logical optimizer rule in
+/// `sedona-query-planner` that wraps raster args with it. Both depend on
 /// `sedona-expr`, so this is their common home.
 pub const RS_ENSURE_LOADED_NAME: &str = "rs_ensureloaded";
+
+/// Well-known [`SedonaScalarUDF`] metadata key marking a UDF whose
+/// kernels read raster pixel bytes from their inputs. Presence with
+/// value `"true"` is what the `RS_EnsureLoaded` optimizer rule keys off
+/// to decide whether to wrap raster arguments. A generic string-keyed
+/// metadata map (rather than a dedicated bool) keeps the UDF metadata
+/// surface — and the eventual cross-cdylib FFI for it — extensible
+/// without a schema change per flag.
+pub const NEEDS_PIXELS_METADATA_KEY: &str = "needs_pixels";
 
 /// Top-level scalar user-defined function
 ///
@@ -80,13 +89,13 @@ pub struct SedonaScalarUDF {
     signature: Signature,
     kernels: Vec<ScalarKernelRef>,
     aliases: Vec<String>,
-    /// Class-level metadata: does this UDF read raster pixel bytes from
-    /// any of its inputs? The optimiser/analyzer rule for `RS_EnsureLoaded`
-    /// uses this to decide whether to wrap raster arguments. Default
-    /// `false`; set via [`SedonaScalarUDF::with_needs_bytes`] at
-    /// construction time for UDFs whose kernels call
-    /// `BandRef::nd_buffer()` / `BandRef::contiguous_data()`.
-    needs_bytes: bool,
+    /// Class-level, string-keyed metadata describing this UDF to the
+    /// planner. Currently carries the [`NEEDS_PIXELS_METADATA_KEY`] flag
+    /// (set via [`SedonaScalarUDF::with_needs_bytes`]) that the
+    /// `RS_EnsureLoaded` optimizer rule reads; the map shape leaves room
+    /// for further planner-visible flags — and a future cross-cdylib FFI
+    /// carrying them — without a new field per flag.
+    metadata: HashMap<String, String>,
 }
 
 impl PartialEq for SedonaScalarUDF {
@@ -207,7 +216,7 @@ impl SedonaScalarUDF {
             signature,
             kernels,
             aliases: vec![],
-            needs_bytes: false,
+            metadata: HashMap::new(),
         }
     }
 
@@ -216,20 +225,41 @@ impl SedonaScalarUDF {
         Self { aliases, ..self }
     }
 
-    /// Mark this UDF as one whose kernels read raster pixel bytes from
-    /// their inputs. The optimiser/analyzer rule for `RS_EnsureLoaded`
-    /// reads this to decide whether to wrap raster arguments with the
-    /// async byte-materialisation UDF.
-    pub fn with_needs_bytes(self) -> SedonaScalarUDF {
-        Self {
-            needs_bytes: true,
-            ..self
-        }
+    /// Set a class-level metadata entry on this UDF, returning the
+    /// modified UDF. Metadata is planner-visible (e.g. the
+    /// `RS_EnsureLoaded` optimizer rule reads [`NEEDS_PIXELS_METADATA_KEY`])
+    /// and crosses the `sedona-extension` FFI boundary so plugin-defined
+    /// UDFs can declare it too.
+    pub fn with_metadata(
+        mut self,
+        key: impl Into<String>,
+        value: impl Into<String>,
+    ) -> SedonaScalarUDF {
+        self.metadata.insert(key.into(), value.into());
+        self
     }
 
-    /// Returns whether this UDF reads raster pixel bytes from its inputs.
+    /// Class-level metadata map describing this UDF to the planner.
+    pub fn metadata(&self) -> &HashMap<String, String> {
+        &self.metadata
+    }
+
+    /// Mark this UDF as one whose kernels read raster pixel bytes from
+    /// their inputs — convenience for setting [`NEEDS_PIXELS_METADATA_KEY`]
+    /// to `"true"`. The `RS_EnsureLoaded` optimizer rule reads this to
+    /// decide whether to wrap raster arguments with the async
+    /// byte-materialisation UDF.
+    pub fn with_needs_bytes(self) -> SedonaScalarUDF {
+        self.with_metadata(NEEDS_PIXELS_METADATA_KEY, "true")
+    }
+
+    /// Returns whether this UDF reads raster pixel bytes from its inputs
+    /// (i.e. carries [`NEEDS_PIXELS_METADATA_KEY`] = `"true"`).
     pub fn needs_bytes(&self) -> bool {
-        self.needs_bytes
+        self.metadata
+            .get(NEEDS_PIXELS_METADATA_KEY)
+            .map(String::as_str)
+            == Some("true")
     }
 
     /// Create a SedonaScalarUDF from a single kernel

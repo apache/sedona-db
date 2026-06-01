@@ -32,6 +32,14 @@ use arrow_array::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 pub struct SedonaCScalarKernel {
     pub function_name:
         Option<unsafe extern "C" fn(self_: *const SedonaCScalarKernel) -> *const c_char>,
+
+    /// Optional class-level UDF metadata, serialised as a JSON object of
+    /// string keys to string values (e.g. `{"needs_pixels":"true"}`).
+    /// Mirrors how `function_name` carries a UDF-level fact per kernel;
+    /// the importer parses it and applies it to the assembled
+    /// `SedonaScalarUDF`. Null or absent means "no metadata".
+    pub metadata: Option<unsafe extern "C" fn(self_: *const SedonaCScalarKernel) -> *const c_char>,
+
     pub new_impl: Option<
         unsafe extern "C" fn(self_: *const SedonaCScalarKernel, out: *mut SedonaCScalarKernelImpl),
     >,
