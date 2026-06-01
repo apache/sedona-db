@@ -107,7 +107,7 @@ For geography, the distance is specified in meters:
 
 ```sql
 SELECT ST_Buffer(
-  ST_GeomFromText('POINT (-64 45)'),
+  ST_GeogFromText('POLYGON ((10 10, 11 10, 10 11, 10 10))'),
   1000
-) AS geom;
+);
 ```

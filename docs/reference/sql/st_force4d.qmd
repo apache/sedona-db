@@ -70,3 +70,7 @@ SELECT ST_Force4D(ST_GeomFromWKT('POINT (1 2)'));
 ```sql
 SELECT ST_Force4D(ST_GeomFromWKT('POINT ZM (1 2 3 4)'), 10.0, 20.0);
 ```
+
+```sql
+SELECT ST_Force4D(ST_GeogFromWKT('POINT ZM (1 2 3 4)'), 10.0, 20.0);
+```

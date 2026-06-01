@@ -35,24 +35,22 @@ kernels:
 
 ## Description
 
-For geography, the distance is specified in meters and represents the geodesic distance between the two geographies.
+For geography, the distance is specified in meters and represents the spherical approximation of the geodesic distance between the two geographies.
 
 ## Examples
 
 ```sql
 SELECT ST_DWithin(
-  ST_Point(0.25, 0.25),
-  ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))'),
-  0.5
+    ST_Point(0, 0),
+    ST_Point(1, 1),
+    2
 );
 ```
 
-
 ```sql
--- Check if two geographies are within 100km of each other
 SELECT ST_DWithin(
-  ST_GeogPoint(0, 0),
-  ST_GeogPoint(0, 1),
-  111195.1  -- approximately 1 degree in meters
+    ST_GeogPoint(0, 0),
+    ST_GeogPoint(1, 1),
+    200000
 );
 ```

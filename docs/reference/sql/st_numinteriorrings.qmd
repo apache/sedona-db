@@ -35,15 +35,9 @@ Returns NULL for non-polygon geometry types.
 
 ## Examples
 
-
-```sql
-SELECT ST_NumInteriorRings(ST_GeomFromText('POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))'));
-```
-
 ```sql
 SELECT ST_NumInteriorRings(ST_GeomFromText('POLYGON ((0 0, 0 10, 10 10, 10 0, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))'));
 ```
-
 
 ```sql
 SELECT ST_NumInteriorRings(ST_GeogFromWKT('POLYGON ((0 0, 0 10, 10 10, 10 0, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))'));

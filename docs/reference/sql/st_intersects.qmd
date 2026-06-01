@@ -29,17 +29,14 @@ kernels:
 
 ```sql
 SELECT ST_Intersects(
-    ST_Point(0.25, 0.25),
-    ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')
-) AS val;
+    ST_Point(0.5, 0.5),
+    ST_GeomFromText('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))')
+);
 ```
-
-
-For geography, ST_Intersects uses spherical geometry calculations. Edges between vertices are interpreted as geodesics (great circle arcs), which means polygons that span the antimeridian are handled correctly.
 
 ```sql
 SELECT ST_Intersects(
-    ST_GeogFromWKT('POLYGON ((179 0, -179 0, 179 2, 179 0))'),
-    ST_GeogPoint(-180, 0.25)
-) AS val;
+    ST_GeogPoint(0.5, 0.5),
+    ST_GeogFromText('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))')
+);
 ```

@@ -27,22 +27,14 @@ kernels:
 
 ## Description
 
-For geometry, returns the 2D Cartesian (planar) distance between two geometries, in the units of the coordinate reference system.
-
-For geography, returns the geodesic distance between two geographies in **meters**, calculated on a spherical Earth model.
+For geometry, returns the 2D Cartesian (planar) distance between two geometries, in the units of the coordinate reference system. For geography, returns the spherical approximation of the geodesic distance between two geographies in meters.
 
 ## Examples
-
 
 ```sql
 SELECT ST_Distance(ST_Point(0, 0), ST_Point(1, 1));
 ```
 
-
 ```sql
--- Distance between two points in meters
-SELECT ST_Distance(
-    ST_GeogPoint(0, 0),
-    ST_GeogPoint(0, 1)
-);
+SELECT ST_Distance(ST_GeogPoint(0, 0), ST_GeogPoint(1, 1));
 ```

@@ -27,23 +27,20 @@ kernels:
 
 ## Description
 
-For geography, returns the maximum geodesic distance in **meters** between any pair of points in the two geographies.
+For geography, returns the maximum distance in meters calculated using a spherical approximation.
 
 ## Examples
 
-
 ```sql
 SELECT ST_MaxDistance(
-    ST_GeomFromText('POLYGON ((10 10, 11 10, 10 11, 10 10))'),
-    ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')
-) AS val;
+    ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))'),
+    ST_GeomFromText('POLYGON ((10 10, 11 10, 10 11, 10 10))')
+);
 ```
 
-
 ```sql
 SELECT ST_MaxDistance(
-    ST_GeogFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'),
-    ST_GeogFromWKT('POLYGON ((30 30, 31 30, 30 31, 30 30))')
-) AS val;
--- Returns maximum distance in meters
+    ST_GeogFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))'),
+    ST_GeogFromText('POLYGON ((10 10, 11 10, 10 11, 10 10))')
+);
 ```

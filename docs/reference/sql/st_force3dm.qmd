@@ -50,10 +50,5 @@ SELECT ST_Force3DM(ST_GeomFromWKT('POINT (1 2)'));
 ```
 
 ```sql
-SELECT ST_Force3DM(ST_GeomFromWKT('POINT M (1 2 3)'), 10.0);
-```
-
-
-```sql
-SELECT ST_Force3DM(ST_GeogFromWKT('POINT (0 1)'), 5);
+SELECT ST_Force3DM(ST_GeogFromWKT('POINT (1 2)'), 10.0);
 ```

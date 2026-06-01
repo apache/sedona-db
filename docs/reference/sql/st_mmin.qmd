@@ -27,12 +27,10 @@ kernels:
 
 ## Examples
 
-
 ```sql
-SELECT ST_MMin(ST_GeomFromWKT('LINESTRING ZM (1 2 3 4, 5 6 7 8)'));
+SELECT ST_MMin(ST_GeomFromWKT('LINESTRING M (1 2 3, 5 6 7)'));
 ```
 
-
 ```sql
-SELECT ST_MMin(ST_GeogFromWKT('POINT M (10 20 30)'));
+SELECT ST_MMin(ST_GeogFromWKT('LINESTRING M (1 2 3, 5 6 7)'));
 ```

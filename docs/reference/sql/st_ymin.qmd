@@ -27,10 +27,9 @@ kernels:
 
 ## Description
 
-For geography, the minimum latitude is computed considering spherical geometry. Linestrings that cross the poles may have a minimum latitude that is not a vertex.
+For geography, the minimum latitude is computed considering spherical geometry (e.g., the minimum latitude of a linestring that crosses the South Pole is -90).
 
 ## Examples
-
 
 ```sql
 SELECT ST_YMin(ST_GeomFromText('LINESTRING(0 0, 5 4)'));
@@ -38,5 +37,5 @@ SELECT ST_YMin(ST_GeomFromText('LINESTRING(0 0, 5 4)'));
 
 
 ```sql
-SELECT ST_YMin(ST_GeogFromWKT('LINESTRING (-90 80, 90 80)'));
+SELECT ST_YMin(ST_GeogFromText('LINESTRING(0 0, 5 4)'));
 ```

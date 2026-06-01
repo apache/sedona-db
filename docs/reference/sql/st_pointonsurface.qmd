@@ -19,38 +19,19 @@
 title: ST_PointOnSurface
 description: Returns a point guaranteed to lie on the surface of a geometry or geography.
 kernels:
-  - returns: geometry
-    args: [geometry]
   - returns: geography
     args: [geography]
 ---
 
 ## Description
 
-Returns a point that is guaranteed to be inside the geometry or geography (or on its boundary for linear geometries). Unlike `ST_Centroid`, which may return a point outside of concave shapes, `ST_PointOnSurface` always returns a point that lies on or within the geometry.
-
-For geography types, the returned point is a geography.
+Unlike ST_Centroid which does not necessarily intersect a geometry or geography, ST_PointOnSurface
+makes an attempt to find an interior point close to the middle (using deterministic heuristics).
 
 ## Examples
 
-
 ```sql
-SELECT ST_AsText(ST_PointOnSurface(
-    ST_GeomFromText('POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 3, 3 3, 3 1, 1 1))')
-));
--- Returns a point on the polygon (outside the hole)
-```
-
-```sql
-SELECT ST_AsText(ST_PointOnSurface(
-    ST_GeomFromText('LINESTRING (0 0, 5 5, 10 0)')
-));
-```
-
-
-```sql
-SELECT ST_AsText(ST_PointOnSurface(
-    ST_GeogFromWKT('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))')
-));
--- Returns a point on the polygon surface
+SELECT ST_PointOnSurface(
+    ST_GeogFromWKT('POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 3, 3 3, 3 1, 1 1))')
+);
 ```

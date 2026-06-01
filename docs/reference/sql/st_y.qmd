@@ -35,7 +35,6 @@ Returns NULL for non-point geometries or NULL input.
 SELECT ST_Y(ST_Point(-74.0060, 40.7128));
 ```
 
-
 ```sql
-SELECT ST_Y(ST_GeogPoint(-122.5, 47.3));
+SELECT ST_Y(ST_GeogPoint(-74.0060, 40.7128));
 ```

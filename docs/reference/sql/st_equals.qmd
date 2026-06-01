@@ -38,10 +38,9 @@ SELECT ST_Equals(
 );
 ```
 
-
 ```sql
 SELECT ST_Equals(
-    ST_GeogFromWKT('POINT (0 0)'),
-    ST_GeogFromWKT('POINT (0 0)')
+    ST_GeogFromText('LINESTRING(0 0, 1 1)'),
+    ST_GeogFromText('LINESTRING(1 1, 0 0)')
 );
 ```
