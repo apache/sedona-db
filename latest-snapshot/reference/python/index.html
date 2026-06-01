@@ -3945,6 +3945,77 @@ Expr(t.y)
 <div class="doc doc-object doc-function">
 
 
+<h4 id="sedonadb.dataframe.DataFrame.agg" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">agg</span>
+
+
+<a href="#sedonadb.dataframe.DataFrame.agg" class="headerlink" title="Permanent link">¶</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">agg</span><span class="p">(</span><span class="o">*</span><span class="n">exprs</span><span class="p">:</span> <span class="n"><span title="sedonadb.expr.Expr">Expr</span></span><span class="p">,</span> <span class="o">**</span><span class="n">named_exprs</span><span class="p">:</span> <span class="n"><span title="sedonadb.expr.Expr">Expr</span></span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Aggregate the entire DataFrame to a single row.</p>
+<p>Aggregate expressions can be passed positionally or as keyword
+arguments. With keyword arguments the keyword becomes the
+output column name — <code>df.agg(total=sd.funcs.sum(sd.col("x")))</code>
+is shorthand for
+<code>df.agg(sd.funcs.sum(sd.col("x")).alias("total"))</code>. The two
+forms can be mixed in a single call.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+            <b><code>*exprs</code></b>
+              (<code><span title="sedonadb.expr.Expr">Expr</span></code>, default:
+                  <code>()</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>Positional aggregate expressions.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>**named_exprs</code></b>
+              (<code><span title="sedonadb.expr.Expr">Expr</span></code>, default:
+                  <code>{}</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>Keyword aggregate expressions; each keyword
+is applied as the output alias of the corresponding
+expression.</p>
+          </div>
+        </li>
+    </ul>
+        <p>Examples:</p>
+<div class="codehilite"><pre><span></span><code>&gt;&gt;&gt; sd = sedona.db.connect()
+&gt;&gt;&gt; df = sd.sql("SELECT * FROM (VALUES (1), (2), (3), (4)) AS t(x)")
+&gt;&gt;&gt; df.agg(sd.funcs.sum(sd.col("x")).alias("total")).show()
+┌───────┐
+│ total │
+│ int64 │
+╞═══════╡
+│    10 │
+└───────┘
+&gt;&gt;&gt; df.agg(total=sd.funcs.sum(sd.col("x"))).show()
+┌───────┐
+│ total │
+│ int64 │
+╞═══════╡
+│    10 │
+└───────┘
+</code></pre></div>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
 <h4 id="sedonadb.dataframe.DataFrame.alias" class="doc doc-heading">
             <span class="doc doc-object-name doc-function-name">alias</span>
 
