@@ -31,12 +31,14 @@ use std::sync::{Arc, RwLock};
 
 use arrow_array::{Array, ArrayRef, StructArray};
 use arrow_buffer::Buffer;
-use arrow_schema::DataType;
+use arrow_schema::{DataType, FieldRef};
 use async_trait::async_trait;
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::{plan_err, DataFusionError, Result};
 use datafusion_expr::async_udf::AsyncScalarUDFImpl;
-use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
+use datafusion_expr::{
+    ColumnarValue, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility,
+};
 use sedona_common::sedona_internal_datafusion_err;
 use sedona_raster::array::RasterStructArray;
 use sedona_raster::builder::RasterBuilder;
@@ -161,20 +163,38 @@ impl ScalarUDFImpl for RsEnsureLoaded {
         &self.signature
     }
 
-    fn return_type(&self, arg_types: &[DataType]) -> Result<DataType> {
-        // Output shape mirrors input — the schema is preserved; only the
-        // `data` column's contents change. We require exactly one Struct
-        // argument shaped like a raster.
-        if arg_types.len() != 1 {
+    fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
+        // Never called in practice — `return_field_from_args` below is the
+        // authoritative output-type source and carries the raster
+        // extension metadata that a bare `DataType` would drop. Provided
+        // only to satisfy the trait.
+        Err(sedona_internal_datafusion_err!(
+            "RS_EnsureLoaded::return_type should not be called; return_field_from_args is authoritative"
+        ))
+    }
+
+    fn return_field_from_args(&self, args: ReturnFieldArgs) -> Result<FieldRef> {
+        // Identity on schema: the output raster has the same fields as the
+        // input — only the `data` column's bytes change. Return the input
+        // field verbatim so its `"sedona.raster"` extension metadata
+        // survives; building a fresh `Field` from the bare `DataType`
+        // (as the default `return_type`-based path does) would strip the
+        // extension and downstream code would stop recognising the column
+        // as a Raster.
+        if args.arg_fields.len() != 1 {
             return plan_err!(
                 "RS_EnsureLoaded expects exactly one argument, got {}",
-                arg_types.len()
+                args.arg_fields.len()
             );
         }
-        match &arg_types[0] {
-            dt @ DataType::Struct(_) => Ok(dt.clone()),
-            other => plan_err!("RS_EnsureLoaded expects a Raster (Struct) argument, got {other}"),
+        let field = &args.arg_fields[0];
+        if !matches!(field.data_type(), DataType::Struct(_)) {
+            return plan_err!(
+                "RS_EnsureLoaded expects a Raster (Struct) argument, got {}",
+                field.data_type()
+            );
         }
+        Ok(Arc::clone(field))
     }
 
     fn invoke_with_args(&self, _args: ScalarFunctionArgs) -> Result<ColumnarValue> {
@@ -305,8 +325,13 @@ where
                 // `Buffer::from_vec` is zero-copy ownership transfer of
                 // the Vec; the per-row clone of `band.data()` itself is
                 // the one InDb copy we accept for sequential simplicity.
-                // Parallel fan-out + zero-copy borrowing of the input
-                // column is a follow-up optimisation.
+                //
+                // This passthrough copy (and the equivalent re-copy of
+                // freshly-loaded OutDb bytes through the builder) goes
+                // away once `RasterBuilder` gains a zero-copy band-data
+                // path that references an existing `arrow_buffer::Buffer`
+                // as a `BinaryViewArray` row. Tracked in
+                // https://github.com/apache/sedona-db/issues/894.
                 let indb_bytes: Option<Buffer> = if band.is_indb() {
                     Some(Buffer::from_vec(band.data().to_vec()))
                 } else {
@@ -424,7 +449,7 @@ mod tests {
     use sedona_schema::raster::BandDataType;
 
     /// Records load requests and returns a deterministic byte pattern.
-    #[derive(Default)]
+    #[derive(Debug, Default)]
     struct RecordingLoader {
         seen: Mutex<Vec<(String, Vec<u64>, BandDataType)>>,
     }
@@ -510,6 +535,51 @@ mod tests {
         let mut reg = OutDbLoaderRegistry::new();
         reg.register(format, loader);
         Arc::new(RwLock::new(reg))
+    }
+
+    /// Regression guard: `RS_EnsureLoaded`'s declared output field must
+    /// keep the `"sedona.raster"` extension metadata. If it ever reverts
+    /// to a bare-`DataType` return path the output column stops being
+    /// recognised as a Raster, and the analyzer rule (which wraps raster
+    /// args of needs_bytes UDFs) would both fail to detect already-wrapped
+    /// args and break downstream raster kernels reading the result.
+    #[test]
+    fn return_field_preserves_raster_extension() {
+        use datafusion_expr::ReturnFieldArgs;
+        use sedona_schema::datatypes::SedonaType;
+
+        let raster_field = SedonaType::Raster.to_storage_field("rast", true).unwrap();
+        let arg_fields = [Arc::new(raster_field)];
+        let args = ReturnFieldArgs {
+            arg_fields: &arg_fields,
+            scalar_arguments: &[None],
+        };
+
+        let out = RsEnsureLoaded::new().return_field_from_args(args).unwrap();
+
+        // The output must round-trip back to SedonaType::Raster — proving
+        // the extension type survived, not just the raw Struct DataType.
+        assert!(
+            matches!(SedonaType::from_storage_field(&out), Ok(SedonaType::Raster)),
+            "output field lost its raster extension: {out:?}"
+        );
+    }
+
+    #[test]
+    fn return_field_rejects_non_raster_arg() {
+        use arrow_schema::{DataType, Field};
+        use datafusion_expr::ReturnFieldArgs;
+
+        let arg_fields = [Arc::new(Field::new("n", DataType::Int32, true))];
+        let args = ReturnFieldArgs {
+            arg_fields: &arg_fields,
+            scalar_arguments: &[None],
+        };
+        let err = RsEnsureLoaded::new()
+            .return_field_from_args(args)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Raster"), "{err}");
     }
 
     #[tokio::test]
@@ -607,7 +677,7 @@ mod tests {
         let input_struct = build_outdb_input("file:///tmp/foo.tif", "mock", &[2, 3]);
         let input: ArrayRef = Arc::new(input_struct);
 
-        #[derive(Default)]
+        #[derive(Debug, Default)]
         struct ShortLoader;
 
         #[async_trait]

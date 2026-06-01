@@ -75,7 +75,7 @@ pub struct OutDbLoadRequest<'a> {
 /// build the output `BinaryViewArray` directly from collected Buffers
 /// without an extra copy through a `BinaryViewBuilder` block buffer.
 #[async_trait::async_trait]
-pub trait AsyncByteLoader: Send + Sync {
+pub trait AsyncByteLoader: Send + Sync + std::fmt::Debug {
     /// Fetch the band's bytes. The returned `Buffer` must contain exactly
     /// `Π source_shape × data_type.byte_size()` bytes in C-order over
     /// `dim_names`. Errors propagate to the caller of `RS_EnsureLoaded`.
@@ -305,7 +305,7 @@ mod tests {
 
     /// Minimal in-test loader: records the request and returns a buffer
     /// of `Π source_shape × byte_size` zeros.
-    #[derive(Default)]
+    #[derive(Debug, Default)]
     struct MockLoader {
         seen: Mutex<Vec<(String, Vec<u64>)>>,
     }
