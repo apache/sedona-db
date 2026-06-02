@@ -539,14 +539,14 @@ def generate_geo_methods_py(functions: list[FunctionInfo]) -> str:
         if call_args:
             if use_filter:
                 lines.append(
-                    f'        return self._expr._call("{method_name}", *filter_missing_args({call_args}))'
+                    f'        return self._expr._call("{func.name}", *filter_missing_args({call_args}))'
                 )
             else:
                 lines.append(
-                    f'        return self._expr._call("{method_name}", {call_args})'
+                    f'        return self._expr._call("{func.name}", {call_args})'
                 )
         else:
-            lines.append(f'        return self._expr._call("{method_name}")')
+            lines.append(f'        return self._expr._call("{func.name}")')
 
     lines.append("")
     return "\n".join(lines)
@@ -588,7 +588,7 @@ def generate_geo_functions_py(functions: list[FunctionInfo]) -> str:
                 "    @property",
                 f"    def {prop_name}(self) -> Callable[..., ExprT]:",
                 f"        {docstring}",
-                f'        return self._factory["{prop_name}"]',
+                f'        return self._factory["{func.name}"]',
             ]
         )
 

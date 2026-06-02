@@ -225,7 +225,7 @@ class Expr:
     def _call(self, name, *args) -> "Expr":
         if self._ctx is None:
             raise ValueError("Can't _call() Expr constructed without a SedonaContext")
-        return self._ctx.funcs[name](*args)
+        return self._ctx.funcs[name](self, *args)
 
     # Arithmetic operators -------------------------------------------------
     #
