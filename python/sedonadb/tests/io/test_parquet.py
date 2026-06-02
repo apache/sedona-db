@@ -760,9 +760,9 @@ def test_prune_geography_parquet():
 def test_write_partitioned_parquet(con):
     t = con.funcs.table.sd_random_geometry(seed=3847)
     t = t.select(
-        grp=con.funcs.floor(t.id / 100),
         id=t.id,
         geom=con.funcs.st_setsrid(t.geometry, 3857),
+        grp=con.funcs.floor(t.id / 100).cast(pa.string()),
     )
 
     with tempfile.TemporaryDirectory() as td:
@@ -770,8 +770,26 @@ def test_write_partitioned_parquet(con):
 
         t.to_parquet(out_dir, partition_by="grp")
 
-        assert con.read_parquet(out_dir).columns == t.columns
-
+        # Test auto-discovery of partition columns (partitioning=None)
+        result = con.read_parquet(out_dir)
+        assert result.columns == t.columns
         geopandas.testing.assert_geodataframe_equal(
-            con.read_parquet(out_dir).sort("id").to_pandas(), t.sort("id").to_pandas()
+            result.sort("id").to_pandas(),
+            t.sort("id").to_pandas(),
+        )
+
+        # The default is to discover the partitioning
+        result_explicit = con.read_parquet(out_dir, partitioning=["grp"])
+        assert result_explicit.columns == t.columns
+        geopandas.testing.assert_geodataframe_equal(
+            result_explicit.sort("id").to_pandas(),
+            t.sort("id").to_pandas(),
+        )
+
+        # partitioning=[] disables auto-discovery
+        result_disabled = con.read_parquet(out_dir, partitioning=[])
+        assert result_disabled.columns == ["id", "geom"]
+        geopandas.testing.assert_geodataframe_equal(
+            result_disabled.sort("id").to_pandas(),
+            t.sort("id").to_pandas()[["id", "geom"]],
         )

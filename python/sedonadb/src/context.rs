@@ -87,6 +87,7 @@ impl InternalContext {
         options: HashMap<String, PyObject>,
         geometry_columns: Option<String>,
         validate: bool,
+        partitioning: Option<Vec<String>>,
     ) -> Result<InternalDataFrame, PySedonaError> {
         // Convert Python options to strings, filtering out None values
         let rust_options: HashMap<String, String> = options
@@ -115,6 +116,9 @@ impl InternalContext {
                 })?;
         }
         geo_options = geo_options.with_validate(validate);
+        if let Some(partitioning) = partitioning {
+            geo_options = geo_options.with_table_partition_cols(partitioning);
+        }
 
         let df = wait_for_future(
             py,

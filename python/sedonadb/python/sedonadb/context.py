@@ -192,6 +192,7 @@ class SedonaContext:
         options: Optional[Dict[str, Any]] = None,
         geometry_columns: Optional[Union[str, Dict[str, Any]]] = None,
         validate: bool = False,
+        partitioning: Optional[List[str]] = None,
     ) -> DataFrame:
         """Create a [DataFrame][sedonadb.dataframe.DataFrame] from one or more Parquet files
 
@@ -252,6 +253,12 @@ class SedonaContext:
 
                 Currently the only property that is validated is the WKB of input geometry
                 columns.
+            partitioning:
+                Optional list of column names for hive-style partitioning. When reading
+                from a directory with paths like `/col=value/file.parquet`, partition
+                column names are auto-discovered by default (`None`). Explicitly specify
+                column names (e.g., `["col"]`) to override auto-discovery, or pass an
+                empty list `[]` to disable partitioning entirely.
 
 
         Examples:
@@ -273,7 +280,11 @@ class SedonaContext:
         return DataFrame(
             self._impl,
             self._impl.read_parquet(
-                [str(path) for path in table_paths], options, geometry_columns, validate
+                [str(path) for path in table_paths],
+                options,
+                geometry_columns,
+                validate,
+                partitioning,
             ),
             self.options,
         )
