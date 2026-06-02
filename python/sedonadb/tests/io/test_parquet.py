@@ -755,3 +755,23 @@ def test_prune_geography_parquet():
         assert matched < total, (
             f"Expected pruning to reduce row groups: {matched} matched out of {total}"
         )
+
+
+def test_write_partitioned_parquet(con):
+    t = con.funcs.table.sd_random_geometry(seed=3847)
+    t = t.select(
+        grp=con.funcs.floor(t.id / 100),
+        id=t.id,
+        geom=con.funcs.st_setsrid(t.geometry, 3857),
+    )
+
+    with tempfile.TemporaryDirectory() as td:
+        out_dir = Path(td) / "out_dir"
+
+        t.to_parquet(out_dir, partition_by="grp")
+
+        assert con.read_parquet(out_dir).columns == t.columns
+
+        geopandas.testing.assert_geodataframe_equal(
+            con.read_parquet(out_dir).sort("id").to_pandas(), t.sort("id").to_pandas()
+        )
