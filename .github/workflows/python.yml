@@ -136,18 +136,28 @@ jobs:
         run: |
           docker compose up --wait --detach postgis
 
-      - name: Run tests
+      - name: Run tests (sedonadb)
         env:
           # Ensure that we don't skip tests that we didn't intend to
           SEDONADB_PYTHON_NO_SKIP_TESTS: "true"
         run: |
-          cd python
+          cd python/sedonadb
           python -m pytest -vv
 
-      - name: Run doctests
+      - name: Run doctests (sedonadb)
         run: |
-          cd python
-          python -m pytest --doctest-modules
+          cd python/sedonadb
+          python -m pytest --doctest-modules src
+
+      - name: Run tests (sedonadb-expr)
+        run: |
+          cd python/sedonadb-expr
+          python -m pytest -vv
+
+      - name: Run doctests (sedonadb-expr)
+        run: |
+          cd python/sedonadb-expr
+          python -m pytest --doctest-modules src
 
       - name: Shutdown docker compose services
         if: always()
