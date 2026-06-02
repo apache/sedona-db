@@ -31,7 +31,7 @@ kernels:
 its struct return type are:
 
 - `count`: Number of input geometries
-- `minx`, `miny`, `maxx`, `maxy`: Minimum bounding rectangle (envelope). For geography, this represents geographical bounds such that minx may be greater than miny where this represents more compact bounds (e.g., a small feature crossing the antimeridian).
+- `minx`, `miny`, `maxx`, `maxy`: Minimum bounding rectangle (envelope). For geography, this represents geographical bounds such that minx may be greater than maxx where this represents more compact bounds (e.g., a small feature crossing the antimeridian).
 - `mean_size_in_bytes`
 - `mean_points_per_geometry`
 - `puntal_count`: Number of point or multipoint geometries

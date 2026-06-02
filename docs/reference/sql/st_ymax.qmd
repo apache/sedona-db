@@ -27,7 +27,7 @@ kernels:
 
 ## Description
 
-For geography, the maximum latitude is computed considering spherical geometry (e.g., the maximum latitude of a linestring that crosses the North Pole is -90).
+For geography, the maximum latitude is computed considering spherical geometry (e.g., the maximum latitude of a linestring that crosses the North Pole is 90).
 
 ## Examples
 

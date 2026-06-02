@@ -61,7 +61,7 @@ kernels:
 
 ## Description
 
-For geography, the distance is specified in meters. The buffer is computed on the sphere, producing a geodetically accurate result. Negative distances are supported for polygon inputs to shrink the polygon.
+For geography, the distance is specified in meters. The buffer is computed on the sphere, producing a result that considers polar regions and the antimeridian. Negative distances are supported for polygon inputs to shrink the polygon.
 
 ## Examples
 
