@@ -28,8 +28,9 @@ kernels:
 
 ## Description
 
-Build a new geometry after specifying all vertices to the specified size. Z and M values are preserved
-but not affected by the grid snapping.
+Rebuilds a new geometry after specifying all vertices to the specified size. Z and M values are preserved
+but not affected by the grid snapping. The implementation is similar to a unary union and is designed to
+output valid geometry (e.g., by avoiding creating new crossing edges when snapping vertices).
 
 ## Examples
 

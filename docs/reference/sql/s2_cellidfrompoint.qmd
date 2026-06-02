@@ -25,11 +25,7 @@ kernels:
 
 ## Description
 
-Returns the 64-bit S2 cell ID at level 30 (the finest resolution) that contains the given point geography. This is useful for spatial indexing and cell-based operations.
-
-S2 cells are a hierarchical spatial indexing system that divides the sphere into cells at different levels. Level 0 has 6 face cells, and each subsequent level divides cells into 4 children, up to level 30.
-
-Returns NULL for empty point geometries.
+Returns the 64-bit S2 cell ID at level 30 (the finest resolution) that contains the given point geography. Returns NULL for empty point geometries. This is useful for spatial indexing and efficient spatial queries.
 
 ## Examples
 

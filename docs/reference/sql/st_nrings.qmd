@@ -27,9 +27,7 @@ kernels:
 
 ## Description
 
-Returns the total number of rings (exterior and interior) in a polygon or multipolygon. For a simple polygon, this is 1 plus the number of holes. For a multipolygon, it is the sum of all rings in all polygons.
-
-Returns 0 for non-polygon geometry types (points, lines).
+Returns the total number of rings (exterior and interior) in a polygon or multipolygon. For a simple polygon, this is 1 plus the number of holes. For a multipolygon, it is the sum of all rings in all polygons. Returns 0 for non-polygon geometry types.
 
 ## Examples
 
