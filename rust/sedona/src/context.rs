@@ -781,7 +781,7 @@ mod tests {
             .ctx
             .state()
             .scalar_functions()
-            .get(sedona_raster_functions::rs_ensure_loaded::RS_ENSURE_LOADED_NAME)
+            .get("rs_ensureloaded")
             .cloned();
         assert!(
             udf.is_some(),

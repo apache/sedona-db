@@ -21,7 +21,7 @@
 //! inside the kernel.
 //!
 //! After this rule, calls like `RS_Value(raster, x, y)` (where
-//! `RS_Value` is annotated `with_needs_bytes()`) become
+//! `RS_Value` is annotated with the `needs_pixels` metadata flag) become
 //! `RS_Value(RS_EnsureLoaded(raster), x, y)`. DataFusion's
 //! `CommonSubexprEliminate` pass deduplicates identical
 //! `RS_EnsureLoaded(col)` calls across multiple `needs_bytes` UDFs
@@ -43,7 +43,7 @@ use datafusion_expr::expr_schema::ExprSchemable;
 use datafusion_expr::{Expr, LogicalPlan, ScalarUDF};
 use datafusion_optimizer::{ApplyOrder, OptimizerConfig, OptimizerRule};
 use sedona_common::sedona_internal_err;
-use sedona_expr::scalar_udf::{SedonaScalarUDF, RS_ENSURE_LOADED_NAME};
+use sedona_expr::scalar_udf::SedonaScalarUDF;
 use sedona_schema::datatypes::SedonaType;
 
 /// Logical optimizer rule wrapping raster arguments of `needs_bytes`
@@ -79,7 +79,7 @@ impl OptimizerRule for EnsureLoadedOptimizerRule {
         let Some(registry) = config.function_registry() else {
             return Ok(Transformed::no(plan));
         };
-        let Ok(ensure_loaded_udf) = registry.udf(RS_ENSURE_LOADED_NAME) else {
+        let Ok(ensure_loaded_udf) = registry.udf("rs_ensureloaded") else {
             return Ok(Transformed::no(plan));
         };
 
@@ -134,7 +134,7 @@ fn rewrite_expr_node(
     };
 
     // Recursion guard.
-    if func_call.func.name() == RS_ENSURE_LOADED_NAME {
+    if func_call.func.name() == "rs_ensureloaded" {
         return Ok(Transformed::no(expr));
     }
 
@@ -195,7 +195,7 @@ fn rewrite_expr_node(
 
 /// True if `expr` is a call to `RS_EnsureLoaded`.
 fn is_ensure_loaded_call(expr: &Expr) -> bool {
-    matches!(expr, Expr::ScalarFunction(sf) if sf.func.name() == RS_ENSURE_LOADED_NAME)
+    matches!(expr, Expr::ScalarFunction(sf) if sf.func.name() == "rs_ensureloaded")
 }
 
 /// True if `expr` evaluates to a `SedonaType::Raster` under the given
@@ -219,7 +219,9 @@ mod tests {
     use arrow_schema::{DataType, Field, Schema};
     use datafusion_common::tree_node::TreeNodeRecursion;
     use datafusion_expr::{col, ScalarUDF, Volatility};
-    use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarUDF, SimpleSedonaScalarKernel};
+    use sedona_expr::scalar_udf::{
+        ScalarKernelRef, SedonaScalarUDF, SimpleSedonaScalarKernel, NEEDS_PIXELS_METADATA_KEY,
+    };
     use sedona_schema::matchers::ArgMatcher;
 
     /// A stand-in `rs_ensureloaded` UDF. The rule keys off the name and
@@ -231,7 +233,7 @@ mod tests {
             ArgMatcher::new(vec![ArgMatcher::is_raster()], SedonaType::Raster),
             Arc::new(|_, _| unreachable!("stub kernel; rewrite never invokes it")),
         );
-        let udf = SedonaScalarUDF::new(RS_ENSURE_LOADED_NAME, vec![kernel], Volatility::Immutable);
+        let udf = SedonaScalarUDF::new("rs_ensureloaded", vec![kernel], Volatility::Immutable);
         Arc::new(ScalarUDF::new_from_impl(udf))
     }
 
@@ -244,8 +246,8 @@ mod tests {
             ),
             Arc::new(|_, _| unreachable!("stub kernel; not invoked at plan time")),
         );
-        let udf =
-            SedonaScalarUDF::new(name, vec![kernel], Volatility::Immutable).with_needs_bytes();
+        let udf = SedonaScalarUDF::new(name, vec![kernel], Volatility::Immutable)
+            .with_metadata(NEEDS_PIXELS_METADATA_KEY, "true");
         Arc::new(ScalarUDF::new_from_impl(udf))
     }
 
@@ -278,7 +280,7 @@ mod tests {
         let mut n = 0;
         expr.apply(|e| {
             if let Expr::ScalarFunction(sf) = e {
-                if sf.func.name() == RS_ENSURE_LOADED_NAME {
+                if sf.func.name() == "rs_ensureloaded" {
                     n += 1;
                 }
             }

@@ -47,12 +47,6 @@ use sedona_raster::outdb_loader::{
 };
 use sedona_raster::traits::RasterRef;
 
-/// Re-exported from `sedona-expr` (its canonical home — see
-/// [`sedona_expr::scalar_udf::RS_ENSURE_LOADED_NAME`]) so existing
-/// `crate::rs_ensure_loaded::RS_ENSURE_LOADED_NAME` references keep
-/// resolving.
-pub use sedona_expr::scalar_udf::RS_ENSURE_LOADED_NAME;
-
 /// Async UDF that resolves OutDb bands by dispatching through the
 /// [`OutDbLoaderRegistry`] stashed in `ConfigOptions` as a
 /// [`OutDbLoaderConfig`] extension. The UDF instance itself is
@@ -146,7 +140,7 @@ impl PartialEq for RsEnsureLoaded {
 impl Eq for RsEnsureLoaded {}
 impl Hash for RsEnsureLoaded {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        RS_ENSURE_LOADED_NAME.hash(state);
+        "rs_ensureloaded".hash(state);
     }
 }
 
@@ -156,7 +150,7 @@ impl ScalarUDFImpl for RsEnsureLoaded {
     }
 
     fn name(&self) -> &str {
-        RS_ENSURE_LOADED_NAME
+        "rs_ensureloaded"
     }
 
     fn signature(&self) -> &Signature {
@@ -209,6 +203,13 @@ impl ScalarUDFImpl for RsEnsureLoaded {
 
 #[async_trait]
 impl AsyncScalarUDFImpl for RsEnsureLoaded {
+    /// Materialising OutDb bytes is per-row I/O, so favour larger input
+    /// batches over DataFusion's default to amortise loader dispatch and
+    /// keep the async pipeline fed.
+    fn ideal_batch_size(&self) -> Option<usize> {
+        Some(1024)
+    }
+
     async fn invoke_async_with_args(&self, args: ScalarFunctionArgs) -> Result<ColumnarValue> {
         let input_array = match args.args.into_iter().next() {
             Some(ColumnarValue::Array(arr)) => arr,
@@ -411,6 +412,8 @@ where
                 );
             }
 
+            // Follow up: ensure loaded bytes are not copied
+            // https://github.com/apache/sedona-db/issues/894.
             builder.band_data_writer().append_value(resolved.as_slice());
             builder.finish_band().map_err(|e| {
                 sedona_internal_datafusion_err!(

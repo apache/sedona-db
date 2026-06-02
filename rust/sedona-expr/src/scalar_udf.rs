@@ -60,15 +60,6 @@ impl<T: SedonaScalarKernel + 'static> IntoScalarKernelRefs for Vec<Arc<T>> {
     }
 }
 
-/// Canonical name of the `RS_EnsureLoaded` async UDF.
-///
-/// Lives here (rather than next to the UDF impl) because two crates that
-/// can't depend on each other both need it: the UDF implementation in
-/// `sedona-raster-functions`, and the logical optimizer rule in
-/// `sedona-query-planner` that wraps raster args with it. Both depend on
-/// `sedona-expr`, so this is their common home.
-pub const RS_ENSURE_LOADED_NAME: &str = "rs_ensureloaded";
-
 /// Well-known [`SedonaScalarUDF`] metadata key marking a UDF whose
 /// kernels read raster pixel bytes from their inputs. Presence with
 /// value `"true"` is what the `RS_EnsureLoaded` optimizer rule keys off
@@ -91,7 +82,7 @@ pub struct SedonaScalarUDF {
     aliases: Vec<String>,
     /// Class-level, string-keyed metadata describing this UDF to the
     /// planner. Currently carries the [`NEEDS_PIXELS_METADATA_KEY`] flag
-    /// (set via [`SedonaScalarUDF::with_needs_bytes`]) that the
+    /// (set via [`SedonaScalarUDF::with_metadata`]) that the
     /// `RS_EnsureLoaded` optimizer rule reads; the map shape leaves room
     /// for further planner-visible flags — and a future cross-cdylib FFI
     /// carrying them — without a new field per flag.
@@ -244,15 +235,6 @@ impl SedonaScalarUDF {
         &self.metadata
     }
 
-    /// Mark this UDF as one whose kernels read raster pixel bytes from
-    /// their inputs — convenience for setting [`NEEDS_PIXELS_METADATA_KEY`]
-    /// to `"true"`. The `RS_EnsureLoaded` optimizer rule reads this to
-    /// decide whether to wrap raster arguments with the async
-    /// byte-materialisation UDF.
-    pub fn with_needs_bytes(self) -> SedonaScalarUDF {
-        self.with_metadata(NEEDS_PIXELS_METADATA_KEY, "true")
-    }
-
     /// Returns whether this UDF reads raster pixel bytes from its inputs
     /// (i.e. carries [`NEEDS_PIXELS_METADATA_KEY`] = `"true"`).
     pub fn needs_bytes(&self) -> bool {
@@ -397,14 +379,14 @@ mod tests {
         let udf = SedonaScalarUDF::new("u", vec![], Volatility::Immutable);
         assert!(!udf.needs_bytes());
 
-        let annotated = udf.with_needs_bytes();
+        let annotated = udf.with_metadata(NEEDS_PIXELS_METADATA_KEY, "true");
         assert!(annotated.needs_bytes());
     }
 
     #[test]
     fn needs_bytes_survives_with_aliases() {
         let udf = SedonaScalarUDF::new("u", vec![], Volatility::Immutable)
-            .with_needs_bytes()
+            .with_metadata(NEEDS_PIXELS_METADATA_KEY, "true")
             .with_aliases(vec!["u_alias".to_string()]);
         assert!(udf.needs_bytes());
         assert_eq!(udf.aliases(), &["u_alias".to_string()]);
