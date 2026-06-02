@@ -36,7 +36,7 @@ from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 # Type to parameter name mapping (matches R version)
 TYPE_TO_PARAM: dict[str, str] = {
     "geometry": "geom",
-    "geography": "geog",
+    "geography": "geom",
     "raster": "rast",
     "float64": "x",
     "double": "x",
@@ -183,10 +183,11 @@ def extract_description_section(file_path: Path) -> str | None:
         is_list_item = bool(re.match(r"^[-*]|\d+\.", stripped))
 
         if not stripped:
-            # Empty line: flush current paragraph
+            # Empty line: flush current paragraph and add blank line for separation
             if current_paragraph:
                 result_lines.append(" ".join(current_paragraph))
                 current_paragraph = []
+                result_lines.append("")  # Preserve paragraph break
         elif is_list_item:
             # List item: flush paragraph first, then add list item
             if current_paragraph:
@@ -382,22 +383,37 @@ def wrap_docstring(text: str, width: int = 88, indent: str = "        ") -> str:
 
 def generate_method_docstring(func: FunctionInfo) -> str:
     """Generate docstring for a method."""
-    parts = [f'"""{func.title}']
+    title = func.title.strip()
+    parts = [f'"""{title}']
 
-    if func.description and func.description != func.title:
+    if func.description and func.description.strip() != title:
         parts.append("")
         parts.append(wrap_docstring(func.description, indent="        "))
 
     kernel_info = func.kernel_info
-    if kernel_info and kernel_info.args:
-        # Skip first arg (piped in via self._expr)
-        remaining_args = kernel_info.args[1:] if len(kernel_info.args) > 1 else []
-        if remaining_args:
+    if kernel_info:
+        if kernel_info.variadic and kernel_info.kernel_signatures:
+            # Variadic mode: document with bulleted list of supported combinations
+            # Skip the first arg (piped in via self._expr) from each signature
             parts.append("")
-            parts.append("Args:")
-            for arg in remaining_args:
-                desc = arg.description or f"Input {arg.type}"
-                parts.append(f"    {arg.name}: {desc}")
+            parts.append("Variants:")
+            for sig in kernel_info.kernel_signatures:
+                # Split signature, skip first arg, rejoin
+                arg_parts = [p.strip() for p in sig.split(",")]
+                remaining = ", ".join(arg_parts[1:]) if len(arg_parts) > 1 else ""
+                if remaining:
+                    parts.append(f"    - {remaining}")
+                else:
+                    parts.append("    - (no additional arguments)")
+        elif kernel_info.args:
+            # Skip first arg (piped in via self._expr)
+            remaining_args = kernel_info.args[1:] if len(kernel_info.args) > 1 else []
+            if remaining_args:
+                parts.append("")
+                parts.append("Args:")
+                for arg in remaining_args:
+                    desc = arg.description or f"Input {arg.type}"
+                    parts.append(f"    {arg.name}: {desc}")
 
     parts.append("")
     parts.append("See Also:")
@@ -409,19 +425,27 @@ def generate_method_docstring(func: FunctionInfo) -> str:
 
 def generate_function_docstring(func: FunctionInfo) -> str:
     """Generate docstring for a standalone function property."""
-    parts = [f'"""{func.title}']
+    title = func.title.strip()
+    parts = [f'"""{title}']
 
-    if func.description and func.description != func.title:
+    if func.description and func.description.strip() != title:
         parts.append("")
         parts.append(wrap_docstring(func.description, indent="        "))
 
     kernel_info = func.kernel_info
-    if kernel_info and kernel_info.args:
-        parts.append("")
-        parts.append("Args:")
-        for arg in kernel_info.args:
-            desc = arg.description or f"Input {arg.type}"
-            parts.append(f"    {arg.name}: {desc}")
+    if kernel_info:
+        if kernel_info.variadic and kernel_info.kernel_signatures:
+            # Variadic mode: document with bulleted list of supported combinations
+            parts.append("")
+            parts.append("Variants:")
+            for sig in kernel_info.kernel_signatures:
+                parts.append(f"    - {sig}")
+        elif kernel_info.args:
+            parts.append("")
+            parts.append("Args:")
+            for arg in kernel_info.args:
+                desc = arg.description or f"Input {arg.type}"
+                parts.append(f"    {arg.name}: {desc}")
 
     parts.append("")
     parts.append("See Also:")
