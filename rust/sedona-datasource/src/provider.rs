@@ -18,7 +18,7 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use arrow_schema::SchemaRef;
+use arrow_schema::{DataType, SchemaRef};
 use async_trait::async_trait;
 use datafusion::{
     catalog::TableProvider,
@@ -57,11 +57,17 @@ use crate::{
 /// - `true`: builds a [`SingleObjectExternalTable`] that treats each
 ///   URI as one opaque object, skipping listing entirely. Required
 ///   for directory-shaped formats like Zarr.
+///
+/// The `partitioning` parameter controls hive-style partition discovery:
+/// - `None`: auto-discover partition columns from directory structure
+/// - `Some([])`: disable partition discovery
+/// - `Some([cols])`: use explicit partition columns
 pub async fn external_table(
     spec: Arc<dyn ExternalFormatSpec>,
     context: &SessionContext,
     table_paths: Vec<ListingTableUrl>,
     check_extension: bool,
+    partitioning: Option<Vec<String>>,
 ) -> Result<Arc<dyn TableProvider>> {
     if table_paths.is_empty() {
         return exec_err!("No table paths were provided");
@@ -71,7 +77,9 @@ pub async fn external_table(
         let provider = SingleObjectExternalTable::try_new(spec, context, table_paths).await?;
         Ok(Arc::new(provider) as Arc<dyn TableProvider>)
     } else {
-        let provider = listing_table_provider(spec, context, table_paths, check_extension).await?;
+        let provider =
+            listing_table_provider(spec, context, table_paths, check_extension, partitioning)
+                .await?;
         Ok(Arc::new(provider) as Arc<dyn TableProvider>)
     }
 }
@@ -81,13 +89,15 @@ async fn listing_table_provider(
     context: &SessionContext,
     table_paths: Vec<ListingTableUrl>,
     check_extension: bool,
+    partitioning: Option<Vec<String>>,
 ) -> Result<ListingTable> {
     let session_config = context.copied_config();
     let options = RecordBatchReaderTableOptions {
         spec,
         check_extension,
+        table_partition_cols: partitioning,
     };
-    let listing_options =
+    let mut listing_options =
         options.to_listing_options(&session_config, context.copied_table_options());
 
     let option_extension = listing_options.file_extension.clone();
@@ -101,6 +111,22 @@ async fn listing_table_provider(
                         "File path '{file_path}' does not match the expected extension '{option_extension}'"
                     );
             }
+        }
+    }
+
+    // Auto-discover partition columns only if not explicitly provided (None)
+    // If explicitly set to empty (Some([])), skip auto-discovery
+    if options.table_partition_cols.is_none() {
+        let inferred_partitions = listing_options
+            .infer_partitions(&context.state(), &table_paths[0])
+            .await?;
+        if !inferred_partitions.is_empty() {
+            listing_options = listing_options.with_table_partition_cols(
+                inferred_partitions
+                    .into_iter()
+                    .map(|name| (name, DataType::Utf8))
+                    .collect(),
+            );
         }
     }
 
@@ -118,6 +144,8 @@ async fn listing_table_provider(
 struct RecordBatchReaderTableOptions {
     spec: Arc<dyn ExternalFormatSpec>,
     check_extension: bool,
+    /// None = auto-discover, Some([]) = disabled, Some([cols]) = explicit
+    table_partition_cols: Option<Vec<String>>,
 }
 
 #[async_trait]
@@ -133,9 +161,22 @@ impl ReadOptions<'_> for RecordBatchReaderTableOptions {
             ExternalFileFormat::new(self.spec.clone())
         };
 
-        ListingOptions::new(Arc::new(format))
+        let mut options = ListingOptions::new(Arc::new(format))
             .with_file_extension(self.spec.extension())
-            .with_session_config_options(config)
+            .with_session_config_options(config);
+
+        // Apply partition columns if explicitly specified (Some)
+        // None means auto-discover later, Some([]) means no partitioning
+        if let Some(ref partition_cols) = self.table_partition_cols {
+            options = options.with_table_partition_cols(
+                partition_cols
+                    .iter()
+                    .map(|name| (name.clone(), DataType::Utf8))
+                    .collect(),
+            );
+        }
+
+        options
     }
 
     async fn get_resolved_schema(

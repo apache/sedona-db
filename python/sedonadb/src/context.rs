@@ -134,6 +134,7 @@ impl InternalContext {
         format_spec: Bound<PyAny>,
         table_paths: Vec<String>,
         check_extension: bool,
+        partitioning: Option<Vec<String>>,
     ) -> Result<InternalDataFrame, PySedonaError> {
         let spec = format_spec
             .call_method0("__sedona_external_format__")?
@@ -141,8 +142,13 @@ impl InternalContext {
         let df = wait_for_future(
             py,
             &self.runtime,
-            self.inner
-                .read_external_format(Arc::new(spec), table_paths, None, check_extension),
+            self.inner.read_external_format(
+                Arc::new(spec),
+                table_paths,
+                None,
+                check_extension,
+                partitioning,
+            ),
         )??;
 
         Ok(InternalDataFrame::new(df, self.runtime.clone()))

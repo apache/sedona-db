@@ -390,12 +390,18 @@ impl SedonaContext {
     }
 
     /// Creates a [`DataFrame`] for reading a [ExternalFormatSpec]
+    ///
+    /// The `partitioning` parameter controls hive-style partition discovery:
+    /// - `None`: auto-discover partition columns from directory structure
+    /// - `Some([])`: disable partition discovery
+    /// - `Some([cols])`: use explicit partition columns
     pub async fn read_external_format<P: DataFilePaths>(
         &self,
         spec: Arc<dyn ExternalFormatSpec>,
         table_paths: P,
         options: Option<&HashMap<String, String>>,
         check_extension: bool,
+        partitioning: Option<Vec<String>>,
     ) -> Result<DataFrame> {
         let urls = table_paths.to_urls()?;
 
@@ -418,9 +424,9 @@ impl SedonaContext {
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect::<HashMap<String, String>>();
             let spec = spec.with_options(&options_without_filesystems)?;
-            external_table(spec, &self.ctx, urls, check_extension).await?
+            external_table(spec, &self.ctx, urls, check_extension, partitioning).await?
         } else {
-            external_table(spec, &self.ctx, urls, check_extension).await?
+            external_table(spec, &self.ctx, urls, check_extension, partitioning).await?
         };
 
         self.ctx.read_table(provider)
@@ -826,7 +832,7 @@ mod tests {
 
         // Ensure read_external_format() works
         let df = ctx
-            .read_external_format(spec.clone(), file_that_exists.clone(), None, false)
+            .read_external_format(spec.clone(), file_that_exists.clone(), None, false, None)
             .await
             .unwrap();
         let batches = df.collect().await.unwrap();
@@ -852,6 +858,7 @@ mod tests {
             file_that_exists.clone(),
             Some(&kv_options),
             false,
+            None,
         )
         .await
         .expect_err("should error for unsupported key/value options");
@@ -865,6 +872,7 @@ mod tests {
             file_that_exists.clone(),
             Some(&kv_options),
             false,
+            None,
         )
         .await
         .expect("should succeed because aws and gcs options were stripped");

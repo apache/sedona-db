@@ -294,6 +294,7 @@ class SedonaContext:
         table_paths: Union[str, Path, Iterable[str]],
         options: Optional[Dict[str, Any]] = None,
         extension: str = "",
+        partitioning: Optional[List[str]] = None,
     ) -> DataFrame:
         """Read spatial file formats using GDAL/OGR via pyogrio
 
@@ -323,6 +324,12 @@ class SedonaContext:
             extension: An optional file extension (e.g., `"fgb"`) used when
                 `table_paths` specifies one or more directories or a glob
                 that does not enforce a file extension.
+            partitioning:
+                Optional list of column names for hive-style partitioning. When reading
+                from a directory with paths like `/col=value/file.fgb`, partition
+                column names are auto-discovered by default (`None`). Explicitly specify
+                column names (e.g., `["col"]`) to override auto-discovery, or pass an
+                empty list `[]` to disable partitioning entirely.
 
         Examples:
 
@@ -357,7 +364,7 @@ class SedonaContext:
         return DataFrame(
             self._impl,
             self._impl.read_external_format(
-                spec, [str(path) for path in table_paths], False
+                spec, [str(path) for path in table_paths], False, partitioning
             ),
             self.options,
         )
@@ -367,6 +374,7 @@ class SedonaContext:
         spec: "ExternalFormatSpec",
         table_paths: Union[str, Path, Iterable[str]],
         check_extension: bool = False,
+        partitioning: Optional[List[str]] = None,
     ) -> DataFrame:
         """Read one or more paths using a Python-defined `ExternalFormatSpec`.
 
@@ -386,6 +394,12 @@ class SedonaContext:
             table_paths: A str, Path, or iterable of paths/URLs.
             check_extension: When `True`, error if a non-collection path
                 doesn't end in the spec's `extension`. Defaults to `False`.
+            partitioning:
+                Optional list of column names for hive-style partitioning. When reading
+                from a directory with paths like `/col=value/file.ext`, partition
+                column names are auto-discovered by default (`None`). Explicitly specify
+                column names (e.g., `["col"]`) to override auto-discovery, or pass an
+                empty list `[]` to disable partitioning entirely.
 
         Examples:
             >>> import sedonadb_zarr  # doctest: +SKIP
@@ -401,7 +415,7 @@ class SedonaContext:
         return DataFrame(
             self._impl,
             self._impl.read_external_format(
-                spec, [str(path) for path in table_paths], check_extension
+                spec, [str(path) for path in table_paths], check_extension, partitioning
             ),
             self.options,
         )
