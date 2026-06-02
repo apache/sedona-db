@@ -222,6 +222,9 @@ class Expr:
 
         return GeoMethods(self)
 
+    def _call(self, name, *args) -> "Expr":
+        return self._ctx.funcs[name](*args)
+
     # Arithmetic operators -------------------------------------------------
     #
     # Each binary dunder routes through the shared `_binary` helper, which
