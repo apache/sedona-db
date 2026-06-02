@@ -325,6 +325,44 @@ All previous saved benchmark runs can be cleared with:
 rm -rf target/criterion
 ```
 
+## Implementation conventions
+
+### Scalar SQL functions
+
+For scalar SQL functions with arguments that can be either scalar or array
+values, use the executor helpers in
+`rust/sedona-functions/src/executor.rs` instead of manually branching on scalar
+and array arguments. For non-geometry arguments, cast the argument once, convert
+it to an array with `executor.num_iterations()`, iterate it in lockstep with the
+geometry executor, and handle nulls in the row loop:
+
+```rust
+let arg1 = args[1]
+    .cast_to(&DataType::Float64, None)?
+    .to_array(executor.num_iterations())?;
+let arg1_array = as_float64_array(&arg1)?;
+let mut arg1_iter = arg1_array.iter();
+
+executor.execute_wkb_void(|maybe_wkb| {
+    match (maybe_wkb, arg1_iter.next().unwrap()) {
+        (Some(wkb), Some(arg1)) => {
+            invoke_scalar(&wkb, arg1, &mut builder)?;
+            builder.append_value([]);
+        }
+        _ => builder.append_null(),
+    }
+
+    Ok(())
+})?;
+```
+
+Avoid `unwrap()` and `expect()` for user or data failures in runtime paths. Use
+DataFusion errors for those cases, and reserve panics for local invariants like
+iterator lengths that were already fixed with `to_array(executor.num_iterations())`.
+
+When a scalar function accepts both scalar and array arguments, add
+`ScalarUdfTester` coverage for both paths and for null handling.
+
 ## Documentation
 
 To contribute to the SedonaDB documentation:

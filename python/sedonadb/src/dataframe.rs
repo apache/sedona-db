@@ -98,6 +98,52 @@ impl InternalDataFrame {
         Ok(names)
     }
 
+    fn qualified_column_expr(&self, py: Python<'_>, key: PyObject) -> Result<PyExpr, PyErr> {
+        let num_fields = self.inner.schema().fields().len();
+        let all_names = || self.inner.schema().field_names();
+
+        let index = if let Ok(i) = key.extract::<isize>(py) {
+            // Handle negative indices (Python-style)
+            let resolved = if i < 0 { (num_fields as isize) + i } else { i };
+            if resolved < 0 || resolved >= num_fields as isize {
+                return Err(pyo3::exceptions::PyIndexError::new_err(format!(
+                    "Column index out of range (schema has {num_fields} columns)"
+                )));
+            }
+            resolved as usize
+        } else if let Ok(name) = key.extract::<String>(py) {
+            self.inner
+                .schema()
+                .fields()
+                .iter()
+                .position(|f| f.name() == &name)
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyKeyError::new_err(format!(
+                        "Column '{}' not found. Available columns: {:?}",
+                        name,
+                        all_names()
+                    ))
+                })?
+        } else {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "Column key must be an integer index or string name",
+            ));
+        };
+
+        let (relation, field) = self.inner.schema().qualified_field(index);
+        let expr = Expr::Column(Column {
+            relation: relation.cloned(),
+            name: field.name().to_string(),
+            spans: Default::default(),
+        });
+        Ok(PyExpr::new(expr))
+    }
+
+    fn alias(&self, alias: &str) -> Result<InternalDataFrame, PySedonaError> {
+        let inner = self.inner.clone().alias(alias)?;
+        Ok(InternalDataFrame::new(inner, self.runtime.clone()))
+    }
+
     fn limit(
         &self,
         limit: Option<usize>,
@@ -186,6 +232,28 @@ impl InternalDataFrame {
         }
         let borrowed: Vec<&str> = cols.iter().map(String::as_str).collect();
         let inner = self.inner.clone().drop_columns(&borrowed)?;
+        Ok(InternalDataFrame::new(inner, self.runtime.clone()))
+    }
+
+    /// Aggregate the rows of the DataFrame, optionally partitioned by
+    /// `group_exprs`. Both inputs are `Vec<PyExpr>` so the same Rust
+    /// method serves global aggregation (`group_exprs` empty, called
+    /// from `DataFrame.agg`) and grouped aggregation.
+    ///
+    /// The Python side guarantees `agg_exprs` is non-empty and that
+    /// every entry is an `Expr` (vs. a string or other type). It does
+    /// not verify that each entry is an aggregate-shaped expression —
+    /// e.g. `col("x")` would pass the Python `isinstance` check but is
+    /// not a valid aggregate. DataFusion's plan-build catches that case
+    /// with a clear error, so we don't reimplement the check here.
+    fn aggregate(
+        &self,
+        group_exprs: Vec<PyExpr>,
+        agg_exprs: Vec<PyExpr>,
+    ) -> Result<InternalDataFrame, PySedonaError> {
+        let group_exprs: Vec<Expr> = group_exprs.into_iter().map(|e| e.inner).collect();
+        let agg_exprs: Vec<Expr> = agg_exprs.into_iter().map(|e| e.inner).collect();
+        let inner = self.inner.clone().aggregate(group_exprs, agg_exprs)?;
         Ok(InternalDataFrame::new(inner, self.runtime.clone()))
     }
 

@@ -16,7 +16,10 @@
 # under the License.
 
 from functools import cached_property
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Union
+
+from sedonadb._lib import SedonaError
+from sedonadb.expr.expression import ScalarUdf, AggregateUdf
 
 if TYPE_CHECKING:
     from sedonadb.functions.table import TableFunctions
@@ -38,3 +41,35 @@ class Functions:
         from sedonadb.functions.table import TableFunctions
 
         return TableFunctions(self._ctx)
+
+    def __getattr__(self, name) -> Union["ScalarUdf", "AggregateUdf"]:
+        try:
+            return ScalarUdf(self._ctx._impl.scalar_udf(name))
+        except SedonaError:
+            pass
+
+        try:
+            return AggregateUdf(self._ctx._impl.aggregate_udf(name))
+        except SedonaError:
+            pass
+
+        raise AttributeError(f"Can't find scalar or aggregate function '{name}'")
+
+    def __getitem__(self, key) -> Union["ScalarUdf", "AggregateUdf"]:
+        try:
+            return self.__getattr__(key)
+        except AttributeError:
+            raise KeyError(f"Can't find scalar or aggregate function '{key}'")
+
+    def __dir__(self):
+        return (
+            self._ctx._impl.list_scalar_udfs()
+            + self._ctx._impl.list_aggregate_udfs()
+            + super().__dir__()
+        )
+
+    def _ipython_key_completions_(self):
+        """Enable tab completion for f["name"] in IPython/Jupyter."""
+        return (
+            self._ctx._impl.list_scalar_udfs() + self._ctx._impl.list_aggregate_udfs()
+        )

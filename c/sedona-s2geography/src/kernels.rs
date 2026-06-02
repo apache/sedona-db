@@ -25,7 +25,7 @@ use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
 use sedona_extension::{extension::SedonaCScalarKernel, scalar_kernel::ImportedScalarKernel};
 use sedona_functions::executor::WkbBytesExecutor;
 use sedona_schema::{
-    datatypes::{SedonaType, WKB_GEOGRAPHY},
+    datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY},
     matchers::ArgMatcher,
 };
 
@@ -168,30 +168,52 @@ pub fn s2_scalar_kernels() -> Result<Vec<(String, ScalarKernelRef)>> {
         ));
     }
 
-    // st_buffer(geography, NULL) -> geography
+    // Binary (geography, numeric) -> geography
+    let binary_geog_numeric_fns = [
+        "st_buffer",
+        "st_reduceprecision",
+        "st_segmentize",
+        "st_simplify",
+    ];
+    for fn_name in binary_geog_numeric_fns {
+        kernels.push((
+            fn_name.to_string(),
+            Arc::new(NullKernelHelper::new(ArgMatcher::new(
+                vec![ArgMatcher::is_geography(), ArgMatcher::is_null()],
+                WKB_GEOGRAPHY,
+            ))),
+        ));
+    }
+
+    // st_tessellategeog(geometry, numeric) -> geography
     kernels.push((
-        "st_buffer".to_string(),
+        "st_tessellategeog".to_string(),
         Arc::new(NullKernelHelper::new(ArgMatcher::new(
-            vec![ArgMatcher::is_geography(), ArgMatcher::is_null()],
+            vec![ArgMatcher::is_geometry(), ArgMatcher::is_null()],
+            WKB_GEOGRAPHY,
+        ))),
+    ));
+    kernels.push((
+        "st_tessellategeog".to_string(),
+        Arc::new(NullKernelHelper::new(ArgMatcher::new(
+            vec![ArgMatcher::is_null(), ArgMatcher::is_numeric()],
             WKB_GEOGRAPHY,
         ))),
     ));
 
-    // st_reduceprecision(geography, NULL) -> geography
+    // st_tessellategeom(geography, numeric) -> geometry
     kernels.push((
-        "st_reduceprecision".to_string(),
+        "st_tessellategeom".to_string(),
         Arc::new(NullKernelHelper::new(ArgMatcher::new(
             vec![ArgMatcher::is_geography(), ArgMatcher::is_null()],
-            WKB_GEOGRAPHY,
+            WKB_GEOMETRY,
         ))),
     ));
-
-    // st_simplify(geography, NULL) -> geography
     kernels.push((
-        "st_simplify".to_string(),
+        "st_tessellategeom".to_string(),
         Arc::new(NullKernelHelper::new(ArgMatcher::new(
-            vec![ArgMatcher::is_geography(), ArgMatcher::is_null()],
-            WKB_GEOGRAPHY,
+            vec![ArgMatcher::is_null(), ArgMatcher::is_numeric()],
+            WKB_GEOMETRY,
         ))),
     ));
 

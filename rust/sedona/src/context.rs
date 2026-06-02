@@ -291,6 +291,8 @@ impl SedonaContext {
             Arc::new(RandomGeometryFunction::default()),
         );
 
+        out.register_function_set(sedona_raster_gdal::register::default_function_set());
+
         // Always register default function set
         out.register_function_set(sedona_functions::register::default_function_set());
 

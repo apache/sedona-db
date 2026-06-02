@@ -21,6 +21,7 @@ use sedona_gdal::gdal::Gdal;
 use sedona_gdal::gdal_dyn_bindgen::{GDAL_OF_RASTER, GDAL_OF_READONLY, GDAL_OF_VERBOSE_ERROR};
 use sedona_gdal::geo_transform::GeoTransform;
 use sedona_gdal::mem::MemDatasetBuilder;
+use sedona_gdal::raster::rasterband::RasterBand;
 use sedona_gdal::raster::types::DatasetOptions;
 use sedona_gdal::raster::types::GdalDataType;
 
@@ -268,37 +269,11 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
             .band(src_band_index)
             .map_err(|e| arrow_datafusion_err!(e))?;
         let band_metadata = band.metadata();
-        let band_type = band_metadata.data_type()?;
         if let Some(nodata_bytes) = band_metadata.nodata_value() {
             let raster_band = dataset
                 .rasterband(dst_band_index)
                 .map_err(convert_gdal_err)?;
-            match band_type {
-                BandDataType::UInt64 => {
-                    let nodata_bytes: [u8; 8] = nodata_bytes.try_into().map_err(|_| {
-                        exec_datafusion_err!("Invalid nodata byte length for UInt64")
-                    })?;
-                    let nodata = u64::from_le_bytes(nodata_bytes);
-                    raster_band
-                        .set_no_data_value_u64(Some(nodata))
-                        .map_err(convert_gdal_err)?;
-                }
-                BandDataType::Int64 => {
-                    let nodata_bytes: [u8; 8] = nodata_bytes.try_into().map_err(|_| {
-                        exec_datafusion_err!("Invalid nodata byte length for Int64")
-                    })?;
-                    let nodata = i64::from_le_bytes(nodata_bytes);
-                    raster_band
-                        .set_no_data_value_i64(Some(nodata))
-                        .map_err(convert_gdal_err)?;
-                }
-                _ => {
-                    let nodata = bytes_to_f64(nodata_bytes, &band_type)?;
-                    raster_band
-                        .set_no_data_value(Some(nodata))
-                        .map_err(convert_gdal_err)?;
-                }
-            }
+            set_band_nodata_from_bytes(&raster_band, Some(nodata_bytes))?;
         }
     }
 
@@ -318,6 +293,54 @@ pub fn raster_ref_to_gdal_empty<R: RasterRef + ?Sized>(gdal: &Gdal, raster: &R) 
 pub fn nodata_bytes_to_f64(nodata_bytes: Option<&[u8]>, band_type: &BandDataType) -> Option<f64> {
     let bytes = nodata_bytes?;
     bytes_to_f64(bytes, band_type).ok()
+}
+
+/// Read a GDAL band's nodata value into a byte vector using the band's native type.
+pub fn band_nodata_to_bytes(band: &RasterBand<'_>) -> Result<Option<Vec<u8>>> {
+    let band_type = gdal_to_band_data_type(band.band_type())?;
+
+    Ok(match band_type {
+        BandDataType::UInt64 => band
+            .no_data_value_u64()
+            .map(|nodata| nodata.to_le_bytes().to_vec()),
+        BandDataType::Int64 => band
+            .no_data_value_i64()
+            .map(|nodata| nodata.to_le_bytes().to_vec()),
+        _ => band
+            .no_data_value()
+            .map(|nodata| nodata_f64_to_bytes(nodata, &band_type)),
+    })
+}
+
+/// Set a GDAL band's nodata value from stored bytes using the band's native type.
+pub fn set_band_nodata_from_bytes(
+    band: &RasterBand<'_>,
+    nodata_bytes: Option<&[u8]>,
+) -> Result<()> {
+    let band_type = gdal_to_band_data_type(band.band_type())?;
+
+    match (nodata_bytes, band_type) {
+        (Some(bytes), BandDataType::UInt64) => {
+            let bytes: [u8; 8] = bytes
+                .try_into()
+                .map_err(|_| exec_datafusion_err!("Invalid nodata byte length for UInt64"))?;
+            band.set_no_data_value_u64(Some(u64::from_le_bytes(bytes)))
+                .map_err(convert_gdal_err)
+        }
+        (Some(bytes), BandDataType::Int64) => {
+            let bytes: [u8; 8] = bytes
+                .try_into()
+                .map_err(|_| exec_datafusion_err!("Invalid nodata byte length for Int64"))?;
+            band.set_no_data_value_i64(Some(i64::from_le_bytes(bytes)))
+                .map_err(convert_gdal_err)
+        }
+        (Some(bytes), band_type) => band
+            .set_no_data_value(Some(bytes_to_f64(bytes, &band_type)?))
+            .map_err(convert_gdal_err),
+        (None, BandDataType::UInt64) => band.set_no_data_value_u64(None).map_err(convert_gdal_err),
+        (None, BandDataType::Int64) => band.set_no_data_value_i64(None).map_err(convert_gdal_err),
+        (None, _) => band.set_no_data_value(None).map_err(convert_gdal_err),
+    }
 }
 
 /// Convert a f64 nodata value into a byte vector appropriate for the given band type.

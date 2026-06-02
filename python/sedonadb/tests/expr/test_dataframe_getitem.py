@@ -27,46 +27,53 @@ from sedonadb.expr import Expr, col
 
 
 def test_getitem_string_returns_col_expr(con):
-    df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3]}))
+    df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3]})).alias("foofy")
     e = df["x"]
     assert isinstance(e, Expr)
-    assert repr(e) == "Expr(x)"
+    assert repr(e) == "Expr(foofy.x)"
 
 
 def test_getitem_positive_int_returns_col_expr(con):
-    df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3], "y": [10, 20, 30]}))
+    df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3], "y": [10, 20, 30]})).alias(
+        "foofy"
+    )
     e = df[1]
     assert isinstance(e, Expr)
-    assert repr(e) == "Expr(y)"
+    assert repr(e) == "Expr(foofy.y)"
 
 
 def test_getitem_first_int_index(con):
-    df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3], "y": [10, 20, 30]}))
-    assert repr(df[0]) == "Expr(x)"
+    df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3], "y": [10, 20, 30]})).alias(
+        "foofy"
+    )
+    assert repr(df[0]) == "Expr(foofy.x)"
 
 
 def test_getitem_negative_int_returns_col_expr(con):
-    df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3], "y": [10, 20, 30]}))
-    assert repr(df[-1]) == "Expr(y)"
-    assert repr(df[-2]) == "Expr(x)"
+    df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3], "y": [10, 20, 30]})).alias(
+        "foofy"
+    )
+    assert repr(df[-1]) == "Expr(foofy.y)"
+    assert repr(df[-2]) == "Expr(foofy.x)"
 
 
 def test_getitem_string_composes_with_operators(con):
     # Single-column return preserves the operator-overloading chain.
-    df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3], "y": [10, 20, 30]}))
+    df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3], "y": [10, 20, 30]})).alias(
+        "foofy"
+    )
     e = df["x"] + df["y"]
     assert isinstance(e, Expr)
-    assert repr(e) == "Expr(x + y)"
+    assert repr(e) == "Expr(foofy.x + foofy.y)"
 
 
 def test_getitem_unknown_string_raises_keyerror_with_columns(con):
     df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3], "y": [10, 20, 30]}))
-    with pytest.raises(KeyError) as exc:
+    with pytest.raises(KeyError, match="not found") as exc:
         df["nonexistent"]
-    assert (
-        exc.value.args[0]
-        == "Column 'nonexistent' not found. Available columns: ['x', 'y']"
-    )
+    assert "nonexistent" in exc.value.args[0]
+    assert "x" in exc.value.args[0]
+    assert "y" in exc.value.args[0]
 
 
 def test_getitem_int_out_of_range_raises_indexerror(con):

@@ -72,17 +72,24 @@ When `gpu.fallback_to_cpu = true` (default), unsupported predicates fall back to
 When `gpu.fallback_to_cpu = false`, unsupported predicates fail the query.
 
 ## Install from Source with the GPU Feature
+**Build from source**
 
-If you build the Python package from source, enable GPU at build time and configure the CUDA
-environment before running `MATURIN_PEP517_ARGS="--features gpu" pip install`.
+For building the Python package from source, you should enable the GPU at build time and configure the CUDA
+environment before running `MATURIN_PEP517_ARGS="--features='gpu,s2geography,pyo3/extension-module' pip install`.
 
 Common environment variables used by the GPU build:
 
 - `CUDA_HOME`: points to your CUDA toolkit root.
-- `CMAKE_CUDA_ARCHITECTURES`: CUDA SM targets (default falls back to `86;89` if not set). Change this according to your GPU architecture.
+- `CMAKE_CUDA_ARCHITECTURES`: CUDA SM targets (default falls back to `86` if not set; You can specify multiple arcs, e.g., "86;89"). Change this according to your [GPU models](https://developer.nvidia.com/cuda/gpus). **Otherwise, it requires JIT to compile kernels, making the first-time run very slow!**
 
 - `LIBGPUSPATIAL_LOGGING_LEVEL`: Logging level, including `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`, `CRITICAL`.
 - `GPUSPATIAL_PROFILING=ON`: Profiling mode (`ON`, `OFF`) to compile profiling instrumentation.
+
+**Using Docker**
+
+We also provide a Dockerfile for the users. Make sure you have installed Docker, the NVIDIA Driver, and NVIDIA Container Toolkit by `sudo nvidia-ctk runtime configure --runtime=docker`. Then, you may run `docker build -f docker/sedonadb-gpu.dockerfile --build-arg CMAKE_CUDA_ARCHITECTURES="Your GPU compute capability" -t sedonadb-gpu .` to build an image. Finally, you may run `docker run -it --rm --gpus all -p 8888:8888 sedonadb-gpu` to start a JupyterLab instance.
+
+> **Note:** This Docker image is currently source-built directly from the repository's active codebase and is not tied to a released SedonaDB GPU wheel yet. This is to support development and early testing before an official SedonaDB GPU wheel is published.
 
 ## Enable GPU Join with SQL `SET`
 
@@ -94,8 +101,15 @@ import sedonadb
 
 ctx = sedonadb.connect()
 
-ctx.sql("SET gpu.enable = true")
+ctx.sql("SET gpu.enable = true").execute()
 ```
+
+
+
+
+    <sedonadb.dataframe.DataFrame object at 0x70b85c1b7850>
+
+
 
 ## Performance Tuning and Special Cautions
 
@@ -103,7 +117,7 @@ To keep the GPU efficiently utilized, use larger execution batches:
 
 
 ```python
-ctx.sql("SET datafusion.execution.batch_size = 100000")
+ctx.sql("SET datafusion.execution.batch_size = 100000").execute()
 ```
 
 Important guidance:
@@ -140,17 +154,19 @@ ctx.sql("SET gpu.use_memory_pool = true")
 ctx.sql("SET gpu.memory_pool_init_percentage = 60")
 ctx.sql("SET gpu.pipeline_batches = 2")
 ctx.sql("SET gpu.compress_bvh = false")
-ctx.sql("SET datafusion.execution.batch_size = 100000")
+ctx.sql("SET datafusion.execution.batch_size = 100000").execute()
 ```
 
 ## Example
+
+### Check GPU environment
 
 
 ```python
 !nvidia-smi
 ```
 
-    Mon Apr 20 19:26:08 2026
+    Tue May 26 20:49:41 2026
     +-----------------------------------------------------------------------------------------+
     | NVIDIA-SMI 580.105.08             Driver Version: 580.105.08     CUDA Version: 13.0     |
     +-----------------------------------------+------------------------+----------------------+
@@ -159,7 +175,7 @@ ctx.sql("SET datafusion.execution.batch_size = 100000")
     |                                         |                        |               MIG M. |
     |=========================================+========================+======================|
     |   0  NVIDIA L4                      On  |   00000000:31:00.0 Off |                    0 |
-    | N/A   36C    P8             19W /   72W |       0MiB /  23034MiB |      0%      Default |
+    | N/A   41C    P0             28W /   72W |   11610MiB /  23034MiB |      0%      Default |
     |                                         |                        |                  N/A |
     +-----------------------------------------+------------------------+----------------------+
 
@@ -168,22 +184,28 @@ ctx.sql("SET datafusion.execution.batch_size = 100000")
     |  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
     |        ID   ID                                                               Usage      |
     |=========================================================================================|
-    |  No running processes found                                                             |
+    |    0   N/A  N/A           20603      C   ...a3/envs/sedona/bin/python3.11      11602MiB |
     +-----------------------------------------------------------------------------------------+
 
+
+### Install required packages for the example
+
+
+```python
+!pip install huggingface_hub rasterio pyogrio
+```
+
+### Download datasets
 
 
 ```python
 from huggingface_hub import snapshot_download
-import os
 
 snapshot_download(
-  repo_id='apache-sedona/spatialbench',
-  repo_type='dataset',
-  local_dir='hf-data',
-  allow_patterns=[
-    "v0.1.0/sf1/zone/*",
-    "v0.1.0/sf1/trip/*"],
+    repo_id="apache-sedona/spatialbench",
+    repo_type="dataset",
+    local_dir="hf-data",
+    allow_patterns=["v0.1.0/sf1/zone/*", "v0.1.0/sf1/trip/*"],
 )
 ```
 
@@ -195,9 +217,6 @@ snapshot_download(
     Fetching 8 files:   0%|          | 0/8 [00:00<?, ?it/s]
 
 
-    Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
-
-
 
 
 
@@ -205,173 +224,146 @@ snapshot_download(
 
 
 
+### Create sedonadb context and load datasets
+
 
 ```python
 import sedonadb
 
 ctx = sedonadb.connect()
 ctx.options.memory_limit = "unlimited"
-```
 
-
-```python
-ctx.sql(f"""
+ctx.sql("""
     CREATE EXTERNAL TABLE zone
     STORED AS PARQUET
     LOCATION 'hf-data/v0.1.0/sf1/zone/'
 """)
-ctx.sql(f"""
+ctx.sql("""
     CREATE EXTERNAL TABLE trip
     STORED AS PARQUET
     LOCATION 'hf-data/v0.1.0/sf1/trip/'
-""")
+""").execute()
 ```
 
 
 
 
-    <sedonadb.dataframe.DataFrame object at 0x7ff5213d96d0>
+    0
 
 
+
+### Define query
+
+
+```python
+# Define the query once to ensure both executions use the exact same logic
+query = """
+SELECT COUNT(*) AS cross_zone_trip_count
+FROM trip t
+    JOIN zone pickup_zone
+        ON ST_Within(ST_GeomFromWKB(t.t_pickuploc), ST_GeomFromWKB(pickup_zone.z_boundary))
+    JOIN zone dropoff_zone
+        ON ST_Within(ST_GeomFromWKB(t.t_dropoffloc), ST_GeomFromWKB(dropoff_zone.z_boundary))
+WHERE pickup_zone.z_zonekey != dropoff_zone.z_zonekey
+"""
+```
+
+First, we will run this query using the standard CPU execution to establish our baseline correctness and get a sense of the standard execution time.
 
 
 ```python
 import time
-from tqdm.notebook import tqdm
-from IPython.display import display, HTML
-import ipywidgets as widgets
 
-def interactive_spatial_benchmark(ctx, runs=6):
-    query = """
-    SELECT COUNT(*) AS cross_zone_trip_count
-    FROM trip t
-        JOIN zone pickup_zone
-            ON ST_Within(ST_GeomFromWKB(t.t_pickuploc), ST_GeomFromWKB(pickup_zone.z_boundary))
-        JOIN zone dropoff_zone
-            ON ST_Within(ST_GeomFromWKB(t.t_dropoffloc), ST_GeomFromWKB(dropoff_zone.z_boundary))
-    WHERE pickup_zone.z_zonekey != dropoff_zone.z_zonekey
-    """
+print("Executing on CPU (Baseline)...")
+ctx.sql("SET gpu.enable = false")  # Disable the GPU feature
+ctx.sql("SET datafusion.execution.batch_size = 8192")  # Default configuration
 
-    modes = [("CPU", "false"), ("GPU", "true")]
-    averages = {}
+runs = 5
+cpu_times = []
+cpu_count = 0
 
-    # 1. Create a scrollable widget to catch the verbose `.show()` output
-    log_output = widgets.Output(layout={'border': '1px solid #ccc', 'height': '150px', 'overflow_y': 'auto'})
-    display(HTML("<h3>🚀 Running Spatial Benchmark...</h3>"))
-    display(log_output)
+for i in range(runs):
+    start_time = time.time()
+    cpu_df = ctx.sql(query).to_pandas()
+    elapsed = time.time() - start_time
 
-    # 2. Execute the Benchmark
-    for mode_name, gpu_flag in modes:
-        ctx.sql(f"SET gpu.enable = {gpu_flag}")
-        if gpu_flag:
-            ctx.sql("SET datafusion.execution.batch_size = 2000000") # Increase batch size
-        else:
-            ctx.sql("SET datafusion.execution.batch_size = 8192") # Default
-        execution_times = []
+    cpu_times.append(elapsed)
+    cpu_count = cpu_df.iloc[0, 0]
+    print(f"  Run {i + 1}: {elapsed:.4f} seconds")
 
-        # Display a Jupyter-native progress bar
-        for i in tqdm(range(runs), desc=f"{mode_name} Executions"):
-            start_time = time.time()
-
-            result = ctx.sql(query)
-
-            # Execute physical plan and catch the output inside our widget
-            with log_output:
-                print(f"--- {mode_name} Run {i+1} ---")
-                result.show()
-
-            elapsed = time.time() - start_time
-
-            # Record everything except the first run (warmup)
-            if i > 0:
-                execution_times.append(elapsed)
-
-        # Calculate average
-        averages[mode_name] = sum(execution_times) / len(execution_times)
-
-    # 3. Clean up the UI
-    log_output.clear_output()
-    log_output.layout.display = 'none'
-
-    # 4. Generate Table Results
-    cpu_avg = averages["CPU"]
-    gpu_avg = averages["GPU"]
-
-    # Calculate speedup (using CPU as the 1.0x baseline)
-    cpu_speedup = 1.0
-    gpu_speedup = cpu_avg / gpu_avg if gpu_avg > 0 else 0
-
-    # Color code the GPU speedup (green if faster, red if slower)
-    gpu_color = "green" if gpu_speedup >= 1.0 else "red"
-
-    html_table = f"""
-    <table style="width: 60%; text-align: center; border-collapse: collapse; font-family: sans-serif; margin-top: 15px;">
-        <tr style="background-color: #f8f9fa; border-bottom: 2px solid #dee2e6;">
-            <th style="padding: 12px; border: 1px solid #dee2e6;">Mode</th>
-            <th style="padding: 12px; border: 1px solid #dee2e6;">Average Time (s)</th>
-            <th style="padding: 12px; border: 1px solid #dee2e6;">Speedup</th>
-        </tr>
-        <tr>
-            <td style="padding: 12px; border: 1px solid #dee2e6;"><b>CPU</b> (Baseline)</td>
-            <td style="padding: 12px; border: 1px solid #dee2e6;">{cpu_avg:.4f}</td>
-            <td style="padding: 12px; border: 1px solid #dee2e6;">{cpu_speedup:.2f}x</td>
-        </tr>
-        <tr>
-            <td style="padding: 12px; border: 1px solid #dee2e6;"><b>GPU</b></td>
-            <td style="padding: 12px; border: 1px solid #dee2e6;">{gpu_avg:.4f}</td>
-            <td style="padding: 12px; border: 1px solid #dee2e6; color: {gpu_color}; font-weight: bold;">{gpu_speedup:.2f}x</td>
-        </tr>
-    </table>
-    """
-
-    display(HTML("<h3>📊 Benchmark Results (Averaged over 5 runs)</h3>"))
-    display(HTML(html_table))
-
-# --- Execution Block ---
-# Run the interactive function with your Sedona Context
-interactive_spatial_benchmark(ctx)
+cpu_avg_time = sum(cpu_times) / runs
+print("-" * 30)
+print(f"CPU Average Time: {cpu_avg_time:.4f} seconds | Rows: {cpu_count}")
 ```
 
-
-<h3>🚀 Running Spatial Benchmark...</h3>
-
-
-
-    Output(layout=Layout(border_bottom='1px solid #ccc', border_left='1px solid #ccc', border_right='1px solid #cc…
-
-
-
-    CPU Executions:   0%|          | 0/6 [00:00<?, ?it/s]
+    Executing on CPU (Baseline)...
+      Run 1: 7.7795 seconds
+      Run 2: 6.8287 seconds
+      Run 3: 7.0688 seconds
+      Run 4: 7.2434 seconds
+      Run 5: 7.1739 seconds
+    ------------------------------
+    CPU Average Time: 7.2189 seconds | Rows: 176391
 
 
-
-    GPU Executions:   0%|          | 0/6 [00:00<?, ?it/s]
-
+Next, we enable GPU execution. We also increase the batch size, which is a crucial optimization step to ensure we are feeding enough data to the GPU to maximize its parallel processing capabilities.
 
 
-<h3>📊 Benchmark Results (Averaged over 5 runs)</h3>
+```python
+print("Executing on GPU (Accelerated)...")
+ctx.sql("SET gpu.enable = true")
+ctx.sql("SET datafusion.execution.batch_size = 1000000")  # Optimized for GPU throughput
+
+runs = 5
+gpu_times = []
+gpu_count = 0
+
+for i in range(runs):
+    start_time = time.time()
+    gpu_df = ctx.sql(query).to_pandas()
+    elapsed = time.time() - start_time
+
+    gpu_times.append(elapsed)
+    gpu_count = gpu_df.iloc[0, 0]
+    print(f"  Run {i + 1}: {elapsed:.4f} seconds")
+
+gpu_avg_time = sum(gpu_times) / runs
+print("-" * 30)
+print(f"GPU Average Time: {gpu_avg_time:.4f} seconds | Rows: {gpu_count}")
+```
+
+    Executing on GPU (Accelerated)...
+      Run 1: 3.2582 seconds
+      Run 2: 3.3126 seconds
+      Run 3: 3.0703 seconds
+      Run 4: 3.2604 seconds
+      Run 5: 3.1418 seconds
+    ------------------------------
+    GPU Average Time: 3.2087 seconds | Rows: 176391
 
 
+### Compare Results
 
 
-<table style="width: 60%; text-align: center; border-collapse: collapse; font-family: sans-serif; margin-top: 15px;">
-    <tr style="background-color: #f8f9fa; border-bottom: 2px solid #dee2e6;">
-        <th style="padding: 12px; border: 1px solid #dee2e6;">Mode</th>
-        <th style="padding: 12px; border: 1px solid #dee2e6;">Average Time (s)</th>
-        <th style="padding: 12px; border: 1px solid #dee2e6;">Speedup</th>
-    </tr>
-    <tr>
-        <td style="padding: 12px; border: 1px solid #dee2e6;"><b>CPU</b> (Baseline)</td>
-        <td style="padding: 12px; border: 1px solid #dee2e6;">21.5221</td>
-        <td style="padding: 12px; border: 1px solid #dee2e6;">1.00x</td>
-    </tr>
-    <tr>
-        <td style="padding: 12px; border: 1px solid #dee2e6;"><b>GPU</b></td>
-        <td style="padding: 12px; border: 1px solid #dee2e6;">2.8889</td>
-        <td style="padding: 12px; border: 1px solid #dee2e6; color: green; font-weight: bold;">7.45x</td>
-    </tr>
-</table>
+```python
+# Validate correctness
+match_status = "✅ Match" if cpu_count == gpu_count else "❌ Mismatch"
 
+# Calculate speedup based on the new averages
+speedup = cpu_avg_time / gpu_avg_time if gpu_avg_time > 0 else 0
+
+print("--- Query Validation (Based on Averages) ---")
+print(f"Row Count Validated : {gpu_count} ({match_status})")
+print(f"Average CPU Time    : {cpu_avg_time:.4f}s")
+print(f"Average GPU Time    : {gpu_avg_time:.4f}s")
+print(f"Calculated Speedup  : {speedup:.2f}x")
+```
+
+    --- Query Validation (Based on Averages) ---
+    Row Count Validated : 176391 (✅ Match)
+    Average CPU Time    : 7.2189s
+    Average GPU Time    : 3.2087s
+    Calculated Speedup  : 2.25x
 
 
 ## References
