@@ -1216,6 +1216,12 @@ class DataFrame:
         else:
             return super().__repr__()
 
+    def __len__(self):
+        raise ValueError(
+            "Can't compute len() of a lazy SedonaDB DataFrame. "
+            "Use .count() to execute and resolve the number of rows."
+        )
+
     def _simplify_storage_types(self):
         return DataFrame(
             self._ctx, self._impl.simplify_storage_types(self._ctx), self._options
