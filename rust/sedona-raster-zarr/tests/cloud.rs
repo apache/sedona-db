@@ -43,7 +43,11 @@ use object_store::ObjectStore;
 use sedona_raster::array::RasterStructArray;
 use sedona_raster_zarr::{open_storage_from_uri, ZarrChunkReader};
 
-/// ITS_LIVE bucket layout: `s3://<BUCKET>/<KEY>` ↔
+/// NASA MEaSUREs ITS_LIVE global glacier ice-velocity datacubes — public,
+/// anonymous, in `s3://its-live-data/` (us-west-2). Project and data docs:
+/// <https://its-live.jpl.nasa.gov/>.
+///
+/// Bucket layout: `s3://<BUCKET>/<KEY>` ↔
 /// `https://<BUCKET>.s3.us-west-2.amazonaws.com/<KEY>`.
 const ITS_LIVE_BUCKET: &str = "its-live-data";
 const ITS_LIVE_KEY: &str =

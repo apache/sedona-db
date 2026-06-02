@@ -33,8 +33,6 @@ result_large_err = "allow"
 [dependencies]
 arrow-array = { workspace = true }
 arrow-schema = { workspace = true }
-async-trait = { workspace = true }
-datafusion = { workspace = true, default_features = false }
 datafusion-common = { workspace = true }
 futures = { workspace = true }
 log = { workspace = true }

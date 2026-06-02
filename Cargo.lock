@@ -6162,8 +6162,6 @@ version = "0.4.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
- "async-trait",
- "datafusion",
  "datafusion-common",
  "futures",
  "log",
