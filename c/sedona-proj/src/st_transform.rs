@@ -59,6 +59,14 @@ impl SedonaScalarKernel for STTransform {
 
         if inputs.len() == 2 {
             match (inputs[0], inputs[1]) {
+                // Null output CRS is usually a sentinel for a parameter that hasn't been bound yet
+                // For the purposes of computing an output type, we pretend it is a scalar string.
+                (ArgInput::Geo(edges, _), ArgInput::Null) => {
+                    Ok(Some(output_type_from_scalar_crs_value(
+                        edges,
+                        &ScalarValue::Utf8(Some("0".to_string())),
+                    )?))
+                }
                 // ScalarCrs output always returns a Wkb output type with concrete Crs
                 (ArgInput::Geo(edges, _), ArgInput::ScalarCrs(scalar_value))
                 | (ArgInput::ItemCrs(edges), ArgInput::ScalarCrs(scalar_value)) => Ok(Some(
@@ -74,6 +82,14 @@ impl SedonaScalarKernel for STTransform {
             }
         } else if inputs.len() == 3 {
             match (inputs[0], inputs[1], inputs[2]) {
+                // Null output CRS is usually a sentinel for a parameter that hasn't been bound yet
+                // For the purposes of computing an output type, we pretend it is a scalar string.
+                (ArgInput::Geo(edges, _), _, ArgInput::Null) => {
+                    Ok(Some(output_type_from_scalar_crs_value(
+                        edges,
+                        &ScalarValue::Utf8(Some("0".to_string())),
+                    )?))
+                }
                 // ScalarCrs output always returns a Wkb output type with concrete Crs
                 (
                     ArgInput::Geo(edges, _),
@@ -317,12 +333,18 @@ enum ArgInput<'a> {
     /// Array CRS input. Supported for second and third arguments. When present
     /// as the last (to) argument, this forces Item CRS output.
     ArrayCrs,
+    /// A literal null
+    Null,
     /// Sentinel for anything else
     Unsupported,
 }
 
 impl<'a> ArgInput<'a> {
     fn from_return_type_arg(arg_type: &'a SedonaType, scalar_arg: Option<&'a ScalarValue>) -> Self {
+        if ArgMatcher::is_null().match_type(arg_type) {
+            return Self::Null;
+        }
+
         if let Ok((SedonaType::Wkb(edges, _) | SedonaType::WkbView(edges, _), maybe_crs_type)) =
             parse_item_crs_arg_type(arg_type)
         {
@@ -783,7 +805,7 @@ mod tests {
     }
 
     #[test]
-    fn test_invoke_null_crs_to() {
+    fn test_invoke_null_utf8_crs_to() {
         let udf = SedonaScalarUDF::from_impl("st_transform", st_transform_impl());
         let tester = ScalarUdfTester::new(
             udf.clone().into(),
@@ -821,6 +843,36 @@ mod tests {
         );
         let result = tester
             .invoke_scalar_scalar("POINT (0 1)", ScalarValue::Null)
+            .unwrap();
+        assert_eq!(result, create_scalar(None, &WKB_GEOMETRY));
+    }
+
+    #[test]
+    fn test_invoke_null_crs_to() {
+        let udf = SedonaScalarUDF::from_impl("st_transform", st_transform_impl());
+        let tester = ScalarUdfTester::new(
+            udf.clone().into(),
+            vec![WKB_GEOMETRY, SedonaType::Arrow(DataType::Null)],
+        );
+
+        // A null scalar CRS should generate WKB_GEOMETRY output with a type
+        // level CRS that is unset; however, all the output will be null.
+        let result = tester
+            .invoke_scalar_scalar("POINT (0 1)", ScalarValue::Null)
+            .unwrap();
+        assert_eq!(result, create_scalar(None, &WKB_GEOMETRY));
+
+        // This should also work for the three arg variant
+        let tester = ScalarUdfTester::new(
+            udf.clone().into(),
+            vec![
+                WKB_GEOMETRY,
+                SedonaType::Arrow(DataType::Null),
+                SedonaType::Arrow(DataType::Null),
+            ],
+        );
+        let result = tester
+            .invoke_scalar_scalar_scalar("POINT (0 1)", ScalarValue::Null, ScalarValue::Null)
             .unwrap();
         assert_eq!(result, create_scalar(None, &WKB_GEOMETRY));
     }

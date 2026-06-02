@@ -16,6 +16,7 @@
 # under the License.
 
 import geopandas
+import geopandas.testing
 import pyproj
 import pytest
 from sedonadb.testing import PostGIS, SedonaDB, geom_or_null, val_or_null
@@ -86,6 +87,44 @@ def test_st_srid(eng, geom, srid, expected_srid):
         f"SELECT ST_SRID(ST_SetSrid({geom_or_null(geom)}, {val_or_null(srid)}))",
         expected_srid,
     )
+
+
+def test_st_transform_bind_crs(con):
+    # Check the two argument version
+    df = con.sql(
+        "SELECT ST_Transform(ST_Point(0, 1, 4326), $1) AS geom", params=("EPSG:3857",)
+    ).to_pandas()
+    expected = con.sql(
+        "SELECT ST_Transform(ST_Point(0, 1, 4326), 'EPSG:3857') AS geom"
+    ).to_pandas()
+    geopandas.testing.assert_geodataframe_equal(df, expected)
+
+    # Check the three argument version
+    df = con.sql(
+        "SELECT ST_Transform(ST_Point(0, 1), 4326, $1) AS geom", params=("EPSG:3857",)
+    ).to_pandas()
+    expected = con.sql(
+        "SELECT ST_Transform(ST_Point(0, 1), 4326, 'EPSG:3857') AS geom"
+    ).to_pandas()
+    geopandas.testing.assert_geodataframe_equal(df, expected)
+
+
+def test_st_set_crs_bind_crs(con):
+    df = con.sql(
+        "SELECT ST_SetCrs(ST_Point(0, 1), $1) AS geom", params=("EPSG:3857",)
+    ).to_pandas()
+    expected = con.sql(
+        "SELECT ST_SetCrs(ST_Point(0, 1), 'EPSG:3857') AS geom"
+    ).to_pandas()
+    geopandas.testing.assert_geodataframe_equal(df, expected)
+
+
+def test_st_set_srid_bind_srid(con):
+    df = con.sql(
+        "SELECT ST_SetSRID(ST_Point(0, 1), $1) AS geom", params=(3857,)
+    ).to_pandas()
+    expected = con.sql("SELECT ST_SetSRID(ST_Point(0, 1), 3857) AS geom").to_pandas()
+    geopandas.testing.assert_geodataframe_equal(df, expected)
 
 
 # PostGIS does not have an API ST_SetCrs, ST_Crs
