@@ -80,10 +80,12 @@ class ArgInfo:
         type: str,
         name: str | None = None,
         description: str | None = None,
+        optional: bool = False,
     ):
         self.type = type
         self.name = name
         self.description = description
+        self.optional = optional
 
 
 class KernelInfo:
@@ -102,6 +104,11 @@ class KernelInfo:
         self.kernel_signatures = (
             kernel_signatures if kernel_signatures is not None else []
         )
+
+    @property
+    def has_optional_args(self) -> bool:
+        """Return True if any argument is optional."""
+        return any(arg.optional for arg in self.args)
 
 
 class FunctionInfo:
@@ -309,10 +316,15 @@ def parse_kernel_params(kernels: list[dict], fn_name: str = "unknown") -> Kernel
     arg_info = all_kernel_info[ref_idx] if all_kernel_info else []
     arg_names = all_kernel_args[ref_idx] if all_kernel_args else []
 
-    # Update ArgInfo with generated names
+    # Determine minimum args (args present in all kernels)
+    min_args = min(kernel_lengths) if kernel_lengths else 0
+
+    # Update ArgInfo with generated names and optional flag
     for i, info in enumerate(arg_info):
         if info.name is None:
             info.name = arg_names[i]
+        # Args beyond min_args are optional (not present in all kernels)
+        info.optional = i >= min_args
 
     return KernelInfo(args=arg_info, returns=returns, variadic=False)
 
@@ -467,6 +479,8 @@ def generate_geo_methods_py(functions: list[FunctionInfo]) -> str:
         "",
         "from typing import Generic, TypeVar",
         "",
+        "from sedonadb_expr.utils import MISSING, filter_missing_args",
+        "",
         'ExprT = TypeVar("ExprT")',
         "",
         "",
@@ -489,17 +503,28 @@ def generate_geo_methods_py(functions: list[FunctionInfo]) -> str:
 
         # Build method signature - skip first arg (piped in)
         remaining_args = kernel_info.args[1:] if len(kernel_info.args) > 1 else []
+        # Check if any remaining args are optional
+        has_optional = any(arg.optional for arg in remaining_args)
 
         if kernel_info.variadic:
             params = "self, *args"
             call_args = "*args"
+            use_filter = False
         elif remaining_args:
-            param_strs = [f"{arg.name}" for arg in remaining_args]
+            # Build param strings with MISSING default for optional args
+            param_strs = []
+            for arg in remaining_args:
+                if arg.optional:
+                    param_strs.append(f"{arg.name}=MISSING")
+                else:
+                    param_strs.append(arg.name)
             params = "self, " + ", ".join(param_strs)
             call_args = ", ".join(arg.name for arg in remaining_args)
+            use_filter = has_optional
         else:
             params = "self"
             call_args = ""
+            use_filter = False
 
         docstring = generate_method_docstring(func)
 
@@ -512,9 +537,14 @@ def generate_geo_methods_py(functions: list[FunctionInfo]) -> str:
         )
 
         if call_args:
-            lines.append(
-                f'        return self._expr._call("{method_name}", {call_args})'
-            )
+            if use_filter:
+                lines.append(
+                    f'        return self._expr._call("{method_name}", *filter_missing_args({call_args}))'
+                )
+            else:
+                lines.append(
+                    f'        return self._expr._call("{method_name}", {call_args})'
+                )
         else:
             lines.append(f'        return self._expr._call("{method_name}")')
 

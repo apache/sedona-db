@@ -18,5 +18,6 @@
 from sedonadb_expr._version import __version__
 from sedonadb_expr._generated.geo_functions import GeoFunctions
 from sedonadb_expr._generated.geo_methods import GeoMethods
+from sedonadb_expr.utils import MISSING, filter_missing_args
 
-__all__ = ["__version__", "GeoFunctions", "GeoMethods"]
+__all__ = ["__version__", "GeoFunctions", "GeoMethods", "MISSING", "filter_missing_args"]
