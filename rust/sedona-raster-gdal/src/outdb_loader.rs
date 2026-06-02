@@ -201,13 +201,13 @@ impl AsyncByteLoader for GdalLoader {
                     // Catch it cleanly here.
                     let file_dtype = gdal_to_band_data_type(band.band_type())?;
                     if file_dtype != expected_dtype {
-                        return Err(sedona_common::sedona_internal_datafusion_err!(
+                        return sedona_common::sedona_internal_err!(
                             "GDAL OutDb band metadata claims {:?} but file {} band {} is {:?}",
                             expected_dtype,
                             uri,
                             band_num,
                             file_dtype
-                        ));
+                        );
                     }
 
                     // Pre-allocate the output buffer once; each strip read
@@ -269,12 +269,12 @@ fn read_band_blockwise(
         // Sanity: should always hold given the caller's pre-allocated
         // output slice; defensive in case of arithmetic surprises.
         if byte_end > output.len() {
-            return Err(sedona_common::sedona_internal_datafusion_err!(
+            return sedona_common::sedona_internal_err!(
                 "GDAL OutDb read range [{}..{}) exceeds output buffer length {}",
                 byte_off,
                 byte_end,
                 output.len()
-            ));
+            );
         }
         band.read_into_bytes(
             (0, y_start as isize),

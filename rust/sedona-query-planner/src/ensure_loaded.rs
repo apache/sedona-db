@@ -42,7 +42,7 @@ use datafusion_expr::expr::ScalarFunction;
 use datafusion_expr::expr_schema::ExprSchemable;
 use datafusion_expr::{Expr, LogicalPlan, ScalarUDF};
 use datafusion_optimizer::{ApplyOrder, OptimizerConfig, OptimizerRule};
-use sedona_common::sedona_internal_datafusion_err;
+use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{SedonaScalarUDF, RS_ENSURE_LOADED_NAME};
 use sedona_schema::datatypes::SedonaType;
 
@@ -156,9 +156,9 @@ fn rewrite_expr_node(
     // so a future refactor that breaks the invariant fails the query
     // cleanly instead of crashing a worker.
     let Expr::ScalarFunction(ScalarFunction { func, args }) = expr else {
-        return Err(sedona_internal_datafusion_err!(
+        return sedona_internal_err!(
             "rewrite_expr_node: expected ScalarFunction after match, got a different Expr variant"
-        ));
+        );
     };
     let mut changed = false;
     let new_args: Vec<Expr> = args

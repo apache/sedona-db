@@ -34,12 +34,12 @@ use arrow_buffer::Buffer;
 use arrow_schema::{DataType, FieldRef};
 use async_trait::async_trait;
 use datafusion_common::config::ConfigOptions;
-use datafusion_common::{plan_err, DataFusionError, Result};
+use datafusion_common::{plan_err, Result};
 use datafusion_expr::async_udf::AsyncScalarUDFImpl;
 use datafusion_expr::{
     ColumnarValue, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility,
 };
-use sedona_common::sedona_internal_datafusion_err;
+use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_raster::array::RasterStructArray;
 use sedona_raster::builder::RasterBuilder;
 use sedona_raster::outdb_loader::{
@@ -131,9 +131,7 @@ fn lookup_loader(
     } else {
         format!("registered formats: {}", registered.join(", "))
     };
-    Err(DataFusionError::Plan(format!(
-        "no OutDb loader registered for format '{format}' — {registered_msg}"
-    )))
+    plan_err!("no OutDb loader registered for format '{format}' — {registered_msg}")
 }
 
 // One RsEnsureLoaded per session by construction — equality and hash
@@ -170,9 +168,9 @@ impl ScalarUDFImpl for RsEnsureLoaded {
         // authoritative output-type source and carries the raster
         // extension metadata that a bare `DataType` would drop. Provided
         // only to satisfy the trait.
-        Err(sedona_internal_datafusion_err!(
+        sedona_internal_err!(
             "RS_EnsureLoaded::return_type should not be called; return_field_from_args is authoritative"
-        ))
+        )
     }
 
     fn return_field_from_args(&self, args: ReturnFieldArgs) -> Result<FieldRef> {
@@ -203,9 +201,9 @@ impl ScalarUDFImpl for RsEnsureLoaded {
         // DataFusion routes async UDFs through `invoke_async_with_args`
         // on the AsyncFuncExec node; this sync entry should never be
         // called for an `AsyncScalarUDF`-wrapped impl.
-        Err(sedona_internal_datafusion_err!(
+        sedona_internal_err!(
             "RS_EnsureLoaded is async; AsyncFuncExec should have dispatched to invoke_async_with_args"
-        ))
+        )
     }
 }
 
@@ -215,15 +213,11 @@ impl AsyncScalarUDFImpl for RsEnsureLoaded {
         let input_array = match args.args.into_iter().next() {
             Some(ColumnarValue::Array(arr)) => arr,
             Some(ColumnarValue::Scalar(_)) => {
-                return Err(sedona_internal_datafusion_err!(
+                return sedona_internal_err!(
                     "RS_EnsureLoaded does not support scalar inputs; pass a column reference"
-                ))
+                )
             }
-            None => {
-                return Err(sedona_internal_datafusion_err!(
-                    "RS_EnsureLoaded received zero arguments"
-                ))
-            }
+            None => return sedona_internal_err!("RS_EnsureLoaded received zero arguments"),
         };
 
         let registry = registry_handle_from_config(&args.config_options)?;
@@ -411,10 +405,10 @@ where
                 })?;
             let got = resolved.len();
             if got as u64 != expected_bytes {
-                return Err(sedona_internal_datafusion_err!(
+                return sedona_internal_err!(
                     "RS_EnsureLoaded: band ({raster_idx},{band_idx}) expected {expected_bytes} \
                      bytes but loader returned {got}"
-                ));
+                );
             }
 
             builder.band_data_writer().append_value(resolved.as_slice());
