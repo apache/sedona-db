@@ -17,18 +17,24 @@
 # under the License.
 
 title: ST_Perimeter
-description: Calculates the 2D perimeter of a given geometry.
+description: Calculates the perimeter of a given geometry or geography.
 kernels:
   - returns: double
     args: [geometry]
+  - returns: double
+    args: [geography]
 ---
 
 ## Description
 
-This function calculates the 2D perimeter of a given geometry. It supports Polygon, MultiPolygon, and GeometryCollection geometries (as long as the GeometryCollection contains polygonal geometries). For other types, it returns 0. To measure lines, use ST_Length.
+This function calculates the perimeter of a given geometry or geography. It supports Polygon, MultiPolygon, and GeometryCollection geometries (as long as the GeometryCollection contains polygonal geometries). For other types, it returns 0. To measure lines, use ST_Length. For geography, returns the spherical approximation of the geodesic perimeter in meters.
 
 ## Examples
 
 ```sql
-SELECT ST_Perimeter(ST_GeomFromWKT('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))'));
+SELECT ST_Perimeter(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))'));
+```
+
+```sql
+SELECT ST_Perimeter(ST_GeogFromWKT('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))'));
 ```

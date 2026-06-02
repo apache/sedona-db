@@ -17,14 +17,25 @@
 # under the License.
 
 title: ST_YMax
-description: Returns the maximum Y coordinate of a geometry's bounding box.
+description: Returns the maximum Y coordinate (latitude for geography) of a geometry or geography's bounding box.
 kernels:
   - returns: double
     args: [geometry]
+  - returns: double
+    args: [geography]
 ---
+
+## Description
+
+For geography, the maximum latitude is computed considering spherical geometry (e.g., the maximum latitude of a linestring that crosses the North Pole is 90).
 
 ## Examples
 
 ```sql
 SELECT ST_YMax(ST_GeomFromText('LINESTRING(0 0, 5 4)'));
+```
+
+
+```sql
+SELECT ST_YMax(ST_GeogFromText('LINESTRING(0 0, 5 4)'));
 ```

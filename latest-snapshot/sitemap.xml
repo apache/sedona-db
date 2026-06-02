@@ -209,6 +209,14 @@
          <lastmod>2026-06-02</lastmod>
     </url>
     <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/s2_cellidfrompoint/</loc>
+         <lastmod>2026-06-02</lastmod>
+    </url>
+    <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/s2_coveringcellids/</loc>
+         <lastmod>2026-06-02</lastmod>
+    </url>
+    <url>
          <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/sd_format/</loc>
          <lastmod>2026-06-02</lastmod>
     </url>
@@ -509,7 +517,19 @@
          <lastmod>2026-06-02</lastmod>
     </url>
     <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/st_nrings/</loc>
+         <lastmod>2026-06-02</lastmod>
+    </url>
+    <url>
          <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/st_numgeometries/</loc>
+         <lastmod>2026-06-02</lastmod>
+    </url>
+    <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/st_numinteriorrings/</loc>
+         <lastmod>2026-06-02</lastmod>
+    </url>
+    <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/st_numpoints/</loc>
          <lastmod>2026-06-02</lastmod>
     </url>
     <url>
@@ -533,6 +553,10 @@
          <lastmod>2026-06-02</lastmod>
     </url>
     <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/st_pointonsurface/</loc>
+         <lastmod>2026-06-02</lastmod>
+    </url>
+    <url>
          <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/st_points/</loc>
          <lastmod>2026-06-02</lastmod>
     </url>
@@ -550,6 +574,10 @@
     </url>
     <url>
          <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/st_polygonize_agg/</loc>
+         <lastmod>2026-06-02</lastmod>
+    </url>
+    <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/st_reduceprecision/</loc>
          <lastmod>2026-06-02</lastmod>
     </url>
     <url>

@@ -24,14 +24,23 @@ kernels:
     - geometry
     - name: fraction
       type: double
+  - returns: geography
+    args:
+    - geography
+    - name: fraction
+      type: double
 ---
 
 ## Description
 
-Returns a point interpolated along a line. First argument must be a LINESTRING. Second argument is a double between 0 and 1 representing fraction of total linestring length the point has to be located.
+Returns a point interpolated along a line. First argument must be a LINESTRING. Second argument is a double between 0 and 1 representing fraction of total linestring length the point has to be located. For geography, the interpolation is computed using spherical interpolation between vertices.
 
 ## Examples
 
 ```sql
-SELECT ST_LineInterpolatePoint(ST_GeomFromWKT('LINESTRING(25 50, 100 125, 150 190)'), 0.2);
+SELECT ST_LineInterpolatePoint(ST_GeomFromWKT('LINESTRING (0 0, 1 1)'), 0.5);
+```
+
+```sql
+SELECT ST_LineInterpolatePoint(ST_GeogFromWKT('LINESTRING (0 0, 1 1)'), 0.5);
 ```

@@ -17,13 +17,20 @@
 # under the License.
 
 title: ST_Force3DM
-description: Forces a geometry into a XYM coordinate model with an optional M value.
+description: Forces a geometry or geography into a XYM coordinate model with an optional M value.
 kernels:
   - returns: geometry
     args: [geometry]
   - returns: geometry
     args:
     - geometry
+    - name: m
+      type: double
+  - returns: geography
+    args: [geography]
+  - returns: geography
+    args:
+    - geography
     - name: m
       type: double
 ---
@@ -43,5 +50,5 @@ SELECT ST_Force3DM(ST_GeomFromWKT('POINT (1 2)'));
 ```
 
 ```sql
-SELECT ST_Force3DM(ST_GeomFromWKT('POINT M (1 2 3)'), 10.0);
+SELECT ST_Force3DM(ST_GeogFromWKT('POINT (1 2)'), 10.0);
 ```

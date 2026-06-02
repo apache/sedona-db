@@ -17,22 +17,46 @@
 # under the License.
 
 title: ST_Envelope
-description: Returns the bounding box (envelope) of a geometry as a new geometry.
+description: Returns the bounding box (envelope) of a geometry or geography as a new geometry.
 kernels:
   - returns: geometry
     args: [geometry]
+  - returns: geometry
+    args: [geography]
 ---
 
 ## Description
 
-Returns the minimum axis-aligned bounding box of a geometry. This is usually a polygon but can be a linestring for perfectly vertical or horizontal input.
+Returns the minimum axis-aligned bounding box of a geometry. This is usually a polygon but can be a linestring for perfectly vertical or horizontal input and is a point if the input is also a point. For geography, the return value is still a rectangular polygon geometry that represents the latitude and longitude range of the input. For geographies that span the antimeridian, a multipolygon is returned (one on each side of the antimeridian).
+
+Because of slight numerical inaccuracy of geographical calculations, the bounds are expanded slightly compared to the corresponding geometry envelope.
 
 ## Examples
+
+```sql
+SELECT ST_Envelope(ST_Point(1.0, 2.0));
+```
 
 ```sql
 SELECT ST_Envelope(ST_GeomFromWKT('LINESTRING(0 0, 3 4)'));
 ```
 
 ```sql
-SELECT ST_Envelope(ST_Point(1.0, 2.0));
+SELECT ST_Envelope(ST_GeogFromWKT('LINESTRING(0 0, 3 4)'));
+```
+
+```sql
+SELECT ST_Envelope(ST_GeomFromWKT('LINESTRING(170 3, -170 4)'));
+```
+
+```sql
+SELECT ST_Envelope(ST_GeogPoint(1.0, 2.0));
+```
+
+```sql
+SELECT ST_Envelope(ST_GeogFromWKT('LINESTRING(0 0, 3 4)'));
+```
+
+```sql
+SELECT ST_Envelope(ST_GeogFromWKT('LINESTRING(170 3, -170 4)'));
 ```

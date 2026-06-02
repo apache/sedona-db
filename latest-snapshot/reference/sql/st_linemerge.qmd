@@ -21,12 +21,21 @@ description: Merges a collection of potentially connected line segments into the
 kernels:
   - returns: geometry
     args: [geometry]
+  - returns: geography
+    args: [geography]
 ---
 
 ## Examples
 
+
 ```sql
 SELECT ST_LineMerge(
     ST_GeomFromWKT('MULTILINESTRING ((0 0, 1 0), (1 0, 1 1))')
+);
+```
+
+```sql
+SELECT ST_LineMerge(
+    ST_GeogFromWKT('MULTILINESTRING ((0 0, 1 0), (1 0, 1 1))')
 );
 ```

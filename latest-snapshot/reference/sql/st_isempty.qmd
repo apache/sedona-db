@@ -17,18 +17,20 @@
 # under the License.
 
 title: ST_IsEmpty
-description: Returns true if the geometry is empty.
+description: Returns true if the geometry or geography is empty.
 kernels:
   - returns: boolean
     args: [geometry]
+  - returns: boolean
+    args: [geography]
 ---
 
 ## Examples
 
 ```sql
-SELECT ST_IsEmpty(ST_GeomFromWKT('POLYGON EMPTY'));
+SELECT ST_IsEmpty(ST_GeomFromWKT('POINT EMPTY'));
 ```
 
 ```sql
-SELECT ST_IsEmpty(ST_Point(1.0, 2.0));
+SELECT ST_IsEmpty(ST_GeogFromWKT('POINT EMPTY'));
 ```

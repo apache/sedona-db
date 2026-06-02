@@ -1574,19 +1574,39 @@
 
 
 <h1 id="st_envelope">ST_Envelope<a class="headerlink" href="#st_envelope" title="Permanent link">¶</a></h1>
-<p>Returns the bounding box (envelope) of a geometry as a new geometry.</p>
+<p>Returns the bounding box (envelope) of a geometry or geography as a new
+geometry.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">¶</a></h2>
 <div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_Envelope</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
+<span class="n">geometry</span><span class="w"> </span><span class="n">ST_Envelope</span><span class="p">(</span><span class="n">geog</span><span class="p">:</span><span class="w"> </span><span class="n">geography</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="arguments">Arguments<a class="headerlink" href="#arguments" title="Permanent link">¶</a></h2>
 <ul>
+<li><strong>geog</strong> (geography): Input geography</li>
 <li><strong>geom</strong> (geometry): Input geometry</li>
 </ul>
 <h2 id="description">Description<a class="headerlink" href="#description" title="Permanent link">¶</a></h2>
 <p>Returns the minimum axis-aligned bounding box of a geometry. This is
 usually a polygon but can be a linestring for perfectly vertical or
-horizontal input.</p>
+horizontal input and is a point if the input is also a point. For
+geography, the return value is still a rectangular polygon geometry that
+represents the latitude and longitude range of the input. For
+geographies that span the antimeridian, a multipolygon is returned (one
+on each side of the antimeridian).</p>
+<p>Because of slight numerical inaccuracy of geographical calculations, the
+bounds are expanded slightly compared to the corresponding geometry
+envelope.</p>
 <h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">¶</a></h2>
+<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">ST_Envelope</span><span class="p">(</span><span class="n">ST_Point</span><span class="p">(</span><span class="mi">1</span><span class="p">.</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">.</span><span class="mi">0</span><span class="p">));</span>
+</code></pre></div>
+<div class="codehilite"><pre><span></span><code>┌──────────────────────────────────────────────┐
+│ st_envelope(st_point(Float64(1),Float64(2))) │
+│                   geometry                   │
+╞══════════════════════════════════════════════╡
+│ POINT(1 2)                                   │
+└──────────────────────────────────────────────┘
+</code></pre></div>
+
 <div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">ST_Envelope</span><span class="p">(</span><span class="n">ST_GeomFromWKT</span><span class="p">(</span><span class="s1">'LINESTRING(0 0, 3 4)'</span><span class="p">));</span>
 </code></pre></div>
 <div class="codehilite"><pre><span></span><code>┌───────────────────────────────────────────────────────────┐
@@ -1597,14 +1617,54 @@ horizontal input.</p>
 └───────────────────────────────────────────────────────────┘
 </code></pre></div>
 
-<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">ST_Envelope</span><span class="p">(</span><span class="n">ST_Point</span><span class="p">(</span><span class="mi">1</span><span class="p">.</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">.</span><span class="mi">0</span><span class="p">));</span>
+<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">ST_Envelope</span><span class="p">(</span><span class="n">ST_GeogFromWKT</span><span class="p">(</span><span class="s1">'LINESTRING(0 0, 3 4)'</span><span class="p">));</span>
 </code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌──────────────────────────────────────────────┐
-│ st_envelope(st_point(Float64(1),Float64(2))) │
-│                   geometry                   │
-╞══════════════════════════════════════════════╡
-│ POINT(1 2)                                   │
-└──────────────────────────────────────────────┘
+<div class="codehilite"><pre><span></span><code>┌──────────────────────────────────────────────────────────────────────────────┐
+│           st_envelope(st_geogfromwkt(Utf8("LINESTRING(0 0, 3 4)")))          │
+│                                   geometry                                   │
+╞══════════════════════════════════════════════════════════════════════════════╡
+│ POLYGON((0 -0.000000000000025444437451708134,0 4.000000000000026,3.00000000… │
+└──────────────────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">ST_Envelope</span><span class="p">(</span><span class="n">ST_GeomFromWKT</span><span class="p">(</span><span class="s1">'LINESTRING(170 3, -170 4)'</span><span class="p">));</span>
+</code></pre></div>
+<div class="codehilite"><pre><span></span><code>┌────────────────────────────────────────────────────────────────┐
+│ st_envelope(st_geomfromwkt(Utf8("LINESTRING(170 3, -170 4)"))) │
+│                            geometry                            │
+╞════════════════════════════════════════════════════════════════╡
+│ POLYGON((-170 3,-170 4,170 4,170 3,-170 3))                    │
+└────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">ST_Envelope</span><span class="p">(</span><span class="n">ST_GeogPoint</span><span class="p">(</span><span class="mi">1</span><span class="p">.</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">.</span><span class="mi">0</span><span class="p">));</span>
+</code></pre></div>
+<div class="codehilite"><pre><span></span><code>┌───────────────────────────────────────────────────────┐
+│    st_envelope(st_geogpoint(Float64(1),Float64(2)))   │
+│                        geometry                       │
+╞═══════════════════════════════════════════════════════╡
+│ LINESTRING(0.9999999999999746 2,1.0000000000000255 2) │
+└───────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">ST_Envelope</span><span class="p">(</span><span class="n">ST_GeogFromWKT</span><span class="p">(</span><span class="s1">'LINESTRING(0 0, 3 4)'</span><span class="p">));</span>
+</code></pre></div>
+<div class="codehilite"><pre><span></span><code>┌──────────────────────────────────────────────────────────────────────────────┐
+│           st_envelope(st_geogfromwkt(Utf8("LINESTRING(0 0, 3 4)")))          │
+│                                   geometry                                   │
+╞══════════════════════════════════════════════════════════════════════════════╡
+│ POLYGON((0 -0.000000000000025444437451708134,0 4.000000000000026,3.00000000… │
+└──────────────────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">ST_Envelope</span><span class="p">(</span><span class="n">ST_GeogFromWKT</span><span class="p">(</span><span class="s1">'LINESTRING(170 3, -170 4)'</span><span class="p">));</span>
+</code></pre></div>
+<div class="codehilite"><pre><span></span><code>┌──────────────────────────────────────────────────────────────────────────────┐
+│        st_envelope(st_geogfromwkt(Utf8("LINESTRING(170 3, -170 4)")))        │
+│                                   geometry                                   │
+╞══════════════════════════════════════════════════════════════════════════════╡
+│ MULTIPOLYGON(((170 2.9999999999999747,170 4.000000000000026,180 4.000000000… │
+└──────────────────────────────────────────────────────────────────────────────┘
 </code></pre></div>
 
 
@@ -1626,7 +1686,7 @@ horizontal input.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"></path></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="June 2, 2026 14:47:04 UTC">June 2, 2026 14:47:04</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="June 2, 2026 21:11:57 UTC">June 2, 2026 21:11:57</span>
   </span>
 
     

@@ -17,14 +17,25 @@
 # under the License.
 
 title: ST_YMin
-description: Returns the minimum Y coordinate of a geometry's bounding box.
+description: Returns the minimum Y coordinate (latitude for geography) of a geometry or geography's bounding box.
 kernels:
   - returns: double
     args: [geometry]
+  - returns: double
+    args: [geography]
 ---
+
+## Description
+
+For geography, the minimum latitude is computed considering spherical geometry (e.g., the minimum latitude of a linestring that crosses the South Pole is -90).
 
 ## Examples
 
 ```sql
 SELECT ST_YMin(ST_GeomFromText('LINESTRING(0 0, 5 4)'));
+```
+
+
+```sql
+SELECT ST_YMin(ST_GeogFromText('LINESTRING(0 0, 5 4)'));
 ```

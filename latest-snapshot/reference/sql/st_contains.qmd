@@ -21,6 +21,8 @@ description: Returns true if geomA contains geomB.
 kernels:
   - returns: boolean
     args: [geometry, geometry]
+  - returns: boolean
+    args: [geography, geography]
 ---
 
 ## Description
@@ -33,5 +35,12 @@ Returns `true` if no points of B lie outside A and at least one point of B lies 
 SELECT ST_Contains(
     ST_GeomFromText('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))'),
     ST_Point(0.25, 0.25)
+) AS val;
+```
+
+```sql
+SELECT ST_Contains(
+    ST_GeogFromText('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))'),
+    ST_GeogPoint(0.25, 0.25)
 ) AS val;
 ```

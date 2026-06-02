@@ -20,18 +20,18 @@ title: ST_LineLocatePoint
 description: Returns the location of the closest point on a LineString as a fraction of its total length.
 kernels:
   - returns: double
-    args: [geometry, geometry]
+    args: [geography, geography]
 ---
 
 ## Description
 
-Returns a double between 0 and 1, representing the location of the closest point on the LineString as a fraction of its total length. The first argument must be a LINESTRING, and the second argument is a POINT geometry.
+Returns a double between 0 and 1, representing the location of the closest point on the LineString as a fraction of its total length. The first argument must be a LINESTRING, and the second argument is a POINT geometry or geography. For geography, the fraction is computed based on spherical interpolation between vertices.
 
 ## Examples
 
 ```sql
 SELECT ST_LineLocatePoint(
-    ST_GeogFromText('LINESTRING(0 0, 1 1, 2 2)'),
-    ST_GeogFromText('POINT(0 2)')
+    ST_GeogFromWKT('LINESTRING (0 0, 1 1, 2 2)'),
+    ST_GeogFromWKT('POINT (1 1)')
 );
 ```

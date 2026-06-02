@@ -17,26 +17,38 @@
 # under the License.
 
 title: ST_Simplify
-description: Simplifies an input geometry using the Douglas-Peucker algorithm.
+description: Simplifies an input geometry or geography using the Douglas-Peucker algorithm.
 kernels:
   - returns: geometry
     args:
     - geometry
     - name: tolerance
       type: double
+  - returns: geography
+    args:
+    - geography
+    - name: tolerance
+      type: double
 ---
 
 ## Description
 
-Simplifies a geometry using the Douglas-Peucker algorithm. The `tolerance` parameter controls the degree of simplification: higher values produce simpler geometries. This function may produce invalid geometries; use `ST_SimplifyPreserveTopology` when validity must be maintained.
+Simplifies a geometry or geography using the Douglas-Peucker algorithm. The `tolerance` parameter controls the degree of simplification: higher values produce simpler geometries. For geography, the tolerance is specified in meters and a different algorithm is used.
+
+This function may produce invalid geometries; use `ST_SimplifyPreserveTopology` when validity must be maintained.
 
 ## Examples
 
 ```sql
 SELECT ST_Simplify(
-    ST_GeomFromWKT('POLYGON((8 25, 28 22, 28 20, 15 11, 33 3, 56 30, 46 33,
-        46 34, 47 44, 35 36, 45 33, 43 19, 29 21, 29 22,
-        35 26, 24 39, 8 25))'),
-    10
+    ST_GeomFromWKT('LINESTRING (0 0, 0.5 0.1, 1 0, 1.5 0.1, 2 0)'),
+    0.2
+);
+```
+
+```sql
+SELECT ST_Simplify(
+    ST_GeogFromWKT('LINESTRING (0 0, 0.5 0.1, 1 0, 1.5 0.1, 2 0)'),
+    50000
 );
 ```
