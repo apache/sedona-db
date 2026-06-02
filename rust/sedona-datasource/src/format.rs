@@ -402,7 +402,6 @@ mod test {
         prelude::{col, lit, SessionContext},
     };
     use datafusion_common::plan_err;
-    use datafusion_physical_plan::filter_pushdown::PushedDown::No;
     use std::{
         io::{Read, Write},
         path::PathBuf,
