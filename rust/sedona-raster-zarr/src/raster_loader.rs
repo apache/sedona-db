@@ -45,7 +45,7 @@ use arrow_buffer::Buffer;
 use arrow_schema::ArrowError;
 use async_trait::async_trait;
 use sedona_common::sedona_internal_datafusion_err;
-use sedona_raster::raster_loader::{AsyncByteLoader, RasterLoadRequest};
+use sedona_raster::raster_loader::{AsyncByteLoader, RasterLoadRequest, RasterLoadResult};
 use zarrs::group::Group;
 use zarrs_filesystem::FilesystemStore;
 
@@ -74,7 +74,7 @@ impl ZarrLoader {
 
 #[async_trait]
 impl AsyncByteLoader for ZarrLoader {
-    async fn load(&self, req: &RasterLoadRequest<'_>) -> Result<Buffer, ArrowError> {
+    async fn load(&self, req: &RasterLoadRequest<'_>) -> Result<RasterLoadResult, ArrowError> {
         // Take owned copies for the spawn_blocking closure.
         let uri = req.uri.to_string();
         let expected_dtype = req.data_type;
@@ -139,7 +139,7 @@ impl AsyncByteLoader for ZarrLoader {
             )))
         })??;
 
-        Ok(buffer)
+        Ok(RasterLoadResult::unresolved(buffer, req))
     }
 }
 
@@ -197,10 +197,11 @@ mod tests {
             uri: &uri,
             dim_names: &["y", "x"],
             source_shape: &[2, 3],
+            view: &[],
             data_type: BandDataType::UInt8,
         };
-        let buf = loader.load(&req).await.unwrap();
-        assert_eq!(buf.as_slice(), expected_pixels.as_slice());
+        let result = loader.load(&req).await.unwrap();
+        assert_eq!(result.bytes.as_slice(), expected_pixels.as_slice());
     }
 
     #[tokio::test]
@@ -214,7 +215,7 @@ mod tests {
             uri: &uri,
             dim_names: &["y", "x"],
             source_shape: &[2, 3],
-            // Array is UInt8 but the band claims Int16.
+            view: &[], // Array is UInt8 but the band claims Int16.
             data_type: BandDataType::Int16,
         };
         let err = loader.load(&req).await.unwrap_err();
@@ -232,6 +233,7 @@ mod tests {
             uri: "file:///tmp/foo.zarr", // missing fragment
             dim_names: &["y", "x"],
             source_shape: &[2, 3],
+            view: &[],
             data_type: BandDataType::UInt8,
         };
         let err = loader.load(&req).await.unwrap_err();
@@ -253,6 +255,7 @@ mod tests {
             uri: &uri,
             dim_names: &["y", "x"],
             source_shape: &[2, 3],
+            view: &[],
             data_type: BandDataType::UInt8,
         };
         let err = loader.load(&req).await.unwrap_err();
@@ -271,6 +274,7 @@ mod tests {
             uri: &uri,
             dim_names: &["y", "x"],
             source_shape: &[2, 3],
+            view: &[],
             data_type: BandDataType::UInt8,
         };
         let err = loader.load(&req).await.unwrap_err();

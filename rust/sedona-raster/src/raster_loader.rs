@@ -37,6 +37,8 @@ use datafusion_common::config::{
 use datafusion_common::{config_err, Result as DFResult};
 use sedona_schema::raster::BandDataType;
 
+use crate::traits::ViewEntry;
+
 /// Everything a backend needs to materialise a single OutDb band's bytes.
 ///
 /// Constructed by `RS_EnsureLoaded` once per row from the band's schema
@@ -44,13 +46,14 @@ use sedona_schema::raster::BandDataType;
 /// fields point into the input `RecordBatch` and stay valid for the
 /// duration of the [`AsyncByteLoader::load`] future.
 ///
-/// This request carries no band *view*: it always asks for the full
-/// `source_shape`, and `load` returns a bare `Buffer`. Once non-identity
-/// views become constructible, the request must carry the desired view
-/// and the response must report the realized `(buffer, source_shape,
-/// view)` so a loader can range-read a sub-window and the caller can tell
-/// what it got. Tracked in
-/// <https://github.com/apache/sedona-db/issues/897>.
+/// The request carries the band's `view`, but a loader may ignore it: it
+/// returns a [`RasterLoadResult`] that *describes* the bytes it produced
+/// (their `source_shape` and `view`), so the caller never needs a separate
+/// "did you resolve the view?" flag. A loader that doesn't prune I/O returns
+/// the full `source_shape` with the view unresolved
+/// ([`RasterLoadResult::unresolved`]); one that range-reads a sub-window
+/// returns the visible shape with an identity view. Actually pruning by the
+/// view is tracked in <https://github.com/apache/sedona-db/issues/897>.
 #[derive(Debug, Clone, Copy)]
 pub struct RasterLoadRequest<'a> {
     /// Anchor URI from the band's `outdb_uri` column. Bare paths and
@@ -59,13 +62,51 @@ pub struct RasterLoadRequest<'a> {
     /// Per-axis names parallel to `source_shape`. Backends use this to
     /// map their native axis order onto the band's.
     pub dim_names: &'a [&'a str],
-    /// Raw source shape in `dim_names` order. The loader returns a
-    /// `Buffer` whose length equals `Π source_shape × data_type.byte_size()`
-    /// bytes, encoding pixels in C-order over `dim_names`.
+    /// Raw source shape in `dim_names` order. A loader that returns the full
+    /// source produces a `Buffer` of `Π source_shape × byte_size` bytes in
+    /// C-order over `dim_names`.
     pub source_shape: &'a [u64],
+    /// The band's view over `source_shape` (the visible region). A loader
+    /// may ignore it and return the full source (reporting the view
+    /// unresolved), or honor it and return only the visible region; the
+    /// returned [`RasterLoadResult`] says which.
+    pub view: &'a [ViewEntry],
     /// Pixel type the band claims. The loader returns bytes encoding this
     /// type and errors if the source disagrees (e.g. file's dtype differs).
     pub data_type: BandDataType,
+}
+
+/// What [`AsyncByteLoader::load`] returns: the bytes plus the layout they
+/// are in. Self-describing, so the caller builds the output band from it
+/// without a separate capability flag.
+///
+/// - **Unresolved** (loader ignored the view): `bytes` is the full source,
+///   `source_shape` == request's, `view` == request's. See
+///   [`RasterLoadResult::unresolved`].
+/// - **Resolved** (loader cropped to the view): `bytes` is the visible
+///   region, `source_shape` is the visible shape, `view` is identity.
+#[derive(Debug, Clone)]
+pub struct RasterLoadResult {
+    /// Loaded bytes, C-order over `dim_names`, length
+    /// `Π source_shape × data_type.byte_size()`.
+    pub bytes: Buffer,
+    /// The shape `bytes` are laid out in.
+    pub source_shape: Vec<u64>,
+    /// View to apply to `bytes` to obtain the visible region (identity when
+    /// the loader already resolved the crop).
+    pub view: Vec<ViewEntry>,
+}
+
+impl RasterLoadResult {
+    /// Full source, view left unresolved — echoes the request. The default
+    /// a loader that doesn't prune I/O returns.
+    pub fn unresolved(bytes: Buffer, req: &RasterLoadRequest<'_>) -> Self {
+        Self {
+            bytes,
+            source_shape: req.source_shape.to_vec(),
+            view: req.view.to_vec(),
+        }
+    }
 }
 
 /// Backend trait. Implementers live in format-specific crates
@@ -84,10 +125,12 @@ pub struct RasterLoadRequest<'a> {
 /// without an extra copy through a `BinaryViewBuilder` block buffer.
 #[async_trait::async_trait]
 pub trait AsyncByteLoader: Send + Sync + std::fmt::Debug {
-    /// Fetch the band's bytes. The returned `Buffer` must contain exactly
-    /// `Π source_shape × data_type.byte_size()` bytes in C-order over
-    /// `dim_names`. Errors propagate to the caller of `RS_EnsureLoaded`.
-    async fn load(&self, req: &RasterLoadRequest<'_>) -> Result<Buffer, ArrowError>;
+    /// Fetch the band's bytes, returning a [`RasterLoadResult`] that
+    /// describes the layout produced. A loader that doesn't prune by the
+    /// view returns [`RasterLoadResult::unresolved`] (full source, length
+    /// `Π source_shape × data_type.byte_size()` in C-order over
+    /// `dim_names`). Errors propagate to the caller of `RS_EnsureLoaded`.
+    async fn load(&self, req: &RasterLoadRequest<'_>) -> Result<RasterLoadResult, ArrowError>;
 }
 
 /// Process-side registry mapping `outdb_format` keys to loader instances.
@@ -308,14 +351,17 @@ mod tests {
 
     #[async_trait::async_trait]
     impl AsyncByteLoader for MockLoader {
-        async fn load(&self, req: &RasterLoadRequest<'_>) -> Result<Buffer, ArrowError> {
+        async fn load(&self, req: &RasterLoadRequest<'_>) -> Result<RasterLoadResult, ArrowError> {
             self.seen
                 .lock()
                 .unwrap()
                 .push((req.uri.to_string(), req.source_shape.to_vec()));
             let elements: u64 = req.source_shape.iter().copied().product();
             let len = elements as usize * req.data_type.byte_size();
-            Ok(Buffer::from_vec(vec![0u8; len]))
+            Ok(RasterLoadResult::unresolved(
+                Buffer::from_vec(vec![0u8; len]),
+                req,
+            ))
         }
     }
 
@@ -368,10 +414,11 @@ mod tests {
             uri: "file:///tmp/foo.tif",
             dim_names: &["y", "x"],
             source_shape: &[3, 4],
+            view: &[],
             data_type: BandDataType::UInt8,
         };
-        let buf = loader.load(&req).await.unwrap();
-        assert_eq!(buf.len(), 12); // 3 × 4 × 1 byte
+        let result = loader.load(&req).await.unwrap();
+        assert_eq!(result.bytes.len(), 12); // 3 × 4 × 1 byte
         let seen = loader.seen.lock().unwrap();
         assert_eq!(seen.len(), 1);
         assert_eq!(seen[0].0, "file:///tmp/foo.tif");
@@ -390,11 +437,12 @@ mod tests {
             uri: "s3://bucket/cube.zarr",
             dim_names: &["t", "y", "x"],
             source_shape: &[2, 3, 4],
+            view: &[],
             data_type: BandDataType::Float32,
         };
         let loader = r.get("zarr").unwrap();
-        let buf = loader.load(&req).await.unwrap();
-        assert_eq!(buf.len(), 2 * 3 * 4 * 4); // Float32 = 4 bytes
+        let result = loader.load(&req).await.unwrap();
+        assert_eq!(result.bytes.len(), 2 * 3 * 4 * 4); // Float32 = 4 bytes
 
         // Dispatched to zarr, not gdal.
         assert_eq!(zarr.seen.lock().unwrap().len(), 1);

@@ -747,7 +747,7 @@ mod tests {
     #[tokio::test]
     async fn outdb_registry_has_gdal_at_bootstrap_and_accepts_runtime_registration() {
         use arrow_buffer::Buffer;
-        use sedona_raster::raster_loader::{AsyncByteLoader, RasterLoadRequest};
+        use sedona_raster::raster_loader::{AsyncByteLoader, RasterLoadRequest, RasterLoadResult};
 
         let ctx = SedonaContext::new();
         // GDAL is always registered at bootstrap (compiled-in backend).
@@ -766,9 +766,12 @@ mod tests {
         impl AsyncByteLoader for MockLoader {
             async fn load(
                 &self,
-                _req: &RasterLoadRequest<'_>,
-            ) -> std::result::Result<Buffer, arrow_schema::ArrowError> {
-                Ok(Buffer::from_vec(Vec::<u8>::new()))
+                req: &RasterLoadRequest<'_>,
+            ) -> std::result::Result<RasterLoadResult, arrow_schema::ArrowError> {
+                Ok(RasterLoadResult::unresolved(
+                    Buffer::from_vec(Vec::<u8>::new()),
+                    req,
+                ))
             }
         }
         ctx.register_raster_loader("mock", Arc::new(MockLoader));

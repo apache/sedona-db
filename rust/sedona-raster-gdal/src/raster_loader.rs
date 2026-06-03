@@ -65,7 +65,7 @@ use arrow_schema::ArrowError;
 use async_trait::async_trait;
 use datafusion_common::{DataFusionError, Result as DFResult};
 use sedona_gdal::raster::rasterband::RasterBand;
-use sedona_raster::raster_loader::{AsyncByteLoader, RasterLoadRequest};
+use sedona_raster::raster_loader::{AsyncByteLoader, RasterLoadRequest, RasterLoadResult};
 
 use crate::gdal_common::{convert_gdal_err, gdal_to_band_data_type, with_gdal};
 use crate::gdal_dataset_provider::thread_local_cache;
@@ -115,7 +115,7 @@ impl Drop for CancelOnDrop {
 
 #[async_trait]
 impl AsyncByteLoader for GdalLoader {
-    async fn load(&self, req: &RasterLoadRequest<'_>) -> Result<Buffer, ArrowError> {
+    async fn load(&self, req: &RasterLoadRequest<'_>) -> Result<RasterLoadResult, ArrowError> {
         // Validate request shape synchronously, before spawning a blocking
         // task — these are programming errors, no point queueing them
         // onto a worker.
@@ -226,7 +226,7 @@ impl AsyncByteLoader for GdalLoader {
             )))
         })??;
 
-        Ok(buffer)
+        Ok(RasterLoadResult::unresolved(buffer, req))
     }
 }
 
@@ -360,12 +360,13 @@ mod tests {
             uri: &uri,
             dim_names: &["y", "x"],
             source_shape: &[2, 3],
+            view: &[],
             data_type: BandDataType::UInt8,
         };
 
-        let buf = loader.load(&req).await.unwrap();
-        assert_eq!(buf.len(), 6);
-        assert_eq!(buf.as_slice(), &[0u8, 1, 2, 3, 4, 5]);
+        let result = loader.load(&req).await.unwrap();
+        assert_eq!(result.bytes.len(), 6);
+        assert_eq!(result.bytes.as_slice(), &[0u8, 1, 2, 3, 4, 5]);
     }
 
     #[tokio::test]
@@ -379,10 +380,11 @@ mod tests {
             uri: &uri,
             dim_names: &["y", "x"],
             source_shape: &[2, 3],
+            view: &[],
             data_type: BandDataType::UInt8,
         };
-        let buf = loader.load(&req).await.unwrap();
-        assert_eq!(buf.len(), 6);
+        let result = loader.load(&req).await.unwrap();
+        assert_eq!(result.bytes.len(), 6);
     }
 
     #[tokio::test]
@@ -392,6 +394,7 @@ mod tests {
             uri: "ignored",
             dim_names: &["t", "y", "x"],
             source_shape: &[2, 3, 4],
+            view: &[],
             data_type: BandDataType::UInt8,
         };
         let err = loader.load(&req).await.unwrap_err();
@@ -408,6 +411,7 @@ mod tests {
             uri: "ignored",
             dim_names: &["x", "y"], // transposed
             source_shape: &[2, 3],
+            view: &[],
             data_type: BandDataType::UInt8,
         };
         let err = loader.load(&req).await.unwrap_err();
@@ -428,7 +432,7 @@ mod tests {
             uri: &uri,
             dim_names: &["y", "x"],
             source_shape: &[2, 3],
-            // File is UInt8 but we claim Int16 — should fail with a
+            view: &[], // File is UInt8 but we claim Int16 — should fail with a
             // clear dtype-mismatch message, not garbled bytes.
             data_type: BandDataType::Int16,
         };
@@ -447,6 +451,7 @@ mod tests {
             uri: "/nonexistent/path/to/file.tif#band=1",
             dim_names: &["y", "x"],
             source_shape: &[2, 3],
+            view: &[],
             data_type: BandDataType::UInt8,
         };
         let err = loader.load(&req).await.unwrap_err();
@@ -466,6 +471,7 @@ mod tests {
             uri: &uri,
             dim_names: &["y", "x"],
             source_shape: &[2, 3],
+            view: &[],
             data_type: BandDataType::UInt8,
         };
         let err = loader.load(&req).await.unwrap_err();
@@ -489,6 +495,7 @@ mod tests {
             uri: "ignored",
             dim_names: &["y", "x"],
             source_shape: &[1 << 16, 1 << 16],
+            view: &[],
             data_type: BandDataType::Float32,
         };
         let err = loader.load(&req).await.unwrap_err();
@@ -512,11 +519,12 @@ mod tests {
             uri: &uri,
             dim_names: &["y", "x"],
             source_shape: &[64, 16],
+            view: &[],
             data_type: BandDataType::UInt8,
         };
-        let buf = loader.load(&req).await.unwrap();
+        let result = loader.load(&req).await.unwrap();
         let expected: Vec<u8> = (0..16 * 64).map(|i| (i % 251) as u8).collect();
-        assert_eq!(buf.as_slice(), expected.as_slice());
+        assert_eq!(result.bytes.as_slice(), expected.as_slice());
     }
 
     /// Pre-arm the cancellation flag, then drive `read_band_blockwise`

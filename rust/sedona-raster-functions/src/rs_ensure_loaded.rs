@@ -45,7 +45,7 @@ use sedona_raster::builder::RasterBuilder;
 use sedona_raster::raster_loader::{
     AsyncByteLoader, RasterLoadRequest, RasterLoaderConfig, RasterLoaderRegistry,
 };
-use sedona_raster::traits::RasterRef;
+use sedona_raster::traits::{RasterRef, ViewEntry};
 
 /// `SedonaScalarUDF` metadata key marking a UDF whose kernels read raster
 /// pixel bytes. A raster function sets it (value `"true"`) via
@@ -138,6 +138,21 @@ fn lookup_loader(
         format!("registered formats: {}", registered.join(", "))
     };
     plan_err!("no raster loader registered for format '{format}' — {registered_msg}")
+}
+
+/// True if `view` is the canonical identity over `source_shape` (each visible
+/// axis maps to the same source axis, full extent, unit step). An empty view
+/// is treated as identity. Used to detect whether a loader returned an
+/// already-resolved (identity) layout we can build directly.
+fn view_is_identity(view: &[ViewEntry], source_shape: &[u64]) -> bool {
+    view.is_empty()
+        || (view.len() == source_shape.len()
+            && view.iter().enumerate().all(|(i, v)| {
+                v.source_axis == i as i64
+                    && v.start == 0
+                    && v.step == 1
+                    && v.steps == source_shape[i] as i64
+            }))
 }
 
 // One RsEnsureLoaded per session by construction — equality and hash
@@ -312,6 +327,7 @@ where
             let (
                 dim_names_owned,
                 source_shape,
+                view_owned,
                 data_type,
                 nodata,
                 outdb_uri,
@@ -326,6 +342,9 @@ where
                 let dim_names_owned: Vec<String> =
                     band.dim_names().iter().map(|s| s.to_string()).collect();
                 let source_shape: Vec<u64> = band.raw_source_shape().to_vec();
+                // Passed to the loader so it can (eventually) prune I/O; today
+                // every loader ignores it and returns the full source.
+                let view_owned: Vec<ViewEntry> = band.view().to_vec();
                 let data_type = band.data_type();
                 let nodata: Option<Vec<u8>> = band.nodata().map(|b| b.to_vec());
                 let outdb_uri: Option<String> = band.outdb_uri().map(|s| s.to_string());
@@ -349,6 +368,7 @@ where
                 (
                     dim_names_owned,
                     source_shape,
+                    view_owned,
                     data_type,
                     nodata,
                     outdb_uri,
@@ -395,14 +415,30 @@ where
                     uri,
                     dim_names: &dim_names,
                     source_shape: &source_shape,
+                    view: &view_owned,
                     data_type,
                 };
-                loader.load(&req).await.map_err(|e| {
+                let result = loader.load(&req).await.map_err(|e| {
                     sedona_internal_datafusion_err!(
                         "RS_EnsureLoaded: loader for format '{format}' failed on \
                          band ({raster_idx},{band_idx}): {e}"
                     )
-                })?
+                })?;
+                // We can only build identity-view output bands today
+                // (`start_band_nd`). A loader that resolved/cropped the view —
+                // returning a different `source_shape` or a non-identity
+                // `view` — needs `start_band_with_view`. Reserved for
+                // https://github.com/apache/sedona-db/issues/897.
+                if result.source_shape != source_shape
+                    || !view_is_identity(&result.view, &result.source_shape)
+                {
+                    return sedona_internal_err!(
+                        "RS_EnsureLoaded: band ({raster_idx},{band_idx}) loader returned a \
+                         resolved/non-identity view; lazy view resolution is not yet supported \
+                         (apache/sedona-db#897)"
+                    );
+                }
+                result.bytes
             };
 
             // Validate the resolved length so an under-sized loader output
@@ -455,7 +491,7 @@ mod tests {
     use arrow_array::Array;
     use sedona_raster::array::RasterStructArray;
     use sedona_raster::builder::RasterBuilder;
-    use sedona_raster::raster_loader::RasterLoaderRegistry;
+    use sedona_raster::raster_loader::{RasterLoadResult, RasterLoaderRegistry};
     use sedona_raster::traits::RasterRef;
     use sedona_schema::raster::BandDataType;
 
@@ -470,7 +506,7 @@ mod tests {
         async fn load(
             &self,
             req: &RasterLoadRequest<'_>,
-        ) -> Result<Buffer, arrow_schema::ArrowError> {
+        ) -> Result<RasterLoadResult, arrow_schema::ArrowError> {
             self.seen.lock().unwrap().push((
                 req.uri.to_string(),
                 req.source_shape.to_vec(),
@@ -480,7 +516,7 @@ mod tests {
             let len = elements as usize * req.data_type.byte_size();
             // Fill with a recognisable pattern: byte i = (i % 251) as u8.
             let bytes: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
-            Ok(Buffer::from_vec(bytes))
+            Ok(RasterLoadResult::unresolved(Buffer::from_vec(bytes), req))
         }
     }
 
@@ -695,10 +731,13 @@ mod tests {
         impl AsyncByteLoader for ShortLoader {
             async fn load(
                 &self,
-                _req: &RasterLoadRequest<'_>,
-            ) -> Result<Buffer, arrow_schema::ArrowError> {
+                req: &RasterLoadRequest<'_>,
+            ) -> Result<RasterLoadResult, arrow_schema::ArrowError> {
                 // Return one too few bytes (5 instead of 6).
-                Ok(Buffer::from_vec(vec![0u8; 5]))
+                Ok(RasterLoadResult::unresolved(
+                    Buffer::from_vec(vec![0u8; 5]),
+                    req,
+                ))
             }
         }
 
@@ -717,6 +756,63 @@ mod tests {
         assert!(
             msg.contains("expected") && msg.contains("loader returned"),
             "expected diagnostic about expected vs actual loader bytes, got: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn ensure_loaded_errors_when_loader_reports_non_identity_view() {
+        // A loader that reports a non-identity view exercises the deferred
+        // #897 path: we can't build a viewed output band yet, so the caller
+        // must surface a clear error rather than silently dropping the view.
+        let input_struct = build_outdb_input("file:///tmp/foo.tif", "mock", &[2, 3]);
+        let input: ArrayRef = Arc::new(input_struct);
+
+        #[derive(Debug, Default)]
+        struct ViewReportingLoader;
+        #[async_trait]
+        impl AsyncByteLoader for ViewReportingLoader {
+            async fn load(
+                &self,
+                req: &RasterLoadRequest<'_>,
+            ) -> Result<RasterLoadResult, arrow_schema::ArrowError> {
+                let elements: u64 = req.source_shape.iter().product();
+                let len = elements as usize * req.data_type.byte_size();
+                Ok(RasterLoadResult {
+                    bytes: Buffer::from_vec(vec![0u8; len]),
+                    source_shape: req.source_shape.to_vec(),
+                    // Non-identity: first axis sliced to a single step.
+                    view: vec![
+                        ViewEntry {
+                            source_axis: 0,
+                            start: 0,
+                            step: 1,
+                            steps: 1,
+                        },
+                        ViewEntry {
+                            source_axis: 1,
+                            start: 0,
+                            step: 1,
+                            steps: 3,
+                        },
+                    ],
+                })
+            }
+        }
+
+        let loader_dyn: Arc<dyn AsyncByteLoader> = Arc::new(ViewReportingLoader);
+        let reg = registry_with("mock", loader_dyn);
+        let err = ensure_loaded(&input, |fmt| {
+            reg.read()
+                .unwrap()
+                .get(fmt)
+                .ok_or_else(|| datafusion_common::DataFusionError::Plan(format!("no '{fmt}'")))
+        })
+        .await
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("897"),
+            "expected the #897 deferral error, got: {msg}"
         );
     }
 
