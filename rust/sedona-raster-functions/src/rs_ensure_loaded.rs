@@ -128,7 +128,7 @@ fn lookup_loader(
         return Ok(loader);
     }
     // Build a diagnostic that lists registered formats so users know
-    // which plugins are loaded.
+    // which loaders are registered.
     let registered: Vec<String> = guard.formats().map(String::from).collect();
     let registered_msg = if registered.is_empty() {
         "no OutDb loaders are registered in this session".to_string()

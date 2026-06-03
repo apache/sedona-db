@@ -85,7 +85,7 @@ pub struct SedonaContext {
     pub functions: FunctionSet,
     /// Per-session registry of async OutDb byte loaders, keyed by
     /// `outdb_format`. Held behind an `Arc<RwLock<…>>` so the registered
-    /// `RS_EnsureLoaded` UDF instance and any plugin crates' `register(&ctx)`
+    /// `RS_EnsureLoaded` UDF instance and any extension crates' `register(&ctx)`
     /// entry points observe the same map. See
     /// [`SedonaContext::register_outdb_loader`].
     outdb_registry: Arc<RwLock<OutDbLoaderRegistry>>,
@@ -356,7 +356,7 @@ impl SedonaContext {
     ///
     /// Used by both compiled-in backends (`sedona-raster-gdal::register`
     /// called from `new_from_context` under `#[cfg(feature = "gdal")]`)
-    /// and out-of-tree plugins (`sedona-raster-zarr::register(&ctx)`
+    /// and out-of-tree extensions (`sedona-raster-zarr::register(&ctx)`
     /// from user code after construction). Later registrations under the
     /// same `format` key overwrite earlier ones.
     pub fn register_outdb_loader(
@@ -373,7 +373,8 @@ impl SedonaContext {
     }
 
     /// Returns a snapshot list of currently-registered OutDb format keys.
-    /// Useful for diagnostics (e.g., listing plugins after session setup).
+    /// Useful for diagnostics (e.g., listing registered backends after
+    /// session setup).
     pub fn registered_outdb_formats(&self) -> Vec<String> {
         self.outdb_registry
             .read()
@@ -744,13 +745,13 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn outdb_registry_has_gdal_at_bootstrap_and_accepts_plugin_registration() {
+    async fn outdb_registry_has_gdal_at_bootstrap_and_accepts_runtime_registration() {
         use arrow_buffer::Buffer;
         use sedona_raster::outdb_loader::{AsyncByteLoader, OutDbLoadRequest};
 
         let ctx = SedonaContext::new();
         // GDAL is always registered at bootstrap (compiled-in backend).
-        // Plugin backends like Zarr add themselves later via
+        // Extension backends like Zarr add themselves later via
         // `register_outdb_loader`.
         let initial_formats = ctx.registered_outdb_formats();
         assert!(
@@ -758,7 +759,7 @@ mod tests {
             "fresh SedonaContext should register the GDAL backend at bootstrap; got {initial_formats:?}"
         );
 
-        // Mock plugin-style registration on top of the bootstrap state.
+        // Mock runtime registration on top of the bootstrap state.
         #[derive(Debug)]
         struct MockLoader;
         #[async_trait]

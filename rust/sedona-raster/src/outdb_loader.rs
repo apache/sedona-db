@@ -93,7 +93,7 @@ pub trait AsyncByteLoader: Send + Sync + std::fmt::Debug {
 /// Process-side registry mapping `outdb_format` keys to loader instances.
 ///
 /// One registry instance per `SedonaContext`. The owning context wraps it
-/// in `Arc<RwLock<…>>` so plugin crates (`sedona-raster-zarr`, future COG /
+/// in `Arc<RwLock<…>>` so extension crates (`sedona-raster-zarr`, future COG /
 /// Icechunk / …) can register their loaders post-construction via a
 /// public `SedonaContext::register_outdb_loader` API.
 #[derive(Debug, Default)]
@@ -104,7 +104,7 @@ pub struct OutDbLoaderRegistry {
 impl OutDbLoaderRegistry {
     /// Construct an empty registry. Compiled-in backends (`sedona-raster-gdal`
     /// under the `gdal` feature) register themselves from `SedonaContext::new`;
-    /// plugin backends register via `SedonaContext::register_outdb_loader`.
+    /// extension backends register via `SedonaContext::register_outdb_loader`.
     pub fn new() -> Self {
         Self::default()
     }
@@ -112,8 +112,8 @@ impl OutDbLoaderRegistry {
     /// Register a loader under a format key. Later registrations for the
     /// same key overwrite — registries are mutable for the lifetime of
     /// the session and there's no value in locking down after first
-    /// registration (a process running plugins may legitimately swap
-    /// implementations during setup).
+    /// registration (a process with runtime-registered backends may
+    /// legitimately swap implementations during setup).
     pub fn register(&mut self, format: impl Into<String>, loader: Arc<dyn AsyncByteLoader>) {
         self.loaders.insert(format.into(), loader);
     }
