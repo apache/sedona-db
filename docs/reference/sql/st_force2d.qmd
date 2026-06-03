@@ -17,10 +17,12 @@
 # under the License.
 
 title: ST_Force2D
-description: Forces a geometry into a XY coordinate model.
+description: Forces a geometry or geography into a XY coordinate model.
 kernels:
   - returns: geometry
     args: [geometry]
+  - returns: geography
+    args: [geography]
 ---
 
 ## Description
@@ -31,4 +33,8 @@ Discards any Z and M values present (if any).
 
 ```sql
 SELECT ST_Force2D(ST_GeomFromWKT('POINT Z (1 2 3)'));
+```
+
+```sql
+SELECT ST_Force2D(ST_GeogFromWKT('POINT Z (1 2 3)'));
 ```

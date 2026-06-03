@@ -33,15 +33,24 @@ kernels:
 
 ## Description
 
-Densifies a geometry by adding intermediate points along line segments that exceed
-the specified maximum segment length. Uses Euclidean (planar) distance for geometry.
-Points are added so that each resulting segment is no longer than `max_segment_length`.
+Densifies a geometry or geography by adding intermediate points along line segments
+that exceed the specified maximum segment length. For geometry, uses planar distance; for
+geography, uses the spherical approximation of the geodesic distance in meters and points
+are added along the great circle arc. In both cases, points are added so that each
+resulting segment is no longer than `max_segment_length`.
 
 ## Examples
 
 ```sql
 SELECT ST_Segmentize(
-    ST_GeomFromText('LINESTRING (0 0, 100 0)'),
-    25
+    ST_GeomFromText('LINESTRING (0 0, 0 10)'),
+    2
+);
+```
+
+```sql
+SELECT ST_Segmentize(
+    ST_GeogFromWKT('LINESTRING (0 0, 0 10)'),
+    100000
 );
 ```

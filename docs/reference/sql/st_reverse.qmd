@@ -17,14 +17,20 @@
 # under the License.
 
 title: ST_Reverse
-description: Returns the geometry with vertex order reversed.
+description: Returns the geometry or geography with vertex order reversed.
 kernels:
   - returns: geometry
     args: [geometry]
+  - returns: geography
+    args: [geography]
 ---
 
 ## Examples
 
 ```sql
-SELECT ST_Reverse(ST_GeomFromText('LINESTRING(0 0, 1 2, 2 4, 3 6)'));
+SELECT ST_Reverse(ST_GeomFromText('LINESTRING (0 0, 1 2, 2 4)'));
+```
+
+```sql
+SELECT ST_Reverse(ST_GeogFromWKT('LINESTRING (0 0, 1 2, 2 4)'));
 ```

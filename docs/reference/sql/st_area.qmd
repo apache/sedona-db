@@ -17,18 +17,24 @@
 # under the License.
 
 title: ST_Area
-description: Returns the area of a geometry.
+description: Returns the area of a geometry or geography.
 kernels:
-  - returns: geometry
+  - returns: double
     args: [geometry]
+  - returns: double
+    args: [geography]
 ---
 
 ## Description
 
-`ST_Area()` Returns the area of a polygon or multi-polygon geometry.
+`ST_Area()` Returns the area of a polygon or multi-polygon. For geometry, returns the area in the units of the coordinate reference system (squared); for geography, returns the area in square meters, calculated on a spherical Earth model.
 
 ## Examples
 
 ```sql
-SELECT ST_Area(ST_GeomFromWKT('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))'));
+SELECT ST_Area(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))'));
+```
+
+```sql
+SELECT ST_Area(ST_GeogFromWKT('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))'));
 ```

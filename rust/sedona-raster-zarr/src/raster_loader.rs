@@ -39,19 +39,15 @@
 //! );
 //! ```
 
-use std::sync::Arc;
-
 use arrow_buffer::Buffer;
 use arrow_schema::ArrowError;
 use async_trait::async_trait;
 use sedona_common::sedona_internal_datafusion_err;
 use sedona_raster::raster_loader::{AsyncByteLoader, RasterLoadRequest, RasterLoadResult};
-use zarrs::group::Group;
-use zarrs_filesystem::FilesystemStore;
+use zarrs::array::{Array, ArrayBytes};
 
 use crate::dtype::zarr_to_band_data_type;
-use crate::loader::retrieve_chunk_bytes;
-use crate::source_uri::{group_uri_to_filesystem_path, parse_chunk_anchor};
+use crate::source_uri::{object_store_for_uri, open_storage_from_uri, parse_chunk_anchor};
 
 /// Format key the loader registers under. Keep in sync with
 /// `outdb_format` values emitted by the Zarr reader's band builder
@@ -60,9 +56,11 @@ pub const ZARR_FORMAT: &str = "zarr";
 
 /// Async raster byte loader for Zarr-backed bands.
 ///
-/// Stateless: dataset opens use a fresh `FilesystemStore` per call.
-/// Caching the open store per `(store_uri, array_path)` is a follow-up
-/// optimisation that doesn't change the trait surface.
+/// Stateless: each call builds an `ObjectStore` from the anchor's store URI
+/// (via [`object_store_for_uri`]) and opens the array over async storage.
+/// Building the store here is the in-process bridge until a credentialed
+/// store can be passed in from DataFusion's `ObjectStoreRegistry`; see the
+/// loader-FFI follow-up.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ZarrLoader;
 
@@ -75,82 +73,72 @@ impl ZarrLoader {
 #[async_trait]
 impl AsyncByteLoader for ZarrLoader {
     async fn load(&self, req: &RasterLoadRequest<'_>) -> Result<RasterLoadResult, ArrowError> {
-        // Take owned copies for the spawn_blocking closure.
-        let uri = req.uri.to_string();
-        let expected_dtype = req.data_type;
+        let anchor = parse_chunk_anchor(req.uri)?;
+        // Build the store from the anchor's store URI. Temporary: when a
+        // credentialed store can be passed in from DataFusion's
+        // ObjectStoreRegistry, this is replaced by a store carried on the
+        // request (loader-FFI follow-up).
+        let store = object_store_for_uri(&anchor.store_uri)?;
+        let storage = open_storage_from_uri(&anchor.store_uri, store)?;
 
-        let buffer = tokio::task::spawn_blocking(move || -> Result<Buffer, ArrowError> {
-            let anchor = parse_chunk_anchor(&uri)?;
-            let fs_path = group_uri_to_filesystem_path(&anchor.store_uri)?;
-            let store = FilesystemStore::new(&fs_path).map_err(|e| {
-                ArrowError::ExternalError(Box::new(sedona_internal_datafusion_err!(
-                    "failed to open Zarr store at {}: {e}",
-                    fs_path.display()
-                )))
-            })?;
-            let storage: Arc<FilesystemStore> = Arc::new(store);
-
-            // The group itself isn't strictly needed to open an array,
-            // but resolving the array path through it gives a clear
-            // diagnostic if the group root or the array path is wrong.
-            let group = Group::open(storage.clone(), "/").map_err(|e| {
-                ArrowError::ExternalError(Box::new(sedona_internal_datafusion_err!(
-                    "failed to open Zarr group at {}: {e}",
-                    fs_path.display()
-                )))
-            })?;
-            let _ = group; // group handle dropped; array open uses storage directly.
-
-            let array_path = if anchor.array_path.starts_with('/') {
-                anchor.array_path.clone()
-            } else {
-                format!("/{}", anchor.array_path)
-            };
-            let array = zarrs::array::Array::open(storage, &array_path).map_err(|e| {
-                ArrowError::ExternalError(Box::new(sedona_internal_datafusion_err!(
-                    "failed to open Zarr array {}: {e}",
-                    array_path
-                )))
-            })?;
-
-            // Verify the Zarr array's dtype matches the band metadata's
-            // claim before reading. Mismatches catch silent byte-count
-            // surprises here rather than letting RS_EnsureLoaded's
-            // expected-byte-count check mis-blame the loader for size.
-            let file_dtype = zarr_to_band_data_type(array.data_type())?;
-            if file_dtype != expected_dtype {
-                return Err(ArrowError::ExternalError(Box::new(
-                    sedona_internal_datafusion_err!(
-                        "Zarr OutDb band metadata claims {:?} but array {} is {:?}",
-                        expected_dtype,
-                        array_path,
-                        file_dtype
-                    ),
-                )));
-            }
-
-            let bytes = retrieve_chunk_bytes(&array, &anchor.chunk_indices)?;
-            Ok(Buffer::from_vec(bytes))
-        })
-        .await
-        .map_err(|e| {
+        let array_path = if anchor.array_path.starts_with('/') {
+            anchor.array_path.clone()
+        } else {
+            format!("/{}", anchor.array_path)
+        };
+        let array = Array::async_open(storage, &array_path).await.map_err(|e| {
             ArrowError::ExternalError(Box::new(sedona_internal_datafusion_err!(
-                "Zarr raster loader task panicked or was cancelled: {e}"
+                "failed to open Zarr array {array_path}: {e}"
             )))
-        })??;
+        })?;
 
-        Ok(RasterLoadResult::unresolved(buffer, req))
+        // Verify the Zarr array's dtype matches the band metadata's claim
+        // before reading. Mismatches surface here rather than letting
+        // RS_EnsureLoaded's expected-byte-count check mis-blame the loader.
+        let file_dtype = zarr_to_band_data_type(array.data_type())?;
+        if file_dtype != req.data_type {
+            return Err(ArrowError::ExternalError(Box::new(
+                sedona_internal_datafusion_err!(
+                    "Zarr OutDb band metadata claims {:?} but array {} is {:?}",
+                    req.data_type,
+                    array_path,
+                    file_dtype
+                ),
+            )));
+        }
+
+        let bytes = array
+            .async_retrieve_chunk::<ArrayBytes<'static>>(&anchor.chunk_indices)
+            .await
+            .map_err(|e| {
+                ArrowError::ExternalError(Box::new(sedona_internal_datafusion_err!(
+                    "failed to retrieve chunk {:?} from {array_path}: {e}",
+                    anchor.chunk_indices
+                )))
+            })?;
+        let raw = bytes.into_fixed().map_err(|_| {
+            ArrowError::InvalidArgumentError(format!(
+                "array {array_path}: variable-length chunk bytes are not supported"
+            ))
+        })?;
+        Ok(RasterLoadResult::unresolved(
+            Buffer::from_vec(raw.into_owned()),
+            req,
+        ))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
     use sedona_schema::raster::BandDataType;
     use tempfile::TempDir;
     use zarrs::array::ArrayBuilder;
     use zarrs::array::{data_type as zarr_dtype, FillValue};
     use zarrs::group::GroupBuilder;
+    use zarrs_filesystem::FilesystemStore;
 
     use crate::source_uri::build_chunk_anchor;
 
@@ -267,9 +255,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn zarr_loader_errors_on_cloud_scheme_until_supported() {
+    async fn zarr_loader_errors_on_unsupported_scheme() {
+        // `s3`/`http` are supported now; an unsupported scheme (e.g. `gs://`)
+        // is rejected at store construction, without touching the network.
         let loader = ZarrLoader::new();
-        let uri = build_chunk_anchor("s3://bucket/foo.zarr", "temperature", &[0, 0]);
+        let uri = build_chunk_anchor("gs://bucket/foo.zarr", "temperature", &[0, 0]);
         let req = RasterLoadRequest {
             uri: &uri,
             dim_names: &["y", "x"],
@@ -279,8 +269,8 @@ mod tests {
         };
         let err = loader.load(&req).await.unwrap_err();
         assert!(
-            err.to_string().contains("cloud") || err.to_string().contains("s3://"),
-            "expected cloud-scheme rejection, got: {err}"
+            err.to_string().contains("unsupported Zarr URI scheme"),
+            "expected unsupported-scheme rejection, got: {err}"
         );
     }
 }

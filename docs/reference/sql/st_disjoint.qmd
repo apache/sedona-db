@@ -21,6 +21,8 @@ description: Returns true if geomA is disjoint from geomB.
 kernels:
   - returns: boolean
     args: [geometry, geometry]
+  - returns: boolean
+    args: [geography, geography]
 ---
 
 ## Description
@@ -31,7 +33,14 @@ Returns `true` if the two geometries do not share any points. This is the invers
 
 ```sql
 SELECT ST_Disjoint(
-    ST_Point(0.25, 0.25),
-    ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))')
-) AS val;
+    ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))'),
+    ST_GeomFromText('POLYGON ((2 2, 3 2, 2 3, 2 2))')
+);
+```
+
+```sql
+SELECT ST_Disjoint(
+    ST_GeogFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))'),
+    ST_GeogFromText('POLYGON ((2 2, 3 2, 2 3, 2 2))')
+);
 ```

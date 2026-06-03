@@ -17,10 +17,12 @@
 # under the License.
 
 title: ST_NumGeometries
-description: Returns the number of geometries in a geometry collection.
+description: Returns the number of geometries in a geometry or geography collection.
 kernels:
   - returns: integer
     args: [geometry]
+  - returns: integer
+    args: [geography]
 ---
 
 ## Description
@@ -30,5 +32,9 @@ Returns the number of Geometries. If geometry is a GEOMETRYCOLLECTION (or MULTI*
 ## Examples
 
 ```sql
-SELECT ST_NumGeometries(ST_GeomFromWKT('LINESTRING (-29 -27, -30 -29.7, -45 -33)'));
+SELECT ST_NumGeometries(ST_GeomFromWKT('MULTIPOINT ((0 0), (1 1))'));
+```
+
+```sql
+SELECT ST_NumGeometries(ST_GeogFromWKT('MULTIPOINT ((0 0), (1 1))'));
 ```

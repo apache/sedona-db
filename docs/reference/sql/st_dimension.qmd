@@ -17,10 +17,12 @@
 # under the License.
 
 title: ST_Dimension
-description: Returns the dimension of the geometry.
+description: Returns the dimension of the geometry or geography.
 kernels:
   - returns: integer
     args: [geometry]
+  - returns: integer
+    args: [geography]
 ---
 
 ## Description
@@ -40,5 +42,5 @@ SELECT ST_Dimension(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'));
 ```
 
 ```sql
-SELECT ST_Dimension(ST_Point(1.0, 2.0));
+SELECT ST_Dimension(ST_GeogFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'));
 ```

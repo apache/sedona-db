@@ -17,15 +17,20 @@
 # under the License.
 
 title: ST_MMin
-description: Returns the minimum M-coordinate (measure) of a geometry's bounding box.
+description: Returns the minimum M-coordinate (measure) of a geometry or geography's bounding box.
 kernels:
   - returns: double
     args: [geometry]
+  - returns: double
+    args: [geography]
 ---
 
 ## Examples
 
 ```sql
-SELECT ST_MMin(ST_GeomFromWKT('LINESTRING ZM (1 2 3 4, 5 6 7 8)'));
--- Returns: 4
+SELECT ST_MMin(ST_GeomFromWKT('LINESTRING M (1 2 3, 5 6 7)'));
+```
+
+```sql
+SELECT ST_MMin(ST_GeogFromWKT('LINESTRING M (1 2 3, 5 6 7)'));
 ```

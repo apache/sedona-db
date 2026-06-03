@@ -16,31 +16,21 @@
 # specific language governing permissions and limitations
 # under the License.
 
-title: ST_Equals
-description: Returns true if geomA equals geomB.
+title: S2_CoveringCellIds
+description: Returns an array of S2 cell IDs that cover the given geography.
 kernels:
-  - returns: boolean
-    args: [geometry, geometry]
-  - returns: boolean
-    args: [geography, geography]
+  - returns: array
+    args: [geography]
 ---
 
 ## Description
 
-Returns `true` if the two geometries are topologically equal (i.e., they represent the same point set, regardless of vertex order).
+Returns an array of 64-bit S2 cell IDs that form a covering of the given geography. A covering is a set of cells that completely contains the geography with minimal overlap. For a point, returns an array with a single cell ID. For empty geometries, returns an empty array.
+
+This is useful for spatial indexing and efficient spatial queries. The returned cells may be at different S2 levels depending on the size and shape of the geography.
 
 ## Examples
 
 ```sql
-SELECT ST_Equals(
-    ST_GeomFromText('LINESTRING(0 0, 1 1)'),
-    ST_GeomFromText('LINESTRING(1 1, 0 0)')
-);
-```
-
-```sql
-SELECT ST_Equals(
-    ST_GeogFromText('LINESTRING(0 0, 1 1)'),
-    ST_GeogFromText('LINESTRING(1 1, 0 0)')
-);
+SELECT S2_CoveringCellIds(ST_GeogFromWKT('LINESTRING (0 0, 1 1)'));
 ```

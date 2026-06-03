@@ -255,6 +255,14 @@ You can later shut it down with
 docker compose down
 ```
 
+You can open a shell into the running PostgreSQL server with
+
+```shell
+docker compose exec postgis psql -U postgres
+```
+
+...which is useful for interactively checking expected behaviour when adding new functions to SedonaDB.
+
 To run the actual Python tests, you can use pytest.
 
 e.g Run all of the tests

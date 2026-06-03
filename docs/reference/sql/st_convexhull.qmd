@@ -17,10 +17,12 @@
 # under the License.
 
 title: ST_ConvexHull
-description: Returns the Convex Hull of polygon A.
+description: Returns the Convex Hull of a geometry or geography.
 kernels:
   - returns: geometry
     args: [geometry]
+  - returns: geography
+    args: [geography]
 ---
 
 ## Description
@@ -31,6 +33,12 @@ Returns the smallest convex polygon that encloses all points in the input geomet
 
 ```sql
 SELECT ST_ConvexHull(
-  ST_GeomFromText('POLYGON((175 150, 20 40, 50 60, 125 100, 175 150))')
+  ST_GeomFromText('MULTIPOINT ((0 0), (0 1), (1 0))')
+);
+```
+
+```sql
+SELECT ST_ConvexHull(
+  ST_GeogFromWKT('MULTIPOINT ((0 0), (0 1), (1 0))')
 );
 ```

@@ -17,10 +17,12 @@
 # under the License.
 
 title: ST_AsBinary
-description: Converts a geometry to Well-Known Binary (WKB) format.
+description: Converts a geometry or geography to Well-Known Binary (WKB) format.
 kernels:
-  - returns: geometry
+  - returns: binary
     args: [geometry]
+  - returns: binary
+    args: [geography]
 ---
 
 ## Description
@@ -39,5 +41,5 @@ SELECT ST_AsBinary(ST_Point(1.0, 2.0));
 ```
 
 ```sql
-SELECT sd_simplifystorage(ST_AsBinary(ST_Point(1.0, 2.0)));
+SELECT ST_AsBinary(ST_GeogPoint(1.0, 2.0));
 ```

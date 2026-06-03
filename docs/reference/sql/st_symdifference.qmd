@@ -17,17 +17,26 @@
 # under the License.
 
 title: ST_SymDifference
-description: Returns the parts of geometries A and B that do not overlap.
+description: Returns the parts of geometries or geographies A and B that do not overlap.
 kernels:
   - returns: geometry
     args: [geometry, geometry]
+  - returns: geography
+    args: [geography, geography]
 ---
 
 ## Examples
 
 ```sql
 SELECT ST_SymDifference(
-    ST_GeomFromWKT('POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))'),
-    ST_GeomFromWKT('POLYGON((1 0, 3 0, 3 2, 1 2, 1 0))')
+    ST_GeomFromWKT('POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))'),
+    ST_GeomFromWKT('POLYGON ((1 0, 3 0, 3 2, 1 2, 1 0))')
+);
+```
+
+```sql
+SELECT ST_SymDifference(
+    ST_GeogFromWKT('POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))'),
+    ST_GeogFromWKT('POLYGON ((1 0, 3 0, 3 2, 1 2, 1 0))')
 );
 ```

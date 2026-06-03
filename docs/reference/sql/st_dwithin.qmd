@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_DWithin
-description: Returns true if two geometries are within a specified distance of each other.
+description: Returns true if two geometries or geographies are within a specified distance of each other.
 kernels:
   - returns: boolean
     args:
@@ -25,14 +25,32 @@ kernels:
     - geometry
     - name: distance
       type: double
+  - returns: boolean
+    args:
+    - geography
+    - geography
+    - name: distance
+      type: double
 ---
+
+## Description
+
+For geography, the distance is specified in meters and represents the spherical approximation of the geodesic distance between the two geographies.
 
 ## Examples
 
 ```sql
 SELECT ST_DWithin(
-  ST_Point(0.25, 0.25),
-  ST_GeomFromText('POLYGON ((0 0, 1 0, 0 1, 0 0))'),
-  0.5
+    ST_Point(0, 0),
+    ST_Point(1, 1),
+    2
+);
+```
+
+```sql
+SELECT ST_DWithin(
+    ST_GeogPoint(0, 0),
+    ST_GeogPoint(1, 1),
+    200000
 );
 ```

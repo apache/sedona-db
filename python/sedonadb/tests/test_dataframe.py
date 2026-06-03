@@ -599,3 +599,10 @@ def test_repr(con):
         assert repr_interactive == expected
     finally:
         con.options.interactive = False
+
+
+def test_len_error(con):
+    with pytest.raises(
+        ValueError, match=r"Can't compute len\(\) of a lazy SedonaDB DataFrame"
+    ):
+        len(con.sql("SELECT 1 as one"))

@@ -16,31 +16,19 @@
 # specific language governing permissions and limitations
 # under the License.
 
-title: ST_Equals
-description: Returns true if geomA equals geomB.
+title: S2_CellIdFromPoint
+description: Returns the S2 cell ID containing the given point geography at the maximum S2 level (30).
 kernels:
-  - returns: boolean
-    args: [geometry, geometry]
-  - returns: boolean
-    args: [geography, geography]
+  - returns: int64
+    args: [geography]
 ---
 
 ## Description
 
-Returns `true` if the two geometries are topologically equal (i.e., they represent the same point set, regardless of vertex order).
+Returns the 64-bit S2 cell ID at level 30 (the finest resolution) that contains the given point geography. Returns NULL for empty point geometries. This is useful for spatial indexing and efficient spatial queries.
 
 ## Examples
 
 ```sql
-SELECT ST_Equals(
-    ST_GeomFromText('LINESTRING(0 0, 1 1)'),
-    ST_GeomFromText('LINESTRING(1 1, 0 0)')
-);
-```
-
-```sql
-SELECT ST_Equals(
-    ST_GeogFromText('LINESTRING(0 0, 1 1)'),
-    ST_GeogFromText('LINESTRING(1 1, 0 0)')
-);
+SELECT S2_CellIdFromPoint(ST_GeogPoint(-64, 45));
 ```

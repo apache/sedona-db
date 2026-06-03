@@ -17,13 +17,20 @@
 # under the License.
 
 title: ST_Force3D
-description: Forces a geometry into a XYZ coordinate model with an optional Z value.
+description: Forces a geometry or geography into a XYZ coordinate model with an optional Z value.
 kernels:
   - returns: geometry
     args: [geometry]
   - returns: geometry
     args:
     - geometry
+    - name: z
+      type: double
+  - returns: geography
+    args: [geography]
+  - returns: geography
+    args:
+    - geography
     - name: z
       type: double
 ---
@@ -43,5 +50,5 @@ SELECT ST_Force3D(ST_GeomFromWKT('POINT (1 2)'));
 ```
 
 ```sql
-SELECT ST_Force3D(ST_GeomFromWKT('POINT Z (1 2 3)'), 10.0);
+SELECT ST_Force3D(ST_GeogFromWKT('POINT (1 2)'), 10.0);
 ```

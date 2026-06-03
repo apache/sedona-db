@@ -17,10 +17,12 @@
 # under the License.
 
 title: ST_Y
-description: Returns the Y coordinate of the point, or NULL if not available.
+description: Returns the Y coordinate (latitude for geography) of the point, or NULL if not available.
 kernels:
   - returns: double
     args: [geometry]
+  - returns: double
+    args: [geography]
 ---
 
 ## Description
@@ -31,4 +33,8 @@ Returns NULL for non-point geometries or NULL input.
 
 ```sql
 SELECT ST_Y(ST_Point(-74.0060, 40.7128));
+```
+
+```sql
+SELECT ST_Y(ST_GeogPoint(-74.0060, 40.7128));
 ```

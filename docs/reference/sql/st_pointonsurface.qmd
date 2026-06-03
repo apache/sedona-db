@@ -16,31 +16,22 @@
 # specific language governing permissions and limitations
 # under the License.
 
-title: ST_Equals
-description: Returns true if geomA equals geomB.
+title: ST_PointOnSurface
+description: Returns a point guaranteed to lie on the surface of a geometry or geography.
 kernels:
-  - returns: boolean
-    args: [geometry, geometry]
-  - returns: boolean
-    args: [geography, geography]
+  - returns: geography
+    args: [geography]
 ---
 
 ## Description
 
-Returns `true` if the two geometries are topologically equal (i.e., they represent the same point set, regardless of vertex order).
+Unlike ST_Centroid which does not necessarily intersect a geometry or geography, ST_PointOnSurface
+makes an attempt to find an interior point close to the middle (using deterministic heuristics).
 
 ## Examples
 
 ```sql
-SELECT ST_Equals(
-    ST_GeomFromText('LINESTRING(0 0, 1 1)'),
-    ST_GeomFromText('LINESTRING(1 1, 0 0)')
-);
-```
-
-```sql
-SELECT ST_Equals(
-    ST_GeogFromText('LINESTRING(0 0, 1 1)'),
-    ST_GeogFromText('LINESTRING(1 1, 0 0)')
+SELECT ST_PointOnSurface(
+    ST_GeogFromWKT('POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 3, 3 3, 3 1, 1 1))')
 );
 ```

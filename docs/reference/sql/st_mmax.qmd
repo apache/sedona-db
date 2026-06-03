@@ -17,14 +17,20 @@
 # under the License.
 
 title: ST_MMax
-description: Returns the maximum M (measure) value from a geometry's bounding box.
+description: Returns the maximum M (measure) value from a geometry or geography's bounding box.
 kernels:
   - returns: double
     args: [geometry]
+  - returns: double
+    args: [geography]
 ---
 
 ## Examples
 
 ```sql
-SELECT ST_MMax(ST_GeomFromWKT('POLYGON ((0 0, 1 0, 0 1, 0 0))'));
+SELECT ST_MMax(ST_GeomFromWKT('LINESTRING M (1 2 3, 5 6 7)'));
+```
+
+```sql
+SELECT ST_MMax(ST_GeogFromWKT('LINESTRING M (1 2 3, 5 6 7)'));
 ```

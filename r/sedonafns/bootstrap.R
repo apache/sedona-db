@@ -15,6 +15,20 @@
 # specific language governing permissions and limitations
 # under the License.
 
+# On r-universe, bootstrap.R runs before dependencies are installed.
+# Install the packages we need for source generation.
+required_packages <- c("yaml", "here", "glue", "rlang", "roxygen2")
+missing_packages <- required_packages[
+  !vapply(required_packages, requireNamespace, logical(1), quietly = TRUE)
+]
+if (length(missing_packages) > 0 && nzchar(Sys.getenv("MY_UNIVERSE"))) {
+  message(
+    "Running on r-universe, installing bootstrap dependencies: ",
+    paste(missing_packages, collapse = ", ")
+  )
+  install.packages(missing_packages)
+}
+
 source("tools/update-sd-funcs.R")
 update_sd_funcs()
 

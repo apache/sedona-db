@@ -17,16 +17,30 @@
 # under the License.
 
 title: ST_Centroid
-description: Returns the centroid of a geometry.
+description: Returns the centroid of a geometry or geography.
 kernels:
   - returns: geometry
     args: [geometry]
+  - returns: geography
+    args: [geography]
 ---
+
+## Description
+
+For geography, the centroid is calculated using spherical geometry.
 
 ## Examples
 
+
 ```sql
 SELECT ST_Centroid(
-  ST_GeomFromWKT('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))')
+  ST_GeomFromWKT('LINESTRING (-64 45, 52 8)')
+);
+```
+
+
+```sql
+SELECT ST_Centroid(
+  ST_GeogFromWKT('LINESTRING (-64 45, 52 8)')
 );
 ```

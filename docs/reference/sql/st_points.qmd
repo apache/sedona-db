@@ -17,10 +17,12 @@
 # under the License.
 
 title: ST_Points
-description: Returns a MultiPoint geometry consisting of all the coordinates of the input geometry.
+description: Returns a MultiPoint geometry consisting of all the coordinates of the input geometry or geography.
 kernels:
   - returns: geometry
     args: [geometry]
+  - returns: geography
+    args: [geography]
 ---
 
 ## Description
@@ -30,5 +32,9 @@ Returns a MultiPoint geometry consisting of all the coordinates of the input geo
 ## Examples
 
 ```sql
-SELECT ST_AsText(ST_Points(ST_GeomFromText('LINESTRING (2 4, 3 3, 4 2, 7 3)')));
+SELECT ST_Points(ST_GeomFromText('LINESTRING (2 4, 3 3, 4 2)'));
+```
+
+```sql
+SELECT ST_Points(ST_GeogFromWKT('LINESTRING (2 4, 3 3, 4 2)'));
 ```

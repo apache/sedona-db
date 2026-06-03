@@ -17,18 +17,27 @@
 # under the License.
 
 title: ST_Normalize
-description: Returns the geometry in its canonical form.
+description: Returns the geometry or geography in its canonical form.
 kernels:
   - returns: geometry
     args: [geometry]
+  - returns: geography
+    args: [geography]
 ---
+
+This function is mostly useful for testing and may rearrange vertices within a ring
+or interior rings within a polygon.
 
 ## Examples
 
 ```sql
-SELECT ST_AsText(
-  ST_Normalize(
-    ST_GeomFromWKT('POLYGON((10 10, 10 0, 0 0, 0 10, 10 10))')
-  )
+SELECT ST_Normalize(
+    ST_GeomFromWKT('POLYGON ((10 10, 10 0, 0 0, 0 10, 10 10))')
+);
+```
+
+```sql
+SELECT ST_Normalize(
+    ST_GeogFromWKT('POLYGON ((10 10, 10 0, 0 0, 0 10, 10 10))')
 );
 ```

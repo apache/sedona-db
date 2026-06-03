@@ -21,6 +21,8 @@ description: Computes the difference between geomA and geomB.
 kernels:
   - returns: geometry
     args: [geometry, geometry]
+  - returns: geography
+    args: [geography, geography]
 ---
 
 ## Description
@@ -33,5 +35,12 @@ Returns the part of geometry A that does not intersect with geometry B.
 SELECT ST_Difference(
     ST_GeomFromText('POLYGON ((1 1, 11 1, 11 11, 1 11, 1 1))'),
     ST_GeomFromText('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))')
+) AS val;
+```
+
+```sql
+SELECT ST_Difference(
+    ST_GeogFromText('POLYGON ((1 1, 11 1, 11 11, 1 11, 1 1))'),
+    ST_GeogFromText('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))')
 ) AS val;
 ```

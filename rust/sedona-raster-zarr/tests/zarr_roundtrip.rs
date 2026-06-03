@@ -30,13 +30,20 @@ use arrow_array::StructArray;
 use arrow_schema::ArrowError;
 use sedona_raster::array::RasterStructArray;
 use sedona_raster::traits::RasterRef;
-use sedona_raster_zarr::ZarrChunkReader;
+use sedona_raster_zarr::{open_storage_from_uri, ZarrChunkReader};
 
 /// Drain a `ZarrChunkReader` into a single `StructArray`. Fixtures in
 /// this file are small (≤8 chunk rows) so they fit in one batch with a
 /// generous batch_size. Anything bigger would need `arrow::compute::concat`.
-fn read_all(uri: &str, arrays: Option<&[String]>) -> Result<StructArray, ArrowError> {
-    let reader = ZarrChunkReader::try_new(uri, arrays, 1024)?;
+async fn read_all(uri: &str, arrays: Option<&[String]>) -> Result<StructArray, ArrowError> {
+    // Fixtures are file:// URIs rooted at an absolute temp path. Pass a
+    // LocalFileSystem rooted at `/` — the same shape the host's
+    // ObjectStoreRegistry yields for file:// — and let
+    // open_storage_from_uri prefix it at the group's path.
+    let store: Arc<dyn object_store::ObjectStore> =
+        Arc::new(object_store::local::LocalFileSystem::new());
+    let storage = open_storage_from_uri(uri, store)?;
+    let reader = ZarrChunkReader::try_new(storage, uri, arrays, 1024).await?;
     let batches: Vec<_> = reader.collect::<Result<Vec<_>, _>>()?;
     assert!(
         batches.len() <= 1,
@@ -108,11 +115,11 @@ fn build_fixture() -> TempDir {
     tmp
 }
 
-#[test]
-fn round_trip_emits_one_row_per_chunk_position_with_outdb_anchors() {
+#[tokio::test]
+async fn round_trip_emits_one_row_per_chunk_position_with_outdb_anchors() {
     let tmp = build_fixture();
     let uri = format!("file://{}", tmp.path().display());
-    let arr = read_all(&uri, None).unwrap();
+    let arr = read_all(&uri, None).await.unwrap();
 
     let rasters = RasterStructArray::new(&arr);
     assert_eq!(rasters.len(), 8, "expected 8 chunk rows (2*2*2)");
@@ -158,8 +165,8 @@ fn round_trip_emits_one_row_per_chunk_position_with_outdb_anchors() {
     assert!(anchor.contains("&chunk=1,1,1"), "got: {anchor}");
 }
 
-#[test]
-fn errors_on_empty_group() {
+#[tokio::test]
+async fn errors_on_empty_group() {
     let tmp = TempDir::new().unwrap();
     let store = Arc::new(FilesystemStore::new(tmp.path()).unwrap());
     GroupBuilder::new()
@@ -168,7 +175,7 @@ fn errors_on_empty_group() {
         .store_metadata()
         .unwrap();
     let uri = format!("file://{}", tmp.path().display());
-    let err = read_all(&uri, None).unwrap_err().to_string();
+    let err = read_all(&uri, None).await.unwrap_err().to_string();
     assert!(err.contains("no child arrays"), "got: {err}");
 }
 
@@ -212,11 +219,11 @@ fn build_xarray_style_fixture() -> TempDir {
     tmp
 }
 
-#[test]
-fn auto_skips_1d_coord_variables() {
+#[tokio::test]
+async fn auto_skips_1d_coord_variables() {
     let tmp = build_xarray_style_fixture();
     let uri = format!("file://{}", tmp.path().display());
-    let arr = read_all(&uri, None).unwrap();
+    let arr = read_all(&uri, None).await.unwrap();
     let rasters = RasterStructArray::new(&arr);
     // 2*2*2 = 8 chunk positions, with 2 bands per row (pressure, temperature).
     assert_eq!(rasters.len(), 8);
@@ -224,30 +231,30 @@ fn auto_skips_1d_coord_variables() {
     assert_eq!(r0.num_bands(), 2);
 }
 
-#[test]
-fn explicit_arrays_filter_selects_subset() {
+#[tokio::test]
+async fn explicit_arrays_filter_selects_subset() {
     let tmp = build_xarray_style_fixture();
     let uri = format!("file://{}", tmp.path().display());
     let filter = vec!["temperature".to_string()];
-    let arr = read_all(&uri, Some(&filter)).unwrap();
+    let arr = read_all(&uri, Some(&filter)).await.unwrap();
     let rasters = RasterStructArray::new(&arr);
     assert_eq!(rasters.len(), 8);
     let r0 = rasters.get(0).unwrap();
     assert_eq!(r0.num_bands(), 1, "only temperature should be read");
 }
 
-#[test]
-fn explicit_arrays_filter_rejects_unknown_name() {
+#[tokio::test]
+async fn explicit_arrays_filter_rejects_unknown_name() {
     let tmp = build_xarray_style_fixture();
     let uri = format!("file://{}", tmp.path().display());
     let filter = vec!["humidity".to_string()];
-    let err = read_all(&uri, Some(&filter)).unwrap_err().to_string();
+    let err = read_all(&uri, Some(&filter)).await.unwrap_err().to_string();
     assert!(err.contains("humidity"), "got: {err}");
     assert!(err.contains("no array named"), "got: {err}");
 }
 
-#[test]
-fn errors_when_crs_declared_without_transform() {
+#[tokio::test]
+async fn errors_when_crs_declared_without_transform() {
     // CRS-without-transform is almost certainly malformed metadata —
     // the user thinks they have full georef but downstream spatial
     // joins would silently use the identity pixel transform. The
@@ -270,27 +277,27 @@ fn errors_when_crs_declared_without_transform() {
         .unwrap();
 
     let uri = format!("file://{}", tmp.path().display());
-    let err = read_all(&uri, None).unwrap_err().to_string();
+    let err = read_all(&uri, None).await.unwrap_err().to_string();
     assert!(err.contains("CRS"), "got: {err}");
     assert!(err.contains("spatial:transform"), "got: {err}");
 }
 
-#[test]
-fn explicit_arrays_filter_rejects_1d_arrays() {
+#[tokio::test]
+async fn explicit_arrays_filter_rejects_1d_arrays() {
     // A user explicitly naming a 1-D array gets a clear "needs 2 dims"
     // error at parse time, not a confusing downstream spatial-dim
     // resolution failure.
     let tmp = build_xarray_style_fixture();
     let uri = format!("file://{}", tmp.path().display());
     let filter = vec!["t".to_string()];
-    let err = read_all(&uri, Some(&filter)).unwrap_err().to_string();
+    let err = read_all(&uri, Some(&filter)).await.unwrap_err().to_string();
     assert!(err.contains("\"t\""), "got: {err}");
     assert!(err.contains("rank 1"), "got: {err}");
     assert!(err.contains("at least 2 dimensions"), "got: {err}");
 }
 
-#[test]
-fn errors_when_group_has_only_1d_arrays() {
+#[tokio::test]
+async fn errors_when_group_has_only_1d_arrays() {
     let tmp = TempDir::new().unwrap();
     let store = Arc::new(FilesystemStore::new(tmp.path()).unwrap());
     GroupBuilder::new()
@@ -306,12 +313,12 @@ fn errors_when_group_has_only_1d_arrays() {
         .unwrap();
 
     let uri = format!("file://{}", tmp.path().display());
-    let err = read_all(&uri, None).unwrap_err().to_string();
+    let err = read_all(&uri, None).await.unwrap_err().to_string();
     assert!(err.contains("only 1-D arrays"), "got: {err}");
 }
 
-#[test]
-fn falls_back_to_array_dimensions_attribute() {
+#[tokio::test]
+async fn falls_back_to_array_dimensions_attribute() {
     // Simulates a Zarr v2 array (or any v3 array that lacks a first-class
     // `dimension_names` field) by leaving `.dimension_names(None)` and
     // setting xarray's `_ARRAY_DIMENSIONS` attribute instead. The loader
@@ -334,7 +341,7 @@ fn falls_back_to_array_dimensions_attribute() {
     array.store_metadata().unwrap();
 
     let uri = format!("file://{}", tmp.path().display());
-    let arr = read_all(&uri, None).unwrap();
+    let arr = read_all(&uri, None).await.unwrap();
     let rasters = RasterStructArray::new(&arr);
     assert_eq!(rasters.len(), 2);
     let r0 = rasters.get(0).unwrap();
@@ -345,8 +352,8 @@ fn falls_back_to_array_dimensions_attribute() {
     assert!(band.outdb_uri().unwrap().contains("#array=temperature"));
 }
 
-#[test]
-fn errors_on_mismatched_chunk_grids() {
+#[tokio::test]
+async fn errors_on_mismatched_chunk_grids() {
     let tmp = TempDir::new().unwrap();
     let store = Arc::new(FilesystemStore::new(tmp.path()).unwrap());
     GroupBuilder::new()
@@ -368,7 +375,7 @@ fn errors_on_mismatched_chunk_grids() {
         .unwrap();
 
     let uri = format!("file://{}", tmp.path().display());
-    let err = read_all(&uri, None).unwrap_err().to_string();
+    let err = read_all(&uri, None).await.unwrap_err().to_string();
     assert!(
         err.contains("chunk") && err.contains("array_a") && err.contains("array_b"),
         "got: {err}"

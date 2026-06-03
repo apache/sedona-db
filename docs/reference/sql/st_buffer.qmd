@@ -18,8 +18,8 @@
 
 title: ST_Buffer
 description: >
-    Computes a geometry that represents all points whose distance from the input
-    geometry is less than or equal to a specified distance.
+    Computes a geometry or geography that represents all points whose distance from the input
+    is less than or equal to a specified distance.
 kernels:
   - returns: geometry
     args:
@@ -38,7 +38,30 @@ kernels:
         Space-separated `key=value` parameters. Supported parameters include `quad_segs`,
         `endcap`, `join`, `mitre_limit`, and `side`. These parameters are identical to
         the PostGIS buffer parameter strings.
+  - returns: geography
+    args:
+    - geography
+    - name: distance
+      type: float64
+  - returns: geography
+    args:
+    - geography
+    - name: distance
+      type: float64
+    - name: num_quad_segs
+      type: integer
+  - returns: geography
+    args:
+    - geography
+    - name: distance
+      type: float64
+    - name: params
+      type: string
 ---
+
+## Description
+
+For geography, the distance is specified in meters. The buffer is computed on the sphere, producing a result that considers polar regions and the antimeridian. Negative distances are supported for polygon inputs to shrink the polygon.
 
 ## Examples
 
@@ -78,4 +101,13 @@ df = sd.sql("SELECT *, ST_Buffer(geom, 1.0, 'quad_segs=2') AS result FROM input"
 
 ax = df.geom.plot(alpha=0.5)
 df.result.plot(ax=ax, facecolor='none', edgecolor='red')
+```
+
+For geography, the distance is specified in meters:
+
+```sql
+SELECT ST_Buffer(
+  ST_GeogFromText('POLYGON ((10 10, 11 10, 10 11, 10 10))'),
+  1000
+);
 ```

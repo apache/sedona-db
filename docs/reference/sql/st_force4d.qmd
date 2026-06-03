@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_Force4D
-description: Forces a geometry into a XYZM coordinate model with optional Z and M values.
+description: Forces a geometry or geography into a XYZM coordinate model with optional Z and M values.
 kernels:
   - returns: geometry
     args: [geometry]
@@ -29,6 +29,20 @@ kernels:
   - returns: geometry
     args:
     - geometry
+    - name: z
+      type: double
+    - name: m
+      type: double
+  - returns: geography
+    args: [geography]
+  - returns: geography
+    args:
+    - geography
+    - name: z
+      type: double
+  - returns: geography
+    args:
+    - geography
     - name: z
       type: double
     - name: m
@@ -55,4 +69,8 @@ SELECT ST_Force4D(ST_GeomFromWKT('POINT (1 2)'));
 
 ```sql
 SELECT ST_Force4D(ST_GeomFromWKT('POINT ZM (1 2 3 4)'), 10.0, 20.0);
+```
+
+```sql
+SELECT ST_Force4D(ST_GeogFromWKT('POINT ZM (1 2 3 4)'), 10.0, 20.0);
 ```
