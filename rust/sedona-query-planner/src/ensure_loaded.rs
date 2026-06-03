@@ -46,6 +46,12 @@ use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::SedonaScalarUDF;
 use sedona_schema::datatypes::SedonaType;
 
+/// `SedonaScalarUDF` metadata key marking a UDF whose kernels read raster
+/// pixel bytes. Duplicated from `sedona_raster_functions` (the owner),
+/// which this crate can't depend on — keep the literal in sync with
+/// `sedona_raster_functions::rs_ensure_loaded::NEEDS_PIXELS_METADATA_KEY`.
+const NEEDS_PIXELS_METADATA_KEY: &str = "needs_pixels";
+
 /// Logical optimizer rule wrapping raster arguments of `needs_bytes`
 /// UDFs with `RS_EnsureLoaded`. Stateless — the `RS_EnsureLoaded` UDF
 /// is resolved from the session's [`FunctionRegistry`] at rewrite time.
@@ -145,7 +151,12 @@ fn rewrite_expr_node(
         .inner()
         .as_any()
         .downcast_ref::<SedonaScalarUDF>()
-        .map(|u| u.needs_bytes())
+        .map(|u| {
+            u.metadata()
+                .get(NEEDS_PIXELS_METADATA_KEY)
+                .map(String::as_str)
+                == Some("true")
+        })
         .unwrap_or(false);
     if !needs_bytes {
         return Ok(Transformed::no(expr));
@@ -219,9 +230,7 @@ mod tests {
     use arrow_schema::{DataType, Field, Schema};
     use datafusion_common::tree_node::TreeNodeRecursion;
     use datafusion_expr::{col, ScalarUDF, Volatility};
-    use sedona_expr::scalar_udf::{
-        ScalarKernelRef, SedonaScalarUDF, SimpleSedonaScalarKernel, NEEDS_PIXELS_METADATA_KEY,
-    };
+    use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarUDF, SimpleSedonaScalarKernel};
     use sedona_schema::matchers::ArgMatcher;
 
     /// A stand-in `rs_ensureloaded` UDF. The rule keys off the name and

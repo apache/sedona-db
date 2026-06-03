@@ -60,15 +60,6 @@ impl<T: SedonaScalarKernel + 'static> IntoScalarKernelRefs for Vec<Arc<T>> {
     }
 }
 
-/// Well-known [`SedonaScalarUDF`] metadata key marking a UDF whose
-/// kernels read raster pixel bytes from their inputs. Presence with
-/// value `"true"` is what the `RS_EnsureLoaded` optimizer rule keys off
-/// to decide whether to wrap raster arguments. A generic string-keyed
-/// metadata map (rather than a dedicated bool) keeps the UDF metadata
-/// surface — and the eventual cross-cdylib FFI for it — extensible
-/// without a schema change per flag.
-pub const NEEDS_PIXELS_METADATA_KEY: &str = "needs_pixels";
-
 /// Top-level scalar user-defined function
 ///
 /// This struct implements datafusion's ScalarUDF and implements kernel dispatch
@@ -81,11 +72,13 @@ pub struct SedonaScalarUDF {
     kernels: Vec<ScalarKernelRef>,
     aliases: Vec<String>,
     /// Class-level, string-keyed metadata describing this UDF to the
-    /// planner. Currently carries the [`NEEDS_PIXELS_METADATA_KEY`] flag
-    /// (set via [`SedonaScalarUDF::with_metadata`]) that the
-    /// `RS_EnsureLoaded` optimizer rule reads; the map shape leaves room
-    /// for further planner-visible flags — and a future cross-cdylib FFI
-    /// carrying them — without a new field per flag.
+    /// planner. Flags are set via [`SedonaScalarUDF::with_metadata`] and
+    /// read back via [`SedonaScalarUDF::metadata`]; the planner keys off
+    /// well-known entries (e.g. the raster `"needs_pixels"` flag, whose
+    /// key is owned by `sedona-raster-functions`) without this crate
+    /// knowing their meaning. The map shape leaves room for further
+    /// planner-visible flags — and a future cross-cdylib FFI carrying
+    /// them — without a new field per flag.
     metadata: HashMap<String, String>,
 }
 
@@ -218,9 +211,9 @@ impl SedonaScalarUDF {
 
     /// Set a class-level metadata entry on this UDF, returning the
     /// modified UDF. Metadata is planner-visible (e.g. the
-    /// `RS_EnsureLoaded` optimizer rule reads [`NEEDS_PIXELS_METADATA_KEY`])
-    /// and crosses the `sedona-extension` FFI boundary so plugin-defined
-    /// UDFs can declare it too.
+    /// `RS_EnsureLoaded` optimizer rule reads the raster `"needs_pixels"`
+    /// flag) and crosses the `sedona-extension` FFI boundary so
+    /// plugin-defined UDFs can declare it too.
     pub fn with_metadata(
         mut self,
         key: impl Into<String>,
@@ -233,15 +226,6 @@ impl SedonaScalarUDF {
     /// Class-level metadata map describing this UDF to the planner.
     pub fn metadata(&self) -> &HashMap<String, String> {
         &self.metadata
-    }
-
-    /// Returns whether this UDF reads raster pixel bytes from its inputs
-    /// (i.e. carries [`NEEDS_PIXELS_METADATA_KEY`] = `"true"`).
-    pub fn needs_bytes(&self) -> bool {
-        self.metadata
-            .get(NEEDS_PIXELS_METADATA_KEY)
-            .map(String::as_str)
-            == Some("true")
     }
 
     /// Create a SedonaScalarUDF from a single kernel
@@ -375,20 +359,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn needs_bytes_defaults_false_and_flips_via_builder() {
+    fn metadata_defaults_empty_and_set_via_builder() {
         let udf = SedonaScalarUDF::new("u", vec![], Volatility::Immutable);
-        assert!(!udf.needs_bytes());
+        assert!(udf.metadata().get("a_flag").is_none());
 
-        let annotated = udf.with_metadata(NEEDS_PIXELS_METADATA_KEY, "true");
-        assert!(annotated.needs_bytes());
+        let annotated = udf.with_metadata("a_flag", "true");
+        assert_eq!(
+            annotated.metadata().get("a_flag").map(String::as_str),
+            Some("true")
+        );
     }
 
     #[test]
-    fn needs_bytes_survives_with_aliases() {
+    fn metadata_survives_with_aliases() {
         let udf = SedonaScalarUDF::new("u", vec![], Volatility::Immutable)
-            .with_metadata(NEEDS_PIXELS_METADATA_KEY, "true")
+            .with_metadata("a_flag", "true")
             .with_aliases(vec!["u_alias".to_string()]);
-        assert!(udf.needs_bytes());
+        assert_eq!(
+            udf.metadata().get("a_flag").map(String::as_str),
+            Some("true")
+        );
         assert_eq!(udf.aliases(), &["u_alias".to_string()]);
     }
 

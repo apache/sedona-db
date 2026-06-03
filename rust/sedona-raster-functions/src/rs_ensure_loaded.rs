@@ -47,6 +47,16 @@ use sedona_raster::outdb_loader::{
 };
 use sedona_raster::traits::RasterRef;
 
+/// `SedonaScalarUDF` metadata key marking a UDF whose kernels read raster
+/// pixel bytes. A raster function sets it (value `"true"`) via
+/// `with_metadata`; the `RS_EnsureLoaded` optimizer rule keys off it to
+/// decide whether to wrap raster arguments with byte materialisation.
+///
+/// This crate owns the key. The optimizer rule lives in
+/// `sedona-query-planner`, which can't depend on this crate, so it carries
+/// a duplicate of the same string literal — keep the two in sync.
+pub const NEEDS_PIXELS_METADATA_KEY: &str = "needs_pixels";
+
 /// Async UDF that resolves OutDb bands by dispatching through the
 /// [`OutDbLoaderRegistry`] stashed in `ConfigOptions` as a
 /// [`OutDbLoaderConfig`] extension. The UDF instance itself is
