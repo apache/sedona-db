@@ -652,7 +652,7 @@ fn advance_chunk_indices(chunk_indices: &mut [u64], chunk_grid_shape: &[u64]) ->
 /// dtype check in `collect_array_infos` rejects them upstream.
 ///
 /// The only pixel-byte read primitive in the crate. Consumed by the
-/// async OutDb byte loader (`outdb_loader::ZarrLoader`).
+/// async OutDb byte loader (`raster_loader::ZarrLoader`).
 pub(crate) fn retrieve_chunk_bytes(
     array: &Array<FilesystemStore>,
     chunk_indices: &[u64],

@@ -19,7 +19,7 @@
 //!
 //! `sedona-raster` deliberately knows nothing about GDAL, Zarr, or any
 //! other backend. Backends implement [`AsyncByteLoader`] and register
-//! themselves with a format key against an [`OutDbLoaderRegistry`]. The
+//! themselves with a format key against an [`RasterLoaderRegistry`]. The
 //! `RS_EnsureLoaded` UDF in the `sedona` crate consumes the registry to
 //! materialise OutDb bands at query time; band accessors
 //! (`BandRef::nd_buffer()` / `contiguous_data()`) do **not** invoke the
@@ -52,7 +52,7 @@ use sedona_schema::raster::BandDataType;
 /// what it got. Tracked in
 /// <https://github.com/apache/sedona-db/issues/897>.
 #[derive(Debug, Clone, Copy)]
-pub struct OutDbLoadRequest<'a> {
+pub struct RasterLoadRequest<'a> {
     /// Anchor URI from the band's `outdb_uri` column. Bare paths and
     /// scheme'd URIs both allowed; backend is responsible for parsing.
     pub uri: &'a str,
@@ -70,7 +70,7 @@ pub struct OutDbLoadRequest<'a> {
 
 /// Backend trait. Implementers live in format-specific crates
 /// (`sedona-raster-gdal`, `sedona-raster-zarr`, …) and are registered
-/// against an [`OutDbLoaderRegistry`] under a format key matching the
+/// against an [`RasterLoaderRegistry`] under a format key matching the
 /// band's `outdb_format` column.
 ///
 /// Synchronous backends (e.g. GDAL) wrap their I/O in
@@ -87,7 +87,7 @@ pub trait AsyncByteLoader: Send + Sync + std::fmt::Debug {
     /// Fetch the band's bytes. The returned `Buffer` must contain exactly
     /// `Π source_shape × data_type.byte_size()` bytes in C-order over
     /// `dim_names`. Errors propagate to the caller of `RS_EnsureLoaded`.
-    async fn load(&self, req: &OutDbLoadRequest<'_>) -> Result<Buffer, ArrowError>;
+    async fn load(&self, req: &RasterLoadRequest<'_>) -> Result<Buffer, ArrowError>;
 }
 
 /// Process-side registry mapping `outdb_format` keys to loader instances.
@@ -95,16 +95,16 @@ pub trait AsyncByteLoader: Send + Sync + std::fmt::Debug {
 /// One registry instance per `SedonaContext`. The owning context wraps it
 /// in `Arc<RwLock<…>>` so extension crates (`sedona-raster-zarr`, future COG /
 /// Icechunk / …) can register their loaders post-construction via a
-/// public `SedonaContext::register_outdb_loader` API.
+/// public `SedonaContext::register_raster_loader` API.
 #[derive(Debug, Default)]
-pub struct OutDbLoaderRegistry {
+pub struct RasterLoaderRegistry {
     loaders: HashMap<String, Arc<dyn AsyncByteLoader>>,
 }
 
-impl OutDbLoaderRegistry {
+impl RasterLoaderRegistry {
     /// Construct an empty registry. Compiled-in backends (`sedona-raster-gdal`
     /// under the `gdal` feature) register themselves from `SedonaContext::new`;
-    /// extension backends register via `SedonaContext::register_outdb_loader`.
+    /// extension backends register via `SedonaContext::register_raster_loader`.
     pub fn new() -> Self {
         Self::default()
     }
@@ -148,36 +148,36 @@ impl OutDbLoaderRegistry {
 /// extension (read at UDF dispatch time); both observe the same
 /// underlying lock.
 #[derive(Debug, Clone)]
-pub struct OutDbLoaderRegistryOption(Arc<RwLock<OutDbLoaderRegistry>>);
+pub struct RasterLoaderRegistryOption(Arc<RwLock<RasterLoaderRegistry>>);
 
-impl OutDbLoaderRegistryOption {
+impl RasterLoaderRegistryOption {
     /// Wrap an existing shared registry handle.
-    pub fn new(inner: Arc<RwLock<OutDbLoaderRegistry>>) -> Self {
+    pub fn new(inner: Arc<RwLock<RasterLoaderRegistry>>) -> Self {
         Self(inner)
     }
 
     /// Clone the inner Arc for callers that need their own owning handle
-    /// (e.g. `SedonaContext::register_outdb_loader` needs to write
+    /// (e.g. `SedonaContext::register_raster_loader` needs to write
     /// through the same lock that the config extension exposes for
     /// reads).
-    pub fn handle(&self) -> Arc<RwLock<OutDbLoaderRegistry>> {
+    pub fn handle(&self) -> Arc<RwLock<RasterLoaderRegistry>> {
         Arc::clone(&self.0)
     }
 }
 
-impl Default for OutDbLoaderRegistryOption {
+impl Default for RasterLoaderRegistryOption {
     fn default() -> Self {
-        Self(Arc::new(RwLock::new(OutDbLoaderRegistry::new())))
+        Self(Arc::new(RwLock::new(RasterLoaderRegistry::new())))
     }
 }
 
-impl PartialEq for OutDbLoaderRegistryOption {
+impl PartialEq for RasterLoaderRegistryOption {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }
 }
 
-impl ConfigField for OutDbLoaderRegistryOption {
+impl ConfigField for RasterLoaderRegistryOption {
     fn visit<V: Visit>(&self, v: &mut V, key: &str, description: &'static str) {
         let snapshot = match self.0.read() {
             Ok(g) => g.formats().map(String::from).collect::<Vec<_>>(),
@@ -189,7 +189,7 @@ impl ConfigField for OutDbLoaderRegistryOption {
         };
         v.some(
             key,
-            format!("OutDbLoaderRegistry {{ formats: {snapshot:?} }}"),
+            format!("RasterLoaderRegistry {{ formats: {snapshot:?} }}"),
             description,
         );
     }
@@ -200,39 +200,39 @@ impl ConfigField for OutDbLoaderRegistryOption {
 }
 
 /// `ConfigExtension` that stashes the per-session
-/// [`OutDbLoaderRegistry`] inside a `ConfigOptions`. Registered into
+/// [`RasterLoaderRegistry`] inside a `ConfigOptions`. Registered into
 /// the session's `ConfigOptions` at `SedonaContext::new_from_context`
 /// time; consumed by the `RS_EnsureLoaded` async UDF at dispatch time
-/// via `args.config_options.extensions.get::<OutDbLoaderConfig>()`.
+/// via `args.config_options.extensions.get::<RasterLoaderConfig>()`.
 ///
-/// The PREFIX namespace is `sedona.outdb_loader` — kept separate from
+/// The PREFIX namespace is `sedona.raster_loader` — kept separate from
 /// `sedona`'s main `SedonaOptions` extension because this lives in
 /// `sedona-raster` (which is upstream of `sedona-common` in the
 /// dependency graph) and adding a field to `SedonaOptions` would
 /// require an undesirable circular dep.
 #[derive(Debug, Default, Clone, PartialEq)]
-pub struct OutDbLoaderConfig {
-    pub registry: OutDbLoaderRegistryOption,
+pub struct RasterLoaderConfig {
+    pub registry: RasterLoaderRegistryOption,
 }
 
-impl OutDbLoaderConfig {
+impl RasterLoaderConfig {
     /// Build a config extension that closes over an existing shared
     /// registry handle. Use this rather than `default()` when wiring
     /// from `SedonaContext::new_from_context` so the context's mutable
-    /// `register_outdb_loader` API writes to the same `RwLock` the
+    /// `register_raster_loader` API writes to the same `RwLock` the
     /// config extension exposes for reads.
-    pub fn from_handle(registry: Arc<RwLock<OutDbLoaderRegistry>>) -> Self {
+    pub fn from_handle(registry: Arc<RwLock<RasterLoaderRegistry>>) -> Self {
         Self {
-            registry: OutDbLoaderRegistryOption::new(registry),
+            registry: RasterLoaderRegistryOption::new(registry),
         }
     }
 }
 
-impl ConfigExtension for OutDbLoaderConfig {
-    const PREFIX: &'static str = "sedona.outdb_loader";
+impl ConfigExtension for RasterLoaderConfig {
+    const PREFIX: &'static str = "sedona.raster_loader";
 }
 
-impl ConfigField for OutDbLoaderConfig {
+impl ConfigField for RasterLoaderConfig {
     fn visit<V: Visit>(&self, v: &mut V, key_prefix: &str, _description: &'static str) {
         let key = if key_prefix.is_empty() {
             "registry".to_string()
@@ -248,7 +248,7 @@ impl ConfigField for OutDbLoaderConfig {
     }
 }
 
-impl ExtensionOptions for OutDbLoaderConfig {
+impl ExtensionOptions for RasterLoaderConfig {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -308,7 +308,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl AsyncByteLoader for MockLoader {
-        async fn load(&self, req: &OutDbLoadRequest<'_>) -> Result<Buffer, ArrowError> {
+        async fn load(&self, req: &RasterLoadRequest<'_>) -> Result<Buffer, ArrowError> {
             self.seen
                 .lock()
                 .unwrap()
@@ -321,7 +321,7 @@ mod tests {
 
     #[test]
     fn registry_starts_empty_and_reports_no_formats() {
-        let r = OutDbLoaderRegistry::new();
+        let r = RasterLoaderRegistry::new();
         assert!(r.is_empty());
         assert!(r.get("gdal").is_none());
         assert_eq!(r.formats().count(), 0);
@@ -329,7 +329,7 @@ mod tests {
 
     #[test]
     fn registry_get_returns_registered_loader() {
-        let mut r = OutDbLoaderRegistry::new();
+        let mut r = RasterLoaderRegistry::new();
         r.register("mock", Arc::new(MockLoader::default()));
         assert!(!r.is_empty());
         assert!(r.get("mock").is_some());
@@ -338,7 +338,7 @@ mod tests {
 
     #[test]
     fn registry_register_overwrites_existing_key() {
-        let mut r = OutDbLoaderRegistry::new();
+        let mut r = RasterLoaderRegistry::new();
         let first = Arc::new(MockLoader::default());
         let second = Arc::new(MockLoader::default());
         r.register("mock", first.clone());
@@ -353,7 +353,7 @@ mod tests {
 
     #[test]
     fn registry_formats_lists_registered_keys() {
-        let mut r = OutDbLoaderRegistry::new();
+        let mut r = RasterLoaderRegistry::new();
         r.register("gdal", Arc::new(MockLoader::default()));
         r.register("zarr", Arc::new(MockLoader::default()));
         let mut formats: Vec<&str> = r.formats().collect();
@@ -364,7 +364,7 @@ mod tests {
     #[tokio::test]
     async fn loader_load_returns_buffer_of_expected_size() {
         let loader = MockLoader::default();
-        let req = OutDbLoadRequest {
+        let req = RasterLoadRequest {
             uri: "file:///tmp/foo.tif",
             dim_names: &["y", "x"],
             source_shape: &[3, 4],
@@ -380,13 +380,13 @@ mod tests {
 
     #[tokio::test]
     async fn loader_load_through_registry_dispatches_to_correct_backend() {
-        let mut r = OutDbLoaderRegistry::new();
+        let mut r = RasterLoaderRegistry::new();
         let gdal = Arc::new(MockLoader::default());
         let zarr = Arc::new(MockLoader::default());
         r.register("gdal", gdal.clone());
         r.register("zarr", zarr.clone());
 
-        let req = OutDbLoadRequest {
+        let req = RasterLoadRequest {
             uri: "s3://bucket/cube.zarr",
             dim_names: &["t", "y", "x"],
             source_shape: &[2, 3, 4],
@@ -403,7 +403,7 @@ mod tests {
 
     #[test]
     fn registry_get_missing_format_returns_none_for_diagnostic_message() {
-        let r = OutDbLoaderRegistry::new();
+        let r = RasterLoaderRegistry::new();
         // Caller (RS_EnsureLoaded) sees None and can build a diagnostic
         // listing the registered formats.
         assert!(r.get("nonexistent").is_none());

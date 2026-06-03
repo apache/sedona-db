@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! Zarr backend implementing [`sedona_raster::outdb_loader::AsyncByteLoader`].
+//! Zarr backend implementing [`sedona_raster::raster_loader::AsyncByteLoader`].
 //!
 //! Resolves a band's OutDb URI back into a Zarr chunk read: the URI is
 //! a chunk anchor of the form
@@ -27,13 +27,13 @@
 //! stalled by Zarr's blocking decoder.
 //!
 //! Registered against the per-session
-//! [`OutDbLoaderRegistry`](sedona_raster::outdb_loader::OutDbLoaderRegistry)
+//! [`RasterLoaderRegistry`](sedona_raster::raster_loader::RasterLoaderRegistry)
 //! under the format key [`ZARR_FORMAT`]. As an out-of-tree plugin,
 //! `sedona-raster-zarr` does not depend on `sedona` — callers wire the
 //! registration themselves from their `SedonaContext` setup:
 //!
 //! ```ignore
-//! ctx.register_outdb_loader(
+//! ctx.register_raster_loader(
 //!     sedona_raster_zarr::ZARR_FORMAT,
 //!     std::sync::Arc::new(sedona_raster_zarr::ZarrLoader::new()),
 //! );
@@ -45,7 +45,7 @@ use arrow_buffer::Buffer;
 use arrow_schema::ArrowError;
 use async_trait::async_trait;
 use sedona_common::sedona_internal_datafusion_err;
-use sedona_raster::outdb_loader::{AsyncByteLoader, OutDbLoadRequest};
+use sedona_raster::raster_loader::{AsyncByteLoader, RasterLoadRequest};
 use zarrs::group::Group;
 use zarrs_filesystem::FilesystemStore;
 
@@ -74,7 +74,7 @@ impl ZarrLoader {
 
 #[async_trait]
 impl AsyncByteLoader for ZarrLoader {
-    async fn load(&self, req: &OutDbLoadRequest<'_>) -> Result<Buffer, ArrowError> {
+    async fn load(&self, req: &RasterLoadRequest<'_>) -> Result<Buffer, ArrowError> {
         // Take owned copies for the spawn_blocking closure.
         let uri = req.uri.to_string();
         let expected_dtype = req.data_type;
@@ -193,7 +193,7 @@ mod tests {
         let uri = build_chunk_anchor(&store_uri, array_path, &[0, 0]);
 
         let loader = ZarrLoader::new();
-        let req = OutDbLoadRequest {
+        let req = RasterLoadRequest {
             uri: &uri,
             dim_names: &["y", "x"],
             source_shape: &[2, 3],
@@ -210,7 +210,7 @@ mod tests {
         let uri = build_chunk_anchor(&store_uri, array_path, &[0, 0]);
 
         let loader = ZarrLoader::new();
-        let req = OutDbLoadRequest {
+        let req = RasterLoadRequest {
             uri: &uri,
             dim_names: &["y", "x"],
             source_shape: &[2, 3],
@@ -228,7 +228,7 @@ mod tests {
     #[tokio::test]
     async fn zarr_loader_errors_on_malformed_chunk_anchor_uri() {
         let loader = ZarrLoader::new();
-        let req = OutDbLoadRequest {
+        let req = RasterLoadRequest {
             uri: "file:///tmp/foo.zarr", // missing fragment
             dim_names: &["y", "x"],
             source_shape: &[2, 3],
@@ -249,7 +249,7 @@ mod tests {
         let uri = build_chunk_anchor(&store_uri, "nonexistent", &[0, 0]);
 
         let loader = ZarrLoader::new();
-        let req = OutDbLoadRequest {
+        let req = RasterLoadRequest {
             uri: &uri,
             dim_names: &["y", "x"],
             source_shape: &[2, 3],
@@ -267,7 +267,7 @@ mod tests {
     async fn zarr_loader_errors_on_cloud_scheme_until_supported() {
         let loader = ZarrLoader::new();
         let uri = build_chunk_anchor("s3://bucket/foo.zarr", "temperature", &[0, 0]);
-        let req = OutDbLoadRequest {
+        let req = RasterLoadRequest {
             uri: &uri,
             dim_names: &["y", "x"],
             source_shape: &[2, 3],

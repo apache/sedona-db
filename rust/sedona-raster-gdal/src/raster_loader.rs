@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! GDAL backend implementing [`sedona_raster::outdb_loader::AsyncByteLoader`].
+//! GDAL backend implementing [`sedona_raster::raster_loader::AsyncByteLoader`].
 //!
 //! Reads OutDb raster bands identified by a `#band=N` URI fragment via
 //! GDAL's blocking API. The blocking work runs inside
@@ -52,7 +52,7 @@
 //! can't tie up a blocking-pool thread.
 //!
 //! Registered against the per-session
-//! [`OutDbLoaderRegistry`](sedona_raster::outdb_loader::OutDbLoaderRegistry)
+//! [`RasterLoaderRegistry`](sedona_raster::raster_loader::RasterLoaderRegistry)
 //! under the format key `"gdal"`. The `sedona` crate constructs a
 //! [`GdalLoader`] from `SedonaContext::new_from_context` and registers
 //! it during session bootstrap.
@@ -65,7 +65,7 @@ use arrow_schema::ArrowError;
 use async_trait::async_trait;
 use datafusion_common::{DataFusionError, Result as DFResult};
 use sedona_gdal::raster::rasterband::RasterBand;
-use sedona_raster::outdb_loader::{AsyncByteLoader, OutDbLoadRequest};
+use sedona_raster::raster_loader::{AsyncByteLoader, RasterLoadRequest};
 
 use crate::gdal_common::{convert_gdal_err, gdal_to_band_data_type, with_gdal};
 use crate::gdal_dataset_provider::thread_local_cache;
@@ -115,7 +115,7 @@ impl Drop for CancelOnDrop {
 
 #[async_trait]
 impl AsyncByteLoader for GdalLoader {
-    async fn load(&self, req: &OutDbLoadRequest<'_>) -> Result<Buffer, ArrowError> {
+    async fn load(&self, req: &RasterLoadRequest<'_>) -> Result<Buffer, ArrowError> {
         // Validate request shape synchronously, before spawning a blocking
         // task — these are programming errors, no point queueing them
         // onto a worker.
@@ -356,7 +356,7 @@ mod tests {
         let uri = format!("{path}#band=1");
 
         let loader = GdalLoader::new();
-        let req = OutDbLoadRequest {
+        let req = RasterLoadRequest {
             uri: &uri,
             dim_names: &["y", "x"],
             source_shape: &[2, 3],
@@ -375,7 +375,7 @@ mod tests {
         let uri = path;
 
         let loader = GdalLoader::new();
-        let req = OutDbLoadRequest {
+        let req = RasterLoadRequest {
             uri: &uri,
             dim_names: &["y", "x"],
             source_shape: &[2, 3],
@@ -388,7 +388,7 @@ mod tests {
     #[tokio::test]
     async fn gdal_loader_rejects_non_2d_source_shape() {
         let loader = GdalLoader::new();
-        let req = OutDbLoadRequest {
+        let req = RasterLoadRequest {
             uri: "ignored",
             dim_names: &["t", "y", "x"],
             source_shape: &[2, 3, 4],
@@ -404,7 +404,7 @@ mod tests {
     #[tokio::test]
     async fn gdal_loader_rejects_non_yx_dim_names() {
         let loader = GdalLoader::new();
-        let req = OutDbLoadRequest {
+        let req = RasterLoadRequest {
             uri: "ignored",
             dim_names: &["x", "y"], // transposed
             source_shape: &[2, 3],
@@ -424,7 +424,7 @@ mod tests {
         let uri = format!("{path}#band=1");
 
         let loader = GdalLoader::new();
-        let req = OutDbLoadRequest {
+        let req = RasterLoadRequest {
             uri: &uri,
             dim_names: &["y", "x"],
             source_shape: &[2, 3],
@@ -443,7 +443,7 @@ mod tests {
     #[tokio::test]
     async fn gdal_loader_errors_on_missing_file() {
         let loader = GdalLoader::new();
-        let req = OutDbLoadRequest {
+        let req = RasterLoadRequest {
             uri: "/nonexistent/path/to/file.tif#band=1",
             dim_names: &["y", "x"],
             source_shape: &[2, 3],
@@ -462,7 +462,7 @@ mod tests {
         let uri = format!("{path}#band=5");
 
         let loader = GdalLoader::new();
-        let req = OutDbLoadRequest {
+        let req = RasterLoadRequest {
             uri: &uri,
             dim_names: &["y", "x"],
             source_shape: &[2, 3],
@@ -485,7 +485,7 @@ mod tests {
         // 2^31 elements × 4 bytes = 8 GiB, well over the 4 GiB cap.
         // (Source shape values are u64, so this fits the request
         // struct; only the cap should reject it.)
-        let req = OutDbLoadRequest {
+        let req = RasterLoadRequest {
             uri: "ignored",
             dim_names: &["y", "x"],
             source_shape: &[1 << 16, 1 << 16],
@@ -508,7 +508,7 @@ mod tests {
         let uri = format!("{path}#band=1");
 
         let loader = GdalLoader::new();
-        let req = OutDbLoadRequest {
+        let req = RasterLoadRequest {
             uri: &uri,
             dim_names: &["y", "x"],
             source_shape: &[64, 16],

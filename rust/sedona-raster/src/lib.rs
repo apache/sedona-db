@@ -19,5 +19,5 @@ pub mod affine_transformation;
 pub mod array;
 pub mod builder;
 pub mod display;
-pub mod outdb_loader;
+pub mod raster_loader;
 pub mod traits;

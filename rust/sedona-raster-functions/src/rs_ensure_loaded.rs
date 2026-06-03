@@ -20,7 +20,7 @@
 //!
 //! Walks every input row, identifies bands whose `data` column is empty
 //! (the schema-OutDb discriminator), groups them by `outdb_format`,
-//! dispatches each via the [`OutDbLoaderRegistry`] held on `SedonaContext`,
+//! dispatches each via the [`RasterLoaderRegistry`] held on `SedonaContext`,
 //! and assembles an output `RecordBatch` of the same row count whose
 //! `data` columns are populated with the loaded bytes. InDb bands pass
 //! through unchanged. Other band/raster metadata is preserved verbatim.
@@ -42,8 +42,8 @@ use datafusion_expr::{
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_raster::array::RasterStructArray;
 use sedona_raster::builder::RasterBuilder;
-use sedona_raster::outdb_loader::{
-    AsyncByteLoader, OutDbLoadRequest, OutDbLoaderConfig, OutDbLoaderRegistry,
+use sedona_raster::raster_loader::{
+    AsyncByteLoader, RasterLoadRequest, RasterLoaderConfig, RasterLoaderRegistry,
 };
 use sedona_raster::traits::RasterRef;
 
@@ -58,10 +58,10 @@ use sedona_raster::traits::RasterRef;
 pub const NEEDS_PIXELS_METADATA_KEY: &str = "needs_pixels";
 
 /// Async UDF that resolves OutDb bands by dispatching through the
-/// [`OutDbLoaderRegistry`] stashed in `ConfigOptions` as a
-/// [`OutDbLoaderConfig`] extension. The UDF instance itself is
+/// [`RasterLoaderRegistry`] stashed in `ConfigOptions` as a
+/// [`RasterLoaderConfig`] extension. The UDF instance itself is
 /// session-agnostic — it pulls the registry handle out of
-/// `args.config_options.extensions.get::<OutDbLoaderConfig>()` at
+/// `args.config_options.extensions.get::<RasterLoaderConfig>()` at
 /// dispatch time. This matches DataFusion's
 /// `AsyncScalarUDFImpl::invoke_async_with_args` surface (only
 /// `Arc<ConfigOptions>` is reachable from the async fn) and mirrors how
@@ -99,18 +99,20 @@ impl RsEnsureLoaded {
 }
 
 /// Pull the shared registry handle out of a `ConfigOptions`. Returns a
-/// helpful error if the [`OutDbLoaderConfig`] extension isn't installed
+/// helpful error if the [`RasterLoaderConfig`] extension isn't installed
 /// — that only happens if a caller bypasses `SedonaContext::new` to
 /// build their own session, in which case naming the extension is the
 /// right diagnostic.
-fn registry_handle_from_config(config: &ConfigOptions) -> Result<Arc<RwLock<OutDbLoaderRegistry>>> {
+fn registry_handle_from_config(
+    config: &ConfigOptions,
+) -> Result<Arc<RwLock<RasterLoaderRegistry>>> {
     config
         .extensions
-        .get::<OutDbLoaderConfig>()
+        .get::<RasterLoaderConfig>()
         .map(|cfg| cfg.registry.handle())
         .ok_or_else(|| {
             sedona_internal_datafusion_err!(
-                "OutDbLoaderConfig is not registered in this session's ConfigOptions; \
+                "RasterLoaderConfig is not registered in this session's ConfigOptions; \
                  RS_EnsureLoaded cannot dispatch without it. Use SedonaContext::new() \
                  or insert the extension manually."
             )
@@ -118,7 +120,7 @@ fn registry_handle_from_config(config: &ConfigOptions) -> Result<Arc<RwLock<OutD
 }
 
 fn lookup_loader(
-    registry: &Arc<RwLock<OutDbLoaderRegistry>>,
+    registry: &Arc<RwLock<RasterLoaderRegistry>>,
     format: &str,
 ) -> Result<Arc<dyn AsyncByteLoader>> {
     let guard = registry
@@ -389,7 +391,7 @@ where
                     )
                 })?;
                 let loader = lookup(format)?;
-                let req = OutDbLoadRequest {
+                let req = RasterLoadRequest {
                     uri,
                     dim_names: &dim_names,
                     source_shape: &source_shape,
@@ -453,7 +455,7 @@ mod tests {
     use arrow_array::Array;
     use sedona_raster::array::RasterStructArray;
     use sedona_raster::builder::RasterBuilder;
-    use sedona_raster::outdb_loader::OutDbLoaderRegistry;
+    use sedona_raster::raster_loader::RasterLoaderRegistry;
     use sedona_raster::traits::RasterRef;
     use sedona_schema::raster::BandDataType;
 
@@ -467,7 +469,7 @@ mod tests {
     impl AsyncByteLoader for RecordingLoader {
         async fn load(
             &self,
-            req: &OutDbLoadRequest<'_>,
+            req: &RasterLoadRequest<'_>,
         ) -> Result<Buffer, arrow_schema::ArrowError> {
             self.seen.lock().unwrap().push((
                 req.uri.to_string(),
@@ -540,8 +542,8 @@ mod tests {
     fn registry_with(
         format: &str,
         loader: Arc<dyn AsyncByteLoader>,
-    ) -> Arc<RwLock<OutDbLoaderRegistry>> {
-        let mut reg = OutDbLoaderRegistry::new();
+    ) -> Arc<RwLock<RasterLoaderRegistry>> {
+        let mut reg = RasterLoaderRegistry::new();
         reg.register(format, loader);
         Arc::new(RwLock::new(reg))
     }
@@ -662,8 +664,8 @@ mod tests {
         let input_struct = build_outdb_input("s3://bucket/foo.zarr", "zarr", &[2, 3]);
         let input: ArrayRef = Arc::new(input_struct);
 
-        let reg: Arc<RwLock<OutDbLoaderRegistry>> =
-            Arc::new(RwLock::new(OutDbLoaderRegistry::new()));
+        let reg: Arc<RwLock<RasterLoaderRegistry>> =
+            Arc::new(RwLock::new(RasterLoaderRegistry::new()));
 
         let err = ensure_loaded(&input, |fmt| {
             reg.read().unwrap().get(fmt).ok_or_else(|| {
@@ -693,7 +695,7 @@ mod tests {
         impl AsyncByteLoader for ShortLoader {
             async fn load(
                 &self,
-                _req: &OutDbLoadRequest<'_>,
+                _req: &RasterLoadRequest<'_>,
             ) -> Result<Buffer, arrow_schema::ArrowError> {
                 // Return one too few bytes (5 instead of 6).
                 Ok(Buffer::from_vec(vec![0u8; 5]))
