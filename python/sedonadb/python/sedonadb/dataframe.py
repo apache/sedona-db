@@ -634,6 +634,168 @@ class DataFrame:
 
         return GroupedDataFrame(self, coerced)
 
+    def join(
+        self,
+        other: "DataFrame",
+        on: Union[str, List[str], Expr, List[Expr]],
+        how: Literal[
+            "inner",
+            "left",
+            "right",
+            "outer",
+            "full",
+            "left_semi",
+            "semi",
+            "left_anti",
+            "anti",
+            "right_semi",
+            "right_anti",
+        ] = "inner",
+    ) -> "DataFrame":
+        """Join two DataFrames.
+
+        `on` accepts either common column names or arbitrary boolean
+        predicates:
+
+        - **Column names** (`str` or `list[str]`): the named column(s)
+          must exist on both sides. Result has a single copy of each
+          join key — matching pandas / Polars / PySpark output shape.
+        - **Predicate expressions** (`Expr` or `list[Expr]`): each Expr
+          is a boolean predicate combining columns from both sides
+          (e.g. `left.k == right.k`, or `f.st_intersects(left.g, right.g)`).
+          Result keeps both sides' columns verbatim — disambiguate
+          with `df.alias(...)` on either side.
+
+        Args:
+            other: The right-hand DataFrame to join against.
+            on: Join key(s). A column name (`str`), a list of column
+                names, a single boolean `Expr`, or a list of boolean
+                `Expr`s combined with logical AND.
+            how: Join type. Canonical: `"inner"` (default), `"left"`,
+                `"right"`, `"outer"`, `"left_semi"`, `"left_anti"`,
+                `"right_semi"`, `"right_anti"`. PySpark aliases also
+                accepted: `"full"` (= outer), `"semi"` (= left_semi),
+                `"anti"` (= left_anti).
+
+        Examples:
+
+            >>> sd = sedona.db.connect()
+            >>> left = sd.sql(
+            ...     "SELECT * FROM (VALUES (1, 'a'), (2, 'b')) AS t(k, v)"
+            ... )
+            >>> right = sd.sql(
+            ...     "SELECT * FROM (VALUES (1, 'x'), (2, 'y'), (3, 'z')) AS t(k, w)"
+            ... )
+            >>> left.join(right, on="k").sort("k").show()
+            ┌───────┬──────┬──────┐
+            │   k   ┆   v  ┆   w  │
+            │ int64 ┆ utf8 ┆ utf8 │
+            ╞═══════╪══════╪══════╡
+            │     1 ┆ a    ┆ x    │
+            ├╌╌╌╌╌╌╌┼╌╌╌╌╌╌┼╌╌╌╌╌╌┤
+            │     2 ┆ b    ┆ y    │
+            └───────┴──────┴──────┘
+        """
+        if not isinstance(other, DataFrame):
+            raise TypeError(
+                f"join() expects a DataFrame as the first argument, "
+                f"got {type(other).__name__}"
+            )
+
+        HOW_ALIASES = {"semi": "left_semi", "anti": "left_anti", "full": "outer"}
+        valid_canonical = {
+            "inner",
+            "left",
+            "right",
+            "outer",
+            "left_semi",
+            "left_anti",
+            "right_semi",
+            "right_anti",
+        }
+        canonical_how = HOW_ALIASES.get(how, how)
+        if canonical_how not in valid_canonical:
+            accepted = sorted(valid_canonical | set(HOW_ALIASES))
+            raise ValueError(f"join() `how` must be one of {accepted}, got {how!r}")
+
+        if isinstance(on, (str, Expr)):
+            on_list = [on]
+        elif isinstance(on, list):
+            on_list = on
+        else:
+            raise TypeError(
+                f"join() `on` expects str, Expr, or a list of either, "
+                f"got {type(on).__name__}"
+            )
+
+        if not on_list:
+            raise ValueError("join() requires at least one element in `on`")
+
+        is_str_keys = all(isinstance(x, str) for x in on_list)
+        is_expr_keys = all(isinstance(x, Expr) for x in on_list)
+        if not (is_str_keys or is_expr_keys):
+            raise TypeError(
+                "join() `on` list must contain only str or only Expr, not a mix"
+            )
+
+        if is_expr_keys:
+            joined_impl = self._impl.join_on(
+                other._impl, [p._impl for p in on_list], canonical_how
+            )
+            return DataFrame(self._ctx, joined_impl)
+
+        # String-keys path: alias both sides, synthesize equi-join
+        # predicates from the qualified columns, then project to dedupe
+        # the join keys so the output shape matches pandas / PySpark
+        # rather than DataFusion's keep-both-copies default.
+        LEFT_ALIAS = "_sd_join_left_"
+        RIGHT_ALIAS = "_sd_join_right_"
+        left_cols = self._impl.columns()
+        right_cols = other._impl.columns()
+
+        missing_left = [k for k in on_list if k not in left_cols]
+        missing_right = [k for k in on_list if k not in right_cols]
+        if missing_left or missing_right:
+            raise KeyError(
+                f"Join keys missing — left: {missing_left}, "
+                f"right: {missing_right}. "
+                f"Left columns: {left_cols}; right columns: {right_cols}"
+            )
+
+        left_aliased = self.alias(LEFT_ALIAS)
+        right_aliased = other.alias(RIGHT_ALIAS)
+
+        predicates = [(left_aliased[k] == right_aliased[k])._impl for k in on_list]
+        joined_impl = left_aliased._impl.join_on(
+            right_aliased._impl, predicates, canonical_how
+        )
+
+        if canonical_how in ("left_semi", "left_anti"):
+            projection = [left_aliased[c]._impl for c in left_cols]
+        elif canonical_how in ("right_semi", "right_anti"):
+            projection = [right_aliased[c]._impl for c in right_cols]
+        else:
+            # For the unified key column, pick the side that is always
+            # populated: right join takes from the right, outer COALESCEs
+            # so unmatched-on-either-side rows still carry a key value.
+            key_set = set(on_list)
+            projection = []
+            for c in left_cols:
+                if c in key_set and canonical_how == "right":
+                    projection.append(right_aliased[c]._impl)
+                elif c in key_set and canonical_how == "outer":
+                    coalesced = self._ctx.funcs.coalesce(
+                        left_aliased[c], right_aliased[c]
+                    ).alias(c)
+                    projection.append(coalesced._impl)
+                else:
+                    projection.append(left_aliased[c]._impl)
+            for c in right_cols:
+                if c not in key_set:
+                    projection.append(right_aliased[c]._impl)
+
+        return DataFrame(self._ctx, joined_impl.select(projection))
+
     def limit(self, n: Optional[int], /, *, offset: int = 0) -> "DataFrame":
         """Limit result to n rows starting at offset
 

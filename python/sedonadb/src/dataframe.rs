@@ -28,7 +28,7 @@ use datafusion::logical_expr::SortExpr;
 use datafusion::prelude::{DataFrame, SessionContext};
 use datafusion_common::{Column, DataFusionError, ParamValues};
 use datafusion_execution::TaskContextProvider;
-use datafusion_expr::{ExplainFormat, ExplainOption, Expr};
+use datafusion_expr::{ExplainFormat, ExplainOption, Expr, JoinType};
 use datafusion_ffi::table_provider::FFI_TableProvider;
 use futures::lock::Mutex;
 use futures::TryStreamExt;
@@ -254,6 +254,35 @@ impl InternalDataFrame {
         let group_exprs: Vec<Expr> = group_exprs.into_iter().map(|e| e.inner).collect();
         let agg_exprs: Vec<Expr> = agg_exprs.into_iter().map(|e| e.inner).collect();
         let inner = self.inner.clone().aggregate(group_exprs, agg_exprs)?;
+        Ok(InternalDataFrame::new(inner, self.runtime.clone()))
+    }
+
+    fn join_on(
+        &self,
+        right: &InternalDataFrame,
+        predicates: Vec<PyExpr>,
+        how: &str,
+    ) -> Result<InternalDataFrame, PySedonaError> {
+        let join_type = match how {
+            "inner" => JoinType::Inner,
+            "left" => JoinType::Left,
+            "right" => JoinType::Right,
+            "outer" => JoinType::Full,
+            "left_semi" => JoinType::LeftSemi,
+            "left_anti" => JoinType::LeftAnti,
+            "right_semi" => JoinType::RightSemi,
+            "right_anti" => JoinType::RightAnti,
+            other => {
+                return Err(PySedonaError::SedonaPython(format!(
+                    "Unsupported join type '{other}'"
+                )))
+            }
+        };
+        let on_exprs: Vec<Expr> = predicates.into_iter().map(|p| p.inner).collect();
+        let inner = self
+            .inner
+            .clone()
+            .join_on(right.inner.clone(), join_type, on_exprs)?;
         Ok(InternalDataFrame::new(inner, self.runtime.clone()))
     }
 
