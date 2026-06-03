@@ -30,6 +30,7 @@ use arrow_array::{RecordBatch, RecordBatchReader};
 use arrow_schema::{ArrowError, Schema, SchemaRef};
 use sedona_common::sedona_internal_datafusion_err;
 use sedona_raster::builder::RasterBuilder;
+use sedona_raster::traits::is_spatial_dim_pair;
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::raster::BandDataType;
 use zarrs::array::Array;
@@ -350,9 +351,10 @@ async fn open_and_validate(
     validate_group_constraints(&array_infos)?;
 
     // Spatial-dim resolution. Two configurations are accepted:
-    //   - dim_names ends with ["y", "x"] (canonical for georeferenced
-    //     2-D and time-series rasters); the spatial extent is the chunk's
-    //     last two dims.
+    //   - dim_names ends with a recognized spatial pair — ["y", "x"],
+    //     ["lat", "lon"], or ["latitude", "longitude"] (canonical for
+    //     georeferenced 2-D and time-series rasters); the spatial extent
+    //     is the chunk's last two dims.
     //   - `spatial:dims` attribute on the group explicitly names them.
     // Anything else errors with a clear message — silently picking dims
     // would produce wrong per-row transforms.
@@ -601,8 +603,9 @@ fn validate_group_constraints(infos: &[ArrayInfo]) -> Result<(), ArrowError> {
 ///
 /// If `spatial_dims` is provided via the group's `spatial:dims` attribute,
 /// look up those names by position. Otherwise, default to the last two
-/// dims and require they be named `y` and `x` (in that order) — the
-/// canonical GeoZarr-2D convention. Anything else errors.
+/// dims and require they form a recognized spatial pair — `[y, x]`,
+/// `[lat, lon]`, or `[latitude, longitude]` (in that order), the common
+/// CF / GeoZarr-2D conventions. Anything else errors.
 fn resolve_spatial_dim_indices(
     dim_names: &[String],
     spatial_dims: Option<&[String]>,
@@ -625,10 +628,11 @@ fn resolve_spatial_dim_indices(
             "at least 2 dimensions are required to resolve spatial axes; got {dim_names:?}",
         )));
     }
-    if dim_names[n - 2] != "y" || dim_names[n - 1] != "x" {
+    if !is_spatial_dim_pair(&dim_names[n - 2], &dim_names[n - 1]) {
         return Err(ArrowError::InvalidArgumentError(format!(
-            "the last two dim_names must be [\"y\", \"x\"] when `spatial:dims` is \
-             not declared; got {dim_names:?}",
+            "the last two dim_names must be a recognized spatial pair \
+             ([\"y\", \"x\"], [\"lat\", \"lon\"], or [\"latitude\", \"longitude\"]) \
+             when `spatial:dims` is not declared; got {dim_names:?}",
         )));
     }
     Ok(vec![n - 2, n - 1])
@@ -810,6 +814,20 @@ mod tests {
         let names = vec!["time".into(), "y".into(), "x".into()];
         let idx = resolve_spatial_dim_indices(&names, None).unwrap();
         assert_eq!(idx, vec![1, 2]);
+    }
+
+    #[test]
+    fn resolve_spatial_dim_indices_default_latlon() {
+        let names = vec!["time".into(), "lat".into(), "lon".into()];
+        let idx = resolve_spatial_dim_indices(&names, None).unwrap();
+        assert_eq!(idx, vec![1, 2]);
+    }
+
+    #[test]
+    fn resolve_spatial_dim_indices_default_latitude_longitude() {
+        let names = vec!["latitude".into(), "longitude".into()];
+        let idx = resolve_spatial_dim_indices(&names, None).unwrap();
+        assert_eq!(idx, vec![0, 1]);
     }
 
     #[test]

@@ -20,6 +20,24 @@ use std::borrow::Cow;
 use arrow_schema::ArrowError;
 use sedona_schema::raster::BandDataType;
 
+/// Recognized spatial dimension-name pairs, in band C-order: the slower-
+/// varying Y-like (row) axis first, the faster-varying X-like (column) axis
+/// second. A band whose trailing two `dim_names` match one of these pairs is
+/// treated as a georeferenced 2-D layout without needing an explicit
+/// `spatial:dims` declaration. CF-style `lat`/`lon` and
+/// `latitude`/`longitude` layouts are accepted alongside the native `y`/`x`.
+pub const SPATIAL_DIM_NAME_PAIRS: [(&str, &str); 3] =
+    [("y", "x"), ("lat", "lon"), ("latitude", "longitude")];
+
+/// True iff `(y_like, x_like)` is a recognized spatial dimension-name pair
+/// (see [`SPATIAL_DIM_NAME_PAIRS`]). Arguments are in band C-order: the
+/// Y-like (row) axis first, the X-like (column) axis second.
+pub fn is_spatial_dim_pair(y_like: &str, x_like: &str) -> bool {
+    SPATIAL_DIM_NAME_PAIRS
+        .iter()
+        .any(|&(y, x)| y == y_like && x == x_like)
+}
+
 /// View into a band's N-D data buffer with layout metadata.
 ///
 /// `shape`, `strides`, and `offset` describe the *visible* region in
@@ -508,14 +526,16 @@ pub trait BandRef {
     }
 
     /// True iff this band is shaped exactly like a legacy 2-D raster band:
-    /// `dim_names == ["y", "x"]` and the view is the identity over the
-    /// band's `raw_source_shape` (no slice, no broadcast, no permutation).
+    /// `dim_names` is a recognized spatial pair (`["y", "x"]`, `["lat",
+    /// "lon"]`, or `["latitude", "longitude"]`; see [`is_spatial_dim_pair`])
+    /// and the view is the identity over the band's `raw_source_shape` (no
+    /// slice, no broadcast, no permutation).
     ///
     /// GDAL-backed SQL functions use this to refuse N-D bands cleanly while
     /// they wait for an MDArray-aware port.
     fn is_2d(&self) -> bool {
         let dims = self.dim_names();
-        if dims.len() != 2 || dims[0] != "y" || dims[1] != "x" {
+        if dims.len() != 2 || !is_spatial_dim_pair(dims[0], dims[1]) {
             return false;
         }
         let view = self.view();
@@ -985,8 +1005,32 @@ mod tests {
     }
 
     #[test]
-    fn is_2d_yx_other_dim_names_is_false() {
+    fn is_2d_identity_latlon_is_true() {
+        // CF-style lat/lon is a recognized spatial pair, so an identity-view
+        // band shaped [lat, lon] is a legacy 2-D raster.
         let b = band(&["lat", "lon"], &[4, 5], &[ve(0, 0, 1, 4), ve(1, 0, 1, 5)]);
+        assert!(b.is_2d());
+    }
+
+    #[test]
+    fn is_2d_identity_latitude_longitude_is_true() {
+        let b = band(
+            &["latitude", "longitude"],
+            &[4, 5],
+            &[ve(0, 0, 1, 4), ve(1, 0, 1, 5)],
+        );
+        assert!(b.is_2d());
+    }
+
+    #[test]
+    fn is_2d_unrecognized_dim_names_is_false() {
+        // Names outside the recognized spatial pairs are not legacy 2-D,
+        // even with an identity view.
+        let b = band(
+            &["northing", "easting"],
+            &[4, 5],
+            &[ve(0, 0, 1, 4), ve(1, 0, 1, 5)],
+        );
         assert!(!b.is_2d());
     }
 }
