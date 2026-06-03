@@ -48,7 +48,7 @@ zarrs = { workspace = true, features = ["async", "gzip", "zstd", "blosc", "crc32
 zarrs_object_store = { workspace = true }
 
 [dev-dependencies]
-object_store = { workspace = true, features = ["aws", "gcp", "azure", "http"] }
+object_store = { workspace = true, features = ["aws", "http"] }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 # Test fixtures write Zarr groups to a temp dir; the loader itself
