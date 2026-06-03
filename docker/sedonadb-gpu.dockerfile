@@ -61,7 +61,6 @@ WORKDIR /workspace
 # Set environment variables for build
 ENV VCPKG_ROOT=/home/ubuntu/vcpkg
 ENV CMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake
-ENV PKG_CONFIG_PATH=$VCPKG_ROOT/installed/x64-linux/lib/pkgconfig
 ENV CC=clang-18
 ENV CXX=clang++-18
 ARG CMAKE_CUDA_ARCHITECTURES="86"
@@ -78,8 +77,12 @@ ENV MATURIN_PEP517_ARGS="--features s2geography,gpu"
 # Install maturin AND JupyterLab inside the virtual environment
 RUN pip3 install maturin jupyterlab pyproj geoarrow-pyarrow pandas
 
-# Install the project. You may add '-e' to enable the editable mode (uses pyproject -> maturin under the hood) for debug/development purposes
-RUN pip3 install "python/sedonadb" -vv
+# Install the project. You may add '-e' to enable the editable mode (uses pyproject -> maturin under the hood) for debug/development purposes.
+# Resolve the vcpkg triplet for the target architecture (x64-linux on amd64,
+# arm64-linux on arm64) so the GEOS/s2geography build finds pkg-config on both.
+RUN VCPKG_TRIPLET="$([ "$(uname -m)" = "aarch64" ] && echo arm64-linux || echo x64-linux)" \
+    && export PKG_CONFIG_PATH="$VCPKG_ROOT/installed/$VCPKG_TRIPLET/lib/pkgconfig" \
+    && pip3 install "python/sedonadb" -vv
 
 # Clean up the library path so the container uses the real driver at runtime
 ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64
