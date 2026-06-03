@@ -119,14 +119,11 @@ impl ZarrChunkReader {
             spatial_dim_indices,
         } = open_and_validate(storage, group_uri, arrays).await?;
 
-        let spatial_dims_names: Vec<String> = spatial_dim_indices
-            .iter()
-            .map(|&i| array_infos[0].dim_names[i].clone())
-            .collect();
-        let chunk_spatial_shape: Vec<i64> = spatial_dim_indices
-            .iter()
-            .map(|&i| array_infos[0].chunk_shape[i] as i64)
-            .collect();
+        let (spatial_dims_names, chunk_spatial_shape) = raster_spatial_metadata(
+            &array_infos[0].dim_names,
+            &array_infos[0].chunk_shape,
+            &spatial_dim_indices,
+        );
 
         let raster_field = SedonaType::Raster
             .to_storage_field("raster", true)
@@ -638,6 +635,28 @@ fn resolve_spatial_dim_indices(
     Ok(vec![n - 2, n - 1])
 }
 
+/// Build the raster-level `(spatial_dims, spatial_shape)` for a chunk in the
+/// X-first GIS order that `RasterRef::width()`/`height()`/`x_dim()`/`y_dim()`
+/// and the GDAL geotransform expect (X/width at index 0).
+///
+/// `spatial_dim_indices` is in file (C-)order — the slowest-varying spatial
+/// axis first, i.e. `[y_index, x_index]` for the 2-D case (see
+/// [`resolve_spatial_dim_indices`]). Bands keep their natural C-order
+/// `dim_names`/`shape` (matching the chunk's physical pixel layout); only
+/// this logical raster-level descriptor is reordered, so reversing the
+/// index list yields fastest-axis-first `[x, y]`. No pixel data is moved.
+fn raster_spatial_metadata(
+    dim_names: &[String],
+    chunk_shape: &[u64],
+    spatial_dim_indices: &[usize],
+) -> (Vec<String>, Vec<i64>) {
+    spatial_dim_indices
+        .iter()
+        .rev()
+        .map(|&i| (dim_names[i].clone(), chunk_shape[i] as i64))
+        .unzip()
+}
+
 /// Per-chunk transform: translate the group's transform so the chunk's
 /// `[0, 0]` element maps to the chunk's spatial origin.
 fn compute_row_transform(
@@ -814,6 +833,20 @@ mod tests {
         let names = vec!["time".into(), "y".into(), "x".into()];
         let idx = resolve_spatial_dim_indices(&names, None).unwrap();
         assert_eq!(idx, vec![1, 2]);
+    }
+
+    #[test]
+    fn raster_spatial_metadata_is_x_first_for_nonsquare_chunk() {
+        // Band is C-order [time, lat, lon] with a deliberately non-square
+        // chunk: lat=2 (height), lon=3 (width). resolve_spatial_dim_indices
+        // returns [lat_idx, lon_idx] = [1, 2] (y-first, file order).
+        let dim_names = vec!["time".to_string(), "lat".to_string(), "lon".to_string()];
+        let chunk_shape = vec![1u64, 2, 3];
+        let (dims, shape) = raster_spatial_metadata(&dim_names, &chunk_shape, &[1, 2]);
+        // Raster-level descriptor must be X-first so width()=shape[0]=lon=3
+        // and height()=shape[1]=lat=2 (not the band's C-order [lat, lon]).
+        assert_eq!(dims, vec!["lon".to_string(), "lat".to_string()]);
+        assert_eq!(shape, vec![3, 2]);
     }
 
     #[test]
