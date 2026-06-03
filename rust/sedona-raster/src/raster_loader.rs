@@ -240,7 +240,7 @@ impl ConfigField for RasterLoaderConfig {
             format!("{key_prefix}.registry")
         };
         self.registry
-            .visit(v, &key, "Registered OutDb byte loaders");
+            .visit(v, &key, "Registered raster byte loaders");
     }
 
     fn set(&mut self, key: &str, _value: &str) -> DFResult<()> {

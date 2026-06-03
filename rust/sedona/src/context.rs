@@ -83,7 +83,7 @@ use sedona_raster::raster_loader::{AsyncByteLoader, RasterLoaderConfig, RasterLo
 pub struct SedonaContext {
     pub ctx: SessionContext,
     pub functions: FunctionSet,
-    /// Per-session registry of async OutDb byte loaders, keyed by
+    /// Per-session registry of async raster byte loaders, keyed by
     /// `outdb_format`. Held behind an `Arc<RwLock<…>>` so the registered
     /// `RS_EnsureLoaded` UDF instance and any extension crates' `register(&ctx)`
     /// entry points observe the same map. See
@@ -273,7 +273,7 @@ impl SedonaContext {
             out.ctx.register_udf(udf.into_scalar_udf());
         };
 
-        // Register the GDAL OutDb byte loader. `sedona-raster-gdal` is a
+        // Register the GDAL raster byte loader. `sedona-raster-gdal` is a
         // mandatory dep on `sedona`, but libgdal itself is dlopen'd
         // lazily by `sedona-gdal` (workspace-default-features = false),
         // so this registration is safe on systems without libgdal —
@@ -347,7 +347,7 @@ impl SedonaContext {
         Ok(())
     }
 
-    /// Register an async OutDb byte loader under a `format` key.
+    /// Register an async raster byte loader under a `format` key.
     ///
     /// `format` matches the band-level `outdb_format` column value
     /// (`"gdal"`, `"zarr"`, …). At query time the `RS_EnsureLoaded` UDF

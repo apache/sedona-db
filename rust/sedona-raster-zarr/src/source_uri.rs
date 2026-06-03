@@ -40,7 +40,7 @@
 
 use arrow_schema::ArrowError;
 
-/// Parts of a chunk-anchor URI. The async OutDb byte loader parses
+/// Parts of a chunk-anchor URI. The async raster byte loader parses
 /// `outdb_uri` values back into this struct.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChunkAnchor {

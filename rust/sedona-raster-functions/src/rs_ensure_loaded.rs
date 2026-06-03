@@ -123,9 +123,9 @@ fn lookup_loader(
     registry: &Arc<RwLock<RasterLoaderRegistry>>,
     format: &str,
 ) -> Result<Arc<dyn AsyncByteLoader>> {
-    let guard = registry
-        .read()
-        .map_err(|e| sedona_internal_datafusion_err!("OutDb registry lock poisoned: {e}"))?;
+    let guard = registry.read().map_err(|e| {
+        sedona_internal_datafusion_err!("raster loader registry lock poisoned: {e}")
+    })?;
     if let Some(loader) = guard.get(format) {
         return Ok(loader);
     }
@@ -133,11 +133,11 @@ fn lookup_loader(
     // which loaders are registered.
     let registered: Vec<String> = guard.formats().map(String::from).collect();
     let registered_msg = if registered.is_empty() {
-        "no OutDb loaders are registered in this session".to_string()
+        "no raster loaders are registered in this session".to_string()
     } else {
         format!("registered formats: {}", registered.join(", "))
     };
-    plan_err!("no OutDb loader registered for format '{format}' — {registered_msg}")
+    plan_err!("no raster loader registered for format '{format}' — {registered_msg}")
 }
 
 // One RsEnsureLoaded per session by construction — equality and hash
@@ -670,7 +670,7 @@ mod tests {
         let err = ensure_loaded(&input, |fmt| {
             reg.read().unwrap().get(fmt).ok_or_else(|| {
                 datafusion_common::DataFusionError::Plan(format!(
-                    "no OutDb loader registered for format '{fmt}'"
+                    "no raster loader registered for format '{fmt}'"
                 ))
             })
         })

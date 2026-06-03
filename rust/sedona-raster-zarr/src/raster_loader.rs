@@ -58,7 +58,7 @@ use crate::source_uri::{group_uri_to_filesystem_path, parse_chunk_anchor};
 /// (see `crate::loader`).
 pub const ZARR_FORMAT: &str = "zarr";
 
-/// Async OutDb byte loader for Zarr-backed bands.
+/// Async raster byte loader for Zarr-backed bands.
 ///
 /// Stateless: dataset opens use a fresh `FilesystemStore` per call.
 /// Caching the open store per `(store_uri, array_path)` is a follow-up
@@ -135,7 +135,7 @@ impl AsyncByteLoader for ZarrLoader {
         .await
         .map_err(|e| {
             ArrowError::ExternalError(Box::new(sedona_internal_datafusion_err!(
-                "Zarr OutDb loader task panicked or was cancelled: {e}"
+                "Zarr raster loader task panicked or was cancelled: {e}"
             )))
         })??;
 

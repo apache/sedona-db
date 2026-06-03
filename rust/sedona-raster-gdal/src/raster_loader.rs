@@ -121,13 +121,13 @@ impl AsyncByteLoader for GdalLoader {
         // onto a worker.
         if req.source_shape.len() != 2 {
             return Err(ArrowError::NotYetImplemented(format!(
-                "GDAL OutDb loader only supports 2-D bands; got source_shape with {} dims",
+                "GDAL raster loader only supports 2-D bands; got source_shape with {} dims",
                 req.source_shape.len()
             )));
         }
         if req.dim_names != ["y", "x"] {
             return Err(ArrowError::InvalidArgumentError(format!(
-                "GDAL OutDb loader requires dim_names=[\"y\", \"x\"]; got {:?}",
+                "GDAL raster loader requires dim_names=[\"y\", \"x\"]; got {:?}",
                 req.dim_names
             )));
         }
@@ -222,7 +222,7 @@ impl AsyncByteLoader for GdalLoader {
         .await
         .map_err(|e| {
             ArrowError::ExternalError(Box::new(sedona_common::sedona_internal_datafusion_err!(
-                "GDAL OutDb loader task panicked or was cancelled: {e}"
+                "GDAL raster loader task panicked or was cancelled: {e}"
             )))
         })??;
 
