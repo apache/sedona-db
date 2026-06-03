@@ -89,12 +89,15 @@ impl OptimizerRule for EnsureLoadedOptimizerRule {
             return Ok(Transformed::no(plan));
         };
 
-        // Expressions on a node are evaluated against the combined schema
-        // of its inputs: single-input nodes (Projection, Filter, …) use
-        // their one input; a Join's `filter` references left ⋈ right, so
-        // a predicate like `RS_Intersects(a.rast, b.rast)` resolves only
-        // against the merged schema. Leaf nodes carry no wrappable
-        // expressions.
+        // Type-check argument expressions against the merged schema of the
+        // node's INPUTS, not the node's own (output) schema. For a
+        // Projection the output schema holds the projected results
+        // (`rs_value(rast, …)`), not the input `rast` column the argument
+        // references, so `plan.schema()` would fail to recognise the raster
+        // arg and silently skip wrapping. Single-input nodes (Projection,
+        // Filter, …) use their one input; a Join's `filter` references
+        // left ⋈ right, so the merged schema resolves either side. Leaf
+        // nodes carry no wrappable expressions.
         let inputs = plan.inputs();
         if inputs.is_empty() {
             return Ok(Transformed::no(plan));
@@ -433,6 +436,48 @@ mod tests {
             count_ensure_loaded(&out),
             1,
             "raster arg from the right join input should be wrapped: {out:?}"
+        );
+    }
+
+    #[test]
+    fn rule_wraps_raster_arg_through_a_projection() {
+        // Drives the real `OptimizerRule::rewrite()` (not the
+        // `rewrite_expr_node` helper) on a Projection — `SELECT rs_mock(rast)`.
+        // The projection's OUTPUT schema holds the result column, not the
+        // input `rast`, so the rule must type-check against the INPUT schema
+        // to recognise and wrap the raster arg. A regression guard against
+        // switching to `plan.schema()`, which would silently skip wrapping
+        // here (the common single-projection case).
+        use datafusion::execution::session_state::SessionStateBuilder;
+        use datafusion_expr::registry::FunctionRegistry;
+        use datafusion_expr::{EmptyRelation, LogicalPlanBuilder};
+
+        // SessionState doubles as the OptimizerConfig and carries the
+        // function registry the rule resolves `rs_ensureloaded` from.
+        let mut state = SessionStateBuilder::new().with_default_features().build();
+        state.register_udf(fake_ensure_loaded_udf()).unwrap();
+
+        let scan = LogicalPlan::EmptyRelation(EmptyRelation {
+            produce_one_row: false,
+            schema: raster_schema_named("rast"),
+        });
+        let proj = Expr::ScalarFunction(ScalarFunction {
+            func: needs_bytes_udf("rs_mock"),
+            args: vec![col("rast")],
+        });
+        let plan = LogicalPlanBuilder::from(scan)
+            .project(vec![proj])
+            .unwrap()
+            .build()
+            .unwrap();
+
+        let out = EnsureLoadedOptimizerRule.rewrite(plan, &state).unwrap();
+
+        let wrapped: usize = out.data.expressions().iter().map(count_ensure_loaded).sum();
+        assert_eq!(
+            wrapped, 1,
+            "projection's raster arg should be wrapped via the input schema: {:?}",
+            out.data
         );
     }
 }
