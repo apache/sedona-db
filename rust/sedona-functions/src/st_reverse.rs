@@ -19,7 +19,7 @@ use std::io::Write;
 use std::sync::Arc;
 
 use arrow_array::builder::BinaryBuilder;
-use datafusion_common::{DataFusionError, Result};
+use datafusion_common::{exec_datafusion_err, Result};
 use datafusion_expr::ColumnarValue;
 use datafusion_expr::Volatility;
 use geo_traits::{
@@ -27,6 +27,7 @@ use geo_traits::{
     MultiPointTrait, MultiPolygonTrait, PointTrait, PolygonTrait,
 };
 use sedona_expr::item_crs::ItemCrsKernel;
+use sedona_geometry::error::SedonaGeometryError;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::wkb_factory::{
     write_wkb_coord_trait, write_wkb_empty_point, write_wkb_geometrycollection_header,
@@ -83,7 +84,8 @@ impl SedonaScalarKernel for STReverse {
         executor.execute_wkb_void(|maybe_wkb| {
             match maybe_wkb {
                 Some(wkb) => {
-                    invoke_scalar(&wkb, &mut builder)?;
+                    invoke_scalar(&wkb, &mut builder)
+                        .map_err(|e| exec_datafusion_err!("ST_Reverse error: {e}"))?;
                     builder.append_value([]);
                 }
                 _ => builder.append_null(),
@@ -95,39 +97,36 @@ impl SedonaScalarKernel for STReverse {
     }
 }
 
-fn invoke_scalar(geom: &impl GeometryTrait<T = f64>, writer: &mut impl Write) -> Result<()> {
+fn invoke_scalar(
+    geom: &impl GeometryTrait<T = f64>,
+    writer: &mut impl Write,
+) -> Result<(), SedonaGeometryError> {
     let dims = geom.dim();
     match geom.as_type() {
         geo_traits::GeometryType::Point(pt) => {
             if pt.coord().is_some() {
-                write_wkb_point_header(writer, dims)
-                    .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-                write_wkb_coord_trait(writer, &pt.coord().unwrap())
-                    .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+                write_wkb_point_header(writer, dims)?;
+                write_wkb_coord_trait(writer, &pt.coord().unwrap())?;
             } else {
-                write_wkb_empty_point(writer, dims)
-                    .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+                write_wkb_empty_point(writer, dims)?;
             }
         }
 
         geo_traits::GeometryType::MultiPoint(multi_point) => {
-            write_wkb_multipoint_header(writer, dims, multi_point.points().count())
-                .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+            write_wkb_multipoint_header(writer, dims, multi_point.points().count())?;
             for pt in multi_point.points() {
                 invoke_scalar(&pt, writer)?;
             }
         }
 
         geo_traits::GeometryType::LineString(ls) => {
-            write_wkb_linestring_header(writer, dims, ls.coords().count())
-                .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+            write_wkb_linestring_header(writer, dims, ls.coords().count())?;
             write_reversed_coords(writer, ls.coords())?;
         }
 
         geo_traits::GeometryType::Polygon(pgn) => {
             let num_rings = pgn.interiors().count() + pgn.exterior().is_some() as usize;
-            write_wkb_polygon_header(writer, dims, num_rings)
-                .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+            write_wkb_polygon_header(writer, dims, num_rings)?;
 
             if let Some(exterior) = pgn.exterior() {
                 write_reversed_ring(writer, exterior)?;
@@ -139,31 +138,28 @@ fn invoke_scalar(geom: &impl GeometryTrait<T = f64>, writer: &mut impl Write) ->
         }
 
         geo_traits::GeometryType::MultiLineString(mls) => {
-            write_wkb_multilinestring_header(writer, dims, mls.line_strings().count())
-                .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+            write_wkb_multilinestring_header(writer, dims, mls.line_strings().count())?;
             for ls in mls.line_strings() {
                 invoke_scalar(&ls, writer)?;
             }
         }
 
         geo_traits::GeometryType::MultiPolygon(mpgn) => {
-            write_wkb_multipolygon_header(writer, dims, mpgn.polygons().count())
-                .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+            write_wkb_multipolygon_header(writer, dims, mpgn.polygons().count())?;
             for pgn in mpgn.polygons() {
                 invoke_scalar(&pgn, writer)?;
             }
         }
 
         geo_traits::GeometryType::GeometryCollection(gcn) => {
-            write_wkb_geometrycollection_header(writer, dims, gcn.geometries().count())
-                .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+            write_wkb_geometrycollection_header(writer, dims, gcn.geometries().count())?;
             for geom in gcn.geometries() {
                 invoke_scalar(&geom, writer)?;
             }
         }
 
         _ => {
-            return Err(DataFusionError::Execution(
+            return Err(SedonaGeometryError::Invalid(
                 "Unsupported geometry type for reversal operation".to_string(),
             ));
         }
@@ -171,20 +167,22 @@ fn invoke_scalar(geom: &impl GeometryTrait<T = f64>, writer: &mut impl Write) ->
     Ok(())
 }
 
-fn write_reversed_ring(writer: &mut impl Write, ring: impl LineStringTrait<T = f64>) -> Result<()> {
-    write_wkb_polygon_ring_header(writer, ring.coords().count())
-        .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+fn write_reversed_ring(
+    writer: &mut impl Write,
+    ring: impl LineStringTrait<T = f64>,
+) -> Result<(), SedonaGeometryError> {
+    write_wkb_polygon_ring_header(writer, ring.coords().count())?;
     write_reversed_coords(writer, ring.coords())
 }
 
-fn write_reversed_coords<I>(writer: &mut impl Write, coords: I) -> Result<()>
+fn write_reversed_coords<I>(writer: &mut impl Write, coords: I) -> Result<(), SedonaGeometryError>
 where
     I: DoubleEndedIterator,
     I::Item: CoordTrait<T = f64>,
 {
-    coords.rev().try_for_each(|coord| {
-        write_wkb_coord_trait(writer, &coord).map_err(|e| DataFusionError::Execution(e.to_string()))
-    })
+    coords
+        .rev()
+        .try_for_each(|coord| write_wkb_coord_trait(writer, &coord))
 }
 
 #[cfg(test)]
