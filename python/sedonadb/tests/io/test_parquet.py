@@ -757,7 +757,7 @@ def test_prune_geography_parquet():
         )
 
 
-def test_write_partitioned_parquet(con):
+def test_read_partitioned_parquet(con):
     t = con.funcs.table.sd_random_geometry(seed=3847)
     t = t.select(
         id=t.id,
@@ -769,6 +769,14 @@ def test_write_partitioned_parquet(con):
         out_dir = Path(td) / "out_dir"
 
         t.to_parquet(out_dir, partition_by="grp")
+
+        # Test default partitioning read behaviour (autodiscover)
+        result = con.read_parquet(out_dir)
+        assert result.columns == t.columns
+        geopandas.testing.assert_geodataframe_equal(
+            result.sort("id").to_pandas(),
+            t.sort("id").to_pandas(),
+        )
 
         # Test auto-discovery of partition columns (partitioning=None)
         result = con.read_parquet(out_dir, partitioning=None)

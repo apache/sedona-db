@@ -64,7 +64,7 @@ def test_read_ogr_projection(con):
 
 def test_read_ogr_multi_file(con):
     n = 1024 * 16
-    partitions = ["part_{c}" for c in "abcdefghijklmnop"]
+    partitions = [f"part_{c}" for c in "abcdefghijklmnop"]
     series = geopandas.GeoSeries.from_xy(
         list(range(n)), list(range(1, n + 1)), crs="EPSG:3857"
     )
@@ -91,19 +91,24 @@ def test_read_ogr_multi_file(con):
             con.read_parquet(parquet_path).to_pandas().to_file(fgb_path)
 
         # Reading a directory while specifying the extension should work
+        # Partition columns are auto-discovered from the directory structure
         con.read_pyogrio(f"{td}", extension="fgb").to_view(
             "gdf_from_dir", overwrite=True
         )
         geopandas.testing.assert_geodataframe_equal(
-            con.sql("SELECT * FROM gdf_from_dir ORDER BY idx").to_pandas(),
-            gdf.filter(["idx", "wkb_geometry"]),
+            con.sql(
+                "SELECT idx, partition, wkb_geometry FROM gdf_from_dir ORDER BY idx"
+            ).to_pandas(),
+            gdf,
         )
 
         # Reading using a glob without specifying the extension should work
         con.read_pyogrio(f"{td}/**/*.fgb").to_view("gdf_from_glob", overwrite=True)
         geopandas.testing.assert_geodataframe_equal(
-            con.sql("SELECT * FROM gdf_from_glob ORDER BY idx").to_pandas(),
-            gdf.filter(["idx", "wkb_geometry"]),
+            con.sql(
+                "SELECT idx, partition, wkb_geometry FROM gdf_from_glob ORDER BY idx"
+            ).to_pandas(),
+            gdf,
         )
 
 
@@ -314,6 +319,18 @@ def test_read_ogr_partitioned(con):
             grp_dir.mkdir()
             subset = gdf[gdf["grp"] == grp_val].drop(columns=["grp"])
             subset.to_file(grp_dir / "data.fgb")
+
+        # Test auto-discovery of partition columns with the default value
+        # (which is to autodiscover partitions)
+        con.read_pyogrio(td, extension="fgb").to_view(
+            "partitioned_auto", overwrite=True
+        )
+        geopandas.testing.assert_geodataframe_equal(
+            con.sql(
+                "SELECT idx, grp, wkb_geometry FROM partitioned_auto ORDER BY idx"
+            ).to_pandas(),
+            gdf,
+        )
 
         # Test auto-discovery of partition columns (partitioning=None)
         con.read_pyogrio(td, extension="fgb", partitioning=None).to_view(
