@@ -114,9 +114,14 @@ async fn listing_table_provider(
         }
     }
 
-    // Auto-discover partition columns only if not explicitly provided (None)
-    // If explicitly set to empty (Some([])), skip auto-discovery
-    if options.table_partition_cols.is_none() {
+    // Auto-discover partition columns if not explicitly set and config allows it
+    let should_infer = options.table_partition_cols.is_none()
+        && session_config
+            .options()
+            .execution
+            .listing_table_factory_infer_partitions;
+
+    if should_infer {
         let inferred_partitions = listing_options
             .infer_partitions(&context.state(), &table_paths[0])
             .await?;
@@ -124,7 +129,7 @@ async fn listing_table_provider(
             listing_options = listing_options.with_table_partition_cols(
                 inferred_partitions
                     .into_iter()
-                    .map(|name| (name, DataType::Utf8))
+                    .map(|name| (name, DataType::Utf8View))
                     .collect(),
             );
         }

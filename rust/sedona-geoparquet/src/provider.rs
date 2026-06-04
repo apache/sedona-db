@@ -80,7 +80,7 @@ pub async fn geoparquet_listing_table(
             listing_options.with_table_partition_cols(
                 inferred_partitions
                     .into_iter()
-                    .map(|name| (name, DataType::Utf8))
+                    .map(|name| (name, DataType::Utf8View))
                     .collect(),
             )
         } else {

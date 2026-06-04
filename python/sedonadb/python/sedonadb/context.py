@@ -192,7 +192,7 @@ class SedonaContext:
         options: Optional[Dict[str, Any]] = None,
         geometry_columns: Optional[Union[str, Dict[str, Any]]] = None,
         validate: bool = False,
-        partitioning: Optional[Iterable[str]] = (),
+        partitioning: Optional[Iterable[str]] = None,
     ) -> DataFrame:
         """Create a [DataFrame][sedonadb.dataframe.DataFrame] from one or more Parquet files
 
@@ -256,12 +256,10 @@ class SedonaContext:
             partitioning:
                 Optional list of column names for hive-style partitioning. When reading
                 from a directory with paths like `/col=value/file.parquet`, partition
-                column names are auto-discovered when `partitioning=None`. Explicitly
-                specify column names (e.g., `["col"]`) to override auto-discovery, or
-                pass an empty list `[]` to disable partitioning entirely. The current
-                default is to disable partitioning but this may change in a future
-                release.
-
+                column names are auto-discovered by default (`partitioning=None`).
+                Explicitly specify column names (e.g., `["col"]`) to override
+                auto-discovery, or pass an empty list `[]` to disable partitioning
+                entirely.
 
         Examples:
 
@@ -299,7 +297,7 @@ class SedonaContext:
         table_paths: Union[str, Path, Iterable[str]],
         options: Optional[Dict[str, Any]] = None,
         extension: str = "",
-        partitioning: Union[str, Iterable[str], None] = (),
+        partitioning: Union[str, Iterable[str], None] = None,
     ) -> DataFrame:
         """Read spatial file formats using GDAL/OGR via pyogrio
 
@@ -332,11 +330,10 @@ class SedonaContext:
             partitioning:
                 Optional list of column names for hive-style partitioning. When reading
                 from a directory with paths like `/col=value/file.fgb`, partition
-                column names are auto-discovered when `partitioning=None`. Explicitly
-                specify column names (e.g., `["col"]`) to override auto-discovery, or
-                pass an empty list `[]` to disable partitioning entirely.  The current
-                default is to disable partitioning but this may change in a future
-                release.
+                column names are auto-discovered by default (`partitioning=None`).
+                Explicitly specify column names (e.g., `["col"]`) to override
+                auto-discovery, or pass an empty list `[]` to disable partitioning
+                entirely.
 
         Examples:
 
@@ -387,7 +384,7 @@ class SedonaContext:
         spec: "ExternalFormatSpec",
         table_paths: Union[str, Path, Iterable[str]],
         check_extension: bool = False,
-        partitioning: Union[str, List[str], None] = (),
+        partitioning: Union[str, List[str], None] = None,
     ) -> DataFrame:
         """Read one or more paths using a Python-defined `ExternalFormatSpec`.
 
@@ -410,11 +407,10 @@ class SedonaContext:
             partitioning:
                 Optional list of column names for hive-style partitioning. When reading
                 from a directory with paths like `/col=value/file.ext`, partition
-                column names are auto-discovered by setting `partitioning=None`. Explicitly
-                specify column names (e.g., `["col"]`) to override auto-discovery, or pass an
-                empty list `[]` to disable partitioning entirely. The current
-                default is to disable partitioning but this may change in a future
-                release.
+                column names are auto-discovered by default (`partitioning=None`).
+                Explicitly specify column names (e.g., `["col"]`) to override
+                auto-discovery, or pass an empty list `[]` to disable partitioning
+                entirely.
 
         Examples:
             >>> import sedonadb_zarr  # doctest: +SKIP
