@@ -30,6 +30,7 @@ use arrow_array::{RecordBatch, RecordBatchReader};
 use arrow_schema::{ArrowError, Schema, SchemaRef};
 use sedona_common::sedona_internal_datafusion_err;
 use sedona_raster::builder::RasterBuilder;
+use sedona_raster::traits::is_spatial_dim_pair;
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::raster::BandDataType;
 use zarrs::array::Array;
@@ -118,14 +119,11 @@ impl ZarrChunkReader {
             spatial_dim_indices,
         } = open_and_validate(storage, group_uri, arrays).await?;
 
-        let spatial_dims_names: Vec<String> = spatial_dim_indices
-            .iter()
-            .map(|&i| array_infos[0].dim_names[i].clone())
-            .collect();
-        let chunk_spatial_shape: Vec<i64> = spatial_dim_indices
-            .iter()
-            .map(|&i| array_infos[0].chunk_shape[i] as i64)
-            .collect();
+        let (spatial_dims_names, chunk_spatial_shape) = raster_spatial_metadata(
+            &array_infos[0].dim_names,
+            &array_infos[0].chunk_shape,
+            &spatial_dim_indices,
+        );
 
         let raster_field = SedonaType::Raster
             .to_storage_field("raster", true)
@@ -350,9 +348,10 @@ async fn open_and_validate(
     validate_group_constraints(&array_infos)?;
 
     // Spatial-dim resolution. Two configurations are accepted:
-    //   - dim_names ends with ["y", "x"] (canonical for georeferenced
-    //     2-D and time-series rasters); the spatial extent is the chunk's
-    //     last two dims.
+    //   - dim_names ends with a recognized spatial pair — ["y", "x"],
+    //     ["lat", "lon"], or ["latitude", "longitude"] (canonical for
+    //     georeferenced 2-D and time-series rasters); the spatial extent
+    //     is the chunk's last two dims.
     //   - `spatial:dims` attribute on the group explicitly names them.
     // Anything else errors with a clear message — silently picking dims
     // would produce wrong per-row transforms.
@@ -601,8 +600,9 @@ fn validate_group_constraints(infos: &[ArrayInfo]) -> Result<(), ArrowError> {
 ///
 /// If `spatial_dims` is provided via the group's `spatial:dims` attribute,
 /// look up those names by position. Otherwise, default to the last two
-/// dims and require they be named `y` and `x` (in that order) — the
-/// canonical GeoZarr-2D convention. Anything else errors.
+/// dims and require they form a recognized spatial pair — `[y, x]`,
+/// `[lat, lon]`, or `[latitude, longitude]` (in that order), the common
+/// CF / GeoZarr-2D conventions. Anything else errors.
 fn resolve_spatial_dim_indices(
     dim_names: &[String],
     spatial_dims: Option<&[String]>,
@@ -625,13 +625,36 @@ fn resolve_spatial_dim_indices(
             "at least 2 dimensions are required to resolve spatial axes; got {dim_names:?}",
         )));
     }
-    if dim_names[n - 2] != "y" || dim_names[n - 1] != "x" {
+    if !is_spatial_dim_pair(&dim_names[n - 2], &dim_names[n - 1]) {
         return Err(ArrowError::InvalidArgumentError(format!(
-            "the last two dim_names must be [\"y\", \"x\"] when `spatial:dims` is \
-             not declared; got {dim_names:?}",
+            "the last two dim_names must be a recognized spatial pair \
+             ([\"y\", \"x\"], [\"lat\", \"lon\"], or [\"latitude\", \"longitude\"]) \
+             when `spatial:dims` is not declared; got {dim_names:?}",
         )));
     }
     Ok(vec![n - 2, n - 1])
+}
+
+/// Build the raster-level `(spatial_dims, spatial_shape)` for a chunk in the
+/// X-first GIS order that `RasterRef::width()`/`height()`/`x_dim()`/`y_dim()`
+/// and the GDAL geotransform expect (X/width at index 0).
+///
+/// `spatial_dim_indices` is in file (C-)order — the slowest-varying spatial
+/// axis first, i.e. `[y_index, x_index]` for the 2-D case (see
+/// [`resolve_spatial_dim_indices`]). Bands keep their natural C-order
+/// `dim_names`/`shape` (matching the chunk's physical pixel layout); only
+/// this logical raster-level descriptor is reordered, so reversing the
+/// index list yields fastest-axis-first `[x, y]`. No pixel data is moved.
+fn raster_spatial_metadata(
+    dim_names: &[String],
+    chunk_shape: &[u64],
+    spatial_dim_indices: &[usize],
+) -> (Vec<String>, Vec<i64>) {
+    spatial_dim_indices
+        .iter()
+        .rev()
+        .map(|&i| (dim_names[i].clone(), chunk_shape[i] as i64))
+        .unzip()
 }
 
 /// Per-chunk transform: translate the group's transform so the chunk's
@@ -808,6 +831,34 @@ mod tests {
         let names = vec!["time".into(), "y".into(), "x".into()];
         let idx = resolve_spatial_dim_indices(&names, None).unwrap();
         assert_eq!(idx, vec![1, 2]);
+    }
+
+    #[test]
+    fn raster_spatial_metadata_is_x_first_for_nonsquare_chunk() {
+        // Band is C-order [time, lat, lon] with a deliberately non-square
+        // chunk: lat=2 (height), lon=3 (width). resolve_spatial_dim_indices
+        // returns [lat_idx, lon_idx] = [1, 2] (y-first, file order).
+        let dim_names = vec!["time".to_string(), "lat".to_string(), "lon".to_string()];
+        let chunk_shape = vec![1u64, 2, 3];
+        let (dims, shape) = raster_spatial_metadata(&dim_names, &chunk_shape, &[1, 2]);
+        // Raster-level descriptor must be X-first so width()=shape[0]=lon=3
+        // and height()=shape[1]=lat=2 (not the band's C-order [lat, lon]).
+        assert_eq!(dims, vec!["lon".to_string(), "lat".to_string()]);
+        assert_eq!(shape, vec![3, 2]);
+    }
+
+    #[test]
+    fn resolve_spatial_dim_indices_default_latlon() {
+        let names = vec!["time".into(), "lat".into(), "lon".into()];
+        let idx = resolve_spatial_dim_indices(&names, None).unwrap();
+        assert_eq!(idx, vec![1, 2]);
+    }
+
+    #[test]
+    fn resolve_spatial_dim_indices_default_latitude_longitude() {
+        let names = vec!["latitude".into(), "longitude".into()];
+        let idx = resolve_spatial_dim_indices(&names, None).unwrap();
+        assert_eq!(idx, vec![0, 1]);
     }
 
     #[test]
