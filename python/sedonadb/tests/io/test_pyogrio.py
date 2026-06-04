@@ -326,8 +326,19 @@ def test_read_ogr_partitioned(con):
             gdf,
         )
 
-        # Test explicit partitioning specification
+        # Test explicit partitioning specification (list)
         con.read_pyogrio(td, extension="fgb", partitioning=["grp"]).to_view(
+            "partitioned_explicit", overwrite=True
+        )
+        geopandas.testing.assert_geodataframe_equal(
+            con.sql(
+                "SELECT idx, grp, wkb_geometry FROM partitioned_explicit ORDER BY idx"
+            ).to_pandas(),
+            gdf,
+        )
+
+        # Test explicit partitioning specification (str)
+        con.read_pyogrio(td, extension="fgb", partitioning="grp").to_view(
             "partitioned_explicit", overwrite=True
         )
         geopandas.testing.assert_geodataframe_equal(

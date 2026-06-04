@@ -393,8 +393,8 @@ impl SedonaContext {
     ///
     /// The `partitioning` parameter controls hive-style partition discovery:
     /// - `None`: auto-discover partition columns from directory structure
-    /// - `Some([])`: disable partition discovery
-    /// - `Some([cols])`: use explicit partition columns
+    /// - `Some(vec![])`: disable partition discovery
+    /// - `Some(vec![...])`: use explicit partition columns
     pub async fn read_external_format<P: DataFilePaths>(
         &self,
         spec: Arc<dyn ExternalFormatSpec>,

@@ -778,8 +778,16 @@ def test_write_partitioned_parquet(con):
             t.sort("id").to_pandas(),
         )
 
-        # The default is to discover the partitioning
+        # Explicit partitioning (list)
         result_explicit = con.read_parquet(out_dir, partitioning=["grp"])
+        assert result_explicit.columns == t.columns
+        geopandas.testing.assert_geodataframe_equal(
+            result_explicit.sort("id").to_pandas(),
+            t.sort("id").to_pandas(),
+        )
+
+        # Explicit partitioning (str)
+        result_explicit = con.read_parquet(out_dir, partitioning="grp")
         assert result_explicit.columns == t.columns
         geopandas.testing.assert_geodataframe_equal(
             result_explicit.sort("id").to_pandas(),
