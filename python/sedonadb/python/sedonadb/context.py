@@ -410,7 +410,7 @@ class SedonaContext:
             partitioning:
                 Optional list of column names for hive-style partitioning. When reading
                 from a directory with paths like `/col=value/file.ext`, partition
-                column names are auto-discovered by setting `partitioning=None`). Explicitly
+                column names are auto-discovered by setting `partitioning=None`. Explicitly
                 specify column names (e.g., `["col"]`) to override auto-discovery, or pass an
                 empty list `[]` to disable partitioning entirely. The current
                 default is to disable partitioning but this may change in a future
