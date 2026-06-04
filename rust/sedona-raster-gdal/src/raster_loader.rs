@@ -66,6 +66,7 @@ use async_trait::async_trait;
 use datafusion_common::{DataFusionError, Result as DFResult};
 use sedona_gdal::raster::rasterband::RasterBand;
 use sedona_raster::raster_loader::{AsyncByteLoader, RasterLoadRequest, RasterLoadResult};
+use sedona_raster::traits::is_spatial_dim_pair;
 
 use crate::gdal_common::{convert_gdal_err, gdal_to_band_data_type, with_gdal};
 use crate::gdal_dataset_provider::thread_local_cache;
@@ -125,12 +126,15 @@ impl AsyncByteLoader for GdalLoader {
                 req.source_shape.len()
             )));
         }
-        if req.dim_names != ["y", "x"] {
+        if req.dim_names.len() != 2 || !is_spatial_dim_pair(req.dim_names[0], req.dim_names[1]) {
             return Err(ArrowError::InvalidArgumentError(format!(
-                "GDAL raster loader requires dim_names=[\"y\", \"x\"]; got {:?}",
+                "GDAL raster loader requires a 2-D spatial dim pair \
+                 ([\"y\", \"x\"], [\"lat\", \"lon\"], or [\"latitude\", \"longitude\"]); got {:?}",
                 req.dim_names
             )));
         }
+        // The Y-like (row) axis is source_shape[0], the X-like (column) axis
+        // is source_shape[1] — guaranteed by the dim-pair check above.
         let height = usize::try_from(req.source_shape[0]).map_err(|_| {
             ArrowError::InvalidArgumentError(format!(
                 "GDAL OutDb source_shape[0]={} exceeds usize::MAX",
@@ -405,20 +409,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn gdal_loader_rejects_non_yx_dim_names() {
+    async fn gdal_loader_rejects_unrecognized_dim_names() {
         let loader = GdalLoader::new();
         let req = RasterLoadRequest {
             uri: "ignored",
-            dim_names: &["x", "y"], // transposed
+            dim_names: &["x", "y"], // transposed — not a recognized (y, x) pair
             source_shape: &[2, 3],
             view: &[],
             data_type: BandDataType::UInt8,
         };
         let err = loader.load(&req).await.unwrap_err();
         assert!(
-            err.to_string().contains("dim_names"),
-            "expected dim_names rejection diagnostic, got: {err}"
+            err.to_string().contains("spatial dim pair"),
+            "expected spatial-dim-pair rejection diagnostic, got: {err}"
         );
+    }
+
+    #[tokio::test]
+    async fn gdal_loader_accepts_latlon_dim_names() {
+        let tmp = TempDir::new().unwrap();
+        let path = write_uint8_geotiff(&tmp, "latlon.tif");
+        let uri = format!("{path}#band=1");
+
+        let loader = GdalLoader::new();
+        let req = RasterLoadRequest {
+            uri: &uri,
+            dim_names: &["lat", "lon"],
+            source_shape: &[2, 3],
+            view: &[],
+            data_type: BandDataType::UInt8,
+        };
+        // lat/lon is a recognized spatial pair, so the request is accepted and
+        // the GeoTIFF is read just like a ["y", "x"] band.
+        let result = loader.load(&req).await.unwrap();
+        assert_eq!(result.bytes.len(), 6);
     }
 
     #[tokio::test]
