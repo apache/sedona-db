@@ -147,6 +147,17 @@ pub fn unlink_mem_file(api: &'static GdalApi, file_name: &str) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+pub(crate) fn with_memfile<T>(
+    api: &'static GdalApi,
+    file_name: &str,
+    f: impl FnOnce(&str) -> T,
+) -> T {
+    let ret = f(file_name);
+    unlink_mem_file(api, file_name).unwrap();
+    ret
+}
+
 /// Returns an owned GDAL-allocated buffer containing the bytes of the VSI in-memory
 /// file, taking ownership and freeing the GDAL memory on drop.
 pub fn get_vsi_mem_file_buffer_owned(api: &'static GdalApi, file_name: &str) -> Result<VSIBuffer> {
