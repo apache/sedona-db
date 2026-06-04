@@ -44,7 +44,7 @@ pub async fn geoparquet_listing_table(
     options: GeoParquetReadOptions<'_>,
 ) -> Result<ListingTable> {
     let session_config = context.copied_config();
-    let mut listing_options =
+    let listing_options =
         options.to_listing_options(&session_config, context.copied_table_options());
 
     let option_extension = listing_options.file_extension.clone();
@@ -62,22 +62,6 @@ pub async fn geoparquet_listing_table(
             return exec_err!(
                     "File path '{file_path}' does not match the expected extension '{option_extension}'"
                 );
-        }
-    }
-
-    // Auto-discover partition columns only if not explicitly provided (None)
-    // If explicitly set to empty (Some([])), skip auto-discovery
-    if options.table_partition_cols().is_none() {
-        let inferred_partitions = listing_options
-            .infer_partitions(&context.state(), &table_paths[0])
-            .await?;
-        if !inferred_partitions.is_empty() {
-            listing_options = listing_options.with_table_partition_cols(
-                inferred_partitions
-                    .into_iter()
-                    .map(|name| (name, DataType::Utf8))
-                    .collect(),
-            );
         }
     }
 
@@ -101,8 +85,6 @@ pub struct GeoParquetReadOptions<'a> {
     table_options: Option<HashMap<String, String>>,
     geometry_columns: Option<HashMap<String, GeoParquetColumnMetadata>>,
     validate: bool,
-    /// None = auto-discover, Some([]) = disabled, Some([cols]) = explicit
-    table_partition_cols: Option<Vec<(String, DataType)>>,
 }
 
 impl GeoParquetReadOptions<'_> {
@@ -209,7 +191,6 @@ impl GeoParquetReadOptions<'_> {
             table_options: Some(options),
             geometry_columns: None,
             validate: false,
-            table_partition_cols: None,
         })
     }
 
@@ -251,10 +232,8 @@ impl GeoParquetReadOptions<'_> {
     ///
     /// Partition columns are extracted from directory paths like `/col=value/`.
     /// All partition columns are assumed to be `Utf8` type.
-    ///
-    /// Pass an empty vector to explicitly disable partition auto-discovery.
     pub fn with_table_partition_cols(mut self, cols: Vec<String>) -> Self {
-        self.table_partition_cols = Some(
+        self.inner = self.inner.table_partition_cols(
             cols.into_iter()
                 .map(|name| (name, DataType::Utf8))
                 .collect(),
@@ -263,8 +242,8 @@ impl GeoParquetReadOptions<'_> {
     }
 
     /// Get the table partition columns
-    pub fn table_partition_cols(&self) -> Option<&[(String, DataType)]> {
-        self.table_partition_cols.as_deref()
+    pub fn table_partition_cols(&self) -> &[(String, DataType)] {
+        &self.inner.table_partition_cols
     }
 }
 
@@ -298,12 +277,6 @@ impl ReadOptions<'_> for GeoParquetReadOptions<'_> {
         }
 
         let mut options = self.inner.to_listing_options(config, table_options);
-
-        // Apply partition columns if explicitly specified (Some)
-        // None means auto-discover later, Some([]) means no partitioning
-        if let Some(ref partition_cols) = self.table_partition_cols {
-            options = options.with_table_partition_cols(partition_cols.clone());
-        }
 
         if let Some(parquet_format) = options.format.as_any().downcast_ref::<ParquetFormat>() {
             let mut geoparquet_options =
