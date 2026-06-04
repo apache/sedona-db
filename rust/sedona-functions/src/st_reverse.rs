@@ -22,13 +22,14 @@ use arrow_array::builder::BinaryBuilder;
 use datafusion_common::{exec_datafusion_err, Result};
 use datafusion_expr::ColumnarValue;
 use datafusion_expr::Volatility;
+use geo_traits::Dimensions;
 use geo_traits::{
     CoordTrait, GeometryCollectionTrait, GeometryTrait, LineStringTrait, MultiLineStringTrait,
     MultiPointTrait, MultiPolygonTrait, PointTrait, PolygonTrait,
 };
 use sedona_expr::item_crs::ItemCrsKernel;
-use sedona_geometry::error::SedonaGeometryError;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_geometry::error::SedonaGeometryError;
 use sedona_geometry::wkb_factory::{
     write_wkb_coord_trait, write_wkb_empty_point, write_wkb_geometrycollection_header,
     write_wkb_linestring_header, write_wkb_multilinestring_header, write_wkb_multipoint_header,
@@ -39,6 +40,7 @@ use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY},
     matchers::ArgMatcher,
 };
+use wkb::reader::Wkb;
 
 use crate::executor::WkbExecutor;
 
@@ -97,64 +99,39 @@ impl SedonaScalarKernel for STReverse {
     }
 }
 
-fn invoke_scalar(
-    geom: &impl GeometryTrait<T = f64>,
-    writer: &mut impl Write,
-) -> Result<(), SedonaGeometryError> {
+fn invoke_scalar(geom: &Wkb, writer: &mut impl Write) -> Result<(), SedonaGeometryError> {
     let dims = geom.dim();
     match geom.as_type() {
-        geo_traits::GeometryType::Point(pt) => {
-            if pt.coord().is_some() {
-                write_wkb_point_header(writer, dims)?;
-                write_wkb_coord_trait(writer, &pt.coord().unwrap())?;
-            } else {
-                write_wkb_empty_point(writer, dims)?;
-            }
-        }
-
-        geo_traits::GeometryType::MultiPoint(multi_point) => {
-            write_wkb_multipoint_header(writer, dims, multi_point.points().count())?;
-            for pt in multi_point.points() {
-                invoke_scalar(&pt, writer)?;
-            }
+        geo_traits::GeometryType::Point(_) | geo_traits::GeometryType::MultiPoint(_) => {
+            writer.write_all(geom.buf())?;
         }
 
         geo_traits::GeometryType::LineString(ls) => {
-            write_wkb_linestring_header(writer, dims, ls.coords().count())?;
-            write_reversed_coords(writer, ls.coords())?;
+            write_reversed_linestring(writer, ls, dims)?;
         }
 
         geo_traits::GeometryType::Polygon(pgn) => {
-            let num_rings = pgn.interiors().count() + pgn.exterior().is_some() as usize;
-            write_wkb_polygon_header(writer, dims, num_rings)?;
-
-            if let Some(exterior) = pgn.exterior() {
-                write_reversed_ring(writer, exterior)?;
-            }
-
-            for interior in pgn.interiors() {
-                write_reversed_ring(writer, interior)?;
-            }
+            write_reversed_polygon(writer, pgn, dims)?;
         }
 
         geo_traits::GeometryType::MultiLineString(mls) => {
             write_wkb_multilinestring_header(writer, dims, mls.line_strings().count())?;
             for ls in mls.line_strings() {
-                invoke_scalar(&ls, writer)?;
+                write_reversed_linestring(writer, ls, dims)?;
             }
         }
 
         geo_traits::GeometryType::MultiPolygon(mpgn) => {
             write_wkb_multipolygon_header(writer, dims, mpgn.polygons().count())?;
             for pgn in mpgn.polygons() {
-                invoke_scalar(&pgn, writer)?;
+                write_reversed_polygon(writer, pgn, dims)?;
             }
         }
 
         geo_traits::GeometryType::GeometryCollection(gcn) => {
             write_wkb_geometrycollection_header(writer, dims, gcn.geometries().count())?;
             for geom in gcn.geometries() {
-                invoke_scalar(&geom, writer)?;
+                invoke_scalar(geom, writer)?;
             }
         }
 
@@ -167,22 +144,54 @@ fn invoke_scalar(
     Ok(())
 }
 
-fn write_reversed_ring(
+fn write_reversed_linestring(
     writer: &mut impl Write,
-    ring: impl LineStringTrait<T = f64>,
+    ls: &wkb::reader::LineString,
+    dims: Dimensions,
 ) -> Result<(), SedonaGeometryError> {
-    write_wkb_polygon_ring_header(writer, ring.coords().count())?;
-    write_reversed_coords(writer, ring.coords())
+    write_wkb_linestring_header(writer, dims, ls.coords().count())?;
+    write_reversed_coords(writer, ls.coords_slice(), dims.size())?;
+    Ok(())
 }
 
-fn write_reversed_coords<I>(writer: &mut impl Write, coords: I) -> Result<(), SedonaGeometryError>
-where
-    I: DoubleEndedIterator,
-    I::Item: CoordTrait<T = f64>,
-{
-    coords
-        .rev()
-        .try_for_each(|coord| write_wkb_coord_trait(writer, &coord))
+fn write_reversed_polygon(
+    writer: &mut impl Write,
+    pgn: &wkb::reader::Polygon,
+    dims: Dimensions,
+) -> Result<(), SedonaGeometryError> {
+    let num_rings = pgn.interiors().count() + pgn.exterior().is_some() as usize;
+    write_wkb_polygon_header(writer, dims, num_rings)?;
+
+    if let Some(exterior) = pgn.exterior() {
+        write_reversed_ring(writer, exterior, dims)?;
+    }
+
+    for interior in pgn.interiors() {
+        write_reversed_ring(writer, interior, dims)?;
+    }
+
+    Ok(())
+}
+
+fn write_reversed_ring(
+    writer: &mut impl Write,
+    ring: &wkb::reader::LinearRing,
+    dims: Dimensions,
+) -> Result<(), SedonaGeometryError> {
+    write_wkb_polygon_ring_header(writer, ring.coords().count())?;
+    write_reversed_coords(writer, ring.coords_slice(), dims.size())
+}
+
+fn write_reversed_coords(
+    writer: &mut impl Write,
+    coords: &[u8],
+    dim_size: usize,
+) -> Result<(), SedonaGeometryError> {
+    let coord_bytes = dim_size * size_of::<f64>();
+    for coord in coords.chunks(coord_bytes).rev() {
+        writer.write_all(coord)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
