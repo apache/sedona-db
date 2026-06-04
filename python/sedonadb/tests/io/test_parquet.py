@@ -771,7 +771,7 @@ def test_write_partitioned_parquet(con):
         t.to_parquet(out_dir, partition_by="grp")
 
         # Test auto-discovery of partition columns (partitioning=None)
-        result = con.read_parquet(out_dir)
+        result = con.read_parquet(out_dir, partitioning=None)
         assert result.columns == t.columns
         geopandas.testing.assert_geodataframe_equal(
             result.sort("id").to_pandas(),

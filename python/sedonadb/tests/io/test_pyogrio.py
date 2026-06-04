@@ -91,8 +91,7 @@ def test_read_ogr_multi_file(con):
             con.read_parquet(parquet_path).to_pandas().to_file(fgb_path)
 
         # Reading a directory while specifying the extension should work
-        # Disable partitioning since this test focuses on multi-file reading
-        con.read_pyogrio(f"{td}", extension="fgb", partitioning=[]).to_view(
+        con.read_pyogrio(f"{td}", extension="fgb").to_view(
             "gdf_from_dir", overwrite=True
         )
         geopandas.testing.assert_geodataframe_equal(
@@ -101,9 +100,7 @@ def test_read_ogr_multi_file(con):
         )
 
         # Reading using a glob without specifying the extension should work
-        con.read_pyogrio(f"{td}/**/*.fgb", partitioning=[]).to_view(
-            "gdf_from_glob", overwrite=True
-        )
+        con.read_pyogrio(f"{td}/**/*.fgb").to_view("gdf_from_glob", overwrite=True)
         geopandas.testing.assert_geodataframe_equal(
             con.sql("SELECT * FROM gdf_from_glob ORDER BY idx").to_pandas(),
             gdf.filter(["idx", "wkb_geometry"]),
@@ -319,7 +316,7 @@ def test_read_ogr_partitioned(con):
             subset.to_file(grp_dir / "data.fgb")
 
         # Test auto-discovery of partition columns (partitioning=None)
-        con.read_pyogrio(td, extension="fgb").to_view(
+        con.read_pyogrio(td, extension="fgb", partitioning=None).to_view(
             "partitioned_auto", overwrite=True
         )
         geopandas.testing.assert_geodataframe_equal(

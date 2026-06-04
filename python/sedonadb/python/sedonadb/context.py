@@ -192,7 +192,7 @@ class SedonaContext:
         options: Optional[Dict[str, Any]] = None,
         geometry_columns: Optional[Union[str, Dict[str, Any]]] = None,
         validate: bool = False,
-        partitioning: Optional[List[str]] = None,
+        partitioning: Optional[Iterable[str]] = (),
     ) -> DataFrame:
         """Create a [DataFrame][sedonadb.dataframe.DataFrame] from one or more Parquet files
 
@@ -256,9 +256,11 @@ class SedonaContext:
             partitioning:
                 Optional list of column names for hive-style partitioning. When reading
                 from a directory with paths like `/col=value/file.parquet`, partition
-                column names are auto-discovered by default (`None`). Explicitly specify
-                column names (e.g., `["col"]`) to override auto-discovery, or pass an
-                empty list `[]` to disable partitioning entirely.
+                column names are auto-discovered when `partitioning=None`). Explicitly
+                specify column names (e.g., `["col"]`) to override auto-discovery, or
+                pass an empty list `[]` to disable partitioning entirely. The current
+                default is to disable partitioning but this may change in a future
+                release.
 
 
         Examples:
@@ -284,7 +286,7 @@ class SedonaContext:
                 options,
                 geometry_columns,
                 validate,
-                partitioning,
+                None if partitioning is None else list(partitioning),
             ),
             self.options,
         )
@@ -294,7 +296,7 @@ class SedonaContext:
         table_paths: Union[str, Path, Iterable[str]],
         options: Optional[Dict[str, Any]] = None,
         extension: str = "",
-        partitioning: Optional[List[str]] = None,
+        partitioning: Optional[Iterable[str]] = (),
     ) -> DataFrame:
         """Read spatial file formats using GDAL/OGR via pyogrio
 
@@ -327,9 +329,11 @@ class SedonaContext:
             partitioning:
                 Optional list of column names for hive-style partitioning. When reading
                 from a directory with paths like `/col=value/file.fgb`, partition
-                column names are auto-discovered by default (`None`). Explicitly specify
-                column names (e.g., `["col"]`) to override auto-discovery, or pass an
-                empty list `[]` to disable partitioning entirely.
+                column names are auto-discovered when `partitioning=None`. Explicitly
+                specify column names (e.g., `["col"]`) to override auto-discovery, or
+                pass an empty list `[]` to disable partitioning entirely.  The current
+                default is to disable partitioning but this may change in a future
+                release.
 
         Examples:
 
@@ -364,7 +368,10 @@ class SedonaContext:
         return DataFrame(
             self._impl,
             self._impl.read_external_format(
-                spec, [str(path) for path in table_paths], False, partitioning
+                spec,
+                [str(path) for path in table_paths],
+                False,
+                None if partitioning is None else list(partitioning),
             ),
             self.options,
         )
@@ -399,7 +406,9 @@ class SedonaContext:
                 from a directory with paths like `/col=value/file.ext`, partition
                 column names are auto-discovered by default (`None`). Explicitly specify
                 column names (e.g., `["col"]`) to override auto-discovery, or pass an
-                empty list `[]` to disable partitioning entirely.
+                empty list `[]` to disable partitioning entirely. The current
+                default is to disable partitioning but this may change in a future
+                release.
 
         Examples:
             >>> import sedonadb_zarr  # doctest: +SKIP
@@ -415,7 +424,10 @@ class SedonaContext:
         return DataFrame(
             self._impl,
             self._impl.read_external_format(
-                spec, [str(path) for path in table_paths], check_extension, partitioning
+                spec,
+                [str(path) for path in table_paths],
+                check_extension,
+                None if partitioning is None else list(partitioning),
             ),
             self.options,
         )
