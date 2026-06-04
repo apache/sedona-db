@@ -42,6 +42,7 @@ use sedona_schema::{
     matchers::ArgMatcher,
 };
 use wkb::reader::Wkb;
+use wkb::Endianness;
 
 use crate::executor::WkbExecutor;
 
@@ -151,7 +152,7 @@ fn write_reversed_linestring(
     dims: Dimensions,
 ) -> Result<(), SedonaGeometryError> {
     write_wkb_linestring_header(writer, dims, ls.coords().count())?;
-    write_reversed_coords(writer, ls.coords_slice(), dims.size())?;
+    write_reversed_coords(writer, ls.coords_slice(), dims.size(), ls.byte_order())?;
     Ok(())
 }
 
@@ -164,11 +165,11 @@ fn write_reversed_polygon(
     write_wkb_polygon_header(writer, dims, num_rings)?;
 
     if let Some(exterior) = pgn.exterior() {
-        write_reversed_ring(writer, exterior, dims)?;
+        write_reversed_ring(writer, exterior, dims.size())?;
     }
 
     for interior in pgn.interiors() {
-        write_reversed_ring(writer, interior, dims)?;
+        write_reversed_ring(writer, interior, dims.size())?;
     }
 
     Ok(())
@@ -177,21 +178,41 @@ fn write_reversed_polygon(
 fn write_reversed_ring(
     writer: &mut impl Write,
     ring: &wkb::reader::LinearRing,
-    dims: Dimensions,
+    dim_size: usize,
 ) -> Result<(), SedonaGeometryError> {
     write_wkb_polygon_ring_header(writer, ring.coords().count())?;
-    write_reversed_coords(writer, ring.coords_slice(), dims.size())
+    write_reversed_coords(writer, ring.coords_slice(), dim_size, ring.byte_order())
 }
 
 fn write_reversed_coords(
     writer: &mut impl Write,
     coords: &[u8],
     dim_size: usize,
+    endianness: Endianness,
 ) -> Result<(), SedonaGeometryError> {
     let coord_bytes = dim_size * size_of::<f64>();
-    for coord in coords.chunks(coord_bytes).rev() {
-        writer.write_all(coord)?;
+
+    #[cfg(target_endian = "little")]
+    let needs_byteswap = matches!(endianness, Endianness::BigEndian);
+
+    #[cfg(target_endian = "big")]
+    let needs_byteswap = matches!(endianness, Endianness::LittleEndian);
+
+    if needs_byteswap {
+        let mut ord_reversed = [0u8; 8];
+        for coord in coords.rchunks_exact(coord_bytes) {
+            for ord in coord.chunks_exact(size_of::<f64>()) {
+                ord_reversed.copy_from_slice(ord);
+                ord_reversed.reverse();
+                writer.write_all(&ord_reversed)?;
+            }
+        }
+    } else {
+        for coord in coords.rchunks_exact(coord_bytes) {
+            writer.write_all(coord)?;
+        }
     }
+
     Ok(())
 }
 
@@ -442,6 +463,29 @@ mod tests {
         );
 
         assert_array_equal(&tester.invoke_wkb_array(input_wkt).unwrap(), &expected);
+    }
+
+    #[test]
+    fn udf_big_endian_linestring() {
+        // Big-endian WKB for LINESTRING (1 2, 3 4)
+        #[rustfmt::skip]
+        let big_endian_wkb: &[u8] = &[
+            0x00,                               // big-endian
+            0x00, 0x00, 0x00, 0x02,              // LINESTRING
+            0x00, 0x00, 0x00, 0x02,              // 2 points
+            0x3F, 0xF0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // x=1.0
+            0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // y=2.0
+            0x40, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // x=3.0
+            0x40, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // y=4.0
+        ];
+
+        let tester = ScalarUdfTester::new(st_reverse_udf().into(), vec![WKB_GEOMETRY.clone()]);
+        let input = Arc::new(arrow_array::BinaryArray::from_vec(vec![big_endian_wkb]));
+        let result = tester.invoke_array(input).unwrap();
+
+        // Result should be LINESTRING (3 4, 1 2) in little-endian WKB
+        let expected = create_array(&[Some("LINESTRING (3 4, 1 2)")], &WKB_GEOMETRY);
+        assert_array_equal(&result, &expected);
     }
 
     #[rstest]
