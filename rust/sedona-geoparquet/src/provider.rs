@@ -65,6 +65,31 @@ pub async fn geoparquet_listing_table(
         }
     }
 
+    // Auto-discover partition columns if not explicitly set and config allows it
+    let should_infer = !options.partition_cols_set
+        && session_config
+            .options()
+            .execution
+            .listing_table_factory_infer_partitions;
+
+    let listing_options = if should_infer {
+        let inferred_partitions = listing_options
+            .infer_partitions(&context.state(), &table_paths[0])
+            .await?;
+        if !inferred_partitions.is_empty() {
+            listing_options.with_table_partition_cols(
+                inferred_partitions
+                    .into_iter()
+                    .map(|name| (name, DataType::Utf8))
+                    .collect(),
+            )
+        } else {
+            listing_options
+        }
+    } else {
+        listing_options
+    };
+
     let resolved_schema = options
         .get_resolved_schema(&session_config, context.state(), table_paths[0].clone())
         .await?;
@@ -85,6 +110,8 @@ pub struct GeoParquetReadOptions<'a> {
     table_options: Option<HashMap<String, String>>,
     geometry_columns: Option<HashMap<String, GeoParquetColumnMetadata>>,
     validate: bool,
+    /// When true, partition columns were explicitly set (skip auto-discovery)
+    partition_cols_set: bool,
 }
 
 impl GeoParquetReadOptions<'_> {
@@ -191,6 +218,7 @@ impl GeoParquetReadOptions<'_> {
             table_options: Some(options),
             geometry_columns: None,
             validate: false,
+            partition_cols_set: false,
         })
     }
 
@@ -232,18 +260,26 @@ impl GeoParquetReadOptions<'_> {
     ///
     /// Partition columns are extracted from directory paths like `/col=value/`.
     /// All partition columns are assumed to be `Utf8` type.
+    ///
+    /// Pass an empty vector to explicitly disable partition auto-discovery.
     pub fn with_table_partition_cols(mut self, cols: Vec<String>) -> Self {
         self.inner = self.inner.table_partition_cols(
             cols.into_iter()
                 .map(|name| (name, DataType::Utf8))
                 .collect(),
         );
+        self.partition_cols_set = true;
         self
     }
 
     /// Get the table partition columns
     pub fn table_partition_cols(&self) -> &[(String, DataType)] {
         &self.inner.table_partition_cols
+    }
+
+    /// Returns true if partition columns were explicitly set
+    pub fn partition_cols_explicitly_set(&self) -> bool {
+        self.partition_cols_set
     }
 }
 
