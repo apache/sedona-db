@@ -77,8 +77,7 @@ pub struct SedonaScalarUDF {
     /// well-known entries (e.g. the raster `"needs_pixels"` flag, whose
     /// key is owned by `sedona-raster-functions`) without this crate
     /// knowing their meaning. The map shape leaves room for further
-    /// planner-visible flags — and a future cross-cdylib FFI carrying
-    /// them — without a new field per flag.
+    /// planner-visible flags.
     metadata: HashMap<String, String>,
 }
 

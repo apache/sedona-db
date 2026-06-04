@@ -213,9 +213,9 @@ fn rewrite_expr_node(
 }
 
 /// Wrap a raster argument so its byte materialisation is explicit in the
-/// plan: `__rs_reraster(rs_ensureloaded(arg))`.
+/// plan: `sd_reraster(rs_ensureloaded(arg))`.
 ///
-/// DF-22662: the outer `__rs_reraster` re-applies the `sedona.raster`
+/// DF-22662: the outer `sd_reraster` re-applies the `sedona.raster`
 /// extension type that the async `rs_ensureloaded` drops at the physical
 /// layer. When that upstream bug is fixed, drop the `reraster_udf` parameter
 /// and return just the `rs_ensureloaded(arg)` call.
@@ -235,7 +235,7 @@ fn wrap_for_loading(
 }
 
 /// True if `expr` is already a load wrap. DF-22662: the wrap's outer node is
-/// the `__rs_reraster` re-stamp (when the workaround is removed, change this
+/// the `sd_reraster` re-stamp (when the workaround is removed, change this
 /// back to matching `"rs_ensureloaded"`).
 fn is_loaded_wrap(expr: &Expr) -> bool {
     matches!(expr, Expr::ScalarFunction(sf)
@@ -394,7 +394,7 @@ mod tests {
     #[test]
     fn idempotency_guard_does_not_rewrap_already_wrapped_arg() {
         // Models the fixpoint re-run: the input already has the wrapped form
-        // rs_mock(__rs_reraster(rs_ensureloaded(rast))). A second pass must
+        // rs_mock(sd_reraster(rs_ensureloaded(rast))). A second pass must
         // not wrap it again.
         let schema = raster_schema_named("rast");
         let udf = fake_ensure_loaded_udf();
@@ -510,7 +510,7 @@ mod tests {
 
         // DF-22662: the rule emits the re-stamp wrapper so the async load's
         // dropped raster type is re-applied. Confirm the wrapped arg's outer
-        // node is `__rs_reraster`.
+        // node is `sd_reraster`.
         let Expr::ScalarFunction(ScalarFunction { args, .. }) = &out.data.expressions()[0] else {
             panic!("expected the projected expr to be a ScalarFunction");
         };

@@ -22,7 +22,7 @@
 //! downstream raster functions stop recognising it.
 //!
 //! As a stopgap, the EnsureLoaded optimizer rule wraps each async load in
-//! this sync `__rs_reraster` UDF — `__rs_reraster(rs_ensureloaded(x))`. A
+//! this sync `sd_reraster` UDF — `sd_reraster(rs_ensureloaded(x))`. A
 //! sync `ScalarFunctionExpr` *does* preserve `return_field`, so this node
 //! re-applies the raster extension type onto the (otherwise stripped)
 //! struct. The data passes through untouched (identity).
@@ -46,11 +46,11 @@ use sedona_common::sedona_internal_err;
 use sedona_schema::datatypes::SedonaType;
 
 /// Registry/UDF name of the re-stamp helper.
-pub const RERASTER_NAME: &str = "__rs_reraster";
+pub const RERASTER_NAME: &str = "sd_reraster";
 
 /// Build the sync re-stamp UDF. Cheap and stateless; the rule constructs one
 /// per rewrite and clones the `Arc` for each wrapped argument. `Stable`
-/// volatility so CSE can deduplicate identical `__rs_reraster(...)` subtrees.
+/// volatility so CSE can deduplicate identical `sd_reraster(...)` subtrees.
 pub fn reraster_udf() -> Arc<ScalarUDF> {
     Arc::new(ScalarUDF::new_from_impl(RsReRaster::new()))
 }
@@ -70,7 +70,7 @@ impl RsReRaster {
     }
 }
 
-// Identity by name so CSE can dedup `__rs_reraster(...)` across exprs.
+// Identity by name so CSE can dedup `sd_reraster(...)` across exprs.
 impl PartialEq for RsReRaster {
     fn eq(&self, _other: &Self) -> bool {
         true
@@ -99,7 +99,7 @@ impl ScalarUDFImpl for RsReRaster {
     fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
         // return_field_from_args is authoritative (it carries the extension
         // metadata a bare DataType would drop).
-        sedona_internal_err!("__rs_reraster::return_type should not be called")
+        sedona_internal_err!("sd_reraster::return_type should not be called")
     }
 
     fn return_field_from_args(&self, args: ReturnFieldArgs) -> Result<FieldRef> {
@@ -120,7 +120,7 @@ impl ScalarUDFImpl for RsReRaster {
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> Result<ColumnarValue> {
         // Identity on the data; only the output field's type changes.
         let Some(arg) = args.args.into_iter().next() else {
-            return sedona_internal_err!("__rs_reraster expects exactly one argument");
+            return sedona_internal_err!("sd_reraster expects exactly one argument");
         };
         Ok(arg)
     }
