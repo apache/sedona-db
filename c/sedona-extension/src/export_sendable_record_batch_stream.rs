@@ -42,6 +42,22 @@ use crate::extension_ffi::{
     FFI_ArrowDeviceArray, ARROW_DEVICE_CPU,
 };
 
+/// Yields control back to the async executor once, then resumes.
+/// This allows other tasks (e.g., the consumer) to make progress.
+async fn yield_once() {
+    let mut yielded = false;
+    futures::future::poll_fn(|cx| {
+        if yielded {
+            Poll::Ready(())
+        } else {
+            yielded = true;
+            cx.waker().wake_by_ref();
+            Poll::Pending
+        }
+    })
+    .await
+}
+
 /// Shared state between the async driver and the FFI producer callbacks.
 struct ProducerState {
     /// Number of batches requested by consumer (back-pressure).
@@ -226,6 +242,9 @@ async fn drive_stream_inner(
                     call_on_error(handler_ref, 1, &e);
                     return Err(());
                 }
+                // Yield to allow consumer to process the batch.
+                // This enables single-task usage (producer and consumer in same task).
+                yield_once().await;
             }
             Some(Err(e)) => {
                 call_on_error(handler_ref, 1, &e.to_string());

@@ -480,12 +480,10 @@ mod tests {
         .unwrap()
     }
 
-    /// A simple SendableRecordBatchStream that yields once before each batch.
-    /// This ensures proper async interleaving between producer and consumer.
+    /// A simple SendableRecordBatchStream from a list of batches.
     struct TestStream {
         schema: SchemaRef,
         batches: std::collections::VecDeque<Result<RecordBatch>>,
-        yielded: bool,
     }
 
     impl TestStream {
@@ -493,7 +491,6 @@ mod tests {
             Box::pin(Self {
                 schema,
                 batches: batches.into_iter().map(Ok).collect(),
-                yielded: false, // Start not yielded so first poll yields
             })
         }
 
@@ -519,7 +516,6 @@ mod tests {
             Box::pin(Self {
                 schema,
                 batches: results,
-                yielded: false, // Start not yielded so first poll yields
             })
         }
     }
@@ -529,23 +525,10 @@ mod tests {
 
         fn poll_next(
             mut self: Pin<&mut Self>,
-            cx: &mut Context<'_>,
+            _cx: &mut Context<'_>,
         ) -> Poll<Option<Self::Item>> {
             let this = self.as_mut().get_mut();
-            if this.yielded {
-                // After yielding, return data on next poll
-                this.yielded = false;
-                if let Some(batch) = this.batches.pop_front() {
-                    Poll::Ready(Some(batch))
-                } else {
-                    Poll::Ready(None)
-                }
-            } else {
-                // Haven't yielded yet - yield once to give other tasks a chance
-                this.yielded = true;
-                cx.waker().wake_by_ref();
-                Poll::Pending
-            }
+            Poll::Ready(this.batches.pop_front())
         }
     }
 
