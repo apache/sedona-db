@@ -19,4 +19,4 @@ pub mod extension_ffi;
 pub mod scalar_kernel;
 
 #[cfg(feature = "async")]
-pub mod sendable_record_batch_stream;
+pub mod export_sendable_record_batch_stream;
