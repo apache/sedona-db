@@ -87,6 +87,9 @@ struct ImportedStreamState {
     prefetch_count: u64,
     /// Number of outstanding requests.
     pending_requests: u64,
+    /// Set to true when the stream is dropped but producer hasn't called release yet.
+    /// Callbacks should return errors when this is true.
+    abandoned: bool,
 }
 
 // Safety: We ensure proper synchronization via Mutex
@@ -102,6 +105,7 @@ impl ImportedStreamState {
             producer: null_mut(),
             prefetch_count,
             pending_requests: 0,
+            abandoned: false,
         }
     }
 
@@ -132,11 +136,14 @@ impl ImportedStreamState {
 ///
 /// Create with [`ImportedAsyncDeviceStream::new`], then pass the handler pointer
 /// to the FFI producer. The stream will yield batches as the producer sends them.
+///
+/// # Dropping
+///
+/// When the stream is dropped, it signals cancellation to the producer. The handler
+/// remains valid until the producer calls its `release` callback. This allows the
+/// idiomatic DataFusion pattern of dropping streams to cancel queries.
 pub struct ImportedAsyncDeviceStream {
     state: Arc<Mutex<ImportedStreamState>>,
-    /// The handler - kept alive for the lifetime of the stream.
-    /// Box is used to get a stable address.
-    _handler: Box<FFI_ArrowAsyncDeviceStreamHandler>,
     /// Cached schema for the RecordBatchStream trait.
     schema: Option<SchemaRef>,
     /// DataType for converting FFI arrays.
@@ -160,25 +167,26 @@ impl ImportedAsyncDeviceStream {
     ///
     /// # Safety
     ///
-    /// The returned handler pointer is valid for the lifetime of the stream.
-    /// The FFI producer must not use the handler after the stream is dropped.
+    /// The returned handler pointer remains valid until the producer calls its `release`
+    /// callback. When the stream is dropped, it signals cancellation to the producer,
+    /// but the handler stays valid - callbacks will return error codes to tell the
+    /// producer to stop and release the handler.
     pub fn new(prefetch_count: u64) -> (Self, *mut FFI_ArrowAsyncDeviceStreamHandler) {
         let state = Arc::new(Mutex::new(ImportedStreamState::new(prefetch_count)));
 
-        let handler = Box::new(FFI_ArrowAsyncDeviceStreamHandler {
+        // Handler is heap-allocated and will be freed when producer calls release().
+        // This allows the handler to outlive the stream.
+        let handler_ptr = Box::into_raw(Box::new(FFI_ArrowAsyncDeviceStreamHandler {
             on_schema: Some(handler_on_schema),
             on_next_task: Some(handler_on_next_task),
             on_error: Some(handler_on_error),
             release: Some(handler_release),
             producer: null_mut(),
             private_data: Arc::into_raw(Arc::clone(&state)) as *mut c_void,
-        });
-
-        let handler_ptr = handler.as_ref() as *const _ as *mut FFI_ArrowAsyncDeviceStreamHandler;
+        }));
 
         let stream = Self {
             state,
-            _handler: handler,
             schema: None,
             schema_struct_type: None,
         };
@@ -310,6 +318,22 @@ impl RecordBatchStream for ImportedAsyncDeviceStream {
     }
 }
 
+impl Drop for ImportedAsyncDeviceStream {
+    fn drop(&mut self) {
+        let mut state = self.state.lock().unwrap();
+
+        // Mark as abandoned so callbacks know to return errors
+        state.abandoned = true;
+
+        // Signal cancellation to the producer
+        if !state.producer.is_null() {
+            if let Some(cancel_fn) = unsafe { (*state.producer).cancel } {
+                unsafe { cancel_fn(state.producer) };
+            }
+        }
+    }
+}
+
 // FFI callback implementations
 
 unsafe extern "C" fn handler_on_schema(
@@ -328,6 +352,17 @@ unsafe extern "C" fn handler_on_schema(
     // Store the producer pointer for later use
     let state_ptr = handler.private_data as *const Mutex<ImportedStreamState>;
     let state_arc = Arc::from_raw(state_ptr);
+
+    let abandoned = {
+        let state = state_arc.lock().unwrap();
+        state.abandoned
+    };
+
+    // If stream was dropped, tell producer to stop
+    if abandoned {
+        let _ = Arc::into_raw(state_arc);
+        return 1; // Error code signals producer to stop and release
+    }
 
     let result = {
         let mut state = state_arc.lock().unwrap();
@@ -370,6 +405,17 @@ unsafe extern "C" fn handler_on_next_task(
 
     let state_ptr = handler.private_data as *const Mutex<ImportedStreamState>;
     let state_arc = Arc::from_raw(state_ptr);
+
+    let abandoned = {
+        let state = state_arc.lock().unwrap();
+        state.abandoned
+    };
+
+    // If stream was dropped, tell producer to stop
+    if abandoned {
+        let _ = Arc::into_raw(state_arc);
+        return 1; // Error code signals producer to stop and release
+    }
 
     {
         let mut state = state_arc.lock().unwrap();
@@ -434,13 +480,30 @@ unsafe extern "C" fn handler_release(self_: *mut FFI_ArrowAsyncDeviceStreamHandl
 
     let handler = &mut *self_;
     if handler.private_data.is_null() {
+        // Already released - free the handler struct
+        // Clear release to prevent Drop from calling us again
+        handler.release = None;
+        let _ = Box::from_raw(self_);
         return;
     }
 
-    // Drop our Arc reference
+    // Get the state and clear the producer pointer so stream Drop won't use it
     let state_ptr = handler.private_data as *const Mutex<ImportedStreamState>;
-    let _ = Arc::from_raw(state_ptr);
+    let state_arc = Arc::from_raw(state_ptr);
+
+    {
+        let mut state = state_arc.lock().unwrap();
+        state.producer = null_mut();
+        state.ended = true;
+    }
+
+    // Drop the Arc reference (will be freed when stream also drops its reference)
+    drop(state_arc);
     handler.private_data = null_mut();
+
+    // Clear release to prevent Drop impl from calling us again, then free
+    handler.release = None;
+    let _ = Box::from_raw(self_);
 }
 
 #[cfg(test)]

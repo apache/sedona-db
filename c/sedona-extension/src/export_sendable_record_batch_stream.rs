@@ -159,14 +159,14 @@ pub async fn drive_stream_to_handler(
     // Create the producer
     let mut producer = create_producer(Arc::clone(&state));
 
-    // Use a guard to handle unexpected drops
+    // Use a guard to handle unexpected drops (panics)
     let mut guard = StreamDriverGuard::new(handler);
 
-    let result = drive_stream_inner(stream, handler, &mut producer, state).await;
+    let _result = drive_stream_inner(stream, handler, &mut producer, state).await;
 
-    if result.is_ok() {
-        guard.disarm();
-    }
+    // Normal completion (success or error) - disarm the guard and release handler
+    guard.disarm();
+    release_handler(handler);
 }
 
 /// Inner implementation that returns a Result for cleaner control flow.
@@ -339,6 +339,8 @@ impl Drop for StreamDriverGuard {
                 libc::ECANCELED,
                 "Stream driver dropped unexpectedly",
             );
+            // Still need to release the handler
+            release_handler(self.handler);
         }
     }
 }
@@ -353,6 +355,17 @@ fn signal_end_of_stream(
         unsafe {
             on_next_task(handler, std::ptr::null_mut(), std::ptr::null());
         }
+    }
+}
+
+/// Release the handler (call its release callback).
+fn release_handler(handler: *mut FFI_ArrowAsyncDeviceStreamHandler) {
+    if handler.is_null() {
+        return;
+    }
+    let handler_ref = unsafe { &*handler };
+    if let Some(release) = handler_ref.release {
+        unsafe { release(handler) };
     }
 }
 
