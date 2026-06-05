@@ -343,11 +343,18 @@ impl ReadOptions<'_> for GeoParquetReadOptions<'_> {
 mod test {
 
     use arrow_schema::DataType;
+    use datafusion::datasource::file_format::format_as_file_type;
+    use datafusion::execution::SessionStateBuilder;
+    use datafusion::prelude::{col, lit};
+    use datafusion_expr::LogicalPlanBuilder;
     use sedona_schema::{
         crs::lnglat,
         datatypes::{Edges, SedonaType},
     };
-    use sedona_testing::data::geoarrow_data_dir;
+    use sedona_testing::data::{geoarrow_data_dir, test_geoparquet};
+    use tempfile::tempdir;
+
+    use crate::format::GeoParquetFormatFactory;
 
     use super::*;
 
@@ -425,5 +432,84 @@ mod test {
             err.message(),
             "Can't infer Parquet schema for zero objects. Does the input path exist?"
         );
+    }
+
+    fn setup_context() -> SessionContext {
+        let mut state = SessionStateBuilder::new().build();
+        state
+            .register_file_format(Arc::new(GeoParquetFormatFactory::new()), true)
+            .unwrap();
+        SessionContext::new_with_state(state).enable_url_table()
+    }
+
+    #[tokio::test]
+    async fn listing_table_with_partition_discovery() {
+        // Set up a context with our GeoParquet format registered
+        let ctx = setup_context();
+
+        // Read an existing GeoParquet file and add a partition column
+        let example = test_geoparquet("example", "point").unwrap();
+        let df = ctx
+            .table(&example)
+            .await
+            .unwrap()
+            .select(vec![
+                lit("partition_value").alias("part"),
+                col("wkt"),
+                col("geometry"),
+            ])
+            .unwrap();
+        let df_count = df.clone().count().await.unwrap();
+
+        // Write the data to a temp directory with hive-style partitioning
+        let tmpdir = tempdir().unwrap();
+        let tmp_parquet = tmpdir.path().join("partitioned.parquet");
+
+        let format = GeoParquetFormatFactory::new();
+        let file_type = format_as_file_type(Arc::new(format));
+
+        let plan = LogicalPlanBuilder::copy_to(
+            df.into_unoptimized_plan(),
+            tmp_parquet.to_string_lossy().into(),
+            file_type,
+            Default::default(),
+            // Partition by the "part" column
+            vec!["part".into()],
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+        datafusion::prelude::DataFrame::new(ctx.state(), plan)
+            .collect()
+            .await
+            .unwrap();
+
+        // Now read it back using geoparquet_listing_table with partition discovery
+        let tab = geoparquet_listing_table(
+            &ctx,
+            vec![ListingTableUrl::parse(format!("{}/**", tmp_parquet.to_string_lossy())).unwrap()],
+            GeoParquetReadOptions::default(),
+        )
+        .await
+        .unwrap();
+
+        let df = ctx.read_table(Arc::new(tab)).unwrap();
+
+        // Check that the partition column is in the schema
+        let schema = df.schema();
+        let field_names: Vec<_> = schema.fields().iter().map(|f| f.name().as_str()).collect();
+        assert!(
+            field_names.contains(&"part"),
+            "Partition column 'part' should be in the schema: {field_names:?}"
+        );
+
+        // Verify we can read the data
+        let batches = df.collect().await.unwrap();
+        let mut total_rows = 0;
+        for batch in &batches {
+            total_rows += batch.num_rows();
+        }
+        assert_eq!(total_rows, df_count);
     }
 }
