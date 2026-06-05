@@ -1,0 +1,16 @@
+Package: sedonadbplyr
+Title: Apache SedonaDB 'dplyr' Interface
+Version: 0.3.0.9000
+Authors@R:
+    person("Dewey", "Dunnington", , "dewey@dunnington.ca", role = c("aut", "cre"))
+Description: Provides a 'dplyr' backend implemented using 'SedonaDB'.
+License: Apache License (>= 2)
+Encoding: UTF-8
+Depends: R (>= 4.1.0)
+Imports:
+    sedonadb,
+    sedonafns,
+    dplyr
+Suggests:
+    testthat (>= 3.0.0)
+RoxygenNote: 7.3.3
