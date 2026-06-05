@@ -29,7 +29,7 @@ use std::ffi::{c_int, c_void, CString};
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::task::Poll;
+use std::task::{Poll, Waker};
 
 use arrow_array::ffi::{to_ffi, FFI_ArrowSchema};
 use arrow_array::RecordBatch;
@@ -42,27 +42,14 @@ use crate::extension_ffi::{
     FFI_ArrowDeviceArray, ARROW_DEVICE_CPU,
 };
 
-/// Yields control back to the async executor once, then resumes.
-async fn yield_once() {
-    let mut yielded = false;
-    futures::future::poll_fn(|cx| {
-        if yielded {
-            Poll::Ready(())
-        } else {
-            yielded = true;
-            cx.waker().wake_by_ref();
-            Poll::Pending
-        }
-    })
-    .await
-}
-
 /// Shared state between the async driver and the FFI producer callbacks.
 struct ProducerState {
     /// Number of batches requested by consumer (back-pressure).
     requested: AtomicU64,
     /// Set to true when consumer calls cancel().
     cancelled: AtomicBool,
+    /// Waker to wake when requests are available or cancelled.
+    waker: std::sync::Mutex<Option<Waker>>,
 }
 
 impl ProducerState {
@@ -70,15 +57,18 @@ impl ProducerState {
         Self {
             requested: AtomicU64::new(0),
             cancelled: AtomicBool::new(false),
+            waker: std::sync::Mutex::new(None),
         }
     }
 
     fn request(&self, n: u64) {
         self.requested.fetch_add(n, Ordering::SeqCst);
+        self.wake();
     }
 
     fn cancel(&self) {
         self.cancelled.store(true, Ordering::SeqCst);
+        self.wake();
     }
 
     fn is_cancelled(&self) -> bool {
@@ -104,6 +94,16 @@ impl ProducerState {
 
     fn has_requests(&self) -> bool {
         self.requested.load(Ordering::SeqCst) > 0
+    }
+
+    fn register_waker(&self, waker: Waker) {
+        *self.waker.lock().unwrap() = Some(waker);
+    }
+
+    fn wake(&self) {
+        if let Some(waker) = self.waker.lock().unwrap().take() {
+            waker.wake();
+        }
     }
 }
 
@@ -197,10 +197,16 @@ async fn drive_stream_inner(
         }
 
         // Wait for consumer to request batches (back-pressure)
-        // Yield to allow other tasks to run while waiting
-        while !state.has_requests() && !state.is_cancelled() {
-            yield_once().await;
-        }
+        // Use poll_fn to properly register our waker with ProducerState
+        futures::future::poll_fn(|cx| {
+            if state.has_requests() || state.is_cancelled() {
+                Poll::Ready(())
+            } else {
+                state.register_waker(cx.waker().clone());
+                Poll::Pending
+            }
+        })
+        .await;
 
         // Re-check cancellation after waiting
         if state.is_cancelled() {
