@@ -19,26 +19,102 @@
 //!
 //! This module provides interoperability between DataFusion's async record batch streams
 //! and C code via the [`FFI_ArrowAsyncDeviceStreamHandler`] interface.
+//!
+//! The implementation follows the Arrow Async Device Stream specification, including:
+//! - Back-pressure via `request()` callback
+//! - Consumer-initiated cancellation via `cancel()` callback
+//! - Proper end-of-stream signaling
 
 use std::ffi::{c_int, c_void, CString};
 use std::ptr::null_mut;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
+use std::task::Poll;
 
-use arrow_array::ffi::FFI_ArrowSchema;
+use arrow_array::ffi::{to_ffi, FFI_ArrowSchema};
 use arrow_array::RecordBatch;
 use futures::StreamExt;
 
-use datafusion_execution::SendableRecordBatchStream;
+pub use datafusion_execution::SendableRecordBatchStream;
 
 use crate::extension_ffi::{
-    FFI_ArrowAsyncDeviceStreamHandler, FFI_ArrowAsyncTask, FFI_ArrowDeviceArray, ARROW_DEVICE_CPU,
+    FFI_ArrowAsyncDeviceStreamHandler, FFI_ArrowAsyncProducer, FFI_ArrowAsyncTask,
+    FFI_ArrowDeviceArray, ARROW_DEVICE_CPU,
 };
+
+/// Yields control back to the async executor once, then resumes.
+async fn yield_once() {
+    let mut yielded = false;
+    futures::future::poll_fn(|cx| {
+        if yielded {
+            Poll::Ready(())
+        } else {
+            yielded = true;
+            cx.waker().wake_by_ref();
+            Poll::Pending
+        }
+    })
+    .await
+}
+
+/// Shared state between the async driver and the FFI producer callbacks.
+struct ProducerState {
+    /// Number of batches requested by consumer (back-pressure).
+    requested: AtomicU64,
+    /// Set to true when consumer calls cancel().
+    cancelled: AtomicBool,
+}
+
+impl ProducerState {
+    fn new() -> Self {
+        Self {
+            requested: AtomicU64::new(0),
+            cancelled: AtomicBool::new(false),
+        }
+    }
+
+    fn request(&self, n: u64) {
+        self.requested.fetch_add(n, Ordering::SeqCst);
+    }
+
+    fn cancel(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+
+    /// Try to consume one request slot. Returns true if successful.
+    fn try_consume_request(&self) -> bool {
+        loop {
+            let current = self.requested.load(Ordering::SeqCst);
+            if current == 0 {
+                return false;
+            }
+            if self
+                .requested
+                .compare_exchange(current, current - 1, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                return true;
+            }
+        }
+    }
+
+    fn has_requests(&self) -> bool {
+        self.requested.load(Ordering::SeqCst) > 0
+    }
+}
 
 /// Drives a [`SendableRecordBatchStream`] and pushes results to an [`FFI_ArrowAsyncDeviceStreamHandler`].
 ///
-/// This function consumes the stream and calls the handler's callbacks:
-/// - `on_schema` is called first with the stream's schema
-/// - `on_next_task` is called for each record batch
-/// - `on_error` is called if an error occurs
+/// This function implements the full Arrow Async Device Stream producer protocol:
+/// - Creates an `FFI_ArrowAsyncProducer` and sets it on the handler before calling `on_schema`
+/// - Respects back-pressure: waits for consumer to call `producer.request(n)` before sending batches
+/// - Handles consumer cancellation via `producer.cancel()`
+/// - Signals end-of-stream by calling `on_next_task` with `NULL`
+/// - Calls `on_error` if an error occurs (including cancellation)
 ///
 /// # Safety
 ///
@@ -50,54 +126,207 @@ use crate::extension_ffi::{
 /// ```ignore
 /// use sedona_extension::sendable_record_batch_stream::drive_stream_to_handler;
 ///
-/// // Assuming you have a SendableRecordBatchStream and a handler
+/// // The consumer should call handler.producer.request(n) to receive batches
 /// drive_stream_to_handler(stream, handler).await;
 /// ```
 pub async fn drive_stream_to_handler(
-    mut stream: SendableRecordBatchStream,
+    stream: SendableRecordBatchStream,
     handler: *mut FFI_ArrowAsyncDeviceStreamHandler,
 ) {
     if handler.is_null() {
         return;
     }
 
+    // Create shared state for producer callbacks
+    let state = Arc::new(ProducerState::new());
+
+    // Create the producer
+    let mut producer = create_producer(Arc::clone(&state));
+
+    // Use a guard to handle unexpected drops
+    let mut guard = StreamDriverGuard::new(handler);
+
+    let result = drive_stream_inner(stream, handler, &mut producer, state).await;
+
+    if result.is_ok() {
+        guard.disarm();
+    }
+}
+
+/// Inner implementation that returns a Result for cleaner control flow.
+async fn drive_stream_inner(
+    mut stream: SendableRecordBatchStream,
+    handler: *mut FFI_ArrowAsyncDeviceStreamHandler,
+    producer: &mut FFI_ArrowAsyncProducer,
+    state: Arc<ProducerState>,
+) -> Result<(), ()> {
     let handler_ref = unsafe { &mut *handler };
 
-    // First, send the schema
+    // Set the producer on the handler BEFORE calling on_schema (per Arrow spec)
+    handler_ref.producer = producer;
+
+    // Send the schema
     let schema = stream.schema();
     let ffi_schema = match FFI_ArrowSchema::try_from(schema.as_ref()) {
         Ok(s) => s,
         Err(e) => {
             call_on_error(handler_ref, 1, &e.to_string());
-            return;
+            return Err(());
         }
     };
 
     if let Some(on_schema) = handler_ref.on_schema {
-        // We need to box the schema so it lives long enough
         let mut boxed_schema = Box::new(ffi_schema);
         let ret = unsafe { on_schema(handler, boxed_schema.as_mut()) };
         if ret != 0 {
             call_on_error(handler_ref, ret, "on_schema callback failed");
-            return;
+            return Err(());
         }
-        // The handler now owns the schema, so we forget it
+        // The handler now owns the schema
         std::mem::forget(boxed_schema);
     }
 
-    // Stream batches
-    while let Some(result) = stream.next().await {
-        match result {
-            Ok(batch) => {
+    // Stream batches with back-pressure
+    loop {
+        // Check for cancellation
+        if state.is_cancelled() {
+            // Per Arrow spec: successful cancel should NOT call on_error,
+            // just signal end of stream and release
+            signal_end_of_stream(handler_ref, handler);
+            return Ok(());
+        }
+
+        // Wait for consumer to request batches (back-pressure)
+        // Yield to allow other tasks to run while waiting
+        while !state.has_requests() && !state.is_cancelled() {
+            yield_once().await;
+        }
+
+        // Re-check cancellation after waiting
+        if state.is_cancelled() {
+            signal_end_of_stream(handler_ref, handler);
+            return Ok(());
+        }
+
+        // Consume one request slot
+        if !state.try_consume_request() {
+            continue;
+        }
+
+        // Get next batch
+        match stream.next().await {
+            Some(Ok(batch)) => {
                 if let Err(e) = send_batch_to_handler(handler_ref, handler, batch) {
                     call_on_error(handler_ref, 1, &e);
-                    return;
+                    return Err(());
                 }
             }
-            Err(e) => {
+            Some(Err(e)) => {
                 call_on_error(handler_ref, 1, &e.to_string());
-                return;
+                return Err(());
             }
+            None => {
+                // End of stream
+                signal_end_of_stream(handler_ref, handler);
+                return Ok(());
+            }
+        }
+    }
+}
+
+/// Create an FFI producer with request/cancel callbacks.
+fn create_producer(state: Arc<ProducerState>) -> FFI_ArrowAsyncProducer {
+    // Convert Arc to raw pointer - this increments the refcount
+    let private_data = Arc::into_raw(state) as *mut c_void;
+
+    FFI_ArrowAsyncProducer {
+        device_type: ARROW_DEVICE_CPU,
+        request: Some(producer_request),
+        cancel: Some(producer_cancel),
+        release: Some(producer_release),
+        additional_metadata: std::ptr::null(),
+        private_data,
+    }
+}
+
+unsafe extern "C" fn producer_request(self_: *mut FFI_ArrowAsyncProducer, n: u64) {
+    if self_.is_null() {
+        return;
+    }
+    let producer = &*self_;
+    if producer.private_data.is_null() {
+        return;
+    }
+    let state = &*(producer.private_data as *const ProducerState);
+    state.request(n);
+}
+
+unsafe extern "C" fn producer_cancel(self_: *mut FFI_ArrowAsyncProducer) {
+    if self_.is_null() {
+        return;
+    }
+    let producer = &*self_;
+    if producer.private_data.is_null() {
+        return;
+    }
+    let state = &*(producer.private_data as *const ProducerState);
+    state.cancel();
+}
+
+unsafe extern "C" fn producer_release(self_: *mut FFI_ArrowAsyncProducer) {
+    if self_.is_null() {
+        return;
+    }
+    let producer = &mut *self_;
+    if producer.private_data.is_null() {
+        return;
+    }
+    // Drop the Arc<ProducerState>
+    let _ = Arc::from_raw(producer.private_data as *const ProducerState);
+    producer.private_data = null_mut();
+}
+
+/// Guard that calls `on_error` if dropped without being disarmed.
+struct StreamDriverGuard {
+    handler: *mut FFI_ArrowAsyncDeviceStreamHandler,
+    armed: bool,
+}
+
+impl StreamDriverGuard {
+    fn new(handler: *mut FFI_ArrowAsyncDeviceStreamHandler) -> Self {
+        Self {
+            handler,
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for StreamDriverGuard {
+    fn drop(&mut self) {
+        if self.armed && !self.handler.is_null() {
+            let handler_ref = unsafe { &mut *self.handler };
+            call_on_error(
+                handler_ref,
+                libc::ECANCELED,
+                "Stream driver dropped unexpectedly",
+            );
+        }
+    }
+}
+
+/// Signal end of stream by calling on_next_task with NULL.
+fn signal_end_of_stream(
+    handler_ref: &mut FFI_ArrowAsyncDeviceStreamHandler,
+    handler: *mut FFI_ArrowAsyncDeviceStreamHandler,
+) {
+    if let Some(on_next_task) = handler_ref.on_next_task {
+        // Per Arrow spec: pass NULL task pointer to signal end of stream
+        unsafe {
+            on_next_task(handler, std::ptr::null_mut(), std::ptr::null());
         }
     }
 }
@@ -175,19 +404,13 @@ unsafe extern "C" fn async_task_extract_data(
 
     // Convert to struct array and then to FFI
     let struct_array: arrow_array::StructArray = batch.into();
-    let (ffi_array, _ffi_schema) = match arrow_array::ffi::to_ffi(&struct_array.into()) {
+    let (ffi_array, _ffi_schema) = match to_ffi(&struct_array.into()) {
         Ok(result) => result,
         Err(_) => return 1,
     };
 
     // Create device array (CPU)
-    let device_array = FFI_ArrowDeviceArray {
-        array: ffi_array,
-        device_id: -1,
-        device_type: ARROW_DEVICE_CPU,
-        sync_event: null_mut(),
-    };
-
+    let device_array = FFI_ArrowDeviceArray::from(ffi_array);
     std::ptr::write(out, device_array);
     0
 }

@@ -205,6 +205,42 @@ impl Drop for FFI_ArrowDeviceArrayStream {
     }
 }
 
+/// FFI representation of the ArrowAsyncProducer from the Arrow C Device Data Interface.
+///
+/// This producer-managed object allows consumers to control flow via back-pressure
+/// (`request`) and cancellation (`cancel`).
+///
+/// See: https://arrow.apache.org/docs/format/CDeviceDataInterface.html
+#[repr(C)]
+pub struct FFI_ArrowAsyncProducer {
+    /// The device type that this producer will provide data on.
+    pub device_type: i32,
+
+    /// Request `n` additional arrays/batches. The producer should only call
+    /// `on_next_task` up to the total sum of requested batches.
+    pub request: Option<unsafe extern "C" fn(self_: *mut FFI_ArrowAsyncProducer, n: u64)>,
+
+    /// Signal that the producer should stop producing. Idempotent and thread-safe.
+    pub cancel: Option<unsafe extern "C" fn(self_: *mut FFI_ArrowAsyncProducer)>,
+
+    /// Release callback for cleanup.
+    pub release: Option<unsafe extern "C" fn(self_: *mut FFI_ArrowAsyncProducer)>,
+
+    /// Optional metadata string (same encoding as ArrowSchema.metadata).
+    pub additional_metadata: *const c_char,
+
+    /// Opaque producer-specific data.
+    pub private_data: *mut c_void,
+}
+
+impl Drop for FFI_ArrowAsyncProducer {
+    fn drop(&mut self) {
+        if let Some(releaser) = self.release {
+            unsafe { releaser(self) };
+        }
+    }
+}
+
 /// FFI representation of the ArrowAsyncDeviceStreamHandler from the Arrow C Device Data Interface
 ///
 /// See: https://arrow.apache.org/docs/format/CDeviceDataInterface.html
@@ -232,6 +268,11 @@ pub struct FFI_ArrowAsyncDeviceStreamHandler {
         ),
     >,
     pub release: Option<unsafe extern "C" fn(self_: *mut FFI_ArrowAsyncDeviceStreamHandler)>,
+
+    /// The producer object that the consumer uses to request data or cancel.
+    /// Must be populated by the producer before calling `on_schema`.
+    pub producer: *mut FFI_ArrowAsyncProducer,
+
     pub private_data: *mut c_void,
 }
 
