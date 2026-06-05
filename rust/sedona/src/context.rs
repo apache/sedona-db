@@ -72,7 +72,7 @@ use sedona_query_planner::{
     optimizer::{register_ensure_loaded_optimizer, register_spatial_join_logical_optimizer},
     query_planner::SedonaQueryPlanner,
 };
-use sedona_raster::raster_loader::{AsyncByteLoader, RasterLoaderConfig, RasterLoaderRegistry};
+use sedona_raster::raster_loader::{AsyncRasterLoader, RasterLoaderConfig, RasterLoaderRegistry};
 
 /// Sedona SessionContext wrapper
 ///
@@ -280,10 +280,7 @@ impl SedonaContext {
         // the loader's `load()` call will surface a clean "libgdal not
         // found" error when first invoked, but registration and import
         // succeed regardless.
-        out.register_raster_loader(
-            sedona_raster_gdal::GDAL_FORMAT,
-            Arc::new(sedona_raster_gdal::GdalLoader::new()),
-        );
+        out.register_raster_loader(Arc::new(sedona_raster_gdal::GdalLoader::new()));
 
         // Register table functions
         out.ctx.register_udtf(
@@ -349,37 +346,24 @@ impl SedonaContext {
 
     /// Register an async raster byte loader under a `format` key.
     ///
-    /// `format` matches the band-level `outdb_format` column value
-    /// (`"gdal"`, `"zarr"`, …). At query time the `RS_EnsureLoaded` UDF
-    /// looks up the loader for each OutDb band's format and dispatches
-    /// the byte fetch through it.
+    /// Each loader declares the band `outdb_format` values it handles via
+    /// `AsyncRasterLoader::supports_format`. At query time the
+    /// `RS_EnsureLoaded` UDF matches each OutDb band's format against the
+    /// registered loaders (most-recently-registered first) and dispatches
+    /// the byte fetch through the first that accepts it.
     ///
-    /// Used by both compiled-in backends (`sedona-raster-gdal::register`
-    /// called from `new_from_context` under `#[cfg(feature = "gdal")]`)
-    /// and out-of-tree extensions (`sedona-raster-zarr::register(&ctx)`
-    /// from user code after construction). Later registrations under the
-    /// same `format` key overwrite earlier ones.
-    pub fn register_raster_loader(
-        &self,
-        format: impl Into<String>,
-        loader: Arc<dyn AsyncByteLoader>,
-    ) {
+    /// Used by both compiled-in backends (`sedona-raster-gdal`, the catch-all,
+    /// registered first at bootstrap) and out-of-tree extensions
+    /// (`sedona-raster-zarr::register(&ctx)` from user code after
+    /// construction). Loaders registered later win for the formats they
+    /// claim, so registration order matters: the catch-all goes first.
+    pub fn register_raster_loader(&self, loader: Arc<dyn AsyncRasterLoader>) {
         // Lock poisoning here would mean a previous registrant panicked
         // mid-write — recover-by-ignoring matches how DataFusion handles
         // session-state writes elsewhere.
         if let Ok(mut guard) = self.raster_loader_registry.write() {
-            guard.register(format, loader);
+            guard.register(loader);
         }
-    }
-
-    /// Returns a snapshot list of currently-registered OutDb format keys.
-    /// Useful for diagnostics (e.g., listing registered backends after
-    /// session setup).
-    pub fn registered_raster_formats(&self) -> Vec<String> {
-        self.raster_loader_registry
-            .read()
-            .map(|g| g.formats().map(String::from).collect())
-            .unwrap_or_default()
     }
 
     /// Register all functions in a [FunctionSet] with this context
@@ -747,23 +731,34 @@ mod tests {
     #[tokio::test]
     async fn outdb_registry_has_gdal_at_bootstrap_and_accepts_runtime_registration() {
         use arrow_buffer::Buffer;
-        use sedona_raster::raster_loader::{AsyncByteLoader, RasterLoadRequest, RasterLoadResult};
+        use sedona_raster::raster_loader::{
+            AsyncRasterLoader, RasterLoadRequest, RasterLoadResult,
+        };
 
         let ctx = SedonaContext::new();
-        // GDAL is always registered at bootstrap (compiled-in backend).
+        // GDAL is the catch-all backend, registered at bootstrap: it resolves
+        // any format, including the unset `None` that RS_FromPath emits.
         // Extension backends like Zarr add themselves later via
         // `register_raster_loader`.
-        let initial_formats = ctx.registered_raster_formats();
-        assert!(
-            initial_formats.contains(&"gdal".to_string()),
-            "fresh SedonaContext should register the GDAL backend at bootstrap; got {initial_formats:?}"
-        );
+        {
+            let reg = ctx.raster_loader_registry.read().unwrap();
+            let loader = reg
+                .get(None)
+                .expect("fresh SedonaContext should register the GDAL backend at bootstrap");
+            assert_eq!(loader.name(), "gdal");
+        }
 
         // Mock runtime registration on top of the bootstrap state.
         #[derive(Debug)]
         struct MockLoader;
         #[async_trait]
-        impl AsyncByteLoader for MockLoader {
+        impl AsyncRasterLoader for MockLoader {
+            fn name(&self) -> &str {
+                "mock"
+            }
+            fn supports_format(&self, format: Option<&str>) -> bool {
+                format == Some("mock")
+            }
             async fn load(
                 &self,
                 req: &RasterLoadRequest<'_>,
@@ -774,11 +769,15 @@ mod tests {
                 ))
             }
         }
-        ctx.register_raster_loader("mock", Arc::new(MockLoader));
-        let mut after = ctx.registered_raster_formats();
-        after.sort();
-        assert!(after.contains(&"gdal".to_string()));
-        assert!(after.contains(&"mock".to_string()));
+        ctx.register_raster_loader(Arc::new(MockLoader));
+        {
+            let reg = ctx.raster_loader_registry.read().unwrap();
+            // The mock wins for its own format (most-recently-registered)...
+            assert_eq!(reg.get(Some("mock")).unwrap().name(), "mock");
+            // ...while everything else, including the unset `None`, still
+            // falls through to the GDAL catch-all.
+            assert_eq!(reg.get(None).unwrap().name(), "gdal");
+        }
 
         // RS_EnsureLoaded is registered as a UDF at session bootstrap.
         let udf = ctx

@@ -43,7 +43,7 @@ use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_raster::array::RasterStructArray;
 use sedona_raster::builder::RasterBuilder;
 use sedona_raster::raster_loader::{
-    AsyncByteLoader, RasterLoadRequest, RasterLoaderConfig, RasterLoaderRegistry,
+    AsyncRasterLoader, RasterLoadRequest, RasterLoaderConfig, RasterLoaderRegistry,
 };
 use sedona_raster::traits::{RasterRef, ViewEntry};
 
@@ -121,23 +121,13 @@ fn registry_handle_from_config(
 
 fn lookup_loader(
     registry: &Arc<RwLock<RasterLoaderRegistry>>,
-    format: &str,
-) -> Result<Arc<dyn AsyncByteLoader>> {
+    format: Option<&str>,
+) -> Result<Arc<dyn AsyncRasterLoader>> {
     let guard = registry.read().map_err(|e| {
         sedona_internal_datafusion_err!("raster loader registry lock poisoned: {e}")
     })?;
-    if let Some(loader) = guard.get(format) {
-        return Ok(loader);
-    }
-    // Build a diagnostic that lists registered formats so users know
-    // which loaders are registered.
-    let registered: Vec<String> = guard.formats().map(String::from).collect();
-    let registered_msg = if registered.is_empty() {
-        "no raster loaders are registered in this session".to_string()
-    } else {
-        format!("registered formats: {}", registered.join(", "))
-    };
-    plan_err!("no raster loader registered for format '{format}' — {registered_msg}")
+    // The registry owns format resolution + the missing-loader diagnostic.
+    guard.get_or_error(format)
 }
 
 /// True if `view` is the canonical identity over `source_shape` (each visible
@@ -266,7 +256,7 @@ impl AsyncScalarUDFImpl for RsEnsureLoaded {
 /// contract.
 async fn ensure_loaded<F>(input_array: &ArrayRef, mut lookup: F) -> Result<ArrayRef>
 where
-    F: FnMut(&str) -> Result<Arc<dyn AsyncByteLoader>>,
+    F: FnMut(Option<&str>) -> Result<Arc<dyn AsyncRasterLoader>>,
 {
     let input_struct = input_array
         .as_any()
@@ -398,12 +388,10 @@ where
             let resolved: Buffer = if let Some(buf) = indb_bytes {
                 buf
             } else {
-                let format = outdb_format.as_deref().ok_or_else(|| {
-                    sedona_internal_datafusion_err!(
-                        "RS_EnsureLoaded: OutDb band ({raster_idx},{band_idx}) has empty data \
-                         but no outdb_format set"
-                    )
-                })?;
+                // `outdb_format` may be unset (None) — e.g. RS_FromPath emits
+                // null and relies on the catch-all GDAL loader. The registry
+                // resolves None against each loader's `supports_format`.
+                let format = outdb_format.as_deref();
                 let uri = outdb_uri.as_deref().ok_or_else(|| {
                     sedona_internal_datafusion_err!(
                         "RS_EnsureLoaded: OutDb band ({raster_idx},{band_idx}) has empty data \
@@ -420,8 +408,9 @@ where
                 };
                 let result = loader.load(&req).await.map_err(|e| {
                     sedona_internal_datafusion_err!(
-                        "RS_EnsureLoaded: loader for format '{format}' failed on \
-                         band ({raster_idx},{band_idx}): {e}"
+                        "RS_EnsureLoaded: loader '{}' failed on \
+                         band ({raster_idx},{band_idx}): {e}",
+                        loader.name()
                     )
                 })?;
                 // We can only build identity-view output bands today
@@ -502,7 +491,13 @@ mod tests {
     }
 
     #[async_trait]
-    impl AsyncByteLoader for RecordingLoader {
+    impl AsyncRasterLoader for RecordingLoader {
+        fn name(&self) -> &str {
+            "recording"
+        }
+        fn supports_format(&self, _format: Option<&str>) -> bool {
+            true
+        }
         async fn load(
             &self,
             req: &RasterLoadRequest<'_>,
@@ -575,12 +570,9 @@ mod tests {
         b.finish().unwrap()
     }
 
-    fn registry_with(
-        format: &str,
-        loader: Arc<dyn AsyncByteLoader>,
-    ) -> Arc<RwLock<RasterLoaderRegistry>> {
+    fn registry_with(loader: Arc<dyn AsyncRasterLoader>) -> Arc<RwLock<RasterLoaderRegistry>> {
         let mut reg = RasterLoaderRegistry::new();
-        reg.register(format, loader);
+        reg.register(loader);
         Arc::new(RwLock::new(reg))
     }
 
@@ -635,17 +627,12 @@ mod tests {
         let input: ArrayRef = Arc::new(input_struct);
 
         let loader: Arc<RecordingLoader> = Arc::new(RecordingLoader::default());
-        let loader_dyn: Arc<dyn AsyncByteLoader> = loader.clone();
-        let reg = registry_with("mock", loader_dyn);
+        let loader_dyn: Arc<dyn AsyncRasterLoader> = loader.clone();
+        let reg = registry_with(loader_dyn);
 
-        let out = ensure_loaded(&input, |fmt| {
-            reg.read()
-                .unwrap()
-                .get(fmt)
-                .ok_or_else(|| datafusion_common::DataFusionError::Plan(format!("no '{fmt}'")))
-        })
-        .await
-        .unwrap();
+        let out = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt))
+            .await
+            .unwrap();
 
         let out_struct = out.as_any().downcast_ref::<StructArray>().unwrap();
         let out_rasters = RasterStructArray::new(out_struct);
@@ -673,17 +660,12 @@ mod tests {
         let input: ArrayRef = Arc::new(input_struct);
 
         let loader: Arc<RecordingLoader> = Arc::new(RecordingLoader::default());
-        let loader_dyn: Arc<dyn AsyncByteLoader> = loader.clone();
-        let reg = registry_with("mock", loader_dyn);
+        let loader_dyn: Arc<dyn AsyncRasterLoader> = loader.clone();
+        let reg = registry_with(loader_dyn);
 
-        let out = ensure_loaded(&input, |fmt| {
-            reg.read()
-                .unwrap()
-                .get(fmt)
-                .ok_or_else(|| datafusion_common::DataFusionError::Plan(format!("no '{fmt}'")))
-        })
-        .await
-        .unwrap();
+        let out = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt))
+            .await
+            .unwrap();
 
         let out_struct = out.as_any().downcast_ref::<StructArray>().unwrap();
         let out_rasters = RasterStructArray::new(out_struct);
@@ -703,15 +685,9 @@ mod tests {
         let reg: Arc<RwLock<RasterLoaderRegistry>> =
             Arc::new(RwLock::new(RasterLoaderRegistry::new()));
 
-        let err = ensure_loaded(&input, |fmt| {
-            reg.read().unwrap().get(fmt).ok_or_else(|| {
-                datafusion_common::DataFusionError::Plan(format!(
-                    "no raster loader registered for format '{fmt}'"
-                ))
-            })
-        })
-        .await
-        .unwrap_err();
+        let err = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt))
+            .await
+            .unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("zarr"),
@@ -728,7 +704,13 @@ mod tests {
         struct ShortLoader;
 
         #[async_trait]
-        impl AsyncByteLoader for ShortLoader {
+        impl AsyncRasterLoader for ShortLoader {
+            fn name(&self) -> &str {
+                "short"
+            }
+            fn supports_format(&self, _format: Option<&str>) -> bool {
+                true
+            }
             async fn load(
                 &self,
                 req: &RasterLoadRequest<'_>,
@@ -741,17 +723,12 @@ mod tests {
             }
         }
 
-        let loader_dyn: Arc<dyn AsyncByteLoader> = Arc::new(ShortLoader);
-        let reg = registry_with("mock", loader_dyn);
+        let loader_dyn: Arc<dyn AsyncRasterLoader> = Arc::new(ShortLoader);
+        let reg = registry_with(loader_dyn);
 
-        let err = ensure_loaded(&input, |fmt| {
-            reg.read()
-                .unwrap()
-                .get(fmt)
-                .ok_or_else(|| datafusion_common::DataFusionError::Plan(format!("no '{fmt}'")))
-        })
-        .await
-        .unwrap_err();
+        let err = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt))
+            .await
+            .unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("expected") && msg.contains("loader returned"),
@@ -770,7 +747,13 @@ mod tests {
         #[derive(Debug, Default)]
         struct ViewReportingLoader;
         #[async_trait]
-        impl AsyncByteLoader for ViewReportingLoader {
+        impl AsyncRasterLoader for ViewReportingLoader {
+            fn name(&self) -> &str {
+                "view-reporting"
+            }
+            fn supports_format(&self, _format: Option<&str>) -> bool {
+                true
+            }
             async fn load(
                 &self,
                 req: &RasterLoadRequest<'_>,
@@ -799,16 +782,11 @@ mod tests {
             }
         }
 
-        let loader_dyn: Arc<dyn AsyncByteLoader> = Arc::new(ViewReportingLoader);
-        let reg = registry_with("mock", loader_dyn);
-        let err = ensure_loaded(&input, |fmt| {
-            reg.read()
-                .unwrap()
-                .get(fmt)
-                .ok_or_else(|| datafusion_common::DataFusionError::Plan(format!("no '{fmt}'")))
-        })
-        .await
-        .unwrap_err();
+        let loader_dyn: Arc<dyn AsyncRasterLoader> = Arc::new(ViewReportingLoader);
+        let reg = registry_with(loader_dyn);
+        let err = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt))
+            .await
+            .unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("897"),
@@ -839,17 +817,12 @@ mod tests {
         let input_struct = b.finish().unwrap();
         let input: ArrayRef = Arc::new(input_struct);
 
-        let loader_dyn: Arc<dyn AsyncByteLoader> = Arc::new(RecordingLoader::default());
-        let reg = registry_with("mock", loader_dyn);
+        let loader_dyn: Arc<dyn AsyncRasterLoader> = Arc::new(RecordingLoader::default());
+        let reg = registry_with(loader_dyn);
 
-        let out = ensure_loaded(&input, |fmt| {
-            reg.read()
-                .unwrap()
-                .get(fmt)
-                .ok_or_else(|| datafusion_common::DataFusionError::Plan(format!("no '{fmt}'")))
-        })
-        .await
-        .unwrap();
+        let out = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt))
+            .await
+            .unwrap();
 
         assert_eq!(out.len(), 2);
         assert!(!out.is_null(0));

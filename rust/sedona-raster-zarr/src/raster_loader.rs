@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! Zarr backend implementing [`sedona_raster::raster_loader::AsyncByteLoader`].
+//! Zarr backend implementing [`sedona_raster::raster_loader::AsyncRasterLoader`].
 //!
 //! Resolves a band's OutDb URI back into a Zarr chunk read: the URI is
 //! a chunk anchor of the form
@@ -27,23 +27,21 @@
 //! stalled by Zarr's blocking decoder.
 //!
 //! Registered against the per-session
-//! [`RasterLoaderRegistry`](sedona_raster::raster_loader::RasterLoaderRegistry)
-//! under the format key [`ZARR_FORMAT`]. As an out-of-tree plugin,
-//! `sedona-raster-zarr` does not depend on `sedona` — callers wire the
-//! registration themselves from their `SedonaContext` setup:
+//! [`RasterLoaderRegistry`](sedona_raster::raster_loader::RasterLoaderRegistry);
+//! the loader claims the [`ZARR_FORMAT`] `outdb_format` via
+//! `supports_format`. As an out-of-tree plugin, `sedona-raster-zarr` does
+//! not depend on `sedona` — callers wire the registration themselves from
+//! their `SedonaContext` setup:
 //!
 //! ```ignore
-//! ctx.register_raster_loader(
-//!     sedona_raster_zarr::ZARR_FORMAT,
-//!     std::sync::Arc::new(sedona_raster_zarr::ZarrLoader::new()),
-//! );
+//! ctx.register_raster_loader(std::sync::Arc::new(sedona_raster_zarr::ZarrLoader::new()));
 //! ```
 
 use arrow_buffer::Buffer;
 use arrow_schema::ArrowError;
 use async_trait::async_trait;
 use sedona_common::sedona_internal_datafusion_err;
-use sedona_raster::raster_loader::{AsyncByteLoader, RasterLoadRequest, RasterLoadResult};
+use sedona_raster::raster_loader::{AsyncRasterLoader, RasterLoadRequest, RasterLoadResult};
 use zarrs::array::{Array, ArrayBytes};
 
 use crate::dtype::zarr_to_band_data_type;
@@ -71,7 +69,18 @@ impl ZarrLoader {
 }
 
 #[async_trait]
-impl AsyncByteLoader for ZarrLoader {
+impl AsyncRasterLoader for ZarrLoader {
+    fn name(&self) -> &str {
+        ZARR_FORMAT
+    }
+
+    /// Zarr-specific: claims only bands whose `outdb_format` is
+    /// [`ZARR_FORMAT`]. Everything else (including the unset `None` that
+    /// `RS_FromPath` emits) falls through to the catch-all GDAL loader.
+    fn supports_format(&self, format: Option<&str>) -> bool {
+        format == Some(ZARR_FORMAT)
+    }
+
     async fn load(&self, req: &RasterLoadRequest<'_>) -> Result<RasterLoadResult, ArrowError> {
         let anchor = parse_chunk_anchor(req.uri)?;
         // Build the store from the anchor's store URI. Temporary: when a

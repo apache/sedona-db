@@ -18,15 +18,15 @@
 //! Async byte-loading for schema-OutDb raster bands.
 //!
 //! `sedona-raster` deliberately knows nothing about GDAL, Zarr, or any
-//! other backend. Backends implement [`AsyncByteLoader`] and register
-//! themselves with a format key against an [`RasterLoaderRegistry`]. The
+//! other backend. Backends implement [`AsyncRasterLoader`] — declaring which
+//! `outdb_format` values they handle — and register themselves against an
+//! [`RasterLoaderRegistry`]. The
 //! `RS_EnsureLoaded` UDF in the `sedona` crate consumes the registry to
 //! materialise OutDb bands at query time; band accessors
 //! (`BandRef::nd_buffer()` / `contiguous_data()`) do **not** invoke the
 //! loader transparently — they return whatever is in the `data` column
 //! verbatim, surfacing a clear error when the column is empty.
 
-use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use arrow_buffer::Buffer;
@@ -44,7 +44,7 @@ use crate::traits::ViewEntry;
 /// Constructed by `RS_EnsureLoaded` once per row from the band's schema
 /// metadata. The lifetime is the request's, not the loader's — borrowed
 /// fields point into the input `RecordBatch` and stay valid for the
-/// duration of the [`AsyncByteLoader::load`] future.
+/// duration of the [`AsyncRasterLoader::load`] future.
 ///
 /// The request carries the band's `view`, but a loader may ignore it: it
 /// returns a [`RasterLoadResult`] that *describes* the bytes it produced
@@ -76,7 +76,7 @@ pub struct RasterLoadRequest<'a> {
     pub data_type: BandDataType,
 }
 
-/// What [`AsyncByteLoader::load`] returns: the bytes plus the layout they
+/// What [`AsyncRasterLoader::load`] returns: the bytes plus the layout they
 /// are in. Self-describing, so the caller builds the output band from it
 /// without a separate capability flag.
 ///
@@ -111,8 +111,8 @@ impl RasterLoadResult {
 
 /// Backend trait. Implementers live in format-specific crates
 /// (`sedona-raster-gdal`, `sedona-raster-zarr`, …) and are registered
-/// against an [`RasterLoaderRegistry`] under a format key matching the
-/// band's `outdb_format` column.
+/// against an [`RasterLoaderRegistry`]; each declares the band
+/// `outdb_format` values it handles via [`AsyncRasterLoader::supports_format`].
 ///
 /// Synchronous backends (e.g. GDAL) wrap their I/O in
 /// `tokio::task::spawn_blocking` inside the impl — the trait itself stays
@@ -124,7 +124,18 @@ impl RasterLoadResult {
 /// build the output `BinaryViewArray` directly from collected Buffers
 /// without an extra copy through a `BinaryViewBuilder` block buffer.
 #[async_trait::async_trait]
-pub trait AsyncByteLoader: Send + Sync + std::fmt::Debug {
+pub trait AsyncRasterLoader: Send + Sync + std::fmt::Debug {
+    /// Short name for diagnostics and error messages (e.g. `"gdal"`,
+    /// `"zarr"`).
+    fn name(&self) -> &str;
+
+    /// Whether this loader will attempt a band with the given
+    /// `outdb_format`. `format` is the band's `outdb_format` column value —
+    /// `None` when unset (as `RS_FromPath` emits). A catch-all backend
+    /// (e.g. GDAL) returns `true` for any input; a format-specific backend
+    /// (e.g. Zarr) returns `true` only for its own format.
+    fn supports_format(&self, format: Option<&str>) -> bool;
+
     /// Fetch the band's bytes, returning a [`RasterLoadResult`] that
     /// describes the layout produced. A loader that doesn't prune by the
     /// view returns [`RasterLoadResult::unresolved`] (full source, length
@@ -133,15 +144,21 @@ pub trait AsyncByteLoader: Send + Sync + std::fmt::Debug {
     async fn load(&self, req: &RasterLoadRequest<'_>) -> Result<RasterLoadResult, ArrowError>;
 }
 
-/// Process-side registry mapping `outdb_format` keys to loader instances.
+/// Process-side registry of raster byte loaders.
 ///
 /// One registry instance per `SedonaContext`. The owning context wraps it
 /// in `Arc<RwLock<…>>` so extension crates (`sedona-raster-zarr`, future COG /
 /// Icechunk / …) can register their loaders post-construction via a
 /// public `SedonaContext::register_raster_loader` API.
+///
+/// Loaders are held in registration order. A band's `outdb_format` is
+/// matched against each loader's [`AsyncRasterLoader::supports_format`],
+/// scanning **most-recently-registered first** — so a format-specific
+/// loader registered after a catch-all (GDAL) wins for the formats it
+/// claims, while everything else falls through to the catch-all.
 #[derive(Debug, Default)]
 pub struct RasterLoaderRegistry {
-    loaders: HashMap<String, Arc<dyn AsyncByteLoader>>,
+    loaders: Vec<Arc<dyn AsyncRasterLoader>>,
 }
 
 impl RasterLoaderRegistry {
@@ -152,30 +169,56 @@ impl RasterLoaderRegistry {
         Self::default()
     }
 
-    /// Register a loader under a format key. Later registrations for the
-    /// same key overwrite — registries are mutable for the lifetime of
-    /// the session and there's no value in locking down after first
-    /// registration (a process with runtime-registered backends may
-    /// legitimately swap implementations during setup).
-    pub fn register(&mut self, format: impl Into<String>, loader: Arc<dyn AsyncByteLoader>) {
-        self.loaders.insert(format.into(), loader);
+    /// Register a loader. Each loader declares the formats it handles via
+    /// [`AsyncRasterLoader::supports_format`]; lookup scans in reverse, so a
+    /// loader registered later takes precedence over an earlier one for any
+    /// format both accept. The catch-all (GDAL) is registered first so
+    /// specific backends registered afterward win for their own formats.
+    pub fn register(&mut self, loader: Arc<dyn AsyncRasterLoader>) {
+        self.loaders.push(loader);
     }
 
-    /// Look up a loader by format key. Returns `None` for keys with no
-    /// registered backend. `RS_EnsureLoaded` surfaces the `None` case as a
-    /// query-time error that names the missing format and points users at
-    /// the install/register step.
-    pub fn get(&self, format: &str) -> Option<Arc<dyn AsyncByteLoader>> {
-        self.loaders.get(format).cloned()
+    /// Find the loader for a band `outdb_format` (`None` when unset, as
+    /// `RS_FromPath` emits). Scans most-recently-registered first and
+    /// returns the first loader whose [`AsyncRasterLoader::supports_format`]
+    /// accepts it, or `None` when nothing does.
+    pub fn get(&self, format: Option<&str>) -> Option<Arc<dyn AsyncRasterLoader>> {
+        self.loaders
+            .iter()
+            .rev()
+            .find(|l| l.supports_format(format))
+            .cloned()
     }
 
-    /// Iterate registered format keys. Useful for diagnostics ("no loader
-    /// for 'zarr'; registered formats are: gdal").
-    pub fn formats(&self) -> impl Iterator<Item = &str> {
-        self.loaders.keys().map(String::as_str)
+    /// Like [`Self::get`], but returns a planner error naming the format and
+    /// the registered loaders when nothing accepts it. `RS_EnsureLoaded`
+    /// dispatches through this so the diagnostic points users at the
+    /// install/register step.
+    pub fn get_or_error(
+        &self,
+        format: Option<&str>,
+    ) -> datafusion_common::Result<Arc<dyn AsyncRasterLoader>> {
+        if let Some(loader) = self.get(format) {
+            return Ok(loader);
+        }
+        let registered = self.loader_names();
+        let registered_msg = if registered.is_empty() {
+            "no raster loaders are registered in this session".to_string()
+        } else {
+            format!("registered loaders: {}", registered.join(", "))
+        };
+        datafusion_common::plan_err!(
+            "no raster loader accepts outdb_format {format:?} — {registered_msg}"
+        )
     }
 
-    /// True if any loader is registered.
+    /// Names of registered loaders, most-recently-registered first. Useful
+    /// for diagnostics.
+    pub fn loader_names(&self) -> Vec<&str> {
+        self.loaders.iter().rev().map(|l| l.name()).collect()
+    }
+
+    /// True if no loader is registered.
     pub fn is_empty(&self) -> bool {
         self.loaders.is_empty()
     }
@@ -223,16 +266,21 @@ impl PartialEq for RasterLoaderRegistryOption {
 impl ConfigField for RasterLoaderRegistryOption {
     fn visit<V: Visit>(&self, v: &mut V, key: &str, description: &'static str) {
         let snapshot = match self.0.read() {
-            Ok(g) => g.formats().map(String::from).collect::<Vec<_>>(),
+            Ok(g) => g
+                .loader_names()
+                .into_iter()
+                .map(String::from)
+                .collect::<Vec<_>>(),
             Err(p) => p
                 .into_inner()
-                .formats()
+                .loader_names()
+                .into_iter()
                 .map(String::from)
                 .collect::<Vec<_>>(),
         };
         v.some(
             key,
-            format!("RasterLoaderRegistry {{ formats: {snapshot:?} }}"),
+            format!("RasterLoaderRegistry {{ loaders: {snapshot:?} }}"),
             description,
         );
     }
@@ -343,14 +391,35 @@ mod tests {
     use std::sync::Mutex;
 
     /// Minimal in-test loader: records the request and returns a buffer
-    /// of `Π source_shape × byte_size` zeros.
+    /// of `Π source_shape × byte_size` zeros. Carries a name and the set
+    /// of formats it claims so registry dispatch can be exercised.
     #[derive(Debug, Default)]
     struct MockLoader {
+        name: String,
+        formats: Vec<String>,
         seen: Mutex<Vec<(String, Vec<u64>)>>,
     }
 
+    impl MockLoader {
+        fn new(name: &str, formats: &[&str]) -> Self {
+            Self {
+                name: name.to_string(),
+                formats: formats.iter().map(|s| s.to_string()).collect(),
+                seen: Mutex::default(),
+            }
+        }
+    }
+
     #[async_trait::async_trait]
-    impl AsyncByteLoader for MockLoader {
+    impl AsyncRasterLoader for MockLoader {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn supports_format(&self, format: Option<&str>) -> bool {
+            matches!(format, Some(f) if self.formats.iter().any(|s| s == f))
+        }
+
         async fn load(&self, req: &RasterLoadRequest<'_>) -> Result<RasterLoadResult, ArrowError> {
             self.seen
                 .lock()
@@ -366,45 +435,77 @@ mod tests {
     }
 
     #[test]
-    fn registry_starts_empty_and_reports_no_formats() {
+    fn registry_starts_empty_and_reports_no_loaders() {
         let r = RasterLoaderRegistry::new();
         assert!(r.is_empty());
-        assert!(r.get("gdal").is_none());
-        assert_eq!(r.formats().count(), 0);
+        assert!(r.get(Some("gdal")).is_none());
+        assert!(r.loader_names().is_empty());
     }
 
     #[test]
-    fn registry_get_returns_registered_loader() {
+    fn registry_get_returns_loader_that_supports_the_format() {
         let mut r = RasterLoaderRegistry::new();
-        r.register("mock", Arc::new(MockLoader::default()));
+        r.register(Arc::new(MockLoader::new("mock", &["mock"])));
         assert!(!r.is_empty());
-        assert!(r.get("mock").is_some());
-        assert!(r.get("gdal").is_none());
+        assert!(r.get(Some("mock")).is_some());
+        assert!(r.get(Some("gdal")).is_none());
+        assert!(r.get(None).is_none());
     }
 
     #[test]
-    fn registry_register_overwrites_existing_key() {
+    fn registry_get_returns_most_recently_registered_matching_loader() {
         let mut r = RasterLoaderRegistry::new();
-        let first = Arc::new(MockLoader::default());
-        let second = Arc::new(MockLoader::default());
-        r.register("mock", first.clone());
-        r.register("mock", second.clone());
-        // Two distinct loaders pushed under the same key; the second wins.
-        let resolved = r.get("mock").unwrap();
+        let first = Arc::new(MockLoader::new("first", &["mock"]));
+        let second = Arc::new(MockLoader::new("second", &["mock"]));
+        r.register(first.clone());
+        r.register(second.clone());
+        // Both claim "mock"; the reverse scan returns the later registration.
+        let resolved = r.get(Some("mock")).unwrap();
         assert!(Arc::ptr_eq(
-            &(resolved as Arc<dyn AsyncByteLoader>),
-            &(second as Arc<dyn AsyncByteLoader>)
+            &(resolved as Arc<dyn AsyncRasterLoader>),
+            &(second as Arc<dyn AsyncRasterLoader>)
         ));
     }
 
     #[test]
-    fn registry_formats_lists_registered_keys() {
+    fn registry_catch_all_yields_to_later_specific_loader() {
+        // Catch-all registered first (accepts everything, including None);
+        // a specific loader registered after wins for its own format.
+        #[derive(Debug)]
+        struct CatchAll;
+        #[async_trait::async_trait]
+        impl AsyncRasterLoader for CatchAll {
+            fn name(&self) -> &str {
+                "catch-all"
+            }
+            fn supports_format(&self, _format: Option<&str>) -> bool {
+                true
+            }
+            async fn load(
+                &self,
+                req: &RasterLoadRequest<'_>,
+            ) -> Result<RasterLoadResult, ArrowError> {
+                Ok(RasterLoadResult::unresolved(
+                    Buffer::from_vec(Vec::<u8>::new()),
+                    req,
+                ))
+            }
+        }
+
         let mut r = RasterLoaderRegistry::new();
-        r.register("gdal", Arc::new(MockLoader::default()));
-        r.register("zarr", Arc::new(MockLoader::default()));
-        let mut formats: Vec<&str> = r.formats().collect();
-        formats.sort();
-        assert_eq!(formats, vec!["gdal", "zarr"]);
+        r.register(Arc::new(CatchAll));
+        r.register(Arc::new(MockLoader::new("zarr", &["zarr"])));
+        assert_eq!(r.get(Some("zarr")).unwrap().name(), "zarr");
+        assert_eq!(r.get(Some("geotiff")).unwrap().name(), "catch-all");
+        assert_eq!(r.get(None).unwrap().name(), "catch-all");
+    }
+
+    #[test]
+    fn registry_loader_names_lists_registered_most_recent_first() {
+        let mut r = RasterLoaderRegistry::new();
+        r.register(Arc::new(MockLoader::new("gdal", &[])));
+        r.register(Arc::new(MockLoader::new("zarr", &["zarr"])));
+        assert_eq!(r.loader_names(), vec!["zarr", "gdal"]);
     }
 
     #[tokio::test]
@@ -428,10 +529,10 @@ mod tests {
     #[tokio::test]
     async fn loader_load_through_registry_dispatches_to_correct_backend() {
         let mut r = RasterLoaderRegistry::new();
-        let gdal = Arc::new(MockLoader::default());
-        let zarr = Arc::new(MockLoader::default());
-        r.register("gdal", gdal.clone());
-        r.register("zarr", zarr.clone());
+        let gdal = Arc::new(MockLoader::new("gdal", &["gdal"]));
+        let zarr = Arc::new(MockLoader::new("zarr", &["zarr"]));
+        r.register(gdal.clone());
+        r.register(zarr.clone());
 
         let req = RasterLoadRequest {
             uri: "s3://bucket/cube.zarr",
@@ -440,7 +541,7 @@ mod tests {
             view: &[],
             data_type: BandDataType::Float32,
         };
-        let loader = r.get("zarr").unwrap();
+        let loader = r.get(Some("zarr")).unwrap();
         let result = loader.load(&req).await.unwrap();
         assert_eq!(result.bytes.len(), 2 * 3 * 4 * 4); // Float32 = 4 bytes
 
@@ -453,7 +554,7 @@ mod tests {
     fn registry_get_missing_format_returns_none_for_diagnostic_message() {
         let r = RasterLoaderRegistry::new();
         // Caller (RS_EnsureLoaded) sees None and can build a diagnostic
-        // listing the registered formats.
-        assert!(r.get("nonexistent").is_none());
+        // listing the registered loaders.
+        assert!(r.get(Some("nonexistent")).is_none());
     }
 }

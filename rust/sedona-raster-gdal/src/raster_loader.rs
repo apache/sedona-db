@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! GDAL backend implementing [`sedona_raster::raster_loader::AsyncByteLoader`].
+//! GDAL backend implementing [`sedona_raster::raster_loader::AsyncRasterLoader`].
 //!
 //! Reads OutDb raster bands identified by a `#band=N` URI fragment via
 //! GDAL's blocking API. The blocking work runs inside
@@ -65,16 +65,17 @@ use arrow_schema::ArrowError;
 use async_trait::async_trait;
 use datafusion_common::{DataFusionError, Result as DFResult};
 use sedona_gdal::raster::rasterband::RasterBand;
-use sedona_raster::raster_loader::{AsyncByteLoader, RasterLoadRequest, RasterLoadResult};
+use sedona_raster::raster_loader::{AsyncRasterLoader, RasterLoadRequest, RasterLoadResult};
 use sedona_raster::traits::is_spatial_dim_pair;
 
 use crate::gdal_common::{convert_gdal_err, gdal_to_band_data_type, with_gdal};
 use crate::gdal_dataset_provider::thread_local_cache;
 use crate::source_uri::parse_outdb_source;
 
-/// Format key the loader is registered under. Keep in sync with
-/// `SedonaContext::new_from_context` and any band-builder code emitting
-/// `outdb_format` values.
+/// Diagnostic name for the GDAL raster loader (reported via
+/// [`AsyncRasterLoader::name`]). GDAL is a catch-all loader — it doesn't key
+/// off a specific `outdb_format` — so this is an identity label, not a
+/// dispatch key.
 pub const GDAL_FORMAT: &str = "gdal";
 
 /// Maximum bytes a single OutDb load request will produce.
@@ -88,7 +89,7 @@ pub const GDAL_FORMAT: &str = "gdal";
 /// the override.
 pub const MAX_OUTDB_LOAD_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 
-/// GDAL-backed `AsyncByteLoader`.
+/// GDAL-backed `AsyncRasterLoader`.
 ///
 /// Stateless: the per-thread dataset cache lives in a thread-local owned
 /// by `sedona-raster-gdal::gdal_dataset_provider`, so constructing a
@@ -115,7 +116,20 @@ impl Drop for CancelOnDrop {
 }
 
 #[async_trait]
-impl AsyncByteLoader for GdalLoader {
+impl AsyncRasterLoader for GdalLoader {
+    fn name(&self) -> &str {
+        GDAL_FORMAT
+    }
+
+    /// GDAL is the catch-all byte loader: it attempts any band format,
+    /// including the `None` that `RS_FromPath` emits — it opens the file
+    /// with GDAL regardless of the declared format. Registered first so
+    /// format-specific loaders (e.g. Zarr) registered later win for the
+    /// formats they claim.
+    fn supports_format(&self, _format: Option<&str>) -> bool {
+        true
+    }
+
     async fn load(&self, req: &RasterLoadRequest<'_>) -> Result<RasterLoadResult, ArrowError> {
         // Validate request shape synchronously, before spawning a blocking
         // task — these are programming errors, no point queueing them
