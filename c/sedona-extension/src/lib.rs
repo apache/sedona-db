@@ -17,3 +17,4 @@
 
 pub mod extension_ffi;
 pub mod scalar_kernel;
+pub mod device_stream_reader;
