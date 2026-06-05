@@ -105,6 +105,8 @@ fn invoke_scalar(geom: &Wkb, writer: &mut impl Write) -> Result<(), SedonaGeomet
     let dims = geom.dim();
     match geom.as_type() {
         geo_traits::GeometryType::Point(_) | geo_traits::GeometryType::MultiPoint(_) => {
+            // Note: in the case of big endian input, this may result in mixed endian output.
+            // Mixed endian output should be handled by all readers but is probably not well tested.
             writer.write_all(geom.buf())?;
         }
 
@@ -117,21 +119,21 @@ fn invoke_scalar(geom: &Wkb, writer: &mut impl Write) -> Result<(), SedonaGeomet
         }
 
         geo_traits::GeometryType::MultiLineString(mls) => {
-            write_wkb_multilinestring_header(writer, dims, mls.line_strings().count())?;
+            write_wkb_multilinestring_header(writer, dims, mls.num_line_strings())?;
             for ls in mls.line_strings() {
                 write_reversed_linestring(writer, ls, dims)?;
             }
         }
 
         geo_traits::GeometryType::MultiPolygon(mpgn) => {
-            write_wkb_multipolygon_header(writer, dims, mpgn.polygons().count())?;
+            write_wkb_multipolygon_header(writer, dims, mpgn.num_polygons())?;
             for pgn in mpgn.polygons() {
                 write_reversed_polygon(writer, pgn, dims)?;
             }
         }
 
         geo_traits::GeometryType::GeometryCollection(gcn) => {
-            write_wkb_geometrycollection_header(writer, dims, gcn.geometries().count())?;
+            write_wkb_geometrycollection_header(writer, dims, gcn.num_geometries())?;
             for geom in gcn.geometries() {
                 invoke_scalar(geom, writer)?;
             }
@@ -151,7 +153,7 @@ fn write_reversed_linestring(
     ls: &wkb::reader::LineString,
     dims: Dimensions,
 ) -> Result<(), SedonaGeometryError> {
-    write_wkb_linestring_header(writer, dims, ls.coords().count())?;
+    write_wkb_linestring_header(writer, dims, ls.num_coords())?;
     write_reversed_coords(writer, ls.coords_slice(), dims.size(), ls.byte_order())?;
     Ok(())
 }
@@ -161,7 +163,7 @@ fn write_reversed_polygon(
     pgn: &wkb::reader::Polygon,
     dims: Dimensions,
 ) -> Result<(), SedonaGeometryError> {
-    let num_rings = pgn.interiors().count() + pgn.exterior().is_some() as usize;
+    let num_rings = pgn.num_interiors() + pgn.exterior().is_some() as usize;
     write_wkb_polygon_header(writer, dims, num_rings)?;
 
     if let Some(exterior) = pgn.exterior() {
@@ -180,7 +182,7 @@ fn write_reversed_ring(
     ring: &wkb::reader::LinearRing,
     dim_size: usize,
 ) -> Result<(), SedonaGeometryError> {
-    write_wkb_polygon_ring_header(writer, ring.coords().count())?;
+    write_wkb_polygon_ring_header(writer, ring.num_coords())?;
     write_reversed_coords(writer, ring.coords_slice(), dim_size, ring.byte_order())
 }
 
@@ -191,15 +193,10 @@ fn write_reversed_coords(
     endianness: Endianness,
 ) -> Result<(), SedonaGeometryError> {
     let coord_bytes = dim_size * size_of::<f64>();
-
-    #[cfg(target_endian = "little")]
     let needs_byteswap = matches!(endianness, Endianness::BigEndian);
 
-    #[cfg(target_endian = "big")]
-    let needs_byteswap = matches!(endianness, Endianness::LittleEndian);
-
     if needs_byteswap {
-        let mut ord_reversed = [0u8; 8];
+        let mut ord_reversed = [0u8; size_of::<f64>()];
         for coord in coords.rchunks_exact(coord_bytes) {
             for ord in coord.chunks_exact(size_of::<f64>()) {
                 ord_reversed.copy_from_slice(ord);
