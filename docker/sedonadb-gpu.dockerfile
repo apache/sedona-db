@@ -63,7 +63,11 @@ ENV VCPKG_ROOT=/home/ubuntu/vcpkg
 ENV CMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake
 ENV CC=clang-18
 ENV CXX=clang++-18
-ARG CMAKE_CUDA_ARCHITECTURES="86"
+# Build a fat binary covering common NVIDIA GPUs: Turing (7.5, e.g. T4),
+# Ampere (8.6, e.g. A10G), and Ada Lovelace (8.9, e.g. L4). CUDA JIT is only
+# forward-compatible, so a single-arch build (e.g. 8.6) would not run on older
+# GPUs such as the T4 found on AWS g5g instances.
+ARG CMAKE_CUDA_ARCHITECTURES="75;86;89"
 ENV CMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES}
 ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs:${LD_LIBRARY_PATH}
 

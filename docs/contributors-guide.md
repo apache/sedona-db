@@ -472,8 +472,9 @@ To build and push the image, run the helper script from the repository root:
 docker/build.sh release apache/sedona:sedonadb-latest
 ```
 
-The `release` mode builds both architectures and pushes the result straight to the registry. A
-final argument overrides the CUDA target (the default is `86`, for the Ampere architecture).
-Because each architecture compiles CUDA, Rust, and vcpkg dependencies, this is best run on native
-`amd64` and `arm64` hardware (such as CI runners): building the non-native architecture locally
-falls back to QEMU emulation and is very slow.
+The `release` mode builds both CPU architectures and pushes the result straight to the registry. A
+final argument overrides the CUDA target (the default is `75;86;89`, a fat binary covering Turing,
+Ampere, and Ada Lovelace GPUs such as the T4, A10G, and L4). Because each CPU architecture compiles
+CUDA, Rust, and vcpkg dependencies for every CUDA target, this is best run on native `amd64` and
+`arm64` hardware (such as CI runners): building the non-native architecture locally falls back to
+QEMU emulation and is very slow.

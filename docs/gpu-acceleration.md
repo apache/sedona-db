@@ -97,7 +97,7 @@ docker run -it --rm --gpus all -p 8888:8888 apache/sedona:sedonadb-latest
 
 Open the JupyterLab URL printed in the terminal to start working.
 
-The prebuilt image is compiled for the Ampere architecture (`CMAKE_CUDA_ARCHITECTURES=86`). It still runs on other GPUs, but the kernels are JIT-compiled on first use, which can make the first run slow. To target your own GPU, build the image from the repository root:
+The prebuilt image is compiled for the Turing, Ampere, and Ada Lovelace architectures (`CMAKE_CUDA_ARCHITECTURES=75;86;89`), covering common NVIDIA GPUs such as the T4, A10G, and L4. On a GPU outside this set the kernels are JIT-compiled on first use, which can make the first run slow. To target your own GPU, build the image from the repository root:
 
 ```bash
 docker build -f docker/sedonadb-gpu.dockerfile --build-arg CMAKE_CUDA_ARCHITECTURES="<your GPU compute capability>" -t sedonadb-gpu .
