@@ -259,7 +259,7 @@ impl GeoParquetReadOptions<'_> {
     /// Set table partition columns for hive-style partitioning
     ///
     /// Partition columns are extracted from directory paths like `/col=value/`.
-    /// All partition columns are assumed to be `Utf8` type.
+    /// All partition columns are assumed to be `Utf8View` type.
     ///
     /// Pass an empty vector to explicitly disable partition auto-discovery.
     pub fn with_table_partition_cols(mut self, cols: Vec<(String, DataType)>) -> Self {
