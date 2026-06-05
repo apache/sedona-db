@@ -15,6 +15,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
+pub mod device_stream_reader;
 pub mod extension_ffi;
 pub mod scalar_kernel;
-pub mod device_stream_reader;
+
+#[cfg(feature = "async")]
+pub mod sendable_record_batch_stream;
