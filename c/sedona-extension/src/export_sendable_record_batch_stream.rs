@@ -113,11 +113,13 @@ impl ProducerState {
     }
 
     fn register_waker(&self, waker: Waker) {
-        *self.waker.lock().unwrap() = Some(waker);
+        // Lock cannot be poisoned: we never panic while holding it
+        *self.waker.lock().expect("waker mutex poisoned") = Some(waker);
     }
 
     fn wake(&self) {
-        if let Some(waker) = self.waker.lock().unwrap().take() {
+        // Lock cannot be poisoned: we never panic while holding it
+        if let Some(waker) = self.waker.lock().expect("waker mutex poisoned").take() {
             waker.wake();
         }
     }

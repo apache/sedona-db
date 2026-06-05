@@ -136,7 +136,8 @@ impl ImportedStreamState {
             return;
         }
 
-        let producer_state = self.producer_state.lock().unwrap();
+        // Lock cannot be poisoned: we never panic while holding it
+        let producer_state = self.producer_state.lock().expect("producer_state mutex poisoned");
         if producer_state.producer.is_null() {
             return;
         }
@@ -155,17 +156,20 @@ impl ImportedStreamState {
     }
 
     fn set_producer(&self, producer: *mut FFI_ArrowAsyncProducer) {
-        let mut state = self.producer_state.lock().unwrap();
+        // Lock cannot be poisoned: we never panic while holding it
+        let mut state = self.producer_state.lock().expect("producer_state mutex poisoned");
         state.producer = producer;
     }
 
     fn clear_producer(&self) {
-        let mut state = self.producer_state.lock().unwrap();
+        // Lock cannot be poisoned: we never panic while holding it
+        let mut state = self.producer_state.lock().expect("producer_state mutex poisoned");
         state.producer = null_mut();
     }
 
     fn cancel(&self) {
-        let state = self.producer_state.lock().unwrap();
+        // Lock cannot be poisoned: we never panic while holding it
+        let state = self.producer_state.lock().expect("producer_state mutex poisoned");
         if !state.producer.is_null() {
             if let Some(cancel_fn) = unsafe { (*state.producer).cancel } {
                 unsafe { cancel_fn(state.producer) };
