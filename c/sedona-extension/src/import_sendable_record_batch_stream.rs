@@ -29,10 +29,10 @@
 //! ```ignore
 //! use sedona_extension::import_sendable_record_batch_stream::ImportedAsyncDeviceStream;
 //!
-//! let (stream, handler_ptr) = ImportedAsyncDeviceStream::new(16);
+//! let (stream, handler) = ImportedAsyncDeviceStream::new(16);
 //!
-//! // Pass handler_ptr to FFI producer...
-//! // ffi_producer_start(handler_ptr);
+//! // Pass handler to FFI producer...
+//! // ffi_producer_start(handler.as_ptr());
 //!
 //! // Consume the stream
 //! while let Some(batch) = stream.next().await {
@@ -99,6 +99,8 @@ struct ImportedStreamState {
     pending_requests: AtomicU64,
     /// Set to true when the stream is dropped but producer hasn't called release yet.
     abandoned: AtomicBool,
+    /// Set to true when handler_release is called (handler was freed by producer).
+    handler_released: AtomicBool,
     /// Producer state (needs mutex for FFI calls).
     producer_state: Mutex<ProducerState>,
 }
@@ -116,6 +118,7 @@ impl ImportedStreamState {
             ended: AtomicBool::new(false),
             pending_requests: AtomicU64::new(0),
             abandoned: AtomicBool::new(false),
+            handler_released: AtomicBool::new(false),
             producer_state: Mutex::new(ProducerState {
                 producer: null_mut(),
                 prefetch_count,
@@ -200,28 +203,115 @@ pub struct ImportedAsyncDeviceStream {
 // Safety: The state uses atomic operations and mutex-protected producer access.
 unsafe impl Send for ImportedAsyncDeviceStream {}
 
+/// RAII wrapper for the FFI handler.
+///
+/// This wrapper ensures the handler is properly cleaned up even if the FFI producer
+/// never calls `release()`. It provides safe access to the raw pointer for FFI calls.
+///
+/// # Usage
+///
+/// ```ignore
+/// let (stream, handler) = ImportedAsyncDeviceStream::new(16);
+///
+/// // Pass raw pointer to FFI producer
+/// ffi_producer_start(handler.as_ptr());
+///
+/// // Handler is automatically cleaned up when dropped (if producer didn't release it)
+/// ```
+pub struct AsyncDeviceStreamHandler {
+    /// Raw pointer to the handler (heap-allocated).
+    ptr: *mut FFI_ArrowAsyncDeviceStreamHandler,
+    /// Shared state with the stream - needed to check if already released.
+    state: Arc<ImportedStreamState>,
+}
+
+// Safety: The handler pointer is only accessed from one thread at a time.
+// The state Arc provides synchronization.
+unsafe impl Send for AsyncDeviceStreamHandler {}
+
+impl AsyncDeviceStreamHandler {
+    /// Get the raw pointer to pass to FFI code.
+    ///
+    /// The pointer remains valid until either:
+    /// - The FFI producer calls the handler's `release` callback, or
+    /// - This wrapper is dropped
+    #[inline]
+    pub fn as_ptr(&self) -> *mut FFI_ArrowAsyncDeviceStreamHandler {
+        self.ptr
+    }
+}
+
+impl Drop for AsyncDeviceStreamHandler {
+    fn drop(&mut self) {
+        if self.ptr.is_null() {
+            return;
+        }
+
+        // Check via shared state if the handler was already released by the producer.
+        // We MUST check this before touching self.ptr because handler_release frees it.
+        if self.state.handler_released.load(Ordering::Acquire) {
+            // Producer already called release and freed the handler
+            return;
+        }
+
+        // Handler was never released by producer - clean it up ourselves.
+        // This can happen if the producer never connected or crashed.
+        //
+        // We need to:
+        // 1. Mark the stream as ended
+        // 2. Drop the Arc reference in private_data
+        // 3. Free the handler struct
+
+        let handler = unsafe { &mut *self.ptr };
+
+        self.state.ended.store(true, Ordering::Release);
+
+        if !handler.private_data.is_null() {
+            let state_ptr = handler.private_data as *const ImportedStreamState;
+            let _ = unsafe { Arc::from_raw(state_ptr) };
+            handler.private_data = null_mut();
+        }
+
+        // Clear release to prevent FFI_ArrowAsyncDeviceStreamHandler's Drop
+        // from calling it (which would double-free)
+        handler.release = None;
+
+        let _ = unsafe { Box::from_raw(self.ptr) };
+    }
+}
+
 impl ImportedAsyncDeviceStream {
     /// Create a new imported stream.
     ///
-    /// Returns the stream and a pointer to the handler that should be passed to the FFI producer.
+    /// Returns the stream and an RAII handler wrapper that should be used to pass
+    /// the handler pointer to the FFI producer.
     ///
     /// # Arguments
     ///
     /// * `prefetch_count` - Number of batches to request ahead for back-pressure.
     ///   A larger value reduces latency but uses more memory.
     ///
-    /// # Safety
+    /// # Example
     ///
-    /// The returned handler pointer remains valid until the producer calls its `release`
-    /// callback. When the stream is dropped, it signals cancellation to the producer,
-    /// but the handler stays valid - callbacks will return error codes to tell the
-    /// producer to stop and release the handler.
-    pub fn new(prefetch_count: u64) -> (Self, *mut FFI_ArrowAsyncDeviceStreamHandler) {
+    /// ```ignore
+    /// let (stream, handler) = ImportedAsyncDeviceStream::new(16);
+    ///
+    /// // Pass to FFI producer
+    /// ffi_producer_start(handler.as_ptr());
+    ///
+    /// // Stream the data
+    /// while let Some(batch) = stream.next().await {
+    ///     // ...
+    /// }
+    /// // Handler is automatically cleaned up when dropped
+    /// ```
+    pub fn new(prefetch_count: u64) -> (Self, AsyncDeviceStreamHandler) {
         let (sender, receiver) = mpsc::unbounded();
         let state = Arc::new(ImportedStreamState::new(prefetch_count, sender));
 
-        // Handler is heap-allocated and will be freed when producer calls release().
-        // This allows the handler to outlive the stream.
+        // Handler is heap-allocated and will be freed when:
+        // 1. Producer calls release(), or
+        // 2. AsyncDeviceStreamHandler is dropped (fallback cleanup)
         let handler_ptr = Box::into_raw(Box::new(FFI_ArrowAsyncDeviceStreamHandler {
             on_schema: Some(handler_on_schema),
             on_next_task: Some(handler_on_next_task),
@@ -232,13 +322,18 @@ impl ImportedAsyncDeviceStream {
         }));
 
         let stream = Self {
-            state,
+            state: Arc::clone(&state),
             receiver,
             schema: None,
             schema_struct_type: None,
         };
 
-        (stream, handler_ptr)
+        let handler = AsyncDeviceStreamHandler {
+            ptr: handler_ptr,
+            state,
+        };
+
+        (stream, handler)
     }
 
     /// Convert this stream into a [`SendableRecordBatchStream`].
@@ -518,6 +613,9 @@ unsafe extern "C" fn handler_release(self_: *mut FFI_ArrowAsyncDeviceStreamHandl
     state_arc.clear_producer();
     state_arc.ended.store(true, Ordering::Release);
 
+    // Mark handler as released so AsyncDeviceStreamHandler::drop knows not to free it
+    state_arc.handler_released.store(true, Ordering::Release);
+
     // Drop the Arc reference (will be freed when stream also drops its reference)
     drop(state_arc);
     handler.private_data = null_mut();
@@ -627,7 +725,7 @@ mod tests {
         let schema = test_schema();
         let source_stream = TestStream::new(schema.clone(), vec![]);
 
-        let (mut consumer, handler_ptr) = ImportedAsyncDeviceStream::new(4);
+        let (mut consumer, handler) = ImportedAsyncDeviceStream::new(4);
 
         let consumer_future = async {
             let mut received = vec![];
@@ -637,7 +735,7 @@ mod tests {
             (received, consumer.schema())
         };
 
-        let producer_future = drive_stream_to_handler(source_stream, handler_ptr);
+        let producer_future = drive_stream_to_handler(source_stream, handler.as_ptr());
 
         let ((received, result_schema), _) = futures::join!(consumer_future, producer_future);
 
@@ -651,7 +749,7 @@ mod tests {
         let batch = make_batch(&schema, 1, 5);
         let source_stream = TestStream::new(schema.clone(), vec![batch.clone()]);
 
-        let (mut consumer, handler_ptr) = ImportedAsyncDeviceStream::new(4);
+        let (mut consumer, handler) = ImportedAsyncDeviceStream::new(4);
 
         let consumer_future = async {
             let mut received = vec![];
@@ -661,7 +759,7 @@ mod tests {
             received
         };
 
-        let producer_future = drive_stream_to_handler(source_stream, handler_ptr);
+        let producer_future = drive_stream_to_handler(source_stream, handler.as_ptr());
 
         let (received, _) = futures::join!(consumer_future, producer_future);
 
@@ -693,7 +791,7 @@ mod tests {
 
         let source_stream = TestStream::new(schema.clone(), batches);
 
-        let (mut consumer, handler_ptr) = ImportedAsyncDeviceStream::new(prefetch_count);
+        let (mut consumer, handler) = ImportedAsyncDeviceStream::new(prefetch_count);
 
         let consumer_future = async {
             let mut received = vec![];
@@ -703,7 +801,7 @@ mod tests {
             received
         };
 
-        let producer_future = drive_stream_to_handler(source_stream, handler_ptr);
+        let producer_future = drive_stream_to_handler(source_stream, handler.as_ptr());
 
         let (received, _) = futures::join!(consumer_future, producer_future);
 
@@ -720,7 +818,7 @@ mod tests {
         // Error after first batch
         let source_stream = TestStream::with_error(schema.clone(), batches, 1);
 
-        let (mut consumer, handler_ptr) = ImportedAsyncDeviceStream::new(4);
+        let (mut consumer, handler) = ImportedAsyncDeviceStream::new(4);
 
         let consumer_future = async {
             let mut received = vec![];
@@ -730,7 +828,7 @@ mod tests {
             received
         };
 
-        let producer_future = drive_stream_to_handler(source_stream, handler_ptr);
+        let producer_future = drive_stream_to_handler(source_stream, handler.as_ptr());
 
         let (received, _) = futures::join!(consumer_future, producer_future);
 
@@ -752,7 +850,7 @@ mod tests {
 
         let source_stream = TestStream::new(schema.clone(), batches);
 
-        let (mut consumer, handler_ptr) = ImportedAsyncDeviceStream::new(2);
+        let (mut consumer, handler) = ImportedAsyncDeviceStream::new(2);
 
         let consumer_future = async {
             let mut count = 0;
@@ -768,7 +866,7 @@ mod tests {
             count
         };
 
-        let producer_future = drive_stream_to_handler(source_stream, handler_ptr);
+        let producer_future = drive_stream_to_handler(source_stream, handler.as_ptr());
 
         let (count, _) = futures::join!(consumer_future, producer_future);
 
