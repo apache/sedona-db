@@ -13,7 +13,8 @@ Imports:
     dplyr,
     tidyselect,
     rlang,
-    nanoarrow
+    nanoarrow,
+    vctrs
 Suggests:
     testthat (>= 3.0.0)
 RoxygenNote: 7.3.3
