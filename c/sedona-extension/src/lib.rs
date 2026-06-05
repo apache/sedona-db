@@ -20,3 +20,6 @@ pub mod scalar_kernel;
 
 #[cfg(feature = "async")]
 pub mod export_sendable_record_batch_stream;
+
+#[cfg(feature = "async")]
+pub mod import_sendable_record_batch_stream;
