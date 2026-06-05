@@ -208,7 +208,7 @@ impl RasterLoaderRegistry {
             format!("registered loaders: {}", registered.join(", "))
         };
         datafusion_common::plan_err!(
-            "no raster loader accepts outdb_format {format:?} — {registered_msg}"
+            "no raster loader accepts raster format {format:?} — {registered_msg}"
         )
     }
 
