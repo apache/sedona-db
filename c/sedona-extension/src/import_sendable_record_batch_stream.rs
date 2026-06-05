@@ -101,6 +101,8 @@ struct ImportedStreamState {
     abandoned: AtomicBool,
     /// Set to true when handler_release is called (handler was freed by producer).
     handler_released: AtomicBool,
+    /// Set to true when a producer connects (calls on_schema).
+    producer_connected: AtomicBool,
     /// Producer state (needs mutex for FFI calls).
     producer_state: Mutex<ProducerState>,
 }
@@ -119,6 +121,7 @@ impl ImportedStreamState {
             pending_requests: AtomicU64::new(0),
             abandoned: AtomicBool::new(false),
             handler_released: AtomicBool::new(false),
+            producer_connected: AtomicBool::new(false),
             producer_state: Mutex::new(ProducerState {
                 producer: null_mut(),
                 prefetch_count,
@@ -137,7 +140,10 @@ impl ImportedStreamState {
         }
 
         // Lock cannot be poisoned: we never panic while holding it
-        let producer_state = self.producer_state.lock().expect("producer_state mutex poisoned");
+        let producer_state = self
+            .producer_state
+            .lock()
+            .expect("producer_state mutex poisoned");
         if producer_state.producer.is_null() {
             return;
         }
@@ -150,26 +156,37 @@ impl ImportedStreamState {
             let to_request = prefetch - pending;
             if let Some(request_fn) = unsafe { (*producer_state.producer).request } {
                 unsafe { request_fn(producer_state.producer, to_request) };
-                self.pending_requests.fetch_add(to_request, Ordering::Release);
+                self.pending_requests
+                    .fetch_add(to_request, Ordering::Release);
             }
         }
     }
 
     fn set_producer(&self, producer: *mut FFI_ArrowAsyncProducer) {
         // Lock cannot be poisoned: we never panic while holding it
-        let mut state = self.producer_state.lock().expect("producer_state mutex poisoned");
+        let mut state = self
+            .producer_state
+            .lock()
+            .expect("producer_state mutex poisoned");
         state.producer = producer;
+        self.producer_connected.store(true, Ordering::Release);
     }
 
     fn clear_producer(&self) {
         // Lock cannot be poisoned: we never panic while holding it
-        let mut state = self.producer_state.lock().expect("producer_state mutex poisoned");
+        let mut state = self
+            .producer_state
+            .lock()
+            .expect("producer_state mutex poisoned");
         state.producer = null_mut();
     }
 
     fn cancel(&self) {
         // Lock cannot be poisoned: we never panic while holding it
-        let state = self.producer_state.lock().expect("producer_state mutex poisoned");
+        let state = self
+            .producer_state
+            .lock()
+            .expect("producer_state mutex poisoned");
         if !state.producer.is_null() {
             if let Some(cancel_fn) = unsafe { (*state.producer).cancel } {
                 unsafe { cancel_fn(state.producer) };
@@ -211,17 +228,6 @@ unsafe impl Send for ImportedAsyncDeviceStream {}
 ///
 /// This wrapper ensures the handler is properly cleaned up even if the FFI producer
 /// never calls `release()`. It provides safe access to the raw pointer for FFI calls.
-///
-/// # Usage
-///
-/// ```ignore
-/// let (stream, handler) = ImportedAsyncDeviceStream::new(16);
-///
-/// // Pass raw pointer to FFI producer
-/// ffi_producer_start(handler.as_ptr());
-///
-/// // Handler is automatically cleaned up when dropped (if producer didn't release it)
-/// ```
 pub struct AsyncDeviceStreamHandler {
     /// Raw pointer to the handler (heap-allocated).
     ptr: *mut FFI_ArrowAsyncDeviceStreamHandler,
@@ -258,8 +264,14 @@ impl Drop for AsyncDeviceStreamHandler {
             return;
         }
 
-        // Handler was never released by producer - clean it up ourselves.
-        // This can happen if the producer never connected or crashed.
+        // If a producer has connected, it will call release when done.
+        // We must NOT free the handler or we'll cause a use-after-free.
+        if self.state.producer_connected.load(Ordering::Acquire) {
+            return;
+        }
+
+        // No producer ever connected - clean it up ourselves.
+        // This can happen if the handler was never passed to FFI code.
         //
         // We need to:
         // 1. Mark the stream as ended
@@ -294,21 +306,6 @@ impl ImportedAsyncDeviceStream {
     ///
     /// * `prefetch_count` - Number of batches to request ahead for back-pressure.
     ///   A larger value reduces latency but uses more memory.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let (stream, handler) = ImportedAsyncDeviceStream::new(16);
-    ///
-    /// // Pass to FFI producer
-    /// ffi_producer_start(handler.as_ptr());
-    ///
-    /// // Stream the data
-    /// while let Some(batch) = stream.next().await {
-    ///     // ...
-    /// }
-    /// // Handler is automatically cleaned up when dropped
-    /// ```
     pub fn new(prefetch_count: u64) -> (Self, AsyncDeviceStreamHandler) {
         let (sender, receiver) = mpsc::unbounded();
         let state = Arc::new(ImportedStreamState::new(prefetch_count, sender));
@@ -374,9 +371,7 @@ impl ImportedAsyncDeviceStream {
                 }
                 StreamMessage::Task(mut task) => {
                     // Decrement pending (lock-free)
-                    self.state
-                        .pending_requests
-                        .fetch_sub(1, Ordering::Release);
+                    self.state.pending_requests.fetch_sub(1, Ordering::Release);
                     // Maybe request more (acquires lock only if needed)
                     self.state.maybe_request_more();
 
@@ -507,7 +502,9 @@ unsafe extern "C" fn handler_on_schema(
     let result = match Schema::try_from(&ffi_schema) {
         Ok(s) => {
             // Send through channel (lock-free)
-            let _ = state_arc.sender.unbounded_send(StreamMessage::Schema(Arc::new(s)));
+            let _ = state_arc
+                .sender
+                .unbounded_send(StreamMessage::Schema(Arc::new(s)));
             state_arc.wake();
             0
         }
@@ -553,7 +550,9 @@ unsafe extern "C" fn handler_on_next_task(
     } else {
         // Take ownership of the task by copying it
         let task_copy = std::ptr::read(task);
-        let _ = state_arc.sender.unbounded_send(StreamMessage::Task(task_copy));
+        let _ = state_arc
+            .sender
+            .unbounded_send(StreamMessage::Task(task_copy));
     }
     state_arc.wake();
 
@@ -709,10 +708,7 @@ mod tests {
     impl Stream for TestStream {
         type Item = Result<RecordBatch>;
 
-        fn poll_next(
-            mut self: Pin<&mut Self>,
-            _cx: &mut Context<'_>,
-        ) -> Poll<Option<Self::Item>> {
+        fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
             let this = self.as_mut().get_mut();
             Poll::Ready(this.batches.pop_front())
         }
@@ -876,5 +872,115 @@ mod tests {
 
         // Should have received at least 3 batches before cancellation
         assert!(count >= 3);
+    }
+
+    #[tokio::test]
+    async fn test_drop_stream_while_producing() {
+        // Test that dropping the consumer stream while the producer is still producing
+        // doesn't cause crashes or hangs - the producer should stop gracefully.
+        let schema = test_schema();
+        let batches: Vec<RecordBatch> = (0..100).map(|i| make_batch(&schema, i * 3, 3)).collect();
+        let source_stream = TestStream::new(schema.clone(), batches);
+
+        let (consumer, handler) = ImportedAsyncDeviceStream::new(2);
+        let handler_ptr = handler.as_ptr();
+
+        // Wrap consumer in Option so we can drop it mid-stream
+        let consumer = std::sync::Arc::new(tokio::sync::Mutex::new(Some(consumer)));
+        let consumer_clone = consumer.clone();
+
+        let consumer_future = async move {
+            let mut count = 0;
+            loop {
+                let mut guard = consumer_clone.lock().await;
+                let stream = guard.as_mut().unwrap();
+                match stream.next().await {
+                    Some(result) => {
+                        result.expect("should not error before drop");
+                        count += 1;
+                        if count >= 2 {
+                            // Drop the stream after receiving 2 batches
+                            drop(guard.take());
+                            break;
+                        }
+                    }
+                    None => break,
+                }
+            }
+            count
+        };
+
+        let producer_future = drive_stream_to_handler(source_stream, handler_ptr);
+
+        // Both futures should complete without panic or hang
+        let (count, _) = futures::join!(consumer_future, producer_future);
+        assert_eq!(count, 2);
+    }
+
+    #[tokio::test]
+    async fn test_drop_handler_while_consuming() {
+        // Test that dropping the handler wrapper while the consumer is still reading
+        // doesn't cause crashes. The handler should be properly freed by the producer's
+        // release callback, and the wrapper's Drop should be a no-op.
+        let schema = test_schema();
+        let batches: Vec<RecordBatch> = (0..5).map(|i| make_batch(&schema, i * 3, 3)).collect();
+        let source_stream = TestStream::new(schema.clone(), batches);
+
+        let (mut consumer, handler) = ImportedAsyncDeviceStream::new(4);
+        let handler_ptr = handler.as_ptr();
+
+        // Start producer
+        let producer_future = drive_stream_to_handler(source_stream, handler_ptr);
+
+        // Consume all batches, but drop the handler wrapper early
+        let consumer_future = async {
+            let mut received = vec![];
+            // Read one batch first
+            if let Some(result) = consumer.next().await {
+                received.push(result);
+            }
+
+            // Drop the handler wrapper while stream is still active
+            // This should NOT free the handler since producer hasn't called release yet
+            drop(handler);
+
+            // Continue consuming - should work fine
+            while let Some(result) = consumer.next().await {
+                received.push(result);
+            }
+            received
+        };
+
+        let (received, _) = futures::join!(consumer_future, producer_future);
+
+        // All 5 batches should be received
+        assert_eq!(received.len(), 5);
+        assert!(received.iter().all(|r| r.is_ok()));
+    }
+
+    #[tokio::test]
+    async fn test_handler_cleanup_when_producer_never_connects() {
+        // Test RAII cleanup when the handler is dropped but the producer never called
+        // any callbacks (never connected). The handler wrapper should clean up properly.
+        let (_consumer, handler) = ImportedAsyncDeviceStream::new(4);
+
+        // Just drop the handler without ever passing it to a producer
+        // This should NOT panic or leak memory
+        drop(handler);
+
+        // Stream should still be usable (though it will never receive data)
+        // The ended flag should be set by handler drop
+    }
+
+    #[tokio::test]
+    async fn test_stream_and_handler_both_dropped_before_producer() {
+        // Test cleanup when both stream and handler are dropped before any producer connects
+        let (consumer, handler) = ImportedAsyncDeviceStream::new(4);
+
+        // Drop both without ever starting a producer
+        drop(consumer);
+        drop(handler);
+
+        // Should not panic or leak
     }
 }
