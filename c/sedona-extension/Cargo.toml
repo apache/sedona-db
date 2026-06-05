@@ -29,7 +29,7 @@ rust-version.workspace = true
 
 [features]
 default = []
-async = ["dep:datafusion-execution", "dep:futures", "dep:tokio"]
+async = ["dep:datafusion-execution", "dep:futures"]
 
 [dependencies]
 arrow-array = { workspace = true, features = ["ffi"]}
@@ -43,7 +43,6 @@ sedona-common = { workspace = true }
 sedona-expr = { workspace = true }
 sedona-schema = { workspace = true }
 sedona-testing = { path = "../../rust/sedona-testing" }
-tokio = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }

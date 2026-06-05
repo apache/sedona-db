@@ -173,38 +173,6 @@ impl From<FFI_ArrowArray> for FFI_ArrowDeviceArray {
     }
 }
 
-/// FFI representation of the ArrowDeviceArrayStream from the Arrow C Device Data Interface
-///
-/// See: https://arrow.apache.org/docs/format/CDeviceDataInterface.html
-#[repr(C)]
-pub struct FFI_ArrowDeviceArrayStream {
-    pub device_type: i32,
-    pub get_schema: Option<
-        unsafe extern "C" fn(
-            self_: *mut FFI_ArrowDeviceArrayStream,
-            out: *mut FFI_ArrowSchema,
-        ) -> c_int,
-    >,
-    pub get_next: Option<
-        unsafe extern "C" fn(
-            self_: *mut FFI_ArrowDeviceArrayStream,
-            out: *mut FFI_ArrowDeviceArray,
-        ) -> c_int,
-    >,
-    pub get_last_error:
-        Option<unsafe extern "C" fn(self_: *mut FFI_ArrowDeviceArrayStream) -> *const c_char>,
-    pub release: Option<unsafe extern "C" fn(self_: *mut FFI_ArrowDeviceArrayStream)>,
-    pub private_data: *mut c_void,
-}
-
-impl Drop for FFI_ArrowDeviceArrayStream {
-    fn drop(&mut self) {
-        if let Some(releaser) = self.release {
-            unsafe { releaser(self) };
-        }
-    }
-}
-
 /// FFI representation of the ArrowAsyncProducer from the Arrow C Device Data Interface.
 ///
 /// This producer-managed object allows consumers to control flow via back-pressure
