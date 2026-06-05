@@ -145,7 +145,7 @@ impl TryFrom<FFI_ArrowDeviceArray> for FFI_ArrowArray {
     type Error = ArrowError;
 
     fn try_from(value: FFI_ArrowDeviceArray) -> Result<Self, Self::Error> {
-        if value.device_id != 1 {
+        if value.device_type != ARROW_DEVICE_CPU {
             return Err(ArrowError::CDataInterface(
                 "Can't create FFI_ArrowArray from non-CPU FFI_ArrowDeviceArray".to_string(),
             ));

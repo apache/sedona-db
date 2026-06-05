@@ -20,11 +20,12 @@ use std::sync::Arc;
 
 use arrow_array::{
     ffi::{from_ffi_and_data_type, FFI_ArrowArray, FFI_ArrowSchema},
+    ffi_stream::FFI_ArrowArrayStream,
     RecordBatch, RecordBatchReader, StructArray,
 };
 use arrow_schema::{ArrowError, DataType, Schema, SchemaRef};
 
-use crate::extension_ffi::{FFI_ArrowDeviceArray, FFI_ArrowDeviceArrayStream};
+use crate::extension_ffi::{FFI_ArrowDeviceArray, FFI_ArrowDeviceArrayStream, ARROW_DEVICE_CPU};
 
 pub struct DeviceStreamReader {
     inner: FFI_ArrowDeviceArrayStream,
@@ -123,15 +124,258 @@ impl RecordBatchReader for DeviceStreamReader {
     }
 }
 
-struct ExportedDeviceReaderPrivate {
-    inner: Box<dyn RecordBatchReader + Send>
+impl From<FFI_ArrowArrayStream> for FFI_ArrowDeviceArrayStream {
+    fn from(value: FFI_ArrowArrayStream) -> Self {
+        let private_data = Box::new(ExportedDeviceReaderPrivate { inner: value });
+
+        FFI_ArrowDeviceArrayStream {
+            device_type: ARROW_DEVICE_CPU,
+            get_schema: Some(exported_reader_get_schema),
+            get_next: Some(exported_reader_get_next),
+            get_last_error: Some(exported_reader_get_last_error),
+            release: Some(exported_reader_release),
+            private_data: Box::into_raw(private_data) as *mut std::ffi::c_void,
+        }
+    }
 }
 
-fn exported_reader_get_schema(
-            self_: *mut FFI_ArrowDeviceArrayStream,
+struct ExportedDeviceReaderPrivate {
+    inner: FFI_ArrowArrayStream,
+}
+
+unsafe extern "C" fn exported_reader_get_schema(
+    self_: *mut FFI_ArrowDeviceArrayStream,
+    out: *mut FFI_ArrowSchema,
+) -> std::ffi::c_int {
+    if self_.is_null() || out.is_null() {
+        return 1;
+    }
+
+    let private = &mut *((*self_).private_data as *mut ExportedDeviceReaderPrivate);
+    let inner = &mut private.inner as *mut FFI_ArrowArrayStream as *mut ArrowArrayStreamInternal;
+
+    if let Some(get_schema) = (*inner).get_schema {
+        get_schema(inner, out)
+    } else {
+        1
+    }
+}
+
+unsafe extern "C" fn exported_reader_get_next(
+    self_: *mut FFI_ArrowDeviceArrayStream,
+    out: *mut FFI_ArrowDeviceArray,
+) -> std::ffi::c_int {
+    if self_.is_null() || out.is_null() {
+        return 1;
+    }
+
+    let private = &mut *((*self_).private_data as *mut ExportedDeviceReaderPrivate);
+    let inner = &mut private.inner as *mut FFI_ArrowArrayStream as *mut ArrowArrayStreamInternal;
+
+    let Some(get_next) = (*inner).get_next else {
+        return 1;
+    };
+
+    let mut ffi_array = FFI_ArrowArray::empty();
+    let ret = get_next(inner, &mut ffi_array);
+    if ret != 0 {
+        return ret;
+    }
+
+    // Wrap the array in a device array
+    let device_array = FFI_ArrowDeviceArray {
+        array: ffi_array,
+        device_id: -1,
+        device_type: ARROW_DEVICE_CPU,
+        sync_event: std::ptr::null_mut(),
+    };
+    std::ptr::write(out, device_array);
+    0
+}
+
+unsafe extern "C" fn exported_reader_get_last_error(
+    self_: *mut FFI_ArrowDeviceArrayStream,
+) -> *const std::ffi::c_char {
+    if self_.is_null() {
+        return std::ptr::null();
+    }
+
+    let private = &mut *((*self_).private_data as *mut ExportedDeviceReaderPrivate);
+    let inner = &mut private.inner as *mut FFI_ArrowArrayStream as *mut ArrowArrayStreamInternal;
+
+    if let Some(get_last_error) = (*inner).get_last_error {
+        get_last_error(inner)
+    } else {
+        std::ptr::null()
+    }
+}
+
+unsafe extern "C" fn exported_reader_release(self_: *mut FFI_ArrowDeviceArrayStream) {
+    if self_.is_null() {
+        return;
+    }
+
+    let stream = &mut *self_;
+    if stream.private_data.is_null() {
+        return;
+    }
+
+    // Drop the private data (which will drop the inner FFI_ArrowArrayStream)
+    let _ = Box::from_raw(stream.private_data as *mut ExportedDeviceReaderPrivate);
+    stream.private_data = std::ptr::null_mut();
+    stream.release = None;
+}
+
+/// Internal representation of FFI_ArrowArrayStream with public fields.
+/// Duplicated here because arrow-rs doesn't expose the fields publicly.
+#[repr(C)]
+struct ArrowArrayStreamInternal {
+    get_schema: Option<
+        unsafe extern "C" fn(
+            self_: *mut ArrowArrayStreamInternal,
             out: *mut FFI_ArrowSchema,
-        ) -> std::ffi::c_int {
+        ) -> std::ffi::c_int,
+    >,
+    get_next: Option<
+        unsafe extern "C" fn(
+            self_: *mut ArrowArrayStreamInternal,
+            out: *mut FFI_ArrowArray,
+        ) -> std::ffi::c_int,
+    >,
+    get_last_error: Option<
+        unsafe extern "C" fn(self_: *mut ArrowArrayStreamInternal) -> *const std::ffi::c_char,
+    >,
+    release: Option<unsafe extern "C" fn(self_: *mut ArrowArrayStreamInternal)>,
+    private_data: *mut std::ffi::c_void,
+}
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow_array::{Int32Array, RecordBatchIterator, StringArray};
+    use arrow_schema::Field;
+
+    fn make_test_batches() -> (SchemaRef, Vec<RecordBatch>) {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            Field::new("name", DataType::Utf8, true),
+        ]));
+
+        let batch1 = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(Int32Array::from(vec![1, 2, 3])),
+                Arc::new(StringArray::from(vec![Some("a"), Some("b"), None])),
+            ],
+        )
+        .unwrap();
+
+        let batch2 = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(Int32Array::from(vec![4, 5])),
+                Arc::new(StringArray::from(vec![Some("d"), Some("e")])),
+            ],
+        )
+        .unwrap();
+
+        (schema, vec![batch1, batch2])
+    }
+
+    #[test]
+    fn test_roundtrip_two_batches() {
+        let (schema, batches) = make_test_batches();
+        let original_batches = batches.clone();
+
+        // Create a RecordBatchReader
+        let reader = RecordBatchIterator::new(batches.into_iter().map(Ok), schema.clone());
+
+        // Export to FFI_ArrowArrayStream, then to FFI_ArrowDeviceArrayStream
+        let array_stream = FFI_ArrowArrayStream::new(Box::new(reader));
+        let device_stream: FFI_ArrowDeviceArrayStream = array_stream.into();
+
+        // Import back via DeviceStreamReader
+        let imported_reader = DeviceStreamReader::try_new(device_stream).unwrap();
+
+        // Verify schema
+        assert_eq!(imported_reader.schema(), schema);
+
+        // Collect and verify batches
+        let imported_batches: Vec<RecordBatch> =
+            imported_reader.into_iter().map(|r| r.unwrap()).collect();
+
+        assert_eq!(imported_batches.len(), original_batches.len());
+        for (imported, original) in imported_batches.iter().zip(original_batches.iter()) {
+            assert_eq!(imported, original);
         }
+    }
 
+    /// A RecordBatchReader that yields one batch then errors
+    struct ErroringReader {
+        schema: SchemaRef,
+        yielded_first: bool,
+        first_batch: Option<RecordBatch>,
+    }
 
+    impl ErroringReader {
+        fn new(schema: SchemaRef, first_batch: RecordBatch) -> Self {
+            Self {
+                schema,
+                yielded_first: false,
+                first_batch: Some(first_batch),
+            }
+        }
+    }
+
+    impl Iterator for ErroringReader {
+        type Item = Result<RecordBatch, ArrowError>;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            if !self.yielded_first {
+                self.yielded_first = true;
+                Some(Ok(self.first_batch.take().unwrap()))
+            } else {
+                Some(Err(ArrowError::ComputeError(
+                    "intentional test error".to_string(),
+                )))
+            }
+        }
+    }
+
+    impl RecordBatchReader for ErroringReader {
+        fn schema(&self) -> SchemaRef {
+            self.schema.clone()
+        }
+    }
+
+    #[test]
+    fn test_roundtrip_with_error() {
+        let (schema, batches) = make_test_batches();
+        let first_batch = batches[0].clone();
+
+        // Create an erroring reader
+        let reader = ErroringReader::new(schema.clone(), first_batch.clone());
+
+        // Export to FFI_ArrowArrayStream, then to FFI_ArrowDeviceArrayStream
+        let array_stream = FFI_ArrowArrayStream::new(Box::new(reader));
+        let device_stream: FFI_ArrowDeviceArrayStream = array_stream.into();
+
+        // Import back via DeviceStreamReader
+        let mut imported_reader = DeviceStreamReader::try_new(device_stream).unwrap();
+
+        // First batch should succeed
+        let result1 = imported_reader.next();
+        assert!(result1.is_some());
+        let batch1 = result1.unwrap();
+        assert!(batch1.is_ok());
+        assert_eq!(batch1.unwrap(), first_batch);
+
+        // Second call should return an error
+        let result2 = imported_reader.next();
+        assert!(result2.is_some());
+        let batch2 = result2.unwrap();
+        assert!(batch2.is_err());
+        let err = batch2.unwrap_err();
+        assert!(err.to_string().contains("intentional test error"));
+    }
+}
