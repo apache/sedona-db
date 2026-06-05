@@ -44,14 +44,17 @@
 use std::ffi::{c_int, c_void, CStr};
 use std::pin::Pin;
 use std::ptr::null_mut;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll, Waker};
+use std::task::{Context, Poll};
 
 use arrow_array::ffi::{from_ffi_and_data_type, FFI_ArrowArray, FFI_ArrowSchema};
 use arrow_array::{RecordBatch, StructArray};
 use arrow_schema::{ArrowError, DataType, Schema, SchemaRef};
 use datafusion_common::Result;
 use datafusion_execution::RecordBatchStream;
+use futures::channel::mpsc;
+use futures::task::AtomicWaker;
 use futures::Stream;
 
 use crate::extension_ffi::{
@@ -71,62 +74,98 @@ enum StreamMessage {
     Error(ArrowError),
 }
 
-/// Shared state between the handler callbacks and the stream.
-struct ImportedStreamState {
-    /// The schema, set by on_schema callback.
-    schema: Option<SchemaRef>,
-    /// Pending messages from callbacks.
-    messages: Vec<StreamMessage>,
-    /// Waker to wake the stream when new data arrives.
-    waker: Option<Waker>,
-    /// Whether the stream has ended.
-    ended: bool,
+/// State shared between callbacks and stream for producer management.
+/// This is the only state that requires mutex protection.
+struct ProducerState {
     /// Producer pointer for requesting more data.
     producer: *mut FFI_ArrowAsyncProducer,
     /// Number of batches to request at a time (for back-pressure).
     prefetch_count: u64,
-    /// Number of outstanding requests.
-    pending_requests: u64,
-    /// Set to true when the stream is dropped but producer hasn't called release yet.
-    /// Callbacks should return errors when this is true.
-    abandoned: bool,
 }
 
-// Safety: We ensure proper synchronization via Mutex
+// Safety: Producer pointer is only dereferenced while holding the lock
+unsafe impl Send for ProducerState {}
+unsafe impl Sync for ProducerState {}
+
+/// Shared state between the handler callbacks and the stream.
+struct ImportedStreamState {
+    /// Sender for messages from callbacks to stream (lock-free).
+    sender: mpsc::UnboundedSender<StreamMessage>,
+    /// Waker for the stream (lock-free).
+    waker: AtomicWaker,
+    /// Whether the stream has ended.
+    ended: AtomicBool,
+    /// Number of outstanding requests (for back-pressure).
+    pending_requests: AtomicU64,
+    /// Set to true when the stream is dropped but producer hasn't called release yet.
+    abandoned: AtomicBool,
+    /// Producer state (needs mutex for FFI calls).
+    producer_state: Mutex<ProducerState>,
+}
+
+// Safety: All fields are Send+Sync (atomics, Mutex, channel sender).
+// The producer pointer inside ProducerState is protected by the Mutex.
 unsafe impl Send for ImportedStreamState {}
+unsafe impl Sync for ImportedStreamState {}
 
 impl ImportedStreamState {
-    fn new(prefetch_count: u64) -> Self {
+    fn new(prefetch_count: u64, sender: mpsc::UnboundedSender<StreamMessage>) -> Self {
         Self {
-            schema: None,
-            messages: Vec::new(),
-            waker: None,
-            ended: false,
-            producer: null_mut(),
-            prefetch_count,
-            pending_requests: 0,
-            abandoned: false,
+            sender,
+            waker: AtomicWaker::new(),
+            ended: AtomicBool::new(false),
+            pending_requests: AtomicU64::new(0),
+            abandoned: AtomicBool::new(false),
+            producer_state: Mutex::new(ProducerState {
+                producer: null_mut(),
+                prefetch_count,
+            }),
         }
     }
 
     fn wake(&self) {
-        if let Some(ref waker) = self.waker {
-            waker.wake_by_ref();
-        }
+        self.waker.wake();
     }
 
     /// Request more data from the producer if needed.
-    fn maybe_request_more(&mut self) {
-        if self.ended || self.producer.is_null() {
+    fn maybe_request_more(&self) {
+        if self.ended.load(Ordering::Acquire) {
             return;
         }
 
+        let producer_state = self.producer_state.lock().unwrap();
+        if producer_state.producer.is_null() {
+            return;
+        }
+
+        let pending = self.pending_requests.load(Ordering::Acquire);
+        let prefetch = producer_state.prefetch_count;
+
         // Request more when we're running low
-        if self.pending_requests < self.prefetch_count / 2 {
-            let to_request = self.prefetch_count - self.pending_requests;
-            if let Some(request_fn) = unsafe { (*self.producer).request } {
-                unsafe { request_fn(self.producer, to_request) };
-                self.pending_requests += to_request;
+        if pending < prefetch / 2 {
+            let to_request = prefetch - pending;
+            if let Some(request_fn) = unsafe { (*producer_state.producer).request } {
+                unsafe { request_fn(producer_state.producer, to_request) };
+                self.pending_requests.fetch_add(to_request, Ordering::Release);
+            }
+        }
+    }
+
+    fn set_producer(&self, producer: *mut FFI_ArrowAsyncProducer) {
+        let mut state = self.producer_state.lock().unwrap();
+        state.producer = producer;
+    }
+
+    fn clear_producer(&self) {
+        let mut state = self.producer_state.lock().unwrap();
+        state.producer = null_mut();
+    }
+
+    fn cancel(&self) {
+        let state = self.producer_state.lock().unwrap();
+        if !state.producer.is_null() {
+            if let Some(cancel_fn) = unsafe { (*state.producer).cancel } {
+                unsafe { cancel_fn(state.producer) };
             }
         }
     }
@@ -142,17 +181,23 @@ impl ImportedStreamState {
 /// When the stream is dropped, it signals cancellation to the producer. The handler
 /// remains valid until the producer calls its `release` callback. This allows the
 /// idiomatic DataFusion pattern of dropping streams to cancel queries.
+///
+/// # Performance
+///
+/// Uses a lock-free channel for message passing from FFI callbacks to the stream.
+/// Only acquires a mutex when requesting more batches from the producer (approximately
+/// once per `prefetch_count / 2` batches).
 pub struct ImportedAsyncDeviceStream {
-    state: Arc<Mutex<ImportedStreamState>>,
+    state: Arc<ImportedStreamState>,
+    /// Receiver for messages from callbacks (lock-free).
+    receiver: mpsc::UnboundedReceiver<StreamMessage>,
     /// Cached schema for the RecordBatchStream trait.
     schema: Option<SchemaRef>,
     /// DataType for converting FFI arrays.
     schema_struct_type: Option<DataType>,
 }
 
-// Safety: The handler contains raw pointers but they are only accessed from
-// the thread that polls the stream. The Arc<Mutex<_>> provides synchronization
-// for the shared state accessed by callbacks.
+// Safety: The state uses atomic operations and mutex-protected producer access.
 unsafe impl Send for ImportedAsyncDeviceStream {}
 
 impl ImportedAsyncDeviceStream {
@@ -172,7 +217,8 @@ impl ImportedAsyncDeviceStream {
     /// but the handler stays valid - callbacks will return error codes to tell the
     /// producer to stop and release the handler.
     pub fn new(prefetch_count: u64) -> (Self, *mut FFI_ArrowAsyncDeviceStreamHandler) {
-        let state = Arc::new(Mutex::new(ImportedStreamState::new(prefetch_count)));
+        let (sender, receiver) = mpsc::unbounded();
+        let state = Arc::new(ImportedStreamState::new(prefetch_count, sender));
 
         // Handler is heap-allocated and will be freed when producer calls release().
         // This allows the handler to outlive the stream.
@@ -187,6 +233,7 @@ impl ImportedAsyncDeviceStream {
 
         let stream = Self {
             state,
+            receiver,
             schema: None,
             schema_struct_type: None,
         };
@@ -203,64 +250,64 @@ impl ImportedAsyncDeviceStream {
 
     /// Cancel the stream, signaling to the producer to stop sending data.
     pub fn cancel(&self) {
-        let state = self.state.lock().unwrap();
-        if !state.producer.is_null() {
-            if let Some(cancel_fn) = unsafe { (*state.producer).cancel } {
-                unsafe { cancel_fn(state.producer) };
-            }
-        }
+        self.state.cancel();
     }
 
     /// Poll for the next message, handling schema initialization.
     fn poll_next_inner(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<RecordBatch>>> {
-        let mut state = self.state.lock().unwrap();
+        // Register waker (lock-free)
+        self.state.waker.register(cx.waker());
 
-        // Register waker for when new data arrives
-        state.waker = Some(cx.waker().clone());
-
-        // Process any pending messages
-        if let Some(msg) = state.messages.pop() {
-            match msg {
+        // Poll the channel for messages first (lock-free)
+        // This ensures we drain all messages before returning None due to ended flag
+        match Pin::new(&mut self.receiver).poll_next(cx) {
+            Poll::Ready(Some(msg)) => match msg {
                 StreamMessage::Schema(schema) => {
                     self.schema_struct_type =
                         Some(DataType::Struct(schema.fields().iter().cloned().collect()));
-                    self.schema = Some(schema.clone());
-                    state.schema = Some(schema);
+                    self.schema = Some(schema);
 
-                    // Request initial batch of data
-                    state.maybe_request_more();
+                    // Request initial batch of data (acquires lock)
+                    self.state.maybe_request_more();
 
                     // Continue polling for actual data
-                    drop(state);
-                    return self.poll_next_inner(cx);
+                    self.poll_next_inner(cx)
                 }
                 StreamMessage::Task(mut task) => {
-                    state.pending_requests = state.pending_requests.saturating_sub(1);
-                    state.maybe_request_more();
-                    drop(state);
+                    // Decrement pending (lock-free)
+                    self.state
+                        .pending_requests
+                        .fetch_sub(1, Ordering::Release);
+                    // Maybe request more (acquires lock only if needed)
+                    self.state.maybe_request_more();
 
                     // Extract data from the task
                     let batch = self.extract_batch_from_task(&mut task);
-                    return Poll::Ready(Some(batch));
+                    Poll::Ready(Some(batch))
                 }
                 StreamMessage::EndOfStream => {
-                    state.ended = true;
-                    return Poll::Ready(None);
+                    self.state.ended.store(true, Ordering::Release);
+                    Poll::Ready(None)
                 }
                 StreamMessage::Error(e) => {
-                    state.ended = true;
-                    return Poll::Ready(Some(Err(e.into())));
+                    self.state.ended.store(true, Ordering::Release);
+                    Poll::Ready(Some(Err(e.into())))
+                }
+            },
+            Poll::Ready(None) => {
+                // Channel closed (shouldn't happen in normal operation)
+                self.state.ended.store(true, Ordering::Release);
+                Poll::Ready(None)
+            }
+            Poll::Pending => {
+                // No messages in channel - check if stream has ended (lock-free)
+                if self.state.ended.load(Ordering::Acquire) {
+                    Poll::Ready(None)
+                } else {
+                    Poll::Pending
                 }
             }
         }
-
-        // Check if stream has ended
-        if state.ended {
-            return Poll::Ready(None);
-        }
-
-        // No messages available, wait for callback
-        Poll::Pending
     }
 
     /// Extract a RecordBatch from an FFI task.
@@ -320,17 +367,11 @@ impl RecordBatchStream for ImportedAsyncDeviceStream {
 
 impl Drop for ImportedAsyncDeviceStream {
     fn drop(&mut self) {
-        let mut state = self.state.lock().unwrap();
+        // Mark as abandoned so callbacks know to return errors (lock-free)
+        self.state.abandoned.store(true, Ordering::Release);
 
-        // Mark as abandoned so callbacks know to return errors
-        state.abandoned = true;
-
-        // Signal cancellation to the producer
-        if !state.producer.is_null() {
-            if let Some(cancel_fn) = unsafe { (*state.producer).cancel } {
-                unsafe { cancel_fn(state.producer) };
-            }
-        }
+        // Signal cancellation to the producer (acquires lock)
+        self.state.cancel();
     }
 }
 
@@ -349,38 +390,32 @@ unsafe extern "C" fn handler_on_schema(
         return 1;
     }
 
-    // Store the producer pointer for later use
-    let state_ptr = handler.private_data as *const Mutex<ImportedStreamState>;
+    // Get shared state
+    let state_ptr = handler.private_data as *const ImportedStreamState;
     let state_arc = Arc::from_raw(state_ptr);
 
-    let abandoned = {
-        let state = state_arc.lock().unwrap();
-        state.abandoned
-    };
-
-    // If stream was dropped, tell producer to stop
-    if abandoned {
+    // If stream was dropped, tell producer to stop (lock-free check)
+    if state_arc.abandoned.load(Ordering::Acquire) {
         let _ = Arc::into_raw(state_arc);
         return 1; // Error code signals producer to stop and release
     }
 
-    let result = {
-        let mut state = state_arc.lock().unwrap();
-        state.producer = handler.producer;
+    // Store the producer pointer (acquires lock)
+    state_arc.set_producer(handler.producer);
 
-        // Import the schema
-        let ffi_schema = std::ptr::read(schema);
-        match Schema::try_from(&ffi_schema) {
-            Ok(s) => {
-                state.messages.push(StreamMessage::Schema(Arc::new(s)));
-                state.wake();
-                0
-            }
-            Err(e) => {
-                state.messages.push(StreamMessage::Error(e));
-                state.wake();
-                1
-            }
+    // Import the schema
+    let ffi_schema = std::ptr::read(schema);
+    let result = match Schema::try_from(&ffi_schema) {
+        Ok(s) => {
+            // Send through channel (lock-free)
+            let _ = state_arc.sender.unbounded_send(StreamMessage::Schema(Arc::new(s)));
+            state_arc.wake();
+            0
+        }
+        Err(e) => {
+            let _ = state_arc.sender.unbounded_send(StreamMessage::Error(e));
+            state_arc.wake();
+            1
         }
     };
 
@@ -403,33 +438,25 @@ unsafe extern "C" fn handler_on_next_task(
         return 1;
     }
 
-    let state_ptr = handler.private_data as *const Mutex<ImportedStreamState>;
+    let state_ptr = handler.private_data as *const ImportedStreamState;
     let state_arc = Arc::from_raw(state_ptr);
 
-    let abandoned = {
-        let state = state_arc.lock().unwrap();
-        state.abandoned
-    };
-
-    // If stream was dropped, tell producer to stop
-    if abandoned {
+    // If stream was dropped, tell producer to stop (lock-free check)
+    if state_arc.abandoned.load(Ordering::Acquire) {
         let _ = Arc::into_raw(state_arc);
         return 1; // Error code signals producer to stop and release
     }
 
-    {
-        let mut state = state_arc.lock().unwrap();
-
-        if task.is_null() {
-            // NULL task signals end of stream
-            state.messages.push(StreamMessage::EndOfStream);
-        } else {
-            // Take ownership of the task by copying it
-            let task_copy = std::ptr::read(task);
-            state.messages.push(StreamMessage::Task(task_copy));
-        }
-        state.wake();
+    // Send message through channel (lock-free)
+    if task.is_null() {
+        // NULL task signals end of stream
+        let _ = state_arc.sender.unbounded_send(StreamMessage::EndOfStream);
+    } else {
+        // Take ownership of the task by copying it
+        let task_copy = std::ptr::read(task);
+        let _ = state_arc.sender.unbounded_send(StreamMessage::Task(task_copy));
     }
+    state_arc.wake();
 
     let _ = Arc::into_raw(state_arc);
     0
@@ -450,25 +477,22 @@ unsafe extern "C" fn handler_on_error(
         return;
     }
 
-    let state_ptr = handler.private_data as *const Mutex<ImportedStreamState>;
+    let state_ptr = handler.private_data as *const ImportedStreamState;
     let state_arc = Arc::from_raw(state_ptr);
 
-    {
-        let mut state = state_arc.lock().unwrap();
+    let error_msg = if message.is_null() {
+        format!("FFI error code {}", code)
+    } else {
+        let c_str = CStr::from_ptr(message);
+        c_str.to_string_lossy().into_owned()
+    };
 
-        let error_msg = if message.is_null() {
-            format!("FFI error code {}", code)
-        } else {
-            let c_str = CStr::from_ptr(message);
-            c_str.to_string_lossy().into_owned()
-        };
-
-        state
-            .messages
-            .push(StreamMessage::Error(ArrowError::CDataInterface(error_msg)));
-        state.ended = true;
-        state.wake();
-    }
+    // Send error through channel (lock-free)
+    let _ = state_arc
+        .sender
+        .unbounded_send(StreamMessage::Error(ArrowError::CDataInterface(error_msg)));
+    state_arc.ended.store(true, Ordering::Release);
+    state_arc.wake();
 
     let _ = Arc::into_raw(state_arc);
 }
@@ -488,14 +512,11 @@ unsafe extern "C" fn handler_release(self_: *mut FFI_ArrowAsyncDeviceStreamHandl
     }
 
     // Get the state and clear the producer pointer so stream Drop won't use it
-    let state_ptr = handler.private_data as *const Mutex<ImportedStreamState>;
+    let state_ptr = handler.private_data as *const ImportedStreamState;
     let state_arc = Arc::from_raw(state_ptr);
 
-    {
-        let mut state = state_arc.lock().unwrap();
-        state.producer = null_mut();
-        state.ended = true;
-    }
+    state_arc.clear_producer();
+    state_arc.ended.store(true, Ordering::Release);
 
     // Drop the Arc reference (will be freed when stream also drops its reference)
     drop(state_arc);
