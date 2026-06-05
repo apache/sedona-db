@@ -34,7 +34,7 @@ use std::{
     str::FromStr,
 };
 
-use crate::extension::{ffi_arrow_schema_is_valid, SedonaCScalarKernel, SedonaCScalarKernelImpl};
+use crate::extension_ffi::{ffi_arrow_schema_is_valid, SedonaCScalarKernel, SedonaCScalarKernelImpl};
 
 /// Wrapper around a [SedonaCScalarKernel] that implements [SedonaScalarKernel]
 ///

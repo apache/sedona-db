@@ -15,5 +15,5 @@
 // specific language governing permissions and limitations
 // under the License.
 
-pub mod extension;
+pub mod extension_ffi;
 pub mod scalar_kernel;
