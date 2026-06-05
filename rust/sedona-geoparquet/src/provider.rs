@@ -262,12 +262,8 @@ impl GeoParquetReadOptions<'_> {
     /// All partition columns are assumed to be `Utf8` type.
     ///
     /// Pass an empty vector to explicitly disable partition auto-discovery.
-    pub fn with_table_partition_cols(mut self, cols: Vec<String>) -> Self {
-        self.inner = self.inner.table_partition_cols(
-            cols.into_iter()
-                .map(|name| (name, DataType::Utf8))
-                .collect(),
-        );
+    pub fn with_table_partition_cols(mut self, cols: Vec<(String, DataType)>) -> Self {
+        self.inner = self.inner.table_partition_cols(cols);
         self.partition_cols_set = true;
         self
     }

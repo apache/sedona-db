@@ -27,6 +27,7 @@ use crate::{
     show::{show_batches, DisplayTableOptions},
 };
 use arrow_array::RecordBatch;
+use arrow_schema::DataType;
 use async_trait::async_trait;
 use datafusion::datasource::file_format::format_as_file_type;
 use datafusion::{
@@ -401,7 +402,7 @@ impl SedonaContext {
         table_paths: P,
         options: Option<&HashMap<String, String>>,
         check_extension: bool,
-        partitioning: Option<Vec<String>>,
+        partitioning: Option<Vec<(String, DataType)>>,
     ) -> Result<DataFrame> {
         let urls = table_paths.to_urls()?;
 

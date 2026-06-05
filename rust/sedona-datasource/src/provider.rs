@@ -67,7 +67,7 @@ pub async fn external_table(
     context: &SessionContext,
     table_paths: Vec<ListingTableUrl>,
     check_extension: bool,
-    partitioning: Option<Vec<String>>,
+    partitioning: Option<Vec<(String, DataType)>>,
 ) -> Result<Arc<dyn TableProvider>> {
     if table_paths.is_empty() {
         return exec_err!("No table paths were provided");
@@ -89,7 +89,7 @@ async fn listing_table_provider(
     context: &SessionContext,
     table_paths: Vec<ListingTableUrl>,
     check_extension: bool,
-    partitioning: Option<Vec<String>>,
+    partitioning: Option<Vec<(String, DataType)>>,
 ) -> Result<ListingTable> {
     let session_config = context.copied_config();
     let options = RecordBatchReaderTableOptions {
@@ -150,7 +150,7 @@ struct RecordBatchReaderTableOptions {
     spec: Arc<dyn ExternalFormatSpec>,
     check_extension: bool,
     /// None = auto-discover, Some([]) = disabled, Some([cols]) = explicit
-    table_partition_cols: Option<Vec<String>>,
+    table_partition_cols: Option<Vec<(String, DataType)>>,
 }
 
 #[async_trait]
@@ -173,12 +173,7 @@ impl ReadOptions<'_> for RecordBatchReaderTableOptions {
         // Apply partition columns if explicitly specified (Some)
         // None means auto-discover later, Some([]) means no partitioning
         if let Some(ref partition_cols) = self.table_partition_cols {
-            options = options.with_table_partition_cols(
-                partition_cols
-                    .iter()
-                    .map(|name| (name.clone(), DataType::Utf8))
-                    .collect(),
-            );
+            options = options.with_table_partition_cols(partition_cols.to_vec());
         }
 
         options

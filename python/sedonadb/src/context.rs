@@ -16,6 +16,7 @@
 // under the License.
 use std::{collections::HashMap, sync::Arc};
 
+use arrow_schema::DataType;
 use datafusion_expr::ScalarUDFImpl;
 use pyo3::prelude::*;
 use sedona::context::SedonaContext;
@@ -117,7 +118,12 @@ impl InternalContext {
         }
         geo_options = geo_options.with_validate(validate);
         if let Some(partitioning) = partitioning {
-            geo_options = geo_options.with_table_partition_cols(partitioning);
+            geo_options = geo_options.with_table_partition_cols(
+                partitioning
+                    .iter()
+                    .map(|name| (name.clone(), DataType::Utf8View))
+                    .collect(),
+            );
         }
 
         let df = wait_for_future(
@@ -147,7 +153,11 @@ impl InternalContext {
                 table_paths,
                 None,
                 check_extension,
-                partitioning,
+                partitioning.map(|cols| {
+                    cols.iter()
+                        .map(|name| (name.clone(), DataType::Utf8View))
+                        .collect()
+                }),
             ),
         )??;
 
