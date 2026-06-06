@@ -17,18 +17,22 @@
 
 //! PyO3 shim around `sedona-raster-zarr`. Exposes:
 //! - `PyZarrChunkReader`: a single-use `__arrow_c_stream__` wrapper consumed by
-//!    the Python-side `ZarrFormatSpec`.
+//!   the Python-side `ZarrFormatSpec`.
 //! - `ZarrRasterLoader`: a Python class implementing the raster loader interface
 //!   that can be registered with `sedonadb` via `py_raster_loader`.
 
-use std::ffi::CString;
+use std::ffi::{c_int, CString};
 use std::sync::{Mutex, OnceLock};
 
 use arrow_array::ffi_stream::FFI_ArrowArrayStream;
+use arrow_buffer::Buffer;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::ffi::Py_buffer;
 use pyo3::prelude::*;
 use pyo3::types::PyCapsule;
-use sedona_raster_zarr::{object_store_for_uri, open_storage_from_uri, ZarrChunkReader, ZarrLoader};
+use sedona_raster_zarr::{
+    object_store_for_uri, open_storage_from_uri, ZarrChunkReader, ZarrLoader,
+};
 use tokio::runtime::{Builder, Runtime};
 
 /// Process-wide tokio runtime backing the sync Python FFI bridge.
@@ -100,17 +104,107 @@ impl PyZarrChunkReader {
     }
 }
 
+/// Zero-copy wrapper around an Arrow Buffer implementing Python's buffer protocol.
+///
+/// This allows Python code to access the underlying memory without copying,
+/// e.g., via `memoryview(zarr_buffer)` or passing directly to numpy.
+#[pyclass(frozen)]
+pub struct ZarrBuffer {
+    buffer: Buffer,
+}
+
+impl ZarrBuffer {
+    fn new(buffer: Buffer) -> Self {
+        Self { buffer }
+    }
+}
+
+#[pymethods]
+impl ZarrBuffer {
+    fn __len__(&self) -> usize {
+        self.buffer.len()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("ZarrBuffer(len={})", self.buffer.len())
+    }
+
+    /// Implement Python buffer protocol for zero-copy access.
+    ///
+    /// # Safety
+    /// The caller must ensure the view is properly released via __releasebuffer__.
+    unsafe fn __getbuffer__(
+        slf: PyRef<'_, Self>,
+        view: *mut Py_buffer,
+        flags: c_int,
+    ) -> PyResult<()> {
+        use pyo3::ffi;
+
+        if view.is_null() {
+            return Err(pyo3::exceptions::PyBufferError::new_err(
+                "View pointer is null",
+            ));
+        }
+
+        // Check for unsupported flags
+        if (flags & ffi::PyBUF_WRITABLE) != 0 {
+            return Err(pyo3::exceptions::PyBufferError::new_err(
+                "Buffer is read-only",
+            ));
+        }
+
+        // Fill in the buffer view
+        (*view).buf = slf.buffer.as_ptr() as *mut std::ffi::c_void;
+        (*view).len = slf.buffer.len() as isize;
+        (*view).itemsize = 1;
+        (*view).readonly = 1;
+        (*view).ndim = 1;
+        (*view).format = if (flags & ffi::PyBUF_FORMAT) != 0 {
+            // "B" = unsigned byte
+            c"B".as_ptr() as *mut std::ffi::c_char
+        } else {
+            std::ptr::null_mut()
+        };
+        (*view).shape = if (flags & ffi::PyBUF_ND) != 0 {
+            &mut (*view).len as *mut isize
+        } else {
+            std::ptr::null_mut()
+        };
+        (*view).strides = if (flags & ffi::PyBUF_STRIDES) != 0 {
+            &mut (*view).itemsize as *mut isize
+        } else {
+            std::ptr::null_mut()
+        };
+        (*view).suboffsets = std::ptr::null_mut();
+        (*view).internal = std::ptr::null_mut();
+
+        // Set obj to the ZarrBuffer and increment its refcount to keep it alive
+        // while the buffer view exists. Python will call __releasebuffer__ when done,
+        // which decrements the refcount.
+        let obj_ptr = slf.as_ptr();
+        ffi::Py_INCREF(obj_ptr);
+        (*view).obj = obj_ptr;
+
+        Ok(())
+    }
+
+    #[allow(unused_variables)]
+    unsafe fn __releasebuffer__(&self, view: *mut Py_buffer) {
+        // Python handles decrementing the refcount of view.obj automatically
+        // when the buffer is released. Nothing else to clean up.
+    }
+}
+
 /// Result from a Zarr raster load operation.
 ///
 /// This type matches the interface expected by `py_raster_loader` from `sedonadb`:
-/// - `bytes`: raw pixel data
+/// - `bytes`: raw pixel data (zero-copy via buffer protocol)
 /// - `source_shape`: shape of the returned data
 /// - `view`: view entries (identity when returning full source)
 #[pyclass]
-#[derive(Clone)]
 pub struct ZarrLoadResult {
     #[pyo3(get)]
-    pub bytes: Vec<u8>,
+    pub bytes: Py<ZarrBuffer>,
     #[pyo3(get)]
     pub source_shape: Vec<u64>,
     #[pyo3(get)]
@@ -119,11 +213,11 @@ pub struct ZarrLoadResult {
 
 #[pymethods]
 impl ZarrLoadResult {
-    fn __repr__(&self) -> String {
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let bytes_len = self.bytes.borrow(py).buffer.len();
         format!(
             "ZarrLoadResult(bytes_len={}, source_shape={:?})",
-            self.bytes.len(),
-            self.source_shape
+            bytes_len, self.source_shape
         )
     }
 }
@@ -205,7 +299,11 @@ impl ZarrRasterLoader {
     /// - data_type: BandDataType-like with .name and .byte_size
     ///
     /// Returns a list of ZarrLoadResult objects.
-    fn load(&self, py: Python<'_>, requests: Vec<Bound<'_, PyAny>>) -> PyResult<Vec<ZarrLoadResult>> {
+    fn load(
+        &self,
+        py: Python<'_>,
+        requests: Vec<Bound<'_, PyAny>>,
+    ) -> PyResult<Vec<ZarrLoadResult>> {
         use sedona_raster::raster_loader::AsyncRasterLoader;
         use sedona_raster::traits::ViewEntry;
         use sedona_schema::raster::BandDataType;
@@ -248,11 +346,7 @@ impl ZarrRasterLoader {
                 "uint64" => BandDataType::UInt64,
                 "float32" => BandDataType::Float32,
                 "float64" => BandDataType::Float64,
-                other => {
-                    return Err(PyValueError::new_err(format!(
-                        "Unknown data type: {other}"
-                    )))
-                }
+                other => return Err(PyValueError::new_err(format!("Unknown data type: {other}"))),
             };
 
             owned_requests.push(OwnedLoadRequest {
@@ -273,13 +367,15 @@ impl ZarrRasterLoader {
             owned_requests
                 .iter()
                 .zip(dim_names_refs.iter())
-                .map(|(req, dim_refs)| sedona_raster::raster_loader::RasterLoadRequest {
-                    uri: &req.uri,
-                    dim_names: dim_refs,
-                    source_shape: &req.source_shape,
-                    view: &req.view,
-                    data_type: req.data_type,
-                })
+                .map(
+                    |(req, dim_refs)| sedona_raster::raster_loader::RasterLoadRequest {
+                        uri: &req.uri,
+                        dim_names: dim_refs,
+                        source_shape: &req.source_shape,
+                        view: &req.view,
+                        data_type: req.data_type,
+                    },
+                )
                 .collect();
 
         let request_refs: Vec<&sedona_raster::raster_loader::RasterLoadRequest<'_>> =
@@ -292,26 +388,30 @@ impl ZarrRasterLoader {
 
         let results = results.map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
 
-        // Convert results to Python objects
-        let py_results: Vec<ZarrLoadResult> = results
+        // Convert results to Python objects (zero-copy for bytes via ZarrBuffer)
+        let py_results: PyResult<Vec<ZarrLoadResult>> = results
             .into_iter()
-            .map(|r| ZarrLoadResult {
-                bytes: r.bytes.to_vec(),
-                source_shape: r.source_shape,
-                view: r
-                    .view
-                    .into_iter()
-                    .map(|v| ZarrViewEntry {
-                        source_axis: v.source_axis,
-                        start: v.start,
-                        step: v.step,
-                        steps: v.steps,
-                    })
-                    .collect(),
+            .map(|r| {
+                let zarr_buffer = ZarrBuffer::new(r.bytes);
+                let py_buffer = Py::new(py, zarr_buffer)?;
+                Ok(ZarrLoadResult {
+                    bytes: py_buffer,
+                    source_shape: r.source_shape,
+                    view: r
+                        .view
+                        .into_iter()
+                        .map(|v| ZarrViewEntry {
+                            source_axis: v.source_axis,
+                            start: v.start,
+                            step: v.step,
+                            steps: v.steps,
+                        })
+                        .collect(),
+                })
             })
             .collect();
 
-        Ok(py_results)
+        py_results
     }
 
     fn __repr__(&self) -> String {
@@ -332,6 +432,7 @@ struct OwnedLoadRequest {
 fn _lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyZarrChunkReader>()?;
     m.add_class::<ZarrRasterLoader>()?;
+    m.add_class::<ZarrBuffer>()?;
     m.add_class::<ZarrLoadResult>()?;
     m.add_class::<ZarrViewEntry>()?;
     Ok(())

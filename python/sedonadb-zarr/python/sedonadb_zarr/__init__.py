@@ -33,7 +33,13 @@ from typing import Any, Mapping, Optional
 
 from sedonadb.datasource import ExternalFormatSpec
 
-from sedonadb_zarr._lib import PyZarrChunkReader, ZarrRasterLoader, ZarrLoadResult, ZarrViewEntry
+from sedonadb_zarr._lib import (
+    PyZarrChunkReader,
+    ZarrBuffer,
+    ZarrLoadResult,
+    ZarrRasterLoader,
+    ZarrViewEntry,
+)
 
 
 class ZarrFormatSpec(ExternalFormatSpec):
@@ -86,4 +92,11 @@ class ZarrFormatSpec(ExternalFormatSpec):
         return PyZarrChunkReader(uri, arrays, batch_size)
 
 
-__all__ = ["ZarrFormatSpec", "PyZarrChunkReader", "ZarrRasterLoader", "ZarrLoadResult", "ZarrViewEntry"]
+__all__ = [
+    "PyZarrChunkReader",
+    "ZarrBuffer",
+    "ZarrFormatSpec",
+    "ZarrLoadResult",
+    "ZarrRasterLoader",
+    "ZarrViewEntry",
+]
