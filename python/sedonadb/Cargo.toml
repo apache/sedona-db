@@ -37,6 +37,7 @@ gpu = ["sedona/gpu"]
 adbc_core = { workspace = true }
 arrow-buffer = { workspace = true }
 arrow-schema = { workspace = true }
+bytes = { workspace = true }
 arrow-array = { workspace = true }
 async-trait = { workspace = true }
 datafusion = { workspace = true }
