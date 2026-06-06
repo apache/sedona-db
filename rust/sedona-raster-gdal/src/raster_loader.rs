@@ -57,6 +57,7 @@
 //! [`GdalLoader`] from `SedonaContext::new_from_context` and registers
 //! it during session bootstrap.
 
+use std::iter::zip;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -132,15 +133,20 @@ impl AsyncRasterLoader for GdalLoader {
 
     async fn load(&self, reqs: &[&RasterLoadRequest]) -> Result<Vec<RasterLoadResult>, ArrowError> {
         let mut results = Vec::with_capacity(reqs.len());
-        for req in reqs {
-            results.push(self.load_one(req).await?);
+        let expected_bytes = reqs
+            .iter()
+            .map(|req| self.validate_one(req))
+            .collect::<Result<Vec<_>, ArrowError>>()?;
+        for (expected_bytes, req) in zip(expected_bytes, reqs) {
+            results.push(self.load_one(expected_bytes, req).await?);
         }
         Ok(results)
     }
 }
 
 impl GdalLoader {
-    async fn load_one(&self, req: &RasterLoadRequest<'_>) -> Result<RasterLoadResult, ArrowError> {
+    /// Validate one request and return the expected byte count
+    fn validate_one(&self, req: &RasterLoadRequest<'_>) -> Result<u64, ArrowError> {
         // Validate request shape synchronously, before spawning a blocking
         // task — these are programming errors, no point queueing them
         // onto a worker.
@@ -157,20 +163,7 @@ impl GdalLoader {
                 req.dim_names
             )));
         }
-        // The Y-like (row) axis is source_shape[0], the X-like (column) axis
-        // is source_shape[1] — guaranteed by the dim-pair check above.
-        let height = usize::try_from(req.source_shape[0]).map_err(|_| {
-            ArrowError::InvalidArgumentError(format!(
-                "GDAL OutDb source_shape[0]={} exceeds usize::MAX",
-                req.source_shape[0]
-            ))
-        })?;
-        let width = usize::try_from(req.source_shape[1]).map_err(|_| {
-            ArrowError::InvalidArgumentError(format!(
-                "GDAL OutDb source_shape[1]={} exceeds usize::MAX",
-                req.source_shape[1]
-            ))
-        })?;
+
         let byte_size = req.data_type.byte_size();
 
         // Byte-cap validation: compute Π source_shape × byte_size in u64
@@ -192,12 +185,37 @@ impl GdalLoader {
                 expected_bytes_u64, MAX_OUTDB_LOAD_BYTES
             )));
         }
+
+        Ok(expected_bytes_u64)
+    }
+
+    async fn load_one(
+        &self,
+        expected_bytes_u64: u64,
+        req: &RasterLoadRequest<'_>,
+    ) -> Result<RasterLoadResult, ArrowError> {
+        // The Y-like (row) axis is source_shape[0], the X-like (column) axis
+        // is source_shape[1] — guaranteed by the dim-pair check above.
+        let height = usize::try_from(req.source_shape[0]).map_err(|_| {
+            ArrowError::InvalidArgumentError(format!(
+                "GDAL OutDb source_shape[0]={} exceeds usize::MAX",
+                req.source_shape[0]
+            ))
+        })?;
+        let width = usize::try_from(req.source_shape[1]).map_err(|_| {
+            ArrowError::InvalidArgumentError(format!(
+                "GDAL OutDb source_shape[1]={} exceeds usize::MAX",
+                req.source_shape[1]
+            ))
+        })?;
+
         let expected_bytes = expected_bytes_u64 as usize;
 
         // Take owned copies for the spawn_blocking closure (the closure
         // must be `'static`).
         let uri = req.uri.to_string();
         let expected_dtype = req.data_type;
+        let byte_size = req.data_type.byte_size();
 
         // Cancellation plumbing: the guard lives in this async fn's
         // frame. On normal completion `_guard` drops after the await
