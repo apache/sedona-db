@@ -6430,9 +6430,12 @@ name = "sedonadb-zarr"
 version = "0.4.0"
 dependencies = [
  "arrow-array",
+ "arrow-buffer",
  "object_store",
  "pyo3",
+ "sedona-raster",
  "sedona-raster-zarr",
+ "sedona-schema",
  "tokio",
  "url",
 ]

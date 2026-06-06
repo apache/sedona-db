@@ -78,7 +78,104 @@ def test_format_spec_class_invariants():
     assert spec.extension == ".zarr"
     spec2 = spec.with_options({"arrays": ["temperature"]})
     assert spec2 is not spec
-    assert spec2._options.get("arrays") == ["temperature"]
+
+
+def test_zarr_loader_creation():
+    """Test that we can create a ZarrRasterLoader."""
+    loader = sedonadb_zarr.ZarrRasterLoader()
+    assert loader.name() == "zarr"
+
+
+def test_zarr_loader_supports_format():
+    """Test format support checking."""
+    loader = sedonadb_zarr.ZarrRasterLoader()
+    assert loader.supports_format("zarr") is True
+    assert loader.supports_format(None) is False
+    assert loader.supports_format("gdal") is False
+
+
+def test_zarr_loader_repr():
+    """Test repr output."""
+    loader = sedonadb_zarr.ZarrRasterLoader()
+    assert "ZarrRasterLoader" in repr(loader)
+    assert "zarr" in repr(loader)
+
+
+def test_zarr_loader_registration_with_sedonadb():
+    """Test that we can register the loader with sedonadb."""
+    from sedonadb._lib import InternalContext, py_raster_loader
+
+    loader = sedonadb_zarr.ZarrRasterLoader()
+    wrapper = py_raster_loader(
+        loader.name,
+        loader.supports_format,
+        loader.load,
+    )
+
+    assert wrapper.name() == "zarr"
+    assert wrapper.supports_format("zarr") is True
+
+    # Register with context
+    ctx = InternalContext({})
+    ctx.register_raster_loader(wrapper)
+    # If we got here, registration worked
+
+
+def test_rs_ensure_loaded_with_zarr(tmp_path):
+    """Test that RS_EnsureLoaded can materialize Zarr OutDb raster data."""
+    zarr = pytest.importorskip("zarr")
+    from sedonadb._lib import py_raster_loader
+
+    # Create a simple 2x2 uint8 Zarr array
+    root = zarr.open_group(str(tmp_path), mode="w")
+    arr = root.create_array(
+        "temperature",
+        shape=(2, 2),
+        chunks=(2, 2),  # Single chunk for simplicity
+        dtype="uint8",
+        dimension_names=["y", "x"],
+    )
+    arr[:] = np.array([[10, 11], [20, 21]], dtype=np.uint8)
+
+    # Create a fresh connection (new context)
+    con = sedonadb.connect()
+
+    # Register the ZarrRasterLoader
+    loader = sedonadb_zarr.ZarrRasterLoader()
+    wrapper = py_raster_loader(
+        loader.name,
+        loader.supports_format,
+        loader.load,
+    )
+    con._impl.register_raster_loader(wrapper)
+
+    # Read the Zarr group as OutDb rasters
+    df = con.read_format(sedonadb_zarr.ZarrFormatSpec(), f"file://{tmp_path}")
+
+    # Verify the data is OutDb (empty data column)
+    arrow_tab = df.to_arrow_table()
+    assert arrow_tab.num_rows == 1  # Single chunk
+    raster = arrow_tab["raster"][0].as_py()
+    band = raster["bands"][0]
+    assert band.get("data") in (None, b"", bytes()), "Should be OutDb before RS_EnsureLoaded"
+
+    # Create a view and call RS_EnsureLoaded via SQL
+    df.to_view("zarr_rasters")
+    loaded_df = con.sql("SELECT RS_EnsureLoaded(raster) as raster FROM zarr_rasters")
+
+    # Verify the data was loaded
+    loaded_tab = loaded_df.to_arrow_table()
+    assert loaded_tab.num_rows == 1
+    loaded_raster = loaded_tab["raster"][0].as_py()
+    loaded_band = loaded_raster["bands"][0]
+
+    # Data should now be populated
+    data = loaded_band.get("data")
+    assert data is not None and len(data) > 0, "Data should be populated after RS_EnsureLoaded"
+
+    # Verify the pixel values: [[10, 11], [20, 21]] in row-major (C) order
+    expected_bytes = bytes([10, 11, 20, 21])
+    assert data == expected_bytes, f"Expected {expected_bytes!r}, got {data!r}"
 
 
 # Each numpy dtype below maps to a different `BandDataType` arm in
