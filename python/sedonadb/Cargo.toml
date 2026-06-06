@@ -35,6 +35,7 @@ gpu = ["sedona/gpu"]
 
 [dependencies]
 adbc_core = { workspace = true }
+arrow-buffer = { workspace = true }
 arrow-schema = { workspace = true }
 arrow-array = { workspace = true }
 async-trait = { workspace = true }
@@ -51,6 +52,7 @@ sedona-datasource = { workspace = true }
 sedona-geometry = { workspace = true }
 sedona-expr = { workspace = true }
 sedona-geoparquet = { workspace = true }
+sedona-raster = { workspace = true }
 sedona-schema = { workspace = true }
 sedona-gdal = { workspace = true }
 sedona-proj = { workspace = true }

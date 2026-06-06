@@ -6397,6 +6397,7 @@ version = "0.4.0"
 dependencies = [
  "adbc_core",
  "arrow-array",
+ "arrow-buffer",
  "arrow-schema",
  "async-trait",
  "datafusion",
@@ -6416,6 +6417,7 @@ dependencies = [
  "sedona-geometry",
  "sedona-geoparquet",
  "sedona-proj",
+ "sedona-raster",
  "sedona-schema",
  "sedona-tg",
  "serde_json",

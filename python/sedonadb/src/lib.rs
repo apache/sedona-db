@@ -16,6 +16,7 @@
 // under the License.
 
 use crate::{error::PySedonaError, udf::sedona_scalar_udf};
+use crate::raster_loader::py_raster_loader;
 use pyo3::{ffi::Py_uintptr_t, prelude::*};
 use sedona_adbc::AdbcSedonadbDriverInit;
 use sedona_gdal::global::{configure_global_gdal_api, with_global_gdal, GdalApiBuilder};
@@ -28,6 +29,7 @@ mod datasource;
 mod error;
 mod expr;
 mod import_from;
+mod raster_loader;
 mod reader;
 mod runtime;
 mod schema;
@@ -125,6 +127,7 @@ fn _lib(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(sedona_python_version, m)?)?;
     m.add_function(wrap_pyfunction!(sedona_python_features, m)?)?;
     m.add_function(wrap_pyfunction!(sedona_scalar_udf, m)?)?;
+    m.add_function(wrap_pyfunction!(py_raster_loader, m)?)?;
     m.add_function(wrap_pyfunction!(expr::expr_col, m)?)?;
     m.add_function(wrap_pyfunction!(expr::expr_lit, m)?)?;
     m.add_function(wrap_pyfunction!(expr::expr_binary, m)?)?;
@@ -141,6 +144,11 @@ fn _lib(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<schema::PySedonaSchema>()?;
     m.add_class::<schema::PySedonaField>()?;
     m.add_class::<schema::PySedonaType>()?;
+    m.add_class::<raster_loader::PyRasterLoadRequest>()?;
+    m.add_class::<raster_loader::PyRasterLoadResult>()?;
+    m.add_class::<raster_loader::PyRasterLoaderWrapper>()?;
+    m.add_class::<raster_loader::PyViewEntry>()?;
+    m.add_class::<raster_loader::PyBandDataType>()?;
 
     Ok(())
 }

@@ -28,6 +28,7 @@ use crate::{
     datasource::PyExternalFormat,
     error::PySedonaError,
     import_from::{import_ffi_scalar_udf, import_table_provider_from_any},
+    raster_loader::PyRasterLoaderWrapper,
     runtime::wait_for_future,
     udf::{PyAggregateUdf, PyScalarUdf, PySedonaScalarUdf},
 };
@@ -286,5 +287,15 @@ impl InternalContext {
             "Expected an object implementing __sedona_internal_udf__ or __datafusion_scalar_udf__"
                 .to_string(),
         ))
+    }
+
+    /// Register a Python-backed raster loader with this context.
+    ///
+    /// The loader will be used by `RS_EnsureLoaded` to materialize OutDb raster
+    /// bands at query time. Loaders registered later win for the formats they
+    /// claim, so a format-specific loader registered after the catch-all (GDAL)
+    /// will handle bands with that format.
+    pub fn register_raster_loader(&self, loader: PyRasterLoaderWrapper) {
+        self.inner.register_raster_loader(loader.inner);
     }
 }
