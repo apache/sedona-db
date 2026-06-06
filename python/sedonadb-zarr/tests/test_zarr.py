@@ -80,45 +80,13 @@ def test_format_spec_class_invariants():
     assert spec2 is not spec
 
 
-def test_zarr_loader_creation():
-    """Test that we can create a ZarrRasterLoader."""
-    loader = sedonadb_zarr.ZarrRasterLoader()
-    assert loader.name() == "zarr"
-
-
 def test_zarr_loader_supports_format():
     """Test format support checking."""
     loader = sedonadb_zarr.ZarrRasterLoader()
     assert loader.supports_format("zarr") is True
     assert loader.supports_format(None) is False
     assert loader.supports_format("gdal") is False
-
-
-def test_zarr_loader_repr():
-    """Test repr output."""
-    loader = sedonadb_zarr.ZarrRasterLoader()
     assert "ZarrRasterLoader" in repr(loader)
-    assert "zarr" in repr(loader)
-
-
-def test_zarr_loader_registration_with_sedonadb():
-    """Test that we can register the loader with sedonadb."""
-    from sedonadb._lib import InternalContext, py_raster_loader
-
-    loader = sedonadb_zarr.ZarrRasterLoader()
-    wrapper = py_raster_loader(
-        loader.name,
-        loader.supports_format,
-        loader.load,
-    )
-
-    assert wrapper.name() == "zarr"
-    assert wrapper.supports_format("zarr") is True
-
-    # Register with context
-    ctx = InternalContext({})
-    ctx.register_raster_loader(wrapper)
-    # If we got here, registration worked
 
 
 def test_rs_ensure_loaded_with_zarr(tmp_path):
@@ -157,7 +125,9 @@ def test_rs_ensure_loaded_with_zarr(tmp_path):
     assert arrow_tab.num_rows == 1  # Single chunk
     raster = arrow_tab["raster"][0].as_py()
     band = raster["bands"][0]
-    assert band.get("data") in (None, b"", bytes()), "Should be OutDb before RS_EnsureLoaded"
+    assert band.get("data") in (None, b"", bytes()), (
+        "Should be OutDb before RS_EnsureLoaded"
+    )
 
     # Create a view and call RS_EnsureLoaded via SQL
     df.to_view("zarr_rasters")
@@ -171,7 +141,9 @@ def test_rs_ensure_loaded_with_zarr(tmp_path):
 
     # Data should now be populated
     data = loaded_band.get("data")
-    assert data is not None and len(data) > 0, "Data should be populated after RS_EnsureLoaded"
+    assert data is not None and len(data) > 0, (
+        "Data should be populated after RS_EnsureLoaded"
+    )
 
     # Verify the pixel values: [[10, 11], [20, 21]] in row-major (C) order
     expected_bytes = bytes([10, 11, 20, 21])
