@@ -68,6 +68,7 @@ use datafusion_common::{DataFusionError, Result as DFResult};
 use sedona_gdal::raster::rasterband::RasterBand;
 use sedona_raster::raster_loader::{AsyncRasterLoader, RasterLoadRequest, RasterLoadResult};
 use sedona_raster::traits::is_spatial_dim_pair;
+use sedona_schema::raster::BandDataType;
 
 use crate::gdal_common::{convert_gdal_err, gdal_to_band_data_type, with_gdal};
 use crate::gdal_dataset_provider::thread_local_cache;
@@ -133,20 +134,32 @@ impl AsyncRasterLoader for GdalLoader {
 
     async fn load(&self, reqs: &[&RasterLoadRequest]) -> Result<Vec<RasterLoadResult>, ArrowError> {
         let mut results = Vec::with_capacity(reqs.len());
-        let expected_bytes = reqs
+        let load_requests = reqs
             .iter()
             .map(|req| self.validate_one(req))
             .collect::<Result<Vec<_>, ArrowError>>()?;
-        for (expected_bytes, req) in zip(expected_bytes, reqs) {
-            results.push(self.load_one(expected_bytes, req).await?);
+        for (load_request, original_load_request) in zip(load_requests, reqs) {
+            results.push(self.load_one(load_request, original_load_request).await?);
         }
         Ok(results)
     }
 }
 
+struct OwnedGdalLoadRequest {
+    uri: String,
+    height: usize,
+    width: usize,
+    expected_bytes: usize,
+    byte_size: usize,
+    expected_dtype: BandDataType,
+}
+
 impl GdalLoader {
-    /// Validate one request and return the expected byte count
-    fn validate_one(&self, req: &RasterLoadRequest<'_>) -> Result<u64, ArrowError> {
+    /// Validate one request and return the information we'll queue onto the worker
+    fn validate_one(
+        &self,
+        req: &RasterLoadRequest<'_>,
+    ) -> Result<OwnedGdalLoadRequest, ArrowError> {
         // Validate request shape synchronously, before spawning a blocking
         // task — these are programming errors, no point queueing them
         // onto a worker.
@@ -156,6 +169,7 @@ impl GdalLoader {
                 req.source_shape.len()
             )));
         }
+
         if req.dim_names.len() != 2 || !is_spatial_dim_pair(req.dim_names[0], req.dim_names[1]) {
             return Err(ArrowError::InvalidArgumentError(format!(
                 "GDAL raster loader requires a 2-D spatial dim pair \
@@ -163,6 +177,22 @@ impl GdalLoader {
                 req.dim_names
             )));
         }
+
+        // The Y-like (row) axis is source_shape[0], the X-like (column) axis
+        // is source_shape[1] — guaranteed by the dim-pair check above.
+        let height = usize::try_from(req.source_shape[0]).map_err(|_| {
+            ArrowError::InvalidArgumentError(format!(
+                "GDAL OutDb source_shape[0]={} exceeds usize::MAX",
+                req.source_shape[0]
+            ))
+        })?;
+
+        let width = usize::try_from(req.source_shape[1]).map_err(|_| {
+            ArrowError::InvalidArgumentError(format!(
+                "GDAL OutDb source_shape[1]={} exceeds usize::MAX",
+                req.source_shape[1]
+            ))
+        })?;
 
         let byte_size = req.data_type.byte_size();
 
@@ -186,37 +216,21 @@ impl GdalLoader {
             )));
         }
 
-        Ok(expected_bytes_u64)
+        Ok(OwnedGdalLoadRequest {
+            uri: req.uri.to_string(),
+            height,
+            width,
+            expected_bytes: expected_bytes_u64 as usize,
+            byte_size,
+            expected_dtype: req.data_type,
+        })
     }
 
     async fn load_one(
         &self,
-        expected_bytes_u64: u64,
-        req: &RasterLoadRequest<'_>,
+        req: OwnedGdalLoadRequest,
+        original: &RasterLoadRequest<'_>,
     ) -> Result<RasterLoadResult, ArrowError> {
-        // The Y-like (row) axis is source_shape[0], the X-like (column) axis
-        // is source_shape[1] — guaranteed by the dim-pair check above.
-        let height = usize::try_from(req.source_shape[0]).map_err(|_| {
-            ArrowError::InvalidArgumentError(format!(
-                "GDAL OutDb source_shape[0]={} exceeds usize::MAX",
-                req.source_shape[0]
-            ))
-        })?;
-        let width = usize::try_from(req.source_shape[1]).map_err(|_| {
-            ArrowError::InvalidArgumentError(format!(
-                "GDAL OutDb source_shape[1]={} exceeds usize::MAX",
-                req.source_shape[1]
-            ))
-        })?;
-
-        let expected_bytes = expected_bytes_u64 as usize;
-
-        // Take owned copies for the spawn_blocking closure (the closure
-        // must be `'static`).
-        let uri = req.uri.to_string();
-        let expected_dtype = req.data_type;
-        let byte_size = req.data_type.byte_size();
-
         // Cancellation plumbing: the guard lives in this async fn's
         // frame. On normal completion `_guard` drops after the await
         // returns, flipping the flag on an already-finished blocking
@@ -232,7 +246,7 @@ impl GdalLoader {
             move || -> Result<Buffer, ArrowError> {
                 with_gdal(|gdal| {
                     // `#band=N` fragment, with N defaulting to 1 if absent.
-                    let (path, band_num) = parse_outdb_source(&uri)?;
+                    let (path, band_num) = parse_outdb_source(&req.uri)?;
                     let cache = thread_local_cache()?;
                     let dataset = cache.get_or_create_outdb_source(gdal, &path, None)?;
                     let band = dataset
@@ -246,11 +260,11 @@ impl GdalLoader {
                     // loader for size rather than naming the dtype mismatch.
                     // Catch it cleanly here.
                     let file_dtype = gdal_to_band_data_type(band.band_type())?;
-                    if file_dtype != expected_dtype {
+                    if file_dtype != req.expected_dtype {
                         return sedona_common::sedona_internal_err!(
                             "GDAL OutDb band metadata claims {:?} but file {} band {} is {:?}",
-                            expected_dtype,
-                            uri,
+                            req.expected_dtype,
+                            req.uri,
                             band_num,
                             file_dtype
                         );
@@ -258,8 +272,15 @@ impl GdalLoader {
 
                     // Pre-allocate the output buffer once; each strip read
                     // writes into a contiguous slice.
-                    let mut output = vec![0u8; expected_bytes];
-                    read_band_blockwise(&band, &mut output, width, height, byte_size, &cancel)?;
+                    let mut output = vec![0u8; req.expected_bytes];
+                    read_band_blockwise(
+                        &band,
+                        &mut output,
+                        req.width,
+                        req.height,
+                        req.byte_size,
+                        &cancel,
+                    )?;
                     Ok(Buffer::from_vec(output))
                 })
                 .map_err(|e| ArrowError::ExternalError(Box::new(e)))
@@ -272,7 +293,7 @@ impl GdalLoader {
             )))
         })??;
 
-        Ok(RasterLoadResult::unresolved(buffer, req))
+        Ok(RasterLoadResult::unresolved(buffer, original))
     }
 }
 
