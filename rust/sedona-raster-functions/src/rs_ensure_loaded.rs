@@ -422,6 +422,9 @@ where
                     view: &view_owned,
                     data_type,
                 };
+
+                // This is currently loading one request at a time; however, it is more efficient
+                // for some loaders to process more than one request at once.
                 let result = loader.load(&[&req]).await.map_err(|e| {
                     sedona_internal_datafusion_err!(
                         "RS_EnsureLoaded: loader '{}' failed on \
