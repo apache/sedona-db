@@ -133,14 +133,14 @@ impl AsyncRasterLoader for GdalLoader {
     }
 
     async fn load(&self, reqs: &[&RasterLoadRequest]) -> Result<Vec<RasterLoadResult>, ArrowError> {
-        let mut results = Vec::with_capacity(reqs.len());
         let load_requests = reqs
             .iter()
             .map(|req| self.validate_one(req))
             .collect::<Result<Vec<_>, ArrowError>>()?;
-        for (load_request, original_load_request) in zip(load_requests, reqs) {
-            results.push(self.load_one(load_request, original_load_request).await?);
-        }
+        let buffers = self.load_all(load_requests).await?;
+        let results = zip(buffers, reqs)
+            .map(|(buf, req)| RasterLoadResult::unresolved(buf, req))
+            .collect::<Vec<_>>();
         Ok(results)
     }
 }
@@ -226,11 +226,7 @@ impl GdalLoader {
         })
     }
 
-    async fn load_one(
-        &self,
-        req: OwnedGdalLoadRequest,
-        original: &RasterLoadRequest<'_>,
-    ) -> Result<RasterLoadResult, ArrowError> {
+    async fn load_all(&self, reqs: Vec<OwnedGdalLoadRequest>) -> Result<Vec<Buffer>, ArrowError> {
         // Cancellation plumbing: the guard lives in this async fn's
         // frame. On normal completion `_guard` drops after the await
         // returns, flipping the flag on an already-finished blocking
@@ -241,47 +237,52 @@ impl GdalLoader {
         let cancel: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
         let _guard = CancelOnDrop(Arc::clone(&cancel));
 
-        let buffer = tokio::task::spawn_blocking({
+        let buffers = tokio::task::spawn_blocking({
             let cancel = Arc::clone(&cancel);
-            move || -> Result<Buffer, ArrowError> {
+            move || -> Result<Vec<Buffer>, ArrowError> {
                 with_gdal(|gdal| {
-                    // `#band=N` fragment, with N defaulting to 1 if absent.
-                    let (path, band_num) = parse_outdb_source(&req.uri)?;
-                    let cache = thread_local_cache()?;
-                    let dataset = cache.get_or_create_outdb_source(gdal, &path, None)?;
-                    let band = dataset
-                        .rasterband(band_num as usize)
-                        .map_err(convert_gdal_err)?;
+                    let mut buffers = Vec::new();
+                    for req in reqs {
+                        // `#band=N` fragment, with N defaulting to 1 if absent.
+                        let (path, band_num) = parse_outdb_source(&req.uri)?;
+                        let cache = thread_local_cache()?;
+                        let dataset = cache.get_or_create_outdb_source(gdal, &path, None)?;
+                        let band = dataset
+                            .rasterband(band_num as usize)
+                            .map_err(convert_gdal_err)?;
 
-                    // Verify the file's pixel type matches the band metadata's
-                    // claim BEFORE reading. The bytes-out path doesn't convert;
-                    // a mismatch would produce a 2x-or-N/2 byte count and the
-                    // size check in `RS_EnsureLoaded` would mis-blame the
-                    // loader for size rather than naming the dtype mismatch.
-                    // Catch it cleanly here.
-                    let file_dtype = gdal_to_band_data_type(band.band_type())?;
-                    if file_dtype != req.expected_dtype {
-                        return sedona_common::sedona_internal_err!(
-                            "GDAL OutDb band metadata claims {:?} but file {} band {} is {:?}",
-                            req.expected_dtype,
-                            req.uri,
-                            band_num,
-                            file_dtype
-                        );
+                        // Verify the file's pixel type matches the band metadata's
+                        // claim BEFORE reading. The bytes-out path doesn't convert;
+                        // a mismatch would produce a 2x-or-N/2 byte count and the
+                        // size check in `RS_EnsureLoaded` would mis-blame the
+                        // loader for size rather than naming the dtype mismatch.
+                        // Catch it cleanly here.
+                        let file_dtype = gdal_to_band_data_type(band.band_type())?;
+                        if file_dtype != req.expected_dtype {
+                            return sedona_common::sedona_internal_err!(
+                                "GDAL OutDb band metadata claims {:?} but file {} band {} is {:?}",
+                                req.expected_dtype,
+                                req.uri,
+                                band_num,
+                                file_dtype
+                            );
+                        }
+
+                        // Pre-allocate the output buffer once; each strip read
+                        // writes into a contiguous slice.
+                        let mut output = vec![0u8; req.expected_bytes];
+                        read_band_blockwise(
+                            &band,
+                            &mut output,
+                            req.width,
+                            req.height,
+                            req.byte_size,
+                            &cancel,
+                        )?;
+                        buffers.push(Buffer::from_vec(output));
                     }
 
-                    // Pre-allocate the output buffer once; each strip read
-                    // writes into a contiguous slice.
-                    let mut output = vec![0u8; req.expected_bytes];
-                    read_band_blockwise(
-                        &band,
-                        &mut output,
-                        req.width,
-                        req.height,
-                        req.byte_size,
-                        &cancel,
-                    )?;
-                    Ok(Buffer::from_vec(output))
+                    Ok(buffers)
                 })
                 .map_err(|e| ArrowError::ExternalError(Box::new(e)))
             }
@@ -293,7 +294,7 @@ impl GdalLoader {
             )))
         })??;
 
-        Ok(RasterLoadResult::unresolved(buffer, original))
+        Ok(buffers)
     }
 }
 
