@@ -422,18 +422,29 @@ where
                     view: &view_owned,
                     data_type,
                 };
-                let result = loader.load(&req).await.map_err(|e| {
+                let result = loader.load(&[&req]).await.map_err(|e| {
                     sedona_internal_datafusion_err!(
                         "RS_EnsureLoaded: loader '{}' failed on \
                          band ({raster_idx},{band_idx}): {e}",
                         loader.name()
                     )
                 })?;
+
+                // Check that the loader returned the correct number of results
+                if result.len() != 1 {
+                    return sedona_internal_err!(
+                        "RS_EnsureLoaded: band ({raster_idx},{band_idx}), \
+                    loader {} returned incorrect result count",
+                        loader.name()
+                    );
+                }
+
                 // We can only build identity-view output bands today
                 // (`start_band_nd`). A loader that resolved/cropped the view —
                 // returning a different `source_shape` or a non-identity
                 // `view` — needs `start_band_with_view`. Reserved for
                 // https://github.com/apache/sedona-db/issues/897.
+                let result = &result[0];
                 if result.source_shape != source_shape
                     || !view_is_identity(&result.view, &result.source_shape)
                 {
@@ -519,18 +530,22 @@ mod tests {
         }
         async fn load(
             &self,
-            req: &RasterLoadRequest<'_>,
-        ) -> Result<RasterLoadResult, arrow_schema::ArrowError> {
-            self.seen.lock().unwrap().push((
-                req.uri.to_string(),
-                req.source_shape.to_vec(),
-                req.data_type,
-            ));
-            let elements: i64 = req.source_shape.iter().copied().product();
-            let len = elements as usize * req.data_type.byte_size();
-            // Fill with a recognisable pattern: byte i = (i % 251) as u8.
-            let bytes: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
-            Ok(RasterLoadResult::unresolved(Buffer::from_vec(bytes), req))
+            reqs: &[&RasterLoadRequest],
+        ) -> Result<Vec<RasterLoadResult>, arrow_schema::ArrowError> {
+            let mut results = Vec::with_capacity(reqs.len());
+            for req in reqs {
+                self.seen.lock().unwrap().push((
+                    req.uri.to_string(),
+                    req.source_shape.to_vec(),
+                    req.data_type,
+                ));
+                let elements: i64 = req.source_shape.iter().copied().product();
+                let len = elements as usize * req.data_type.byte_size();
+                // Fill with a recognisable pattern: byte i = (i % 251) as u8.
+                let bytes: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
+                results.push(RasterLoadResult::unresolved(Buffer::from_vec(bytes), req));
+            }
+            Ok(results)
         }
     }
 
@@ -759,9 +774,13 @@ mod tests {
             }
             async fn load(
                 &self,
-                req: &RasterLoadRequest<'_>,
-            ) -> Result<RasterLoadResult, arrow_schema::ArrowError> {
-                Ok(RasterLoadResult::unresolved(self.buffer.clone(), req))
+                req: &[&RasterLoadRequest],
+            ) -> Result<Vec<RasterLoadResult>, arrow_schema::ArrowError> {
+                assert_eq!(req.len(), 0);
+                Ok(vec![RasterLoadResult::unresolved(
+                    self.buffer.clone(),
+                    req[0],
+                )])
             }
         }
 
@@ -829,13 +848,13 @@ mod tests {
             }
             async fn load(
                 &self,
-                req: &RasterLoadRequest<'_>,
-            ) -> Result<RasterLoadResult, arrow_schema::ArrowError> {
-                // Return one too few bytes (5 instead of 6).
-                Ok(RasterLoadResult::unresolved(
-                    Buffer::from_vec(vec![0u8; 5]),
-                    req,
-                ))
+                reqs: &[&RasterLoadRequest],
+            ) -> Result<Vec<RasterLoadResult>, arrow_schema::ArrowError> {
+                // Return one too few bytes (5 instead of 6) for each request.
+                Ok(reqs
+                    .iter()
+                    .map(|req| RasterLoadResult::unresolved(Buffer::from_vec(vec![0u8; 5]), req))
+                    .collect())
             }
         }
 
@@ -872,29 +891,34 @@ mod tests {
             }
             async fn load(
                 &self,
-                req: &RasterLoadRequest<'_>,
-            ) -> Result<RasterLoadResult, arrow_schema::ArrowError> {
-                let elements: i64 = req.source_shape.iter().product();
-                let len = elements as usize * req.data_type.byte_size();
-                Ok(RasterLoadResult {
-                    bytes: Buffer::from_vec(vec![0u8; len]),
-                    source_shape: req.source_shape.to_vec(),
-                    // Non-identity: first axis sliced to a single step.
-                    view: vec![
-                        ViewEntry {
-                            source_axis: 0,
-                            start: 0,
-                            step: 1,
-                            steps: 1,
-                        },
-                        ViewEntry {
-                            source_axis: 1,
-                            start: 0,
-                            step: 1,
-                            steps: 3,
-                        },
-                    ],
-                })
+                reqs: &[&RasterLoadRequest],
+            ) -> Result<Vec<RasterLoadResult>, arrow_schema::ArrowError> {
+                Ok(reqs
+                    .iter()
+                    .map(|req| {
+                        let elements: i64 = req.source_shape.iter().product();
+                        let len = elements as usize * req.data_type.byte_size();
+                        RasterLoadResult {
+                            bytes: Buffer::from_vec(vec![0u8; len]),
+                            source_shape: req.source_shape.to_vec(),
+                            // Non-identity: first axis sliced to a single step.
+                            view: vec![
+                                ViewEntry {
+                                    source_axis: 0,
+                                    start: 0,
+                                    step: 1,
+                                    steps: 1,
+                                },
+                                ViewEntry {
+                                    source_axis: 1,
+                                    start: 0,
+                                    step: 1,
+                                    steps: 3,
+                                },
+                            ],
+                        }
+                    })
+                    .collect())
             }
         }
 

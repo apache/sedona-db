@@ -81,7 +81,17 @@ impl AsyncRasterLoader for ZarrLoader {
         format == Some(ZARR_FORMAT)
     }
 
-    async fn load(&self, req: &RasterLoadRequest<'_>) -> Result<RasterLoadResult, ArrowError> {
+    async fn load(&self, reqs: &[&RasterLoadRequest]) -> Result<Vec<RasterLoadResult>, ArrowError> {
+        let mut results = Vec::with_capacity(reqs.len());
+        for req in reqs {
+            results.push(self.load_one(req).await?);
+        }
+        Ok(results)
+    }
+}
+
+impl ZarrLoader {
+    async fn load_one(&self, req: &RasterLoadRequest<'_>) -> Result<RasterLoadResult, ArrowError> {
         let anchor = parse_chunk_anchor(req.uri)?;
         // Build the store from the anchor's store URI. Temporary: when a
         // credentialed store can be passed in from DataFusion's
@@ -197,8 +207,8 @@ mod tests {
             view: &[],
             data_type: BandDataType::UInt8,
         };
-        let result = loader.load(&req).await.unwrap();
-        assert_eq!(result.bytes.as_slice(), expected_pixels.as_slice());
+        let result = loader.load(&[&req]).await.unwrap();
+        assert_eq!(result[0].bytes.as_slice(), expected_pixels.as_slice());
     }
 
     #[tokio::test]
@@ -215,7 +225,7 @@ mod tests {
             view: &[], // Array is UInt8 but the band claims Int16.
             data_type: BandDataType::Int16,
         };
-        let err = loader.load(&req).await.unwrap_err();
+        let err = loader.load(&[&req]).await.unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("metadata claims") && (msg.contains("UInt8") || msg.contains("Int16")),
@@ -233,7 +243,7 @@ mod tests {
             view: &[],
             data_type: BandDataType::UInt8,
         };
-        let err = loader.load(&req).await.unwrap_err();
+        let err = loader.load(&[&req]).await.unwrap_err();
         assert!(
             err.to_string().contains("missing"),
             "expected missing-fragment diagnostic, got: {err}"
@@ -255,7 +265,7 @@ mod tests {
             view: &[],
             data_type: BandDataType::UInt8,
         };
-        let err = loader.load(&req).await.unwrap_err();
+        let err = loader.load(&[&req]).await.unwrap_err();
         assert!(
             err.to_string().contains("nonexistent")
                 || err.to_string().to_lowercase().contains("array"),
@@ -276,7 +286,7 @@ mod tests {
             view: &[],
             data_type: BandDataType::UInt8,
         };
-        let err = loader.load(&req).await.unwrap_err();
+        let err = loader.load(&[&req]).await.unwrap_err();
         assert!(
             err.to_string().contains("unsupported Zarr URI scheme"),
             "expected unsupported-scheme rejection, got: {err}"

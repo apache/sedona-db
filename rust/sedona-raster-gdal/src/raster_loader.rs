@@ -130,7 +130,17 @@ impl AsyncRasterLoader for GdalLoader {
         true
     }
 
-    async fn load(&self, req: &RasterLoadRequest<'_>) -> Result<RasterLoadResult, ArrowError> {
+    async fn load(&self, reqs: &[&RasterLoadRequest]) -> Result<Vec<RasterLoadResult>, ArrowError> {
+        let mut results = Vec::with_capacity(reqs.len());
+        for req in reqs {
+            results.push(self.load_one(req).await?);
+        }
+        Ok(results)
+    }
+}
+
+impl GdalLoader {
+    async fn load_one(&self, req: &RasterLoadRequest<'_>) -> Result<RasterLoadResult, ArrowError> {
         // Validate request shape synchronously, before spawning a blocking
         // task — these are programming errors, no point queueing them
         // onto a worker.
@@ -382,9 +392,9 @@ mod tests {
             data_type: BandDataType::UInt8,
         };
 
-        let result = loader.load(&req).await.unwrap();
-        assert_eq!(result.bytes.len(), 6);
-        assert_eq!(result.bytes.as_slice(), &[0u8, 1, 2, 3, 4, 5]);
+        let result = loader.load(&[&req]).await.unwrap();
+        assert_eq!(result[0].bytes.len(), 6);
+        assert_eq!(result[0].bytes.as_slice(), &[0u8, 1, 2, 3, 4, 5]);
     }
 
     #[tokio::test]
@@ -401,8 +411,8 @@ mod tests {
             view: &[],
             data_type: BandDataType::UInt8,
         };
-        let result = loader.load(&req).await.unwrap();
-        assert_eq!(result.bytes.len(), 6);
+        let result = loader.load(&[&req]).await.unwrap();
+        assert_eq!(result[0].bytes.len(), 6);
     }
 
     #[tokio::test]
@@ -415,7 +425,7 @@ mod tests {
             view: &[],
             data_type: BandDataType::UInt8,
         };
-        let err = loader.load(&req).await.unwrap_err();
+        let err = loader.load(&[&req]).await.unwrap_err();
         assert!(
             err.to_string().contains("2-D"),
             "expected 2-D rejection diagnostic, got: {err}"
@@ -432,7 +442,7 @@ mod tests {
             view: &[],
             data_type: BandDataType::UInt8,
         };
-        let err = loader.load(&req).await.unwrap_err();
+        let err = loader.load(&[&req]).await.unwrap_err();
         assert!(
             err.to_string().contains("spatial dim pair"),
             "expected spatial-dim-pair rejection diagnostic, got: {err}"
@@ -455,8 +465,8 @@ mod tests {
         };
         // lat/lon is a recognized spatial pair, so the request is accepted and
         // the GeoTIFF is read just like a ["y", "x"] band.
-        let result = loader.load(&req).await.unwrap();
-        assert_eq!(result.bytes.len(), 6);
+        let result = loader.load(&[&req]).await.unwrap();
+        assert_eq!(result[0].bytes.len(), 6);
     }
 
     #[tokio::test]
@@ -474,7 +484,7 @@ mod tests {
             // clear dtype-mismatch message, not garbled bytes.
             data_type: BandDataType::Int16,
         };
-        let err = loader.load(&req).await.unwrap_err();
+        let err = loader.load(&[&req]).await.unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("metadata claims") && (msg.contains("UInt8") || msg.contains("Int16")),
@@ -492,7 +502,7 @@ mod tests {
             view: &[],
             data_type: BandDataType::UInt8,
         };
-        let err = loader.load(&req).await.unwrap_err();
+        let err = loader.load(&[&req]).await.unwrap_err();
         // GDAL's "no such file" error message wraps through our convert.
         assert!(err.to_string().to_lowercase().contains("nonexistent"));
     }
@@ -512,7 +522,7 @@ mod tests {
             view: &[],
             data_type: BandDataType::UInt8,
         };
-        let err = loader.load(&req).await.unwrap_err();
+        let err = loader.load(&[&req]).await.unwrap_err();
         let msg = err.to_string();
         // GDAL surfaces this as a band-index error; just verify the
         // dispatch went through and the error was propagated, not the
@@ -536,7 +546,7 @@ mod tests {
             view: &[],
             data_type: BandDataType::Float32,
         };
-        let err = loader.load(&req).await.unwrap_err();
+        let err = loader.load(&[&req]).await.unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("MAX_OUTDB_LOAD_BYTES"),
@@ -560,9 +570,9 @@ mod tests {
             view: &[],
             data_type: BandDataType::UInt8,
         };
-        let result = loader.load(&req).await.unwrap();
+        let result = loader.load(&[&req]).await.unwrap();
         let expected: Vec<u8> = (0..16 * 64).map(|i| (i % 251) as u8).collect();
-        assert_eq!(result.bytes.as_slice(), expected.as_slice());
+        assert_eq!(result[0].bytes.as_slice(), expected.as_slice());
     }
 
     /// Pre-arm the cancellation flag, then drive `read_band_blockwise`
