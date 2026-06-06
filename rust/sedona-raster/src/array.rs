@@ -578,6 +578,22 @@ impl<'a> RasterStructArray<'a> {
     pub fn is_null(&self, index: usize) -> bool {
         self.raster_array.is_null(index)
     }
+
+    /// The flattened band `data` column (BinaryView) shared by every raster
+    /// in this array. Pair with [`Self::band_data_row`] to address a single
+    /// band's bytes — e.g. for zero-copy passthrough into a [`RasterBuilder`]
+    /// via `append_band_data_from`.
+    #[inline(always)]
+    pub fn band_data_array(&self) -> &'a BinaryViewArray {
+        self.band_data_array
+    }
+
+    /// Absolute row of band `band_idx` of raster `raster_idx` within the
+    /// flattened band arrays (such as [`Self::band_data_array`]).
+    #[inline(always)]
+    pub fn band_data_row(&self, raster_idx: usize, band_idx: usize) -> usize {
+        self.bands_list.value_offsets()[raster_idx] as usize + band_idx
+    }
 }
 
 #[cfg(test)]
