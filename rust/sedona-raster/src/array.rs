@@ -15,8 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::borrow::Cow;
-
 use arrow_array::{
     Array, BinaryArray, BinaryViewArray, Float64Array, Int64Array, ListArray, StringArray,
     StringViewArray, StructArray, UInt32Array, UInt64Array,
@@ -85,17 +83,6 @@ impl<'a> BandRef for BandRefImpl<'a> {
         self.data_type
     }
 
-    fn data(&self) -> &[u8] {
-        // Pre-N-D compatibility surface. Identity-view InDb bands → the
-        // row-major in-line buffer (zero-copy borrow into the StructArray),
-        // matching the pre-N-D behavior exactly. OutDb → `&[]` from the
-        // empty `data` column, no panic. Non-identity views never reach
-        // here — `RasterRefImpl::band()` rejects them upstream so the
-        // raw column bytes always equal the visible bytes for any band
-        // this reader produces.
-        self.data_array.value(self.band_row)
-    }
-
     fn nodata(&self) -> Option<&[u8]> {
         if self.nodata_array.is_null(self.band_row) {
             None
@@ -141,19 +128,6 @@ impl<'a> BandRef for BandRefImpl<'a> {
             offset: self.byte_offset,
             data_type: self.data_type,
         })
-    }
-
-    fn contiguous_data(&self) -> Result<Cow<'_, [u8]>, ArrowError> {
-        if !self.is_indb() {
-            return Err(ArrowError::NotYetImplemented(
-                "OutDb byte access via contiguous_data() is not yet implemented; \
-                 backend-specific OutDb resolvers are tracked separately"
-                    .to_string(),
-            ));
-        }
-        // Identity-view only today, so the data buffer is already row-major
-        // over the visible region.
-        Ok(Cow::Borrowed(self.data_array.value(self.band_row)))
     }
 }
 
@@ -678,8 +652,11 @@ mod tests {
 
         // Access band with 1-based band_number
         let band = bands.band(1).unwrap();
-        assert_eq!(band.data().len(), 100);
-        assert_eq!(band.data()[0], 1u8);
+        assert_eq!(
+            band.nd_buffer().unwrap().as_contiguous().unwrap().len(),
+            100
+        );
+        assert_eq!(band.nd_buffer().unwrap().as_contiguous().unwrap()[0], 1u8);
 
         let band_meta = band.metadata();
         assert_eq!(band_meta.storage_type().unwrap(), StorageType::InDb);
@@ -743,7 +720,13 @@ mod tests {
             // Access band with 1-based band_number
             let band = bands.band(i + 1).unwrap();
             let expected_value = i as u8;
-            assert!(band.data().iter().all(|&x| x == expected_value));
+            assert!(band
+                .nd_buffer()
+                .unwrap()
+                .as_contiguous()
+                .unwrap()
+                .iter()
+                .all(|&x| x == expected_value));
         }
 
         // Test array
@@ -752,8 +735,11 @@ mod tests {
             .enumerate()
             .map(|(i, band)| {
                 let band = band.unwrap();
-                assert_eq!(band.data()[0], i as u8);
-                band.data()[0]
+                assert_eq!(
+                    band.nd_buffer().unwrap().as_contiguous().unwrap()[0],
+                    i as u8
+                );
+                band.nd_buffer().unwrap().as_contiguous().unwrap()[0]
             })
             .collect();
 
@@ -1043,17 +1029,32 @@ mod tests {
         assert_eq!(r0.num_bands(), 3);
         assert_eq!(r0.band(0).unwrap().shape(), &[3]);
         assert_eq!(
-            &*r0.band(0).unwrap().contiguous_data().unwrap(),
+            r0.band(0)
+                .unwrap()
+                .nd_buffer()
+                .unwrap()
+                .as_contiguous()
+                .unwrap(),
             &[10u8, 20, 30]
         );
         assert_eq!(r0.band(1).unwrap().shape(), &[3]);
         assert_eq!(
-            &*r0.band(1).unwrap().contiguous_data().unwrap(),
+            r0.band(1)
+                .unwrap()
+                .nd_buffer()
+                .unwrap()
+                .as_contiguous()
+                .unwrap(),
             &[40u8, 50, 60]
         );
         assert_eq!(r0.band(2).unwrap().shape(), &[3]);
         assert_eq!(
-            &*r0.band(2).unwrap().contiguous_data().unwrap(),
+            r0.band(2)
+                .unwrap()
+                .nd_buffer()
+                .unwrap()
+                .as_contiguous()
+                .unwrap(),
             &[100u8, 101, 102]
         );
 
@@ -1061,12 +1062,22 @@ mod tests {
         assert_eq!(r1.num_bands(), 2);
         assert_eq!(r1.band(0).unwrap().shape(), &[4]);
         assert_eq!(
-            &*r1.band(0).unwrap().contiguous_data().unwrap(),
+            r1.band(0)
+                .unwrap()
+                .nd_buffer()
+                .unwrap()
+                .as_contiguous()
+                .unwrap(),
             &[42u8, 43, 44, 45]
         );
         assert_eq!(r1.band(1).unwrap().shape(), &[4]);
         assert_eq!(
-            &*r1.band(1).unwrap().contiguous_data().unwrap(),
+            r1.band(1)
+                .unwrap()
+                .nd_buffer()
+                .unwrap()
+                .as_contiguous()
+                .unwrap(),
             &[1u8, 2, 3, 4]
         );
 

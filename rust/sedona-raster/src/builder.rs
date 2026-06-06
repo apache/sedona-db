@@ -687,7 +687,6 @@ mod tests {
     use arrow_ipc::writer::StreamWriter;
     use arrow_schema::Schema;
     use sedona_schema::raster::StorageType;
-    use std::borrow::Cow;
     use std::io::Cursor;
 
     #[test]
@@ -747,8 +746,11 @@ mod tests {
 
         // Access band with 1-based band_number
         let band = bands.band(1).unwrap();
-        assert_eq!(band.data().len(), 100);
-        assert_eq!(band.data()[0], 1u8);
+        assert_eq!(
+            band.nd_buffer().unwrap().as_contiguous().unwrap().len(),
+            100
+        );
+        assert_eq!(band.nd_buffer().unwrap().as_contiguous().unwrap()[0], 1u8);
 
         let band_meta = band.metadata();
         assert_eq!(band_meta.storage_type().unwrap(), StorageType::InDb);
@@ -812,7 +814,13 @@ mod tests {
             // Access band with 1-based band_number
             let band = bands.band(i + 1).unwrap();
             let expected_value = i as u8;
-            assert!(band.data().iter().all(|&x| x == expected_value));
+            assert!(band
+                .nd_buffer()
+                .unwrap()
+                .as_contiguous()
+                .unwrap()
+                .iter()
+                .all(|&x| x == expected_value));
         }
 
         // Test iterator
@@ -821,8 +829,11 @@ mod tests {
             .enumerate()
             .map(|(i, band)| {
                 let band = band.unwrap();
-                assert_eq!(band.data()[0], i as u8);
-                band.data()[0]
+                assert_eq!(
+                    band.nd_buffer().unwrap().as_contiguous().unwrap()[0],
+                    i as u8
+                );
+                band.nd_buffer().unwrap().as_contiguous().unwrap()[0]
             })
             .collect();
 
@@ -913,7 +924,15 @@ mod tests {
         let target_band_meta = target_band.metadata();
         assert_eq!(target_band_meta.data_type().unwrap(), BandDataType::UInt16);
         assert!(target_band_meta.nodata_value().is_none());
-        assert_eq!(target_band.data().len(), 2016); // 1008 * 2 bytes per u16
+        assert_eq!(
+            target_band
+                .nd_buffer()
+                .unwrap()
+                .as_contiguous()
+                .unwrap()
+                .len(),
+            2016
+        ); // 1008 * 2 bytes per u16
 
         let result = target_raster.bands().band(0);
         assert!(result.is_err(), "Band number 0 should be invalid");
@@ -1112,7 +1131,7 @@ mod tests {
         assert_eq!(indb_metadata.data_type().unwrap(), BandDataType::UInt8);
         assert!(indb_metadata.outdb_url().is_none());
         assert!(indb_metadata.outdb_band_id().is_none());
-        assert_eq!(indb_band.data().len(), 100);
+        assert!(indb_band.is_indb());
 
         // Test OutDbRef band
         let outdb_band = bands.band(2).unwrap();
@@ -1127,7 +1146,7 @@ mod tests {
             "s3://mybucket/satellite_image.tif"
         );
         assert_eq!(outdb_metadata.outdb_band_id().unwrap(), 2);
-        assert_eq!(outdb_band.data().len(), 0); // Empty data for OutDbRef
+        assert!(!outdb_band.is_indb());
     }
 
     #[test]
@@ -1182,7 +1201,10 @@ mod tests {
         let result = bands.band(1);
         assert!(result.is_ok());
         let band = result.unwrap();
-        assert_eq!(band.data().len(), 100);
+        assert_eq!(
+            band.nd_buffer().unwrap().as_contiguous().unwrap().len(),
+            100
+        );
     }
 
     #[test]
@@ -1227,7 +1249,10 @@ mod tests {
         assert_eq!(band.shape(), &[20, 10]);
         assert_eq!(band.data_type(), BandDataType::UInt8);
         assert_eq!(band.nodata(), Some(&[255u8][..]));
-        assert_eq!(band.contiguous_data().unwrap().len(), 200);
+        assert_eq!(
+            band.nd_buffer().unwrap().as_contiguous().unwrap().len(),
+            200
+        );
     }
 
     #[test]
@@ -1478,7 +1503,7 @@ mod tests {
     }
 
     #[test]
-    fn test_contiguous_data_is_borrowed() {
+    fn test_as_contiguous_borrows_identity_view() {
         let mut builder = RasterBuilder::new(1);
         builder
             .start_raster_2d(4, 4, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, None)
@@ -1493,9 +1518,11 @@ mod tests {
         let r = rasters.get(0).unwrap();
         let band = r.band(0).unwrap();
 
-        let data = band.contiguous_data().unwrap();
-        // Identity-view bands are always contiguous, so should be Cow::Borrowed
-        assert!(matches!(data, Cow::Borrowed(_)));
+        let ndb = band.nd_buffer().unwrap();
+        // Identity-view bands are always contiguous, so as_contiguous borrows
+        // the underlying bytes zero-copy rather than erroring.
+        assert!(ndb.is_contiguous());
+        let data = ndb.as_contiguous().unwrap();
         assert_eq!(data.len(), 16);
     }
 
@@ -1734,7 +1761,7 @@ mod tests {
     }
 
     #[test]
-    fn test_contiguous_data_identity_via_start_band_is_borrowed() {
+    fn test_as_contiguous_identity_via_start_band_borrows() {
         // Canonical identity: the row's view list is null, and the read path
         // synthesises the identity view. Should still hand the underlying
         // bytes back without copying.
@@ -1771,10 +1798,8 @@ mod tests {
         let buf = band.nd_buffer().unwrap();
         assert_eq!(buf.strides, &[3, 1]);
         assert_eq!(buf.offset, 0);
-
-        let bytes = band.contiguous_data().unwrap();
-        assert!(matches!(bytes, Cow::Borrowed(_)));
-        assert_eq!(&*bytes, pixels.as_slice());
+        assert!(buf.is_contiguous());
+        assert_eq!(buf.as_contiguous().unwrap(), pixels.as_slice());
     }
 
     #[test]

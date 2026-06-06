@@ -261,7 +261,7 @@ impl GDALDatasetCache {
         for i in 1..=num_bands {
             let band = bands.band(i).map_err(|e| arrow_datafusion_err!(e))?;
 
-            if !band.is_2d() {
+            if !band.is_spatial_2d() {
                 return exec_err!(
                     "GDAL backend requires 2-dim bands; got dim_names={:?}",
                     band.dim_names()

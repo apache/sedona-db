@@ -475,7 +475,17 @@ pub fn assert_raster_equal(raster1: &impl RasterRef, raster2: &impl RasterRef) {
             "Band outdb band IDs do not match"
         );
 
-        assert_eq!(band1.data(), band2.data(), "Band data does not match");
+        assert_eq!(
+            band1.is_indb(),
+            band2.is_indb(),
+            "Band storage (in/out-db) does not match"
+        );
+        if band1.is_indb() {
+            // Identity-view InDb fixtures: compare the packed visible bytes.
+            let b1 = band1.nd_buffer().unwrap().as_contiguous().unwrap();
+            let b2 = band2.nd_buffer().unwrap().as_contiguous().unwrap();
+            assert_eq!(b1, b2, "Band data does not match");
+        }
     }
 }
 
@@ -513,7 +523,7 @@ mod tests {
             assert_eq!(band_metadata.outdb_url(), None);
             assert_eq!(band_metadata.outdb_band_id(), None);
 
-            let band_data = band.data();
+            let band_data = band.nd_buffer().unwrap().as_contiguous().unwrap();
             let expected_pixel_count = (i + 1) * (i + 2); // width * height
 
             // Convert raw bytes back to u16 values for comparison
@@ -550,7 +560,7 @@ mod tests {
                 let band_metadata = band.metadata();
                 assert_eq!(band_metadata.data_type().unwrap(), BandDataType::UInt8);
                 assert_eq!(band_metadata.storage_type().unwrap(), StorageType::InDb);
-                let band_data = band.data();
+                let band_data = band.nd_buffer().unwrap().as_contiguous().unwrap();
                 assert_eq!(band_data.len(), 64 * 64); // 4096 pixels
             }
         }
@@ -619,7 +629,10 @@ mod tests {
         let b1 = bands.band(1).unwrap();
         assert_eq!(b1.metadata().data_type().unwrap(), BandDataType::UInt8);
         assert_eq!(b1.metadata().nodata_value(), Some(&[255u8][..]));
-        assert_eq!(b1.data(), &[1u8, 2, 3, 4]);
+        assert_eq!(
+            b1.nd_buffer().unwrap().as_contiguous().unwrap(),
+            &[1u8, 2, 3, 4]
+        );
 
         // Band 2: UInt16, nodata=0
         let b2 = bands.band(2).unwrap();

@@ -223,7 +223,7 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
             .band(src_band_index)
             .map_err(|e| arrow_datafusion_err!(e))?;
 
-        if !band.is_2d() {
+        if !band.is_spatial_2d() {
             return exec_err!(
                 "GDAL backend requires a 2-dim band; got dim_names={:?}",
                 band.dim_names()
@@ -239,8 +239,13 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
         let band_metadata = band.metadata();
         let band_type = band_metadata.data_type()?;
         let gdal_type = band_data_type_to_gdal(&band_type);
-        let band_data = band.data();
-        let data_ptr = band_data.as_ptr();
+        // `as_contiguous()` borrows the bytes zero-copy (erroring on a strided
+        // view); GDAL holds the pointer, so `raster` must outlive the dataset.
+        let band_bytes = band
+            .nd_buffer()
+            .and_then(|ndb| ndb.as_contiguous())
+            .map_err(|e| arrow_datafusion_err!(e))?;
+        let data_ptr: *const u8 = band_bytes.as_ptr();
         unsafe {
             mem_ds_builder = mem_ds_builder.add_band(gdal_type, data_ptr as *mut u8);
         }

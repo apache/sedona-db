@@ -341,8 +341,8 @@ where
                 let outdb_format: Option<String> = band.outdb_format().map(|s| s.to_string());
                 // For InDb bands, copy bytes into an owned Buffer.
                 // `Buffer::from_vec` is zero-copy ownership transfer of
-                // the Vec; the per-row clone of `band.data()` itself is
-                // the one InDb copy we accept for sequential simplicity.
+                // the Vec; the per-row clone of the band's contiguous bytes
+                // is the one InDb copy we accept for sequential simplicity.
                 //
                 // This passthrough copy (and the equivalent re-copy of
                 // freshly-loaded OutDb bytes through the builder) goes
@@ -351,7 +351,34 @@ where
                 // as a `BinaryViewArray` row. Tracked in
                 // https://github.com/apache/sedona-db/issues/894.
                 let indb_bytes: Option<Buffer> = if band.is_indb() {
-                    Some(Buffer::from_vec(band.data().to_vec()))
+                    // A non-identity view can't be passed through yet: the
+                    // rebuild via `start_band_nd` below emits an identity band,
+                    // so the view would be silently dropped (and a contiguous
+                    // outer-slice would trip the source-byte-count check with a
+                    // misleading message). Unreachable today — the read
+                    // boundary rejects non-identity views — but guard it loudly
+                    // so that when views land this surfaces as the internal gap
+                    // it is, not a confusing downstream error. Fixed alongside
+                    // the zero-copy view-preserving passthrough
+                    // (apache/sedona-db#894 + #897).
+                    if !view_is_identity(&view_owned, &source_shape) {
+                        return sedona_internal_err!(
+                            "RS_EnsureLoaded: InDb band ({raster_idx},{band_idx}) has a \
+                             non-identity view; view-preserving passthrough is not \
+                             implemented yet (apache/sedona-db#897)"
+                        );
+                    }
+                    let bytes = band
+                        .nd_buffer()
+                        .and_then(|ndb| ndb.as_contiguous())
+                        .map(|b| b.to_vec())
+                        .map_err(|e| {
+                            sedona_internal_datafusion_err!(
+                                "RS_EnsureLoaded: InDb band ({raster_idx},{band_idx}) \
+                                 bytes unavailable: {e}"
+                            )
+                        })?;
+                    Some(Buffer::from_vec(bytes))
                 } else {
                     None
                 };
@@ -640,7 +667,10 @@ mod tests {
         let r = out_rasters.get(0).unwrap();
         let band = r.band(0).unwrap();
         // Loader filled 6 bytes (2 × 3 × UInt8) with the (i % 251) pattern.
-        assert_eq!(band.data(), &[0, 1, 2, 3, 4, 5]);
+        assert_eq!(
+            band.nd_buffer().unwrap().as_contiguous().unwrap(),
+            &[0, 1, 2, 3, 4, 5]
+        );
         // outdb_uri / outdb_format are preserved as provenance.
         assert_eq!(band.outdb_uri(), Some("file:///tmp/foo.tif"));
         assert_eq!(band.outdb_format(), Some("mock"));
@@ -671,7 +701,7 @@ mod tests {
         let out_rasters = RasterStructArray::new(out_struct);
         let r = out_rasters.get(0).unwrap();
         let band = r.band(0).unwrap();
-        assert_eq!(band.data(), &pixels);
+        assert_eq!(band.nd_buffer().unwrap().as_contiguous().unwrap(), &pixels);
 
         // Loader was never called.
         assert!(loader.seen.lock().unwrap().is_empty());
