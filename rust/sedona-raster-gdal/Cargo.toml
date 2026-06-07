@@ -58,3 +58,8 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 harness = false
 name = "rs_frompath"
 path = "benches/rs_frompath.rs"
+
+[[bench]]
+harness = false
+name = "rs_metadata"
+path = "benches/rs_metadata.rs"

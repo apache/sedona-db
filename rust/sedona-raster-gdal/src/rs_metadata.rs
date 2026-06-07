@@ -125,6 +125,7 @@ impl SedonaScalarKernel for RsMetaData {
                     }
                     Some(raster) => {
                         let metadata = raster.metadata();
+                        let num_bands = raster.bands().len() as u64;
 
                         upper_left_x_builder.append_value(metadata.upper_left_x());
                         upper_left_y_builder.append_value(metadata.upper_left_y());
@@ -146,18 +147,23 @@ impl SedonaScalarKernel for RsMetaData {
                         };
                         srid_builder.append_value(srid);
 
-                        num_bands_builder.append_value(raster.bands().len() as u64);
+                        num_bands_builder.append_value(num_bands);
 
-                        let dataset = provider.raster_ref_to_gdal(raster).map_err(|e| {
-                            exec_datafusion_err!("Failed to create GDAL dataset: {e}")
-                        })?;
-                        let band1 = dataset
-                            .as_dataset()
-                            .rasterband(1)
-                            .map_err(|e| exec_datafusion_err!("Failed to get band 1: {e}"))?;
-                        let (block_x, block_y) = band1.block_size();
-                        tile_width_builder.append_value(block_x.max(1) as u64);
-                        tile_height_builder.append_value(block_y.max(1) as u64);
+                        if num_bands == 0 {
+                            tile_width_builder.append_value(0);
+                            tile_height_builder.append_value(0);
+                        } else {
+                            let dataset = provider.raster_ref_to_gdal(raster).map_err(|e| {
+                                exec_datafusion_err!("Failed to create GDAL dataset: {e}")
+                            })?;
+                            let band1 = dataset
+                                .as_dataset()
+                                .rasterband(1)
+                                .map_err(|e| exec_datafusion_err!("Failed to get band 1: {e}"))?;
+                            let (block_x, block_y) = band1.block_size();
+                            tile_width_builder.append_value(block_x.max(1) as u64);
+                            tile_height_builder.append_value(block_y.max(1) as u64);
+                        }
                     }
                 }
                 Ok(())
@@ -190,13 +196,34 @@ impl SedonaScalarKernel for RsMetaData {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::cast::AsArray;
+    use arrow_array::{
+        cast::AsArray, types::Float64Type, types::Int32Type, types::UInt64Type, Array,
+    };
+    use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use sedona_raster::array::RasterStructArray;
     use sedona_raster::builder::RasterBuilder;
+    use sedona_raster::traits::RasterMetadata;
     use sedona_schema::datatypes::RASTER;
-    use sedona_testing::testers::ScalarUdfTester;
+    use sedona_schema::raster::BandDataType;
+    use sedona_testing::{
+        rasters::{build_in_db_raster, generate_multi_band_raster, InDbTestBand},
+        testers::ScalarUdfTester,
+    };
     use tempfile::TempDir;
+
+    const UPPER_LEFT_X: usize = 0;
+    const UPPER_LEFT_Y: usize = 1;
+    const GRID_WIDTH: usize = 2;
+    const GRID_HEIGHT: usize = 3;
+    const SCALE_X: usize = 4;
+    const SCALE_Y: usize = 5;
+    const SKEW_X: usize = 6;
+    const SKEW_Y: usize = 7;
+    const SRID: usize = 8;
+    const NUM_SAMPLE_DIMENSIONS: usize = 9;
+    const TILE_WIDTH: usize = 10;
+    const TILE_HEIGHT: usize = 11;
 
     fn write_test_geotiff() -> (StructArray, usize, usize) {
         let temp_dir = TempDir::new().unwrap();
@@ -229,6 +256,86 @@ mod tests {
         .unwrap()
     }
 
+    fn build_zero_band_raster() -> StructArray {
+        let mut builder = RasterBuilder::new(1);
+        let metadata = RasterMetadata {
+            width: 4,
+            height: 3,
+            upperleft_x: 11.0,
+            upperleft_y: 22.0,
+            scale_x: 0.5,
+            scale_y: -0.5,
+            skew_x: 0.0,
+            skew_y: 0.0,
+        };
+        builder.start_raster(&metadata, Some("EPSG:4326")).unwrap();
+        builder.finish_raster().unwrap();
+        builder.finish().unwrap()
+    }
+
+    fn build_no_crs_raster() -> StructArray {
+        let metadata = RasterMetadata {
+            width: 4,
+            height: 3,
+            upperleft_x: 7.0,
+            upperleft_y: 8.0,
+            scale_x: 1.0,
+            scale_y: -1.0,
+            skew_x: 0.0,
+            skew_y: 0.0,
+        };
+        build_in_db_raster(
+            metadata,
+            None,
+            &[InDbTestBand {
+                datatype: BandDataType::UInt8,
+                nodata_value: None,
+                data: vec![1u8, 2, 3, 4],
+            }],
+        )
+    }
+
+    fn metadata_udf_tester() -> ScalarUdfTester {
+        let udf: ScalarUDF = rs_metadata_udf().into();
+        ScalarUdfTester::new(udf, vec![RASTER])
+    }
+
+    fn invoke_array_result(raster_array: StructArray) -> StructArray {
+        metadata_udf_tester()
+            .invoke_array(Arc::new(raster_array))
+            .unwrap()
+            .as_struct()
+            .clone()
+    }
+
+    fn assert_scalar_result(result: ScalarValue) -> Arc<StructArray> {
+        match result {
+            ScalarValue::Struct(struct_array) => struct_array,
+            other => panic!("Expected struct scalar result, got {other:?}"),
+        }
+    }
+
+    fn uint64_value(struct_array: &StructArray, column: usize, row: usize) -> u64 {
+        struct_array
+            .column(column)
+            .as_primitive::<UInt64Type>()
+            .value(row)
+    }
+
+    fn int32_value(struct_array: &StructArray, column: usize, row: usize) -> i32 {
+        struct_array
+            .column(column)
+            .as_primitive::<Int32Type>()
+            .value(row)
+    }
+
+    fn float64_value(struct_array: &StructArray, column: usize, row: usize) -> f64 {
+        struct_array
+            .column(column)
+            .as_primitive::<Float64Type>()
+            .value(row)
+    }
+
     #[test]
     fn rs_metadata_udf_docs() {
         let udf: ScalarUDF = rs_metadata_udf().into();
@@ -236,25 +343,84 @@ mod tests {
     }
 
     #[test]
-    fn rs_metadata_tile_dimensions_from_gdal() {
+    fn rs_metadata_returns_expected_fields_for_single_band_raster() {
         let (raster_array, block_x, block_y) = write_test_geotiff();
 
-        let udf: ScalarUDF = rs_metadata_udf().into();
-        let tester = ScalarUdfTester::new(udf, vec![RASTER]);
-        let result = tester.invoke_array(Arc::new(raster_array)).unwrap();
-        let struct_array = result.as_struct();
+        let struct_array = invoke_array_result(raster_array);
 
-        let tile_width = struct_array
-            .column(10)
-            .as_primitive::<arrow_array::types::UInt64Type>()
-            .value(0);
-        let tile_height = struct_array
-            .column(11)
-            .as_primitive::<arrow_array::types::UInt64Type>()
-            .value(0);
+        assert_eq!(float64_value(&struct_array, UPPER_LEFT_X, 0), 100.0);
+        assert_eq!(float64_value(&struct_array, UPPER_LEFT_Y, 0), 200.0);
+        assert_eq!(uint64_value(&struct_array, GRID_WIDTH, 0), 10);
+        assert_eq!(uint64_value(&struct_array, GRID_HEIGHT, 0), 7);
+        assert_eq!(float64_value(&struct_array, SCALE_X, 0), 2.0);
+        assert_eq!(float64_value(&struct_array, SCALE_Y, 0), -2.0);
+        assert_eq!(float64_value(&struct_array, SKEW_X, 0), 0.0);
+        assert_eq!(float64_value(&struct_array, SKEW_Y, 0), 0.0);
+        assert_eq!(int32_value(&struct_array, SRID, 0), 4326);
+        assert_eq!(uint64_value(&struct_array, NUM_SAMPLE_DIMENSIONS, 0), 1);
+        assert_eq!(
+            uint64_value(&struct_array, TILE_WIDTH, 0),
+            block_x.max(1) as u64
+        );
+        assert_eq!(
+            uint64_value(&struct_array, TILE_HEIGHT, 0),
+            block_y.max(1) as u64
+        );
+    }
 
-        assert_eq!(tile_width, block_x.max(1) as u64);
-        assert_eq!(tile_height, block_y.max(1) as u64);
+    #[test]
+    fn rs_metadata_reports_band_count_for_multi_band_raster() {
+        let struct_array = invoke_array_result(generate_multi_band_raster());
+
+        assert_eq!(uint64_value(&struct_array, NUM_SAMPLE_DIMENSIONS, 0), 3);
+    }
+
+    #[test]
+    fn rs_metadata_returns_zero_srid_without_crs() {
+        let struct_array = invoke_array_result(build_no_crs_raster());
+
+        assert_eq!(int32_value(&struct_array, SRID, 0), 0);
+    }
+
+    #[test]
+    fn rs_metadata_zero_band_raster_returns_zero_tile_dimensions() {
+        let struct_array = invoke_array_result(build_zero_band_raster());
+
+        assert_eq!(uint64_value(&struct_array, NUM_SAMPLE_DIMENSIONS, 0), 0);
+        assert_eq!(uint64_value(&struct_array, TILE_WIDTH, 0), 0);
+        assert_eq!(uint64_value(&struct_array, TILE_HEIGHT, 0), 0);
+    }
+
+    #[test]
+    fn rs_metadata_scalar_ignores_num_rows_for_shape() {
+        let (raster_array, block_x, block_y) = write_test_geotiff();
+        let scalar_raster = ScalarValue::Struct(Arc::new(raster_array.clone()));
+
+        let result = RsMetaData {}
+            .invoke_batch_from_args(
+                &[RASTER],
+                &[ColumnarValue::Scalar(scalar_raster)],
+                &SedonaType::Arrow(DataType::Null),
+                32,
+                None,
+            )
+            .expect("Should invoke successfully for scalar raster with larger num_rows");
+
+        let scalar_struct = match result {
+            ColumnarValue::Scalar(scalar) => assert_scalar_result(scalar),
+            other => panic!("Expected scalar result, got {other:?}"),
+        };
+
+        assert_eq!(scalar_struct.len(), 1);
+        assert_eq!(uint64_value(&scalar_struct, NUM_SAMPLE_DIMENSIONS, 0), 1);
+        assert_eq!(
+            uint64_value(&scalar_struct, TILE_WIDTH, 0),
+            block_x.max(1) as u64
+        );
+        assert_eq!(
+            uint64_value(&scalar_struct, TILE_HEIGHT, 0),
+            block_y.max(1) as u64
+        );
     }
 
     #[test]
@@ -263,10 +429,7 @@ mod tests {
         builder.append_null().unwrap();
         let raster_array = builder.finish().unwrap();
 
-        let udf: ScalarUDF = rs_metadata_udf().into();
-        let tester = ScalarUdfTester::new(udf, vec![RASTER]);
-        let result = tester.invoke_array(Arc::new(raster_array)).unwrap();
-        let struct_array = result.as_struct();
+        let struct_array = invoke_array_result(raster_array);
 
         for column in struct_array.columns() {
             assert!(column.is_null(0));
