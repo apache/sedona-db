@@ -2539,7 +2539,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2661,7 +2661,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3443,9 +3443,9 @@ dependencies = [
 
 [[package]]
 name = "i_float"
-version = "2.0.0"
+version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "36c8fc32799c6cde9c7604188e4ece27acf3ddcb2d40b038113e3f0bc525aac7"
+checksum = "519b2780a1187eeed09145e5d168863c87f0d704abe84084206ebd897f99c6dc"
 dependencies = [
  "libm",
 ]
@@ -3477,14 +3477,14 @@ dependencies = [
 
 [[package]]
 name = "i_overlay"
-version = "6.0.0"
+version = "7.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0f8ed01b5f7de7c2e5661d9ac807aacb33ad76f591f973d89b58e998f552c34"
+checksum = "fd4e3fcd31bcb1bfa09ea7863303f0197a0d60061b1f97e5438daa760aab888f"
 dependencies = [
- "i_float 2.0.0",
+ "i_float 3.0.0",
  "i_key_sort 0.10.3",
- "i_shape 2.0.0",
- "i_tree 0.18.0",
+ "i_shape 3.0.0",
+ "i_tree 0.19.0",
 ]
 
 [[package]]
@@ -3498,11 +3498,11 @@ dependencies = [
 
 [[package]]
 name = "i_shape"
-version = "2.0.0"
+version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d12d0501b145b966d1801f90e4fcc20b65b39617055d131efa8699068bb1de1"
+checksum = "90b2ee7bae072887c579a2f2fd2a7fa1c29cceecfae1998ef940061c5570afff"
 dependencies = [
- "i_float 2.0.0",
+ "i_float 3.0.0",
 ]
 
 [[package]]
@@ -3513,9 +3513,9 @@ checksum = "35e6d558e6d4c7b82bc51d9c771e7a927862a161a7d87bf2b0541450e0e20915"
 
 [[package]]
 name = "i_tree"
-version = "0.18.0"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4804bdc1dc124eb7e1aa9e144ecc04096bcf787a10a15fa44af682b51f0f6cce"
+checksum = "1e9d4a992a9fe83130f41ceacceac3bb116a4355dfc9c8d6ecea4f1e4b4c6caf"
 
 [[package]]
 name = "iana-time-zone"
@@ -3726,7 +3726,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5004,7 +5004,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5430,7 +5430,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5874,7 +5874,7 @@ dependencies = [
  "geo",
  "geo-traits",
  "geo-types",
- "i_overlay 6.0.0",
+ "i_overlay 7.0.0",
  "log",
  "num-traits",
  "pretty_env_logger",
@@ -6844,7 +6844,7 @@ dependencies = [
  "getrandom 0.4.1",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7497,7 +7497,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
