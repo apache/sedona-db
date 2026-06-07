@@ -1566,6 +1566,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#publishing-the-gpu-docker-image" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Publishing the GPU Docker image
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -2093,6 +2104,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#publishing-the-gpu-docker-image" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Publishing the GPU Docker image
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -2456,6 +2478,22 @@ an example, the frontmatter for <code>ST_Buffer()</code> is:</p>
 </ul>
 <p>The build system for function documentation is a work in progress, so be sure to ask
 if you run into problems or have any questions about the syntax!</p>
+<h2 id="publishing-the-gpu-docker-image">Publishing the GPU Docker image<a class="headerlink" href="#publishing-the-gpu-docker-image" title="Permanent link">¶</a></h2>
+<p>The GPU image built from <code>docker/sedonadb-gpu.dockerfile</code> is published to Docker Hub as
+<a href="https://hub.docker.com/r/apache/sedona/tags"><code>apache/sedona</code></a> under the <code>sedonadb-latest</code> tag.
+Publishing requires push access to the <code>apache</code> organization, so run <code>docker login</code> with an
+authorized account first. The image is multi-architecture (<code>linux/amd64</code> and <code>linux/arm64</code>), so
+you also need a Buildx builder that can target multiple platforms — create one once per machine
+with <code>docker buildx create --use</code>.</p>
+<p>To build and push the image, run the helper script from the repository root:</p>
+<div class="highlight"><pre><span></span><code>docker/build.sh<span class="w"> </span>release<span class="w"> </span>apache/sedona:sedonadb-latest
+</code></pre></div>
+<p>The <code>release</code> mode builds both CPU architectures and pushes the result straight to the registry. A
+final argument overrides the CUDA target (the default is <code>75;86;89</code>, a fat binary covering Turing,
+Ampere, and Ada Lovelace GPUs such as the T4, A10G, and L4). Because each CPU architecture compiles
+CUDA, Rust, and vcpkg dependencies for every CUDA target, this is best run on native <code>amd64</code> and
+<code>arm64</code> hardware (such as CI runners): building the non-native architecture locally falls back to
+QEMU emulation and is very slow.</p>
 
 
 
@@ -2476,7 +2514,7 @@ if you run into problems or have any questions about the syntax!</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"></path></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="June 2, 2026 22:04:54 UTC">June 2, 2026 22:04:54</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="June 7, 2026 05:21:13 UTC">June 7, 2026 05:21:13</span>
   </span>
 
     
