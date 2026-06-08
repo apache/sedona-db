@@ -23,6 +23,7 @@ use arrow_array::{
     Array, ArrayRef, BinaryViewArray, ListArray, StructArray,
 };
 use arrow_buffer::{Buffer, NullBuffer, OffsetBuffer, ScalarBuffer};
+use arrow_data::{ByteView, MAX_INLINE_VIEW_LEN};
 use arrow_schema::{ArrowError, DataType};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -448,11 +449,11 @@ impl RasterBuilder {
     /// pointer, so handing the same backing buffer for many bands attaches it
     /// once and points every view at it.
     ///
-    /// Bytes shorter than the 12-byte inline threshold are stored inline (a
-    /// tiny copy) instead, since the `BinaryViewArray` layout requires `len <=
-    /// 12` views to be inline and a block-referencing view of that size is
-    /// non-canonical (it fails array validation on roundtrip). Band data is
-    /// realistically always larger, so this is the degenerate path.
+    /// Bytes at or under the inline threshold ([`MAX_INLINE_VIEW_LEN`]) are
+    /// stored inline (a tiny copy) instead, since the `BinaryViewArray` layout
+    /// requires such views to be inline and a block-referencing view of that
+    /// size is non-canonical (it fails array validation on roundtrip). Band
+    /// data is realistically always larger, so this is the degenerate path.
     ///
     /// Counts as the one data value for the current band (see [`finish_band`]).
     ///
@@ -463,7 +464,7 @@ impl RasterBuilder {
         offset: u32,
         len: u32,
     ) -> Result<(), ArrowError> {
-        if len <= 12 {
+        if len <= MAX_INLINE_VIEW_LEN {
             self.band_data
                 .append_value(&buffer.as_slice()[offset as usize..(offset + len) as usize]);
             return Ok(());
@@ -483,8 +484,8 @@ impl RasterBuilder {
     /// Append the current band's data by copying row `row` of `src` through —
     /// zero-copy when the row's bytes are block-backed (shares the backing
     /// `Buffer` via [`append_band_data_buffer`]), with a small copy only for
-    /// inline views (≤ 12 bytes, which live in the view itself and have no
-    /// backing buffer).
+    /// inline views (≤ [`MAX_INLINE_VIEW_LEN`] bytes, which live in the view
+    /// itself and have no backing buffer).
     ///
     /// Counts as the one data value for the current band (see [`finish_band`]).
     ///
@@ -494,17 +495,18 @@ impl RasterBuilder {
         src: &BinaryViewArray,
         row: usize,
     ) -> Result<(), ArrowError> {
-        // BYTE_VIEW u128 layout: [len: u32][prefix: u32][buffer_index: u32][offset: u32].
-        // A `len <= 12` view stores its bytes inline (no backing buffer).
-        let view = src.views()[row];
-        let len = view as u32;
-        if len <= 12 {
+        let view = ByteView::from(src.views()[row]);
+        if view.length <= MAX_INLINE_VIEW_LEN {
+            // Inline views store their bytes in the view itself — no backing
+            // buffer to share, so copy.
             self.band_data.append_value(src.value(row));
             Ok(())
         } else {
-            let buffer_index = (view >> 64) as u32;
-            let offset = (view >> 96) as u32;
-            self.append_band_data_buffer(&src.data_buffers()[buffer_index as usize], offset, len)
+            self.append_band_data_buffer(
+                &src.data_buffers()[view.buffer_index as usize],
+                view.offset,
+                view.length,
+            )
         }
     }
 
