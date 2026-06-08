@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 
 
 if TYPE_CHECKING:
-    from sedonadb_expr._generated.geo_methods import GeoMethods
+    from sedonadb_expr import GeoMethods
 
 
 class Expr:
