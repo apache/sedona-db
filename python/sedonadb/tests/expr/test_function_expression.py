@@ -27,6 +27,10 @@ def test_scalar_st_function_returns_expr(con):
     assert isinstance(e, Expr)
     assert repr(e) == 'Expr(st_geomfromwkt(Utf8("POINT (0 1)")))'
 
+    # TODO: do this for other functions too
+    e = con.lit("POINT (0 1)").funcs.st_geomfromwkt()
+    assert repr(e) == 'Expr(st_geomfromwkt(Utf8("POINT (0 1)")))'
+
 
 def test_scalar_st_function_alias_returns_expr(con):
     st_geomfromtext = con.funcs.st_geomfromtext
@@ -108,3 +112,13 @@ def test_function_expression_composed(con):
         repr(e)
         == 'Expr(st_area(st_geomfromwkt(Utf8("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"))))'
     )
+
+
+def test_geo_functions_accessor(con):
+    # TODO:
+    pass
+
+
+def test_geo_methods_accessor(con):
+    # TODO: need to add this test
+    pass
