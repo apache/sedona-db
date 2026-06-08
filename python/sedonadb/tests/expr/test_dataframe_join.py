@@ -259,3 +259,19 @@ def test_join_key_missing_on_one_side_errors(con):
         left.join(right, on="k")
     with pytest.raises(KeyError, match=r"left: \['j'\].*right: \[\]"):
         left.join(right, on="j")
+
+
+def test_cross_join_basic(con):
+    left = con.create_data_frame(pd.DataFrame({"x": [1, 2]}))
+    right = con.create_data_frame(pd.DataFrame({"y": ["a", "b"]}))
+    out = left.cross_join(right).sort("x", "y").to_pandas()
+    pdt.assert_frame_equal(
+        out,
+        pd.DataFrame({"x": [1, 1, 2, 2], "y": ["a", "b", "a", "b"]}),
+    )
+
+
+def test_cross_join_non_dataframe_other_raises(con):
+    left = con.create_data_frame(pd.DataFrame({"x": [1]}))
+    with pytest.raises(TypeError, match=r"cross_join\(\) expects a DataFrame"):
+        left.cross_join({"y": 1})

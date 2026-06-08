@@ -28,7 +28,7 @@ use datafusion::logical_expr::SortExpr;
 use datafusion::prelude::{DataFrame, SessionContext};
 use datafusion_common::{Column, DataFusionError, ParamValues};
 use datafusion_execution::TaskContextProvider;
-use datafusion_expr::{ExplainFormat, ExplainOption, Expr, JoinType};
+use datafusion_expr::{ExplainFormat, ExplainOption, Expr, JoinType, LogicalPlanBuilder};
 use datafusion_ffi::table_provider::FFI_TableProvider;
 use futures::lock::Mutex;
 use futures::TryStreamExt;
@@ -254,6 +254,16 @@ impl InternalDataFrame {
         let group_exprs: Vec<Expr> = group_exprs.into_iter().map(|e| e.inner).collect();
         let agg_exprs: Vec<Expr> = agg_exprs.into_iter().map(|e| e.inner).collect();
         let inner = self.inner.clone().aggregate(group_exprs, agg_exprs)?;
+        Ok(InternalDataFrame::new(inner, self.runtime.clone()))
+    }
+
+    fn cross_join(&self, right: &InternalDataFrame) -> Result<InternalDataFrame, PySedonaError> {
+        let (state, plan) = self.inner.clone().into_parts();
+        let right_plan = right.inner.logical_plan().clone();
+        let new_plan = LogicalPlanBuilder::from(plan)
+            .cross_join(right_plan)?
+            .build()?;
+        let inner = DataFrame::new(state, new_plan);
         Ok(InternalDataFrame::new(inner, self.runtime.clone()))
     }
 
