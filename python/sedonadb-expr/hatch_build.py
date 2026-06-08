@@ -52,6 +52,22 @@ GEO_TYPES = {"geometry", "geography"}
 
 DOCS_BASE_URL = "https://sedona.apache.org/sedonadb/latest/reference/sql"
 
+
+def camel_to_snake(name: str) -> str:
+    """Convert CamelCase/PascalCase to snake_case.
+
+    Examples:
+        AsBinary -> as_binary
+        GeomFromWKB -> geom_from_wkb
+        AsEWKT -> as_ewkt
+        LineInterpolatePoint -> line_interpolate_point
+    """
+    # Insert underscore before uppercase letters that follow lowercase letters
+    # or before uppercase letters that are followed by lowercase letters
+    result = re.sub(r"(?<=[a-z])(?=[A-Z])", "_", name)
+    result = re.sub(r"(?<=[A-Z])(?=[A-Z][a-z])", "_", result)
+    return result.lower()
+
 LICENSE_HEADER = """\
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
@@ -122,6 +138,7 @@ class FunctionInfo:
         kernels: list[dict[str, Any]],
         is_geo_method: bool = False,
         kernel_info: KernelInfo | None = None,
+        sql_name: str | None = None,
     ):
         self.name = name
         self.title = title
@@ -129,6 +146,21 @@ class FunctionInfo:
         self.kernels = kernels
         self.is_geo_method = is_geo_method
         self.kernel_info = kernel_info
+        self.sql_name = sql_name or name  # e.g., "ST_AsBinary"
+
+    @property
+    def method_name(self) -> str:
+        """Return the snake_case method name derived from the SQL function name.
+
+        e.g., ST_AsBinary -> as_binary, ST_GeomFromWKB -> geom_from_wkb
+        """
+        sql = self.sql_name
+        # Strip prefix (ST_, RS_, S2_, SD_)
+        for prefix in ("ST_", "RS_", "S2_", "SD_"):
+            if sql.upper().startswith(prefix):
+                sql = sql[len(prefix) :]
+                break
+        return camel_to_snake(sql)
 
 
 def extract_frontmatter(file_path: Path) -> dict[str, Any]:
@@ -355,6 +387,8 @@ def parse_qmd_file(qmd_path: Path) -> FunctionInfo | None:
                 is_geo_method = True
                 break
 
+    # Get properly-cased SQL function name from title field
+    sql_name = frontmatter.get("title", fn_name)
     title = frontmatter.get("description", frontmatter.get("title", fn_name))
     description = extract_description_section(qmd_path) or ""
 
@@ -367,6 +401,7 @@ def parse_qmd_file(qmd_path: Path) -> FunctionInfo | None:
         kernels=kernels,
         is_geo_method=is_geo_method,
         kernel_info=kernel_info,
+        sql_name=sql_name,
     )
 
 
@@ -492,10 +527,8 @@ def generate_geo_methods_py(functions: list[FunctionInfo]) -> str:
     ]
 
     for func in sorted(geo_funcs, key=lambda f: f.name):
-        # Method name: strip st_ prefix
-        method_name = func.name
-        if method_name.startswith("st_"):
-            method_name = method_name[3:]
+        # Method name: derived from SQL function name (e.g., ST_AsBinary -> as_binary)
+        method_name = func.method_name
 
         kernel_info = func.kernel_info
         if not kernel_info:
@@ -575,10 +608,8 @@ def generate_geo_functions_py(functions: list[FunctionInfo]) -> str:
     ]
 
     for func in sorted(geo_funcs, key=lambda f: f.name):
-        # Property name: strip st_ prefix
-        prop_name = func.name
-        if prop_name.startswith("st_"):
-            prop_name = prop_name[3:]
+        # Property name: derived from SQL function name (e.g., ST_AsBinary -> as_binary)
+        prop_name = func.method_name
 
         docstring = generate_function_docstring(func)
 
