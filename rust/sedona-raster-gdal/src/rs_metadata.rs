@@ -17,7 +17,7 @@
 
 use std::sync::Arc;
 
-use arrow_array::builder::{Float64Builder, Int32Builder, UInt64Builder};
+use arrow_array::builder::{Float64Builder, Int32Builder, UInt32Builder, UInt64Builder};
 use arrow_array::StructArray;
 use arrow_schema::{DataType, Field, Fields};
 use datafusion_common::config::ConfigOptions;
@@ -51,7 +51,7 @@ fn metadata_struct_fields() -> Fields {
         Field::new("skewX", DataType::Float64, true),
         Field::new("skewY", DataType::Float64, true),
         Field::new("srid", DataType::Int32, true),
-        Field::new("numSampleDimensions", DataType::UInt64, true),
+        Field::new("numSampleDimensions", DataType::UInt32, true),
         Field::new("tileWidth", DataType::UInt64, true),
         Field::new("tileHeight", DataType::UInt64, true),
     ])
@@ -98,7 +98,7 @@ impl SedonaScalarKernel for RsMetaData {
         let mut skew_x_builder = Float64Builder::with_capacity(capacity);
         let mut skew_y_builder = Float64Builder::with_capacity(capacity);
         let mut srid_builder = Int32Builder::with_capacity(capacity);
-        let mut num_bands_builder = UInt64Builder::with_capacity(capacity);
+        let mut num_bands_builder = UInt32Builder::with_capacity(capacity);
         let mut tile_width_builder = UInt64Builder::with_capacity(capacity);
         let mut tile_height_builder = UInt64Builder::with_capacity(capacity);
 
@@ -125,7 +125,7 @@ impl SedonaScalarKernel for RsMetaData {
                     }
                     Some(raster) => {
                         let metadata = raster.metadata();
-                        let num_bands = raster.bands().len() as u64;
+                        let num_bands = raster.bands().len() as u32;
 
                         upper_left_x_builder.append_value(metadata.upper_left_x());
                         upper_left_y_builder.append_value(metadata.upper_left_y());
@@ -161,8 +161,8 @@ impl SedonaScalarKernel for RsMetaData {
                                 .rasterband(1)
                                 .map_err(|e| exec_datafusion_err!("Failed to get band 1: {e}"))?;
                             let (block_x, block_y) = band1.block_size();
-                            tile_width_builder.append_value(block_x.max(1) as u64);
-                            tile_height_builder.append_value(block_y.max(1) as u64);
+                            tile_width_builder.append_value(block_x as u64);
+                            tile_height_builder.append_value(block_y as u64);
                         }
                     }
                 }
@@ -197,7 +197,8 @@ impl SedonaScalarKernel for RsMetaData {
 mod tests {
     use super::*;
     use arrow_array::{
-        cast::AsArray, types::Float64Type, types::Int32Type, types::UInt64Type, Array,
+        cast::AsArray, types::Float64Type, types::Int32Type, types::UInt32Type, types::UInt64Type,
+        Array,
     };
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
@@ -322,6 +323,13 @@ mod tests {
             .value(row)
     }
 
+    fn uint32_value(struct_array: &StructArray, column: usize, row: usize) -> u32 {
+        struct_array
+            .column(column)
+            .as_primitive::<UInt32Type>()
+            .value(row)
+    }
+
     fn int32_value(struct_array: &StructArray, column: usize, row: usize) -> i32 {
         struct_array
             .column(column)
@@ -340,6 +348,12 @@ mod tests {
     fn rs_metadata_udf_docs() {
         let udf: ScalarUDF = rs_metadata_udf().into();
         assert_eq!(udf.name(), "rs_metadata");
+        tester_assert_return_type_is_struct_with_uint32_num_bands(udf);
+    }
+
+    fn tester_assert_return_type_is_struct_with_uint32_num_bands(udf: ScalarUDF) {
+        let tester = ScalarUdfTester::new(udf, vec![RASTER]);
+        tester.assert_return_type(DataType::Struct(metadata_struct_fields()));
     }
 
     #[test]
@@ -357,22 +371,16 @@ mod tests {
         assert_eq!(float64_value(&struct_array, SKEW_X, 0), 0.0);
         assert_eq!(float64_value(&struct_array, SKEW_Y, 0), 0.0);
         assert_eq!(int32_value(&struct_array, SRID, 0), 4326);
-        assert_eq!(uint64_value(&struct_array, NUM_SAMPLE_DIMENSIONS, 0), 1);
-        assert_eq!(
-            uint64_value(&struct_array, TILE_WIDTH, 0),
-            block_x.max(1) as u64
-        );
-        assert_eq!(
-            uint64_value(&struct_array, TILE_HEIGHT, 0),
-            block_y.max(1) as u64
-        );
+        assert_eq!(uint32_value(&struct_array, NUM_SAMPLE_DIMENSIONS, 0), 1);
+        assert_eq!(uint64_value(&struct_array, TILE_WIDTH, 0), block_x as u64);
+        assert_eq!(uint64_value(&struct_array, TILE_HEIGHT, 0), block_y as u64);
     }
 
     #[test]
     fn rs_metadata_reports_band_count_for_multi_band_raster() {
         let struct_array = invoke_array_result(generate_multi_band_raster());
 
-        assert_eq!(uint64_value(&struct_array, NUM_SAMPLE_DIMENSIONS, 0), 3);
+        assert_eq!(uint32_value(&struct_array, NUM_SAMPLE_DIMENSIONS, 0), 3);
     }
 
     #[test]
@@ -386,7 +394,7 @@ mod tests {
     fn rs_metadata_zero_band_raster_returns_zero_tile_dimensions() {
         let struct_array = invoke_array_result(build_zero_band_raster());
 
-        assert_eq!(uint64_value(&struct_array, NUM_SAMPLE_DIMENSIONS, 0), 0);
+        assert_eq!(uint32_value(&struct_array, NUM_SAMPLE_DIMENSIONS, 0), 0);
         assert_eq!(uint64_value(&struct_array, TILE_WIDTH, 0), 0);
         assert_eq!(uint64_value(&struct_array, TILE_HEIGHT, 0), 0);
     }
@@ -412,15 +420,9 @@ mod tests {
         };
 
         assert_eq!(scalar_struct.len(), 1);
-        assert_eq!(uint64_value(&scalar_struct, NUM_SAMPLE_DIMENSIONS, 0), 1);
-        assert_eq!(
-            uint64_value(&scalar_struct, TILE_WIDTH, 0),
-            block_x.max(1) as u64
-        );
-        assert_eq!(
-            uint64_value(&scalar_struct, TILE_HEIGHT, 0),
-            block_y.max(1) as u64
-        );
+        assert_eq!(uint32_value(&scalar_struct, NUM_SAMPLE_DIMENSIONS, 0), 1);
+        assert_eq!(uint64_value(&scalar_struct, TILE_WIDTH, 0), block_x as u64);
+        assert_eq!(uint64_value(&scalar_struct, TILE_HEIGHT, 0), block_y as u64);
     }
 
     #[test]
