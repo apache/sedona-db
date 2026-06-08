@@ -243,8 +243,7 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
         // view); GDAL holds the pointer, so `raster` must outlive the dataset.
         let band_bytes = band
             .nd_buffer()
-            .and_then(|ndb| ndb.as_contiguous())
-            .map_err(|e| arrow_datafusion_err!(e))?;
+            .and_then(|ndb| ndb.as_contiguous())?;
         let data_ptr: *const u8 = band_bytes.as_ptr();
         unsafe {
             mem_ds_builder = mem_ds_builder.add_band(gdal_type, data_ptr as *mut u8);

@@ -955,10 +955,6 @@ mod tests {
         }
     }
 
-    // `is_spatial_2d` is a shape/naming predicate — it inspects only
-    // `dim_names`, never the view. View/byte-layout concerns are covered by
-    // the `NdBuffer::is_contiguous` tests below.
-
     #[test]
     fn is_spatial_2d_yx_is_true() {
         let b = band(&["y", "x"], &[4, 5], &[ve(0, 0, 1, 4), ve(1, 0, 1, 5)]);

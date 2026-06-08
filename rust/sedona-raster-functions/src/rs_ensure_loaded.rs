@@ -359,13 +359,13 @@ where
                     // boundary rejects non-identity views — but guard it loudly
                     // so that when views land this surfaces as the internal gap
                     // it is, not a confusing downstream error. Fixed alongside
-                    // the zero-copy view-preserving passthrough
-                    // (apache/sedona-db#894 + #897).
+                    // https://github.com/apache/sedona-db/pull/894
+                    // https://github.com/apache/sedona-db/pull/897
                     if !view_is_identity(&view_owned, &source_shape) {
                         return sedona_internal_err!(
                             "RS_EnsureLoaded: InDb band ({raster_idx},{band_idx}) has a \
                              non-identity view; view-preserving passthrough is not \
-                             implemented yet (apache/sedona-db#897)"
+                             implemented yet"
                         );
                     }
                     let bytes = band
