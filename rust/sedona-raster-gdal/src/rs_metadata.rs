@@ -19,6 +19,7 @@ use std::sync::Arc;
 
 use arrow_array::builder::{Float64Builder, Int32Builder, UInt32Builder, UInt64Builder};
 use arrow_array::StructArray;
+use arrow_buffer::NullBuffer;
 use arrow_schema::{DataType, Field, Fields};
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::error::Result;
@@ -101,6 +102,7 @@ impl SedonaScalarKernel for RsMetaData {
         let mut num_bands_builder = UInt32Builder::with_capacity(capacity);
         let mut tile_width_builder = UInt64Builder::with_capacity(capacity);
         let mut tile_height_builder = UInt64Builder::with_capacity(capacity);
+        let mut struct_validity = Vec::with_capacity(capacity);
 
         with_gdal(|gdal| {
             configure_thread_local_options(gdal, config_options)?;
@@ -110,6 +112,7 @@ impl SedonaScalarKernel for RsMetaData {
             executor.execute_raster_void(|_i, raster_opt| {
                 match raster_opt {
                     None => {
+                        struct_validity.push(false);
                         upper_left_x_builder.append_null();
                         upper_left_y_builder.append_null();
                         grid_width_builder.append_null();
@@ -124,6 +127,7 @@ impl SedonaScalarKernel for RsMetaData {
                         tile_height_builder.append_null();
                     }
                     Some(raster) => {
+                        struct_validity.push(true);
                         let metadata = raster.metadata();
                         let num_bands = raster.bands().len() as u32;
 
@@ -139,9 +143,12 @@ impl SedonaScalarKernel for RsMetaData {
                         let srid = match raster.crs() {
                             None => 0i32,
                             Some(crs_str) => match deserialize_crs(crs_str) {
-                                Ok(Some(crs_ref)) => {
-                                    crs_ref.srid().ok().flatten().map(|s| s as i32).unwrap_or(0)
-                                }
+                                Ok(Some(crs_ref)) => crs_ref
+                                    .srid()
+                                    .ok()
+                                    .flatten()
+                                    .and_then(|s| i32::try_from(s).ok())
+                                    .unwrap_or(0),
                                 _ => 0i32,
                             },
                         };
@@ -186,7 +193,7 @@ impl SedonaScalarKernel for RsMetaData {
                 Arc::new(tile_width_builder.finish()),
                 Arc::new(tile_height_builder.finish()),
             ],
-            None,
+            Some(NullBuffer::from_iter(struct_validity)),
         );
 
         executor.finish(Arc::new(struct_array))
@@ -432,6 +439,8 @@ mod tests {
         let raster_array = builder.finish().unwrap();
 
         let struct_array = invoke_array_result(raster_array);
+
+        assert!(struct_array.is_null(0));
 
         for column in struct_array.columns() {
             assert!(column.is_null(0));

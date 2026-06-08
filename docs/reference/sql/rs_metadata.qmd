@@ -49,5 +49,5 @@ SELECT RS_MetaData(
 SELECT meta."gridWidth", meta."gridHeight"
 FROM (
   SELECT RS_MetaData(RS_FromPath('../../../submodules/sedona-testing/data/raster/test4.tiff')) AS meta
-);
+) q;
 ```
