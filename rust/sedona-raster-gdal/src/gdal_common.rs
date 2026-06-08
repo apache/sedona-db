@@ -241,9 +241,7 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
         let gdal_type = band_data_type_to_gdal(&band_type);
         // `as_contiguous()` borrows the bytes zero-copy (erroring on a strided
         // view); GDAL holds the pointer, so `raster` must outlive the dataset.
-        let band_bytes = band
-            .nd_buffer()
-            .and_then(|ndb| ndb.as_contiguous())?;
+        let band_bytes = band.nd_buffer().and_then(|ndb| ndb.as_contiguous())?;
         let data_ptr: *const u8 = band_bytes.as_ptr();
         unsafe {
             mem_ds_builder = mem_ds_builder.add_band(gdal_type, data_ptr as *mut u8);
