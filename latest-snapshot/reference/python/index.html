@@ -2804,6 +2804,7 @@ in <code>ST_SetCRS()</code>, <code>ST_Point()</code>, or <code>ST_GeomFromWKT()<
     <span class="n">spec</span><span class="p">:</span> <span class="n"><span title="sedonadb.datasource.ExternalFormatSpec">ExternalFormatSpec</span></span><span class="p">,</span>
     <span class="n">table_paths</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Union" href="https://docs.python.org/3/library/typing.html#typing.Union">Union</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span><span class="p">,</span> <span class="n"><a class="autorefs autorefs-external" title="pathlib.Path" href="https://docs.python.org/3/library/pathlib.html#pathlib.Path">Path</a></span><span class="p">,</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Iterable" href="https://docs.python.org/3/library/typing.html#typing.Iterable">Iterable</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span><span class="p">]],</span>
     <span class="n">check_extension</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/functions.html#bool">bool</a></span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">partitioning</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Union" href="https://docs.python.org/3/library/typing.html#typing.Union">Union</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span><span class="p">,</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Iterable" href="https://docs.python.org/3/library/typing.html#typing.Iterable">Iterable</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span><span class="p">],</span> <span class="kc">None</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></span>
 </code></pre></div>
 
@@ -2850,6 +2851,21 @@ the underlying source.</p>
 doesn't end in the spec's <code>extension</code>. Defaults to <code>False</code>.</p>
           </div>
         </li>
+        <li class="doc-section-item field-body">
+            <b><code>partitioning</code></b>
+              (<code><a class="autorefs autorefs-external" title="typing.Union" href="https://docs.python.org/3/library/typing.html#typing.Union">Union</a>[<a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a>, <a class="autorefs autorefs-external" title="typing.Iterable" href="https://docs.python.org/3/library/typing.html#typing.Iterable">Iterable</a>[<a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a>], None]</code>, default:
+                  <code>None</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>Optional list of column names for hive-style partitioning. When reading
+from a directory with paths like <code>/col=value/file.ext</code>, partition
+column names are auto-discovered by default (<code>partitioning=None</code>).
+Explicitly specify column names (e.g., <code>["col"]</code>) to override
+auto-discovery, or pass an empty list <code>[]</code> to disable partitioning
+entirely.</p>
+          </div>
+        </li>
     </ul>
 
 
@@ -2880,6 +2896,7 @@ doesn't end in the spec's <code>extension</code>. Defaults to <code>False</code>
     <span class="n">options</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Optional" href="https://docs.python.org/3/library/typing.html#typing.Optional">Optional</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" title="typing.Dict" href="https://docs.python.org/3/library/typing.html#typing.Dict">Dict</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span><span class="p">,</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Any" href="https://docs.python.org/3/library/typing.html#typing.Any">Any</a></span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">geometry_columns</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Optional" href="https://docs.python.org/3/library/typing.html#typing.Optional">Optional</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" title="typing.Union" href="https://docs.python.org/3/library/typing.html#typing.Union">Union</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span><span class="p">,</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Dict" href="https://docs.python.org/3/library/typing.html#typing.Dict">Dict</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span><span class="p">,</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Any" href="https://docs.python.org/3/library/typing.html#typing.Any">Any</a></span><span class="p">]]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">validate</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/functions.html#bool">bool</a></span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">partitioning</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Union" href="https://docs.python.org/3/library/typing.html#typing.Union">Union</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span><span class="p">,</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Iterable" href="https://docs.python.org/3/library/typing.html#typing.Iterable">Iterable</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span><span class="p">],</span> <span class="kc">None</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></span>
 </code></pre></div>
 
@@ -2972,6 +2989,21 @@ ignored. If validation fails, execution stops with an error.</p>
 columns.</p>
           </div>
         </li>
+        <li class="doc-section-item field-body">
+            <b><code>partitioning</code></b>
+              (<code><a class="autorefs autorefs-external" title="typing.Union" href="https://docs.python.org/3/library/typing.html#typing.Union">Union</a>[<a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a>, <a class="autorefs autorefs-external" title="typing.Iterable" href="https://docs.python.org/3/library/typing.html#typing.Iterable">Iterable</a>[<a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a>], None]</code>, default:
+                  <code>None</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>Optional list of column names for hive-style partitioning. When reading
+from a directory with paths like <code>/col=value/file.parquet</code>, partition
+column names are auto-discovered by default (<code>partitioning=None</code>).
+Explicitly specify column names (e.g., <code>["col"]</code>) to override
+auto-discovery, or pass an empty list <code>[]</code> to disable partitioning
+entirely.</p>
+          </div>
+        </li>
     </ul>
         <p>Examples:</p>
 <div class="codehilite"><pre><span></span><code>&gt;&gt;&gt; sd = sedona.db.connect()
@@ -2997,6 +3029,7 @@ columns.</p>
     <span class="n">table_paths</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Union" href="https://docs.python.org/3/library/typing.html#typing.Union">Union</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span><span class="p">,</span> <span class="n"><a class="autorefs autorefs-external" title="pathlib.Path" href="https://docs.python.org/3/library/pathlib.html#pathlib.Path">Path</a></span><span class="p">,</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Iterable" href="https://docs.python.org/3/library/typing.html#typing.Iterable">Iterable</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span><span class="p">]],</span>
     <span class="n">options</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Optional" href="https://docs.python.org/3/library/typing.html#typing.Optional">Optional</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" title="typing.Dict" href="https://docs.python.org/3/library/typing.html#typing.Dict">Dict</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span><span class="p">,</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Any" href="https://docs.python.org/3/library/typing.html#typing.Any">Any</a></span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">extension</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span> <span class="o">=</span> <span class="s2">""</span><span class="p">,</span>
+    <span class="n">partitioning</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Union" href="https://docs.python.org/3/library/typing.html#typing.Union">Union</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span><span class="p">,</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Iterable" href="https://docs.python.org/3/library/typing.html#typing.Iterable">Iterable</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span><span class="p">],</span> <span class="kc">None</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></span>
 </code></pre></div>
 
@@ -3053,6 +3086,21 @@ a GDB stored inside a .zip file).</p>
             <p>An optional file extension (e.g., <code>"fgb"</code>) used when
 <code>table_paths</code> specifies one or more directories or a glob
 that does not enforce a file extension.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>partitioning</code></b>
+              (<code><a class="autorefs autorefs-external" title="typing.Union" href="https://docs.python.org/3/library/typing.html#typing.Union">Union</a>[<a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a>, <a class="autorefs autorefs-external" title="typing.Iterable" href="https://docs.python.org/3/library/typing.html#typing.Iterable">Iterable</a>[<a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a>], None]</code>, default:
+                  <code>None</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>Optional list of column names for hive-style partitioning. When reading
+from a directory with paths like <code>/col=value/file.fgb</code>, partition
+column names are auto-discovered by default (<code>partitioning=None</code>).
+Explicitly specify column names (e.g., <code>["col"]</code>) to override
+auto-discovery, or pass an empty list <code>[]</code> to disable partitioning
+entirely.</p>
           </div>
         </li>
     </ul>
@@ -4436,6 +4484,109 @@ At least one is required.</p>
 ╞══════╡
 │ one  │
 └──────┘
+</code></pre></div>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="sedonadb.dataframe.DataFrame.join" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">join</span>
+
+
+<a href="#sedonadb.dataframe.DataFrame.join" class="headerlink" title="Permanent link">¶</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">join</span><span class="p">(</span>
+    <span class="n">other</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></span><span class="p">,</span>
+    <span class="n">on</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Union" href="https://docs.python.org/3/library/typing.html#typing.Union">Union</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span><span class="p">,</span> <span class="n"><a class="autorefs autorefs-external" title="typing.List" href="https://docs.python.org/3/library/typing.html#typing.List">List</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span><span class="p">],</span> <span class="n"><span title="sedonadb.expr.Expr">Expr</span></span><span class="p">,</span> <span class="n"><a class="autorefs autorefs-external" title="typing.List" href="https://docs.python.org/3/library/typing.html#typing.List">List</a></span><span class="p">[</span><span class="n"><span title="sedonadb.expr.Expr">Expr</span></span><span class="p">]],</span>
+    <span class="n">how</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Literal" href="https://docs.python.org/3/library/typing.html#typing.Literal">Literal</a></span><span class="p">[</span>
+        <span class="s2">"inner"</span><span class="p">,</span>
+        <span class="s2">"left"</span><span class="p">,</span>
+        <span class="s2">"right"</span><span class="p">,</span>
+        <span class="s2">"outer"</span><span class="p">,</span>
+        <span class="s2">"full"</span><span class="p">,</span>
+        <span class="s2">"left_semi"</span><span class="p">,</span>
+        <span class="s2">"semi"</span><span class="p">,</span>
+        <span class="s2">"left_anti"</span><span class="p">,</span>
+        <span class="s2">"anti"</span><span class="p">,</span>
+        <span class="s2">"right_semi"</span><span class="p">,</span>
+        <span class="s2">"right_anti"</span><span class="p">,</span>
+    <span class="p">]</span> <span class="o">=</span> <span class="s2">"inner"</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Join two DataFrames.</p>
+<p><code>on</code> accepts either common column names or arbitrary boolean
+predicates:</p>
+<ul>
+<li><strong>Column names</strong> (<code>str</code> or <code>list[str]</code>): the named column(s)
+  must exist on both sides. Result has a single copy of each
+  join key — matching pandas / Polars / PySpark output shape.</li>
+<li><strong>Predicate expressions</strong> (<code>Expr</code> or <code>list[Expr]</code>): each Expr
+  is a boolean predicate combining columns from both sides
+  (e.g. <code>left.k == right.k</code>, or <code>f.st_intersects(left.g, right.g)</code>).
+  Result keeps both sides' columns verbatim — disambiguate
+  with <code>df.alias(...)</code> on either side.</li>
+</ul>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+            <b><code>other</code></b>
+              (<code><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></code>)
+          –
+          <div class="doc-md-description">
+            <p>The right-hand DataFrame to join against.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>on</code></b>
+              (<code><a class="autorefs autorefs-external" title="typing.Union" href="https://docs.python.org/3/library/typing.html#typing.Union">Union</a>[<a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a>, <a class="autorefs autorefs-external" title="typing.List" href="https://docs.python.org/3/library/typing.html#typing.List">List</a>[<a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a>], <span title="sedonadb.expr.Expr">Expr</span>, <a class="autorefs autorefs-external" title="typing.List" href="https://docs.python.org/3/library/typing.html#typing.List">List</a>[<span title="sedonadb.expr.Expr">Expr</span>]]</code>)
+          –
+          <div class="doc-md-description">
+            <p>Join key(s). A column name (<code>str</code>), a list of column
+names, a single boolean <code>Expr</code>, or a list of boolean
+<code>Expr</code>s combined with logical AND.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>how</code></b>
+              (<code><a class="autorefs autorefs-external" title="typing.Literal" href="https://docs.python.org/3/library/typing.html#typing.Literal">Literal</a>['inner', 'left', 'right', 'outer', 'full', 'left_semi', 'semi', 'left_anti', 'anti', 'right_semi', 'right_anti']</code>, default:
+                  <code>'inner'</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>Join type. Canonical: <code>"inner"</code> (default), <code>"left"</code>,
+<code>"right"</code>, <code>"outer"</code>, <code>"left_semi"</code>, <code>"left_anti"</code>,
+<code>"right_semi"</code>, <code>"right_anti"</code>. PySpark aliases also
+accepted: <code>"full"</code> (= outer), <code>"semi"</code> (= left_semi),
+<code>"anti"</code> (= left_anti).</p>
+          </div>
+        </li>
+    </ul>
+        <p>Examples:</p>
+<div class="codehilite"><pre><span></span><code>&gt;&gt;&gt; sd = sedona.db.connect()
+&gt;&gt;&gt; left = sd.sql(
+<span class="k">...</span>     "SELECT * FROM (VALUES (1, 'a'), (2, 'b')) AS t(k, v)"
+<span class="k">...</span> )
+&gt;&gt;&gt; right = sd.sql(
+<span class="k">...</span>     "SELECT * FROM (VALUES (1, 'x'), (2, 'y'), (3, 'z')) AS t(k, w)"
+<span class="k">...</span> )
+&gt;&gt;&gt; left.join(right, on="k").sort("k").show()
+┌───────┬──────┬──────┐
+│   k   ┆   v  ┆   w  │
+│ int64 ┆ utf8 ┆ utf8 │
+╞═══════╪══════╪══════╡
+│     1 ┆ a    ┆ x    │
+├╌╌╌╌╌╌╌┼╌╌╌╌╌╌┼╌╌╌╌╌╌┤
+│     2 ┆ b    ┆ y    │
+└───────┴──────┴──────┘
 </code></pre></div>
 
 
