@@ -34,7 +34,6 @@ result_large_err = "allow"
 arrow-schema = { workspace = true }
 arrow-array = { workspace = true }
 arrow-buffer = { workspace = true }
-arrow-data = { workspace = true }
 async-trait = { workspace = true }
 datafusion-common = { workspace = true }
 sedona-common = { workspace = true }
