@@ -23,7 +23,6 @@ use arrow_array::{
     Array, ArrayRef, BinaryViewArray, ListArray, StructArray,
 };
 use arrow_buffer::{Buffer, NullBuffer, OffsetBuffer, ScalarBuffer};
-use arrow_data::{ByteView, MAX_INLINE_VIEW_LEN};
 use arrow_schema::{ArrowError, DataType};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -31,6 +30,11 @@ use std::sync::Arc;
 use sedona_schema::raster::{BandDataType, RasterSchema};
 
 use crate::traits::{BandMetadata, MetadataRef};
+
+/// Maximum byte length of an inline `BinaryViewArray` view. Views this short
+/// store their bytes in the 16-byte view itself; longer views reference a data
+/// block by `(buffer_index, offset)`. Fixed by the Arrow columnar format spec.
+const MAX_INLINE_VIEW_LEN: u32 = 12;
 
 /// Builder for constructing raster arrays with zero-copy band data writing
 ///
@@ -495,18 +499,23 @@ impl RasterBuilder {
         src: &BinaryViewArray,
         row: usize,
     ) -> Result<(), ArrowError> {
-        let view = ByteView::from(src.views()[row]);
-        if view.length <= MAX_INLINE_VIEW_LEN {
-            // Inline views store their bytes in the view itself — no backing
-            // buffer to share, so copy.
+        // Arrow BYTE_VIEW layout (u128, little-endian fields), fixed by the
+        // columnar format spec:
+        //   bits   0..32  length
+        //   bits  32..64  prefix
+        //   bits  64..96  buffer_index
+        //   bits  96..128 offset
+        // A view of `length <= MAX_INLINE_VIEW_LEN` stores its bytes inline and
+        // has no backing buffer to share.
+        let view = src.views()[row];
+        let len = view as u32;
+        if len <= MAX_INLINE_VIEW_LEN {
             self.band_data.append_value(src.value(row));
             Ok(())
         } else {
-            self.append_band_data_buffer(
-                &src.data_buffers()[view.buffer_index as usize],
-                view.offset,
-                view.length,
-            )
+            let buffer_index = (view >> 64) as u32;
+            let offset = (view >> 96) as u32;
+            self.append_band_data_buffer(&src.data_buffers()[buffer_index as usize], offset, len)
         }
     }
 
