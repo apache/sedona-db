@@ -133,14 +133,14 @@ fn lookup_loader(
 /// axis maps to the same source axis, full extent, unit step). An empty view
 /// is treated as identity. Used to detect whether a loader returned an
 /// already-resolved (identity) layout we can build directly.
-fn view_is_identity(view: &[ViewEntry], source_shape: &[u64]) -> bool {
+fn view_is_identity(view: &[ViewEntry], source_shape: &[i64]) -> bool {
     view.is_empty()
         || (view.len() == source_shape.len()
             && view.iter().enumerate().all(|(i, v)| {
                 v.source_axis == i as i64
                     && v.start == 0
                     && v.step == 1
-                    && v.steps == source_shape[i] as i64
+                    && v.steps == source_shape[i]
             }))
 }
 
@@ -333,7 +333,7 @@ where
                 })?;
                 let dim_names_owned: Vec<String> =
                     band.dim_names().iter().map(|s| s.to_string()).collect();
-                let source_shape: Vec<u64> = band.raw_source_shape().to_vec();
+                let source_shape: Vec<i64> = band.raw_source_shape().to_vec();
                 // Passed to the loader so it can (eventually) prune I/O; today
                 // every loader ignores it and returns the full source.
                 let view_owned: Vec<ViewEntry> = band.view().to_vec();
@@ -446,16 +446,16 @@ where
                 // surfaces here, not as garbage bytes downstream.
                 let expected_bytes = source_shape
                     .iter()
-                    .try_fold(1u64, |acc, &d| acc.checked_mul(d))
-                    .and_then(|elems| elems.checked_mul(data_type.byte_size() as u64))
+                    .try_fold(1i64, |acc, &d| acc.checked_mul(d))
+                    .and_then(|elems| elems.checked_mul(data_type.byte_size() as i64))
                     .ok_or_else(|| {
                         sedona_internal_datafusion_err!(
                             "RS_EnsureLoaded: band ({raster_idx},{band_idx}) byte count \
-                             overflows u64"
+                             overflows i64"
                         )
                     })?;
                 let got = result.bytes.len();
-                if got as u64 != expected_bytes {
+                if got as i64 != expected_bytes {
                     return sedona_internal_err!(
                         "RS_EnsureLoaded: band ({raster_idx},{band_idx}) expected \
                          {expected_bytes} bytes but loader returned {got}"
@@ -506,7 +506,7 @@ mod tests {
     /// Records load requests and returns a deterministic byte pattern.
     #[derive(Debug, Default)]
     struct RecordingLoader {
-        seen: Mutex<Vec<(String, Vec<u64>, BandDataType)>>,
+        seen: Mutex<Vec<(String, Vec<i64>, BandDataType)>>,
     }
 
     #[async_trait]
@@ -526,7 +526,7 @@ mod tests {
                 req.source_shape.to_vec(),
                 req.data_type,
             ));
-            let elements: u64 = req.source_shape.iter().copied().product();
+            let elements: i64 = req.source_shape.iter().copied().product();
             let len = elements as usize * req.data_type.byte_size();
             // Fill with a recognisable pattern: byte i = (i % 251) as u8.
             let bytes: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
@@ -536,12 +536,12 @@ mod tests {
 
     /// Build a 1-row raster with one OutDb band ready for the loader to
     /// materialise.
-    fn build_outdb_input(uri: &str, format: &str, source_shape: &[u64]) -> StructArray {
+    fn build_outdb_input(uri: &str, format: &str, source_shape: &[i64]) -> StructArray {
         let mut b = RasterBuilder::new(1);
         b.start_raster_nd(
             &[0.0, 1.0, 0.0, 0.0, 0.0, -1.0],
             &["y", "x"],
-            &source_shape.iter().map(|&v| v as i64).collect::<Vec<_>>(),
+            source_shape,
             None,
         )
         .unwrap();
@@ -564,12 +564,12 @@ mod tests {
 
     /// Build a 1-row raster with one InDb band — bytes are inline,
     /// `outdb_uri`/`outdb_format` are null.
-    fn build_indb_input(source_shape: &[u64], data: &[u8]) -> StructArray {
+    fn build_indb_input(source_shape: &[i64], data: &[u8]) -> StructArray {
         let mut b = RasterBuilder::new(1);
         b.start_raster_nd(
             &[0.0, 1.0, 0.0, 0.0, 0.0, -1.0],
             &["y", "x"],
-            &source_shape.iter().map(|&v| v as i64).collect::<Vec<_>>(),
+            source_shape,
             None,
         )
         .unwrap();
@@ -874,7 +874,7 @@ mod tests {
                 &self,
                 req: &RasterLoadRequest<'_>,
             ) -> Result<RasterLoadResult, arrow_schema::ArrowError> {
-                let elements: u64 = req.source_shape.iter().product();
+                let elements: i64 = req.source_shape.iter().product();
                 let len = elements as usize * req.data_type.byte_size();
                 Ok(RasterLoadResult {
                     bytes: Buffer::from_vec(vec![0u8; len]),

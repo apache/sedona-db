@@ -54,7 +54,7 @@ pub fn is_spatial_dim_pair(y_like: &str, x_like: &str) -> bool {
 #[derive(Debug)]
 pub struct NdBuffer<'a> {
     pub buffer: &'a [u8],
-    pub shape: Vec<u64>,
+    pub shape: Vec<i64>,
     pub strides: Vec<i64>,
     pub offset: u64,
     pub data_type: BandDataType,
@@ -80,7 +80,7 @@ impl<'a> NdBuffer<'a> {
             if stride != expected {
                 return false;
             }
-            expected = expected.saturating_mul(dim as i64);
+            expected = expected.saturating_mul(dim);
         }
         true
     }
@@ -101,7 +101,7 @@ impl<'a> NdBuffer<'a> {
                 self.shape, self.strides
             )));
         }
-        let elements: u64 = self.shape.iter().product();
+        let elements: i64 = self.shape.iter().product();
         let len = elements as usize * self.data_type.byte_size();
         let start = self.offset as usize;
         let buffer: &'a [u8] = self.buffer;
@@ -550,7 +550,7 @@ pub trait BandRef {
     /// `dim_names` order. Derived from `view`: `[v.steps for v in view]`.
     /// This is what almost all consumers want; use `raw_source_shape()` only
     /// when you need to address into the raw `data` buffer (e.g. FFI).
-    fn shape(&self) -> &[u64];
+    fn shape(&self) -> &[i64];
 
     /// **Internal/FFI-only.** Natural C-order extent of the band's
     /// underlying `data` buffer, indexed by *source* axis (not visible
@@ -563,7 +563,7 @@ pub trait BandRef {
     /// Use this only when you need to index directly into the raw `data`
     /// bytes (e.g. Arrow C Data Interface, numpy zero-copy views) and you
     /// also handle `view()` and the byte-stride layout from `nd_buffer()`.
-    fn raw_source_shape(&self) -> &[u64];
+    fn raw_source_shape(&self) -> &[i64];
 
     /// Per-visible-dimension view entries describing how the band's
     /// visible axes map onto its `source_shape`. `view().len() == ndim()`.
@@ -571,7 +571,7 @@ pub trait BandRef {
     fn view(&self) -> &[ViewEntry];
 
     /// Size of a named dimension (None if doesn't exist)
-    fn dim_size(&self, name: &str) -> Option<u64> {
+    fn dim_size(&self, name: &str) -> Option<i64> {
         let idx = self.dim_index(name)?;
         Some(self.shape()[idx])
     }
@@ -913,8 +913,8 @@ mod tests {
     /// every other method returns a placeholder we never read.
     struct StubBand {
         dim_names: Vec<String>,
-        source_shape: Vec<u64>,
-        shape: Vec<u64>,
+        source_shape: Vec<i64>,
+        shape: Vec<i64>,
         view: Vec<ViewEntry>,
     }
 
@@ -925,10 +925,10 @@ mod tests {
         fn dim_names(&self) -> Vec<&str> {
             self.dim_names.iter().map(String::as_str).collect()
         }
-        fn shape(&self) -> &[u64] {
+        fn shape(&self) -> &[i64] {
             &self.shape
         }
-        fn raw_source_shape(&self) -> &[u64] {
+        fn raw_source_shape(&self) -> &[i64] {
             &self.source_shape
         }
         fn view(&self) -> &[ViewEntry] {
@@ -945,8 +945,8 @@ mod tests {
         }
     }
 
-    fn band(dims: &[&str], source_shape: &[u64], view: &[ViewEntry]) -> StubBand {
-        let shape = view.iter().map(|v| v.steps as u64).collect();
+    fn band(dims: &[&str], source_shape: &[i64], view: &[ViewEntry]) -> StubBand {
+        let shape = view.iter().map(|v| v.steps).collect();
         StubBand {
             dim_names: dims.iter().map(|s| (*s).to_string()).collect(),
             source_shape: source_shape.to_vec(),
@@ -1012,7 +1012,7 @@ mod tests {
 
     /// Build a bufferless `NdBuffer` for contiguity checks — `is_contiguous`
     /// inspects only shape/strides/data_type, never the bytes.
-    fn ndbuf(shape: &[u64], strides: &[i64], offset: u64) -> NdBuffer<'static> {
+    fn ndbuf(shape: &[i64], strides: &[i64], offset: u64) -> NdBuffer<'static> {
         NdBuffer {
             buffer: &[],
             shape: shape.to_vec(),

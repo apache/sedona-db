@@ -166,8 +166,8 @@ impl AsyncRasterLoader for GdalLoader {
         // Byte-cap validation: compute Π source_shape × byte_size in u64
         // with checked arithmetic so a hostile request can't wrap to a
         // small accept-value. Reject before allocating.
-        let expected_bytes_u64 = (req.source_shape[0])
-            .checked_mul(req.source_shape[1])
+        let expected_bytes_u64 = (req.source_shape[0] as u64)
+            .checked_mul(req.source_shape[1] as u64)
             .and_then(|elems| elems.checked_mul(byte_size as u64))
             .ok_or_else(|| {
                 ArrowError::InvalidArgumentError(format!(

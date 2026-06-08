@@ -17,7 +17,7 @@
 
 use arrow_array::{
     Array, BinaryArray, BinaryViewArray, Float64Array, Int64Array, ListArray, StringArray,
-    StringViewArray, StructArray, UInt32Array, UInt64Array,
+    StringViewArray, StructArray, UInt32Array,
 };
 use arrow_schema::ArrowError;
 
@@ -33,7 +33,7 @@ struct BandRefImpl<'a> {
     dim_names_list: &'a ListArray,
     dim_names_values: &'a StringArray,
     source_shape_list: &'a ListArray,
-    source_shape_values: &'a UInt64Array,
+    source_shape_values: &'a Int64Array,
     nodata_array: &'a BinaryArray,
     outdb_uri_array: &'a StringArray,
     outdb_format_array: &'a StringViewArray,
@@ -45,7 +45,7 @@ struct BandRefImpl<'a> {
     /// Per-visible-axis view, length = ndim. Always identity today.
     view_entries: Vec<ViewEntry>,
     /// Visible shape, length = ndim. Equals `source_shape` today.
-    visible_shape: Vec<u64>,
+    visible_shape: Vec<i64>,
     /// Byte strides per visible axis. C-order over `source_shape` today.
     byte_strides: Vec<i64>,
     /// Byte offset into `data` of the visible region's `[0,...,0]` element.
@@ -65,11 +65,11 @@ impl<'a> BandRef for BandRefImpl<'a> {
             .collect()
     }
 
-    fn shape(&self) -> &[u64] {
+    fn shape(&self) -> &[i64] {
         &self.visible_shape
     }
 
-    fn raw_source_shape(&self) -> &[u64] {
+    fn raw_source_shape(&self) -> &[i64] {
         let start = self.source_shape_list.value_offsets()[self.band_row] as usize;
         let end = self.source_shape_list.value_offsets()[self.band_row + 1] as usize;
         &self.source_shape_values.values()[start..end]
@@ -151,7 +151,7 @@ pub struct RasterRefImpl<'a> {
     band_dim_names_list: &'a ListArray,
     band_dim_names_values: &'a StringArray,
     band_source_shape_list: &'a ListArray,
-    band_source_shape_values: &'a UInt64Array,
+    band_source_shape_values: &'a Int64Array,
     band_datatype_array: &'a UInt32Array,
     band_nodata_array: &'a BinaryArray,
     band_view_list: &'a ListArray,
@@ -194,7 +194,7 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
         // Read source shape slice.
         let ss_start = self.band_source_shape_list.value_offsets()[band_row] as usize;
         let ss_end = self.band_source_shape_list.value_offsets()[band_row + 1] as usize;
-        let source_shape: &[u64] = &self.band_source_shape_values.values()[ss_start..ss_end];
+        let source_shape: &[i64] = &self.band_source_shape_values.values()[ss_start..ss_end];
 
         // Reject 0-D bands at the read boundary. Schema doesn't forbid them
         // outright but every consumer assumes ndim >= 1.
@@ -241,17 +241,17 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
                 source_axis: i as i64,
                 start: 0,
                 step: 1,
-                steps: s as i64,
+                steps: s,
             })
             .collect();
 
-        let visible_shape: Vec<u64> = source_shape.to_vec();
+        let visible_shape: Vec<i64> = source_shape.to_vec();
 
         let dtype_size = data_type.byte_size() as i64;
         let mut byte_strides = vec![0i64; source_shape.len()];
         byte_strides[source_shape.len() - 1] = dtype_size;
         for k in (0..source_shape.len() - 1).rev() {
-            byte_strides[k] = byte_strides[k + 1] * (source_shape[k + 1] as i64);
+            byte_strides[k] = byte_strides[k + 1] * source_shape[k + 1];
         }
 
         Ok(Box::new(BandRefImpl {
@@ -386,7 +386,7 @@ pub struct RasterStructArray<'a> {
     band_dim_names_list: &'a ListArray,
     band_dim_names_values: &'a StringArray,
     band_source_shape_list: &'a ListArray,
-    band_source_shape_values: &'a UInt64Array,
+    band_source_shape_values: &'a Int64Array,
     band_datatype_array: &'a UInt32Array,
     band_nodata_array: &'a BinaryArray,
     band_view_list: &'a ListArray,
@@ -472,7 +472,7 @@ impl<'a> RasterStructArray<'a> {
         let band_source_shape_values = band_source_shape_list
             .values()
             .as_any()
-            .downcast_ref::<UInt64Array>()
+            .downcast_ref::<Int64Array>()
             .unwrap();
         let band_datatype_array = bands_struct
             .column(band_indices::DATA_TYPE)
@@ -601,7 +601,7 @@ mod tests {
     use super::*;
     use crate::builder::RasterBuilder;
     use crate::traits::{BandMetadata, RasterMetadata};
-    use arrow_array::{ArrayRef, ListArray, StructArray, UInt32Array, UInt64Array};
+    use arrow_array::{ArrayRef, ListArray, StructArray, UInt32Array};
     use arrow_buffer::{OffsetBuffer, ScalarBuffer};
     use arrow_schema::{DataType, Fields};
     use sedona_schema::raster::{
@@ -871,7 +871,7 @@ mod tests {
         let empty_source_shape = ListArray::new(
             ss_field,
             OffsetBuffer::new(ScalarBuffer::from(vec![0i32, 0])),
-            Arc::new(UInt64Array::from(Vec::<u64>::new())),
+            Arc::new(Int64Array::from(Vec::<i64>::new())),
             None,
         );
         let mutated = replace_band_column(

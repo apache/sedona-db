@@ -65,7 +65,7 @@ pub struct RasterLoadRequest<'a> {
     /// Raw source shape in `dim_names` order. A loader that returns the full
     /// source produces a `Buffer` of `Π source_shape × byte_size` bytes in
     /// C-order over `dim_names`.
-    pub source_shape: &'a [u64],
+    pub source_shape: &'a [i64],
     /// The band's view over `source_shape` (the visible region). A loader
     /// may ignore it and return the full source (reporting the view
     /// unresolved), or honor it and return only the visible region; the
@@ -91,7 +91,7 @@ pub struct RasterLoadResult {
     /// `Π source_shape × data_type.byte_size()`.
     pub bytes: Buffer,
     /// The shape `bytes` are laid out in.
-    pub source_shape: Vec<u64>,
+    pub source_shape: Vec<i64>,
     /// View to apply to `bytes` to obtain the visible region (identity when
     /// the loader already resolved the crop).
     pub view: Vec<ViewEntry>,
@@ -397,7 +397,7 @@ mod tests {
     struct MockLoader {
         name: String,
         formats: Vec<String>,
-        seen: Mutex<Vec<(String, Vec<u64>)>>,
+        seen: Mutex<Vec<(String, Vec<i64>)>>,
     }
 
     impl MockLoader {
@@ -425,7 +425,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((req.uri.to_string(), req.source_shape.to_vec()));
-            let elements: u64 = req.source_shape.iter().copied().product();
+            let elements: i64 = req.source_shape.iter().copied().product();
             let len = elements as usize * req.data_type.byte_size();
             Ok(RasterLoadResult::unresolved(
                 Buffer::from_vec(vec![0u8; len]),

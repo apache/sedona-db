@@ -18,7 +18,7 @@
 use arrow_array::{
     builder::{
         ArrayBuilder, BinaryBuilder, BinaryViewBuilder, BooleanBuilder, Float64Builder,
-        Int64Builder, StringBuilder, StringViewBuilder, UInt32Builder, UInt64Builder,
+        Int64Builder, StringBuilder, StringViewBuilder, UInt32Builder,
     },
     Array, ArrayRef, BinaryViewArray, ListArray, StructArray,
 };
@@ -98,7 +98,7 @@ pub struct RasterBuilder {
     band_name: StringBuilder,
     band_dim_names_values: StringBuilder,
     band_dim_names_offsets: Vec<i32>,
-    band_shape_values: UInt64Builder,
+    band_shape_values: Int64Builder,
     band_shape_offsets: Vec<i32>,
     band_datatype: UInt32Builder,
     band_nodata: BinaryBuilder,
@@ -130,7 +130,7 @@ pub struct RasterBuilder {
     // finish_raster can check every band matches the top-level spatial grid.
     current_spatial_dims: Vec<String>,
     current_spatial_shape: Vec<i64>,
-    current_raster_bands: Vec<(Vec<String>, Vec<u64>)>,
+    current_raster_bands: Vec<(Vec<String>, Vec<i64>)>,
 
     // Track band_data count at the start of each band for finish_band validation
     band_data_count_at_start: usize,
@@ -159,7 +159,7 @@ impl RasterBuilder {
             band_name: StringBuilder::with_capacity(capacity, capacity),
             band_dim_names_values: StringBuilder::with_capacity(capacity * 2, capacity * 4),
             band_dim_names_offsets: vec![0],
-            band_shape_values: UInt64Builder::with_capacity(capacity * 2),
+            band_shape_values: Int64Builder::with_capacity(capacity * 2),
             band_shape_offsets: vec![0],
             band_datatype: UInt32Builder::with_capacity(capacity),
             band_nodata: BinaryBuilder::with_capacity(capacity, capacity),
@@ -310,7 +310,7 @@ impl RasterBuilder {
         &mut self,
         name: Option<&str>,
         dim_names: &[&str],
-        shape: &[u64],
+        shape: &[i64],
         data_type: BandDataType,
         nodata: Option<&[u8]>,
         outdb_uri: Option<&str>,
@@ -404,7 +404,7 @@ impl RasterBuilder {
         self.start_band_nd(
             None,
             &["y", "x"],
-            &[self.current_height, self.current_width],
+            &[self.current_height as i64, self.current_width as i64],
             data_type,
             nodata,
             None,
@@ -431,7 +431,7 @@ impl RasterBuilder {
         self.start_band_nd(
             None,
             &["y", "x"],
-            &[self.current_height, self.current_width],
+            &[self.current_height as i64, self.current_width as i64],
             metadata.datatype,
             metadata.nodata_value.as_deref(),
             outdb_uri.as_deref(),
@@ -553,7 +553,7 @@ impl RasterBuilder {
                         ))
                     })?;
                 let expected = self.current_spatial_shape[spatial_idx];
-                let actual = band_shape[pos] as i64;
+                let actual = band_shape[pos];
                 if actual != expected {
                     return Err(ArrowError::InvalidArgumentError(format!(
                         "Band {band_idx} dimension {spatial_dim:?} has size {actual}, \
