@@ -73,8 +73,8 @@ pub(crate) trait RasterMetadataFromGdalGeoTransform {
 impl RasterMetadataFromGdalGeoTransform for GeoTransform {
     fn to_raster_metadata(&self, width: usize, height: usize) -> RasterMetadata {
         RasterMetadata {
-            width: width as u64,
-            height: height as u64,
+            width: width as i64,
+            height: height as i64,
             upperleft_x: self[0],
             upperleft_y: self[3],
             scale_x: self[1],

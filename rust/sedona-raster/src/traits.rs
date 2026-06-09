@@ -150,8 +150,8 @@ pub struct ViewEntry {
 /// methods directly; the metadata accessor is the convenience surface.
 #[derive(Debug, Clone)]
 pub struct RasterMetadata {
-    pub width: u64,
-    pub height: u64,
+    pub width: i64,
+    pub height: i64,
     pub upperleft_x: f64,
     pub upperleft_y: f64,
     pub scale_x: f64,
@@ -166,9 +166,9 @@ pub struct RasterMetadata {
 /// should reach for `RasterRef::width()? / height()?` instead.
 pub trait MetadataRef {
     /// Width of the raster in pixels
-    fn width(&self) -> u64;
+    fn width(&self) -> i64;
     /// Height of the raster in pixels
-    fn height(&self) -> u64;
+    fn height(&self) -> i64;
     /// X coordinate of the upper-left corner
     fn upper_left_x(&self) -> f64;
     /// Y coordinate of the upper-left corner
@@ -184,10 +184,10 @@ pub trait MetadataRef {
 }
 
 impl MetadataRef for RasterMetadata {
-    fn width(&self) -> u64 {
+    fn width(&self) -> i64 {
         self.width
     }
-    fn height(&self) -> u64 {
+    fn height(&self) -> i64 {
         self.height
     }
     fn upper_left_x(&self) -> f64 {
@@ -211,10 +211,10 @@ impl MetadataRef for RasterMetadata {
 }
 
 impl RasterMetadata {
-    pub fn width(&self) -> u64 {
+    pub fn width(&self) -> i64 {
         self.width
     }
-    pub fn height(&self) -> u64 {
+    pub fn height(&self) -> i64 {
         self.height
     }
     pub fn upper_left_x(&self) -> f64 {
@@ -480,41 +480,27 @@ pub trait RasterRef {
     }
 
     /// Width in pixels — size of the X spatial dimension from the top-level
-    /// `spatial_shape`. Errors if `spatial_shape` is empty or the X size is
-    /// negative; both are invariant violations rather than legitimate "no
-    /// value" states.
-    fn width(&self) -> Result<u64, ArrowError> {
+    /// `spatial_shape`. Errors if `spatial_shape` is empty, which is an
+    /// invariant violation rather than a legitimate "no value" state.
+    fn width(&self) -> Result<i64, ArrowError> {
         let shape = self.spatial_shape();
-        let Some(&v) = shape.first() else {
-            return Err(ArrowError::InvalidArgumentError(
+        shape.first().copied().ok_or_else(|| {
+            ArrowError::InvalidArgumentError(
                 "raster has no width (spatial_shape is empty)".to_string(),
-            ));
-        };
-        if v < 0 {
-            return Err(ArrowError::InvalidArgumentError(format!(
-                "raster width must be non-negative, got {v}"
-            )));
-        }
-        Ok(v as u64)
+            )
+        })
     }
 
     /// Height in pixels — size of the Y spatial dimension from the top-level
-    /// `spatial_shape`. Errors if `spatial_shape` has fewer than two entries
-    /// or the Y size is negative.
-    fn height(&self) -> Result<u64, ArrowError> {
+    /// `spatial_shape`. Errors if `spatial_shape` has fewer than two entries.
+    fn height(&self) -> Result<i64, ArrowError> {
         let shape = self.spatial_shape();
-        let Some(&v) = shape.get(1) else {
-            return Err(ArrowError::InvalidArgumentError(format!(
+        shape.get(1).copied().ok_or_else(|| {
+            ArrowError::InvalidArgumentError(format!(
                 "raster has no height (spatial_shape has {} entries, need >= 2)",
                 shape.len()
-            )));
-        };
-        if v < 0 {
-            return Err(ArrowError::InvalidArgumentError(format!(
-                "raster height must be non-negative, got {v}"
-            )));
-        }
-        Ok(v as u64)
+            ))
+        })
     }
 
     /// Look up a band by name. Returns an error if no band has that

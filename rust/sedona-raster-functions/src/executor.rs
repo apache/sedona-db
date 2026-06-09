@@ -697,8 +697,8 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::builder::UInt64Builder;
-    use arrow_array::UInt64Array;
+    use arrow_array::builder::Int64Builder;
+    use arrow_array::Int64Array;
     use arrow_schema::Field;
     use sedona_raster::traits::RasterRef;
     use sedona_schema::crs::{deserialize_crs, lnglat};
@@ -718,7 +718,7 @@ mod tests {
         let executor = RasterExecutor::new(&arg_types, &args);
         assert_eq!(executor.num_iterations(), 3);
 
-        let mut builder = UInt64Builder::with_capacity(executor.num_iterations());
+        let mut builder = Int64Builder::with_capacity(executor.num_iterations());
         executor
             .execute_raster_void(|_i, raster_opt| {
                 match raster_opt {
@@ -737,8 +737,8 @@ mod tests {
         let width_array = match &result {
             ColumnarValue::Array(array) => array
                 .as_any()
-                .downcast_ref::<UInt64Array>()
-                .expect("Expected UInt64Array"),
+                .downcast_ref::<Int64Array>()
+                .expect("Expected Int64Array"),
             ColumnarValue::Scalar(_) => panic!("Expected array, got scalar"),
         };
 
@@ -760,7 +760,7 @@ mod tests {
         let executor = RasterExecutor::new(&arg_types, &args);
         assert_eq!(executor.num_iterations(), 1);
 
-        let mut builder = UInt64Builder::with_capacity(executor.num_iterations());
+        let mut builder = Int64Builder::with_capacity(executor.num_iterations());
         executor
             .execute_raster_void(|_i, raster_opt| {
                 match raster_opt {
@@ -783,8 +783,8 @@ mod tests {
         };
 
         match width_scalar {
-            ScalarValue::UInt64(Some(width)) => assert_eq!(*width, 1),
-            _ => panic!("Expected UInt64 scalar"),
+            ScalarValue::Int64(Some(width)) => assert_eq!(*width, 1),
+            _ => panic!("Expected Int64 scalar"),
         }
     }
 
@@ -797,7 +797,7 @@ mod tests {
         let executor = RasterExecutor::new(&arg_types, &args);
         assert_eq!(executor.num_iterations(), 1);
 
-        let mut builder = UInt64Builder::with_capacity(executor.num_iterations());
+        let mut builder = Int64Builder::with_capacity(executor.num_iterations());
         executor
             .execute_raster_void(|_i, raster_opt| {
                 match raster_opt {
@@ -819,7 +819,7 @@ mod tests {
             ColumnarValue::Array(_) => panic!("Expected scalar, got array"),
         };
 
-        assert_eq!(width_scalar, &ScalarValue::UInt64(None));
+        assert_eq!(width_scalar, &ScalarValue::Int64(None));
     }
 
     #[test]

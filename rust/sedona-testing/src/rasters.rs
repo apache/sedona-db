@@ -47,8 +47,8 @@ pub fn generate_test_rasters(
         }
 
         let raster_metadata = RasterMetadata {
-            width: i as u64 + 1,
-            height: i as u64 + 2,
+            width: i as i64 + 1,
+            height: i as i64 + 2,
             upperleft_x: i as f64 + 1.0,
             upperleft_y: i as f64 + 2.0,
             scale_x: i.max(1) as f64 * 0.1,
@@ -106,8 +106,8 @@ pub fn generate_tiled_rasters(
             let origin_y = (tile_y * tile_height) as f64;
 
             let raster_metadata = RasterMetadata {
-                width: tile_width as u64,
-                height: tile_height as u64,
+                width: tile_width as i64,
+                height: tile_height as i64,
                 upperleft_x: origin_x,
                 upperleft_y: origin_y,
                 scale_x: 1.0,
@@ -225,8 +225,8 @@ pub fn raster_from_single_band(
     crs: Option<&str>,
 ) -> StructArray {
     let metadata = RasterMetadata {
-        width: width as u64,
-        height: height as u64,
+        width: width as i64,
+        height: height as i64,
         upperleft_x: 0.0,
         upperleft_y: 0.0,
         scale_x: 1.0,
@@ -505,8 +505,8 @@ mod tests {
         for i in 0..count {
             let raster = raster_array.get(i).unwrap();
             let metadata = raster.metadata();
-            assert_eq!(metadata.width(), i as u64 + 1);
-            assert_eq!(metadata.height(), i as u64 + 2);
+            assert_eq!(metadata.width(), i as i64 + 1);
+            assert_eq!(metadata.height(), i as i64 + 2);
             assert_eq!(metadata.upper_left_x(), i as f64 + 1.0);
             assert_eq!(metadata.upper_left_y(), i as f64 + 2.0);
             assert_eq!(metadata.scale_x(), (i.max(1) as f64) * 0.1);

@@ -472,8 +472,8 @@ struct VrtBandKey {
 
 #[derive(Hash, Eq, PartialEq)]
 struct VrtKey {
-    width: u64,
-    height: u64,
+    width: i64,
+    height: i64,
     geotransform_bits: [u64; 6],
     crs: Option<String>,
     bands: Vec<VrtBandKey>,

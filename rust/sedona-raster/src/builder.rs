@@ -123,8 +123,8 @@ pub struct RasterBuilder {
     current_band_count: i32, // Track bands in current raster
 
     // Current raster state (needed for start_band_2d)
-    current_width: u64,
-    current_height: u64,
+    current_width: i64,
+    current_height: i64,
 
     // Per-raster validation state: spatial dims/shape and recorded bands so
     // finish_raster can check every band matches the top-level spatial grid.
@@ -260,8 +260,8 @@ impl RasterBuilder {
     #[allow(clippy::too_many_arguments)]
     pub fn start_raster_2d(
         &mut self,
-        width: u64,
-        height: u64,
+        width: i64,
+        height: i64,
         origin_x: f64,
         origin_y: f64,
         scale_x: f64,
@@ -271,7 +271,7 @@ impl RasterBuilder {
         crs: Option<&str>,
     ) -> Result<(), ArrowError> {
         let transform = [origin_x, scale_x, skew_x, origin_y, skew_y, scale_y];
-        self.start_raster_nd(&transform, &["x", "y"], &[width as i64, height as i64], crs)?;
+        self.start_raster_nd(&transform, &["x", "y"], &[width, height], crs)?;
         self.current_width = width;
         self.current_height = height;
         Ok(())
@@ -404,7 +404,7 @@ impl RasterBuilder {
         self.start_band_nd(
             None,
             &["y", "x"],
-            &[self.current_height as i64, self.current_width as i64],
+            &[self.current_height, self.current_width],
             data_type,
             nodata,
             None,
@@ -431,7 +431,7 @@ impl RasterBuilder {
         self.start_band_nd(
             None,
             &["y", "x"],
-            &[self.current_height as i64, self.current_width as i64],
+            &[self.current_height, self.current_width],
             metadata.datatype,
             metadata.nodata_value.as_deref(),
             outdb_uri.as_deref(),
