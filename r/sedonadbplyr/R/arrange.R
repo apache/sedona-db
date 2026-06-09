@@ -15,7 +15,8 @@
 # specific language governing permissions and limitations
 # under the License.
 
-arrange.sedonadb_dataframe <- function(.data, ...) {
+arrange.sedonadb_dataframe <- function(.data, ..., .by_group = sdplyr_unsupported()) {
+  assert_unsupported(.by_group)
   exprs <- rlang::enquos(...)
   sedonadb::sd_arrange(.data, !!!exprs)
 }

@@ -71,3 +71,10 @@ test_that("arrange() handles NA values", {
     df |> arrange(desc(x))
   )
 })
+
+test_that("arrange(..., .by_group) is unsupported", {
+  df <- tibble(x = 1:3)
+  expect_snapshot_error(
+    df |> as_sedonadb_dataframe() |> arrange(.by_group = TRUE)
+  )
+})
