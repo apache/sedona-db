@@ -15,8 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::{error::PySedonaError, udf::sedona_scalar_udf};
 use crate::raster_loader::py_raster_loader;
+use crate::{error::PySedonaError, udf::sedona_scalar_udf};
 use pyo3::{ffi::Py_uintptr_t, prelude::*};
 use sedona_adbc::AdbcSedonadbDriverInit;
 use sedona_gdal::global::{configure_global_gdal_api, with_global_gdal, GdalApiBuilder};
