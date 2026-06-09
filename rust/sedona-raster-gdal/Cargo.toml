@@ -31,10 +31,12 @@ rust-version.workspace = true
 result_large_err = "allow"
 
 [dependencies]
+arrow = { workspace = true }
 arrow-array = { workspace = true }
 arrow-buffer = { workspace = true }
 arrow-schema = { workspace = true }
 async-trait = { workspace = true }
+datafusion = { workspace = true, default_features = false }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
 lru = { workspace = true }
@@ -42,13 +44,21 @@ sedona-common = { workspace = true }
 sedona-expr = { workspace = true }
 sedona-functions = { workspace = true }
 sedona-gdal = { workspace = true }
+datafusion-common-runtime = { workspace = true }
+evalexpr = "13"
+futures = { workspace = true }
+sedona-geometry = { workspace = true }
 sedona-raster = { workspace = true }
+sedona-raster-functions = { workspace = true }
 sedona-schema = { workspace = true }
 tokio = { workspace = true }
+sedona-proj = { workspace = true }
+wkb = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
 sedona-gdal = { workspace = true, features = ["gdal-sys"] }
+sedona-proj = { workspace = true, features = ["proj-sys"] }
 sedona-testing = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
@@ -57,3 +67,38 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 harness = false
 name = "rs_frompath"
 path = "benches/rs_frompath.rs"
+
+[[bench]]
+harness = false
+name = "rs_as_geotiff"
+path = "benches/rs_as_geotiff.rs"
+
+[[bench]]
+harness = false
+name = "rs_clip"
+path = "benches/rs_clip.rs"
+
+[[bench]]
+harness = false
+name = "rs_from_gdal_raster"
+path = "benches/rs_from_gdal_raster.rs"
+
+[[bench]]
+harness = false
+name = "rs_map_algebra"
+path = "benches/rs_map_algebra.rs"
+
+[[bench]]
+harness = false
+name = "rs_polygonize"
+path = "benches/rs_polygonize.rs"
+
+[[bench]]
+harness = false
+name = "rs_value"
+path = "benches/rs_value.rs"
+
+[[bench]]
+harness = false
+name = "rs_zonal_stats"
+path = "benches/rs_zonal_stats.rs"

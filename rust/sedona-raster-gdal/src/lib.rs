@@ -32,8 +32,19 @@ mod gdal_common;
 #[allow(dead_code)]
 mod gdal_dataset_provider;
 
+pub mod raster_band_reader;
 mod raster_loader;
+pub mod rs_as_geotiff;
+pub mod rs_as_raster;
+pub mod rs_clip;
+pub mod rs_from_gdal_raster;
 mod rs_frompath;
+pub mod rs_geotiff_tiles;
+pub mod rs_map_algebra;
+pub mod rs_metadata;
+pub mod rs_polygonize;
+pub mod rs_value;
+pub mod rs_zonal_stats;
 mod source_uri;
 mod utils;
 
@@ -43,5 +54,17 @@ pub use gdal_common::{
     nodata_bytes_to_f64, nodata_f64_to_bytes,
 };
 pub use raster_loader::{GdalLoader, GDAL_FORMAT};
+pub use rs_as_geotiff::{rs_as_geotiff_udf, CompressionType};
+pub use rs_as_raster::rs_as_raster_udf;
+pub use rs_clip::rs_clip_udf;
+pub use rs_from_gdal_raster::rs_from_gdal_raster_udf;
 pub use rs_frompath::rs_frompath_udf;
-pub use utils::{append_as_indb_raster, append_as_outdb_raster, dataset_to_indb_raster};
+pub use rs_geotiff_tiles::rs_geotiff_tiles_udtf;
+pub use rs_map_algebra::rs_map_algebra_udf;
+pub use rs_metadata::rs_metadata_udf;
+pub use rs_polygonize::rs_polygonize_udf;
+pub use rs_value::rs_value_udf;
+pub use rs_zonal_stats::{rs_zonal_stats_all_udf, rs_zonal_stats_udf, StatType, ZonalStatistics};
+pub use utils::{
+    append_as_indb_raster, append_as_outdb_raster, dataset_to_indb_raster, load_as_indb_raster,
+};

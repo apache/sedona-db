@@ -176,17 +176,36 @@ pub fn dataset_to_indb_raster(dataset: &Dataset) -> Result<StructArray> {
         .map_err(|e| exec_datafusion_err!("Failed to build raster: {}", e))
 }
 
+/// Load a GDAL dataset from the specified path and materialize it as an in-db raster `StructArray`.
+pub fn load_as_indb_raster(gdal: &Gdal, path: &str) -> datafusion_common::Result<StructArray> {
+    let dataset = open_dataset(gdal, path).map_err(crate::gdal_common::convert_gdal_err)?;
+    dataset_to_indb_raster(&dataset)
+}
+
+fn open_dataset(gdal: &Gdal, path: &str) -> sedona_gdal::errors::Result<Dataset> {
+    use sedona_gdal::gdal_dyn_bindgen::{GDAL_OF_RASTER, GDAL_OF_READONLY};
+
+    gdal.open_ex_with_options(
+        path,
+        DatasetOptions {
+            open_flags: GDAL_OF_RASTER | GDAL_OF_READONLY,
+            ..Default::default()
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{append_as_indb_raster, append_as_outdb_raster, dataset_to_indb_raster};
+    use super::{
+        append_as_indb_raster, append_as_outdb_raster, dataset_to_indb_raster, load_as_indb_raster,
+        open_dataset,
+    };
 
     use arrow_array::StructArray;
     use datafusion_common::exec_datafusion_err;
     use sedona_gdal::dataset::Dataset;
     use sedona_gdal::gdal::Gdal;
-    use sedona_gdal::gdal_dyn_bindgen::{GDAL_OF_RASTER, GDAL_OF_READONLY};
     use sedona_gdal::raster::types::Buffer;
-    use sedona_gdal::raster::types::DatasetOptions;
     use sedona_raster::array::RasterStructArray;
     use sedona_raster::builder::RasterBuilder;
     use sedona_raster::traits::RasterRef;
@@ -196,27 +215,11 @@ mod tests {
 
     use crate::gdal_common::with_gdal;
 
-    fn open_dataset(gdal: &Gdal, path: &str) -> sedona_gdal::errors::Result<Dataset> {
-        gdal.open_ex_with_options(
-            path,
-            DatasetOptions {
-                open_flags: GDAL_OF_RASTER | GDAL_OF_READONLY,
-                ..Default::default()
-            },
-        )
-    }
-
-    fn load_as_indb_raster(gdal: &Gdal, path: &str) -> datafusion_common::Result<StructArray> {
-        let dataset = open_dataset(gdal, path).map_err(crate::gdal_common::convert_gdal_err)?;
-        dataset_to_indb_raster(&dataset)
-    }
-
     fn load_as_outdb_raster(gdal: &Gdal, path: &str) -> datafusion_common::Result<StructArray> {
         let mut builder = RasterBuilder::new(1);
         append_as_outdb_raster(gdal, path, &mut builder)?;
         builder.finish().map_err(Into::into)
     }
-
     fn write_uint64_tiff(gdal: &Gdal, path: &str, nodata: u64, data: Vec<u64>) {
         let driver = gdal.get_driver_by_name("GTiff").unwrap();
         let dataset = driver.create_with_band_type::<u64>(path, 2, 2, 1).unwrap();

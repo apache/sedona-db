@@ -25,7 +25,6 @@ use datafusion_common::cast::as_string_array;
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::error::Result;
 use datafusion_expr::{ColumnarValue, Volatility};
-use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_functions::executor::WkbBytesExecutor;
 use sedona_raster::builder::RasterBuilder;
@@ -85,10 +84,10 @@ impl SedonaScalarKernel for RsFromPath {
 
     fn invoke_batch(
         &self,
-        _arg_types: &[SedonaType],
-        _args: &[ColumnarValue],
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
-        sedona_internal_err!("Should not be called because invoke_batch_from_args() is implemented")
+        self.invoke_batch_from_args(arg_types, args, &SedonaType::Arrow(DataType::Null), 0, None)
     }
 }
 
