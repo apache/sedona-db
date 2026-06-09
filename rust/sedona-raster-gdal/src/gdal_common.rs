@@ -359,7 +359,7 @@ pub struct GdalBandPlan {
     /// Full dim-name list, e.g. `["time", "y", "x"]`.
     pub dim_names: Vec<String>,
     /// Sizes of the non-spatial (leading) axes; empty for a plain 2-D band.
-    pub nonspatial_shape: Vec<u64>,
+    pub nonspatial_shape: Vec<i64>,
     /// Number of 2-D planes (`Π nonspatial_shape`, `1` for a 2-D band) — the
     /// count of consecutive GDAL bands this source band owns.
     pub plane_count: usize,
@@ -384,8 +384,8 @@ impl GdalBandLayout {
                      spatial (y, x) pair; got dim_names={dim_names:?}"
                 );
             }
-            let nonspatial_shape: Vec<u64> = band.shape()[..ndim - 2].to_vec();
-            let plane_count = nonspatial_shape.iter().product::<u64>() as usize;
+            let nonspatial_shape: Vec<i64> = band.shape()[..ndim - 2].to_vec();
+            let plane_count = nonspatial_shape.iter().product::<i64>() as usize;
             plans.push(GdalBandPlan {
                 // `band_indices` are 1-based (the `Bands` wrapper convention used
                 // by `raster_ref_to_gdal_mem`), but `band_name` is 0-based.

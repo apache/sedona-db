@@ -219,8 +219,8 @@ pub fn append_nd_from_dataset(
         let dim_names: Vec<&str> = plan.dim_names.iter().map(String::as_str).collect();
         // shape = [non-spatial..., height, width] — spatial from the dataset.
         let mut shape = plan.nonspatial_shape.clone();
-        shape.push(height as u64);
-        shape.push(width as u64);
+        shape.push(height as i64);
+        shape.push(width as i64);
 
         builder
             .start_band_nd(
