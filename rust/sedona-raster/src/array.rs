@@ -108,7 +108,11 @@ impl<'a> BandRef for BandRefImpl<'a> {
     }
 
     fn is_indb(&self) -> bool {
-        !self.data_array.value(self.band_row).is_empty()
+        // A 0-element visible region (any visible dim is 0) holds no readable
+        // bytes — trivially fully in-RAM — so it's InDb, not the OutDb
+        // empty-`data` sentinel. Otherwise the discriminator is buffer presence.
+        self.shape().iter().product::<u64>() == 0
+            || !self.data_array.value(self.band_row).is_empty()
     }
 
     fn nd_buffer(&self) -> Result<NdBuffer<'_>, ArrowError> {
@@ -1151,5 +1155,40 @@ mod tests {
         assert!(r1.band_outdb_uri(0).is_none());
         assert!(r1.band_outdb_format(0).is_none());
         assert!(r1.band_nodata(0).is_none());
+    }
+
+    #[test]
+    fn zero_element_indb_band_classifies_as_indb() {
+        // A band with a 0-size dim (here `time = 0`) legitimately holds 0 bytes.
+        // Its empty `data` column must NOT be mistaken for the OutDb sentinel:
+        // a 0-element band has nothing to load, so it's InDb.
+        let mut builder = RasterBuilder::new(1);
+        builder
+            .start_raster_2d(2, 2, 0.0, 2.0, 1.0, -1.0, 0.0, 0.0, None)
+            .unwrap();
+        builder
+            .start_band_nd(
+                Some("empty_time"),
+                &["time", "y", "x"],
+                &[0, 2, 2],
+                BandDataType::UInt8,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        builder.band_data_writer().append_value([]); // 0 bytes, legitimately
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+        let arr = builder.finish().unwrap();
+
+        let rasters = RasterStructArray::new(&arr);
+        let r = rasters.get(0).unwrap();
+        let band = r.band(0).unwrap();
+        assert!(
+            band.is_indb(),
+            "a 0-element band holds 0 bytes legitimately and must be InDb"
+        );
+        assert_eq!(band.metadata().storage_type().unwrap(), StorageType::InDb);
     }
 }
