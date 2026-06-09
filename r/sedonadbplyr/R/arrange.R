@@ -15,4 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# todo: arrange
+arrange.sedonadb_dataframe <- function(.data, ...) {
+  exprs <- rlang::enquos(...)
+  sedonadb::sd_arrange(.data, !!!exprs)
+}

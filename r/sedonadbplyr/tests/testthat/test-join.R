@@ -23,56 +23,66 @@ test_that("dplyr::*_join() works for sedonadb_dataframe", {
     df1 |>
       as_sedonadb_dataframe() |>
       inner_join(as_sedonadb_dataframe(df2), by = "key") |>
+      arrange(key) |>
       collect(),
-    df1 |> inner_join(df2, by = "key")
+    df1 |> inner_join(df2, by = "key") |> arrange(key)
   )
 
   expect_identical(
     df1 |>
       as_sedonadb_dataframe() |>
       left_join(as_sedonadb_dataframe(df2), by = "key") |>
+      arrange(key) |>
       collect(),
-    df1 |> left_join(df2, by = "key")
+    df1 |> left_join(df2, by = "key") |> arrange(key)
   )
 
   expect_identical(
     df1 |>
       as_sedonadb_dataframe() |>
       right_join(as_sedonadb_dataframe(df2), by = "key") |>
+      arrange(key) |>
       collect(),
-    df1 |> right_join(df2, by = "key")
+    df1 |> right_join(df2, by = "key") |> arrange(key)
   )
 
   expect_identical(
     df1 |>
       as_sedonadb_dataframe() |>
       full_join(as_sedonadb_dataframe(df2), by = "key") |>
+      arrange(key) |>
       collect(),
-    df1 |> full_join(df2, by = "key")
+    df1 |> full_join(df2, by = "key") |> arrange(key)
   )
 
   expect_identical(
     df1 |>
       as_sedonadb_dataframe() |>
       semi_join(as_sedonadb_dataframe(df2), by = "key") |>
+      arrange(key) |>
       collect(),
-    df1 |> semi_join(df2, by = "key")
+    df1 |> semi_join(df2, by = "key") |> arrange(key)
   )
 
   expect_identical(
     df1 |>
       as_sedonadb_dataframe() |>
       anti_join(as_sedonadb_dataframe(df2), by = "key") |>
+      arrange(key) |>
       collect(),
-    df1 |> anti_join(df2, by = "key")
+    df1 |> anti_join(df2, by = "key") |> arrange(key)
   )
 
   df3 <- tibble(a = 1:2)
   df4 <- tibble(b = c("x", "y"))
 
   expect_identical(
-    df3 |> as_sedonadb_dataframe() |> cross_join(as_sedonadb_dataframe(df4)) |> collect(),
-    df3 |> cross_join(df4)
+    df3 |>
+      as_sedonadb_dataframe() |>
+      cross_join(as_sedonadb_dataframe(df4)) |>
+      arrange(a, b) |>
+      collect(),
+    df3 |> cross_join(df4) |> arrange(a, b)
   )
 })
 
@@ -84,31 +94,35 @@ test_that("dplyr::*_join(keep = TRUE) works for sedonadb_dataframe", {
     df1 |>
       as_sedonadb_dataframe() |>
       inner_join(as_sedonadb_dataframe(df2), by = c("key_x" = "key_y"), keep = TRUE) |>
+      arrange(key_x) |>
       collect(),
-    df1 |> inner_join(df2, by = c("key_x" = "key_y"), keep = TRUE)
+    df1 |> inner_join(df2, by = c("key_x" = "key_y"), keep = TRUE) |> arrange(key_x)
   )
 
   expect_identical(
     df1 |>
       as_sedonadb_dataframe() |>
       left_join(as_sedonadb_dataframe(df2), by = c("key_x" = "key_y"), keep = TRUE) |>
+      arrange(key_x) |>
       collect(),
-    df1 |> left_join(df2, by = c("key_x" = "key_y"), keep = TRUE)
+    df1 |> left_join(df2, by = c("key_x" = "key_y"), keep = TRUE) |> arrange(key_x)
   )
 
   expect_identical(
     df1 |>
       as_sedonadb_dataframe() |>
       right_join(as_sedonadb_dataframe(df2), by = c("key_x" = "key_y"), keep = TRUE) |>
+      arrange(key_x) |>
       collect(),
-    df1 |> right_join(df2, by = c("key_x" = "key_y"), keep = TRUE)
+    df1 |> right_join(df2, by = c("key_x" = "key_y"), keep = TRUE) |> arrange(key_x)
   )
 
   expect_identical(
     df1 |>
       as_sedonadb_dataframe() |>
       full_join(as_sedonadb_dataframe(df2), by = c("key_x" = "key_y"), keep = TRUE) |>
+      arrange(key_x) |>
       collect(),
-    df1 |> full_join(df2, by = c("key_x" = "key_y"), keep = TRUE)
+    df1 |> full_join(df2, by = c("key_x" = "key_y"), keep = TRUE) |> arrange(key_x)
   )
 })
