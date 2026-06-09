@@ -32,7 +32,7 @@ use sedona_raster::traits::BandMetadata;
 use sedona_schema::raster::StorageType;
 
 use crate::gdal_common::{
-    band_nodata_to_bytes, gdal_to_band_data_type, normalize_outdb_source_path,
+    band_nodata_to_bytes, gdal_to_band_data_type, normalize_outdb_source_path, GdalBandLayout,
     RasterMetadataFromGdalGeoTransform,
 };
 
@@ -171,6 +171,114 @@ pub fn dataset_to_indb_raster(dataset: &Dataset) -> Result<StructArray> {
     let mut builder = RasterBuilder::new(1);
     append_as_indb_raster(dataset, &mut builder)?;
 
+    builder
+        .finish()
+        .map_err(|e| exec_datafusion_err!("Failed to build raster: {}", e))
+}
+
+/// Append a GDAL dataset as a single **N-D** in-db raster, regrouping the flat
+/// GDAL band list back into N-D bands per `layout`.
+///
+/// The inverse of the plane-stacking in `raster_ref_to_gdal_mem`: each source
+/// band owns `plane_count` consecutive GDAL bands (band-major, plane-major), so
+/// this consumes them in order and concatenates their bytes (C-order, planes
+/// outermost) into one band. The spatial extent and geotransform come from the
+/// (possibly transformed) `dataset`; the non-spatial structure comes from
+/// `layout`.
+pub fn append_nd_from_dataset(
+    dataset: &Dataset,
+    layout: &GdalBandLayout,
+    builder: &mut RasterBuilder,
+) -> Result<()> {
+    let (width, height) = dataset.raster_size();
+
+    let geotransform = dataset
+        .geo_transform()
+        .map_err(|e| exec_datafusion_err!("Failed to get geotransform: {}", e))?;
+    let metadata = geotransform.to_raster_metadata(width, height);
+
+    let crs = dataset
+        .spatial_ref()
+        .ok()
+        .and_then(|sr: SpatialRef| sr.to_projjson().ok());
+
+    builder
+        .start_raster(&metadata, crs.as_deref())
+        .map_err(|e| exec_datafusion_err!("Failed to start raster: {}", e))?;
+
+    let total_planes: usize = layout.bands.iter().map(|b| b.plane_count).sum();
+    let gdal_band_count = dataset.raster_count();
+    if gdal_band_count != total_planes {
+        return Err(exec_datafusion_err!(
+            "layout expects {total_planes} GDAL bands but dataset has {gdal_band_count}"
+        ));
+    }
+
+    let mut gdal_band = 1;
+    for plan in &layout.bands {
+        let dim_names: Vec<&str> = plan.dim_names.iter().map(String::as_str).collect();
+        // shape = [non-spatial..., height, width] — spatial from the dataset.
+        let mut shape = plan.nonspatial_shape.clone();
+        shape.push(height as u64);
+        shape.push(width as u64);
+
+        builder
+            .start_band_nd(
+                plan.name.as_deref(),
+                &dim_names,
+                &shape,
+                plan.data_type,
+                plan.nodata.as_deref(),
+                None,
+                None,
+            )
+            .map_err(|e| exec_datafusion_err!("Failed to start band: {}", e))?;
+
+        let mut band_data: Vec<u8> =
+            Vec::with_capacity(plan.plane_count * width * height * plan.data_type.byte_size());
+        for _ in 0..plan.plane_count {
+            let band = dataset
+                .rasterband(gdal_band)
+                .map_err(|e| exec_datafusion_err!("Failed to get band {}: {}", gdal_band, e))?;
+            let plane = band
+                .read_as_bytes((0, 0), (width, height), (width, height), None)
+                .map_err(|e| {
+                    exec_datafusion_err!("Failed to read band {} data: {}", gdal_band, e)
+                })?;
+            band_data.extend_from_slice(&plane);
+            gdal_band += 1;
+        }
+
+        let band_data_len = u32::try_from(band_data.len())
+            .map_err(|_| exec_datafusion_err!("Band data too large for Arrow view"))?;
+        let block = builder
+            .band_data_writer()
+            .append_block(Buffer::from_vec(band_data));
+        builder
+            .band_data_writer()
+            .try_append_view(block, 0, band_data_len)
+            .map_err(|e| exec_datafusion_err!("Failed to append band data: {}", e))?;
+
+        builder
+            .finish_band()
+            .map_err(|e| exec_datafusion_err!("Failed to finish band: {}", e))?;
+    }
+
+    builder
+        .finish_raster()
+        .map_err(|e| exec_datafusion_err!("Failed to finish raster: {}", e))?;
+
+    Ok(())
+}
+
+/// Materialize a GDAL dataset as an N-D in-db raster `StructArray`, regrouping
+/// its flat band list into N-D bands per `layout`.
+pub fn gdal_dataset_to_nd_raster(
+    dataset: &Dataset,
+    layout: &GdalBandLayout,
+) -> Result<StructArray> {
+    let mut builder = RasterBuilder::new(1);
+    append_nd_from_dataset(dataset, layout, &mut builder)?;
     builder
         .finish()
         .map_err(|e| exec_datafusion_err!("Failed to build raster: {}", e))
