@@ -24,6 +24,13 @@
   vctrs::s3_register("dplyr::collect", "sedonadb_dataframe")
   vctrs::s3_register("dplyr::compute", "sedonadb_dataframe")
   vctrs::s3_register("dplyr::select", "sedonadb_dataframe")
+  vctrs::s3_register("dplyr::left_join", "sedonadb_dataframe")
+  vctrs::s3_register("dplyr::right_join", "sedonadb_dataframe")
+  vctrs::s3_register("dplyr::inner_join", "sedonadb_dataframe")
+  vctrs::s3_register("dplyr::full_join", "sedonadb_dataframe")
+  vctrs::s3_register("dplyr::semi_join", "sedonadb_dataframe")
+  vctrs::s3_register("dplyr::anti_join", "sedonadb_dataframe")
+  vctrs::s3_register("dplyr::cross_join", "sedonadb_dataframe")
 }
 
 .onAttach <- function(libname, pkgname) {
