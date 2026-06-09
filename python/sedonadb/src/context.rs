@@ -17,7 +17,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use arrow_schema::DataType;
-use datafusion_expr::ScalarUDFImpl;
+use datafusion_expr::{AggregateUDFImpl, ScalarUDFImpl};
 use pyo3::prelude::*;
 use sedona::context::SedonaContext;
 use sedona::context_builder::SedonaContextBuilder;
@@ -29,7 +29,7 @@ use crate::{
     error::PySedonaError,
     import_from::{import_ffi_scalar_udf, import_table_provider_from_any},
     runtime::wait_for_future,
-    udf::{PyAggregateUdf, PyScalarUdf, PySedonaScalarUdf},
+    udf::{PyAggregateUdf, PyScalarUdf, PySedonaAggregateUdf, PySedonaScalarUdf},
 };
 
 #[pyclass]
@@ -259,23 +259,42 @@ impl InternalContext {
 
     pub fn register_udf(&mut self, udf: Bound<PyAny>) -> Result<(), PySedonaError> {
         if udf.hasattr("__sedona_internal_udf__")? {
-            let py_scalar_udf = udf
-                .getattr("__sedona_internal_udf__")?
-                .call0()?
-                .extract::<PySedonaScalarUdf>()?;
-            let name = py_scalar_udf.inner.name();
-            self.inner
-                .functions
-                .insert_scalar_udf(py_scalar_udf.inner.clone());
-            self.inner.ctx.register_udf(
+            let internal = udf.getattr("__sedona_internal_udf__")?.call0()?;
+            if let Ok(py_scalar_udf) = internal.extract::<PySedonaScalarUdf>() {
+                let name = py_scalar_udf.inner.name();
                 self.inner
                     .functions
-                    .scalar_udf(name)
-                    .unwrap()
-                    .clone()
-                    .into(),
-            );
-            return Ok(());
+                    .insert_scalar_udf(py_scalar_udf.inner.clone());
+                self.inner.ctx.register_udf(
+                    self.inner
+                        .functions
+                        .scalar_udf(name)
+                        .unwrap()
+                        .clone()
+                        .into(),
+                );
+                return Ok(());
+            }
+            if let Ok(py_agg_udf) = internal.extract::<PySedonaAggregateUdf>() {
+                let name = py_agg_udf.inner.name();
+                self.inner
+                    .functions
+                    .insert_aggregate_udf(py_agg_udf.inner.clone());
+                self.inner.ctx.register_udaf(
+                    self.inner
+                        .functions
+                        .aggregate_udf(name)
+                        .unwrap()
+                        .clone()
+                        .into(),
+                );
+                return Ok(());
+            }
+            return Err(PySedonaError::SedonaPython(
+                "__sedona_internal_udf__ returned an unrecognized UDF type \
+                 (expected scalar or aggregate)"
+                    .to_string(),
+            ));
         } else if udf.hasattr("__datafusion_scalar_udf__")? {
             let scalar_udf = import_ffi_scalar_udf(&udf)?;
             self.inner.ctx.register_udf(scalar_udf);
