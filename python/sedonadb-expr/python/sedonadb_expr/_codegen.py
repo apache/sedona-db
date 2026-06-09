@@ -677,8 +677,7 @@ def generate_sources(docs_sql: Path, output_dir: Path) -> GenerationResult:
     # Create __init__.py for the generated module
     init_file = output_dir / "__init__.py"
     init_file.write_text(
-        "# Auto-generated module - do not edit\n"
-        "# Generated from docs/reference/sql\n"
+        "# Auto-generated module - do not edit\n# Generated from docs/reference/sql\n"
     )
 
     generated_files: list[Path] = [init_file]

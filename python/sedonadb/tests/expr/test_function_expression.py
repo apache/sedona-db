@@ -27,7 +27,7 @@ def test_scalar_st_function_returns_expr(con):
     assert isinstance(e, Expr)
     assert repr(e) == 'Expr(st_geomfromwkt(Utf8("POINT (0 1)")))'
 
-    # TODO: do this for other functions too
+    # Also check piped function from literal
     e = con.lit("POINT (0 1)").funcs.st_geomfromwkt()
     assert repr(e) == 'Expr(st_geomfromwkt(Utf8("POINT (0 1)")))'
 
@@ -49,6 +49,10 @@ def test_scalar_st_function_with_column(con):
     e = st_area(con.col("geom"))
     assert isinstance(e, Expr)
     assert repr(e) == "Expr(st_area(geom))"
+
+    # Also check piped function from column
+    e = con.col("geom").funcs.st_geomfromwkt()
+    assert repr(e) == 'Expr(st_geomfromwkt(Utf8("POINT (0 1)")))'
 
 
 def test_scalar_st_function_with_multiple_args(con):
