@@ -1128,7 +1128,10 @@ mod tests {
         let band = rt.band(0).unwrap();
         assert_eq!(band.dim_names(), vec!["time", "level", "y", "x"]);
         assert_eq!(band.shape(), &[2, 2, 2, 2]);
-        assert_eq!(band.nd_buffer().unwrap().as_contiguous().unwrap(), &data[..]);
+        assert_eq!(
+            band.nd_buffer().unwrap().as_contiguous().unwrap(),
+            &data[..]
+        );
     }
 
     #[test]
@@ -1152,7 +1155,9 @@ mod tests {
                 None,
             )
             .unwrap();
-        builder.band_data_writer().append_value(vec![0u8; 2 * 2 * 3]);
+        builder
+            .band_data_writer()
+            .append_value(vec![0u8; 2 * 2 * 3]);
         builder.finish_band().unwrap();
         builder.finish_raster().unwrap();
         let raster_array = builder.finish().unwrap();
