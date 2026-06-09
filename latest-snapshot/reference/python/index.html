@@ -4155,6 +4155,62 @@ in SQL (<code>(SELECT * FROM df) AS name</code>).</p>
 <div class="doc doc-object doc-function">
 
 
+<h4 id="sedonadb.dataframe.DataFrame.cross_join" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">cross_join</span>
+
+
+<a href="#sedonadb.dataframe.DataFrame.cross_join" class="headerlink" title="Permanent link">¶</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">cross_join</span><span class="p">(</span><span class="n">other</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Cartesian product of two DataFrames.</p>
+<p>Returns a DataFrame containing every pair of rows from <code>self</code>
+and <code>other</code>; the row count is the product of the two input
+row counts. Both sides' columns are kept verbatim —
+disambiguate with <code>df.alias(...)</code> on either side if column
+names collide.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+            <b><code>other</code></b>
+              (<code><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></code>)
+          –
+          <div class="doc-md-description">
+            <p>The right-hand DataFrame.</p>
+          </div>
+        </li>
+    </ul>
+        <p>Examples:</p>
+<div class="codehilite"><pre><span></span><code>&gt;&gt;&gt; sd = sedona.db.connect()
+&gt;&gt;&gt; left = sd.sql("SELECT <span class="gs">* FROM (VALUES (1), (2)) AS t(x)")</span>
+<span class="gs">&gt;&gt;&gt; right = sd.sql("SELECT *</span> FROM (VALUES ('a'), ('b')) AS t(y)")
+&gt;&gt;&gt; left.cross_join(right).sort("x", "y").show()
+┌───────┬──────┐
+│   x   ┆   y  │
+│ int64 ┆ utf8 │
+╞═══════╪══════╡
+│     1 ┆ a    │
+├╌╌╌╌╌╌╌┼╌╌╌╌╌╌┤
+│     1 ┆ b    │
+├╌╌╌╌╌╌╌┼╌╌╌╌╌╌┤
+│     2 ┆ a    │
+├╌╌╌╌╌╌╌┼╌╌╌╌╌╌┤
+│     2 ┆ b    │
+└───────┴──────┘
+</code></pre></div>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
 <h4 id="sedonadb.dataframe.DataFrame.drop" class="doc doc-heading">
             <span class="doc doc-object-name doc-function-name">drop</span>
 
