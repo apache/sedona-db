@@ -8,15 +8,14 @@ License: Apache License (>= 2)
 Encoding: UTF-8
 Depends: R (>= 4.1.0)
 Imports:
+    cli,
+    dplyr,
+    nanoarrow,
+    rlang,
     sedonadb,
     sedonafns,
-    dplyr,
-    tidyselect,
-    rlang,
-    nanoarrow,
-    vctrs,
-    cli,
-    tibble
+    tibble,
+    tidyselect
 Suggests:
     testthat (>= 3.0.0)
 RoxygenNote: 7.3.3

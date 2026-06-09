@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+#' @exportS3Method dplyr::arrange
 arrange.sedonadb_dataframe <- function(.data, ..., .by_group = sdplyr_unsupported()) {
   assert_unsupported(.by_group)
   exprs <- rlang::enquos(...)

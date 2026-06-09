@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+#' @exportS3Method dplyr::left_join
 left_join.sedonadb_dataframe <- function(
   x,
   y,
@@ -28,6 +29,7 @@ left_join.sedonadb_dataframe <- function(
   sedonadb::sd_left_join(x, y, by = by, keep = keep)
 }
 
+#' @exportS3Method dplyr::right_join
 right_join.sedonadb_dataframe <- function(
   x,
   y,
@@ -41,6 +43,7 @@ right_join.sedonadb_dataframe <- function(
   sedonadb::sd_right_join(x, y, by = by, keep = keep)
 }
 
+#' @exportS3Method dplyr::inner_join
 inner_join.sedonadb_dataframe <- function(
   x,
   y,
@@ -54,6 +57,7 @@ inner_join.sedonadb_dataframe <- function(
   sedonadb::sd_inner_join(x, y, by = by, keep = keep)
 }
 
+#' @exportS3Method dplyr::full_join
 full_join.sedonadb_dataframe <- function(
   x,
   y,
@@ -67,16 +71,19 @@ full_join.sedonadb_dataframe <- function(
   sedonadb::sd_full_join(x, y, by = by, keep = keep)
 }
 
+#' @exportS3Method dplyr::semi_join
 semi_join.sedonadb_dataframe <- function(x, y, by = NULL, copy = FALSE, ...) {
   rlang::check_dots_empty()
   sedonadb::sd_semi_join(x, y, by = by)
 }
 
+#' @exportS3Method dplyr::anti_join
 anti_join.sedonadb_dataframe <- function(x, y, by = NULL, copy = FALSE, ...) {
   rlang::check_dots_empty()
   sedonadb::sd_anti_join(x, y, by = by)
 }
 
+#' @exportS3Method dplyr::cross_join
 cross_join.sedonadb_dataframe <- function(
   x,
   y,

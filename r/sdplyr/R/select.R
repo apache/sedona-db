@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+#' @exportS3Method dplyr::select
 select.sedonadb_dataframe <- function(.data, ...) {
   exprs <- rlang::enquos(...)
   sedonadb::sd_select(.data, !!!exprs)

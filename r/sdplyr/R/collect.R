@@ -15,11 +15,13 @@
 # specific language governing permissions and limitations
 # under the License.
 
+#' @exportS3Method dplyr::collect
 collect.sedonadb_dataframe <- function(x, ...) {
   rlang::check_dots_empty()
   tibble::as_tibble(sedonadb::sd_collect(x))
 }
 
+#' @exportS3Method dplyr::compute
 compute.sedonadb_dataframe <- function(x, ...) {
   rlang::check_dots_empty()
   sedonadb::sd_compute(x)
