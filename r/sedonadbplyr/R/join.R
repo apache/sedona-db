@@ -15,8 +15,6 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# nolint start: object_name_linter
-
 left_join.sedonadb_dataframe <- function(
   x,
   y,
@@ -26,6 +24,7 @@ left_join.sedonadb_dataframe <- function(
   ...,
   keep = NULL
 ) {
+  rlang::check_dots_empty()
   sedonadb::sd_left_join(x, y, by = by, keep = keep)
 }
 
@@ -38,6 +37,7 @@ right_join.sedonadb_dataframe <- function(
   ...,
   keep = NULL
 ) {
+  rlang::check_dots_empty()
   sedonadb::sd_right_join(x, y, by = by, keep = keep)
 }
 
@@ -50,6 +50,7 @@ inner_join.sedonadb_dataframe <- function(
   ...,
   keep = NULL
 ) {
+  rlang::check_dots_empty()
   sedonadb::sd_inner_join(x, y, by = by, keep = keep)
 }
 
@@ -62,14 +63,17 @@ full_join.sedonadb_dataframe <- function(
   ...,
   keep = NULL
 ) {
+  rlang::check_dots_empty()
   sedonadb::sd_full_join(x, y, by = by, keep = keep)
 }
 
 semi_join.sedonadb_dataframe <- function(x, y, by = NULL, copy = FALSE, ...) {
+  rlang::check_dots_empty()
   sedonadb::sd_semi_join(x, y, by = by)
 }
 
 anti_join.sedonadb_dataframe <- function(x, y, by = NULL, copy = FALSE, ...) {
+  rlang::check_dots_empty()
   sedonadb::sd_anti_join(x, y, by = by)
 }
 
@@ -80,7 +84,6 @@ cross_join.sedonadb_dataframe <- function(
   suffix = c(".x", ".y"),
   ...
 ) {
+  rlang::check_dots_empty()
   sedonadb::sd_cross_join(x, y)
 }
-
-# nolint end
