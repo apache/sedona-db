@@ -625,11 +625,15 @@ pub trait BandRef {
     /// The discriminator is whether the `data` buffer is non-empty —
     /// `outdb_uri` and `outdb_format` are orthogonal location/format hints
     /// that may be set on either kind of band.
-    fn is_indb(&self) -> bool {
-        // Default: materialize via nd_buffer and check buffer emptiness.
-        // Concrete impls should override with a direct buffer check.
-        self.nd_buffer().is_ok_and(|b| !b.buffer.is_empty())
-    }
+    /// A band whose visible region is empty (`Π shape() == 0`) holds no
+    /// readable bytes and is always InDb — there is nothing to load. This is
+    /// what separates a legitimately-empty InDb band from the OutDb empty-`data`
+    /// sentinel.
+    ///
+    /// Required (no default): a band's storage location is a primitive fact each
+    /// impl answers directly. `nd_buffer()` depends on `is_indb()`, so any
+    /// `nd_buffer`-based default would recurse.
+    fn is_indb(&self) -> bool;
 
     /// Eagerly-computed concrete band metadata. Mirrors the pre-N-D
     /// `BandRef::metadata()` accessor.
@@ -941,6 +945,9 @@ mod tests {
             None
         }
         fn nd_buffer(&self) -> Result<NdBuffer<'_>, ArrowError> {
+            unimplemented!("not used in is_spatial_2d tests")
+        }
+        fn is_indb(&self) -> bool {
             unimplemented!("not used in is_spatial_2d tests")
         }
     }
