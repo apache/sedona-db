@@ -467,7 +467,8 @@ def generate_method_docstring(func: FunctionInfo) -> str:
     parts.append(f"    {DOCS_BASE_URL}/{func.name}/")
     parts.append('"""')
 
-    return "\n        ".join(parts)
+    joined = "\n        ".join(parts)
+    return "\n".join(line.rstrip() for line in joined.split("\n"))
 
 
 def generate_function_docstring(func: FunctionInfo) -> str:
@@ -499,7 +500,8 @@ def generate_function_docstring(func: FunctionInfo) -> str:
     parts.append(f"    {DOCS_BASE_URL}/{func.name}/")
     parts.append('"""')
 
-    return "\n        ".join(parts)
+    joined = "\n        ".join(parts)
+    return "\n".join(line.rstrip() for line in joined.split("\n"))
 
 
 def generate_geo_methods_py(functions: list[FunctionInfo]) -> str:
@@ -641,6 +643,24 @@ class GenerationResult:
         self.generated_files = generated_files
 
 
+def parse_qmd_files(docs_sql: Path, pattern: str) -> list[FunctionInfo]:
+    """Parse all .qmd files in a directory and return function definitions.
+
+    Args:
+        docs_sql: Path to directory containing .qmd files.
+
+    Returns:
+        List of parsed FunctionInfo objects.
+    """
+    qmd_files = sorted(docs_sql.glob(pattern))
+    functions: list[FunctionInfo] = []
+    for qmd_file in qmd_files:
+        func = parse_qmd_file(qmd_file)
+        if func:
+            functions.append(func)
+    return functions
+
+
 def generate_sources(docs_sql: Path, output_dir: Path) -> GenerationResult:
     """Generate Python source files from docs/reference/sql.
 
@@ -670,15 +690,7 @@ def generate_sources(docs_sql: Path, output_dir: Path) -> GenerationResult:
             generated_files=generated_files,
         )
 
-    # Find all .qmd files
-    qmd_files = sorted(docs_sql.glob("st_*.qmd"))
-
-    # Parse all function definitions
-    functions: list[FunctionInfo] = []
-    for qmd_file in qmd_files:
-        func = parse_qmd_file(qmd_file)
-        if func:
-            functions.append(func)
+    functions = parse_qmd_files(docs_sql, "st_*.qmd")
 
     # Generate geo_methods.py
     geo_methods_content = generate_geo_methods_py(functions)
@@ -704,8 +716,6 @@ def generate_sources(docs_sql: Path, output_dir: Path) -> GenerationResult:
 
 if __name__ == "__main__":
     # Allow running as a standalone script for development/debugging
-    import sys
-
     here = Path(__file__).parent
     docs_sql = here.parent.parent.parent.parent / "docs" / "reference" / "sql"
     output_dir = here / "_generated"
@@ -717,5 +727,3 @@ if __name__ == "__main__":
     print("Output files:")
     for f in result.generated_files:
         print(f"  - {f}")
-
-    sys.exit(0)

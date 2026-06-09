@@ -16,7 +16,7 @@
 # under the License.
 
 [build-system]
-requires = ["hatchling", "pyyaml"]
+requires = ["hatchling>=1.0.0", "pyyaml"]
 build-backend = "hatchling.build"
 
 [project]
@@ -38,6 +38,7 @@ dynamic = ["version"]
 [project.optional-dependencies]
 test = [
     "pytest",
+    "pyyaml",
 ]
 
 [tool.hatch.version]
