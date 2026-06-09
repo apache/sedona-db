@@ -56,9 +56,19 @@ pub struct ViewEntries(Vec<ViewEntry>);
 
 impl ViewEntries {
     /// Wrap a pre-built vector of entries. The view is not validated
-    /// here — call [`Self::validate`] before relying on it.
+    /// here — call [`Self::validate`] before relying on it, or use
+    /// [`Self::try_new`] to wrap and validate in one step.
     pub fn new(inner: Vec<ViewEntry>) -> Self {
         Self(inner)
+    }
+
+    /// Wrap a pre-built vector of entries and validate it against
+    /// `source_shape` in one step — [`Self::new`] followed by
+    /// [`Self::validate`].
+    pub fn try_new(inner: Vec<ViewEntry>, source_shape: &[i64]) -> Result<Self, ArrowError> {
+        let entries = Self::new(inner);
+        entries.validate(source_shape)?;
+        Ok(entries)
     }
 
     /// Build the canonical identity view over `source_shape`:

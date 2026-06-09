@@ -44,7 +44,8 @@ use sedona_raster::builder::RasterBuilder;
 use sedona_raster::raster_loader::{
     AsyncRasterLoader, RasterLoadRequest, RasterLoaderConfig, RasterLoaderRegistry,
 };
-use sedona_raster::traits::{RasterRef, ViewEntry};
+use sedona_raster::traits::RasterRef;
+use sedona_raster::view_entries::ViewEntry;
 
 /// `SedonaScalarUDF` metadata key marking a UDF whose kernels read raster
 /// pixel bytes. A raster function sets it (value `"true"`) via

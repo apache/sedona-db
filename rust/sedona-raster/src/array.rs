@@ -21,7 +21,8 @@ use arrow_array::{
 };
 use arrow_schema::ArrowError;
 
-use crate::traits::{BandRef, Bands, NdBuffer, RasterRef, ViewEntry};
+use crate::traits::{BandRef, Bands, NdBuffer, RasterRef};
+use crate::view_entries::ViewEntry;
 use sedona_schema::raster::{band_indices, raster_indices, BandDataType};
 
 /// Arrow-backed implementation of BandRef for a single band within a raster.

@@ -18,6 +18,8 @@
 use arrow_schema::ArrowError;
 use sedona_schema::raster::BandDataType;
 
+use crate::view_entries::ViewEntry;
+
 /// Recognized spatial dimension-name pairs, in band C-order: the slower-
 /// varying Y-like (row) axis first, the faster-varying X-like (column) axis
 /// second. A band whose trailing two `dim_names` match one of these pairs is
@@ -117,12 +119,6 @@ impl<'a> NdBuffer<'a> {
         }
     }
 }
-
-// `ViewEntry` (and the `ViewEntries` newtype with its validation /
-// composition / visible-shape machinery) lives in `view_entries.rs`.
-// Re-exported here so the `crate::traits::ViewEntry` import path keeps
-// working.
-pub use crate::view_entries::ViewEntry;
 
 /// Concrete raster metadata returned by `RasterRef::metadata()`.
 ///
