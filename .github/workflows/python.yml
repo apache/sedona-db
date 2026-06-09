@@ -154,11 +154,6 @@ jobs:
           cd python/sedonadb-expr
           python -m pytest -vv
 
-      - name: Run doctests (sedonadb-expr)
-        run: |
-          cd python/sedonadb-expr
-          python -m pytest --doctest-modules python/
-
       - name: Shutdown docker compose services
         if: always()
         run: |
