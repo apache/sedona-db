@@ -235,9 +235,24 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
             );
         }
 
+        // The plane's 2-D extent must equal the MEM dataset's (and the raster's
+        // spatial grid); otherwise the per-plane byte slicing below would
+        // disagree with the GDAL band size and silently mis-stack the planes.
+        // `finish_raster` already enforces this for builder-made rasters, but
+        // re-check so the public bridge stays sound for any `RasterRef`.
+        let shape = band.shape();
+        if shape[ndim - 2] as usize != height || shape[ndim - 1] as usize != width {
+            return exec_err!(
+                "band spatial extent {}x{} does not match the raster grid \
+                 {width}x{height} (dim_names={dims:?})",
+                shape[ndim - 1],
+                shape[ndim - 2]
+            );
+        }
+
         if band.metadata().storage_type()? != StorageType::InDb {
             return Err(DataFusionError::NotImplemented(
-                "OutDb bands are not supported in raster_to_mem_dataset".to_string(),
+                "OutDb bands are not supported by raster_ref_to_gdal_mem".to_string(),
             ));
         }
 
