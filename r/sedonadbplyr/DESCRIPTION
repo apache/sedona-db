@@ -14,7 +14,8 @@ Imports:
     tidyselect,
     rlang,
     nanoarrow,
-    vctrs
+    vctrs,
+    cli
 Suggests:
     testthat (>= 3.0.0)
 RoxygenNote: 7.3.3

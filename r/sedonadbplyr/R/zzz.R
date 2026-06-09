@@ -16,6 +16,43 @@
 # under the License.
 
 .onLoad <- function(...) {
+  # Ensure we load the sedona R namespaces
+  requireNamespace("sedonadb", quietly = TRUE)
+  requireNamespace("sedonafns", quietly = TRUE)
+
+  # Lazy register dplyr methods
   vctrs::s3_register("dplyr::collect", "sedonadb_dataframe")
   vctrs::s3_register("dplyr::select", "sedonadb_dataframe")
+}
+
+.onAttach <- function(libname, pkgname) {
+  pkgs <- c("sedonadb", "sedonafns", "dplyr")
+
+  # Attach packages silently
+  suppressPackageStartupMessages({
+    for (pkg in pkgs) {
+      library(pkg, character.only = TRUE)
+    }
+  })
+
+  # Get versions
+  versions <- vapply(pkgs, function(pkg) {
+    as.character(utils::packageVersion(pkg))
+  }, character(1))
+
+  # Format package info
+  pkg_info <- paste0(
+    cli::col_green(cli::symbol$tick), " ",
+    cli::col_blue(format(pkgs, width = max(nchar(pkgs)))), " ",
+    cli::col_grey(versions)
+  )
+
+  # Build message
+  header <- cli::rule(
+    left = cli::style_bold("Attaching sedonadbplyr packages"),
+    right = utils::packageVersion(pkgname)
+  )
+
+  msg <- paste(c(header, pkg_info), collapse = "\n")
+  packageStartupMessage(msg)
 }

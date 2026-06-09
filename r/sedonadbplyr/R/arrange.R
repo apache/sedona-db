@@ -15,12 +15,4 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# nolint start: object_name_linter
-collect.sedonadb_dataframe <- function(x, ...) {
-  rlang::check_dots_empty()
-  tibble::as_tibble(sedonadb::sd_collect(x))
-}
-
-# TODO: compute() wraps sd_compute()
-
-# nolint end
+# todo: arrange
