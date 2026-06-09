@@ -36,14 +36,20 @@
   })
 
   # Get versions
-  versions <- vapply(pkgs, function(pkg) {
-    as.character(utils::packageVersion(pkg))
-  }, character(1))
+  versions <- vapply(
+    pkgs,
+    function(pkg) {
+      as.character(utils::packageVersion(pkg))
+    },
+    character(1)
+  )
 
   # Format package info
   pkg_info <- paste0(
-    cli::col_green(cli::symbol$tick), " ",
-    cli::col_blue(format(pkgs, width = max(nchar(pkgs)))), " ",
+    cli::col_green(cli::symbol$tick),
+    " ",
+    cli::col_blue(format(pkgs, width = max(nchar(pkgs)))),
+    " ",
     cli::col_grey(versions)
   )
 

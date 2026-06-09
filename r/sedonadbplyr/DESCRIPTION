@@ -15,7 +15,8 @@ Imports:
     rlang,
     nanoarrow,
     vctrs,
-    cli
+    cli,
+    tibble
 Suggests:
     testthat (>= 3.0.0)
 RoxygenNote: 7.3.3

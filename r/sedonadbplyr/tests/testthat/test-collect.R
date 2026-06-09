@@ -15,6 +15,4 @@
 # specific language governing permissions and limitations
 # under the License.
 
-test_that("collect() works for a SedonaDB data frame", {
-
-})
+test_that("collect() works for a SedonaDB data frame", {})
