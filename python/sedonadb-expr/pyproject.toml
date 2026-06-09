@@ -16,7 +16,7 @@
 # under the License.
 
 [build-system]
-requires = ["hatchling>=1.0.0", "pyyaml"]
+requires = ["hatchling", "pyyaml"]
 build-backend = "hatchling.build"
 
 [project]

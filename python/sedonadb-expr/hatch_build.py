@@ -59,13 +59,16 @@ __version__ = "{version}"
 
     def _generate_sources(self) -> None:
         """Generate Python source files from docs/reference/sql."""
-        # Import here to avoid circular imports and allow standalone usage
-        import sys
+        # Import the _codegen module directly to avoid triggering __init__.py,
+        # which imports from _generated (which doesn't exist yet).
+        import importlib.util
 
         here = Path(__file__).parent
-        # Add the package to sys.path so we can import _codegen
-        sys.path.insert(0, str(here / "python"))
-        from sedonadb_expr._codegen import generate_sources
+        codegen_path = here / "python" / "sedonadb_expr" / "_codegen.py"
+        spec = importlib.util.spec_from_file_location("_codegen", codegen_path)
+        codegen_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(codegen_module)
+        generate_sources = codegen_module.generate_sources
 
         docs_sql = here.parent.parent / "docs" / "reference" / "sql"
         output_dir = here / "python" / "sedonadb_expr" / "_generated"
