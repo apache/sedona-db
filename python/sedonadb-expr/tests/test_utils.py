@@ -31,6 +31,19 @@ class MockExpr:
         return self
 
 
+class MockFunctions:
+    """Mock function mapping that records _call invocations."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __getitem__(self, name, *args):
+        def fn(*args):
+            self.calls.append((name, args))
+
+        return fn
+
+
 def test_filter_missing_args():
     """Tests for filter_missing_args utility."""
     # Passthrough when no missing
@@ -87,17 +100,7 @@ def test_geo_methods_missing_args():
 
 def test_geo_functions():
     """Tests for GeoFunctions property access."""
-    calls = []
-
-    def mock_factory_getitem(name):
-        def fn(*args):
-            calls.append((name, args))
-
-        return fn
-
-    factory = type(
-        "MockFactory", (), {"__getitem__": lambda self, k: mock_factory_getitem(k)}
-    )()
+    factory = MockFunctions()
     geo_fns = GeoFunctions(factory)
 
     # Properties return callables
@@ -106,4 +109,4 @@ def test_geo_functions():
 
     # Calling returned function invokes factory
     geo_fns.envelope("geom_arg")
-    assert calls[-1] == ("st_envelope", ("geom_arg",))
+    assert factory.calls[-1] == ("st_envelope", ("geom_arg",))
