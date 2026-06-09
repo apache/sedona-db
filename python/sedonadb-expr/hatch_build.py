@@ -43,22 +43,6 @@ class CustomBuildHook(BuildHookInterface):
             version: The version being built
             build_data: Mutable dict to modify build behavior
         """
-        self._generate_version(version)
-        self._generate_sources()
-
-    def _generate_version(self, version: str) -> None:
-        """Generate _version.py with the static version string."""
-        here = Path(__file__).parent
-        version_file = here / "python" / "sedonadb_expr" / "_version.py"
-
-        content = f'''# Auto-generated at build time - do not edit
-__version__ = "{version}"
-'''
-        version_file.write_text(content)
-        self.app.display_info(f"Generated _version.py with version {version}")
-
-    def _generate_sources(self) -> None:
-        """Generate Python source files from docs/reference/sql."""
         # Import the _codegen module directly to avoid triggering __init__.py,
         # which imports from _generated (which doesn't exist yet).
         import importlib.util
@@ -68,6 +52,24 @@ __version__ = "{version}"
         spec = importlib.util.spec_from_file_location("_codegen", codegen_path)
         codegen_module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(codegen_module)
+
+        self._generate_version(version, codegen_module.LICENSE_HEADER)
+        self._generate_sources(codegen_module, here)
+
+    def _generate_version(self, version: str, license_header: str) -> None:
+        """Generate _version.py with the static version string."""
+        here = Path(__file__).parent
+        version_file = here / "python" / "sedonadb_expr" / "_version.py"
+
+        content = f'''{license_header}
+# Auto-generated at build time - do not edit
+__version__ = "{version}"
+'''
+        version_file.write_text(content)
+        self.app.display_info(f"Generated _version.py with version {version}")
+
+    def _generate_sources(self, codegen_module: Any, here: Path) -> None:
+        """Generate Python source files from docs/reference/sql."""
         generate_sources = codegen_module.generate_sources
 
         docs_sql = here.parent.parent / "docs" / "reference" / "sql"

@@ -135,8 +135,10 @@ def test_geo_methods_accessor(con):
 
     # Check piped function from literal via .geo accessor
     e = con.lit(shapely.Point(0, 1)).geo.as_text()
-    e = con.lit("POINT (0 1)").funcs.st_geomfromwkt()
-    assert repr(e) == 'Expr(st_geomfromwkt(Utf8("POINT (0 1)")))'
+    assert (
+        repr(e)
+        == """Expr(st_astext(Binary("1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,240,63") FieldMetadata { inner: {"ARROW:extension:metadata": "{}", "ARROW:extension:name": "geoarrow.wkb"} }))"""
+    )
 
     # Check piped function from Expr via .geo accessor
     e = con.col("foofy").geo.as_text()
