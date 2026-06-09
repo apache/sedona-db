@@ -252,8 +252,8 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
         let plane_bytes = width * height * band_type.byte_size();
         if plane_bytes == 0 || band_bytes.len() % plane_bytes != 0 {
             return exec_err!(
-                "band byte length {} is not a whole number of {width}x{height} \
-                 planes (dim_names={dims:?})",
+                "band byte length {} is not a multiple of the {width}x{height} \
+                 plane size (dim_names={dims:?})",
                 band_bytes.len()
             );
         }
