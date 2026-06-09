@@ -2,3 +2,4 @@
 ^\.Rproj\.user$
 ^\.positai$
 ^\.claude$
+^\.lintr\.R$

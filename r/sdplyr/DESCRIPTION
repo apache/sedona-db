@@ -10,12 +10,10 @@ Depends: R (>= 4.1.0)
 Imports:
     cli,
     dplyr,
-    nanoarrow,
     rlang,
     sedonadb,
     sedonafns,
-    tibble,
-    tidyselect
+    tibble
 Suggests:
     testthat (>= 3.0.0)
 RoxygenNote: 7.3.3

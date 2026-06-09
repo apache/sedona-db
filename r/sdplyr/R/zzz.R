@@ -16,9 +16,9 @@
 # under the License.
 
 .onLoad <- function(...) {
-  # Ensure we load the sedona R namespaces
-  requireNamespace("sedonadb", quietly = TRUE)
-  requireNamespace("sedonafns", quietly = TRUE)
+  # Ensure we use sedonafns:: and dplyr:: at least once for Imports
+  dplyr::select(data.frame())
+  try(sedonafns::sd_point(), silent = TRUE)
 }
 
 .onAttach <- function(libname, pkgname) {
@@ -27,7 +27,7 @@
   # Attach packages silently
   suppressPackageStartupMessages({
     for (pkg in pkgs) {
-      library(pkg, character.only = TRUE)
+      sdplyr_attach(pkg)
     }
   })
 
@@ -57,4 +57,10 @@
 
   msg <- paste(c(header, pkg_info), collapse = "\n")
   packageStartupMessage(msg)
+}
+
+# from tidyverse::same_library
+sdplyr_attach <- function(pkg) {
+  loc <- if (pkg %in% loadedNamespaces()) dirname(getNamespaceInfo(pkg, "path"))
+  library(pkg, lib.loc = loc, character.only = TRUE, warn.conflicts = FALSE)
 }
