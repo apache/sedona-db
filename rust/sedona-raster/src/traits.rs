@@ -118,26 +118,11 @@ impl<'a> NdBuffer<'a> {
     }
 }
 
-/// One per-dimension entry of a band's logical view. Describes how a
-/// visible axis maps onto an axis of the underlying source buffer.
-///
-/// - `source_axis`: index into the band's `source_shape` that this visible
-///   axis reads from. Across a band's full view, `source_axis` values must
-///   form a permutation of `0..ndim` — axis-dropping and axis-introducing
-///   views are not supported today.
-/// - `start`: starting index along the source axis (in elements, not bytes).
-/// - `step`: stride between consecutive visible elements along the source
-///   axis. `step == 0` means broadcast (the same source element is
-///   exposed `steps` times); negative `step` means reverse iteration.
-/// - `steps`: number of visible elements along this axis. `steps == 0` is
-///   allowed (empty axis).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ViewEntry {
-    pub source_axis: i64,
-    pub start: i64,
-    pub step: i64,
-    pub steps: i64,
-}
+// `ViewEntry` (and the `ViewEntries` newtype with its validation /
+// composition / visible-shape machinery) lives in `view_entries.rs`.
+// Re-exported here so the `crate::traits::ViewEntry` import path keeps
+// working.
+pub use crate::view_entries::ViewEntry;
 
 /// Concrete raster metadata returned by `RasterRef::metadata()`.
 ///
