@@ -19,7 +19,7 @@ assert_unsupported <- function(...) {
     cli::cli_abort(
       c(
         "{cli::qty(bad_args)} Argument{?s} {.arg {bad_args}} {?is/are} not supported
-        by sedonadbplyr."
+        by sdplyr."
       ),
       call = parent.frame()
     )

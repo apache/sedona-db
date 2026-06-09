@@ -1,4 +1,4 @@
-Package: sedonadbplyr
+Package: sdplyr
 Title: Apache SedonaDB 'dplyr' Interface
 Version: 0.3.0.9000
 Authors@R:

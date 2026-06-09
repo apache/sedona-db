@@ -64,7 +64,7 @@
 
   # Build message
   header <- cli::rule(
-    left = cli::style_bold("Attaching sedonadbplyr packages"),
+    left = cli::style_bold("Attaching sdplyr packages"),
     right = utils::packageVersion(pkgname)
   )
 

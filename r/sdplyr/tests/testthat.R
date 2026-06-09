@@ -7,6 +7,6 @@
 # * https://testthat.r-lib.org/articles/special-files.html
 
 library(testthat)
-library(sedonadbplyr)
+library(sdplyr)
 
-test_check("sedonadbplyr")
+test_check("sdplyr")
