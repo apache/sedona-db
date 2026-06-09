@@ -19,7 +19,9 @@
 
 # SedonaDB Expr
 
-A standalone Python package for SedonaDB expressions.
+A standalone Python package for SedonaDB expressions. This is an optional
+dependency of the `sedonadb` package that powers the type-specific accessors
+without bloating the core package for non-interactive usage.
 
 ## Installation
 
