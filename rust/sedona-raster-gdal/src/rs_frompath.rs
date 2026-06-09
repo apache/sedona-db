@@ -25,7 +25,6 @@ use datafusion_common::cast::as_string_array;
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::error::Result;
 use datafusion_expr::{ColumnarValue, Volatility};
-use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_functions::executor::WkbBytesExecutor;
 use sedona_raster::builder::RasterBuilder;

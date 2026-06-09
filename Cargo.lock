@@ -2671,6 +2671,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dea2df4cf52843e0452895c455a1a2cfbb842a1e7329671acf418fdc53ed4c59"
 
 [[package]]
+name = "evalexpr"
+version = "13.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "25929004897f2bbab309121a60400d36992f6d911d09baa6c172f6cc55706601"
+
+[[package]]
 name = "event-listener"
 version = "5.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2690,12 +2696,6 @@ dependencies = [
  "event-listener",
  "pin-project-lite",
 ]
-
-[[package]]
-name = "evalexpr"
-version = "13.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "25929004897f2bbab309121a60400d36992f6d911d09baa6c172f6cc55706601"
 
 [[package]]
 name = "fastrand"
@@ -6161,9 +6161,10 @@ dependencies = [
  "arrow-schema",
  "async-trait",
  "criterion",
+ "datafusion",
  "datafusion-common",
- "datafusion-expr",
  "datafusion-common-runtime",
+ "datafusion-expr",
  "evalexpr",
  "futures",
  "lru 0.18.0",

@@ -196,14 +196,16 @@ fn open_dataset(gdal: &Gdal, path: &str) -> sedona_gdal::errors::Result<Dataset>
 
 #[cfg(test)]
 mod tests {
-    use super::{append_as_indb_raster, dataset_to_indb_raster, load_as_indb_raster, open_dataset};
+    use super::{
+        append_as_indb_raster, append_as_outdb_raster, dataset_to_indb_raster, load_as_indb_raster,
+        open_dataset,
+    };
 
+    use arrow_array::StructArray;
     use datafusion_common::exec_datafusion_err;
     use sedona_gdal::dataset::Dataset;
     use sedona_gdal::gdal::Gdal;
-    use sedona_gdal::gdal_dyn_bindgen::{GDAL_OF_RASTER, GDAL_OF_READONLY};
     use sedona_gdal::raster::types::Buffer;
-    use sedona_gdal::raster::types::DatasetOptions;
     use sedona_raster::array::RasterStructArray;
     use sedona_raster::builder::RasterBuilder;
     use sedona_raster::traits::RasterRef;

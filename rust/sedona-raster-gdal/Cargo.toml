@@ -36,6 +36,7 @@ arrow-array = { workspace = true }
 arrow-buffer = { workspace = true }
 arrow-schema = { workspace = true }
 async-trait = { workspace = true }
+datafusion = { workspace = true, default_features = false }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
 lru = { workspace = true }

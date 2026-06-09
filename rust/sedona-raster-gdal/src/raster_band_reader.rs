@@ -74,7 +74,12 @@ impl<'a> RasterBandReader<'a> {
         match storage_type {
             StorageType::InDb => {
                 let band = self.band_ref(band_idx)?;
-                let data = band.data();
+                let nd_buffer = band
+                    .nd_buffer()
+                    .map_err(|e| exec_datafusion_err!("Failed to read band buffer: {e}"))?;
+                let data = nd_buffer.as_contiguous().map_err(|e| {
+                    exec_datafusion_err!("Failed to get contiguous band bytes: {e}")
+                })?;
                 read_pixel_from_bytes(data, pixel_idx, &data_type)
             }
             StorageType::OutDbRef => {
@@ -113,7 +118,12 @@ impl<'a> RasterBandReader<'a> {
         match storage_type {
             StorageType::InDb => {
                 let band = self.band_ref(band_idx)?;
-                let data = band.data();
+                let nd_buffer = band
+                    .nd_buffer()
+                    .map_err(|e| exec_datafusion_err!("Failed to read band buffer: {e}"))?;
+                let data = nd_buffer.as_contiguous().map_err(|e| {
+                    exec_datafusion_err!("Failed to get contiguous band bytes: {e}")
+                })?;
                 let mut result = Vec::with_capacity(pixel_count);
                 for idx in 0..pixel_count {
                     result.push(read_pixel_from_bytes(data, idx, &data_type)?);
@@ -146,7 +156,12 @@ impl<'a> RasterBandReader<'a> {
                 }
 
                 let band = self.band_ref(band_idx)?;
-                let data = band.data();
+                let nd_buffer = band
+                    .nd_buffer()
+                    .map_err(|e| exec_datafusion_err!("Failed to read band buffer: {e}"))?;
+                let data = nd_buffer.as_contiguous().map_err(|e| {
+                    exec_datafusion_err!("Failed to get contiguous band bytes: {e}")
+                })?;
                 let mut result = Vec::with_capacity(win_w * win_h);
                 for row in 0..win_h {
                     let base = (yoff + row) * width + xoff;
@@ -205,7 +220,13 @@ impl<'a> RasterBandReader<'a> {
         match storage_type {
             StorageType::InDb => {
                 let band = self.band_ref(band_idx)?;
-                Ok(band.data().to_vec())
+                let nd_buffer = band
+                    .nd_buffer()
+                    .map_err(|e| exec_datafusion_err!("Failed to read band buffer: {e}"))?;
+                let data = nd_buffer.as_contiguous().map_err(|e| {
+                    exec_datafusion_err!("Failed to get contiguous band bytes: {e}")
+                })?;
+                Ok(data.to_vec())
             }
             StorageType::OutDbRef => {
                 let dataset = self.ensure_dataset()?;
@@ -240,7 +261,12 @@ impl<'a> RasterBandReader<'a> {
                 }
 
                 let band = self.band_ref(band_idx)?;
-                let data = band.data();
+                let nd_buffer = band
+                    .nd_buffer()
+                    .map_err(|e| exec_datafusion_err!("Failed to read band buffer: {e}"))?;
+                let data = nd_buffer.as_contiguous().map_err(|e| {
+                    exec_datafusion_err!("Failed to get contiguous band bytes: {e}")
+                })?;
                 let byte_size = band_data_type_size(&data_type);
                 let mut result = Vec::with_capacity(win_w * win_h * byte_size);
                 for row in 0..win_h {

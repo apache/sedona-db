@@ -893,7 +893,15 @@ mod tests {
             ColumnarValue::Scalar(ScalarValue::Struct(struct_array)) => {
                 let array = RasterStructArray::new(struct_array.as_ref());
                 let raster = array.get(0).unwrap();
-                let data = raster.bands().band(1).unwrap().data().to_vec();
+                let data = raster
+                    .bands()
+                    .band(1)
+                    .unwrap()
+                    .nd_buffer()
+                    .unwrap()
+                    .as_contiguous()
+                    .unwrap()
+                    .to_vec();
                 data
             }
             _ => panic!("Expected raster scalar result"),
@@ -903,7 +911,15 @@ mod tests {
             ColumnarValue::Scalar(ScalarValue::Struct(struct_array)) => {
                 let array = RasterStructArray::new(struct_array.as_ref());
                 let raster = array.get(0).unwrap();
-                let data = raster.bands().band(1).unwrap().data().to_vec();
+                let data = raster
+                    .bands()
+                    .band(1)
+                    .unwrap()
+                    .nd_buffer()
+                    .unwrap()
+                    .as_contiguous()
+                    .unwrap()
+                    .to_vec();
                 data
             }
             _ => panic!("Expected raster scalar result"),
