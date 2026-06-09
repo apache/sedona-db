@@ -133,3 +133,11 @@ jobs:
       - name: Test sedonafns R Package
         run: |
           R -e 'library(testthat); test_local("r/sedonafns", MultiReporter$new(list(CheckReporter$new(), LocationReporter$new())))'
+
+      - name: Install sdplyr R Package
+        run: |
+          R CMD INSTALL r/sdplyr --preclean
+
+      - name: Test sdplyr R Package
+        run: |
+          R -e 'library(testthat); test_local("r/sdplyr", MultiReporter$new(list(CheckReporter$new(), LocationReporter$new())))'
