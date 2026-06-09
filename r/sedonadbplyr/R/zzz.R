@@ -22,6 +22,7 @@
 
   # Lazy register dplyr methods
   vctrs::s3_register("dplyr::collect", "sedonadb_dataframe")
+  vctrs::s3_register("dplyr::compute", "sedonadb_dataframe")
   vctrs::s3_register("dplyr::select", "sedonadb_dataframe")
 }
 

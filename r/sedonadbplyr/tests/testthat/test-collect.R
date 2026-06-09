@@ -15,4 +15,20 @@
 # specific language governing permissions and limitations
 # under the License.
 
-test_that("collect() works for a SedonaDB data frame", {})
+test_that("collect() returns a collected tibble", {
+  df <- tibble(one = 1L, two = "two", THREE = 3.0)
+  expect_identical(
+    df |> as_sedonadb_dataframe() |> collect(),
+    df
+  )
+})
+
+test_that("compute() returns a collected SedonaDB dataframe", {
+  df <- tibble(one = 1L, two = "two", THREE = 3.0)
+  computed <- df |> as_sedonadb_dataframe() |> compute()
+  expect_s3_class(computed, "sedonadb_dataframe")
+  expect_identical(
+    computed |> collect(),
+    df
+  )
+})
