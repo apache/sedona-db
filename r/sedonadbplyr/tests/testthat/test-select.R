@@ -16,8 +16,6 @@
 # under the License.
 
 test_that("select() works for sedonadb_dataframe", {
-  skip_if_not_installed("dplyr")
-
   df <- sd_sql("SELECT 1 as one, 'two' as two, 3.0 as \"THREE\"")
 
   expect_identical(

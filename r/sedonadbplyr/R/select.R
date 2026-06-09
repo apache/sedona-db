@@ -15,16 +15,9 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# nolint start: object_name_linter
 select.sedonadb_dataframe <- function(.data, ...) {
-  schema <- nanoarrow::infer_nanoarrow_schema(.data)
-  ptype <- nanoarrow::infer_nanoarrow_ptype(schema)
-  loc <- tidyselect::eval_select(rlang::expr(c(...)), data = ptype)
-
-  df <- .data$df$select_indices(names(loc), loc - 1L)
-  new_sedonadb_dataframe(.data$ctx, df)
+  exprs <- rlang::enquos(...)
+  sedonadb::sd_select(.data, !!!exprs)
 }
 
 # TODO: rename
-
-# nolint end
