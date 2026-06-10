@@ -141,3 +141,13 @@ jobs:
       - name: Test sdplyr R Package
         run: |
           R -e 'library(testthat); test_local("r/sdplyr", MultiReporter$new(list(CheckReporter$new(), LocationReporter$new())))'
+
+      # These two packages are quick to CMD check after sedonadb is installed,
+      # so do that here
+      - uses: r-lib/actions/check-r-package@v2
+        with:
+          working-directory: r/sedonafns
+
+      - uses: r-lib/actions/check-r-package@v2
+        with:
+          working-directory: r/sdplyr
