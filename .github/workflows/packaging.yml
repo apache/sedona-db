@@ -162,6 +162,12 @@ jobs:
           MATURIN_PEP517_ARGS: "--features s2geography,pyo3/extension-module"
         run: |
             pip install "python/sedonadb/[geopandas]" -v
+            # sedonadb-zarr is a pure Rust + pyo3 plugin (no s2geography
+            # feature). It's installed so mkdocstrings can import it to build
+            # the Zarr extension API reference. Unset the sedonadb-only maturin
+            # args first so they don't leak into the plugin build.
+            unset MATURIN_PEP517_ARGS
+            pip install "python/sedonadb-zarr/" -v
 
       - name: Validate SQL function docs coverage
         run: |

@@ -66,6 +66,21 @@ class ZarrFormatSpec(ExternalFormatSpec):
         return True
 
     def with_options(self, options: Mapping[str, Any]) -> "ZarrFormatSpec":
+        """Return a copy of this spec with additional read options set.
+
+        Args:
+            options: Option key/value pairs merged over the current options.
+                Supported keys:
+
+                - `arrays` (`list[str]`): explicit subset of the group's
+                  arrays to read. Defaults to every array in the group.
+
+        Returns:
+            A new `ZarrFormatSpec`; the original spec is left unchanged.
+
+        Raises:
+            ValueError: If `options` contains an unsupported key.
+        """
         unknown = set(options) - self._SUPPORTED_OPTIONS
         if unknown:
             raise ValueError(

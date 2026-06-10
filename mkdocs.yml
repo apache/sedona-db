@@ -42,6 +42,7 @@ nav:
         - GPU Acceleration: gpu-acceleration.md
       - API:
         - Python: reference/python.md
+        - Zarr Extension (Python): reference/python-zarr.md
         - SQL: reference/sql/index.md
         - Spatial Joins: reference/sql-joins.md
       - Examples:
