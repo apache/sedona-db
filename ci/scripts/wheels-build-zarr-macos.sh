@@ -17,19 +17,9 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# Build macOS wheels for sedonadb-zarr.
-#
-# sedonadb-zarr is pure Rust + pyo3 with no vcpkg-managed native dependencies
-# and no sedonadb-only cargo features, so this is just cibuildwheel over the
-# Rust build. cmake (preinstalled on the runners) backs c-blosc and
-# aws-lc-sys, and the default delocate repair suffices because there are no
-# vcpkg @rpath libs to vendor.
-#
-# This build profile is specific to sedonadb-zarr. Other extensions may have
-# different native build requirements and should get their own script rather
-# than reusing this one.
-#
-# Set SEDONADB_MACOS_ARCH=x86_64 to cross-build for Intel (defaults to arm64).
+# Build macOS wheels for sedonadb-zarr: pure Rust + pyo3, no vcpkg. cmake
+# (preinstalled) builds c-blosc + aws-lc-sys; default delocate repair
+# suffices. Set SEDONADB_MACOS_ARCH=x86_64 to cross-build for Intel.
 #
 # Local usage:
 # CIBW_BUILD='cp313*' ./wheels-build-zarr-macos.sh

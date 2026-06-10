@@ -17,18 +17,9 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# Build Linux wheels for sedonadb-zarr.
-#
-# sedonadb-zarr is pure Rust + pyo3 with no vcpkg-managed native dependencies
-# and no sedonadb-only cargo features, so this is just cibuildwheel over the
-# Rust build. The manylinux image needs cmake (builds c-blosc via blosc-src
-# and aws-lc-sys) plus clang/perl (back ring and aws-lc-sys).
-#
-# This build profile is specific to sedonadb-zarr. Other extensions may have
-# different native build requirements and should get their own script rather
-# than reusing this one.
-#
-# Builds one arch at a time; musllinux must be skipped via CIBW_BUILD/CIBW_SKIP.
+# Build Linux wheels for sedonadb-zarr: pure Rust + pyo3, no vcpkg. cmake
+# builds c-blosc + aws-lc-sys; clang/perl back ring/aws-lc-sys. One arch per
+# invocation; skip musllinux via CIBW_BUILD/CIBW_SKIP.
 #
 # Local usage:
 # CIBW_BUILD=cp313-manylinux_x86_64 ./wheels-build-zarr-linux.sh x86_64
