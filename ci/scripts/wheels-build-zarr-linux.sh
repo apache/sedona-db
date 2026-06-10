@@ -33,6 +33,13 @@
 # Local usage:
 # CIBW_BUILD=cp313-manylinux_x86_64 ./wheels-build-zarr-linux.sh x86_64
 
+set -e
+set -o pipefail
+
+if [ ${VERBOSE:-0} -gt 0 ]; then
+  set -x
+fi
+
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 SEDONADB_DIR="$(cd "${SOURCE_DIR}/../.." && pwd)"
 
@@ -41,4 +48,4 @@ ARCH="$1"
 export CIBW_BEFORE_ALL="yum install -y clang perl cmake"
 
 pushd "${SEDONADB_DIR}"
-python -m cibuildwheel --platform linux --archs ${ARCH} --output-dir python/sedonadb-zarr/dist python/sedonadb-zarr
+python -m cibuildwheel --platform linux --archs "${ARCH}" --output-dir python/sedonadb-zarr/dist python/sedonadb-zarr

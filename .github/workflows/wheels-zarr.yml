@@ -59,10 +59,11 @@ jobs:
           .\wheels-build-zarr-windows.ps1
         env:
           CIBW_BUILD: "*-win_amd64"
-          # The sedonadb wheel was downloaded into the package dir above; --pre
-          # lets pip prefer the local dev prerelease over a PyPI stable release
-          # (transitive deps still resolve from PyPI).
-          CIBW_BEFORE_TEST: pip install --pre --find-links {package}/prebuilt sedonadb
+          # Install the sedonadb dev wheel downloaded into the package dir
+          # above: first sedonadb itself (--no-deps --pre, since the dev
+          # version is a prerelease), then its dependencies without --pre so
+          # transitive deps can't resolve to prereleases.
+          CIBW_BEFORE_TEST: pip install --no-deps --pre --find-links {package}/prebuilt sedonadb && pip install --find-links {package}/prebuilt sedonadb
           CIBW_TEST_REQUIRES: pytest zarr numpy
           CIBW_TEST_COMMAND: pytest {package}/tests -vv
 
@@ -95,7 +96,7 @@ jobs:
           cd ci/scripts
           ./wheels-build-zarr-macos.sh
         env:
-          CIBW_BEFORE_TEST: pip install --pre --find-links {package}/prebuilt sedonadb
+          CIBW_BEFORE_TEST: pip install --no-deps --pre --find-links {package}/prebuilt sedonadb && pip install --find-links {package}/prebuilt sedonadb
           CIBW_TEST_REQUIRES: pytest zarr numpy
           CIBW_TEST_COMMAND: pytest {package}/tests -vv
 
@@ -128,7 +129,7 @@ jobs:
           cd ci/scripts
           ./wheels-build-zarr-macos.sh
         env:
-          CIBW_BEFORE_TEST: pip install --pre --find-links {package}/prebuilt sedonadb
+          CIBW_BEFORE_TEST: pip install --no-deps --pre --find-links {package}/prebuilt sedonadb && pip install --find-links {package}/prebuilt sedonadb
           CIBW_TEST_REQUIRES: pytest zarr numpy
           CIBW_TEST_COMMAND: pytest {package}/tests -vv
           SEDONADB_MACOS_ARCH: x86_64
@@ -167,7 +168,7 @@ jobs:
           ./wheels-build-zarr-linux.sh ${{ matrix.config.arch }}
         env:
           CIBW_SKIP: "*musllinux*"
-          CIBW_BEFORE_TEST: pip install --pre --find-links {package}/prebuilt sedonadb
+          CIBW_BEFORE_TEST: pip install --no-deps --pre --find-links {package}/prebuilt sedonadb && pip install --find-links {package}/prebuilt sedonadb
           CIBW_TEST_REQUIRES: pytest zarr numpy
           CIBW_TEST_COMMAND: pytest {package}/tests -vv
 
@@ -180,6 +181,9 @@ jobs:
     needs: ["zarr-linux", "zarr-macOS-arm64", "zarr-macOS-amd64", "zarr-windows-x86_64"]
     name: Upload nightly packages (sedonadb-zarr)
     runs-on: "macos-latest"
+    # Only the nightly publish needs this job; skip it entirely (rather than
+    # just the push step) on PRs so it doesn't burn a runner.
+    if: github.repository == 'apache/sedona-db' && github.ref == 'refs/heads/main'
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -194,7 +198,6 @@ jobs:
           fury --version
 
       - name: Upload packages to Gemfury
-        if: github.repository == 'apache/sedona-db' && github.ref == 'refs/heads/main'
         shell: bash
         run: |
           fury push \
