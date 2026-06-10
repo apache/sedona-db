@@ -64,7 +64,7 @@ jobs:
           # version is a prerelease), then its dependencies without --pre so
           # transitive deps can't resolve to prereleases.
           CIBW_BEFORE_TEST: pip install --no-deps --pre --find-links {package}/prebuilt sedonadb && pip install --find-links {package}/prebuilt sedonadb
-          CIBW_TEST_REQUIRES: pytest zarr numpy
+          CIBW_TEST_REQUIRES: pytest zarr numpy geoarrow-pyarrow
           CIBW_TEST_COMMAND: pytest {package}/tests -vv
 
       - uses: actions/upload-artifact@v7
@@ -97,7 +97,7 @@ jobs:
           ./wheels-build-zarr-macos.sh
         env:
           CIBW_BEFORE_TEST: pip install --no-deps --pre --find-links {package}/prebuilt sedonadb && pip install --find-links {package}/prebuilt sedonadb
-          CIBW_TEST_REQUIRES: pytest zarr numpy
+          CIBW_TEST_REQUIRES: pytest zarr numpy geoarrow-pyarrow
           CIBW_TEST_COMMAND: pytest {package}/tests -vv
 
       - uses: actions/upload-artifact@v7
@@ -130,7 +130,7 @@ jobs:
           ./wheels-build-zarr-macos.sh
         env:
           CIBW_BEFORE_TEST: pip install --no-deps --pre --find-links {package}/prebuilt sedonadb && pip install --find-links {package}/prebuilt sedonadb
-          CIBW_TEST_REQUIRES: pytest zarr numpy
+          CIBW_TEST_REQUIRES: pytest zarr numpy geoarrow-pyarrow
           CIBW_TEST_COMMAND: pytest {package}/tests -vv
           SEDONADB_MACOS_ARCH: x86_64
 
@@ -169,7 +169,7 @@ jobs:
         env:
           CIBW_SKIP: "*musllinux*"
           CIBW_BEFORE_TEST: pip install --no-deps --pre --find-links {package}/prebuilt sedonadb && pip install --find-links {package}/prebuilt sedonadb
-          CIBW_TEST_REQUIRES: pytest zarr numpy
+          CIBW_TEST_REQUIRES: pytest zarr numpy geoarrow-pyarrow
           CIBW_TEST_COMMAND: pytest {package}/tests -vv
 
       - uses: actions/upload-artifact@v7
