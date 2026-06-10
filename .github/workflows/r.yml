@@ -114,7 +114,7 @@ jobs:
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
           needs: check
-          extra-packages: any::glue, any::here, any::rlang, any::yaml, any::roxygen2
+          extra-packages: any::glue, any::here, any::rlang, any::yaml, any::roxygen2, any::rcmdcheck
           working-directory: r/sedonadb
           cache: false
 
