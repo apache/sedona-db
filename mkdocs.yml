@@ -52,6 +52,7 @@ nav:
         - Iceberg: iceberg.md
         - Working with Parquet Files: working-with-parquet-files.md
         - Working with SQL in SedonaDB: working-with-sql-sedonadb.md
+        - Working with Zarr and NDArray data in SedonaDB: working-with-zarr-ndarray-sedonadb.md
       - Contributors Guide: contributors-guide.md
       - Release notes: release-notes.md
   - SedonaSpark: https://sedona.apache.org/latest/sedonaspark/
