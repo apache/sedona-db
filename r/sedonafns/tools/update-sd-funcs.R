@@ -557,7 +557,11 @@ generate_from_qmd <- function(qmd_path, force = FALSE) {
 #' @returns Invisible NULL
 update_sd_funcs <- function(files = NULL, force = TRUE) {
   if (is.null(files)) {
-    qmd_files <- list.files(docs_dir, pattern = "^(st|rs|s2)_.*\\.qmd$", full.names = TRUE)
+    qmd_files <- list.files(
+      docs_dir,
+      pattern = "^(st|rs|s2)_.*\\.qmd$",
+      full.names = TRUE
+    )
 
     # Clear old generated files when regenerating all
     message("Clearing old generated files...")
