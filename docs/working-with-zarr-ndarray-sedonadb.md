@@ -57,17 +57,18 @@ store = "/tmp/temperature.zarr"
 root = zarr.open_group(store, mode="w")
 arr = root.create_array(
     "temperature",
-    shape=(3, 4, 5),
-    chunks=(1, 4, 5),
+    shape=(3, 10, 20),
+    chunks=(3, 5, 5),
     dtype="uint16",
     dimension_names=["time", "y", "x"],
 )
-arr[:] = np.arange(3 * 4 * 5, dtype="uint16").reshape(3, 4, 5)
+arr[:] = np.arange(3 * 10 * 20, dtype="uint16").reshape(3, 10, 20)
 ```
 
-The `chunks=(1, 4, 5)` argument splits the cube into three chunks along
-`time` — one chunk per time step, each spanning the full `(y, x)` grid.
-That chunking is what determines how the data loads, as we'll see next.
+The `chunks=(3, 5, 5)` argument leaves `time` un-chunked — every chunk
+holds all three time steps — and tiles the `10 × 20` spatial grid into a
+`2 × 4` grid of `5 × 5` patches. That's `8` chunks in total, and that
+chunking is what determines how the data loads, as we'll see next.
 
 ## Connect and load
 
@@ -86,8 +87,9 @@ df.to_view("cube")
 ```
 
 `sedonadb-zarr` emits **one row per Zarr chunk**, with one band per array
-in the group. Our cube has three chunks, so it loads as three rows — each
-a `[1, y, x]` slab holding a single time step:
+in the group. Our cube tiles into eight chunks, so it loads as eight rows
+— each a `[3, 5, 5]` tile holding all three time steps for one `5 × 5`
+spatial patch:
 
 ```python
 sd.sql("SELECT COUNT(*) AS n_chunks FROM cube").show()
@@ -97,7 +99,7 @@ sd.sql("SELECT COUNT(*) AS n_chunks FROM cube").show()
 ┌──────────┐
 │ n_chunks │
 ╞══════════╡
-│        3 │
+│        8 │
 └──────────┘
 ```
 
@@ -106,7 +108,7 @@ sd.sql("SELECT COUNT(*) AS n_chunks FROM cube").show()
 The dimension-query functions read the raster's schema only — **no pixel
 data is loaded** — so they return near-instantly even against a large
 remote cube. Each row reports its **chunk's** shape, not the full cube
-extent:
+extent. All eight chunks share the same shape here, so we look at one:
 
 ```python
 sd.sql("""
@@ -116,6 +118,7 @@ sd.sql("""
         RS_Shape(raster)           AS shape,
         RS_DimSize(raster, 'time') AS n_time
     FROM cube
+    LIMIT 1
 """).show()
 ```
 
@@ -123,43 +126,39 @@ sd.sql("""
 ┌──────┬──────────────┬───────────┬────────┐
 │ ndim ┆ dims         ┆ shape     ┆ n_time │
 ╞══════╪══════════════╪═══════════╪════════╡
-│    3 ┆ [time, y, x] ┆ [1, 4, 5] ┆      1 │
-│    3 ┆ [time, y, x] ┆ [1, 4, 5] ┆      1 │
-│    3 ┆ [time, y, x] ┆ [1, 4, 5] ┆      1 │
+│    3 ┆ [time, y, x] ┆ [3, 5, 5] ┆      3 │
 └──────┴──────────────┴───────────┴────────┘
 ```
 
-Three rows, one per chunk. Each is still 3-dimensional (`[time, y, x]`),
-but its `time` axis has length `1` because we chunked one time step per
-chunk.
+Each chunk is 3-dimensional (`[time, y, x]`) with all three time steps
+(`n_time = 3`) and a `5 × 5` spatial footprint — one tile of the full
+`10 × 20` grid.
 
 ## Slice out a 2-D plane
 
 `RS_Slice` selects a single index along a named dimension and drops it.
-Each row's chunk carries a length-1 `time` axis, so slicing it off turns
-every `[1, y, x]` chunk into a clean `[y, x]` plane — one per row:
+Picking time step `1` turns every `[3, 5, 5]` chunk into a `[y, x]` plane
+— the `5 × 5` patch at that time step, one per row:
 
 ```python
-sliced = sd.sql("SELECT RS_Slice(raster, 'time', 0) AS plane FROM cube")
+sliced = sd.sql("SELECT RS_Slice(raster, 'time', 1) AS plane FROM cube")
 sliced.to_view("plane")
 
-sd.sql("SELECT RS_DimNames(plane) AS dims, RS_Shape(plane) AS shape FROM plane").show()
+sd.sql("SELECT RS_DimNames(plane) AS dims, RS_Shape(plane) AS shape FROM plane LIMIT 1").show()
 ```
 
 ```text
 ┌────────┬────────┐
 │ dims   ┆ shape  │
 ╞════════╪════════╡
-│ [y, x] ┆ [4, 5] │
-│ [y, x] ┆ [4, 5] │
-│ [y, x] ┆ [4, 5] │
+│ [y, x] ┆ [5, 5] │
 └────────┴────────┘
 ```
 
 `RS_Slice` needs pixel data, so SedonaDB resolves each row's Zarr chunk on
-demand before slicing — you never call a loader yourself. The slice index
-is relative to the chunk; here every chunk holds one time step, so index
-`0` is the only valid choice.
+demand before slicing — you never call a loader yourself. Because `time`
+isn't chunked, the slice index is the global time step: `0`, `1`, or `2`
+all select a real plane.
 
 Related functions reshape a cube in other ways:
 
@@ -185,21 +184,22 @@ def band_to_numpy(raster, band_index=0):
     return np.frombuffer(band["data"], dtype=dtype).reshape(band["source_shape"])
 
 planes = sliced.to_arrow_table()["plane"]
-raster = planes[0].as_py()  # each of the three rows is one time step's plane
+raster = planes[0].as_py()  # each row is one 5x5 spatial tile at time step 1
 print(band_to_numpy(raster))
 ```
 
 ```text
-[[ 0  1  2  3  4]
- [ 5  6  7  8  9]
- [10 11 12 13 14]
- [15 16 17 18 19]]
+[[200 201 202 203 204]
+ [220 221 222 223 224]
+ [240 241 242 243 244]
+ [260 261 262 263 264]
+ [280 281 282 283 284]]
 ```
 
-Each of the three rows decodes to one time step as a 2-D `[4, 5]` plane;
-this is the first. Rows correspond to chunks rather than a guaranteed
+Each of the eight rows decodes to a `5 × 5` spatial tile at time step `1`;
+this is one of them. Rows correspond to chunks rather than a guaranteed
 order, so apply your own `ORDER BY` (or carry a chunk identifier) if you
-need to line planes up to specific time steps.
+need to know which spatial tile a given plane covers.
 
 ## Reading from cloud storage
 
