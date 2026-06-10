@@ -32,7 +32,10 @@ import sedonadb_zarr
 @pytest.fixture
 def zarr_group(tmp_path):
     """Build a tiny 2x2 UInt8 Zarr v3 group with two chunks."""
-    zarr = pytest.importorskip("zarr")
+    # The fixture uses the zarr-python 3.x API (create_array,
+    # dimension_names); zarr 2.x (the newest available on Python < 3.11)
+    # can't write these fixtures.
+    zarr = pytest.importorskip("zarr", minversion="3.0")
     root = zarr.open_group(str(tmp_path), mode="w")
     arr = root.create_array(
         "temperature",
@@ -100,7 +103,7 @@ def test_format_spec_class_invariants():
     ],
 )
 def test_dtype_mapping_roundtrips(tmp_path, numpy_dtype):
-    zarr = pytest.importorskip("zarr")
+    zarr = pytest.importorskip("zarr", minversion="3.0")
     root = zarr.open_group(str(tmp_path), mode="w")
     arr = root.create_array(
         "temperature",

@@ -1,0 +1,205 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+name: wheels-zarr
+
+# Reusable workflow that builds, tests, and publishes the sedonadb-zarr
+# extension wheels. Invoked by python-wheels.yml after the sedonadb jobs so
+# this runs in the same run and can download their wheels for testing.
+#
+# Kept separate from the core wheel jobs so an extension build failure can't
+# block the core package from publishing. Future extensions (e.g. point cloud)
+# get their own reusable workflow following this same shape.
+#
+# sedonadb-zarr wheels are pure Rust + pyo3, but the tests `import sedonadb`,
+# so each job downloads the matching sedonadb wheel (built by the caller) and
+# installs it via CIBW_BEFORE_TEST before running the tests.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  zarr-windows-x86_64:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: 'true'
+          fetch-depth: 0
+
+      - uses: ./.github/actions/setup-wheel-build
+        with:
+          rust-cache-key: "python-wheel-zarr-windows-v1"
+          delvewheel: "true"
+
+      - name: Download sedonadb wheel for the test environment
+        uses: actions/download-artifact@v8
+        with:
+          name: release-wheels-windows-x86_64
+          path: python/sedonadb-zarr/prebuilt
+
+      - name: Build and test wheels (sedonadb-zarr)
+        run: |
+          cd ci/scripts
+          .\wheels-build-zarr-windows.ps1
+        env:
+          CIBW_BUILD: "*-win_amd64"
+          # The sedonadb wheel was downloaded into the package dir above; --pre
+          # lets pip prefer the local dev prerelease over a PyPI stable release
+          # (transitive deps still resolve from PyPI).
+          CIBW_BEFORE_TEST: pip install --pre --find-links {package}/prebuilt sedonadb
+          CIBW_TEST_REQUIRES: pytest zarr numpy
+          CIBW_TEST_COMMAND: pytest {package}/tests -vv
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-zarr-wheels-windows-x86_64
+          path: python/sedonadb-zarr/dist/*.whl
+
+  zarr-macOS-arm64:
+    runs-on: macOS-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: 'true'
+          fetch-depth: 0
+
+      - uses: ./.github/actions/setup-wheel-build
+        with:
+          rust-cache-key: "python-wheel-zarr-macOS-v1"
+          cache-bin: "false"
+
+      - name: Download sedonadb wheel for the test environment
+        uses: actions/download-artifact@v8
+        with:
+          name: release-wheels-macOS-arm64
+          path: python/sedonadb-zarr/prebuilt
+
+      - name: Build and test wheels (sedonadb-zarr)
+        run: |
+          cd ci/scripts
+          ./wheels-build-zarr-macos.sh
+        env:
+          CIBW_BEFORE_TEST: pip install --pre --find-links {package}/prebuilt sedonadb
+          CIBW_TEST_REQUIRES: pytest zarr numpy
+          CIBW_TEST_COMMAND: pytest {package}/tests -vv
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-zarr-wheels-macOS-arm64
+          path: python/sedonadb-zarr/dist/*.whl
+
+  zarr-macOS-amd64:
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: 'true'
+          fetch-depth: 0
+
+      - uses: ./.github/actions/setup-wheel-build
+        with:
+          rust-cache-key: "python-wheel-zarr-macOS-v1"
+          cache-bin: "false"
+
+      - name: Download sedonadb wheel for the test environment
+        uses: actions/download-artifact@v8
+        with:
+          name: release-wheels-macOS-amd64
+          path: python/sedonadb-zarr/prebuilt
+
+      - name: Build and test wheels (sedonadb-zarr)
+        run: |
+          cd ci/scripts
+          ./wheels-build-zarr-macos.sh
+        env:
+          CIBW_BEFORE_TEST: pip install --pre --find-links {package}/prebuilt sedonadb
+          CIBW_TEST_REQUIRES: pytest zarr numpy
+          CIBW_TEST_COMMAND: pytest {package}/tests -vv
+          SEDONADB_MACOS_ARCH: x86_64
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-zarr-wheels-macOS-amd64
+          path: python/sedonadb-zarr/dist/*.whl
+
+  zarr-linux:
+    name: zarr-${{ matrix.config.label }}
+    runs-on: ${{ matrix.config.os }}
+    strategy:
+      matrix:
+        config:
+          - {os: "ubuntu-latest", label: "linux-x86_64", arch: "x86_64"}
+          - {os: "ubuntu-24.04-arm", label: "linux-arm64", arch: "aarch64"}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: 'true'
+          fetch-depth: 0
+
+      - uses: ./.github/actions/setup-wheel-build
+
+      - name: Download sedonadb wheel for the test environment
+        uses: actions/download-artifact@v8
+        with:
+          name: release-wheels-${{ matrix.config.label }}
+          path: python/sedonadb-zarr/prebuilt
+
+      - name: Build and test wheels (sedonadb-zarr)
+        run: |
+          cd ci/scripts
+          ./wheels-build-zarr-linux.sh ${{ matrix.config.arch }}
+        env:
+          CIBW_SKIP: "*musllinux*"
+          CIBW_BEFORE_TEST: pip install --pre --find-links {package}/prebuilt sedonadb
+          CIBW_TEST_REQUIRES: pytest zarr numpy
+          CIBW_TEST_COMMAND: pytest {package}/tests -vv
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-zarr-wheels-${{ matrix.config.label }}
+          path: python/sedonadb-zarr/dist/*.whl
+
+  upload_nightly:
+    needs: ["zarr-linux", "zarr-macOS-arm64", "zarr-macOS-amd64", "zarr-windows-x86_64"]
+    name: Upload nightly packages (sedonadb-zarr)
+    runs-on: "macos-latest"
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-zarr-wheels-*
+          merge-multiple: true
+          path: dist
+
+      - name: Install gemfury client
+        run: |
+          brew tap gemfury/tap
+          brew install fury-cli
+          fury --version
+
+      - name: Upload packages to Gemfury
+        if: github.repository == 'apache/sedona-db' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          fury push \
+            --api-token=${GEMFURY_PUSH_TOKEN} \
+            --as="sedona-nightlies" \
+            dist/*
+        env:
+          GEMFURY_PUSH_TOKEN: ${{ secrets.GEMFURY_PUSH_TOKEN }}
