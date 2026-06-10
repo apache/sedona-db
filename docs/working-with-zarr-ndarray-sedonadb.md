@@ -169,11 +169,12 @@ That's the `time = 1` plane of the cube (values `20`–`39`).
 
 ## Reading from cloud storage
 
-The same code reads a datacube in object storage — only the URI changes:
+The same code reads a datacube over S3 or HTTP(S) — only the URI changes:
 
 ```python
 df = sd.read_format(sedonadb_zarr.ZarrFormatSpec(), "s3://my-bucket/temperature.zarr")
 ```
 
-`s3://`, `gs://`, `az://`, and `https://` are supported, with credentials
-read from the standard environment variables for each backend.
+Supported URI schemes are `file://` (and bare local paths), `s3://`,
+`http://`, and `https://`. S3 credentials are read from the standard AWS
+environment variables (for example `AWS_ACCESS_KEY_ID` and `AWS_REGION`).
