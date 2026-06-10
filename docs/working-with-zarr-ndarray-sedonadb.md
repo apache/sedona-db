@@ -65,6 +65,10 @@ arr = root.create_array(
 arr[:] = np.arange(3 * 4 * 5, dtype="uint16").reshape(3, 4, 5)
 ```
 
+The `chunks=(1, 4, 5)` argument splits the cube into three chunks along
+`time` — one chunk per time step, each spanning the full `(y, x)` grid.
+That chunking is what determines how the data loads, as we'll see next.
+
 ## Connect and load
 
 Register the extension on your connection, then read the Zarr group with
@@ -81,13 +85,28 @@ df = sd.read_format(sedonadb_zarr.ZarrFormatSpec(), f"file://{store}")
 df.to_view("cube")
 ```
 
-Each array in the Zarr group becomes one row with a `raster` column.
+`sedonadb-zarr` emits **one row per Zarr chunk**, with one band per array
+in the group. Our cube has three chunks, so it loads as three rows — each
+a `[1, y, x]` slab holding a single time step:
+
+```python
+sd.sql("SELECT COUNT(*) AS n_chunks FROM cube").show()
+```
+
+```text
+┌──────────┐
+│ n_chunks │
+╞══════════╡
+│        3 │
+└──────────┘
+```
 
 ## Inspect the dimensions
 
 The dimension-query functions read the raster's schema only — **no pixel
-data is loaded** — so they return instantly even against a large remote
-cube:
+data is loaded** — so they return near-instantly even against a large
+remote cube. Each row reports its **chunk's** shape, not the full cube
+extent:
 
 ```python
 sd.sql("""
@@ -104,17 +123,24 @@ sd.sql("""
 ┌──────┬──────────────┬───────────┬────────┐
 │ ndim ┆ dims         ┆ shape     ┆ n_time │
 ╞══════╪══════════════╪═══════════╪════════╡
-│    3 ┆ [time, y, x] ┆ [3, 4, 5] ┆      3 │
+│    3 ┆ [time, y, x] ┆ [1, 4, 5] ┆      1 │
+│    3 ┆ [time, y, x] ┆ [1, 4, 5] ┆      1 │
+│    3 ┆ [time, y, x] ┆ [1, 4, 5] ┆      1 │
 └──────┴──────────────┴───────────┴────────┘
 ```
 
+Three rows, one per chunk. Each is still 3-dimensional (`[time, y, x]`),
+but its `time` axis has length `1` because we chunked one time step per
+chunk.
+
 ## Slice out a 2-D plane
 
-`RS_Slice` selects a single index along a named dimension and drops it,
-turning the `[time, y, x]` cube into a `[y, x]` raster:
+`RS_Slice` selects a single index along a named dimension and drops it.
+Each row's chunk carries a length-1 `time` axis, so slicing it off turns
+every `[1, y, x]` chunk into a clean `[y, x]` plane — one per row:
 
 ```python
-sliced = sd.sql("SELECT RS_Slice(raster, 'time', 1) AS plane FROM cube")
+sliced = sd.sql("SELECT RS_Slice(raster, 'time', 0) AS plane FROM cube")
 sliced.to_view("plane")
 
 sd.sql("SELECT RS_DimNames(plane) AS dims, RS_Shape(plane) AS shape FROM plane").show()
@@ -125,11 +151,15 @@ sd.sql("SELECT RS_DimNames(plane) AS dims, RS_Shape(plane) AS shape FROM plane")
 │ dims   ┆ shape  │
 ╞════════╪════════╡
 │ [y, x] ┆ [4, 5] │
+│ [y, x] ┆ [4, 5] │
+│ [y, x] ┆ [4, 5] │
 └────────┴────────┘
 ```
 
-`RS_Slice` needs pixel data, so SedonaDB resolves the Zarr chunks for that
-time step on demand before slicing — you never call a loader yourself.
+`RS_Slice` needs pixel data, so SedonaDB resolves each row's Zarr chunk on
+demand before slicing — you never call a loader yourself. The slice index
+is relative to the chunk; here every chunk holds one time step, so index
+`0` is the only valid choice.
 
 Related functions reshape a cube in other ways:
 
@@ -154,18 +184,22 @@ def band_to_numpy(raster, band_index=0):
     dtype = _NP_DTYPE[band["data_type"]]
     return np.frombuffer(band["data"], dtype=dtype).reshape(band["source_shape"])
 
-raster = sliced.to_arrow_table()["plane"][0].as_py()
+planes = sliced.to_arrow_table()["plane"]
+raster = planes[0].as_py()  # each of the three rows is one time step's plane
 print(band_to_numpy(raster))
 ```
 
 ```text
-[[20 21 22 23 24]
- [25 26 27 28 29]
- [30 31 32 33 34]
- [35 36 37 38 39]]
+[[ 0  1  2  3  4]
+ [ 5  6  7  8  9]
+ [10 11 12 13 14]
+ [15 16 17 18 19]]
 ```
 
-That's the `time = 1` plane of the cube (values `20`–`39`).
+Each of the three rows decodes to one time step as a 2-D `[4, 5]` plane;
+this is the first. Rows correspond to chunks rather than a guaranteed
+order, so apply your own `ORDER BY` (or carry a chunk identifier) if you
+need to line planes up to specific time steps.
 
 ## Reading from cloud storage
 
@@ -178,3 +212,7 @@ df = sd.read_format(sedonadb_zarr.ZarrFormatSpec(), "s3://my-bucket/temperature.
 Supported URI schemes are `file://` (and bare local paths), `s3://`,
 `http://`, and `https://`. S3 credentials are read from the standard AWS
 environment variables (for example `AWS_ACCESS_KEY_ID` and `AWS_REGION`).
+
+Because each row corresponds to one chunk, a `LIMIT` or row filter
+directly bounds how many chunks SedonaDB fetches — handy for sampling a
+large remote cube before committing to a full scan.
