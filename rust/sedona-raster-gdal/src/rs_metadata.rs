@@ -17,7 +17,9 @@
 
 use std::sync::Arc;
 
-use arrow_array::builder::{Float64Builder, Int32Builder, UInt32Builder, UInt64Builder};
+use arrow_array::builder::{
+    Float64Builder, Int32Builder, Int64Builder, UInt32Builder, UInt64Builder,
+};
 use arrow_array::StructArray;
 use arrow_buffer::NullBuffer;
 use arrow_schema::{DataType, Field, Fields};
@@ -45,8 +47,8 @@ fn metadata_struct_fields() -> Fields {
     Fields::from(vec![
         Field::new("upperLeftX", DataType::Float64, true),
         Field::new("upperLeftY", DataType::Float64, true),
-        Field::new("gridWidth", DataType::UInt64, true),
-        Field::new("gridHeight", DataType::UInt64, true),
+        Field::new("gridWidth", DataType::Int64, true),
+        Field::new("gridHeight", DataType::Int64, true),
         Field::new("scaleX", DataType::Float64, true),
         Field::new("scaleY", DataType::Float64, true),
         Field::new("skewX", DataType::Float64, true),
@@ -92,8 +94,8 @@ impl SedonaScalarKernel for RsMetaData {
 
         let mut upper_left_x_builder = Float64Builder::with_capacity(capacity);
         let mut upper_left_y_builder = Float64Builder::with_capacity(capacity);
-        let mut grid_width_builder = UInt64Builder::with_capacity(capacity);
-        let mut grid_height_builder = UInt64Builder::with_capacity(capacity);
+        let mut grid_width_builder = Int64Builder::with_capacity(capacity);
+        let mut grid_height_builder = Int64Builder::with_capacity(capacity);
         let mut scale_x_builder = Float64Builder::with_capacity(capacity);
         let mut scale_y_builder = Float64Builder::with_capacity(capacity);
         let mut skew_x_builder = Float64Builder::with_capacity(capacity);
@@ -204,8 +206,8 @@ impl SedonaScalarKernel for RsMetaData {
 mod tests {
     use super::*;
     use arrow_array::{
-        cast::AsArray, types::Float64Type, types::Int32Type, types::UInt32Type, types::UInt64Type,
-        Array,
+        cast::AsArray, types::Float64Type, types::Int32Type, types::Int64Type, types::UInt32Type,
+        types::UInt64Type, Array,
     };
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
@@ -298,7 +300,7 @@ mod tests {
             &[InDbTestBand {
                 datatype: BandDataType::UInt8,
                 nodata_value: None,
-                data: vec![1u8, 2, 3, 4],
+                data: (1u8..=12).collect(),
             }],
         )
     }
@@ -327,6 +329,13 @@ mod tests {
         struct_array
             .column(column)
             .as_primitive::<UInt64Type>()
+            .value(row)
+    }
+
+    fn int64_value(struct_array: &StructArray, column: usize, row: usize) -> i64 {
+        struct_array
+            .column(column)
+            .as_primitive::<Int64Type>()
             .value(row)
     }
 
@@ -371,8 +380,8 @@ mod tests {
 
         assert_eq!(float64_value(&struct_array, UPPER_LEFT_X, 0), 100.0);
         assert_eq!(float64_value(&struct_array, UPPER_LEFT_Y, 0), 200.0);
-        assert_eq!(uint64_value(&struct_array, GRID_WIDTH, 0), 10);
-        assert_eq!(uint64_value(&struct_array, GRID_HEIGHT, 0), 7);
+        assert_eq!(int64_value(&struct_array, GRID_WIDTH, 0), 10);
+        assert_eq!(int64_value(&struct_array, GRID_HEIGHT, 0), 7);
         assert_eq!(float64_value(&struct_array, SCALE_X, 0), 2.0);
         assert_eq!(float64_value(&struct_array, SCALE_Y, 0), -2.0);
         assert_eq!(float64_value(&struct_array, SKEW_X, 0), 0.0);
