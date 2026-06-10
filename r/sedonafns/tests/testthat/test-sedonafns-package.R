@@ -19,7 +19,7 @@ test_that("basic usage with sedonadb integration works", {
   skip_if_not_installed("sedonadb")
 
   df_out <- data.frame(x = 1, y = 2) |>
-    sedonadb::sd_transmute(x, y, geom = sd_point(x, y) |> sd_astext())
+    sedonadb::sd_transmute(x, y, geom = sd_point(x, y) |> sd_as_text())
 
   expect_identical(
     as.data.frame(df_out),
