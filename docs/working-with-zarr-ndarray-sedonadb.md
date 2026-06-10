@@ -33,8 +33,8 @@ slicing out a 2-D plane, and handing the result to NumPy.
 
 ## Install
 
-`sedonadb-zarr` is a plugin, distributed separately from the core SedonaDB
-package:
+`sedonadb-zarr` is an extension, distributed separately from the core
+SedonaDB package:
 
 ```bash
 pip install "apache-sedona[db]" sedonadb-zarr zarr numpy geoarrow-pyarrow
