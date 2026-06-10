@@ -317,16 +317,32 @@ sd_transmute <- function(.data, ...) {
 
   expr_ctx <- sd_expr_ctx(infer_nanoarrow_schema(.data), env, ctx = .data$ctx)
   r_exprs <- expr_quos |> rlang::quos_auto_name() |> lapply(rlang::quo_get_expr)
-  sd_exprs <- lapply(r_exprs, sd_eval_expr, expr_ctx = expr_ctx, env = env)
 
-  # Ensure inputs are given aliases to account for the expected column name
+  # Cache names and the mapping between the name and its first occurrence
   exprs_names <- names(r_exprs)
+  expr_name_indices <- match(exprs_names, exprs_names)
+  sd_exprs <- vector("list", length(r_exprs))
+
   for (i in seq_along(sd_exprs)) {
+    expr <- sd_eval_expr(r_exprs[[i]], expr_ctx = expr_ctx, env = env)
     name <- exprs_names[i]
+
     if (!is.na(name) && name != "") {
-      sd_exprs[[i]] <- sd_expr_alias(sd_exprs[[i]], name, expr_ctx$factory)
+      # Update the data mask so that subsequent expressions can refer to previous ones
+      expr_ctx$data[[name]] <- expr
+
+      # Ensure inputs are given aliases to account for the expected column name
+      expr <- sd_expr_alias(expr, name, expr_ctx$factory)
+
+      # Assign them to the first output position with that name
+      sd_exprs[[expr_name_indices[[i]]]] <- expr
+    } else {
+      sd_exprs[[i]] <- expr
     }
   }
+
+  # Deduplicate identical (explicit) output names
+  sd_exprs <- sd_exprs[!duplicated(exprs_names) | exprs_names == ""]
 
   df <- .data$df$select(sd_exprs)
   new_sedonadb_dataframe(.data$ctx, df)

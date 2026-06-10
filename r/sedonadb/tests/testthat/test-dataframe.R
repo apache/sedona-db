@@ -440,6 +440,18 @@ test_that("sd_transmute() works with dplyr-like transmute syntax", {
   )
 })
 
+test_that("sd_transmute() arguments can refer to previous arguments", {
+  df_in <- data.frame(x = 1:10)
+
+  # checks that (1) unnamed inputs like `x` are named `x` in the output
+  # and (2) named inputs are given an alias and (3) expressions are
+  # translated.
+  expect_identical(
+    df_in |> sd_transmute(x, y = x + 1L, y = y + 1L) |> sd_collect(),
+    data.frame(x = 1:10, y = 3:12)
+  )
+})
+
 test_that("sd_filter() works with dplyr-like filter syntax", {
   df_in <- data.frame(x = 1:10)
 
