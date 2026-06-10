@@ -15,7 +15,57 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# todo: summarise()
+#' @exportS3Method dplyr::group_by
+group_by.sedonadb_dataframe <- function(
+  .data,
+  ...,
+  .add = FALSE,
+  .drop = sdplyr_unsupported()
+) {
+  exprs <- rlang::enquos(...)
+
+  if (.add) {
+    existing_groups <- unclass(.data)$group_by
+    sedonadb::sd_group_by(.data, !!!existing_groups, !!!exprs)
+  } else {
+    sedonadb::sd_group_by(.data, !!!exprs)
+  }
+}
+
+#' @exportS3Method dplyr::ungroup
+ungroup.sedonadb_dataframe <- function(.data, ...) {
+  rlang::check_dots_empty()
+  sedonadb::sd_ungroup(.data)
+}
+
+#' @exportS3Method dplyr::summarise
+summarise.sedonadb_dataframe <- function(.data, ..., .by = NULL, .groups = NULL) {
+  exprs <- rlang::enquos(...)
+  .by <- rlang::enquo(.by)
+
+  if (!is.null(.groups) && !rlang::quo_is_null(.by)) {
+    rlang::abort("Can't supply both .groups and .by")
+  } else if (is.null(.groups) && rlang::quo_is_null(.by)) {
+    rlang::inform(
+      c(
+        "In sdplyr, groups are dropped by default on summarise",
+        "i" = 'Use .groups = "drop" to suppress this message'
+      )
+    )
+  } else if (!identical(.groups, "drop") && rlang::quo_is_null(.by)) {
+    rlang::abort('sdplyr::summarise() only supports .groups = "drop"')
+  }
+
+  .data <- if (rlang::quo_is_null(.by)) {
+    .data
+  } else if (rlang::quo_is_call(.by, "c")) {
+    # TODO unwrap the expr args and sd_group_by the args
+  } else {
+    .data <- sedonadb::sd_group_by(.data, {{ .by }})
+  }
+
+  sedonadb::sd_summarise(.data, !!!exprs)
+}
 
 # todo: count()
 

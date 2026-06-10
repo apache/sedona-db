@@ -435,6 +435,10 @@ ensure_translations_registered <- function() {
   sd_register_translation("base::sum", function(.ctx, x, ..., na.rm = FALSE) {
     sd_expr_aggregate_function("sum", list(x), na.rm = na.rm, factory = .ctx$factory)
   })
+
+  sd_register_translation("base::mean", function(.ctx, x, ..., na.rm = FALSE) {
+    sd_expr_aggregate_function("avg", list(x), na.rm = na.rm, factory = .ctx$factory)
+  })
   # nolint end
 
   sd_register_translation("base::+", function(.ctx, lhs, rhs) {
