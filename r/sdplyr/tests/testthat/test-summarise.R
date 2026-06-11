@@ -80,6 +80,18 @@ test_that("summarise() works without groups", {
   )
 })
 
+test_that("summarize() alternate spelling works", {
+  df <- tibble(x = c(1, 2, 3, 4, 5))
+
+  expect_identical(
+    df |>
+      as_sedonadb_dataframe() |>
+      summarize(total = sum(x), .groups = "drop") |>
+      collect(),
+    df |> summarize(total = sum(x), .groups = "drop")
+  )
+})
+
 test_that("summarise() works with multiple aggregations", {
   df <- tibble(letter = c("a", "a", "b", "b", "b"), x = c(1, 2, 3, 4, 5))
 
