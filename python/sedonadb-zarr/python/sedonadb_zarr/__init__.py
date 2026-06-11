@@ -48,6 +48,10 @@ class ZarrFormatSpec(ExternalFormatSpec):
     Supported `with_options` keys:
 
     - `arrays` (`list[str]`) — explicit subset of group arrays to read.
+      Needed when the group mixes arrays with different shapes/chunk
+      grids, or when the store can't list and has no consolidated
+      metadata (e.g. a plain HTTP server). Otherwise arrays are discovered
+      automatically.
     """
 
     _SUPPORTED_OPTIONS = frozenset({"arrays"})
@@ -66,6 +70,26 @@ class ZarrFormatSpec(ExternalFormatSpec):
         return True
 
     def with_options(self, options: Mapping[str, Any]) -> "ZarrFormatSpec":
+        """Return a copy of this spec with additional read options set.
+
+        Args:
+            options: Option key/value pairs merged over the current options.
+                Supported keys:
+
+                - `arrays` (`list[str]`): explicit subset of the group's
+                  arrays to read. Defaults to every array in the group,
+                  discovered from the group's consolidated metadata when
+                  present, otherwise by listing the store. Name arrays
+                  explicitly when the group mixes arrays with different
+                  shapes/chunk grids, or when the store can't list and has
+                  no consolidated metadata (e.g. a plain HTTP server).
+
+        Returns:
+            A new `ZarrFormatSpec`; the original spec is left unchanged.
+
+        Raises:
+            ValueError: If `options` contains an unsupported key.
+        """
         unknown = set(options) - self._SUPPORTED_OPTIONS
         if unknown:
             raise ValueError(
