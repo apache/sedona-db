@@ -458,7 +458,7 @@ class AggregateUdfImpl:
         else:
             self._name = name
 
-    def __sedona_internal_udf__(self):
+    def __sedona_internal_aggregate_udf__(self):
         # The factory closure is invoked by the Rust kernel once per
         # accumulator instance; it captures `self` (which only holds the
         # user class and small type lists).
