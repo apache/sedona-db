@@ -213,6 +213,22 @@ Supported URI schemes are `file://` (and bare local paths), `s3://`,
 `http://`, and `https://`. S3 credentials are read from the standard AWS
 environment variables (for example `AWS_ACCESS_KEY_ID` and `AWS_REGION`).
 
+### Selecting arrays with the `arrays` option
+
+By default SedonaDB discovers a group's arrays by listing the store. The
+`arrays` option names an explicit subset to read instead:
+
+```python
+spec = sedonadb_zarr.ZarrFormatSpec().with_options({"arrays": ["temperature"]})
+df = sd.read_format(spec, "s3://my-bucket/temperature.zarr")
+```
+
+This is optional on backends that support listing (`file://`, `s3://`),
+where it just narrows what's read. On `http://` and `https://` stores it
+is effectively **required**: plain HTTP servers generally don't support
+directory listing, so discovery fails and the arrays must be named
+explicitly.
+
 Because each row corresponds to one chunk, a `LIMIT` or row filter
 directly bounds how many chunks SedonaDB fetches — handy for sampling a
 large remote cube before committing to a full scan.
