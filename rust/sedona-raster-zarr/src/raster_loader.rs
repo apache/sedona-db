@@ -82,6 +82,9 @@ impl AsyncRasterLoader for ZarrLoader {
     }
 
     async fn load(&self, reqs: &[&RasterLoadRequest]) -> Result<Vec<RasterLoadResult>, ArrowError> {
+        // These requests are currently issued in serial. We may want to increase the
+        // concurrency of these requests; however, in many cases we will have multiple
+        // partitions issuing these requests at once.
         let mut results = Vec::with_capacity(reqs.len());
         for req in reqs {
             results.push(self.load_one(req).await?);
