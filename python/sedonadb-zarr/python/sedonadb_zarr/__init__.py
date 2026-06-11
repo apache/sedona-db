@@ -48,9 +48,10 @@ class ZarrFormatSpec(ExternalFormatSpec):
     Supported `with_options` keys:
 
     - `arrays` (`list[str]`) — explicit subset of group arrays to read.
-      Optional on backends that can list (`file://`, `s3://`); effectively
-      required on `http(s)://` stores, which generally can't list
-      directories.
+      Needed when the group mixes arrays with different shapes/chunk
+      grids, or when the store can't list and has no consolidated
+      metadata (e.g. a plain HTTP server). Otherwise arrays are discovered
+      automatically.
     """
 
     _SUPPORTED_OPTIONS = frozenset({"arrays"})
@@ -77,10 +78,11 @@ class ZarrFormatSpec(ExternalFormatSpec):
 
                 - `arrays` (`list[str]`): explicit subset of the group's
                   arrays to read. Defaults to every array in the group,
-                  discovered by listing the store. Optional on backends
-                  that can list (`file://`, `s3://`); effectively required
-                  on `http(s)://` stores, which generally can't list
-                  directories — without it the read fails at discovery.
+                  discovered from the group's consolidated metadata when
+                  present, otherwise by listing the store. Name arrays
+                  explicitly when the group mixes arrays with different
+                  shapes/chunk grids, or when the store can't list and has
+                  no consolidated metadata (e.g. a plain HTTP server).
 
         Returns:
             A new `ZarrFormatSpec`; the original spec is left unchanged.
