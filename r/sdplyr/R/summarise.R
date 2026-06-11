@@ -59,14 +59,11 @@ summarise.sedonadb_dataframe <- function(.data, ..., .by = NULL, .groups = NULL)
   .data <- if (rlang::quo_is_null(.by)) {
     .data
   } else if (rlang::quo_is_call(.by, "c")) {
-    # TODO unwrap the expr args and sd_group_by the args
+    by_args <- rlang::call_args(rlang::quo_get_expr(.by))
+    sedonadb::sd_group_by(.data, !!!by_args)
   } else {
-    .data <- sedonadb::sd_group_by(.data, {{ .by }})
+    sedonadb::sd_group_by(.data, !!.by)
   }
 
   sedonadb::sd_summarise(.data, !!!exprs)
 }
-
-# todo: count()
-
-# todo: distinct()

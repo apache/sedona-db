@@ -124,6 +124,21 @@ test_that("summarise() works with .by argument", {
   )
 })
 
+test_that("summarise() works with .by = c(...) for multiple groups", {
+  df <- tibble(a = c("x", "x", "y", "y"), b = c(1, 2, 1, 2), val = c(1, 2, 3, 4))
+
+  expect_identical(
+    df |>
+      as_sedonadb_dataframe() |>
+      summarise(total = sum(val), .by = c(a, b)) |>
+      arrange(a, b) |>
+      collect(),
+    df |>
+      summarise(total = sum(val), .by = c(a, b)) |>
+      arrange(a, b)
+  )
+})
+
 test_that("summarise() referring to previous args", {
   df <- tibble(letter = c("a", "a", "b", "b"), x = c(1, 2, 3, 4))
 
