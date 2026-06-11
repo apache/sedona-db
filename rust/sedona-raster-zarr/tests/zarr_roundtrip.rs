@@ -59,7 +59,11 @@ use sedona_schema::raster::BandDataType;
 use tempfile::TempDir;
 use zarrs::array::data_type;
 use zarrs::array::ArrayBuilder;
-use zarrs::group::GroupBuilder;
+use zarrs::group::{Group, GroupBuilder};
+use zarrs::metadata_ext::group::consolidated_metadata::{
+    ConsolidatedMetadata, ConsolidatedMetadataKind,
+};
+use zarrs::node::Node;
 use zarrs_filesystem::FilesystemStore;
 
 /// Build a 2-band group on disk:
@@ -113,6 +117,61 @@ fn build_fixture() -> TempDir {
     }
 
     tmp
+}
+
+/// Like [`build_fixture`], but folds a `consolidated_metadata` block into
+/// the group's `zarr.json` and then *removes* each child array's
+/// `zarr.json`. Discovery can then only succeed by reading the
+/// consolidated block — a list-then-open-each path would re-read the
+/// now-deleted per-array metadata and find nothing. This is the
+/// regression fixture for stores that can't list (e.g. plain HTTPS),
+/// where consolidated metadata is the only viable discovery mechanism.
+fn build_consolidated_fixture() -> TempDir {
+    let tmp = build_fixture();
+    let store = Arc::new(FilesystemStore::new(tmp.path()).unwrap());
+
+    // Build the consolidated map from the on-disk hierarchy (this lists,
+    // which is fine — the fixture is local) and fold it into the group.
+    let metadata = Node::open(&store, "/")
+        .unwrap()
+        .consolidate_metadata()
+        .expect("root group yields consolidated metadata");
+    let consolidated = ConsolidatedMetadata {
+        metadata,
+        kind: ConsolidatedMetadataKind::Inline,
+    };
+    Group::open(store.clone(), "/")
+        .unwrap()
+        .set_consolidated_metadata(Some(consolidated))
+        .store_metadata()
+        .unwrap();
+
+    // Remove the per-array metadata so a list-then-open read would find
+    // no openable arrays; only the consolidated block remains.
+    for name in ["temperature", "pressure"] {
+        std::fs::remove_file(tmp.path().join(name).join("zarr.json")).unwrap();
+    }
+
+    tmp
+}
+
+#[tokio::test]
+async fn discovers_child_arrays_from_consolidated_metadata() {
+    let tmp = build_consolidated_fixture();
+    let uri = format!("file://{}", tmp.path().display());
+
+    // Per-array zarr.json are gone, so this only succeeds via the group's
+    // consolidated_metadata block: the pre-fix list-then-open path would
+    // discover zero arrays and error.
+    let arr = read_all(&uri, None).await.unwrap();
+
+    let rasters = RasterStructArray::new(&arr);
+    assert_eq!(
+        rasters.len(),
+        8,
+        "8 chunk rows, discovered from consolidated metadata without per-array reads"
+    );
+    assert_eq!(rasters.get(0).unwrap().num_bands(), 2);
 }
 
 #[tokio::test]
