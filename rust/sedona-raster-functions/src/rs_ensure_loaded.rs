@@ -780,7 +780,7 @@ mod tests {
                 &self,
                 req: &[&RasterLoadRequest],
             ) -> Result<Vec<RasterLoadResult>, arrow_schema::ArrowError> {
-                assert_eq!(req.len(), 0);
+                assert_eq!(req.len(), 1);
                 Ok(vec![RasterLoadResult::unresolved(
                     self.buffer.clone(),
                     req[0],
