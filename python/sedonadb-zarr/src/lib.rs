@@ -30,6 +30,7 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::ffi::Py_buffer;
 use pyo3::prelude::*;
 use pyo3::types::PyCapsule;
+use sedona_raster::view_entries::ViewEntry;
 use sedona_raster_zarr::{
     object_store_for_uri, open_storage_from_uri, ZarrChunkReader, ZarrLoader,
 };
@@ -206,7 +207,7 @@ pub struct ZarrLoadResult {
     #[pyo3(get)]
     pub bytes: Py<ZarrBuffer>,
     #[pyo3(get)]
-    pub source_shape: Vec<u64>,
+    pub source_shape: Vec<i64>,
     #[pyo3(get)]
     pub view: Vec<ZarrViewEntry>,
 }
@@ -305,7 +306,6 @@ impl ZarrRasterLoader {
         requests: Vec<Bound<'_, PyAny>>,
     ) -> PyResult<Vec<ZarrLoadResult>> {
         use sedona_raster::raster_loader::AsyncRasterLoader;
-        use sedona_raster::traits::ViewEntry;
         use sedona_schema::raster::BandDataType;
 
         // Extract data from Python request objects into owned structures
@@ -313,7 +313,7 @@ impl ZarrRasterLoader {
         for req in &requests {
             let uri: String = req.getattr("uri")?.extract()?;
             let dim_names: Vec<String> = req.getattr("dim_names")?.extract()?;
-            let source_shape: Vec<u64> = req.getattr("source_shape")?.extract()?;
+            let source_shape: Vec<i64> = req.getattr("source_shape")?.extract()?;
 
             // Extract view entries
             let view_list = req.getattr("view")?;
@@ -423,8 +423,8 @@ impl ZarrRasterLoader {
 struct OwnedLoadRequest {
     uri: String,
     dim_names: Vec<String>,
-    source_shape: Vec<u64>,
-    view: Vec<sedona_raster::traits::ViewEntry>,
+    source_shape: Vec<i64>,
+    view: Vec<ViewEntry>,
     data_type: sedona_schema::raster::BandDataType,
 }
 

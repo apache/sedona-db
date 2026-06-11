@@ -27,8 +27,10 @@ use pyo3::{
     types::{PyAnyMethods, PyList, PyListMethods},
     PyObject, Python,
 };
-use sedona_raster::raster_loader::{AsyncRasterLoader, RasterLoadRequest, RasterLoadResult};
-use sedona_raster::traits::ViewEntry;
+use sedona_raster::{
+    raster_loader::{AsyncRasterLoader, RasterLoadRequest, RasterLoadResult},
+    view_entries::ViewEntry,
+};
 use sedona_schema::raster::BandDataType;
 
 /// Python-backed raster loader.
@@ -136,7 +138,7 @@ impl AsyncRasterLoader for PyRasterLoader {
                     let py_buffer = PyBufferWrapper::new(&bytes_obj)?;
                     let bytes = Bytes::from_owner(py_buffer);
 
-                    let source_shape: Vec<u64> = item
+                    let source_shape: Vec<i64> = item
                         .getattr("source_shape")
                         .map_err(py_err)?
                         .extract()
@@ -206,7 +208,7 @@ impl AsyncRasterLoader for PyRasterLoader {
 struct OwnedPyLoadRequest {
     uri: String,
     dim_names: Vec<String>,
-    source_shape: Vec<u64>,
+    source_shape: Vec<i64>,
     view: Vec<ViewEntry>,
     data_type: BandDataType,
 }
@@ -214,7 +216,7 @@ struct OwnedPyLoadRequest {
 /// Intermediate result data extracted from Python (zero-copy for bytes)
 struct PyRasterLoadResultData {
     bytes: Bytes,
-    source_shape: Vec<u64>,
+    source_shape: Vec<i64>,
     view: Vec<ViewEntry>,
 }
 
@@ -287,7 +289,7 @@ pub struct PyRasterLoadRequest {
     #[pyo3(get)]
     pub dim_names: Vec<String>,
     #[pyo3(get)]
-    pub source_shape: Vec<u64>,
+    pub source_shape: Vec<i64>,
     #[pyo3(get)]
     pub view: Vec<PyViewEntry>,
     #[pyo3(get)]
@@ -400,7 +402,7 @@ pub struct PyRasterLoadResult {
     #[pyo3(get, set)]
     pub bytes: Vec<u8>,
     #[pyo3(get, set)]
-    pub source_shape: Vec<u64>,
+    pub source_shape: Vec<i64>,
     #[pyo3(get, set)]
     pub view: Vec<PyViewEntry>,
 }
@@ -408,7 +410,7 @@ pub struct PyRasterLoadResult {
 #[pymethods]
 impl PyRasterLoadResult {
     #[new]
-    fn new(bytes: Vec<u8>, source_shape: Vec<u64>, view: Vec<PyViewEntry>) -> Self {
+    fn new(bytes: Vec<u8>, source_shape: Vec<i64>, view: Vec<PyViewEntry>) -> Self {
         Self {
             bytes,
             source_shape,
