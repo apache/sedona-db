@@ -498,13 +498,21 @@ class SedonaContext:
         else:
             return df
 
-    def register_udf(self, udf: Any):
-        """Register a user-defined function
+    def register(self, component: Any, **kwargs: Any) -> None:
+        """Register an extension component
+
+        The following types of components are currently supported:
+
+        - Python UDFs annotated with arrow_aggregate_udf or arrow_udf
+        - An object implementing __sedonadb_extension__(ctx, **kwargs), which
+          is called with this context and any keyword arguments passed.
+
+        The extension interface is experimental and may change.
 
         Args:
-            udf: An object implementing the DataFusion PyCapsule protocol
-                (i.e., `__datafusion_scalar_udf__`) or a function annotated
-                with [arrow_udf][sedonadb.udf.arrow_udf].
+            component: A Python object implementing one of the above protocols.
+            **kwargs: Extension-specific options, supported for specific types
+              of components.
 
         Examples:
 
@@ -520,7 +528,7 @@ class SedonaContext:
             ...         pa.int64()
             ...     )
             ...
-            >>> sd.register_udf(char_count)
+            >>> sd.register(char_count)
             >>> sd.sql("SELECT char_count('abcde') as col").show()
             ┌───────┐
             │  col  │
@@ -530,7 +538,16 @@ class SedonaContext:
             └───────┘
 
         """
-        self._impl.register_udf(udf)
+        if hasattr(component, "__sedonadb_extension__"):
+            component.__sedonadb_extension__(self, **kwargs)
+        elif hasattr(component, "__sedonadb_internal_udf__"):
+            if kwargs:
+                raise ValueError("options are not supported for UDF registration")
+            self._impl.register_udf(component)
+        else:
+            raise ValueError(
+                f"Can't register extension for object of type {type(component).__name__}"
+            )
 
     @cached_property
     def funcs(self) -> Functions:

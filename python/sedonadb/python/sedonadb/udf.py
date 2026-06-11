@@ -103,7 +103,7 @@ def arrow_udf(
         ...         pa.string(),
         ...     )
         ...
-        >>> sd.register_udf(some_udf)
+        >>> sd.register(some_udf)
         >>> sd.sql("SELECT some_udf(123, 'abc') as col").show()
         ┌───────────┐
         │    col    │
@@ -125,7 +125,7 @@ def arrow_udf(
         ...         pa.int64()
         ...     )
         ...
-        >>> sd.register_udf(char_count)
+        >>> sd.register(char_count)
         >>> sd.sql("SELECT char_count('abcde') as col").show()
         ┌───────┐
         │  col  │
@@ -163,7 +163,7 @@ def arrow_udf(
         ...     return pa.array(shapely.to_wkb(result_shapely))
         ...
         >>>
-        >>> sd.register_udf(shapely_udf)
+        >>> sd.register(shapely_udf)
         >>> sd.sql("SELECT ST_SRID(shapely_udf(ST_Point(0, 0), 2.0)) as col").show()
         ┌────────┐
         │   col  │
@@ -198,8 +198,8 @@ def arrow_udf(
         ...     return random_impl(return_type, num_rows)
         ...
         >>> np.random.seed(487)
-        >>> sd.register_udf(random_f32)
-        >>> sd.register_udf(random_f64)
+        >>> sd.register(random_f32)
+        >>> sd.register(random_f64)
         >>> sd.sql("SELECT random_f32() AS f32, random_f64() as f64;").show()
         ┌────────────┬─────────────────────┐
         │     f32    ┆         f64         │
@@ -296,7 +296,7 @@ class ScalarUdfImpl:
 
         self._volatility = volatility
 
-    def __sedona_internal_udf__(self):
+    def __sedonadb_internal_udf__(self):
         return sedona_scalar_udf(
             self._invoke_batch,
             self._return_type,
@@ -304,9 +304,6 @@ class ScalarUdfImpl:
             self._volatility,
             self._name,
         )
-
-    def __datafusion_scalar_udf__(self):
-        return self.__sedona_internal_udf__().__datafusion_scalar_udf__()
 
 
 def _callable_kwarg_only_names(f):

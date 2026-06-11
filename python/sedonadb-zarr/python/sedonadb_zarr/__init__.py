@@ -31,9 +31,14 @@ it pay no runtime cost.
 
 from typing import Any, Mapping, Optional
 
+from sedonadb.context import SedonaContext
 from sedonadb.datasource import ExternalFormatSpec
 
 from sedonadb_zarr._lib import PyZarrChunkReader
+
+
+def __sedonadb_extension__(ctx: SedonaContext) -> None:
+    pass
 
 
 class ZarrFormatSpec(ExternalFormatSpec):
