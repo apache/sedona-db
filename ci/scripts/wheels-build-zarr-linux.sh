@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+#
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
 # distributed with this work for additional information
@@ -14,79 +16,27 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-/target
 
-# Byte-compiled / optimized / DLL files
-__pycache__/
-.pytest_cache/
-*.py[cod]
+# Build Linux wheels for sedonadb-zarr: pure Rust + pyo3, no vcpkg. cmake
+# builds c-blosc + aws-lc-sys; clang/perl back ring/aws-lc-sys. One arch per
+# invocation; skip musllinux via CIBW_BUILD/CIBW_SKIP.
+#
+# Local usage:
+# CIBW_BUILD=cp313-manylinux_x86_64 ./wheels-build-zarr-linux.sh x86_64
 
-# C extensions
-*.so
+set -e
+set -o pipefail
 
-# Distribution / packaging
-.Python
-.venv/
-env/
-bin/
-build/
-develop-eggs/
-dist/
-# CI downloads the sedonadb wheel here to test the plugin against it.
-prebuilt/
-eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-include/
-man/
-venv/
-*.egg-info/
-.installed.cfg
-*.egg
+if [ ${VERBOSE:-0} -gt 0 ]; then
+  set -x
+fi
 
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-pip-selfcheck.json
+SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+SEDONADB_DIR="$(cd "${SOURCE_DIR}/../.." && pwd)"
 
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.coverage
-.cache
-nosetests.xml
-coverage.xml
+ARCH="$1"
 
-# Translations
-*.mo
+export CIBW_BEFORE_ALL="yum install -y clang perl cmake"
 
-# Mr Developer
-.mr.developer.cfg
-.project
-.pydevproject
-
-# Rope
-.ropeproject
-
-# Django stuff:
-*.log
-*.pot
-
-.DS_Store
-
-# Sphinx documentation
-docs/_build/
-
-# PyCharm
-.idea/
-
-# VSCode
-.vscode/
-
-# Pyenv
-.python-version
-
-uv.lock
+pushd "${SEDONADB_DIR}"
+python -m cibuildwheel --platform linux --archs "${ARCH}" --output-dir python/sedonadb-zarr/dist python/sedonadb-zarr

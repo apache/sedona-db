@@ -21,3 +21,4 @@ pub mod builder;
 pub mod display;
 pub mod raster_loader;
 pub mod traits;
+pub mod view_entries;

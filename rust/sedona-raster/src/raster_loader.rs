@@ -37,7 +37,7 @@ use datafusion_common::config::{
 use datafusion_common::{config_err, Result as DFResult};
 use sedona_schema::raster::BandDataType;
 
-use crate::traits::ViewEntry;
+use crate::view_entries::ViewEntry;
 
 /// Everything a backend needs to materialise a single OutDb band's bytes.
 ///
