@@ -50,7 +50,7 @@ def zarr_group(tmp_path):
 
 def test_format_spec_via_read_format(zarr_group):
     con = sedonadb.connect()
-    df = con.read_format(sedonadb_zarr.ZarrFormatSpec(), f"file://{zarr_group}")
+    df = con.read_format(sedonadb_zarr.Zarr(), f"file://{zarr_group}")
     arrow_tab = df.to_arrow_table()
     assert arrow_tab.num_rows == 2
     assert arrow_tab.column_names == ["raster"]
@@ -71,14 +71,14 @@ def test_format_spec_via_read_format(zarr_group):
 
 def test_format_spec_with_arrays_option(zarr_group):
     con = sedonadb.connect()
-    spec = sedonadb_zarr.ZarrFormatSpec().with_options({"arrays": ["temperature"]})
+    spec = sedonadb_zarr.Zarr().with_options({"arrays": ["temperature"]})
     df = con.read_format(spec, f"file://{zarr_group}")
     assert df.to_arrow_table().num_rows == 2
 
 
 def test_format_spec_class_invariants():
-    spec = sedonadb_zarr.ZarrFormatSpec()
-    assert spec.extension == ".zarr"
+    spec = sedonadb_zarr.Zarr()
+    assert spec.extension == "zarr"
     spec2 = spec.with_options({"arrays": ["temperature"]})
     assert spec2 is not spec
     assert spec2._options.get("arrays") == ["temperature"]
@@ -115,5 +115,5 @@ def test_dtype_mapping_roundtrips(tmp_path, numpy_dtype):
     arr[:] = np.ones((2, 2), dtype=numpy_dtype)
 
     con = sedonadb.connect()
-    df = con.read_format(sedonadb_zarr.ZarrFormatSpec(), f"file://{tmp_path}")
+    df = con.read_format(sedonadb_zarr.Zarr(), f"file://{tmp_path}")
     assert df.to_arrow_table().num_rows == 2
