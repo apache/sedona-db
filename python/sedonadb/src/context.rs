@@ -279,7 +279,7 @@ impl InternalContext {
             return Ok(());
         } else if component.hasattr("__sedonadb_internal_aggregate_udf__")? {
             let py_agg_udf = component
-                .getattr("__sedonadb_internal_udf__")?
+                .getattr("__sedonadb_internal_aggregate_udf__")?
                 .call0()?
                 .extract::<PySedonaAggregateUdf>()?;
             let name = py_agg_udf.inner.name();

@@ -541,16 +541,24 @@ class SedonaContext:
         """
         if hasattr(component, "__sedonadb_extension__"):
             component.__sedonadb_extension__(self, **kwargs)
-        elif hasattr(component, "__sedonadb_internal_udf__"):
-            if kwargs:
-                raise ValueError("options are not supported for UDF registration")
-            self._impl.register_component(component)
-        elif hasattr(component, "__sedonadb_external_format__"):
-            self._impl.register_component(component)
-        else:
-            raise ValueError(
-                f"Can't register extension for object of type {type(component).__name__}"
-            )
+
+        supported_interfaces = (
+            "__sedonadb_internal_udf__",
+            "__sedonadb_internal_aggregate_udf__",
+            "__sedonadb_external_format__",
+        )
+        for interface in supported_interfaces:
+            if hasattr(component, interface):
+                if kwargs:
+                    raise ValueError(
+                        f"register options not supported for interface {interface}"
+                    )
+                self._impl.register_component(component)
+                return
+
+        raise ValueError(
+            f"Can't register extension for object of type {type(component).__name__}"
+        )
 
     @cached_property
     def funcs(self) -> Functions:

@@ -403,7 +403,7 @@ def arrow_aggregate_udf(
         ...     def evaluate(self):
         ...         return None if self.count == 0 else self.total / self.count
         ...
-        >>> sd.register_udf(my_mean)
+        >>> sd.register(my_mean)
         >>> sd.create_data_frame(
         ...     pd.DataFrame({"k": ["a", "a", "b"], "v": [1.0, 3.0, 7.0]})
         ... ).to_view("t", overwrite=True)
@@ -458,7 +458,7 @@ class AggregateUdfImpl:
         else:
             self._name = name
 
-    def __sedona_internal_aggregate_udf__(self):
+    def __sedonadb_internal_aggregate_udf__(self):
         # The factory closure is invoked by the Rust kernel once per
         # accumulator instance; it captures `self` (which only holds the
         # user class and small type lists).
