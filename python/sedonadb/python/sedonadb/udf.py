@@ -357,7 +357,10 @@ def arrow_aggregate_udf(
       `state_types`, splatted positionally. Each array has N rows for N
       partial states being merged in.
     - `evaluate(self)`: return the final scalar Python value (or `None`
-      for SQL NULL) matching `return_type`.
+      for SQL NULL) matching `return_type`. When `return_type` is a
+      geometry/geography type, a Shapely (or GeoPandas / pyproj) object
+      may be returned directly; the same holds for `state()` elements
+      whose `state_types` entry is a geometry/geography type.
 
     Args:
         return_type: A pyarrow data type for the final aggregate result.
@@ -512,6 +515,20 @@ class _AccumulatorWrapper:
     def _wrap_scalar(value, pa_type):
         import pyarrow as pa
 
+        # For an extension type (e.g. geometry/geography), build with the
+        # declared type first so its metadata (CRS, edge type) is preserved
+        # when the value is already serialized (e.g. WKB bytes). Fall back to
+        # `lit()` only when pyarrow can't build the declared type from the
+        # Python object — the Shapely / GeoPandas / pyproj case. The fallback
+        # is scoped to extension types so a plain-type mismatch (e.g. a str
+        # for float64) still surfaces pyarrow's clear conversion error.
+        if value is not None and isinstance(pa_type, pa.ExtensionType):
+            try:
+                return pa.array([value], type=pa_type)
+            except (pa.ArrowInvalid, pa.ArrowTypeError):
+                from sedonadb.expr import lit
+
+                return lit(value)
         return pa.array([value], type=pa_type)
 
     def update(self, args):

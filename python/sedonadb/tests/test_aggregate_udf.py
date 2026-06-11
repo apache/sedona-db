@@ -325,13 +325,16 @@ def test_aggregate_udf_shapely_geometry(con):
             self._absorb(batch.to_pylist())
 
         def state(self):
+            # State serializes to WKB binary (a plain Arrow type).
             return (None if self.acc is None else shapely.to_wkb(self.acc),)
 
         def merge(self, states):
             self._absorb(states.to_pylist())
 
         def evaluate(self):
-            return None if self.acc is None else shapely.to_wkb(self.acc)
+            # Return the Shapely geometry directly; the wrapper routes it
+            # through lit() since the declared return type is an extension.
+            return self.acc
 
     con.register_udf(geom_union)
     con.sql(
@@ -340,3 +343,44 @@ def test_aggregate_udf_shapely_geometry(con):
     out = con.sql("SELECT geom_union(g) AS u FROM t_geom").to_pandas()
     expected = shapely.union(shapely.Point(0, 0), shapely.Point(1, 1))
     assert out["u"].iloc[0].equals(expected)
+
+
+def test_aggregate_udf_geometry_wkb_bytes_preserves_crs(con):
+    # An aggregate that returns already-serialized WKB bytes (rather than a
+    # Shapely object) is still supported, and the declared return type's CRS
+    # metadata is preserved — the wrapper builds with the declared type
+    # before falling back to lit().
+    import geoarrow.pyarrow as ga
+
+    @udf.arrow_aggregate_udf(
+        return_type=ga.wkb().with_crs("EPSG:4326"),
+        input_types=[udf.GEOMETRY],
+        state_types=[pa.binary()],
+    )
+    class first_geom:
+        def __init__(self):
+            self.acc = None
+
+        def update(self, batch):
+            for wkb in batch.to_pylist():
+                if wkb is not None and self.acc is None:
+                    self.acc = wkb
+
+        def state(self):
+            return (self.acc,)
+
+        def merge(self, states):
+            for wkb in states.to_pylist():
+                if wkb is not None and self.acc is None:
+                    self.acc = wkb
+
+        def evaluate(self):
+            # Return WKB bytes; the declared type carries the CRS.
+            return self.acc
+
+    con.register_udf(first_geom)
+    con.sql("SELECT ST_SetSRID(ST_Point(1.0, 2.0), 4326) AS g").to_view(
+        "t_geom_crs", overwrite=True
+    )
+    out = con.sql("SELECT ST_SRID(first_geom(g)) AS srid FROM t_geom_crs").to_pandas()
+    pdt.assert_frame_equal(out, pd.DataFrame({"srid": [4326]}, dtype="uint32"))
