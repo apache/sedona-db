@@ -107,7 +107,7 @@ impl RasterSchema {
     /// shape exposed to consumers is derived from `view`:
     /// `[entry.steps for entry in view]`.
     pub fn source_shape_type() -> DataType {
-        DataType::List(FieldRef::new(Field::new("item", DataType::UInt64, false)))
+        DataType::List(FieldRef::new(Field::new("item", DataType::Int64, false)))
     }
 
     /// View list type — one entry per dimension in the band's *visible*

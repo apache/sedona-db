@@ -25,7 +25,7 @@ use sedona_gdal::raster::rasterband::RasterBand;
 use sedona_gdal::raster::types::DatasetOptions;
 use sedona_gdal::raster::types::GdalDataType;
 
-use sedona_raster::traits::{MetadataRef, RasterMetadata, RasterRef};
+use sedona_raster::traits::{is_spatial_dim_pair, MetadataRef, RasterMetadata, RasterRef};
 use sedona_schema::raster::{BandDataType, StorageType};
 
 use datafusion_common::{
@@ -73,8 +73,8 @@ pub(crate) trait RasterMetadataFromGdalGeoTransform {
 impl RasterMetadataFromGdalGeoTransform for GeoTransform {
     fn to_raster_metadata(&self, width: usize, height: usize) -> RasterMetadata {
         RasterMetadata {
-            width: width as u64,
-            height: height as u64,
+            width: width as i64,
+            height: height as i64,
             upperleft_x: self[0],
             upperleft_y: self[3],
             scale_x: self[1],
@@ -223,26 +223,62 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
             .band(src_band_index)
             .map_err(|e| arrow_datafusion_err!(e))?;
 
-        if !band.is_2d() {
+        // An N-D band's trailing two axes must be the spatial (y, x) pair; the
+        // non-spatial axes become a stack of 2-D planes, one GDAL band each. A
+        // plain 2-D band is just the single-plane case.
+        let dims = band.dim_names();
+        let ndim = dims.len();
+        if ndim < 2 || !is_spatial_dim_pair(dims[ndim - 2], dims[ndim - 1]) {
             return exec_err!(
-                "GDAL backend requires a 2-dim band; got dim_names={:?}",
-                band.dim_names()
+                "GDAL backend requires a band whose trailing two dims are a \
+                 spatial (y, x) pair; got dim_names={dims:?}"
+            );
+        }
+
+        // The plane's 2-D extent must equal the MEM dataset's (and the raster's
+        // spatial grid); otherwise the per-plane byte slicing below would
+        // disagree with the GDAL band size and silently mis-stack the planes.
+        // `finish_raster` already enforces this for builder-made rasters, but
+        // re-check so the public bridge stays sound for any `RasterRef`.
+        let shape = band.shape();
+        if shape[ndim - 2] as usize != height || shape[ndim - 1] as usize != width {
+            return exec_err!(
+                "band spatial extent {}x{} does not match the raster grid \
+                 {width}x{height} (dim_names={dims:?})",
+                shape[ndim - 1],
+                shape[ndim - 2]
             );
         }
 
         if band.metadata().storage_type()? != StorageType::InDb {
             return Err(DataFusionError::NotImplemented(
-                "OutDb bands are not supported in raster_to_mem_dataset".to_string(),
+                "OutDb bands are not supported by raster_ref_to_gdal_mem".to_string(),
             ));
         }
 
         let band_metadata = band.metadata();
         let band_type = band_metadata.data_type()?;
         let gdal_type = band_data_type_to_gdal(&band_type);
-        let band_data = band.data();
-        let data_ptr = band_data.as_ptr();
-        unsafe {
-            mem_ds_builder = mem_ds_builder.add_band(gdal_type, data_ptr as *mut u8);
+        // `as_contiguous()` borrows the bytes zero-copy (erroring on a strided
+        // view); GDAL holds the pointer, so `raster` must outlive the dataset.
+        // Because (y, x) are innermost, each plane is a contiguous sub-range, so
+        // the zero-copy DATAPOINTER holds per plane.
+        let band_bytes = band.nd_buffer().and_then(|ndb| ndb.as_contiguous())?;
+        let plane_bytes = width * height * band_type.byte_size();
+        if plane_bytes == 0 || band_bytes.len() % plane_bytes != 0 {
+            return exec_err!(
+                "band byte length {} is not a multiple of the {width}x{height} \
+                 plane size (dim_names={dims:?})",
+                band_bytes.len()
+            );
+        }
+        let plane_count = band_bytes.len() / plane_bytes;
+        for plane in 0..plane_count {
+            let off = plane * plane_bytes;
+            let data_ptr: *const u8 = band_bytes[off..off + plane_bytes].as_ptr();
+            unsafe {
+                mem_ds_builder = mem_ds_builder.add_band(gdal_type, data_ptr as *mut u8);
+            }
         }
     }
 
@@ -263,17 +299,27 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
         dataset.set_projection(crs).map_err(convert_gdal_err)?;
     }
 
-    for (dst_band_index, &src_band_index) in band_indices.iter().enumerate() {
-        let dst_band_index = dst_band_index + 1;
+    // Nodata is per source band, shared across all its planes. Walk the dst
+    // bands in the same band-major / plane order as the add loop above.
+    let mut dst_band_index = 0usize;
+    for &src_band_index in band_indices.iter() {
         let band = bands
             .band(src_band_index)
             .map_err(|e| arrow_datafusion_err!(e))?;
         let band_metadata = band.metadata();
-        if let Some(nodata_bytes) = band_metadata.nodata_value() {
-            let raster_band = dataset
-                .rasterband(dst_band_index)
-                .map_err(convert_gdal_err)?;
-            set_band_nodata_from_bytes(&raster_band, Some(nodata_bytes))?;
+        let band_type = band_metadata.data_type()?;
+        let plane_bytes = width * height * band_type.byte_size();
+        let band_bytes = band.nd_buffer().and_then(|ndb| ndb.as_contiguous())?;
+        let plane_count = band_bytes.len() / plane_bytes;
+        let nodata = band_metadata.nodata_value();
+        for _ in 0..plane_count {
+            dst_band_index += 1;
+            if let Some(nodata_bytes) = nodata {
+                let raster_band = dataset
+                    .rasterband(dst_band_index)
+                    .map_err(convert_gdal_err)?;
+                set_band_nodata_from_bytes(&raster_band, Some(nodata_bytes))?;
+            }
         }
     }
 
@@ -285,6 +331,73 @@ pub fn raster_ref_to_gdal_empty<R: RasterRef + ?Sized>(gdal: &Gdal, raster: &R) 
         // SAFETY: raster_ref_to_gdal_mem is safe to call with an empty band list. The
         // returned dataset will have zero bands and references no external memory.
         raster_ref_to_gdal_mem(gdal, raster, &[])
+    }
+}
+
+/// The N-D structure that [`raster_ref_to_gdal_mem`] flattens away when it
+/// stacks each band's non-spatial planes into a flat GDAL band list.
+///
+/// GDAL is 2-D-planar and oblivious to the extra dimensions, so this layout is
+/// the out-of-band record needed to regroup a GDAL dataset's bands back into
+/// N-D raster bands (see `gdal_dataset_to_nd_raster`). It is derived from the
+/// *input* raster and is invariant under spatial-only GDAL ops (warp /
+/// reproject / resample), which preserve band count and order and touch only
+/// the x/y extent — the spatial extent is read from the output dataset, not
+/// from here.
+#[derive(Debug, Clone)]
+pub struct GdalBandLayout {
+    /// One entry per source band, in the order passed to
+    /// [`raster_ref_to_gdal_mem`]. GDAL bands are laid out band-major then
+    /// plane-major.
+    pub bands: Vec<GdalBandPlan>,
+}
+
+/// One source band's non-spatial structure within a [`GdalBandLayout`].
+#[derive(Debug, Clone)]
+pub struct GdalBandPlan {
+    pub name: Option<String>,
+    /// Full dim-name list, e.g. `["time", "y", "x"]`.
+    pub dim_names: Vec<String>,
+    /// Sizes of the non-spatial (leading) axes; empty for a plain 2-D band.
+    pub nonspatial_shape: Vec<i64>,
+    /// Number of 2-D planes (`Π nonspatial_shape`, `1` for a 2-D band) — the
+    /// count of consecutive GDAL bands this source band owns.
+    pub plane_count: usize,
+    pub data_type: BandDataType,
+    pub nodata: Option<Vec<u8>>,
+}
+
+impl GdalBandLayout {
+    /// Derive the layout from `raster`'s selected bands. Order and plane counts
+    /// match exactly what [`raster_ref_to_gdal_mem`] emits for the same
+    /// `band_indices`.
+    pub fn from_raster<R: RasterRef + ?Sized>(raster: &R, band_indices: &[usize]) -> Result<Self> {
+        let bands = raster.bands();
+        let mut plans = Vec::with_capacity(band_indices.len());
+        for &i in band_indices {
+            let band = bands.band(i).map_err(|e| arrow_datafusion_err!(e))?;
+            let dim_names: Vec<String> = band.dim_names().iter().map(|s| s.to_string()).collect();
+            let ndim = dim_names.len();
+            if ndim < 2 || !is_spatial_dim_pair(&dim_names[ndim - 2], &dim_names[ndim - 1]) {
+                return exec_err!(
+                    "GDAL backend requires a band whose trailing two dims are a \
+                     spatial (y, x) pair; got dim_names={dim_names:?}"
+                );
+            }
+            let nonspatial_shape: Vec<i64> = band.shape()[..ndim - 2].to_vec();
+            let plane_count = nonspatial_shape.iter().product::<i64>() as usize;
+            plans.push(GdalBandPlan {
+                // `band_indices` are 1-based (the `Bands` wrapper convention used
+                // by `raster_ref_to_gdal_mem`), but `band_name` is 0-based.
+                name: raster.band_name(i - 1).map(|s| s.to_string()),
+                dim_names,
+                nonspatial_shape,
+                plane_count,
+                data_type: band.data_type(),
+                nodata: band.nodata().map(|b| b.to_vec()),
+            });
+        }
+        Ok(Self { bands: plans })
     }
 }
 
@@ -857,16 +970,18 @@ mod tests {
     }
 
     #[test]
-    fn test_raster_ref_to_gdal_mem_rejects_nd_bands() {
-        // Build a 3-D in-db band shaped ["time","y","x"] over a 2-D raster.
-        // The N-D guard should fire before any GDAL call.
+    fn test_raster_ref_to_gdal_mem_nd_band_stacks_and_round_trips() {
+        // 3-D band ["time","y","x"] shape [3,2,2] over a 2x2 raster; its three
+        // time planes flatten into three GDAL bands, then regroup back to the
+        // same N-D band via the layout — a byte-exact round trip.
+        let data: Vec<u8> = (0u8..12).collect();
         let mut builder = RasterBuilder::new(1);
         builder
             .start_raster_2d(2, 2, 0.0, 2.0, 1.0, -1.0, 0.0, 0.0, None)
             .unwrap();
         builder
             .start_band_nd(
-                None,
+                Some("cube"),
                 &["time", "y", "x"],
                 &[3, 2, 2],
                 BandDataType::UInt8,
@@ -875,9 +990,189 @@ mod tests {
                 None,
             )
             .unwrap();
+        builder.band_data_writer().append_value(&data);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+        let raster_array = builder.finish().unwrap();
+        let raster = single_raster(&raster_array);
+
+        let (band_count, reconstructed) = with_gdal(|gdal| {
+            let dataset = unsafe { raster_ref_to_gdal_mem(gdal, &raster, &[1]) }?;
+            let band_count = dataset.raster_count();
+            let layout = GdalBandLayout::from_raster(&raster, &[1])?;
+            let reconstructed = crate::utils::gdal_dataset_to_nd_raster(&dataset, &layout)?;
+            Ok((band_count, reconstructed))
+        })
+        .unwrap();
+
+        // 3 time planes -> 3 GDAL bands.
+        assert_eq!(band_count, 3);
+
+        // Round-trip identity: name, dims, shape, bytes.
+        let rt = single_raster(&reconstructed);
+        assert_eq!(rt.band_name(0), Some("cube"));
+        let band = rt.band(0).unwrap();
+        assert_eq!(band.dim_names(), vec!["time", "y", "x"]);
+        assert_eq!(band.shape(), &[3, 2, 2]);
+        let ndb = band.nd_buffer().unwrap();
+        assert_eq!(ndb.as_contiguous().unwrap(), &data[..]);
+    }
+
+    #[test]
+    fn test_raster_ref_to_gdal_mem_mixed_2d_and_nd_round_trips() {
+        // One 2-D band (1 plane) + one 3-D band with nodata (3 planes) in the
+        // same raster. Exercises heterogeneous plane counts (the regroup
+        // run-length split), the 2-D degenerate path, and per-plane nodata
+        // expansion across an N-D band's GDAL bands.
+        let band0: Vec<u8> = (0u8..4).collect(); // [y,x] = [2,2]
+        let band1: Vec<u8> = (10u8..22).collect(); // [time,y,x] = [3,2,2]
+        let mut builder = RasterBuilder::new(1);
+        builder
+            .start_raster_2d(2, 2, 0.0, 2.0, 1.0, -1.0, 0.0, 0.0, None)
+            .unwrap();
+        builder
+            .start_band_nd(
+                Some("flat"),
+                &["y", "x"],
+                &[2, 2],
+                BandDataType::UInt8,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        builder.band_data_writer().append_value(&band0);
+        builder.finish_band().unwrap();
+        builder
+            .start_band_nd(
+                Some("cube"),
+                &["time", "y", "x"],
+                &[3, 2, 2],
+                BandDataType::UInt8,
+                Some(&[7u8]),
+                None,
+                None,
+            )
+            .unwrap();
+        builder.band_data_writer().append_value(&band1);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+        let raster_array = builder.finish().unwrap();
+        let raster = single_raster(&raster_array);
+
+        let (band_count, plane_nodata, reconstructed) = with_gdal(|gdal| {
+            let dataset = unsafe { raster_ref_to_gdal_mem(gdal, &raster, &[1, 2]) }?;
+            let band_count = dataset.raster_count();
+            // GDAL bands: 1 = flat (no nodata), 2..=4 = cube planes (nodata 7).
+            let mut plane_nodata = Vec::new();
+            for g in 1..=band_count {
+                let band = dataset.rasterband(g).map_err(convert_gdal_err)?;
+                plane_nodata.push(band_nodata_to_bytes(&band)?);
+            }
+            let layout = GdalBandLayout::from_raster(&raster, &[1, 2])?;
+            let reconstructed = crate::utils::gdal_dataset_to_nd_raster(&dataset, &layout)?;
+            Ok((band_count, plane_nodata, reconstructed))
+        })
+        .unwrap();
+
+        // 1 plane + 3 planes -> 4 GDAL bands.
+        assert_eq!(band_count, 4);
+        // Per-plane nodata: the 2-D band carries none; each cube plane carries 7.
+        assert_eq!(
+            plane_nodata,
+            vec![None, Some(vec![7]), Some(vec![7]), Some(vec![7])]
+        );
+
+        let rt = single_raster(&reconstructed);
+        assert_eq!(rt.num_bands(), 2);
+
+        // Band 0 regroups to the 2-D band.
+        assert_eq!(rt.band_name(0), Some("flat"));
+        let b0 = rt.band(0).unwrap();
+        assert_eq!(b0.dim_names(), vec!["y", "x"]);
+        assert_eq!(b0.shape(), &[2, 2]);
+        assert_eq!(b0.nodata(), None);
+        assert_eq!(b0.nd_buffer().unwrap().as_contiguous().unwrap(), &band0[..]);
+
+        // Band 1 regroups its 3 planes back into the 3-D band, nodata intact.
+        assert_eq!(rt.band_name(1), Some("cube"));
+        let b1 = rt.band(1).unwrap();
+        assert_eq!(b1.dim_names(), vec!["time", "y", "x"]);
+        assert_eq!(b1.shape(), &[3, 2, 2]);
+        assert_eq!(b1.nodata(), Some(&[7u8][..]));
+        assert_eq!(b1.nd_buffer().unwrap().as_contiguous().unwrap(), &band1[..]);
+    }
+
+    #[test]
+    fn test_raster_ref_to_gdal_mem_multi_nonspatial_dims_round_trip() {
+        // Two non-spatial axes ["time","level","y","x"] = [2,2,2,2] -> 4 planes,
+        // flattened C-order (time outer, level inner) and regrouped back.
+        let data: Vec<u8> = (0u8..16).collect();
+        let mut builder = RasterBuilder::new(1);
+        builder
+            .start_raster_2d(2, 2, 0.0, 2.0, 1.0, -1.0, 0.0, 0.0, None)
+            .unwrap();
+        builder
+            .start_band_nd(
+                Some("hypercube"),
+                &["time", "level", "y", "x"],
+                &[2, 2, 2, 2],
+                BandDataType::UInt8,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        builder.band_data_writer().append_value(&data);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+        let raster_array = builder.finish().unwrap();
+        let raster = single_raster(&raster_array);
+
+        let (band_count, reconstructed) = with_gdal(|gdal| {
+            let dataset = unsafe { raster_ref_to_gdal_mem(gdal, &raster, &[1]) }?;
+            let band_count = dataset.raster_count();
+            let layout = GdalBandLayout::from_raster(&raster, &[1])?;
+            let reconstructed = crate::utils::gdal_dataset_to_nd_raster(&dataset, &layout)?;
+            Ok((band_count, reconstructed))
+        })
+        .unwrap();
+
+        assert_eq!(band_count, 4); // 2 * 2 planes
+        let rt = single_raster(&reconstructed);
+        let band = rt.band(0).unwrap();
+        assert_eq!(band.dim_names(), vec!["time", "level", "y", "x"]);
+        assert_eq!(band.shape(), &[2, 2, 2, 2]);
+        assert_eq!(
+            band.nd_buffer().unwrap().as_contiguous().unwrap(),
+            &data[..]
+        );
+    }
+
+    #[test]
+    fn test_raster_ref_to_gdal_mem_rejects_non_trailing_spatial_pair() {
+        // Spatial axes not innermost: ["y","x","time"]. The raster's spatial
+        // grid is still satisfied (y, x present at the right sizes), so the
+        // builder accepts it, but the GDAL bridge requires the spatial pair to
+        // be the trailing two dims.
+        let mut builder = RasterBuilder::new(1);
+        builder
+            .start_raster_2d(2, 2, 0.0, 2.0, 1.0, -1.0, 0.0, 0.0, None)
+            .unwrap();
+        builder
+            .start_band_nd(
+                None,
+                &["y", "x", "time"],
+                &[2, 2, 3],
+                BandDataType::UInt8,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
         builder
             .band_data_writer()
-            .append_value(vec![0u8; 3 * 2 * 2]);
+            .append_value(vec![0u8; 2 * 2 * 3]);
         builder.finish_band().unwrap();
         builder.finish_raster().unwrap();
         let raster_array = builder.finish().unwrap();
@@ -887,7 +1182,7 @@ mod tests {
             .err()
             .unwrap();
         assert!(
-            err.to_string().contains("requires a 2-dim band"),
+            err.to_string().contains("trailing two dims are a"),
             "got: {err}"
         );
     }

@@ -17,7 +17,7 @@
 use std::{sync::Arc, vec};
 
 use crate::executor::RasterExecutor;
-use arrow_array::builder::UInt64Builder;
+use arrow_array::builder::Int64Builder;
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
 use datafusion_expr::{ColumnarValue, Volatility};
@@ -66,7 +66,7 @@ impl SedonaScalarKernel for RsSize {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(
             vec![ArgMatcher::is_raster()],
-            SedonaType::Arrow(DataType::UInt64),
+            SedonaType::Arrow(DataType::Int64),
         );
 
         matcher.match_args(args)
@@ -78,7 +78,7 @@ impl SedonaScalarKernel for RsSize {
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
         let executor = RasterExecutor::new(arg_types, args);
-        let mut builder = UInt64Builder::with_capacity(executor.num_iterations());
+        let mut builder = Int64Builder::with_capacity(executor.num_iterations());
 
         executor.execute_raster_void(|_i, raster_opt| {
             match raster_opt {
@@ -104,7 +104,7 @@ impl SedonaScalarKernel for RsSize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::UInt64Array;
+    use arrow_array::Int64Array;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_schema::datatypes::RASTER;
@@ -134,7 +134,7 @@ mod tests {
             SizeType::Height => vec![Some(2), None, Some(4)],
             SizeType::Width => vec![Some(1), None, Some(3)],
         };
-        let expected: Arc<dyn arrow_array::Array> = Arc::new(UInt64Array::from(expected_values));
+        let expected: Arc<dyn arrow_array::Array> = Arc::new(Int64Array::from(expected_values));
 
         // Check scalars
         let result = tester.invoke_array(Arc::new(rasters)).unwrap();

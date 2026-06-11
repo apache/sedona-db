@@ -174,10 +174,11 @@ impl ZarrChunkReader {
             // discriminator; this reader always emits empty `data` and
             // defers pixel-byte resolution to the raster byte loader.
             let anchor = build_chunk_anchor(&self.group_uri, &info.path, &self.chunk_indices);
+            let source_shape: Vec<i64> = info.chunk_shape.iter().map(|&n| n as i64).collect();
             builder.start_band_nd(
                 Some(info.path.as_str()),
                 &dim_names_ref,
-                &info.chunk_shape,
+                &source_shape,
                 info.data_type,
                 nodata_ref,
                 Some(anchor.as_str()),

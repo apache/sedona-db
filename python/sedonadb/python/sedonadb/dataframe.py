@@ -796,6 +796,44 @@ class DataFrame:
 
         return DataFrame(self._ctx, joined_impl.select(projection))
 
+    def cross_join(self, other: "DataFrame") -> "DataFrame":
+        """Cartesian product of two DataFrames.
+
+        Returns a DataFrame containing every pair of rows from `self`
+        and `other`; the row count is the product of the two input
+        row counts. Both sides' columns are kept verbatim —
+        disambiguate with `df.alias(...)` on either side if column
+        names collide.
+
+        Args:
+            other: The right-hand DataFrame.
+
+        Examples:
+
+            >>> sd = sedona.db.connect()
+            >>> left = sd.sql("SELECT * FROM (VALUES (1), (2)) AS t(x)")
+            >>> right = sd.sql("SELECT * FROM (VALUES ('a'), ('b')) AS t(y)")
+            >>> left.cross_join(right).sort("x", "y").show()
+            ┌───────┬──────┐
+            │   x   ┆   y  │
+            │ int64 ┆ utf8 │
+            ╞═══════╪══════╡
+            │     1 ┆ a    │
+            ├╌╌╌╌╌╌╌┼╌╌╌╌╌╌┤
+            │     1 ┆ b    │
+            ├╌╌╌╌╌╌╌┼╌╌╌╌╌╌┤
+            │     2 ┆ a    │
+            ├╌╌╌╌╌╌╌┼╌╌╌╌╌╌┤
+            │     2 ┆ b    │
+            └───────┴──────┘
+        """
+        if not isinstance(other, DataFrame):
+            raise TypeError(
+                f"cross_join() expects a DataFrame as the first argument, "
+                f"got {type(other).__name__}"
+            )
+        return DataFrame(self._ctx, self._impl.cross_join(other._impl))
+
     def limit(self, n: Optional[int], /, *, offset: int = 0) -> "DataFrame":
         """Limit result to n rows starting at offset
 

@@ -15,8 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::borrow::Cow;
-
 use arrow_schema::ArrowError;
 use sedona_schema::raster::BandDataType;
 
@@ -56,10 +54,68 @@ pub fn is_spatial_dim_pair(y_like: &str, x_like: &str) -> bool {
 #[derive(Debug)]
 pub struct NdBuffer<'a> {
     pub buffer: &'a [u8],
-    pub shape: Vec<u64>,
+    pub shape: Vec<i64>,
     pub strides: Vec<i64>,
     pub offset: u64,
     pub data_type: BandDataType,
+}
+
+impl<'a> NdBuffer<'a> {
+    /// True iff the visible region is packed in C-order (row-major) with no
+    /// gaps — the byte strides equal the canonical innermost-fastest layout
+    /// over `shape`. Offset-agnostic. A strided slice, broadcast, or
+    /// permutation is not contiguous.
+    pub fn is_contiguous(&self) -> bool {
+        if self.shape.len() != self.strides.len() {
+            return false;
+        }
+        // An empty visible region is trivially packed.
+        if self.shape.contains(&0) {
+            return true;
+        }
+        // Expected C-order byte strides, innermost first:
+        // stride[i] == byte_size × Π_{j>i} shape[j].
+        let mut expected = self.data_type.byte_size() as i64;
+        for (&dim, &stride) in self.shape.iter().zip(self.strides.iter()).rev() {
+            if stride != expected {
+                return false;
+            }
+            expected = expected.saturating_mul(dim);
+        }
+        true
+    }
+
+    /// The visible bytes as a packed row-major slice, borrowed zero-copy
+    /// from `buffer`. `Ok` iff [`is_contiguous`](Self::is_contiguous);
+    /// otherwise an error directing the caller to materialize via
+    /// `RS_EnsureContiguous`
+    /// (<https://github.com/apache/sedona-db/issues/899>). Never copies or
+    /// allocates — a strided layout returns an error, it is not materialized
+    /// here.
+    pub fn as_contiguous(&self) -> Result<&'a [u8], ArrowError> {
+        if !self.is_contiguous() {
+            return Err(ArrowError::InvalidArgumentError(format!(
+                "band view is not contiguous (shape {:?}, strides {:?}); \
+                 materialize it with RS_EnsureContiguous before contiguous \
+                 byte access — see https://github.com/apache/sedona-db/issues/899",
+                self.shape, self.strides
+            )));
+        }
+        let elements: i64 = self.shape.iter().product();
+        let len = elements as usize * self.data_type.byte_size();
+        let start = self.offset as usize;
+        let buffer: &'a [u8] = self.buffer;
+        match start.checked_add(len) {
+            Some(end) if end <= buffer.len() => Ok(&buffer[start..end]),
+            _ => Err(ArrowError::ExternalError(Box::new(
+                sedona_common::sedona_internal_datafusion_err!(
+                    "contiguous region [{start}, {start}+{len}) is out of bounds \
+                     for buffer of length {}",
+                    buffer.len()
+                ),
+            ))),
+        }
+    }
 }
 
 /// One per-dimension entry of a band's logical view. Describes how a
@@ -94,8 +150,8 @@ pub struct ViewEntry {
 /// methods directly; the metadata accessor is the convenience surface.
 #[derive(Debug, Clone)]
 pub struct RasterMetadata {
-    pub width: u64,
-    pub height: u64,
+    pub width: i64,
+    pub height: i64,
     pub upperleft_x: f64,
     pub upperleft_y: f64,
     pub scale_x: f64,
@@ -110,9 +166,9 @@ pub struct RasterMetadata {
 /// should reach for `RasterRef::width()? / height()?` instead.
 pub trait MetadataRef {
     /// Width of the raster in pixels
-    fn width(&self) -> u64;
+    fn width(&self) -> i64;
     /// Height of the raster in pixels
-    fn height(&self) -> u64;
+    fn height(&self) -> i64;
     /// X coordinate of the upper-left corner
     fn upper_left_x(&self) -> f64;
     /// Y coordinate of the upper-left corner
@@ -128,10 +184,10 @@ pub trait MetadataRef {
 }
 
 impl MetadataRef for RasterMetadata {
-    fn width(&self) -> u64 {
+    fn width(&self) -> i64 {
         self.width
     }
-    fn height(&self) -> u64 {
+    fn height(&self) -> i64 {
         self.height
     }
     fn upper_left_x(&self) -> f64 {
@@ -155,10 +211,10 @@ impl MetadataRef for RasterMetadata {
 }
 
 impl RasterMetadata {
-    pub fn width(&self) -> u64 {
+    pub fn width(&self) -> i64 {
         self.width
     }
-    pub fn height(&self) -> u64 {
+    pub fn height(&self) -> i64 {
         self.height
     }
     pub fn upper_left_x(&self) -> f64 {
@@ -424,41 +480,27 @@ pub trait RasterRef {
     }
 
     /// Width in pixels — size of the X spatial dimension from the top-level
-    /// `spatial_shape`. Errors if `spatial_shape` is empty or the X size is
-    /// negative; both are invariant violations rather than legitimate "no
-    /// value" states.
-    fn width(&self) -> Result<u64, ArrowError> {
+    /// `spatial_shape`. Errors if `spatial_shape` is empty, which is an
+    /// invariant violation rather than a legitimate "no value" state.
+    fn width(&self) -> Result<i64, ArrowError> {
         let shape = self.spatial_shape();
-        let Some(&v) = shape.first() else {
-            return Err(ArrowError::InvalidArgumentError(
+        shape.first().copied().ok_or_else(|| {
+            ArrowError::InvalidArgumentError(
                 "raster has no width (spatial_shape is empty)".to_string(),
-            ));
-        };
-        if v < 0 {
-            return Err(ArrowError::InvalidArgumentError(format!(
-                "raster width must be non-negative, got {v}"
-            )));
-        }
-        Ok(v as u64)
+            )
+        })
     }
 
     /// Height in pixels — size of the Y spatial dimension from the top-level
-    /// `spatial_shape`. Errors if `spatial_shape` has fewer than two entries
-    /// or the Y size is negative.
-    fn height(&self) -> Result<u64, ArrowError> {
+    /// `spatial_shape`. Errors if `spatial_shape` has fewer than two entries.
+    fn height(&self) -> Result<i64, ArrowError> {
         let shape = self.spatial_shape();
-        let Some(&v) = shape.get(1) else {
-            return Err(ArrowError::InvalidArgumentError(format!(
+        shape.get(1).copied().ok_or_else(|| {
+            ArrowError::InvalidArgumentError(format!(
                 "raster has no height (spatial_shape has {} entries, need >= 2)",
                 shape.len()
-            )));
-        };
-        if v < 0 {
-            return Err(ArrowError::InvalidArgumentError(format!(
-                "raster height must be non-negative, got {v}"
-            )));
-        }
-        Ok(v as u64)
+            ))
+        })
     }
 
     /// Look up a band by name. Returns an error if no band has that
@@ -494,7 +536,7 @@ pub trait BandRef {
     /// `dim_names` order. Derived from `view`: `[v.steps for v in view]`.
     /// This is what almost all consumers want; use `raw_source_shape()` only
     /// when you need to address into the raw `data` buffer (e.g. FFI).
-    fn shape(&self) -> &[u64];
+    fn shape(&self) -> &[i64];
 
     /// **Internal/FFI-only.** Natural C-order extent of the band's
     /// underlying `data` buffer, indexed by *source* axis (not visible
@@ -507,7 +549,7 @@ pub trait BandRef {
     /// Use this only when you need to index directly into the raw `data`
     /// bytes (e.g. Arrow C Data Interface, numpy zero-copy views) and you
     /// also handle `view()` and the byte-stride layout from `nd_buffer()`.
-    fn raw_source_shape(&self) -> &[u64];
+    fn raw_source_shape(&self) -> &[i64];
 
     /// Per-visible-dimension view entries describing how the band's
     /// visible axes map onto its `source_shape`. `view().len() == ndim()`.
@@ -515,7 +557,7 @@ pub trait BandRef {
     fn view(&self) -> &[ViewEntry];
 
     /// Size of a named dimension (None if doesn't exist)
-    fn dim_size(&self, name: &str) -> Option<u64> {
+    fn dim_size(&self, name: &str) -> Option<i64> {
         let idx = self.dim_index(name)?;
         Some(self.shape()[idx])
     }
@@ -525,31 +567,19 @@ pub trait BandRef {
         self.dim_names().iter().position(|n| *n == name)
     }
 
-    /// True iff this band is shaped exactly like a legacy 2-D raster band:
-    /// `dim_names` is a recognized spatial pair (`["y", "x"]`, `["lat",
-    /// "lon"]`, or `["latitude", "longitude"]`; see [`is_spatial_dim_pair`])
-    /// and the view is the identity over the band's `raw_source_shape` (no
-    /// slice, no broadcast, no permutation).
+    /// True iff this band has a recognized 2-D spatial *shape*: exactly two
+    /// dimensions named as a spatial pair (`["y", "x"]`, `["lat", "lon"]`, or
+    /// `["latitude", "longitude"]`; see [`is_spatial_dim_pair`]).
     ///
-    /// GDAL-backed SQL functions use this to refuse N-D bands cleanly while
-    /// they wait for an MDArray-aware port.
-    fn is_2d(&self) -> bool {
+    /// This is a shape/naming predicate only — it says nothing about the
+    /// band's view or byte layout. Callers that also need the bytes laid out
+    /// contiguously (e.g. the GDAL boundary, which hands GDAL a zero-copy
+    /// pointer) pair this with a contiguity check via `nd_buffer()?` +
+    /// [`NdBuffer::as_contiguous`], which borrows on a contiguous view and
+    /// errors otherwise (pointing the caller at `RS_EnsureContiguous`).
+    fn is_spatial_2d(&self) -> bool {
         let dims = self.dim_names();
-        if dims.len() != 2 || !is_spatial_dim_pair(dims[0], dims[1]) {
-            return false;
-        }
-        let view = self.view();
-        let source_shape = self.raw_source_shape();
-        if view.len() != 2 || source_shape.len() != 2 {
-            return false;
-        }
-        view.iter().enumerate().all(|(i, v)| {
-            v.source_axis as usize == i
-                && v.start == 0
-                && v.step == 1
-                && v.steps >= 0
-                && v.steps as u64 == source_shape[i]
-        })
+        dims.len() == 2 && is_spatial_dim_pair(dims[0], dims[1])
     }
 
     // -- Band metadata --
@@ -581,11 +611,15 @@ pub trait BandRef {
     /// The discriminator is whether the `data` buffer is non-empty —
     /// `outdb_uri` and `outdb_format` are orthogonal location/format hints
     /// that may be set on either kind of band.
-    fn is_indb(&self) -> bool {
-        // Default: materialize via nd_buffer and check buffer emptiness.
-        // Concrete impls should override with a direct buffer check.
-        self.nd_buffer().is_ok_and(|b| !b.buffer.is_empty())
-    }
+    /// A band whose visible region is empty (`Π shape() == 0`) holds no
+    /// readable bytes and is always InDb — there is nothing to load. This is
+    /// what separates a legitimately-empty InDb band from the OutDb empty-`data`
+    /// sentinel.
+    ///
+    /// Required (no default): a band's storage location is a primitive fact each
+    /// impl answers directly. `nd_buffer()` depends on `is_indb()`, so any
+    /// `nd_buffer`-based default would recurse.
+    fn is_indb(&self) -> bool;
 
     /// Eagerly-computed concrete band metadata. Mirrors the pre-N-D
     /// `BandRef::metadata()` accessor.
@@ -631,39 +665,6 @@ pub trait BandRef {
     /// natural C-order byte strides. Strides may be zero (broadcast) or
     /// negative (reverse iteration).
     fn nd_buffer(&self) -> Result<NdBuffer<'_>, ArrowError>;
-
-    /// Contiguous row-major bytes covering the *visible* region. Zero-copy
-    /// (`Cow::Borrowed`) when the view is full identity over a C-order
-    /// source buffer; copies into a new buffer when the view slices,
-    /// broadcasts, or permutes. Most RS_* functions use this.
-    fn contiguous_data(&self) -> Result<Cow<'_, [u8]>, ArrowError>;
-
-    /// Pre-N-D compatibility shim: raw row-major bytes for InDb,
-    /// identity-view bands. Panics on anything else (OutDb, non-identity
-    /// view, or a `contiguous_data` error) — corresponds to main's
-    /// infallible `BandRef::data() -> &[u8]` which only ever ran against
-    /// identity-view InDb bands.
-    fn data(&self) -> &[u8] {
-        // Compatibility shim: returns the same bytes pre-N-D callers expect
-        // from `BandRef::data() -> &[u8]`. Delegates to `contiguous_data()`
-        // so identity-view bands surface the borrowed in-line bytes,
-        // matching the pre-N-D behavior exactly. View-materialized
-        // (`Cow::Owned`) bands can't be returned through `&[u8]` because
-        // the owned `Vec` would die at the end of this call — implementers
-        // that need view-materialized bytes via `data()` must override and
-        // anchor the materialized buffer on `Self`; other consumers should
-        // reach for `contiguous_data()` directly.
-        match self
-            .contiguous_data()
-            .expect("BandRef::data() requires an in-db band with bytes")
-        {
-            Cow::Borrowed(b) => b,
-            Cow::Owned(_) => panic!(
-                "BandRef::data() can't return view-materialized bytes; \
-                 use contiguous_data() for sliced/permuted bands"
-            ),
-        }
-    }
 
     /// Nodata value interpreted as f64.
     ///
@@ -902,8 +903,8 @@ mod tests {
     /// every other method returns a placeholder we never read.
     struct StubBand {
         dim_names: Vec<String>,
-        source_shape: Vec<u64>,
-        shape: Vec<u64>,
+        source_shape: Vec<i64>,
+        shape: Vec<i64>,
         view: Vec<ViewEntry>,
     }
 
@@ -914,10 +915,10 @@ mod tests {
         fn dim_names(&self) -> Vec<&str> {
             self.dim_names.iter().map(String::as_str).collect()
         }
-        fn shape(&self) -> &[u64] {
+        fn shape(&self) -> &[i64] {
             &self.shape
         }
-        fn raw_source_shape(&self) -> &[u64] {
+        fn raw_source_shape(&self) -> &[i64] {
             &self.source_shape
         }
         fn view(&self) -> &[ViewEntry] {
@@ -930,15 +931,15 @@ mod tests {
             None
         }
         fn nd_buffer(&self) -> Result<NdBuffer<'_>, ArrowError> {
-            unimplemented!("not used in is_2d tests")
+            unimplemented!("not used in is_spatial_2d tests")
         }
-        fn contiguous_data(&self) -> Result<Cow<'_, [u8]>, ArrowError> {
-            unimplemented!("not used in is_2d tests")
+        fn is_indb(&self) -> bool {
+            unimplemented!("not used in is_spatial_2d tests")
         }
     }
 
-    fn band(dims: &[&str], source_shape: &[u64], view: &[ViewEntry]) -> StubBand {
-        let shape = view.iter().map(|v| v.steps as u64).collect();
+    fn band(dims: &[&str], source_shape: &[i64], view: &[ViewEntry]) -> StubBand {
+        let shape = view.iter().map(|v| v.steps).collect();
         StubBand {
             dim_names: dims.iter().map(|s| (*s).to_string()).collect(),
             source_shape: source_shape.to_vec(),
@@ -948,89 +949,94 @@ mod tests {
     }
 
     #[test]
-    fn is_2d_identity_yx_is_true() {
+    fn is_spatial_2d_yx_is_true() {
         let b = band(&["y", "x"], &[4, 5], &[ve(0, 0, 1, 4), ve(1, 0, 1, 5)]);
-        assert!(b.is_2d());
+        assert!(b.is_spatial_2d());
     }
 
     #[test]
-    fn is_2d_identity_3d_is_false() {
-        let b = band(
-            &["time", "y", "x"],
-            &[3, 4, 5],
-            &[ve(0, 0, 1, 3), ve(1, 0, 1, 4), ve(2, 0, 1, 5)],
-        );
-        assert!(!b.is_2d());
-    }
-
-    #[test]
-    fn is_2d_identity_1d_is_false() {
-        let b = band(&["x"], &[5], &[ve(0, 0, 1, 5)]);
-        assert!(!b.is_2d());
-    }
-
-    #[test]
-    fn is_2d_yx_with_slice_view_is_false() {
-        // Same dim_names but the y-axis is sliced — view is not the identity.
-        let b = band(&["y", "x"], &[4, 5], &[ve(0, 1, 1, 2), ve(1, 0, 1, 5)]);
-        assert!(!b.is_2d());
-    }
-
-    #[test]
-    fn is_2d_yx_with_step_two_is_false() {
-        let b = band(&["y", "x"], &[4, 5], &[ve(0, 0, 2, 2), ve(1, 0, 1, 5)]);
-        assert!(!b.is_2d());
-    }
-
-    #[test]
-    fn is_2d_yx_with_broadcast_is_false() {
-        let b = band(&["y", "x"], &[4, 5], &[ve(0, 0, 0, 4), ve(1, 0, 1, 5)]);
-        assert!(!b.is_2d());
-    }
-
-    #[test]
-    fn is_2d_permuted_xy_is_false() {
-        // dim_names are swapped — not the legacy 2D shape, even though the
-        // view per-axis is the identity.
-        let b = band(&["x", "y"], &[5, 4], &[ve(0, 0, 1, 5), ve(1, 0, 1, 4)]);
-        assert!(!b.is_2d());
-    }
-
-    #[test]
-    fn is_2d_yx_with_transposed_source_axes_is_false() {
-        // dim_names are ["y","x"] but the view permutes the source axes,
-        // so the band exposes y-then-x out of an x-then-y source.
-        let b = band(&["y", "x"], &[5, 4], &[ve(1, 0, 1, 4), ve(0, 0, 1, 5)]);
-        assert!(!b.is_2d());
-    }
-
-    #[test]
-    fn is_2d_identity_latlon_is_true() {
-        // CF-style lat/lon is a recognized spatial pair, so an identity-view
-        // band shaped [lat, lon] is a legacy 2-D raster.
+    fn is_spatial_2d_latlon_is_true() {
         let b = band(&["lat", "lon"], &[4, 5], &[ve(0, 0, 1, 4), ve(1, 0, 1, 5)]);
-        assert!(b.is_2d());
+        assert!(b.is_spatial_2d());
     }
 
     #[test]
-    fn is_2d_identity_latitude_longitude_is_true() {
+    fn is_spatial_2d_latitude_longitude_is_true() {
         let b = band(
             &["latitude", "longitude"],
             &[4, 5],
             &[ve(0, 0, 1, 4), ve(1, 0, 1, 5)],
         );
-        assert!(b.is_2d());
+        assert!(b.is_spatial_2d());
     }
 
     #[test]
-    fn is_2d_unrecognized_dim_names_is_false() {
-        // Names outside the recognized spatial pairs are not legacy 2-D,
-        // even with an identity view.
+    fn is_spatial_2d_3d_is_false() {
+        let b = band(
+            &["time", "y", "x"],
+            &[3, 4, 5],
+            &[ve(0, 0, 1, 3), ve(1, 0, 1, 4), ve(2, 0, 1, 5)],
+        );
+        assert!(!b.is_spatial_2d());
+    }
+
+    #[test]
+    fn is_spatial_2d_1d_is_false() {
+        let b = band(&["x"], &[5], &[ve(0, 0, 1, 5)]);
+        assert!(!b.is_spatial_2d());
+    }
+
+    #[test]
+    fn is_spatial_2d_permuted_xy_is_false() {
+        // ["x","y"] is not a recognized (y-like, x-like) pair.
+        let b = band(&["x", "y"], &[5, 4], &[ve(0, 0, 1, 5), ve(1, 0, 1, 4)]);
+        assert!(!b.is_spatial_2d());
+    }
+
+    #[test]
+    fn is_spatial_2d_unrecognized_dim_names_is_false() {
         let b = band(
             &["northing", "easting"],
             &[4, 5],
             &[ve(0, 0, 1, 4), ve(1, 0, 1, 5)],
         );
-        assert!(!b.is_2d());
+        assert!(!b.is_spatial_2d());
+    }
+
+    /// Build a bufferless `NdBuffer` for contiguity checks — `is_contiguous`
+    /// inspects only shape/strides/data_type, never the bytes.
+    fn ndbuf(shape: &[i64], strides: &[i64], offset: u64) -> NdBuffer<'static> {
+        NdBuffer {
+            buffer: &[],
+            shape: shape.to_vec(),
+            strides: strides.to_vec(),
+            offset,
+            data_type: BandDataType::UInt8,
+        }
+    }
+
+    #[test]
+    fn is_contiguous_packed_identity() {
+        // C-order packed strides for shape [2, 3], byte_size 1.
+        assert!(ndbuf(&[2, 3], &[3, 1], 0).is_contiguous());
+    }
+
+    #[test]
+    fn is_contiguous_packed_with_offset() {
+        // Offset is irrelevant to contiguity — a packed sub-window still
+        // counts (this is the relaxation the GDAL gate relies on).
+        assert!(ndbuf(&[2, 3], &[3, 1], 12).is_contiguous());
+    }
+
+    #[test]
+    fn is_contiguous_strided_is_false() {
+        // Inner stride 2 != byte_size 1 — gaps between elements.
+        assert!(!ndbuf(&[2, 3], &[6, 2], 0).is_contiguous());
+    }
+
+    #[test]
+    fn is_contiguous_broadcast_is_false() {
+        // Zero stride (broadcast) is not packed.
+        assert!(!ndbuf(&[2, 3], &[0, 1], 0).is_contiguous());
     }
 }

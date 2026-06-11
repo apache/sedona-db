@@ -543,7 +543,10 @@ mod tests {
             for band_idx in 0..orig_bands.len() {
                 let orig_band = orig_bands.band(band_idx + 1).unwrap();
                 let mod_band = mod_bands.band(band_idx + 1).unwrap();
-                assert_eq!(orig_band.data(), mod_band.data());
+                assert_eq!(
+                    orig_band.nd_buffer().unwrap().as_contiguous().unwrap(),
+                    mod_band.nd_buffer().unwrap().as_contiguous().unwrap()
+                );
                 assert_eq!(
                     orig_band.metadata().data_type().unwrap(),
                     mod_band.metadata().data_type().unwrap()

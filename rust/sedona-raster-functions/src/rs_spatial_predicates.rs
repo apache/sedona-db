@@ -377,8 +377,8 @@ const CONVEXHULL_WKB_SIZE: usize = 93;
 
 /// Create WKB for a convex hull polygon for the raster
 fn write_convexhull_wkb(raster: &dyn RasterRef, out: &mut impl std::io::Write) -> Result<()> {
-    let width = raster.metadata().width() as i64;
-    let height = raster.metadata().height() as i64;
+    let width = raster.metadata().width();
+    let height = raster.metadata().height();
 
     let (ulx, uly) = to_world_coordinate(raster, 0, 0);
     let (urx, ury) = to_world_coordinate(raster, width, 0);

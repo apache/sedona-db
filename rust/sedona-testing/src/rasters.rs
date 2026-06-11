@@ -47,8 +47,8 @@ pub fn generate_test_rasters(
         }
 
         let raster_metadata = RasterMetadata {
-            width: i as u64 + 1,
-            height: i as u64 + 2,
+            width: i as i64 + 1,
+            height: i as i64 + 2,
             upperleft_x: i as f64 + 1.0,
             upperleft_y: i as f64 + 2.0,
             scale_x: i.max(1) as f64 * 0.1,
@@ -106,8 +106,8 @@ pub fn generate_tiled_rasters(
             let origin_y = (tile_y * tile_height) as f64;
 
             let raster_metadata = RasterMetadata {
-                width: tile_width as u64,
-                height: tile_height as u64,
+                width: tile_width as i64,
+                height: tile_height as i64,
                 upperleft_x: origin_x,
                 upperleft_y: origin_y,
                 scale_x: 1.0,
@@ -225,8 +225,8 @@ pub fn raster_from_single_band(
     crs: Option<&str>,
 ) -> StructArray {
     let metadata = RasterMetadata {
-        width: width as u64,
-        height: height as u64,
+        width: width as i64,
+        height: height as i64,
         upperleft_x: 0.0,
         upperleft_y: 0.0,
         scale_x: 1.0,
@@ -475,7 +475,17 @@ pub fn assert_raster_equal(raster1: &impl RasterRef, raster2: &impl RasterRef) {
             "Band outdb band IDs do not match"
         );
 
-        assert_eq!(band1.data(), band2.data(), "Band data does not match");
+        assert_eq!(
+            band1.is_indb(),
+            band2.is_indb(),
+            "Band storage (in/out-db) does not match"
+        );
+        if band1.is_indb() {
+            // Identity-view InDb fixtures: compare the packed visible bytes.
+            let b1 = band1.nd_buffer().unwrap().as_contiguous().unwrap();
+            let b2 = band2.nd_buffer().unwrap().as_contiguous().unwrap();
+            assert_eq!(b1, b2, "Band data does not match");
+        }
     }
 }
 
@@ -495,8 +505,8 @@ mod tests {
         for i in 0..count {
             let raster = raster_array.get(i).unwrap();
             let metadata = raster.metadata();
-            assert_eq!(metadata.width(), i as u64 + 1);
-            assert_eq!(metadata.height(), i as u64 + 2);
+            assert_eq!(metadata.width(), i as i64 + 1);
+            assert_eq!(metadata.height(), i as i64 + 2);
             assert_eq!(metadata.upper_left_x(), i as f64 + 1.0);
             assert_eq!(metadata.upper_left_y(), i as f64 + 2.0);
             assert_eq!(metadata.scale_x(), (i.max(1) as f64) * 0.1);
@@ -513,7 +523,7 @@ mod tests {
             assert_eq!(band_metadata.outdb_url(), None);
             assert_eq!(band_metadata.outdb_band_id(), None);
 
-            let band_data = band.data();
+            let band_data = band.nd_buffer().unwrap().as_contiguous().unwrap();
             let expected_pixel_count = (i + 1) * (i + 2); // width * height
 
             // Convert raw bytes back to u16 values for comparison
@@ -550,7 +560,7 @@ mod tests {
                 let band_metadata = band.metadata();
                 assert_eq!(band_metadata.data_type().unwrap(), BandDataType::UInt8);
                 assert_eq!(band_metadata.storage_type().unwrap(), StorageType::InDb);
-                let band_data = band.data();
+                let band_data = band.nd_buffer().unwrap().as_contiguous().unwrap();
                 assert_eq!(band_data.len(), 64 * 64); // 4096 pixels
             }
         }
@@ -619,7 +629,10 @@ mod tests {
         let b1 = bands.band(1).unwrap();
         assert_eq!(b1.metadata().data_type().unwrap(), BandDataType::UInt8);
         assert_eq!(b1.metadata().nodata_value(), Some(&[255u8][..]));
-        assert_eq!(b1.data(), &[1u8, 2, 3, 4]);
+        assert_eq!(
+            b1.nd_buffer().unwrap().as_contiguous().unwrap(),
+            &[1u8, 2, 3, 4]
+        );
 
         // Band 2: UInt16, nodata=0
         let b2 = bands.band(2).unwrap();

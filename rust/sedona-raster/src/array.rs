@@ -15,11 +15,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::borrow::Cow;
-
 use arrow_array::{
     Array, BinaryArray, BinaryViewArray, Float64Array, Int64Array, ListArray, StringArray,
-    StringViewArray, StructArray, UInt32Array, UInt64Array,
+    StringViewArray, StructArray, UInt32Array,
 };
 use arrow_schema::ArrowError;
 
@@ -35,7 +33,7 @@ struct BandRefImpl<'a> {
     dim_names_list: &'a ListArray,
     dim_names_values: &'a StringArray,
     source_shape_list: &'a ListArray,
-    source_shape_values: &'a UInt64Array,
+    source_shape_values: &'a Int64Array,
     nodata_array: &'a BinaryArray,
     outdb_uri_array: &'a StringArray,
     outdb_format_array: &'a StringViewArray,
@@ -47,7 +45,7 @@ struct BandRefImpl<'a> {
     /// Per-visible-axis view, length = ndim. Always identity today.
     view_entries: Vec<ViewEntry>,
     /// Visible shape, length = ndim. Equals `source_shape` today.
-    visible_shape: Vec<u64>,
+    visible_shape: Vec<i64>,
     /// Byte strides per visible axis. C-order over `source_shape` today.
     byte_strides: Vec<i64>,
     /// Byte offset into `data` of the visible region's `[0,...,0]` element.
@@ -67,11 +65,11 @@ impl<'a> BandRef for BandRefImpl<'a> {
             .collect()
     }
 
-    fn shape(&self) -> &[u64] {
+    fn shape(&self) -> &[i64] {
         &self.visible_shape
     }
 
-    fn raw_source_shape(&self) -> &[u64] {
+    fn raw_source_shape(&self) -> &[i64] {
         let start = self.source_shape_list.value_offsets()[self.band_row] as usize;
         let end = self.source_shape_list.value_offsets()[self.band_row + 1] as usize;
         &self.source_shape_values.values()[start..end]
@@ -83,17 +81,6 @@ impl<'a> BandRef for BandRefImpl<'a> {
 
     fn data_type(&self) -> BandDataType {
         self.data_type
-    }
-
-    fn data(&self) -> &[u8] {
-        // Pre-N-D compatibility surface. Identity-view InDb bands → the
-        // row-major in-line buffer (zero-copy borrow into the StructArray),
-        // matching the pre-N-D behavior exactly. OutDb → `&[]` from the
-        // empty `data` column, no panic. Non-identity views never reach
-        // here — `RasterRefImpl::band()` rejects them upstream so the
-        // raw column bytes always equal the visible bytes for any band
-        // this reader produces.
-        self.data_array.value(self.band_row)
     }
 
     fn nodata(&self) -> Option<&[u8]> {
@@ -121,7 +108,11 @@ impl<'a> BandRef for BandRefImpl<'a> {
     }
 
     fn is_indb(&self) -> bool {
-        !self.data_array.value(self.band_row).is_empty()
+        // A 0-element visible region (any visible dim is 0) holds no readable
+        // bytes — trivially fully in-RAM — so it's InDb, not the OutDb
+        // empty-`data` sentinel. Otherwise the discriminator is buffer presence.
+        self.shape().iter().product::<i64>() == 0
+            || !self.data_array.value(self.band_row).is_empty()
     }
 
     fn nd_buffer(&self) -> Result<NdBuffer<'_>, ArrowError> {
@@ -141,19 +132,6 @@ impl<'a> BandRef for BandRefImpl<'a> {
             offset: self.byte_offset,
             data_type: self.data_type,
         })
-    }
-
-    fn contiguous_data(&self) -> Result<Cow<'_, [u8]>, ArrowError> {
-        if !self.is_indb() {
-            return Err(ArrowError::NotYetImplemented(
-                "OutDb byte access via contiguous_data() is not yet implemented; \
-                 backend-specific OutDb resolvers are tracked separately"
-                    .to_string(),
-            ));
-        }
-        // Identity-view only today, so the data buffer is already row-major
-        // over the visible region.
-        Ok(Cow::Borrowed(self.data_array.value(self.band_row)))
     }
 }
 
@@ -177,7 +155,7 @@ pub struct RasterRefImpl<'a> {
     band_dim_names_list: &'a ListArray,
     band_dim_names_values: &'a StringArray,
     band_source_shape_list: &'a ListArray,
-    band_source_shape_values: &'a UInt64Array,
+    band_source_shape_values: &'a Int64Array,
     band_datatype_array: &'a UInt32Array,
     band_nodata_array: &'a BinaryArray,
     band_view_list: &'a ListArray,
@@ -220,7 +198,7 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
         // Read source shape slice.
         let ss_start = self.band_source_shape_list.value_offsets()[band_row] as usize;
         let ss_end = self.band_source_shape_list.value_offsets()[band_row + 1] as usize;
-        let source_shape: &[u64] = &self.band_source_shape_values.values()[ss_start..ss_end];
+        let source_shape: &[i64] = &self.band_source_shape_values.values()[ss_start..ss_end];
 
         // Reject 0-D bands at the read boundary. Schema doesn't forbid them
         // outright but every consumer assumes ndim >= 1.
@@ -267,17 +245,17 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
                 source_axis: i as i64,
                 start: 0,
                 step: 1,
-                steps: s as i64,
+                steps: s,
             })
             .collect();
 
-        let visible_shape: Vec<u64> = source_shape.to_vec();
+        let visible_shape: Vec<i64> = source_shape.to_vec();
 
         let dtype_size = data_type.byte_size() as i64;
         let mut byte_strides = vec![0i64; source_shape.len()];
         byte_strides[source_shape.len() - 1] = dtype_size;
         for k in (0..source_shape.len() - 1).rev() {
-            byte_strides[k] = byte_strides[k + 1] * (source_shape[k + 1] as i64);
+            byte_strides[k] = byte_strides[k + 1] * source_shape[k + 1];
         }
 
         Ok(Box::new(BandRefImpl {
@@ -412,7 +390,7 @@ pub struct RasterStructArray<'a> {
     band_dim_names_list: &'a ListArray,
     band_dim_names_values: &'a StringArray,
     band_source_shape_list: &'a ListArray,
-    band_source_shape_values: &'a UInt64Array,
+    band_source_shape_values: &'a Int64Array,
     band_datatype_array: &'a UInt32Array,
     band_nodata_array: &'a BinaryArray,
     band_view_list: &'a ListArray,
@@ -498,7 +476,7 @@ impl<'a> RasterStructArray<'a> {
         let band_source_shape_values = band_source_shape_list
             .values()
             .as_any()
-            .downcast_ref::<UInt64Array>()
+            .downcast_ref::<Int64Array>()
             .unwrap();
         let band_datatype_array = bands_struct
             .column(band_indices::DATA_TYPE)
@@ -604,6 +582,22 @@ impl<'a> RasterStructArray<'a> {
     pub fn is_null(&self, index: usize) -> bool {
         self.raster_array.is_null(index)
     }
+
+    /// The flattened band `data` column (BinaryView) shared by every raster
+    /// in this array. Pair with [`Self::band_data_row`] to address a single
+    /// band's bytes — e.g. for zero-copy passthrough into a [`RasterBuilder`]
+    /// via `append_band_data_from`.
+    #[inline(always)]
+    pub fn band_data_array(&self) -> &'a BinaryViewArray {
+        self.band_data_array
+    }
+
+    /// Absolute row of band `band_idx` of raster `raster_idx` within the
+    /// flattened band arrays (such as [`Self::band_data_array`]).
+    #[inline(always)]
+    pub fn band_data_row(&self, raster_idx: usize, band_idx: usize) -> usize {
+        self.bands_list.value_offsets()[raster_idx] as usize + band_idx
+    }
 }
 
 #[cfg(test)]
@@ -611,7 +605,7 @@ mod tests {
     use super::*;
     use crate::builder::RasterBuilder;
     use crate::traits::{BandMetadata, RasterMetadata};
-    use arrow_array::{ArrayRef, ListArray, StructArray, UInt32Array, UInt64Array};
+    use arrow_array::{ArrayRef, ListArray, StructArray, UInt32Array};
     use arrow_buffer::{OffsetBuffer, ScalarBuffer};
     use arrow_schema::{DataType, Fields};
     use sedona_schema::raster::{
@@ -678,8 +672,11 @@ mod tests {
 
         // Access band with 1-based band_number
         let band = bands.band(1).unwrap();
-        assert_eq!(band.data().len(), 100);
-        assert_eq!(band.data()[0], 1u8);
+        assert_eq!(
+            band.nd_buffer().unwrap().as_contiguous().unwrap().len(),
+            100
+        );
+        assert_eq!(band.nd_buffer().unwrap().as_contiguous().unwrap()[0], 1u8);
 
         let band_meta = band.metadata();
         assert_eq!(band_meta.storage_type().unwrap(), StorageType::InDb);
@@ -743,7 +740,13 @@ mod tests {
             // Access band with 1-based band_number
             let band = bands.band(i + 1).unwrap();
             let expected_value = i as u8;
-            assert!(band.data().iter().all(|&x| x == expected_value));
+            assert!(band
+                .nd_buffer()
+                .unwrap()
+                .as_contiguous()
+                .unwrap()
+                .iter()
+                .all(|&x| x == expected_value));
         }
 
         // Test array
@@ -752,8 +755,11 @@ mod tests {
             .enumerate()
             .map(|(i, band)| {
                 let band = band.unwrap();
-                assert_eq!(band.data()[0], i as u8);
-                band.data()[0]
+                assert_eq!(
+                    band.nd_buffer().unwrap().as_contiguous().unwrap()[0],
+                    i as u8
+                );
+                band.nd_buffer().unwrap().as_contiguous().unwrap()[0]
             })
             .collect();
 
@@ -869,7 +875,7 @@ mod tests {
         let empty_source_shape = ListArray::new(
             ss_field,
             OffsetBuffer::new(ScalarBuffer::from(vec![0i32, 0])),
-            Arc::new(UInt64Array::from(Vec::<u64>::new())),
+            Arc::new(Int64Array::from(Vec::<i64>::new())),
             None,
         );
         let mutated = replace_band_column(
@@ -1043,17 +1049,32 @@ mod tests {
         assert_eq!(r0.num_bands(), 3);
         assert_eq!(r0.band(0).unwrap().shape(), &[3]);
         assert_eq!(
-            &*r0.band(0).unwrap().contiguous_data().unwrap(),
+            r0.band(0)
+                .unwrap()
+                .nd_buffer()
+                .unwrap()
+                .as_contiguous()
+                .unwrap(),
             &[10u8, 20, 30]
         );
         assert_eq!(r0.band(1).unwrap().shape(), &[3]);
         assert_eq!(
-            &*r0.band(1).unwrap().contiguous_data().unwrap(),
+            r0.band(1)
+                .unwrap()
+                .nd_buffer()
+                .unwrap()
+                .as_contiguous()
+                .unwrap(),
             &[40u8, 50, 60]
         );
         assert_eq!(r0.band(2).unwrap().shape(), &[3]);
         assert_eq!(
-            &*r0.band(2).unwrap().contiguous_data().unwrap(),
+            r0.band(2)
+                .unwrap()
+                .nd_buffer()
+                .unwrap()
+                .as_contiguous()
+                .unwrap(),
             &[100u8, 101, 102]
         );
 
@@ -1061,12 +1082,22 @@ mod tests {
         assert_eq!(r1.num_bands(), 2);
         assert_eq!(r1.band(0).unwrap().shape(), &[4]);
         assert_eq!(
-            &*r1.band(0).unwrap().contiguous_data().unwrap(),
+            r1.band(0)
+                .unwrap()
+                .nd_buffer()
+                .unwrap()
+                .as_contiguous()
+                .unwrap(),
             &[42u8, 43, 44, 45]
         );
         assert_eq!(r1.band(1).unwrap().shape(), &[4]);
         assert_eq!(
-            &*r1.band(1).unwrap().contiguous_data().unwrap(),
+            r1.band(1)
+                .unwrap()
+                .nd_buffer()
+                .unwrap()
+                .as_contiguous()
+                .unwrap(),
             &[1u8, 2, 3, 4]
         );
 
@@ -1124,5 +1155,40 @@ mod tests {
         assert!(r1.band_outdb_uri(0).is_none());
         assert!(r1.band_outdb_format(0).is_none());
         assert!(r1.band_nodata(0).is_none());
+    }
+
+    #[test]
+    fn zero_element_indb_band_classifies_as_indb() {
+        // A band with a 0-size dim (here `time = 0`) legitimately holds 0 bytes.
+        // Its empty `data` column must NOT be mistaken for the OutDb sentinel:
+        // a 0-element band has nothing to load, so it's InDb.
+        let mut builder = RasterBuilder::new(1);
+        builder
+            .start_raster_2d(2, 2, 0.0, 2.0, 1.0, -1.0, 0.0, 0.0, None)
+            .unwrap();
+        builder
+            .start_band_nd(
+                Some("empty_time"),
+                &["time", "y", "x"],
+                &[0, 2, 2],
+                BandDataType::UInt8,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        builder.band_data_writer().append_value([]); // 0 bytes, legitimately
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+        let arr = builder.finish().unwrap();
+
+        let rasters = RasterStructArray::new(&arr);
+        let r = rasters.get(0).unwrap();
+        let band = r.band(0).unwrap();
+        assert!(
+            band.is_indb(),
+            "a 0-element band holds 0 bytes legitimately and must be InDb"
+        );
+        assert_eq!(band.metadata().storage_type().unwrap(), StorageType::InDb);
     }
 }
