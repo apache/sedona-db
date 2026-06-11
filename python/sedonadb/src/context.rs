@@ -17,7 +17,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use arrow_schema::DataType;
-use datafusion_expr::ScalarUDFImpl;
+use datafusion_expr::{AggregateUDFImpl, ScalarUDFImpl};
 use pyo3::prelude::*;
 use sedona::context::SedonaContext;
 use sedona::context_builder::SedonaContextBuilder;
@@ -30,7 +30,7 @@ use crate::{
     error::PySedonaError,
     import_from::import_table_provider_from_any,
     runtime::wait_for_future,
-    udf::{PyAggregateUdf, PyScalarUdf, PySedonaScalarUdf},
+    udf::{PyAggregateUdf, PyScalarUdf, PySedonaAggregateUdf, PySedonaScalarUdf},
 };
 
 #[pyclass]
@@ -272,6 +272,24 @@ impl InternalContext {
                 self.inner
                     .functions
                     .scalar_udf(name)
+                    .unwrap()
+                    .clone()
+                    .into(),
+            );
+            return Ok(());
+        } else if component.hasattr("__sedonadb_internal_aggregate_udf__")? {
+            let py_agg_udf = component
+                .getattr("__sedonadb_internal_udf__")?
+                .call0()?
+                .extract::<PySedonaAggregateUdf>()?;
+            let name = py_agg_udf.inner.name();
+            self.inner
+                .functions
+                .insert_aggregate_udf(py_agg_udf.inner.clone());
+            self.inner.ctx.register_udaf(
+                self.inner
+                    .functions
+                    .aggregate_udf(name)
                     .unwrap()
                     .clone()
                     .into(),
