@@ -504,6 +504,7 @@ class SedonaContext:
         The following types of components are currently supported:
 
         - Python UDFs annotated with arrow_aggregate_udf or arrow_udf
+        - An ExternalFormatSpec implementing a custom datasource type
         - An object implementing __sedonadb_extension__(ctx, **kwargs), which
           is called with this context and any keyword arguments passed.
 
@@ -543,7 +544,9 @@ class SedonaContext:
         elif hasattr(component, "__sedonadb_internal_udf__"):
             if kwargs:
                 raise ValueError("options are not supported for UDF registration")
-            self._impl.register_udf(component)
+            self._impl.register_component(component)
+        elif hasattr(component, "__sedonadb_external_format__"):
+            self._impl.register_component(component)
         else:
             raise ValueError(
                 f"Can't register extension for object of type {type(component).__name__}"
