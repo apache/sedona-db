@@ -136,21 +136,32 @@ test_that("summarise() with duplicate column names", {
     df |>
       as_sedonadb_dataframe() |>
       group_by(letter) |>
-      summarise(y = y + 1, y = sum(y), .groups = "drop") |>
+      summarise(y = mean(x), y = sum(x), .groups = "drop") |>
       arrange(letter) |>
       collect(),
     df |>
       group_by(letter) |>
-      summarise(y = y + 1, y = sum(y), .groups = "drop") |>
+      summarise(y = mean(x), y = sum(x), .groups = "drop") |>
       arrange(letter)
   )
 })
 
 test_that("summarise() errors on unsupported .groups values", {
-  df <- tibble(x = c(1, 2, 3))
+  df <- tibble(x = c(1, 2, 3)) |> as_sedonadb_dataframe()
 
-  expect_error(
-    df |> as_sedonadb_dataframe() |> summarise(total = sum(x), .groups = "keep"),
-    'only supports .groups = "drop"'
+  expect_snapshot_error(
+    df |> summarise(total = sum(x), .groups = "keep")
+  )
+
+  expect_snapshot_error(
+    df |> summarise(total = sum(x), .groups = "keep", .by = x)
+  )
+})
+
+test_that("summarise() messages for implicit .groups", {
+  df <- tibble(x = c(1, 2, 3)) |> as_sedonadb_dataframe()
+
+  expect_snapshot(
+    df |> summarise(total = sum(x))
   )
 })
