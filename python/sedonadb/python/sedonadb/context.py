@@ -541,6 +541,7 @@ class SedonaContext:
         """
         if hasattr(component, "__sedonadb_extension__"):
             component.__sedonadb_extension__(self, **kwargs)
+            return
 
         supported_interfaces = (
             "__sedonadb_internal_udf__",
