@@ -513,7 +513,7 @@ class SedonaContext:
         Args:
             component: A Python object implementing one of the above protocols.
             **kwargs: Extension-specific options, supported for specific types
-              of components.
+                of components.
 
         Examples:
 
