@@ -506,6 +506,33 @@ mod tests {
     }
 
     #[test]
+    fn set_crs_wkt() {
+        const WKT_3857: &str = r#"PROJCS["WGS 84 / Pseudo-Mercator",GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563,AUTHORITY["EPSG","7030"]],AUTHORITY["EPSG","6326"]],AUTHORITY["EPSG","4326"]],PROJECTION["Mercator_1SP"],AUTHORITY["EPSG","3857"]]"#;
+        const WKT_LCC_NO_AUTHORITY: &str = r#"PROJCS["Custom LCC",GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]]],PROJECTION["Lambert_Conformal_Conic_2SP"],PARAMETER["standard_parallel_1",33],PARAMETER["standard_parallel_2",45],PARAMETER["latitude_of_origin",39],PARAMETER["central_meridian",-96],UNIT["metre",1]]"#;
+
+        let udf: ScalarUDF = rs_set_crs_udf().into();
+        let tester = ScalarUdfTester::new(udf, vec![RASTER, SedonaType::Arrow(DataType::Utf8)]);
+
+        // A WKT carrying an EPSG authority canonicalizes to that code via normalize().
+        let rasters = generate_test_rasters(1, None).unwrap();
+        let result = tester
+            .invoke_array_scalar(Arc::new(rasters), WKT_3857)
+            .unwrap();
+        let result_struct = result.as_any().downcast_ref::<StructArray>().unwrap();
+        let raster = RasterStructArray::new(result_struct).get(0).unwrap();
+        assert_eq!(raster.crs(), Some("EPSG:3857"));
+
+        // An authority-less WKT is stored verbatim.
+        let rasters = generate_test_rasters(1, None).unwrap();
+        let result = tester
+            .invoke_array_scalar(Arc::new(rasters), WKT_LCC_NO_AUTHORITY)
+            .unwrap();
+        let result_struct = result.as_any().downcast_ref::<StructArray>().unwrap();
+        let raster = RasterStructArray::new(result_struct).get(0).unwrap();
+        assert_eq!(raster.crs(), Some(WKT_LCC_NO_AUTHORITY));
+    }
+
+    #[test]
     fn set_srid_preserves_metadata_and_bands() {
         let udf: ScalarUDF = rs_set_srid_udf().into();
         let tester = ScalarUdfTester::new(udf, vec![RASTER, SedonaType::Arrow(DataType::UInt32)]);

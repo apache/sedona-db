@@ -223,6 +223,59 @@ mod tests {
         tester.assert_scalar_result_equals(result, ScalarValue::Utf8(None));
     }
 
+    // EPSG:3857 as WKT1 (carries an authority tag) and a bespoke LCC WKT with
+    // no authority tag.
+    const WKT_3857: &str = r#"PROJCS["WGS 84 / Pseudo-Mercator",GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563,AUTHORITY["EPSG","7030"]],AUTHORITY["EPSG","6326"]],AUTHORITY["EPSG","4326"]],PROJECTION["Mercator_1SP"],AUTHORITY["EPSG","3857"]]"#;
+    const WKT_LCC_NO_AUTHORITY: &str = r#"PROJCS["Custom LCC",GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]]],PROJECTION["Lambert_Conformal_Conic_2SP"],PARAMETER["standard_parallel_1",33],PARAMETER["standard_parallel_2",45],PARAMETER["latitude_of_origin",39],PARAMETER["central_meridian",-96],UNIT["metre",1]]"#;
+
+    #[test]
+    fn udf_srid_wkt() {
+        let udf: ScalarUDF = rs_srid_udf().into();
+        let tester = ScalarUdfTester::new(udf, vec![RASTER]);
+
+        // A WKT CRS carrying an EPSG authority resolves to that SRID.
+        let mut builder = RasterBuilder::new(1);
+        append_1x1_raster_with_crs(&mut builder, Some(WKT_3857));
+        let result = tester
+            .invoke_array(Arc::new(builder.finish().unwrap()))
+            .unwrap();
+        assert_array_equal(
+            &result,
+            &(Arc::new(UInt32Array::from(vec![Some(3857)])) as Arc<dyn arrow_array::Array>),
+        );
+
+        // An authority-less WKT has no SRID -> error.
+        let mut builder = RasterBuilder::new(1);
+        append_1x1_raster_with_crs(&mut builder, Some(WKT_LCC_NO_AUTHORITY));
+        let err = tester
+            .invoke_array(Arc::new(builder.finish().unwrap()))
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Can't extract SRID from item-level CRS"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn udf_crs_wkt() {
+        // RS_CRS echoes the stored CRS verbatim (canonicalization happens at
+        // set time in RS_SetCRS), so a WKT-valued CRS comes back unchanged.
+        let udf: ScalarUDF = rs_crs_udf().into();
+        let tester = ScalarUdfTester::new(udf, vec![RASTER]);
+
+        let mut builder = RasterBuilder::new(1);
+        append_1x1_raster_with_crs(&mut builder, Some(WKT_LCC_NO_AUTHORITY));
+        let result = tester
+            .invoke_array(Arc::new(builder.finish().unwrap()))
+            .unwrap();
+        assert_array_equal(
+            &result,
+            &(Arc::new(StringArray::from(vec![Some(WKT_LCC_NO_AUTHORITY)]))
+                as Arc<dyn arrow_array::Array>),
+        );
+    }
+
     fn append_1x1_raster_with_crs(builder: &mut RasterBuilder, crs: Option<&str>) {
         let raster_metadata = RasterMetadata {
             width: 1,
