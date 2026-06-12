@@ -15,13 +15,6 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""Tests for the `sedonadb-zarr` plugin.
-
-Plugin surface: `ZarrFormatSpec(ExternalFormatSpec)` paired with
-`con.read_format(spec, uri)`. The SQL UDTF form (`sd_read_zarr`) is
-deferred to a follow-up PR.
-"""
-
 import numpy as np
 import pytest
 import sedonadb
@@ -111,7 +104,6 @@ def test_zarr_loader_supports_format():
 def test_rs_ensure_loaded_with_zarr(tmp_path, numpy_dtype):
     """Test that RS_EnsureLoaded can materialize Zarr OutDb raster data."""
     zarr = pytest.importorskip("zarr", minversion="3.0")
-    from sedonadb._lib import py_raster_loader
 
     # Create a simple 8x8 Zarr array with random data
     rng = np.random.default_rng(seed=836)
@@ -134,18 +126,10 @@ def test_rs_ensure_loaded_with_zarr(tmp_path, numpy_dtype):
 
     # Create a fresh connection (new context)
     sd = sedonadb.connect()
-
-    # Register the ZarrRasterLoader
-    loader = sedonadb_zarr.ZarrRasterLoader()
-    wrapper = py_raster_loader(
-        loader.name,
-        loader.supports_format,
-        loader.load,
-    )
-    sd._impl.register_raster_loader(wrapper)
+    sd.register(sedonadb_zarr.ZarrExtension())
 
     # Read the Zarr group as loaded rasters
-    t = sd.read_format(sedonadb_zarr.ZarrFormatSpec(), f"file://{tmp_path}")
+    t = sd.read_format(sedonadb_zarr.Zarr(), f"file://{tmp_path}")
     loaded_tab = t.select(raster=t.raster.funcs.rs_ensureloaded()).to_arrow_table()
 
     # Verify the data was loaded
