@@ -1221,11 +1221,11 @@ def test_st_unaryunion_zm(eng, geom, expected):
     elif is_postgis and ("M(" in expected or "M (" in expected):
         pytest.skip("PostGIS doesn't support M dimensions")
     else:
-        # Test for exact string equality
-        # Remove all spaces from both the actual and expected results to ignore formatting differences
+        # Compare the geometry result directly so the shared test harness can
+        # normalize WKT formatting for geometry-typed outputs only.
         eng.assert_query_result(
-            f"SELECT replace(ST_AsText(ST_UnaryUnion({geom_or_null(geom)})), ' ', '')",
-            expected.replace(" ", ""),
+            f"SELECT ST_UnaryUnion({geom_or_null(geom)})",
+            expected,
         )
 
 
@@ -2309,7 +2309,7 @@ def test_st_length(eng, geom, expected):
     ("geom", "expected"),
     [
         (None, None),
-        ("POINT EMPTY", "POINT EMPTY"),
+        ("POINT EMPTY", "POINT (nan nan)"),
         ("LINESTRING EMPTY", "LINESTRING EMPTY"),
         ("POLYGON EMPTY", "POLYGON EMPTY"),
         ("MULTIPOINT EMPTY", "MULTIPOINT EMPTY"),
@@ -2371,20 +2371,12 @@ def test_st_normalize(eng, geom, expected):
             expected = "POLYGON Z ((0 0 5, 0 1 5, 1 1 5, 1 0 5, 0 0 5))"
 
     if isinstance(eng, PostGIS) and expected is not None:
-        # Normalize expected WKT to PostGIS's compact ST_AsText formatting.
-        expected = expected.replace(", ", ",")
-        expected = expected.replace(" (", "(")
+        # Normalize expected WKT to PostGIS's formatting.
         expected = expected.replace(r"ZM(", r"ZM (")
         expected = expected.replace(r"M(", r"M (")
         expected = expected.replace(r"Z(", r"Z (")
 
-    if isinstance(eng, SedonaDB) and expected is not None:
-        expected = expected.replace(", ", ",")
-        expected = expected.replace(" (", "(")
-
-    eng.assert_query_result(
-        f"SELECT ST_AsText(ST_Normalize({geom_or_null(geom)}))", expected
-    )
+    eng.assert_query_result(f"SELECT ST_Normalize({geom_or_null(geom)})", expected)
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
