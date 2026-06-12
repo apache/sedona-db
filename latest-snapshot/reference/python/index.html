@@ -3176,29 +3176,46 @@ entirely.</p>
 <div class="doc doc-object doc-function">
 
 
-<h4 id="sedonadb.context.SedonaContext.register_udf" class="doc doc-heading">
-            <span class="doc doc-object-name doc-function-name">register_udf</span>
+<h4 id="sedonadb.context.SedonaContext.register" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">register</span>
 
 
-<a href="#sedonadb.context.SedonaContext.register_udf" class="headerlink" title="Permanent link">¶</a></h4>
-<div class="doc-signature highlight"><pre><span></span><code><span class="nf">register_udf</span><span class="p">(</span><span class="n">udf</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Any" href="https://docs.python.org/3/library/typing.html#typing.Any">Any</a></span><span class="p">)</span>
+<a href="#sedonadb.context.SedonaContext.register" class="headerlink" title="Permanent link">¶</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">register</span><span class="p">(</span><span class="n">component</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Any" href="https://docs.python.org/3/library/typing.html#typing.Any">Any</a></span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Any" href="https://docs.python.org/3/library/typing.html#typing.Any">Any</a></span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
 </code></pre></div>
 
     <div class="doc doc-contents ">
 
-        <p>Register a user-defined function</p>
+        <p>Register an extension component</p>
+<p>The following types of components are currently supported:</p>
+<ul>
+<li>Python UDFs annotated with arrow_aggregate_udf or arrow_udf</li>
+<li>An ExternalFormatSpec implementing a custom datasource type</li>
+<li>An object implementing <strong>sedonadb_extension</strong>(ctx, **kwargs), which
+  is called with this context and any keyword arguments passed.</li>
+</ul>
+<p>The extension interface is experimental and may change.</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>
     <ul>
         <li class="doc-section-item field-body">
-            <b><code>udf</code></b>
+            <b><code>component</code></b>
               (<code><a class="autorefs autorefs-external" title="typing.Any" href="https://docs.python.org/3/library/typing.html#typing.Any">Any</a></code>)
           –
           <div class="doc-md-description">
-            <p>An object implementing the DataFusion PyCapsule protocol
-(i.e., <code>__datafusion_scalar_udf__</code>) or a function annotated
-with <a class="autorefs autorefs-internal" title="arrow_udf" href="#sedonadb.udf.arrow_udf">arrow_udf</a>.</p>
+            <p>A Python object implementing one of the above protocols.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>**kwargs</code></b>
+              (<code><a class="autorefs autorefs-external" title="typing.Any" href="https://docs.python.org/3/library/typing.html#typing.Any">Any</a></code>, default:
+                  <code>{}</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>Extension-specific options, supported for specific types
+of components.</p>
           </div>
         </li>
     </ul>
@@ -3215,7 +3232,7 @@ with <a class="autorefs autorefs-internal" title="arrow_udf" href="#sedonadb.udf
 <span class="o">...</span>         <span class="n">pa</span><span class="o">.</span><span class="n">int64</span><span class="p">()</span>
 <span class="o">...</span>     <span class="p">)</span>
 <span class="o">...</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">sd</span><span class="o">.</span><span class="n">register_udf</span><span class="p">(</span><span class="n">char_count</span><span class="p">)</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">sd</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="n">char_count</span><span class="p">)</span>
 <span class="o">&gt;&gt;&gt;</span> <span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SELECT char_count('abcde') as col"</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
 <span class="err">┌───────┐</span>
 <span class="err">│</span>  <span class="n">col</span>  <span class="err">│</span>
@@ -7263,7 +7280,7 @@ class is callable as <code>my_mean</code>).</p>
 <span class="o">...</span>     <span class="k">def</span><span class="w"> </span><span class="nf">evaluate</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 <span class="o">...</span>         <span class="k">return</span> <span class="kc">None</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">count</span> <span class="o">==</span> <span class="mi">0</span> <span class="k">else</span> <span class="bp">self</span><span class="o">.</span><span class="n">total</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">count</span>
 <span class="o">...</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">sd</span><span class="o">.</span><span class="n">register_udf</span><span class="p">(</span><span class="n">my_mean</span><span class="p">)</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">sd</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="n">my_mean</span><span class="p">)</span>
 <span class="o">&gt;&gt;&gt;</span> <span class="n">sd</span><span class="o">.</span><span class="n">create_data_frame</span><span class="p">(</span>
 <span class="o">...</span>     <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">({</span><span class="s2">"k"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"a"</span><span class="p">,</span> <span class="s2">"a"</span><span class="p">,</span> <span class="s2">"b"</span><span class="p">],</span> <span class="s2">"v"</span><span class="p">:</span> <span class="p">[</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">3.0</span><span class="p">,</span> <span class="mf">7.0</span><span class="p">]})</span>
 <span class="o">...</span> <span class="p">)</span><span class="o">.</span><span class="n">to_view</span><span class="p">(</span><span class="s2">"t"</span><span class="p">,</span> <span class="n">overwrite</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
@@ -7398,7 +7415,7 @@ the name of the provided function.</p>
 <span class="o">...</span>         <span class="n">pa</span><span class="o">.</span><span class="n">string</span><span class="p">(),</span>
 <span class="o">...</span>     <span class="p">)</span>
 <span class="o">...</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">sd</span><span class="o">.</span><span class="n">register_udf</span><span class="p">(</span><span class="n">some_udf</span><span class="p">)</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">sd</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="n">some_udf</span><span class="p">)</span>
 <span class="o">&gt;&gt;&gt;</span> <span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SELECT some_udf(123, 'abc') as col"</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
 <span class="err">┌───────────┐</span>
 <span class="err">│</span>    <span class="n">col</span>    <span class="err">│</span>
@@ -7420,7 +7437,7 @@ the name of the provided function.</p>
 <span class="o">...</span>         <span class="n">pa</span><span class="o">.</span><span class="n">int64</span><span class="p">()</span>
 <span class="o">...</span>     <span class="p">)</span>
 <span class="o">...</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">sd</span><span class="o">.</span><span class="n">register_udf</span><span class="p">(</span><span class="n">char_count</span><span class="p">)</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">sd</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="n">char_count</span><span class="p">)</span>
 <span class="o">&gt;&gt;&gt;</span> <span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SELECT char_count('abcde') as col"</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
 <span class="err">┌───────┐</span>
 <span class="err">│</span>  <span class="n">col</span>  <span class="err">│</span>
@@ -7458,7 +7475,7 @@ the name of the provided function.</p>
 <span class="o">...</span>     <span class="k">return</span> <span class="n">pa</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">shapely</span><span class="o">.</span><span class="n">to_wkb</span><span class="p">(</span><span class="n">result_shapely</span><span class="p">))</span>
 <span class="o">...</span>
 <span class="o">&gt;&gt;&gt;</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">sd</span><span class="o">.</span><span class="n">register_udf</span><span class="p">(</span><span class="n">shapely_udf</span><span class="p">)</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">sd</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="n">shapely_udf</span><span class="p">)</span>
 <span class="o">&gt;&gt;&gt;</span> <span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SELECT ST_SRID(shapely_udf(ST_Point(0, 0), 2.0)) as col"</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
 <span class="err">┌────────┐</span>
 <span class="err">│</span>   <span class="n">col</span>  <span class="err">│</span>
@@ -7493,8 +7510,8 @@ the name of the provided function.</p>
 <span class="o">...</span>     <span class="k">return</span> <span class="n">random_impl</span><span class="p">(</span><span class="n">return_type</span><span class="p">,</span> <span class="n">num_rows</span><span class="p">)</span>
 <span class="o">...</span>
 <span class="o">&gt;&gt;&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">seed</span><span class="p">(</span><span class="mi">487</span><span class="p">)</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">sd</span><span class="o">.</span><span class="n">register_udf</span><span class="p">(</span><span class="n">random_f32</span><span class="p">)</span>
-<span class="o">&gt;&gt;&gt;</span> <span class="n">sd</span><span class="o">.</span><span class="n">register_udf</span><span class="p">(</span><span class="n">random_f64</span><span class="p">)</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">sd</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="n">random_f32</span><span class="p">)</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">sd</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="n">random_f64</span><span class="p">)</span>
 <span class="o">&gt;&gt;&gt;</span> <span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SELECT random_f32() AS f32, random_f64() as f64;"</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
 <span class="err">┌────────────┬─────────────────────┐</span>
 <span class="err">│</span>     <span class="n">f32</span>    <span class="err">┆</span>         <span class="n">f64</span>         <span class="err">│</span>
