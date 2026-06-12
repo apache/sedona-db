@@ -23,6 +23,8 @@ from sedonadb.expr.expression import ScalarUdf, AggregateUdf
 
 if TYPE_CHECKING:
     from sedonadb.functions.table import TableFunctions
+    from sedonadb.expr.expression import Expr
+    from sedonadb_expr import GeoFunctions
 
 
 class Functions:
@@ -45,6 +47,12 @@ class Functions:
             raise ValueError("Expr piping into table functions is not supported")
 
         return TableFunctions(self._ctx)
+
+    @property
+    def geo(self) -> "GeoFunctions[Expr]":
+        from sedonadb_expr import GeoFunctions
+
+        return GeoFunctions(self)
 
     def __getattr__(self, name) -> Union["ScalarUdf", "AggregateUdf"]:
         try:
