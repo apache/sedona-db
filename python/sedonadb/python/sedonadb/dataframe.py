@@ -1388,8 +1388,7 @@ class DataFrame:
 
         Examples:
 
-            >>> import sedonadb
-            >>> con = sedonadb.connect()
+            >>> con = sedona.db.connect()
             >>> df = con.sql("SELECT 1 as one")
             >>> df.explain().show()
             ┌───────────────┬─────────────────────────────────┐
@@ -1404,7 +1403,7 @@ class DataFrame:
             │               ┆                                 │
             └───────────────┴─────────────────────────────────┘
         """
-        return DataFrame(self._ctx, self._impl.explain(type, format))
+        return DataFrame(self._ctx, self._impl.unwrap_alias().explain(type, format))
 
     def __repr__(self) -> str:
         if self._ctx.options.interactive:
@@ -1433,6 +1432,29 @@ class DataFrame:
 
         return width
 
+    def _ensure_aliased(self, src: Any) -> "DataFrame":
+        return self.alias(_default_alias_for_obj(src))
+
+
+def _default_alias_for_obj(obj: Any) -> str:
+    hex_id = f"{id(obj):x}"
+    if isinstance(obj, str):
+        try:
+            basename = Path(obj).name
+            if basename:
+                return f"{basename}_{hex_id}"
+        except Exception:
+            pass
+        return f"{obj}_{hex_id}"
+    elif isinstance(obj, Path):
+        try:
+            if obj.name:
+                return f"{obj.name}_{hex_id}"
+        except Exception:
+            pass
+
+    return f"{type(obj).__name__.lower()}_{hex_id}"
+
 
 def _create_data_frame(ctx, obj, schema) -> DataFrame:
     """Create a DataFrame (internal)
@@ -1453,13 +1475,13 @@ def _create_data_frame(ctx, obj, schema) -> DataFrame:
     # This includes geopandas/pandas DataFrames, pyarrow tables, and Polars tables.
     type_name = _qualified_type_name(obj)
     if type_name in SPECIAL_CASED_SCANS:
-        return SPECIAL_CASED_SCANS[type_name](ctx, obj, schema)
+        return SPECIAL_CASED_SCANS[type_name](ctx, obj, schema)._ensure_aliased(obj)
 
     # The default implementation handles objects that implement
     # __datafusion_table_provider__ or __arrow_c_stream__. For objects implementing
     # __arrow_c_stream__, this currently will only work for a single scan (i.e.,
     # the returned data frame can't be previewed before the query is computed).
-    return _scan_default(ctx, obj, schema)
+    return _scan_default(ctx, obj, schema)._ensure_aliased(obj)
 
 
 def _scan_default(ctx, obj, schema):

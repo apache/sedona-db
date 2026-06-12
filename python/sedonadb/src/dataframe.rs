@@ -28,7 +28,9 @@ use datafusion::logical_expr::SortExpr;
 use datafusion::prelude::{DataFrame, SessionContext};
 use datafusion_common::{Column, DataFusionError, ParamValues};
 use datafusion_execution::TaskContextProvider;
-use datafusion_expr::{ExplainFormat, ExplainOption, Expr, JoinType, LogicalPlanBuilder};
+use datafusion_expr::{
+    ExplainFormat, ExplainOption, Expr, JoinType, LogicalPlan, LogicalPlanBuilder,
+};
 use datafusion_ffi::table_provider::FFI_TableProvider;
 use futures::lock::Mutex;
 use futures::TryStreamExt;
@@ -140,8 +142,35 @@ impl InternalDataFrame {
     }
 
     fn alias(&self, alias: &str) -> Result<InternalDataFrame, PySedonaError> {
-        let inner = self.inner.clone().alias(alias)?;
-        Ok(InternalDataFrame::new(inner, self.runtime.clone()))
+        let inner_clone = self.inner.clone();
+
+        // Don't alias an explain plan because if we do it won't execute.
+        // If we don't special case this here, sd.sql("EXPLAIN ...") doesn't
+        // work and we need to special case it in Python instead.
+        if matches!(inner_clone.logical_plan(), LogicalPlan::Explain(_)) {
+            Ok(InternalDataFrame::new(inner_clone, self.runtime.clone()))
+        } else {
+            Ok(InternalDataFrame::new(
+                inner_clone.alias(alias)?,
+                self.runtime.clone(),
+            ))
+        }
+    }
+
+    fn unwrap_alias(&self) -> Result<InternalDataFrame, PySedonaError> {
+        let (state, plan) = self.inner.clone().into_parts();
+
+        if let LogicalPlan::SubqueryAlias(sqa) = plan {
+            Ok(InternalDataFrame::new(
+                DataFrame::new(state, Arc::unwrap_or_clone(sqa.input)),
+                self.runtime.clone(),
+            ))
+        } else {
+            Ok(InternalDataFrame::new(
+                DataFrame::new(state, plan),
+                self.runtime.clone(),
+            ))
+        }
     }
 
     fn limit(

@@ -55,21 +55,6 @@ def test_options():
     assert "DataFrame object at" not in repr(sd.sql("SELECT 1 as one"))
 
 
-def test_read_parquet(con, geoarrow_data):
-    # Check one file
-    tab = con.read_parquet(
-        geoarrow_data / "quadrangles/files/quadrangles_100k_geo.parquet"
-    ).to_arrow_table()
-    assert tab["geometry"].type.extension_name == "geoarrow.wkb"
-
-    # Check many files
-    tab = con.read_parquet(
-        geoarrow_data.glob("example/files/*_geo.parquet")
-    ).to_arrow_table()
-    assert tab["geometry"].type.extension_name == "geoarrow.wkb"
-    assert len(tab) == 244
-
-
 def test_read_parquet_local_glob(con, geoarrow_data):
     # The above test uses .glob() method, this test uses the raw string
     tab = con.read_parquet(

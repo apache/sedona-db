@@ -276,7 +276,10 @@ class SedonaContext:
             <sedonadb.dataframe.DataFrame object at ...>
         """
         if isinstance(table_paths, (str, Path)):
-            table_paths = [table_paths]
+            table_paths_list = [str(table_paths)]
+        else:
+            table_paths = list(table_paths)
+            table_paths_list = [str(path) for path in table_paths]
 
         if options is None:
             options = {}
@@ -290,13 +293,13 @@ class SedonaContext:
         return DataFrame(
             self,
             self._impl.read_parquet(
-                [str(path) for path in table_paths],
+                table_paths_list,
                 options,
                 geometry_columns,
                 validate,
                 None if partitioning is None else list(partitioning),
             ),
-        )
+        )._ensure_aliased(table_paths)
 
     def read_pyogrio(
         self,
@@ -365,7 +368,10 @@ class SedonaContext:
         from sedonadb.datasource import PyogrioFormatSpec
 
         if isinstance(table_paths, (str, Path)):
-            table_paths = [table_paths]
+            table_paths_list = [str(table_paths)]
+        else:
+            table_paths = list(table_paths)
+            table_paths_list = [str(path) for path in table_paths]
 
         spec = PyogrioFormatSpec(extension)
         if options is not None:
@@ -378,11 +384,11 @@ class SedonaContext:
             self,
             self._impl.read_external_format(
                 spec,
-                [str(path) for path in table_paths],
+                table_paths_list,
                 False,
                 None if partitioning is None else list(partitioning),
             ),
-        )
+        )._ensure_aliased(table_paths)
 
     def read_format(
         self,
@@ -426,7 +432,10 @@ class SedonaContext:
             >>> sd.read_format(spec, "file:///path/to/foo.zarr").show()  # doctest: +SKIP
         """
         if isinstance(table_paths, (str, Path)):
-            table_paths = [table_paths]
+            table_paths_list = [str(table_paths)]
+        else:
+            table_paths = list(table_paths)
+            table_paths_list = [str(path) for path in table_paths]
 
         if isinstance(partitioning, str):
             partitioning = [partitioning]
@@ -435,11 +444,11 @@ class SedonaContext:
             self,
             self._impl.read_external_format(
                 spec,
-                [str(path) for path in table_paths],
+                table_paths_list,
                 check_extension,
                 None if partitioning is None else list(partitioning),
             ),
-        )
+        )._ensure_aliased(table_paths)
 
     def sql(
         self, sql: str, *, params: Union[List, Tuple, Dict, None] = None
@@ -484,7 +493,7 @@ class SedonaContext:
             └────────────┘
 
         """
-        df = DataFrame(self, self._impl.sql(sql))
+        df = DataFrame(self, self._impl.sql(sql))._ensure_aliased(f"sql_{id(sql)}")
 
         if params is not None:
             if isinstance(params, (tuple, list)):

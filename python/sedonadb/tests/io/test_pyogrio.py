@@ -43,7 +43,11 @@ def test_read_ogr_projection(con):
     with tempfile.TemporaryDirectory() as td:
         temp_fgb_path = f"{td}/temp.fgb"
         gdf.to_file(temp_fgb_path)
-        con.read_pyogrio(temp_fgb_path).to_view("test_fgb", overwrite=True)
+        df = con.read_pyogrio(temp_fgb_path)
+        df.to_view("test_fgb", overwrite=True)
+
+        # Ensure we get a meaningful alias when reading a path
+        assert "temp.fgb" in repr(df.wkb_geometry)
 
         # With no projection
         geopandas.testing.assert_geodataframe_equal(

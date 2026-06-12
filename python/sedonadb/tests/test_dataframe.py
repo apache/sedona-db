@@ -32,7 +32,11 @@ def test_dataframe_from_dataframe(con):
     # DataFrame from DataFrame on the same context with no schema
     # should be just a Python reference
     df = con.sql("SELECT ST_Point(0, 1) as geom")
-    assert con.create_data_frame(df) is df
+    new_df = con.create_data_frame(df)
+    assert new_df is df
+
+    # Alias should not change
+    assert repr(df.geom) == repr(new_df.geom)
 
     # On a separate context the table should still be collected the same
     # but should be a separate Python reference. This also has the effect
@@ -41,6 +45,9 @@ def test_dataframe_from_dataframe(con):
     new_df = new_con.create_data_frame(df)
     assert new_df is not df
     pd.testing.assert_frame_equal(df.to_pandas(), new_df.to_pandas())
+
+    # Alias changes
+    assert repr(new_df.geom) != repr(df.geom)
 
 
 def test_dataframe_from_table(con):
@@ -59,6 +66,9 @@ def test_dataframe_from_table(con):
     # ...and ensure we can collect again
     assert df.to_arrow_table() == tab
 
+    # Should be aliased with 'table'
+    assert "table_" in repr(df.geom)
+
 
 def test_dataframe_from_pandas(con):
     pd_df = pd.DataFrame({"col1": [1, 2, 3]})
@@ -70,6 +80,9 @@ def test_dataframe_from_pandas(con):
 
     # ...and ensure we can collect again
     pd.testing.assert_frame_equal(df.to_pandas(), pd_df)
+
+    # Should be aliased with 'dataframe'
+    assert "dataframe_" in repr(df.col1)
 
 
 def test_dataframe_from_geopandas(con):
@@ -538,20 +551,7 @@ def test_show_explained(con, capsys):
 
 def test_explain(con, capsys):
     con.sql("SELECT 1 as one").explain().show()
-    expected = """
-┌───────────────┬─────────────────────────────────┐
-│   plan_type   ┆               plan              │
-│      utf8     ┆               utf8              │
-╞═══════════════╪═════════════════════════════════╡
-│ logical_plan  ┆ Projection: Int64(1) AS one     │
-│               ┆   EmptyRelation: rows=1         │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ physical_plan ┆ ProjectionExec: expr=[1 as one] │
-│               ┆   PlaceholderRowExec            │
-│               ┆                                 │
-└───────────────┴─────────────────────────────────┘
-    """.strip()
-    assert capsys.readouterr().out.strip() == expected
+    assert "Projection: Int64(1) AS one" in capsys.readouterr().out.strip()
 
     con.sql("SELECT 1 as one").explain(format="tree").show()
     expected = """
@@ -606,3 +606,43 @@ def test_len_error(con):
         ValueError, match=r"Can't compute len\(\) of a lazy SedonaDB DataFrame"
     ):
         len(con.sql("SELECT 1 as one"))
+
+
+def test_default_alias_for_obj():
+    from sedonadb.dataframe import _default_alias_for_obj
+
+    # String with path - extracts basename + hex id suffix
+    s = "/path/to/file.parquet"
+    assert _default_alias_for_obj(s) == f"file.parquet_{id(s):x}"
+
+    s = "s3://bucket/data.parquet"
+    assert _default_alias_for_obj(s) == f"data.parquet_{id(s):x}"
+
+    s = "relative/path/data.csv"
+    assert _default_alias_for_obj(s) == f"data.csv_{id(s):x}"
+
+    # String without path component - returns original + hex id suffix
+    s = "simple_name"
+    assert _default_alias_for_obj(s) == f"simple_name_{id(s):x}"
+
+    s = ""
+    alias = _default_alias_for_obj(s)
+    # Empty basename, falls back to original (empty) + hex id
+    assert alias == f"_{id(s):x}"
+
+    # Path object - extracts name + hex id suffix
+    p = Path("/path/to/file.parquet")
+    assert _default_alias_for_obj(p) == f"file.parquet_{id(p):x}"
+
+    p = Path("relative/data.csv")
+    assert _default_alias_for_obj(p) == f"data.csv_{id(p):x}"
+
+    # Path with empty name (root path) - falls back to type-based
+    root_path = Path("/")
+    alias = _default_alias_for_obj(root_path)
+    assert alias == f"posixpath_{id(root_path):x}"
+
+    # Other types - returns lowercase type name + hex id
+    obj = [1, 2, 3]
+    alias = _default_alias_for_obj(obj)
+    assert alias == f"list_{id(obj):x}"

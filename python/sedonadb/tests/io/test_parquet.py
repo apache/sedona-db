@@ -32,6 +32,28 @@ from sedonadb._lib import SedonaError
 from sedonadb.testing import DuckDB, SedonaDB, geom_or_null, skip_if_not_exists
 
 
+def test_read_parquet(con, geoarrow_data):
+    # Check one file
+    df = con.read_parquet(
+        geoarrow_data / "quadrangles/files/quadrangles_100k_geo.parquet"
+    )
+
+    # Ensure the alias reflects the filename
+    assert "quadrangles_100k" in repr(df.geometry)
+
+    tab = df.to_arrow_table()
+    assert tab["geometry"].type.extension_name == "geoarrow.wkb"
+
+    # Check many files
+    df = con.read_parquet(geoarrow_data.glob("example/files/*_geo.parquet"))
+    tab = df.to_arrow_table()
+    assert tab["geometry"].type.extension_name == "geoarrow.wkb"
+    assert len(tab) == 244
+
+    # Check that we still have an alias based on the input object
+    assert "list_" in repr(df.geometry)
+
+
 @pytest.mark.parametrize("name", ["water-junc", "water-point"])
 def test_read_whole_geoparquet(geoarrow_data, name):
     # Checks a read of some non-trivial files and ensures we match a GeoPandas read
