@@ -21,16 +21,20 @@ use arrow_array::{
     ffi::{FFI_ArrowArray, FFI_ArrowSchema},
     ArrayRef,
 };
-use arrow_schema::Field;
+use arrow_schema::{Field, FieldRef};
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::{Result, ScalarValue};
-use datafusion_expr::{AggregateUDF, ColumnarValue, ScalarUDF, ScalarUDFImpl, Volatility};
+use datafusion_expr::{
+    Accumulator, AggregateUDF, AggregateUDFImpl, ColumnarValue, ScalarUDF, ScalarUDFImpl,
+    Volatility,
+};
 use datafusion_ffi::udf::FFI_ScalarUDF;
 use pyo3::{
     pyclass, pyfunction, pymethods,
-    types::{PyAnyMethods, PyCapsule, PyTuple},
+    types::{PyAnyMethods, PyCapsule, PyTuple, PyTupleMethods},
     Bound, PyObject, Python,
 };
+use sedona_expr::aggregate_udf::{SedonaAccumulator, SedonaAccumulatorRef, SedonaAggregateUDF};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
@@ -148,6 +152,36 @@ impl PySedonaScalarUdf {
     }
 }
 
+/// Parse a Python-supplied volatility string into a [Volatility].
+fn parse_volatility(volatility: &str) -> Result<Volatility, PySedonaError> {
+    match volatility {
+        "immutable" => Ok(Volatility::Immutable),
+        "stable" => Ok(Volatility::Stable),
+        "volatile" => Ok(Volatility::Volatile),
+        v => Err(PySedonaError::SedonaPython(format!(
+            "Expected one of 'immutable', 'stable', or 'volatile' but got '{v}'"
+        ))),
+    }
+}
+
+/// Validate that an array imported from a Python UDF has the expected logical
+/// type, accepting either the exact [SedonaType] or its bare storage type.
+fn validate_imported_type(
+    expected: &SedonaType,
+    actual: &SedonaType,
+    context: &str,
+) -> Result<(), PySedonaError> {
+    if expected != actual {
+        let expected_storage = SedonaType::Arrow(expected.storage_type().clone());
+        if &expected_storage != actual {
+            return Err(PySedonaError::SedonaPython(format!(
+                "Expected {context} to return array of type {expected} or its storage but got {actual}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 #[pyfunction]
 pub fn sedona_scalar_udf<'py>(
     py: Python<'py>,
@@ -157,16 +191,7 @@ pub fn sedona_scalar_udf<'py>(
     volatility: &str,
     name: &str,
 ) -> Result<PySedonaScalarUdf, PySedonaError> {
-    let volatility = match volatility {
-        "immutable" => Volatility::Immutable,
-        "stable" => Volatility::Stable,
-        "volatile" => Volatility::Volatile,
-        v => {
-            return Err(PySedonaError::SedonaPython(format!(
-                "Expected one of 'immutable', 'stable', or 'volatile' but got '{v}'"
-            )));
-        }
-    };
+    let volatility = parse_volatility(volatility)?;
 
     let scalar_kernel = sedona_scalar_kernel(py, py_input_types, py_return_type, py_invoke_batch)?;
     let sedona_scalar_udf = SedonaScalarUDF::new(name, vec![Arc::new(scalar_kernel)], volatility);
@@ -296,14 +321,11 @@ impl SedonaScalarKernel for PySedonaScalarKernel {
             let (result_field, result_array) = import_arrow_array(result_bound)?;
             let result_sedona_type = SedonaType::from_storage_field(&result_field)?;
 
-            if return_type != &result_sedona_type {
-                let return_type_storage = SedonaType::Arrow(return_type.storage_type().clone());
-                if return_type_storage != result_sedona_type {
-                    return Err(PySedonaError::SedonaPython(format!(
-                        "Expected result of user-defined function to return array of type {return_type} or its storage but got {result_sedona_type}"
-                    )));
-                }
-            }
+            validate_imported_type(
+                return_type,
+                &result_sedona_type,
+                "result of user-defined function",
+            )?;
 
             if result_array.len() != num_rows {
                 return Err(PySedonaError::SedonaPython(format!(
@@ -427,5 +449,237 @@ impl PySedonaValue {
             "PySedonaValue {label} {}[{}]",
             self.sedona_type.inner, self.num_rows
         )
+    }
+}
+
+/// SedonaAggregateUdf wrapper for Python-implemented aggregate UDFs.
+///
+/// Parallel to [PySedonaScalarUdf]: holds a SedonaAggregateUDF that wraps a
+/// Python class which produces accumulator instances. Registration goes
+/// through `__sedona_internal_udf__()` on the Python side; `InternalContext`
+/// recognizes the capsule and routes to `insert_aggregate_udf`.
+#[pyclass]
+#[derive(Clone)]
+pub struct PySedonaAggregateUdf {
+    pub inner: SedonaAggregateUDF,
+}
+
+#[pymethods]
+impl PySedonaAggregateUdf {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn __repr__(&self) -> String {
+        self.inner.name().to_string()
+    }
+
+    fn call(&self, args: Vec<PyExpr>) -> Result<PyExpr, PySedonaError> {
+        let expr_args = args.iter().map(|arg| arg.inner.clone()).collect();
+        let aggregate_udf: AggregateUDF = self.inner.clone().into();
+        let result = aggregate_udf.call(expr_args);
+        Ok(PyExpr::new(result))
+    }
+}
+
+#[pyfunction]
+pub fn sedona_aggregate_udf<'py>(
+    py: Python<'py>,
+    py_factory: PyObject,
+    py_return_type: PyObject,
+    py_input_types: Vec<PyObject>,
+    py_state_types: Vec<PyObject>,
+    volatility: &str,
+    name: &str,
+) -> Result<PySedonaAggregateUdf, PySedonaError> {
+    let volatility = parse_volatility(volatility)?;
+
+    let arg_matchers = py_input_types
+        .iter()
+        .map(|obj| import_arg_matcher(obj.bind(py)))
+        .collect::<Result<Vec<_>, _>>()?;
+    let return_type = import_sedona_type(py_return_type.bind(py))?;
+    let matcher = ArgMatcher::new(arg_matchers, return_type);
+
+    let state_types = py_state_types
+        .iter()
+        .map(|obj| import_sedona_type(obj.bind(py)))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let kernel = PySedonaAggregateKernel {
+        matcher,
+        state_types,
+        py_factory,
+    };
+    let kernel_ref: SedonaAccumulatorRef = Arc::new(kernel);
+    let sedona_aggregate_udf = SedonaAggregateUDF::new(name, vec![kernel_ref], volatility);
+
+    Ok(PySedonaAggregateUdf {
+        inner: sedona_aggregate_udf,
+    })
+}
+
+#[derive(Debug)]
+struct PySedonaAggregateKernel {
+    matcher: ArgMatcher,
+    state_types: Vec<SedonaType>,
+    py_factory: PyObject,
+}
+
+impl SedonaAccumulator for PySedonaAggregateKernel {
+    fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
+        self.matcher.match_args(args)
+    }
+
+    fn accumulator(
+        &self,
+        args: &[SedonaType],
+        output_type: &SedonaType,
+    ) -> Result<Box<dyn Accumulator>> {
+        let instance = Python::with_gil(|py| -> Result<PyObject, PySedonaError> {
+            Ok(self.py_factory.call0(py)?)
+        })?;
+        Ok(Box::new(PySedonaAccumulator {
+            instance,
+            input_types: args.to_vec(),
+            state_types: self.state_types.clone(),
+            output_type: output_type.clone(),
+        }))
+    }
+
+    fn state_fields(&self, _args: &[SedonaType]) -> Result<Vec<FieldRef>> {
+        self.state_types
+            .iter()
+            .enumerate()
+            .map(|(i, t)| Ok(Arc::new(t.to_storage_field(&format!("state_{i}"), true)?)))
+            .collect()
+    }
+}
+
+#[derive(Debug)]
+struct PySedonaAccumulator {
+    instance: PyObject,
+    input_types: Vec<SedonaType>,
+    state_types: Vec<SedonaType>,
+    output_type: SedonaType,
+}
+
+impl PySedonaAccumulator {
+    /// Build a tuple of PySedonaValue (Array variant) from raw Arrow arrays
+    /// for handoff into a Python method call.
+    fn arrays_to_py_values<'py>(
+        py: Python<'py>,
+        types: &[SedonaType],
+        arrays: &[ArrayRef],
+    ) -> Result<Bound<'py, PyTuple>, PySedonaError> {
+        if types.len() != arrays.len() {
+            return Err(PySedonaError::SedonaPython(format!(
+                "Internal aggregate UDF bridge: expected {} arrays, got {}",
+                types.len(),
+                arrays.len()
+            )));
+        }
+        let values: Vec<_> = zip(types, arrays)
+            .map(|(t, a)| PySedonaValue {
+                sedona_type: PySedonaType::new(t.clone()),
+                value: ColumnarValue::Array(a.clone()),
+                num_rows: a.len(),
+            })
+            .collect();
+        Ok(PyTuple::new(py, values)?)
+    }
+
+    /// Pull a ScalarValue out of a Python return value that implements
+    /// `__arrow_c_array__()` (a one-element Arrow array). The expected
+    /// SedonaType is used to validate the array's logical type.
+    fn import_scalar(
+        py: Python<'_>,
+        result: PyObject,
+        expected: &SedonaType,
+        context: &str,
+    ) -> Result<ScalarValue, PySedonaError> {
+        let result_bound = result.bind(py);
+        if !result_bound.hasattr("__arrow_c_array__")? {
+            return Err(PySedonaError::SedonaPython(format!(
+                "Expected {context} to return an object implementing __arrow_c_array__()"
+            )));
+        }
+        let (field, array) = import_arrow_array(result_bound)?;
+        let actual = SedonaType::from_storage_field(&field)?;
+        validate_imported_type(expected, &actual, context)?;
+        if array.len() != 1 {
+            return Err(PySedonaError::SedonaPython(format!(
+                "Expected {context} to be a 1-element array; got length {}",
+                array.len()
+            )));
+        }
+        Ok(ScalarValue::try_from_array(&array, 0)?)
+    }
+}
+
+impl Accumulator for PySedonaAccumulator {
+    fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
+        Python::with_gil(|py| -> Result<(), PySedonaError> {
+            let args = Self::arrays_to_py_values(py, &self.input_types, values)?;
+            self.instance.call_method1(py, "update", (args,))?;
+            Ok(())
+        })?;
+        Ok(())
+    }
+
+    fn evaluate(&mut self) -> Result<ScalarValue> {
+        let scalar = Python::with_gil(|py| -> Result<ScalarValue, PySedonaError> {
+            let result = self.instance.call_method0(py, "evaluate")?;
+            Self::import_scalar(py, result, &self.output_type, "aggregate UDF evaluate()")
+        })?;
+        Ok(scalar)
+    }
+
+    fn state(&mut self) -> Result<Vec<ScalarValue>> {
+        let scalars = Python::with_gil(|py| -> Result<Vec<ScalarValue>, PySedonaError> {
+            let result = self.instance.call_method0(py, "state")?;
+            let result_bound = result.bind(py);
+            let tuple = result_bound.downcast::<PyTuple>().map_err(|_| {
+                PySedonaError::SedonaPython(
+                    "Expected aggregate UDF state() to return a tuple".to_string(),
+                )
+            })?;
+            if tuple.len() != self.state_types.len() {
+                return Err(PySedonaError::SedonaPython(format!(
+                    "Expected aggregate UDF state() to return {} elements; got {}",
+                    self.state_types.len(),
+                    tuple.len()
+                )));
+            }
+            let mut out = Vec::with_capacity(tuple.len());
+            for (i, item) in tuple.iter().enumerate() {
+                let scalar = Self::import_scalar(
+                    py,
+                    item.unbind(),
+                    &self.state_types[i],
+                    "aggregate UDF state() element",
+                )?;
+                out.push(scalar);
+            }
+            Ok(out)
+        })?;
+        Ok(scalars)
+    }
+
+    fn merge_batch(&mut self, states: &[ArrayRef]) -> Result<()> {
+        Python::with_gil(|py| -> Result<(), PySedonaError> {
+            let args = Self::arrays_to_py_values(py, &self.state_types, states)?;
+            self.instance.call_method1(py, "merge", (args,))?;
+            Ok(())
+        })?;
+        Ok(())
+    }
+
+    fn size(&self) -> usize {
+        // Only the Rust-side struct is accounted for; the Python accumulator's
+        // heap footprint is opaque to DataFusion's memory limiter. Acceptable
+        // for v1 (a conservative under-estimate). A future `mem_used()` hook on
+        // the Python class could report the true size.
+        std::mem::size_of::<Self>()
     }
 }

@@ -23,6 +23,10 @@ from typing import TYPE_CHECKING, Any, List, Tuple
 import geoarrow.pyarrow as ga
 import pyarrow as pa
 
+from sedonadb.utility import register_pyarrow_extension_types
+
+register_pyarrow_extension_types()
+
 if TYPE_CHECKING:
     import pandas
 

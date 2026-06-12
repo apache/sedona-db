@@ -47,3 +47,15 @@ class Sedona:
 
 
 sedona = Sedona()
+
+
+def register_pyarrow_extension_types():
+    """Register extension types
+
+    This should be called after a lazy pyarrow import.
+    """
+    import geoarrow.pyarrow  # noqa: F401
+
+    from sedonadb.raster import register_extension_type
+
+    register_extension_type()
