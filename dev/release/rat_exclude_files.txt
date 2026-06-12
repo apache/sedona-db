@@ -15,6 +15,7 @@ c/sedona-libgpuspatial/libgpuspatial/include/gpuspatial/utils/thread_pool.hpp
 c/sedona-tg/src/tg/*
 Cargo.lock
 ci/scripts/windows/Cargo.lock
+examples/*/Cargo.lock
 dev/release/rat_exclude_files.txt
 r/sedonadb/.Rbuildignore
 r/sedonadb/DESCRIPTION
