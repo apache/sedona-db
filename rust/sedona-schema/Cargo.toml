@@ -35,6 +35,7 @@ arrow-schema = { workspace = true }
 arrow-array = { workspace = true }
 datafusion-common = { workspace = true }
 lru = { workspace = true }
+regex = { workspace = true }
 sedona-common = { workspace = true }
 serde_json = { workspace = true }
 

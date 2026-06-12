@@ -6228,6 +6228,7 @@ dependencies = [
  "criterion",
  "datafusion-common",
  "lru 0.18.0",
+ "regex",
  "sedona-common",
  "serde_json",
 ]

@@ -380,6 +380,50 @@ mod test {
     }
 
     #[test]
+    fn udf_srid_wkt() {
+        // A WKT CRS carrying an EPSG authority tag resolves to that SRID; an
+        // authority-less WKT (e.g. a bespoke LCC) has no SRID.
+        const WKT_3857: &str = r#"PROJCS["WGS 84 / Pseudo-Mercator",GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563,AUTHORITY["EPSG","7030"]],AUTHORITY["EPSG","6326"]],AUTHORITY["EPSG","4326"]],PROJECTION["Mercator_1SP"],AUTHORITY["EPSG","3857"]]"#;
+        const WKT_LCC_NO_AUTHORITY: &str = r#"PROJCS["Custom LCC",GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]]],PROJECTION["Lambert_Conformal_Conic_2SP"],PARAMETER["standard_parallel_1",33],PARAMETER["standard_parallel_2",45],PARAMETER["latitude_of_origin",39],PARAMETER["central_meridian",-96],UNIT["metre",1]]"#;
+
+        let udf: ScalarUDF = st_srid_udf().into();
+
+        // Type-level WKT with an EPSG authority -> that SRID.
+        let crs = deserialize_crs(WKT_3857).unwrap();
+        let tester = ScalarUdfTester::new(udf.clone(), vec![SedonaType::Wkb(Edges::Planar, crs)]);
+        let result = tester.invoke_scalar("POINT (0 1)").unwrap();
+        tester.assert_scalar_result_equals(result, 3857_u32);
+
+        // Type-level authority-less WKT -> no SRID -> error.
+        let crs = deserialize_crs(WKT_LCC_NO_AUTHORITY).unwrap();
+        let tester = ScalarUdfTester::new(udf.clone(), vec![SedonaType::Wkb(Edges::Planar, crs)]);
+        let err = tester.invoke_scalar("POINT (0 1)").unwrap_err();
+        assert!(err.to_string().contains("CRS has no SRID"), "{err}");
+
+        // Item-level WKT with an EPSG authority -> that SRID.
+        let tester = ScalarUdfTester::new(udf.clone(), vec![WKB_GEOMETRY_ITEM_CRS.clone()]);
+        let arr = create_array_item_crs(&[Some("POINT (0 1)")], [Some(WKT_3857)], &WKB_GEOMETRY);
+        let result = tester.invoke_array(arr).unwrap();
+        assert_eq!(
+            &result,
+            &(create_array!(UInt32, [Some(3857_u32)]) as ArrayRef)
+        );
+
+        // Item-level authority-less WKT -> error from the CRS->SRID mapping.
+        let arr = create_array_item_crs(
+            &[Some("POINT (0 1)")],
+            [Some(WKT_LCC_NO_AUTHORITY)],
+            &WKB_GEOMETRY,
+        );
+        let err = tester.invoke_array(arr).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Can't extract SRID from item-level CRS"),
+            "{err}"
+        );
+    }
+
+    #[test]
     fn udf_crs() {
         let udf: ScalarUDF = st_crs_udf().into();
 
@@ -419,6 +463,27 @@ mod test {
         // Test with a CRS but null geom
         let result = tester.invoke_scalar(ScalarValue::Null).unwrap();
         tester.assert_scalar_result_equals(result, ScalarValue::Null);
+    }
+
+    #[test]
+    fn udf_crs_wkt() {
+        const WKT_3857: &str = r#"PROJCS["WGS 84 / Pseudo-Mercator",GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563,AUTHORITY["EPSG","7030"]],AUTHORITY["EPSG","6326"]],AUTHORITY["EPSG","4326"]],PROJECTION["Mercator_1SP"],AUTHORITY["EPSG","3857"]]"#;
+        const WKT_LCC_NO_AUTHORITY: &str = r#"PROJCS["Custom LCC",GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]]],PROJECTION["Lambert_Conformal_Conic_2SP"],PARAMETER["standard_parallel_1",33],PARAMETER["standard_parallel_2",45],PARAMETER["latitude_of_origin",39],PARAMETER["central_meridian",-96],UNIT["metre",1]]"#;
+
+        let udf: ScalarUDF = st_crs_udf().into();
+
+        // WKT with an EPSG authority -> ST_CRS returns the authority code.
+        let crs = deserialize_crs(WKT_3857).unwrap();
+        let tester = ScalarUdfTester::new(udf.clone(), vec![SedonaType::Wkb(Edges::Planar, crs)]);
+        let result = tester.invoke_scalar("POINT (0 1)").unwrap();
+        tester.assert_scalar_result_equals(result, "EPSG:3857");
+
+        // Authority-less WKT -> falls back to the JSON serialization (`to_json`).
+        let crs = deserialize_crs(WKT_LCC_NO_AUTHORITY).unwrap();
+        let expected = crs.as_ref().unwrap().to_json();
+        let tester = ScalarUdfTester::new(udf.clone(), vec![SedonaType::Wkb(Edges::Planar, crs)]);
+        let result = tester.invoke_scalar("POINT (0 1)").unwrap();
+        tester.assert_scalar_result_equals(result, expected.as_str());
     }
 
     #[test]
