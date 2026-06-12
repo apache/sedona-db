@@ -23,6 +23,7 @@ from sedonadb.expr import Expr, SortExpr
 from sedonadb.expr import Literal as _SedonaLit
 from sedonadb.expr import col as _col
 from sedonadb.expr.expression import _to_expr
+from sedonadb.series import Series
 from sedonadb.utility import sedona  # noqa: F401
 
 if TYPE_CHECKING:
@@ -200,12 +201,13 @@ class DataFrame:
         """
         return DataFrame(self._ctx, self._impl.alias(name))
 
-    def __getitem__(self, key: Union[str, int]) -> Expr:
+    def __getitem__(self, key: Union[str, int]) -> "Series":
         """Reference a single column by name or position.
 
-        Returns an `Expr` referencing the requested column. The
-        return-type is always `Expr` (no `DataFrame ⏐ Expr` union) so that
-        IDEs and type-aware tools can resolve `df["x"].<method>` cleanly.
+        Returns a `Series` (a pandas-flavored column) referencing the
+        requested column. The return-type is always `Series` (no
+        `DataFrame ⏐ Series` union) so that IDEs and type-aware tools can
+        resolve `df["x"].<method>` cleanly.
 
         For row filtering use `df.filter(predicate)`. For multi-column
         projection use `df.select(*cols)`.
@@ -227,11 +229,11 @@ class DataFrame:
             >>> sd = sedona.db.connect()
             >>> df = sd.sql("SELECT * FROM (VALUES (1, 10), (2, 20)) AS t(x, y)").alias("t")
             >>> df["x"]
-            Expr(t.x)
+            Series(t.x)
             >>> df[1]
-            Expr(t.y)
+            Series(t.y)
             >>> df[-1]
-            Expr(t.y)
+            Series(t.y)
         """
         # `bool` is a subclass of `int`, so guard explicitly — otherwise
         # `df[True]` would silently mean `df[1]`.
@@ -259,7 +261,7 @@ class DataFrame:
             )
 
         inner_expr = self._impl.qualified_column_expr(key)
-        return Expr(inner_expr, self._ctx)
+        return Series(inner_expr, self._ctx)
 
     def __getattr__(self, name):
         """Syntactic sugar for column access

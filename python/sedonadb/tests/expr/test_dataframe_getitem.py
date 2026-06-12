@@ -17,20 +17,22 @@
 
 # Tests for DataFrame.__getitem__ — single-column lookup by name or
 # position. `__getitem__` is deliberately not a polymorphic
-# select/filter shortcut: keeping the return type strictly `Expr`
-# preserves IDE/type-checker inference on `df["x"].<method>`.
+# select/filter shortcut: keeping the return type strictly `Series`
+# preserves IDE/type-checker inference on `df["x"].<method>`. `Series`
+# subclasses `Expr`, so it is still accepted everywhere an `Expr` is.
 
 import pandas as pd
 import pytest
 
-from sedonadb.expr import Expr, col
+from sedonadb.expr import col
+from sedonadb.series import Series
 
 
 def test_getitem_string_returns_col_expr(con):
     df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3]})).alias("foofy")
     e = df["x"]
-    assert isinstance(e, Expr)
-    assert repr(e) == "Expr(foofy.x)"
+    assert isinstance(e, Series)
+    assert repr(e) == "Series(foofy.x)"
     assert e._ctx is not None
 
 
@@ -39,8 +41,8 @@ def test_getitem_positive_int_returns_col_expr(con):
         "foofy"
     )
     e = df[1]
-    assert isinstance(e, Expr)
-    assert repr(e) == "Expr(foofy.y)"
+    assert isinstance(e, Series)
+    assert repr(e) == "Series(foofy.y)"
     assert e._ctx is not None
 
 
@@ -48,25 +50,26 @@ def test_getitem_first_int_index(con):
     df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3], "y": [10, 20, 30]})).alias(
         "foofy"
     )
-    assert repr(df[0]) == "Expr(foofy.x)"
+    assert repr(df[0]) == "Series(foofy.x)"
 
 
 def test_getitem_negative_int_returns_col_expr(con):
     df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3], "y": [10, 20, 30]})).alias(
         "foofy"
     )
-    assert repr(df[-1]) == "Expr(foofy.y)"
-    assert repr(df[-2]) == "Expr(foofy.x)"
+    assert repr(df[-1]) == "Series(foofy.y)"
+    assert repr(df[-2]) == "Series(foofy.x)"
 
 
 def test_getitem_string_composes_with_operators(con):
-    # Single-column return preserves the operator-overloading chain.
+    # Single-column return preserves the operator-overloading chain, and
+    # operators keep the result a Series.
     df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3], "y": [10, 20, 30]})).alias(
         "foofy"
     )
     e = df["x"] + df["y"]
-    assert isinstance(e, Expr)
-    assert repr(e) == "Expr(foofy.x + foofy.y)"
+    assert isinstance(e, Series)
+    assert repr(e) == "Series(foofy.x + foofy.y)"
     assert e._ctx is not None
 
 
@@ -116,8 +119,8 @@ def test_getitem_slice_raises_typeerror(con):
 def test_getattr_returns_col_expr(con):
     df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3]})).alias("foofy")
     e = df.x
-    assert isinstance(e, Expr)
-    assert repr(e) == "Expr(foofy.x)"
+    assert isinstance(e, Series)
+    assert repr(e) == "Series(foofy.x)"
     assert e._ctx is not None
 
 
