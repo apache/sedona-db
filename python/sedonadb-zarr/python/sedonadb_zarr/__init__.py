@@ -18,11 +18,10 @@
 """Zarr support for SedonaDB.
 
 ```python
-import sedonadb
-import sedonadb_zarr
+from sedonadb_zarr import Zarr
 
-con = sedonadb.connect()
-con.read_format(sedonadb_zarr.ZarrFormatSpec(), "file:///path/to/foo.zarr").show()
+sd = sedona.db.connect()
+sd.read_format(Zarr(), "file:///path/to/foo.zarr").show()
 ```
 
 Importing `sedonadb_zarr` is opt-in — applications that don't import
@@ -31,7 +30,9 @@ it pay no runtime cost.
 
 from typing import Any, Mapping, Optional
 
+from sedonadb.context import SedonaContext
 from sedonadb.datasource import ExternalFormatSpec
+from sedonadb.utility import sedona  # noqa: F401
 
 from sedonadb_zarr._lib import (
     PyZarrChunkReader,
@@ -42,18 +43,39 @@ from sedonadb_zarr._lib import (
 )
 
 
-class ZarrFormatSpec(ExternalFormatSpec):
+class ZarrExtension:
+    """SedonaDB Zarr extension entrypoint
+
+    This interface enables registration of Zarr components with a Python
+    SedonaContext.
+
+    Examples:
+        >>> from sedonadb_zarr import ZarrExtension
+        >>> sd = sedona.db.connect()
+        >>> sd.register(ZarrExtension())
+    """
+
+    def __sedonadb_extension__(self, ctx: SedonaContext, **kwargs) -> None:
+        if kwargs:
+            raise ValueError("Registration options not supported for ZarrExtension")
+
+        # Register the Zarr() format as a FileFormatFactory for SQL support
+        ctx.register(Zarr())
+
+
+class Zarr(ExternalFormatSpec):
     """`ExternalFormatSpec` for Zarr groups.
 
-    Use with `con.read_format(spec, uri)`:
+    This is registered automatically when registering the module with a
+    SedonaContext. Use with `sd.read_format(spec, uri)`:
 
     ```python
-    con.read_format(ZarrFormatSpec(), "file:///path/to/foo.zarr")
+    sd.read_format(Zarr(), "file:///path/to/foo.zarr")
     ```
 
-    Supported `with_options` keys:
-
-    - `arrays` (`list[str]`) — explicit subset of group arrays to read.
+    Args:
+        options: Supported options include
+            - `arrays` (`list[str]`) — explicit subset of group arrays to read.
     """
 
     _SUPPORTED_OPTIONS = frozenset({"arrays"})
@@ -63,7 +85,7 @@ class ZarrFormatSpec(ExternalFormatSpec):
 
     @property
     def extension(self) -> str:
-        return ".zarr"
+        return "zarr"
 
     @property
     def list_single_object(self) -> bool:
@@ -71,32 +93,23 @@ class ZarrFormatSpec(ExternalFormatSpec):
         # returns zero objects at a `.zarr` prefix.
         return True
 
-    def with_options(self, options: Mapping[str, Any]) -> "ZarrFormatSpec":
+    def with_options(self, options: Mapping[str, Any]) -> "Zarr":
         unknown = set(options) - self._SUPPORTED_OPTIONS
         if unknown:
             raise ValueError(
-                f"ZarrFormatSpec: unknown option(s) {sorted(unknown)!r}; "
+                f"Zarr: unknown option(s) {sorted(unknown)!r}; "
                 f"supported: {sorted(self._SUPPORTED_OPTIONS)!r}"
             )
         merged = {**self._options, **options}
-        return ZarrFormatSpec(merged)
+        return Zarr(merged)
 
     def open_reader(self, args: Any) -> PyZarrChunkReader:
         uri = args.src.to_url()
         if uri is None:
-            raise ValueError(
-                "ZarrFormatSpec: could not resolve a URL from the source object"
-            )
+            raise ValueError("Zarr: could not resolve a URL from the source object")
         arrays = self._options.get("arrays")
         batch_size = args.batch_size if args.batch_size is not None else 8192
         return PyZarrChunkReader(uri, arrays, batch_size)
 
 
-__all__ = [
-    "PyZarrChunkReader",
-    "ZarrBuffer",
-    "ZarrFormatSpec",
-    "ZarrLoadResult",
-    "ZarrRasterLoader",
-    "ZarrViewEntry",
-]
+__all__ = ["Zarr"]

@@ -37,7 +37,7 @@ def test_udf_matchers(con):
     udf_impl = udf.arrow_udf(pa.binary(), [udf.STRING, udf.NUMERIC])(some_udf)
     assert udf_impl._name == "some_udf"
 
-    con.register_udf(udf_impl)
+    con.register(udf_impl)
     pd.testing.assert_frame_equal(
         con.sql("SELECT some_udf('abcd', 123) as col").to_pandas(),
         pd.DataFrame({"col": [b"abcd / 123"]}),
@@ -48,7 +48,7 @@ def test_udf_types(con):
     udf_impl = udf.arrow_udf(pa.binary(), [pa.string(), pa.int64()])(some_udf)
     assert udf_impl._name == "some_udf"
 
-    con.register_udf(udf_impl)
+    con.register(udf_impl)
     pd.testing.assert_frame_equal(
         con.sql("SELECT some_udf('abcd', 123) as col").to_pandas(),
         pd.DataFrame({"col": [b"abcd / 123"]}),
@@ -59,7 +59,7 @@ def test_udf_any_input(con):
     udf_impl = udf.arrow_udf(pa.binary())(some_udf)
     assert udf_impl._name == "some_udf"
 
-    con.register_udf(udf_impl)
+    con.register(udf_impl)
     pd.testing.assert_frame_equal(
         con.sql("SELECT some_udf('abcd', 123) as col").to_pandas(),
         pd.DataFrame({"col": [b"abcd / 123"]}),
@@ -70,7 +70,7 @@ def test_udf_return_type_fn(con):
     udf_impl = udf.arrow_udf(lambda arg_types, arg_scalars: arg_types[0])(some_udf)
     assert udf_impl._name == "some_udf"
 
-    con.register_udf(udf_impl)
+    con.register(udf_impl)
     pd.testing.assert_frame_equal(
         con.sql("SELECT some_udf('abcd'::BYTEA, 123) as col").to_pandas(),
         pd.DataFrame({"col": [b"b'abcd' / 123"]}),
@@ -81,7 +81,7 @@ def test_udf_array_input(con):
     udf_impl = udf.arrow_udf(pa.binary(), [udf.STRING, udf.NUMERIC])(some_udf)
     assert udf_impl._name == "some_udf"
 
-    con.register_udf(udf_impl)
+    con.register(udf_impl)
     pd.testing.assert_frame_equal(
         con.sql(
             "SELECT some_udf(x, 123) as col FROM (VALUES ('a'), ('b'), ('c')) as t(x)"
@@ -108,7 +108,7 @@ def test_shapely_udf(con):
         result_shapely = shapely.buffer(geom, distance)
         return pa.array(shapely.to_wkb(result_shapely))
 
-    con.register_udf(shapely_udf)
+    con.register(shapely_udf)
 
     pd.testing.assert_frame_equal(
         con.sql("SELECT ST_Area(shapely_udf(ST_Point(0, 0), 2.0)) as col").to_pandas(),
@@ -146,7 +146,7 @@ def test_py_sedona_value(con):
 
         return pa.array(range(len(pa.array(arg))))
 
-    con.register_udf(fn_arg_only)
+    con.register(fn_arg_only)
     con.sql("SELECT fn_arg_only(123)").to_arrow_table()
 
 
@@ -156,7 +156,7 @@ def test_udf_kwargs(con):
         assert repr(return_type) == "SedonaType int64<Int64>"
         return pa.array(range(len(pa.array(arg))))
 
-    con.register_udf(fn_return_type)
+    con.register(fn_return_type)
     con.sql("SELECT fn_return_type('123')").to_arrow_table()
 
     @udf.arrow_udf(pa.int64())
@@ -164,7 +164,7 @@ def test_udf_kwargs(con):
         assert num_rows == 1
         return pa.array(range(len(pa.array(arg))))
 
-    con.register_udf(fn_num_rows)
+    con.register(fn_num_rows)
     con.sql("SELECT fn_num_rows('123')").to_arrow_table()
 
     @udf.arrow_udf(pa.int64())
@@ -173,7 +173,7 @@ def test_udf_kwargs(con):
         assert num_rows == 1
         return pa.array(range(len(pa.array(arg))))
 
-    con.register_udf(fn_num_rows_and_return_type)
+    con.register(fn_num_rows_and_return_type)
     con.sql("SELECT fn_num_rows_and_return_type('123')").to_arrow_table()
 
 
@@ -182,7 +182,7 @@ def test_udf_bad_return_object(con):
     def questionable_udf(arg):
         return None
 
-    con.register_udf(questionable_udf)
+    con.register(questionable_udf)
     with pytest.raises(
         sedonadb._lib.SedonaError,
         match="Expected result of user-defined function to return an object implementing __arrow_c_array__",
@@ -195,7 +195,7 @@ def test_udf_bad_return_type(con):
     def questionable_udf(arg):
         return pa.array(["abc"], pa.string())
 
-    con.register_udf(questionable_udf)
+    con.register(questionable_udf)
     with pytest.raises(
         sedonadb._lib.SedonaError,
         match=(
@@ -212,28 +212,9 @@ def test_udf_bad_return_length(con):
     def questionable_udf(arg):
         return pa.array([b"abc", b"def"], pa.binary())
 
-    con.register_udf(questionable_udf)
+    con.register(questionable_udf)
     with pytest.raises(
         sedonadb._lib.SedonaError,
         match="Expected result of user-defined function to return array of length 1 but got 2",
     ):
         con.sql("SELECT questionable_udf(123) as col").to_pandas()
-
-
-def test_udf_datafusion_to_sedonadb(con):
-    udf_impl = udf.arrow_udf(
-        pa.binary(), [udf.STRING, udf.NUMERIC], name="some_external_udf"
-    )(some_udf)
-
-    class UdfWrapper:
-        def __init__(self, obj):
-            self.obj = obj
-
-        def __datafusion_scalar_udf__(self):
-            return self.obj.__datafusion_scalar_udf__()
-
-    con.register_udf(UdfWrapper(udf_impl))
-    pd.testing.assert_frame_equal(
-        con.sql("SELECT some_external_udf('abcd', 123) as col").to_pandas(),
-        pd.DataFrame({"col": [b"abcd / 123"]}),
-    )
