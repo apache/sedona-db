@@ -53,7 +53,7 @@ class ZarrExtension:
         if kwargs:
             raise ValueError("Registration options not supported for ZarrExtension")
 
-        # Regiser the Zarr() format as a FileFormatFactory for SQL support
+        # Register the Zarr() format as a FileFormatFactory for SQL support
         ctx.register(Zarr())
 
 
@@ -100,9 +100,7 @@ class Zarr(ExternalFormatSpec):
     def open_reader(self, args: Any) -> PyZarrChunkReader:
         uri = args.src.to_url()
         if uri is None:
-            raise ValueError(
-                "Zarr: could not resolve a URL from the source object"
-            )
+            raise ValueError("Zarr: could not resolve a URL from the source object")
         arrays = self._options.get("arrays")
         batch_size = args.batch_size if args.batch_size is not None else 8192
         return PyZarrChunkReader(uri, arrays, batch_size)
