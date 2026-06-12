@@ -443,3 +443,73 @@ async fn errors_on_mismatched_chunk_grids() {
         "got: {err}"
     );
 }
+
+/// A CF-style group with no `spatial:transform` — just `longitude`/`latitude`
+/// coordinate arrays plus a 2-D data array. Georeferencing must be derived
+/// from the (regularly spaced) coordinate values.
+// `store_chunk_elements` is deprecated upstream but is the most direct way to
+// write typed coordinate values in a test fixture.
+#[allow(deprecated)]
+fn build_coord_array_fixture() -> TempDir {
+    let tmp = TempDir::new().unwrap();
+    let store = Arc::new(FilesystemStore::new(tmp.path()).unwrap());
+
+    // No spatial:transform, no proj:* — only coordinate arrays.
+    GroupBuilder::new()
+        .build(store.clone(), "/")
+        .unwrap()
+        .store_metadata()
+        .unwrap();
+
+    // 1-D coordinate arrays, single chunk each. lon 10,11,12 (step +1);
+    // lat 20,19 (step -1, north-to-south).
+    let lon = ArrayBuilder::new(vec![3u64], vec![3u64], data_type::float64(), 0.0f64)
+        .dimension_names(Some(["longitude"]))
+        .build(store.clone(), "/longitude")
+        .unwrap();
+    lon.store_metadata().unwrap();
+    lon.store_chunk_elements::<f64>(&[0], &[10.0, 11.0, 12.0])
+        .unwrap();
+
+    let lat = ArrayBuilder::new(vec![2u64], vec![2u64], data_type::float64(), 0.0f64)
+        .dimension_names(Some(["latitude"]))
+        .build(store.clone(), "/latitude")
+        .unwrap();
+    lat.store_metadata().unwrap();
+    lat.store_chunk_elements::<f64>(&[0], &[20.0, 19.0])
+        .unwrap();
+
+    // 2-D data array, dims [latitude, longitude], single chunk.
+    let data = ArrayBuilder::new(vec![2u64, 3u64], vec![2u64, 3u64], data_type::uint8(), 0u8)
+        .dimension_names(Some(["latitude", "longitude"]))
+        .build(store.clone(), "/temperature")
+        .unwrap();
+    data.store_metadata().unwrap();
+    data.store_chunk(&[0, 0], vec![0u8; 6]).unwrap();
+
+    tmp
+}
+
+#[tokio::test]
+async fn derives_geotransform_and_crs_from_coordinate_arrays() {
+    let tmp = build_coord_array_fixture();
+    let uri = format!("file://{}", tmp.path().display());
+    let arr = read_all(&uri, None).await.unwrap();
+
+    let rasters = RasterStructArray::new(&arr);
+    assert_eq!(
+        rasters.len(),
+        1,
+        "single-chunk data array -> one raster row"
+    );
+    let raster = rasters.get(0).unwrap();
+
+    // lon [10,11,12] step +1 -> scale_x 1, origin_x 10 - 0.5 = 9.5
+    // lat [20,19]    step -1 -> scale_y -1, origin_y 20 - (-0.5) = 20.5
+    assert_eq!(
+        raster.transform().to_vec(),
+        vec![9.5, 1.0, 0.0, 20.5, 0.0, -1.0]
+    );
+    // latitude/longitude dim names imply geographic EPSG:4326.
+    assert_eq!(raster.crs(), Some("EPSG:4326"));
+}
