@@ -36,6 +36,7 @@ github:
     - spatial-query
     - spatial-analysis
     - spatial-sql
+    - raster
     - rust
     - python
     - c
