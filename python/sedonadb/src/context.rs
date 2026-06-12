@@ -300,12 +300,7 @@ impl InternalContext {
                 .call_method0("__sedonadb_external_format__")?
                 .extract::<PyExternalFormat>()?;
             let state_ref = self.inner.ctx.state_ref();
-            let Some(mut writable) = state_ref.try_write() else {
-                return Err(PySedonaError::SedonaPython(
-                    "Can't get writable session state".to_string(),
-                ));
-            };
-
+            let mut writable = state_ref.write();
             writable
                 .register_file_format(Arc::new(ExternalFormatFactory::new(Arc::new(spec))), true)?;
             return Ok(());

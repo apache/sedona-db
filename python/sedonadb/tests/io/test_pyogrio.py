@@ -376,7 +376,7 @@ def test_read_ogr_partitioned(con):
         )
 
 
-def test_pygrio_format_register():
+def test_pyogrio_format_register():
     # Create a dedicated connection here because we're about to modify options
     sd = sedonadb.connect()
     sd.register(PyogrioFormatSpec("fgb"))

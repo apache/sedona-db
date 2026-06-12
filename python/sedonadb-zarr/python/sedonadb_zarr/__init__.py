@@ -18,11 +18,10 @@
 """Zarr support for SedonaDB.
 
 ```python
-import sedonadb_zarr
+from sedonadb_zarr import Zarr
 
 sd = sedona.db.connect()
-sd.register(sedonadb_zarr)
-sd.read_format(sedonadb_zarr.Zarr(), "file:///path/to/foo.zarr").show()
+sd.read_format(Zarr(), "file:///path/to/foo.zarr").show()
 ```
 
 Importing `sedonadb_zarr` is opt-in — applications that don't import
@@ -38,21 +37,24 @@ from sedonadb.utility import sedona  # noqa: F401
 from sedonadb_zarr._lib import PyZarrChunkReader
 
 
-def __sedonadb_extension__(ctx: SedonaContext) -> None:
-    """SedonaDB extension entrypoint
+class ZarrExtension:
+    """SedonaDB Zarr extension entrypoint
 
     This interface enables registration of Zarr components with a Python
     SedonaContext.
 
-    Args:
-        ctx: A SedonaDB context (e.g., `sedona.db.connect()`)
-
     Examples:
-        >>> import sedonadb_zarr
+        >>> from sedonadb_zarr import ZarrExtension
         >>> sd = sedona.db.connect()
-        >>> sd.register(sedonadb_zarr)
+        >>> sd.register(ZarrExtension())
     """
-    ctx.register(Zarr())
+
+    def __sedonadb_extension__(self, ctx: SedonaContext, **kwargs) -> None:
+        if kwargs:
+            raise ValueError("Registration options not supported for ZarrExtension")
+
+        # Regiser the Zarr() format as a FileFormatFactory for SQL support
+        ctx.register(Zarr())
 
 
 class Zarr(ExternalFormatSpec):
@@ -89,7 +91,7 @@ class Zarr(ExternalFormatSpec):
         unknown = set(options) - self._SUPPORTED_OPTIONS
         if unknown:
             raise ValueError(
-                f"ZarrFormatSpec: unknown option(s) {sorted(unknown)!r}; "
+                f"Zarr: unknown option(s) {sorted(unknown)!r}; "
                 f"supported: {sorted(self._SUPPORTED_OPTIONS)!r}"
             )
         merged = {**self._options, **options}
@@ -99,7 +101,7 @@ class Zarr(ExternalFormatSpec):
         uri = args.src.to_url()
         if uri is None:
             raise ValueError(
-                "ZarrFormatSpec: could not resolve a URL from the source object"
+                "Zarr: could not resolve a URL from the source object"
             )
         arrays = self._options.get("arrays")
         batch_size = args.batch_size if args.batch_size is not None else 8192
