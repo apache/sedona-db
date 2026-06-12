@@ -44,7 +44,7 @@ datafusion-execution = { workspace = true }
 datafusion-expr = { workspace = true }
 datafusion-ffi = { workspace = true }
 futures = { workspace = true }
-pyo3 = { version = "0.25.1" }
+pyo3 = { version = "0.29.0" }
 sedona = { workspace = true }
 sedona-adbc = { workspace = true }
 sedona-datasource = { workspace = true }
