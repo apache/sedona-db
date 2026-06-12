@@ -17,6 +17,7 @@
 
 use crate::{
     error::PySedonaError,
+    raster_loader::py_raster_loader,
     udf::{sedona_aggregate_udf, sedona_scalar_udf},
 };
 use pyo3::{ffi::Py_uintptr_t, prelude::*};
@@ -31,6 +32,7 @@ mod datasource;
 mod error;
 mod expr;
 mod import_from;
+mod raster_loader;
 mod reader;
 mod runtime;
 mod schema;
@@ -121,30 +123,37 @@ fn _lib(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "mimalloc")]
     configure_tg_allocator();
 
-    m.add_function(wrap_pyfunction!(configure_proj_shared, m)?)?;
     m.add_function(wrap_pyfunction!(configure_gdal_shared, m)?)?;
-    m.add_function(wrap_pyfunction!(gdal_version, m)?)?;
-    m.add_function(wrap_pyfunction!(sedona_adbc_driver_init, m)?)?;
-    m.add_function(wrap_pyfunction!(sedona_python_version, m)?)?;
-    m.add_function(wrap_pyfunction!(sedona_python_features, m)?)?;
-    m.add_function(wrap_pyfunction!(sedona_scalar_udf, m)?)?;
-    m.add_function(wrap_pyfunction!(sedona_aggregate_udf, m)?)?;
+    m.add_function(wrap_pyfunction!(configure_proj_shared, m)?)?;
+    m.add_function(wrap_pyfunction!(expr::expr_binary, m)?)?;
     m.add_function(wrap_pyfunction!(expr::expr_col, m)?)?;
     m.add_function(wrap_pyfunction!(expr::expr_lit, m)?)?;
-    m.add_function(wrap_pyfunction!(expr::expr_binary, m)?)?;
     m.add_function(wrap_pyfunction!(expr::expr_not, m)?)?;
     m.add_function(wrap_pyfunction!(expr::expr_sort_expr, m)?)?;
+    m.add_function(wrap_pyfunction!(gdal_version, m)?)?;
+    m.add_function(wrap_pyfunction!(py_raster_loader, m)?)?;
+    m.add_function(wrap_pyfunction!(sedona_adbc_driver_init, m)?)?;
+    m.add_function(wrap_pyfunction!(sedona_aggregate_udf, m)?)?;
+    m.add_function(wrap_pyfunction!(sedona_python_features, m)?)?;
+    m.add_function(wrap_pyfunction!(sedona_python_version, m)?)?;
+    m.add_function(wrap_pyfunction!(sedona_scalar_udf, m)?)?;
 
     m.add_class::<context::InternalContext>()?;
     m.add_class::<dataframe::InternalDataFrame>()?;
-    m.add_class::<expr::PyExpr>()?;
-    m.add_class::<expr::PySortExpr>()?;
     m.add_class::<datasource::PyExternalFormat>()?;
     m.add_class::<datasource::PyProjectedRecordBatchReader>()?;
-    m.add("SedonaError", py.get_type::<error::SedonaError>())?;
-    m.add_class::<schema::PySedonaSchema>()?;
+    m.add_class::<expr::PyExpr>()?;
+    m.add_class::<expr::PySortExpr>()?;
+    m.add_class::<raster_loader::PyBandDataType>()?;
+    m.add_class::<raster_loader::PyRasterLoaderWrapper>()?;
+    m.add_class::<raster_loader::PyRasterLoadRequest>()?;
+    m.add_class::<raster_loader::PyRasterLoadResult>()?;
+    m.add_class::<raster_loader::PyViewEntry>()?;
     m.add_class::<schema::PySedonaField>()?;
+    m.add_class::<schema::PySedonaSchema>()?;
     m.add_class::<schema::PySedonaType>()?;
+
+    m.add("SedonaError", py.get_type::<error::SedonaError>())?;
 
     Ok(())
 }

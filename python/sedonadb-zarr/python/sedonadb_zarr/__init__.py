@@ -30,11 +30,15 @@ it pay no runtime cost.
 
 from typing import Any, Mapping, Optional
 
+from sedonadb._lib import py_raster_loader
 from sedonadb.context import SedonaContext
 from sedonadb.datasource import ExternalFormatSpec
 from sedonadb.utility import sedona  # noqa: F401
 
-from sedonadb_zarr._lib import PyZarrChunkReader
+from sedonadb_zarr._lib import (
+    PyZarrChunkReader,
+    ZarrRasterLoader,
+)
 
 
 class ZarrExtension:
@@ -49,12 +53,21 @@ class ZarrExtension:
         >>> sd.register(ZarrExtension())
     """
 
-    def __sedonadb_extension__(self, ctx: SedonaContext, **kwargs) -> None:
+    def __sedonadb_extension__(self, sd: SedonaContext, **kwargs) -> None:
         if kwargs:
             raise ValueError("Registration options not supported for ZarrExtension")
 
         # Register the Zarr() format as a FileFormatFactory for SQL support
-        ctx.register(Zarr())
+        sd.register(Zarr())
+
+        # Register the ZarrRasterLoader
+        loader = ZarrRasterLoader()
+        wrapper = py_raster_loader(
+            loader.name,
+            loader.supports_format,
+            loader.load,
+        )
+        sd._impl.register_raster_loader(wrapper)
 
 
 class Zarr(ExternalFormatSpec):

@@ -29,8 +29,11 @@ doc = false
 
 [dependencies]
 arrow-array = { workspace = true, features = ["ffi"] }
+arrow-buffer = { workspace = true }
 object_store = { workspace = true, features = ["aws", "http"] }
 pyo3 = { version = "0.25.1" }
+sedona-raster = { workspace = true }
 sedona-raster-zarr = { workspace = true }
+sedona-schema = { workspace = true }
 tokio = { workspace = true, features = ["rt"] }
 url = { workspace = true }

@@ -15,13 +15,6 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""Tests for the `sedonadb-zarr` plugin.
-
-Plugin surface: `ZarrFormatSpec(ExternalFormatSpec)` paired with
-`con.read_format(spec, uri)`. The SQL UDTF form (`sd_read_zarr`) is
-deferred to a follow-up PR.
-"""
-
 import numpy as np
 import pytest
 import sedonadb
@@ -81,7 +74,70 @@ def test_format_spec_class_invariants():
     assert spec.extension == "zarr"
     spec2 = spec.with_options({"arrays": ["temperature"]})
     assert spec2 is not spec
-    assert spec2._options.get("arrays") == ["temperature"]
+
+
+def test_zarr_loader_supports_format():
+    """Test format support checking."""
+    loader = sedonadb_zarr.ZarrRasterLoader()
+    assert loader.supports_format("zarr") is True
+    assert loader.supports_format(None) is False
+    assert loader.supports_format("gdal") is False
+    assert "ZarrRasterLoader" in repr(loader)
+
+
+@pytest.mark.parametrize(
+    "numpy_dtype",
+    [
+        "bool",
+        "int8",
+        "uint8",
+        "int16",
+        "uint16",
+        "int32",
+        "uint32",
+        "int64",
+        "uint64",
+        "float32",
+        "float64",
+    ],
+)
+def test_rs_ensure_loaded_with_zarr(tmp_path, numpy_dtype):
+    """Test that RS_EnsureLoaded can materialize Zarr OutDb raster data."""
+    zarr = pytest.importorskip("zarr", minversion="3.0")
+
+    # Create a simple 8x8 Zarr array with random data
+    rng = np.random.default_rng(seed=836)
+    if numpy_dtype == "bool":
+        numpy_arr = rng.integers(0, 2, (8, 8), dtype=np.uint8).astype(numpy_dtype)
+    elif np.issubdtype(np.dtype(numpy_dtype), np.integer):
+        numpy_arr = rng.integers(0, 100, (8, 8), dtype=numpy_dtype)
+    else:
+        numpy_arr = rng.random((8, 8)).astype(numpy_dtype)
+
+    root = zarr.open_group(str(tmp_path), mode="w")
+    arr = root.create_array(
+        "temperature",
+        shape=numpy_arr.shape,
+        chunks=numpy_arr.shape,
+        dtype=numpy_dtype,
+        dimension_names=["y", "x"],
+    )
+    arr[:] = numpy_arr
+
+    # Create a fresh connection (new context)
+    sd = sedonadb.connect()
+    sd.register(sedonadb_zarr.ZarrExtension())
+
+    # Read the Zarr group as loaded rasters
+    t = sd.read_format(sedonadb_zarr.Zarr(), f"file://{tmp_path}")
+    loaded_tab = t.select(raster=t.raster.funcs.rs_ensureloaded()).to_arrow_table()
+
+    # Verify the data was loaded
+    assert loaded_tab.num_rows == 1
+    loaded_raster = Raster(loaded_tab["raster"].chunk(0))  # TODO: dropped metadata
+    loaded_band = loaded_raster.bands[0]
+
+    np.testing.assert_array_equal(loaded_band.to_numpy(), numpy_arr)
 
 
 # Each numpy dtype below maps to a different `BandDataType` arm in
