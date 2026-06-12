@@ -177,7 +177,14 @@ impl SedonaScalarKernel for StCrs {
         let mut builder = StringViewBuilder::with_capacity(executor.num_iterations());
         let crs_opt: Option<String> = match &arg_types[0] {
             SedonaType::Wkb(_, Some(crs)) | SedonaType::WkbView(_, Some(crs)) => {
-                Some(crs.to_authority_code()?.unwrap_or_else(|| crs.to_json()))
+                // Prefer the authority code; otherwise the unescaped CRS string
+                // (`to_crs_string`, not `to_json`) so the result round-trips
+                // back through ST_SetCRS / deserialize_crs — e.g. a raw WKT
+                // rather than a JSON-quoted one.
+                Some(
+                    crs.to_authority_code()?
+                        .unwrap_or_else(|| crs.to_crs_string()),
+                )
             }
             _ => None,
         };
@@ -478,12 +485,20 @@ mod test {
         let result = tester.invoke_scalar("POINT (0 1)").unwrap();
         tester.assert_scalar_result_equals(result, "EPSG:3857");
 
-        // Authority-less WKT -> falls back to the JSON serialization (`to_json`).
+        // Authority-less WKT -> the raw WKT (unescaped), which round-trips back
+        // through deserialize_crs / ST_SetCRS.
         let crs = deserialize_crs(WKT_LCC_NO_AUTHORITY).unwrap();
-        let expected = crs.as_ref().unwrap().to_json();
         let tester = ScalarUdfTester::new(udf.clone(), vec![SedonaType::Wkb(Edges::Planar, crs)]);
         let result = tester.invoke_scalar("POINT (0 1)").unwrap();
-        tester.assert_scalar_result_equals(result, expected.as_str());
+        tester.assert_scalar_result_equals(result, WKT_LCC_NO_AUTHORITY);
+        // Round-trips: the returned string deserializes back to the same CRS.
+        assert_eq!(
+            deserialize_crs(WKT_LCC_NO_AUTHORITY)
+                .unwrap()
+                .unwrap()
+                .to_crs_string(),
+            WKT_LCC_NO_AUTHORITY
+        );
     }
 
     #[test]
