@@ -28,6 +28,9 @@ kernels:
 Returns the CRS (Coordinate Reference System) string associated with a geometry
 or geography. This is abbreviated as an authority/code if possible (e.g., `'EPSG:3857'`).
 
+For a CRS originally given as WKT, this returns the embedded authority code when
+the WKT carries one, and otherwise the original WKT string.
+
 ## Examples
 
 ```sql

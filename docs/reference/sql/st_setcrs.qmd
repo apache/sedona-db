@@ -37,6 +37,14 @@ Sets a CRS to a geometry/geography. This is metadata-only - no coordinates are t
 
 This is different from ST_Transform which actually transforms coordinates.
 
+`target_crs` accepts an authority code (e.g. `'EPSG:4326'`), a PROJJSON object, or
+a WKT1/WKT2 string. When a WKT string carries an embedded authority
+(`AUTHORITY["EPSG","3857"]` in WKT1 or `ID["EPSG",3857]` in WKT2), the CRS is
+**canonicalized to that authority code** (e.g. `'EPSG:3857'`) — the compact,
+interoperable form the rest of the system understands. A WKT with no authority
+code (for example a bespoke Lambert Conformal Conic) is kept verbatim; such a CRS
+has no SRID and is only considered equal to a byte-identical CRS string.
+
 ## Examples
 
 ```sql

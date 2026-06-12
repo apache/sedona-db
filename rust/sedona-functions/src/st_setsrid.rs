@@ -952,6 +952,52 @@ mod test {
         );
     }
 
+    #[test]
+    fn udf_set_crs_wkt() {
+        // ST_SetCRS with a WKT string. The output's type-level CRS round-trips
+        // through Arrow field metadata, where `Wkt::to_json` emits the
+        // extracted authority when one exists. So an EPSG-bearing WKT
+        // canonicalizes to its authority code, while an authority-less WKT
+        // (e.g. a bespoke LCC) is carried verbatim.
+        const WKT_3857: &str = r#"PROJCS["WGS 84 / Pseudo-Mercator",GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563,AUTHORITY["EPSG","7030"]],AUTHORITY["EPSG","6326"]],AUTHORITY["EPSG","4326"]],PROJECTION["Mercator_1SP"],AUTHORITY["EPSG","3857"]]"#;
+        const WKT_LCC_NO_AUTHORITY: &str = r#"PROJCS["Custom LCC",GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]]],PROJECTION["Lambert_Conformal_Conic_2SP"],PARAMETER["standard_parallel_1",33],PARAMETER["standard_parallel_2",45],PARAMETER["latitude_of_origin",39],PARAMETER["central_meridian",-96],UNIT["metre",1]]"#;
+
+        let udf: ScalarUDF = st_set_crs_udf().into();
+        let geom_arg = create_scalar_value(Some("POINT (0 1)"), &WKB_GEOMETRY);
+
+        // WKT with an EPSG authority canonicalizes to that authority code.
+        let (return_type, _) = call_udf(
+            &udf,
+            geom_arg.clone(),
+            &[WKB_GEOMETRY, SedonaType::Arrow(DataType::Utf8)],
+            ScalarValue::Utf8(Some(WKT_3857.to_string())),
+        )
+        .unwrap();
+        let SedonaType::Wkb(_, Some(crs)) = &return_type else {
+            panic!("expected a Wkb type with a CRS, got {return_type:?}");
+        };
+        assert_eq!(
+            crs.to_authority_code().unwrap().as_deref(),
+            Some("EPSG:3857")
+        );
+        assert_eq!(crs.srid().unwrap(), Some(3857));
+        assert_eq!(crs.to_crs_string(), "EPSG:3857");
+
+        // Authority-less WKT: carried verbatim, no authority code.
+        let (return_type, _) = call_udf(
+            &udf,
+            geom_arg.clone(),
+            &[WKB_GEOMETRY, SedonaType::Arrow(DataType::Utf8)],
+            ScalarValue::Utf8(Some(WKT_LCC_NO_AUTHORITY.to_string())),
+        )
+        .unwrap();
+        let SedonaType::Wkb(_, Some(crs)) = &return_type else {
+            panic!("expected a Wkb type with a CRS, got {return_type:?}");
+        };
+        assert_eq!(crs.to_authority_code().unwrap(), None);
+        assert_eq!(crs.to_crs_string(), WKT_LCC_NO_AUTHORITY);
+    }
+
     fn call_udf(
         udf: &ScalarUDF,
         arg: ColumnarValue,
