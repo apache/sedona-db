@@ -243,38 +243,24 @@ fn get_nodata_value(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::{Array, Float64Array, Int32Array, Int64Array, StringArray, StructArray};
+    use arrow_array::{Array, Float64Array, Int32Array, Int64Array, StringArray};
     use datafusion_expr::ScalarUDF;
-    use sedona_raster::builder::RasterBuilder;
-    use sedona_raster::traits::{BandMetadata, RasterMetadata};
     use sedona_schema::datatypes::RASTER;
-    use sedona_schema::raster::{BandDataType, StorageType};
+    use sedona_schema::raster::BandDataType;
     use sedona_testing::compare::assert_array_equal;
+    use sedona_testing::raster_spec::RasterSpec;
     use sedona_testing::rasters::generate_test_rasters;
     use sedona_testing::testers::ScalarUdfTester;
 
-    /// Build a single-row raster StructArray with custom metadata and band metadata.
-    fn build_custom_raster(
-        meta: &RasterMetadata,
-        band_meta: &BandMetadata,
-        data: &[u8],
-        crs: Option<&str>,
-    ) -> StructArray {
-        let mut builder = RasterBuilder::new(1);
-        builder.start_raster(meta, crs).expect("start raster");
-        builder
-            .start_band(BandMetadata {
-                datatype: band_meta.datatype,
-                nodata_value: band_meta.nodata_value.clone(),
-                storage_type: band_meta.storage_type,
-                outdb_url: band_meta.outdb_url.clone(),
-                outdb_band_id: band_meta.outdb_band_id,
-            })
-            .expect("start band");
-        builder.band_data_writer().append_value(data);
-        builder.finish_band().expect("finish band");
-        builder.finish_raster().expect("finish raster");
-        builder.finish().expect("finish")
+    /// A 2x2 raster with 3 bands of different types:
+    /// UInt8 (nodata=255), UInt16 (nodata=0), Float32 (no nodata).
+    fn multi_band_spec() -> RasterSpec {
+        RasterSpec::d2(2, 2)
+            .band(BandDataType::UInt8)
+            .nodata(255u8)
+            .band(BandDataType::UInt16)
+            .nodata(0u16)
+            .band(BandDataType::Float32)
     }
 
     // -----------------------------------------------------------------------
@@ -400,30 +386,12 @@ mod tests {
 
     #[test]
     fn udf_bandnodatavalue_no_nodata() {
-        // Create a raster without nodata
-        let meta = RasterMetadata {
-            width: 2,
-            height: 2,
-            upperleft_x: 0.0,
-            upperleft_y: 0.0,
-            scale_x: 1.0,
-            scale_y: -1.0,
-            skew_x: 0.0,
-            skew_y: 0.0,
-        };
-        let band_meta = BandMetadata {
-            datatype: BandDataType::UInt8,
-            nodata_value: None,
-            storage_type: StorageType::InDb,
-            outdb_url: None,
-            outdb_band_id: None,
-        };
-        let data = vec![1u8, 2, 3, 4];
-        let rasters = build_custom_raster(&meta, &band_meta, &data, Some("OGC:CRS84"));
-
         let udf: ScalarUDF = rs_bandnodatavalue_udf().into();
         let tester = ScalarUdfTester::new(udf, vec![RASTER]);
-        let result = tester.invoke_array(Arc::new(rasters)).unwrap();
+
+        // A band without a nodata value yields null.
+        let spec = RasterSpec::d2(2, 2).band_values(&[1u8, 2, 3, 4]);
+        let result = tester.invoke_raster_array(vec![Some(spec)]).unwrap();
         let float_array = result
             .as_any()
             .downcast_ref::<Float64Array>()
@@ -436,28 +404,17 @@ mod tests {
         let udf: ScalarUDF = rs_bandpixeltype_udf().into();
         let tester = ScalarUdfTester::new(udf, vec![RASTER, SedonaType::Arrow(DataType::Int32)]);
 
-        let rasters = sedona_testing::rasters::generate_multi_band_raster();
-
-        // Band 1: UInt8
-        let result = tester
-            .invoke_array_scalar(Arc::new(rasters.clone()), 1_i32)
-            .unwrap();
-        let arr = result.as_any().downcast_ref::<StringArray>().unwrap();
-        assert_eq!(arr.value(0), "UNSIGNED_8BITS");
-
-        // Band 2: UInt16
-        let result = tester
-            .invoke_array_scalar(Arc::new(rasters.clone()), 2_i32)
-            .unwrap();
-        let arr = result.as_any().downcast_ref::<StringArray>().unwrap();
-        assert_eq!(arr.value(0), "UNSIGNED_16BITS");
-
-        // Band 3: Float32
-        let result = tester
-            .invoke_array_scalar(Arc::new(rasters), 3_i32)
-            .unwrap();
-        let arr = result.as_any().downcast_ref::<StringArray>().unwrap();
-        assert_eq!(arr.value(0), "REAL_32BITS");
+        for (band, expected) in [
+            (1_i32, "UNSIGNED_8BITS"),
+            (2, "UNSIGNED_16BITS"),
+            (3, "REAL_32BITS"),
+        ] {
+            let result = tester
+                .invoke_raster_array_scalar(vec![Some(multi_band_spec())], band)
+                .unwrap();
+            let arr = result.as_any().downcast_ref::<StringArray>().unwrap();
+            assert_eq!(arr.value(0), expected);
+        }
     }
 
     #[test]
@@ -465,28 +422,13 @@ mod tests {
         let udf: ScalarUDF = rs_bandnodatavalue_udf().into();
         let tester = ScalarUdfTester::new(udf, vec![RASTER, SedonaType::Arrow(DataType::Int32)]);
 
-        let rasters = sedona_testing::rasters::generate_multi_band_raster();
-
-        // Band 1: nodata=255 (UInt8)
-        let result = tester
-            .invoke_array_scalar(Arc::new(rasters.clone()), 1_i32)
-            .unwrap();
-        let arr = result.as_any().downcast_ref::<Float64Array>().unwrap();
-        assert_eq!(arr.value(0), 255.0);
-
-        // Band 2: nodata=0 (UInt16)
-        let result = tester
-            .invoke_array_scalar(Arc::new(rasters.clone()), 2_i32)
-            .unwrap();
-        let arr = result.as_any().downcast_ref::<Float64Array>().unwrap();
-        assert_eq!(arr.value(0), 0.0);
-
-        // Band 3: no nodata (Float32)
-        let result = tester
-            .invoke_array_scalar(Arc::new(rasters), 3_i32)
-            .unwrap();
-        let arr = result.as_any().downcast_ref::<Float64Array>().unwrap();
-        assert!(arr.is_null(0));
+        for (band, expected) in [(1_i32, Some(255.0)), (2, Some(0.0)), (3, None)] {
+            let result = tester
+                .invoke_raster_array_scalar(vec![Some(multi_band_spec())], band)
+                .unwrap();
+            let expected: Arc<dyn Array> = Arc::new(Float64Array::from(vec![expected]));
+            assert_array_equal(&result, &expected);
+        }
     }
 
     #[test]
