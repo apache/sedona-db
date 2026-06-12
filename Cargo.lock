@@ -1777,7 +1777,7 @@ dependencies = [
  "itertools 0.14.0",
  "liblzma",
  "log",
- "object_store",
+ "object_store 0.12.4",
  "parking_lot",
  "parquet",
  "rand 0.9.2",
@@ -1810,7 +1810,7 @@ dependencies = [
  "futures",
  "itertools 0.14.0",
  "log",
- "object_store",
+ "object_store 0.12.4",
  "parking_lot",
  "tokio",
 ]
@@ -1835,7 +1835,7 @@ dependencies = [
  "futures",
  "itertools 0.14.0",
  "log",
- "object_store",
+ "object_store 0.12.4",
 ]
 
 [[package]]
@@ -1854,7 +1854,7 @@ dependencies = [
  "indexmap 2.13.0",
  "libc",
  "log",
- "object_store",
+ "object_store 0.12.4",
  "parquet",
  "paste",
  "recursive",
@@ -1901,7 +1901,7 @@ dependencies = [
  "itertools 0.14.0",
  "liblzma",
  "log",
- "object_store",
+ "object_store 0.12.4",
  "rand 0.9.2",
  "tokio",
  "tokio-util",
@@ -1929,7 +1929,7 @@ dependencies = [
  "datafusion-session",
  "futures",
  "itertools 0.14.0",
- "object_store",
+ "object_store 0.12.4",
  "tokio",
 ]
 
@@ -1950,7 +1950,7 @@ dependencies = [
  "datafusion-session",
  "futures",
  "num-traits",
- "object_store",
+ "object_store 0.12.4",
 ]
 
 [[package]]
@@ -1971,7 +1971,7 @@ dependencies = [
  "datafusion-physical-plan",
  "datafusion-session",
  "futures",
- "object_store",
+ "object_store 0.12.4",
  "regex",
  "tokio",
 ]
@@ -1994,7 +1994,7 @@ dependencies = [
  "datafusion-physical-plan",
  "datafusion-session",
  "futures",
- "object_store",
+ "object_store 0.12.4",
  "tokio",
 ]
 
@@ -2022,7 +2022,7 @@ dependencies = [
  "futures",
  "itertools 0.14.0",
  "log",
- "object_store",
+ "object_store 0.12.4",
  "parking_lot",
  "parquet",
  "tokio",
@@ -2048,7 +2048,7 @@ dependencies = [
  "datafusion-expr",
  "futures",
  "log",
- "object_store",
+ "object_store 0.12.4",
  "parking_lot",
  "rand 0.9.2",
  "tempfile",
@@ -2413,7 +2413,7 @@ dependencies = [
  "datafusion-physical-expr-common",
  "datafusion-physical-plan",
  "datafusion-proto-common",
- "object_store",
+ "object_store 0.12.4",
  "prost",
 ]
 
@@ -4493,6 +4493,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "object_store"
+version = "0.13.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "622acbc9100d3c10e2ee15804b0caa40e55c933d5aa53814cd520805b7958a49"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "chrono",
+ "futures-channel",
+ "futures-core",
+ "futures-util",
+ "http 1.4.0",
+ "humantime",
+ "itertools 0.14.0",
+ "parking_lot",
+ "percent-encoding",
+ "thiserror 2.0.17",
+ "url",
+ "wasm-bindgen-futures",
+ "web-time",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4602,7 +4625,7 @@ dependencies = [
  "num-bigint",
  "num-integer",
  "num-traits",
- "object_store",
+ "object_store 0.12.4",
  "parquet-geospatial",
  "paste",
  "seq-macro",
@@ -5659,7 +5682,7 @@ dependencies = [
  "futures",
  "geo-traits",
  "geo-types",
- "object_store",
+ "object_store 0.12.4",
  "parking_lot",
  "regex",
  "rstest",
@@ -5756,7 +5779,7 @@ dependencies = [
  "datafusion-physical-expr",
  "datafusion-physical-plan",
  "futures",
- "object_store",
+ "object_store 0.12.4",
  "regex",
  "sedona-common",
  "sedona-expr",
@@ -5958,7 +5981,7 @@ dependencies = [
  "float_next_after 2.0.0",
  "futures",
  "geo-traits",
- "object_store",
+ "object_store 0.12.4",
  "parquet",
  "parquet-geospatial",
  "rstest",
@@ -6048,7 +6071,7 @@ dependencies = [
  "las",
  "las-crs",
  "laz",
- "object_store",
+ "object_store 0.12.4",
  "rayon",
  "sedona",
  "sedona-expr",
@@ -6179,7 +6202,7 @@ dependencies = [
  "datafusion-common",
  "futures",
  "log",
- "object_store",
+ "object_store 0.12.4",
  "sedona-common",
  "sedona-raster",
  "sedona-schema",
@@ -6428,7 +6451,7 @@ name = "sedonadb-zarr"
 version = "0.4.0"
 dependencies = [
  "arrow-array",
- "object_store",
+ "object_store 0.12.4",
  "pyo3",
  "sedona-raster-zarr",
  "tokio",
@@ -8142,13 +8165,13 @@ dependencies = [
 
 [[package]]
 name = "zarrs_object_store"
-version = "0.5.0"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5d9d0d3db426dd50dfb0b5d7cc1660bda368caeb5cd8645c60c46bc4f261a19"
+checksum = "ba1662bcdc585be1923a8b98ee5d6314d19af8c5775d6516a69ca33fd88b46af"
 dependencies = [
  "async-trait",
  "futures",
- "object_store",
+ "object_store 0.13.2",
  "zarrs_storage",
 ]
 
