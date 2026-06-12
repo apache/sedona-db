@@ -24,9 +24,9 @@ deferred to a follow-up PR.
 
 import numpy as np
 import pytest
-
 import sedonadb
 import sedonadb_zarr
+from sedonadb.raster import Raster
 
 
 @pytest.fixture
@@ -56,17 +56,17 @@ def test_format_spec_via_read_format(zarr_group):
     assert arrow_tab.column_names == ["raster"]
 
     raster = arrow_tab["raster"][0].as_py()
-    assert isinstance(raster, dict), f"raster row is {type(raster).__name__}"
-    for field in ("transform", "bands"):
-        assert field in raster, f"raster row missing {field!r}: {sorted(raster)}"
-    assert isinstance(raster["bands"], list) and len(raster["bands"]) >= 1
-    band = raster["bands"][0]
-    # `data` is empty (OutDb scan); `outdb_uri` points at this chunk.
-    assert band.get("data") in (None, b"", bytes()), (
-        f"OutDb band should have empty data; got {band.get('data')!r}"
+    assert isinstance(raster, Raster), f"raster row is {type(raster).__name__}"
+    assert raster.transform is not None
+    assert len(raster.bands) >= 1
+    band = raster.bands[0]
+    # `source_data` is empty (OutDb scan); `outdb_uri` points at this chunk.
+    assert len(band.source_data) == 0, (
+        f"OutDb band should have empty data; got {len(band.source_data)} bytes"
     )
-    anchor = band.get("outdb_uri")
-    assert anchor and "#array=temperature" in anchor, f"unexpected anchor: {anchor!r}"
+    assert band.outdb_uri is not None and "#array=temperature" in band.outdb_uri, (
+        f"unexpected anchor: {band.outdb_uri!r}"
+    )
 
 
 def test_format_spec_with_arrays_option(zarr_group):
@@ -116,4 +116,11 @@ def test_dtype_mapping_roundtrips(tmp_path, numpy_dtype):
 
     con = sedonadb.connect()
     df = con.read_format(sedonadb_zarr.Zarr(), f"file://{tmp_path}")
-    assert df.to_arrow_table().num_rows == 2
+    tab = df.to_arrow_table()
+    assert tab.num_rows == 2
+
+    # We can't extract data because these are OutDB refs
+    with pytest.raises(
+        ValueError, match="Can't extract buffer from a reference to external data"
+    ):
+        tab["raster"][0].as_py().bands[0].to_numpy()
