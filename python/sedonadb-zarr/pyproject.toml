@@ -30,8 +30,12 @@ classifiers = [
 ]
 dynamic = ["version"]
 dependencies = [
-    # `ExternalFormatSpec` + `list_single_object` landed in 0.4.0.
-    "sedonadb>=0.4.0",
+    # `ExternalFormatSpec` + `list_single_object` landed in 0.4.0. The floor is
+    # an explicit prerelease (`0.4.0a0`) so dev/nightly builds — which version
+    # as `0.4.0aN` and are PEP 440-*less* than `0.4.0` — satisfy it; a plain
+    # `>=0.4.0` would reject the matching nightly sedonadb wheel (and break
+    # `pip install` of the nightly for users, not just CI).
+    "sedonadb>=0.4.0a0",
 ]
 
 [project.optional-dependencies]

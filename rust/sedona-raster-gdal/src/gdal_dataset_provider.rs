@@ -188,7 +188,7 @@ impl GDALDatasetCache {
         })
     }
 
-    fn get_or_create_outdb_source(
+    pub(crate) fn get_or_create_outdb_source(
         &self,
         gdal: &Gdal,
         path: &str,
@@ -261,7 +261,7 @@ impl GDALDatasetCache {
         for i in 1..=num_bands {
             let band = bands.band(i).map_err(|e| arrow_datafusion_err!(e))?;
 
-            if !band.is_2d() {
+            if !band.is_spatial_2d() {
                 return exec_err!(
                     "GDAL backend requires 2-dim bands; got dim_names={:?}",
                     band.dim_names()
@@ -472,8 +472,8 @@ struct VrtBandKey {
 
 #[derive(Hash, Eq, PartialEq)]
 struct VrtKey {
-    width: u64,
-    height: u64,
+    width: i64,
+    height: i64,
     geotransform_bits: [u64; 6],
     crs: Option<String>,
     bands: Vec<VrtBandKey>,

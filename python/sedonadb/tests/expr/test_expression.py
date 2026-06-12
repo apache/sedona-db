@@ -281,3 +281,58 @@ def test_bool_raises_for_not():
 def test_len_raises():
     with pytest.raises(TypeError, match="Expr has no length"):
         len(col("x"))
+
+
+def test_expr_funcs(con):
+    e = con.col("foofy").funcs.sqrt()
+    assert isinstance(e, Expr)
+    assert repr(e) == "Expr(sqrt(foofy))"
+
+
+def test_contextless_expr():
+    e = col("foofy")
+
+    with pytest.raises(ValueError, match="Can't pipe Expr"):
+        e.funcs
+
+
+def test_ctx_propagation(con):
+    e = con.col("foofy")
+    assert e._ctx is con
+
+    assert e.alias("bar")._ctx is con
+    assert e.cast(pa.int32())._ctx is con
+    assert e.is_null()._ctx is con
+    assert e.is_not_null()._ctx is con
+    assert e.isin([1, 2])._ctx is con
+    assert e.negate()._ctx is con
+
+    assert (e + 1)._ctx is con
+    assert (e - 1)._ctx is con
+    assert (e * 2)._ctx is con
+    assert (e / 2)._ctx is con
+    assert (-e)._ctx is con
+
+    assert (1 + e)._ctx is con
+    assert (1 - e)._ctx is con
+    assert (2 * e)._ctx is con
+    assert (2 / e)._ctx is con
+
+    assert (e == 0)._ctx is con
+    assert (e != 0)._ctx is con
+    assert (e < 0)._ctx is con
+    assert (e <= 0)._ctx is con
+    assert (e > 0)._ctx is con
+    assert (e >= 0)._ctx is con
+
+    assert (e & e)._ctx is con
+    assert (e | e)._ctx is con
+    assert (~e)._ctx is con
+
+    assert con.col("geom").funcs.st_area()._ctx is con
+    assert ((e + 1) * 2).is_null().alias("check")._ctx is con
+
+    bare_expr = col("y")
+    assert bare_expr._ctx is None
+    assert (e + bare_expr)._ctx is con
+    assert (bare_expr + e)._ctx is con

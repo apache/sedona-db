@@ -15,8 +15,6 @@
 # specific language governing permissions and limitations
 # under the License.
 
-import pytest
-
 from sedonadb.expr import Expr
 from sedonadb.expr.expression import ScalarUdf, AggregateUdf
 
@@ -110,37 +108,3 @@ def test_function_expression_composed(con):
         repr(e)
         == 'Expr(st_area(st_geomfromwkt(Utf8("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"))))'
     )
-
-
-def test_funcs_getitem_access(con):
-    st_area = con.funcs["st_area"]
-    assert isinstance(st_area, ScalarUdf)
-
-    e = st_area(con.col("geom"))
-    assert repr(e) == "Expr(st_area(geom))"
-
-    sum = con.funcs["sum"]
-    assert isinstance(sum, AggregateUdf)
-
-    e = sum(con.col("x"))
-    assert repr(e) == "Expr(sum(x))"
-
-
-def test_funcs_getattr_not_found_raises_attribute_error(con):
-    with pytest.raises(AttributeError, match="Can't find scalar or aggregate function"):
-        con.funcs.nonexistent_function_xyz
-
-
-def test_funcs_getitem_not_found_raises_key_error(con):
-    with pytest.raises(KeyError, match="Can't find scalar or aggregate function"):
-        con.funcs["nonexistent_function_xyz"]
-
-
-def test_scalar_udf_repr(con):
-    st_area = con.funcs.st_area
-    assert repr(st_area) == "ScalarUdf(st_area)"
-
-
-def test_aggregate_udf_repr(con):
-    st_collect_agg = con.funcs.st_collect_agg
-    assert repr(st_collect_agg) == "AggregateUdf(st_collect_agg)"

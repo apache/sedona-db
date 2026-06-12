@@ -14,7 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::{any::Any, fmt::Debug, sync::Arc};
+use std::{any::Any, collections::HashMap, fmt::Debug, sync::Arc};
 
 use arrow_schema::{DataType, FieldRef};
 use datafusion_common::config::ConfigOptions;
@@ -71,6 +71,14 @@ pub struct SedonaScalarUDF {
     signature: Signature,
     kernels: Vec<ScalarKernelRef>,
     aliases: Vec<String>,
+    /// Class-level, string-keyed metadata describing this UDF to the
+    /// planner. Flags are set via [`SedonaScalarUDF::with_metadata`] and
+    /// read back via [`SedonaScalarUDF::metadata`]; the planner keys off
+    /// well-known entries (e.g. the raster `"needs_pixels"` flag, whose
+    /// key is owned by `sedona-raster-functions`) without this crate
+    /// knowing their meaning. The map shape leaves room for further
+    /// planner-visible flags.
+    metadata: HashMap<String, String>,
 }
 
 impl PartialEq for SedonaScalarUDF {
@@ -191,17 +199,32 @@ impl SedonaScalarUDF {
             signature,
             kernels,
             aliases: vec![],
+            metadata: HashMap::new(),
         }
     }
 
     /// Add aliases to an existing SedonaScalarUDF
     pub fn with_aliases(self, aliases: Vec<String>) -> SedonaScalarUDF {
-        Self {
-            name: self.name,
-            signature: self.signature,
-            kernels: self.kernels,
-            aliases,
-        }
+        Self { aliases, ..self }
+    }
+
+    /// Set a class-level metadata entry on this UDF, returning the
+    /// modified UDF. Metadata is planner-visible (e.g. the
+    /// `RS_EnsureLoaded` optimizer rule reads the raster `"needs_pixels"`
+    /// flag) and crosses the `sedona-extension` FFI boundary so
+    /// plugin-defined UDFs can declare it too.
+    pub fn with_metadata(
+        mut self,
+        key: impl Into<String>,
+        value: impl Into<String>,
+    ) -> SedonaScalarUDF {
+        self.metadata.insert(key.into(), value.into());
+        self
+    }
+
+    /// Class-level metadata map describing this UDF to the planner.
+    pub fn metadata(&self) -> &HashMap<String, String> {
+        &self.metadata
     }
 
     /// Create a SedonaScalarUDF from a single kernel
@@ -333,6 +356,30 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn metadata_defaults_empty_and_set_via_builder() {
+        let udf = SedonaScalarUDF::new("u", vec![], Volatility::Immutable);
+        assert!(udf.metadata().get("a_flag").is_none());
+
+        let annotated = udf.with_metadata("a_flag", "true");
+        assert_eq!(
+            annotated.metadata().get("a_flag").map(String::as_str),
+            Some("true")
+        );
+    }
+
+    #[test]
+    fn metadata_survives_with_aliases() {
+        let udf = SedonaScalarUDF::new("u", vec![], Volatility::Immutable)
+            .with_metadata("a_flag", "true")
+            .with_aliases(vec!["u_alias".to_string()]);
+        assert_eq!(
+            udf.metadata().get("a_flag").map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(udf.aliases(), &["u_alias".to_string()]);
+    }
 
     #[test]
     fn udf_empty() -> Result<()> {

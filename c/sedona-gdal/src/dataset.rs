@@ -363,7 +363,7 @@ mod tests {
     use crate::gdal_dyn_bindgen::{OGRwkbGeometryType, GDAL_OF_READONLY, GDAL_OF_VECTOR};
     use crate::global::with_global_gdal_api;
     use crate::vector::layer::Layer;
-    use crate::vsi::unlink_mem_file;
+    use crate::vsi::with_memfile;
 
     use super::{Dataset, LayerOptions};
 
@@ -435,24 +435,27 @@ mod tests {
     #[test]
     fn test_create_vector_layer() {
         with_global_gdal_api(|api| {
-            let path = "/vsimem/test_dataset_create_vector_layer.gpkg";
-            let driver = DriverManager::get_driver_by_name(api, "GPKG").unwrap();
-            let dataset = driver.create_vector_only(path).unwrap();
+            with_memfile(
+                api,
+                "/vsimem/test_dataset_create_vector_layer.fgb",
+                |path| {
+                    let driver = DriverManager::get_driver_by_name(api, "FlatGeobuf").unwrap();
+                    let dataset = driver.create_vector_only(path).unwrap();
 
-            let layer = dataset
-                .create_layer(LayerOptions {
-                    name: "points",
-                    srs: None,
-                    ty: OGRwkbGeometryType::wkbPoint,
-                    options: None,
-                })
-                .unwrap();
+                    let layer = dataset
+                        .create_layer(LayerOptions {
+                            name: "points",
+                            srs: None,
+                            ty: OGRwkbGeometryType::wkbPoint,
+                            options: None,
+                        })
+                        .unwrap();
 
-            assert_eq!(dataset.raster_count(), 0);
-            assert!(!layer.c_layer().is_null());
-            assert_eq!(layer.feature_count(true), 0);
-
-            unlink_mem_file(api, path).unwrap();
+                    assert_eq!(dataset.raster_count(), 0);
+                    assert!(!layer.c_layer().is_null());
+                    assert_eq!(layer.feature_count(true), 0);
+                },
+            );
         })
         .unwrap();
     }
@@ -460,41 +463,40 @@ mod tests {
     #[test]
     fn test_open_vector_dataset_with_open_ex() {
         with_global_gdal_api(|api| {
-            let path = "/vsimem/test_dataset_open_vector.gpkg";
-            let driver = DriverManager::get_driver_by_name(api, "GPKG").unwrap();
-            {
-                let dataset = driver.create_vector_only(path).unwrap();
+            with_memfile(api, "/vsimem/test_dataset_open_vector.fgb", |path| {
+                let driver = DriverManager::get_driver_by_name(api, "FlatGeobuf").unwrap();
+                {
+                    let dataset = driver.create_vector_only(path).unwrap();
 
-                dataset
-                    .create_layer(LayerOptions {
-                        name: "points",
-                        srs: None,
-                        ty: OGRwkbGeometryType::wkbPoint,
-                        options: None,
-                    })
-                    .unwrap();
-            }
+                    dataset
+                        .create_layer(LayerOptions {
+                            name: "points",
+                            srs: None,
+                            ty: OGRwkbGeometryType::wkbPoint,
+                            options: None,
+                        })
+                        .unwrap();
+                }
 
-            let reopened = Dataset::open_ex(
-                api,
-                path,
-                GDAL_OF_VECTOR | GDAL_OF_READONLY,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
+                let reopened = Dataset::open_ex(
+                    api,
+                    path,
+                    GDAL_OF_VECTOR | GDAL_OF_READONLY,
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap();
 
-            let layer_count = unsafe { GDALDatasetGetLayerCount(reopened.c_dataset()) };
-            assert_eq!(layer_count, 1);
+                let layer_count = unsafe { GDALDatasetGetLayerCount(reopened.c_dataset()) };
+                assert_eq!(layer_count, 1);
 
-            let c_layer = unsafe { GDALDatasetGetLayer(reopened.c_dataset(), 0) };
-            assert!(!c_layer.is_null());
+                let c_layer = unsafe { GDALDatasetGetLayer(reopened.c_dataset(), 0) };
+                assert!(!c_layer.is_null());
 
-            let reopened_layer = Layer::new(api, c_layer, &reopened);
-            assert_eq!(reopened_layer.feature_count(true), 0);
-
-            unlink_mem_file(api, path).unwrap();
+                let reopened_layer = Layer::new(api, c_layer, &reopened);
+                assert_eq!(reopened_layer.feature_count(true), 0);
+            });
         })
         .unwrap();
     }

@@ -54,6 +54,7 @@ rstest = { workspace = true }
 [dependencies]
 arrow-schema = { workspace = true }
 arrow-array = { workspace = true }
+arrow-buffer = { workspace = true }
 async-trait = { workspace = true }
 aws-config = { version = "1.5.17", optional = true }
 aws-credential-types = { version = "1.2.0", optional = true }
@@ -62,6 +63,7 @@ datafusion = { workspace = true, default_features = false, features = ["sql", "p
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
 datafusion-ffi = { workspace = true }
+datafusion-optimizer = { workspace = true }
 dirs = { workspace = true }
 futures = { workspace = true }
 geo-traits = { workspace = true }
@@ -80,6 +82,7 @@ sedona-geos = { workspace = true, optional = true }
 sedona-pointcloud = { workspace = true, optional = true }
 sedona-proj = { workspace = true }
 sedona-gdal = { workspace = true }
+sedona-raster = { workspace = true }
 sedona-raster-functions = { workspace = true }
 sedona-raster-gdal = { workspace = true }
 sedona-schema = { workspace = true }

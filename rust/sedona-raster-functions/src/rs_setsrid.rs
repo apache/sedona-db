@@ -17,6 +17,7 @@
 
 use std::sync::Arc;
 
+use arrow_array::builder::StringViewBuilder;
 use arrow_array::{Array, ArrayRef, StringViewArray, StructArray};
 use arrow_buffer::NullBuffer;
 use arrow_schema::DataType;
@@ -24,6 +25,7 @@ use datafusion_common::cast::{as_int64_array, as_string_view_array};
 use datafusion_common::error::Result;
 use datafusion_common::{exec_err, DataFusionError, ScalarValue};
 use datafusion_expr::{ColumnarValue, Volatility};
+use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::transform::CrsEngine;
 use sedona_schema::crs::{CachedCrsNormalization, CachedSRIDToCrs};
@@ -168,13 +170,11 @@ fn replace_raster_crs(
                 .as_any()
                 .downcast_ref::<StructArray>()
                 .ok_or_else(|| {
-                    datafusion_common::DataFusionError::Internal(
-                        "Expected StructArray for raster data".to_string(),
-                    )
+                    sedona_internal_datafusion_err!("Expected StructArray for raster data")
                 })?;
 
             let num_rows = raster_struct.len();
-            let new_crs: ArrayRef = broadcast_string_view(crs_array, num_rows);
+            let new_crs: ArrayRef = broadcast_string_view(crs_array, num_rows)?;
             let new_struct = swap_crs_column(raster_struct, new_crs)?;
 
             let input_nulls = input_nulls.map(|nulls| {
@@ -224,16 +224,25 @@ fn replace_raster_crs(
 ///
 /// If the array already has the target length, it is returned as-is (clone of Arc).
 /// Otherwise the array must have length 1, and its single value is repeated.
-fn broadcast_string_view(array: &StringViewArray, len: usize) -> ArrayRef {
+fn broadcast_string_view(array: &StringViewArray, len: usize) -> Result<ArrayRef> {
     if array.len() == len {
-        return Arc::new(array.clone());
+        return Ok(Arc::new(array.clone()));
     }
-    debug_assert_eq!(array.len(), 1);
+
+    if array.len() != 1 {
+        return sedona_internal_err!(
+            "Expected array of length {len} or 1 but got {}",
+            array.len()
+        );
+    }
+
     if array.is_null(0) {
-        Arc::new(StringViewArray::new_null(len))
+        Ok(Arc::new(StringViewArray::new_null(len)))
     } else {
         let value = array.value(0);
-        Arc::new(std::iter::repeat_n(Some(value), len).collect::<StringViewArray>())
+        let mut builder = StringViewBuilder::with_capacity(len);
+        builder.try_append_value_n(value, len)?;
+        Ok(Arc::new(builder.finish()))
     }
 }
 
@@ -534,7 +543,10 @@ mod tests {
             for band_idx in 0..orig_bands.len() {
                 let orig_band = orig_bands.band(band_idx + 1).unwrap();
                 let mod_band = mod_bands.band(band_idx + 1).unwrap();
-                assert_eq!(orig_band.data(), mod_band.data());
+                assert_eq!(
+                    orig_band.nd_buffer().unwrap().as_contiguous().unwrap(),
+                    mod_band.nd_buffer().unwrap().as_contiguous().unwrap()
+                );
                 assert_eq!(
                     orig_band.metadata().data_type().unwrap(),
                     mod_band.metadata().data_type().unwrap()

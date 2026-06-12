@@ -30,6 +30,9 @@
 mod dtype;
 mod geozarr;
 mod loader;
+mod raster_loader;
 mod source_uri;
 
 pub use loader::ZarrChunkReader;
+pub use raster_loader::{ZarrLoader, ZARR_FORMAT};
+pub use source_uri::{object_store_for_uri, open_storage_from_uri};

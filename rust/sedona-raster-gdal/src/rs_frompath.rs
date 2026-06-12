@@ -111,14 +111,14 @@ mod tests {
     fn assert_raster_dimensions(
         result: &ColumnarValue,
         expected_len: usize,
-        width: u64,
-        height: u64,
+        width: i64,
+        height: i64,
     ) {
         fn assert_struct_array_dimensions(
             struct_arr: &StructArray,
             expected_len: usize,
-            width: u64,
-            height: u64,
+            width: i64,
+            height: i64,
         ) {
             let raster_array = RasterStructArray::new(struct_arr);
             assert_eq!(raster_array.len(), expected_len);

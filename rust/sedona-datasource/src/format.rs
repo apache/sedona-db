@@ -621,6 +621,7 @@ mod test {
                 .map(|f| ListingTableUrl::parse(f.to_string_lossy()).unwrap())
                 .collect(),
             true,
+            None,
         )
         .await
         .unwrap();
@@ -651,6 +652,7 @@ mod test {
                 .map(|f| ListingTableUrl::parse(f.to_string_lossy()).unwrap())
                 .collect(),
             true,
+            None,
         )
         .await
         .unwrap();
@@ -686,7 +688,7 @@ mod test {
         let (temp_dir, mut files) = create_echo_spec_temp_dir();
 
         // Listing table with no files should error
-        let err = external_table(spec.clone(), &ctx, vec![], true)
+        let err = external_table(spec.clone(), &ctx, vec![], true, None)
             .await
             .unwrap_err();
         assert_eq!(err.message(), "No table paths were provided");
@@ -708,6 +710,7 @@ mod test {
                 .map(|f| ListingTableUrl::parse(f.to_string_lossy()).unwrap())
                 .collect(),
             true,
+            None,
         )
         .await
         .unwrap_err();
@@ -725,6 +728,7 @@ mod test {
                 .map(|f| ListingTableUrl::parse(f.to_string_lossy()).unwrap())
                 .collect(),
             false,
+            None,
         )
         .await
         .unwrap();
@@ -810,7 +814,9 @@ mod test {
 
         let ctx = SessionContext::new();
         let url = ListingTableUrl::parse(dir_path.to_string_lossy()).unwrap();
-        let provider = external_table(spec, &ctx, vec![url], false).await.unwrap();
+        let provider = external_table(spec, &ctx, vec![url], false, None)
+            .await
+            .unwrap();
 
         let batches = ctx.read_table(provider).unwrap().collect().await.unwrap();
 
@@ -837,7 +843,7 @@ mod test {
         // doesn't try to span.
         let url_a = ListingTableUrl::parse("file:///tmp/a.dirfmt").unwrap();
         let url_b = ListingTableUrl::parse("https://example.com/b.dirfmt").unwrap();
-        let err = external_table(spec, &ctx, vec![url_a, url_b], false)
+        let err = external_table(spec, &ctx, vec![url_a, url_b], false, None)
             .await
             .unwrap_err();
         assert!(

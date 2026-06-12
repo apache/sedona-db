@@ -755,3 +755,57 @@ def test_prune_geography_parquet():
         assert matched < total, (
             f"Expected pruning to reduce row groups: {matched} matched out of {total}"
         )
+
+
+def test_read_partitioned_parquet(con):
+    t = con.funcs.table.sd_random_geometry(seed=3847)
+    t = t.select(
+        id=t.id,
+        geom=con.funcs.st_setsrid(t.geometry, 3857),
+        grp=con.funcs.floor(t.id / 100).cast(pa.string()),
+    )
+
+    with tempfile.TemporaryDirectory() as td:
+        out_dir = Path(td) / "out_dir"
+
+        t.to_parquet(out_dir, partition_by="grp")
+
+        # Test default partitioning read behaviour (autodiscover)
+        result = con.read_parquet(out_dir)
+        assert result.columns == t.columns
+        geopandas.testing.assert_geodataframe_equal(
+            result.sort("id").to_pandas(),
+            t.sort("id").to_pandas(),
+        )
+
+        # Test auto-discovery of partition columns (partitioning=None)
+        result = con.read_parquet(out_dir, partitioning=None)
+        assert result.columns == t.columns
+        geopandas.testing.assert_geodataframe_equal(
+            result.sort("id").to_pandas(),
+            t.sort("id").to_pandas(),
+        )
+
+        # Explicit partitioning (list)
+        result_explicit = con.read_parquet(out_dir, partitioning=["grp"])
+        assert result_explicit.columns == t.columns
+        geopandas.testing.assert_geodataframe_equal(
+            result_explicit.sort("id").to_pandas(),
+            t.sort("id").to_pandas(),
+        )
+
+        # Explicit partitioning (str)
+        result_explicit = con.read_parquet(out_dir, partitioning="grp")
+        assert result_explicit.columns == t.columns
+        geopandas.testing.assert_geodataframe_equal(
+            result_explicit.sort("id").to_pandas(),
+            t.sort("id").to_pandas(),
+        )
+
+        # partitioning=[] disables auto-discovery
+        result_disabled = con.read_parquet(out_dir, partitioning=[])
+        assert result_disabled.columns == ["id", "geom"]
+        geopandas.testing.assert_geodataframe_equal(
+            result_disabled.sort("id").to_pandas(),
+            t.sort("id").to_pandas()[["id", "geom"]],
+        )

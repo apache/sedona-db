@@ -66,8 +66,8 @@ impl fmt::Display for RasterDisplay<'_> {
 
         // Compute axis-aligned bounding box from 4 corners in world coordinates.
         // This handles both skewed and non-skewed rasters correctly.
-        let w = width as i64;
-        let h = height as i64;
+        let w = width;
+        let h = height;
         let (ulx, uly) = to_world_coordinate(raster, 0, 0);
         let (urx, ury) = to_world_coordinate(raster, w, 0);
         let (lrx, lry) = to_world_coordinate(raster, w, h);

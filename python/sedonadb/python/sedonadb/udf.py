@@ -16,9 +16,10 @@
 # under the License.
 
 import inspect
+import re
 from typing import Any, List, Literal, Optional, Union
 
-from sedonadb._lib import sedona_scalar_udf
+from sedonadb._lib import sedona_aggregate_udf, sedona_scalar_udf
 from sedonadb.utility import sedona  # noqa: F401
 
 
@@ -103,7 +104,7 @@ def arrow_udf(
         ...         pa.string(),
         ...     )
         ...
-        >>> sd.register_udf(some_udf)
+        >>> sd.register(some_udf)
         >>> sd.sql("SELECT some_udf(123, 'abc') as col").show()
         ┌───────────┐
         │    col    │
@@ -125,7 +126,7 @@ def arrow_udf(
         ...         pa.int64()
         ...     )
         ...
-        >>> sd.register_udf(char_count)
+        >>> sd.register(char_count)
         >>> sd.sql("SELECT char_count('abcde') as col").show()
         ┌───────┐
         │  col  │
@@ -163,7 +164,7 @@ def arrow_udf(
         ...     return pa.array(shapely.to_wkb(result_shapely))
         ...
         >>>
-        >>> sd.register_udf(shapely_udf)
+        >>> sd.register(shapely_udf)
         >>> sd.sql("SELECT ST_SRID(shapely_udf(ST_Point(0, 0), 2.0)) as col").show()
         ┌────────┐
         │   col  │
@@ -198,8 +199,8 @@ def arrow_udf(
         ...     return random_impl(return_type, num_rows)
         ...
         >>> np.random.seed(487)
-        >>> sd.register_udf(random_f32)
-        >>> sd.register_udf(random_f64)
+        >>> sd.register(random_f32)
+        >>> sd.register(random_f64)
         >>> sd.sql("SELECT random_f32() AS f32, random_f64() as f64;").show()
         ┌────────────┬─────────────────────┐
         │     f32    ┆         f64         │
@@ -296,7 +297,7 @@ class ScalarUdfImpl:
 
         self._volatility = volatility
 
-    def __sedona_internal_udf__(self):
+    def __sedonadb_internal_udf__(self):
         return sedona_scalar_udf(
             self._invoke_batch,
             self._return_type,
@@ -305,12 +306,227 @@ class ScalarUdfImpl:
             self._name,
         )
 
-    def __datafusion_scalar_udf__(self):
-        return self.__sedona_internal_udf__().__datafusion_scalar_udf__()
-
 
 def _callable_kwarg_only_names(f):
     sig = inspect.signature(f)
     return [
         k for k, p in sig.parameters.items() if p.kind == inspect.Parameter.KEYWORD_ONLY
     ]
+
+
+def _camel_to_snake(name: str) -> str:
+    """Convert a `CamelCase` identifier to `snake_case`.
+
+    `MyMean` -> `my_mean`, `STMean` -> `st_mean`, `my_mean` -> `my_mean`.
+    """
+    s = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
+    s = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s)
+    return s.lower()
+
+
+def arrow_aggregate_udf(
+    return_type: Any,
+    input_types: List[Union[TypeMatcher, Any]],
+    state_types: List[Any],
+    *,
+    volatility: Literal["immutable", "stable", "volatile"] = "immutable",
+    name: Optional[str] = None,
+):
+    """Decorator for Python-implemented aggregate UDFs.
+
+    Decorates a class whose instances act as a stateful accumulator. Each
+    grouped/global aggregation builds one instance per partial-state slot
+    and then merges them.
+
+    !!! warning
+        SedonaDB Python UDFs are experimental and this interface may change
+        based on user feedback.
+
+    The decorated class must define:
+
+    - `__init__(self)`: build a fresh accumulator (no arguments).
+    - `update(self, *arrays)`: receives one `pa.Array` per declared input
+      column, splatted positionally (single input today; the array can
+      contain nulls).
+    - `state(self) -> tuple`: serialize the accumulator into a tuple of
+      Python values matching `state_types` in order.
+    - `merge(self, *arrays)`: receives one `pa.Array` per element of
+      `state_types`, splatted positionally. Each array has N rows for N
+      partial states being merged in.
+    - `evaluate(self)`: return the final scalar Python value (or `None`
+      for SQL NULL) matching `return_type`.
+
+    Args:
+        return_type: A pyarrow data type for the final aggregate result.
+            Must be a concrete pyarrow type — `TypeMatcher` constants are
+            not accepted here.
+        input_types: One or more types describing the columns the
+            aggregate consumes. Each entry is either a `TypeMatcher`
+            constant (`udf.NUMERIC`, `udf.GEOMETRY`, …) or a concrete
+            pyarrow type.
+        state_types: A list of concrete pyarrow types describing the
+            serialized state. The length must match the tuple returned by
+            `state()`.
+        volatility: `"immutable"` (default), `"stable"`, or `"volatile"`.
+        name: SQL-visible name. Defaults to the decorated class name
+            converted from `CamelCase` to `snake_case` (so a `MyMean`
+            class is callable as `my_mean`).
+
+    Examples:
+
+        >>> import pyarrow as pa
+        >>> import pandas as pd
+        >>> import sedonadb
+        >>> from sedonadb import udf
+        >>> sd = sedonadb.connect()
+        >>>
+        >>> @udf.arrow_aggregate_udf(
+        ...     return_type=pa.float64(),
+        ...     input_types=[udf.NUMERIC],
+        ...     state_types=[pa.float64(), pa.int64()],
+        ... )
+        ... class my_mean:
+        ...     def __init__(self):
+        ...         self.total = 0.0
+        ...         self.count = 0
+        ...     def update(self, batch):
+        ...         for v in batch:
+        ...             if v.is_valid:
+        ...                 self.total += float(v.as_py())
+        ...                 self.count += 1
+        ...     def state(self):
+        ...         return (self.total, self.count)
+        ...     def merge(self, totals, counts):
+        ...         for i in range(len(totals)):
+        ...             self.total += totals[i].as_py()
+        ...             self.count += counts[i].as_py()
+        ...     def evaluate(self):
+        ...         return None if self.count == 0 else self.total / self.count
+        ...
+        >>> sd.register(my_mean)
+        >>> sd.create_data_frame(
+        ...     pd.DataFrame({"k": ["a", "a", "b"], "v": [1.0, 3.0, 7.0]})
+        ... ).to_view("t", overwrite=True)
+        >>> sd.sql("SELECT k, my_mean(v) AS m FROM t GROUP BY k ORDER BY k").show()
+        ┌──────┬─────────┐
+        │   k  ┆    m    │
+        │ utf8 ┆ float64 │
+        ╞══════╪═════════╡
+        │ a    ┆     2.0 │
+        ├╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┤
+        │ b    ┆     7.0 │
+        └──────┴─────────┘
+    """
+
+    def decorator(cls):
+        return AggregateUdfImpl(
+            cls, return_type, input_types, state_types, volatility, name
+        )
+
+    return decorator
+
+
+class AggregateUdfImpl:
+    """Aggregate user-defined function wrapper.
+
+    Returned by [`arrow_aggregate_udf`][sedonadb.udf.arrow_aggregate_udf].
+    Holds the user's class plus the type schemas; on registration, builds
+    a factory that produces a per-accumulator `_AccumulatorWrapper`
+    bridging the user's class to the Rust `Accumulator` trait.
+    """
+
+    def __init__(
+        self,
+        user_cls,
+        return_type,
+        input_types,
+        state_types,
+        volatility: Literal["immutable", "stable", "volatile"] = "immutable",
+        name: Optional[str] = None,
+    ):
+        self._user_cls = user_cls
+        self._return_type = return_type
+        self._input_types = input_types
+        self._state_types = state_types
+        self._volatility = volatility
+        if name is None and hasattr(user_cls, "__name__"):
+            # Linters push users toward CamelCase class names, but function
+            # lookups (con.funcs.<name> and SQL) resolve against a lowercased
+            # name. Derive a snake_case default so `MyMean` is callable as
+            # `my_mean`.
+            self._name = _camel_to_snake(user_cls.__name__)
+        else:
+            self._name = name
+
+    def __sedonadb_internal_aggregate_udf__(self):
+        # The factory closure is invoked by the Rust kernel once per
+        # accumulator instance; it captures `self` (which only holds the
+        # user class and small type lists).
+        def factory():
+            return _AccumulatorWrapper(
+                self._user_cls(), self._return_type, self._state_types
+            )
+
+        return sedona_aggregate_udf(
+            factory,
+            self._return_type,
+            self._input_types,
+            self._state_types,
+            self._volatility,
+            self._name,
+        )
+
+
+class _AccumulatorWrapper:
+    """Bridges a user accumulator class to the Rust `Accumulator` calls.
+
+    Translates each Rust → Python crossing:
+
+    - `update(args)` / `merge(args)`: `args` is a tuple of zero-copy
+      Arrow-array handles (PySedonaValue); we convert each to a real
+      `pa.Array` and splat them positionally into the user's method.
+    - `evaluate()`: wraps the user's scalar return value as a 1-element
+      `pa.Array` of `return_type` so the Rust side can extract a
+      `ScalarValue` via the C-data interface.
+    - `state()`: wraps each scalar in the user's tuple as a 1-element
+      `pa.Array` of the matching `state_types[i]`.
+    """
+
+    def __init__(self, user_instance, return_type, state_types):
+        self._user = user_instance
+        self._return_type = return_type
+        self._state_types = state_types
+
+    @staticmethod
+    def _to_arrays(args):
+        import pyarrow as pa
+
+        # `.to_array()` forces the Array variant before the C-data import,
+        # matching the conversion the scalar-UDF examples use.
+        return [pa.array(a.to_array()) for a in args]
+
+    @staticmethod
+    def _wrap_scalar(value, pa_type):
+        import pyarrow as pa
+
+        return pa.array([value], type=pa_type)
+
+    def update(self, args):
+        self._user.update(*self._to_arrays(args))
+
+    def merge(self, args):
+        self._user.merge(*self._to_arrays(args))
+
+    def evaluate(self):
+        return self._wrap_scalar(self._user.evaluate(), self._return_type)
+
+    def state(self):
+        values = self._user.state()
+        if not isinstance(values, (tuple, list)):
+            values = (values,)
+        if len(values) != len(self._state_types):
+            raise ValueError(
+                f"Aggregate UDF state() returned {len(values)} elements, "
+                f"expected {len(self._state_types)} per state_types"
+            )
+        return tuple(self._wrap_scalar(v, t) for v, t in zip(values, self._state_types))

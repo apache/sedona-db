@@ -87,7 +87,22 @@ Common environment variables used by the GPU build:
 
 **Using Docker**
 
-We also provide a Dockerfile for the users. Make sure you have installed Docker, the NVIDIA Driver, and NVIDIA Container Toolkit by `sudo nvidia-ctk runtime configure --runtime=docker`. Then, you may run `docker build -f docker/sedonadb-gpu.dockerfile --build-arg CMAKE_CUDA_ARCHITECTURES="Your GPU compute capability" -t sedonadb-gpu .` to build an image. Finally, you may run `docker run -it --rm --gpus all -p 8888:8888 sedonadb-gpu` to start a JupyterLab instance.
+A prebuilt, GPU-enabled image is published to Docker Hub at [`apache/sedona`](https://hub.docker.com/r/apache/sedona/tags) under the `sedonadb-latest` tag (built for both `linux/amd64` and `linux/arm64`). It bundles SedonaDB with the GPU feature enabled and starts a JupyterLab instance.
+
+Make sure you have installed Docker, the NVIDIA Driver, and the NVIDIA Container Toolkit (`sudo nvidia-ctk runtime configure --runtime=docker`), then pull and run the image:
+
+```bash
+docker run -it --rm --gpus all -p 8888:8888 apache/sedona:sedonadb-latest
+```
+
+Open the JupyterLab URL printed in the terminal to start working.
+
+The prebuilt image is compiled for the Turing, Ampere, and Ada Lovelace architectures (`CMAKE_CUDA_ARCHITECTURES=75;86;89`), covering common NVIDIA GPUs such as the T4, A10G, and L4. On a GPU outside this set the kernels are JIT-compiled on first use, which can make the first run slow. To target your own GPU, build the image from the repository root:
+
+```bash
+docker build -f docker/sedonadb-gpu.dockerfile --build-arg CMAKE_CUDA_ARCHITECTURES="<your GPU compute capability>" -t sedonadb-gpu .
+docker run -it --rm --gpus all -p 8888:8888 sedonadb-gpu
+```
 
 > **Note:** This Docker image is currently source-built directly from the repository's active codebase and is not tied to a released SedonaDB GPU wheel yet. This is to support development and early testing before an official SedonaDB GPU wheel is published.
 

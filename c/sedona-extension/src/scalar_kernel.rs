@@ -364,8 +364,8 @@ impl ExportedScalarKernel {
     /// when passed across a boundary.
     pub fn with_function_name(self, function_name: impl AsRef<str>) -> Self {
         Self {
-            inner: self.inner,
             function_name: Some(CString::from_str(function_name.as_ref()).unwrap()),
+            ..self
         }
     }
 

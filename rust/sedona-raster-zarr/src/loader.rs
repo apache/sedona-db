@@ -30,17 +30,19 @@ use arrow_array::{RecordBatch, RecordBatchReader};
 use arrow_schema::{ArrowError, Schema, SchemaRef};
 use sedona_common::sedona_internal_datafusion_err;
 use sedona_raster::builder::RasterBuilder;
+use sedona_raster::traits::is_spatial_dim_pair;
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::raster::BandDataType;
 use zarrs::array::Array;
 #[cfg(test)]
 use zarrs::array::ArrayBytes;
 use zarrs::group::Group;
-use zarrs_filesystem::FilesystemStore;
+use zarrs::node::NodeMetadata;
+use zarrs::storage::{AsyncReadableListableStorage, AsyncReadableListableStorageTraits};
 
 use crate::dtype::zarr_to_band_data_type;
 use crate::geozarr::GroupGeoMetadata;
-use crate::source_uri::{build_chunk_anchor, group_uri_to_filesystem_path};
+use crate::source_uri::build_chunk_anchor;
 
 /// Streaming reader over the chunk grid of a Zarr group.
 ///
@@ -52,7 +54,7 @@ use crate::source_uri::{build_chunk_anchor, group_uri_to_filesystem_path};
 /// formatting.
 ///
 /// Rows always emit OutDb-style: `data` is empty, `outdb_uri` carries
-/// a chunk anchor that the async OutDb resolver (registered separately)
+/// a chunk anchor that the async raster byte loader (registered separately)
 /// resolves to bytes on demand.
 pub struct ZarrChunkReader {
     schema: SchemaRef,
@@ -102,7 +104,8 @@ impl ZarrChunkReader {
     /// `batch_size` controls how many chunk rows are emitted per
     /// `RecordBatch`. Must be ≥ 1; callers typically pass
     /// `SessionConfig::batch_size` (defaults to 8192).
-    pub fn try_new(
+    pub async fn try_new(
+        storage: AsyncReadableListableStorage,
         group_uri: &str,
         arrays: Option<&[String]>,
         batch_size: usize,
@@ -113,16 +116,13 @@ impl ZarrChunkReader {
             geo,
             group_transform,
             spatial_dim_indices,
-        } = open_and_validate(group_uri, arrays)?;
+        } = open_and_validate(storage, group_uri, arrays).await?;
 
-        let spatial_dims_names: Vec<String> = spatial_dim_indices
-            .iter()
-            .map(|&i| array_infos[0].dim_names[i].clone())
-            .collect();
-        let chunk_spatial_shape: Vec<i64> = spatial_dim_indices
-            .iter()
-            .map(|&i| array_infos[0].chunk_shape[i] as i64)
-            .collect();
+        let (spatial_dims_names, chunk_spatial_shape) = raster_spatial_metadata(
+            &array_infos[0].dim_names,
+            &array_infos[0].chunk_shape,
+            &spatial_dim_indices,
+        );
 
         let raster_field = SedonaType::Raster
             .to_storage_field("raster", true)
@@ -171,12 +171,13 @@ impl ZarrChunkReader {
             // Every band gets its chunk-anchor URI populated as
             // provenance metadata. `data.is_empty()` is the InDb/OutDb
             // discriminator; this reader always emits empty `data` and
-            // defers pixel-byte resolution to the OutDb resolver.
+            // defers pixel-byte resolution to the raster byte loader.
             let anchor = build_chunk_anchor(&self.group_uri, &info.path, &self.chunk_indices);
+            let source_shape: Vec<i64> = info.chunk_shape.iter().map(|&n| n as i64).collect();
             builder.start_band_nd(
                 Some(info.path.as_str()),
                 &dim_names_ref,
-                &info.chunk_shape,
+                &source_shape,
                 info.data_type,
                 nodata_ref,
                 Some(anchor.as_str()),
@@ -267,20 +268,12 @@ struct OpenedGroup {
 /// Open the Zarr group, parse and validate group metadata, and return
 /// everything `ZarrChunkReader` needs to iterate without further I/O
 /// (apart from per-chunk byte fetches by future resolvers).
-fn open_and_validate(
+async fn open_and_validate(
+    storage: AsyncReadableListableStorage,
     group_uri: &str,
     arrays_filter: Option<&[String]>,
 ) -> Result<OpenedGroup, ArrowError> {
-    let fs_path = group_uri_to_filesystem_path(group_uri)?;
-    let store = FilesystemStore::new(&fs_path).map_err(|e| {
-        ArrowError::ExternalError(Box::new(sedona_internal_datafusion_err!(
-            "failed to open Zarr filesystem store at {}: {e}",
-            fs_path.display()
-        )))
-    })?;
-    let storage: Arc<FilesystemStore> = Arc::new(store);
-
-    let group = Group::open(storage.clone(), "/").map_err(|e| {
+    let group = Group::async_open(storage.clone(), "/").await.map_err(|e| {
         ArrowError::ExternalError(Box::new(sedona_internal_datafusion_err!(
             "failed to open Zarr group at {group_uri}: {e}"
         )))
@@ -302,25 +295,63 @@ fn open_and_validate(
         )));
     }
 
-    let arrays = group.child_arrays().map_err(|e| {
-        ArrowError::ExternalError(Box::new(sedona_internal_datafusion_err!(
-            "failed to enumerate child arrays in {group_uri}: {e}"
-        )))
-    })?;
-    if arrays.is_empty() {
-        return Err(ArrowError::InvalidArgumentError(format!(
-            "Zarr group at {group_uri} has no child arrays"
-        )));
-    }
+    let arrays = match arrays_filter {
+        // Explicit filter: open each named array directly, skipping the
+        // listing step. This is the only viable path against backends
+        // that don't expose directory listing (plain HTTPS without
+        // WebDAV, S3-via-HttpStore) and is strictly less I/O than
+        // list-then-filter when the user already knows what they want.
+        // A 1-D array named explicitly is a user error — surface it
+        // immediately rather than letting the spatial-dim resolver
+        // fail with a confusing message downstream.
+        Some(names) => {
+            let arrays = open_named_arrays(&storage, names, group_uri).await?;
+            for (name, array) in names.iter().zip(arrays.iter()) {
+                if array.shape().len() < 2 {
+                    return Err(ArrowError::InvalidArgumentError(format!(
+                        "array {name:?} has rank {} (shape {:?}); a raster band \
+                         requires at least 2 dimensions and cannot be read.",
+                        array.shape().len(),
+                        array.shape()
+                    )));
+                }
+            }
+            arrays
+        }
+        // Discovery: list direct children of the group and try to open
+        // each as an array. Per-array open failures are logged + skipped
+        // rather than poisoning the whole group, so a single malformed
+        // sibling (e.g. ITS_LIVE's U-typed coord variables with null
+        // fill values) doesn't take the whole read offline. 1-D arrays
+        // (typical xarray coord variables) are silently dropped so a
+        // canonical xarray layout reads cleanly.
+        None => {
+            let arrays = enumerate_child_arrays(&group, &storage, group_uri).await?;
+            if arrays.is_empty() {
+                return Err(ArrowError::InvalidArgumentError(format!(
+                    "Zarr group at {group_uri} has no child arrays"
+                )));
+            }
+            let kept: Vec<_> = arrays.into_iter().filter(|a| a.shape().len() > 1).collect();
+            if kept.is_empty() {
+                return Err(ArrowError::InvalidArgumentError(format!(
+                    "Zarr group at {group_uri} contains only 1-D arrays (typical \
+                     xarray-style coord variables); a raster band requires at least \
+                     2 dimensions, so this group has nothing readable as a raster"
+                )));
+            }
+            kept
+        }
+    };
 
-    let arrays = select_arrays(arrays, arrays_filter, group_uri)?;
     let array_infos = collect_array_infos(arrays)?;
     validate_group_constraints(&array_infos)?;
 
     // Spatial-dim resolution. Two configurations are accepted:
-    //   - dim_names ends with ["y", "x"] (canonical for georeferenced
-    //     2-D and time-series rasters); the spatial extent is the chunk's
-    //     last two dims.
+    //   - dim_names ends with a recognized spatial pair — ["y", "x"],
+    //     ["lat", "lon"], or ["latitude", "longitude"] (canonical for
+    //     georeferenced 2-D and time-series rasters); the spatial extent
+    //     is the chunk's last two dims.
     //   - `spatial:dims` attribute on the group explicitly names them.
     // Anything else errors with a clear message — silently picking dims
     // would produce wrong per-row transforms.
@@ -367,6 +398,80 @@ fn open_and_validate(
     })
 }
 
+/// Open arrays at the explicit paths requested by the caller, skipping
+/// the group listing step entirely. Used when `arrays_filter` is `Some`
+/// — the canonical path for backends that can't list (plain HTTPS / S3
+/// behind HttpStore) and a strict subset of work for any other backend.
+async fn open_named_arrays(
+    storage: &AsyncReadableListableStorage,
+    names: &[String],
+    group_uri: &str,
+) -> Result<Vec<Array<dyn AsyncReadableListableStorageTraits>>, ArrowError> {
+    let mut out = Vec::with_capacity(names.len());
+    for name in names {
+        let normalized = name.trim_start_matches('/');
+        let path = format!("/{normalized}");
+        let array = Array::async_open(storage.clone(), &path)
+            .await
+            .map_err(|e| {
+                ArrowError::InvalidArgumentError(format!(
+                    "Zarr group at {group_uri} has no array named {name:?} \
+                     (or its metadata could not be parsed): {e}"
+                ))
+            })?;
+        out.push(array);
+    }
+    Ok(out)
+}
+
+/// Discover the group's direct child arrays.
+///
+/// Discovery goes through zarrs's [`Group::async_children`], which uses
+/// the group's V3 `consolidated_metadata` block when present (no
+/// per-node storage reads) and otherwise lists the store. Listing is
+/// unsupported on some backends — plain HTTPS / S3-behind-`HttpStore`
+/// answer directory listing with `405 Method Not Allowed` — so a store
+/// that has neither consolidated metadata nor listing yields an
+/// actionable error pointing at the `arrays` option rather than a raw
+/// store error.
+///
+/// Each array is then built from its already-parsed metadata. Per-array
+/// failures are logged at warn level and the child is skipped — a single
+/// malformed sibling array (e.g. an xarray-style coord variable with a
+/// dtype zarrs can't yet parse) can no longer poison the whole group.
+/// Subgroups are skipped via the `NodeMetadata::Group` arm.
+async fn enumerate_child_arrays(
+    group: &Group<dyn AsyncReadableListableStorageTraits>,
+    storage: &AsyncReadableListableStorage,
+    group_uri: &str,
+) -> Result<Vec<Array<dyn AsyncReadableListableStorageTraits>>, ArrowError> {
+    let children = group.async_children(false).await.map_err(|e| {
+        ArrowError::ExternalError(Box::new(sedona_internal_datafusion_err!(
+            "failed to discover child arrays of Zarr group at {group_uri}: {e}. \
+             If this store has no consolidated metadata and does not support \
+             directory listing (for example a plain HTTPS server), pass the \
+             `arrays` option to name the arrays to read."
+        )))
+    })?;
+
+    let mut arrays = Vec::with_capacity(children.len());
+    for node in children {
+        let path = node.path().to_string();
+        match NodeMetadata::from(node) {
+            NodeMetadata::Array(metadata) => {
+                match Array::new_with_metadata(storage.clone(), &path, metadata) {
+                    Ok(array) => arrays.push(array),
+                    Err(e) => log::warn!(
+                        "skipping Zarr child {path} in {group_uri}: not usable as an array ({e})"
+                    ),
+                }
+            }
+            NodeMetadata::Group(_) => {}
+        }
+    }
+    Ok(arrays)
+}
+
 /// Collect per-array metadata from open zarrs `Array` handles.
 ///
 /// Sorts arrays by path so band ordering across rows is deterministic
@@ -374,7 +479,7 @@ fn open_and_validate(
 /// filesystem stores currently happen to enumerate alphabetically, but
 /// that's not part of the contract we want consumers to rely on).
 fn collect_array_infos(
-    mut arrays: Vec<Array<FilesystemStore>>,
+    mut arrays: Vec<Array<dyn AsyncReadableListableStorageTraits>>,
 ) -> Result<Vec<ArrayInfo>, ArrowError> {
     arrays.sort_by(|a, b| a.path().as_str().cmp(b.path().as_str()));
     let mut out = Vec::with_capacity(arrays.len());
@@ -409,69 +514,6 @@ fn collect_array_infos(
         });
     }
     Ok(out)
-}
-
-/// Apply the array-selection rules. 1-D arrays (typical xarray-style
-/// coord variables) are always dropped — a raster band requires at
-/// least 2 dimensions, so reading a 1-D array could never succeed.
-/// - Explicit filter: keep arrays whose path (with leading `/` stripped)
-///   matches one of the requested names. Unknown names error so users
-///   don't silently get an empty group from a typo; naming a 1-D array
-///   errors with a clear message rather than producing a confusing
-///   "no spatial axes" failure downstream.
-/// - No filter: read every multi-dimensional array.
-fn select_arrays(
-    arrays: Vec<Array<FilesystemStore>>,
-    filter: Option<&[String]>,
-    group_uri: &str,
-) -> Result<Vec<Array<FilesystemStore>>, ArrowError> {
-    if let Some(names) = filter {
-        let available: Vec<String> = arrays
-            .iter()
-            .map(|a| a.path().as_str().trim_start_matches('/').to_string())
-            .collect();
-        for requested in names {
-            let needle = requested.trim_start_matches('/');
-            match arrays
-                .iter()
-                .find(|a| a.path().as_str().trim_start_matches('/') == needle)
-            {
-                None => {
-                    return Err(ArrowError::InvalidArgumentError(format!(
-                        "Zarr group at {group_uri} has no array named {requested:?}; \
-                         available arrays: {available:?}"
-                    )));
-                }
-                Some(a) if a.shape().len() < 2 => {
-                    return Err(ArrowError::InvalidArgumentError(format!(
-                        "array {requested:?} has rank {} (shape {:?}); a raster band \
-                         requires at least 2 dimensions and cannot be read.",
-                        a.shape().len(),
-                        a.shape()
-                    )));
-                }
-                Some(_) => {}
-            }
-        }
-        let kept: Vec<_> = arrays
-            .into_iter()
-            .filter(|a| {
-                let path = a.path().as_str().trim_start_matches('/').to_string();
-                names.iter().any(|n| n.trim_start_matches('/') == path)
-            })
-            .collect();
-        return Ok(kept);
-    }
-
-    let kept: Vec<_> = arrays.into_iter().filter(|a| a.shape().len() > 1).collect();
-    if kept.is_empty() {
-        return Err(ArrowError::InvalidArgumentError(format!(
-            "Zarr group at {group_uri} contains only 1-D arrays (typical \
-             xarray-style coord variables); a raster band requires at least \
-             2 dimensions, so this group has nothing readable as a raster"
-        )));
-    }
-    Ok(kept)
 }
 
 /// Resolve dimension names for an array, supporting both Zarr v3
@@ -571,8 +613,9 @@ fn validate_group_constraints(infos: &[ArrayInfo]) -> Result<(), ArrowError> {
 ///
 /// If `spatial_dims` is provided via the group's `spatial:dims` attribute,
 /// look up those names by position. Otherwise, default to the last two
-/// dims and require they be named `y` and `x` (in that order) — the
-/// canonical GeoZarr-2D convention. Anything else errors.
+/// dims and require they form a recognized spatial pair — `[y, x]`,
+/// `[lat, lon]`, or `[latitude, longitude]` (in that order), the common
+/// CF / GeoZarr-2D conventions. Anything else errors.
 fn resolve_spatial_dim_indices(
     dim_names: &[String],
     spatial_dims: Option<&[String]>,
@@ -595,13 +638,36 @@ fn resolve_spatial_dim_indices(
             "at least 2 dimensions are required to resolve spatial axes; got {dim_names:?}",
         )));
     }
-    if dim_names[n - 2] != "y" || dim_names[n - 1] != "x" {
+    if !is_spatial_dim_pair(&dim_names[n - 2], &dim_names[n - 1]) {
         return Err(ArrowError::InvalidArgumentError(format!(
-            "the last two dim_names must be [\"y\", \"x\"] when `spatial:dims` is \
-             not declared; got {dim_names:?}",
+            "the last two dim_names must be a recognized spatial pair \
+             ([\"y\", \"x\"], [\"lat\", \"lon\"], or [\"latitude\", \"longitude\"]) \
+             when `spatial:dims` is not declared; got {dim_names:?}",
         )));
     }
     Ok(vec![n - 2, n - 1])
+}
+
+/// Build the raster-level `(spatial_dims, spatial_shape)` for a chunk in the
+/// X-first GIS order that `RasterRef::width()`/`height()`/`x_dim()`/`y_dim()`
+/// and the GDAL geotransform expect (X/width at index 0).
+///
+/// `spatial_dim_indices` is in file (C-)order — the slowest-varying spatial
+/// axis first, i.e. `[y_index, x_index]` for the 2-D case (see
+/// [`resolve_spatial_dim_indices`]). Bands keep their natural C-order
+/// `dim_names`/`shape` (matching the chunk's physical pixel layout); only
+/// this logical raster-level descriptor is reordered, so reversing the
+/// index list yields fastest-axis-first `[x, y]`. No pixel data is moved.
+fn raster_spatial_metadata(
+    dim_names: &[String],
+    chunk_shape: &[u64],
+    spatial_dim_indices: &[usize],
+) -> (Vec<String>, Vec<i64>) {
+    spatial_dim_indices
+        .iter()
+        .rev()
+        .map(|&i| (dim_names[i].clone(), chunk_shape[i] as i64))
+        .unzip()
 }
 
 /// Per-chunk transform: translate the group's transform so the chunk's
@@ -653,17 +719,15 @@ fn advance_chunk_indices(chunk_indices: &mut [u64], chunk_grid_shape: &[u64]) ->
 /// types — those don't have a `BandDataType` counterpart anyway, so the
 /// dtype check in `collect_array_infos` rejects them upstream.
 ///
-/// This is the only pixel-byte read primitive in the crate. The loader
-/// itself never calls it today — it always emits OutDb anchors — but
-/// the async `RS_EnsureLoaded` resolver (follow-up PR) will. Lives
-/// behind `#[cfg(test)]` until the resolver lands; the unit test below
-/// exercises it so the implementation doesn't bit-rot in the
-/// meantime.
+/// The sync chunk-decode path, exercised by the unit test below against a
+/// filesystem fixture. The production byte loader (`raster_loader::ZarrLoader`)
+/// reads over async object_store storage and so retrieves chunks directly
+/// via `Array::async_retrieve_chunk` rather than through this helper.
 #[cfg(test)]
-fn retrieve_chunk_bytes(
-    array: &Array<FilesystemStore>,
-    chunk_indices: &[u64],
-) -> Result<Vec<u8>, ArrowError> {
+fn retrieve_chunk_bytes<S>(array: &Array<S>, chunk_indices: &[u64]) -> Result<Vec<u8>, ArrowError>
+where
+    S: ?Sized + zarrs::storage::ReadableStorageTraits + 'static,
+{
     let bytes = array
         .retrieve_chunk::<ArrayBytes<'static>>(chunk_indices)
         .map_err(|e| {
@@ -689,6 +753,7 @@ mod tests {
     use tempfile::TempDir;
     use zarrs::array::data_type;
     use zarrs::array::ArrayBuilder;
+    use zarrs_filesystem::FilesystemStore;
 
     /// Direct coverage for `retrieve_chunk_bytes`. The function is the
     /// only pixel-byte read primitive in the crate today; previously it
@@ -779,6 +844,34 @@ mod tests {
         let names = vec!["time".into(), "y".into(), "x".into()];
         let idx = resolve_spatial_dim_indices(&names, None).unwrap();
         assert_eq!(idx, vec![1, 2]);
+    }
+
+    #[test]
+    fn raster_spatial_metadata_is_x_first_for_nonsquare_chunk() {
+        // Band is C-order [time, lat, lon] with a deliberately non-square
+        // chunk: lat=2 (height), lon=3 (width). resolve_spatial_dim_indices
+        // returns [lat_idx, lon_idx] = [1, 2] (y-first, file order).
+        let dim_names = vec!["time".to_string(), "lat".to_string(), "lon".to_string()];
+        let chunk_shape = vec![1u64, 2, 3];
+        let (dims, shape) = raster_spatial_metadata(&dim_names, &chunk_shape, &[1, 2]);
+        // Raster-level descriptor must be X-first so width()=shape[0]=lon=3
+        // and height()=shape[1]=lat=2 (not the band's C-order [lat, lon]).
+        assert_eq!(dims, vec!["lon".to_string(), "lat".to_string()]);
+        assert_eq!(shape, vec![3, 2]);
+    }
+
+    #[test]
+    fn resolve_spatial_dim_indices_default_latlon() {
+        let names = vec!["time".into(), "lat".into(), "lon".into()];
+        let idx = resolve_spatial_dim_indices(&names, None).unwrap();
+        assert_eq!(idx, vec![1, 2]);
+    }
+
+    #[test]
+    fn resolve_spatial_dim_indices_default_latitude_longitude() {
+        let names = vec!["latitude".into(), "longitude".into()];
+        let idx = resolve_spatial_dim_indices(&names, None).unwrap();
+        assert_eq!(idx, vec![0, 1]);
     }
 
     #[test]

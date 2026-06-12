@@ -19,25 +19,30 @@ use std::io::Write;
 use std::sync::Arc;
 
 use arrow_array::builder::BinaryBuilder;
-use datafusion_common::{DataFusionError, Result};
+use datafusion_common::{exec_datafusion_err, Result};
 use datafusion_expr::ColumnarValue;
 use datafusion_expr::Volatility;
+use geo_traits::Dimensions;
 use geo_traits::{
-    CoordTrait, GeometryCollectionTrait, GeometryTrait, LineStringTrait, MultiLineStringTrait,
-    MultiPointTrait, MultiPolygonTrait, PointTrait, PolygonTrait,
+    GeometryCollectionTrait, GeometryTrait, LineStringTrait, MultiLineStringTrait,
+    MultiPolygonTrait, PolygonTrait,
 };
 use sedona_expr::item_crs::ItemCrsKernel;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
-use sedona_geometry::wkb_factory::{
-    write_wkb_coord_trait, write_wkb_empty_point, write_wkb_geometrycollection_header,
-    write_wkb_linestring_header, write_wkb_multilinestring_header, write_wkb_multipoint_header,
-    write_wkb_multipolygon_header, write_wkb_point_header, write_wkb_polygon_header,
-    write_wkb_polygon_ring_header, WKB_MIN_PROBABLE_BYTES,
+use sedona_geometry::{
+    error::SedonaGeometryError,
+    wkb_factory::{
+        write_wkb_geometrycollection_header, write_wkb_linestring_header,
+        write_wkb_multilinestring_header, write_wkb_multipolygon_header, write_wkb_polygon_header,
+        write_wkb_polygon_ring_header, WKB_MIN_PROBABLE_BYTES,
+    },
 };
 use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY},
     matchers::ArgMatcher,
 };
+use wkb::reader::Wkb;
+use wkb::Endianness;
 
 use crate::executor::WkbExecutor;
 
@@ -83,7 +88,8 @@ impl SedonaScalarKernel for STReverse {
         executor.execute_wkb_void(|maybe_wkb| {
             match maybe_wkb {
                 Some(wkb) => {
-                    invoke_scalar(&wkb, &mut builder)?;
+                    invoke_scalar(&wkb, &mut builder)
+                        .map_err(|e| exec_datafusion_err!("ST_Reverse error: {e}"))?;
                     builder.append_value([]);
                 }
                 _ => builder.append_null(),
@@ -95,75 +101,46 @@ impl SedonaScalarKernel for STReverse {
     }
 }
 
-fn invoke_scalar(geom: &impl GeometryTrait<T = f64>, writer: &mut impl Write) -> Result<()> {
+fn invoke_scalar(geom: &Wkb, writer: &mut impl Write) -> Result<(), SedonaGeometryError> {
     let dims = geom.dim();
     match geom.as_type() {
-        geo_traits::GeometryType::Point(pt) => {
-            if pt.coord().is_some() {
-                write_wkb_point_header(writer, dims)
-                    .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-                write_wkb_coord_trait(writer, &pt.coord().unwrap())
-                    .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-            } else {
-                write_wkb_empty_point(writer, dims)
-                    .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-            }
-        }
-
-        geo_traits::GeometryType::MultiPoint(multi_point) => {
-            write_wkb_multipoint_header(writer, dims, multi_point.points().count())
-                .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-            for pt in multi_point.points() {
-                invoke_scalar(&pt, writer)?;
-            }
+        geo_traits::GeometryType::Point(_) | geo_traits::GeometryType::MultiPoint(_) => {
+            // Note: in the case of big endian input, this may result in mixed endian output.
+            // Mixed endian output should be handled by all readers but is probably not well tested.
+            writer.write_all(geom.buf())?;
         }
 
         geo_traits::GeometryType::LineString(ls) => {
-            write_wkb_linestring_header(writer, dims, ls.coords().count())
-                .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-            write_reversed_coords(writer, ls.coords())?;
+            write_reversed_linestring(writer, ls, dims)?;
         }
 
         geo_traits::GeometryType::Polygon(pgn) => {
-            let num_rings = pgn.interiors().count() + pgn.exterior().is_some() as usize;
-            write_wkb_polygon_header(writer, dims, num_rings)
-                .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-
-            if let Some(exterior) = pgn.exterior() {
-                write_reversed_ring(writer, exterior)?;
-            }
-
-            for interior in pgn.interiors() {
-                write_reversed_ring(writer, interior)?;
-            }
+            write_reversed_polygon(writer, pgn, dims)?;
         }
 
         geo_traits::GeometryType::MultiLineString(mls) => {
-            write_wkb_multilinestring_header(writer, dims, mls.line_strings().count())
-                .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+            write_wkb_multilinestring_header(writer, dims, mls.num_line_strings())?;
             for ls in mls.line_strings() {
-                invoke_scalar(&ls, writer)?;
+                write_reversed_linestring(writer, ls, dims)?;
             }
         }
 
         geo_traits::GeometryType::MultiPolygon(mpgn) => {
-            write_wkb_multipolygon_header(writer, dims, mpgn.polygons().count())
-                .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+            write_wkb_multipolygon_header(writer, dims, mpgn.num_polygons())?;
             for pgn in mpgn.polygons() {
-                invoke_scalar(&pgn, writer)?;
+                write_reversed_polygon(writer, pgn, dims)?;
             }
         }
 
         geo_traits::GeometryType::GeometryCollection(gcn) => {
-            write_wkb_geometrycollection_header(writer, dims, gcn.geometries().count())
-                .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+            write_wkb_geometrycollection_header(writer, dims, gcn.num_geometries())?;
             for geom in gcn.geometries() {
-                invoke_scalar(&geom, writer)?;
+                invoke_scalar(geom, writer)?;
             }
         }
 
         _ => {
-            return Err(DataFusionError::Execution(
+            return Err(SedonaGeometryError::Invalid(
                 "Unsupported geometry type for reversal operation".to_string(),
             ));
         }
@@ -171,20 +148,69 @@ fn invoke_scalar(geom: &impl GeometryTrait<T = f64>, writer: &mut impl Write) ->
     Ok(())
 }
 
-fn write_reversed_ring(writer: &mut impl Write, ring: impl LineStringTrait<T = f64>) -> Result<()> {
-    write_wkb_polygon_ring_header(writer, ring.coords().count())
-        .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-    write_reversed_coords(writer, ring.coords())
+fn write_reversed_linestring(
+    writer: &mut impl Write,
+    ls: &wkb::reader::LineString,
+    dims: Dimensions,
+) -> Result<(), SedonaGeometryError> {
+    write_wkb_linestring_header(writer, dims, ls.num_coords())?;
+    write_reversed_coords(writer, ls.coords_slice(), dims.size(), ls.byte_order())?;
+    Ok(())
 }
 
-fn write_reversed_coords<I>(writer: &mut impl Write, coords: I) -> Result<()>
-where
-    I: DoubleEndedIterator,
-    I::Item: CoordTrait<T = f64>,
-{
-    coords.rev().try_for_each(|coord| {
-        write_wkb_coord_trait(writer, &coord).map_err(|e| DataFusionError::Execution(e.to_string()))
-    })
+fn write_reversed_polygon(
+    writer: &mut impl Write,
+    pgn: &wkb::reader::Polygon,
+    dims: Dimensions,
+) -> Result<(), SedonaGeometryError> {
+    let num_rings = pgn.num_interiors() + pgn.exterior().is_some() as usize;
+    write_wkb_polygon_header(writer, dims, num_rings)?;
+
+    if let Some(exterior) = pgn.exterior() {
+        write_reversed_ring(writer, exterior, dims.size())?;
+    }
+
+    for interior in pgn.interiors() {
+        write_reversed_ring(writer, interior, dims.size())?;
+    }
+
+    Ok(())
+}
+
+fn write_reversed_ring(
+    writer: &mut impl Write,
+    ring: &wkb::reader::LinearRing,
+    dim_size: usize,
+) -> Result<(), SedonaGeometryError> {
+    write_wkb_polygon_ring_header(writer, ring.num_coords())?;
+    write_reversed_coords(writer, ring.coords_slice(), dim_size, ring.byte_order())
+}
+
+fn write_reversed_coords(
+    writer: &mut impl Write,
+    coords: &[u8],
+    dim_size: usize,
+    endianness: Endianness,
+) -> Result<(), SedonaGeometryError> {
+    let coord_bytes = dim_size * size_of::<f64>();
+    let needs_byteswap = matches!(endianness, Endianness::BigEndian);
+
+    if needs_byteswap {
+        let mut ord_reversed = [0u8; size_of::<f64>()];
+        for coord in coords.rchunks_exact(coord_bytes) {
+            for ord in coord.chunks_exact(size_of::<f64>()) {
+                ord_reversed.copy_from_slice(ord);
+                ord_reversed.reverse();
+                writer.write_all(&ord_reversed)?;
+            }
+        }
+    } else {
+        for coord in coords.rchunks_exact(coord_bytes) {
+            writer.write_all(coord)?;
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -434,6 +460,29 @@ mod tests {
         );
 
         assert_array_equal(&tester.invoke_wkb_array(input_wkt).unwrap(), &expected);
+    }
+
+    #[test]
+    fn udf_big_endian_linestring() {
+        // Big-endian WKB for LINESTRING (1 2, 3 4)
+        #[rustfmt::skip]
+        let big_endian_wkb: &[u8] = &[
+            0x00,                               // big-endian
+            0x00, 0x00, 0x00, 0x02,              // LINESTRING
+            0x00, 0x00, 0x00, 0x02,              // 2 points
+            0x3F, 0xF0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // x=1.0
+            0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // y=2.0
+            0x40, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // x=3.0
+            0x40, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // y=4.0
+        ];
+
+        let tester = ScalarUdfTester::new(st_reverse_udf().into(), vec![WKB_GEOMETRY.clone()]);
+        let input = Arc::new(arrow_array::BinaryArray::from_vec(vec![big_endian_wkb]));
+        let result = tester.invoke_array(input).unwrap();
+
+        // Result should be LINESTRING (3 4, 1 2) in little-endian WKB
+        let expected = create_array(&[Some("LINESTRING (3 4, 1 2)")], &WKB_GEOMETRY);
+        assert_array_equal(&result, &expected);
     }
 
     #[rstest]

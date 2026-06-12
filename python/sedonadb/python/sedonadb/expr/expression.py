@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-from typing import Any, Iterable, Optional
+from typing import TYPE_CHECKING, Any, Iterable, Optional
 
 from sedonadb._lib import (
     InternalExpr as _InternalExpr,
@@ -27,6 +27,11 @@ from sedonadb._lib import (
     expr_sort_expr as _expr_sort_expr,
 )
 from sedonadb.expr.literal import Literal
+from sedonadb.utility import sedona  # noqa: F401
+
+
+if TYPE_CHECKING:
+    from sedonadb.functions import Functions
 
 
 class Expr:
@@ -46,9 +51,9 @@ class Expr:
     that accept value lists (e.g. `isin`).
     """
 
-    __slots__ = ("_impl",)
+    __slots__ = ("_impl", "_ctx")
 
-    def __init__(self, impl):
+    def __init__(self, impl, ctx=None):
         # `impl` is the underlying _lib.InternalExpr handle. Users normally do
         # not construct `Expr` directly; use `col()` (or operator composition)
         # instead. Validate the type so a misuse fails clearly here rather
@@ -60,9 +65,27 @@ class Expr:
                 f"Use sedonadb.expr.col() to construct a column expression."
             )
         self._impl = impl
+        self._ctx = ctx
 
     def __repr__(self) -> str:
         return f"Expr({self._impl!r})"
+
+    @property
+    def funcs(self) -> "Functions":
+        """Pipe this expression into another SedonaDB function
+
+        Examples:
+
+            >>> sd = sedona.db.connect()
+            >>> sd.col("geom").funcs.st_envelope()
+            Expr(st_envelope(geom))
+        """
+        from sedonadb.functions import Functions
+
+        if self._ctx is None:
+            raise ValueError("Can't pipe Expr without context into Functions")
+
+        return Functions(self._ctx, self)
 
     def alias(self, name: str) -> "Expr":
         """Return a copy of the expression with a new output name.
@@ -72,11 +95,11 @@ class Expr:
 
         Examples:
 
-            >>> from sedonadb.expr import col
-            >>> col("x").alias("y")
+            >>> sd = sedona.db.connect()
+            >>> sd.col("x").alias("y")
             Expr(x AS y)
         """
-        return Expr(self._impl.alias(name))
+        return Expr(self._impl.alias(name), self._ctx)
 
     def cast(self, target) -> "Expr":
         """Cast the expression to the given Arrow type.
@@ -92,11 +115,11 @@ class Expr:
         Examples:
 
             >>> import pyarrow as pa
-            >>> from sedonadb.expr import col
-            >>> col("x").cast(pa.int32())
+            >>> sd = sedona.db.connect()
+            >>> sd.col("x").cast(pa.int32())
             Expr(CAST(x AS Int32))
         """
-        return Expr(self._impl.cast(target))
+        return Expr(self._impl.cast(target), self._ctx)
 
     def is_null(self) -> "Expr":
         """Return a boolean expression that is true where this expression is
@@ -108,11 +131,11 @@ class Expr:
 
         Examples:
 
-            >>> from sedonadb.expr import col
-            >>> col("x").is_null()
+            >>> sd = sedona.db.connect()
+            >>> sd.col("x").is_null()
             Expr(x IS NULL)
         """
-        return Expr(self._impl.is_null())
+        return Expr(self._impl.is_null(), self._ctx)
 
     def is_not_null(self) -> "Expr":
         """Return a boolean expression that is true where this expression is
@@ -120,11 +143,11 @@ class Expr:
 
         Examples:
 
-            >>> from sedonadb.expr import col
-            >>> col("x").is_not_null()
+            >>> sd = sedona.db.connect()
+            >>> sd.col("x").is_not_null()
             Expr(x IS NOT NULL)
         """
-        return Expr(self._impl.is_not_null())
+        return Expr(self._impl.is_not_null(), self._ctx)
 
     def isin(self, values: Iterable[Any]) -> "Expr":
         """Return a boolean expression that is true where this expression
@@ -139,23 +162,23 @@ class Expr:
 
         Examples:
 
-            >>> from sedonadb.expr import col
-            >>> col("x").isin([1, 2, 3])
+            >>> sd = sedona.db.connect()
+            >>> sd.col("x").isin([1, 2, 3])
             Expr(x IN ([Int64(1), Int64(2), Int64(3)]))
         """
         coerced = [_to_expr(v) for v in values]
-        return Expr(self._impl.isin([e._impl for e in coerced], False))
+        return Expr(self._impl.isin([e._impl for e in coerced], False), self._ctx)
 
     def negate(self) -> "Expr":
         """Return the arithmetic negation of this expression.
 
         Examples:
 
-            >>> from sedonadb.expr import col
-            >>> col("x").negate()
+            >>> sd = sedona.db.connect()
+            >>> sd.col("x").negate()
             Expr((- x))
         """
-        return Expr(self._impl.negate())
+        return Expr(self._impl.negate(), self._ctx)
 
     def asc(self, nulls_first: bool = False) -> "SortExpr":
         """Wrap this expression as an ascending sort key.
@@ -171,8 +194,8 @@ class Expr:
 
         Examples:
 
-            >>> from sedonadb.expr import col
-            >>> col("x").asc()
+            >>> sd = sedona.db.connect()
+            >>> sd.col("x").asc()
             SortExpr(x ASC NULLS LAST)
         """
         return SortExpr(self._impl.asc(nulls_first))
@@ -183,8 +206,8 @@ class Expr:
 
         Examples:
 
-            >>> from sedonadb.expr import col
-            >>> col("x").desc()
+            >>> sd = sedona.db.connect()
+            >>> sd.col("x").desc()
             SortExpr(x DESC NULLS LAST)
         """
         return SortExpr(self._impl.desc(nulls_first))
@@ -262,7 +285,7 @@ class Expr:
         return _binary("|", other, self)
 
     def __invert__(self) -> "Expr":
-        return Expr(_expr_not(self._impl))
+        return Expr(_expr_not(self._impl), self._ctx)
 
     # Defining `__eq__` makes the class unhashable by default. Be explicit
     # so users see a clear error instead of a confusing one. Expressions are
@@ -338,10 +361,11 @@ def sort_expr(
 
     Examples:
 
-        >>> from sedonadb.expr import col, sort_expr
-        >>> sort_expr(col("x"))
+        >>> from sedonadb.expr import sort_expr
+        >>> sd = sedona.db.connect()
+        >>> sort_expr(sd.col("x"))
         SortExpr(x ASC NULLS LAST)
-        >>> sort_expr(col("x"), asc=False, nulls_first=True)
+        >>> sort_expr(sd.col("x"), asc=False, nulls_first=True)
         SortExpr(x DESC NULLS FIRST)
     """
     if not isinstance(expr, Expr):
@@ -352,8 +376,11 @@ def sort_expr(
     return SortExpr(_expr_sort_expr(expr._impl, asc, nulls_first))
 
 
-def col(name: str, qualifier: Optional[str] = None) -> Expr:
+def col(name: str, qualifier: Optional[str] = None, ctx: Any = None) -> Expr:
     """Reference a column by name.
+
+    This is typically constructed using `sd.col()`, which provides the
+    associated context automatically.
 
     Args:
         name: The column name to reference.
@@ -361,6 +388,7 @@ def col(name: str, qualifier: Optional[str] = None) -> Expr:
             when the same column name appears in multiple input tables of a
             join. Defaults to `None`, which leaves the column unqualified and
             lets the planner resolve against the surrounding schema.
+        ctx: A SedonaContext from which function definitions should be derived
 
     Examples:
 
@@ -370,7 +398,7 @@ def col(name: str, qualifier: Optional[str] = None) -> Expr:
         >>> col("x", "t")
         Expr(t.x)
     """
-    return Expr(_expr_col(name, qualifier))
+    return Expr(_expr_col(name, qualifier), ctx)
 
 
 class ScalarUdf:
@@ -380,18 +408,26 @@ class ScalarUdf:
     the Python expression API.
     """
 
-    def __init__(self, impl):
+    def __init__(self, impl, ctx=None, expr=None):
         if type(impl).__name__ not in ("PySedonaScalarUdf", "PyScalarUdf"):
             raise TypeError(
                 "ScalarUdf must be constructed from internal scalar UDF wrapper"
             )
         self._impl = impl
+        self._ctx = ctx
+        self._expr = expr
 
     def __repr__(self) -> str:
         return f"ScalarUdf({self._impl!r})"
 
     def __call__(self, *args: Any) -> Expr:
-        return Expr(self._impl.call([_to_expr(arg)._impl for arg in args]))
+        # When generated from a piped Functions, self._expr should be
+        # the first argument
+        args = [_to_expr(arg)._impl for arg in args]
+        if self._expr is not None:
+            args = [_to_expr(self._expr)._impl] + args
+
+        return Expr(self._impl.call(args), self._ctx)
 
 
 class AggregateUdf:
@@ -401,21 +437,29 @@ class AggregateUdf:
     the Python expression API.
     """
 
-    def __init__(self, impl):
+    def __init__(self, impl, ctx=None, expr=None):
         if type(impl).__name__ not in ("PyAggregateUdf",):
             raise TypeError(
                 "AggregateUdf must be constructed from internal aggregate UDF wrapper"
             )
         self._impl = impl
+        self._ctx = ctx
+        self._expr = expr
 
     def __repr__(self) -> str:
         return f"AggregateUdf({self._impl!r})"
 
     def __call__(self, *args: Any) -> Expr:
-        return Expr(self._impl.call([_to_expr(arg)._impl for arg in args]))
+        # When generated from a piped Functions, self._expr should be
+        # the first argument
+        args = [_to_expr(arg)._impl for arg in args]
+        if self._expr is not None:
+            args = [_to_expr(self._expr)._impl] + args
+
+        return Expr(self._impl.call(args), self._ctx)
 
 
-def _to_expr(value: Any) -> Expr:
+def _to_expr(value: Any, ctx=None) -> Expr:
     """Coerce a Python value to an `Expr`.
 
     `Expr` values pass through unchanged. Anything else is wrapped as a
@@ -426,9 +470,13 @@ def _to_expr(value: Any) -> Expr:
     literal-handling logic.
     """
     if isinstance(value, Expr):
+        ctx = value._ctx if value._ctx is not None else ctx
         return value
-    arrow_obj = value if isinstance(value, Literal) else Literal(value)
-    return Expr(_expr_lit(arrow_obj))
+    elif isinstance(value, Literal):
+        ctx = value._ctx if value._ctx is not None else ctx
+        return Expr(_expr_lit(value), ctx)
+    else:
+        return Expr(_expr_lit(Literal(value)), ctx)
 
 
 def _binary(op: str, lhs: Any, rhs: Any) -> Expr:
@@ -440,4 +488,5 @@ def _binary(op: str, lhs: Any, rhs: Any) -> Expr:
     """
     lhs_expr = _to_expr(lhs)
     rhs_expr = _to_expr(rhs)
-    return Expr(_expr_binary(op, lhs_expr._impl, rhs_expr._impl))
+    ctx = lhs_expr._ctx if lhs_expr._ctx is not None else rhs_expr._ctx
+    return Expr(_expr_binary(op, lhs_expr._impl, rhs_expr._impl), ctx)

@@ -32,24 +32,30 @@ class Functions:
     given a specific SedonaDB context.
     """
 
-    def __init__(self, ctx):
+    def __init__(self, ctx, expr=None):
         self._ctx = ctx
+        self._expr = expr
 
     @cached_property
     def table(self) -> "TableFunctions":
         """Access SedonaDB Table functions"""
         from sedonadb.functions.table import TableFunctions
 
+        if self._expr is not None:
+            raise ValueError("Expr piping into table functions is not supported")
+
         return TableFunctions(self._ctx)
 
     def __getattr__(self, name) -> Union["ScalarUdf", "AggregateUdf"]:
         try:
-            return ScalarUdf(self._ctx._impl.scalar_udf(name))
+            return ScalarUdf(self._ctx._impl.scalar_udf(name), self._ctx, self._expr)
         except SedonaError:
             pass
 
         try:
-            return AggregateUdf(self._ctx._impl.aggregate_udf(name))
+            return AggregateUdf(
+                self._ctx._impl.aggregate_udf(name), self._ctx, self._expr
+            )
         except SedonaError:
             pass
 

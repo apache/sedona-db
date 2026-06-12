@@ -28,6 +28,7 @@ import pandas as pd
 import pyarrow as pa
 import pytest
 import sedonadb
+from sedonadb.datasource import PyogrioFormatSpec
 import shapely
 
 
@@ -64,7 +65,7 @@ def test_read_ogr_projection(con):
 
 def test_read_ogr_multi_file(con):
     n = 1024 * 16
-    partitions = ["part_{c}" for c in "abcdefghijklmnop"]
+    partitions = [f"part_{c}" for c in "abcdefghijklmnop"]
     series = geopandas.GeoSeries.from_xy(
         list(range(n)), list(range(1, n + 1)), crs="EPSG:3857"
     )
@@ -91,19 +92,24 @@ def test_read_ogr_multi_file(con):
             con.read_parquet(parquet_path).to_pandas().to_file(fgb_path)
 
         # Reading a directory while specifying the extension should work
+        # Partition columns are auto-discovered from the directory structure
         con.read_pyogrio(f"{td}", extension="fgb").to_view(
             "gdf_from_dir", overwrite=True
         )
         geopandas.testing.assert_geodataframe_equal(
-            con.sql("SELECT * FROM gdf_from_dir ORDER BY idx").to_pandas(),
-            gdf.filter(["idx", "wkb_geometry"]),
+            con.sql(
+                "SELECT idx, partition, wkb_geometry FROM gdf_from_dir ORDER BY idx"
+            ).to_pandas(),
+            gdf,
         )
 
         # Reading using a glob without specifying the extension should work
         con.read_pyogrio(f"{td}/**/*.fgb").to_view("gdf_from_glob", overwrite=True)
         geopandas.testing.assert_geodataframe_equal(
-            con.sql("SELECT * FROM gdf_from_glob ORDER BY idx").to_pandas(),
-            gdf.filter(["idx", "wkb_geometry"]),
+            con.sql(
+                "SELECT idx, partition, wkb_geometry FROM gdf_from_glob ORDER BY idx"
+            ).to_pandas(),
+            gdf,
         )
 
 
@@ -290,3 +296,102 @@ def test_write_ogr_from_view_types(con):
         con.create_data_frame(tab).to_pyogrio(f"{td}/foofy.fgb")
         tab_roundtrip = con.read_pyogrio(f"{td}/foofy.fgb").to_arrow_table()
         assert tab_roundtrip.sort_by("string_col") == tab_simple
+
+
+def test_read_ogr_partitioned(con):
+    n = 100
+    series = geopandas.GeoSeries.from_xy(
+        list(range(n)), list(range(1, n + 1)), crs="EPSG:3857"
+    )
+    gdf = geopandas.GeoDataFrame(
+        {
+            "idx": list(range(n)),
+            "grp": [str(i // 10) for i in range(n)],
+            "wkb_geometry": series,
+        }
+    )
+    gdf = gdf.set_geometry(gdf["wkb_geometry"])
+
+    with tempfile.TemporaryDirectory() as td:
+        # Write partitioned FGB files using hive-style directories because
+        # write_pyogrio doesn't support writing partitions yet
+        for grp_val in gdf["grp"].unique():
+            grp_dir = Path(td) / f"grp={grp_val}"
+            grp_dir.mkdir()
+            subset = gdf[gdf["grp"] == grp_val].drop(columns=["grp"])
+            subset.to_file(grp_dir / "data.fgb")
+
+        # Test auto-discovery of partition columns with the default value
+        # (which is to autodiscover partitions)
+        con.read_pyogrio(td, extension="fgb").to_view(
+            "partitioned_auto", overwrite=True
+        )
+        geopandas.testing.assert_geodataframe_equal(
+            con.sql(
+                "SELECT idx, grp, wkb_geometry FROM partitioned_auto ORDER BY idx"
+            ).to_pandas(),
+            gdf,
+        )
+
+        # Test auto-discovery of partition columns (partitioning=None)
+        con.read_pyogrio(td, extension="fgb", partitioning=None).to_view(
+            "partitioned_auto", overwrite=True
+        )
+        geopandas.testing.assert_geodataframe_equal(
+            con.sql(
+                "SELECT idx, grp, wkb_geometry FROM partitioned_auto ORDER BY idx"
+            ).to_pandas(),
+            gdf,
+        )
+
+        # Test explicit partitioning specification (list)
+        con.read_pyogrio(td, extension="fgb", partitioning=["grp"]).to_view(
+            "partitioned_explicit", overwrite=True
+        )
+        geopandas.testing.assert_geodataframe_equal(
+            con.sql(
+                "SELECT idx, grp, wkb_geometry FROM partitioned_explicit ORDER BY idx"
+            ).to_pandas(),
+            gdf,
+        )
+
+        # Test explicit partitioning specification (str)
+        con.read_pyogrio(td, extension="fgb", partitioning="grp").to_view(
+            "partitioned_explicit", overwrite=True
+        )
+        geopandas.testing.assert_geodataframe_equal(
+            con.sql(
+                "SELECT idx, grp, wkb_geometry FROM partitioned_explicit ORDER BY idx"
+            ).to_pandas(),
+            gdf,
+        )
+
+        # Test partitioning=[] disables auto-discovery
+        con.read_pyogrio(td, extension="fgb", partitioning=[]).to_view(
+            "partitioned_disabled", overwrite=True
+        )
+        geopandas.testing.assert_geodataframe_equal(
+            con.sql("SELECT * FROM partitioned_disabled ORDER BY idx").to_pandas(),
+            gdf.filter(["idx", "wkb_geometry"]),
+        )
+
+
+def test_pyogrio_format_register():
+    # Create a dedicated connection here because we're about to modify options
+    sd = sedonadb.connect()
+    sd.register(PyogrioFormatSpec("fgb"))
+
+    n = 1024
+    series = geopandas.GeoSeries.from_xy(
+        list(range(n)), list(range(1, n + 1)), crs="EPSG:3857"
+    )
+    gdf = geopandas.GeoDataFrame({"idx": list(range(n)), "wkb_geometry": series})
+    gdf = gdf.set_geometry(gdf["wkb_geometry"])
+
+    with tempfile.TemporaryDirectory() as td:
+        temp_fgb_path = f"{td}/temp.fgb"
+        gdf.to_file(temp_fgb_path)
+
+        # Should be able to SELECT * from 'file' after registering the format
+        df = sd.sql(f"SELECT * FROM '{temp_fgb_path}' ORDER BY idx")
+        geopandas.testing.assert_geodataframe_equal(df.to_pandas(), gdf)

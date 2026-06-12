@@ -27,8 +27,8 @@ use arrow_array::{
 use arrow_schema::{Field, Schema};
 use datafusion::catalog::TableProvider;
 use datafusion_common::{metadata::ScalarAndMetadata, ScalarValue};
-use datafusion_expr::{expr::FieldMetadata, ScalarUDF, ScalarUDFImpl};
-use datafusion_ffi::{table_provider::FFI_TableProvider, udf::FFI_ScalarUDF};
+use datafusion_expr::expr::FieldMetadata;
+use datafusion_ffi::table_provider::FFI_TableProvider;
 use pyo3::{
     types::{PyAnyMethods, PyCapsule, PyCapsuleMethods},
     Bound, PyAny, Python,
@@ -67,13 +67,6 @@ pub fn import_ffi_table_provider(
         check_pycapsule(&capsule, "datafusion_table_provider")? as *mut FFI_TableProvider;
     let provider = Arc::<dyn TableProvider>::from(unsafe { contents.as_ref().unwrap() });
     Ok(provider)
-}
-
-pub fn import_ffi_scalar_udf(obj: &Bound<PyAny>) -> Result<ScalarUDF, PySedonaError> {
-    let capsule = obj.getattr("__datafusion_scalar_udf__")?.call0()?;
-    let udf_ptr = check_pycapsule(&capsule, "datafusion_scalar_udf")? as *mut FFI_ScalarUDF;
-    let udf_impl: Arc<dyn ScalarUDFImpl> = unsafe { udf_ptr.as_ref().unwrap().into() };
-    Ok(ScalarUDF::new_from_shared_impl(udf_impl))
 }
 
 pub fn import_arrow_array_stream<'py>(

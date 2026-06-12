@@ -31,6 +31,7 @@ def test_getitem_string_returns_col_expr(con):
     e = df["x"]
     assert isinstance(e, Expr)
     assert repr(e) == "Expr(foofy.x)"
+    assert e._ctx is not None
 
 
 def test_getitem_positive_int_returns_col_expr(con):
@@ -40,6 +41,7 @@ def test_getitem_positive_int_returns_col_expr(con):
     e = df[1]
     assert isinstance(e, Expr)
     assert repr(e) == "Expr(foofy.y)"
+    assert e._ctx is not None
 
 
 def test_getitem_first_int_index(con):
@@ -65,6 +67,7 @@ def test_getitem_string_composes_with_operators(con):
     e = df["x"] + df["y"]
     assert isinstance(e, Expr)
     assert repr(e) == "Expr(foofy.x + foofy.y)"
+    assert e._ctx is not None
 
 
 def test_getitem_unknown_string_raises_keyerror_with_columns(con):
@@ -108,3 +111,20 @@ def test_getitem_slice_raises_typeerror(con):
     df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3]}))
     with pytest.raises(TypeError, match="not supported"):
         df[0:2]
+
+
+def test_getattr_returns_col_expr(con):
+    df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3]})).alias("foofy")
+    e = df.x
+    assert isinstance(e, Expr)
+    assert repr(e) == "Expr(foofy.x)"
+    assert e._ctx is not None
+
+
+def test_getattr_unknown_raises_attributeerror(con):
+    df = con.create_data_frame(pd.DataFrame({"x": [1, 2, 3], "y": [10, 20, 30]}))
+    with pytest.raises(AttributeError, match="not found") as exc:
+        df.nonexistent
+    assert "nonexistent" in str(exc.value)
+    assert "x" in str(exc.value)
+    assert "y" in str(exc.value)

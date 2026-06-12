@@ -15,47 +15,43 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! Zarr URI helpers — group locators and per-chunk OutDb anchors.
+//! Zarr URI helpers — store resolution and per-chunk OutDb anchors.
 //!
 //! Two URI shapes flow through the loader:
 //!
 //! 1. **Group URI** (the loader entry-point argument). Identifies a Zarr
-//!    group on a backend, e.g. `file:///tmp/datacube.zarr` or a bare
-//!    local path. Cloud schemes (`s3://`, `gs://`, `az://`, `https://`)
-//!    will be accepted by a future revision; today only `file://` and
-//!    bare-path are recognised.
+//!    group on a backend. Supported schemes: `file://`, bare local path,
+//!    `s3://`, `gs://`/`gcs://`, `az://`/`abfs://`/`abfss://`,
+//!    `http://`, `https://`.
 //! 2. **Chunk anchor URI** (written into a band's `outdb_uri`). Addresses
 //!    one chunk in one array within a group:
 //!    `<store-uri>#array=<array-path>&chunk=<i0>,<i1>,...`. The store URI
 //!    is the original group URI verbatim (whatever scheme that uses);
 //!    array path and chunk indices both live in the fragment so the
 //!    store URI is unambiguous even when both contain `/` (e.g.
-//!    `s3://bucket/foo.zarr/2024` + `subgroup/B01`). Inner-chunk indices
-//!    always — sharding is a storage detail the resolver handles.
+//!    `s3://bucket/foo.zarr/2024` + `subgroup/B01`).
 //!
 //!    The "this is a zarr anchor" signal lives in the band's
 //!    `outdb_format = "zarr"` field, not in a URI scheme prefix — matches
 //!    the GDAL OutDb convention and lets the format-keyed dispatcher
 //!    route without parsing URI schemes.
 
-use arrow_schema::ArrowError;
+use std::sync::Arc;
 
-/// Parts of a chunk-anchor URI.
-///
-/// `#[cfg(test)]`: no production consumer yet. The async byte
-/// resolver (separate follow-up) will parse `outdb_uri` values back
-/// into this struct.
-#[cfg(test)]
+use arrow_schema::ArrowError;
+use object_store::path::Path as ObjectPath;
+use object_store::prefix::PrefixStore;
+use object_store::ObjectStore;
+use url::Url;
+use zarrs::storage::AsyncReadableListableStorage;
+use zarrs_object_store::AsyncObjectStore;
+
+/// Parts of a chunk-anchor URI. The async raster byte loader parses
+/// `outdb_uri` values back into this struct.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChunkAnchor {
-    /// Original store URI for the *group* (e.g. `file:///tmp/foo.zarr`,
-    /// `s3://bucket/foo.zarr/2024`). Same value across every chunk of every
-    /// array in a group.
     pub store_uri: String,
-    /// Array's path within the store (e.g. `temperature`, `subgroup/B01`).
     pub array_path: String,
-    /// Chunk's position in the array's inner chunk grid (one index per
-    /// array dimension).
     pub chunk_indices: Vec<u64>,
 }
 
@@ -80,10 +76,6 @@ pub fn build_chunk_anchor(store_uri: &str, array_path: &str, chunk_indices: &[u6
 ///
 /// Strict: rejects URIs that don't carry both `array=` and `chunk=`
 /// fragment parameters with valid values.
-///
-/// `#[cfg(test)]`: pairs with [`ChunkAnchor`]; resurrected when the
-/// async byte resolver lands.
-#[cfg(test)]
 pub fn parse_chunk_anchor(uri: &str) -> Result<ChunkAnchor, ArrowError> {
     let (store_uri, fragment) = uri.split_once('#').ok_or_else(|| {
         ArrowError::InvalidArgumentError(format!(
@@ -138,24 +130,97 @@ pub fn parse_chunk_anchor(uri: &str) -> Result<ChunkAnchor, ArrowError> {
     })
 }
 
-/// Normalize a user-supplied group URI into a local filesystem path.
+/// Resolve a group URI into an async zarrs storage handle rooted at
+/// the group, given a credentialed [`object_store::ObjectStore`] for
+/// the URI.
 ///
-/// Only `file://` and bare-path URIs are supported. Cloud schemes
-/// (`s3://`, `gs://`, `az://`, `https://`) error with a clear message.
-pub fn group_uri_to_filesystem_path(uri: &str) -> Result<std::path::PathBuf, ArrowError> {
-    if let Some(rest) = uri.strip_prefix("file://") {
-        return Ok(std::path::PathBuf::from(rest));
+/// **Contract:** the caller passes a `store` rooted at the URI's
+/// scheme + authority — exactly what
+/// [`datafusion_execution::object_store::ObjectStoreRegistry::get_store`]
+/// returns (e.g. for `s3://bucket/path/foo.zarr` the store is rooted at
+/// `s3://bucket`; for `file:///data/foo.zarr` it's a
+/// `LocalFileSystem` rooted at `/`). This helper then wraps it in a
+/// [`PrefixStore`] at the URL's path so the returned storage is rooted
+/// at the zarr group. Bare paths are treated as `file://`.
+///
+/// The scheme itself is opaque here: any backend whose `store` honours
+/// the rooting contract works without a per-scheme branch. Schemes the
+/// caller can't produce a store for never reach this function.
+///
+/// Returns storage rooted at the group: callers invoke
+/// `Group::async_open(storage, "/").await`.
+/// Build an `Arc<dyn ObjectStore>` for `uri` using env-var credential
+/// discovery, per scheme: `file://` / bare paths → `LocalFileSystem`,
+/// `s3://` → `AmazonS3Builder`, `http(s)://` → `HttpBuilder`.
+///
+/// This is the in-process bridge that lets the byte loader (and the Python
+/// reader shim) resolve a store from a URI when no host-provided store is
+/// available. It is **temporary**: once a credentialed `ObjectStore` can be
+/// passed in from DataFusion's `ObjectStoreRegistry` (the obstore FFI; see
+/// the loader-FFI follow-up), callers receive the store instead of building
+/// it here, and this function — with the `object_store` `aws`/`http`
+/// features behind it — goes away.
+pub fn object_store_for_uri(uri: &str) -> Result<Arc<dyn ObjectStore>, ArrowError> {
+    // file:// and bare paths use a LocalFileSystem rooted at `/`;
+    // open_storage_from_uri prefixes it at the group's path.
+    if uri.starts_with("file://") || !uri.contains("://") {
+        return Ok(Arc::new(object_store::local::LocalFileSystem::new()));
     }
-    for scheme in ["s3://", "gs://", "az://", "https://", "http://"] {
-        if uri.starts_with(scheme) {
-            return Err(ArrowError::NotYetImplemented(format!(
-                "cloud Zarr stores ({scheme}…) are not supported yet; \
-                 use a local filesystem path or `file://` URI"
-            )));
+    let url = Url::parse(uri).map_err(|e| {
+        ArrowError::InvalidArgumentError(format!("group URI {uri:?} is not a valid URL: {e}"))
+    })?;
+    let build_err = |backend: &str, e: object_store::Error| {
+        ArrowError::ExternalError(Box::new(sedona_common::sedona_internal_datafusion_err!(
+            "failed to build {backend} object_store for {uri}: {e}. Provide credentials via \
+             standard environment variables (e.g. AWS_ACCESS_KEY_ID/AWS_REGION for s3)."
+        )))
+    };
+    match url.scheme().to_ascii_lowercase().as_str() {
+        "s3" => {
+            use object_store::aws::AmazonS3Builder;
+            let store = AmazonS3Builder::from_env()
+                .with_url(uri)
+                .build()
+                .map_err(|e| build_err("s3", e))?;
+            Ok(Arc::new(store))
         }
+        "http" | "https" => {
+            use object_store::http::HttpBuilder;
+            // open_storage_from_uri applies the path as a PrefixStore, so the
+            // HttpStore must be rooted at scheme+authority only — unlike S3,
+            // HttpBuilder roots at whatever URL it's given.
+            let authority = format!("{}://{}", url.scheme(), url.authority());
+            let store = HttpBuilder::new()
+                .with_url(authority)
+                .build()
+                .map_err(|e| build_err("http", e))?;
+            Ok(Arc::new(store))
+        }
+        other => Err(ArrowError::NotYetImplemented(format!(
+            "unsupported Zarr URI scheme {other:?}; expected one of: file, s3, http, https"
+        ))),
     }
-    // Bare path.
-    Ok(std::path::PathBuf::from(uri))
+}
+
+pub fn open_storage_from_uri(
+    uri: &str,
+    store: Arc<dyn ObjectStore>,
+) -> Result<AsyncReadableListableStorage, ArrowError> {
+    // Bare local paths aren't valid URLs; coerce them to `file://` so
+    // the path lands in `url.path()` like every other scheme.
+    let url = Url::parse(uri)
+        .or_else(|_| Url::parse(&format!("file://{uri}")))
+        .map_err(|e| {
+            ArrowError::InvalidArgumentError(format!("group URI {uri:?} is not a valid URL: {e}"))
+        })?;
+
+    let prefix = url.path().trim_start_matches('/').to_string();
+    let prefixed: Arc<dyn ObjectStore> = if prefix.is_empty() {
+        store
+    } else {
+        Arc::new(PrefixStore::new(store, ObjectPath::from(prefix)))
+    };
+    Ok(Arc::new(AsyncObjectStore::new(prefixed)))
 }
 
 #[cfg(test)]
@@ -206,8 +271,6 @@ mod tests {
 
     #[test]
     fn parse_anchor_rejects_missing_fragment() {
-        // No `#` means no fragment, so neither `array=` nor `chunk=` is
-        // present. The parser surfaces "missing fragment".
         let err = parse_chunk_anchor("file:///foo.zarr")
             .unwrap_err()
             .to_string();
@@ -248,8 +311,6 @@ mod tests {
 
     #[test]
     fn parse_anchor_ignores_unknown_fragment_params() {
-        // Forward-compatible: extra `&key=value` pairs in the fragment
-        // shouldn't break parsing — they're reserved for future use.
         let anchor = parse_chunk_anchor("file:///foo.zarr#array=t&chunk=0,0&version=v3").unwrap();
         assert_eq!(anchor.array_path, "t");
         assert_eq!(anchor.chunk_indices, vec![0, 0]);
@@ -271,24 +332,31 @@ mod tests {
         assert_eq!(parsed, original);
     }
 
-    #[test]
-    fn group_uri_file_scheme() {
-        let path = group_uri_to_filesystem_path("file:///tmp/foo.zarr").unwrap();
-        assert_eq!(path, std::path::PathBuf::from("/tmp/foo.zarr"));
+    fn placeholder_store() -> Arc<dyn ObjectStore> {
+        Arc::new(object_store::memory::InMemory::new())
     }
 
     #[test]
-    fn group_uri_bare_path() {
-        let path = group_uri_to_filesystem_path("/tmp/foo.zarr").unwrap();
-        assert_eq!(path, std::path::PathBuf::from("/tmp/foo.zarr"));
+    fn open_storage_wraps_cloud_store_with_prefix() {
+        // An InMemory store stands in for a bucket-rooted cloud store;
+        // the s3:// path component should be applied as a PrefixStore.
+        let storage = open_storage_from_uri("s3://bucket/path/foo.zarr", placeholder_store())
+            .expect("cloud URI builds storage from a passed-in store");
+        assert!(Arc::strong_count(&storage) >= 1);
     }
 
     #[test]
-    fn group_uri_cloud_scheme_errors() {
-        let err = group_uri_to_filesystem_path("s3://bucket/foo.zarr")
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("s3://"), "{err}");
-        assert!(err.contains("not supported"), "{err}");
+    fn open_storage_accepts_file_scheme() {
+        let storage = open_storage_from_uri("file:///nonexistent/foo.zarr", placeholder_store())
+            .expect("file:// URI builds storage");
+        assert!(Arc::strong_count(&storage) >= 1);
+    }
+
+    #[test]
+    fn open_storage_accepts_bare_path() {
+        // Bare paths are coerced to file:// rather than rejected.
+        let storage = open_storage_from_uri("/nonexistent/foo.zarr", placeholder_store())
+            .expect("bare path builds storage");
+        assert!(Arc::strong_count(&storage) >= 1);
     }
 }

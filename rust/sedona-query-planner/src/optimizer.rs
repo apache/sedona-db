@@ -16,6 +16,7 @@
 // under the License.
 use std::sync::Arc;
 
+use crate::ensure_loaded::EnsureLoadedOptimizerRule;
 use crate::logical_plan_node::SpatialJoinPlanNode;
 use crate::spatial_expr_utils::{
     collect_spatial_predicate_names, find_knn_query_side, KNNJoinQuerySide,
@@ -90,6 +91,33 @@ pub fn register_spatial_join_logical_optimizer(
 
     // Append SpatialJoinLogicalRewrite at the end so non-KNN joins benefit from filter pushdown.
     optimizer.rules.push(Arc::new(SpatialJoinLogicalRewrite));
+
+    Ok(session_state_builder)
+}
+
+/// Register the `RS_EnsureLoaded`-wrapping logical optimizer rule.
+///
+/// Inserts [`EnsureLoadedOptimizerRule`] immediately before DataFusion's
+/// `common_sub_expression_eliminate` so that, in the same optimizer
+/// pass, CSE can dedupe the `RS_EnsureLoaded(col)` wraps this rule
+/// injects across multiple `needs_bytes` UDFs sharing a raster column.
+/// Falls back to appending if CSE isn't present.
+pub fn register_ensure_loaded_optimizer(
+    mut session_state_builder: SessionStateBuilder,
+) -> Result<SessionStateBuilder> {
+    let optimizer = session_state_builder
+        .optimizer()
+        .get_or_insert_with(Optimizer::new);
+
+    let rule = Arc::new(EnsureLoadedOptimizerRule);
+    match optimizer
+        .rules
+        .iter()
+        .position(|r| r.name() == "common_sub_expression_eliminate")
+    {
+        Some(cse_pos) => optimizer.rules.insert(cse_pos, rule),
+        None => optimizer.rules.push(rule),
+    }
 
     Ok(session_state_builder)
 }

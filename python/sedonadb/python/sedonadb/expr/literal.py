@@ -15,7 +15,12 @@
 # specific language governing permissions and limitations
 # under the License.
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from sedonadb.utility import sedona  # noqa: F401
+
+if TYPE_CHECKING:
+    from sedonadb.functions import Functions
 
 
 class Literal:
@@ -38,8 +43,9 @@ class Literal:
         value: An arbitrary Python object.
     """
 
-    def __init__(self, value: Any):
+    def __init__(self, value: Any, ctx=None):
         self._value = value
+        self._ctx = ctx
 
     def __arrow_c_array__(self, requested_schema=None):
         resolved_lit = _resolve_arrow_lit(self._value)
@@ -47,6 +53,23 @@ class Literal:
 
     def __repr__(self):
         return f"<Literal>\n{repr(self._value)}"
+
+    @property
+    def funcs(self) -> "Functions":
+        """Pipe this expression into another SedonaDB function
+
+        Examples:
+
+            >>> sd = sedona.db.connect()
+            >>> sd.lit(5.0).funcs.sqrt()
+            Expr(sqrt(Float64(5)))
+        """
+        from sedonadb.functions import Functions
+
+        if self._ctx is None:
+            raise ValueError("Can't pipe Literal without context into Functions")
+
+        return Functions(self._ctx, self)
 
     def alias(self, name: str):
         """Give this literal a column name.
@@ -64,18 +87,23 @@ class Literal:
         """
         from sedonadb.expr.expression import _to_expr
 
-        return _to_expr(self).alias(name)
+        return _to_expr(self, self._ctx).alias(name)
 
 
-def lit(value: Any) -> Literal:
+def lit(value: Any, ctx: Any = None) -> Literal:
     """Create a literal (constant) expression
 
     See documentation in `SedonaContext`.
     """
     if isinstance(value, Literal):
-        return value
+        if ctx is not None:
+            # Create a new literal with the assigned context
+            return Literal(value._value, ctx)
+        else:
+            # Otherwise just return the existing literal
+            return value
     else:
-        return Literal(value)
+        return Literal(value, ctx)
 
 
 def _resolve_arrow_lit(obj: Any):
@@ -146,8 +174,8 @@ def _lit_from_shapely(obj):
 
 
 def _lit_from_wkb_and_crs(wkb, crs):
-    import pyarrow as pa
     import geoarrow.pyarrow as ga
+    import pyarrow as pa
 
     type = ga.wkb().with_crs(crs)
     storage = pa.array([wkb], type.storage_type)

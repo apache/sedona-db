@@ -15,6 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
+pub mod ensure_loaded;
+// DF-22662 workaround (remove when async UDF return-field metadata is
+// preserved upstream): see ensure_loaded_reraster.rs.
+mod ensure_loaded_reraster;
 mod logical_plan_node;
 pub mod optimizer;
 pub mod probe_shuffle_exec;

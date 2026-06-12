@@ -32,18 +32,27 @@ result_large_err = "allow"
 
 [dependencies]
 arrow-array = { workspace = true }
+arrow-buffer = { workspace = true }
 arrow-schema = { workspace = true }
+async-trait = { workspace = true }
 datafusion-common = { workspace = true }
 futures = { workspace = true }
 log = { workspace = true }
+object_store = { workspace = true, features = ["aws", "http"] }
 sedona-common = { workspace = true }
 sedona-raster = { workspace = true }
 sedona-schema = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-zarrs = { workspace = true, features = ["filesystem", "gzip", "zstd", "blosc", "crc32c", "sharding", "transpose"] }
-zarrs_filesystem = { workspace = true }
+tokio = { workspace = true }
+url = { workspace = true }
+zarrs = { workspace = true, features = ["async", "gzip", "zstd", "blosc", "crc32c", "sharding", "transpose"] }
+zarrs_object_store = { workspace = true }
 
 [dev-dependencies]
+object_store = { workspace = true, features = ["aws", "http"] }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+# Test fixtures write Zarr groups to a temp dir; the loader itself
+# reads everything through object_store, so this is dev-only.
+zarrs_filesystem = { workspace = true }

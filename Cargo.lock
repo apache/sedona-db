@@ -554,6 +554,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-generic"
+version = "1.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ddf3728566eefa873833159754f5732fb0951d3649e6e5b891cc70d56dd41673"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "async-lock"
 version = "3.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2528,7 +2539,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2650,7 +2661,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3432,9 +3443,9 @@ dependencies = [
 
 [[package]]
 name = "i_float"
-version = "2.0.0"
+version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "36c8fc32799c6cde9c7604188e4ece27acf3ddcb2d40b038113e3f0bc525aac7"
+checksum = "519b2780a1187eeed09145e5d168863c87f0d704abe84084206ebd897f99c6dc"
 dependencies = [
  "libm",
 ]
@@ -3466,14 +3477,14 @@ dependencies = [
 
 [[package]]
 name = "i_overlay"
-version = "6.0.0"
+version = "7.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0f8ed01b5f7de7c2e5661d9ac807aacb33ad76f591f973d89b58e998f552c34"
+checksum = "fd4e3fcd31bcb1bfa09ea7863303f0197a0d60061b1f97e5438daa760aab888f"
 dependencies = [
- "i_float 2.0.0",
+ "i_float 3.0.0",
  "i_key_sort 0.10.3",
- "i_shape 2.0.0",
- "i_tree 0.18.0",
+ "i_shape 3.0.0",
+ "i_tree 0.19.0",
 ]
 
 [[package]]
@@ -3487,11 +3498,11 @@ dependencies = [
 
 [[package]]
 name = "i_shape"
-version = "2.0.0"
+version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d12d0501b145b966d1801f90e4fcc20b65b39617055d131efa8699068bb1de1"
+checksum = "90b2ee7bae072887c579a2f2fd2a7fa1c29cceecfae1998ef940061c5570afff"
 dependencies = [
- "i_float 2.0.0",
+ "i_float 3.0.0",
 ]
 
 [[package]]
@@ -3502,9 +3513,9 @@ checksum = "35e6d558e6d4c7b82bc51d9c771e7a927862a161a7d87bf2b0541450e0e20915"
 
 [[package]]
 name = "i_tree"
-version = "0.18.0"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4804bdc1dc124eb7e1aa9e144ecc04096bcf787a10a15fa44af682b51f0f6cce"
+checksum = "1e9d4a992a9fe83130f41ceacceac3bb116a4355dfc9c8d6ecea4f1e4b4c6caf"
 
 [[package]]
 name = "iana-time-zone"
@@ -3715,7 +3726,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4182,10 +4193,13 @@ version = "0.12.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "957228ad12042ee839f93c8f257b62b4c0ab5eaae1d4fa60de53b27c9d7c5046"
 dependencies = [
+ "async-lock",
  "crossbeam-channel",
  "crossbeam-epoch",
  "crossbeam-utils",
  "equivalent",
+ "event-listener",
+ "futures-util",
  "parking_lot",
  "portable-atomic",
  "smallvec",
@@ -4990,7 +5004,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5416,7 +5430,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5630,6 +5644,7 @@ name = "sedona"
 version = "0.4.0"
 dependencies = [
  "arrow-array",
+ "arrow-buffer",
  "arrow-schema",
  "async-trait",
  "aws-config",
@@ -5639,6 +5654,7 @@ dependencies = [
  "datafusion-common",
  "datafusion-expr",
  "datafusion-ffi",
+ "datafusion-optimizer",
  "dirs",
  "futures",
  "geo-traits",
@@ -5659,6 +5675,7 @@ dependencies = [
  "sedona-pointcloud",
  "sedona-proj",
  "sedona-query-planner",
+ "sedona-raster",
  "sedona-raster-functions",
  "sedona-raster-gdal",
  "sedona-s2geography",
@@ -5857,7 +5874,7 @@ dependencies = [
  "geo",
  "geo-traits",
  "geo-types",
- "i_overlay 6.0.0",
+ "i_overlay 7.0.0",
  "log",
  "num-traits",
  "pretty_env_logger",
@@ -6094,10 +6111,12 @@ dependencies = [
  "arrow-buffer",
  "arrow-ipc",
  "arrow-schema",
+ "async-trait",
  "datafusion-common",
  "sedona-common",
  "sedona-schema",
  "sedona-testing",
+ "tokio",
 ]
 
 [[package]]
@@ -6107,6 +6126,7 @@ dependencies = [
  "arrow-array",
  "arrow-buffer",
  "arrow-schema",
+ "async-trait",
  "criterion",
  "datafusion-common",
  "datafusion-expr",
@@ -6121,6 +6141,7 @@ dependencies = [
  "sedona-testing",
  "sedona-tg",
  "serde_json",
+ "tokio",
  "wkb",
 ]
 
@@ -6131,6 +6152,7 @@ dependencies = [
  "arrow-array",
  "arrow-buffer",
  "arrow-schema",
+ "async-trait",
  "criterion",
  "datafusion-common",
  "datafusion-expr",
@@ -6151,10 +6173,13 @@ name = "sedona-raster-zarr"
 version = "0.4.0"
 dependencies = [
  "arrow-array",
+ "arrow-buffer",
  "arrow-schema",
+ "async-trait",
  "datafusion-common",
  "futures",
  "log",
+ "object_store",
  "sedona-common",
  "sedona-raster",
  "sedona-schema",
@@ -6162,8 +6187,10 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "url",
  "zarrs",
  "zarrs_filesystem",
+ "zarrs_object_store",
 ]
 
 [[package]]
@@ -6401,8 +6428,11 @@ name = "sedonadb-zarr"
 version = "0.4.0"
 dependencies = [
  "arrow-array",
+ "object_store",
  "pyo3",
  "sedona-raster-zarr",
+ "tokio",
+ "url",
 ]
 
 [[package]]
@@ -6519,9 +6549,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with"
-version = "3.20.0"
+version = "3.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e72c1c2cb7b223fafb600a619537a871c2818583d619401b785e7c0b746ccde2"
+checksum = "76a5c54c7310e7b8b9577c286d7e399ddd876c3e12b3ed917a8aabc4b96e9e8c"
 dependencies = [
  "base64",
  "bs58",
@@ -6539,9 +6569,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with_macros"
-version = "3.20.0"
+version = "3.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b90c488738ecb4fb0262f41f43bc40efc5868d9fb744319ddf5f5317f417bfac"
+checksum = "84d57bc0c8b9a17920c178daa6bb924850d54a9c97ab45194bb8c17ad66bb660"
 dependencies = [
  "darling",
  "proc-macro2",
@@ -6814,7 +6844,7 @@ dependencies = [
  "getrandom 0.4.1",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7467,7 +7497,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7948,7 +7978,9 @@ version = "0.23.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "251f4ec1a9e60ca9c693ade9b29a0b981a61e68ea3e2ae85fa9da31bcdca5dbe"
 dependencies = [
+ "async-generic",
  "async-lock",
+ "async-trait",
  "base64",
  "blosc-src",
  "blusc",
@@ -7957,6 +7989,7 @@ dependencies = [
  "crc32c",
  "derive_more",
  "flate2",
+ "futures",
  "getrandom 0.3.4",
  "half",
  "inventory",
@@ -7983,7 +8016,6 @@ dependencies = [
  "zarrs_chunk_key_encoding",
  "zarrs_codec",
  "zarrs_data_type",
- "zarrs_filesystem",
  "zarrs_metadata",
  "zarrs_metadata_ext",
  "zarrs_plugin",
@@ -8109,6 +8141,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "zarrs_object_store"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5d9d0d3db426dd50dfb0b5d7cc1660bda368caeb5cd8645c60c46bc4f261a19"
+dependencies = [
+ "async-trait",
+ "futures",
+ "object_store",
+ "zarrs_storage",
+]
+
+[[package]]
 name = "zarrs_plugin"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8126,9 +8170,11 @@ version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d098796d2ed4cf94896569615101e0432e870a7665396da5cc32300fb68f7c1"
 dependencies = [
+ "async-trait",
  "auto_impl",
  "bytes",
  "derive_more",
+ "futures",
  "itertools 0.14.0",
  "thiserror 2.0.17",
  "unsafe_cell_slice",

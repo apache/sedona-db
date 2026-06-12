@@ -20,13 +20,30 @@
 //! Python-side `ZarrFormatSpec`.
 
 use std::ffi::CString;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
 use arrow_array::ffi_stream::FFI_ArrowArrayStream;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyCapsule;
-use sedona_raster_zarr::ZarrChunkReader;
+use sedona_raster_zarr::{object_store_for_uri, open_storage_from_uri, ZarrChunkReader};
+use tokio::runtime::{Builder, Runtime};
+
+/// Process-wide tokio runtime backing the sync Python FFI bridge.
+///
+/// `ZarrChunkReader::try_new` is async, but the Python constructor is sync
+/// by contract, so we `block_on` here. Building a runtime per reader is
+/// wasteful; one shared runtime serves every open in the package. `next()`
+/// on the returned reader is pure CPU and never touches this runtime.
+fn shared_runtime() -> &'static Runtime {
+    static RUNTIME: OnceLock<Runtime> = OnceLock::new();
+    RUNTIME.get_or_init(|| {
+        Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build sedonadb-zarr tokio runtime")
+    })
+}
 
 /// Single-use `__arrow_c_stream__` wrapper around `ZarrChunkReader`.
 #[pyclass]
@@ -39,7 +56,18 @@ impl PyZarrChunkReader {
     #[new]
     #[pyo3(signature = (uri, arrays=None, batch_size=8192))]
     fn new(uri: &str, arrays: Option<Vec<String>>, batch_size: usize) -> PyResult<Self> {
-        let reader = ZarrChunkReader::try_new(uri, arrays.as_deref(), batch_size)
+        let store = object_store_for_uri(uri).map_err(|e| PyValueError::new_err(e.to_string()))?;
+        let storage =
+            open_storage_from_uri(uri, store).map_err(|e| PyValueError::new_err(e.to_string()))?;
+        // The crate's async-native loader exposes `try_new` as an
+        // `async fn`; the Python FFI is a sync constructor by contract,
+        // so we bridge by blocking on the shared package runtime.
+        // `next()` on the returned reader is pure CPU and stays synchronous.
+        let arrays_ref = arrays.as_deref();
+        let reader = shared_runtime()
+            .block_on(ZarrChunkReader::try_new(
+                storage, uri, arrays_ref, batch_size,
+            ))
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
         Ok(Self {
             inner: Mutex::new(Some(reader)),

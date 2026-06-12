@@ -87,6 +87,13 @@ class SedonaContext:
         self.__impl = None
         self.options = Options()
 
+    @classmethod
+    def _init_from_impl(cls, impl, options):
+        instance = cls()
+        instance.__impl = impl
+        instance.options = options
+        return instance
+
     @property
     def _impl(self):
         """Lazily initialize the internal Rust context on first use.
@@ -145,7 +152,7 @@ class SedonaContext:
             │     1 │
             └───────┘
         """
-        return _create_data_frame(self._impl, obj, schema, self.options)
+        return _create_data_frame(self, obj, schema)
 
     def view(self, name: str) -> DataFrame:
         """Create a [DataFrame][sedonadb.dataframe.DataFrame] from a named view
@@ -169,7 +176,7 @@ class SedonaContext:
             >>> sd.drop_view("foofy")
 
         """
-        return DataFrame(self._impl, self._impl.view(name), self.options)
+        return DataFrame(self, self._impl.view(name))
 
     def drop_view(self, name: str) -> None:
         """Remove a named view
@@ -192,6 +199,7 @@ class SedonaContext:
         options: Optional[Dict[str, Any]] = None,
         geometry_columns: Optional[Union[str, Dict[str, Any]]] = None,
         validate: bool = False,
+        partitioning: Union[str, Iterable[str], None] = None,
     ) -> DataFrame:
         """Create a [DataFrame][sedonadb.dataframe.DataFrame] from one or more Parquet files
 
@@ -252,7 +260,13 @@ class SedonaContext:
 
                 Currently the only property that is validated is the WKB of input geometry
                 columns.
-
+            partitioning:
+                Optional list of column names for hive-style partitioning. When reading
+                from a directory with paths like `/col=value/file.parquet`, partition
+                column names are auto-discovered by default (`partitioning=None`).
+                Explicitly specify column names (e.g., `["col"]`) to override
+                auto-discovery, or pass an empty list `[]` to disable partitioning
+                entirely.
 
         Examples:
 
@@ -270,12 +284,18 @@ class SedonaContext:
         if geometry_columns is not None and not isinstance(geometry_columns, str):
             geometry_columns = json.dumps(geometry_columns)
 
+        if isinstance(partitioning, str):
+            partitioning = [partitioning]
+
         return DataFrame(
-            self._impl,
+            self,
             self._impl.read_parquet(
-                [str(path) for path in table_paths], options, geometry_columns, validate
+                [str(path) for path in table_paths],
+                options,
+                geometry_columns,
+                validate,
+                None if partitioning is None else list(partitioning),
             ),
-            self.options,
         )
 
     def read_pyogrio(
@@ -283,6 +303,7 @@ class SedonaContext:
         table_paths: Union[str, Path, Iterable[str]],
         options: Optional[Dict[str, Any]] = None,
         extension: str = "",
+        partitioning: Union[str, Iterable[str], None] = None,
     ) -> DataFrame:
         """Read spatial file formats using GDAL/OGR via pyogrio
 
@@ -312,6 +333,13 @@ class SedonaContext:
             extension: An optional file extension (e.g., `"fgb"`) used when
                 `table_paths` specifies one or more directories or a glob
                 that does not enforce a file extension.
+            partitioning:
+                Optional list of column names for hive-style partitioning. When reading
+                from a directory with paths like `/col=value/file.fgb`, partition
+                column names are auto-discovered by default (`partitioning=None`).
+                Explicitly specify column names (e.g., `["col"]`) to override
+                auto-discovery, or pass an empty list `[]` to disable partitioning
+                entirely.
 
         Examples:
 
@@ -343,12 +371,17 @@ class SedonaContext:
         if options is not None:
             spec = spec.with_options(options)
 
+        if isinstance(partitioning, str):
+            partitioning = [partitioning]
+
         return DataFrame(
-            self._impl,
+            self,
             self._impl.read_external_format(
-                spec, [str(path) for path in table_paths], False
+                spec,
+                [str(path) for path in table_paths],
+                False,
+                None if partitioning is None else list(partitioning),
             ),
-            self.options,
         )
 
     def read_format(
@@ -356,6 +389,7 @@ class SedonaContext:
         spec: "ExternalFormatSpec",
         table_paths: Union[str, Path, Iterable[str]],
         check_extension: bool = False,
+        partitioning: Union[str, Iterable[str], None] = None,
     ) -> DataFrame:
         """Read one or more paths using a Python-defined `ExternalFormatSpec`.
 
@@ -375,6 +409,13 @@ class SedonaContext:
             table_paths: A str, Path, or iterable of paths/URLs.
             check_extension: When `True`, error if a non-collection path
                 doesn't end in the spec's `extension`. Defaults to `False`.
+            partitioning:
+                Optional list of column names for hive-style partitioning. When reading
+                from a directory with paths like `/col=value/file.ext`, partition
+                column names are auto-discovered by default (`partitioning=None`).
+                Explicitly specify column names (e.g., `["col"]`) to override
+                auto-discovery, or pass an empty list `[]` to disable partitioning
+                entirely.
 
         Examples:
             >>> import sedonadb_zarr  # doctest: +SKIP
@@ -387,12 +428,17 @@ class SedonaContext:
         if isinstance(table_paths, (str, Path)):
             table_paths = [table_paths]
 
+        if isinstance(partitioning, str):
+            partitioning = [partitioning]
+
         return DataFrame(
-            self._impl,
+            self,
             self._impl.read_external_format(
-                spec, [str(path) for path in table_paths], check_extension
+                spec,
+                [str(path) for path in table_paths],
+                check_extension,
+                None if partitioning is None else list(partitioning),
             ),
-            self.options,
         )
 
     def sql(
@@ -438,7 +484,7 @@ class SedonaContext:
             └────────────┘
 
         """
-        df = DataFrame(self._impl, self._impl.sql(sql), self.options)
+        df = DataFrame(self, self._impl.sql(sql))
 
         if params is not None:
             if isinstance(params, (tuple, list)):
@@ -452,13 +498,22 @@ class SedonaContext:
         else:
             return df
 
-    def register_udf(self, udf: Any):
-        """Register a user-defined function
+    def register(self, component: Any, **kwargs: Any) -> None:
+        """Register an extension component
+
+        The following types of components are currently supported:
+
+        - Python UDFs annotated with arrow_aggregate_udf or arrow_udf
+        - An ExternalFormatSpec implementing a custom datasource type
+        - An object implementing __sedonadb_extension__(ctx, **kwargs), which
+          is called with this context and any keyword arguments passed.
+
+        The extension interface is experimental and may change.
 
         Args:
-            udf: An object implementing the DataFusion PyCapsule protocol
-                (i.e., `__datafusion_scalar_udf__`) or a function annotated
-                with [arrow_udf][sedonadb.udf.arrow_udf].
+            component: A Python object implementing one of the above protocols.
+            **kwargs: Extension-specific options, supported for specific types
+                of components.
 
         Examples:
 
@@ -474,7 +529,7 @@ class SedonaContext:
             ...         pa.int64()
             ...     )
             ...
-            >>> sd.register_udf(char_count)
+            >>> sd.register(char_count)
             >>> sd.sql("SELECT char_count('abcde') as col").show()
             ┌───────┐
             │  col  │
@@ -484,7 +539,27 @@ class SedonaContext:
             └───────┘
 
         """
-        self._impl.register_udf(udf)
+        if hasattr(component, "__sedonadb_extension__"):
+            component.__sedonadb_extension__(self, **kwargs)
+            return
+
+        supported_interfaces = (
+            "__sedonadb_internal_udf__",
+            "__sedonadb_internal_aggregate_udf__",
+            "__sedonadb_external_format__",
+        )
+        for interface in supported_interfaces:
+            if hasattr(component, interface):
+                if kwargs:
+                    raise ValueError(
+                        f"register options not supported for interface {interface}"
+                    )
+                self._impl.register_component(component)
+                return
+
+        raise ValueError(
+            f"Can't register extension for object of type {type(component).__name__}"
+        )
 
     @cached_property
     def funcs(self) -> Functions:
@@ -509,7 +584,7 @@ class SedonaContext:
             >>> sd.col("x", "t")
             Expr(t.x)
         """
-        return col_expr(name, qualifier=qualifier)
+        return col_expr(name, qualifier=qualifier, ctx=self)
 
     def lit(self, value: Any) -> LiteralExpr:
         """Create a literal (constant) expression
@@ -536,7 +611,7 @@ class SedonaContext:
         - pyproj CRS objects become PROJJSON strings (e.g., so they may be used
         in `ST_SetCRS()`, `ST_Point()`, or `ST_GeomFromWKT()`).
         """
-        return lit_expr(value)
+        return lit_expr(value, ctx=self)
 
 
 def connect() -> SedonaContext:
