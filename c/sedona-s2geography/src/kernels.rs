@@ -22,7 +22,7 @@ use datafusion_common::{Result, ScalarValue};
 use datafusion_expr::ColumnarValue;
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
-use sedona_extension::{extension::SedonaCScalarKernel, scalar_kernel::ImportedScalarKernel};
+use sedona_extension::{extension_ffi::SedonaCScalarKernel, scalar_kernel::ImportedScalarKernel};
 use sedona_functions::executor::WkbBytesExecutor;
 use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY},
