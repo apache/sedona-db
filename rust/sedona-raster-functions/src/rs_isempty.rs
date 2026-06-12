@@ -76,9 +76,9 @@ impl SedonaScalarKernel for RsIsEmpty {
 }
 
 /// A raster is empty when it carries no cells: it has no bands, or some
-/// band has a zero-length dimension (`Π shape() == 0`). Bands share the
-/// same dimension structure, so any band is representative, but checking
-/// all of them is cheap and robust.
+/// band has a zero-length dimension in its visible shape
+/// (`Π shape() == 0`). Bands must agree on the spatial dims but may
+/// differ on non-spatial ones, so every band is checked.
 fn raster_is_empty(raster: &impl RasterRef) -> Result<bool> {
     let bands = raster.bands();
     if bands.is_empty() {
@@ -86,9 +86,7 @@ fn raster_is_empty(raster: &impl RasterRef) -> Result<bool> {
     }
     // Band numbers are 1-based.
     for i in 1..=bands.len() {
-        let band = bands
-            .band(i)
-            .map_err(|e| datafusion_common::DataFusionError::External(Box::new(e)))?;
+        let band = bands.band(i)?;
         if band.shape().iter().product::<i64>() == 0 {
             return Ok(true);
         }
