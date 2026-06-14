@@ -45,6 +45,8 @@ mod rs_reproject_match;
 mod rs_resample;
 mod rs_tile;
 mod rs_zonal_stats;
+pub mod rs_geotiff_tiles;
+mod source_uri;
 mod utils;
 
 // Re-export main dataset conversion functions
@@ -63,6 +65,7 @@ pub use rs_polygonize::rs_polygonize_udf;
 pub use rs_reproject_match::rs_reproject_match_udf;
 pub use rs_resample::rs_resample_udf;
 pub use rs_tile::rs_tile_udf;
+pub use rs_geotiff_tiles::rs_geotiff_tiles_udtf;
 pub use utils::{
     append_as_indb_raster, append_as_outdb_raster, append_nd_from_dataset, dataset_to_indb_raster,
     gdal_dataset_to_nd_raster,
