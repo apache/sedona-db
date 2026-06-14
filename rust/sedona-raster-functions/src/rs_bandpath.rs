@@ -149,10 +149,13 @@ fn get_band_path(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::{Array, Int32Array, Int64Array, StringArray};
+    use arrow_array::{create_array, Array, ArrayRef, Int32Array, Int64Array, StringArray};
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use sedona_schema::datatypes::RASTER;
+    use sedona_schema::raster::BandDataType;
+    use sedona_testing::compare::assert_array_equal;
+    use sedona_testing::raster_spec::{raster_array, RasterSpec};
     use sedona_testing::rasters::generate_test_rasters;
     use sedona_testing::testers::ScalarUdfTester;
 
@@ -214,23 +217,24 @@ mod tests {
         let udf: ScalarUDF = rs_bandpath_udf().into();
         let tester = ScalarUdfTester::new(udf, vec![RASTER, SedonaType::Arrow(DataType::Int64)]);
 
-        let rasters = build_outdb_rasters();
         let band_indices = Int64Array::from(vec![1i64, 1, 2]);
         let result = tester
-            .invoke_arrays(vec![Arc::new(rasters), Arc::new(band_indices)])
+            .invoke_arrays(vec![
+                Arc::new(raster_array(outdb_specs())),
+                Arc::new(band_indices),
+            ])
             .unwrap();
 
-        let string_array = result
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .expect("Expected StringArray");
-
-        // Raster 0, band 1: OutDbRef -> URL
-        assert_eq!(string_array.value(0), "s3://bucket/raster_0.tif");
-        // Raster 1: null raster -> null
-        assert!(string_array.is_null(1));
-        // Raster 2, band 2: OutDbRef -> URL
-        assert_eq!(string_array.value(2), "s3://bucket/raster_2.tif");
+        // OutDbRef bands return their URL; the null raster stays null.
+        let expected: ArrayRef = create_array!(
+            Utf8,
+            [
+                Some("s3://bucket/raster_0.tif"),
+                None,
+                Some("s3://bucket/raster_2.tif")
+            ]
+        );
+        assert_array_equal(&result, &expected);
     }
 
     #[test]
@@ -256,74 +260,25 @@ mod tests {
         assert!(string_array.is_null(2)); // negative band index is invalid
     }
 
-    /// Build a raster array with out-db bands for testing RS_BandPath.
-    /// Returns a StructArray with 3 rasters:
+    /// Specs for 3 rasters:
     ///   [0] OutDbRef band with URL "s3://bucket/raster_0.tif"
     ///   [1] null raster
     ///   [2] Two bands: InDb band 1, OutDbRef band 2 with URL "s3://bucket/raster_2.tif"
-    fn build_outdb_rasters() -> arrow_array::StructArray {
-        use sedona_raster::builder::RasterBuilder;
-        use sedona_raster::traits::{BandMetadata, RasterMetadata};
-        use sedona_schema::raster::{BandDataType, StorageType};
-
-        let metadata = RasterMetadata {
-            width: 4,
-            height: 4,
-            upperleft_x: 0.0,
-            upperleft_y: 0.0,
-            scale_x: 1.0,
-            scale_y: -1.0,
-            skew_x: 0.0,
-            skew_y: 0.0,
-        };
-
-        let mut builder = RasterBuilder::new(3);
-
-        // Raster 0: single OutDbRef band
-        builder.start_raster(&metadata, Some("EPSG:4326")).unwrap();
-        builder
-            .start_band(BandMetadata {
-                nodata_value: None,
-                storage_type: StorageType::OutDbRef,
-                datatype: BandDataType::Float32,
-                outdb_url: Some("s3://bucket/raster_0.tif".to_string()),
-                outdb_band_id: Some(1),
-            })
-            .unwrap();
-        builder.band_data_writer().append_value([]);
-        builder.finish_band().unwrap();
-        builder.finish_raster().unwrap();
-
-        // Raster 1: null
-        builder.append_null().unwrap();
-
-        // Raster 2: two bands — InDb (band 1) + OutDbRef (band 2)
-        builder.start_raster(&metadata, Some("EPSG:4326")).unwrap();
-        builder
-            .start_band(BandMetadata {
-                nodata_value: None,
-                storage_type: StorageType::InDb,
-                datatype: BandDataType::UInt8,
-                outdb_url: None,
-                outdb_band_id: None,
-            })
-            .unwrap();
-        builder.band_data_writer().append_value([0u8; 16]);
-        builder.finish_band().unwrap();
-        builder
-            .start_band(BandMetadata {
-                nodata_value: None,
-                storage_type: StorageType::OutDbRef,
-                datatype: BandDataType::Float32,
-                outdb_url: Some("s3://bucket/raster_2.tif".to_string()),
-                outdb_band_id: Some(3),
-            })
-            .unwrap();
-        builder.band_data_writer().append_value([]);
-        builder.finish_band().unwrap();
-        builder.finish_raster().unwrap();
-
-        builder.finish().unwrap()
+    fn outdb_specs() -> Vec<Option<RasterSpec>> {
+        vec![
+            Some(
+                RasterSpec::d2(4, 4)
+                    .band(BandDataType::Float32)
+                    .outdb("s3://bucket/raster_0.tif#band=1", None),
+            ),
+            None,
+            Some(
+                RasterSpec::d2(4, 4)
+                    .band(BandDataType::UInt8)
+                    .band(BandDataType::Float32)
+                    .outdb("s3://bucket/raster_2.tif#band=3", None),
+            ),
+        ]
     }
 
     #[test]
@@ -331,21 +286,13 @@ mod tests {
         let udf: ScalarUDF = rs_bandpath_udf().into();
         let tester = ScalarUdfTester::new(udf, vec![RASTER]);
 
-        let rasters = build_outdb_rasters();
-        let result = tester.invoke_array(Arc::new(rasters)).unwrap();
+        let result = tester.invoke_raster_array(outdb_specs()).unwrap();
 
-        let string_array = result
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .expect("Expected StringArray");
-
-        // Raster 0: OutDbRef band 1 → returns URL
-        assert!(!string_array.is_null(0));
-        assert_eq!(string_array.value(0), "s3://bucket/raster_0.tif");
-        // Raster 1: null raster → null
-        assert!(string_array.is_null(1));
-        // Raster 2: band 1 is InDb → null
-        assert!(string_array.is_null(2));
+        // Raster 0: OutDbRef band 1 → URL; raster 1: null raster → null;
+        // raster 2: band 1 is InDb → null.
+        let expected: ArrayRef =
+            create_array!(Utf8, [Some("s3://bucket/raster_0.tif"), None, None]);
+        assert_array_equal(&result, &expected);
     }
 
     #[test]
@@ -353,24 +300,37 @@ mod tests {
         let udf: ScalarUDF = rs_bandpath_udf().into();
         let tester = ScalarUdfTester::new(udf, vec![RASTER, SedonaType::Arrow(DataType::Int32)]);
 
-        let rasters = build_outdb_rasters();
         // Ask for band 1, band 1, band 2 respectively
         let band_indices = Int32Array::from(vec![1, 1, 2]);
         let result = tester
-            .invoke_arrays(vec![Arc::new(rasters), Arc::new(band_indices)])
+            .invoke_arrays(vec![
+                Arc::new(raster_array(outdb_specs())),
+                Arc::new(band_indices),
+            ])
             .unwrap();
 
-        let string_array = result
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .expect("Expected StringArray");
+        // OutDbRef bands return their URL; the null raster stays null.
+        let expected: ArrayRef = create_array!(
+            Utf8,
+            [
+                Some("s3://bucket/raster_0.tif"),
+                None,
+                Some("s3://bucket/raster_2.tif")
+            ]
+        );
+        assert_array_equal(&result, &expected);
+    }
 
-        // Raster 0, band 1: OutDbRef → URL
-        assert_eq!(string_array.value(0), "s3://bucket/raster_0.tif");
-        // Raster 1: null raster → null
-        assert!(string_array.is_null(1));
-        // Raster 2, band 2: OutDbRef → URL
-        assert_eq!(string_array.value(2), "s3://bucket/raster_2.tif");
+    #[test]
+    fn udf_bandpath_raster_scalar() {
+        let udf: ScalarUDF = rs_bandpath_udf().into();
+        let tester = ScalarUdfTester::new(udf, vec![RASTER]);
+
+        let spec = RasterSpec::d2(4, 4)
+            .band(BandDataType::Float32)
+            .outdb("s3://bucket/raster_0.tif#band=1", None);
+        let result = tester.invoke_raster_scalar(&spec).unwrap();
+        tester.assert_scalar_result_equals(result, "s3://bucket/raster_0.tif");
     }
 
     #[test]

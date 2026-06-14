@@ -379,6 +379,9 @@ fn get_nodata_value_for_type(data_type: &BandDataType) -> Option<Vec<u8>> {
 }
 
 /// Compare two RasterStructArrays for equality
+///
+/// Null rows must agree on null-ness; their (physically arbitrary) child
+/// contents are not compared.
 pub fn assert_raster_arrays_equal(
     raster_array1: &RasterStructArray,
     raster_array2: &RasterStructArray,
@@ -390,6 +393,15 @@ pub fn assert_raster_arrays_equal(
     );
 
     for i in 0..raster_array1.len() {
+        let null1 = raster_array1.is_null(i);
+        let null2 = raster_array2.is_null(i);
+        assert_eq!(
+            null1, null2,
+            "Raster null-ness does not match at row {i}: {null1} vs {null2}"
+        );
+        if null1 {
+            continue;
+        }
         let raster1 = raster_array1.get(i).unwrap();
         let raster2 = raster_array2.get(i).unwrap();
         assert_raster_equal(&raster1, &raster2);
