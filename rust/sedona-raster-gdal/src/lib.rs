@@ -33,6 +33,7 @@ mod gdal_common;
 mod gdal_dataset_provider;
 
 mod raster_loader;
+mod rs_as_raster;
 mod rs_frompath;
 mod rs_metadata;
 mod rs_polygonize;
@@ -45,6 +46,7 @@ pub use gdal_common::{
     nodata_bytes_to_f64, nodata_f64_to_bytes, GdalBandLayout, GdalBandPlan,
 };
 pub use raster_loader::{GdalLoader, GDAL_FORMAT};
+pub use rs_as_raster::rs_as_raster_udf;
 pub use rs_frompath::rs_frompath_udf;
 pub use rs_metadata::rs_metadata_udf;
 pub use rs_polygonize::rs_polygonize_udf;
