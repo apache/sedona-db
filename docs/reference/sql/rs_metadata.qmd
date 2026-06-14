@@ -40,14 +40,14 @@ For rasters with no bands, `tileWidth` and `tileHeight` are `0`.
 ## Examples
 
 ```sql
-SELECT RS_MetaData(
-  RS_FromPath('../../../submodules/sedona-testing/data/raster/test4.tiff')
-);
+SELECT RS_MetaData(RS_Example());
 ```
 
 ```sql
 SELECT meta."gridWidth", meta."gridHeight"
 FROM (
-  SELECT RS_MetaData(RS_FromPath('../../../submodules/sedona-testing/data/raster/test4.tiff')) AS meta
+  SELECT RS_MetaData(
+    RS_FromPath('https://download.osgeo.org/geotiff/samples/gdal_eg/cea.tif')
+  ) AS meta
 ) q;
 ```
