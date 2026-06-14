@@ -35,6 +35,7 @@ mod gdal_dataset_provider;
 mod raster_loader;
 mod rs_frompath;
 mod rs_metadata;
+pub mod rs_geotiff_tiles;
 mod source_uri;
 mod utils;
 
@@ -46,6 +47,7 @@ pub use gdal_common::{
 pub use raster_loader::{GdalLoader, GDAL_FORMAT};
 pub use rs_frompath::rs_frompath_udf;
 pub use rs_metadata::rs_metadata_udf;
+pub use rs_geotiff_tiles::rs_geotiff_tiles_udtf;
 pub use utils::{
     append_as_indb_raster, append_as_outdb_raster, append_nd_from_dataset, dataset_to_indb_raster,
     gdal_dataset_to_nd_raster,
