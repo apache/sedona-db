@@ -52,6 +52,6 @@ def raster_con(zarr_group):
     """
     sedonadb_zarr = pytest.importorskip("sedonadb_zarr")
     con = sedonadb.connect()
-    df = con.read_format(sedonadb_zarr.ZarrFormatSpec(), f"file://{zarr_group}")
+    df = con.read_format(sedonadb_zarr.Zarr(), f"file://{zarr_group}")
     df.to_view("rasters")
     return con
