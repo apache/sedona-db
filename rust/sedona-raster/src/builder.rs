@@ -29,7 +29,7 @@ use std::sync::Arc;
 
 use sedona_schema::raster::{BandDataType, RasterSchema};
 
-use crate::traits::{BandMetadata, BandRef, MetadataRef};
+use crate::traits::{BandMetadata, BandOverrides, BandRef, MetadataRef};
 use crate::view_entries::{ViewEntries, ViewEntry};
 
 /// Maximum byte length of an inline `BinaryViewArray` view. Views this short
@@ -554,49 +554,24 @@ impl RasterBuilder {
             outdb_uri,
             outdb_format,
         } = args;
-        let source_shape: Vec<i64> = input.raw_source_shape().to_vec();
+        // Compose the input band's existing view with the requested one, then
+        // delegate to `copy_into`: it writes the schema (inheriting source_shape
+        // and any unspecified fields from `input`) and carries the bytes over —
+        // zero-copy for an Arrow-backed input via `append_band_data_from`,
+        // copying only for a generic `BandRef`.
         let composed =
             ViewEntries::new(input.view().to_vec()).compose(&ViewEntries::new(view.to_vec()))?;
-
-        // Inherit storage metadata from the input unless the caller has
-        // explicitly overridden it. For OutDb inputs this propagates the
-        // external pointer to the output; for InDb inputs the input's
-        // outdb_uri/outdb_format are typically None anyway.
-        let final_outdb_uri = outdb_uri.or_else(|| input.outdb_uri());
-        let final_outdb_format = outdb_format.or_else(|| input.outdb_format());
-
-        // Reuse the internal start_band_with_view helper to perform
-        // validation + write the schema fields.
-        self.start_band_with_view(StartBandWithViewArgs {
-            name,
-            dim_names,
-            source_shape: &source_shape,
-            view: composed.as_slice(),
-            data_type: input.data_type(),
-            nodata,
-            outdb_uri: final_outdb_uri,
-            outdb_format: final_outdb_format,
-        })?;
-
-        if input.is_indb() {
-            // InDb: nd_buffer().buffer is the source bytes — borrow them
-            // directly into `append_value` so the only copy is the one
-            // BinaryViewBuilder makes into its block. This is still
-            // a full source-bytes copy per `with_view` call, which
-            // undermines the "lazy slice" framing for large rasters.
-            //
-            // The principled fix is Arrow `BinaryView` buffer-sharing:
-            // the output's data row references the input's existing
-            // backing `Buffer` instead of copying. Tracked separately
-            // in the Raster Clean Up project.
-            let buf = input.nd_buffer()?;
-            self.band_data_writer().append_value(buf.buffer);
-        } else {
-            // OutDb: data column stays empty; the source bytes live at the
-            // inherited outdb_uri and are fetched lazily on read.
-            self.band_data_writer().append_value([]);
-        }
-        Ok(())
+        input.copy_into(
+            self,
+            BandOverrides {
+                name,
+                dim_names: Some(dim_names),
+                view: Some(composed.as_slice()),
+                nodata,
+                outdb_uri,
+                outdb_format,
+            },
+        )
     }
 
     /// Convenience: start a 2D band with `dim_names=["y","x"]` and `shape=[height, width]`.
@@ -2353,6 +2328,58 @@ mod tests {
         assert!(buf.as_contiguous().is_err());
         // The output's source_shape is inherited from the input.
         assert_eq!(out_band.raw_source_shape(), &[8]);
+    }
+
+    #[test]
+    fn with_view_indb_shares_source_buffer_zero_copy() {
+        // 16 bytes (> inline threshold) so the band is block-backed and its
+        // backing Buffer can be shared rather than copied.
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        let mut ib = RasterBuilder::new(1);
+        ib.start_raster_nd(&transform, &["x"], &[16], None).unwrap();
+        ib.start_band_nd(None, &["x"], &[16], BandDataType::UInt8, None, None, None)
+            .unwrap();
+        ib.band_data_writer()
+            .append_value((0u8..16).collect::<Vec<u8>>());
+        ib.finish_band().unwrap();
+        ib.finish_raster().unwrap();
+        let input_array = ib.finish().unwrap();
+        let input_rasters = RasterStructArray::new(&input_array);
+        let input_raster = input_rasters.get(0).unwrap();
+        let input_band = input_raster.band(0).unwrap();
+        let input_ptr = input_band.nd_buffer().unwrap().buffer.as_ptr();
+
+        // Identity with_view: the output band must reference the same backing
+        // bytes as the input (refcount bump), not a fresh copy.
+        let mut ob = RasterBuilder::new(1);
+        ob.start_raster_nd(&transform, &["x"], &[16], None).unwrap();
+        let id = crate::view_entries![0:16];
+        ob.with_view(WithViewArgs {
+            name: None,
+            dim_names: &["x"],
+            input: input_band.as_ref(),
+            view: id.as_slice(),
+            nodata: None,
+            outdb_uri: None,
+            outdb_format: None,
+        })
+        .unwrap();
+        ob.finish_band().unwrap();
+        ob.finish_raster().unwrap();
+        let out_array = ob.finish().unwrap();
+        let out_rasters = RasterStructArray::new(&out_array);
+        let out_raster = out_rasters.get(0).unwrap();
+        let out_band = out_raster.band(0).unwrap();
+
+        assert_eq!(
+            input_ptr,
+            out_band.nd_buffer().unwrap().buffer.as_ptr(),
+            "with_view must share the source buffer zero-copy, not copy it"
+        );
+        assert_eq!(
+            out_band.nd_buffer().unwrap().as_contiguous().unwrap(),
+            (0u8..16).collect::<Vec<u8>>().as_slice()
+        );
     }
 
     #[test]

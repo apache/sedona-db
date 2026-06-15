@@ -21,6 +21,7 @@ use arrow_array::{
 };
 use arrow_schema::ArrowError;
 
+use crate::builder::RasterBuilder;
 use crate::traits::{BandRef, Bands, NdBuffer, RasterRef};
 use crate::view_entries::{ViewEntries, ViewEntry};
 use sedona_schema::raster::{band_indices, band_view_indices, raster_indices, BandDataType};
@@ -140,6 +141,18 @@ impl<'a> BandRef for BandRefImpl<'a> {
             offset: self.byte_offset,
             data_type: self.data_type,
         })
+    }
+
+    /// Zero-copy override: share the source row's backing `Buffer` into the
+    /// builder (refcount bump) instead of copying the visible bytes. OutDb
+    /// bands have an empty data column by design.
+    fn append_data_into(&self, builder: &mut RasterBuilder) -> Result<(), ArrowError> {
+        if self.is_indb() {
+            builder.append_band_data_from(self.data_array, self.band_row)
+        } else {
+            builder.band_data_writer().append_value([]);
+            Ok(())
+        }
     }
 }
 
