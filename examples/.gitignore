@@ -16,3 +16,8 @@
 # under the License.
 
 Cargo.lock
+
+# Example projects commit their lockfile so CI builds against pinned,
+# known-good transitive deps instead of re-resolving from scratch.
+!sedonadb-rust/Cargo.lock
+!sedonadb-rust-pointcloud/Cargo.lock

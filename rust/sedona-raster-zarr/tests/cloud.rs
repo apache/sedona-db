@@ -129,3 +129,30 @@ async fn https_zarr_smoke() {
     let rows = count_rows(reader);
     assert!(rows > 0, "expected at least one chunk row from {uri}");
 }
+
+/// Consolidated-metadata discovery over plain HTTPS, with NO `arrays`
+/// filter — the exact shape of issue #941. The ERA5 Hurricane Florence
+/// group (public, anonymous, UK JASMIN/CEDA) is a Zarr v3 group whose
+/// `zarr.json` carries an inline `consolidated_metadata` block, so child
+/// arrays are discovered from that block without ever listing the store.
+/// The host answers directory listing (`PROPFIND`) with 405, so this read
+/// would fail if discovery fell back to listing.
+#[tokio::test]
+#[ignore]
+async fn https_consolidated_metadata_discovery_no_filter() {
+    let uri = "https://atlantis-vis-o.s3-ext.jc.rl.ac.uk/hurricanes/era5/florence";
+    let authority = "https://atlantis-vis-o.s3-ext.jc.rl.ac.uk";
+    let store: Arc<dyn ObjectStore> = Arc::new(
+        HttpBuilder::new()
+            .with_url(authority)
+            .build()
+            .expect("build HttpStore"),
+    );
+    let storage = open_storage_from_uri(uri, store).expect("open_storage_from_uri");
+    // No arrays filter: discovery must come from consolidated metadata.
+    let reader = ZarrChunkReader::try_new(storage, uri, None, 1024)
+        .await
+        .expect("ZarrChunkReader::try_new against Florence over https:// (consolidated metadata)");
+    let rows = count_rows(reader);
+    assert!(rows > 0, "expected at least one chunk row from {uri}");
+}

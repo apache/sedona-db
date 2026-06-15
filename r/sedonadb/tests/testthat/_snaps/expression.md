@@ -232,6 +232,30 @@
       <SedonaDBExpr>
       Float64(1) > Float64(2)
 
+# basic set of numeric functions are translated
+
+    Code
+      sd_eval_expr(quote(sum(x)))
+    Output
+      <SedonaDBExpr>
+      sum(x) RESPECT NULLS
+
+---
+
+    Code
+      sd_eval_expr(quote(mean(x)))
+    Output
+      <SedonaDBExpr>
+      avg(x) RESPECT NULLS
+
+---
+
+    Code
+      sd_eval_expr(quote(abs(x)))
+    Output
+      <SedonaDBExpr>
+      abs(x)
+
 # errors that occur during evaluation have reasonable context
 
     Code

@@ -55,7 +55,7 @@ def _mean_class():
 
 
 def test_aggregate_udf_global_via_sql(con):
-    con.register_udf(_mean_class())
+    con.register(_mean_class())
     con.create_data_frame(pd.DataFrame({"v": [1.0, 3.0, 5.0, 7.0]})).to_view(
         "t_global", overwrite=True
     )
@@ -66,7 +66,7 @@ def test_aggregate_udf_global_via_sql(con):
 def test_aggregate_udf_grouped(con):
     # Grouped aggregation exercises both update_batch and the merge path
     # across groups under the slow Accumulator-per-group fallback.
-    con.register_udf(_mean_class())
+    con.register(_mean_class())
     df = con.create_data_frame(
         pd.DataFrame({"k": ["a", "a", "b", "b", "b"], "v": [1.0, 3.0, 2.0, 4.0, 6.0]})
     )
@@ -75,7 +75,7 @@ def test_aggregate_udf_grouped(con):
 
 
 def test_aggregate_udf_input_nulls_ignored(con):
-    con.register_udf(_mean_class())
+    con.register(_mean_class())
     df = con.create_data_frame(pd.DataFrame({"v": [1.0, None, 3.0, None, 5.0]}))
     out = df.agg(m=con.funcs.my_mean(col("v"))).to_pandas()
     pdt.assert_frame_equal(out, pd.DataFrame({"m": [3.0]}))
@@ -120,7 +120,7 @@ def test_aggregate_udf_multi_batch_forces_merge(con):
         def evaluate(self):
             return None if self.count == 0 else self.total / self.count
 
-    con.register_udf(mean_with_probe)
+    con.register(mean_with_probe)
     # 50k rows >> the 8192-row default batch size; keys interleave so both
     # groups span every batch. k='a' holds the even values, k='b' the odds.
     n = 50_000
@@ -148,7 +148,7 @@ def test_aggregate_udf_multi_batch_forces_merge(con):
 def test_aggregate_udf_empty_input_returns_null(con):
     # No rows → count==0 → evaluate returns None → SQL NULL surfaces as
     # NaN in float64 pandas.
-    con.register_udf(_mean_class())
+    con.register(_mean_class())
     con.create_data_frame(pd.DataFrame({"v": pd.Series([], dtype="float64")})).to_view(
         "t_empty", overwrite=True
     )
@@ -183,7 +183,7 @@ def test_aggregate_udf_evaluate_returning_wrong_type_raises(con):
         def evaluate(self):
             return "not a number"
 
-    con.register_udf(wrong_return_type)
+    con.register(wrong_return_type)
     df = con.create_data_frame(pd.DataFrame({"v": [1.0, 2.0, 3.0]}))
     with pytest.raises(Exception, match="Could not convert"):
         df.agg(n=con.funcs.wrong_return_type(col("v"))).to_pandas()
@@ -214,7 +214,7 @@ def test_aggregate_udf_state_arity_mismatch_raises(con):
         def evaluate(self):
             return self.n
 
-    con.register_udf(wrong_state_arity)
+    con.register(wrong_state_arity)
     # A grouped multi-batch input forces a partial state() call.
     n = 20_000
     df = con.create_data_frame(
@@ -260,7 +260,7 @@ def test_aggregate_udf_exception_in_method_propagates(con, failing_method):
                 raise RuntimeError("boom in evaluate")
             return self.total
 
-    con.register_udf(boom)
+    con.register(boom)
     n = 20_000
     df = con.create_data_frame(
         pa.table({"k": ["a", "b"] * (n // 2), "v": [float(i) for i in range(n)]})
@@ -294,7 +294,7 @@ def test_aggregate_udf_camel_case_name(con):
             return self.n
 
     assert MyRowCount._name == "my_row_count"
-    con.register_udf(MyRowCount)
+    con.register(MyRowCount)
     df = con.create_data_frame(pd.DataFrame({"v": [1.0, 2.0, 3.0]}))
     out = df.agg(n=con.funcs.my_row_count(col("v"))).to_pandas()
     pdt.assert_frame_equal(out, pd.DataFrame({"n": [3]}))
@@ -333,7 +333,7 @@ def test_aggregate_udf_shapely_geometry(con):
         def evaluate(self):
             return None if self.acc is None else shapely.to_wkb(self.acc)
 
-    con.register_udf(geom_union)
+    con.register(geom_union)
     con.sql(
         "SELECT * FROM (VALUES (ST_Point(0.0, 0.0)), (ST_Point(1.0, 1.0))) AS t(g)"
     ).to_view("t_geom", overwrite=True)

@@ -15,18 +15,10 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# nolint start: object_name_linter
-collect.sedonadb_dataframe <- function(x, ...) {
-  rlang::check_dots_empty()
-  tibble::as_tibble(sd_collect(x))
-}
-
+#' @exportS3Method dplyr::select
 select.sedonadb_dataframe <- function(.data, ...) {
-  schema <- nanoarrow::infer_nanoarrow_schema(.data)
-  ptype <- nanoarrow::infer_nanoarrow_ptype(schema)
-  loc <- tidyselect::eval_select(rlang::expr(c(...)), data = ptype)
-
-  df <- .data$df$select_indices(names(loc), loc - 1L)
-  new_sedonadb_dataframe(.data$ctx, df)
+  exprs <- rlang::enquos(...)
+  sedonadb::sd_select(.data, !!!exprs)
 }
-# nolint end
+
+# TODO: rename
