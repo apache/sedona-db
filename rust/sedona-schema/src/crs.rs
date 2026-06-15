@@ -203,8 +203,10 @@ impl CachedSRIDToCrs {
 /// Maps CRS input strings to their canonical `to_crs_string` form with caching
 /// to avoid repeated deserialization of the same CRS string:
 /// - `"0"` or `""` → `None` (no CRS)
-/// - other → deserialized and re-emitted verbatim (authority code stays an
-///   authority code; a PROJJSON/WKT definition is preserved in full)
+/// - other → deserialized and re-emitted via `to_crs_string` (authority code
+///   stays an authority code; a PROJJSON/WKT definition is preserved in full —
+///   semantically, though PROJJSON object keys may be reordered and whitespace
+///   normalized when re-serialized from the parsed tree)
 #[derive(Default)]
 pub struct CachedCrsNormalization {
     cache: HashMap<String, Option<String>>,
@@ -981,7 +983,7 @@ mod test {
             Some("OGC:CRS84")
         );
 
-        // A PROJJSON carrying an embedded authority id is preserved verbatim
+        // A PROJJSON carrying an embedded authority id is preserved in full
         // rather than collapsed to "EPSG:6318" — no information lost on input.
         let normalized = norm.normalize(EPSG_6318_PROJJSON).unwrap().unwrap();
         assert!(

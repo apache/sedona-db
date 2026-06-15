@@ -180,7 +180,7 @@ impl SedonaScalarKernel for StCrs {
                 // Return the full round-trippable definition rather than
                 // collapsing to the authority code: an `authority:code` CRS
                 // stays compact, while a PROJJSON/WKT definition is preserved
-                // verbatim instead of being reduced to its embedded code.
+                // in full instead of being reduced to its embedded code.
                 Some(crs.to_crs_string())
             }
             _ => None,
