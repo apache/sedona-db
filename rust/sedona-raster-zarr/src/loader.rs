@@ -364,13 +364,18 @@ async fn open_and_validate(
                     // Regular CF coordinate arrays imply geographic lon/lat;
                     // infer the CRS from the dim names only when none was
                     // declared. Generic y/x stay CRS-less (attach via RS_SetCRS).
-                    if geo.crs.is_none() {
-                        geo.crs =
-                            coords::infer_geographic_crs(&y_name, &x_name).map(str::to_string);
-                    }
+                    let crs_note = if let Some(declared) = geo.crs.as_deref() {
+                        format!("keeping the declared CRS {declared:?}")
+                    } else if let Some(inferred) = coords::infer_geographic_crs(&y_name, &x_name) {
+                        geo.crs = Some(inferred.to_string());
+                        format!("inferred CRS {inferred} from the dim names")
+                    } else {
+                        "no CRS inferred (spatial dims are not lat/lon) — set one with RS_SetCRS"
+                            .to_string()
+                    };
                     log::debug!(
-                        "Zarr group at {group_uri} has no `spatial:transform`; derived \
-                         a geotransform from the {x_name:?}/{y_name:?} coordinate arrays"
+                        "Zarr group at {group_uri} has no `spatial:transform`; derived a \
+                         geotransform from the {x_name:?}/{y_name:?} coordinate arrays; {crs_note}"
                     );
                     t
                 }
