@@ -17,6 +17,7 @@
 
 import pytest
 import sedonadb
+import sedonadb_zarr
 
 
 @pytest.fixture
@@ -50,7 +51,6 @@ def raster_con(zarr_group):
     Uses its own connection (not the shared module-level one) so the view
     doesn't leak into other tests.
     """
-    sedonadb_zarr = pytest.importorskip("sedonadb_zarr")
     con = sedonadb.connect()
     df = con.read_format(sedonadb_zarr.Zarr(), f"file://{zarr_group}")
     df.to_view("rasters")
