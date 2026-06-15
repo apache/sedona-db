@@ -192,8 +192,10 @@ fn load_all_symbols(lib: &Library, api: &mut SedonaGdalApi) -> Result<(), GdalIn
         api,
         MEMDatasetCreate,
         [
-            // Linux and macOS
+            // Linux and macOS, GDAL <= 3.12 (last param `char**`)
             b"_ZN10MEMDataset6CreateEPKciii12GDALDataTypePPc\0",
+            // Linux and macOS, GDAL >= 3.13 (last param `char const* const*`)
+            b"_ZN10MEMDataset6CreateEPKciii12GDALDataTypePKS1_\0",
             // MSVC
             b"?Create@MEMDataset@@SAPEAV1@PEBDHHHW4GDALDataType@@PEAPEAD@Z\0",
         ]
