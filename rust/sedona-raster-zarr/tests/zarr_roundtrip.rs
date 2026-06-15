@@ -447,9 +447,6 @@ async fn errors_on_mismatched_chunk_grids() {
 /// A CF-style group with no `spatial:transform` — just `longitude`/`latitude`
 /// coordinate arrays plus a 2-D data array. Georeferencing must be derived
 /// from the (regularly spaced) coordinate values.
-// `store_chunk_elements` is deprecated upstream but is the most direct way to
-// write typed coordinate values in a test fixture.
-#[allow(deprecated)]
 fn build_coord_array_fixture() -> TempDir {
     let tmp = TempDir::new().unwrap();
     let store = Arc::new(FilesystemStore::new(tmp.path()).unwrap());
@@ -468,7 +465,9 @@ fn build_coord_array_fixture() -> TempDir {
         .build(store.clone(), "/longitude")
         .unwrap();
     lon.store_metadata().unwrap();
-    lon.store_chunk_elements::<f64>(&[0], &[10.0, 11.0, 12.0])
+    // `&[f64]` implements `IntoArrayBytes`, so pass the element slice straight
+    // to `store_chunk` (the typed `store_chunk_elements` is deprecated).
+    lon.store_chunk(&[0], [10.0f64, 11.0, 12.0].as_slice())
         .unwrap();
 
     let lat = ArrayBuilder::new(vec![2u64], vec![2u64], data_type::float64(), 0.0f64)
@@ -476,8 +475,7 @@ fn build_coord_array_fixture() -> TempDir {
         .build(store.clone(), "/latitude")
         .unwrap();
     lat.store_metadata().unwrap();
-    lat.store_chunk_elements::<f64>(&[0], &[20.0, 19.0])
-        .unwrap();
+    lat.store_chunk(&[0], [20.0f64, 19.0].as_slice()).unwrap();
 
     // 2-D data array, dims [latitude, longitude], single chunk.
     let data = ArrayBuilder::new(vec![2u64, 3u64], vec![2u64, 3u64], data_type::uint8(), 0u8)
