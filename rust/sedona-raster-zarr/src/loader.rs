@@ -37,9 +37,8 @@ use zarrs::array::Array;
 #[cfg(test)]
 use zarrs::array::ArrayBytes;
 use zarrs::group::Group;
-use zarrs::storage::{
-    AsyncReadableListableStorage, AsyncReadableListableStorageTraits, StorePrefix,
-};
+use zarrs::node::NodeMetadata;
+use zarrs::storage::{AsyncReadableListableStorage, AsyncReadableListableStorageTraits};
 
 use crate::dtype::zarr_to_band_data_type;
 use crate::geozarr::GroupGeoMetadata;
@@ -327,7 +326,7 @@ async fn open_and_validate(
         // (typical xarray coord variables) are silently dropped so a
         // canonical xarray layout reads cleanly.
         None => {
-            let arrays = enumerate_child_arrays(&storage, group_uri).await?;
+            let arrays = enumerate_child_arrays(&group, &storage, group_uri).await?;
             if arrays.is_empty() {
                 return Err(ArrowError::InvalidArgumentError(format!(
                     "Zarr group at {group_uri} has no child arrays"
@@ -425,36 +424,49 @@ async fn open_named_arrays(
     Ok(out)
 }
 
-/// List the direct children of the group and try to open each as an
-/// array. Per-array open failures are logged at warn level and the
-/// child is skipped — a single malformed sibling array (e.g. an
-/// xarray-style coord variable with a dtype zarrs can't yet parse)
-/// can no longer poison the whole group. Subgroups are filtered out by
-/// the same `Array::async_open`-error skip, so the externally
-/// observable behaviour matches the old `Group::child_arrays()`
-/// contract for well-formed groups while being permissive about
-/// partial breakage.
+/// Discover the group's direct child arrays.
+///
+/// Discovery goes through zarrs's [`Group::async_children`], which uses
+/// the group's V3 `consolidated_metadata` block when present (no
+/// per-node storage reads) and otherwise lists the store. Listing is
+/// unsupported on some backends — plain HTTPS / S3-behind-`HttpStore`
+/// answer directory listing with `405 Method Not Allowed` — so a store
+/// that has neither consolidated metadata nor listing yields an
+/// actionable error pointing at the `arrays` option rather than a raw
+/// store error.
+///
+/// Each array is then built from its already-parsed metadata. Per-array
+/// failures are logged at warn level and the child is skipped — a single
+/// malformed sibling array (e.g. an xarray-style coord variable with a
+/// dtype zarrs can't yet parse) can no longer poison the whole group.
+/// Subgroups are skipped via the `NodeMetadata::Group` arm.
 async fn enumerate_child_arrays(
+    group: &Group<dyn AsyncReadableListableStorageTraits>,
     storage: &AsyncReadableListableStorage,
     group_uri: &str,
 ) -> Result<Vec<Array<dyn AsyncReadableListableStorageTraits>>, ArrowError> {
-    let listing = storage.list_dir(&StorePrefix::root()).await.map_err(|e| {
+    let children = group.async_children(false).await.map_err(|e| {
         ArrowError::ExternalError(Box::new(sedona_internal_datafusion_err!(
-            "failed to list child nodes of Zarr group at {group_uri}: {e}"
+            "failed to discover child arrays of Zarr group at {group_uri}: {e}. \
+             If this store has no consolidated metadata and does not support \
+             directory listing (for example a plain HTTPS server), pass the \
+             `arrays` option to name the arrays to read."
         )))
     })?;
-    let mut arrays = Vec::with_capacity(listing.prefixes().len());
-    for child in listing.prefixes() {
-        let raw = child.as_str().trim_end_matches('/');
-        if raw.is_empty() {
-            continue;
-        }
-        let path = format!("/{raw}");
-        match Array::async_open(storage.clone(), &path).await {
-            Ok(array) => arrays.push(array),
-            Err(e) => log::warn!(
-                "skipping Zarr child {path} in {group_uri}: not openable as an array ({e})"
-            ),
+
+    let mut arrays = Vec::with_capacity(children.len());
+    for node in children {
+        let path = node.path().to_string();
+        match NodeMetadata::from(node) {
+            NodeMetadata::Array(metadata) => {
+                match Array::new_with_metadata(storage.clone(), &path, metadata) {
+                    Ok(array) => arrays.push(array),
+                    Err(e) => log::warn!(
+                        "skipping Zarr child {path} in {group_uri}: not usable as an array ({e})"
+                    ),
+                }
+            }
+            NodeMetadata::Group(_) => {}
         }
     }
     Ok(arrays)

@@ -39,6 +39,34 @@ type_to_param <- list(
   boolean = "b"
 )
 
+#' Convert a CamelCase function name to snake_case with appropriate prefix
+#'
+#' @param title The function title (e.g., "ST_AsEWKB", "RS_Width")
+#' @returns Character snake_case name with appropriate prefix (e.g., "sd_as_ewkb", "rs_width")
+camel_to_snake <- function(title) {
+  # Determine prefix based on original function type
+  if (grepl("^RS_", title)) {
+    prefix <- "rs_"
+  } else {
+    prefix <- "sd_"
+  }
+
+  # Remove ST_, RS_, or S2_ prefix
+  name <- sub("^(ST|RS|S2)_", "", title)
+
+  # Insert underscore before uppercase letters that follow lowercase letters
+  # e.g., "AsEWKB" -> "As_EWKB"
+  name <- gsub("([a-z])([A-Z])", "\\1_\\2", name)
+
+  # Insert underscore before uppercase letters followed by lowercase
+  # (to handle acronyms like EWKB before lowercase)
+  # e.g., "EWKBTest" -> "EWKB_Test"
+  name <- gsub("([A-Z]+)([A-Z][a-z])", "\\1_\\2", name)
+
+  # Convert to lowercase and add appropriate prefix
+  paste0(prefix, tolower(name))
+}
+
 # Apache license header
 license_header <- "# Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
@@ -425,7 +453,9 @@ generate_translation <- function(sd_name, fn_name, args, variadic = FALSE) {
 #' @param file_hash MD5 hash of source .qmd file
 #' @returns Character string with complete R file content
 generate_r_file <- function(fn_name, frontmatter, description, file_hash) {
-  sd_name <- sub("^st_", "sd_", fn_name)
+  # Use title from frontmatter to get proper snake_case naming
+  title <- frontmatter$title %||% fn_name
+  sd_name <- camel_to_snake(title)
   kernel_info <- parse_kernel_params(frontmatter$kernels, fn_name)
   title <- frontmatter$description %||% frontmatter$title
 
@@ -472,7 +502,15 @@ generate_r_file <- function(fn_name, frontmatter, description, file_hash) {
 #' @returns List with status ("generated", "skipped", "failed") and error message if failed
 generate_from_qmd <- function(qmd_path, force = FALSE) {
   fn_name <- tools::file_path_sans_ext(basename(qmd_path))
-  sd_name <- sub("^st_", "sd_", fn_name)
+
+  # Parse frontmatter early to get the proper sd_name from title
+  frontmatter <- tryCatch(
+    extract_frontmatter(qmd_path),
+
+    error = function(e) list(title = fn_name)
+  )
+  title <- frontmatter$title %||% fn_name
+  sd_name <- camel_to_snake(title)
   output_path <- file.path(output_dir, paste0(sd_name, ".R"))
 
   # Compute hash
@@ -493,7 +531,10 @@ generate_from_qmd <- function(qmd_path, force = FALSE) {
     {
       message("Generating ", sd_name, ".R from ", fn_name, ".qmd")
 
-      frontmatter <- extract_frontmatter(qmd_path)
+      # Re-parse frontmatter if initial parse failed (used fallback)
+      if (is.null(frontmatter$kernels)) {
+        frontmatter <- extract_frontmatter(qmd_path)
+      }
       description <- extract_description_section(qmd_path)
 
       content <- generate_r_file(fn_name, frontmatter, description, file_hash)
@@ -516,7 +557,33 @@ generate_from_qmd <- function(qmd_path, force = FALSE) {
 #' @returns Invisible NULL
 update_sd_funcs <- function(files = NULL, force = TRUE) {
   if (is.null(files)) {
-    qmd_files <- list.files(docs_dir, pattern = "^(st|rs)_.*\\.qmd$", full.names = TRUE)
+    qmd_files <- list.files(
+      docs_dir,
+      pattern = "^(st|rs|s2)_.*\\.qmd$",
+      full.names = TRUE
+    )
+
+    # Clear old generated files when regenerating all
+    message("Clearing old generated files...")
+
+    # Remove R/sd_*.R and R/rs_*.R files
+    old_sd_files <- list.files(output_dir, pattern = "^sd_.*\\.R$", full.names = TRUE)
+    old_rs_files <- list.files(output_dir, pattern = "^rs_.*\\.R$", full.names = TRUE)
+    old_files <- c(old_sd_files, old_rs_files)
+    if (length(old_files) > 0) {
+      file.remove(old_files)
+      message("  Removed ", length(old_files), " old R files")
+    }
+
+    # Clear man/ directory
+    man_dir <- here::here("man")
+    if (dir.exists(man_dir)) {
+      man_files <- list.files(man_dir, full.names = TRUE)
+      if (length(man_files) > 0) {
+        file.remove(man_files)
+        message("  Removed ", length(man_files), " old man files")
+      }
+    }
   } else {
     qmd_files <- file.path(docs_dir, paste0(files, ".qmd"))
     missing <- !file.exists(qmd_files)
@@ -545,6 +612,4 @@ update_sd_funcs <- function(files = NULL, force = TRUE) {
       message("  - ", f$fn_name, ": ", f$error)
     }
   }
-
-  invisible(NULL)
 }

@@ -1,0 +1,72 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+name: "Set up wheel build"
+description: >
+  Shared setup for cibuildwheel jobs: Python, cibuildwheel, an optional Rust
+  cache, and the SedonaDB dev version. Run after actions/checkout.
+
+inputs:
+  rust-cache-key:
+    description: >
+      Swatinem/rust-cache prefix-key. Leave empty to skip the cache (e.g.
+      Linux container builds, where the host cache doesn't apply).
+    required: false
+    default: ""
+  cache-bin:
+    description: "Passed through to rust-cache's cache-bin."
+    required: false
+    default: "true"
+  delvewheel:
+    description: "Also install delvewheel (Windows wheel repair)."
+    required: false
+    default: "false"
+
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/setup-python@v6
+      with:
+        python-version: "3.13"
+
+    - name: Install cibuildwheel
+      shell: bash
+      run: |
+        python -m pip install cibuildwheel==3.1.4
+        if [ "${{ inputs.delvewheel }}" = "true" ]; then
+          python -m pip install delvewheel
+        fi
+
+    - uses: Swatinem/rust-cache@v2
+      if: inputs.rust-cache-key != ''
+      with:
+        prefix-key: ${{ inputs.rust-cache-key }}
+        # Don't cache ~/.cargo/bin -- caching it across runner-image
+        # generations leaves cargo on PATH as a stale rustup-init that
+        # rejects normal subcommands. See sedona-db#837.
+        cache-bin: ${{ inputs.cache-bin }}
+
+    - name: Set SedonaDB dev version
+      shell: bash
+      run: |
+        # Set the unique development version anywhere except a release branch
+        if [[ "${GITHUB_REF##*/}" =~ ^branch-[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          version="${GITHUB_REF##*/branch-}"
+          echo "${version}"
+        else
+          python ci/scripts/set_dev_version.py
+        fi

@@ -996,8 +996,10 @@ class DataFrame:
             geometry: [[01010000000000000000000000000000000000F03F]]
 
         """
-        import geoarrow.pyarrow  # noqa: F401
         import pyarrow as pa
+        from sedonadb.utility import register_pyarrow_extension_types
+
+        register_pyarrow_extension_types()
 
         return pa.RecordBatchReader.from_stream(
             self._impl.to_stream(self._ctx._impl, simplify=simplify)
@@ -1078,8 +1080,10 @@ class DataFrame:
             geometry: [[01010000000000000000000000000000000000F03F]]
 
         """
-        import geoarrow.pyarrow  # noqa: F401
         import pyarrow as pa
+        from sedonadb.utility import register_pyarrow_extension_types
+
+        register_pyarrow_extension_types()
 
         # Collects all batches into an object that exposes __arrow_c_stream__()
         batches = self._impl.to_batches(schema)

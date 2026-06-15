@@ -119,7 +119,7 @@ class ExternalFormatSpec:
         """
         raise NotImplementedError()
 
-    def __sedona_external_format__(self):
+    def __sedonadb_external_format__(self):
         return PyExternalFormat(self)
 
 
