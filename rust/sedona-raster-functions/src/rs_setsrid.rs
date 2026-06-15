@@ -338,19 +338,19 @@ fn normalize_crs_columnar(
     let string_array_ref = ColumnarValue::values_to_arrays(&[string_value])?;
     let string_view_array = as_string_view_array(&string_array_ref[0])?;
 
-    let crs_array: StringViewArray = string_view_array
-        .iter()
-        .map(|maybe_crs| -> Result<Option<String>> {
-            if let Some(crs_str) = maybe_crs {
-                let normalized = crs_norm.normalize(crs_str)?;
-                Ok(normalized)
-            } else {
-                Ok(None)
-            }
-        })
-        .collect::<Result<_>>()?;
+    // Deduplicate: rasters are always stored with an item-level CRS, so a
+    // batch typically repeats the same (possibly large) PROJJSON/WKT
+    // definition. Sharing the bytes across rows keeps the column compact.
+    let mut builder =
+        StringViewBuilder::with_capacity(string_view_array.len()).with_deduplicate_strings();
+    for maybe_crs in string_view_array.iter() {
+        match maybe_crs {
+            Some(crs_str) => builder.append_option(crs_norm.normalize(crs_str)?),
+            None => builder.append_null(),
+        }
+    }
 
-    Ok(crs_array)
+    Ok(builder.finish())
 }
 
 /// Validate a CRS string

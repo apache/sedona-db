@@ -17,8 +17,8 @@
 use std::sync::{Arc, OnceLock};
 
 use arrow_array::{
-    builder::{BinaryBuilder, NullBufferBuilder},
-    new_null_array, ArrayRef, StringViewArray,
+    builder::{BinaryBuilder, NullBufferBuilder, StringViewBuilder},
+    new_null_array, Array, ArrayRef, StringViewArray,
 };
 use arrow_buffer::NullBuffer;
 use arrow_schema::DataType;
@@ -507,18 +507,19 @@ fn normalize_crs_array(
             let string_value = crs_value.cast_to(&DataType::Utf8View, None)?;
             let string_array_ref = ColumnarValue::values_to_arrays(&[string_value])?;
             let string_view_array = as_string_view_array(&string_array_ref[0])?;
-            let utf8_view_array = string_view_array
-                .iter()
-                .map(|maybe_crs| -> Result<Option<String>> {
-                    if let Some(crs_str) = maybe_crs {
-                        crs_norm.normalize(crs_str)
-                    } else {
-                        Ok(None)
-                    }
-                })
-                .collect::<Result<StringViewArray>>()?;
+            // Deduplicate: when many rows carry the same (possibly large)
+            // PROJJSON/WKT definition, the bytes are stored once in the view
+            // buffer and shared across rows.
+            let mut builder = StringViewBuilder::with_capacity(string_view_array.len())
+                .with_deduplicate_strings();
+            for maybe_crs in string_view_array.iter() {
+                match maybe_crs {
+                    Some(crs_str) => builder.append_option(crs_norm.normalize(crs_str)?),
+                    None => builder.append_null(),
+                }
+            }
 
-            Ok(Arc::new(utf8_view_array))
+            Ok(Arc::new(builder.finish()))
         }
     }
 }

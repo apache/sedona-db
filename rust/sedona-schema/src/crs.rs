@@ -198,12 +198,13 @@ impl CachedSRIDToCrs {
     }
 }
 
-/// Cache for normalizing CRS strings to their abbreviated form.
+/// Cache for normalizing CRS strings to their round-trippable definition.
 ///
-/// Maps CRS input strings to their abbreviated `authority:code` representation
-/// with caching to avoid repeated deserialization of the same CRS string:
+/// Maps CRS input strings to their canonical `to_crs_string` form with caching
+/// to avoid repeated deserialization of the same CRS string:
 /// - `"0"` or `""` → `None` (no CRS)
-/// - other → deserialized and abbreviated to `authority:code` if possible
+/// - other → deserialized and re-emitted verbatim (authority code stays an
+///   authority code; a PROJJSON/WKT definition is preserved in full)
 #[derive(Default)]
 pub struct CachedCrsNormalization {
     cache: HashMap<String, Option<String>>,
@@ -226,8 +227,11 @@ impl CachedCrsNormalization {
 
     /// Normalize a CRS string, using the cache to avoid repeated deserialization.
     ///
-    /// Returns the abbreviated `authority:code` form if available, otherwise the
-    /// original string. Returns `None` for `"0"`, `""`, or CRS strings that
+    /// Returns the round-trippable CRS definition (`to_crs_string`) — the
+    /// authority code for an `authority:code` CRS, or the full PROJJSON/WKT for
+    /// a definition-based one. The full definition is preserved rather than
+    /// collapsed to its embedded authority code, so no information is lost on
+    /// the way in. Returns `None` for `"0"`, `""`, or CRS strings that
     /// deserialize to `None`.
     pub fn normalize(&mut self, crs_str: &str) -> Result<Option<String>> {
         if crs_str == "0" || crs_str.is_empty() {
@@ -238,15 +242,7 @@ impl CachedCrsNormalization {
             return Ok(cached.clone());
         }
 
-        let result = if let Some(crs) = deserialize_crs(crs_str)? {
-            if let Some(auth_code) = crs.to_authority_code()? {
-                Some(auth_code)
-            } else {
-                Some(crs_str.to_string())
-            }
-        } else {
-            None
-        };
+        let result = deserialize_crs(crs_str)?.map(|crs| crs.to_crs_string());
 
         self.cache.insert(crs_str.to_string(), result.clone());
         Ok(result)
@@ -963,5 +959,40 @@ mod test {
         .unwrap();
         let params = datum_ensemble.geographic_params().unwrap().unwrap();
         assert_eq!(params.spherical_radius(), 6371000.0);
+    }
+
+    #[test]
+    fn normalize_preserves_definition() {
+        let mut norm = CachedCrsNormalization::new();
+
+        // Empty / "0" -> no CRS.
+        assert_eq!(norm.normalize("0").unwrap(), None);
+        assert_eq!(norm.normalize("").unwrap(), None);
+
+        // An authority:code stays compact.
+        assert_eq!(
+            norm.normalize("EPSG:3857").unwrap().as_deref(),
+            Some("EPSG:3857")
+        );
+
+        // lnglat folds to the canonical OGC:CRS84 (pre-existing behavior).
+        assert_eq!(
+            norm.normalize("EPSG:4326").unwrap().as_deref(),
+            Some("OGC:CRS84")
+        );
+
+        // A PROJJSON carrying an embedded authority id is preserved verbatim
+        // rather than collapsed to "EPSG:6318" — no information lost on input.
+        let normalized = norm.normalize(EPSG_6318_PROJJSON).unwrap().unwrap();
+        assert!(
+            normalized.contains("GeographicCRS"),
+            "expected full PROJJSON, got {normalized}"
+        );
+        assert_ne!(normalized, "EPSG:6318");
+        // It round-trips back to the same CRS.
+        assert_eq!(
+            deserialize_crs(&normalized).unwrap(),
+            deserialize_crs(EPSG_6318_PROJJSON).unwrap()
+        );
     }
 }
