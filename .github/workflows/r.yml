@@ -114,7 +114,7 @@ jobs:
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
           needs: check
-          extra-packages: any::glue, any::here, any::rlang, any::yaml, any::roxygen2
+          extra-packages: any::glue, any::here, any::rlang, any::yaml, any::roxygen2, any::rcmdcheck
           working-directory: r/sedonadb
           cache: false
 
@@ -133,3 +133,21 @@ jobs:
       - name: Test sedonafns R Package
         run: |
           R -e 'library(testthat); test_local("r/sedonafns", MultiReporter$new(list(CheckReporter$new(), LocationReporter$new())))'
+
+      - name: Install sdplyr R Package
+        run: |
+          R CMD INSTALL r/sdplyr --preclean
+
+      - name: Test sdplyr R Package
+        run: |
+          R -e 'library(testthat); test_local("r/sdplyr", MultiReporter$new(list(CheckReporter$new(), LocationReporter$new())))'
+
+      # These two packages are quick to CMD check after sedonadb is installed,
+      # so do that here
+      - uses: r-lib/actions/check-r-package@v2
+        with:
+          working-directory: r/sedonafns
+
+      - uses: r-lib/actions/check-r-package@v2
+        with:
+          working-directory: r/sdplyr

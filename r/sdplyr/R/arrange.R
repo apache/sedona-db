@@ -15,22 +15,9 @@
 # specific language governing permissions and limitations
 # under the License.
 
-test_that("basic usage with sedonadb integration works", {
-  skip_if_not_installed("sedonadb")
-
-  df_out <- data.frame(x = 1, y = 2) |>
-    sedonadb::sd_transmute(x, y, geom = sd_point(x, y) |> sd_as_text())
-
-  expect_identical(
-    as.data.frame(df_out),
-    data.frame(x = 1, y = 2, geom = "POINT(1 2)")
-  )
-})
-
-test_that("functions error when called outside a translation context", {
-  expect_error(
-    sd_point(),
-    "Can't use `sd_point()` outside a SedonaDB translation context",
-    fixed = TRUE
-  )
-})
+#' @exportS3Method dplyr::arrange
+arrange.sedonadb_dataframe <- function(.data, ..., .by_group = sdplyr_unsupported()) {
+  assert_unsupported(.by_group)
+  exprs <- rlang::enquos(...)
+  sedonadb::sd_arrange(.data, !!!exprs)
+}

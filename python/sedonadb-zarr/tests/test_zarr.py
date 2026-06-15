@@ -62,6 +62,116 @@ def test_format_spec_via_read_format(zarr_group):
     )
 
 
+# A north-up affine in spatial:transform order [a, b, c, d, e, f]: origin
+# (10, 20), 1x-1 pixels. A single-chunk 2x2 raster then spans x in [10, 12],
+# y in [18, 20]. Encoding the *same* georeferencing under different attribute
+# spellings must produce the same RS_Envelope — that is the permutation matrix
+# below. A reader that misreads the affine as GDAL order yields a degenerate
+# envelope, so RS_Envelope is a tight guard on the transform handling.
+_NORTH_UP_AFFINE = [1.0, 0.0, 10.0, 0.0, -1.0, 20.0]
+_NORTH_UP_BOUNDS = (10.0, 18.0, 12.0, 20.0)
+
+
+def _zarr_with_attrs(tmp_path, group_attrs, *, dims=("y", "x")):
+    """Write a single-chunk 2x2 Zarr v3 group carrying `group_attrs`."""
+    zarr = pytest.importorskip("zarr", minversion="3.0")
+    root = zarr.open_group(str(tmp_path), mode="w")
+    for key, value in group_attrs.items():
+        root.attrs[key] = value
+    arr = root.create_array(
+        "temperature",
+        shape=(2, 2),
+        chunks=(2, 2),  # single chunk -> one raster row over the full extent
+        dtype="uint8",
+        dimension_names=list(dims),
+    )
+    arr[:] = np.zeros((2, 2), dtype=np.uint8)
+    return tmp_path
+
+
+def _envelope_bounds(con, path):
+    """Read the single-chunk zarr and return RS_Envelope bounds of row 0."""
+    shapely = pytest.importorskip("shapely")
+    df = con.read_format(sedonadb_zarr.Zarr(), f"file://{path}")
+    raster = df.to_arrow_table()["raster"][0].as_py()
+    wkt = (
+        con.sql("SELECT ST_AsText(RS_Envelope($1)) AS wkt", params=(raster,))
+        .to_arrow_table()["wkt"][0]
+        .as_py()
+    )
+    return shapely.from_wkt(wkt).bounds
+
+
+@pytest.mark.parametrize(
+    "group_attrs, dims",
+    [
+        # Canonical current convention.
+        pytest.param(
+            {
+                "proj:code": "EPSG:4326",
+                "spatial:dimensions": ["y", "x"],
+                "spatial:transform": _NORTH_UP_AFFINE,
+            },
+            ("y", "x"),
+            id="proj_code+spatial_dimensions",
+        ),
+        # Legacy aliases: proj:epsg (int) + spatial:dims.
+        pytest.param(
+            {
+                "proj:epsg": 4326,
+                "spatial:dims": ["y", "x"],
+                "spatial:transform": _NORTH_UP_AFFINE,
+            },
+            ("y", "x"),
+            id="legacy_proj_epsg+spatial_dims",
+        ),
+        # Mixed old/new spelling.
+        pytest.param(
+            {
+                "proj:epsg": 4326,
+                "spatial:dimensions": ["y", "x"],
+                "spatial:transform": _NORTH_UP_AFFINE,
+            },
+            ("y", "x"),
+            id="mixed_proj_epsg+spatial_dimensions",
+        ),
+        # No spatial:dimensions -> inferred from the recognized (y, x) pair.
+        pytest.param(
+            {"proj:code": "EPSG:4326", "spatial:transform": _NORTH_UP_AFFINE},
+            ("y", "x"),
+            id="inferred_dims_y_x",
+        ),
+        # latitude/longitude is also a recognized spatial pair.
+        pytest.param(
+            {"proj:code": "EPSG:4326", "spatial:transform": _NORTH_UP_AFFINE},
+            ("latitude", "longitude"),
+            id="inferred_dims_lat_lon",
+        ),
+    ],
+)
+def test_rs_envelope_across_attr_permutations(tmp_path, group_attrs, dims):
+    """The same georeferencing under different attribute spellings yields the
+    same world-coordinate envelope."""
+    con = sedonadb.connect()
+    bounds = _envelope_bounds(con, _zarr_with_attrs(tmp_path, group_attrs, dims=dims))
+    assert bounds == pytest.approx(_NORTH_UP_BOUNDS)
+
+
+def test_rs_envelope_honors_skew(tmp_path):
+    """A non-zero skew term (`b` in `[a, b, c, d, e, f]`) must land in the
+    right transform slot — proves the full affine->GDAL reorder, not just the
+    origin. affine [1, 0.5, 10, 0, -1, 20]: wx = col + 0.5*row + 10, wy =
+    20 - row; corners -> (10,20),(12,20),(13,18),(11,18); AABB x[10,13]."""
+    attrs = {
+        "proj:code": "EPSG:4326",
+        "spatial:dimensions": ["y", "x"],
+        "spatial:transform": [1.0, 0.5, 10.0, 0.0, -1.0, 20.0],
+    }
+    con = sedonadb.connect()
+    bounds = _envelope_bounds(con, _zarr_with_attrs(tmp_path, attrs))
+    assert bounds == pytest.approx((10.0, 18.0, 13.0, 20.0))
+
+
 def test_format_spec_with_arrays_option(zarr_group):
     con = sedonadb.connect()
     spec = sedonadb_zarr.Zarr().with_options({"arrays": ["temperature"]})

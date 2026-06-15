@@ -15,22 +15,20 @@
 # specific language governing permissions and limitations
 # under the License.
 
-test_that("basic usage with sedonadb integration works", {
-  skip_if_not_installed("sedonadb")
-
-  df_out <- data.frame(x = 1, y = 2) |>
-    sedonadb::sd_transmute(x, y, geom = sd_point(x, y) |> sd_as_text())
-
+test_that("collect() returns a collected tibble", {
+  df <- tibble(one = 1L, two = "two", THREE = 3.0)
   expect_identical(
-    as.data.frame(df_out),
-    data.frame(x = 1, y = 2, geom = "POINT(1 2)")
+    df |> as_sedonadb_dataframe() |> collect(),
+    df
   )
 })
 
-test_that("functions error when called outside a translation context", {
-  expect_error(
-    sd_point(),
-    "Can't use `sd_point()` outside a SedonaDB translation context",
-    fixed = TRUE
+test_that("compute() returns a collected SedonaDB dataframe", {
+  df <- tibble(one = 1L, two = "two", THREE = 3.0)
+  computed <- df |> as_sedonadb_dataframe() |> compute()
+  expect_s3_class(computed, "sedonadb_dataframe")
+  expect_identical(
+    computed |> collect(),
+    df
   )
 })

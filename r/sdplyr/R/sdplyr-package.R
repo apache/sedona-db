@@ -15,22 +15,30 @@
 # specific language governing permissions and limitations
 # under the License.
 
-test_that("basic usage with sedonadb integration works", {
-  skip_if_not_installed("sedonadb")
+#' @keywords internal
+"_PACKAGE"
 
-  df_out <- data.frame(x = 1, y = 2) |>
-    sedonadb::sd_transmute(x, y, geom = sd_point(x, y) |> sd_as_text())
+## usethis namespace: start
+## usethis namespace: end
+NULL
 
-  expect_identical(
-    as.data.frame(df_out),
-    data.frame(x = 1, y = 2, geom = "POINT(1 2)")
-  )
-})
+sdplyr_unsupported <- function() {
+  structure(list(), class = "sdplyr_unsupported")
+}
 
-test_that("functions error when called outside a translation context", {
-  expect_error(
-    sd_point(),
-    "Can't use `sd_point()` outside a SedonaDB translation context",
-    fixed = TRUE
-  )
-})
+assert_unsupported <- function(...) {
+  args <- tibble::lst(...)
+  args_is_unsupported <- vapply(args, inherits, logical(1), "sdplyr_unsupported")
+  arg_names <- names(args)
+
+  if (!all(args_is_unsupported)) {
+    bad_args <- arg_names[!args_is_unsupported] # nolint: object_usage_linter
+    cli::cli_abort(
+      c(
+        "{cli::qty(bad_args)} Argument{?s} {.arg {bad_args}} {?is/are} not supported
+        by sdplyr."
+      ),
+      call = parent.frame()
+    )
+  }
+}

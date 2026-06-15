@@ -78,13 +78,16 @@ fn build_fixture() -> TempDir {
     let store = Arc::new(FilesystemStore::new(tmp.path()).unwrap());
 
     // Group with a known affine transform so we can verify per-chunk
-    // transforms below.
+    // transforms below. `spatial:transform` is in affine order
+    // [a, b, c, d, e, f]; the affine [1, 0, 100, 0, -1, 200] is north-up
+    // with origin (100, 200), which the reader stores internally in GDAL
+    // order as [100, 1, 0, 200, 0, -1].
     let mut group_attrs = serde_json::Map::new();
     group_attrs.insert(
         "spatial:transform".into(),
-        serde_json::json!([100.0, 1.0, 0.0, 200.0, 0.0, -1.0]),
+        serde_json::json!([1.0, 0.0, 100.0, 0.0, -1.0, 200.0]),
     );
-    group_attrs.insert("proj:epsg".into(), serde_json::json!(4326));
+    group_attrs.insert("proj:code".into(), serde_json::json!("EPSG:4326"));
     GroupBuilder::new()
         .attributes(group_attrs)
         .build(store.clone(), "/")

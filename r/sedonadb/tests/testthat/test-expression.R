@@ -128,6 +128,13 @@ test_that("function calls that map to binary expressions are translated", {
   expect_snapshot(sd_eval_expr(quote(1 > 2)))
 })
 
+test_that("basic set of numeric functions are translated", {
+  x <- sd_expr_column("x")
+  expect_snapshot(sd_eval_expr(quote(sum(x))))
+  expect_snapshot(sd_eval_expr(quote(mean(x))))
+  expect_snapshot(sd_eval_expr(quote(abs(x))))
+})
+
 test_that("errors that occur during evaluation have reasonable context", {
   function_without_a_translation <- function(x) x + 1L
   expect_snapshot(sd_eval_expr(quote(stop("this will error"))), error = TRUE)
