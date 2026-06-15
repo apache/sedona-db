@@ -296,6 +296,35 @@ impl InternalDataFrame {
         Ok(InternalDataFrame::new(inner, self.runtime.clone()))
     }
 
+    fn distinct(&self) -> Result<InternalDataFrame, PySedonaError> {
+        let inner = self.inner.clone().distinct()?;
+        Ok(InternalDataFrame::new(inner, self.runtime.clone()))
+    }
+
+    /// `DISTINCT ON (on_exprs)` keeping all columns. With no sort expression
+    /// DataFusion keeps an arbitrary row per distinct key (SQL `DISTINCT ON`
+    /// without `ORDER BY`).
+    fn distinct_on(&self, on_exprs: Vec<PyExpr>) -> Result<InternalDataFrame, PySedonaError> {
+        let on: Vec<Expr> = on_exprs.into_iter().map(|e| e.inner).collect();
+
+        // Output all columns: build qualified column refs for the full schema
+        // (mirrors `qualified_column_expr`).
+        let schema = self.inner.schema();
+        let select: Vec<Expr> = (0..schema.fields().len())
+            .map(|i| {
+                let (relation, field) = schema.qualified_field(i);
+                Expr::Column(Column {
+                    relation: relation.cloned(),
+                    name: field.name().to_string(),
+                    spans: Default::default(),
+                })
+            })
+            .collect();
+
+        let inner = self.inner.clone().distinct_on(on, select, None)?;
+        Ok(InternalDataFrame::new(inner, self.runtime.clone()))
+    }
+
     fn execute<'py>(&self, py: Python<'py>) -> Result<usize, PySedonaError> {
         let df = self.inner.clone();
         let count = wait_for_future(py, &self.runtime, async move {
