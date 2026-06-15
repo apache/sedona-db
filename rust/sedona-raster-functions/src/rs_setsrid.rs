@@ -140,7 +140,7 @@ impl SedonaScalarKernel for RsSetCrs {
 
         let input_nulls = extract_input_nulls(crs_arg);
 
-        // Normalize the CRS string(s) — abbreviate PROJJSON to authority:code, map "0" to null
+        // Normalize the CRS string(s) — preserve the full definition, map "0" to null
         let crs_columnar = normalize_crs_columnar(crs_arg, self.engine.as_ref())?;
 
         replace_raster_crs(raster_arg, &crs_columnar, input_nulls)
@@ -380,6 +380,37 @@ mod tests {
     use sedona_schema::datatypes::RASTER;
     use sedona_testing::rasters::generate_test_rasters;
     use sedona_testing::testers::ScalarUdfTester;
+
+    #[test]
+    fn normalize_crs_columnar_dedups_repeats_and_preserves_nulls() {
+        // Rasters are always stored with an item-level CRS, so a batch
+        // typically repeats the same definition. A large PROJJSON repeated
+        // across rows, with a null and a short authority code interleaved.
+        const PROJJSON: &str = r#"{"type":"GeographicCRS","name":"NAD83","datum":{"type":"GeodeticReferenceFrame","name":"NAD83","ellipsoid":{"name":"GRS 1980","semi_major_axis":6378137,"inverse_flattening":298.257222101}},"coordinate_system":{"subtype":"ellipsoidal","axis":[{"name":"Geodetic latitude","abbreviation":"Lat","direction":"north","unit":"degree"},{"name":"Geodetic longitude","abbreviation":"Lon","direction":"east","unit":"degree"}]},"id":{"authority":"EPSG","code":4269}}"#;
+        let input = StringViewArray::from(vec![
+            Some(PROJJSON),
+            None,
+            Some(PROJJSON),
+            Some("EPSG:4326"),
+        ]);
+        let out = normalize_crs_columnar(&ColumnarValue::Array(Arc::new(input)), None).unwrap();
+
+        // Null placement matches the input row-for-row.
+        assert_eq!(out.len(), 4);
+        assert!(out.is_null(1), "the null row must be preserved");
+        // The PROJJSON is preserved in full (not collapsed to "EPSG:4269") and
+        // is identical across the two rows that carried it.
+        assert!(out.value(0).contains("GeographicCRS"));
+        assert_ne!(out.value(0), "EPSG:4269");
+        assert_eq!(out.value(0), out.value(2));
+        // EPSG:4326 folds to OGC:CRS84 (<=12 bytes, inlined into the view).
+        assert_eq!(out.value(3), "OGC:CRS84");
+
+        // Deduplication: the repeated PROJJSON lives in the shared data buffer
+        // exactly once, so total buffer bytes equal a single copy.
+        let buffer_bytes: usize = out.data_buffers().iter().map(|b| b.len()).sum();
+        assert_eq!(buffer_bytes, out.value(0).len());
+    }
 
     #[test]
     fn udf_metadata() {

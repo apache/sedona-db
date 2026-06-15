@@ -637,6 +637,38 @@ mod test {
     }
 
     #[test]
+    fn normalize_crs_array_dedups_repeats_and_preserves_nulls() {
+        // A large PROJJSON repeated across rows, interleaved with a null and a
+        // short authority code, exercises the string path of normalize_crs_array.
+        const PROJJSON: &str = r#"{"type":"GeographicCRS","name":"NAD83","datum":{"type":"GeodeticReferenceFrame","name":"NAD83","ellipsoid":{"name":"GRS 1980","semi_major_axis":6378137,"inverse_flattening":298.257222101}},"coordinate_system":{"subtype":"ellipsoidal","axis":[{"name":"Geodetic latitude","abbreviation":"Lat","direction":"north","unit":"degree"},{"name":"Geodetic longitude","abbreviation":"Lon","direction":"east","unit":"degree"}]},"id":{"authority":"EPSG","code":4269}}"#;
+        let input = StringViewArray::from(vec![
+            Some(PROJJSON),
+            None,
+            Some(PROJJSON),
+            Some("EPSG:4326"),
+        ]);
+        let out = normalize_crs_array(&ColumnarValue::Array(Arc::new(input)), None).unwrap();
+        let out = out.as_any().downcast_ref::<StringViewArray>().unwrap();
+
+        // Null placement matches the input row-for-row.
+        assert_eq!(out.len(), 4);
+        assert!(out.is_null(1), "the null row must be preserved");
+        // The PROJJSON is preserved in full (not collapsed to "EPSG:4269") and
+        // is identical across the two rows that carried it.
+        assert!(out.value(0).contains("GeographicCRS"));
+        assert_ne!(out.value(0), "EPSG:4269");
+        assert_eq!(out.value(0), out.value(2));
+        // EPSG:4326 folds to OGC:CRS84 (<=12 bytes, inlined into the view).
+        assert_eq!(out.value(3), "OGC:CRS84");
+
+        // Deduplication: the repeated PROJJSON lives in the shared data buffer
+        // exactly once, so total buffer bytes equal a single copy (the inlined
+        // OGC:CRS84 contributes nothing to the buffer).
+        let buffer_bytes: usize = out.data_buffers().iter().map(|b| b.len()).sum();
+        assert_eq!(buffer_bytes, out.value(0).len());
+    }
+
+    #[test]
     fn udf_srid() {
         let udf: ScalarUDF = st_set_srid_udf().into();
 

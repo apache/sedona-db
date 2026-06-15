@@ -994,5 +994,17 @@ mod test {
             deserialize_crs(&normalized).unwrap(),
             deserialize_crs(EPSG_6318_PROJJSON).unwrap()
         );
+
+        // A PROJJSON with no authority id: there's nothing to collapse to, so
+        // the full definition is the only faithful output. Round-trip equality
+        // here exercises ProjJSON::crs_equals' full-body comparison (not the
+        // authority-code short circuit), proving the definition survives
+        // re-serialization.
+        const NO_ID_PROJJSON: &str = r#"{"type":"GeographicCRS","name":"Custom","datum":{"type":"GeodeticReferenceFrame","name":"Custom datum","ellipsoid":{"name":"Custom","semi_major_axis":6378137,"inverse_flattening":298.257223563}},"coordinate_system":{"subtype":"ellipsoidal","axis":[{"name":"Geodetic latitude","abbreviation":"Lat","direction":"north","unit":"degree"},{"name":"Geodetic longitude","abbreviation":"Lon","direction":"east","unit":"degree"}]}}"#;
+        let normalized = norm.normalize(NO_ID_PROJJSON).unwrap().unwrap();
+        let from_normalized = deserialize_crs(&normalized).unwrap().unwrap();
+        let from_original = deserialize_crs(NO_ID_PROJJSON).unwrap().unwrap();
+        assert!(from_normalized.to_authority_code().unwrap().is_none());
+        assert!(from_normalized.crs_equals(from_original.as_ref()));
     }
 }
