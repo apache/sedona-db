@@ -444,10 +444,13 @@ async fn errors_on_mismatched_chunk_grids() {
     );
 }
 
-/// A CF-style group with no `spatial:transform` — just `longitude`/`latitude`
-/// coordinate arrays plus a 2-D data array. Georeferencing must be derived
-/// from the (regularly spaced) coordinate values.
-fn build_coord_array_fixture() -> TempDir {
+/// A CF-style group with no `spatial:transform`: a single-chunk 2-D data array
+/// `temperature` with dims `[y_name, x_name]` plus matching 1-D coordinate
+/// arrays. Georeferencing must be derived from the (regularly spaced)
+/// coordinate values. `&[f64]` implements `IntoArrayBytes`, so the element
+/// slice goes straight to `store_chunk` (typed `store_chunk_elements` is
+/// deprecated).
+fn build_coord_fixture(y_name: &str, y_vals: &[f64], x_name: &str, x_vals: &[f64]) -> TempDir {
     let tmp = TempDir::new().unwrap();
     let store = Arc::new(FilesystemStore::new(tmp.path()).unwrap());
 
@@ -458,39 +461,33 @@ fn build_coord_array_fixture() -> TempDir {
         .store_metadata()
         .unwrap();
 
-    // 1-D coordinate arrays, single chunk each. lon 10,11,12 (step +1);
-    // lat 20,19 (step -1, north-to-south).
-    let lon = ArrayBuilder::new(vec![3u64], vec![3u64], data_type::float64(), 0.0f64)
-        .dimension_names(Some(["longitude"]))
-        .build(store.clone(), "/longitude")
-        .unwrap();
-    lon.store_metadata().unwrap();
-    // `&[f64]` implements `IntoArrayBytes`, so pass the element slice straight
-    // to `store_chunk` (the typed `store_chunk_elements` is deprecated).
-    lon.store_chunk(&[0], [10.0f64, 11.0, 12.0].as_slice())
-        .unwrap();
+    // 1-D coordinate arrays, single chunk each.
+    for (name, vals) in [(y_name, y_vals), (x_name, x_vals)] {
+        let n = vals.len() as u64;
+        let arr = ArrayBuilder::new(vec![n], vec![n], data_type::float64(), 0.0f64)
+            .dimension_names(Some([name]))
+            .build(store.clone(), &format!("/{name}"))
+            .unwrap();
+        arr.store_metadata().unwrap();
+        arr.store_chunk(&[0], vals).unwrap();
+    }
 
-    let lat = ArrayBuilder::new(vec![2u64], vec![2u64], data_type::float64(), 0.0f64)
-        .dimension_names(Some(["latitude"]))
-        .build(store.clone(), "/latitude")
-        .unwrap();
-    lat.store_metadata().unwrap();
-    lat.store_chunk(&[0], [20.0f64, 19.0].as_slice()).unwrap();
-
-    // 2-D data array, dims [latitude, longitude], single chunk.
-    let data = ArrayBuilder::new(vec![2u64, 3u64], vec![2u64, 3u64], data_type::uint8(), 0u8)
-        .dimension_names(Some(["latitude", "longitude"]))
+    // 2-D data array, dims [y_name, x_name], single chunk.
+    let (ny, nx) = (y_vals.len() as u64, x_vals.len() as u64);
+    let data = ArrayBuilder::new(vec![ny, nx], vec![ny, nx], data_type::uint8(), 0u8)
+        .dimension_names(Some([y_name, x_name]))
         .build(store.clone(), "/temperature")
         .unwrap();
     data.store_metadata().unwrap();
-    data.store_chunk(&[0, 0], vec![0u8; 6]).unwrap();
+    data.store_chunk(&[0, 0], vec![0u8; (ny * nx) as usize])
+        .unwrap();
 
     tmp
 }
 
 #[tokio::test]
 async fn derives_geotransform_and_crs_from_coordinate_arrays() {
-    let tmp = build_coord_array_fixture();
+    let tmp = build_coord_fixture("latitude", &[20.0, 19.0], "longitude", &[10.0, 11.0, 12.0]);
     let uri = format!("file://{}", tmp.path().display());
     let arr = read_all(&uri, None).await.unwrap();
 
@@ -509,5 +506,54 @@ async fn derives_geotransform_and_crs_from_coordinate_arrays() {
         vec![9.5, 1.0, 0.0, 20.5, 0.0, -1.0]
     );
     // latitude/longitude dim names imply geographic EPSG:4326.
+    assert_eq!(raster.crs(), Some("EPSG:4326"));
+}
+
+#[tokio::test]
+async fn derives_transform_without_crs_for_generic_xy_dims() {
+    // `y`/`x` (not lat/lon): transform is still derived from the coordinates,
+    // but no CRS is inferred — the user attaches one with RS_SetCRS.
+    let tmp = build_coord_fixture("y", &[20.0, 19.0], "x", &[10.0, 11.0, 12.0]);
+    let uri = format!("file://{}", tmp.path().display());
+    let arr = read_all(&uri, None).await.unwrap();
+
+    let raster = RasterStructArray::new(&arr).get(0).unwrap();
+    assert_eq!(
+        raster.transform().to_vec(),
+        vec![9.5, 1.0, 0.0, 20.5, 0.0, -1.0]
+    );
+    assert_eq!(raster.crs(), None);
+}
+
+#[tokio::test]
+async fn irregular_coordinate_arrays_fall_back_to_identity() {
+    // x is irregularly spaced (0, 1, 3), so no affine can represent it; with no
+    // declared CRS the reader falls back to the identity pixel transform.
+    let tmp = build_coord_fixture("y", &[0.0, 1.0], "x", &[0.0, 1.0, 3.0]);
+    let uri = format!("file://{}", tmp.path().display());
+    let arr = read_all(&uri, None).await.unwrap();
+
+    let raster = RasterStructArray::new(&arr).get(0).unwrap();
+    assert_eq!(
+        raster.transform().to_vec(),
+        vec![0.0, 1.0, 0.0, 0.0, 0.0, -1.0]
+    );
+    assert_eq!(raster.crs(), None);
+}
+
+#[tokio::test]
+async fn derives_transform_with_explicit_arrays_filter() {
+    // The coordinate arrays are not in the `arrays` filter, but the reader
+    // opens them by name, so derivation still works.
+    let tmp = build_coord_fixture("latitude", &[20.0, 19.0], "longitude", &[10.0, 11.0, 12.0]);
+    let uri = format!("file://{}", tmp.path().display());
+    let arrays = ["temperature".to_string()];
+    let arr = read_all(&uri, Some(&arrays)).await.unwrap();
+
+    let raster = RasterStructArray::new(&arr).get(0).unwrap();
+    assert_eq!(
+        raster.transform().to_vec(),
+        vec![9.5, 1.0, 0.0, 20.5, 0.0, -1.0]
+    );
     assert_eq!(raster.crs(), Some("EPSG:4326"));
 }
