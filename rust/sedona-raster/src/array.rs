@@ -320,6 +320,100 @@ impl<'a> RasterRefImpl<'a> {
                 .collect(),
         ))
     }
+
+    /// Resolve a 0-based band `index` to its absolute row in the flattened
+    /// bands arrays, bounds-checked against this raster's band count.
+    fn resolve_band_row(&self, index: usize) -> Result<usize, ArrowError> {
+        let nbands = self.num_bands();
+        if index >= nbands {
+            return Err(ArrowError::InvalidArgumentError(format!(
+                "Band index {index} is out of range: this raster has {nbands} bands"
+            )));
+        }
+        let start = self.bands_list.value_offsets()[self.raster_index] as usize;
+        Ok(start + index)
+    }
+
+    /// Read the band's view and source shape, validate the view against the
+    /// source shape, and compose the byte-stride layout (visible shape, byte
+    /// strides, byte offset), checking it against the backing data buffer.
+    fn compose_band_layout(
+        &self,
+        band_row: usize,
+        data_type: BandDataType,
+    ) -> Result<BandLayout, ArrowError> {
+        let source_shape = self.read_band_source_shape(band_row)?;
+        let view_entries = self.read_band_view_entries(band_row, &source_shape)?;
+        view_entries.validate(&source_shape).map_err(|e| {
+            ArrowError::ExternalError(Box::new(sedona_common::sedona_internal_datafusion_err!(
+                "band {band_row} has malformed view: {e}"
+            )))
+        })?;
+
+        let visible_shape = view_entries.visible_shape();
+        let (byte_strides, byte_offset) = compose_byte_strides(
+            band_row,
+            &source_shape,
+            &view_entries,
+            data_type.byte_size(),
+        )?;
+
+        self.check_band_buffer_bounds(
+            band_row,
+            &visible_shape,
+            &byte_strides,
+            byte_offset,
+            data_type,
+        )?;
+
+        Ok(BandLayout {
+            view_entries,
+            visible_shape,
+            byte_strides,
+            byte_offset,
+        })
+    }
+
+    /// For InDb bands, verify the `data` BinaryView is long enough to cover
+    /// every byte the composed view can address. [`ViewEntries::validate`]
+    /// doesn't know the actual buffer length, so a writer that lies about
+    /// `source_shape` vs the bytes written would otherwise slip through and
+    /// panic later when a consumer walks the strided buffer. OutDb bands skip
+    /// this: their data column is empty by design.
+    fn check_band_buffer_bounds(
+        &self,
+        band_row: usize,
+        visible_shape: &[i64],
+        byte_strides: &[i64],
+        byte_offset: i64,
+        data_type: BandDataType,
+    ) -> Result<(), ArrowError> {
+        let data_bytes = self.band_data_array.value(band_row);
+        if data_bytes.is_empty() {
+            return Ok(());
+        }
+        check_view_buffer_bounds(
+            data_bytes.len(),
+            visible_shape,
+            byte_strides,
+            byte_offset,
+            data_type.byte_size(),
+        )
+        .map_err(|e| {
+            ArrowError::ExternalError(Box::new(sedona_common::sedona_internal_datafusion_err!(
+                "band {band_row}: view-buffer bounds check failed: {e}"
+            )))
+        })
+    }
+}
+
+/// The composed, validated byte-stride layout for one band's view — everything
+/// [`RasterRefImpl::band`] derives before constructing a [`BandRefImpl`].
+struct BandLayout {
+    view_entries: ViewEntries,
+    visible_shape: Vec<i64>,
+    byte_strides: Vec<i64>,
+    byte_offset: i64,
 }
 
 /// Compose a validated view against a source shape into C-order byte strides
@@ -390,54 +484,9 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
     }
 
     fn band(&self, index: usize) -> Result<Box<dyn BandRef + '_>, ArrowError> {
-        let nbands = self.num_bands();
-        if index >= nbands {
-            return Err(ArrowError::InvalidArgumentError(format!(
-                "Band index {index} is out of range: this raster has {nbands} bands"
-            )));
-        }
-        let start = self.bands_list.value_offsets()[self.raster_index] as usize;
-        let band_row = start + index;
-
-        let source_shape = self.read_band_source_shape(band_row)?;
+        let band_row = self.resolve_band_row(index)?;
         let data_type = self.read_band_data_type_or_err(band_row)?;
-        let view_entries = self.read_band_view_entries(band_row, &source_shape)?;
-        view_entries.validate(&source_shape).map_err(|e| {
-            ArrowError::ExternalError(Box::new(sedona_common::sedona_internal_datafusion_err!(
-                "band {band_row} has malformed view: {e}"
-            )))
-        })?;
-
-        let visible_shape = view_entries.visible_shape();
-        let (byte_strides, byte_offset) = compose_byte_strides(
-            band_row,
-            &source_shape,
-            &view_entries,
-            data_type.byte_size(),
-        )?;
-
-        // For InDb bands, verify the underlying data column is long enough
-        // to cover every byte the view can address. The view-machinery
-        // validation above doesn't know the actual `data` BinaryView
-        // length — a writer that lies about source_shape vs the bytes
-        // written would otherwise slip through and panic later when a
-        // consumer walks the strided buffer. OutDb bands skip this check:
-        // their data column is empty by design.
-        let data_bytes = self.band_data_array.value(band_row);
-        if !data_bytes.is_empty() {
-            check_view_buffer_bounds(
-                data_bytes.len(),
-                &visible_shape,
-                &byte_strides,
-                byte_offset,
-                data_type.byte_size(),
-            )
-            .map_err(|e| {
-                ArrowError::ExternalError(Box::new(sedona_common::sedona_internal_datafusion_err!(
-                    "band {band_row}: view-buffer bounds check failed: {e}"
-                )))
-            })?;
-        }
+        let layout = self.compose_band_layout(band_row, data_type)?;
 
         Ok(Box::new(BandRefImpl {
             dim_names_list: self.band_dim_names_list,
@@ -450,10 +499,10 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
             data_array: self.band_data_array,
             band_row,
             data_type,
-            view_entries,
-            visible_shape,
-            byte_strides,
-            byte_offset,
+            view_entries: layout.view_entries,
+            visible_shape: layout.visible_shape,
+            byte_strides: layout.byte_strides,
+            byte_offset: layout.byte_offset,
         }))
     }
 
