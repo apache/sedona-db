@@ -20,38 +20,15 @@ import sedonadb
 
 
 @pytest.fixture
-def zarr_group(tmp_path):
-    """Build a tiny 2x2 UInt8 Zarr v3 group with two chunks.
+def raster_con():
+    """A connection with a single `RS_Example()` raster registered as `rasters`.
 
-    The array [[10, 11], [20, 21]] is chunked (1, 2), so it reads as two
-    raster rows of 1x2 pixels each (one row per chunk).
+    Uses the in-DB `RS_Example()` raster (64x32, three UInt8 bands) so the
+    sedonadb package's RS_ function tests carry no zarr dependency — zarr
+    reader behaviors are tested in the sedonadb-zarr package. A dedicated
+    connection (not the shared module-level one) keeps the view from leaking
+    into other tests.
     """
-    # The fixture uses the zarr-python 3.x API (create_array,
-    # dimension_names); zarr 2.x (the newest available on Python < 3.11)
-    # can't write these fixtures.
-    zarr = pytest.importorskip("zarr", minversion="3.0")
-    np = pytest.importorskip("numpy")
-    root = zarr.open_group(str(tmp_path), mode="w")
-    arr = root.create_array(
-        "temperature",
-        shape=(2, 2),
-        chunks=(1, 2),
-        dtype="uint8",
-        dimension_names=["y", "x"],
-    )
-    arr[:] = np.array([[10, 11], [20, 21]], dtype=np.uint8)
-    return tmp_path
-
-
-@pytest.fixture
-def raster_con(zarr_group):
-    """A connection with the `zarr_group` rasters registered as a `rasters` view.
-
-    Uses its own connection (not the shared module-level one) so the view
-    doesn't leak into other tests.
-    """
-    sedonadb_zarr = pytest.importorskip("sedonadb_zarr")
     con = sedonadb.connect()
-    df = con.read_format(sedonadb_zarr.ZarrFormatSpec(), f"file://{zarr_group}")
-    df.to_view("rasters")
+    con.sql("SELECT RS_Example() AS raster").to_view("rasters")
     return con
