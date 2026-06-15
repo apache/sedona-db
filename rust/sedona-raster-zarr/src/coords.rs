@@ -67,6 +67,10 @@ pub(crate) async fn read_coord_values(
                         "failed to read coordinate array {path}: {e}"
                     )))
                 })?;
+            // Lossless for the float dtypes and exact for the small-magnitude
+            // integer coordinates seen in practice; `as f64` can lose precision
+            // only for i64/u64 magnitudes above 2^53, which a coordinate axis
+            // would never reach.
             values.into_iter().map(|v| v as f64).collect::<Vec<f64>>()
         }};
     }
@@ -104,6 +108,11 @@ pub(crate) async fn read_coord_values(
 /// too short, zero-width, or irregular (beyond [`STEP_REL_TOL`]).
 pub(crate) fn regular_step(values: &[f64]) -> Option<f64> {
     if values.len() < 2 {
+        return None;
+    }
+    // An interior NaN/inf would slip past the per-gap check below (every
+    // comparison against NaN is false), so reject non-finite values up front.
+    if values.iter().any(|v| !v.is_finite()) {
         return None;
     }
     // Average step, so float rounding doesn't bias the result toward the first
@@ -172,6 +181,15 @@ mod tests {
         assert_eq!(regular_step(&[0.0, 1.0, 3.0]), None); // irregular
         assert_eq!(regular_step(&[5.0]), None); // too short
         assert_eq!(regular_step(&[2.0, 2.0, 2.0]), None); // zero step
+    }
+
+    #[test]
+    fn regular_step_rejects_non_finite() {
+        // A non-finite value anywhere (incl. an interior one, which the per-gap
+        // check can't catch) must be rejected.
+        assert_eq!(regular_step(&[0.0, f64::NAN, 2.0]), None);
+        assert_eq!(regular_step(&[0.0, 1.0, f64::INFINITY]), None);
+        assert_eq!(regular_step(&[f64::NAN, 1.0, 2.0]), None);
     }
 
     #[test]

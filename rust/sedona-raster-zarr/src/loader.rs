@@ -253,6 +253,10 @@ struct ArrayInfo {
     /// position — ragged final chunks are not emitted as separate short
     /// rows.
     chunk_shape: Vec<u64>,
+    /// Full array shape (extent per dim). Used to validate that a spatial
+    /// coordinate array's length matches the data extent before deriving a
+    /// geotransform from it.
+    shape: Vec<u64>,
     /// Encoded fill value in native-endian byte representation, for the
     /// `nodata` field. None when the array has no fill value declared.
     nodata: Option<Vec<u8>>,
@@ -351,12 +355,30 @@ async fn open_and_validate(
     let group_transform = match geo.transform {
         Some(t) => t,
         None => {
-            let y_name = array_infos[0].dim_names[spatial_dim_indices[0]].clone();
-            let x_name = array_infos[0].dim_names[spatial_dim_indices[1]].clone();
+            let y_axis = spatial_dim_indices[0];
+            let x_axis = spatial_dim_indices[1];
+            let y_name = array_infos[0].dim_names[y_axis].clone();
+            let x_name = array_infos[0].dim_names[x_axis].clone();
             let x_vals = coords::read_coord_values(&storage, &x_name).await?;
             let y_vals = coords::read_coord_values(&storage, &y_name).await?;
-            let derived = match (x_vals, y_vals) {
-                (Some(x), Some(y)) => coords::transform_from_coords(&x, &y),
+
+            // A coordinate array must span the data extent along its axis; a
+            // length mismatch is a malformed coord variable that would yield a
+            // wrong scale, so refuse to derive a transform from it.
+            let x_ok = x_vals
+                .as_ref()
+                .is_none_or(|v| v.len() as u64 == array_infos[0].shape[x_axis]);
+            let y_ok = y_vals
+                .as_ref()
+                .is_none_or(|v| v.len() as u64 == array_infos[0].shape[y_axis]);
+            if !(x_ok && y_ok) {
+                log::warn!(
+                    "Zarr group at {group_uri}: a spatial coordinate array's length does \
+                     not match the data extent; ignoring coordinates for georeferencing"
+                );
+            }
+            let derived = match (x_ok && y_ok, x_vals, y_vals) {
+                (true, Some(x), Some(y)) => coords::transform_from_coords(&x, &y),
                 _ => None,
             };
             match derived {
@@ -532,6 +554,7 @@ fn collect_array_infos(
             .iter()
             .map(|n| n.get())
             .collect();
+        let shape = array.shape().to_vec();
         let fill_bytes = array.fill_value().as_ne_bytes();
         let nodata = if fill_bytes.is_empty() {
             None
@@ -544,6 +567,7 @@ fn collect_array_infos(
             dim_names,
             chunk_grid_shape,
             chunk_shape,
+            shape,
             nodata,
         });
     }
