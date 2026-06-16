@@ -18,6 +18,7 @@
 use arrow_schema::ArrowError;
 use sedona_schema::raster::BandDataType;
 
+use crate::builder::RasterBuilder;
 use crate::view_entries::ViewEntry;
 
 /// Recognized spatial dimension-name pairs, in band C-order: the slower-
@@ -496,6 +497,23 @@ pub trait RasterRef {
     }
 }
 
+/// Field overrides for [`BandRef::copy_into`]. Each field defaults to `None`,
+/// meaning "inherit from the source band". `name` has no source on a `BandRef`
+/// (band names live at the raster level), so it defaults to unnamed.
+#[derive(Default)]
+pub struct BandOverrides<'a> {
+    /// Name for the derived band (the source has none to inherit).
+    pub name: Option<&'a str>,
+    /// Override the dimension names; `None` inherits the source's.
+    pub dim_names: Option<&'a [&'a str]>,
+    /// Override the nodata value; `None` inherits the source's.
+    pub nodata: Option<&'a [u8]>,
+    /// Override the OutDb URI; `None` inherits the source's.
+    pub outdb_uri: Option<&'a str>,
+    /// Override the OutDb format; `None` inherits the source's.
+    pub outdb_format: Option<&'a str>,
+}
+
 /// Trait for accessing a single band/variable within an N-D raster.
 ///
 /// This is the consumer interface. Implementations handle storage details
@@ -666,6 +684,59 @@ pub trait BandRef {
             None => return Ok(None),
         };
         nodata_bytes_to_f64_lossless(bytes, &self.data_type()).map(Some)
+    }
+
+    /// Write a derived band into `builder`, inheriting every field not set in
+    /// `overrides` from `self`, and carrying the source bytes over.
+    ///
+    /// This is the canonical "derive a band from an existing one" path — it
+    /// replaces hand-rebuilding via `start_band_nd` + a manual data append. The
+    /// data transfer is zero-copy when the implementation supports it (see
+    /// [`Self::append_data_into`]).
+    ///
+    /// The derived band has an identity view: it carries the source's
+    /// dimension names, shape, data type, nodata, and OutDb pointers, but not a
+    /// non-identity `view`. (View-carrying overrides land with the view
+    /// machinery.)
+    fn copy_into(
+        &self,
+        builder: &mut RasterBuilder,
+        overrides: BandOverrides<'_>,
+    ) -> Result<(), ArrowError> {
+        let inherited_dims = self.dim_names();
+        let dim_names: Vec<&str> = match overrides.dim_names {
+            Some(d) => d.to_vec(),
+            None => inherited_dims,
+        };
+        let shape = self.raw_source_shape().to_vec();
+        builder.start_band_nd(
+            overrides.name,
+            &dim_names,
+            &shape,
+            self.data_type(),
+            overrides.nodata.or_else(|| self.nodata()),
+            overrides.outdb_uri.or_else(|| self.outdb_uri()),
+            overrides.outdb_format.or_else(|| self.outdb_format()),
+        )?;
+        self.append_data_into(builder)
+    }
+
+    /// Append `self`'s band data as the current band's single `data` value.
+    ///
+    /// The default copies the visible source bytes via `append_value`. Arrow-
+    /// backed implementations override this to share the source row's backing
+    /// `Buffer` zero-copy (a refcount bump via
+    /// [`RasterBuilder::append_band_data_from`]), keeping the buffer plumbing
+    /// encapsulated rather than exposing a raw `Buffer` accessor. Call after the
+    /// band's schema has been written (e.g. by [`Self::copy_into`]).
+    fn append_data_into(&self, builder: &mut RasterBuilder) -> Result<(), ArrowError> {
+        if self.is_indb() {
+            let ndb = self.nd_buffer()?;
+            builder.band_data_writer().append_value(ndb.buffer);
+        } else {
+            builder.band_data_writer().append_value([]);
+        }
+        Ok(())
     }
 }
 

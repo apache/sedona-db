@@ -21,6 +21,7 @@ use arrow_array::{
 };
 use arrow_schema::ArrowError;
 
+use crate::builder::RasterBuilder;
 use crate::traits::{BandRef, Bands, NdBuffer, RasterRef};
 use crate::view_entries::ViewEntry;
 use sedona_schema::raster::{band_indices, raster_indices, BandDataType};
@@ -133,6 +134,18 @@ impl<'a> BandRef for BandRefImpl<'a> {
             offset: self.byte_offset,
             data_type: self.data_type,
         })
+    }
+
+    /// Zero-copy override: share the source row's backing `Buffer` into the
+    /// builder (refcount bump) instead of copying the visible bytes. OutDb
+    /// bands have an empty data column by design.
+    fn append_data_into(&self, builder: &mut RasterBuilder) -> Result<(), ArrowError> {
+        if self.is_indb() {
+            builder.append_band_data_from(self.data_array, self.band_row)
+        } else {
+            builder.band_data_writer().append_value([]);
+            Ok(())
+        }
     }
 }
 
@@ -605,7 +618,7 @@ impl<'a> RasterStructArray<'a> {
 mod tests {
     use super::*;
     use crate::builder::RasterBuilder;
-    use crate::traits::{BandMetadata, RasterMetadata};
+    use crate::traits::{BandMetadata, BandOverrides, RasterMetadata};
     use arrow_array::{ArrayRef, ListArray, StructArray, UInt32Array};
     use arrow_buffer::{OffsetBuffer, ScalarBuffer};
     use arrow_schema::{DataType, Fields};
@@ -614,6 +627,67 @@ mod tests {
     };
     use sedona_testing::rasters::generate_test_rasters;
     use std::sync::Arc;
+
+    #[test]
+    fn copy_into_shares_buffer_zero_copy_and_overrides() {
+        // 16-byte InDb band (> inline threshold, so block-backed and shareable).
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        let mut ib = RasterBuilder::new(1);
+        ib.start_raster_nd(&transform, &["x"], &[16], None).unwrap();
+        ib.start_band_nd(
+            Some("orig"),
+            &["x"],
+            &[16],
+            BandDataType::UInt8,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        ib.band_data_writer()
+            .append_value((0u8..16).collect::<Vec<u8>>());
+        ib.finish_band().unwrap();
+        ib.finish_raster().unwrap();
+        let input_array = ib.finish().unwrap();
+        let input_rasters = RasterStructArray::new(&input_array);
+        let input_raster = input_rasters.get(0).unwrap();
+        let input_band = input_raster.band(0).unwrap();
+        let input_ptr = input_band.nd_buffer().unwrap().buffer.as_ptr();
+
+        // copy_into with a name override; everything else inherited.
+        let mut ob = RasterBuilder::new(1);
+        ob.start_raster_nd(&transform, &["x"], &[16], None).unwrap();
+        input_band
+            .copy_into(
+                &mut ob,
+                BandOverrides {
+                    name: Some("derived"),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        ob.finish_band().unwrap();
+        ob.finish_raster().unwrap();
+        let out_array = ob.finish().unwrap();
+        let out_rasters = RasterStructArray::new(&out_array);
+        let out_raster = out_rasters.get(0).unwrap();
+        let out_band = out_raster.band(0).unwrap();
+
+        // Zero-copy: the derived band references the same backing bytes.
+        assert_eq!(
+            input_ptr,
+            out_band.nd_buffer().unwrap().buffer.as_ptr(),
+            "copy_into must share the source buffer, not copy it"
+        );
+        assert_eq!(
+            out_band.nd_buffer().unwrap().as_contiguous().unwrap(),
+            (0u8..16).collect::<Vec<u8>>().as_slice()
+        );
+        // Name overridden; dim names + data type inherited from the source.
+        assert_eq!(out_raster.band_name(0), Some("derived"));
+        assert_eq!(out_band.dim_names(), vec!["x"]);
+        assert_eq!(out_band.data_type(), BandDataType::UInt8);
+    }
 
     #[test]
     fn test_array_basic_functionality() {
