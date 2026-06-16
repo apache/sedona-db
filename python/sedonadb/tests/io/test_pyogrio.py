@@ -28,6 +28,7 @@ import pandas as pd
 import pyarrow as pa
 import pytest
 import sedonadb
+from sedonadb.datasource import PyogrioFormatSpec
 import shapely
 
 
@@ -373,3 +374,24 @@ def test_read_ogr_partitioned(con):
             con.sql("SELECT * FROM partitioned_disabled ORDER BY idx").to_pandas(),
             gdf.filter(["idx", "wkb_geometry"]),
         )
+
+
+def test_pyogrio_format_register():
+    # Create a dedicated connection here because we're about to modify options
+    sd = sedonadb.connect()
+    sd.register(PyogrioFormatSpec("fgb"))
+
+    n = 1024
+    series = geopandas.GeoSeries.from_xy(
+        list(range(n)), list(range(1, n + 1)), crs="EPSG:3857"
+    )
+    gdf = geopandas.GeoDataFrame({"idx": list(range(n)), "wkb_geometry": series})
+    gdf = gdf.set_geometry(gdf["wkb_geometry"])
+
+    with tempfile.TemporaryDirectory() as td:
+        temp_fgb_path = f"{td}/temp.fgb"
+        gdf.to_file(temp_fgb_path)
+
+        # Should be able to SELECT * from 'file' after registering the format
+        df = sd.sql(f"SELECT * FROM '{temp_fgb_path}' ORDER BY idx")
+        geopandas.testing.assert_geodataframe_equal(df.to_pandas(), gdf)

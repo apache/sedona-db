@@ -60,7 +60,7 @@ futures = { workspace = true }
 mimalloc = { workspace = true, optional = true }
 libmimalloc-sys = { workspace = true, optional = true }
 regex = { workspace = true }
-rustyline = "15.0"
+rustyline = "18.0"
 sedona = { workspace = true, features = ["aws", "gcp", "http", "proj"] }
 sedona-common = { workspace = true }
 sedona-functions = { workspace = true }

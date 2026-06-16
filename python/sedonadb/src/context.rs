@@ -17,19 +17,20 @@
 use std::{collections::HashMap, sync::Arc};
 
 use arrow_schema::DataType;
-use datafusion_expr::ScalarUDFImpl;
+use datafusion_expr::{AggregateUDFImpl, ScalarUDFImpl};
 use pyo3::prelude::*;
 use sedona::context::SedonaContext;
 use sedona::context_builder::SedonaContextBuilder;
+use sedona_datasource::format::ExternalFormatFactory;
 use tokio::runtime::Runtime;
 
 use crate::{
     dataframe::InternalDataFrame,
     datasource::PyExternalFormat,
     error::PySedonaError,
-    import_from::{import_ffi_scalar_udf, import_table_provider_from_any},
+    import_from::import_table_provider_from_any,
     runtime::wait_for_future,
-    udf::{PyAggregateUdf, PyScalarUdf, PySedonaScalarUdf},
+    udf::{PyAggregateUdf, PyScalarUdf, PySedonaAggregateUdf, PySedonaScalarUdf},
 };
 
 #[pyclass]
@@ -143,7 +144,7 @@ impl InternalContext {
         partitioning: Option<Vec<String>>,
     ) -> Result<InternalDataFrame, PySedonaError> {
         let spec = format_spec
-            .call_method0("__sedona_external_format__")?
+            .call_method0("__sedonadb_external_format__")?
             .extract::<PyExternalFormat>()?;
         let df = wait_for_future(
             py,
@@ -257,10 +258,10 @@ impl InternalContext {
             .collect())
     }
 
-    pub fn register_udf(&mut self, udf: Bound<PyAny>) -> Result<(), PySedonaError> {
-        if udf.hasattr("__sedona_internal_udf__")? {
-            let py_scalar_udf = udf
-                .getattr("__sedona_internal_udf__")?
+    pub fn register_component(&mut self, component: Bound<PyAny>) -> Result<(), PySedonaError> {
+        if component.hasattr("__sedonadb_internal_udf__")? {
+            let py_scalar_udf = component
+                .getattr("__sedonadb_internal_udf__")?
                 .call0()?
                 .extract::<PySedonaScalarUdf>()?;
             let name = py_scalar_udf.inner.name();
@@ -276,15 +277,38 @@ impl InternalContext {
                     .into(),
             );
             return Ok(());
-        } else if udf.hasattr("__datafusion_scalar_udf__")? {
-            let scalar_udf = import_ffi_scalar_udf(&udf)?;
-            self.inner.ctx.register_udf(scalar_udf);
+        } else if component.hasattr("__sedonadb_internal_aggregate_udf__")? {
+            let py_agg_udf = component
+                .getattr("__sedonadb_internal_aggregate_udf__")?
+                .call0()?
+                .extract::<PySedonaAggregateUdf>()?;
+            let name = py_agg_udf.inner.name();
+            self.inner
+                .functions
+                .insert_aggregate_udf(py_agg_udf.inner.clone());
+            self.inner.ctx.register_udaf(
+                self.inner
+                    .functions
+                    .aggregate_udf(name)
+                    .unwrap()
+                    .clone()
+                    .into(),
+            );
+            return Ok(());
+        } else if component.hasattr("__sedonadb_external_format__")? {
+            let spec = component
+                .call_method0("__sedonadb_external_format__")?
+                .extract::<PyExternalFormat>()?;
+            let state_ref = self.inner.ctx.state_ref();
+            let mut writable = state_ref.write();
+            writable
+                .register_file_format(Arc::new(ExternalFormatFactory::new(Arc::new(spec))), true)?;
             return Ok(());
         }
 
+        // A better error is raised in Python before this point
         Err(PySedonaError::SedonaPython(
-            "Expected an object implementing __sedona_internal_udf__ or __datafusion_scalar_udf__"
-                .to_string(),
+            "Unsupported object".to_string(),
         ))
     }
 }

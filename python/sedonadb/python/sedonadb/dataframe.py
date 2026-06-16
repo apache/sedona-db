@@ -834,6 +834,77 @@ class DataFrame:
             )
         return DataFrame(self._ctx, self._impl.cross_join(other._impl))
 
+    def distinct(self) -> "DataFrame":
+        """Remove duplicate rows, comparing all columns.
+
+        Returns a new lazy DataFrame keeping one row from each set of
+        rows that are equal across every column (SQL `SELECT DISTINCT`).
+
+        Examples:
+
+            >>> sd = sedona.db.connect()
+            >>> df = sd.sql(
+            ...     "SELECT * FROM (VALUES (1), (1), (2)) AS t(x)"
+            ... )
+            >>> df.distinct().sort("x").show()
+            ┌───────┐
+            │   x   │
+            │ int64 │
+            ╞═══════╡
+            │     1 │
+            ├╌╌╌╌╌╌╌┤
+            │     2 │
+            └───────┘
+        """
+        return DataFrame(self._ctx, self._impl.distinct())
+
+    def distinct_on(self, *cols: Union[str, Expr]) -> "DataFrame":
+        """Remove duplicate rows, comparing only the given key columns.
+
+        Keeps one row for each distinct combination of `cols` (SQL
+        `DISTINCT ON`) and returns all columns. Which row survives for each
+        key is unspecified and not controllable today — there is no row
+        ordering applied, and a preceding `.sort(...)` is not guaranteed to
+        be respected. For a deterministic result, ensure the non-key
+        columns are the same for all rows that share a key.
+
+        Args:
+            *cols: One or more key columns (`str` names or `Expr`). At
+                least one is required.
+
+        Examples:
+
+            >>> sd = sedona.db.connect()
+            >>> df = sd.sql(
+            ...     "SELECT * FROM (VALUES (1, 'a'), (1, 'a'), (2, 'b')) AS t(k, v)"
+            ... )
+            >>> df.distinct_on("k").sort("k").show()
+            ┌───────┬──────┐
+            │   k   ┆   v  │
+            │ int64 ┆ utf8 │
+            ╞═══════╪══════╡
+            │     1 ┆ a    │
+            ├╌╌╌╌╌╌╌┼╌╌╌╌╌╌┤
+            │     2 ┆ b    │
+            └───────┴──────┘
+        """
+        if not cols:
+            raise ValueError("distinct_on() requires at least one column")
+
+        coerced = []
+        for c in cols:
+            if isinstance(c, Expr):
+                coerced.append(c._impl)
+            elif isinstance(c, str):
+                coerced.append(_col(c)._impl)
+            else:
+                raise TypeError(
+                    f"distinct_on() expects str or Expr arguments, "
+                    f"got {type(c).__name__}"
+                )
+
+        return DataFrame(self._ctx, self._impl.distinct_on(coerced))
+
     def limit(self, n: Optional[int], /, *, offset: int = 0) -> "DataFrame":
         """Limit result to n rows starting at offset
 
@@ -996,8 +1067,10 @@ class DataFrame:
             geometry: [[01010000000000000000000000000000000000F03F]]
 
         """
-        import geoarrow.pyarrow  # noqa: F401
         import pyarrow as pa
+        from sedonadb.utility import register_pyarrow_extension_types
+
+        register_pyarrow_extension_types()
 
         return pa.RecordBatchReader.from_stream(
             self._impl.to_stream(self._ctx._impl, simplify=simplify)
@@ -1078,8 +1151,10 @@ class DataFrame:
             geometry: [[01010000000000000000000000000000000000F03F]]
 
         """
-        import geoarrow.pyarrow  # noqa: F401
         import pyarrow as pa
+        from sedonadb.utility import register_pyarrow_extension_types
+
+        register_pyarrow_extension_types()
 
         # Collects all batches into an object that exposes __arrow_c_stream__()
         batches = self._impl.to_batches(schema)

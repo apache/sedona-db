@@ -18,6 +18,9 @@
 from sedonadb.expr import Expr
 from sedonadb.expr.expression import ScalarUdf, AggregateUdf
 
+import shapely
+import pytest
+
 
 def test_scalar_st_function_returns_expr(con):
     st_geomfromwkt = con.funcs.st_geomfromwkt
@@ -25,6 +28,10 @@ def test_scalar_st_function_returns_expr(con):
 
     e = st_geomfromwkt("POINT (0 1)")
     assert isinstance(e, Expr)
+    assert repr(e) == 'Expr(st_geomfromwkt(Utf8("POINT (0 1)")))'
+
+    # Also check piped function from literal
+    e = con.lit("POINT (0 1)").funcs.st_geomfromwkt()
     assert repr(e) == 'Expr(st_geomfromwkt(Utf8("POINT (0 1)")))'
 
 
@@ -45,6 +52,10 @@ def test_scalar_st_function_with_column(con):
     e = st_area(con.col("geom"))
     assert isinstance(e, Expr)
     assert repr(e) == "Expr(st_area(geom))"
+
+    # Also check piped function from column
+    e = con.col("geom").funcs.st_geomfromwkt()
+    assert repr(e) == "Expr(st_geomfromwkt(geom))"
 
 
 def test_scalar_st_function_with_multiple_args(con):
@@ -108,3 +119,27 @@ def test_function_expression_composed(con):
         repr(e)
         == 'Expr(st_area(st_geomfromwkt(Utf8("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"))))'
     )
+
+
+def test_geo_functions_accessor(con):
+    pytest.importorskip("sedonadb_expr")
+
+    # Check function as resolved from the geo accessor
+    e = con.funcs.geo.as_text(con.col("foofy"))
+    assert isinstance(e, Expr)
+    assert repr(e) == "Expr(st_astext(foofy))"
+
+
+def test_geo_methods_accessor(con):
+    pytest.importorskip("sedonadb_expr")
+
+    # Check piped function from literal via .geo accessor
+    e = con.lit(shapely.Point(0, 1)).geo.as_text()
+    assert (
+        repr(e)
+        == """Expr(st_astext(Binary("1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,240,63") FieldMetadata { inner: {"ARROW:extension:metadata": "{}", "ARROW:extension:name": "geoarrow.wkb"} }))"""
+    )
+
+    # Check piped function from Expr via .geo accessor
+    e = con.col("foofy").geo.as_text()
+    assert repr(e) == "Expr(st_astext(foofy))"

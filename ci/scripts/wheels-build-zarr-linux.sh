@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+#
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
 # distributed with this work for additional information
@@ -15,18 +17,26 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# nolint start: object_name_linter
-collect.sedonadb_dataframe <- function(x, ...) {
-  rlang::check_dots_empty()
-  tibble::as_tibble(sd_collect(x))
-}
+# Build Linux wheels for sedonadb-zarr: pure Rust + pyo3, no vcpkg. cmake
+# builds c-blosc + aws-lc-sys; clang/perl back ring/aws-lc-sys. One arch per
+# invocation; skip musllinux via CIBW_BUILD/CIBW_SKIP.
+#
+# Local usage:
+# CIBW_BUILD=cp313-manylinux_x86_64 ./wheels-build-zarr-linux.sh x86_64
 
-select.sedonadb_dataframe <- function(.data, ...) {
-  schema <- nanoarrow::infer_nanoarrow_schema(.data)
-  ptype <- nanoarrow::infer_nanoarrow_ptype(schema)
-  loc <- tidyselect::eval_select(rlang::expr(c(...)), data = ptype)
+set -e
+set -o pipefail
 
-  df <- .data$df$select_indices(names(loc), loc - 1L)
-  new_sedonadb_dataframe(.data$ctx, df)
-}
-# nolint end
+if [ ${VERBOSE:-0} -gt 0 ]; then
+  set -x
+fi
+
+SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+SEDONADB_DIR="$(cd "${SOURCE_DIR}/../.." && pwd)"
+
+ARCH="$1"
+
+export CIBW_BEFORE_ALL="yum install -y clang perl cmake"
+
+pushd "${SEDONADB_DIR}"
+python -m cibuildwheel --platform linux --archs "${ARCH}" --output-dir python/sedonadb-zarr/dist python/sedonadb-zarr

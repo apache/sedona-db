@@ -31,16 +31,19 @@ use arrow_schema::ArrowError;
 #[derive(Debug, Clone, PartialEq)]
 pub struct GroupGeoMetadata {
     /// CRS string in PROJ or WKT format (whichever the group declared).
-    /// `None` if no `proj:wkt2` / `proj:projjson` / `proj:epsg` attribute
-    /// is present on the group.
+    /// `None` if no `proj:wkt2` / `proj:projjson` / `proj:code` (or the
+    /// legacy `proj:epsg`) attribute is present on the group.
     pub crs: Option<String>,
-    /// Affine transform in GDAL GeoTransform order:
-    /// `[origin_x, scale_x, skew_x, origin_y, skew_y, scale_y]`. `None`
-    /// when no `spatial:transform` attribute is present.
+    /// Affine transform, stored in GDAL GeoTransform order:
+    /// `[origin_x, scale_x, skew_x, origin_y, skew_y, scale_y]`. The source
+    /// `spatial:transform` attribute is in affine order `[a, b, c, d, e, f]`
+    /// and is reordered on parse. `None` when no `spatial:transform`
+    /// attribute is present.
     pub transform: Option<[f64; 6]>,
-    /// Names of the spatial dimensions in the order the group declares
-    /// them (typically `["y", "x"]`). `None` falls back to a 2-D default
-    /// at construction time in the loader.
+    /// Names of the spatial dimensions in the order the group declares them
+    /// (typically `["y", "x"]`), from `spatial:dimensions` (or the legacy
+    /// `spatial:dims`). `None` falls back to a 2-D default at construction
+    /// time in the loader.
     pub spatial_dims: Option<Vec<String>>,
 }
 
@@ -68,17 +71,27 @@ impl GroupGeoMetadata {
 fn parse_crs(
     attrs: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<Option<String>, ArrowError> {
-    // GeoZarr `proj:` precedence — wkt2 wins over projjson wins over epsg
-    // code. Match how downstream tools (e.g. xarray + rioxarray) resolve
-    // multi-attribute groups: more specific representations override
-    // numeric codes.
+    // GeoZarr `proj:` convention precedence — wkt2 wins over projjson wins
+    // over the authority `proj:code`. Match how downstream tools (e.g.
+    // xarray + rioxarray) resolve multi-attribute groups: more specific
+    // representations override authority codes.
     if let Some(v) = attrs.get("proj:wkt2") {
         return Ok(Some(json_value_to_string(v, "proj:wkt2")?));
     }
     if let Some(v) = attrs.get("proj:projjson") {
         return Ok(Some(json_value_to_string(v, "proj:projjson")?));
     }
+    if let Some(v) = attrs.get("proj:code") {
+        // Authority string, e.g. "EPSG:4326".
+        return Ok(Some(json_value_to_string(v, "proj:code")?));
+    }
+    // Legacy: the proposal-era `proj:epsg` integer, superseded by
+    // `proj:code`. Still read so older data keeps working.
     if let Some(v) = attrs.get("proj:epsg") {
+        log::warn!(
+            "Zarr group uses the legacy `proj:epsg` attribute; \
+             prefer `proj:code` (e.g. \"EPSG:4326\")"
+        );
         let code = v.as_i64().ok_or_else(|| {
             ArrowError::InvalidArgumentError("proj:epsg attribute must be an integer".into())
         })?;
@@ -98,35 +111,53 @@ fn parse_transform(
     })?;
     if arr.len() != 6 {
         return Err(ArrowError::InvalidArgumentError(format!(
-            "spatial:transform must have 6 elements (GDAL GeoTransform order); got {}",
+            "spatial:transform must have 6 elements (affine order [a, b, c, d, e, f]); got {}",
             arr.len()
         )));
     }
-    let mut out = [0f64; 6];
+    // The `spatial:` convention stores the affine `[a, b, c, d, e, f]` with
+    //   x = a*col + b*row + c
+    //   y = d*col + e*row + f
+    // We carry transforms internally in GDAL GeoTransform order
+    // `[origin_x, scale_x, skew_x, origin_y, skew_y, scale_y]`, so reorder:
+    //   origin_x = c, scale_x = a, skew_x = b,
+    //   origin_y = f, skew_y = d, scale_y = e.
+    let mut aff = [0f64; 6];
     for (i, v) in arr.iter().enumerate() {
-        out[i] = v.as_f64().ok_or_else(|| {
+        aff[i] = v.as_f64().ok_or_else(|| {
             ArrowError::InvalidArgumentError(format!("spatial:transform[{i}] must be a number"))
         })?;
     }
-    Ok(Some(out))
+    let [a, b, c, d, e, f] = aff;
+    Ok(Some([c, a, b, f, d, e]))
 }
 
 fn parse_spatial_dims(
     attrs: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<Option<Vec<String>>, ArrowError> {
-    let Some(v) = attrs.get("spatial:dims") else {
-        return Ok(None);
+    // `spatial:dimensions` is the current convention key; `spatial:dims` is
+    // the proposal-era name, still read for older data.
+    let (key, v) = match attrs.get("spatial:dimensions") {
+        Some(v) => ("spatial:dimensions", v),
+        None => match attrs.get("spatial:dims") {
+            Some(v) => {
+                log::warn!(
+                    "Zarr group uses the legacy `spatial:dims` attribute; \
+                     prefer `spatial:dimensions`"
+                );
+                ("spatial:dims", v)
+            }
+            None => return Ok(None),
+        },
     };
     let arr = v.as_array().ok_or_else(|| {
-        ArrowError::InvalidArgumentError(
-            "spatial:dims attribute must be a JSON array of strings".into(),
-        )
+        ArrowError::InvalidArgumentError(format!("{key} attribute must be a JSON array of strings"))
     })?;
     let dims = arr
         .iter()
         .map(|e| {
             e.as_str().map(String::from).ok_or_else(|| {
-                ArrowError::InvalidArgumentError("spatial:dims entries must be strings".into())
+                ArrowError::InvalidArgumentError(format!("{key} entries must be strings"))
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -163,8 +194,24 @@ mod tests {
     }
 
     #[test]
-    fn epsg_code_parses_to_epsg_string() {
+    fn proj_code_parses_to_string() {
+        let g = GroupGeoMetadata::from_attributes(&map(json!({"proj:code": "EPSG:4326"}))).unwrap();
+        assert_eq!(g.crs.as_deref(), Some("EPSG:4326"));
+    }
+
+    #[test]
+    fn legacy_epsg_code_parses_to_epsg_string() {
         let g = GroupGeoMetadata::from_attributes(&map(json!({"proj:epsg": 4326}))).unwrap();
+        assert_eq!(g.crs.as_deref(), Some("EPSG:4326"));
+    }
+
+    #[test]
+    fn code_takes_precedence_over_legacy_epsg() {
+        let g = GroupGeoMetadata::from_attributes(&map(json!({
+            "proj:epsg": 3857,
+            "proj:code": "EPSG:4326"
+        })))
+        .unwrap();
         assert_eq!(g.crs.as_deref(), Some("EPSG:4326"));
     }
 
@@ -189,12 +236,15 @@ mod tests {
     }
 
     #[test]
-    fn transform_parses_six_floats() {
+    fn transform_affine_reorders_to_gdal() {
+        // Affine [a, b, c, d, e, f] = [1, 0, 100, 0, -1, 200]: north-up,
+        // origin (100, 200), 1×-1 pixels. Stored internally as GDAL order
+        // [origin_x, scale_x, skew_x, origin_y, skew_y, scale_y].
         let g = GroupGeoMetadata::from_attributes(&map(json!({
-            "spatial:transform": [0.0, 1.0, 0.0, 0.0, 0.0, -1.0]
+            "spatial:transform": [1.0, 0.0, 100.0, 0.0, -1.0, 200.0]
         })))
         .unwrap();
-        assert_eq!(g.transform, Some([0.0, 1.0, 0.0, 0.0, 0.0, -1.0]));
+        assert_eq!(g.transform, Some([100.0, 1.0, 0.0, 200.0, 0.0, -1.0]));
     }
 
     #[test]
@@ -208,7 +258,16 @@ mod tests {
     }
 
     #[test]
-    fn spatial_dims_parses_string_list() {
+    fn spatial_dimensions_parses_string_list() {
+        let g = GroupGeoMetadata::from_attributes(&map(json!({
+            "spatial:dimensions": ["y", "x"]
+        })))
+        .unwrap();
+        assert_eq!(g.spatial_dims, Some(vec!["y".to_string(), "x".to_string()]));
+    }
+
+    #[test]
+    fn legacy_spatial_dims_parses_string_list() {
         let g = GroupGeoMetadata::from_attributes(&map(json!({
             "spatial:dims": ["y", "x"]
         })))
@@ -217,9 +276,19 @@ mod tests {
     }
 
     #[test]
-    fn spatial_dims_non_string_errors() {
+    fn dimensions_take_precedence_over_legacy_dims() {
+        let g = GroupGeoMetadata::from_attributes(&map(json!({
+            "spatial:dims": ["lat", "lon"],
+            "spatial:dimensions": ["y", "x"]
+        })))
+        .unwrap();
+        assert_eq!(g.spatial_dims, Some(vec!["y".to_string(), "x".to_string()]));
+    }
+
+    #[test]
+    fn spatial_dimensions_non_string_errors() {
         let err = GroupGeoMetadata::from_attributes(&map(json!({
-            "spatial:dims": ["y", 1]
+            "spatial:dimensions": ["y", 1]
         })))
         .unwrap_err()
         .to_string();

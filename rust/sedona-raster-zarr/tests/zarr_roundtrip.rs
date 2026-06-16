@@ -59,7 +59,11 @@ use sedona_schema::raster::BandDataType;
 use tempfile::TempDir;
 use zarrs::array::data_type;
 use zarrs::array::ArrayBuilder;
-use zarrs::group::GroupBuilder;
+use zarrs::group::{Group, GroupBuilder};
+use zarrs::metadata_ext::group::consolidated_metadata::{
+    ConsolidatedMetadata, ConsolidatedMetadataKind,
+};
+use zarrs::node::Node;
 use zarrs_filesystem::FilesystemStore;
 
 /// Build a 2-band group on disk:
@@ -74,13 +78,16 @@ fn build_fixture() -> TempDir {
     let store = Arc::new(FilesystemStore::new(tmp.path()).unwrap());
 
     // Group with a known affine transform so we can verify per-chunk
-    // transforms below.
+    // transforms below. `spatial:transform` is in affine order
+    // [a, b, c, d, e, f]; the affine [1, 0, 100, 0, -1, 200] is north-up
+    // with origin (100, 200), which the reader stores internally in GDAL
+    // order as [100, 1, 0, 200, 0, -1].
     let mut group_attrs = serde_json::Map::new();
     group_attrs.insert(
         "spatial:transform".into(),
-        serde_json::json!([100.0, 1.0, 0.0, 200.0, 0.0, -1.0]),
+        serde_json::json!([1.0, 0.0, 100.0, 0.0, -1.0, 200.0]),
     );
-    group_attrs.insert("proj:epsg".into(), serde_json::json!(4326));
+    group_attrs.insert("proj:code".into(), serde_json::json!("EPSG:4326"));
     GroupBuilder::new()
         .attributes(group_attrs)
         .build(store.clone(), "/")
@@ -113,6 +120,61 @@ fn build_fixture() -> TempDir {
     }
 
     tmp
+}
+
+/// Like [`build_fixture`], but folds a `consolidated_metadata` block into
+/// the group's `zarr.json` and then *removes* each child array's
+/// `zarr.json`. Discovery can then only succeed by reading the
+/// consolidated block — a list-then-open-each path would re-read the
+/// now-deleted per-array metadata and find nothing. This is the
+/// regression fixture for stores that can't list (e.g. plain HTTPS),
+/// where consolidated metadata is the only viable discovery mechanism.
+fn build_consolidated_fixture() -> TempDir {
+    let tmp = build_fixture();
+    let store = Arc::new(FilesystemStore::new(tmp.path()).unwrap());
+
+    // Build the consolidated map from the on-disk hierarchy (this lists,
+    // which is fine — the fixture is local) and fold it into the group.
+    let metadata = Node::open(&store, "/")
+        .unwrap()
+        .consolidate_metadata()
+        .expect("root group yields consolidated metadata");
+    let consolidated = ConsolidatedMetadata {
+        metadata,
+        kind: ConsolidatedMetadataKind::Inline,
+    };
+    Group::open(store.clone(), "/")
+        .unwrap()
+        .set_consolidated_metadata(Some(consolidated))
+        .store_metadata()
+        .unwrap();
+
+    // Remove the per-array metadata so a list-then-open read would find
+    // no openable arrays; only the consolidated block remains.
+    for name in ["temperature", "pressure"] {
+        std::fs::remove_file(tmp.path().join(name).join("zarr.json")).unwrap();
+    }
+
+    tmp
+}
+
+#[tokio::test]
+async fn discovers_child_arrays_from_consolidated_metadata() {
+    let tmp = build_consolidated_fixture();
+    let uri = format!("file://{}", tmp.path().display());
+
+    // Per-array zarr.json are gone, so this only succeeds via the group's
+    // consolidated_metadata block: the pre-fix list-then-open path would
+    // discover zero arrays and error.
+    let arr = read_all(&uri, None).await.unwrap();
+
+    let rasters = RasterStructArray::new(&arr);
+    assert_eq!(
+        rasters.len(),
+        8,
+        "8 chunk rows, discovered from consolidated metadata without per-array reads"
+    );
+    assert_eq!(rasters.get(0).unwrap().num_bands(), 2);
 }
 
 #[tokio::test]
@@ -380,4 +442,118 @@ async fn errors_on_mismatched_chunk_grids() {
         err.contains("chunk") && err.contains("array_a") && err.contains("array_b"),
         "got: {err}"
     );
+}
+
+/// A CF-style group with no `spatial:transform`: a single-chunk 2-D data array
+/// `temperature` with dims `[y_name, x_name]` plus matching 1-D coordinate
+/// arrays. Georeferencing must be derived from the (regularly spaced)
+/// coordinate values. `&[f64]` implements `IntoArrayBytes`, so the element
+/// slice goes straight to `store_chunk` (typed `store_chunk_elements` is
+/// deprecated).
+fn build_coord_fixture(y_name: &str, y_vals: &[f64], x_name: &str, x_vals: &[f64]) -> TempDir {
+    let tmp = TempDir::new().unwrap();
+    let store = Arc::new(FilesystemStore::new(tmp.path()).unwrap());
+
+    // No spatial:transform, no proj:* — only coordinate arrays.
+    GroupBuilder::new()
+        .build(store.clone(), "/")
+        .unwrap()
+        .store_metadata()
+        .unwrap();
+
+    // 1-D coordinate arrays, single chunk each.
+    for (name, vals) in [(y_name, y_vals), (x_name, x_vals)] {
+        let n = vals.len() as u64;
+        let arr = ArrayBuilder::new(vec![n], vec![n], data_type::float64(), 0.0f64)
+            .dimension_names(Some([name]))
+            .build(store.clone(), &format!("/{name}"))
+            .unwrap();
+        arr.store_metadata().unwrap();
+        arr.store_chunk(&[0], vals).unwrap();
+    }
+
+    // 2-D data array, dims [y_name, x_name], single chunk.
+    let (ny, nx) = (y_vals.len() as u64, x_vals.len() as u64);
+    let data = ArrayBuilder::new(vec![ny, nx], vec![ny, nx], data_type::uint8(), 0u8)
+        .dimension_names(Some([y_name, x_name]))
+        .build(store.clone(), "/temperature")
+        .unwrap();
+    data.store_metadata().unwrap();
+    data.store_chunk(&[0, 0], vec![0u8; (ny * nx) as usize])
+        .unwrap();
+
+    tmp
+}
+
+#[tokio::test]
+async fn derives_geotransform_and_crs_from_coordinate_arrays() {
+    let tmp = build_coord_fixture("latitude", &[20.0, 19.0], "longitude", &[10.0, 11.0, 12.0]);
+    let uri = format!("file://{}", tmp.path().display());
+    let arr = read_all(&uri, None).await.unwrap();
+
+    let rasters = RasterStructArray::new(&arr);
+    assert_eq!(
+        rasters.len(),
+        1,
+        "single-chunk data array -> one raster row"
+    );
+    let raster = rasters.get(0).unwrap();
+
+    // lon [10,11,12] step +1 -> scale_x 1, origin_x 10 - 0.5 = 9.5
+    // lat [20,19]    step -1 -> scale_y -1, origin_y 20 - (-0.5) = 20.5
+    assert_eq!(
+        raster.transform().to_vec(),
+        vec![9.5, 1.0, 0.0, 20.5, 0.0, -1.0]
+    );
+    // latitude/longitude dim names imply geographic EPSG:4326.
+    assert_eq!(raster.crs(), Some("EPSG:4326"));
+}
+
+#[tokio::test]
+async fn derives_transform_without_crs_for_generic_xy_dims() {
+    // `y`/`x` (not lat/lon): transform is still derived from the coordinates,
+    // but no CRS is inferred — the user attaches one with RS_SetCRS.
+    let tmp = build_coord_fixture("y", &[20.0, 19.0], "x", &[10.0, 11.0, 12.0]);
+    let uri = format!("file://{}", tmp.path().display());
+    let arr = read_all(&uri, None).await.unwrap();
+
+    let raster = RasterStructArray::new(&arr).get(0).unwrap();
+    assert_eq!(
+        raster.transform().to_vec(),
+        vec![9.5, 1.0, 0.0, 20.5, 0.0, -1.0]
+    );
+    assert_eq!(raster.crs(), None);
+}
+
+#[tokio::test]
+async fn irregular_coordinate_arrays_fall_back_to_identity() {
+    // x is irregularly spaced (0, 1, 3), so no affine can represent it; with no
+    // declared CRS the reader falls back to the identity pixel transform.
+    let tmp = build_coord_fixture("y", &[0.0, 1.0], "x", &[0.0, 1.0, 3.0]);
+    let uri = format!("file://{}", tmp.path().display());
+    let arr = read_all(&uri, None).await.unwrap();
+
+    let raster = RasterStructArray::new(&arr).get(0).unwrap();
+    assert_eq!(
+        raster.transform().to_vec(),
+        vec![0.0, 1.0, 0.0, 0.0, 0.0, -1.0]
+    );
+    assert_eq!(raster.crs(), None);
+}
+
+#[tokio::test]
+async fn derives_transform_with_explicit_arrays_filter() {
+    // The coordinate arrays are not in the `arrays` filter, but the reader
+    // opens them by name, so derivation still works.
+    let tmp = build_coord_fixture("latitude", &[20.0, 19.0], "longitude", &[10.0, 11.0, 12.0]);
+    let uri = format!("file://{}", tmp.path().display());
+    let arrays = ["temperature".to_string()];
+    let arr = read_all(&uri, Some(&arrays)).await.unwrap();
+
+    let raster = RasterStructArray::new(&arr).get(0).unwrap();
+    assert_eq!(
+        raster.transform().to_vec(),
+        vec![9.5, 1.0, 0.0, 20.5, 0.0, -1.0]
+    );
+    assert_eq!(raster.crs(), Some("EPSG:4326"));
 }

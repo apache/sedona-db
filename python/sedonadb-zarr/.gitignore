@@ -32,6 +32,8 @@ bin/
 build/
 develop-eggs/
 dist/
+# CI downloads the sedonadb wheel here to test the plugin against it.
+prebuilt/
 eggs/
 lib/
 lib64/

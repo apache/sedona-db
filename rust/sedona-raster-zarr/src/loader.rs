@@ -37,10 +37,10 @@ use zarrs::array::Array;
 #[cfg(test)]
 use zarrs::array::ArrayBytes;
 use zarrs::group::Group;
-use zarrs::storage::{
-    AsyncReadableListableStorage, AsyncReadableListableStorageTraits, StorePrefix,
-};
+use zarrs::node::NodeMetadata;
+use zarrs::storage::{AsyncReadableListableStorage, AsyncReadableListableStorageTraits};
 
+use crate::coords;
 use crate::dtype::zarr_to_band_data_type;
 use crate::geozarr::GroupGeoMetadata;
 use crate::source_uri::build_chunk_anchor;
@@ -253,6 +253,10 @@ struct ArrayInfo {
     /// position — ragged final chunks are not emitted as separate short
     /// rows.
     chunk_shape: Vec<u64>,
+    /// Full array shape (extent per dim). Used to validate that a spatial
+    /// coordinate array's length matches the data extent before deriving a
+    /// geotransform from it.
+    shape: Vec<u64>,
     /// Encoded fill value in native-endian byte representation, for the
     /// `nodata` field. None when the array has no fill value declared.
     nodata: Option<Vec<u8>>,
@@ -280,21 +284,7 @@ async fn open_and_validate(
         )))
     })?;
 
-    let geo = GroupGeoMetadata::from_attributes(group.attributes())?;
-
-    // CRS-without-transform is almost always a malformed-metadata bug —
-    // the user thinks they have full georef but downstream spatial joins
-    // will silently use the identity-pixel-coords default. Error loudly
-    // so they fix the metadata rather than getting empty result sets.
-    if geo.crs.is_some() && geo.transform.is_none() {
-        return Err(ArrowError::InvalidArgumentError(format!(
-            "Zarr group at {group_uri} declares a CRS but no `spatial:transform` \
-             attribute; refusing to fall back to the identity transform because \
-             that would silently produce wrong results in spatial joins. Declare \
-             `spatial:transform` on the group or remove the CRS to read this as \
-             a non-georeferenced datacube."
-        )));
-    }
+    let mut geo = GroupGeoMetadata::from_attributes(group.attributes())?;
 
     let arrays = match arrays_filter {
         // Explicit filter: open each named array directly, skipping the
@@ -327,7 +317,7 @@ async fn open_and_validate(
         // (typical xarray coord variables) are silently dropped so a
         // canonical xarray layout reads cleanly.
         None => {
-            let arrays = enumerate_child_arrays(&storage, group_uri).await?;
+            let arrays = enumerate_child_arrays(&group, &storage, group_uri).await?;
             if arrays.is_empty() {
                 return Err(ArrowError::InvalidArgumentError(format!(
                     "Zarr group at {group_uri} has no child arrays"
@@ -359,19 +349,84 @@ async fn open_and_validate(
     let spatial_dim_indices =
         resolve_spatial_dim_indices(&array_infos[0].dim_names, geo.spatial_dims.as_deref())?;
 
+    // Effective transform + CRS. An explicit GeoZarr `spatial:transform` wins;
+    // failing that, derive one from the spatial coordinate arrays (the common
+    // CF / non-GeoZarr case); failing that, fall back to identity pixel coords.
     let group_transform = match geo.transform {
         Some(t) => t,
         None => {
-            // Both `spatial:transform` and `proj:*` are absent (the
-            // CRS-only case errored above). Fall back to identity pixel
-            // coordinates and breadcrumb a warning so spatial-join
-            // surprises are debuggable.
-            log::warn!(
-                "Zarr group at {group_uri} has no `spatial:transform`; falling back \
-                 to the identity pixel-coordinate transform [0, 1, 0, 0, 0, -1]. \
-                 Spatial operations against this raster will use pixel coordinates."
-            );
-            [0.0, 1.0, 0.0, 0.0, 0.0, -1.0]
+            let y_axis = spatial_dim_indices[0];
+            let x_axis = spatial_dim_indices[1];
+            let y_name = array_infos[0].dim_names[y_axis].clone();
+            let x_name = array_infos[0].dim_names[x_axis].clone();
+            let x_vals = coords::read_coord_values(&storage, &x_name).await?;
+            let y_vals = coords::read_coord_values(&storage, &y_name).await?;
+
+            // A coordinate array must span the data extent along its axis; a
+            // length mismatch is a malformed coord variable that would yield a
+            // wrong scale, so refuse to derive a transform from it.
+            let x_ok = x_vals
+                .as_ref()
+                .is_none_or(|v| v.len() as u64 == array_infos[0].shape[x_axis]);
+            let y_ok = y_vals
+                .as_ref()
+                .is_none_or(|v| v.len() as u64 == array_infos[0].shape[y_axis]);
+            if !(x_ok && y_ok) {
+                log::warn!(
+                    "Zarr group at {group_uri}: a spatial coordinate array's length does \
+                     not match the data extent; ignoring coordinates for georeferencing"
+                );
+            }
+            let derived = match (x_ok && y_ok, x_vals, y_vals) {
+                (true, Some(x), Some(y)) => coords::transform_from_coords(&x, &y),
+                _ => None,
+            };
+            match derived {
+                Some(t) => {
+                    // Regular CF coordinate arrays imply geographic lon/lat;
+                    // infer the CRS from the dim names only when none was
+                    // declared. Generic y/x stay CRS-less (attach via RS_SetCRS).
+                    let crs_note = if let Some(declared) = geo.crs.as_deref() {
+                        format!("keeping the declared CRS {declared:?}")
+                    } else if let Some(inferred) = coords::infer_geographic_crs(&y_name, &x_name) {
+                        geo.crs = Some(inferred.to_string());
+                        format!("inferred CRS {inferred} from the dim names")
+                    } else {
+                        "no CRS inferred (spatial dims are not lat/lon) — set one with RS_SetCRS"
+                            .to_string()
+                    };
+                    log::debug!(
+                        "Zarr group at {group_uri} has no `spatial:transform`; derived a \
+                         geotransform from the {x_name:?}/{y_name:?} coordinate arrays; {crs_note}"
+                    );
+                    t
+                }
+                // CRS-without-transform and no usable coordinate arrays is
+                // almost always malformed metadata; error rather than silently
+                // using pixel coordinates in spatial joins.
+                None if geo.crs.is_some() => {
+                    return Err(ArrowError::InvalidArgumentError(format!(
+                        "Zarr group at {group_uri} declares a CRS but has neither a \
+                         `spatial:transform` attribute nor regularly-spaced numeric \
+                         spatial coordinate arrays; refusing to fall back to the \
+                         identity transform because that would silently produce wrong \
+                         results in spatial joins. Declare `spatial:transform`, provide \
+                         regular coordinate arrays, or remove the CRS to read this as a \
+                         non-georeferenced datacube."
+                    )));
+                }
+                // No CRS and no usable coordinates: index space, with a
+                // breadcrumb so spatial-join surprises are debuggable.
+                None => {
+                    log::warn!(
+                        "Zarr group at {group_uri} has no `spatial:transform` and no \
+                         usable spatial coordinate arrays; falling back to the identity \
+                         pixel-coordinate transform [0, 1, 0, 0, 0, -1]. Spatial \
+                         operations against this raster will use pixel coordinates."
+                    );
+                    [0.0, 1.0, 0.0, 0.0, 0.0, -1.0]
+                }
+            }
         }
     };
 
@@ -425,36 +480,49 @@ async fn open_named_arrays(
     Ok(out)
 }
 
-/// List the direct children of the group and try to open each as an
-/// array. Per-array open failures are logged at warn level and the
-/// child is skipped — a single malformed sibling array (e.g. an
-/// xarray-style coord variable with a dtype zarrs can't yet parse)
-/// can no longer poison the whole group. Subgroups are filtered out by
-/// the same `Array::async_open`-error skip, so the externally
-/// observable behaviour matches the old `Group::child_arrays()`
-/// contract for well-formed groups while being permissive about
-/// partial breakage.
+/// Discover the group's direct child arrays.
+///
+/// Discovery goes through zarrs's [`Group::async_children`], which uses
+/// the group's V3 `consolidated_metadata` block when present (no
+/// per-node storage reads) and otherwise lists the store. Listing is
+/// unsupported on some backends — plain HTTPS / S3-behind-`HttpStore`
+/// answer directory listing with `405 Method Not Allowed` — so a store
+/// that has neither consolidated metadata nor listing yields an
+/// actionable error pointing at the `arrays` option rather than a raw
+/// store error.
+///
+/// Each array is then built from its already-parsed metadata. Per-array
+/// failures are logged at warn level and the child is skipped — a single
+/// malformed sibling array (e.g. an xarray-style coord variable with a
+/// dtype zarrs can't yet parse) can no longer poison the whole group.
+/// Subgroups are skipped via the `NodeMetadata::Group` arm.
 async fn enumerate_child_arrays(
+    group: &Group<dyn AsyncReadableListableStorageTraits>,
     storage: &AsyncReadableListableStorage,
     group_uri: &str,
 ) -> Result<Vec<Array<dyn AsyncReadableListableStorageTraits>>, ArrowError> {
-    let listing = storage.list_dir(&StorePrefix::root()).await.map_err(|e| {
+    let children = group.async_children(false).await.map_err(|e| {
         ArrowError::ExternalError(Box::new(sedona_internal_datafusion_err!(
-            "failed to list child nodes of Zarr group at {group_uri}: {e}"
+            "failed to discover child arrays of Zarr group at {group_uri}: {e}. \
+             If this store has no consolidated metadata and does not support \
+             directory listing (for example a plain HTTPS server), pass the \
+             `arrays` option to name the arrays to read."
         )))
     })?;
-    let mut arrays = Vec::with_capacity(listing.prefixes().len());
-    for child in listing.prefixes() {
-        let raw = child.as_str().trim_end_matches('/');
-        if raw.is_empty() {
-            continue;
-        }
-        let path = format!("/{raw}");
-        match Array::async_open(storage.clone(), &path).await {
-            Ok(array) => arrays.push(array),
-            Err(e) => log::warn!(
-                "skipping Zarr child {path} in {group_uri}: not openable as an array ({e})"
-            ),
+
+    let mut arrays = Vec::with_capacity(children.len());
+    for node in children {
+        let path = node.path().to_string();
+        match NodeMetadata::from(node) {
+            NodeMetadata::Array(metadata) => {
+                match Array::new_with_metadata(storage.clone(), &path, metadata) {
+                    Ok(array) => arrays.push(array),
+                    Err(e) => log::warn!(
+                        "skipping Zarr child {path} in {group_uri}: not usable as an array ({e})"
+                    ),
+                }
+            }
+            NodeMetadata::Group(_) => {}
         }
     }
     Ok(arrays)
@@ -486,6 +554,7 @@ fn collect_array_infos(
             .iter()
             .map(|n| n.get())
             .collect();
+        let shape = array.shape().to_vec();
         let fill_bytes = array.fill_value().as_ne_bytes();
         let nodata = if fill_bytes.is_empty() {
             None
@@ -498,6 +567,7 @@ fn collect_array_infos(
             dim_names,
             chunk_grid_shape,
             chunk_shape,
+            shape,
             nodata,
         });
     }

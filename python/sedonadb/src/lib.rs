@@ -15,7 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::{error::PySedonaError, udf::sedona_scalar_udf};
+use crate::{
+    error::PySedonaError,
+    udf::{sedona_aggregate_udf, sedona_scalar_udf},
+};
 use pyo3::{ffi::Py_uintptr_t, prelude::*};
 use sedona_adbc::AdbcSedonadbDriverInit;
 use sedona_gdal::global::{configure_global_gdal_api, with_global_gdal, GdalApiBuilder};
@@ -125,6 +128,7 @@ fn _lib(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(sedona_python_version, m)?)?;
     m.add_function(wrap_pyfunction!(sedona_python_features, m)?)?;
     m.add_function(wrap_pyfunction!(sedona_scalar_udf, m)?)?;
+    m.add_function(wrap_pyfunction!(sedona_aggregate_udf, m)?)?;
     m.add_function(wrap_pyfunction!(expr::expr_col, m)?)?;
     m.add_function(wrap_pyfunction!(expr::expr_lit, m)?)?;
     m.add_function(wrap_pyfunction!(expr::expr_binary, m)?)?;
