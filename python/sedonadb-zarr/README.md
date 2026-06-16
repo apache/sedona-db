@@ -27,7 +27,7 @@ from sedonadb_zarr import ZarrExtension
 
 sd = sedona.db.connect()
 sd.register(ZarrExtension())
-con.read("file:///path/to/foo.zarr").show()
+sd.read("file:///path/to/foo.zarr").show()
 ```
 
 The main `sedonadb` package does not bundle Zarr support — applications that don't import `sedonadb_zarr` pay no runtime cost.

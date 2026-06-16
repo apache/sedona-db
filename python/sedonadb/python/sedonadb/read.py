@@ -118,6 +118,8 @@ class Read:
         if format is None:
             format = self._guess_format(table_paths)
 
+        format = format.lower()
+
         if format in self._registered_formats:
             return self(
                 table_paths,
@@ -137,6 +139,7 @@ class Read:
                 format=PyogrioFormatSpec(format),
             )
         elif format == "parquet":
+            options = options.copy()
             geometry_columns = options.pop("geometry_columns", None)
             validate = options.pop("validate", False)
             return DataFrame(
@@ -150,7 +153,7 @@ class Read:
                 ),
             )
         else:
-            raise ValueError(f"Can't guess file format for extension '{format}'")
+            raise ValueError(f"No format registered for extension '{format}'")
 
     def parquet(
         self,
@@ -320,9 +323,12 @@ class Read:
         )
 
     def _register_external_format(self, format: str, spec: ExternalFormatSpec):
-        self._registered_formats[format] = spec
+        self._registered_formats[format.lower()] = spec
 
     def _guess_format(self, table_paths):
+        """A heuristic to guess a format when not provided. This doesn't handle
+        URL suffixes like query strings or fragments (these types of inputs should
+        use an explicit format)."""
         if not table_paths:
             raise ValueError("Can't guess table paths from empty path list")
 
@@ -331,7 +337,7 @@ class Read:
             try:
                 suffix = Path(path).suffix
                 if suffix:
-                    formats.add(suffix.strip("."))
+                    formats.add(suffix.strip(".").lower())
             except ValueError:
                 pass
 

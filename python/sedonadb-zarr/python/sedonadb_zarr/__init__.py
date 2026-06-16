@@ -18,6 +18,7 @@
 """Zarr support for SedonaDB.
 
 ```python
+import sedona.db
 from sedonadb_zarr import ZarrExtension
 
 sd = sedona.db.connect()
