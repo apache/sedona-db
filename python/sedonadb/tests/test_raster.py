@@ -15,6 +15,8 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import pytest
+
 from sedonadb.raster import Raster, RasterArray, RasterScalar, RasterType
 
 
@@ -67,3 +69,50 @@ def test_raster_to_lit(con):
     ).to_pandas()
     assert t2.iloc[0, 0] == r.width
     assert t2.iloc[0, 1] == r.height
+
+
+def test_raster_lazy():
+    # Basic lazy raster creation
+    r = Raster.lazy(
+        uri="s3://bucket/path/to/data.zarr",
+        shape=(512, 1024),
+        dtype="float32",
+    )
+
+    assert r.width == 1024
+    assert r.height == 512
+    assert len(r.bands) == 1
+
+    b = r.bands[0]
+    assert b.source_shape == (512, 1024)
+    assert b.data_type == "float32"
+    assert b.outdb_uri == "s3://bucket/path/to/data.zarr"
+
+    # Lazy raster should have empty data buffer
+    assert len(b.source_data) == 0
+
+    # Accessing data should raise an error for lazy rasters
+    with pytest.raises(ValueError, match="external data"):
+        _ = b.data
+
+
+def test_raster_lazy_with_crs():
+    r = Raster.lazy(
+        uri="s3://bucket/path/to/data.zarr",
+        shape=(256, 256),
+        dtype="uint8",
+        format="zarr",
+        crs="EPSG:4326",
+    )
+
+    assert r.width == 256
+    assert r.height == 256
+    assert r.crs.to_json_dict()["id"] == {"authority": "EPSG", "code": 4326}
+
+
+def test_raster_lazy_invalid_shape():
+    with pytest.raises(ValueError, match="exactly two dimensions"):
+        Raster.lazy(uri="s3://bucket/data.zarr", shape=(10,), dtype="UInt8")
+
+    with pytest.raises(ValueError, match="exactly two dimensions"):
+        Raster.lazy(uri="s3://bucket/data.zarr", shape=(10, 20, 30), dtype="UInt8")

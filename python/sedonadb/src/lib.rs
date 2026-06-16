@@ -137,6 +137,7 @@ fn _lib(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(sedona_python_features, m)?)?;
     m.add_function(wrap_pyfunction!(sedona_python_version, m)?)?;
     m.add_function(wrap_pyfunction!(sedona_scalar_udf, m)?)?;
+    m.add_function(wrap_pyfunction!(schema::raster_type, m)?)?;
 
     m.add_class::<context::InternalContext>()?;
     m.add_class::<dataframe::InternalDataFrame>()?;
