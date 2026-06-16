@@ -19,6 +19,9 @@ import geopandas
 import geopandas.testing
 import pytest
 
+import sedonadb
+from sedonadb.datasource import ExternalFormatSpec
+
 
 def test_read_guess_format(con):
     read = con.read
@@ -73,3 +76,20 @@ def test_read_parquet_guessed(con, geoarrow_data):
     geopandas.testing.assert_geodataframe_equal(
         df.to_pandas(), con.read_parquet(parquet_path).sort("quadrangle_id").to_pandas()
     )
+
+
+class TestFormatSpec(ExternalFormatSpec):
+    @property
+    def extension(self):
+        return "foofy"
+
+    def with_options(self, options):
+        raise ValueError("test format spec!")
+
+
+def test_format_register():
+    sd = sedonadb.connect()
+    sd.register(TestFormatSpec())
+
+    with pytest.raises(ValueError, match="test format spec!"):
+        sd.read("test.foofy", options={"k": "v"})

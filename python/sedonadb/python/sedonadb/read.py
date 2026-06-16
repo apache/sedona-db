@@ -34,6 +34,7 @@ class Read:
 
     def __init__(self, ctx):
         self._ctx = ctx
+        self._registered_formats = {}
 
     def __call__(
         self,
@@ -44,18 +45,48 @@ class Read:
         format: Union[str, "ExternalFormatSpec", None] = None,
         check_extension: bool = False,
     ) -> DataFrame:
-        """Read one or more paths
+        """Read one or more paths as a DataFrame
 
-        This is the generic read path, which guesses the appropriate format.
-        Format-specific methods like `.read.parquet()` provide type-specific
+        This is the generic read path, which guesses the appropriate format
+        from the file extension when `format` is not specified. Format-specific
+        methods like `.read.parquet()` and `.read.pyogrio()` provide type-specific
         documentation for common format options.
 
+        Supported formats include:
+
+        - `"parquet"`: Parquet and GeoParquet files
+        - `"fgb"`, `"gpkg"`, `"shp"`: Spatial formats via pyogrio/GDAL
+        - Custom formats via `ExternalFormatSpec` objects registered at runtime
+
+        Args:
+            table_paths: A str, Path, or iterable of paths containing URLs or
+                local paths. Globs (e.g., `path/*.parquet`) and directories are
+                supported.
+            options: Optional dictionary of options to pass to the underlying
+                reader. Available options depend on the format being read.
+                For S3 access, use `{"aws.skip_signature": True, "aws.region": "us-west-2"}`
+                for anonymous access to public buckets.
+            partitioning: Optional list of column names for hive-style partitioning.
+                When reading from a directory with paths like `/col=value/file.parquet`,
+                partition column names are auto-discovered by default (`partitioning=None`).
+                Explicitly specify column names (e.g., `["col"]`) to override
+                auto-discovery, or pass an empty list `[]` to disable partitioning
+                entirely.
+            format: Explicit format specification. Can be a string (e.g., `"parquet"`,
+                `"fgb"`) or an `ExternalFormatSpec` object. If `None` (the default),
+                the format is guessed from the file extension.
+            check_extension: When `True`, validates that file extensions match the
+                specified format. Defaults to `False`.
+
         Examples:
+
             >>> sd = sedona.db.connect()
-            >>> spec = sedonadb_zarr.ZarrFormatSpec().with_options(  # doctest: +SKIP
-            ...     {"arrays": ["temperature"]}
-            ... )
-            >>> sd.read_format(spec, "file:///path/to/foo.zarr").show()  # doctest: +SKIP
+            >>> sd.read("path/to/file.parquet")  # doctest: +SKIP
+            <sedonadb.dataframe.DataFrame object at ...>
+
+            >>> sd.read("path/to/file.fgb")  # doctest: +SKIP
+            <sedonadb.dataframe.DataFrame object at ...>
+
         """
         if isinstance(table_paths, (str, Path)):
             table_paths = [table_paths]
@@ -87,7 +118,15 @@ class Read:
         if format is None:
             format = self._guess_format(table_paths)
 
-        if format in ("fgb", "gpkg", "shp"):
+        if format in self._registered_formats:
+            return self(
+                table_paths,
+                options=options,
+                partitioning=partitioning,
+                check_extension=check_extension,
+                format=self._registered_formats[format],
+            )
+        elif format in ("fgb", "gpkg", "shp"):
             from sedonadb.datasource import PyogrioFormatSpec
 
             return self(
@@ -279,6 +318,9 @@ class Read:
             partitioning=partitioning,
             format=PyogrioFormatSpec(extension),
         )
+
+    def _register_external_format(self, format: str, spec: ExternalFormatSpec):
+        self._registered_formats[format] = spec
 
     def _guess_format(self, table_paths):
         if not table_paths:

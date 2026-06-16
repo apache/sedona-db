@@ -22,15 +22,16 @@
 Zarr support for [SedonaDB](https://sedona.apache.org/) as an opt-in plugin package. Reads Zarr v3 groups (with sharding, vlen-utf8 dims, etc.) as a column of N-D rasters:
 
 ```python
-import sedonadb
-import sedonadb_zarr
+import sedona.db
+from sedonadb_zarr import ZarrExtension
 
-con = sedonadb.connect()
-con.read_format(sedonadb_zarr.ZarrFormatSpec(), "file:///path/to/foo.zarr").show()
+sd = sedona.db.connect()
+sd.register(ZarrExtension())
+con.read("file:///path/to/foo.zarr").show()
 ```
 
 The main `sedonadb` package does not bundle Zarr support — applications that don't import `sedonadb_zarr` pay no runtime cost.
 
 ## Architecture
 
-A maturin-built mixed Rust/Python package. The Rust side is a thin PyO3 shim around `sedona-raster-zarr` exposing `PyZarrChunkReader` (implementing `__arrow_c_stream__`). The Python side defines `ZarrFormatSpec(ExternalFormatSpec)`, which sedonadb consumes via `con.read_format(spec, uri)`. The same plugin shape applies to future formats (`sedonadb-cog`, `sedonadb-icechunk`, …).
+A maturin-built mixed Rust/Python package. The Rust side is a thin PyO3 shim around `sedona-raster-zarr` exposing `PyZarrChunkReader` (implementing `__arrow_c_stream__`).

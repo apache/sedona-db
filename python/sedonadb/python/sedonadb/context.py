@@ -459,6 +459,11 @@ class SedonaContext:
             component.__sedonadb_extension__(self, **kwargs)
             return
 
+        # If this is an external format, register it so that sd.read(..., format="ext")
+        # works
+        if hasattr(component, "__sedonadb_external_format__") and component.extension:
+            self.read._register_external_format(component.extension, component)
+
         supported_interfaces = (
             "__sedonadb_internal_udf__",
             "__sedonadb_internal_aggregate_udf__",
