@@ -94,7 +94,6 @@ class Raster:
 
         Examples:
             >>> raster = Raster.lazy("s3://bucket/image.tif", (1024, 2048), "uint8")
-            >>> raster = Raster.lazy("/path/to/file.tif", (100, 100), "float32", crs=4326)
         """
         shape = list(shape)
         if len(shape) != 2:
