@@ -62,8 +62,11 @@ class Raster:
 
     @staticmethod
     def lazy(
-        uri: str, shape: Iterable[int], dtype: str, format: Optional[str] = None,
-        crs: Any = None
+        uri: str,
+        shape: Iterable[int],
+        dtype: str,
+        format: Optional[str] = None,
+        crs: Any = None,
     ) -> "Raster":
         shape = list(shape)
         if len(shape) != 2:
