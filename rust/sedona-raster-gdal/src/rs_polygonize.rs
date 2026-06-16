@@ -235,23 +235,19 @@ mod tests {
     use super::*;
 
     use arrow_array::Array;
-    use arrow_array::StructArray;
     use datafusion_common::cast::{as_list_array, as_struct_array};
     use datafusion_common::ScalarValue;
     use datafusion_expr::{ScalarUDF, ScalarUDFImpl};
     use sedona_raster::array::RasterStructArray;
-    use sedona_raster_functions::rs_example::rs_example_udf;
     use sedona_schema::datatypes::RASTER;
+    use sedona_testing::raster_spec::RasterSpec;
     use sedona_testing::testers::ScalarUdfTester;
 
-    fn load_test_raster() -> StructArray {
-        let udf: ScalarUDF = rs_example_udf().into();
-        let tester = ScalarUdfTester::new(udf, vec![]);
-        let result = tester.invoke(vec![]).unwrap();
-        match result {
-            ColumnarValue::Scalar(ScalarValue::Struct(array)) => array.as_ref().clone(),
-            other => panic!("Expected raster struct scalar, got {other:?}"),
-        }
+    fn test_raster_spec() -> RasterSpec {
+        RasterSpec::d2(3, 3)
+            .transform([0.0, 1.0, 0.0, 3.0, 0.0, -1.0])
+            .band_values(&[1u8, 1, 0, 1, 2, 2, 0, 2, 2])
+            .nodata(255u8)
     }
 
     #[test]
@@ -281,7 +277,7 @@ mod tests {
     #[test]
     fn test_polygonize_raster() {
         let result = with_gdal(|gdal| {
-            let raster_array = load_test_raster();
+            let raster_array = test_raster_spec().build();
             let raster_struct = RasterStructArray::new(&raster_array);
             let raster = raster_struct.get(0).unwrap();
             polygonize_raster(gdal, &raster, 1)
@@ -311,26 +307,15 @@ mod tests {
 
     #[test]
     fn test_polygonize_invoke_scalar() {
-        let raster_array = load_test_raster();
-        let kernel = RsPolygonize;
-        let arg_types = vec![RASTER, SedonaType::Arrow(DataType::Int32)];
-        let args = vec![
-            ColumnarValue::Scalar(ScalarValue::Struct(Arc::new(raster_array))),
-            ColumnarValue::Scalar(ScalarValue::Int32(Some(1))),
-        ];
+        let udf: ScalarUDF = rs_polygonize_udf().into();
+        let tester = ScalarUdfTester::new(udf, vec![RASTER, SedonaType::Arrow(DataType::Int32)]);
 
-        let result = kernel
-            .invoke_batch_from_args(
-                &arg_types,
-                &args,
-                &SedonaType::Arrow(DataType::Null),
-                0,
-                None,
-            )
+        let result = tester
+            .invoke_scalar_scalar(test_raster_spec(), ScalarValue::Int32(Some(1)))
             .unwrap();
 
         match result {
-            ColumnarValue::Scalar(ScalarValue::List(list)) => {
+            ScalarValue::List(list) => {
                 assert!(!list.is_empty());
             }
             other => panic!("Expected scalar list result, got {other:?}"),
@@ -342,12 +327,15 @@ mod tests {
         let udf: ScalarUDF = rs_polygonize_udf().into();
         let tester = ScalarUdfTester::new(udf, vec![RASTER, SedonaType::Arrow(DataType::Int32)]);
 
-        let raster_array = ScalarValue::Struct(Arc::new(load_test_raster()))
-            .to_array_of_size(2)
-            .unwrap();
         let band_array = Arc::new(Int32Array::from(vec![Some(1), None]));
         let result = tester
-            .invoke_arrays(vec![raster_array, band_array])
+            .invoke_arrays(vec![
+                Arc::new(sedona_testing::raster_spec::raster_array(vec![
+                    Some(test_raster_spec()),
+                    None,
+                ])),
+                band_array,
+            ])
             .unwrap();
         let list_array = as_list_array(&result).unwrap();
 
@@ -365,12 +353,11 @@ mod tests {
         let udf: ScalarUDF = rs_polygonize_udf().into();
         let tester = ScalarUdfTester::new(udf, vec![RASTER, SedonaType::Arrow(DataType::Int32)]);
 
-        let raster_array = Arc::new(load_test_raster());
         let err = tester
-            .invoke_arrays(vec![
-                raster_array,
-                Arc::new(Int32Array::from(vec![Some(99)])),
-            ])
+            .invoke_raster_array_scalar(
+                vec![Some(test_raster_spec())],
+                ScalarValue::Int32(Some(99)),
+            )
             .expect_err("out-of-range band should error");
 
         assert!(err.to_string().contains("Band 99 is out of range"));
