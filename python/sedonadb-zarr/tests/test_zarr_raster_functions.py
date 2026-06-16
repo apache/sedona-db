@@ -64,12 +64,6 @@ def test_rs_bandpath_returns_chunk_anchor(raster_con):
         assert path is not None and "#array=temperature" in path
 
 
-@pytest.mark.xfail(
-    reason="The Zarr byte loader is not registered from the Python session "
-    "yet, so RS_EnsureLoaded over Zarr OutDb rasters dispatches to the GDAL "
-    "catch-all loader and fails on the chunk anchor URI.",
-    strict=False,
-)
 def test_rs_ensureloaded_materializes_zarr_chunks(raster_con):
     table = raster_con.sql(
         "SELECT RS_EnsureLoaded(raster) AS r FROM rasters"

@@ -52,6 +52,7 @@ def raster_con(zarr_group):
     doesn't leak into other tests.
     """
     con = sedonadb.connect()
+    con.register(sedonadb_zarr.ZarrExtension())
     df = con.read_format(sedonadb_zarr.Zarr(), f"file://{zarr_group}")
     df.to_view("rasters")
     return con
