@@ -89,24 +89,6 @@ class RasterLoader:
 
     The loader is invoked during `RS_EnsureLoaded` to materialize out-of-database
     (OutDb) raster references into in-memory data.
-
-    Example:
-        >>> class MyRasterLoader(RasterLoader):
-        ...     def name(self) -> str:
-        ...         return "my_loader"
-        ...
-        ...     def supports_format(self, format: Optional[str]) -> bool:
-        ...         return format == "my_format"
-        ...
-        ...     def load(self, requests):
-        ...         results = []
-        ...         for req in requests:
-        ...             data = load_my_data(req.uri, req.source_shape, req.data_type)
-        ...             results.append(RasterLoadResult.unresolved(data, req))
-        ...         return results
-        ...
-        >>> sd = sedonadb.connect()
-        >>> sd.register(MyRasterLoader())
     """
 
     def name(self) -> str:
