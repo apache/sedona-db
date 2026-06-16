@@ -540,7 +540,7 @@ mod tests {
     fn test_generate_test_rasters() {
         let count = 5;
         let struct_array = generate_test_rasters(count, None).unwrap();
-        let raster_array = RasterStructArray::new(&struct_array);
+        let raster_array = RasterStructArray::try_new(&struct_array).unwrap();
         assert_eq!(raster_array.len(), count);
 
         for i in 0..count {
@@ -585,7 +585,7 @@ mod tests {
         let data_type = BandDataType::UInt8;
         let struct_array =
             generate_tiled_rasters(tile_size, number_of_tiles, data_type, Some(43)).unwrap();
-        let raster_array = RasterStructArray::new(&struct_array);
+        let raster_array = RasterStructArray::try_new(&struct_array).unwrap();
         assert_eq!(raster_array.len(), 16); // 4x4 tiles
         for i in 0..16 {
             let raster = raster_array.get(i).unwrap();
@@ -610,7 +610,7 @@ mod tests {
     #[test]
     fn test_raster_arrays_equal() {
         let raster_array1 = generate_test_rasters(3, None).unwrap();
-        let raster_struct_array1 = RasterStructArray::new(&raster_array1);
+        let raster_struct_array1 = RasterStructArray::try_new(&raster_array1).unwrap();
         // Test that identical arrays are equal
         assert_raster_arrays_equal(&raster_struct_array1, &raster_struct_array1);
     }
@@ -626,8 +626,8 @@ mod tests {
             .band(BandDataType::UInt8)
             .build();
         let without_crs = RasterSpec::d2(2, 2).band(BandDataType::UInt8).build();
-        let a = RasterStructArray::new(&with_crs);
-        let b = RasterStructArray::new(&without_crs);
+        let a = RasterStructArray::try_new(&with_crs).unwrap();
+        let b = RasterStructArray::try_new(&without_crs).unwrap();
         assert_raster_arrays_equal(&a, &b);
     }
 
@@ -635,11 +635,11 @@ mod tests {
     #[should_panic = "Raster array lengths do not match"]
     fn test_raster_arrays_not_equal() {
         let raster_array1 = generate_test_rasters(3, None).unwrap();
-        let raster_struct_array1 = RasterStructArray::new(&raster_array1);
+        let raster_struct_array1 = RasterStructArray::try_new(&raster_array1).unwrap();
 
         // Test that arrays with different lengths are not equal
         let raster_array2 = generate_test_rasters(4, None).unwrap();
-        let raster_struct_array2 = RasterStructArray::new(&raster_array2);
+        let raster_struct_array2 = RasterStructArray::try_new(&raster_array2).unwrap();
         assert_raster_arrays_equal(&raster_struct_array1, &raster_struct_array2);
     }
 
@@ -647,7 +647,10 @@ mod tests {
     fn test_raster_equal() {
         let raster_array1 =
             generate_tiled_rasters((256, 256), (1, 1), BandDataType::UInt8, Some(43)).unwrap();
-        let raster1 = RasterStructArray::new(&raster_array1).get(0).unwrap();
+        let raster1 = RasterStructArray::try_new(&raster_array1)
+            .unwrap()
+            .get(0)
+            .unwrap();
 
         // Assert that the rasters are equal to themselves
         assert_raster_equal(&raster1, &raster1);
@@ -661,15 +664,21 @@ mod tests {
         let raster_array2 =
             generate_tiled_rasters((128, 128), (1, 1), BandDataType::UInt8, Some(47)).unwrap();
 
-        let raster1 = RasterStructArray::new(&raster_array1).get(0).unwrap();
-        let raster2 = RasterStructArray::new(&raster_array2).get(0).unwrap();
+        let raster1 = RasterStructArray::try_new(&raster_array1)
+            .unwrap()
+            .get(0)
+            .unwrap();
+        let raster2 = RasterStructArray::try_new(&raster_array2)
+            .unwrap()
+            .get(0)
+            .unwrap();
         assert_raster_equal(&raster1, &raster2);
     }
 
     #[test]
     fn test_generate_multi_band_raster() {
         let struct_array = generate_multi_band_raster();
-        let raster_array = RasterStructArray::new(&struct_array);
+        let raster_array = RasterStructArray::try_new(&struct_array).unwrap();
         assert_eq!(raster_array.len(), 1);
 
         let raster = raster_array.get(0).unwrap();
@@ -707,8 +716,14 @@ mod tests {
     fn test_raster_different_metadata() {
         let raster_array =
             generate_tiled_rasters((128, 128), (2, 1), BandDataType::UInt8, Some(43)).unwrap();
-        let raster1 = RasterStructArray::new(&raster_array).get(0).unwrap();
-        let raster2 = RasterStructArray::new(&raster_array).get(1).unwrap();
+        let raster1 = RasterStructArray::try_new(&raster_array)
+            .unwrap()
+            .get(0)
+            .unwrap();
+        let raster2 = RasterStructArray::try_new(&raster_array)
+            .unwrap()
+            .get(1)
+            .unwrap();
         assert_raster_equal(&raster1, &raster2);
     }
 }

@@ -268,7 +268,7 @@ where
             )
         })?;
 
-    let rasters = RasterStructArray::new(input_struct);
+    let rasters = RasterStructArray::try_new(input_struct)?;
     // Shared band `data` column of the input; addressed per band via
     // `rasters.band_data_row(..)` for zero-copy InDb passthrough below.
     let band_data_array = rasters.band_data_array();
@@ -673,7 +673,7 @@ mod tests {
             .unwrap();
 
         let out_struct = out.as_any().downcast_ref::<StructArray>().unwrap();
-        let out_rasters = RasterStructArray::new(out_struct);
+        let out_rasters = RasterStructArray::try_new(out_struct).unwrap();
         assert_eq!(out_rasters.len(), 1);
         let r = out_rasters.get(0).unwrap();
         let band = r.band(0).unwrap();
@@ -709,7 +709,7 @@ mod tests {
             .unwrap();
 
         let out_struct = out.as_any().downcast_ref::<StructArray>().unwrap();
-        let out_rasters = RasterStructArray::new(out_struct);
+        let out_rasters = RasterStructArray::try_new(out_struct).unwrap();
         let r = out_rasters.get(0).unwrap();
         let band = r.band(0).unwrap();
         assert_eq!(band.nd_buffer().unwrap().as_contiguous().unwrap(), &pixels);
@@ -729,7 +729,7 @@ mod tests {
         // is moved into the call (the backing Buffer is refcounted, so the move
         // doesn't reallocate).
         let in_ptr = {
-            let in_rasters = RasterStructArray::new(&input_struct);
+            let in_rasters = RasterStructArray::try_new(&input_struct).unwrap();
             let r = in_rasters.get(0).unwrap();
             let band = r.band(0).unwrap();
             let ndb = band.nd_buffer().unwrap();
@@ -746,7 +746,7 @@ mod tests {
             .unwrap();
 
         let out_struct = out.as_any().downcast_ref::<StructArray>().unwrap();
-        let out_rasters = RasterStructArray::new(out_struct);
+        let out_rasters = RasterStructArray::try_new(out_struct).unwrap();
         let r = out_rasters.get(0).unwrap();
         let band = r.band(0).unwrap();
         let out_bytes = band.nd_buffer().unwrap().as_contiguous().unwrap();
@@ -803,7 +803,7 @@ mod tests {
             .unwrap();
 
         let out_struct = out.as_any().downcast_ref::<StructArray>().unwrap();
-        let out_rasters = RasterStructArray::new(out_struct);
+        let out_rasters = RasterStructArray::try_new(out_struct).unwrap();
         let r = out_rasters.get(0).unwrap();
         let band = r.band(0).unwrap();
         let out_bytes = band.nd_buffer().unwrap().as_contiguous().unwrap();

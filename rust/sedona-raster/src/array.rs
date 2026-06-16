@@ -402,115 +402,122 @@ pub struct RasterStructArray<'a> {
 
 impl<'a> RasterStructArray<'a> {
     /// Create a new RasterStructArray from an existing StructArray.
+    ///
+    /// Returns an error if the array doesn't have the expected raster schema.
     #[inline]
-    pub fn new(raster_array: &'a StructArray) -> Self {
+    pub fn try_new(raster_array: &'a StructArray) -> Result<Self, ArrowError> {
+        // Helper macro for safe downcasting with descriptive errors
+        macro_rules! downcast {
+            ($array:expr, $type:ty, $field:expr) => {
+                $array.as_any().downcast_ref::<$type>().ok_or_else(|| {
+                    ArrowError::InvalidArgumentError(format!(
+                        "Raster schema mismatch: expected {} for field '{}'",
+                        stringify!($type),
+                        $field
+                    ))
+                })?
+            };
+        }
+
         // Top-level fields
-        let crs_array = raster_array
-            .column(raster_indices::CRS)
-            .as_any()
-            .downcast_ref::<StringViewArray>()
-            .unwrap();
-        let transform_list = raster_array
-            .column(raster_indices::TRANSFORM)
-            .as_any()
-            .downcast_ref::<ListArray>()
-            .unwrap();
-        let transform_values = transform_list
-            .values()
-            .as_any()
-            .downcast_ref::<Float64Array>()
-            .unwrap();
-        let spatial_dims_list = raster_array
-            .column(raster_indices::SPATIAL_DIMS)
-            .as_any()
-            .downcast_ref::<ListArray>()
-            .unwrap();
-        let spatial_dims_values = spatial_dims_list
-            .values()
-            .as_any()
-            .downcast_ref::<StringViewArray>()
-            .unwrap();
-        let spatial_shape_list = raster_array
-            .column(raster_indices::SPATIAL_SHAPE)
-            .as_any()
-            .downcast_ref::<ListArray>()
-            .unwrap();
-        let spatial_shape_values = spatial_shape_list
-            .values()
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .unwrap();
+        let crs_array = downcast!(
+            raster_array.column(raster_indices::CRS),
+            StringViewArray,
+            "crs"
+        );
+        let transform_list = downcast!(
+            raster_array.column(raster_indices::TRANSFORM),
+            ListArray,
+            "transform"
+        );
+        let transform_values = downcast!(transform_list.values(), Float64Array, "transform.values");
+        let spatial_dims_list = downcast!(
+            raster_array.column(raster_indices::SPATIAL_DIMS),
+            ListArray,
+            "spatial_dims"
+        );
+        let spatial_dims_values = downcast!(
+            spatial_dims_list.values(),
+            StringViewArray,
+            "spatial_dims.values"
+        );
+        let spatial_shape_list = downcast!(
+            raster_array.column(raster_indices::SPATIAL_SHAPE),
+            ListArray,
+            "spatial_shape"
+        );
+        let spatial_shape_values = downcast!(
+            spatial_shape_list.values(),
+            Int64Array,
+            "spatial_shape.values"
+        );
 
         // Bands list and nested struct
-        let bands_list = raster_array
-            .column(raster_indices::BANDS)
-            .as_any()
-            .downcast_ref::<ListArray>()
-            .unwrap();
-        let bands_struct = bands_list
-            .values()
-            .as_any()
-            .downcast_ref::<StructArray>()
-            .unwrap();
+        let bands_list = downcast!(
+            raster_array.column(raster_indices::BANDS),
+            ListArray,
+            "bands"
+        );
+        let bands_struct = downcast!(bands_list.values(), StructArray, "bands.values");
 
         // Band-level fields
-        let band_name_array = bands_struct
-            .column(band_indices::NAME)
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .unwrap();
-        let band_dim_names_list = bands_struct
-            .column(band_indices::DIM_NAMES)
-            .as_any()
-            .downcast_ref::<ListArray>()
-            .unwrap();
-        let band_dim_names_values = band_dim_names_list
-            .values()
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .unwrap();
-        let band_source_shape_list = bands_struct
-            .column(band_indices::SOURCE_SHAPE)
-            .as_any()
-            .downcast_ref::<ListArray>()
-            .unwrap();
-        let band_source_shape_values = band_source_shape_list
-            .values()
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .unwrap();
-        let band_datatype_array = bands_struct
-            .column(band_indices::DATA_TYPE)
-            .as_any()
-            .downcast_ref::<UInt32Array>()
-            .unwrap();
-        let band_nodata_array = bands_struct
-            .column(band_indices::NODATA)
-            .as_any()
-            .downcast_ref::<BinaryArray>()
-            .unwrap();
-        let band_view_list = bands_struct
-            .column(band_indices::VIEW)
-            .as_any()
-            .downcast_ref::<ListArray>()
-            .unwrap();
-        let band_outdb_uri_array = bands_struct
-            .column(band_indices::OUTDB_URI)
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .unwrap();
-        let band_outdb_format_array = bands_struct
-            .column(band_indices::OUTDB_FORMAT)
-            .as_any()
-            .downcast_ref::<StringViewArray>()
-            .unwrap();
-        let band_data_array = bands_struct
-            .column(band_indices::DATA)
-            .as_any()
-            .downcast_ref::<BinaryViewArray>()
-            .unwrap();
+        let band_name_array = downcast!(
+            bands_struct.column(band_indices::NAME),
+            StringArray,
+            "bands.name"
+        );
+        let band_dim_names_list = downcast!(
+            bands_struct.column(band_indices::DIM_NAMES),
+            ListArray,
+            "bands.dim_names"
+        );
+        let band_dim_names_values = downcast!(
+            band_dim_names_list.values(),
+            StringArray,
+            "bands.dim_names.values"
+        );
+        let band_source_shape_list = downcast!(
+            bands_struct.column(band_indices::SOURCE_SHAPE),
+            ListArray,
+            "bands.source_shape"
+        );
+        let band_source_shape_values = downcast!(
+            band_source_shape_list.values(),
+            Int64Array,
+            "bands.source_shape.values"
+        );
+        let band_datatype_array = downcast!(
+            bands_struct.column(band_indices::DATA_TYPE),
+            UInt32Array,
+            "bands.data_type"
+        );
+        let band_nodata_array = downcast!(
+            bands_struct.column(band_indices::NODATA),
+            BinaryArray,
+            "bands.nodata"
+        );
+        let band_view_list = downcast!(
+            bands_struct.column(band_indices::VIEW),
+            ListArray,
+            "bands.view"
+        );
+        let band_outdb_uri_array = downcast!(
+            bands_struct.column(band_indices::OUTDB_URI),
+            StringArray,
+            "bands.outdb_uri"
+        );
+        let band_outdb_format_array = downcast!(
+            bands_struct.column(band_indices::OUTDB_FORMAT),
+            StringViewArray,
+            "bands.outdb_format"
+        );
+        let band_data_array = downcast!(
+            bands_struct.column(band_indices::DATA),
+            BinaryViewArray,
+            "bands.data"
+        );
 
-        Self {
+        Ok(Self {
             raster_array,
             crs_array,
             transform_list,
@@ -531,7 +538,7 @@ impl<'a> RasterStructArray<'a> {
             band_outdb_uri_array,
             band_outdb_format_array,
             band_data_array,
-        }
+        })
     }
 
     /// Get the total number of rasters in the array.
@@ -654,7 +661,7 @@ mod tests {
         let raster_array = builder.finish().unwrap();
 
         // Test the array
-        let rasters = RasterStructArray::new(&raster_array);
+        let rasters = RasterStructArray::try_new(&raster_array).unwrap();
 
         assert_eq!(rasters.len(), 1);
         assert!(!rasters.is_empty());
@@ -729,7 +736,7 @@ mod tests {
 
         let raster_array = builder.finish().unwrap();
 
-        let rasters = RasterStructArray::new(&raster_array);
+        let rasters = RasterStructArray::try_new(&raster_array).unwrap();
         let raster = rasters.get(0).unwrap();
         let bands = raster.bands();
 
@@ -770,7 +777,7 @@ mod tests {
     #[test]
     fn test_raster_is_null() {
         let raster_array = generate_test_rasters(2, Some(1)).unwrap();
-        let rasters = RasterStructArray::new(&raster_array);
+        let rasters = RasterStructArray::try_new(&raster_array).unwrap();
         assert_eq!(rasters.len(), 2);
         assert!(!rasters.is_null(0));
         assert!(rasters.is_null(1));
@@ -849,7 +856,7 @@ mod tests {
         let array = build_identity_raster();
         let bad_dtype: ArrayRef = Arc::new(UInt32Array::from(vec![0xFFu32]));
         let mutated = replace_band_column(&array, band_indices::DATA_TYPE, bad_dtype);
-        let rasters = RasterStructArray::new(&mutated);
+        let rasters = RasterStructArray::try_new(&mutated).unwrap();
         let r = rasters.get(0).unwrap();
         // band() surfaces the corruption through the standardized
         // SedonaDB-internal-error message routed via ArrowError::ExternalError.
@@ -884,7 +891,7 @@ mod tests {
             band_indices::SOURCE_SHAPE,
             Arc::new(empty_source_shape),
         );
-        let rasters = RasterStructArray::new(&mutated);
+        let rasters = RasterStructArray::try_new(&mutated).unwrap();
         let err = rasters.get(0).unwrap().band(0).err().unwrap();
         assert!(err.to_string().contains("SedonaDB internal error"));
         assert!(err.to_string().contains("empty source_shape"));
@@ -929,7 +936,7 @@ mod tests {
         builder.finish_band().unwrap();
         builder.finish_raster().unwrap();
         let array = builder.finish().unwrap();
-        let rasters = RasterStructArray::new(&array);
+        let rasters = RasterStructArray::try_new(&array).unwrap();
         let r = rasters.get(0).unwrap();
 
         // Bounds: out-of-range indices yield None on every fast path.
@@ -1044,7 +1051,7 @@ mod tests {
         builder.finish_raster().unwrap();
 
         let array = builder.finish().unwrap();
-        let rasters = RasterStructArray::new(&array);
+        let rasters = RasterStructArray::try_new(&array).unwrap();
 
         let r0 = rasters.get(0).unwrap();
         assert_eq!(r0.num_bands(), 3);
@@ -1138,7 +1145,7 @@ mod tests {
         builder.finish_raster().unwrap();
         builder.append_null().unwrap();
         let array = builder.finish().unwrap();
-        let rasters = RasterStructArray::new(&array);
+        let rasters = RasterStructArray::try_new(&array).unwrap();
 
         // Sanity: raster 0 still resolves correctly.
         let r0 = rasters.get(0).unwrap();
@@ -1183,7 +1190,7 @@ mod tests {
         builder.finish_raster().unwrap();
         let arr = builder.finish().unwrap();
 
-        let rasters = RasterStructArray::new(&arr);
+        let rasters = RasterStructArray::try_new(&arr).unwrap();
         let r = rasters.get(0).unwrap();
         let band = r.band(0).unwrap();
         assert!(

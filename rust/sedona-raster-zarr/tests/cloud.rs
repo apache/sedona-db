@@ -69,7 +69,7 @@ fn count_rows(reader: ZarrChunkReader) -> usize {
             .as_any()
             .downcast_ref::<arrow_array::StructArray>()
             .expect("raster column is a StructArray");
-        rows += RasterStructArray::new(s).len();
+        rows += RasterStructArray::try_new(s).unwrap().len();
     }
     rows
 }
