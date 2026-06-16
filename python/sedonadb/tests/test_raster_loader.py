@@ -20,105 +20,8 @@
 import pyarrow as pa
 
 import sedonadb
+from sedonadb.raster import Raster
 from sedonadb.raster_loader import RasterLoader, RasterLoadResult
-
-
-def _make_outdb_raster(outdb_format: str, outdb_uri: str, shape: tuple[int, int]):
-    """Create an OutDb raster reference for testing.
-
-    Creates a minimal raster with a single band that references external data.
-    The band has empty data bytes and non-null outdb_uri/outdb_format fields,
-    which signals to rs_ensureloaded that it needs to load the data.
-    """
-    height, width = shape
-
-    # View entry struct type
-    view_entry_type = pa.struct(
-        [
-            pa.field("source_axis", pa.int64(), nullable=False),
-            pa.field("start", pa.int64(), nullable=False),
-            pa.field("step", pa.int64(), nullable=False),
-            pa.field("steps", pa.int64(), nullable=False),
-        ]
-    )
-
-    # Band struct schema (matches sedona-schema band_type exactly)
-    band_type = pa.struct(
-        [
-            pa.field("name", pa.utf8(), nullable=True),
-            pa.field(
-                "dim_names",
-                pa.list_(pa.field("item", pa.utf8(), nullable=False)),
-                nullable=False,
-            ),
-            pa.field(
-                "source_shape",
-                pa.list_(pa.field("item", pa.int64(), nullable=False)),
-                nullable=False,
-            ),
-            pa.field("data_type", pa.uint32(), nullable=False),
-            pa.field("nodata", pa.binary(), nullable=True),
-            pa.field(
-                "view",
-                pa.list_(pa.field("item", view_entry_type, nullable=False)),
-                nullable=True,
-            ),
-            pa.field("outdb_uri", pa.utf8(), nullable=True),
-            pa.field("outdb_format", pa.string_view(), nullable=True),
-            pa.field("data", pa.binary_view(), nullable=False),
-        ]
-    )
-
-    # Raster struct schema (matches sedona-schema raster_type exactly)
-    raster_type = pa.struct(
-        [
-            pa.field("crs", pa.string_view(), nullable=True),
-            pa.field(
-                "transform",
-                pa.list_(pa.field("item", pa.float64(), nullable=False)),
-                nullable=False,
-            ),
-            pa.field(
-                "spatial_dims",
-                pa.list_(pa.field("item", pa.string_view(), nullable=False)),
-                nullable=False,
-            ),
-            pa.field(
-                "spatial_shape",
-                pa.list_(pa.field("item", pa.int64(), nullable=False)),
-                nullable=False,
-            ),
-            pa.field(
-                "bands",
-                pa.list_(pa.field("band", band_type, nullable=False)),
-                nullable=True,
-            ),
-        ]
-    )
-
-    # Create the band with OutDb reference (empty data, non-null outdb fields)
-    band = {
-        "name": None,
-        "dim_names": ["y", "x"],
-        "source_shape": [height, width],
-        "data_type": 1,  # UInt8
-        "nodata": None,
-        "view": None,  # No view - full source
-        "outdb_uri": outdb_uri,
-        "outdb_format": outdb_format,
-        "data": b"",  # Empty - data is external
-    }
-
-    # Create the raster
-    raster = {
-        "crs": "EPSG:4326",
-        "transform": [0.0, 1.0, 0.0, 0.0, 0.0, -1.0],
-        "spatial_dims": ["x", "y"],
-        "spatial_shape": [width, height],
-        "bands": [band],
-    }
-
-    return pa.array([raster], type=raster_type)
 
 
 class MockRasterLoader(RasterLoader):
@@ -183,14 +86,15 @@ def test_py_raster_loader_registration():
     sd.register(loader)
 
     # Create an OutDb raster with our custom format
-    outdb_raster = _make_outdb_raster(
-        outdb_format="test_format",
-        outdb_uri="test://mock/data",
+    raster = Raster.lazy(
+        uri="test://mock/data",
         shape=(4, 4),
+        dtype="UInt8",
+        format="test_format",
     )
 
     # Create a table with the OutDb raster
-    table = pa.table({"raster": outdb_raster})
+    table = pa.table({"raster": raster._array})
     df = sd.create_data_frame(table)
 
     # Call rs_ensureloaded - this should invoke our mock loader
