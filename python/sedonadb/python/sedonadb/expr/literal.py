@@ -20,6 +20,9 @@ from typing import TYPE_CHECKING, Any
 from sedonadb.utility import sedona  # noqa: F401
 
 if TYPE_CHECKING:
+    from sedonadb_expr import GeoMethods
+
+    from sedonadb.expr import Expr
     from sedonadb.functions import Functions
 
 
@@ -70,6 +73,15 @@ class Literal:
             raise ValueError("Can't pipe Literal without context into Functions")
 
         return Functions(self._ctx, self)
+
+    @property
+    def geo(self) -> "GeoMethods[Expr]":
+        from sedonadb_expr import GeoMethods
+
+        return GeoMethods(self)
+
+    def _call(self, name, *args) -> "Expr":
+        return self.funcs[name](*args)
 
     def alias(self, name: str):
         """Give this literal a column name.

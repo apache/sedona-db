@@ -114,14 +114,18 @@ jobs:
           # Update this key to force a new cache (sync with packaging.yml)
           prefix-key: "python-v3"
 
-      - name: Install
+      - name: Install sedonadb-expr
+        run: |
+          pip install -e "python/sedonadb-expr" -vv
+
+      - name: Install sedonadb
         run: |
           # Keep this export in sync with the export in dev/release/verify-release-candidate.sh
           export MATURIN_PEP517_ARGS="--features s2geography"
           pip install -e "python/sedonadb/[test]" -vv
-          # Unset so `--features s2geography` (sedonadb-only) doesn't
-          # carry into the plugin install.
-          unset MATURIN_PEP517_ARGS
+
+      - name: Install sedonadb-zarr
+        run: |
           pip install -e "python/sedonadb-zarr/[test]" -vv
 
       - name: Download minimal geoarrow-data assets
@@ -132,18 +136,23 @@ jobs:
         run: |
           docker compose up --wait --detach postgis
 
-      - name: Run tests
+      - name: Run tests (sedonadb)
         env:
           # Ensure that we don't skip tests that we didn't intend to
           SEDONADB_PYTHON_NO_SKIP_TESTS: "true"
         run: |
-          cd python
+          cd python/sedonadb
           python -m pytest -vv
 
-      - name: Run doctests
+      - name: Run doctests (sedonadb)
         run: |
-          cd python
-          python -m pytest --doctest-modules
+          cd python/sedonadb
+          python -m pytest --doctest-modules python/
+
+      - name: Run tests (sedonadb-expr)
+        run: |
+          cd python/sedonadb-expr
+          python -m pytest -vv
 
       - name: Shutdown docker compose services
         if: always()

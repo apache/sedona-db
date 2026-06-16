@@ -40,6 +40,7 @@ use zarrs::group::Group;
 use zarrs::node::NodeMetadata;
 use zarrs::storage::{AsyncReadableListableStorage, AsyncReadableListableStorageTraits};
 
+use crate::coords;
 use crate::dtype::zarr_to_band_data_type;
 use crate::geozarr::GroupGeoMetadata;
 use crate::source_uri::build_chunk_anchor;
@@ -252,6 +253,10 @@ struct ArrayInfo {
     /// position — ragged final chunks are not emitted as separate short
     /// rows.
     chunk_shape: Vec<u64>,
+    /// Full array shape (extent per dim). Used to validate that a spatial
+    /// coordinate array's length matches the data extent before deriving a
+    /// geotransform from it.
+    shape: Vec<u64>,
     /// Encoded fill value in native-endian byte representation, for the
     /// `nodata` field. None when the array has no fill value declared.
     nodata: Option<Vec<u8>>,
@@ -279,21 +284,7 @@ async fn open_and_validate(
         )))
     })?;
 
-    let geo = GroupGeoMetadata::from_attributes(group.attributes())?;
-
-    // CRS-without-transform is almost always a malformed-metadata bug —
-    // the user thinks they have full georef but downstream spatial joins
-    // will silently use the identity-pixel-coords default. Error loudly
-    // so they fix the metadata rather than getting empty result sets.
-    if geo.crs.is_some() && geo.transform.is_none() {
-        return Err(ArrowError::InvalidArgumentError(format!(
-            "Zarr group at {group_uri} declares a CRS but no `spatial:transform` \
-             attribute; refusing to fall back to the identity transform because \
-             that would silently produce wrong results in spatial joins. Declare \
-             `spatial:transform` on the group or remove the CRS to read this as \
-             a non-georeferenced datacube."
-        )));
-    }
+    let mut geo = GroupGeoMetadata::from_attributes(group.attributes())?;
 
     let arrays = match arrays_filter {
         // Explicit filter: open each named array directly, skipping the
@@ -358,19 +349,84 @@ async fn open_and_validate(
     let spatial_dim_indices =
         resolve_spatial_dim_indices(&array_infos[0].dim_names, geo.spatial_dims.as_deref())?;
 
+    // Effective transform + CRS. An explicit GeoZarr `spatial:transform` wins;
+    // failing that, derive one from the spatial coordinate arrays (the common
+    // CF / non-GeoZarr case); failing that, fall back to identity pixel coords.
     let group_transform = match geo.transform {
         Some(t) => t,
         None => {
-            // Both `spatial:transform` and `proj:*` are absent (the
-            // CRS-only case errored above). Fall back to identity pixel
-            // coordinates and breadcrumb a warning so spatial-join
-            // surprises are debuggable.
-            log::warn!(
-                "Zarr group at {group_uri} has no `spatial:transform`; falling back \
-                 to the identity pixel-coordinate transform [0, 1, 0, 0, 0, -1]. \
-                 Spatial operations against this raster will use pixel coordinates."
-            );
-            [0.0, 1.0, 0.0, 0.0, 0.0, -1.0]
+            let y_axis = spatial_dim_indices[0];
+            let x_axis = spatial_dim_indices[1];
+            let y_name = array_infos[0].dim_names[y_axis].clone();
+            let x_name = array_infos[0].dim_names[x_axis].clone();
+            let x_vals = coords::read_coord_values(&storage, &x_name).await?;
+            let y_vals = coords::read_coord_values(&storage, &y_name).await?;
+
+            // A coordinate array must span the data extent along its axis; a
+            // length mismatch is a malformed coord variable that would yield a
+            // wrong scale, so refuse to derive a transform from it.
+            let x_ok = x_vals
+                .as_ref()
+                .is_none_or(|v| v.len() as u64 == array_infos[0].shape[x_axis]);
+            let y_ok = y_vals
+                .as_ref()
+                .is_none_or(|v| v.len() as u64 == array_infos[0].shape[y_axis]);
+            if !(x_ok && y_ok) {
+                log::warn!(
+                    "Zarr group at {group_uri}: a spatial coordinate array's length does \
+                     not match the data extent; ignoring coordinates for georeferencing"
+                );
+            }
+            let derived = match (x_ok && y_ok, x_vals, y_vals) {
+                (true, Some(x), Some(y)) => coords::transform_from_coords(&x, &y),
+                _ => None,
+            };
+            match derived {
+                Some(t) => {
+                    // Regular CF coordinate arrays imply geographic lon/lat;
+                    // infer the CRS from the dim names only when none was
+                    // declared. Generic y/x stay CRS-less (attach via RS_SetCRS).
+                    let crs_note = if let Some(declared) = geo.crs.as_deref() {
+                        format!("keeping the declared CRS {declared:?}")
+                    } else if let Some(inferred) = coords::infer_geographic_crs(&y_name, &x_name) {
+                        geo.crs = Some(inferred.to_string());
+                        format!("inferred CRS {inferred} from the dim names")
+                    } else {
+                        "no CRS inferred (spatial dims are not lat/lon) — set one with RS_SetCRS"
+                            .to_string()
+                    };
+                    log::debug!(
+                        "Zarr group at {group_uri} has no `spatial:transform`; derived a \
+                         geotransform from the {x_name:?}/{y_name:?} coordinate arrays; {crs_note}"
+                    );
+                    t
+                }
+                // CRS-without-transform and no usable coordinate arrays is
+                // almost always malformed metadata; error rather than silently
+                // using pixel coordinates in spatial joins.
+                None if geo.crs.is_some() => {
+                    return Err(ArrowError::InvalidArgumentError(format!(
+                        "Zarr group at {group_uri} declares a CRS but has neither a \
+                         `spatial:transform` attribute nor regularly-spaced numeric \
+                         spatial coordinate arrays; refusing to fall back to the \
+                         identity transform because that would silently produce wrong \
+                         results in spatial joins. Declare `spatial:transform`, provide \
+                         regular coordinate arrays, or remove the CRS to read this as a \
+                         non-georeferenced datacube."
+                    )));
+                }
+                // No CRS and no usable coordinates: index space, with a
+                // breadcrumb so spatial-join surprises are debuggable.
+                None => {
+                    log::warn!(
+                        "Zarr group at {group_uri} has no `spatial:transform` and no \
+                         usable spatial coordinate arrays; falling back to the identity \
+                         pixel-coordinate transform [0, 1, 0, 0, 0, -1]. Spatial \
+                         operations against this raster will use pixel coordinates."
+                    );
+                    [0.0, 1.0, 0.0, 0.0, 0.0, -1.0]
+                }
+            }
         }
     };
 
@@ -498,6 +554,7 @@ fn collect_array_infos(
             .iter()
             .map(|n| n.get())
             .collect();
+        let shape = array.shape().to_vec();
         let fill_bytes = array.fill_value().as_ne_bytes();
         let nodata = if fill_bytes.is_empty() {
             None
@@ -510,6 +567,7 @@ fn collect_array_infos(
             dim_names,
             chunk_grid_shape,
             chunk_shape,
+            shape,
             nodata,
         });
     }
