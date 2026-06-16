@@ -496,7 +496,7 @@ mod tests {
 
         // Verify CRS was changed to EPSG:3857
         let result_struct = result.as_any().downcast_ref::<StructArray>().unwrap();
-        let raster_array = RasterStructArray::new(result_struct);
+        let raster_array = RasterStructArray::try_new(result_struct).unwrap();
         assert_eq!(raster_array.len(), 3);
 
         let raster0 = raster_array.get(0).unwrap();
@@ -520,7 +520,7 @@ mod tests {
             .unwrap();
 
         let result_struct = result.as_any().downcast_ref::<StructArray>().unwrap();
-        let raster_array = RasterStructArray::new(result_struct);
+        let raster_array = RasterStructArray::try_new(result_struct).unwrap();
         let raster = raster_array.get(0).unwrap();
         assert_eq!(raster.crs(), Some("OGC:CRS84"));
     }
@@ -534,7 +534,7 @@ mod tests {
         let result = tester.invoke_array_scalar(Arc::new(rasters), 0u32).unwrap();
 
         let result_struct = result.as_any().downcast_ref::<StructArray>().unwrap();
-        let raster_array = RasterStructArray::new(result_struct);
+        let raster_array = RasterStructArray::try_new(result_struct).unwrap();
         let raster = raster_array.get(0).unwrap();
         // CRS should be None (null) for SRID 0
         assert_eq!(raster.crs(), None);
@@ -553,7 +553,7 @@ mod tests {
             .unwrap();
 
         let result_struct = result.as_any().downcast_ref::<StructArray>().unwrap();
-        let raster_array = RasterStructArray::new(result_struct);
+        let raster_array = RasterStructArray::try_new(result_struct).unwrap();
         assert_eq!(raster_array.len(), 3);
 
         let raster0 = raster_array.get(0).unwrap();
@@ -576,7 +576,7 @@ mod tests {
             .unwrap();
 
         let result_struct = result.as_any().downcast_ref::<StructArray>().unwrap();
-        let raster_array = RasterStructArray::new(result_struct);
+        let raster_array = RasterStructArray::try_new(result_struct).unwrap();
         let raster = raster_array.get(0).unwrap();
         // EPSG:4326 is preserved as given (not folded to OGC:CRS84), but the two
         // still deserialize to equal CRSes.
@@ -596,7 +596,7 @@ mod tests {
         let result = tester.invoke_array_scalar(Arc::new(rasters), "0").unwrap();
 
         let result_struct = result.as_any().downcast_ref::<StructArray>().unwrap();
-        let raster_array = RasterStructArray::new(result_struct);
+        let raster_array = RasterStructArray::try_new(result_struct).unwrap();
         let raster = raster_array.get(0).unwrap();
         assert_eq!(raster.crs(), None);
     }
@@ -607,13 +607,13 @@ mod tests {
         let tester = ScalarUdfTester::new(udf, vec![RASTER, SedonaType::Arrow(DataType::UInt32)]);
 
         let rasters = generate_test_rasters(3, Some(1)).unwrap();
-        let original_array = RasterStructArray::new(&rasters);
+        let original_array = RasterStructArray::try_new(&rasters).unwrap();
 
         let result = tester
             .invoke_array_scalar(Arc::new(rasters.clone()), 3857u32)
             .unwrap();
         let result_struct = result.as_any().downcast_ref::<StructArray>().unwrap();
-        let result_array = RasterStructArray::new(result_struct);
+        let result_array = RasterStructArray::try_new(result_struct).unwrap();
 
         // Verify non-null rasters have same metadata and band data
         for i in [0, 2] {
@@ -699,7 +699,8 @@ mod tests {
             .invoke_array_scalar(Arc::new(rasters), null_srid)
             .unwrap();
         let raster_array =
-            RasterStructArray::new(result.as_any().downcast_ref::<StructArray>().unwrap());
+            RasterStructArray::try_new(result.as_any().downcast_ref::<StructArray>().unwrap())
+                .unwrap();
         for i in 0..raster_array.len() {
             assert!(
                 raster_array.is_null(i),
@@ -720,7 +721,8 @@ mod tests {
             .invoke_array_scalar(Arc::new(rasters), null_crs)
             .unwrap();
         let raster_array =
-            RasterStructArray::new(result.as_any().downcast_ref::<StructArray>().unwrap());
+            RasterStructArray::try_new(result.as_any().downcast_ref::<StructArray>().unwrap())
+                .unwrap();
         for i in 0..raster_array.len() {
             assert!(
                 raster_array.is_null(i),
@@ -746,7 +748,7 @@ mod tests {
             .invoke_array_array(Arc::new(rasters), srid_array)
             .unwrap();
         let result_struct = result.as_any().downcast_ref::<StructArray>().unwrap();
-        let raster_array = RasterStructArray::new(result_struct);
+        let raster_array = RasterStructArray::try_new(result_struct).unwrap();
 
         // Row 0: valid raster + valid SRID -> EPSG:3857
         let raster0 = raster_array.get(0).unwrap();
@@ -779,7 +781,7 @@ mod tests {
             .invoke_array_array(Arc::new(rasters), crs_array)
             .unwrap();
         let result_struct = result.as_any().downcast_ref::<StructArray>().unwrap();
-        let raster_array = RasterStructArray::new(result_struct);
+        let raster_array = RasterStructArray::try_new(result_struct).unwrap();
 
         // Row 0: valid raster + valid CRS -> EPSG:3857
         let raster0 = raster_array.get(0).unwrap();
