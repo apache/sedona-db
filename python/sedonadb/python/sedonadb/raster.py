@@ -84,7 +84,7 @@ class Raster:
             format: The format of the external data (e.g., 'tif', or 'zarr'). If None,
                 the format will be inferred when the data is accessed.
             crs: The coordinate reference system. Can be any value accepted by
-                geoarrow.types.type_spec (e.g., EPSG code, WKT string, pyproj.CRS).
+                geoarrow.types.type_spec (e.g., string, pyproj.CRS).
 
         Returns:
             A new Raster instance with a single band referencing the external data.
