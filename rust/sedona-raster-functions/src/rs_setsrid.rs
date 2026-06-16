@@ -395,6 +395,7 @@ mod tests {
     use datafusion_expr::ScalarUDF;
     use sedona_raster::array::RasterStructArray;
     use sedona_raster::traits::RasterRef;
+    use sedona_schema::crs::deserialize_crs;
     use sedona_schema::datatypes::RASTER;
     use sedona_testing::rasters::generate_test_rasters;
     use sedona_testing::testers::ScalarUdfTester;
@@ -421,8 +422,8 @@ mod tests {
         assert!(out.value(0).contains("GeographicCRS"));
         assert_ne!(out.value(0), "EPSG:4269");
         assert_eq!(out.value(0), out.value(2));
-        // EPSG:4326 folds to OGC:CRS84 (<=12 bytes, inlined into the view).
-        assert_eq!(out.value(3), "OGC:CRS84");
+        // EPSG:4326 is kept verbatim (<=12 bytes, inlined into the view).
+        assert_eq!(out.value(3), "EPSG:4326");
 
         // Deduplication: the repeated PROJJSON lives in the shared data buffer
         // exactly once, so total buffer bytes equal a single copy.
@@ -567,7 +568,7 @@ mod tests {
     }
 
     #[test]
-    fn set_crs_epsg_4326_normalizes_to_ogc_crs84() {
+    fn set_crs_epsg_4326_kept_verbatim() {
         let udf: ScalarUDF = rs_set_crs_udf().into();
         let tester = ScalarUdfTester::new(udf, vec![RASTER, SedonaType::Arrow(DataType::Utf8)]);
 
@@ -579,8 +580,13 @@ mod tests {
         let result_struct = result.as_any().downcast_ref::<StructArray>().unwrap();
         let raster_array = RasterStructArray::new(result_struct);
         let raster = raster_array.get(0).unwrap();
-        // EPSG:4326 should normalize to OGC:CRS84
-        assert_eq!(raster.crs(), Some("OGC:CRS84"));
+        // EPSG:4326 is preserved as given (not folded to OGC:CRS84), but the two
+        // still deserialize to equal CRSes.
+        assert_eq!(raster.crs(), Some("EPSG:4326"));
+        assert_eq!(
+            deserialize_crs(raster.crs().unwrap()).unwrap(),
+            deserialize_crs("OGC:CRS84").unwrap()
+        );
     }
 
     #[test]

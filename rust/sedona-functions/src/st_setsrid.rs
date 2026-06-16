@@ -658,12 +658,12 @@ mod test {
         assert!(out.value(0).contains("GeographicCRS"));
         assert_ne!(out.value(0), "EPSG:4269");
         assert_eq!(out.value(0), out.value(2));
-        // EPSG:4326 folds to OGC:CRS84 (<=12 bytes, inlined into the view).
-        assert_eq!(out.value(3), "OGC:CRS84");
+        // EPSG:4326 is kept verbatim (<=12 bytes, inlined into the view).
+        assert_eq!(out.value(3), "EPSG:4326");
 
         // Deduplication: the repeated PROJJSON lives in the shared data buffer
         // exactly once, so total buffer bytes equal a single copy (the inlined
-        // OGC:CRS84 contributes nothing to the buffer).
+        // EPSG:4326 contributes nothing to the buffer).
         let buffer_bytes: usize = out.data_buffers().iter().map(|b| b.len()).sum();
         assert_eq!(buffer_bytes, out.value(0).len());
     }
@@ -906,7 +906,7 @@ mod test {
                     None
                 ],
                 [
-                    Some("OGC:CRS84"),
+                    Some("EPSG:4326"),
                     Some("EPSG:3857"),
                     Some("EPSG:3857"),
                     None,
@@ -959,7 +959,7 @@ mod test {
                     Some("POINT (4 5)"),
                     None
                 ],
-                [Some("OGC:CRS84"), Some("EPSG:4269"), None, None],
+                [Some("EPSG:4326"), Some("EPSG:4269"), None, None],
                 &WKB_GEOGRAPHY
             )
         );

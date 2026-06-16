@@ -324,7 +324,7 @@ mod tests {
                     None
                 ],
                 [
-                    Some("OGC:CRS84"),
+                    Some("EPSG:4326"),
                     Some("EPSG:3857"),
                     Some("EPSG:3857"),
                     None,
