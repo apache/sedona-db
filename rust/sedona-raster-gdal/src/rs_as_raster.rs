@@ -628,30 +628,22 @@ mod tests {
     use std::sync::Arc;
 
     use arrow_array::{BooleanArray, Float64Array, StringArray};
-    use datafusion_common::cast::as_struct_array;
     use datafusion_expr::{ScalarUDF, ScalarUDFImpl};
-    use sedona_gdal::raster::types::Buffer;
     use sedona_raster::array::RasterStructArray;
+    use sedona_schema::datatypes::RASTER;
     use sedona_schema::datatypes::WKB_GEOMETRY;
+    use sedona_schema::raster::BandDataType;
+    use sedona_testing::raster_spec::{assert_rasters_equal, RasterSpec};
     use sedona_testing::{create::create_array, testers::ScalarUdfTester};
 
     use super::*;
 
-    fn build_reference_raster() -> arrow_array::StructArray {
-        with_gdal(|gdal| {
-            let driver = gdal.get_driver_by_name("MEM").unwrap();
-            let dataset = driver.create_with_band_type::<u8>("", 4, 3, 1).unwrap();
-            dataset
-                .set_geo_transform(&[10.0, 2.0, 0.0, 20.0, 0.0, -2.0])
-                .unwrap();
-            dataset.set_projection("EPSG:4326").unwrap();
-            let band = dataset.rasterband(1).unwrap();
-            band.set_no_data_value(Some(0.0)).unwrap();
-            let mut buffer = Buffer::new((4, 3), vec![0u8; 12]);
-            band.write((0, 0), (4, 3), &mut buffer).unwrap();
-            crate::utils::dataset_to_indb_raster(&dataset)
-        })
-        .unwrap()
+    fn reference_raster_spec() -> RasterSpec {
+        RasterSpec::d2(4, 3)
+            .transform([10.0, 2.0, 0.0, 20.0, 0.0, -2.0])
+            .crs(Some("EPSG:4326"))
+            .band_values(&[0u8; 12])
+            .nodata(0u8)
     }
 
     fn wkb_from_wkt(gdal: &Gdal, wkt: &str) -> Result<Vec<u8>> {
@@ -667,7 +659,7 @@ mod tests {
     }
 
     fn load_reference_raster() -> RasterMetadata {
-        let raster_array = build_reference_raster();
+        let raster_array = reference_raster_spec().build();
         let raster_struct = RasterStructArray::new(&raster_array);
         raster_struct.get(0).unwrap().metadata()
     }
@@ -687,7 +679,7 @@ mod tests {
 
     #[test]
     fn test_rs_as_raster_use_reference_extent() {
-        let raster_array = build_reference_raster();
+        let raster_array = reference_raster_spec().build();
         with_gdal(|gdal| {
             let raster_struct = RasterStructArray::new(&raster_array);
             let raster = raster_struct.get(0).unwrap();
@@ -725,7 +717,7 @@ mod tests {
 
     #[test]
     fn test_rs_as_raster_use_geometry_extent() {
-        let raster_array = build_reference_raster();
+        let raster_array = reference_raster_spec().build();
         with_gdal(|gdal| {
             let raster_struct = RasterStructArray::new(&raster_array);
             let raster = raster_struct.get(0).unwrap();
@@ -768,8 +760,6 @@ mod tests {
 
     #[test]
     fn test_rs_as_raster_udf_batch() {
-        let raster_array = build_reference_raster();
-
         let metadata = load_reference_raster();
         let geom = format!(
             "POLYGON(({x0} {y1}, {x0} {y0}, {x1} {y0}, {x1} {y1}, {x0} {y1}))",
@@ -796,7 +786,7 @@ mod tests {
         let result = tester
             .invoke_arrays(vec![
                 create_array(&[Some(geom.as_str())], &WKB_GEOMETRY),
-                Arc::new(raster_array),
+                Arc::new(reference_raster_spec().build()),
                 Arc::new(StringArray::from(vec!["D"])),
                 Arc::new(BooleanArray::from(vec![false])),
                 Arc::new(Float64Array::from(vec![255.0])),
@@ -805,16 +795,11 @@ mod tests {
             ])
             .unwrap();
 
-        let struct_array = as_struct_array(&result).unwrap();
-        let raster_array = RasterStructArray::new(struct_array);
-        let raster = raster_array.get(0).unwrap();
-
-        assert_eq!(raster.metadata().width(), 1);
-        assert_eq!(raster.metadata().height(), 1);
-        let band = raster.bands().band(1).unwrap();
-        assert_eq!(
-            bytes_to_f64_vec(band.nd_buffer().unwrap().as_contiguous().unwrap()),
-            vec![255.0]
-        );
+        let expected = RasterSpec::d2(1, 1)
+            .transform([10.0, 2.0, 0.0, 20.0, 0.0, -2.0])
+            .crs(Some("EPSG:4326"))
+            .band_values(&[255.0f64])
+            .nodata(0.0f64);
+        assert_rasters_equal(&result, &[Some(expected)]);
     }
 }
