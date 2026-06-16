@@ -4272,6 +4272,100 @@ names collide.</p>
 <div class="doc doc-object doc-function">
 
 
+<h4 id="sedonadb.dataframe.DataFrame.distinct" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">distinct</span>
+
+
+<a href="#sedonadb.dataframe.DataFrame.distinct" class="headerlink" title="Permanent link">¶</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">distinct</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Remove duplicate rows, comparing all columns.</p>
+<p>Returns a new lazy DataFrame keeping one row from each set of
+rows that are equal across every column (SQL <code>SELECT DISTINCT</code>).</p>
+<p>Examples:</p>
+<div class="codehilite"><pre><span></span><code>&gt;&gt;&gt; sd = sedona.db.connect()
+&gt;&gt;&gt; df = sd.sql(
+<span class="k">...</span>     "SELECT * FROM (VALUES (1), (1), (2)) AS t(x)"
+<span class="k">...</span> )
+&gt;&gt;&gt; df.distinct().sort("x").show()
+┌───────┐
+│   x   │
+│ int64 │
+╞═══════╡
+│     1 │
+├╌╌╌╌╌╌╌┤
+│     2 │
+└───────┘
+</code></pre></div>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="sedonadb.dataframe.DataFrame.distinct_on" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">distinct_on</span>
+
+
+<a href="#sedonadb.dataframe.DataFrame.distinct_on" class="headerlink" title="Permanent link">¶</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">distinct_on</span><span class="p">(</span><span class="o">*</span><span class="n">cols</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Union" href="https://docs.python.org/3/library/typing.html#typing.Union">Union</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span><span class="p">,</span> <span class="n"><span title="sedonadb.expr.Expr">Expr</span></span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Remove duplicate rows, comparing only the given key columns.</p>
+<p>Keeps one row for each distinct combination of <code>cols</code> (SQL
+<code>DISTINCT ON</code>) and returns all columns. Which row survives for each
+key is unspecified and not controllable today — there is no row
+ordering applied, and a preceding <code>.sort(...)</code> is not guaranteed to
+be respected. For a deterministic result, ensure the non-key
+columns are the same for all rows that share a key.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+            <b><code>*cols</code></b>
+              (<code><a class="autorefs autorefs-external" title="typing.Union" href="https://docs.python.org/3/library/typing.html#typing.Union">Union</a>[<a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a>, <span title="sedonadb.expr.Expr">Expr</span>]</code>, default:
+                  <code>()</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>One or more key columns (<code>str</code> names or <code>Expr</code>). At
+least one is required.</p>
+          </div>
+        </li>
+    </ul>
+        <p>Examples:</p>
+<div class="codehilite"><pre><span></span><code>&gt;&gt;&gt; sd = sedona.db.connect()
+&gt;&gt;&gt; df = sd.sql(
+<span class="k">...</span>     "SELECT * FROM (VALUES (1, 'a'), (1, 'a'), (2, 'b')) AS t(k, v)"
+<span class="k">...</span> )
+&gt;&gt;&gt; df.distinct_on("k").sort("k").show()
+┌───────┬──────┐
+│   k   ┆   v  │
+│ int64 ┆ utf8 │
+╞═══════╪══════╡
+│     1 ┆ a    │
+├╌╌╌╌╌╌╌┼╌╌╌╌╌╌┤
+│     2 ┆ b    │
+└───────┴──────┘
+</code></pre></div>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
 <h4 id="sedonadb.dataframe.DataFrame.drop" class="doc doc-heading">
             <span class="doc doc-object-name doc-function-name">drop</span>
 
