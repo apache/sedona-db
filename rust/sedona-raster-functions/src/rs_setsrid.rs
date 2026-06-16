@@ -323,8 +323,18 @@ fn srid_to_crs_columnar(
 // CRS string normalization
 // ---------------------------------------------------------------------------
 
-/// Normalize a CRS string ColumnarValue — abbreviate PROJJSON to authority:code
-/// where possible, and map "0" to null.
+/// Normalize a CRS string ColumnarValue — preserve the full definition, and
+/// map "0" to null.
+///
+/// Handles the scalar and array cases distinctly, because raster batches are
+/// typically high-cardinality in records but low-cardinality in CRS:
+/// - A scalar CRS is normalized once and returned as a single-element array.
+///   `broadcast_string_view` later fans it out to the raster's row count with
+///   `try_append_value_n`, so the (possibly large) definition is stored once
+///   regardless of how many rasters share it.
+/// - An array CRS is normalized per row with a deduplicating builder: a column
+///   of many rasters usually carries only a handful of distinct definitions, so
+///   each is stored once in the shared view buffer and shared across rows.
 ///
 /// Uses [CachedCrsNormalization] to avoid repeated deserialization of the same CRS
 /// string within a batch.
@@ -334,23 +344,31 @@ fn normalize_crs_columnar(
 ) -> Result<StringViewArray> {
     let mut crs_norm = CachedCrsNormalization::new();
 
-    let string_value = crs_arg.cast_to(&DataType::Utf8View, None)?;
-    let string_array_ref = ColumnarValue::values_to_arrays(&[string_value])?;
-    let string_view_array = as_string_view_array(&string_array_ref[0])?;
+    match crs_arg {
+        ColumnarValue::Scalar(scalar) => {
+            let normalized = match scalar.cast_to(&DataType::Utf8)? {
+                ScalarValue::Utf8(Some(crs_str)) => crs_norm.normalize(&crs_str)?,
+                _ => None,
+            };
+            Ok(std::iter::once(normalized).collect())
+        }
+        ColumnarValue::Array(_) => {
+            let string_value = crs_arg.cast_to(&DataType::Utf8View, None)?;
+            let string_array_ref = ColumnarValue::values_to_arrays(&[string_value])?;
+            let string_view_array = as_string_view_array(&string_array_ref[0])?;
 
-    // Deduplicate: rasters are always stored with an item-level CRS, so a
-    // batch typically repeats the same (possibly large) PROJJSON/WKT
-    // definition. Sharing the bytes across rows keeps the column compact.
-    let mut builder =
-        StringViewBuilder::with_capacity(string_view_array.len()).with_deduplicate_strings();
-    for maybe_crs in string_view_array.iter() {
-        match maybe_crs {
-            Some(crs_str) => builder.append_option(crs_norm.normalize(crs_str)?),
-            None => builder.append_null(),
+            let mut builder = StringViewBuilder::with_capacity(string_view_array.len())
+                .with_deduplicate_strings();
+            for maybe_crs in string_view_array.iter() {
+                match maybe_crs {
+                    Some(crs_str) => builder.append_option(crs_norm.normalize(crs_str)?),
+                    None => builder.append_null(),
+                }
+            }
+
+            Ok(builder.finish())
         }
     }
-
-    Ok(builder.finish())
 }
 
 /// Validate a CRS string
@@ -382,9 +400,9 @@ mod tests {
     use sedona_testing::testers::ScalarUdfTester;
 
     #[test]
-    fn normalize_crs_columnar_dedups_repeats_and_preserves_nulls() {
-        // Rasters are always stored with an item-level CRS, so a batch
-        // typically repeats the same definition. A large PROJJSON repeated
+    fn normalize_crs_columnar_array_dedups_repeats_and_preserves_nulls() {
+        // The array branch: a column of many rasters carries only a few distinct
+        // CRS definitions, so they are deduplicated. A large PROJJSON repeated
         // across rows, with a null and a short authority code interleaved.
         const PROJJSON: &str = r#"{"type":"GeographicCRS","name":"NAD83","datum":{"type":"GeodeticReferenceFrame","name":"NAD83","ellipsoid":{"name":"GRS 1980","semi_major_axis":6378137,"inverse_flattening":298.257222101}},"coordinate_system":{"subtype":"ellipsoidal","axis":[{"name":"Geodetic latitude","abbreviation":"Lat","direction":"north","unit":"degree"},{"name":"Geodetic longitude","abbreviation":"Lon","direction":"east","unit":"degree"}]},"id":{"authority":"EPSG","code":4269}}"#;
         let input = StringViewArray::from(vec![
@@ -410,6 +428,49 @@ mod tests {
         // exactly once, so total buffer bytes equal a single copy.
         let buffer_bytes: usize = out.data_buffers().iter().map(|b| b.len()).sum();
         assert_eq!(buffer_bytes, out.value(0).len());
+    }
+
+    #[test]
+    fn normalize_crs_columnar_scalar_normalizes_once() {
+        // The scalar branch: the definition is normalized a single time and
+        // returned as a one-element array; fan-out to the raster row count is
+        // broadcast_string_view's job.
+        const PROJJSON: &str = r#"{"type":"GeographicCRS","name":"NAD83","datum":{"type":"GeodeticReferenceFrame","name":"NAD83","ellipsoid":{"name":"GRS 1980","semi_major_axis":6378137,"inverse_flattening":298.257222101}},"coordinate_system":{"subtype":"ellipsoidal","axis":[{"name":"Geodetic latitude","abbreviation":"Lat","direction":"north","unit":"degree"},{"name":"Geodetic longitude","abbreviation":"Lon","direction":"east","unit":"degree"}]},"id":{"authority":"EPSG","code":4269}}"#;
+        let out = normalize_crs_columnar(
+            &ColumnarValue::Scalar(ScalarValue::Utf8(Some(PROJJSON.to_string()))),
+            None,
+        )
+        .unwrap();
+        assert_eq!(out.len(), 1);
+        // Preserved in full, not collapsed to the embedded "EPSG:4269".
+        assert!(out.value(0).contains("GeographicCRS"));
+        assert_ne!(out.value(0), "EPSG:4269");
+
+        // "0" clears the CRS (maps to null).
+        let out = normalize_crs_columnar(
+            &ColumnarValue::Scalar(ScalarValue::Utf8(Some("0".to_string()))),
+            None,
+        )
+        .unwrap();
+        assert_eq!(out.len(), 1);
+        assert!(out.is_null(0));
+    }
+
+    #[test]
+    fn broadcast_string_view_stores_one_copy_across_many_rows() {
+        // The payoff for the scalar branch: many rasters, one CRS. Fanning the
+        // single definition out to a high row count stores its bytes exactly
+        // once in the shared view buffer (via try_append_value_n).
+        const PROJJSON: &str = r#"{"type":"GeographicCRS","name":"NAD83","datum":{"type":"GeodeticReferenceFrame","name":"NAD83","ellipsoid":{"name":"GRS 1980","semi_major_axis":6378137,"inverse_flattening":298.257222101}},"coordinate_system":{"subtype":"ellipsoidal","axis":[{"name":"Geodetic latitude","abbreviation":"Lat","direction":"north","unit":"degree"},{"name":"Geodetic longitude","abbreviation":"Lon","direction":"east","unit":"degree"}]},"id":{"authority":"EPSG","code":4269}}"#;
+        let scalar = StringViewArray::from(vec![Some(PROJJSON)]);
+        let out = broadcast_string_view(&scalar, 1000).unwrap();
+        let out = out.as_any().downcast_ref::<StringViewArray>().unwrap();
+
+        assert_eq!(out.len(), 1000);
+        assert_eq!(out.value(0), PROJJSON);
+        assert_eq!(out.value(999), PROJJSON);
+        let buffer_bytes: usize = out.data_buffers().iter().map(|b| b.len()).sum();
+        assert_eq!(buffer_bytes, PROJJSON.len());
     }
 
     #[test]
