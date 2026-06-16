@@ -134,6 +134,7 @@ fn _lib(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(expr::expr_binary, m)?)?;
     m.add_function(wrap_pyfunction!(expr::expr_not, m)?)?;
     m.add_function(wrap_pyfunction!(expr::expr_sort_expr, m)?)?;
+    m.add_function(wrap_pyfunction!(schema::raster_type, m)?)?;
 
     m.add_class::<context::InternalContext>()?;
     m.add_class::<dataframe::InternalDataFrame>()?;

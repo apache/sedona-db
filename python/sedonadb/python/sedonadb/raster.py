@@ -15,9 +15,11 @@
 # specific language governing permissions and limitations
 # under the License.
 
-from typing import List, Optional, TYPE_CHECKING, Tuple
+from typing import List, Optional, TYPE_CHECKING, Tuple, Any, Iterable
 import geoarrow.types as gat
 import pyarrow as pa
+
+from sedonadb._lib import raster_type
 
 if TYPE_CHECKING:
     import numpy as np
@@ -38,6 +40,8 @@ BAND_DATA_TYPES = {
     10: "Int8",
 }
 
+BAND_DATA_TYPE_IDS = {v.lower(): k for k, v in BAND_DATA_TYPES.items()}
+
 # Python struct module format characters for band data types
 BAND_DATA_TYPE_STRUCT_CHARS = {
     1: "B",
@@ -55,6 +59,46 @@ BAND_DATA_TYPE_STRUCT_CHARS = {
 
 class Raster:
     """Python representation of a sedona.raster scalar value."""
+
+    @staticmethod
+    def lazy(
+        uri: str, shape: Iterable[int], dtype: str, format: Optional[str] = None,
+        crs: Any = None
+    ) -> "Raster":
+        shape = list(shape)
+        if len(shape) != 2:
+            raise ValueError("lazy() currently supports exactly two dimensions")
+
+        if crs is not None:
+            crs = gat.type_spec(crs=crs).crs.to_json()
+
+        # Create the band
+        band = {
+            "name": None,
+            "dim_names": ["y", "x"],
+            "source_shape": list(shape),
+            "data_type": BAND_DATA_TYPE_IDS[dtype.lower()],
+            "nodata": None,
+            "view": None,
+            "outdb_uri": uri,
+            "outdb_format": format,
+            "data": b"",
+        }
+
+        # Create the raster
+        raster = {
+            "crs": crs,
+            "transform": [0.0, 1.0, 0.0, 0.0, 0.0, -1.0],
+            "spatial_dims": ["x", "y"],
+            "spatial_shape": [shape[1], shape[0]],
+            "bands": [band],
+        }
+
+        storage_type = pa.DataType._import_from_c_capsule(
+            raster_type().__arrow_c_schema__()
+        )
+        array = pa.array([raster], type=storage_type)
+        return Raster(array)
 
     def __init__(self, array, i=0):
         """Create a Raster from an Arrow array at index i."""
@@ -198,7 +242,7 @@ class RasterType(pa.ExtensionType):
     This extension type wraps a struct storage type representing raster data.
     """
 
-    def __init__(self, storage_type: pa.DataType):
+    def __init__(self, storage_type: Any = None):
         """Create a RasterType with the given storage type.
 
         Parameters
@@ -206,6 +250,11 @@ class RasterType(pa.ExtensionType):
         storage_type : pa.DataType
             The underlying Arrow storage type (must be a struct type).
         """
+        if storage_type is None:
+            storage_type = pa.DataType._import_from_c_capsule(
+                raster_type().__arrow_c_schema__()
+            )
+
         if not pa.types.is_struct(storage_type):
             raise TypeError(f"storage_type must be a struct type, not {storage_type}")
         super().__init__(storage_type, EXTENSION_NAME)
