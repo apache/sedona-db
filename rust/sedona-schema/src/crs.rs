@@ -325,7 +325,25 @@ pub trait CoordinateReferenceSystem: Debug {
     /// authority_code `"EPSG:{srid}"`. Note that other SRID representations
     /// (e.g., GeoArrow, Parquet GEOMETRY/GEOGRAPHY) do not make any guarantees
     /// that an SRID comes from the EPSG authority.
-    fn srid(&self) -> Result<Option<u32>>;
+    ///
+    /// The default derives the SRID from [`to_authority_code`](Self::to_authority_code):
+    /// the lon/lat alias maps to 4326, an `EPSG:{code}` authority parses to its
+    /// code, and anything else is `None`. Implementors only need to override
+    /// this if they can supply an SRID without an authority code.
+    fn srid(&self) -> Result<Option<u32>> {
+        let Some(auth_code) = self.to_authority_code()? else {
+            return Ok(None);
+        };
+        if LngLat::is_authority_code_lnglat(&auth_code) {
+            return Ok(LngLat::srid());
+        }
+        match auth_code.split_once(':') {
+            Some((authority, code)) if authority.eq_ignore_ascii_case("EPSG") => {
+                Ok(code.parse().ok())
+            }
+            _ => Ok(None),
+        }
+    }
 
     /// Compute a CRS string representation
     ///
@@ -474,19 +492,6 @@ impl CoordinateReferenceSystem for AuthorityCode {
         }
     }
 
-    /// Get the SRID if authority is EPSG
-    fn srid(&self) -> Result<Option<u32>> {
-        if LngLat::is_authority_code_lnglat(&self.auth_code) {
-            return Ok(LngLat::srid());
-        }
-        if let Some(pos) = self.auth_code.find(':') {
-            if self.auth_code[..pos].eq_ignore_ascii_case("EPSG") {
-                return Ok(self.auth_code[pos + 1..].parse::<u32>().ok());
-            }
-        }
-        Ok(None)
-    }
-
     /// Convert to a CRS string
     fn to_crs_string(&self) -> String {
         self.auth_code.clone()
@@ -586,21 +591,6 @@ impl CoordinateReferenceSystem for ProjJSON {
         } else {
             false
         }
-    }
-
-    fn srid(&self) -> Result<Option<u32>> {
-        let authority_code_opt = self.to_authority_code()?;
-        if let Some(authority_code) = authority_code_opt {
-            if LngLat::is_authority_code_lnglat(&authority_code) {
-                return Ok(LngLat::srid());
-            } else if let Some(colon_pos) = authority_code.find(':') {
-                if authority_code[..colon_pos].eq_ignore_ascii_case("EPSG") {
-                    return Ok(authority_code[colon_pos + 1..].parse::<u32>().ok());
-                }
-            }
-        }
-
-        Ok(None)
     }
 
     fn to_crs_string(&self) -> String {
