@@ -15,7 +15,6 @@
 # specific language governing permissions and limitations
 # under the License.
 
-import json
 import os
 import sys
 from functools import cached_property
@@ -33,7 +32,7 @@ from typing import (
 )
 
 if TYPE_CHECKING:
-    from sedonadb.datasource import ExternalFormatSpec
+    from sedonadb.read import Read
 
 from sedonadb._lib import (
     InternalContext,
@@ -44,6 +43,7 @@ from sedonadb._lib import (
 from sedonadb._options import Options
 from sedonadb.dataframe import DataFrame, _create_data_frame
 from sedonadb.functions import Functions
+
 from sedonadb.expr.expression import (
     Expr,
     col as col_expr,
@@ -193,6 +193,12 @@ class SedonaContext:
         """
         self._impl.drop_view(name)
 
+    @cached_property
+    def read(self) -> "Read":
+        from sedonadb.read import Read
+
+        return Read(self)
+
     def read_parquet(
         self,
         table_paths: Union[str, Path, Iterable[str]],
@@ -275,27 +281,12 @@ class SedonaContext:
             >>> sd.read_parquet(url)
             <sedonadb.dataframe.DataFrame object at ...>
         """
-        if isinstance(table_paths, (str, Path)):
-            table_paths = [table_paths]
-
-        if options is None:
-            options = {}
-
-        if geometry_columns is not None and not isinstance(geometry_columns, str):
-            geometry_columns = json.dumps(geometry_columns)
-
-        if isinstance(partitioning, str):
-            partitioning = [partitioning]
-
-        return DataFrame(
-            self,
-            self._impl.read_parquet(
-                [str(path) for path in table_paths],
-                options,
-                geometry_columns,
-                validate,
-                None if partitioning is None else list(partitioning),
-            ),
+        return self.read.parquet(
+            table_paths,
+            options=options,
+            geometry_columns=geometry_columns,
+            validate=validate,
+            partitioning=partitioning,
         )
 
     def read_pyogrio(
@@ -362,83 +353,8 @@ class SedonaContext:
             └──────────────┘
 
         """
-        from sedonadb.datasource import PyogrioFormatSpec
-
-        if isinstance(table_paths, (str, Path)):
-            table_paths = [table_paths]
-
-        spec = PyogrioFormatSpec(extension)
-        if options is not None:
-            spec = spec.with_options(options)
-
-        if isinstance(partitioning, str):
-            partitioning = [partitioning]
-
-        return DataFrame(
-            self,
-            self._impl.read_external_format(
-                spec,
-                [str(path) for path in table_paths],
-                False,
-                None if partitioning is None else list(partitioning),
-            ),
-        )
-
-    def read_format(
-        self,
-        spec: "ExternalFormatSpec",
-        table_paths: Union[str, Path, Iterable[str]],
-        check_extension: bool = False,
-        partitioning: Union[str, Iterable[str], None] = None,
-    ) -> DataFrame:
-        """Read one or more paths using a Python-defined `ExternalFormatSpec`.
-
-        This is the plugin entry point: a format-specific package (e.g.
-        `sedonadb-zarr`) defines an `ExternalFormatSpec` subclass and the
-        user reads through it via this method. Built-in formats have
-        their own dedicated readers (`read_parquet`, `read_pyogrio`).
-
-        Format-specific options are passed via the spec itself using
-        `spec.with_options({...})`, which returns a configured copy.
-        Unlike `read_pyogrio`, this method has no `options=` keyword —
-        each spec class documents its own supported keys.
-
-        Args:
-            spec: An `ExternalFormatSpec` instance describing how to open
-                the underlying source.
-            table_paths: A str, Path, or iterable of paths/URLs.
-            check_extension: When `True`, error if a non-collection path
-                doesn't end in the spec's `extension`. Defaults to `False`.
-            partitioning:
-                Optional list of column names for hive-style partitioning. When reading
-                from a directory with paths like `/col=value/file.ext`, partition
-                column names are auto-discovered by default (`partitioning=None`).
-                Explicitly specify column names (e.g., `["col"]`) to override
-                auto-discovery, or pass an empty list `[]` to disable partitioning
-                entirely.
-
-        Examples:
-            >>> import sedonadb_zarr  # doctest: +SKIP
-            >>> sd = sedona.db.connect()
-            >>> spec = sedonadb_zarr.ZarrFormatSpec().with_options(  # doctest: +SKIP
-            ...     {"arrays": ["temperature"]}
-            ... )
-            >>> sd.read_format(spec, "file:///path/to/foo.zarr").show()  # doctest: +SKIP
-        """
-        if isinstance(table_paths, (str, Path)):
-            table_paths = [table_paths]
-
-        if isinstance(partitioning, str):
-            partitioning = [partitioning]
-
-        return DataFrame(
-            self,
-            self._impl.read_external_format(
-                spec,
-                [str(path) for path in table_paths],
-                check_extension,
-                None if partitioning is None else list(partitioning),
-            ),
+        return self.read.pyogrio(
+            table_paths, options=options, extension=extension, partitioning=partitioning
         )
 
     def sql(
