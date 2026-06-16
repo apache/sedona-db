@@ -325,6 +325,23 @@ impl InternalDataFrame {
         Ok(InternalDataFrame::new(inner, self.runtime.clone()))
     }
 
+    /// `UNION ALL` — concatenate two DataFrames, preserving duplicate rows.
+    /// The two inputs must have the same schema (matched by position);
+    /// DataFusion errors at plan-build time otherwise.
+    fn union(&self, other: &InternalDataFrame) -> Result<InternalDataFrame, PySedonaError> {
+        let inner = self.inner.clone().union(other.inner.clone())?;
+        Ok(InternalDataFrame::new(inner, self.runtime.clone()))
+    }
+
+    /// `UNION` — concatenate two DataFrames and drop duplicate rows.
+    fn union_distinct(
+        &self,
+        other: &InternalDataFrame,
+    ) -> Result<InternalDataFrame, PySedonaError> {
+        let inner = self.inner.clone().union_distinct(other.inner.clone())?;
+        Ok(InternalDataFrame::new(inner, self.runtime.clone()))
+    }
+
     fn execute<'py>(&self, py: Python<'py>) -> Result<usize, PySedonaError> {
         let df = self.inner.clone();
         let count = wait_for_future(py, &self.runtime, async move {
