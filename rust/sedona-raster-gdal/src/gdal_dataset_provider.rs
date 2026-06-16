@@ -775,8 +775,8 @@ mod tests {
         let raster_s3_struct = build_outdb_raster("s3://bucket/path/test.tif");
         let raster_s3a_struct = build_outdb_raster("s3a://bucket/path/test.tif");
 
-        let raster_s3_array = RasterStructArray::new(&raster_s3_struct);
-        let raster_s3a_array = RasterStructArray::new(&raster_s3a_struct);
+        let raster_s3_array = RasterStructArray::try_new(&raster_s3_struct).unwrap();
+        let raster_s3a_array = RasterStructArray::try_new(&raster_s3a_struct).unwrap();
 
         let raster_s3 = raster_s3_array.get(0).unwrap();
         let raster_s3a = raster_s3a_array.get(0).unwrap();
@@ -796,12 +796,12 @@ mod tests {
         let raster_abfs_struct = build_outdb_raster("abfs://filesystem/path/test.tif");
         let raster_abfss_struct = build_outdb_raster("abfss://filesystem/path/test.tif");
 
-        let raster_gs_array = RasterStructArray::new(&raster_gs_struct);
-        let raster_gcs_array = RasterStructArray::new(&raster_gcs_struct);
-        let raster_az_array = RasterStructArray::new(&raster_az_struct);
-        let raster_wasbs_array = RasterStructArray::new(&raster_wasbs_struct);
-        let raster_abfs_array = RasterStructArray::new(&raster_abfs_struct);
-        let raster_abfss_array = RasterStructArray::new(&raster_abfss_struct);
+        let raster_gs_array = RasterStructArray::try_new(&raster_gs_struct).unwrap();
+        let raster_gcs_array = RasterStructArray::try_new(&raster_gcs_struct).unwrap();
+        let raster_az_array = RasterStructArray::try_new(&raster_az_struct).unwrap();
+        let raster_wasbs_array = RasterStructArray::try_new(&raster_wasbs_struct).unwrap();
+        let raster_abfs_array = RasterStructArray::try_new(&raster_abfs_struct).unwrap();
+        let raster_abfss_array = RasterStructArray::try_new(&raster_abfss_struct).unwrap();
 
         let key_gs = super::VrtKey::from_raster(&raster_gs_array.get(0).unwrap()).unwrap();
         let key_gcs = super::VrtKey::from_raster(&raster_gcs_array.get(0).unwrap()).unwrap();
@@ -821,7 +821,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let path = create_source_tiff(&temp_dir);
         let raster_struct = build_outdb_raster(&path);
-        let raster_array = RasterStructArray::new(&raster_struct);
+        let raster_array = RasterStructArray::try_new(&raster_struct).unwrap();
         let raster = raster_array.get(0).unwrap();
 
         let cache = Rc::new(GDALDatasetCache::try_new(4, 4).unwrap());
@@ -852,7 +852,7 @@ mod tests {
             skew_y: 0.0,
         };
         let raster_struct = build_in_db_raster(metadata, Some("EPSG:4326"), &[]);
-        let raster_array = RasterStructArray::new(&raster_struct);
+        let raster_array = RasterStructArray::try_new(&raster_struct).unwrap();
         let raster = raster_array.get(0).unwrap();
         let cache = Rc::new(GDALDatasetCache::try_new(4, 4).unwrap());
 
@@ -897,7 +897,7 @@ mod tests {
                 },
             ],
         );
-        let raster_array = RasterStructArray::new(&raster_struct);
+        let raster_array = RasterStructArray::try_new(&raster_struct).unwrap();
         let raster = raster_array.get(0).unwrap();
         let cache = Rc::new(GDALDatasetCache::try_new(4, 4).unwrap());
 
@@ -922,7 +922,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let path = create_source_tiff(&temp_dir);
         let raster_struct = build_mixed_raster(&path);
-        let raster_array = RasterStructArray::new(&raster_struct);
+        let raster_array = RasterStructArray::try_new(&raster_struct).unwrap();
         let raster = raster_array.get(0).unwrap();
         let cache = Rc::new(GDALDatasetCache::try_new(4, 4).unwrap());
 
@@ -979,10 +979,20 @@ mod tests {
             }],
         );
 
-        let key_a =
-            super::VrtKey::from_raster(&RasterStructArray::new(&raster_a).get(0).unwrap()).unwrap();
-        let key_b =
-            super::VrtKey::from_raster(&RasterStructArray::new(&raster_b).get(0).unwrap()).unwrap();
+        let key_a = super::VrtKey::from_raster(
+            &RasterStructArray::try_new(&raster_a)
+                .unwrap()
+                .get(0)
+                .unwrap(),
+        )
+        .unwrap();
+        let key_b = super::VrtKey::from_raster(
+            &RasterStructArray::try_new(&raster_b)
+                .unwrap()
+                .get(0)
+                .unwrap(),
+        )
+        .unwrap();
 
         assert!(key_a != key_b);
     }
@@ -1028,7 +1038,7 @@ mod tests {
         builder.finish_band().unwrap();
         builder.finish_raster().unwrap();
         let raster_struct = builder.finish().unwrap();
-        let raster_array = RasterStructArray::new(&raster_struct);
+        let raster_array = RasterStructArray::try_new(&raster_struct).unwrap();
         let raster = raster_array.get(0).unwrap();
         let cache = Rc::new(GDALDatasetCache::try_new(4, 4).unwrap());
 
@@ -1073,7 +1083,7 @@ mod tests {
         builder.finish_band().unwrap();
         builder.finish_raster().unwrap();
         let raster_struct = builder.finish().unwrap();
-        let raster_array = RasterStructArray::new(&raster_struct);
+        let raster_array = RasterStructArray::try_new(&raster_struct).unwrap();
         let raster = raster_array.get(0).unwrap();
         let cache = Rc::new(GDALDatasetCache::try_new(4, 4).unwrap());
 

@@ -231,6 +231,7 @@ pub mod raster_indices {
     pub const SPATIAL_DIMS: usize = 2;
     pub const SPATIAL_SHAPE: usize = 3;
     pub const BANDS: usize = 4;
+    pub const FIELD_COUNT: usize = 5;
 }
 
 pub mod band_indices {
@@ -243,6 +244,7 @@ pub mod band_indices {
     pub const OUTDB_URI: usize = 6;
     pub const OUTDB_FORMAT: usize = 7;
     pub const DATA: usize = 8;
+    pub const FIELD_COUNT: usize = 9;
 }
 
 /// Field indices within the `view` struct (`(source_axis, start, step, steps)`).
@@ -251,6 +253,7 @@ pub mod band_view_indices {
     pub const START: usize = 1;
     pub const STEP: usize = 2;
     pub const STEPS: usize = 3;
+    pub const FIELD_COUNT: usize = 4;
 }
 
 /// Column name constants used throughout the raster schema definition.

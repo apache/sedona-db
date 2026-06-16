@@ -231,8 +231,8 @@ pub fn assert_scalar_equal(actual: &ScalarValue, expected: &ScalarValue) {
 
 fn assert_raster_structs_equal(actual: &StructArray, expected: &StructArray) {
     assert_raster_arrays_equal(
-        &RasterStructArray::new(actual),
-        &RasterStructArray::new(expected),
+        &RasterStructArray::try_new(actual).unwrap(),
+        &RasterStructArray::try_new(expected).unwrap(),
     );
 }
 
