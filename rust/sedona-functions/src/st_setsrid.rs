@@ -39,7 +39,7 @@ use sedona_expr::{
 };
 use sedona_geometry::transform::CrsEngine;
 use sedona_schema::{
-    crs::{deserialize_crs, CachedCrsNormalization, CachedSRIDToCrs, Crs},
+    crs::{deserialize_crs, normalize_crs, CachedSRIDToCrs, Crs},
     datatypes::{Edges, SedonaType},
     matchers::ArgMatcher,
 };
@@ -463,9 +463,11 @@ fn crs_input_nulls(crs_value: &ColumnarValue) -> Option<&NullBuffer> {
 /// to a null value in the CRS array) and 4326 (which maps to a value of OGC:CRS84
 /// in the CRS array).
 ///
-/// For CRS arrays of strings, this function attempts to abbreviate any inputs. For example,
-/// PROJJSON input will attempt to be abbreviated to authority:code if possible (or left
-/// as is otherwise). The special value "0" maps to a null value in the CRS array.
+/// For CRS arrays of strings, this function normalizes each input to its
+/// round-trippable definition (`to_crs_string`): an `authority:code` stays
+/// compact, while a PROJJSON/WKT definition is preserved in full rather than
+/// collapsed to its embedded code. The special value "0" maps to a null value
+/// in the CRS array.
 fn normalize_crs_array(
     crs_value: &ColumnarValue,
     maybe_engine: Option<&Arc<dyn CrsEngine + Send + Sync>>,
@@ -502,8 +504,6 @@ fn normalize_crs_array(
             Ok(Arc::new(utf8_view_array))
         }
         _ => {
-            let mut crs_norm = CachedCrsNormalization::new();
-
             let string_value = crs_value.cast_to(&DataType::Utf8View, None)?;
             let string_array_ref = ColumnarValue::values_to_arrays(&[string_value])?;
             let string_view_array = as_string_view_array(&string_array_ref[0])?;
@@ -514,7 +514,7 @@ fn normalize_crs_array(
                 .with_deduplicate_strings();
             for maybe_crs in string_view_array.iter() {
                 match maybe_crs {
-                    Some(crs_str) => builder.append_option(crs_norm.normalize(crs_str)?),
+                    Some(crs_str) => builder.append_option(normalize_crs(crs_str)?),
                     None => builder.append_null(),
                 }
             }

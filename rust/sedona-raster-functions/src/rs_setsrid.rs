@@ -28,7 +28,7 @@ use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::transform::CrsEngine;
-use sedona_schema::crs::{CachedCrsNormalization, CachedSRIDToCrs};
+use sedona_schema::crs::{normalize_crs, CachedSRIDToCrs};
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;
 use sedona_schema::raster::{raster_indices, RasterSchema};
@@ -336,18 +336,16 @@ fn srid_to_crs_columnar(
 ///   of many rasters usually carries only a handful of distinct definitions, so
 ///   each is stored once in the shared view buffer and shared across rows.
 ///
-/// Uses [CachedCrsNormalization] to avoid repeated deserialization of the same CRS
-/// string within a batch.
+/// Parsing is memoized by [deserialize_crs]'s thread-local cache via
+/// [normalize_crs], so repeated definitions in a batch aren't re-parsed.
 fn normalize_crs_columnar(
     crs_arg: &ColumnarValue,
     _maybe_engine: Option<&Arc<dyn CrsEngine + Send + Sync>>,
 ) -> Result<StringViewArray> {
-    let mut crs_norm = CachedCrsNormalization::new();
-
     match crs_arg {
         ColumnarValue::Scalar(scalar) => {
             let normalized = match scalar.cast_to(&DataType::Utf8)? {
-                ScalarValue::Utf8(Some(crs_str)) => crs_norm.normalize(&crs_str)?,
+                ScalarValue::Utf8(Some(crs_str)) => normalize_crs(&crs_str)?,
                 _ => None,
             };
             Ok(std::iter::once(normalized).collect())
@@ -361,7 +359,7 @@ fn normalize_crs_columnar(
                 .with_deduplicate_strings();
             for maybe_crs in string_view_array.iter() {
                 match maybe_crs {
-                    Some(crs_str) => builder.append_option(crs_norm.normalize(crs_str)?),
+                    Some(crs_str) => builder.append_option(normalize_crs(crs_str)?),
                     None => builder.append_null(),
                 }
             }
