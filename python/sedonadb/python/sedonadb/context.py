@@ -547,6 +547,7 @@ class SedonaContext:
             "__sedonadb_internal_udf__",
             "__sedonadb_internal_aggregate_udf__",
             "__sedonadb_external_format__",
+            "__sedonadb_raster_loader__",
         )
         for interface in supported_interfaces:
             if hasattr(component, interface):

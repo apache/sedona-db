@@ -30,14 +30,14 @@ it pay no runtime cost.
 
 from typing import Any, Mapping, Optional
 
-from sedonadb._lib import py_raster_loader
 from sedonadb.context import SedonaContext
 from sedonadb.datasource import ExternalFormatSpec
+from sedonadb.raster_loader import RasterLoader
 from sedonadb.utility import sedona  # noqa: F401
 
 from sedonadb_zarr._lib import (
     PyZarrChunkReader,
-    ZarrRasterLoader,
+    PyZarrRasterLoader,
 )
 
 
@@ -61,13 +61,7 @@ class ZarrExtension:
         sd.register(Zarr())
 
         # Register the ZarrRasterLoader
-        loader = ZarrRasterLoader()
-        wrapper = py_raster_loader(
-            loader.name,
-            loader.supports_format,
-            loader.load,
-        )
-        sd._impl.register_raster_loader(wrapper)
+        sd.register(ZarrRasterLoader())
 
 
 class Zarr(ExternalFormatSpec):
@@ -117,6 +111,26 @@ class Zarr(ExternalFormatSpec):
         arrays = self._options.get("arrays")
         batch_size = args.batch_size if args.batch_size is not None else 8192
         return PyZarrChunkReader(uri, arrays, batch_size)
+
+
+class ZarrRasterLoader(RasterLoader):
+    """Zarr RasterLoader implementation
+
+    This is registered automatically when registering the ZarrExtension
+    and enables RS_EnsureLoaded() can resolve pixels of a Zarr. This is
+    """
+
+    def __init__(self):
+        self._impl = PyZarrRasterLoader()
+
+    def name(self):
+        return super().name()
+
+    def supports_format(self, format):
+        return self._impl.supports_format(format)
+
+    def load(self, requests):
+        return self._impl.load(requests)
 
 
 __all__ = ["Zarr"]

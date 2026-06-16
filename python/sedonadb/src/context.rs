@@ -305,21 +305,20 @@ impl InternalContext {
             writable
                 .register_file_format(Arc::new(ExternalFormatFactory::new(Arc::new(spec))), true)?;
             return Ok(());
+        } else if component.hasattr("__sedonadb_raster_loader__")? {
+            let wrapper = component
+                .call_method0("__sedonadb_raster_loader__")?
+                .extract::<PyRasterLoaderWrapper>()?;
+            self.inner.register_raster_loader(wrapper.inner);
+            return Ok(());
+        } else if let Ok(py_raster_loader) = component.extract::<PyRasterLoaderWrapper>() {
+            self.inner.register_raster_loader(py_raster_loader.inner);
+            return Ok(());
         }
 
         // A better error is raised in Python before this point
         Err(PySedonaError::SedonaPython(
             "Unsupported object".to_string(),
         ))
-    }
-
-    /// Register a Python-backed raster loader with this context.
-    ///
-    /// The loader will be used by `RS_EnsureLoaded` to materialize OutDb raster
-    /// bands at query time. Loaders registered later win for the formats they
-    /// claim, so a format-specific loader registered after the catch-all (GDAL)
-    /// will handle bands with that format.
-    pub fn register_raster_loader(&self, loader: PyRasterLoaderWrapper) {
-        self.inner.register_raster_loader(loader.inner);
     }
 }

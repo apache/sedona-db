@@ -17,16 +17,111 @@
 
 """Tests for Python-backed raster loaders."""
 
-from sedonadb._lib import (
-    InternalContext,
-    PyRasterLoadRequest,
-    PyRasterLoadResult,
-    PyViewEntry,
-    py_raster_loader,
-)
+import pyarrow as pa
+
+import sedonadb
+from sedonadb.raster_loader import RasterLoader, RasterLoadResult
 
 
-class MockRasterLoader:
+def _make_outdb_raster(outdb_format: str, outdb_uri: str, shape: tuple[int, int]):
+    """Create an OutDb raster reference for testing.
+
+    Creates a minimal raster with a single band that references external data.
+    The band has empty data bytes and non-null outdb_uri/outdb_format fields,
+    which signals to rs_ensureloaded that it needs to load the data.
+    """
+    height, width = shape
+
+    # View entry struct type
+    view_entry_type = pa.struct(
+        [
+            pa.field("source_axis", pa.int64(), nullable=False),
+            pa.field("start", pa.int64(), nullable=False),
+            pa.field("step", pa.int64(), nullable=False),
+            pa.field("steps", pa.int64(), nullable=False),
+        ]
+    )
+
+    # Band struct schema (matches sedona-schema band_type exactly)
+    band_type = pa.struct(
+        [
+            pa.field("name", pa.utf8(), nullable=True),
+            pa.field(
+                "dim_names",
+                pa.list_(pa.field("item", pa.utf8(), nullable=False)),
+                nullable=False,
+            ),
+            pa.field(
+                "source_shape",
+                pa.list_(pa.field("item", pa.int64(), nullable=False)),
+                nullable=False,
+            ),
+            pa.field("data_type", pa.uint32(), nullable=False),
+            pa.field("nodata", pa.binary(), nullable=True),
+            pa.field(
+                "view",
+                pa.list_(pa.field("item", view_entry_type, nullable=False)),
+                nullable=True,
+            ),
+            pa.field("outdb_uri", pa.utf8(), nullable=True),
+            pa.field("outdb_format", pa.string_view(), nullable=True),
+            pa.field("data", pa.binary_view(), nullable=False),
+        ]
+    )
+
+    # Raster struct schema (matches sedona-schema raster_type exactly)
+    raster_type = pa.struct(
+        [
+            pa.field("crs", pa.string_view(), nullable=True),
+            pa.field(
+                "transform",
+                pa.list_(pa.field("item", pa.float64(), nullable=False)),
+                nullable=False,
+            ),
+            pa.field(
+                "spatial_dims",
+                pa.list_(pa.field("item", pa.string_view(), nullable=False)),
+                nullable=False,
+            ),
+            pa.field(
+                "spatial_shape",
+                pa.list_(pa.field("item", pa.int64(), nullable=False)),
+                nullable=False,
+            ),
+            pa.field(
+                "bands",
+                pa.list_(pa.field("band", band_type, nullable=False)),
+                nullable=True,
+            ),
+        ]
+    )
+
+    # Create the band with OutDb reference (empty data, non-null outdb fields)
+    band = {
+        "name": None,
+        "dim_names": ["y", "x"],
+        "source_shape": [height, width],
+        "data_type": 1,  # UInt8
+        "nodata": None,
+        "view": None,  # No view - full source
+        "outdb_uri": outdb_uri,
+        "outdb_format": outdb_format,
+        "data": b"",  # Empty - data is external
+    }
+
+    # Create the raster
+    raster = {
+        "crs": "EPSG:4326",
+        "transform": [0.0, 1.0, 0.0, 0.0, 0.0, -1.0],
+        "spatial_dims": ["x", "y"],
+        "spatial_shape": [width, height],
+        "bands": [band],
+    }
+
+    return pa.array([raster], type=raster_type)
+
+
+class MockRasterLoader(RasterLoader):
     """A mock raster loader for testing."""
 
     def __init__(self, name: str = "mock", supported_formats: list[str | None] = None):
@@ -40,7 +135,7 @@ class MockRasterLoader:
     def supports_format(self, format: str | None) -> bool:
         return format in self._supported_formats
 
-    def load(self, requests: list[PyRasterLoadRequest]) -> list[PyRasterLoadResult]:
+    def load(self, requests):
         """Load raster data - returns mock bytes for testing."""
         self._load_calls.append(requests)
         results = []
@@ -53,18 +148,14 @@ class MockRasterLoader:
 
             # Return zeros as mock data
             mock_bytes = bytes(total_bytes)
-            results.append(PyRasterLoadResult.unresolved(mock_bytes, req))
+            results.append(RasterLoadResult.unresolved(mock_bytes, req))
         return results
 
 
 def test_py_raster_loader_creation():
     """Test that we can create a PyRasterLoaderWrapper from Python callables."""
     loader = MockRasterLoader(name="test_loader")
-    wrapper = py_raster_loader(
-        loader.name,
-        loader.supports_format,
-        loader.load,
-    )
+    wrapper = loader.__sedonadb_raster_loader__()
 
     assert wrapper.name() == "test_loader"
     assert wrapper.supports_format(None) is True
@@ -74,11 +165,7 @@ def test_py_raster_loader_creation():
 def test_py_raster_loader_supports_format():
     """Test format support checking."""
     loader = MockRasterLoader(name="zarr_loader", supported_formats=["zarr", "zarr-v3"])
-    wrapper = py_raster_loader(
-        loader.name,
-        loader.supports_format,
-        loader.load,
-    )
+    wrapper = loader.__sedonadb_raster_loader__()
 
     assert wrapper.name() == "zarr_loader"
     assert wrapper.supports_format("zarr") is True
@@ -88,24 +175,54 @@ def test_py_raster_loader_supports_format():
 
 
 def test_py_raster_loader_registration():
-    """Test that we can register a Python raster loader with a context."""
-    loader = MockRasterLoader(name="test_loader")
-    wrapper = py_raster_loader(
-        loader.name,
-        loader.supports_format,
-        loader.load,
+    """Test that rs_ensureloaded invokes a registered Python raster loader."""
+    loader = MockRasterLoader(name="mock_loader", supported_formats=["test_format"])
+
+    # Connect and register our mock loader
+    sd = sedonadb.connect()
+    sd.register(loader)
+
+    # Create an OutDb raster with our custom format
+    outdb_raster = _make_outdb_raster(
+        outdb_format="test_format",
+        outdb_uri="test://mock/data",
+        shape=(4, 4),
     )
 
-    # Create a context and register the loader
-    ctx = InternalContext({})
-    ctx.register_raster_loader(wrapper)
+    # Create a table with the OutDb raster
+    table = pa.table({"raster": outdb_raster})
+    df = sd.create_data_frame(table)
 
-    # If we got here without error, registration worked
-    # The loader is now registered and will be used for RS_EnsureLoaded
+    # Call rs_ensureloaded - this should invoke our mock loader
+    loaded_tab = df.select(raster=df.raster.funcs.rs_ensureloaded()).to_arrow_table()
+    assert len(loaded_tab) == 1
+
+    # Verify the loader was called
+    assert len(loader._load_calls) > 0, "Mock loader was not invoked"
+
+    # Check the request details
+    requests = loader._load_calls[0]
+    assert len(requests) == 1
+    req = requests[0]
+    assert req.uri == "test://mock/data"
+    assert req.source_shape == [4, 4]
+    assert req.data_type.name == "uint8"
+
+
+def test_raster_loader_sedonadb_raster_loader_method():
+    """Test that the __sedonadb_raster_loader__ method works correctly."""
+    loader = MockRasterLoader(name="test_loader", supported_formats=["zarr"])
+    wrapper = loader.__sedonadb_raster_loader__()
+
+    assert wrapper.name() == "test_loader"
+    assert wrapper.supports_format("zarr") is True
+    assert wrapper.supports_format(None) is False
 
 
 def test_view_entry_creation():
     """Test PyViewEntry creation and attributes."""
+    from sedonadb._lib import PyViewEntry
+
     view = PyViewEntry(source_axis=0, start=10, step=2, steps=5)
 
     assert view.source_axis == 0
@@ -116,6 +233,8 @@ def test_view_entry_creation():
 
 def test_raster_load_result_creation():
     """Test PyRasterLoadResult creation."""
+    from sedonadb._lib import PyViewEntry, PyRasterLoadResult
+
     view = PyViewEntry(source_axis=0, start=0, step=1, steps=100)
     result = PyRasterLoadResult(
         bytes=bytes(100),
@@ -127,3 +246,19 @@ def test_raster_load_result_creation():
     assert result.source_shape == [100]
     assert len(result.view) == 1
     assert result.view[0].steps == 100
+
+
+def test_raster_load_result_resolved():
+    """Test RasterLoadResult.resolved creates identity view."""
+    result = RasterLoadResult.resolved(bytes(24), shape=[2, 3, 4])
+
+    assert len(result.bytes) == 24
+    assert result.source_shape == [2, 3, 4]
+    assert len(result.view) == 3
+
+    # Check identity mapping
+    for i, (dim, entry) in enumerate(zip([2, 3, 4], result.view)):
+        assert entry.source_axis == i
+        assert entry.start == 0
+        assert entry.step == 1
+        assert entry.steps == dim

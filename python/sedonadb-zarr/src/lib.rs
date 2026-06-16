@@ -251,23 +251,13 @@ impl ZarrViewEntry {
 ///
 /// This class implements the raster loader interface that `py_raster_loader`
 /// expects. Use it with sedonadb like:
-///
-/// ```python
-/// from sedonadb._lib import py_raster_loader, InternalContext
-/// from sedonadb_zarr import ZarrRasterLoader
-///
-/// loader = ZarrRasterLoader()
-/// wrapper = py_raster_loader(loader.name, loader.supports_format, loader.load)
-/// ctx = InternalContext({})
-/// ctx.register_raster_loader(wrapper)
-/// ```
 #[pyclass]
-pub struct ZarrRasterLoader {
+pub struct PyZarrRasterLoader {
     loader: ZarrLoader,
 }
 
 #[pymethods]
-impl ZarrRasterLoader {
+impl PyZarrRasterLoader {
     #[new]
     fn new() -> Self {
         Self {
@@ -431,7 +421,7 @@ struct OwnedLoadRequest {
 #[pymodule]
 fn _lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyZarrChunkReader>()?;
-    m.add_class::<ZarrRasterLoader>()?;
+    m.add_class::<PyZarrRasterLoader>()?;
     m.add_class::<ZarrBuffer>()?;
     m.add_class::<ZarrLoadResult>()?;
     m.add_class::<ZarrViewEntry>()?;
