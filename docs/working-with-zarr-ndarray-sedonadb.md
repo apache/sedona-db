@@ -80,9 +80,9 @@ import sedona.db
 import sedonadb_zarr
 
 sd = sedona.db.connect()
-sedonadb_zarr.register(sd)
+sd.register(sedonadb_zarr.ZarrExtension())
 
-df = sd.read_format(sedonadb_zarr.ZarrFormatSpec(), f"file://{store}")
+df = sd.read_format(sedonadb_zarr.Zarr(), f"file://{store}")
 df.to_view("cube")
 ```
 
@@ -134,6 +134,12 @@ Each chunk is 3-dimensional (`[time, y, x]`) with all three time steps
 (`n_time = 3`) and a `5 × 5` spatial footprint — one tile of the full
 `10 × 20` grid.
 
+<!-- TODO(reviewer, pending the Zarr byte-loader wiring — DB-36/#897): everything
+     above (read_format, COUNT, RS_NumDimensions/DimNames/Shape/DimSize) is verified
+     working on a local + remote cube. The byte-consuming steps below (RS_Slice and the
+     NumPy section) currently error: with no Zarr loader registered from Python,
+     RS_EnsureLoaded routes the chunk anchors to the GDAL catch-all, which rejects the
+     N-D band. Re-verify this section once the loader lands. -->
 ## Slice out a 2-D plane
 
 `RS_Slice` selects a single index along a named dimension and drops it.
@@ -206,7 +212,7 @@ need to know which spatial tile a given plane covers.
 The same code reads a datacube over S3 or HTTP(S) — only the URI changes:
 
 ```python
-df = sd.read_format(sedonadb_zarr.ZarrFormatSpec(), "s3://my-bucket/temperature.zarr")
+df = sd.read_format(sedonadb_zarr.Zarr(), "s3://my-bucket/temperature.zarr")
 ```
 
 Supported URI schemes are `file://` (and bare local paths), `s3://`,
@@ -220,7 +226,7 @@ group's consolidated metadata when present, otherwise by listing the
 store. The `arrays` option names an explicit subset to read instead:
 
 ```python
-spec = sedonadb_zarr.ZarrFormatSpec().with_options({"arrays": ["temperature"]})
+spec = sedonadb_zarr.Zarr().with_options({"arrays": ["temperature"]})
 df = sd.read_format(spec, "s3://my-bucket/temperature.zarr")
 ```
 

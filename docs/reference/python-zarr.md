@@ -19,21 +19,24 @@
 # Zarr Extension (Python) API Reference
 
 `sedonadb-zarr` reads [Zarr](https://zarr.dev/) groups into the SedonaDB
-raster type. Install it alongside SedonaDB and read a group through its
-format spec:
+raster type. Install it alongside SedonaDB, register the extension on your
+connection, and read a group through its format spec:
 
 ```python
 import sedona.db
 import sedonadb_zarr
 
 sd = sedona.db.connect()
-sd.read_format(sedonadb_zarr.ZarrFormatSpec(), "file:///path/to/foo.zarr").show()
+sd.register(sedonadb_zarr.ZarrExtension())
+sd.read_format(sedonadb_zarr.Zarr(), "file:///path/to/foo.zarr").show()
 ```
 
 For an end-to-end walkthrough, see
 [Working with Zarr and NDArray data in SedonaDB](../working-with-zarr-ndarray-sedonadb.md).
 
-::: sedonadb_zarr.ZarrFormatSpec
+::: sedonadb_zarr.ZarrExtension
+
+::: sedonadb_zarr.Zarr
     options:
       members:
         - with_options
