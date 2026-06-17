@@ -11,5 +11,10 @@ Provides function definitions and documentation for use in 'SedonaDB'.
 \author{
 \strong{Maintainer}: Dewey Dunnington \email{dewey@dunnington.ca}
 
+Authors:
+\itemize{
+  \item Dewey Dunnington \email{dewey@dunnington.ca}
+}
+
 }
 \keyword{internal}
