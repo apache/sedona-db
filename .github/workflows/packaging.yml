@@ -161,6 +161,7 @@ jobs:
         env:
           MATURIN_PEP517_ARGS: "--features s2geography,pyo3/extension-module"
         run: |
+            pip install "python/sedonadb-expr" -v
             pip install "python/sedonadb/[geopandas]" -v
 
       - name: Validate SQL function docs coverage
