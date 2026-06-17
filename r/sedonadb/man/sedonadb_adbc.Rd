@@ -7,7 +7,7 @@
 sedonadb_adbc()
 }
 \value{
-An \code{\link[adbcdrivermanager:adbc_driver_void]{adbcdrivermanager::adbc_driver()}} of class
+An \code{\link[adbcdrivermanager:adbc_driver]{adbcdrivermanager::adbc_driver()}} of class
 'sedonadb_driver_sedonadb'
 }
 \description{

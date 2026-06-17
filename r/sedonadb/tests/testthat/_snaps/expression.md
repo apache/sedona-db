@@ -256,6 +256,14 @@
       <SedonaDBExpr>
       abs(x)
 
+# nulls can be checked via is.na()
+
+    Code
+      sd_eval_expr(quote(is.na(x)))
+    Output
+      <SedonaDBExpr>
+      x IS NULL
+
 # errors that occur during evaluation have reasonable context
 
     Code

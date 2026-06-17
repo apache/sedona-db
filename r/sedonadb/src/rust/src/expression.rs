@@ -87,6 +87,16 @@ impl SedonaDBExpr {
         Ok(Self { inner })
     }
 
+    fn is_null(&self) -> savvy::Result<SedonaDBExpr> {
+        let inner = Expr::IsNull(Box::new(self.inner.clone()));
+        Ok(Self { inner })
+    }
+
+    fn is_not_null(&self) -> savvy::Result<SedonaDBExpr> {
+        let inner = Expr::IsNotNull(Box::new(self.inner.clone()));
+        Ok(Self { inner })
+    }
+
     fn variant_name(&self) -> savvy::Result<savvy::Sexp> {
         self.inner.variant_name().try_into()
     }

@@ -71,6 +71,16 @@ test_that("filter() handles NA values", {
     df |> as_sedonadb_dataframe() |> filter(x == 2L) |> collect(),
     df |> filter(x == 2L)
   )
+
+  expect_identical(
+    df |> as_sedonadb_dataframe() |> filter(is.na(x)) |> collect(),
+    df |> filter(is.na(x))
+  )
+
+  expect_identical(
+    df |> as_sedonadb_dataframe() |> filter(!is.na(x)) |> collect(),
+    df |> filter(!is.na(x))
+  )
 })
 
 test_that("filter(..., .by) is unsupported", {

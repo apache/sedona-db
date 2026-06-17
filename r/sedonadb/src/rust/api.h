@@ -86,6 +86,8 @@ SEXP savvy_SedonaDBExpr_alias__ffi(SEXP self__, SEXP c_arg__name);
 SEXP savvy_SedonaDBExpr_cast__ffi(SEXP self__, SEXP c_arg__schema_xptr);
 SEXP savvy_SedonaDBExpr_debug_string__ffi(SEXP self__);
 SEXP savvy_SedonaDBExpr_display__ffi(SEXP self__);
+SEXP savvy_SedonaDBExpr_is_not_null__ffi(SEXP self__);
+SEXP savvy_SedonaDBExpr_is_null__ffi(SEXP self__);
 SEXP savvy_SedonaDBExpr_negate__ffi(SEXP self__);
 SEXP savvy_SedonaDBExpr_parse_binary__ffi(SEXP self__);
 SEXP savvy_SedonaDBExpr_qualified_name__ffi(SEXP self__);
