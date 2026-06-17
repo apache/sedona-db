@@ -249,7 +249,7 @@ def test_rs_ensure_loaded_with_zarr(tmp_path, numpy_dtype):
     sd.register(sedonadb_zarr.ZarrExtension())
 
     # Read the Zarr group as loaded rasters
-    t = sd.read_format(sedonadb_zarr.Zarr(), f"file://{tmp_path}")
+    t = sd.read(f"file://{tmp_path}", format="zarr")
     loaded_tab = t.select(raster=t.raster.funcs.rs_ensureloaded()).to_arrow_table()
 
     # Verify the data was loaded
