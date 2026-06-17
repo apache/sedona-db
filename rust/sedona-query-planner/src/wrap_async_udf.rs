@@ -27,7 +27,7 @@
 
 use std::sync::Arc;
 
-use datafusion_common::tree_node::{Transformed, TreeNode};
+use datafusion_common::tree_node::{Transformed, TreeNode, TreeNodeRecursion};
 use datafusion_common::{DFSchema, Result};
 use datafusion_expr::async_udf::AsyncScalarUDF;
 use datafusion_expr::expr::{Alias, ScalarFunction};
@@ -49,7 +49,8 @@ impl OptimizerRule for WrapAsyncUdfRule {
     }
 
     fn apply_order(&self) -> Option<ApplyOrder> {
-        // Bottom-up so nested UDFs are wrapped inside-out.
+        // Bottom-up so nested UDFs are wrapped inside-out. Note: expression
+        // rewriting uses transform_down to skip already-wrapped subtrees.
         Some(ApplyOrder::BottomUp)
     }
 
@@ -73,7 +74,9 @@ impl OptimizerRule for WrapAsyncUdfRule {
         };
         drop(inputs);
 
-        plan.map_expressions(|e| e.transform_up(|expr| rewrite_expr_node(expr, &schema)))
+        plan.map_expressions(|e| {
+            e.transform_down_up(skip_already_wrapped, |expr| wrap_async_udf(expr, &schema))
+        })
     }
 }
 
@@ -86,14 +89,26 @@ fn merged_input_schema(inputs: &[&LogicalPlan]) -> Option<Arc<DFSchema>> {
     Some(Arc::new(merged))
 }
 
-/// If `expr` is an async scalar UDF call, wrap it with `sd_restore_metadata`
+/// Pre-order pass: skip children of `sd_restore_metadata` for idempotency.
+fn skip_already_wrapped(expr: Expr) -> Result<Transformed<Expr>> {
+    if let Expr::ScalarFunction(ref func_call) = expr {
+        if func_call.func.name() == RESTORE_METADATA_NAME {
+            // Already wrapped; skip children to avoid re-wrapping nested async UDFs.
+            return Ok(Transformed::new(expr, false, TreeNodeRecursion::Jump));
+        }
+    }
+    Ok(Transformed::no(expr))
+}
+
+/// Post-order pass: wrap async scalar UDF calls with `sd_restore_metadata`
 /// to preserve the return field's metadata.
-fn rewrite_expr_node(expr: Expr, schema: &Arc<DFSchema>) -> Result<Transformed<Expr>> {
+fn wrap_async_udf(expr: Expr, schema: &Arc<DFSchema>) -> Result<Transformed<Expr>> {
     let Expr::ScalarFunction(ref func_call) = expr else {
         return Ok(Transformed::no(expr));
     };
 
-    // Skip if already wrapped with sd_restore_metadata (idempotency).
+    // Skip sd_restore_metadata (shouldn't happen since pre-order skipped children,
+    // but be defensive).
     if func_call.func.name() == RESTORE_METADATA_NAME {
         return Ok(Transformed::no(expr));
     }
@@ -110,11 +125,7 @@ fn rewrite_expr_node(expr: Expr, schema: &Arc<DFSchema>) -> Result<Transformed<E
         return Ok(Transformed::no(expr));
     }
 
-    let Ok((_, return_field)) = expr.to_field(schema) else {
-        // Can't determine return field; skip wrapping.
-        return Ok(Transformed::no(expr));
-    };
-
+    let (_, return_field) = expr.to_field(schema)?;
     let metadata = return_field.metadata().clone();
     if metadata.is_empty() {
         // No metadata to preserve; skip wrapping.
@@ -238,7 +249,7 @@ mod tests {
         });
         let original_name = expr.schema_name().to_string();
 
-        let result = rewrite_expr_node(expr, &input_schema).unwrap();
+        let result = wrap_async_udf(expr, &input_schema).unwrap();
         assert!(result.transformed, "async UDF should be wrapped");
 
         // Verify the wrapper is an alias around sd_restore_metadata.
@@ -275,7 +286,7 @@ mod tests {
             args: vec![col("x")],
         });
 
-        let result = rewrite_expr_node(expr, &input_schema).unwrap();
+        let result = wrap_async_udf(expr, &input_schema).unwrap();
         assert!(
             !result.transformed,
             "async UDF without metadata should not be wrapped"
@@ -298,24 +309,95 @@ mod tests {
         );
 
         let restore_udf = restore_metadata_udf(metadata.clone());
-        let input_schema = Arc::new(
-            DFSchema::try_from(Schema::new(vec![Field::new("x", DataType::Utf8, true)])).unwrap(),
-        );
 
         let expr = Expr::ScalarFunction(ScalarFunction {
             func: restore_udf,
             args: vec![col("x")],
         });
 
-        let result = rewrite_expr_node(expr, &input_schema).unwrap();
+        let result = skip_already_wrapped(expr).unwrap();
         assert!(!result.transformed, "already wrapped should be skipped");
+        // Verify Jump is returned to skip children.
+        assert_eq!(result.tnr, TreeNodeRecursion::Jump);
+    }
 
-        // Verify the output field still has the metadata.
-        let (_, output_field) = result.data.to_field(&input_schema).unwrap();
-        assert_eq!(
-            output_field.metadata(),
-            &metadata,
-            "output field should retain the metadata"
+    /// Verify that running the rewrite multiple times doesn't grow the nesting.
+    /// This tests the full wrapped structure: Alias(sd_restore_metadata(async_udf(x)))
+    #[test]
+    fn idempotent_on_already_wrapped_async_udf() {
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "ARROW:extension:name".to_string(),
+            "sedona.raster".to_string(),
         );
+
+        let udf = fake_async_udf(metadata.clone());
+        let input_schema = Arc::new(
+            DFSchema::try_from(Schema::new(vec![Field::new("x", DataType::Utf8, true)])).unwrap(),
+        );
+
+        // Helper closure matching the optimizer's transform pattern.
+        let rewrite = |e: Expr| -> Result<Transformed<Expr>> {
+            e.transform_down_up(skip_already_wrapped, |expr| {
+                wrap_async_udf(expr, &input_schema)
+            })
+        };
+
+        // First pass: wrap the async UDF.
+        let expr = Expr::ScalarFunction(ScalarFunction {
+            func: udf,
+            args: vec![col("x")],
+        });
+        let first_pass = rewrite(expr).unwrap();
+        assert!(first_pass.transformed, "first pass should wrap");
+
+        // Capture the structure after first pass.
+        let first_pass_str = format!("{:?}", first_pass.data);
+
+        // Second pass: should be a no-op.
+        let second_pass = rewrite(first_pass.data).unwrap();
+
+        let second_pass_str = format!("{:?}", second_pass.data);
+        assert_eq!(
+            first_pass_str, second_pass_str,
+            "second pass should not modify the expression"
+        );
+    }
+
+    /// Nested async UDFs should each be wrapped individually.
+    #[test]
+    fn wraps_nested_async_udfs() {
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "ARROW:extension:name".to_string(),
+            "sedona.raster".to_string(),
+        );
+
+        let outer_udf = fake_async_udf(metadata.clone());
+        let inner_udf = fake_async_udf(metadata.clone());
+        let input_schema = Arc::new(
+            DFSchema::try_from(Schema::new(vec![Field::new("x", DataType::Utf8, true)])).unwrap(),
+        );
+
+        // Construct: outer_async(inner_async(x))
+        let inner_call = Expr::ScalarFunction(ScalarFunction {
+            func: inner_udf,
+            args: vec![col("x")],
+        });
+        let outer_call = Expr::ScalarFunction(ScalarFunction {
+            func: outer_udf,
+            args: vec![inner_call],
+        });
+
+        let result = outer_call
+            .transform_down_up(skip_already_wrapped, |e| wrap_async_udf(e, &input_schema))
+            .unwrap();
+        assert!(result.transformed, "nested async UDFs should be wrapped");
+
+        // Both inner and outer should be wrapped with sd_restore_metadata.
+        // Structure: Alias(sd_restore_metadata(outer_async(Alias(sd_restore_metadata(inner_async(x))))))
+        let result_str = format!("{:?}", result.data);
+        let restore_count = result_str.matches("RestoreMetadata").count();
+        assert_eq!(restore_count, 2, "both nested async UDFs should be wrapped");
     }
 }
