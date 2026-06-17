@@ -242,7 +242,7 @@ def test_generate_sources(sample_qmd_path: Path):
 
         assert result.total_functions == 1
         assert result.geo_method_count == 1
-        assert len(result.generated_files) == 3
+        assert len(result.generated_files) == 5
 
         # Verify generated files compile as valid Python
         for file_path in result.generated_files:
