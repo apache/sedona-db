@@ -38,4 +38,5 @@ pub mod rs_size;
 pub mod rs_slice;
 pub mod rs_spatial_predicates;
 pub mod rs_srid;
+pub mod rs_value;
 pub mod rs_worldcoordinate;
