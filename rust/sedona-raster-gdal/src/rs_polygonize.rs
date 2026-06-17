@@ -278,7 +278,7 @@ mod tests {
     fn test_polygonize_raster() {
         let result = with_gdal(|gdal| {
             let raster_array = test_raster_spec().build();
-            let raster_struct = RasterStructArray::new(&raster_array);
+            let raster_struct = RasterStructArray::try_new(&raster_array).unwrap();
             let raster = raster_struct.get(0).unwrap();
             polygonize_raster(gdal, &raster, 1)
         })
