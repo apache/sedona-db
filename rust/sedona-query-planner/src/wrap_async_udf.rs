@@ -1,0 +1,284 @@
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+//! DF-22662 workaround: logical optimizer rule that wraps async scalar UDF
+//! calls with `sd_restore_metadata` to preserve field metadata.
+//!
+//! DataFusion's async scalar UDFs drop their `return_field` metadata at the
+//! physical layer. This rule wraps every async UDF call with a sync
+//! `sd_restore_metadata` UDF that re-stamps the metadata onto the output.
+//!
+//! **Removal:** once DataFusion #22662 is fixed and downstreamed, delete
+//! this file and its `mod` declaration. `grep DF-22662` finds every site.
+
+use std::sync::Arc;
+
+use datafusion_common::tree_node::{Transformed, TreeNode};
+use datafusion_common::{DFSchema, Result};
+use datafusion_expr::async_udf::AsyncScalarUDF;
+use datafusion_expr::expr::ScalarFunction;
+use datafusion_expr::expr_schema::ExprSchemable;
+use datafusion_expr::{Expr, LogicalPlan, ReturnFieldArgs};
+use datafusion_optimizer::{ApplyOrder, OptimizerConfig, OptimizerRule};
+
+use crate::restore_metadata::{restore_metadata_udf, RESTORE_METADATA_NAME};
+
+/// Logical optimizer rule that wraps async scalar UDF calls with
+/// `sd_restore_metadata` to preserve field metadata stripped at the
+/// physical layer (DF-22662).
+#[derive(Default, Debug)]
+pub struct WrapAsyncUdfRule;
+
+impl OptimizerRule for WrapAsyncUdfRule {
+    fn name(&self) -> &str {
+        "sedona.wrap_async_udf"
+    }
+
+    fn apply_order(&self) -> Option<ApplyOrder> {
+        // Bottom-up so nested UDFs are wrapped inside-out.
+        Some(ApplyOrder::BottomUp)
+    }
+
+    fn supports_rewrite(&self) -> bool {
+        true
+    }
+
+    fn rewrite(
+        &self,
+        plan: LogicalPlan,
+        _config: &dyn OptimizerConfig,
+    ) -> Result<Transformed<LogicalPlan>> {
+        // Type-check argument expressions against the merged schema of the
+        // node's INPUTS (see ensure_loaded.rs for rationale).
+        let inputs = plan.inputs();
+        if inputs.is_empty() {
+            return Ok(Transformed::no(plan));
+        }
+        let Some(schema) = merged_input_schema(&inputs) else {
+            return Ok(Transformed::no(plan));
+        };
+        drop(inputs);
+
+        plan.map_expressions(|e| e.transform_up(|expr| rewrite_expr_node(expr, &schema)))
+    }
+}
+
+/// Merge the schemas of all inputs into one.
+fn merged_input_schema(inputs: &[&LogicalPlan]) -> Option<Arc<DFSchema>> {
+    let mut merged = inputs[0].schema().as_ref().clone();
+    for input in &inputs[1..] {
+        merged = merged.join(input.schema()).ok()?;
+    }
+    Some(Arc::new(merged))
+}
+
+/// If `expr` is an async scalar UDF call, wrap it with `sd_restore_metadata`
+/// to preserve the return field's metadata.
+fn rewrite_expr_node(expr: Expr, schema: &Arc<DFSchema>) -> Result<Transformed<Expr>> {
+    let Expr::ScalarFunction(ref func_call) = expr else {
+        return Ok(Transformed::no(expr));
+    };
+
+    // Skip if already wrapped with sd_restore_metadata (idempotency).
+    if func_call.func.name() == RESTORE_METADATA_NAME {
+        return Ok(Transformed::no(expr));
+    }
+
+    // Check if this is an async UDF by downcasting.
+    let is_async = func_call
+        .func
+        .inner()
+        .as_any()
+        .downcast_ref::<AsyncScalarUDF>()
+        .is_some();
+
+    if !is_async {
+        return Ok(Transformed::no(expr));
+    }
+
+    let Ok((_, return_field)) = expr.to_field(schema) else {
+        // Can't determine return field; skip wrapping.
+        return Ok(Transformed::no(expr));
+    };
+
+    let metadata = return_field.metadata().clone();
+    if metadata.is_empty() {
+        // No metadata to preserve; skip wrapping.
+        return Ok(Transformed::no(expr));
+    }
+
+    // Wrap the async UDF call with sd_restore_metadata.
+    let restore_udf = restore_metadata_udf(metadata);
+    let wrapped = Expr::ScalarFunction(ScalarFunction {
+        func: restore_udf,
+        args: vec![expr],
+    });
+
+    Ok(Transformed::yes(wrapped))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::any::Any;
+    use std::collections::HashMap;
+    use std::hash::{Hash, Hasher};
+
+    use arrow_schema::{DataType, Field, FieldRef, Schema};
+    use async_trait::async_trait;
+    use datafusion_expr::async_udf::{AsyncScalarUDF, AsyncScalarUDFImpl};
+    use datafusion_expr::{
+        col, ColumnarValue, ScalarFunctionArgs, ScalarUDF, Signature, Volatility,
+    };
+
+    /// A fake async UDF for testing.
+    #[derive(Debug)]
+    struct FakeAsyncUdf {
+        signature: Signature,
+        metadata: HashMap<String, String>,
+    }
+
+    impl FakeAsyncUdf {
+        fn new(metadata: HashMap<String, String>) -> Self {
+            Self {
+                signature: Signature::any(1, Volatility::Stable),
+                metadata,
+            }
+        }
+    }
+
+    impl PartialEq for FakeAsyncUdf {
+        fn eq(&self, _other: &Self) -> bool {
+            true
+        }
+    }
+    impl Eq for FakeAsyncUdf {}
+    impl Hash for FakeAsyncUdf {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            "fake_async".hash(state);
+        }
+    }
+
+    impl datafusion_expr::ScalarUDFImpl for FakeAsyncUdf {
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+
+        fn name(&self) -> &str {
+            "fake_async"
+        }
+
+        fn signature(&self) -> &Signature {
+            &self.signature
+        }
+
+        fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
+            Ok(DataType::Utf8)
+        }
+
+        fn return_field_from_args(&self, _args: ReturnFieldArgs) -> Result<FieldRef> {
+            Ok(Arc::new(
+                Field::new("output", DataType::Utf8, true).with_metadata(self.metadata.clone()),
+            ))
+        }
+
+        fn invoke_with_args(&self, _args: ScalarFunctionArgs) -> Result<ColumnarValue> {
+            unreachable!("async UDFs don't use invoke_with_args")
+        }
+    }
+
+    #[async_trait]
+    impl AsyncScalarUDFImpl for FakeAsyncUdf {
+        async fn invoke_async_with_args(&self, _args: ScalarFunctionArgs) -> Result<ColumnarValue> {
+            unreachable!("test stub")
+        }
+    }
+
+    fn fake_async_udf(metadata: HashMap<String, String>) -> Arc<ScalarUDF> {
+        Arc::new(AsyncScalarUDF::new(Arc::new(FakeAsyncUdf::new(metadata))).into_scalar_udf())
+    }
+
+    #[test]
+    fn wraps_async_udf_with_metadata() {
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "ARROW:extension:name".to_string(),
+            "sedona.raster".to_string(),
+        );
+
+        let udf = fake_async_udf(metadata.clone());
+        let input_schema = Arc::new(
+            DFSchema::try_from(Schema::new(vec![Field::new("x", DataType::Utf8, true)])).unwrap(),
+        );
+
+        let expr = Expr::ScalarFunction(ScalarFunction {
+            func: udf,
+            args: vec![col("x")],
+        });
+
+        let result = rewrite_expr_node(expr, &input_schema).unwrap();
+        assert!(result.transformed, "async UDF should be wrapped");
+
+        // Verify the wrapper is sd_restore_metadata.
+        let Expr::ScalarFunction(ref sf) = result.data else {
+            panic!("expected ScalarFunction");
+        };
+        assert_eq!(sf.func.name(), RESTORE_METADATA_NAME);
+    }
+
+    #[test]
+    fn skips_async_udf_without_metadata() {
+        let udf = fake_async_udf(HashMap::new());
+        let input_schema = Arc::new(
+            DFSchema::try_from(Schema::new(vec![Field::new("x", DataType::Utf8, true)])).unwrap(),
+        );
+
+        let expr = Expr::ScalarFunction(ScalarFunction {
+            func: udf,
+            args: vec![col("x")],
+        });
+
+        let result = rewrite_expr_node(expr, &input_schema).unwrap();
+        assert!(
+            !result.transformed,
+            "async UDF without metadata should not be wrapped"
+        );
+    }
+
+    #[test]
+    fn skips_already_wrapped() {
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "ARROW:extension:name".to_string(),
+            "sedona.raster".to_string(),
+        );
+
+        let restore_udf = restore_metadata_udf(metadata);
+        let input_schema = Arc::new(
+            DFSchema::try_from(Schema::new(vec![Field::new("x", DataType::Utf8, true)])).unwrap(),
+        );
+
+        let expr = Expr::ScalarFunction(ScalarFunction {
+            func: restore_udf,
+            args: vec![col("x")],
+        });
+
+        let result = rewrite_expr_node(expr, &input_schema).unwrap();
+        assert!(!result.transformed, "already wrapped should be skipped");
+    }
+}
