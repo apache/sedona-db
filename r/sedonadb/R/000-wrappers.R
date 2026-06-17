@@ -495,6 +495,12 @@ class(`InternalDataFrame`) <- c(
   }
 }
 
+`SedonaDBExpr_not` <- function(self) {
+  function() {
+    .savvy_wrap_SedonaDBExpr(.Call(savvy_SedonaDBExpr_not__impl, `self`))
+  }
+}
+
 `SedonaDBExpr_parse_binary` <- function(self) {
   function() {
     .Call(savvy_SedonaDBExpr_parse_binary__impl, `self`)
@@ -523,6 +529,7 @@ class(`InternalDataFrame`) <- c(
   e$`is_not_null` <- `SedonaDBExpr_is_not_null`(ptr)
   e$`is_null` <- `SedonaDBExpr_is_null`(ptr)
   e$`negate` <- `SedonaDBExpr_negate`(ptr)
+  e$`not` <- `SedonaDBExpr_not`(ptr)
   e$`parse_binary` <- `SedonaDBExpr_parse_binary`(ptr)
   e$`qualified_name` <- `SedonaDBExpr_qualified_name`(ptr)
   e$`variant_name` <- `SedonaDBExpr_variant_name`(ptr)

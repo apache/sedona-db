@@ -92,6 +92,11 @@ impl SedonaDBExpr {
         Ok(Self { inner })
     }
 
+    fn not(&self) -> savvy::Result<SedonaDBExpr> {
+        let inner = Expr::Not(Box::new(self.inner.clone()));
+        Ok(Self { inner })
+    }
+
     fn is_not_null(&self) -> savvy::Result<SedonaDBExpr> {
         let inner = Expr::IsNotNull(Box::new(self.inner.clone()));
         Ok(Self { inner })
