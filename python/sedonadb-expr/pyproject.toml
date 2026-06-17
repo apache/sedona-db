@@ -48,6 +48,8 @@ expression = "get_version()"
 
 [tool.hatch.build.targets.wheel]
 packages = ["python/sedonadb_expr"]
+# Generated files are in .gitignore but must be included in the wheel
+force-include = { "python/sedonadb_expr/_generated" = "sedonadb_expr/_generated", "python/sedonadb_expr/_version.py" = "sedonadb_expr/_version.py" }
 
 [tool.hatch.build.targets.wheel.hooks.custom]
 path = "hatch_build.py"
