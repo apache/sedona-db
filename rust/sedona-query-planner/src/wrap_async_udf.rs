@@ -32,7 +32,7 @@ use datafusion_common::{DFSchema, Result};
 use datafusion_expr::async_udf::AsyncScalarUDF;
 use datafusion_expr::expr::ScalarFunction;
 use datafusion_expr::expr_schema::ExprSchemable;
-use datafusion_expr::{Expr, LogicalPlan, ReturnFieldArgs};
+use datafusion_expr::{Expr, LogicalPlan};
 use datafusion_optimizer::{ApplyOrder, OptimizerConfig, OptimizerRule};
 
 use crate::restore_metadata::{restore_metadata_udf, RESTORE_METADATA_NAME};
@@ -142,8 +142,9 @@ mod tests {
     use arrow_schema::{DataType, Field, FieldRef, Schema};
     use async_trait::async_trait;
     use datafusion_expr::async_udf::{AsyncScalarUDF, AsyncScalarUDFImpl};
+    use datafusion_expr::expr_schema::ExprSchemable;
     use datafusion_expr::{
-        col, ColumnarValue, ScalarFunctionArgs, ScalarUDF, Signature, Volatility,
+        ColumnarValue, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDF, Signature, Volatility, col
     };
 
     /// A fake async UDF for testing.
@@ -239,6 +240,14 @@ mod tests {
             panic!("expected ScalarFunction");
         };
         assert_eq!(sf.func.name(), RESTORE_METADATA_NAME);
+
+        // Verify the output field has the correct metadata.
+        let (_, output_field) = result.data.to_field(&input_schema).unwrap();
+        assert_eq!(
+            output_field.metadata(),
+            &metadata,
+            "output field should have the restored metadata"
+        );
     }
 
     #[test]
@@ -258,6 +267,13 @@ mod tests {
             !result.transformed,
             "async UDF without metadata should not be wrapped"
         );
+
+        // Verify the output field has no metadata (since we didn't wrap).
+        let (_, output_field) = result.data.to_field(&input_schema).unwrap();
+        assert!(
+            output_field.metadata().is_empty(),
+            "output field should have no metadata"
+        );
     }
 
     #[test]
@@ -268,7 +284,7 @@ mod tests {
             "sedona.raster".to_string(),
         );
 
-        let restore_udf = restore_metadata_udf(metadata);
+        let restore_udf = restore_metadata_udf(metadata.clone());
         let input_schema = Arc::new(
             DFSchema::try_from(Schema::new(vec![Field::new("x", DataType::Utf8, true)])).unwrap(),
         );
@@ -280,5 +296,13 @@ mod tests {
 
         let result = rewrite_expr_node(expr, &input_schema).unwrap();
         assert!(!result.transformed, "already wrapped should be skipped");
+
+        // Verify the output field still has the metadata.
+        let (_, output_field) = result.data.to_field(&input_schema).unwrap();
+        assert_eq!(
+            output_field.metadata(),
+            &metadata,
+            "output field should retain the metadata"
+        );
     }
 }
