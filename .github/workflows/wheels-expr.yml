@@ -47,6 +47,10 @@ jobs:
       - name: Install build tools
         run: pip install build
 
+      - name: Bootstrap sources
+        run: |
+          pip install -e python/sedonadb-expr
+
       - name: Build wheel and sdist
         run: |
           cd python/sedonadb-expr
