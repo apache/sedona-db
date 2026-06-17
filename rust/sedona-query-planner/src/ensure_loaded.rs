@@ -519,4 +519,40 @@ mod tests {
             args[0]
         );
     }
+
+    /// Verify that running `transform_up` multiple times doesn't grow nesting.
+    /// This tests the full transform pattern used by the optimizer rule.
+    #[test]
+    fn idempotent_with_transform_up() {
+        let schema = raster_schema_named("rast");
+        let udf = fake_ensure_loaded_udf();
+
+        // Initial expression: rs_mock(rast)
+        let call = Expr::ScalarFunction(ScalarFunction {
+            func: needs_bytes_udf("rs_mock"),
+            args: vec![col("rast")],
+        });
+
+        // First pass via transform_up (matching the optimizer's pattern).
+        let first_pass = call
+            .transform_up(|e| rewrite_expr_node(e, &schema, &udf))
+            .unwrap();
+        assert!(first_pass.transformed, "first pass should wrap");
+        assert_eq!(
+            count_ensure_loaded(&first_pass.data),
+            1,
+            "should have exactly one wrapper after first pass"
+        );
+
+        // Second pass: should be a no-op.
+        let second_pass = first_pass
+            .data
+            .transform_up(|e| rewrite_expr_node(e, &schema, &udf))
+            .unwrap();
+        assert_eq!(
+            count_ensure_loaded(&second_pass.data),
+            1,
+            "second pass should not add more wrappers"
+        );
+    }
 }
