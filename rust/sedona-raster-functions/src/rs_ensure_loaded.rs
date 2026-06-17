@@ -228,19 +228,9 @@ impl AsyncScalarUDFImpl for RsEnsureLoaded {
     }
 
     async fn invoke_async_with_args(&self, args: ScalarFunctionArgs) -> Result<ColumnarValue> {
-        let input_array = match args.args.into_iter().next() {
-            Some(ColumnarValue::Array(arr)) => arr,
-            Some(ColumnarValue::Scalar(_)) => {
-                return sedona_internal_err!(
-                    "RS_EnsureLoaded does not support scalar inputs; pass a column reference"
-                )
-            }
-            None => return sedona_internal_err!("RS_EnsureLoaded received zero arguments"),
-        };
-
+        let input_array = args.args[0].to_array(args.number_rows)?;
         let registry = registry_handle_from_config(&args.config_options)?;
         let output = ensure_loaded(&input_array, |format| lookup_loader(&registry, format)).await?;
-
         Ok(ColumnarValue::Array(output))
     }
 }

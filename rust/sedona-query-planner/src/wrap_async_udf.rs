@@ -30,7 +30,7 @@ use std::sync::Arc;
 use datafusion_common::tree_node::{Transformed, TreeNode};
 use datafusion_common::{DFSchema, Result};
 use datafusion_expr::async_udf::AsyncScalarUDF;
-use datafusion_expr::expr::ScalarFunction;
+use datafusion_expr::expr::{Alias, ScalarFunction};
 use datafusion_expr::expr_schema::ExprSchemable;
 use datafusion_expr::{Expr, LogicalPlan};
 use datafusion_optimizer::{ApplyOrder, OptimizerConfig, OptimizerRule};
@@ -121,14 +121,19 @@ fn rewrite_expr_node(expr: Expr, schema: &Arc<DFSchema>) -> Result<Transformed<E
         return Ok(Transformed::no(expr));
     }
 
-    // Wrap the async UDF call with sd_restore_metadata.
+    // Get the original display name before wrapping so we can preserve it.
+    let original_name = expr.schema_name().to_string();
+
+    // Wrap the async UDF call with sd_restore_metadata, then alias it back
+    // to the original name so the schema doesn't change.
     let restore_udf = restore_metadata_udf(metadata);
     let wrapped = Expr::ScalarFunction(ScalarFunction {
         func: restore_udf,
         args: vec![expr],
     });
+    let aliased = Expr::Alias(Alias::new(wrapped, None::<&str>, original_name));
 
-    Ok(Transformed::yes(wrapped))
+    Ok(Transformed::yes(aliased))
 }
 
 #[cfg(test)]
@@ -231,13 +236,21 @@ mod tests {
             func: udf,
             args: vec![col("x")],
         });
+        let original_name = expr.schema_name().to_string();
 
         let result = rewrite_expr_node(expr, &input_schema).unwrap();
         assert!(result.transformed, "async UDF should be wrapped");
 
-        // Verify the wrapper is sd_restore_metadata.
-        let Expr::ScalarFunction(ref sf) = result.data else {
-            panic!("expected ScalarFunction");
+        // Verify the wrapper is an alias around sd_restore_metadata.
+        let Expr::Alias(ref alias) = result.data else {
+            panic!("expected Alias, got {:?}", result.data);
+        };
+        assert_eq!(
+            alias.name, original_name,
+            "alias should preserve original name"
+        );
+        let Expr::ScalarFunction(ref sf) = *alias.expr else {
+            panic!("expected ScalarFunction inside alias");
         };
         assert_eq!(sf.func.name(), RESTORE_METADATA_NAME);
 

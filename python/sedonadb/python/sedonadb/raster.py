@@ -232,7 +232,8 @@ class Band:
     @property
     def data(self) -> memoryview:
         """The band data as a typed, shaped memoryview."""
-        if self.outdb_uri is not None:
+        source_data = self.source_data
+        if self.outdb_uri is not None and len(source_data) == 0:
             raise ValueError("Can't extract buffer from a reference to external data.")
 
         # When views are supported, we would need to calculate the striding
