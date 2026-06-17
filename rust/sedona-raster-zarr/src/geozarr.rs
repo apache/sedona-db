@@ -35,16 +35,27 @@ pub struct GroupGeoMetadata {
     /// legacy `proj:epsg`) attribute is present on the group.
     pub crs: Option<String>,
     /// Affine transform, stored in GDAL GeoTransform order:
-    /// `[origin_x, scale_x, skew_x, origin_y, skew_y, scale_y]`. The source
-    /// `spatial:transform` attribute is in affine order `[a, b, c, d, e, f]`
-    /// and is reordered on parse. `None` when no `spatial:transform`
-    /// attribute is present.
+    /// `[origin_x, scale_x, skew_x, origin_y, skew_y, scale_y]`. Parsed from the
+    /// `spatial:transform` attribute (affine order `[a, b, c, d, e, f]`,
+    /// reordered on parse). `None` when the group declares no explicit
+    /// transform; the loader then derives one from `bbox` (below) or the
+    /// spatial coordinate arrays, where the array shape is in hand.
     pub transform: Option<[f64; 6]>,
     /// Names of the spatial dimensions in the order the group declares them
     /// (typically `["y", "x"]`), from `spatial:dimensions` (or the legacy
     /// `spatial:dims`). `None` falls back to a 2-D default at construction
     /// time in the loader.
     pub spatial_dims: Option<Vec<String>>,
+    /// Spatial bounding box `[xmin, ymin, xmax, ymax]` from `spatial:bbox`, used
+    /// to derive a transform when no explicit `spatial:transform` is present.
+    /// The grid shape is read from the array itself (not a separate
+    /// `spatial:shape` attribute, which could drift from the real shape), so the
+    /// loader supplies it to [`derive_transform_from_bbox`].
+    pub bbox: Option<[f64; 4]>,
+    /// `spatial:registration` — `"pixel"` or `"node"`; `None` defaults to
+    /// `"pixel"`. Governs how `bbox` maps to the grid (outer edge vs. cell
+    /// centers).
+    pub registration: Option<String>,
 }
 
 impl GroupGeoMetadata {
@@ -60,10 +71,14 @@ impl GroupGeoMetadata {
         let crs = parse_crs(attrs)?;
         let transform = parse_transform(attrs)?;
         let spatial_dims = parse_spatial_dims(attrs)?;
+        let bbox = parse_bbox(attrs);
+        let registration = parse_registration(attrs)?;
         Ok(Self {
             crs,
             transform,
             spatial_dims,
+            bbox,
+            registration,
         })
     }
 }
@@ -104,11 +119,11 @@ fn parse_transform(
     attrs: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<Option<[f64; 6]>, ArrowError> {
     let Some(t) = attrs.get("spatial:transform") else {
+        // No explicit transform; the loader derives one from `bbox` or the
+        // coordinate arrays, where the array's own shape is available.
         return Ok(None);
     };
-    let arr = t.as_array().ok_or_else(|| {
-        ArrowError::InvalidArgumentError("spatial:transform attribute must be a JSON array".into())
-    })?;
+    let arr = parse_f64_array(t, "spatial:transform")?;
     if arr.len() != 6 {
         return Err(ArrowError::InvalidArgumentError(format!(
             "spatial:transform must have 6 elements (affine order [a, b, c, d, e, f]); got {}",
@@ -122,14 +137,137 @@ fn parse_transform(
     // `[origin_x, scale_x, skew_x, origin_y, skew_y, scale_y]`, so reorder:
     //   origin_x = c, scale_x = a, skew_x = b,
     //   origin_y = f, skew_y = d, scale_y = e.
-    let mut aff = [0f64; 6];
-    for (i, v) in arr.iter().enumerate() {
-        aff[i] = v.as_f64().ok_or_else(|| {
-            ArrowError::InvalidArgumentError(format!("spatial:transform[{i}] must be a number"))
-        })?;
-    }
-    let [a, b, c, d, e, f] = aff;
+    let [a, b, c, d, e, f] = [arr[0], arr[1], arr[2], arr[3], arr[4], arr[5]];
     Ok(Some([c, a, b, f, d, e]))
+}
+
+/// Parse the optional `spatial:bbox` attribute into `[xmin, ymin, xmax, ymax]`.
+/// `None` when absent. The grid shape is *not* read from `spatial:shape`; the
+/// loader supplies the array's own shape to [`derive_transform_from_bbox`].
+///
+/// A malformed `spatial:bbox` (not a 4-element numeric array) is treated as
+/// absent — it warns and returns `None` rather than failing the load, so the
+/// loader can fall back to coordinate arrays, mirroring how a bad coordinate
+/// array is handled.
+fn parse_bbox(attrs: &serde_json::Map<String, serde_json::Value>) -> Option<[f64; 4]> {
+    let v = attrs.get("spatial:bbox")?;
+    let bbox: Option<Vec<f64>> = v
+        .as_array()
+        .and_then(|a| a.iter().map(|e| e.as_f64()).collect());
+    match bbox.as_deref() {
+        Some([xmin, ymin, xmax, ymax]) => Some([*xmin, *ymin, *xmax, *ymax]),
+        _ => {
+            log::warn!(
+                "Zarr group has a malformed `spatial:bbox` (expected a 4-element numeric array \
+                 [xmin, ymin, xmax, ymax]); ignoring it"
+            );
+            None
+        }
+    }
+}
+
+/// Parse the optional `spatial:registration` attribute (a string). `Ok(None)`
+/// when absent; [`derive_transform_from_bbox`] then defaults to `"pixel"`.
+fn parse_registration(
+    attrs: &serde_json::Map<String, serde_json::Value>,
+) -> Result<Option<String>, ArrowError> {
+    match attrs.get("spatial:registration") {
+        Some(v) => Ok(Some(
+            v.as_str()
+                .ok_or_else(|| {
+                    ArrowError::InvalidArgumentError("spatial:registration must be a string".into())
+                })?
+                .to_string(),
+        )),
+        None => Ok(None),
+    }
+}
+
+/// Derive a GDAL-order transform from a `spatial:bbox` and the grid's `height`
+/// and `width` — the array's *own* spatial dimensions, not a `spatial:shape`
+/// attribute (which could drift from the real shape).
+///
+/// `bbox` is `[xmin, ymin, xmax, ymax]`. `registration` (default `"pixel"`) sets
+/// how the bbox relates to the grid, per the GeoZarr spatial convention
+/// (<https://github.com/zarr-conventions/spatial>): `"pixel"` means the bbox is
+/// the grid's outer edge, spanning all `N` cells (`scale = extent / N`) with the
+/// top-left corner on the bbox edge `(xmin, ymax)`; `"node"` means the bbox
+/// endpoints are the *centers* of the border cells, so `N` centers span `N - 1`
+/// intervals (`scale = extent / (N - 1)`) and the corner sits half a cell outside
+/// the bbox. `scale_y` is negative (rows increase downward).
+pub(crate) fn derive_transform_from_bbox(
+    bbox: [f64; 4],
+    height: u64,
+    width: u64,
+    registration: Option<&str>,
+) -> Result<[f64; 6], ArrowError> {
+    let [xmin, ymin, xmax, ymax] = bbox;
+    // Reject a degenerate or inverted bbox: a zero span gives a non-invertible
+    // (zero-scale) transform and a negative span isn't north-up. Mirrors the
+    // coordinate-array path's strictness about a wrong scale.
+    if !(xmax > xmin && ymax > ymin) {
+        return Err(ArrowError::InvalidArgumentError(format!(
+            "spatial:bbox must have xmin < xmax and ymin < ymax; got [{xmin}, {ymin}, {xmax}, {ymax}]"
+        )));
+    }
+    // The array's spatial dims; a real raster axis is at least 1.
+    if height == 0 || width == 0 {
+        return Err(ArrowError::InvalidArgumentError(
+            "raster spatial dimensions must be non-zero to derive a transform from spatial:bbox"
+                .into(),
+        ));
+    }
+    let (height, width) = (height as f64, width as f64);
+
+    // cell-area registration is the conventional default
+    let registration = registration.unwrap_or("pixel");
+    // scale_y is negative throughout: rows increase downward.
+    let (scale_x, scale_y, origin_x, origin_y) = match registration {
+        // Pixel-registered: the bbox is the grid's outer edge, spanning all N
+        // cells, so the top-left corner is the bbox edge.
+        "pixel" => {
+            let scale_x = (xmax - xmin) / width;
+            let scale_y = (ymin - ymax) / height;
+            (scale_x, scale_y, xmin, ymax)
+        }
+        // Node-registered: the bbox endpoints are the *centers* of the border
+        // cells, so N centers span N-1 intervals and the footprint extends half
+        // a cell beyond — the corner sits half a cell outside the bbox.
+        "node" => {
+            if width < 2.0 || height < 2.0 {
+                return Err(ArrowError::InvalidArgumentError(
+                    "node-registered grid must be at least 2 cells in each spatial dimension"
+                        .into(),
+                ));
+            }
+            let scale_x = (xmax - xmin) / (width - 1.0);
+            let scale_y = (ymin - ymax) / (height - 1.0);
+            (scale_x, scale_y, xmin - scale_x / 2.0, ymax - scale_y / 2.0)
+        }
+        other => {
+            return Err(ArrowError::InvalidArgumentError(format!(
+                "spatial:registration must be \"pixel\" or \"node\"; got {other:?}"
+            )))
+        }
+    };
+
+    // GDAL GeoTransform order; axis-aligned, so the skews are 0.
+    Ok([origin_x, scale_x, 0.0, origin_y, 0.0, scale_y])
+}
+
+/// Parse a JSON value as an array of `f64`. Caller validates the length.
+fn parse_f64_array(v: &serde_json::Value, attr_name: &str) -> Result<Vec<f64>, ArrowError> {
+    let arr = v.as_array().ok_or_else(|| {
+        ArrowError::InvalidArgumentError(format!("{attr_name} attribute must be a JSON array"))
+    })?;
+    arr.iter()
+        .enumerate()
+        .map(|(i, e)| {
+            e.as_f64().ok_or_else(|| {
+                ArrowError::InvalidArgumentError(format!("{attr_name}[{i}] must be a number"))
+            })
+        })
+        .collect()
 }
 
 fn parse_spatial_dims(
@@ -191,6 +329,8 @@ mod tests {
         assert!(g.crs.is_none());
         assert!(g.transform.is_none());
         assert!(g.spatial_dims.is_none());
+        assert!(g.bbox.is_none());
+        assert!(g.registration.is_none());
     }
 
     #[test]
@@ -255,6 +395,124 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert!(err.contains("6 elements"), "{err}");
+    }
+
+    #[test]
+    fn bbox_pixel_registration_derives_transform() {
+        // The worked example from docs/research/zarr-geozarr.md: a bbox over a
+        // 1000x1000 grid with "pixel" registration derives the same transform
+        // the dataset also declares explicitly ([10, 0, 600000, 0, -10, 5700000]
+        // affine). Height/width are the array's own dims, passed in by the loader.
+        let t = derive_transform_from_bbox(
+            [600000.0, 5690000.0, 610000.0, 5700000.0],
+            1000,
+            1000,
+            Some("pixel"),
+        )
+        .unwrap();
+        assert_eq!(t, [600000.0, 10.0, 0.0, 5700000.0, 0.0, -10.0]);
+    }
+
+    #[test]
+    fn bbox_registration_defaults_to_pixel() {
+        // `None` registration behaves as cell-area ("pixel").
+        let t = derive_transform_from_bbox(
+            [600000.0, 5690000.0, 610000.0, 5700000.0],
+            1000,
+            1000,
+            None,
+        )
+        .unwrap();
+        assert_eq!(t, [600000.0, 10.0, 0.0, 5700000.0, 0.0, -10.0]);
+    }
+
+    #[test]
+    fn bbox_node_registration_uses_n_minus_1_intervals() {
+        // "node": the bbox endpoints are cell centers, so 11 centers span 10
+        // intervals -> scale = 100 / 10 = 10, and the corner sits half a cell
+        // (5) outside the bbox: origin (-5, 105).
+        let t = derive_transform_from_bbox([0.0, 0.0, 100.0, 100.0], 11, 11, Some("node")).unwrap();
+        assert_eq!(t, [-5.0, 10.0, 0.0, 105.0, 0.0, -10.0]);
+    }
+
+    #[test]
+    fn node_registration_requires_at_least_two_cells() {
+        // A single-cell node grid can't define a spacing from its bbox alone.
+        let err = derive_transform_from_bbox([0.0, 0.0, 100.0, 100.0], 1, 1, Some("node"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("at least 2"), "{err}");
+    }
+
+    #[test]
+    fn unknown_registration_errors() {
+        let err = derive_transform_from_bbox([0.0, 0.0, 100.0, 100.0], 10, 10, Some("corner"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("pixel") && err.contains("node"), "{err}");
+    }
+
+    #[test]
+    fn degenerate_or_inverted_bbox_errors() {
+        // Zero x-span (non-invertible) and inverted y (not north-up) are both
+        // rejected, matching the coordinate-array path's strictness about a
+        // wrong scale.
+        for bbox in [
+            [10.0, 0.0, 10.0, 5.0], // xmin == xmax
+            [0.0, 5.0, 5.0, 0.0],   // ymax < ymin
+        ] {
+            let err = derive_transform_from_bbox(bbox, 10, 10, None)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("xmin < xmax") || err.contains("ymin < ymax"),
+                "{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_transform_surfaced_alongside_bbox() {
+        // from_attributes surfaces both the explicit transform and the bbox; the
+        // loader prefers the explicit transform (see the fallback chain there).
+        let g = GroupGeoMetadata::from_attributes(&map(json!({
+            "spatial:transform": [1.0, 0.0, 100.0, 0.0, -1.0, 200.0],
+            "spatial:bbox": [600000.0, 5690000.0, 610000.0, 5700000.0]
+        })))
+        .unwrap();
+        assert_eq!(g.transform, Some([100.0, 1.0, 0.0, 200.0, 0.0, -1.0]));
+        assert_eq!(g.bbox, Some([600000.0, 5690000.0, 610000.0, 5700000.0]));
+    }
+
+    #[test]
+    fn bbox_parsed_without_shape() {
+        // No `spatial:shape` is needed: the bbox and registration are surfaced
+        // and the loader supplies the array's shape. transform stays None (the
+        // loader derives it).
+        let g = GroupGeoMetadata::from_attributes(&map(json!({
+            "spatial:bbox": [600000.0, 5690000.0, 610000.0, 5700000.0],
+            "spatial:registration": "node"
+        })))
+        .unwrap();
+        assert!(g.transform.is_none());
+        assert_eq!(g.bbox, Some([600000.0, 5690000.0, 610000.0, 5700000.0]));
+        assert_eq!(g.registration.as_deref(), Some("node"));
+    }
+
+    #[test]
+    fn malformed_bbox_is_ignored() {
+        // A malformed spatial:bbox (wrong length, non-array, or a non-numeric
+        // element) is treated as absent rather than failing the load — the
+        // loader falls back to coordinate arrays. (It also logs a warning.)
+        for bad in [
+            json!([1.0, 2.0, 3.0]),      // wrong length
+            json!("not-an-array"),       // not an array
+            json!([1.0, 2.0, "x", 4.0]), // non-numeric element
+        ] {
+            let g =
+                GroupGeoMetadata::from_attributes(&map(json!({ "spatial:bbox": bad }))).unwrap();
+            assert!(g.bbox.is_none(), "expected bbox ignored for {bad:?}");
+        }
     }
 
     #[test]

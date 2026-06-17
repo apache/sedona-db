@@ -357,74 +357,127 @@ async fn open_and_validate(
         None => {
             let y_axis = spatial_dim_indices[0];
             let x_axis = spatial_dim_indices[1];
-            let y_name = array_infos[0].dim_names[y_axis].clone();
-            let x_name = array_infos[0].dim_names[x_axis].clone();
-            let x_vals = coords::read_coord_values(&storage, &x_name).await?;
-            let y_vals = coords::read_coord_values(&storage, &y_name).await?;
 
-            // A coordinate array must span the data extent along its axis; a
-            // length mismatch is a malformed coord variable that would yield a
-            // wrong scale, so refuse to derive a transform from it.
-            let x_ok = x_vals
-                .as_ref()
-                .is_none_or(|v| v.len() as u64 == array_infos[0].shape[x_axis]);
-            let y_ok = y_vals
-                .as_ref()
-                .is_none_or(|v| v.len() as u64 == array_infos[0].shape[y_axis]);
-            if !(x_ok && y_ok) {
-                log::warn!(
-                    "Zarr group at {group_uri}: a spatial coordinate array's length does \
-                     not match the data extent; ignoring coordinates for georeferencing"
-                );
-            }
-            let derived = match (x_ok && y_ok, x_vals, y_vals) {
-                (true, Some(x), Some(y)) => coords::transform_from_coords(&x, &y),
-                _ => None,
-            };
-            match derived {
-                Some(t) => {
-                    // Regular CF coordinate arrays imply geographic lon/lat;
-                    // infer the CRS from the dim names only when none was
-                    // declared. Generic y/x stay CRS-less (attach via RS_SetCRS).
-                    let crs_note = if let Some(declared) = geo.crs.as_deref() {
-                        format!("keeping the declared CRS {declared:?}")
-                    } else if let Some(inferred) = coords::infer_geographic_crs(&y_name, &x_name) {
-                        geo.crs = Some(inferred.to_string());
-                        format!("inferred CRS {inferred} from the dim names")
-                    } else {
-                        "no CRS inferred (spatial dims are not lat/lon) — set one with RS_SetCRS"
-                            .to_string()
-                    };
-                    log::debug!(
-                        "Zarr group at {group_uri} has no `spatial:transform`; derived a \
-                         geotransform from the {x_name:?}/{y_name:?} coordinate arrays; {crs_note}"
-                    );
-                    t
+            // A declared `spatial:bbox` is a stronger georeferencing signal than
+            // CF coordinate arrays: try it first, using the array's own shape (no
+            // separate `spatial:shape` attribute that could drift). An unusable
+            // bbox is non-fatal — warn and fall through to the coordinate arrays,
+            // matching how a bad coordinate array is handled below.
+            let bbox_transform = match geo.bbox {
+                Some(bbox) => {
+                    let height = array_infos[0].shape[y_axis];
+                    let width = array_infos[0].shape[x_axis];
+                    match crate::geozarr::derive_transform_from_bbox(
+                        bbox,
+                        height,
+                        width,
+                        geo.registration.as_deref(),
+                    ) {
+                        Ok(t) => {
+                            // Mirror the coordinate-array path: when the group
+                            // declares no CRS, infer a geographic one from the
+                            // spatial dim names (lat/lon). Generic y/x stay
+                            // CRS-less (attach via RS_SetCRS).
+                            if geo.crs.is_none() {
+                                if let Some(inferred) = coords::infer_geographic_crs(
+                                    &array_infos[0].dim_names[y_axis],
+                                    &array_infos[0].dim_names[x_axis],
+                                ) {
+                                    geo.crs = Some(inferred.to_string());
+                                }
+                            }
+                            log::debug!(
+                                "Zarr group at {group_uri} has no `spatial:transform`; derived a \
+                                 geotransform from `spatial:bbox` and the {height}x{width} array shape"
+                            );
+                            Some(t)
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                "Zarr group at {group_uri}: `spatial:bbox` is unusable ({e}); \
+                                 falling back to coordinate arrays for georeferencing"
+                            );
+                            None
+                        }
+                    }
                 }
-                // CRS-without-transform and no usable coordinate arrays is
-                // almost always malformed metadata; error rather than silently
-                // using pixel coordinates in spatial joins.
-                None if geo.crs.is_some() => {
-                    return Err(ArrowError::InvalidArgumentError(format!(
-                        "Zarr group at {group_uri} declares a CRS but has neither a \
+                None => None,
+            };
+            match bbox_transform {
+                Some(t) => t,
+                None => {
+                    let y_name = array_infos[0].dim_names[y_axis].clone();
+                    let x_name = array_infos[0].dim_names[x_axis].clone();
+                    let x_vals = coords::read_coord_values(&storage, &x_name).await?;
+                    let y_vals = coords::read_coord_values(&storage, &y_name).await?;
+
+                    // A coordinate array must span the data extent along its axis; a
+                    // length mismatch is a malformed coord variable that would yield a
+                    // wrong scale, so refuse to derive a transform from it.
+                    let x_ok = x_vals
+                        .as_ref()
+                        .is_none_or(|v| v.len() as u64 == array_infos[0].shape[x_axis]);
+                    let y_ok = y_vals
+                        .as_ref()
+                        .is_none_or(|v| v.len() as u64 == array_infos[0].shape[y_axis]);
+                    if !(x_ok && y_ok) {
+                        log::warn!(
+                            "Zarr group at {group_uri}: a spatial coordinate array's length does \
+                     not match the data extent; ignoring coordinates for georeferencing"
+                        );
+                    }
+                    let derived = match (x_ok && y_ok, x_vals, y_vals) {
+                        (true, Some(x), Some(y)) => coords::transform_from_coords(&x, &y),
+                        _ => None,
+                    };
+                    match derived {
+                        Some(t) => {
+                            // Regular CF coordinate arrays imply geographic lon/lat;
+                            // infer the CRS from the dim names only when none was
+                            // declared. Generic y/x stay CRS-less (attach via RS_SetCRS).
+                            let crs_note = if let Some(declared) = geo.crs.as_deref() {
+                                format!("keeping the declared CRS {declared:?}")
+                            } else if let Some(inferred) =
+                                coords::infer_geographic_crs(&y_name, &x_name)
+                            {
+                                geo.crs = Some(inferred.to_string());
+                                format!("inferred CRS {inferred} from the dim names")
+                            } else {
+                                "no CRS inferred (spatial dims are not lat/lon) — set one with RS_SetCRS"
+                            .to_string()
+                            };
+                            log::debug!(
+                                "Zarr group at {group_uri} has no `spatial:transform`; derived a \
+                         geotransform from the {x_name:?}/{y_name:?} coordinate arrays; {crs_note}"
+                            );
+                            t
+                        }
+                        // CRS-without-transform and no usable coordinate arrays is
+                        // almost always malformed metadata; error rather than silently
+                        // using pixel coordinates in spatial joins.
+                        None if geo.crs.is_some() => {
+                            return Err(ArrowError::InvalidArgumentError(format!(
+                                "Zarr group at {group_uri} declares a CRS but has neither a \
                          `spatial:transform` attribute nor regularly-spaced numeric \
                          spatial coordinate arrays; refusing to fall back to the \
                          identity transform because that would silently produce wrong \
                          results in spatial joins. Declare `spatial:transform`, provide \
                          regular coordinate arrays, or remove the CRS to read this as a \
                          non-georeferenced datacube."
-                    )));
-                }
-                // No CRS and no usable coordinates: index space, with a
-                // breadcrumb so spatial-join surprises are debuggable.
-                None => {
-                    log::warn!(
-                        "Zarr group at {group_uri} has no `spatial:transform` and no \
+                            )));
+                        }
+                        // No CRS and no usable coordinates: index space, with a
+                        // breadcrumb so spatial-join surprises are debuggable.
+                        None => {
+                            log::warn!(
+                                "Zarr group at {group_uri} has no `spatial:transform` and no \
                          usable spatial coordinate arrays; falling back to the identity \
                          pixel-coordinate transform [0, 1, 0, 0, 0, -1]. Spatial \
                          operations against this raster will use pixel coordinates."
-                    );
-                    [0.0, 1.0, 0.0, 0.0, 0.0, -1.0]
+                            );
+                            [0.0, 1.0, 0.0, 0.0, 0.0, -1.0]
+                        }
+                    }
                 }
             }
         }
