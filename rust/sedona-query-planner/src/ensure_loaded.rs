@@ -213,10 +213,14 @@ fn wrap_for_loading(arg: Expr, ensure_loaded_udf: &Arc<ScalarUDF>) -> Expr {
     })
 }
 
-/// True if `expr` is already wrapped with `rs_ensureloaded`.
+/// True if `expr` is already wrapped with `rs_ensureloaded`, either
+/// directly or through an alias (e.g. `rs_ensureloaded(rast) AS loaded`).
 fn is_loaded_wrap(expr: &Expr) -> bool {
-    matches!(expr, Expr::ScalarFunction(sf)
-        if sf.func.name() == "rs_ensureloaded")
+    match expr {
+        Expr::ScalarFunction(sf) => sf.func.name() == "rs_ensureloaded",
+        Expr::Alias(alias) => is_loaded_wrap(&alias.expr),
+        _ => false,
+    }
 }
 
 /// True if `expr` evaluates to a `SedonaType::Raster` under the given
@@ -381,6 +385,20 @@ mod tests {
             count_ensure_loaded(&out),
             1,
             "already-wrapped arg must not be wrapped again: {out:?}"
+        );
+
+        // Same scenario but the wrapped expr is aliased:
+        // rs_mock(rs_ensureloaded(rast) AS loaded) should also not rewrap.
+        let already_wrapped_aliased = wrap_for_loading(col("rast"), &udf).alias("loaded");
+        let call_aliased = Expr::ScalarFunction(ScalarFunction {
+            func: needs_bytes_udf("rs_mock"),
+            args: vec![already_wrapped_aliased],
+        });
+        let out_aliased = rewrite(call_aliased, &schema, &udf);
+        assert_eq!(
+            count_ensure_loaded(&out_aliased),
+            1,
+            "aliased already-wrapped arg must not be wrapped again: {out_aliased:?}"
         );
     }
 

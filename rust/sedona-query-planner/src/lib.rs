@@ -17,7 +17,7 @@
 
 pub mod ensure_loaded;
 // DF-22662 workaround (remove when async UDF return-field metadata is
-// preserved upstream): see ensure_loaded_reraster.rs.
+// preserved upstream): see wrap_async_udf.rs.
 mod logical_plan_node;
 pub mod optimizer;
 pub mod probe_shuffle_exec;
