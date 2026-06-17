@@ -228,6 +228,15 @@ def test_read_parquet_geometry_columns_roundtrip(con, tmp_path):
     ):
         df = con.read_parquet(src, geometry_columns=geometry_columns)
 
+    # Test 9: Ensure this works when passed via read(), not just read.parquet()
+    geometry_columns = {"geom": {"encoding": "WKB"}}
+    df = con.read(src, options={"geometry_columns": geometry_columns})
+    out_geo1 = tmp_path / "geo1.parquet"
+    df.to_parquet(out_geo1)
+
+    geom_meta = _geom_column_metadata(out_geo1)
+    assert geom_meta["encoding"] == "WKB"
+
 
 def test_read_parquet_geometry_columns_multiple_columns(con, tmp_path):
     # Write a regular Parquet table with two Binary WKB columns.
