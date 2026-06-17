@@ -375,17 +375,3 @@ pub fn open_dir(
     }
     Ok(VsiDir { api, handle })
 }
-
-pub fn get_directory_separator(
-    api: &'static crate::gdal_api::GdalApi,
-    path: &str,
-) -> crate::errors::Result<String> {
-    let c_path = std::ffi::CString::new(path)?;
-    let separator_ptr = unsafe { (api.inner.VSIGetDirectorySeparator.unwrap())(c_path.as_ptr()) };
-    if separator_ptr.is_null() {
-        return Err(api.last_null_pointer_err("VSIGetDirectorySeparator"));
-    }
-    Ok(unsafe { std::ffi::CStr::from_ptr(separator_ptr) }
-        .to_string_lossy()
-        .into_owned())
-}

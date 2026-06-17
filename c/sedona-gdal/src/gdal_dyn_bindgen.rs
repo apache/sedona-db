@@ -477,8 +477,6 @@ pub(crate) struct SedonaGdalApi {
     >,
     pub VSIFCloseL: Option<unsafe extern "C" fn(fp: VSILFILE) -> c_int>,
     pub VSIUnlink: Option<unsafe extern "C" fn(pszFilename: *const c_char) -> c_int>,
-    pub VSIGetDirectorySeparator:
-        Option<unsafe extern "C" fn(pszPath: *const c_char) -> *const c_char>,
     pub VSIOpenDir: Option<
         unsafe extern "C" fn(
             pszPath: *const c_char,
