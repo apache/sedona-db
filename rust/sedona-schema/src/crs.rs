@@ -52,10 +52,10 @@ pub fn deserialize_crs(crs_str: &str) -> Result<Crs> {
         return Ok(cached);
     }
 
-    // Handle JSON strings "OGC:CRS84", "EPSG:4326", "{AUTH}:{CODE}", WKT CRS strings and "0"
-    let crs = if LngLat::is_str_lnglat(crs_str) {
-        lnglat()
-    } else if crs_str == "0" {
+    // Handle "0", "{AUTH}:{CODE}" authority codes (including the OGC:CRS84 /
+    // EPSG:4326 lon/lat aliases, which are kept verbatim rather than folded),
+    // and PROJJSON strings.
+    let crs = if crs_str == "0" {
         None
     } else if AuthorityCode::is_authority_code(crs_str) {
         AuthorityCode::crs(crs_str)
@@ -84,11 +84,8 @@ pub fn deserialize_crs_from_obj(crs_value: &serde_json::Value) -> Result<Crs> {
             return Ok(None);
         }
 
-        // Handle JSON strings "OGC:CRS84" and "EPSG:4326"
-        if LngLat::is_str_lnglat(crs_str) {
-            return Ok(lnglat());
-        }
-
+        // Authority codes (including the OGC:CRS84 / EPSG:4326 lon/lat aliases)
+        // are kept verbatim rather than folded.
         if AuthorityCode::is_authority_code(crs_str) {
             return Ok(AuthorityCode::crs(crs_str));
         }
@@ -198,59 +195,21 @@ impl CachedSRIDToCrs {
     }
 }
 
-/// Cache for normalizing CRS strings to their abbreviated form.
+/// Normalize a CRS string to the round-trippable definition stored on
+/// geometry/raster CRSes.
 ///
-/// Maps CRS input strings to their abbreviated `authority:code` representation
-/// with caching to avoid repeated deserialization of the same CRS string:
-/// - `"0"` or `""` → `None` (no CRS)
-/// - other → deserialized and abbreviated to `authority:code` if possible
-#[derive(Default)]
-pub struct CachedCrsNormalization {
-    cache: HashMap<String, Option<String>>,
-}
-
-impl CachedCrsNormalization {
-    /// Create a new CachedCrsNormalization with an empty cache.
-    pub fn new() -> Self {
-        Self {
-            cache: HashMap::new(),
-        }
-    }
-
-    /// Create a new CachedCrsNormalization with a pre-allocated cache.
-    pub fn with_capacity(capacity: usize) -> Self {
-        Self {
-            cache: HashMap::with_capacity(capacity),
-        }
-    }
-
-    /// Normalize a CRS string, using the cache to avoid repeated deserialization.
-    ///
-    /// Returns the abbreviated `authority:code` form if available, otherwise the
-    /// original string. Returns `None` for `"0"`, `""`, or CRS strings that
-    /// deserialize to `None`.
-    pub fn normalize(&mut self, crs_str: &str) -> Result<Option<String>> {
-        if crs_str == "0" || crs_str.is_empty() {
-            return Ok(None);
-        }
-
-        if let Some(cached) = self.cache.get(crs_str) {
-            return Ok(cached.clone());
-        }
-
-        let result = if let Some(crs) = deserialize_crs(crs_str)? {
-            if let Some(auth_code) = crs.to_authority_code()? {
-                Some(auth_code)
-            } else {
-                Some(crs_str.to_string())
-            }
-        } else {
-            None
-        };
-
-        self.cache.insert(crs_str.to_string(), result.clone());
-        Ok(result)
-    }
+/// Returns the [`CoordinateReferenceSystem::to_crs_string`] form — an
+/// `authority:code` stays compact, while a PROJJSON/WKT definition is preserved
+/// in full rather than collapsed to its embedded authority code, so no
+/// information is lost on the way in. Returns `None` for `"0"`, `""`, or CRS
+/// strings that deserialize to `None`.
+///
+/// Parsing is memoized by [`deserialize_crs`]'s thread-local cache, so this is
+/// cheap to call per row. The "full definition" guarantee is semantic, not
+/// byte-for-byte: a PROJJSON re-serializes from its parsed tree, so object keys
+/// may reorder and whitespace normalize; it round-trips and compares equal.
+pub fn normalize_crs(crs_str: &str) -> Result<Option<String>> {
+    Ok(deserialize_crs(crs_str)?.map(|crs| crs.to_crs_string()))
 }
 
 /// Longitude/latitude CRS (WGS84)
@@ -291,11 +250,9 @@ impl PartialEq<dyn CoordinateReferenceSystem + Send + Sync>
     for dyn CoordinateReferenceSystem + Send + Sync
 {
     fn eq(&self, other: &Self) -> bool {
-        if LngLat::is_lnglat(self) && LngLat::is_lnglat(other) {
-            true
-        } else {
-            self.crs_equals(other)
-        }
+        // `crs_equals` is the single source of truth for CRS equality (including
+        // the lon/lat alias); the operator is a pure delegate.
+        self.crs_equals(other)
     }
 }
 
@@ -327,7 +284,25 @@ pub trait CoordinateReferenceSystem: Debug {
     /// authority_code `"EPSG:{srid}"`. Note that other SRID representations
     /// (e.g., GeoArrow, Parquet GEOMETRY/GEOGRAPHY) do not make any guarantees
     /// that an SRID comes from the EPSG authority.
-    fn srid(&self) -> Result<Option<u32>>;
+    ///
+    /// The default derives the SRID from [`to_authority_code`](Self::to_authority_code):
+    /// the lon/lat alias maps to 4326, an `EPSG:{code}` authority parses to its
+    /// code, and anything else is `None`. Implementers only need to override
+    /// this if they can supply an SRID without an authority code.
+    fn srid(&self) -> Result<Option<u32>> {
+        let Some(auth_code) = self.to_authority_code()? else {
+            return Ok(None);
+        };
+        if LngLat::is_authority_code_lnglat(&auth_code) {
+            return Ok(LngLat::srid());
+        }
+        match auth_code.split_once(':') {
+            Some((authority, code)) if authority.eq_ignore_ascii_case("EPSG") => {
+                Ok(code.parse().ok())
+            }
+            _ => Ok(None),
+        }
+    }
 
     /// Compute a CRS string representation
     ///
@@ -374,18 +349,6 @@ impl LngLat {
         Crs::Some(Arc::new(AuthorityCode {
             auth_code: "OGC:CRS84".to_string(),
         }))
-    }
-
-    pub fn is_lnglat(crs: &dyn CoordinateReferenceSystem) -> bool {
-        if let Ok(Some(auth_code)) = crs.to_authority_code() {
-            Self::is_authority_code_lnglat(&auth_code)
-        } else {
-            false
-        }
-    }
-
-    pub fn is_str_lnglat(string_value: &str) -> bool {
-        Self::is_authority_code_lnglat(string_value)
     }
 
     pub fn is_authority_code_lnglat(string_value: &str) -> bool {
@@ -452,13 +415,30 @@ impl AuthorityCode {
     }
 }
 
+/// Compare two authority codes, treating the lon/lat aliases
+/// (`EPSG:4326` and `OGC:CRS84`) as equal. This keeps the aliases equivalent
+/// for `crs_equals` now that `deserialize_crs` preserves them verbatim instead
+/// of folding `EPSG:4326` to `OGC:CRS84`.
+fn authority_codes_equal(a: &str, b: &str) -> bool {
+    a == b || (LngLat::is_authority_code_lnglat(a) && LngLat::is_authority_code_lnglat(b))
+}
+
 /// Implementation of an authority:code CoordinateReferenceSystem
 impl CoordinateReferenceSystem for AuthorityCode {
     /// Convert to a JSON string
+    ///
+    /// The lon/lat aliases (`EPSG:4326`/`OGC:CRS84`) canonicalize to `OGC:CRS84`
+    /// here so CRS metadata stays axis-order-explicit for GeoParquet/GeoArrow,
+    /// even though `to_crs_string` preserves the authority code verbatim.
     fn to_json(&self) -> String {
-        let mut result = String::with_capacity(self.auth_code.len() + 2);
+        let code = if LngLat::is_authority_code_lnglat(&self.auth_code) {
+            "OGC:CRS84"
+        } else {
+            &self.auth_code
+        };
+        let mut result = String::with_capacity(code.len() + 2);
         result.push('"');
-        result.push_str(&self.auth_code);
+        result.push_str(code);
         result.push('"');
         result
     }
@@ -471,22 +451,9 @@ impl CoordinateReferenceSystem for AuthorityCode {
     /// Check equality with another CoordinateReferenceSystem
     fn crs_equals(&self, other: &dyn CoordinateReferenceSystem) -> bool {
         match other.to_authority_code() {
-            Ok(Some(other_ac)) => other_ac == self.auth_code,
+            Ok(Some(other_ac)) => authority_codes_equal(&other_ac, &self.auth_code),
             _ => false,
         }
-    }
-
-    /// Get the SRID if authority is EPSG
-    fn srid(&self) -> Result<Option<u32>> {
-        if LngLat::is_authority_code_lnglat(&self.auth_code) {
-            return Ok(LngLat::srid());
-        }
-        if let Some(pos) = self.auth_code.find(':') {
-            if self.auth_code[..pos].eq_ignore_ascii_case("EPSG") {
-                return Ok(self.auth_code[pos + 1..].parse::<u32>().ok());
-            }
-        }
-        Ok(None)
     }
 
     /// Convert to a CRS string
@@ -582,27 +549,12 @@ impl CoordinateReferenceSystem for ProjJSON {
         if let (Ok(Some(auth_code)), Ok(Some(other_auth_code))) =
             (self.to_authority_code(), other.to_authority_code())
         {
-            auth_code == other_auth_code
+            authority_codes_equal(&auth_code, &other_auth_code)
         } else if let Ok(other_value) = serde_json::from_str::<Value>(&other.to_json()) {
             self.value == other_value
         } else {
             false
         }
-    }
-
-    fn srid(&self) -> Result<Option<u32>> {
-        let authority_code_opt = self.to_authority_code()?;
-        if let Some(authority_code) = authority_code_opt {
-            if LngLat::is_authority_code_lnglat(&authority_code) {
-                return Ok(LngLat::srid());
-            } else if let Some(colon_pos) = authority_code.find(':') {
-                if authority_code[..colon_pos].eq_ignore_ascii_case("EPSG") {
-                    return Ok(authority_code[colon_pos + 1..].parse::<u32>().ok());
-                }
-            }
-        }
-
-        Ok(None)
     }
 
     fn to_crs_string(&self) -> String {
@@ -963,5 +915,79 @@ mod test {
         .unwrap();
         let params = datum_ensemble.geographic_params().unwrap().unwrap();
         assert_eq!(params.spherical_radius(), 6371000.0);
+    }
+
+    #[test]
+    fn normalize_preserves_definition() {
+        // Empty / "0" -> no CRS.
+        assert_eq!(normalize_crs("0").unwrap(), None);
+        assert_eq!(normalize_crs("").unwrap(), None);
+
+        // An authority:code stays compact.
+        assert_eq!(
+            normalize_crs("EPSG:3857").unwrap().as_deref(),
+            Some("EPSG:3857")
+        );
+
+        // The lon/lat alias is kept verbatim (not folded to OGC:CRS84); the two
+        // still compare equal, but the user's input string is preserved.
+        assert_eq!(
+            normalize_crs("EPSG:4326").unwrap().as_deref(),
+            Some("EPSG:4326")
+        );
+        assert_eq!(
+            deserialize_crs("EPSG:4326").unwrap(),
+            deserialize_crs("OGC:CRS84").unwrap()
+        );
+
+        // A PROJJSON carrying an embedded authority id is preserved in full
+        // rather than collapsed to "EPSG:6318" — no information lost on input.
+        let normalized = normalize_crs(EPSG_6318_PROJJSON).unwrap().unwrap();
+        assert!(
+            normalized.contains("GeographicCRS"),
+            "expected full PROJJSON, got {normalized}"
+        );
+        assert_ne!(normalized, "EPSG:6318");
+        // It round-trips back to the same CRS.
+        assert_eq!(
+            deserialize_crs(&normalized).unwrap(),
+            deserialize_crs(EPSG_6318_PROJJSON).unwrap()
+        );
+
+        // A PROJJSON with no authority id: there's nothing to collapse to, so
+        // the full definition is the only faithful output. Round-trip equality
+        // here exercises ProjJSON::crs_equals' full-body comparison (not the
+        // authority-code short circuit), proving the definition survives
+        // re-serialization.
+        const NO_ID_PROJJSON: &str = r#"{"type":"GeographicCRS","name":"Custom","datum":{"type":"GeodeticReferenceFrame","name":"Custom datum","ellipsoid":{"name":"Custom","semi_major_axis":6378137,"inverse_flattening":298.257223563}},"coordinate_system":{"subtype":"ellipsoidal","axis":[{"name":"Geodetic latitude","abbreviation":"Lat","direction":"north","unit":"degree"},{"name":"Geodetic longitude","abbreviation":"Lon","direction":"east","unit":"degree"}]}}"#;
+        let normalized = normalize_crs(NO_ID_PROJJSON).unwrap().unwrap();
+        let from_normalized = deserialize_crs(&normalized).unwrap().unwrap();
+        let from_original = deserialize_crs(NO_ID_PROJJSON).unwrap().unwrap();
+        assert!(from_normalized.to_authority_code().unwrap().is_none());
+        assert!(from_normalized.crs_equals(from_original.as_ref()));
+    }
+
+    #[test]
+    fn lnglat_alias_preserved_in_string_canonical_in_metadata() {
+        // EPSG:4326 is preserved as the round-trippable string (to_crs_string),
+        // but the JSON metadata form (to_json) canonicalizes to OGC:CRS84 so
+        // GeoParquet/GeoArrow stay axis-order-explicit.
+        let crs = deserialize_crs("EPSG:4326").unwrap().unwrap();
+        assert_eq!(crs.to_crs_string(), "EPSG:4326");
+        assert_eq!(crs.to_json(), r#""OGC:CRS84""#);
+
+        // OGC:CRS84 is unchanged in both forms.
+        let crs84 = deserialize_crs("OGC:CRS84").unwrap().unwrap();
+        assert_eq!(crs84.to_crs_string(), "OGC:CRS84");
+        assert_eq!(crs84.to_json(), r#""OGC:CRS84""#);
+
+        // The two aliases still compare equal, and both report SRID 4326.
+        assert!(crs.crs_equals(crs84.as_ref()));
+        assert_eq!(crs.srid().unwrap(), Some(4326));
+
+        // A non-lnglat authority code is untouched in both forms.
+        let crs3857 = deserialize_crs("EPSG:3857").unwrap().unwrap();
+        assert_eq!(crs3857.to_crs_string(), "EPSG:3857");
+        assert_eq!(crs3857.to_json(), r#""EPSG:3857""#);
     }
 }

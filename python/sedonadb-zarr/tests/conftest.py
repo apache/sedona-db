@@ -51,8 +51,10 @@ def raster_con(zarr_group):
     Uses its own connection (not the shared module-level one) so the view
     doesn't leak into other tests.
     """
-    con = sedonadb.connect()
-    con.register(sedonadb_zarr.ZarrExtension())
-    df = con.read_format(sedonadb_zarr.Zarr(), f"file://{zarr_group}")
+    sd = sedonadb.connect()
+    sd.register(sedonadb_zarr.ZarrExtension())
+
+    df = sd.read(f"file://{zarr_group}", format="zarr")
     df.to_view("rasters")
-    return con
+
+    return sd

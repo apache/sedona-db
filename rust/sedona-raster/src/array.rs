@@ -20,6 +20,10 @@ use arrow_array::{
     StringViewArray, StructArray, UInt32Array,
 };
 use arrow_schema::ArrowError;
+use datafusion_common::cast::{
+    as_binary_array, as_binary_view_array, as_float64_array, as_int64_array, as_list_array,
+    as_string_array, as_string_view_array, as_struct_array, as_uint32_array,
+};
 
 use crate::traits::{BandRef, Bands, NdBuffer, RasterRef};
 use crate::view_entries::ViewEntry;
@@ -406,116 +410,45 @@ impl<'a> RasterStructArray<'a> {
     /// Returns an error if the array doesn't have the expected raster schema.
     #[inline]
     pub fn try_new(raster_array: &'a StructArray) -> Result<Self, ArrowError> {
-        // Helper macro for safe downcasting with descriptive errors
-        macro_rules! downcast {
-            ($array:expr, $type:ty, $field:expr) => {
-                $array.as_any().downcast_ref::<$type>().ok_or_else(|| {
-                    ArrowError::InvalidArgumentError(format!(
-                        "Raster schema mismatch: expected {} for field '{}'",
-                        stringify!($type),
-                        $field
-                    ))
-                })?
-            };
+        if raster_array.fields().len() != raster_indices::FIELD_COUNT {
+            return Err(ArrowError::SchemaError(
+                "Unexpected column count for raster array".to_string(),
+            ));
         }
 
         // Top-level fields
-        let crs_array = downcast!(
-            raster_array.column(raster_indices::CRS),
-            StringViewArray,
-            "crs"
-        );
-        let transform_list = downcast!(
-            raster_array.column(raster_indices::TRANSFORM),
-            ListArray,
-            "transform"
-        );
-        let transform_values = downcast!(transform_list.values(), Float64Array, "transform.values");
-        let spatial_dims_list = downcast!(
-            raster_array.column(raster_indices::SPATIAL_DIMS),
-            ListArray,
-            "spatial_dims"
-        );
-        let spatial_dims_values = downcast!(
-            spatial_dims_list.values(),
-            StringViewArray,
-            "spatial_dims.values"
-        );
-        let spatial_shape_list = downcast!(
-            raster_array.column(raster_indices::SPATIAL_SHAPE),
-            ListArray,
-            "spatial_shape"
-        );
-        let spatial_shape_values = downcast!(
-            spatial_shape_list.values(),
-            Int64Array,
-            "spatial_shape.values"
-        );
+        let crs_array = as_string_view_array(raster_array.column(raster_indices::CRS))?;
+        let transform_list = as_list_array(raster_array.column(raster_indices::TRANSFORM))?;
+        let transform_values = as_float64_array(transform_list.values())?;
+        let spatial_dims_list = as_list_array(raster_array.column(raster_indices::SPATIAL_DIMS))?;
+        let spatial_dims_values = as_string_view_array(spatial_dims_list.values())?;
+        let spatial_shape_list = as_list_array(raster_array.column(raster_indices::SPATIAL_SHAPE))?;
+        let spatial_shape_values = as_int64_array(spatial_shape_list.values())?;
 
         // Bands list and nested struct
-        let bands_list = downcast!(
-            raster_array.column(raster_indices::BANDS),
-            ListArray,
-            "bands"
-        );
-        let bands_struct = downcast!(bands_list.values(), StructArray, "bands.values");
+        let bands_list = as_list_array(raster_array.column(raster_indices::BANDS))?;
+        let bands_struct = as_struct_array(bands_list.values())?;
+
+        if bands_struct.fields().len() != band_indices::FIELD_COUNT {
+            return Err(ArrowError::SchemaError(
+                "Unexpected column count for band array".to_string(),
+            ));
+        }
 
         // Band-level fields
-        let band_name_array = downcast!(
-            bands_struct.column(band_indices::NAME),
-            StringArray,
-            "bands.name"
-        );
-        let band_dim_names_list = downcast!(
-            bands_struct.column(band_indices::DIM_NAMES),
-            ListArray,
-            "bands.dim_names"
-        );
-        let band_dim_names_values = downcast!(
-            band_dim_names_list.values(),
-            StringArray,
-            "bands.dim_names.values"
-        );
-        let band_source_shape_list = downcast!(
-            bands_struct.column(band_indices::SOURCE_SHAPE),
-            ListArray,
-            "bands.source_shape"
-        );
-        let band_source_shape_values = downcast!(
-            band_source_shape_list.values(),
-            Int64Array,
-            "bands.source_shape.values"
-        );
-        let band_datatype_array = downcast!(
-            bands_struct.column(band_indices::DATA_TYPE),
-            UInt32Array,
-            "bands.data_type"
-        );
-        let band_nodata_array = downcast!(
-            bands_struct.column(band_indices::NODATA),
-            BinaryArray,
-            "bands.nodata"
-        );
-        let band_view_list = downcast!(
-            bands_struct.column(band_indices::VIEW),
-            ListArray,
-            "bands.view"
-        );
-        let band_outdb_uri_array = downcast!(
-            bands_struct.column(band_indices::OUTDB_URI),
-            StringArray,
-            "bands.outdb_uri"
-        );
-        let band_outdb_format_array = downcast!(
-            bands_struct.column(band_indices::OUTDB_FORMAT),
-            StringViewArray,
-            "bands.outdb_format"
-        );
-        let band_data_array = downcast!(
-            bands_struct.column(band_indices::DATA),
-            BinaryViewArray,
-            "bands.data"
-        );
+        let band_name_array = as_string_array(bands_struct.column(band_indices::NAME))?;
+        let band_dim_names_list = as_list_array(bands_struct.column(band_indices::DIM_NAMES))?;
+        let band_dim_names_values = as_string_array(band_dim_names_list.values())?;
+        let band_source_shape_list =
+            as_list_array(bands_struct.column(band_indices::SOURCE_SHAPE))?;
+        let band_source_shape_values = as_int64_array(band_source_shape_list.values())?;
+        let band_datatype_array = as_uint32_array(bands_struct.column(band_indices::DATA_TYPE))?;
+        let band_nodata_array = as_binary_array(bands_struct.column(band_indices::NODATA))?;
+        let band_view_list = as_list_array(bands_struct.column(band_indices::VIEW))?;
+        let band_outdb_uri_array = as_string_array(bands_struct.column(band_indices::OUTDB_URI))?;
+        let band_outdb_format_array =
+            as_string_view_array(bands_struct.column(band_indices::OUTDB_FORMAT))?;
+        let band_data_array = as_binary_view_array(bands_struct.column(band_indices::DATA))?;
 
         Ok(Self {
             raster_array,

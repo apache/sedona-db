@@ -624,6 +624,18 @@ mod tests {
             serialize_edges_and_crs(&Edges::Spherical, &lnglat()),
             r#"{"edges":"spherical","crs":"OGC:CRS84"}"#
         );
+        // An EPSG:4326 type-CRS is canonicalized to OGC:CRS84 in metadata (so
+        // GeoArrow/GeoParquet stay axis-order-explicit), even though
+        // deserialize_crs now preserves the "EPSG:4326" string for round-trips.
+        assert_eq!(
+            serialize_edges_and_crs(&Edges::Planar, &deserialize_crs("EPSG:4326").unwrap()),
+            r#"{"crs":"OGC:CRS84"}"#
+        );
+        // A non-lnglat authority code is serialized verbatim.
+        assert_eq!(
+            serialize_edges_and_crs(&Edges::Planar, &deserialize_crs("EPSG:3857").unwrap()),
+            r#"{"crs":"EPSG:3857"}"#
+        );
     }
 
     #[test]

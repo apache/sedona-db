@@ -18,10 +18,12 @@
 """Zarr support for SedonaDB.
 
 ```python
-from sedonadb_zarr import Zarr
+import sedona.db
+from sedonadb_zarr import ZarrExtension
 
 sd = sedona.db.connect()
-sd.read_format(Zarr(), "file:///path/to/foo.zarr").show()
+sd.register(ZarrExtension())
+sd.read("file:///path/to/foo.zarr").show()
 ```
 
 Importing `sedonadb_zarr` is opt-in — applications that don't import
@@ -57,21 +59,22 @@ class ZarrExtension:
         if kwargs:
             raise ValueError("Registration options not supported for ZarrExtension")
 
-        # Register the Zarr() format as a FileFormatFactory for SQL support
-        sd.register(Zarr())
-
         # Register the ZarrRasterLoader
         sd.register(ZarrRasterLoader())
+
+        # Register the Zarr() format as a FileFormatFactory for SQL and .read(..., format="zarr")
+        sd.register(Zarr())
 
 
 class Zarr(ExternalFormatSpec):
     """`ExternalFormatSpec` for Zarr groups.
 
     This is registered automatically when registering the module with a
-    SedonaContext. Use with `sd.read_format(spec, uri)`:
+    SedonaContext. Use with `sd.read(uri, format=Zarr())` or format="zarr"
+    after registering the extension:
 
     ```python
-    sd.read_format(Zarr(), "file:///path/to/foo.zarr")
+    sd.read("file:///path/to/foo.zarr", format="zarr")
     ```
 
     Args:

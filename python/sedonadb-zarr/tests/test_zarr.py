@@ -41,9 +41,9 @@ def zarr_group(tmp_path):
     return tmp_path
 
 
-def test_format_spec_via_read_format(zarr_group):
+def test_format_spec_via_read(zarr_group):
     con = sedonadb.connect()
-    df = con.read_format(sedonadb_zarr.Zarr(), f"file://{zarr_group}")
+    df = con.read(f"file://{zarr_group}", format=sedonadb_zarr.Zarr())
     arrow_tab = df.to_arrow_table()
     assert arrow_tab.num_rows == 2
     assert arrow_tab.column_names == ["raster"]
@@ -92,7 +92,7 @@ def _zarr_with_attrs(tmp_path, group_attrs, *, dims=("y", "x")):
 def _envelope_bounds(con, path):
     """Read the single-chunk zarr and return RS_Envelope bounds of row 0."""
     shapely = pytest.importorskip("shapely")
-    df = con.read_format(sedonadb_zarr.Zarr(), f"file://{path}")
+    df = con.read(f"file://{path}", format=sedonadb_zarr.Zarr())
     raster = df.to_arrow_table()["raster"][0].as_py()
     wkt = (
         con.sql("SELECT ST_AsText(RS_Envelope($1)) AS wkt", params=(raster,))
@@ -175,7 +175,17 @@ def test_rs_envelope_honors_skew(tmp_path):
 def test_format_spec_with_arrays_option(zarr_group):
     con = sedonadb.connect()
     spec = sedonadb_zarr.Zarr().with_options({"arrays": ["temperature"]})
-    df = con.read_format(spec, f"file://{zarr_group}")
+
+    # Check via constructor options
+    df = con.read(f"file://{zarr_group}", format=spec)
+    assert df.to_arrow_table().num_rows == 2
+
+    # Check via read(..., options={...})
+    df = con.read(
+        f"file://{zarr_group}",
+        options={"arrays": ["temperature"]},
+        format=sedonadb_zarr.Zarr(),
+    )
     assert df.to_arrow_table().num_rows == 2
 
 
@@ -281,7 +291,7 @@ def test_dtype_mapping_roundtrips(tmp_path, numpy_dtype):
     arr[:] = np.ones((2, 2), dtype=numpy_dtype)
 
     con = sedonadb.connect()
-    df = con.read_format(sedonadb_zarr.Zarr(), f"file://{tmp_path}")
+    df = con.read(f"file://{tmp_path}", format=sedonadb_zarr.Zarr())
     tab = df.to_arrow_table()
     assert tab.num_rows == 2
 
