@@ -90,7 +90,7 @@ impl OptimizerRule for EnsureLoadedOptimizerRule {
         };
         // DF-22662: sync re-stamp UDF that re-applies the raster extension
         // type the async load drops at the physical layer.
-        let reraster_udf = crate::ensure_loaded_reraster::reraster_udf();
+        let reraster_udf = crate::restore_metadata::reraster_udf();
 
         // Type-check argument expressions against the merged schema of the
         // node's INPUTS, not the node's own (output) schema. For a
@@ -152,7 +152,7 @@ fn rewrite_expr_node(
     // Recursion guard. DF-22662: also skip the reraster re-stamp wrapper so
     // its inner rs_ensureloaded arg isn't reconsidered.
     let name = func_call.func.name();
-    if name == "rs_ensureloaded" || name == crate::ensure_loaded_reraster::RERASTER_NAME {
+    if name == "rs_ensureloaded" || name == crate::restore_metadata::RERASTER_NAME {
         return Ok(Transformed::no(expr));
     }
 
@@ -239,7 +239,7 @@ fn wrap_for_loading(
 /// back to matching `"rs_ensureloaded"`).
 fn is_loaded_wrap(expr: &Expr) -> bool {
     matches!(expr, Expr::ScalarFunction(sf)
-        if sf.func.name() == crate::ensure_loaded_reraster::RERASTER_NAME)
+        if sf.func.name() == crate::restore_metadata::RERASTER_NAME)
 }
 
 /// True if `expr` evaluates to a `SedonaType::Raster` under the given
@@ -333,7 +333,7 @@ mod tests {
     }
 
     fn rewrite(expr: Expr, schema: &Arc<DFSchema>, udf: &Arc<ScalarUDF>) -> Expr {
-        let reraster = crate::ensure_loaded_reraster::reraster_udf();
+        let reraster = crate::restore_metadata::reraster_udf();
         rewrite_expr_node(expr, schema, udf, &reraster)
             .unwrap()
             .data
@@ -398,7 +398,7 @@ mod tests {
         // not wrap it again.
         let schema = raster_schema_named("rast");
         let udf = fake_ensure_loaded_udf();
-        let reraster = crate::ensure_loaded_reraster::reraster_udf();
+        let reraster = crate::restore_metadata::reraster_udf();
         let already_wrapped = wrap_for_loading(col("rast"), &udf, &reraster);
         let call = Expr::ScalarFunction(ScalarFunction {
             func: needs_bytes_udf("rs_mock"),
