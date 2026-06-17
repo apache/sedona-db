@@ -228,7 +228,10 @@ impl AsyncScalarUDFImpl for RsEnsureLoaded {
     }
 
     async fn invoke_async_with_args(&self, args: ScalarFunctionArgs) -> Result<ColumnarValue> {
-        debug_assert_eq!(args.args.len(), 1);
+        if args.args.len() != 1 {
+            return sedona_internal_err!("RS_EnsureLoaded() expects a single argument");
+        }
+
         let input_array = args.args[0].to_array(args.number_rows)?;
         let registry = registry_handle_from_config(&args.config_options)?;
         let output = ensure_loaded(&input_array, |format| lookup_loader(&registry, format)).await?;

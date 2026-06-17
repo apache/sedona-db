@@ -128,11 +128,11 @@ impl ScalarUDFImpl for RestoreMetadata {
     }
 
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> Result<ColumnarValue> {
-        // Identity on the data; only the output field's metadata changes.
-        let Some(arg) = args.args.into_iter().next() else {
+        if args.args.len() != 1 {
             return sedona_internal_err!("sd_restore_metadata expects exactly one argument");
-        };
-        Ok(arg)
+        }
+
+        Ok(args.args[0].clone())
     }
 }
 
