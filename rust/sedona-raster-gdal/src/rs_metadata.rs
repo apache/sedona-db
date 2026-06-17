@@ -254,7 +254,7 @@ mod tests {
             band.set_no_data_value(Some(255.0)).unwrap();
 
             let raster_array = crate::utils::dataset_to_indb_raster(&dataset)?;
-            let raster_struct = RasterStructArray::new(&raster_array);
+            let raster_struct = RasterStructArray::try_new(&raster_array)?;
             let raster = raster_struct.get(0).unwrap();
             let provider = thread_local_provider(gdal).unwrap();
             let provider_dataset = provider.raster_ref_to_gdal(&raster).unwrap();
