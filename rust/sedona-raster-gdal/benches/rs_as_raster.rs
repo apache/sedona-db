@@ -54,7 +54,7 @@ fn raster_array(rows: usize) -> ArrayRef {
     if rows == 1 {
         Arc::new(raster)
     } else {
-        let raster_struct = RasterStructArray::new(&raster);
+        let raster_struct = RasterStructArray::try_new(&raster).unwrap();
         let raster_ref = raster_struct.get(0).unwrap();
         let mut builder = RasterBuilder::new(rows);
         for _ in 0..rows {
@@ -76,7 +76,7 @@ fn raster_array(rows: usize) -> ArrayRef {
 fn geometry_array(rows: usize) -> ArrayRef {
     let polygon = with_global_gdal(|_gdal| {
         let raster = base_raster();
-        let raster_struct = RasterStructArray::new(&raster);
+        let raster_struct = RasterStructArray::try_new(&raster).unwrap();
         let raster = raster_struct.get(0).unwrap();
         let md = raster.metadata();
         format!(
