@@ -28,7 +28,7 @@ kernels:
     - name: point
       type: geometry
       description: >
-        Point whose containing pixel is sampled (nearest pixel, no resampling).
+        The pixel that contains this point is sampled (no resampling).
         Reprojected into the raster CRS when both carry one.
   - returns: float64
     args:

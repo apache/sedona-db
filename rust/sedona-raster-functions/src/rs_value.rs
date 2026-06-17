@@ -24,10 +24,10 @@
 //! RS_Value(raster, colX, rowY, band)   -> Double
 //! ```
 //!
-//! Returns the value of the pixel the point falls in (nearest pixel, no
-//! resampling), or the value at the given 1-based grid cell. The result is
-//! `NULL` when the raster/arguments are null, the point/cell is out of bounds,
-//! or the value equals the band's nodata.
+//! Returns the value of the pixel that contains the point (no resampling), or
+//! the value at the given 1-based grid cell. The result is `NULL` when the
+//! raster/arguments are null, the point/cell is out of bounds, or the value
+//! equals the band's nodata.
 //!
 //! The function is tagged [`NEEDS_PIXELS_METADATA_KEY`], so the planner wraps
 //! its raster argument in `RS_EnsureLoaded`; by the time a kernel runs the band
@@ -45,7 +45,7 @@ use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::{CoordTrait, GeometryTrait, GeometryType, PointTrait};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_proj::transform::with_global_proj_engine;
-use sedona_raster::affine_transformation::to_raster_coordinate;
+use sedona_raster::affine_transformation::AffineMatrix;
 use sedona_raster::traits::{nodata_bytes_to_f64_lossless, RasterRef};
 use sedona_schema::crs::CrsRef;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
@@ -119,15 +119,16 @@ impl SedonaScalarKernel for RsValuePoint {
         // Reprojecting the point into the raster CRS needs a PROJ engine.
         with_global_proj_engine(|engine| {
             executor.execute_raster_wkb_crs_void(|raster_opt, wkb_opt, point_crs| {
-                let band_num = next_band(&mut band_iter);
-
-                let (raster, point_wkb) = match (raster_opt, wkb_opt) {
-                    (Some(raster), Some(point_wkb)) => (raster, point_wkb),
-                    _ => {
-                        builder.append_null();
-                        return Ok(());
-                    }
-                };
+                let (raster, point_wkb, band_num) =
+                    match (raster_opt, wkb_opt, next_band(&mut band_iter)) {
+                        (Some(raster), Some(point_wkb), Some(band_num)) => {
+                            (raster, point_wkb, band_num)
+                        }
+                        _ => {
+                            builder.append_null();
+                            return Ok(());
+                        }
+                    };
 
                 // Bring the point into the raster's CRS. A reprojection only
                 // happens when both sides carry a (differing) CRS; otherwise
@@ -138,8 +139,13 @@ impl SedonaScalarKernel for RsValuePoint {
                 let wkb = reprojected.as_deref().unwrap_or(point_wkb);
 
                 let (x, y) = read_point_xy(wkb)?;
-                let (col, row) = to_raster_coordinate(raster, x, y)
+                // Floor (not truncate toward zero) so a point just outside the
+                // top/left edge maps to a negative index and is rejected as out
+                // of bounds, rather than truncating to 0 and sampling an edge pixel.
+                let (raster_x, raster_y) = AffineMatrix::from_metadata(&raster.metadata())
+                    .inv_transform(x, y)
                     .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
+                let (col, row) = (raster_x.floor() as i64, raster_y.floor() as i64);
 
                 match sample_pixel(raster, col, row, band_num)? {
                     Some(value) => builder.append_value(value),
@@ -220,8 +226,8 @@ impl SedonaScalarKernel for RsValueGrid {
             let row = row_iter.next().flatten();
             let band_num = next_band(&mut band_iter);
 
-            match (raster_opt, col, row) {
-                (Some(raster), Some(col), Some(row)) => {
+            match (raster_opt, col, row, band_num) {
+                (Some(raster), Some(col), Some(row), Some(band_num)) => {
                     // 1-based grid coordinates -> 0-based pixel indices.
                     match sample_pixel(raster, col as i64 - 1, row as i64 - 1, band_num)? {
                         Some(value) => builder.append_value(value),
@@ -237,15 +243,17 @@ impl SedonaScalarKernel for RsValueGrid {
     }
 }
 
-/// Advance a band-number iterator one row, returning a clamped 1-based band
-/// number. Defaults to band 1 when the argument is absent or null and clamps
-/// non-positive inputs up to 1, matching the legacy behaviour.
+/// Advance the optional band-number iterator one row, yielding the 1-based band
+/// to sample. A missing band argument defaults to band 1; a NULL band element
+/// returns `None`, which the caller propagates to a NULL result. Band 0 and
+/// negative values map to 0 so [`Bands::band`](sedona_raster::traits::Bands::band)
+/// rejects them as not 1-based rather than being silently coerced.
 fn next_band(
     band_iter: &mut Option<arrow_array::iterator::ArrayIter<&arrow_array::Int32Array>>,
-) -> usize {
+) -> Option<usize> {
     match band_iter.as_mut() {
-        Some(iter) => iter.next().flatten().unwrap_or(1).max(1) as usize,
-        None => 1,
+        None => Some(1),
+        Some(iter) => iter.next().flatten().map(|b| b.max(0) as usize),
     }
 }
 
@@ -312,16 +320,15 @@ fn sample_pixel(
         .bands()
         .band(band_num)
         .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
+
+    // 2-D only: the band must be a recognized spatial (y, x) grid, not just any
+    // two-axis band (e.g. (time, band) would have len 2 but no spatial meaning).
+    if !band.is_spatial_2d() {
+        return exec_err!("RS_Value supports 2-D rasters only; band is not a 2-D (y, x) grid");
+    }
     let buffer = band
         .nd_buffer()
         .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
-
-    if buffer.shape.len() != 2 {
-        return exec_err!(
-            "RS_Value supports 2-D rasters only; band has {} dimensions",
-            buffer.shape.len()
-        );
-    }
     let (height, width) = (buffer.shape[0], buffer.shape[1]);
     if row < 0 || row >= height || col < 0 || col >= width {
         return Ok(None);
@@ -339,6 +346,10 @@ fn sample_pixel(
         exec_datafusion_err!("RS_Value: pixel is out of the band's buffer bounds")
     })?;
 
+    // Decode the pixel to f64. The lossless converter errors (rather than
+    // silently rounding) on Int64/UInt64 values beyond f64's exact-integer
+    // range (2^53) — RS_Value returns a Double, so such a pixel can't be
+    // represented faithfully; failing loudly is preferred over a wrong value.
     let value = nodata_bytes_to_f64_lossless(bytes, &buffer.data_type)
         .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
 
@@ -357,11 +368,16 @@ fn sample_pixel(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arrow_array::{Array, Float64Array};
     use datafusion_expr::ScalarUDF;
     use sedona_raster::array::RasterStructArray;
-    use sedona_schema::datatypes::RASTER;
+    use sedona_schema::crs::lnglat;
+    use sedona_schema::datatypes::{Edges, RASTER};
     use sedona_schema::raster::BandDataType;
+    use sedona_testing::create::create_array as create_geom_array;
     use sedona_testing::raster_spec::RasterSpec;
+    use sedona_testing::rasters::generate_test_rasters;
+    use sedona_testing::testers::ScalarUdfTester;
 
     /// Resolve a single `RasterRefImpl` from a one-row spec for direct
     /// `sample_pixel` exercise.
@@ -452,10 +468,116 @@ mod tests {
     }
 
     #[test]
+    fn band_zero_errors() {
+        // Band 0 is not coerced to band 1 — it surfaces as a 1-based error.
+        let spec = RasterSpec::d2(2, 1).band_values(&[1u8, 2]);
+        let err = sample(spec, 0, 0, 0).unwrap_err().to_string();
+        assert!(err.contains("1-based"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn nan_nodata_pixel_is_none() {
+        // A float band whose nodata is NaN: a NaN pixel reads as NULL (NaN != NaN
+        // makes the `==` check insufficient), a normal pixel reads as its value.
+        let spec = RasterSpec::d2(2, 1)
+            .band_values(&[f64::NAN, 1.0])
+            .nodata(f64::NAN);
+        assert_eq!(sample(spec.clone(), 0, 0, 1).unwrap(), None);
+        assert_eq!(sample(spec, 1, 0, 1).unwrap(), Some(1.0));
+    }
+
+    #[test]
     fn non_2d_band_errors() {
         // A band with a leading non-spatial dimension is rejected.
         let spec = RasterSpec::nd(&["time", "y", "x"], &[2, 2, 1]).band(BandDataType::UInt8);
         let err = sample(spec, 0, 0, 1).unwrap_err().to_string();
         assert!(err.contains("2-D"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn point_crs_mismatch_errors() {
+        let udf: ScalarUDF = rs_value_udf().into();
+
+        // Raster has a CRS (generate_test_rasters sets OGC:CRS84), point does not.
+        let geom_type = SedonaType::Wkb(Edges::Planar, None);
+        let tester = ScalarUdfTester::new(udf.clone(), vec![RASTER, geom_type.clone()]);
+        let rasters = generate_test_rasters(1, None).unwrap();
+        let geoms = create_geom_array(&[Some("POINT (2.1 2.6)")], &geom_type);
+        let err = tester
+            .invoke_arrays(vec![Arc::new(rasters), geoms])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("raster has a CRS but the point does not"),
+            "unexpected error: {err}"
+        );
+
+        // Point has a CRS, raster does not.
+        let geom_type = SedonaType::Wkb(Edges::Planar, lnglat());
+        let tester = ScalarUdfTester::new(udf, vec![RASTER, geom_type.clone()]);
+        let rasters = RasterSpec::d2(2, 2)
+            .band(BandDataType::UInt8)
+            .crs(None)
+            .build();
+        let geoms = create_geom_array(&[Some("POINT (0 0)")], &geom_type);
+        let err = tester
+            .invoke_arrays(vec![Arc::new(rasters), geoms])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("point has a CRS but the raster does not"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn non_point_geometry_errors() {
+        let udf: ScalarUDF = rs_value_udf().into();
+        let geom_type = SedonaType::Wkb(Edges::Planar, lnglat());
+        let tester = ScalarUdfTester::new(udf, vec![RASTER, geom_type.clone()]);
+        let rasters = generate_test_rasters(1, None).unwrap();
+        let geoms = create_geom_array(&[Some("LINESTRING (0 0, 1 1)")], &geom_type);
+        let err = tester
+            .invoke_arrays(vec![Arc::new(rasters), geoms])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("expects a Point geometry"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn point_just_outside_top_edge_is_none() {
+        // North-up raster: origin (0, 10), 1x1 pixels (geotransform
+        // [c, a, b, f, d, e] = [0, 1, 0, 10, 0, -1]), so world y decreases down
+        // the rows. A point at y = 10.5 is just *above* the top edge: its pixel
+        // row is -0.5, which must floor to -1 (out of bounds -> NULL), not
+        // truncate toward zero to 0 (the top row).
+        let udf: ScalarUDF = rs_value_udf().into();
+        let geom_type = SedonaType::Wkb(Edges::Planar, lnglat());
+        let tester = ScalarUdfTester::new(udf, vec![RASTER, geom_type.clone()]);
+        let raster = || {
+            RasterSpec::d2(2, 2)
+                .band_values(&[1u8, 2, 3, 4])
+                .transform([0.0, 1.0, 0.0, 10.0, 0.0, -1.0])
+                .build()
+        };
+
+        // Just above the top edge -> NULL.
+        let geoms = create_geom_array(&[Some("POINT (0.5 10.5)")], &geom_type);
+        let result = tester
+            .invoke_arrays(vec![Arc::new(raster()), geoms])
+            .unwrap();
+        let arr = result.as_any().downcast_ref::<Float64Array>().unwrap();
+        assert!(arr.is_null(0), "point above the top edge should be NULL");
+
+        // Just inside the top row -> the top-left value (1).
+        let geoms = create_geom_array(&[Some("POINT (0.5 9.5)")], &geom_type);
+        let result = tester
+            .invoke_arrays(vec![Arc::new(raster()), geoms])
+            .unwrap();
+        let arr = result.as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_eq!(arr.value(0), 1.0);
     }
 }

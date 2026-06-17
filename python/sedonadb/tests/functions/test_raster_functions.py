@@ -124,6 +124,7 @@ def test_rs_ensureloaded(con, sedona_testing):
         ("RS_Value(raster, 65, 1)", None),  # colX past the width (64)
         ("RS_Value(raster, 1, 33)", None),  # rowY past the height (32)
         ("RS_Value(raster, 0, 1)", None),  # colX 0 -> off the left edge
+        ("RS_Value(raster, 2, 1, CAST(NULL AS INT))", None),  # NULL band -> NULL
     ],
 )
 def test_rs_value_grid(raster_con, expr, expected):
