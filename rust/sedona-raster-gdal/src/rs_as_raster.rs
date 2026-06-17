@@ -586,7 +586,7 @@ where
                 .ok_or_else(|| {
                     sedona_internal_datafusion_err!("Expected StructArray for raster data")
                 })?;
-            let raster_array = RasterStructArray::new(raster_struct);
+            let raster_array = RasterStructArray::try_new(raster_struct)?;
 
             for i in 0..num_iterations {
                 if raster_array.is_null(i) {
@@ -600,7 +600,7 @@ where
             Ok(())
         }
         ColumnarValue::Scalar(ScalarValue::Struct(raster_struct)) => {
-            let raster_array = RasterStructArray::new(raster_struct.as_ref());
+            let raster_array = RasterStructArray::try_new(raster_struct.as_ref())?;
             let raster = if raster_array.is_null(0) {
                 None
             } else {
@@ -660,7 +660,7 @@ mod tests {
 
     fn load_reference_raster() -> RasterMetadata {
         let raster_array = reference_raster_spec().build();
-        let raster_struct = RasterStructArray::new(&raster_array);
+        let raster_struct = RasterStructArray::try_new(&raster_array).unwrap();
         raster_struct.get(0).unwrap().metadata()
     }
 
@@ -681,7 +681,7 @@ mod tests {
     fn test_rs_as_raster_use_reference_extent() {
         let raster_array = reference_raster_spec().build();
         with_gdal(|gdal| {
-            let raster_struct = RasterStructArray::new(&raster_array);
+            let raster_struct = RasterStructArray::try_new(&raster_array).unwrap();
             let raster = raster_struct.get(0).unwrap();
             let md = raster.metadata();
 
@@ -719,7 +719,7 @@ mod tests {
     fn test_rs_as_raster_use_geometry_extent() {
         let raster_array = reference_raster_spec().build();
         with_gdal(|gdal| {
-            let raster_struct = RasterStructArray::new(&raster_array);
+            let raster_struct = RasterStructArray::try_new(&raster_array).unwrap();
             let raster = raster_struct.get(0).unwrap();
             let md = raster.metadata();
 
