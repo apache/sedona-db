@@ -144,7 +144,7 @@ mod tests {
     use datafusion_expr::async_udf::{AsyncScalarUDF, AsyncScalarUDFImpl};
     use datafusion_expr::expr_schema::ExprSchemable;
     use datafusion_expr::{
-        ColumnarValue, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDF, Signature, Volatility, col
+        col, ColumnarValue, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDF, Signature, Volatility,
     };
 
     /// A fake async UDF for testing.

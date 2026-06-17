@@ -47,25 +47,12 @@ use sedona_common::sedona_internal_err;
 /// Registry/UDF name of the metadata restoration helper.
 pub const RESTORE_METADATA_NAME: &str = "sd_restore_metadata";
 
-/// Registry/UDF name of the metadata restoration helper.
-pub const RERASTER_NAME: &str = "sd_restore_metadata";
-
 /// Build the sync metadata-restore UDF with the given metadata map. The rule
 /// constructs one per rewrite, embedding the metadata that should be stamped
 /// onto the output field. `Stable` volatility so CSE can deduplicate identical
 /// `sd_restore_metadata(...)` subtrees.
 pub fn restore_metadata_udf(metadata: HashMap<String, String>) -> Arc<ScalarUDF> {
     Arc::new(ScalarUDF::new_from_impl(RestoreMetadata::new(metadata)))
-}
-
-pub fn reraster_udf() -> Arc<ScalarUDF> {
-    restore_metadata_udf(
-        [(
-            "ARROW:extension:name".to_string(),
-            "sedona.raster".to_string(),
-        )]
-        .into(),
-    )
 }
 
 /// Sync identity UDF that forces the stored metadata onto its argument's
