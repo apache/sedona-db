@@ -362,7 +362,7 @@ def test_nested_expression_exec(con):
 
     t = con.create_data_frame(table)
     pd.testing.assert_frame_equal(
-        t.select(array0=t.array_col[1]).to_pandas(), pd.DataFrame({"array0": [1, 4]})
+        t.select(array0=t.array_col[0]).to_pandas(), pd.DataFrame({"array0": [1, 4]})
     )
 
     pd.testing.assert_frame_equal(
@@ -371,5 +371,6 @@ def test_nested_expression_exec(con):
 
     pd.testing.assert_frame_equal(
         t.select(foofy=t.map_col["foofy"]).to_pandas(),
-        pd.DataFrame({"foofy": ["foggy", "groggy"]}, dtype="object"),
+        pd.DataFrame({"foofy": ["foggy", "groggy"]}),
+        check_dtype=False,
     )

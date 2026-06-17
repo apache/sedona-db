@@ -334,11 +334,12 @@ class Expr:
             # Python uses 0-based indexing; SQL uses 1-based indexing
             return self.funcs.array_extract(key + 1)
         elif isinstance(key, str):
-            return self.funcs.map_extract(key)
+            # get_field works for both structs and maps, returning a scalar
+            return self.funcs.get_field(key)
         else:
             raise ValueError(
                 "Expr keys are not yet supported. Use .funcs.array_extract() "
-                "or .funcs.map_extract() to extract with an expression key."
+                "or .funcs.get_field() to extract with an expression key."
             )
 
     def __getattr__(self, name: str) -> "Expr":
