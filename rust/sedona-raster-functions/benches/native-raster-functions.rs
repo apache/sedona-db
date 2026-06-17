@@ -214,6 +214,38 @@ fn criterion_benchmark(c: &mut Criterion) {
         ),
     );
 
+    // RS_Value(raster, colX, rowY) - grid sampling
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
+        "rs_value",
+        BenchmarkArgs::ArrayScalarScalar(Raster(64, 64), Int32(1, 64), Int32(1, 64)),
+    );
+    // RS_Value(raster, point)
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
+        "rs_value",
+        BenchmarkArgs::ArrayArray(
+            Raster(64, 64),
+            Transformed(Box::new(Point), sd_apply_default_crs_udf().into()),
+        ),
+    );
+    // RS_Value(raster, point, band)
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
+        "rs_value",
+        BenchmarkArgs::ArrayArrayScalar(
+            Raster(64, 64),
+            Transformed(Box::new(Point), sd_apply_default_crs_udf().into()),
+            Int32(1, 2),
+        ),
+    );
+
     // RS_Intersects(raster, geometry) - point
     benchmark::scalar(
         c,
