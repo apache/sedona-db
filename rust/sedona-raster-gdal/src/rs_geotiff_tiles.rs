@@ -428,9 +428,7 @@ fn list_geotiffs(path: &str, recursive: bool) -> Result<Vec<String>> {
 
     let recurse_depth = if recursive { -1 } else { 0 };
     let list_result = with_gdal(|gdal| {
-        let separator = gdal
-            .vsi_directory_separator(&normalized_path)
-            .map_err(convert_gdal_err)?;
+        let separator = directory_separator_for_path(&normalized_path);
         let mut dir = gdal
             .open_vsi_dir(&normalized_path, recurse_depth, None)
             .map_err(convert_gdal_err)?;
@@ -445,7 +443,7 @@ fn list_geotiffs(path: &str, recursive: bool) -> Result<Vec<String>> {
                 continue;
             }
 
-            let child_path = join_vsi_path(&normalized_path, &separator, &entry.name);
+            let child_path = join_vsi_path(&normalized_path, separator, &entry.name);
             if is_geotiff_path_str(&child_path) {
                 out.push(child_path);
             }
@@ -461,6 +459,16 @@ fn list_geotiffs(path: &str, recursive: bool) -> Result<Vec<String>> {
             exec_err!("rs_geotiff_tiles(): failed to open GeoTIFF file: {path}")
         }
         Err(_) => exec_err!("rs_geotiff_tiles(): path is not a GeoTIFF file or directory: {path}"),
+    }
+}
+
+fn directory_separator_for_path(path: &str) -> &'static str {
+    if path.starts_with("/vsi") || path.contains("://") {
+        "/"
+    } else if path.contains('\\') {
+        "\\"
+    } else {
+        "/"
     }
 }
 
@@ -581,6 +589,11 @@ mod tests {
         assert!(is_geotiff_path_str("https://host/data.tif?token=abc#f"));
         assert!(!is_geotiff_path_str("/tmp/a.txt"));
         assert!(!is_geotiff_path_str("/tmp/a"));
+
+        assert_eq!(directory_separator_for_path("/vsis3/bucket/prefix"), "/");
+        assert_eq!(directory_separator_for_path("https://host/data.tif"), "/");
+        assert_eq!(directory_separator_for_path(r"C:\data\dir"), r"\");
+        assert_eq!(directory_separator_for_path("/tmp/data"), "/");
     }
 
     #[tokio::test]
