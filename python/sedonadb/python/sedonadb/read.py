@@ -102,10 +102,13 @@ class Read:
         # If the format is a Python object, call with_options() on the Python objects
         # to eliminate the serialization that would otherwise happen
         if isinstance(format, ExternalFormatSpec):
+            if options:
+                format = format.with_options(options)
+
             return DataFrame(
                 self._ctx,
                 self._ctx._impl.read_external_format(
-                    format.with_options(options),
+                    format,
                     table_paths,
                     check_extension,
                     None if partitioning is None else list(partitioning),
@@ -140,8 +143,13 @@ class Read:
             )
         elif format == "parquet":
             options = options.copy()
+
             geometry_columns = options.pop("geometry_columns", None)
+            if geometry_columns is not None and not isinstance(geometry_columns, str):
+                geometry_columns = json.dumps(geometry_columns)
+
             validate = options.pop("validate", False)
+
             return DataFrame(
                 self._ctx,
                 self._ctx._impl.read_parquet(
@@ -240,9 +248,7 @@ class Read:
         if options is None:
             options = {}
 
-        if geometry_columns is not None and not isinstance(geometry_columns, str):
-            geometry_columns = json.dumps(geometry_columns)
-
+        options = options.copy()
         options["geometry_columns"] = geometry_columns
         options["validate"] = validate
         return self(
@@ -326,20 +332,17 @@ class Read:
         self._registered_formats[format.lower()] = spec
 
     def _guess_format(self, table_paths):
-        """A heuristic to guess a format when not provided. This doesn't handle
-        URL suffixes like query strings or fragments (these types of inputs should
-        use an explicit format)."""
+        """A heuristic to guess a format when not provided."""
         if not table_paths:
             raise ValueError("Can't guess table paths from empty path list")
 
         formats = set()
         for path in table_paths:
-            try:
-                suffix = Path(path).suffix
-                if suffix:
-                    formats.add(suffix.strip(".").lower())
-            except ValueError:
-                pass
+            # Strip query strings and fragments before extracting suffix
+            path = path.split("?")[0].split("#")[0]
+            suffix = Path(path).suffix.strip(".").lower()
+            if suffix:
+                formats.add(suffix)
 
         if not formats:
             raise ValueError(
