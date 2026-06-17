@@ -49,7 +49,9 @@ def test_read_guess_format(con):
     assert read._guess_format(["/a.parquet", "/b.parquet"]) == "parquet"
 
     # URLs with query strings are handled correctly
-    assert read._guess_format(["https://example.com/file.parquet?token=abc"]) == "parquet"
+    assert (
+        read._guess_format(["https://example.com/file.parquet?token=abc"]) == "parquet"
+    )
 
     # URLs with fragments are handled correctly
     assert read._guess_format(["https://example.com/file.fgb#section"]) == "fgb"
