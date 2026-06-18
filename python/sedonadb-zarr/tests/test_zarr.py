@@ -224,9 +224,10 @@ def test_zarr_loader_supports_format():
 def test_rs_ensure_loaded_with_zarr(tmp_path, numpy_dtype):
     zarr = pytest.importorskip("zarr", minversion="3.0")
 
-    # Tune these for coverage vs speed tradeoff
-    width, height = 512 * 16, 512 * 16
-    chunk_width, chunk_height = 512, 512
+    # Tune these for coverage vs speed tradeoff, but ensure a reasonable
+    # number of tiles to test a larger degree of concurrency
+    width, height = 512, 512
+    chunk_width, chunk_height = 16, 16
 
     # Create a Zarr array with random data
     rng = np.random.default_rng(seed=836)
