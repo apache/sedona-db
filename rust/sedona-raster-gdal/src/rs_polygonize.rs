@@ -31,7 +31,6 @@ use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_gdal::gdal::Gdal;
 use sedona_gdal::gdal_dyn_bindgen::{OGRFieldType, OGRwkbGeometryType};
-use sedona_gdal::mem::MemDatasetBuilder;
 use sedona_raster::array::RasterRefImpl;
 use sedona_raster::traits::RasterRef;
 use sedona_raster_functions::RasterExecutor;
@@ -171,63 +170,68 @@ fn polygonize_raster(
         .rasterband(band_num)
         .map_err(|e| exec_datafusion_err!("Failed to get band {}: {}", band_num, e))?;
 
-    let mem_ds = unsafe {
-        MemDatasetBuilder::new(0, 0)
-            .build(gdal)
-            .map_err(|e| exec_datafusion_err!("Failed to create memory dataset: {e}"))?
-    };
+    let polygon_values = (|| {
+        let driver = gdal
+            .get_driver_by_name("Memory")
+            .map_err(|e| exec_datafusion_err!("Failed to get Memory driver: {e}"))?;
+        let vector_ds = driver
+            .create_vector_only("")
+            .map_err(|e| exec_datafusion_err!("Failed to create vector dataset: {e}"))?;
 
-    let spatial_ref = gdal_dataset.spatial_ref().ok();
-    let mut layer = mem_ds
-        .create_layer(sedona_gdal::dataset::LayerOptions {
-            name: "polygons",
-            srs: spatial_ref.as_ref(),
-            ty: OGRwkbGeometryType::wkbPolygon,
-            options: None,
-        })
-        .map_err(|e| exec_datafusion_err!("Failed to create layer: {e}"))?;
+        let spatial_ref = gdal_dataset.spatial_ref().ok();
+        let mut layer = vector_ds
+            .create_layer(sedona_gdal::dataset::LayerOptions {
+                name: "polygons",
+                srs: spatial_ref.as_ref(),
+                ty: OGRwkbGeometryType::wkbPolygon,
+                options: None,
+            })
+            .map_err(|e| exec_datafusion_err!("Failed to create layer: {e}"))?;
 
-    let field_defn = gdal
-        .create_field_defn("value", OGRFieldType::OFTReal)
-        .map_err(|e| exec_datafusion_err!("Failed to create field definition: {e}"))?;
-    layer
-        .create_field(&field_defn)
-        .map_err(|e| exec_datafusion_err!("Failed to add field to layer: {e}"))?;
+        let field_defn = gdal
+            .create_field_defn("value", OGRFieldType::OFTReal)
+            .map_err(|e| exec_datafusion_err!("Failed to create field definition: {e}"))?;
+        layer
+            .create_field(&field_defn)
+            .map_err(|e| exec_datafusion_err!("Failed to add field to layer: {e}"))?;
 
-    gdal.polygonize(
-        &raster_band,
-        None,
-        &layer,
-        0,
-        &sedona_gdal::raster::polygonize::PolygonizeOptions::default(),
-    )
-    .map_err(|e| exec_datafusion_err!("GDAL polygonize failed: {e}"))?;
+        gdal.polygonize(
+            &raster_band,
+            None,
+            &layer,
+            0,
+            &sedona_gdal::raster::polygonize::PolygonizeOptions::default(),
+        )
+        .map_err(|e| exec_datafusion_err!("GDAL polygonize failed: {e}"))?;
 
-    let mut polygon_values = Vec::new();
-    let mut value_field_idx: Option<i32> = None;
-    for feature in layer.features() {
-        let geom = feature
-            .geometry()
-            .ok_or_else(|| exec_datafusion_err!("Polygonize output feature missing geometry"))?;
-        let wkb = geom
-            .wkb()
-            .map_err(|e| exec_datafusion_err!("Failed to export geometry to WKB: {e}"))?;
+        let mut polygon_values = Vec::new();
+        let mut value_field_idx: Option<i32> = None;
+        for feature in layer.features() {
+            let geom = feature.geometry().ok_or_else(|| {
+                exec_datafusion_err!("Polygonize output feature missing geometry")
+            })?;
+            let wkb = geom
+                .wkb()
+                .map_err(|e| exec_datafusion_err!("Failed to export geometry to WKB: {e}"))?;
 
-        let idx = match value_field_idx {
-            Some(idx) => idx,
-            None => {
-                let idx = feature
-                    .field_index("value")
-                    .map_err(|e| exec_datafusion_err!("Missing 'value' field: {e}"))?;
-                value_field_idx = Some(idx);
-                idx
-            }
-        };
+            let idx = match value_field_idx {
+                Some(idx) => idx,
+                None => {
+                    let idx = feature
+                        .field_index("value")
+                        .map_err(|e| exec_datafusion_err!("Missing 'value' field: {e}"))?;
+                    value_field_idx = Some(idx);
+                    idx
+                }
+            };
 
-        polygon_values.push((wkb, feature.field_as_double(idx)));
-    }
+            polygon_values.push((wkb, feature.field_as_double(idx)));
+        }
 
-    Ok(polygon_values)
+        Ok::<_, datafusion_common::DataFusionError>(polygon_values)
+    })();
+
+    polygon_values
 }
 
 #[cfg(test)]
@@ -238,16 +242,40 @@ mod tests {
     use datafusion_common::cast::{as_list_array, as_struct_array};
     use datafusion_common::ScalarValue;
     use datafusion_expr::{ScalarUDF, ScalarUDFImpl};
+    use sedona_gdal::raster::types::Buffer;
     use sedona_raster::array::RasterStructArray;
     use sedona_schema::datatypes::RASTER;
     use sedona_testing::raster_spec::RasterSpec;
     use sedona_testing::testers::ScalarUdfTester;
+    use tempfile::tempdir;
 
     fn test_raster_spec() -> RasterSpec {
         RasterSpec::d2(3, 3)
             .transform([0.0, 1.0, 0.0, 3.0, 0.0, -1.0])
             .band_values(&[1u8, 1, 0, 1, 2, 2, 0, 2, 2])
             .nodata(255u8)
+    }
+
+    fn build_polygonize_test_raster() -> arrow_array::StructArray {
+        let tmp = tempdir().unwrap();
+        let path = tmp.path().join("polygonize.tif");
+        let path_str = path.to_string_lossy().to_string();
+
+        with_gdal(|gdal| {
+            let driver = gdal.get_driver_by_name("GTiff").unwrap();
+            let dataset = driver
+                .create_with_band_type::<u8>(&path_str, 3, 3, 1)
+                .unwrap();
+            dataset
+                .set_geo_transform(&[0.0, 1.0, 0.0, 3.0, 0.0, -1.0])
+                .unwrap();
+            let band = dataset.rasterband(1).unwrap();
+            band.set_no_data_value(Some(255.0)).unwrap();
+            let mut buffer = Buffer::new((3, 3), vec![1u8, 1, 0, 1, 2, 2, 0, 2, 2]);
+            band.write((0, 0), (3, 3), &mut buffer).unwrap();
+            crate::utils::dataset_to_indb_raster(&dataset)
+        })
+        .unwrap()
     }
 
     #[test]
@@ -277,7 +305,7 @@ mod tests {
     #[test]
     fn test_polygonize_raster() {
         let result = with_gdal(|gdal| {
-            let raster_array = test_raster_spec().build();
+            let raster_array = build_polygonize_test_raster();
             let raster_struct = RasterStructArray::try_new(&raster_array).unwrap();
             let raster = raster_struct.get(0).unwrap();
             polygonize_raster(gdal, &raster, 1)
@@ -328,14 +356,11 @@ mod tests {
         let tester = ScalarUdfTester::new(udf, vec![RASTER, SedonaType::Arrow(DataType::Int32)]);
 
         let band_array = Arc::new(Int32Array::from(vec![Some(1), None]));
+        let raster_array = ScalarValue::Struct(Arc::new(build_polygonize_test_raster()))
+            .to_array_of_size(2)
+            .unwrap();
         let result = tester
-            .invoke_arrays(vec![
-                Arc::new(sedona_testing::raster_spec::raster_array(vec![
-                    Some(test_raster_spec()),
-                    None,
-                ])),
-                band_array,
-            ])
+            .invoke_arrays(vec![raster_array, band_array])
             .unwrap();
         let list_array = as_list_array(&result).unwrap();
 
