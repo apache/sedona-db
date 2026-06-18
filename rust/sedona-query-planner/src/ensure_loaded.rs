@@ -32,7 +32,7 @@
 //! look `RS_EnsureLoaded` up from the [`FunctionRegistry`] rather than
 //! capturing an `Arc` at construction time. Because optimizer rules run
 //! to a fixpoint, the rewrite is idempotent: an argument already wrapped
-//! in `RS_EnsureLoaded` is left alone (see [`is_loaded_wrap`]).
+//! in `RS_EnsureLoaded` is left alone (see [`already_loaded`]).
 
 use std::sync::Arc;
 
@@ -53,6 +53,16 @@ use crate::restore_metadata::RESTORE_METADATA_NAME;
 /// which this crate can't depend on — keep the literal in sync with
 /// `sedona_raster_functions::rs_ensure_loaded::NEEDS_PIXELS_METADATA_KEY`.
 const NEEDS_PIXELS_METADATA_KEY: &str = "needs_pixels";
+
+/// `SedonaScalarUDF` metadata key marking a UDF whose returned raster is
+/// already fully materialised in-database. When a `needs_pixels` argument is
+/// itself such a call, the rule skips wrapping it: its result is already
+/// loaded, so an extra `RS_EnsureLoaded` would be redundant — and, being
+/// async, would nest inside the argument's own async wrap, which DataFusion
+/// cannot currently hoist (apache/datafusion#20031). Duplicated from
+/// `sedona_raster_functions` — keep in sync with
+/// `sedona_raster_functions::rs_ensure_loaded::RETURNS_BYTES_METADATA_KEY`.
+const RETURNS_BYTES_METADATA_KEY: &str = "returns_bytes";
 
 /// Logical optimizer rule wrapping raster arguments of `needs_bytes`
 /// UDFs with `RS_EnsureLoaded`. Stateless — the `RS_EnsureLoaded` UDF
@@ -181,9 +191,11 @@ fn rewrite_expr_node(
     let new_args: Vec<Expr> = args
         .into_iter()
         .map(|arg| {
-            // Idempotency guard: a fixpoint re-run sees the wrapped arg
-            // (still raster-typed); don't wrap it again.
-            if is_loaded_wrap(&arg) {
+            // Don't wrap an argument that already yields loaded bytes —
+            // whether it's an injected loader (idempotency across fixpoint
+            // passes) or a function that returns materialised bytes (avoids a
+            // redundant nested async wrap; apache/datafusion#20031).
+            if already_loaded(&arg) {
                 return arg;
             }
             if expr_is_raster(&arg, schema) {
@@ -215,23 +227,38 @@ fn wrap_for_loading(arg: Expr, ensure_loaded_udf: &Arc<ScalarUDF>) -> Expr {
     })
 }
 
-/// True if `expr` is already wrapped with `rs_ensureloaded`, looking
-/// through the wrappers that sit between this rule's fixpoint passes:
+/// True if `expr` already yields loaded (in-database) raster bytes, so the
+/// rule must not wrap it in `RS_EnsureLoaded`. Looks through aliases and the
+/// `sd_restore_metadata(...)` wrapper that [`WrapAsyncUdfRule`] stamps onto
+/// async calls between optimizer passes. Two reasons an argument is already
+/// loaded, unified here:
 ///
-/// - an alias, e.g. `rs_ensureloaded(rast) AS loaded`;
-/// - the `sd_restore_metadata(...)` wrapper that [`WrapAsyncUdfRule`]
-///   stamps onto the async `rs_ensureloaded` call. That rule runs between
-///   our passes, so on the next pass the argument is no longer a bare
-///   `rs_ensureloaded(...)` but `sd_restore_metadata(rs_ensureloaded(...))`.
-///   Without seeing through it the guard would re-inject another wrapper
-///   every pass, producing a tower of unresolved async calls.
-fn is_loaded_wrap(expr: &Expr) -> bool {
+/// - it is (or wraps) an injected `rs_ensureloaded` call — the idempotency
+///   guard that stops a fixpoint re-run from stacking loaders into a tower of
+///   unresolved async calls. `RS_EnsureLoaded` is matched by name because it
+///   is a plain async UDF, not a `SedonaScalarUDF` that could carry metadata.
+/// - it is a call to a function tagged [`RETURNS_BYTES_METADATA_KEY`] (e.g.
+///   `RS_DimToBand`), whose output is already materialised. Wrapping it would
+///   inject a redundant async `rs_ensureloaded` that nests inside the
+///   argument's own async wrap and can't be hoisted (apache/datafusion#20031).
+fn already_loaded(expr: &Expr) -> bool {
     match expr {
         Expr::ScalarFunction(sf) if sf.func.name() == "rs_ensureloaded" => true,
         Expr::ScalarFunction(sf) if sf.func.name() == RESTORE_METADATA_NAME => {
-            sf.args.first().is_some_and(is_loaded_wrap)
+            sf.args.first().is_some_and(already_loaded)
         }
-        Expr::Alias(alias) => is_loaded_wrap(&alias.expr),
+        Expr::ScalarFunction(sf) => sf
+            .func
+            .inner()
+            .as_any()
+            .downcast_ref::<SedonaScalarUDF>()
+            .is_some_and(|u| {
+                u.metadata()
+                    .get(RETURNS_BYTES_METADATA_KEY)
+                    .map(String::as_str)
+                    == Some("true")
+            }),
+        Expr::Alias(alias) => already_loaded(&alias.expr),
         _ => false,
     }
 }
@@ -284,6 +311,19 @@ mod tests {
         );
         let udf = SedonaScalarUDF::new(name, vec![kernel], Volatility::Immutable)
             .with_metadata(NEEDS_PIXELS_METADATA_KEY, "true");
+        Arc::new(ScalarUDF::new_from_impl(udf))
+    }
+
+    /// A raster-returning UDF that both reads pixels (`needs_bytes`) and
+    /// promises loaded output (`returns_bytes`) — like RS_DimToBand / RS_Slice.
+    fn returns_bytes_udf(name: &str) -> Arc<ScalarUDF> {
+        let kernel: ScalarKernelRef = SimpleSedonaScalarKernel::new_ref(
+            ArgMatcher::new(vec![ArgMatcher::is_raster()], SedonaType::Raster),
+            Arc::new(|_, _| unreachable!("stub kernel; not invoked at plan time")),
+        );
+        let udf = SedonaScalarUDF::new(name, vec![kernel], Volatility::Immutable)
+            .with_metadata(NEEDS_PIXELS_METADATA_KEY, "true")
+            .with_metadata(RETURNS_BYTES_METADATA_KEY, "true");
         Arc::new(ScalarUDF::new_from_impl(udf))
     }
 
@@ -342,7 +382,31 @@ mod tests {
         let Expr::ScalarFunction(ScalarFunction { args, .. }) = &out else {
             panic!("expected ScalarFunction, got {out:?}");
         };
-        assert!(is_loaded_wrap(&args[0]), "raster arg should be wrapped");
+        assert!(already_loaded(&args[0]), "raster arg should be wrapped");
+    }
+
+    #[test]
+    fn does_not_wrap_arg_that_returns_loaded_bytes() {
+        // Models RS_BandToDim(RS_DimToBand(rast)): the inner call already
+        // returns loaded bytes, so the outer needs_bytes call must NOT wrap it.
+        // Otherwise a redundant async rs_ensureloaded nests inside the inner
+        // call's own async wrap and DataFusion can't hoist it.
+        let schema = raster_schema_named("rast");
+        let udf = fake_ensure_loaded_udf();
+        let inner = Expr::ScalarFunction(ScalarFunction {
+            func: returns_bytes_udf("rs_inner"),
+            args: vec![col("rast")],
+        });
+        let outer = Expr::ScalarFunction(ScalarFunction {
+            func: needs_bytes_udf("rs_outer"),
+            args: vec![inner],
+        });
+        let out = rewrite(outer, &schema, &udf);
+        assert_eq!(
+            count_ensure_loaded(&out),
+            0,
+            "an argument that already returns loaded bytes must not be wrapped: {out:?}"
+        );
     }
 
     #[test]
@@ -560,7 +624,7 @@ mod tests {
             panic!("expected the projected expr to be a ScalarFunction");
         };
         assert!(
-            is_loaded_wrap(&args[0]),
+            already_loaded(&args[0]),
             "wrapped arg should be rs_ensureloaded: {:?}",
             args[0]
         );
