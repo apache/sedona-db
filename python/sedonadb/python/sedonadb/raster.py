@@ -99,7 +99,9 @@ def _build_raster(
         crs = gat.type_spec(crs=crs).crs.to_json()
     nodata_bytes = None
     if nodata is not None:
-        nodata_bytes = struct.pack("<" + BAND_DATA_TYPE_STRUCT_CHARS[data_type_id], nodata)
+        nodata_bytes = struct.pack(
+            "<" + BAND_DATA_TYPE_STRUCT_CHARS[data_type_id], nodata
+        )
 
     # spatial_dims / spatial_shape reference the trailing (y, x) axes, in x,y order.
     y_name, x_name = dim_names[-2], dim_names[-1]
@@ -125,7 +127,9 @@ def _build_raster(
         "spatial_shape": [width, height],
         "bands": [band],
     }
-    storage_type = pa.DataType._import_from_c_capsule(raster_type().__arrow_c_schema__())
+    storage_type = pa.DataType._import_from_c_capsule(
+        raster_type().__arrow_c_schema__()
+    )
     return Raster(pa.array([raster], type=storage_type))
 
 
