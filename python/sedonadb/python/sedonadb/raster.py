@@ -15,6 +15,9 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import struct
+import math
+
 from typing import List, Optional, TYPE_CHECKING, Tuple, Any, Iterable
 import geoarrow.types as gat
 import pyarrow as pa
@@ -230,9 +233,35 @@ class Band:
         return memoryview(view_scalar.as_buffer())
 
     @property
+    def source_data_size(self) -> int:
+        """The number of bytes consumed by soure_data if it were loaded"""
+        buffer_type_id = self._py_field("data_type")
+        buffer_type_char = BAND_DATA_TYPE_STRUCT_CHARS[buffer_type_id]
+        element_size = struct.calcsize(buffer_type_char)
+        return math.prod(self.source_shape) * element_size
+
+    @property
+    def data_size(self) -> int:
+        """The number of bytes consumed by data if it were loaded"""
+        buffer_type_id = self._py_field("data_type")
+        buffer_type_char = BAND_DATA_TYPE_STRUCT_CHARS[buffer_type_id]
+        element_size = struct.calcsize(buffer_type_char)
+        return math.prod(self.shape) * element_size
+
+    @property
     def data(self) -> memoryview:
         """The band data as a typed, shaped memoryview."""
-        if self.outdb_uri is not None:
+        buffer_type_id = self._py_field("data_type")
+        buffer_type_char = BAND_DATA_TYPE_STRUCT_CHARS[buffer_type_id]
+
+        # This is not quite right, but shapes that contain zeroes are not well
+        # supported by the memoryview yet. Callers should check data_size for
+        # empty handling with non-numpy views.
+        if self.data_size == 0:
+            return memoryview(b"")
+
+        source_data = self.source_data
+        if self.outdb_uri is not None and len(source_data) == 0:
             raise ValueError("Can't extract buffer from a reference to external data.")
 
         # When views are supported, we would need to calculate the striding
@@ -241,13 +270,14 @@ class Band:
         if views:
             raise NotImplementedError("Lazy views are not yet supported")
 
-        buffer_type_id = self._py_field("data_type")
-        buffer_type_char = BAND_DATA_TYPE_STRUCT_CHARS[buffer_type_id]
         return self.source_data.cast(buffer_type_char, self.shape)
 
     def to_numpy(self) -> "np.ndarray":
         """Convert this band's data to a numpy array."""
         import numpy as np
+
+        if self.data_size == 0:
+            return np.empty(self.shape, dtype=self.data_type)
 
         return np.array(self.data)
 

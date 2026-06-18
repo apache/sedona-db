@@ -17,12 +17,13 @@
 
 pub mod ensure_loaded;
 // DF-22662 workaround (remove when async UDF return-field metadata is
-// preserved upstream): see ensure_loaded_reraster.rs.
-mod ensure_loaded_reraster;
+// preserved upstream): see wrap_async_udf.rs.
 mod logical_plan_node;
 pub mod optimizer;
 pub mod probe_shuffle_exec;
 pub mod query_planner;
+mod restore_metadata;
 mod spatial_expr_utils;
 pub mod spatial_join_physical_planner;
 pub mod spatial_predicate;
+pub mod wrap_async_udf;
