@@ -30,7 +30,7 @@ use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;
 
 use crate::executor::RasterExecutor;
-use crate::rs_ensure_loaded::NEEDS_PIXELS_METADATA_KEY;
+use crate::rs_ensure_loaded::{NEEDS_PIXELS_METADATA_KEY, RETURNS_BYTES_METADATA_KEY};
 
 /// RS_Slice(raster, dim_name, index) -> Raster
 ///
@@ -43,6 +43,7 @@ pub fn rs_slice_udf() -> SedonaScalarUDF {
         Volatility::Immutable,
     )
     .with_metadata(NEEDS_PIXELS_METADATA_KEY, "true")
+    .with_metadata(RETURNS_BYTES_METADATA_KEY, "true")
 }
 
 #[derive(Debug)]
@@ -193,6 +194,7 @@ pub fn rs_slicerange_udf() -> SedonaScalarUDF {
         Volatility::Immutable,
     )
     .with_metadata(NEEDS_PIXELS_METADATA_KEY, "true")
+    .with_metadata(RETURNS_BYTES_METADATA_KEY, "true")
 }
 
 #[derive(Debug)]
