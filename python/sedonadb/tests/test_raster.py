@@ -49,6 +49,8 @@ def test_raster_accessors(con):
     assert b.source_shape == (32, 64)
     assert b.outdb_uri is None
     assert b.data_type == "uint8"
+    assert b.source_data_size == 32 * 64 * 1  # uint8 = 1 byte
+    assert b.data_size == 32 * 64 * 1
     assert repr(b) == "<Band uint8 32x64>"
 
     arr = b.to_numpy()
@@ -87,6 +89,8 @@ def test_raster_lazy():
     assert b.source_shape == (512, 1024)
     assert b.data_type == "float32"
     assert b.outdb_uri == "s3://bucket/path/to/data.zarr"
+    assert b.source_data_size == 512 * 1024 * 4  # float32 = 4 bytes
+    assert b.data_size == 512 * 1024 * 4
 
     # Lazy raster should have empty data buffer
     assert len(b.source_data) == 0
@@ -116,3 +120,22 @@ def test_raster_lazy_invalid_shape():
 
     with pytest.raises(ValueError, match="exactly two dimensions"):
         Raster.lazy(uri="s3://bucket/data.zarr", shape=(10, 20, 30), dtype="UInt8")
+
+
+def test_raster_lazy_zero_size():
+    """Test that a raster with zero-size shape returns an empty memoryview."""
+    r = Raster.lazy(
+        uri="s3://bucket/empty.zarr",
+        shape=(0, 64),
+        dtype="float32",
+    )
+
+    b = r.bands[0]
+    assert b.source_shape == (0, 64)
+    assert b.data_size == 0
+    assert b.source_data_size == 0
+    assert b.data == memoryview(b"")
+
+    arr = b.to_numpy()
+    assert arr.shape == (0, 64)
+    assert arr.dtype == "float32"
