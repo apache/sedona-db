@@ -70,4 +70,4 @@ def test_rs_ensureloaded_materializes_zarr_chunks(raster_con):
     ).to_arrow_table()
     for row in table["r"]:
         raster = row.as_py()
-        assert raster["bands"][0]["data"], "expected materialized band bytes"
+        assert raster.bands[0].data, "expected materialized band bytes"

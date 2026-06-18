@@ -254,8 +254,7 @@ def test_rs_ensure_loaded_with_zarr(tmp_path, numpy_dtype):
 
     # Verify the data was loaded
     assert loaded_tab.num_rows == 1
-    loaded_raster = Raster(loaded_tab["raster"].chunk(0))  # TODO: dropped metadata
-    loaded_band = loaded_raster.bands[0]
+    loaded_band = loaded_tab["raster"][0].as_py().bands[0]
 
     np.testing.assert_array_equal(loaded_band.to_numpy(), numpy_arr)
 
