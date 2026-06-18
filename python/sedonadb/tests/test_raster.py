@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import numpy as np
 import pytest
 
 from sedonadb.raster import Raster, RasterArray, RasterScalar, RasterType
@@ -49,6 +50,8 @@ def test_raster_accessors(con):
     assert b.source_shape == (32, 64)
     assert b.outdb_uri is None
     assert b.data_type == "uint8"
+    assert b.source_data_size == 32 * 64 * 1  # uint8 = 1 byte
+    assert b.data_size == 32 * 64 * 1
     assert repr(b) == "<Band uint8 32x64>"
 
     arr = b.to_numpy()
@@ -87,6 +90,8 @@ def test_raster_lazy():
     assert b.source_shape == (512, 1024)
     assert b.data_type == "float32"
     assert b.outdb_uri == "s3://bucket/path/to/data.zarr"
+    assert b.source_data_size == 512 * 1024 * 4  # float32 = 4 bytes
+    assert b.data_size == 512 * 1024 * 4
 
     # Lazy raster should have empty data buffer
     assert len(b.source_data) == 0
@@ -111,8 +116,89 @@ def test_raster_lazy_with_crs():
 
 
 def test_raster_lazy_invalid_shape():
-    with pytest.raises(ValueError, match="exactly two dimensions"):
+    # Fewer than two dimensions has no spatial (y, x) pair.
+    with pytest.raises(ValueError, match="at least two"):
         Raster.lazy(uri="s3://bucket/data.zarr", shape=(10,), dtype="UInt8")
 
-    with pytest.raises(ValueError, match="exactly two dimensions"):
+    # More than two dimensions is allowed, but every axis must be named.
+    with pytest.raises(ValueError, match="dim_names is required"):
         Raster.lazy(uri="s3://bucket/data.zarr", shape=(10, 20, 30), dtype="UInt8")
+
+    # A dim_names list whose length disagrees with the shape is rejected.
+    with pytest.raises(ValueError, match="dim_names has 2 entries"):
+        Raster.lazy(
+            uri="s3://bucket/data.zarr",
+            shape=(10, 20, 30),
+            dtype="UInt8",
+            dim_names=["y", "x"],
+        )
+
+
+def test_raster_lazy_nd():
+    r = Raster.lazy(
+        uri="s3://bucket/cube.zarr",
+        shape=(12, 256, 512),
+        dtype="float32",
+        format="zarr",
+        dim_names=["time", "y", "x"],
+    )
+
+    b = r.bands[0]
+    assert b.source_shape == (12, 256, 512)
+    assert b.data_type == "float32"
+    assert b.outdb_uri == "s3://bucket/cube.zarr"
+    # Lazy rasters carry no pixel bytes until loaded.
+    assert len(b.source_data) == 0
+    # The trailing two axes are the spatial (y, x) pair.
+    assert r.width == 512
+    assert r.height == 256
+
+
+def test_raster_from_numpy_2d():
+    arr = np.arange(2 * 3, dtype="uint8").reshape(2, 3)
+    r = Raster.from_numpy(arr)
+
+    assert r.width == 3
+    assert r.height == 2
+    b = r.bands[0]
+    assert b.source_shape == (2, 3)
+    assert b.data_type == "uint8"
+    np.testing.assert_array_equal(b.to_numpy(), arr)
+
+
+def test_raster_from_numpy_nd_with_crs():
+    arr = np.arange(2 * 2 * 3, dtype="float32").reshape(2, 2, 3)
+    r = Raster.from_numpy(arr, dim_names=["time", "y", "x"], crs="EPSG:4326")
+
+    b = r.bands[0]
+    assert b.source_shape == (2, 2, 3)
+    assert b.data_type == "float32"
+    assert r.crs.to_json_dict()["id"] == {"authority": "EPSG", "code": 4326}
+    np.testing.assert_array_equal(b.to_numpy(), arr)
+
+
+def test_raster_from_numpy_invalid_shape():
+    with pytest.raises(ValueError, match="at least two"):
+        Raster.from_numpy(np.arange(4, dtype="uint8"))
+
+    with pytest.raises(ValueError, match="dim_names is required"):
+        Raster.from_numpy(np.zeros((2, 2, 3), dtype="uint8"))
+
+
+def test_raster_lazy_zero_size():
+    """Test that a raster with zero-size shape returns an empty memoryview."""
+    r = Raster.lazy(
+        uri="s3://bucket/empty.zarr",
+        shape=(0, 64),
+        dtype="float32",
+    )
+
+    b = r.bands[0]
+    assert b.source_shape == (0, 64)
+    assert b.data_size == 0
+    assert b.source_data_size == 0
+    assert b.data == memoryview(b"")
+
+    arr = b.to_numpy()
+    assert arr.shape == (0, 64)
+    assert arr.dtype == "float32"

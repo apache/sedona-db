@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-from typing import TYPE_CHECKING, Any, Iterable, Optional
+from typing import TYPE_CHECKING, Any, Iterable, Optional, Union
 
 from sedonadb._lib import (
     InternalExpr as _InternalExpr,
@@ -334,6 +334,22 @@ class Expr:
             "Expr has no length. To count rows in a DataFrame, evaluate "
             "the Expr against a frame (e.g. `df.filter(expr).count()`)."
         )
+
+    # Nested expressions
+    def __getitem__(self, key: Union[int, str]) -> "Expr":
+        if isinstance(key, int):
+            # Python uses 0-based indexing; SQL uses 1-based indexing
+            if key < 0:
+                raise ValueError("Can't index array expression with negative integer")
+            return self.funcs.array_extract(key + 1)
+        elif isinstance(key, str):
+            # get_field works for both structs and maps, returning a scalar
+            return self.funcs.get_field(key)
+        else:
+            raise ValueError(
+                "Expr keys are not yet supported. Use .funcs.array_extract() "
+                "or .funcs.get_field() to extract with an expression key."
+            )
 
 
 class SortExpr:

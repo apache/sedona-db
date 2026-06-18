@@ -57,6 +57,18 @@ use sedona_raster::view_entries::ViewEntry;
 /// a duplicate of the same string literal — keep the two in sync.
 pub const NEEDS_PIXELS_METADATA_KEY: &str = "needs_pixels";
 
+/// `SedonaScalarUDF` metadata key marking a UDF whose returned raster is
+/// already fully materialised in-database. A raster function sets it (value
+/// `"true"`) via `with_metadata`; the `RS_EnsureLoaded` optimizer rule keys
+/// off it to skip wrapping an argument that is itself such a call (its result
+/// is already loaded, so a wrap would be redundant — and, being async, would
+/// nest unhoistably; see apache/datafusion#20031).
+///
+/// Only set this on functions that guarantee in-database output for loaded
+/// input. Like [`NEEDS_PIXELS_METADATA_KEY`], the optimizer rule carries a
+/// duplicate of the string literal — keep the two in sync.
+pub const RETURNS_BYTES_METADATA_KEY: &str = "returns_bytes";
+
 /// Async UDF that resolves OutDb bands by dispatching through the
 /// [`RasterLoaderRegistry`] stashed in `ConfigOptions` as a
 /// [`RasterLoaderConfig`] extension. The UDF instance itself is
@@ -228,19 +240,13 @@ impl AsyncScalarUDFImpl for RsEnsureLoaded {
     }
 
     async fn invoke_async_with_args(&self, args: ScalarFunctionArgs) -> Result<ColumnarValue> {
-        let input_array = match args.args.into_iter().next() {
-            Some(ColumnarValue::Array(arr)) => arr,
-            Some(ColumnarValue::Scalar(_)) => {
-                return sedona_internal_err!(
-                    "RS_EnsureLoaded does not support scalar inputs; pass a column reference"
-                )
-            }
-            None => return sedona_internal_err!("RS_EnsureLoaded received zero arguments"),
-        };
+        if args.args.len() != 1 {
+            return sedona_internal_err!("RS_EnsureLoaded() expects a single argument");
+        }
 
+        let input_array = args.args[0].to_array(args.number_rows)?;
         let registry = registry_handle_from_config(&args.config_options)?;
         let output = ensure_loaded(&input_array, |format| lookup_loader(&registry, format)).await?;
-
         Ok(ColumnarValue::Array(output))
     }
 }

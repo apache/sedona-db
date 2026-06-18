@@ -31,7 +31,7 @@ sd_ctx_read_sf(
 )
 }
 \arguments{
-\item{dsn, layer}{Description of datasource and layer. See \code{\link[sf:st_read]{sf::read_sf()}}
+\item{dsn, layer}{Description of datasource and layer. See \code{\link[sf:read_sf]{sf::read_sf()}}
 for details.}
 
 \item{...}{Currently unused and must be empty}
@@ -46,7 +46,7 @@ form "KEY=VALUE".}
 \item{filter}{A spatial object that may be used to filter while reading.
 In the future SedonaDB will automatically calculate this value based on
 the query. May be any spatial object that can be converted to WKT via
-\code{\link[wk:wkt]{wk::as_wkt()}}. This filter's CRS must match that of the data.}
+\code{\link[wk:as_wkt]{wk::as_wkt()}}. This filter's CRS must match that of the data.}
 
 \item{fid_column_name}{An optional name for the feature id (FID) column.}
 

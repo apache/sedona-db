@@ -823,6 +823,113 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn nested_expressions_sql() -> Result<()> {
+        let ctx = SedonaContext::new();
+
+        // Test get_field on a struct
+        let batches = ctx
+            .sql("SELECT get_field(named_struct('a', 1, 'b', 2), 'a') AS a")
+            .await?
+            .collect()
+            .await?;
+        #[rustfmt::skip]
+        assert_batches_eq!(
+            [
+                "+---+",
+                "| a |",
+                "+---+",
+                "| 1 |",
+                "+---+",
+            ],
+            &batches
+        );
+
+        // Test map_extract on a map
+        let batches = ctx
+            .sql("SELECT map_extract(map {'x': 10, 'y': 20}, 'x') AS x")
+            .await?
+            .collect()
+            .await?;
+        #[rustfmt::skip]
+        assert_batches_eq!(
+            [
+                "+------+",
+                "| x    |",
+                "+------+",
+                "| [10] |",
+                "+------+",
+            ],
+            &batches
+        );
+
+        // Test map bracket notation shorthand (returns scalar, not array)
+        let batches = ctx
+            .sql("SELECT map {'x': 10, 'y': 20}['x'] AS x")
+            .await?
+            .collect()
+            .await?;
+        #[rustfmt::skip]
+        assert_batches_eq!(
+            [
+                "+----+",
+                "| x  |",
+                "+----+",
+                "| 10 |",
+                "+----+",
+            ],
+            &batches
+        );
+
+        // Test struct dot notation and map bracket notation on table columns
+        ctx.sql(
+            "CREATE TABLE nested_test AS SELECT \
+             named_struct('a', 1, 'b', 2) AS s, \
+             map {'x': 10, 'y': 20} AS m",
+        )
+        .await?
+        .collect()
+        .await?;
+
+        // Struct field access via dot notation on column
+        let batches = ctx
+            .sql("SELECT s.a FROM nested_test")
+            .await?
+            .collect()
+            .await?;
+        #[rustfmt::skip]
+        assert_batches_eq!(
+            [
+                "+------------------+",
+                "| nested_test.s[a] |",
+                "+------------------+",
+                "| 1                |",
+                "+------------------+",
+            ],
+            &batches
+        );
+
+        // Map key access via bracket notation on column
+        let batches = ctx
+            .sql("SELECT m['x'] FROM nested_test")
+            .await?
+            .collect()
+            .await?;
+        #[rustfmt::skip]
+        assert_batches_eq!(
+            [
+                "+------------------+",
+                "| nested_test.m[x] |",
+                "+------------------+",
+                "| 10               |",
+                "+------------------+",
+            ],
+            &batches
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn show() {
         let ctx = SedonaContext::new();
         let tbl = ctx

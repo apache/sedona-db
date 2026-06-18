@@ -23,6 +23,7 @@
 # replacement check on `_impl.variant_name()` so the structural meaning is
 # still locked.
 
+import pandas as pd
 import pyarrow as pa
 import pytest
 
@@ -336,3 +337,40 @@ def test_ctx_propagation(con):
     assert bare_expr._ctx is None
     assert (e + bare_expr)._ctx is con
     assert (bare_expr + e)._ctx is con
+
+
+def test_nested_expression_exec(con):
+    table = pa.table(
+        {
+            "array_col": [[1, 2, 3], [4, 5, 6]],
+            "struct_col": [{"a": 1, "b": 2}, {"a": 3, "b": 4}],
+            "map_col": [
+                [{"key": "foofy", "value": "foggy"}],
+                [{"key": "foofy", "value": "groggy"}],
+            ],
+        },
+        schema=pa.schema(
+            {
+                "array_col": pa.list_(pa.int64()),
+                "struct_col": pa.struct(
+                    [pa.field("a", pa.int64()), pa.field("b", pa.int64())]
+                ),
+                "map_col": pa.map_(pa.string(), pa.string()),
+            }
+        ),
+    )
+
+    t = con.create_data_frame(table)
+    pd.testing.assert_frame_equal(
+        t.select(array0=t.array_col[0]).to_pandas(), pd.DataFrame({"array0": [1, 4]})
+    )
+
+    pd.testing.assert_frame_equal(
+        t.select(a=t.struct_col["a"]).to_pandas(), pd.DataFrame({"a": [1, 3]})
+    )
+
+    pd.testing.assert_frame_equal(
+        t.select(foofy=t.map_col["foofy"]).to_pandas(),
+        pd.DataFrame({"foofy": ["foggy", "groggy"]}),
+        check_dtype=False,
+    )

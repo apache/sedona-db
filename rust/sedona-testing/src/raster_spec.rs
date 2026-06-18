@@ -36,7 +36,9 @@
 //!     .build();
 //! ```
 
-use arrow_array::{Array, ArrayRef, Int64Array, ListArray, StringArray, StructArray};
+use arrow_array::{
+    Array, ArrayRef, Int64Array, ListArray, StringArray, StringViewArray, StructArray,
+};
 use datafusion_common::ScalarValue;
 use datafusion_expr::{Expr, Literal};
 use sedona_raster::array::RasterStructArray;
@@ -450,15 +452,22 @@ pub fn list_utf8_row(result: &ArrayRef, row: usize) -> Option<Vec<String>> {
         return None;
     }
     let values = list.value(row);
-    let strings = values
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .expect("expected Utf8 list items");
-    Some(
-        (0..strings.len())
-            .map(|i| strings.value(i).to_string())
-            .collect(),
-    )
+    // Accept either Utf8 or Utf8View list items.
+    if let Some(strings) = values.as_any().downcast_ref::<StringArray>() {
+        Some(
+            (0..strings.len())
+                .map(|i| strings.value(i).to_string())
+                .collect(),
+        )
+    } else if let Some(strings) = values.as_any().downcast_ref::<StringViewArray>() {
+        Some(
+            (0..strings.len())
+                .map(|i| strings.value(i).to_string())
+                .collect(),
+        )
+    } else {
+        panic!("expected Utf8 or Utf8View list items")
+    }
 }
 
 /// Extract one row of a `List<Int64>` result (e.g. a shape) as `i64`s.
