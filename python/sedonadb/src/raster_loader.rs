@@ -252,7 +252,7 @@ impl PyBufferWrapper {
     /// Create a new PyBufferWrapper from any Python object implementing the buffer protocol.
     ///
     /// The Python GIL must be held when calling this function.
-    /// Returns an error if the buffer is not C-contiguous or is writable (mutable).
+    /// Returns an error if the buffer is not C-contiguous.
     fn new(obj: &pyo3::Bound<'_, pyo3::types::PyAny>) -> Result<Self, ArrowError> {
         let buffer: PyBuffer<u8> = PyBuffer::get(obj).map_err(|e| {
             ArrowError::InvalidArgumentError(format!(
