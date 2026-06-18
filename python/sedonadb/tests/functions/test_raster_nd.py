@@ -173,3 +173,14 @@ def test_dim_to_band_spatial_dim_errors(r3d):
 def test_dim_to_band_unknown_dim_errors(r2d):
     with pytest.raises(sedonadb._lib.SedonaError, match="no band has dimension 'nope'"):
         _eval("RS_DimToBand(r1, 'nope')", r2d)
+
+
+def test_dim_to_band_band_to_dim_round_trip(r3d):
+    arr = np.arange(3 * 4 * 5, dtype="uint8").reshape(3, 4, 5)
+    # DimToBand expands the time axis into separate bands; BandToDim collapses
+    # them back. Composing two needs_pixels functions exercises the full
+    # RS_EnsureLoaded path, and the round-trip must restore the original raster.
+    out = _eval("RS_BandToDim(RS_DimToBand(r1, 'time'), 'time')", r3d)
+    assert len(out.bands) == 1
+    assert out.bands[0].shape == (3, 4, 5)
+    np.testing.assert_array_equal(out.bands[0].to_numpy(), arr)

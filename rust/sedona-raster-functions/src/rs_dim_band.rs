@@ -333,7 +333,6 @@ mod tests {
     use super::*;
     use arrow_array::StructArray;
     use arrow_schema::DataType;
-    use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use sedona_raster::array::RasterStructArray;
     use sedona_raster::builder::RasterBuilder;
@@ -581,43 +580,5 @@ mod tests {
         let result_struct = result.as_any().downcast_ref::<StructArray>().unwrap();
         let raster_array = RasterStructArray::try_new(result_struct).unwrap();
         assert!(raster_array.is_null(0));
-    }
-
-    #[test]
-    fn round_trip_dimtoband_bandtodim() {
-        // Start with 1 band [time=3, y=2, x=2]
-        let rasters = build_3d_raster_sequential(3, 2, 2);
-
-        // DimToBand: 1 band [time=3, y=2, x=2] -> 3 bands [y=2, x=2]
-        let kernel = RsDimToBand {};
-        let arg_types = vec![RASTER, SedonaType::Arrow(DataType::Utf8)];
-        let args = vec![
-            ColumnarValue::Array(Arc::new(rasters)),
-            ColumnarValue::Scalar(ScalarValue::Utf8(Some("time".to_string()))),
-        ];
-        let mid_result = kernel.invoke_batch(&arg_types, &args).unwrap();
-        let mid_array = match mid_result {
-            ColumnarValue::Array(arr) => arr,
-            _ => panic!("Expected array"),
-        };
-
-        // BandToDim: 3 bands [y=2, x=2] -> 1 band [time=3, y=2, x=2]
-        let kernel2 = RsBandToDim {};
-        let args2 = vec![
-            ColumnarValue::Array(mid_array),
-            ColumnarValue::Scalar(ScalarValue::Utf8(Some("time".to_string()))),
-        ];
-        let final_result = kernel2.invoke_batch(&arg_types, &args2).unwrap();
-        let final_array = match final_result {
-            ColumnarValue::Array(arr) => arr,
-            _ => panic!("Expected array"),
-        };
-
-        // Round-trip restores the original [time=3, y=2, x=2] band with its
-        // 0..12 sequential data (band name aside, which BandToDim drops).
-        let expected = RasterSpec::nd(&["time", "y", "x"], &[3, 2, 2])
-            .crs(None)
-            .band_values(&(0u8..12).collect::<Vec<u8>>());
-        assert_rasters_equal(&final_array, &[Some(expected)]);
     }
 }
