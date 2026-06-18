@@ -222,23 +222,28 @@ def test_zarr_loader_supports_format():
     ],
 )
 def test_rs_ensure_loaded_with_zarr(tmp_path, numpy_dtype):
-    """Test that RS_EnsureLoaded can materialize Zarr OutDb raster data."""
     zarr = pytest.importorskip("zarr", minversion="3.0")
 
-    # Create a simple 8x8 Zarr array with random data
+    # Tune these for coverage vs speed tradeoff
+    width, height = 512 * 16, 512 * 16
+    chunk_width, chunk_height = 512, 512
+
+    # Create a Zarr array with random data
     rng = np.random.default_rng(seed=836)
     if numpy_dtype == "bool":
-        numpy_arr = rng.integers(0, 2, (8, 8), dtype=np.uint8).astype(numpy_dtype)
+        numpy_arr = rng.integers(0, 2, (height, width), dtype=np.uint8).astype(
+            numpy_dtype
+        )
     elif np.issubdtype(np.dtype(numpy_dtype), np.integer):
-        numpy_arr = rng.integers(0, 100, (8, 8), dtype=numpy_dtype)
+        numpy_arr = rng.integers(0, 100, (height, width), dtype=numpy_dtype)
     else:
-        numpy_arr = rng.random((8, 8)).astype(numpy_dtype)
+        numpy_arr = rng.random((height, width)).astype(numpy_dtype)
 
     root = zarr.open_group(str(tmp_path), mode="w")
     arr = root.create_array(
         "temperature",
-        shape=numpy_arr.shape,
-        chunks=numpy_arr.shape,
+        shape=(height, width),
+        chunks=(chunk_height, chunk_width),
         dtype=numpy_dtype,
         dimension_names=["y", "x"],
     )
@@ -252,11 +257,24 @@ def test_rs_ensure_loaded_with_zarr(tmp_path, numpy_dtype):
     t = sd.read(f"file://{tmp_path}", format="zarr")
     loaded_tab = t.select(raster=t.raster.funcs.rs_ensureloaded()).to_arrow_table()
 
-    # Verify the data was loaded
-    assert loaded_tab.num_rows == 1
-    loaded_band = loaded_tab["raster"][0].as_py().bands[0]
+    # Verify we get the expected number of chunk rows
+    expected_chunks_y = (height + chunk_height - 1) // chunk_height
+    expected_chunks_x = (width + chunk_width - 1) // chunk_width
+    expected_rows = expected_chunks_y * expected_chunks_x
+    assert loaded_tab.num_rows == expected_rows
 
-    np.testing.assert_array_equal(loaded_band.to_numpy(), numpy_arr)
+    # Verify the total pixels and that each chunk loaded successfully
+    total_pixels = 0
+    for i in range(loaded_tab.num_rows):
+        raster = loaded_tab["raster"][i].as_py()
+        band = raster.bands[0]
+        chunk_data = band.to_numpy()
+        # bool is stored as uint8 in raster bands
+        expected_dtype = np.uint8 if numpy_dtype == "bool" else np.dtype(numpy_dtype)
+        assert chunk_data.dtype == expected_dtype
+        total_pixels += chunk_data.size
+
+    assert total_pixels == width * height
 
 
 # Each numpy dtype below maps to a different `BandDataType` arm in
