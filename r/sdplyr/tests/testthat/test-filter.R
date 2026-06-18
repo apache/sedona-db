@@ -19,23 +19,23 @@ test_that("filter() works for sedonadb_dataframe", {
   df <- tibble(x = c(3L, 1L, 2L), y = c("c", "a", "b"))
 
   expect_identical(
-    df |> as_sedonadb_dataframe() |> filter(x > 1L) |> collect(),
-    df |> filter(x > 1L)
+    df |> as_sedonadb_dataframe() |> filter(x > 1L) |> arrange(x) |> collect(),
+    df |> filter(x > 1L) |> arrange(x)
   )
 
   expect_identical(
-    df |> as_sedonadb_dataframe() |> filter(x == 2L) |> collect(),
-    df |> filter(x == 2L)
+    df |> as_sedonadb_dataframe() |> filter(x == 2L) |> arrange(x) |> collect(),
+    df |> filter(x == 2L) |> arrange(x)
   )
 
   expect_identical(
-    df |> as_sedonadb_dataframe() |> filter(y == "a") |> collect(),
-    df |> filter(y == "a")
+    df |> as_sedonadb_dataframe() |> filter(y == "a") |> arrange(x) |> collect(),
+    df |> filter(y == "a") |> arrange(x)
   )
 
   expect_identical(
-    df |> as_sedonadb_dataframe() |> filter(x != 1L) |> collect(),
-    df |> filter(x != 1L)
+    df |> as_sedonadb_dataframe() |> filter(x != 1L) |> arrange(x) |> collect(),
+    df |> filter(x != 1L) |> arrange(x)
   )
 })
 
@@ -43,18 +43,18 @@ test_that("filter() works with multiple conditions", {
   df <- tibble(x = c(1L, 1L, 2L, 2L), y = c(4L, 3L, 2L, 1L))
 
   expect_identical(
-    df |> as_sedonadb_dataframe() |> filter(x == 1L, y > 3L) |> collect(),
-    df |> filter(x == 1L, y > 3L)
+    df |> as_sedonadb_dataframe() |> filter(x == 1L, y > 3L) |> arrange(x) |> collect(),
+    df |> filter(x == 1L, y > 3L) |> arrange(x)
   )
 
   expect_identical(
-    df |> as_sedonadb_dataframe() |> filter(x >= 1L, y <= 2L) |> collect(),
-    df |> filter(x >= 1L, y <= 2L)
+    df |> as_sedonadb_dataframe() |> filter(x >= 1L, y <= 2L) |> arrange(x) |> collect(),
+    df |> filter(x >= 1L, y <= 2L) |> arrange(x)
   )
 
   expect_identical(
-    df |> as_sedonadb_dataframe() |> filter(x == 1L | y == 1L) |> collect(),
-    df |> filter(x == 1L | y == 1L)
+    df |> as_sedonadb_dataframe() |> filter(x == 1L | y == 1L) |> arrange(x) |> collect(),
+    df |> filter(x == 1L | y == 1L) |> arrange(x)
   )
 })
 
