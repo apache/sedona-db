@@ -15,20 +15,23 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import sys
+
 import numpy as np
 import pytest
 import sedonadb
 import sedonadb_zarr
+import zarr
 from sedonadb.raster import Raster
+
+pytestmark = pytest.mark.skipif(
+    sys.version_info < (3, 11), reason="zarr v3 requires Python 3.11+"
+)
 
 
 @pytest.fixture
 def zarr_group(tmp_path):
     """Build a tiny 2x2 UInt8 Zarr v3 group with two chunks."""
-    # The fixture uses the zarr-python 3.x API (create_array,
-    # dimension_names); zarr 2.x (the newest available on Python < 3.11)
-    # can't write these fixtures.
-    zarr = pytest.importorskip("zarr", minversion="3.0")
     root = zarr.open_group(str(tmp_path), mode="w")
     arr = root.create_array(
         "temperature",
@@ -74,7 +77,6 @@ _NORTH_UP_BOUNDS = (10.0, 18.0, 12.0, 20.0)
 
 def _zarr_with_attrs(tmp_path, group_attrs, *, dims=("y", "x")):
     """Write a single-chunk 2x2 Zarr v3 group carrying `group_attrs`."""
-    zarr = pytest.importorskip("zarr", minversion="3.0")
     root = zarr.open_group(str(tmp_path), mode="w")
     for key, value in group_attrs.items():
         root.attrs[key] = value
@@ -222,8 +224,6 @@ def test_zarr_loader_supports_format():
     ],
 )
 def test_rs_ensure_loaded_with_zarr(tmp_path, numpy_dtype):
-    zarr = pytest.importorskip("zarr", minversion="3.0")
-
     # Tune these for coverage vs speed tradeoff, but ensure a reasonable
     # number of tiles to test a larger degree of concurrency
     width, height = 512, 512
@@ -297,7 +297,6 @@ def test_rs_ensure_loaded_with_zarr(tmp_path, numpy_dtype):
     ],
 )
 def test_dtype_mapping_roundtrips(tmp_path, numpy_dtype):
-    zarr = pytest.importorskip("zarr", minversion="3.0")
     root = zarr.open_group(str(tmp_path), mode="w")
     arr = root.create_array(
         "temperature",
