@@ -38,7 +38,7 @@ use std::sync::Arc;
 
 use datafusion_common::tree_node::{Transformed, TreeNode};
 use datafusion_common::{DFSchema, Result};
-use datafusion_expr::expr::ScalarFunction;
+use datafusion_expr::expr::{Alias, ScalarFunction};
 use datafusion_expr::expr_schema::ExprSchemable;
 use datafusion_expr::{Expr, LogicalPlan, ScalarUDF};
 use datafusion_optimizer::{ApplyOrder, OptimizerConfig, OptimizerRule};
@@ -219,12 +219,24 @@ fn rewrite_expr_node(
 }
 
 /// Wrap a raster argument so its byte materialisation is explicit in the
-/// plan: `rs_ensureloaded(arg)`.
+/// plan: `rs_ensureloaded(arg)`, aliased back to the argument's name.
+///
+/// The alias matters: an optimizer rule must not change the plan's output
+/// schema, but rewriting `f(rast)` to `f(rs_ensureloaded(rast))` would change
+/// the *derived name* of the enclosing expression — and when that expression
+/// is a projection's output (e.g. `SELECT RS_DimToBand(rast, …)`), the column
+/// is renamed from `rs_dimtoband(rast, …)` to `rs_dimtoband(rs_ensureloaded(rast), …)`.
+/// DataFusion's `optimize_projections` invariant check then fails the query.
+/// Aliasing the wrap back to the argument's original name keeps the enclosing
+/// name — and the output schema — stable. (`WrapAsyncUdfRule` uses the same
+/// trick to preserve its wrapper's name.)
 fn wrap_for_loading(arg: Expr, ensure_loaded_udf: &Arc<ScalarUDF>) -> Expr {
-    Expr::ScalarFunction(ScalarFunction {
+    let original_name = arg.schema_name().to_string();
+    let wrapped = Expr::ScalarFunction(ScalarFunction {
         func: Arc::clone(ensure_loaded_udf),
         args: vec![arg],
-    })
+    });
+    Expr::Alias(Alias::new(wrapped, None::<&str>, original_name))
 }
 
 /// True if `expr` already yields loaded (in-database) raster bytes, so the
@@ -406,6 +418,38 @@ mod tests {
             count_ensure_loaded(&out),
             0,
             "an argument that already returns loaded bytes must not be wrapped: {out:?}"
+        );
+    }
+
+    #[test]
+    fn wrapping_preserves_enclosing_expression_name() {
+        // An optimizer rule must not change the plan's output schema. Wrapping
+        // the raster arg must leave the enclosing call's derived name unchanged,
+        // or DataFusion's optimize_projections invariant check fails for an
+        // unaliased projection such as `SELECT rs_mock(rast)`.
+        let schema = raster_schema_named("rast");
+        let udf = fake_ensure_loaded_udf();
+        let call = Expr::ScalarFunction(ScalarFunction {
+            func: needs_bytes_udf("rs_mock"),
+            args: vec![col("rast")],
+        });
+        let original_name = call.schema_name().to_string();
+
+        let out = rewrite(call, &schema, &udf);
+
+        assert_eq!(
+            out.schema_name().to_string(),
+            original_name,
+            "wrapping the raster arg must not rename the enclosing expression: {out:?}"
+        );
+        // The arg is still recognised as wrapped, so the fixpoint stays idempotent
+        // through the name-preserving alias.
+        let Expr::ScalarFunction(ScalarFunction { args, .. }) = &out else {
+            panic!("expected ScalarFunction, got {out:?}");
+        };
+        assert!(
+            already_loaded(&args[0]),
+            "wrapped arg should still be detected"
         );
     }
 
