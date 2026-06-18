@@ -137,7 +137,16 @@ impl AsyncRasterLoader for GdalLoader {
             .iter()
             .map(|req| self.validate_one(req))
             .collect::<Result<Vec<_>, ArrowError>>()?;
+
         let buffers = self.load_all(load_requests).await?;
+        if buffers.len() != reqs.len() {
+            return Err(ArrowError::InvalidArgumentError(format!(
+                "GDAL loader returned {} buffer(s) for {} request(s)",
+                buffers.len(),
+                reqs.len()
+            )));
+        }
+
         let results = zip(buffers, reqs)
             .map(|(buf, req)| RasterLoadResult::unresolved(buf, req))
             .collect::<Vec<_>>();
@@ -156,10 +165,7 @@ struct OwnedGdalLoadRequest {
 
 impl GdalLoader {
     /// Validate one request and return the information we'll queue onto the worker
-    fn validate_one(
-        &self,
-        req: &RasterLoadRequest<'_>,
-    ) -> Result<OwnedGdalLoadRequest, ArrowError> {
+    fn validate_one(&self, req: &RasterLoadRequest) -> Result<OwnedGdalLoadRequest, ArrowError> {
         // Validate request shape synchronously, before spawning a blocking
         // task — these are programming errors, no point queueing them
         // onto a worker.

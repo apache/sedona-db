@@ -431,8 +431,7 @@ where
                 // Check that the loader returned the correct number of results
                 if result.len() != 1 {
                     return sedona_internal_err!(
-                        "RS_EnsureLoaded: band ({raster_idx},{band_idx}), \
-                    loader {} returned incorrect result count",
+                        "RS_EnsureLoaded: loader {} returned incorrect result count",
                         loader.name()
                     );
                 }

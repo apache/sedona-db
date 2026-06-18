@@ -190,6 +190,15 @@ impl AsyncRasterLoader for PyRasterLoader {
         .await
         .map_err(|e| ArrowError::ExternalError(Box::new(e)))??;
 
+        if results.len() != reqs.len() {
+            return Err(ArrowError::InvalidArgumentError(format!(
+                "Python raster loader '{}' returned {} result(s) for {} request(s)",
+                self.name(),
+                results.len(),
+                reqs.len()
+            )));
+        }
+
         // Convert to RasterLoadResult
         let load_results = results
             .into_iter()

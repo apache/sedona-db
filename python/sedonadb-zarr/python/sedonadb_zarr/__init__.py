@@ -120,14 +120,14 @@ class ZarrRasterLoader(RasterLoader):
     """Zarr RasterLoader implementation
 
     This is registered automatically when registering the ZarrExtension
-    and enables RS_EnsureLoaded() can resolve pixels of a Zarr. This is
+    and enables RS_EnsureLoaded() can resolve pixels of a Zarr.
     """
 
     def __init__(self):
         self._impl = PyZarrRasterLoader()
 
     def name(self):
-        return super().name()
+        return self._impl.name()
 
     def supports_format(self, format):
         return self._impl.supports_format(format)
@@ -136,4 +136,4 @@ class ZarrRasterLoader(RasterLoader):
         return self._impl.load(requests)
 
 
-__all__ = ["Zarr"]
+__all__ = ["Zarr", "ZarrExtension"]
