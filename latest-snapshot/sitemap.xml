@@ -85,6 +85,10 @@
          <lastmod>2026-06-18</lastmod>
     </url>
     <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/rs_bandtodim/</loc>
+         <lastmod>2026-06-18</lastmod>
+    </url>
+    <url>
          <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/rs_contains/</loc>
          <lastmod>2026-06-18</lastmod>
     </url>
@@ -94,6 +98,18 @@
     </url>
     <url>
          <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/rs_crs/</loc>
+         <lastmod>2026-06-18</lastmod>
+    </url>
+    <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/rs_dimnames/</loc>
+         <lastmod>2026-06-18</lastmod>
+    </url>
+    <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/rs_dimsize/</loc>
+         <lastmod>2026-06-18</lastmod>
+    </url>
+    <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/rs_dimtoband/</loc>
          <lastmod>2026-06-18</lastmod>
     </url>
     <url>
@@ -130,6 +146,10 @@
     </url>
     <url>
          <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/rs_numbands/</loc>
+         <lastmod>2026-06-18</lastmod>
+    </url>
+    <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/rs_numdimensions/</loc>
          <lastmod>2026-06-18</lastmod>
     </url>
     <url>
@@ -177,11 +197,23 @@
          <lastmod>2026-06-18</lastmod>
     </url>
     <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/rs_shape/</loc>
+         <lastmod>2026-06-18</lastmod>
+    </url>
+    <url>
          <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/rs_skewx/</loc>
          <lastmod>2026-06-18</lastmod>
     </url>
     <url>
          <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/rs_skewy/</loc>
+         <lastmod>2026-06-18</lastmod>
+    </url>
+    <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/rs_slice/</loc>
+         <lastmod>2026-06-18</lastmod>
+    </url>
+    <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/rs_slicerange/</loc>
          <lastmod>2026-06-18</lastmod>
     </url>
     <url>
