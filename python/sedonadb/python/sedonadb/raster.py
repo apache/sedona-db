@@ -92,9 +92,8 @@ def _build_raster(
     outdb_format=None,
 ):
     """Assemble a single-band raster from its components, shared by the
-    :meth:`Raster.lazy` (OutDb) and :meth:`Raster.from_numpy` (InDb)
-    constructors. The trailing two ``dim_names``/``shape`` entries are the
-    spatial ``(y, x)`` axes."""
+    `Raster.lazy` (OutDb) and `Raster.from_numpy` (InDb) constructors. The
+    trailing two `dim_names`/`shape` entries are the spatial `(y, x)` axes."""
     if crs is not None:
         crs = gat.type_spec(crs=crs).crs.to_json()
     nodata_bytes = None
@@ -156,13 +155,13 @@ class Raster:
             uri: The URI of the external data source (e.g., file path or cloud URL).
                 This URI is not validated unless the pixels are read.
             shape: The shape of the raster. The trailing two axes are the spatial
-                ``(y, x)`` pair; any leading axes are extra (e.g. time) dimensions.
+                `(y, x)` pair; any leading axes are extra (e.g. time) dimensions.
             dtype: The pixel data type (e.g., 'uint8', 'float32', 'int16').
             format: The format of the external data (e.g., 'tif', or 'zarr'). If None,
                 the format will be inferred when the data is accessed.
             crs: The coordinate reference system. Can be any value accepted by
                 geoarrow.types.type_spec (e.g., string, pyproj.CRS).
-            dim_names: Names of the dimensions. Defaults to ``["y", "x"]`` for a 2-D
+            dim_names: Names of the dimensions. Defaults to `["y", "x"]` for a 2-D
                 shape; required when the shape has more than two dimensions.
 
         Returns:
@@ -205,20 +204,23 @@ class Raster:
     ) -> "Raster":
         """Create an in-database raster from a NumPy array, holding pixels inline.
 
-        The mirror of :meth:`lazy`: identical dimension/CRS conventions, but the
+        The mirror of `lazy`: identical dimension/CRS conventions, but the
         pixel data is carried in the raster rather than referenced by URI.
 
+        **Warning:** this copies the *entire* array into the raster value; it
+        is not zero-copy.
+
         Args:
-            array: The pixel data. The trailing two axes are the spatial ``(y, x)``
+            array: The pixel data. The trailing two axes are the spatial `(y, x)`
                 pair; any leading axes are extra (e.g. time) dimensions. The dtype
                 must be a supported raster type (uint8, int16, float32, ...).
-            dim_names: Names of the dimensions. Defaults to ``["y", "x"]`` for a 2-D
+            dim_names: Names of the dimensions. Defaults to `["y", "x"]` for a 2-D
                 array; required when the array has more than two dimensions.
             crs: The coordinate reference system (any value accepted by
                 geoarrow.types.type_spec).
             nodata: Optional nodata sentinel, packed in the array's dtype.
             transform: Optional GDAL-order geotransform
-                ``[origin_x, scale_x, skew_x, origin_y, skew_y, scale_y]``;
+                `[origin_x, scale_x, skew_x, origin_y, skew_y, scale_y]`;
                 defaults to a north-up identity.
 
         Returns:
