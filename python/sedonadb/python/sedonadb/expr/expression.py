@@ -329,9 +329,11 @@ class Expr:
         )
 
     # Nested expressions
-    def __getitem__(self, key: Union[int, str, "Expr"]) -> "Expr":
+    def __getitem__(self, key: Union[int, str]) -> "Expr":
         if isinstance(key, int):
             # Python uses 0-based indexing; SQL uses 1-based indexing
+            if key < 0:
+                raise ValueError("Can't index array expression with negative integer")
             return self.funcs.array_extract(key + 1)
         elif isinstance(key, str):
             # get_field works for both structs and maps, returning a scalar
@@ -341,9 +343,6 @@ class Expr:
                 "Expr keys are not yet supported. Use .funcs.array_extract() "
                 "or .funcs.get_field() to extract with an expression key."
             )
-
-    def __getattr__(self, name: str) -> "Expr":
-        return self.funcs.get_field(name)
 
 
 class SortExpr:

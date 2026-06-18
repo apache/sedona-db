@@ -366,7 +366,7 @@ def test_nested_expression_exec(con):
     )
 
     pd.testing.assert_frame_equal(
-        t.select(a=t.struct_col.a).to_pandas(), pd.DataFrame({"a": [1, 3]})
+        t.select(a=t.struct_col["a"]).to_pandas(), pd.DataFrame({"a": [1, 3]})
     )
 
     pd.testing.assert_frame_equal(
