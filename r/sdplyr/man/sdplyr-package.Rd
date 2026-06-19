@@ -11,5 +11,10 @@ Provides a 'dplyr' backend implemented using 'SedonaDB'.
 \author{
 \strong{Maintainer}: Dewey Dunnington \email{dewey@dunnington.ca}
 
+Authors:
+\itemize{
+  \item Dewey Dunnington \email{dewey@dunnington.ca}
+}
+
 }
 \keyword{internal}

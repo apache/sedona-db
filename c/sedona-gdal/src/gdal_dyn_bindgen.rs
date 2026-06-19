@@ -542,7 +542,20 @@ pub(crate) struct SedonaGdalApi {
     // --- Data Type ---
     pub GDALGetDataTypeSizeBytes: Option<unsafe extern "C" fn(eDataType: GDALDataType) -> c_int>,
 
-    // --- C++ API ---
+    // --- MEM dataset Create ---
+    // Public C API `MEMCreate` (no filename parameter), preferred over the C++
+    // `MEMDataset::Create` below because its symbol is unmangled and ABI-stable.
+    pub MEMCreate: Option<
+        unsafe extern "C" fn(
+            nXSize: c_int,
+            nYSize: c_int,
+            nBands: c_int,
+            eType: GDALDataType,
+            papszOptions: *const *const c_char,
+        ) -> GDALDatasetH,
+    >,
+    // C++ `MEMDataset::Create` (resolved via mangled symbol names), fallback for
+    // GDAL builds that predate the `MEMCreate` C API.
     pub MEMDatasetCreate: Option<
         unsafe extern "C" fn(
             pszFilename: *const c_char,

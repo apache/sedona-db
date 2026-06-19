@@ -59,7 +59,7 @@ async-trait = { workspace = true }
 aws-config = { version = "1.5.17", optional = true }
 aws-credential-types = { version = "1.2.0", optional = true }
 comfy-table = { workspace = true }
-datafusion = { workspace = true, default_features = false, features = ["sql", "parquet"] }
+datafusion = { workspace = true, default_features = false, features = ["sql", "parquet", "nested_expressions"] }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
 datafusion-ffi = { workspace = true }

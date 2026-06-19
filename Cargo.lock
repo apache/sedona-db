@@ -6150,6 +6150,7 @@ dependencies = [
  "sedona-functions",
  "sedona-gdal",
  "sedona-raster",
+ "sedona-raster-functions",
  "sedona-schema",
  "sedona-testing",
  "tempfile",
@@ -6385,8 +6386,10 @@ version = "0.4.0"
 dependencies = [
  "adbc_core",
  "arrow-array",
+ "arrow-buffer",
  "arrow-schema",
  "async-trait",
+ "bytes",
  "datafusion",
  "datafusion-common",
  "datafusion-execution",
@@ -6404,6 +6407,7 @@ dependencies = [
  "sedona-geometry",
  "sedona-geoparquet",
  "sedona-proj",
+ "sedona-raster",
  "sedona-schema",
  "sedona-tg",
  "serde_json",
@@ -6416,9 +6420,12 @@ name = "sedonadb-zarr"
 version = "0.4.0"
 dependencies = [
  "arrow-array",
+ "arrow-buffer",
  "object_store",
  "pyo3",
+ "sedona-raster",
  "sedona-raster-zarr",
+ "sedona-schema",
  "tokio",
  "url",
 ]

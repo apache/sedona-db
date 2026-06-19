@@ -74,6 +74,24 @@ sd_expr_negative <- function(expr, factory = sd_expr_factory()) {
 
 #' @rdname sd_expr_column
 #' @export
+sd_expr_is_null <- function(expr, factory = sd_expr_factory()) {
+  as_sd_expr(expr, factory = factory)$is_null()
+}
+
+#' @rdname sd_expr_column
+#' @export
+sd_expr_is_not_null <- function(expr, factory = sd_expr_factory()) {
+  as_sd_expr(expr, factory = factory)$is_not_null()
+}
+
+#' @rdname sd_expr_column
+#' @export
+sd_expr_not <- function(expr, factory = sd_expr_factory()) {
+  as_sd_expr(expr, factory = factory)$not()
+}
+
+#' @rdname sd_expr_column
+#' @export
 sd_expr_any_function <- function(
   function_name,
   args,
@@ -426,6 +444,14 @@ ensure_translations_registered <- function() {
   for (fn_name in fn_names) {
     sd_register_datafusion_fn(fn_name)
   }
+
+  sd_register_translation("base::is.na", function(.ctx, x) {
+    sd_expr_is_null(x, factory = .ctx$factory)
+  })
+
+  sd_register_translation("base::!", function(.ctx, x) {
+    sd_expr_not(x, factory = .ctx$factory)
+  })
 
   sd_register_translation("base::abs", function(.ctx, x) {
     sd_expr_scalar_function("abs", list(x), factory = .ctx$factory)

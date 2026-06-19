@@ -38,8 +38,12 @@ thread_local! {
 
 /// Deserialize a specific GeoArrow "crs" value
 ///
-/// Currently the only CRS types supported are PROJJSON and authority:code
-/// where the authority and code are well-known lon/lat (WGS84) codes.
+/// Recognizes three encodings: an `authority:code` string (e.g. `"EPSG:4326"`),
+/// a PROJJSON object, and a WKT1/WKT2 CRS string (e.g. `PROJCS[...]` /
+/// `PROJCRS[...]`). WKT is carried verbatim (so it can be handed to PROJ for
+/// transforms) with a best-effort `authority:code` extracted from its trailing
+/// `AUTHORITY[...]` / `ID[...]` tag. The `OGC:CRS84` / `EPSG:4326` lon/lat
+/// special case is recognized for the Geography type.
 pub fn deserialize_crs(crs_str: &str) -> Result<Crs> {
     if crs_str.is_empty() {
         return Ok(None);
@@ -52,13 +56,16 @@ pub fn deserialize_crs(crs_str: &str) -> Result<Crs> {
         return Ok(cached);
     }
 
-    // Handle JSON strings "OGC:CRS84", "EPSG:4326", "{AUTH}:{CODE}", WKT CRS strings and "0"
-    let crs = if LngLat::is_str_lnglat(crs_str) {
-        lnglat()
-    } else if crs_str == "0" {
+    // Handle "0", "{AUTH}:{CODE}" authority codes (including the OGC:CRS84 /
+    // EPSG:4326 lon/lat aliases, which are kept verbatim rather than folded),
+    // a WKT1/WKT2 CRS string, then PROJJSON.
+    let crs = if crs_str == "0" {
         None
     } else if AuthorityCode::is_authority_code(crs_str) {
         AuthorityCode::crs(crs_str)
+    } else if looks_like_wkt(crs_str) {
+        Some(Arc::new(WktCrs::new(crs_str.to_string()))
+            as Arc<dyn CoordinateReferenceSystem + Send + Sync>)
     } else {
         // Try to parse as PROJJSON string
         let projjson: ProjJSON = crs_str.parse()?;
@@ -84,11 +91,8 @@ pub fn deserialize_crs_from_obj(crs_value: &serde_json::Value) -> Result<Crs> {
             return Ok(None);
         }
 
-        // Handle JSON strings "OGC:CRS84" and "EPSG:4326"
-        if LngLat::is_str_lnglat(crs_str) {
-            return Ok(lnglat());
-        }
-
+        // Authority codes (including the OGC:CRS84 / EPSG:4326 lon/lat aliases)
+        // are kept verbatim rather than folded.
         if AuthorityCode::is_authority_code(crs_str) {
             return Ok(AuthorityCode::crs(crs_str));
         }
@@ -198,59 +202,21 @@ impl CachedSRIDToCrs {
     }
 }
 
-/// Cache for normalizing CRS strings to their abbreviated form.
+/// Normalize a CRS string to the round-trippable definition stored on
+/// geometry/raster CRSes.
 ///
-/// Maps CRS input strings to their abbreviated `authority:code` representation
-/// with caching to avoid repeated deserialization of the same CRS string:
-/// - `"0"` or `""` → `None` (no CRS)
-/// - other → deserialized and abbreviated to `authority:code` if possible
-#[derive(Default)]
-pub struct CachedCrsNormalization {
-    cache: HashMap<String, Option<String>>,
-}
-
-impl CachedCrsNormalization {
-    /// Create a new CachedCrsNormalization with an empty cache.
-    pub fn new() -> Self {
-        Self {
-            cache: HashMap::new(),
-        }
-    }
-
-    /// Create a new CachedCrsNormalization with a pre-allocated cache.
-    pub fn with_capacity(capacity: usize) -> Self {
-        Self {
-            cache: HashMap::with_capacity(capacity),
-        }
-    }
-
-    /// Normalize a CRS string, using the cache to avoid repeated deserialization.
-    ///
-    /// Returns the abbreviated `authority:code` form if available, otherwise the
-    /// original string. Returns `None` for `"0"`, `""`, or CRS strings that
-    /// deserialize to `None`.
-    pub fn normalize(&mut self, crs_str: &str) -> Result<Option<String>> {
-        if crs_str == "0" || crs_str.is_empty() {
-            return Ok(None);
-        }
-
-        if let Some(cached) = self.cache.get(crs_str) {
-            return Ok(cached.clone());
-        }
-
-        let result = if let Some(crs) = deserialize_crs(crs_str)? {
-            if let Some(auth_code) = crs.to_authority_code()? {
-                Some(auth_code)
-            } else {
-                Some(crs_str.to_string())
-            }
-        } else {
-            None
-        };
-
-        self.cache.insert(crs_str.to_string(), result.clone());
-        Ok(result)
-    }
+/// Returns the [`CoordinateReferenceSystem::to_crs_string`] form — an
+/// `authority:code` stays compact, while a PROJJSON/WKT definition is preserved
+/// in full rather than collapsed to its embedded authority code, so no
+/// information is lost on the way in. Returns `None` for `"0"`, `""`, or CRS
+/// strings that deserialize to `None`.
+///
+/// Parsing is memoized by [`deserialize_crs`]'s thread-local cache, so this is
+/// cheap to call per row. The "full definition" guarantee is semantic, not
+/// byte-for-byte: a PROJJSON re-serializes from its parsed tree, so object keys
+/// may reorder and whitespace normalize; it round-trips and compares equal.
+pub fn normalize_crs(crs_str: &str) -> Result<Option<String>> {
+    Ok(deserialize_crs(crs_str)?.map(|crs| crs.to_crs_string()))
 }
 
 /// Longitude/latitude CRS (WGS84)
@@ -291,11 +257,9 @@ impl PartialEq<dyn CoordinateReferenceSystem + Send + Sync>
     for dyn CoordinateReferenceSystem + Send + Sync
 {
     fn eq(&self, other: &Self) -> bool {
-        if LngLat::is_lnglat(self) && LngLat::is_lnglat(other) {
-            true
-        } else {
-            self.crs_equals(other)
-        }
+        // `crs_equals` is the single source of truth for CRS equality (including
+        // the lon/lat alias); the operator is a pure delegate.
+        self.crs_equals(other)
     }
 }
 
@@ -327,7 +291,25 @@ pub trait CoordinateReferenceSystem: Debug {
     /// authority_code `"EPSG:{srid}"`. Note that other SRID representations
     /// (e.g., GeoArrow, Parquet GEOMETRY/GEOGRAPHY) do not make any guarantees
     /// that an SRID comes from the EPSG authority.
-    fn srid(&self) -> Result<Option<u32>>;
+    ///
+    /// The default derives the SRID from [`to_authority_code`](Self::to_authority_code):
+    /// the lon/lat alias maps to 4326, an `EPSG:{code}` authority parses to its
+    /// code, and anything else is `None`. Implementers only need to override
+    /// this if they can supply an SRID without an authority code.
+    fn srid(&self) -> Result<Option<u32>> {
+        let Some(auth_code) = self.to_authority_code()? else {
+            return Ok(None);
+        };
+        if LngLat::is_authority_code_lnglat(&auth_code) {
+            return Ok(LngLat::srid());
+        }
+        match auth_code.split_once(':') {
+            Some((authority, code)) if authority.eq_ignore_ascii_case("EPSG") => {
+                Ok(code.parse().ok())
+            }
+            _ => Ok(None),
+        }
+    }
 
     /// Compute a CRS string representation
     ///
@@ -374,18 +356,6 @@ impl LngLat {
         Crs::Some(Arc::new(AuthorityCode {
             auth_code: "OGC:CRS84".to_string(),
         }))
-    }
-
-    pub fn is_lnglat(crs: &dyn CoordinateReferenceSystem) -> bool {
-        if let Ok(Some(auth_code)) = crs.to_authority_code() {
-            Self::is_authority_code_lnglat(&auth_code)
-        } else {
-            false
-        }
-    }
-
-    pub fn is_str_lnglat(string_value: &str) -> bool {
-        Self::is_authority_code_lnglat(string_value)
     }
 
     pub fn is_authority_code_lnglat(string_value: &str) -> bool {
@@ -452,13 +422,30 @@ impl AuthorityCode {
     }
 }
 
+/// Compare two authority codes, treating the lon/lat aliases
+/// (`EPSG:4326` and `OGC:CRS84`) as equal. This keeps the aliases equivalent
+/// for `crs_equals` now that `deserialize_crs` preserves them verbatim instead
+/// of folding `EPSG:4326` to `OGC:CRS84`.
+fn authority_codes_equal(a: &str, b: &str) -> bool {
+    a == b || (LngLat::is_authority_code_lnglat(a) && LngLat::is_authority_code_lnglat(b))
+}
+
 /// Implementation of an authority:code CoordinateReferenceSystem
 impl CoordinateReferenceSystem for AuthorityCode {
     /// Convert to a JSON string
+    ///
+    /// The lon/lat aliases (`EPSG:4326`/`OGC:CRS84`) canonicalize to `OGC:CRS84`
+    /// here so CRS metadata stays axis-order-explicit for GeoParquet/GeoArrow,
+    /// even though `to_crs_string` preserves the authority code verbatim.
     fn to_json(&self) -> String {
-        let mut result = String::with_capacity(self.auth_code.len() + 2);
+        let code = if LngLat::is_authority_code_lnglat(&self.auth_code) {
+            "OGC:CRS84"
+        } else {
+            &self.auth_code
+        };
+        let mut result = String::with_capacity(code.len() + 2);
         result.push('"');
-        result.push_str(&self.auth_code);
+        result.push_str(code);
         result.push('"');
         result
     }
@@ -471,22 +458,9 @@ impl CoordinateReferenceSystem for AuthorityCode {
     /// Check equality with another CoordinateReferenceSystem
     fn crs_equals(&self, other: &dyn CoordinateReferenceSystem) -> bool {
         match other.to_authority_code() {
-            Ok(Some(other_ac)) => other_ac == self.auth_code,
+            Ok(Some(other_ac)) => authority_codes_equal(&other_ac, &self.auth_code),
             _ => false,
         }
-    }
-
-    /// Get the SRID if authority is EPSG
-    fn srid(&self) -> Result<Option<u32>> {
-        if LngLat::is_authority_code_lnglat(&self.auth_code) {
-            return Ok(LngLat::srid());
-        }
-        if let Some(pos) = self.auth_code.find(':') {
-            if self.auth_code[..pos].eq_ignore_ascii_case("EPSG") {
-                return Ok(self.auth_code[pos + 1..].parse::<u32>().ok());
-            }
-        }
-        Ok(None)
     }
 
     /// Convert to a CRS string
@@ -497,35 +471,42 @@ impl CoordinateReferenceSystem for AuthorityCode {
     /// Hard-code support for several known spherical CRSes so we can support them
     /// in the geography type
     fn geographic_params(&self) -> Result<Option<GeographicCrsParams>> {
-        match self.auth_code.as_str() {
-            // Default lnglat(). Here we use S2Earth::RadiusMeters() as a constant
-            // for consistent results (if we averaged over the ensemble, distance results
-            // may be subtly different between versions as the ensemble is updated).
-            "OGC:CRS84" | "EPSG:4326" => Ok(Some(GeographicCrsParams {
-                spherical_radius_m: 6371010.0,
-            })),
-            // NAD83
-            // https://spatialreference.org/ref/epsg/4269/
-            "OGC:CRS83" | "EPSG:4269" => {
-                const A: f64 = 6378137.0;
-                const INV_F: f64 = 298.257222101;
-                const B: f64 = A * (1.0 - 1.0 / INV_F);
-                Ok(Some(GeographicCrsParams {
-                    spherical_radius_m: (2.0 * A + B) / 3.0,
-                }))
-            }
-            // NAD27
-            // Mean radius = (2a + b) / 3
-            // https://spatialreference.org/ref/epsg/4267/
-            "OGC:CRS27" | "EPSG:4267" => {
-                const A: f64 = 6378206.4;
-                const B: f64 = 6356583.8;
-                Ok(Some(GeographicCrsParams {
-                    spherical_radius_m: (2.0 * A + B) / 3.0,
-                }))
-            }
-            _ => Ok(None),
+        Ok(geographic_params_for_authority(&self.auth_code))
+    }
+}
+
+/// Spherical parameters for the handful of geographic CRSes the Geography type
+/// supports, keyed by `authority:code`. Shared by [`AuthorityCode`] and [`WktCrs`]
+/// (which resolves its authority code from the WKT first).
+fn geographic_params_for_authority(auth_code: &str) -> Option<GeographicCrsParams> {
+    match auth_code {
+        // Default lnglat(). Here we use S2Earth::RadiusMeters() as a constant
+        // for consistent results (if we averaged over the ensemble, distance results
+        // may be subtly different between versions as the ensemble is updated).
+        "OGC:CRS84" | "EPSG:4326" => Some(GeographicCrsParams {
+            spherical_radius_m: 6371010.0,
+        }),
+        // NAD83
+        // https://spatialreference.org/ref/epsg/4269/
+        "OGC:CRS83" | "EPSG:4269" => {
+            const A: f64 = 6378137.0;
+            const INV_F: f64 = 298.257222101;
+            const B: f64 = A * (1.0 - 1.0 / INV_F);
+            Some(GeographicCrsParams {
+                spherical_radius_m: (2.0 * A + B) / 3.0,
+            })
         }
+        // NAD27
+        // Mean radius = (2a + b) / 3
+        // https://spatialreference.org/ref/epsg/4267/
+        "OGC:CRS27" | "EPSG:4267" => {
+            const A: f64 = 6378206.4;
+            const B: f64 = 6356583.8;
+            Some(GeographicCrsParams {
+                spherical_radius_m: (2.0 * A + B) / 3.0,
+            })
+        }
+        _ => None,
     }
 }
 
@@ -582,27 +563,12 @@ impl CoordinateReferenceSystem for ProjJSON {
         if let (Ok(Some(auth_code)), Ok(Some(other_auth_code))) =
             (self.to_authority_code(), other.to_authority_code())
         {
-            auth_code == other_auth_code
+            authority_codes_equal(&auth_code, &other_auth_code)
         } else if let Ok(other_value) = serde_json::from_str::<Value>(&other.to_json()) {
             self.value == other_value
         } else {
             false
         }
-    }
-
-    fn srid(&self) -> Result<Option<u32>> {
-        let authority_code_opt = self.to_authority_code()?;
-        if let Some(authority_code) = authority_code_opt {
-            if LngLat::is_authority_code_lnglat(&authority_code) {
-                return Ok(LngLat::srid());
-            } else if let Some(colon_pos) = authority_code.find(':') {
-                if authority_code[..colon_pos].eq_ignore_ascii_case("EPSG") {
-                    return Ok(authority_code[colon_pos + 1..].parse::<u32>().ok());
-                }
-            }
-        }
-
-        Ok(None)
     }
 
     fn to_crs_string(&self) -> String {
@@ -679,6 +645,319 @@ impl CoordinateReferenceSystem for ProjJSON {
         Ok(Some(GeographicCrsParams {
             spherical_radius_m: (2.0 * a + b) / 3.0,
         }))
+    }
+}
+
+/// WKT CRS keywords that begin a recognized WKT1/WKT2 coordinate reference
+/// system, matched case-insensitively against the trimmed input.
+const WKT_CRS_KEYWORDS: &[&str] = &[
+    "PROJCRS",
+    "PROJCS",
+    "GEOGCRS",
+    "GEOGCS",
+    "GEODCRS",
+    "GEODETICCRS",
+    "GEOCCS",
+    "BOUNDCRS",
+    "COMPOUNDCRS",
+    "COMPD_CS",
+    "VERTCRS",
+    "VERT_CS",
+    "ENGCRS",
+    "ENGINEERINGCRS",
+    "PARAMETRICCRS",
+    "TIMECRS",
+    "LOCAL_CS",
+    "FITTED_CS",
+];
+
+/// Heuristic check for a WKT1/WKT2 CRS string: the trimmed value begins with a
+/// recognized CRS keyword followed (after optional whitespace) by `[` or `(`.
+fn looks_like_wkt(s: &str) -> bool {
+    let upper = s.trim_start().to_ascii_uppercase();
+    WKT_CRS_KEYWORDS.iter().any(|kw| {
+        upper
+            .strip_prefix(kw)
+            .is_some_and(|rest| rest.trim_start().starts_with(['[', '(']))
+    })
+}
+
+/// A node in a WKT CRS string. WKT is JSON-ish: a keyword followed by a
+/// bracketed, comma-separated list of children, interspersed with quoted
+/// strings and bare tokens (numbers, axis directions, enum values) as leaves.
+enum WktNode<'a> {
+    /// A bare token — a number or unquoted keyword value, e.g. `6378137`.
+    Unquoted(&'a str),
+    /// A quoted string, e.g. `"WGS 84"`.
+    Quoted(&'a str),
+    /// `KEYWORD[child, child, ...]` (or `(...)`), e.g. `ID["EPSG",4326]`.
+    Tagged(&'a str, Vec<WktNode<'a>>),
+}
+
+impl WktNode<'_> {
+    /// The inner text of a leaf node (quoted string or bare token), or `None`
+    /// for a tagged node.
+    fn leaf_str(&self) -> Option<&str> {
+        match self {
+            WktNode::Quoted(s) | WktNode::Unquoted(s) => Some(s),
+            WktNode::Tagged(..) => None,
+        }
+    }
+}
+
+/// Maximum WKT nesting depth the parser will descend into. Real CRS definitions
+/// nest under a dozen levels deep; the cap exists only to bound stack usage on
+/// pathological or malformed input (the WKT can arrive from untrusted file
+/// metadata), past which authority extraction gives up.
+const WKT_MAX_DEPTH: usize = 128;
+
+/// Recursive-descent parser over a WKT string. Whitespace is insignificant
+/// except inside quoted strings. Recursion is bounded by [`WKT_MAX_DEPTH`].
+struct WktParser<'a> {
+    s: &'a str,
+    pos: usize,
+}
+
+impl<'a> WktParser<'a> {
+    fn skip_ws(&mut self) {
+        self.pos += self.s[self.pos..]
+            .find(|c: char| !c.is_whitespace())
+            .unwrap_or(self.s.len() - self.pos);
+    }
+
+    fn peek(&self) -> Option<char> {
+        self.s[self.pos..].chars().next()
+    }
+
+    /// Parse a quoted string, consuming the surrounding quotes. A doubled `""`
+    /// is the WKT escape for a literal quote and does not terminate the string.
+    fn parse_quoted(&mut self) -> Result<WktNode<'a>, DataFusionError> {
+        self.pos += 1; // opening quote
+        let start = self.pos;
+        loop {
+            let rest = &self.s[self.pos..];
+            let Some(q) = rest.find('"') else {
+                return Err(DataFusionError::Execution(
+                    "WKT CRS string has an unterminated quoted string".into(),
+                ));
+            };
+            // A doubled "" is an escaped quote: skip both and keep scanning.
+            if rest[q + 1..].starts_with('"') {
+                self.pos += q + 2;
+                continue;
+            }
+            let value = &self.s[start..self.pos + q];
+            self.pos += q + 1; // closing quote
+            return Ok(WktNode::Quoted(value));
+        }
+    }
+
+    fn parse_node(&mut self, depth: usize) -> Result<WktNode<'a>, DataFusionError> {
+        if depth > WKT_MAX_DEPTH {
+            return Err(DataFusionError::Execution(format!(
+                "WKT CRS string nests beyond {WKT_MAX_DEPTH} levels"
+            )));
+        }
+        self.skip_ws();
+        match self.peek() {
+            Some('"') => return self.parse_quoted(),
+            Some(_) => {}
+            None => {
+                return Err(DataFusionError::Execution(
+                    "unexpected end of WKT CRS string".into(),
+                ))
+            }
+        }
+        // A keyword or bare token runs until a structural character.
+        let start = self.pos;
+        let word_len = self.s[self.pos..]
+            .find(|c: char| c.is_whitespace() || "[](),\"".contains(c))
+            .unwrap_or(self.s.len() - self.pos);
+        let word = self.s[start..start + word_len].trim();
+        self.pos += word_len;
+        self.skip_ws();
+
+        // A `[`/`(` makes this a tagged node; otherwise it is a bare token.
+        match self.peek() {
+            Some(open @ ('[' | '(')) => {
+                let close = if open == '[' { ']' } else { ')' };
+                self.pos += 1;
+                let mut children = Vec::new();
+                loop {
+                    self.skip_ws();
+                    match self.peek() {
+                        Some(c) if c == close => {
+                            self.pos += 1;
+                            break;
+                        }
+                        Some(',') => {
+                            self.pos += 1;
+                        }
+                        Some(_) => children.push(self.parse_node(depth + 1)?),
+                        None => {
+                            return Err(DataFusionError::Execution(
+                                "WKT CRS string has an unterminated bracket".into(),
+                            ))
+                        }
+                    }
+                }
+                Ok(WktNode::Tagged(word, children))
+            }
+            _ if word.is_empty() => Err(DataFusionError::Execution(
+                "WKT CRS string has an empty token".into(),
+            )),
+            _ => Ok(WktNode::Unquoted(word)),
+        }
+    }
+}
+
+/// Best-effort `authority:code` from a WKT CRS string, read from the **CRS-level**
+/// `AUTHORITY["auth","code"]` (WKT1) or `ID["auth",code]` (WKT2) tag — i.e. a
+/// direct child of the root node. Authorities on nested datums, ellipsoids,
+/// projection methods, parameters, or units are deliberately ignored: a custom
+/// CRS with no top-level authority must not be misidentified by an inner code
+/// (e.g. a Lambert Conformal whose only `ID`s are the `EPSG:9001` metre unit and
+/// projection operation codes). `None` when the root carries no authority tag.
+fn extract_authority_from_wkt(wkt: &str) -> Option<String> {
+    let mut parser = WktParser { s: wkt, pos: 0 };
+    // A malformed or too-deeply-nested WKT simply yields no authority — the
+    // definition is still carried verbatim, it just has no SRID.
+    let Ok(WktNode::Tagged(_, children)) = parser.parse_node(0) else {
+        return None;
+    };
+    for child in &children {
+        let WktNode::Tagged(keyword, args) = child else {
+            continue;
+        };
+        if !keyword.eq_ignore_ascii_case("AUTHORITY") && !keyword.eq_ignore_ascii_case("ID") {
+            continue;
+        }
+        let authority = args.first()?.leaf_str()?.trim();
+        let code = args.get(1)?.leaf_str()?.trim();
+        if authority.is_empty() || code.is_empty() {
+            return None;
+        }
+        return Some(format!("{}:{}", authority.to_uppercase(), code));
+    }
+    None
+}
+
+/// True if `keyword` is a geographic/geodetic CRS root — one with a meaningful
+/// ellipsoid for spherical geography. Projected, engineering, vertical, etc.
+/// roots are excluded so they never resolve geographic parameters.
+fn is_geographic_crs_keyword(keyword: &str) -> bool {
+    ["GEOGCS", "GEOGCRS", "GEODCRS", "GEODETICCRS"]
+        .iter()
+        .any(|k| keyword.eq_ignore_ascii_case(k))
+}
+
+/// Depth-first search for the first `ELLIPSOID` (WKT2) or `SPHEROID` (WKT1) node.
+fn find_ellipsoid<'a, 'n>(node: &'n WktNode<'a>) -> Option<&'n WktNode<'a>> {
+    let WktNode::Tagged(keyword, children) = node else {
+        return None;
+    };
+    if keyword.eq_ignore_ascii_case("ELLIPSOID") || keyword.eq_ignore_ascii_case("SPHEROID") {
+        return Some(node);
+    }
+    children.iter().find_map(find_ellipsoid)
+}
+
+/// Best-effort geographic parameters parsed straight from a WKT definition, for
+/// geographic CRSes whose authority code isn't in the curated lookup (including
+/// authority-less ones). Reads the ellipsoid's semi-major axis and inverse
+/// flattening and reduces them to a mean spherical radius the same way
+/// [`geographic_params_for_authority`] does; a sphere (inverse flattening 0)
+/// uses its radius directly. Returns `None` for non-geographic CRSes (e.g. a
+/// projected CRS, even though it nests a geographic base) or WKT without a
+/// parseable ellipsoid.
+fn geographic_params_from_wkt(wkt: &str) -> Option<GeographicCrsParams> {
+    let root = WktParser { s: wkt, pos: 0 }.parse_node(0).ok()?;
+    let WktNode::Tagged(keyword, _) = &root else {
+        return None;
+    };
+    if !is_geographic_crs_keyword(keyword) {
+        return None;
+    }
+
+    let WktNode::Tagged(_, ellipsoid_args) = find_ellipsoid(&root)? else {
+        return None;
+    };
+    let semi_major: f64 = ellipsoid_args.get(1)?.leaf_str()?.trim().parse().ok()?;
+    let inverse_flattening: f64 = ellipsoid_args.get(2)?.leaf_str()?.trim().parse().ok()?;
+    if !semi_major.is_finite() || semi_major <= 0.0 {
+        return None;
+    }
+
+    let spherical_radius_m = if inverse_flattening == 0.0 {
+        semi_major
+    } else {
+        let semi_minor = semi_major * (1.0 - 1.0 / inverse_flattening);
+        (2.0 * semi_major + semi_minor) / 3.0
+    };
+    Some(GeographicCrsParams { spherical_radius_m })
+}
+
+/// A CRS given as a WKT1/WKT2 string.
+///
+/// The WKT is preserved verbatim (`to_crs_string`) so it can be handed to PROJ
+/// for transforms, while an `authority:code` is extracted once at construction
+/// for equality and SRID. Geographic parameters resolve from that authority
+/// when it's known, otherwise straight from the WKT's own ellipsoid.
+#[derive(Debug)]
+struct WktCrs {
+    wkt: String,
+    authority_code: Option<String>,
+}
+
+impl WktCrs {
+    fn new(wkt: String) -> Self {
+        let authority_code = extract_authority_from_wkt(&wkt);
+        Self {
+            wkt,
+            authority_code,
+        }
+    }
+}
+
+impl CoordinateReferenceSystem for WktCrs {
+    /// Emit the WKT verbatim (as a JSON string), preserving the definition the
+    /// same way [`ProjJSON::to_json`] does — a WKT carrying an embedded
+    /// authority is **not** collapsed to that code, so the full definition
+    /// survives a metadata round-trip and `ST_Crs` reads it back unchanged.
+    /// (The GeoParquet writer resolves it to PROJJSON, or to the lon/lat
+    /// default, via the CRS provider, like any other definition.)
+    fn to_json(&self) -> String {
+        Value::String(self.wkt.clone()).to_string()
+    }
+
+    fn to_authority_code(&self) -> Result<Option<String>> {
+        Ok(self.authority_code.clone())
+    }
+
+    fn crs_equals(&self, other: &dyn CoordinateReferenceSystem) -> bool {
+        if let (Ok(Some(a)), Ok(Some(b))) = (self.to_authority_code(), other.to_authority_code()) {
+            return authority_codes_equal(&a, &b);
+        }
+        // No authority on one side: fall back to comparing raw definitions.
+        self.to_crs_string() == other.to_crs_string()
+    }
+
+    // `srid()` uses the trait default (derived from `to_authority_code`).
+
+    /// The verbatim WKT — the form PROJ/GDAL consume directly.
+    fn to_crs_string(&self) -> String {
+        self.wkt.clone()
+    }
+
+    fn geographic_params(&self) -> Result<Option<GeographicCrsParams>> {
+        // Prefer the curated authority lookup (stable, version-independent
+        // radii); otherwise derive the ellipsoid straight from the WKT so
+        // authority-less geographic CRSes still work.
+        Ok(self
+            .authority_code
+            .as_deref()
+            .and_then(geographic_params_for_authority)
+            .or_else(|| geographic_params_from_wkt(&self.wkt)))
     }
 }
 
@@ -963,5 +1242,306 @@ mod test {
         .unwrap();
         let params = datum_ensemble.geographic_params().unwrap().unwrap();
         assert_eq!(params.spherical_radius(), 6371000.0);
+    }
+
+    #[test]
+    fn normalize_preserves_definition() {
+        // Empty / "0" -> no CRS.
+        assert_eq!(normalize_crs("0").unwrap(), None);
+        assert_eq!(normalize_crs("").unwrap(), None);
+
+        // An authority:code stays compact.
+        assert_eq!(
+            normalize_crs("EPSG:3857").unwrap().as_deref(),
+            Some("EPSG:3857")
+        );
+
+        // The lon/lat alias is kept verbatim (not folded to OGC:CRS84); the two
+        // still compare equal, but the user's input string is preserved.
+        assert_eq!(
+            normalize_crs("EPSG:4326").unwrap().as_deref(),
+            Some("EPSG:4326")
+        );
+        assert_eq!(
+            deserialize_crs("EPSG:4326").unwrap(),
+            deserialize_crs("OGC:CRS84").unwrap()
+        );
+
+        // A PROJJSON carrying an embedded authority id is preserved in full
+        // rather than collapsed to "EPSG:6318" — no information lost on input.
+        let normalized = normalize_crs(EPSG_6318_PROJJSON).unwrap().unwrap();
+        assert!(
+            normalized.contains("GeographicCRS"),
+            "expected full PROJJSON, got {normalized}"
+        );
+        assert_ne!(normalized, "EPSG:6318");
+        // It round-trips back to the same CRS.
+        assert_eq!(
+            deserialize_crs(&normalized).unwrap(),
+            deserialize_crs(EPSG_6318_PROJJSON).unwrap()
+        );
+
+        // A PROJJSON with no authority id: there's nothing to collapse to, so
+        // the full definition is the only faithful output. Round-trip equality
+        // here exercises ProjJSON::crs_equals' full-body comparison (not the
+        // authority-code short circuit), proving the definition survives
+        // re-serialization.
+        const NO_ID_PROJJSON: &str = r#"{"type":"GeographicCRS","name":"Custom","datum":{"type":"GeodeticReferenceFrame","name":"Custom datum","ellipsoid":{"name":"Custom","semi_major_axis":6378137,"inverse_flattening":298.257223563}},"coordinate_system":{"subtype":"ellipsoidal","axis":[{"name":"Geodetic latitude","abbreviation":"Lat","direction":"north","unit":"degree"},{"name":"Geodetic longitude","abbreviation":"Lon","direction":"east","unit":"degree"}]}}"#;
+        let normalized = normalize_crs(NO_ID_PROJJSON).unwrap().unwrap();
+        let from_normalized = deserialize_crs(&normalized).unwrap().unwrap();
+        let from_original = deserialize_crs(NO_ID_PROJJSON).unwrap().unwrap();
+        assert!(from_normalized.to_authority_code().unwrap().is_none());
+        assert!(from_normalized.crs_equals(from_original.as_ref()));
+    }
+
+    #[test]
+    fn lnglat_alias_preserved_in_string_canonical_in_metadata() {
+        // EPSG:4326 is preserved as the round-trippable string (to_crs_string),
+        // but the JSON metadata form (to_json) canonicalizes to OGC:CRS84 so
+        // GeoParquet/GeoArrow stay axis-order-explicit.
+        let crs = deserialize_crs("EPSG:4326").unwrap().unwrap();
+        assert_eq!(crs.to_crs_string(), "EPSG:4326");
+        assert_eq!(crs.to_json(), r#""OGC:CRS84""#);
+
+        // OGC:CRS84 is unchanged in both forms.
+        let crs84 = deserialize_crs("OGC:CRS84").unwrap().unwrap();
+        assert_eq!(crs84.to_crs_string(), "OGC:CRS84");
+        assert_eq!(crs84.to_json(), r#""OGC:CRS84""#);
+
+        // The two aliases still compare equal, and both report SRID 4326.
+        assert!(crs.crs_equals(crs84.as_ref()));
+        assert_eq!(crs.srid().unwrap(), Some(4326));
+
+        // A non-lnglat authority code is untouched in both forms.
+        let crs3857 = deserialize_crs("EPSG:3857").unwrap().unwrap();
+        assert_eq!(crs3857.to_crs_string(), "EPSG:3857");
+        assert_eq!(crs3857.to_json(), r#""EPSG:3857""#);
+    }
+}
+
+#[cfg(test)]
+mod wkt_tests {
+    use super::*;
+
+    // CRS-level AUTHORITY is `EPSG:3857`; inner datum/ellipsoid tags
+    // (7030/6326/4326) must not win.
+    const WKT1_PSEUDO_MERCATOR: &str = r#"PROJCS["WGS 84 / Pseudo-Mercator",GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563,AUTHORITY["EPSG","7030"]],AUTHORITY["EPSG","6326"]],AUTHORITY["EPSG","4326"]],PROJECTION["Mercator_1SP"],AUTHORITY["EPSG","3857"]]"#;
+    // WKT2 with a bare (unquoted) CRS-level code; the nested ELLIPSOID must not
+    // be mistaken for the CRS identifier.
+    const WKT2_WGS84: &str = r#"GEOGCRS["WGS 84",DATUM["World Geodetic System 1984",ELLIPSOID["WGS 84",6378137,298.257223563,LENGTHUNIT["metre",1]]],CS[ellipsoidal,2],ID["EPSG",4326]]"#;
+    const WKT_NO_AUTHORITY: &str = r#"PROJCS["Custom",GEOGCS["Custom datum",DATUM["D",SPHEROID["S",6378137,298.257223563]]],PROJECTION["Mercator_1SP"]]"#;
+
+    // A custom projected CRS with no CRS-level authority whose inner GEOGCS *does*
+    // carry one (EPSG:4326). The projected CRS is not EPSG:4326 — the base
+    // geographic CRS is — so no authority should be extracted.
+    const WKT1_CUSTOM_LCC_INNER_AUTHORITY: &str = r#"PROJCS["Custom LCC",GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],AUTHORITY["EPSG","4326"]],PROJECTION["Lambert_Conformal_Conic_2SP"],PARAMETER["standard_parallel_1",33],PARAMETER["standard_parallel_2",45],UNIT["metre",1]]"#;
+
+    // A native HRRR Lambert Conformal CRS that cannot be described by a single
+    // EPSG code. Its only `ID`s are nested unit/operation codes — `EPSG:9001`
+    // (metre), `EPSG:8901` (Greenwich), the `EPSG:9801` projection method, and
+    // its `EPSG:8801..8807` parameters — and the last of them (`EPSG:9001`) is
+    // exactly what a naive "last tag" scan would wrongly return as the CRS.
+    const WKT2_HRRR_LCC: &str = r#"PROJCRS["HRRR Lambert Conformal",BASEGEOGCRS["unknown",DATUM["unknown",ELLIPSOID["unknown",6371229,0,LENGTHUNIT["metre",1,ID["EPSG",9001]]]],PRIMEM["Greenwich",0,ANGLEUNIT["degree",0.0174532925199433],ID["EPSG",8901]]],CONVERSION["unknown",METHOD["Lambert Conic Conformal (1SP)",ID["EPSG",9801]],PARAMETER["Latitude of natural origin",38.5,ANGLEUNIT["degree",0.0174532925199433],ID["EPSG",8801]],PARAMETER["Longitude of natural origin",-97.5,ANGLEUNIT["degree",0.0174532925199433],ID["EPSG",8802]],PARAMETER["Scale factor at natural origin",1,SCALEUNIT["unity",1],ID["EPSG",8805]],PARAMETER["False easting",0,LENGTHUNIT["metre",1],ID["EPSG",8806]],PARAMETER["False northing",0,LENGTHUNIT["metre",1],ID["EPSG",8807]]],CS[Cartesian,2],AXIS["(E)",east,ORDER[1],LENGTHUNIT["metre",1,ID["EPSG",9001]]],AXIS["(N)",north,ORDER[2],LENGTHUNIT["metre",1,ID["EPSG",9001]]]]"#;
+
+    #[test]
+    fn detects_wkt_strings() {
+        assert!(looks_like_wkt(WKT1_PSEUDO_MERCATOR));
+        assert!(looks_like_wkt(WKT2_WGS84));
+        assert!(looks_like_wkt("  geogcs[\"x\"]")); // leading ws + lowercase
+        assert!(!looks_like_wkt("EPSG:4326"));
+        assert!(!looks_like_wkt(r#"{"type":"GeographicCRS"}"#));
+        assert!(!looks_like_wkt(r#"PROJECTILE["not a crs"]"#));
+    }
+
+    #[test]
+    fn extracts_crs_level_authority_not_inner_tags() {
+        assert_eq!(
+            extract_authority_from_wkt(WKT1_PSEUDO_MERCATOR).as_deref(),
+            Some("EPSG:3857")
+        );
+    }
+
+    #[test]
+    fn extracts_wkt2_bare_code_and_ignores_ellipsoid() {
+        assert_eq!(
+            extract_authority_from_wkt(WKT2_WGS84).as_deref(),
+            Some("EPSG:4326")
+        );
+    }
+
+    #[test]
+    fn wkt_without_authority_has_no_code() {
+        assert_eq!(extract_authority_from_wkt(WKT_NO_AUTHORITY), None);
+    }
+
+    #[test]
+    fn inner_authority_does_not_win_without_root_authority() {
+        // The inner GEOGCS EPSG:4326 belongs to the base CRS, not the projected
+        // CRS, so the custom LCC has no authority of its own.
+        assert_eq!(
+            extract_authority_from_wkt(WKT1_CUSTOM_LCC_INNER_AUTHORITY),
+            None
+        );
+        // The HRRR LCC's only codes are nested unit/operation IDs; none is the
+        // CRS, so a naive scan returning EPSG:9001 (metre) would be wrong.
+        assert_eq!(extract_authority_from_wkt(WKT2_HRRR_LCC), None);
+    }
+
+    #[test]
+    fn quoted_name_with_structural_chars_is_not_parsed_as_structure() {
+        // The name carries `[`, `]`, `,`, a doubled-quote escape, and the literal
+        // text `ID` — none of which is structure, since it is all inside a quoted
+        // string. The real CRS-level authority must still win.
+        let wkt = r#"PROJCS["Bob""s [ID] zone, N",GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],AUTHORITY["EPSG","4326"]],PROJECTION["Transverse_Mercator"],UNIT["metre",1],AUTHORITY["EPSG","32633"]]"#;
+        assert_eq!(
+            extract_authority_from_wkt(wkt).as_deref(),
+            Some("EPSG:32633")
+        );
+    }
+
+    #[test]
+    fn unit_nested_authority_does_not_win() {
+        // WKT1 analog of the HRRR trap: the only authority is the metre UNIT's
+        // EPSG:9001, nested below the root, so no CRS authority is extracted.
+        let wkt = r#"PROJCS["Custom TM",GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]]],PROJECTION["Transverse_Mercator"],UNIT["metre",1,AUTHORITY["EPSG","9001"]]]"#;
+        assert_eq!(extract_authority_from_wkt(wkt), None);
+    }
+
+    #[test]
+    fn parser_handles_whitespace_and_lowercase_keywords() {
+        // Pretty-printed across lines, indented, and lowercase keywords.
+        let wkt = "geogcrs[\"WGS 84\",\n    datum[\"World Geodetic System 1984\",\n        ellipsoid[\"WGS 84\",6378137,298.257223563]],\n    cs[ellipsoidal,2],\n    id[\"epsg\",4326]]";
+        assert_eq!(
+            extract_authority_from_wkt(wkt).as_deref(),
+            Some("EPSG:4326")
+        );
+    }
+
+    #[test]
+    fn malformed_wkt_returns_none_without_panicking() {
+        for input in [
+            "",
+            "EPSG:4326",
+            "PROJCS",        // keyword, no bracket
+            "PROJCS[",       // unterminated node
+            "GEOGCRS[\"x\"", // unterminated, dangling child
+            "GEOGCRS[ID[",   // unterminated nested node
+            "PROJCS[\"unterminated name",
+        ] {
+            assert_eq!(extract_authority_from_wkt(input), None, "input: {input:?}");
+        }
+    }
+
+    #[test]
+    fn deeply_nested_wkt_is_bounded() {
+        // Pathological nesting must not overflow the stack; extraction bails out
+        // (and logs a warning) well before that, returning None.
+        let deep = format!("GEOGCRS{}", "[A".repeat(WKT_MAX_DEPTH + 500));
+        assert_eq!(extract_authority_from_wkt(&deep), None);
+    }
+
+    #[test]
+    fn wkt2_id_with_trailing_version_is_extracted() {
+        // A third `ID` argument (version) must not prevent extraction.
+        let wkt = r#"GEOGCRS["WGS 84",DATUM["World Geodetic System 1984",ELLIPSOID["WGS 84",6378137,298.257223563]],CS[ellipsoidal,2],ID["EPSG",4326,"2024"]]"#;
+        assert_eq!(
+            extract_authority_from_wkt(wkt).as_deref(),
+            Some("EPSG:4326")
+        );
+    }
+
+    #[test]
+    fn custom_lcc_crs_has_no_srid_and_carries_definition_through() {
+        // A custom Lambert Conformal CRS that cannot be represented as an EPSG
+        // code must not be misidentified: no authority, no SRID, no spurious
+        // equality with the nested unit code, and the WKT survives verbatim.
+        let crs = deserialize_crs(WKT2_HRRR_LCC).unwrap().unwrap();
+        assert_eq!(crs.to_authority_code().unwrap(), None);
+        assert_eq!(crs.srid().unwrap(), None);
+        assert_eq!(crs.to_crs_string(), WKT2_HRRR_LCC);
+        let metre_unit = deserialize_crs("EPSG:9001").unwrap().unwrap();
+        assert!(!crs.crs_equals(metre_unit.as_ref()));
+    }
+
+    #[test]
+    fn deserialize_routes_wkt_to_authority_and_preserves_definition() {
+        let crs = deserialize_crs(WKT1_PSEUDO_MERCATOR).unwrap().unwrap();
+        assert_eq!(
+            crs.to_authority_code().unwrap().as_deref(),
+            Some("EPSG:3857")
+        );
+        assert_eq!(crs.srid().unwrap(), Some(3857));
+        // PROJ/GDAL get the verbatim WKT, not the authority code.
+        assert_eq!(crs.to_crs_string(), WKT1_PSEUDO_MERCATOR);
+    }
+
+    #[test]
+    fn wkt_without_authority_carries_definition_through() {
+        let crs = deserialize_crs(WKT_NO_AUTHORITY).unwrap().unwrap();
+        assert_eq!(crs.to_authority_code().unwrap(), None);
+        assert_eq!(crs.srid().unwrap(), None);
+        assert_eq!(crs.to_crs_string(), WKT_NO_AUTHORITY);
+    }
+
+    #[test]
+    fn wkt_equals_matching_authority_code() {
+        let wkt_crs = deserialize_crs(WKT1_PSEUDO_MERCATOR).unwrap().unwrap();
+        let auth_crs = deserialize_crs("EPSG:3857").unwrap().unwrap();
+        assert!(wkt_crs.crs_equals(auth_crs.as_ref()));
+        assert!(auth_crs.crs_equals(wkt_crs.as_ref()));
+    }
+
+    #[test]
+    fn wkt_geographic_params_resolve_via_authority() {
+        let geographic = deserialize_crs(WKT2_WGS84).unwrap().unwrap();
+        assert!(geographic.geographic_params().unwrap().is_some()); // EPSG:4326
+        let projected = deserialize_crs(WKT1_PSEUDO_MERCATOR).unwrap().unwrap();
+        assert!(projected.geographic_params().unwrap().is_none()); // EPSG:3857
+    }
+
+    #[test]
+    fn wkt_geographic_params_parsed_from_ellipsoid_when_authority_unknown() {
+        // An authority-less geographic WKT: params are read from its ellipsoid
+        // (GRS 1980, a=6378137, 1/f=298.257222101) and reduced to a mean radius.
+        let wkt = r#"GEOGCRS["unknown",DATUM["unknown",ELLIPSOID["GRS 1980",6378137,298.257222101,LENGTHUNIT["metre",1]]],CS[ellipsoidal,2],AXIS["lat",north],AXIS["lon",east]]"#;
+        let crs = deserialize_crs(wkt).unwrap().unwrap();
+        let params = crs.geographic_params().unwrap().expect("geographic params");
+        let a = 6378137.0_f64;
+        let b = a * (1.0 - 1.0 / 298.257222101);
+        assert!((params.spherical_radius() - (2.0 * a + b) / 3.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn wkt_sphere_radius_parsed_from_ellipsoid() {
+        // A spherical ellipsoid (inverse flattening 0) uses its radius directly.
+        let wkt = r#"GEOGCRS["sphere",DATUM["d",ELLIPSOID["sphere",6371229,0,LENGTHUNIT["metre",1]]],CS[ellipsoidal,2]]"#;
+        let crs = deserialize_crs(wkt).unwrap().unwrap();
+        let params = crs.geographic_params().unwrap().expect("geographic params");
+        assert_eq!(params.spherical_radius(), 6371229.0);
+    }
+
+    #[test]
+    fn projected_wkt_has_no_geographic_params() {
+        // A projected CRS is never a geography, even though it nests a GEOGCS
+        // with a SPHEROID — the parse fallback must reject it.
+        let crs = deserialize_crs(WKT_NO_AUTHORITY).unwrap().unwrap();
+        assert!(crs.geographic_params().unwrap().is_none());
+    }
+
+    #[test]
+    fn wkt_to_json_preserves_definition() {
+        // to_json emits the WKT verbatim (as a quoted JSON string), like
+        // ProjJSON — a WKT carrying an embedded authority is NOT collapsed to
+        // that code, so the full definition survives a metadata round-trip.
+        let crs = deserialize_crs(WKT1_PSEUDO_MERCATOR).unwrap().unwrap();
+        assert_eq!(
+            crs.to_json(),
+            Value::String(WKT1_PSEUDO_MERCATOR.to_string()).to_string()
+        );
+        let bare = deserialize_crs(WKT_NO_AUTHORITY).unwrap().unwrap();
+        assert_eq!(
+            bare.to_json(),
+            Value::String(WKT_NO_AUTHORITY.to_string()).to_string()
+        );
     }
 }

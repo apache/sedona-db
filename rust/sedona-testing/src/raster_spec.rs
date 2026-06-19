@@ -36,7 +36,9 @@
 //!     .build();
 //! ```
 
-use arrow_array::{Array, ArrayRef, Int64Array, ListArray, StringArray, StructArray};
+use arrow_array::{
+    Array, ArrayRef, Int64Array, ListArray, StringArray, StringViewArray, StructArray,
+};
 use datafusion_common::ScalarValue;
 use datafusion_expr::{Expr, Literal};
 use sedona_raster::array::RasterStructArray;
@@ -419,8 +421,8 @@ pub fn assert_rasters_equal(actual: &ArrayRef, expected: &[Option<RasterSpec>]) 
         .expect("expected a raster StructArray result");
     let expected_struct = raster_array(expected.iter().cloned());
     assert_raster_arrays_equal(
-        &RasterStructArray::new(actual_struct),
-        &RasterStructArray::new(&expected_struct),
+        &RasterStructArray::try_new(actual_struct).unwrap(),
+        &RasterStructArray::try_new(&expected_struct).unwrap(),
     );
 }
 
@@ -431,8 +433,8 @@ pub fn assert_raster_scalar_equals(actual: &ScalarValue, expected: &RasterSpec) 
         ScalarValue::Struct(actual_struct) => {
             let expected_struct = expected.build();
             assert_raster_arrays_equal(
-                &RasterStructArray::new(actual_struct),
-                &RasterStructArray::new(&expected_struct),
+                &RasterStructArray::try_new(actual_struct).unwrap(),
+                &RasterStructArray::try_new(&expected_struct).unwrap(),
             );
         }
         other => panic!("expected a raster struct scalar, got {other:?}"),
@@ -450,15 +452,22 @@ pub fn list_utf8_row(result: &ArrayRef, row: usize) -> Option<Vec<String>> {
         return None;
     }
     let values = list.value(row);
-    let strings = values
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .expect("expected Utf8 list items");
-    Some(
-        (0..strings.len())
-            .map(|i| strings.value(i).to_string())
-            .collect(),
-    )
+    // Accept either Utf8 or Utf8View list items.
+    if let Some(strings) = values.as_any().downcast_ref::<StringArray>() {
+        Some(
+            (0..strings.len())
+                .map(|i| strings.value(i).to_string())
+                .collect(),
+        )
+    } else if let Some(strings) = values.as_any().downcast_ref::<StringViewArray>() {
+        Some(
+            (0..strings.len())
+                .map(|i| strings.value(i).to_string())
+                .collect(),
+        )
+    } else {
+        panic!("expected Utf8 or Utf8View list items")
+    }
 }
 
 /// Extract one row of a `List<Int64>` result (e.g. a shape) as `i64`s.
@@ -484,7 +493,7 @@ pub fn list_i64_row(result: &ArrayRef, row: usize) -> Option<Vec<i64>> {
 pub fn band_pixels<T: PixelValue>(rasters: &StructArray, row: usize, band_number: usize) -> Vec<T> {
     use sedona_raster::traits::RasterRef;
 
-    let array = RasterStructArray::new(rasters);
+    let array = RasterStructArray::try_new(rasters).unwrap();
     assert!(!array.is_null(row), "raster row {row} is null");
     let raster = array.get(row).expect("raster row");
     let bands = raster.bands();
@@ -510,7 +519,7 @@ mod tests {
     #[test]
     fn d2_defaults() {
         let raster = RasterSpec::d2(4, 5).band(BandDataType::Float32).build();
-        let array = RasterStructArray::new(&raster);
+        let array = RasterStructArray::try_new(&raster).unwrap();
         assert_eq!(array.len(), 1);
         let raster_ref = array.get(0).unwrap();
         let metadata = raster_ref.metadata();
@@ -537,7 +546,7 @@ mod tests {
         let raster = RasterSpec::nd(&["time", "y", "x"], &[3, 4, 5])
             .band(BandDataType::Float32)
             .build();
-        let array = RasterStructArray::new(&raster);
+        let array = RasterStructArray::try_new(&raster).unwrap();
         let raster_ref = array.get(0).unwrap();
 
         // Raster-level spatial metadata is X-first, like the readers emit.
@@ -563,7 +572,7 @@ mod tests {
             .band_nd(&["y", "x"], &[4, 5], BandDataType::Float32)
             .band(BandDataType::Float32)
             .build();
-        let array = RasterStructArray::new(&mixed);
+        let array = RasterStructArray::try_new(&mixed).unwrap();
         let raster_ref = array.get(0).unwrap();
         assert_eq!(raster_ref.bands().len(), 2);
 
@@ -572,7 +581,7 @@ mod tests {
             .band(BandDataType::Float32)
             .band_nd(&["time", "y", "x"], &[7, 4, 5], BandDataType::Float32)
             .build();
-        let array = RasterStructArray::new(&conflicting);
+        let array = RasterStructArray::try_new(&conflicting).unwrap();
         let bands = array.get(0).unwrap();
         let bands = bands.bands();
         assert_eq!(bands.band(1).unwrap().shape(), &[3, 4, 5]);
@@ -586,7 +595,7 @@ mod tests {
             .nodata(0u16)
             .name("temperature")
             .build();
-        let array = RasterStructArray::new(&raster);
+        let array = RasterStructArray::try_new(&raster).unwrap();
         let raster_ref = array.get(0).unwrap();
         let bands = raster_ref.bands();
         let band = bands.band(1).unwrap();
@@ -607,7 +616,7 @@ mod tests {
             .band(BandDataType::Float32)
             .outdb("s3://bucket/raster.tif#band=2", None)
             .build();
-        let array = RasterStructArray::new(&raster);
+        let array = RasterStructArray::try_new(&raster).unwrap();
         let raster_ref = array.get(0).unwrap();
         let bands = raster_ref.bands();
         let band = bands.band(1).unwrap();
@@ -624,7 +633,7 @@ mod tests {
             None,
             Some(RasterSpec::d2(3, 3).band(BandDataType::UInt8)),
         ]);
-        let rasters = RasterStructArray::new(&array);
+        let rasters = RasterStructArray::try_new(&array).unwrap();
         assert_eq!(rasters.len(), 3);
         assert!(!rasters.is_null(0));
         assert!(rasters.is_null(1));

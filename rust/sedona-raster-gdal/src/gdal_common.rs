@@ -580,7 +580,10 @@ mod tests {
     fn single_raster<'a>(
         raster_array: &'a arrow_array::StructArray,
     ) -> impl sedona_raster::traits::RasterRef + 'a {
-        RasterStructArray::new(raster_array).get(0).unwrap()
+        RasterStructArray::try_new(raster_array)
+            .unwrap()
+            .get(0)
+            .unwrap()
     }
 
     fn read_band_u64(dataset: &Dataset, band_index: usize, size: (usize, usize)) -> Vec<u64> {

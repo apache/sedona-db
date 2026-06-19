@@ -1,0 +1,53 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: RS_MetaData
+description: Returns raster metadata as a struct.
+kernels:
+  - returns: struct
+    args: [raster]
+---
+
+## Description
+
+`RS_MetaData()` returns a struct containing:
+
+- `upperLeftX`, `upperLeftY`: origin of the raster geotransform
+- `gridWidth`, `gridHeight`: raster dimensions in pixels
+- `scaleX`, `scaleY`: pixel scale
+- `skewX`, `skewY`: geotransform skew terms
+- `srid`: raster SRID if available, otherwise `0`
+- `numSampleDimensions`: band count
+- `tileWidth`, `tileHeight`: GDAL block size derived tile dimensions
+
+For rasters with no bands, `tileWidth` and `tileHeight` are `0`.
+
+## Examples
+
+```sql
+SELECT RS_MetaData(RS_Example());
+```
+
+```sql
+SELECT meta."gridWidth", meta."gridHeight"
+FROM (
+  SELECT RS_MetaData(
+    RS_FromPath('https://download.osgeo.org/geotiff/samples/gdal_eg/cea.tif')
+  ) AS meta
+) q;
+```

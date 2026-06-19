@@ -168,7 +168,7 @@ async fn discovers_child_arrays_from_consolidated_metadata() {
     // discover zero arrays and error.
     let arr = read_all(&uri, None).await.unwrap();
 
-    let rasters = RasterStructArray::new(&arr);
+    let rasters = RasterStructArray::try_new(&arr).unwrap();
     assert_eq!(
         rasters.len(),
         8,
@@ -183,7 +183,7 @@ async fn round_trip_emits_one_row_per_chunk_position_with_outdb_anchors() {
     let uri = format!("file://{}", tmp.path().display());
     let arr = read_all(&uri, None).await.unwrap();
 
-    let rasters = RasterStructArray::new(&arr);
+    let rasters = RasterStructArray::try_new(&arr).unwrap();
     assert_eq!(rasters.len(), 8, "expected 8 chunk rows (2*2*2)");
 
     // First row corresponds to chunk (t=0, y=0, x=0). With group transform
@@ -286,7 +286,7 @@ async fn auto_skips_1d_coord_variables() {
     let tmp = build_xarray_style_fixture();
     let uri = format!("file://{}", tmp.path().display());
     let arr = read_all(&uri, None).await.unwrap();
-    let rasters = RasterStructArray::new(&arr);
+    let rasters = RasterStructArray::try_new(&arr).unwrap();
     // 2*2*2 = 8 chunk positions, with 2 bands per row (pressure, temperature).
     assert_eq!(rasters.len(), 8);
     let r0 = rasters.get(0).unwrap();
@@ -299,7 +299,7 @@ async fn explicit_arrays_filter_selects_subset() {
     let uri = format!("file://{}", tmp.path().display());
     let filter = vec!["temperature".to_string()];
     let arr = read_all(&uri, Some(&filter)).await.unwrap();
-    let rasters = RasterStructArray::new(&arr);
+    let rasters = RasterStructArray::try_new(&arr).unwrap();
     assert_eq!(rasters.len(), 8);
     let r0 = rasters.get(0).unwrap();
     assert_eq!(r0.num_bands(), 1, "only temperature should be read");
@@ -404,7 +404,7 @@ async fn falls_back_to_array_dimensions_attribute() {
 
     let uri = format!("file://{}", tmp.path().display());
     let arr = read_all(&uri, None).await.unwrap();
-    let rasters = RasterStructArray::new(&arr);
+    let rasters = RasterStructArray::try_new(&arr).unwrap();
     assert_eq!(rasters.len(), 2);
     let r0 = rasters.get(0).unwrap();
     let band = r0.band(0).unwrap();
@@ -491,7 +491,7 @@ async fn derives_geotransform_and_crs_from_coordinate_arrays() {
     let uri = format!("file://{}", tmp.path().display());
     let arr = read_all(&uri, None).await.unwrap();
 
-    let rasters = RasterStructArray::new(&arr);
+    let rasters = RasterStructArray::try_new(&arr).unwrap();
     assert_eq!(
         rasters.len(),
         1,
@@ -517,7 +517,7 @@ async fn derives_transform_without_crs_for_generic_xy_dims() {
     let uri = format!("file://{}", tmp.path().display());
     let arr = read_all(&uri, None).await.unwrap();
 
-    let raster = RasterStructArray::new(&arr).get(0).unwrap();
+    let raster = RasterStructArray::try_new(&arr).unwrap().get(0).unwrap();
     assert_eq!(
         raster.transform().to_vec(),
         vec![9.5, 1.0, 0.0, 20.5, 0.0, -1.0]
@@ -533,7 +533,7 @@ async fn irregular_coordinate_arrays_fall_back_to_identity() {
     let uri = format!("file://{}", tmp.path().display());
     let arr = read_all(&uri, None).await.unwrap();
 
-    let raster = RasterStructArray::new(&arr).get(0).unwrap();
+    let raster = RasterStructArray::try_new(&arr).unwrap().get(0).unwrap();
     assert_eq!(
         raster.transform().to_vec(),
         vec![0.0, 1.0, 0.0, 0.0, 0.0, -1.0]
@@ -550,7 +550,7 @@ async fn derives_transform_with_explicit_arrays_filter() {
     let arrays = ["temperature".to_string()];
     let arr = read_all(&uri, Some(&arrays)).await.unwrap();
 
-    let raster = RasterStructArray::new(&arr).get(0).unwrap();
+    let raster = RasterStructArray::try_new(&arr).unwrap().get(0).unwrap();
     assert_eq!(
         raster.transform().to_vec(),
         vec![9.5, 1.0, 0.0, 20.5, 0.0, -1.0]

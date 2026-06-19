@@ -258,7 +258,7 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
                             sedona_internal_datafusion_err!("Expected StructArray for raster data")
                         })?;
 
-                let raster_array = RasterStructArray::new(raster_struct);
+                let raster_array = RasterStructArray::try_new(raster_struct)?;
 
                 // Iterate through each raster in the array
                 for i in 0..self.num_iterations {
@@ -274,7 +274,7 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
             }
             ColumnarValue::Scalar(scalar_value) => match scalar_value {
                 ScalarValue::Struct(arc_struct) => {
-                    let raster_array = RasterStructArray::new(arc_struct.as_ref());
+                    let raster_array = RasterStructArray::try_new(arc_struct.as_ref())?;
                     let raster_opt = if raster_array.is_null(0) {
                         None
                     } else {
@@ -320,8 +320,8 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
                     sedona_internal_datafusion_err!("Expected StructArray for raster data")
                 })?;
 
-                let arr0 = RasterStructArray::new(s0);
-                let arr1 = RasterStructArray::new(s1);
+                let arr0 = RasterStructArray::try_new(s0)?;
+                let arr1 = RasterStructArray::try_new(s1)?;
                 if arr0.len() != self.num_iterations || arr1.len() != self.num_iterations {
                     return sedona_internal_err!(
                         "Expected arrays of length {} but got ({}, {})",
@@ -350,7 +350,7 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
                 let s0 = a0.as_any().downcast_ref::<StructArray>().ok_or_else(|| {
                     sedona_internal_datafusion_err!("Expected StructArray for raster data")
                 })?;
-                let arr0 = RasterStructArray::new(s0);
+                let arr0 = RasterStructArray::try_new(s0)?;
                 if arr0.len() != self.num_iterations {
                     return sedona_internal_err!(
                         "Expected array of length {} but got {}",
@@ -360,7 +360,7 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
                 }
                 let r1 = match sv1 {
                     ScalarValue::Struct(arc_struct) => {
-                        let arr1 = RasterStructArray::new(arc_struct.as_ref());
+                        let arr1 = RasterStructArray::try_new(arc_struct.as_ref())?;
                         if arr1.is_null(0) {
                             None
                         } else {
@@ -387,7 +387,7 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
                 let s1 = a1.as_any().downcast_ref::<StructArray>().ok_or_else(|| {
                     sedona_internal_datafusion_err!("Expected StructArray for raster data")
                 })?;
-                let arr1 = RasterStructArray::new(s1);
+                let arr1 = RasterStructArray::try_new(s1)?;
                 if arr1.len() != self.num_iterations {
                     return sedona_internal_err!(
                         "Expected array of length {} but got {}",
@@ -397,7 +397,7 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
                 }
                 let r0 = match sv0 {
                     ScalarValue::Struct(arc_struct) => {
-                        let arr0 = RasterStructArray::new(arc_struct.as_ref());
+                        let arr0 = RasterStructArray::try_new(arc_struct.as_ref())?;
                         if arr0.is_null(0) {
                             None
                         } else {
@@ -423,7 +423,7 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
             (ColumnarValue::Scalar(sv0), ColumnarValue::Scalar(sv1)) => {
                 let r0 = match sv0 {
                     ScalarValue::Struct(arc_struct) => {
-                        let arr0 = RasterStructArray::new(arc_struct.as_ref());
+                        let arr0 = RasterStructArray::try_new(arc_struct.as_ref())?;
                         if arr0.is_null(0) {
                             None
                         } else {
@@ -437,7 +437,7 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
                 };
                 let r1 = match sv1 {
                     ScalarValue::Struct(arc_struct) => {
-                        let arr1 = RasterStructArray::new(arc_struct.as_ref());
+                        let arr1 = RasterStructArray::try_new(arc_struct.as_ref())?;
                         if arr1.is_null(0) {
                             None
                         } else {
@@ -487,7 +487,7 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
                         .ok_or_else(|| {
                             sedona_internal_datafusion_err!("Expected StructArray for raster data")
                         })?;
-                let raster_array = RasterStructArray::new(raster_struct);
+                let raster_array = RasterStructArray::try_new(raster_struct)?;
 
                 for i in 0..self.num_iterations {
                     let (maybe_wkb, maybe_crs) = geom_accessor.get(i)?;
@@ -503,7 +503,7 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
             }
             ColumnarValue::Scalar(scalar_value) => match scalar_value {
                 ScalarValue::Struct(arc_struct) => {
-                    let raster_array = RasterStructArray::new(arc_struct.as_ref());
+                    let raster_array = RasterStructArray::try_new(arc_struct.as_ref())?;
                     let raster_opt = if raster_array.is_null(0) {
                         None
                     } else {

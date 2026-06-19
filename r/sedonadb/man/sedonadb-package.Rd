@@ -11,5 +11,10 @@ Provides bindings for Apache SedonaDB, a lightweight query engine optimized for 
 \author{
 \strong{Maintainer}: Dewey Dunnington \email{dewey@dunnington.ca}
 
+Authors:
+\itemize{
+  \item Dewey Dunnington \email{dewey@dunnington.ca}
+}
+
 }
 \keyword{internal}

@@ -967,7 +967,7 @@ mod test {
         assert_eq!(data[0].data_type(), RASTER.storage_type());
 
         let raster_array = data[0].as_any().downcast_ref::<StructArray>().unwrap();
-        let rasters = RasterStructArray::new(raster_array);
+        let rasters = RasterStructArray::try_new(raster_array).unwrap();
         assert_eq!(rasters.len(), ROWS_PER_BATCH);
         let raster = rasters.get(0).unwrap();
         let metadata = raster.metadata();

@@ -135,6 +135,16 @@ test_that("basic set of numeric functions are translated", {
   expect_snapshot(sd_eval_expr(quote(abs(x))))
 })
 
+test_that("nulls can be checked via is.na()", {
+  x <- sd_expr_column("x")
+  expect_snapshot(sd_eval_expr(quote(is.na(x))))
+})
+
+test_that("! is translated to NOT", {
+  x <- sd_expr_column("x")
+  expect_snapshot(sd_eval_expr(quote(!x)))
+})
+
 test_that("errors that occur during evaluation have reasonable context", {
   function_without_a_translation <- function(x) x + 1L
   expect_snapshot(sd_eval_expr(quote(stop("this will error"))), error = TRUE)

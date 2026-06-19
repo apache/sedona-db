@@ -57,6 +57,18 @@ use sedona_raster::view_entries::ViewEntry;
 /// a duplicate of the same string literal — keep the two in sync.
 pub const NEEDS_PIXELS_METADATA_KEY: &str = "needs_pixels";
 
+/// `SedonaScalarUDF` metadata key marking a UDF whose returned raster is
+/// already fully materialised in-database. A raster function sets it (value
+/// `"true"`) via `with_metadata`; the `RS_EnsureLoaded` optimizer rule keys
+/// off it to skip wrapping an argument that is itself such a call (its result
+/// is already loaded, so a wrap would be redundant — and, being async, would
+/// nest unhoistably; see apache/datafusion#20031).
+///
+/// Only set this on functions that guarantee in-database output for loaded
+/// input. Like [`NEEDS_PIXELS_METADATA_KEY`], the optimizer rule carries a
+/// duplicate of the string literal — keep the two in sync.
+pub const RETURNS_BYTES_METADATA_KEY: &str = "returns_bytes";
+
 /// Async UDF that resolves OutDb bands by dispatching through the
 /// [`RasterLoaderRegistry`] stashed in `ConfigOptions` as a
 /// [`RasterLoaderConfig`] extension. The UDF instance itself is
@@ -228,19 +240,13 @@ impl AsyncScalarUDFImpl for RsEnsureLoaded {
     }
 
     async fn invoke_async_with_args(&self, args: ScalarFunctionArgs) -> Result<ColumnarValue> {
-        let input_array = match args.args.into_iter().next() {
-            Some(ColumnarValue::Array(arr)) => arr,
-            Some(ColumnarValue::Scalar(_)) => {
-                return sedona_internal_err!(
-                    "RS_EnsureLoaded does not support scalar inputs; pass a column reference"
-                )
-            }
-            None => return sedona_internal_err!("RS_EnsureLoaded received zero arguments"),
-        };
+        if args.args.len() != 1 {
+            return sedona_internal_err!("RS_EnsureLoaded() expects a single argument");
+        }
 
+        let input_array = args.args[0].to_array(args.number_rows)?;
         let registry = registry_handle_from_config(&args.config_options)?;
         let output = ensure_loaded(&input_array, |format| lookup_loader(&registry, format)).await?;
-
         Ok(ColumnarValue::Array(output))
     }
 }
@@ -268,7 +274,7 @@ where
             )
         })?;
 
-    let rasters = RasterStructArray::new(input_struct);
+    let rasters = RasterStructArray::try_new(input_struct)?;
     // Shared band `data` column of the input; addressed per band via
     // `rasters.band_data_row(..)` for zero-copy InDb passthrough below.
     let band_data_array = rasters.band_data_array();
@@ -423,18 +429,31 @@ where
                     view: &view_owned,
                     data_type,
                 };
-                let result = loader.load(&req).await.map_err(|e| {
+
+                // This is currently loading one request at a time; however, it is more efficient
+                // for some loaders to process more than one request at once.
+                let result = loader.load(&[&req]).await.map_err(|e| {
                     sedona_internal_datafusion_err!(
                         "RS_EnsureLoaded: loader '{}' failed on \
                          band ({raster_idx},{band_idx}): {e}",
                         loader.name()
                     )
                 })?;
+
+                // Check that the loader returned the correct number of results
+                if result.len() != 1 {
+                    return sedona_internal_err!(
+                        "RS_EnsureLoaded: loader {} returned incorrect result count",
+                        loader.name()
+                    );
+                }
+
                 // We can only build identity-view output bands today
                 // (`start_band_nd`). A loader that resolved/cropped the view —
                 // returning a different `source_shape` or a non-identity
                 // `view` — needs `start_band_with_view`. Reserved for
                 // https://github.com/apache/sedona-db/issues/897.
+                let result = &result[0];
                 if result.source_shape != source_shape
                     || !view_is_identity(&result.view, &result.source_shape)
                 {
@@ -520,18 +539,22 @@ mod tests {
         }
         async fn load(
             &self,
-            req: &RasterLoadRequest<'_>,
-        ) -> Result<RasterLoadResult, arrow_schema::ArrowError> {
-            self.seen.lock().unwrap().push((
-                req.uri.to_string(),
-                req.source_shape.to_vec(),
-                req.data_type,
-            ));
-            let elements: i64 = req.source_shape.iter().copied().product();
-            let len = elements as usize * req.data_type.byte_size();
-            // Fill with a recognisable pattern: byte i = (i % 251) as u8.
-            let bytes: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
-            Ok(RasterLoadResult::unresolved(Buffer::from_vec(bytes), req))
+            reqs: &[&RasterLoadRequest],
+        ) -> Result<Vec<RasterLoadResult>, arrow_schema::ArrowError> {
+            let mut results = Vec::with_capacity(reqs.len());
+            for req in reqs {
+                self.seen.lock().unwrap().push((
+                    req.uri.to_string(),
+                    req.source_shape.to_vec(),
+                    req.data_type,
+                ));
+                let elements: i64 = req.source_shape.iter().copied().product();
+                let len = elements as usize * req.data_type.byte_size();
+                // Fill with a recognisable pattern: byte i = (i % 251) as u8.
+                let bytes: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
+                results.push(RasterLoadResult::unresolved(Buffer::from_vec(bytes), req));
+            }
+            Ok(results)
         }
     }
 
@@ -655,7 +678,7 @@ mod tests {
             .unwrap();
 
         let out_struct = out.as_any().downcast_ref::<StructArray>().unwrap();
-        let out_rasters = RasterStructArray::new(out_struct);
+        let out_rasters = RasterStructArray::try_new(out_struct).unwrap();
         assert_eq!(out_rasters.len(), 1);
         let r = out_rasters.get(0).unwrap();
         let band = r.band(0).unwrap();
@@ -691,7 +714,7 @@ mod tests {
             .unwrap();
 
         let out_struct = out.as_any().downcast_ref::<StructArray>().unwrap();
-        let out_rasters = RasterStructArray::new(out_struct);
+        let out_rasters = RasterStructArray::try_new(out_struct).unwrap();
         let r = out_rasters.get(0).unwrap();
         let band = r.band(0).unwrap();
         assert_eq!(band.nd_buffer().unwrap().as_contiguous().unwrap(), &pixels);
@@ -711,7 +734,7 @@ mod tests {
         // is moved into the call (the backing Buffer is refcounted, so the move
         // doesn't reallocate).
         let in_ptr = {
-            let in_rasters = RasterStructArray::new(&input_struct);
+            let in_rasters = RasterStructArray::try_new(&input_struct).unwrap();
             let r = in_rasters.get(0).unwrap();
             let band = r.band(0).unwrap();
             let ndb = band.nd_buffer().unwrap();
@@ -728,7 +751,7 @@ mod tests {
             .unwrap();
 
         let out_struct = out.as_any().downcast_ref::<StructArray>().unwrap();
-        let out_rasters = RasterStructArray::new(out_struct);
+        let out_rasters = RasterStructArray::try_new(out_struct).unwrap();
         let r = out_rasters.get(0).unwrap();
         let band = r.band(0).unwrap();
         let out_bytes = band.nd_buffer().unwrap().as_contiguous().unwrap();
@@ -760,9 +783,13 @@ mod tests {
             }
             async fn load(
                 &self,
-                req: &RasterLoadRequest<'_>,
-            ) -> Result<RasterLoadResult, arrow_schema::ArrowError> {
-                Ok(RasterLoadResult::unresolved(self.buffer.clone(), req))
+                req: &[&RasterLoadRequest],
+            ) -> Result<Vec<RasterLoadResult>, arrow_schema::ArrowError> {
+                assert_eq!(req.len(), 1);
+                Ok(vec![RasterLoadResult::unresolved(
+                    self.buffer.clone(),
+                    req[0],
+                )])
             }
         }
 
@@ -781,7 +808,7 @@ mod tests {
             .unwrap();
 
         let out_struct = out.as_any().downcast_ref::<StructArray>().unwrap();
-        let out_rasters = RasterStructArray::new(out_struct);
+        let out_rasters = RasterStructArray::try_new(out_struct).unwrap();
         let r = out_rasters.get(0).unwrap();
         let band = r.band(0).unwrap();
         let out_bytes = band.nd_buffer().unwrap().as_contiguous().unwrap();
@@ -830,13 +857,13 @@ mod tests {
             }
             async fn load(
                 &self,
-                req: &RasterLoadRequest<'_>,
-            ) -> Result<RasterLoadResult, arrow_schema::ArrowError> {
-                // Return one too few bytes (5 instead of 6).
-                Ok(RasterLoadResult::unresolved(
-                    Buffer::from_vec(vec![0u8; 5]),
-                    req,
-                ))
+                reqs: &[&RasterLoadRequest],
+            ) -> Result<Vec<RasterLoadResult>, arrow_schema::ArrowError> {
+                // Return one too few bytes (5 instead of 6) for each request.
+                Ok(reqs
+                    .iter()
+                    .map(|req| RasterLoadResult::unresolved(Buffer::from_vec(vec![0u8; 5]), req))
+                    .collect())
             }
         }
 
@@ -873,29 +900,34 @@ mod tests {
             }
             async fn load(
                 &self,
-                req: &RasterLoadRequest<'_>,
-            ) -> Result<RasterLoadResult, arrow_schema::ArrowError> {
-                let elements: i64 = req.source_shape.iter().product();
-                let len = elements as usize * req.data_type.byte_size();
-                Ok(RasterLoadResult {
-                    bytes: Buffer::from_vec(vec![0u8; len]),
-                    source_shape: req.source_shape.to_vec(),
-                    // Non-identity: first axis sliced to a single step.
-                    view: vec![
-                        ViewEntry {
-                            source_axis: 0,
-                            start: 0,
-                            step: 1,
-                            steps: 1,
-                        },
-                        ViewEntry {
-                            source_axis: 1,
-                            start: 0,
-                            step: 1,
-                            steps: 3,
-                        },
-                    ],
-                })
+                reqs: &[&RasterLoadRequest],
+            ) -> Result<Vec<RasterLoadResult>, arrow_schema::ArrowError> {
+                Ok(reqs
+                    .iter()
+                    .map(|req| {
+                        let elements: i64 = req.source_shape.iter().product();
+                        let len = elements as usize * req.data_type.byte_size();
+                        RasterLoadResult {
+                            bytes: Buffer::from_vec(vec![0u8; len]),
+                            source_shape: req.source_shape.to_vec(),
+                            // Non-identity: first axis sliced to a single step.
+                            view: vec![
+                                ViewEntry {
+                                    source_axis: 0,
+                                    start: 0,
+                                    step: 1,
+                                    steps: 1,
+                                },
+                                ViewEntry {
+                                    source_axis: 1,
+                                    start: 0,
+                                    step: 1,
+                                    steps: 3,
+                                },
+                            ],
+                        }
+                    })
+                    .collect())
             }
         }
 

@@ -18,9 +18,13 @@
 from sedonadb_expr._version import __version__
 from sedonadb_expr._generated.geo_functions import GeoFunctions
 from sedonadb_expr._generated.geo_methods import GeoMethods
+from sedonadb_expr._generated.raster_functions import RasterFunctions
+from sedonadb_expr._generated.raster_methods import RasterMethods
 
 __all__ = [
     "__version__",
     "GeoFunctions",
     "GeoMethods",
+    "RasterFunctions",
+    "RasterMethods",
 ]

@@ -15,20 +15,14 @@
 # specific language governing permissions and limitations
 # under the License.
 
-import pytest
-import sedonadb
-
-
-@pytest.fixture
-def raster_con():
-    """A connection with a single `RS_Example()` raster registered as `rasters`.
-
-    Uses the in-DB `RS_Example()` raster (64x32, three UInt8 bands) so the
-    sedonadb package's RS_ function tests carry no zarr dependency — zarr
-    reader behaviors are tested in the sedonadb-zarr package. A dedicated
-    connection (not the shared module-level one) keeps the view from leaking
-    into other tests.
-    """
-    con = sedonadb.connect()
-    con.sql("SELECT RS_Example() AS raster").to_view("rasters")
-    return con
+#' @exportS3Method dplyr::filter
+filter.sedonadb_dataframe <- function(
+  .data,
+  ...,
+  .by = sdplyr_unsupported(),
+  .preserve = sdplyr_unsupported()
+) {
+  assert_unsupported(.by, .preserve)
+  exprs <- rlang::enquos(...)
+  sedonadb::sd_filter(.data, !!!exprs)
+}
