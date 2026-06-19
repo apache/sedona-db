@@ -132,7 +132,17 @@ from lonboard import viz  # in a notebook with lonboard installed
 
 f = sd.funcs
 chunks = cube.select(geom=f.st_transform(cube.raster.rst.envelope(), "EPSG:4326"))
-viz(chunks)
+
+# Draw outlines only, so the basemap shows through the chunk grid.
+viz(
+    chunks,
+    polygon_kwargs=dict(
+        filled=False,
+        stroked=True,
+        get_line_color=[236, 64, 160],
+        line_width_min_pixels=2,
+    ),
+)
 ```
 
 Because each year tiles into a `4 × 4` grid, the envelopes lay out that grid over the mapped extent — a picture of the cube's layout, drawn entirely from metadata. A `LIMIT` or row filter trims which chunks you draw (and, later, fetch).
