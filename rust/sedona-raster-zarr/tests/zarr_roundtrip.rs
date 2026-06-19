@@ -541,6 +541,96 @@ async fn irregular_coordinate_arrays_fall_back_to_identity() {
     assert_eq!(raster.crs(), None);
 }
 
+/// A CF / rioxarray group whose CRS lives on a separate scalar grid-mapping
+/// variable rather than in the group attributes. `temperature` has generic
+/// `y`/`x` dims (so no CRS is inferred from the names) and links to the CRS
+/// via a `coordinates: "spatial_ref"` attribute; the scalar `spatial_ref`
+/// variable carries the WKT in `crs_wkt`. Regularly spaced coordinate arrays
+/// supply the transform.
+fn build_grid_mapping_fixture(crs_wkt: &str) -> TempDir {
+    let tmp = TempDir::new().unwrap();
+    let store = Arc::new(FilesystemStore::new(tmp.path()).unwrap());
+
+    GroupBuilder::new()
+        .build(store.clone(), "/")
+        .unwrap()
+        .store_metadata()
+        .unwrap();
+
+    // 1-D coordinate arrays (regular spacing -> derivable transform).
+    for (name, vals) in [("y", &[20.0, 19.0][..]), ("x", &[10.0, 11.0, 12.0][..])] {
+        let n = vals.len() as u64;
+        let arr = ArrayBuilder::new(vec![n], vec![n], data_type::float64(), 0.0f64)
+            .dimension_names(Some([name]))
+            .build(store.clone(), &format!("/{name}"))
+            .unwrap();
+        arr.store_metadata().unwrap();
+        arr.store_chunk(&[0], vals).unwrap();
+    }
+
+    // Scalar grid-mapping variable holding the CRS (rioxarray convention).
+    let mut crs_attrs = serde_json::Map::new();
+    crs_attrs.insert("crs_wkt".into(), serde_json::json!(crs_wkt));
+    let crs_var = ArrayBuilder::new(
+        Vec::<u64>::new(),
+        Vec::<u64>::new(),
+        data_type::int64(),
+        0i64,
+    )
+    .attributes(crs_attrs)
+    .build(store.clone(), "/spatial_ref")
+    .unwrap();
+    crs_var.store_metadata().unwrap();
+
+    // 2-D data array linking to the CRS variable via `coordinates`.
+    let mut data_attrs = serde_json::Map::new();
+    data_attrs.insert("coordinates".into(), serde_json::json!("spatial_ref"));
+    let data = ArrayBuilder::new(vec![2u64, 3], vec![2u64, 3], data_type::uint8(), 0u8)
+        .dimension_names(Some(["y", "x"]))
+        .attributes(data_attrs)
+        .build(store.clone(), "/temperature")
+        .unwrap();
+    data.store_metadata().unwrap();
+    data.store_chunk(&[0, 0], vec![0u8; 6]).unwrap();
+
+    tmp
+}
+
+const POLAR_STEREO_WKT: &str = "PROJCS[\"unknown\",GEOGCS[\"unknown\",DATUM[\"WGS_1984\",\
+    SPHEROID[\"WGS 84\",6378137,298.257223563]],PRIMEM[\"Greenwich\",0],\
+    UNIT[\"degree\",0.0174532925199433]],PROJECTION[\"Polar_Stereographic\"],\
+    PARAMETER[\"latitude_of_origin\",-71],UNIT[\"metre\",1]]";
+
+#[tokio::test]
+async fn resolves_crs_from_cf_grid_mapping_variable() {
+    // CRS is on the `spatial_ref` variable, not the group; the loader must
+    // open it and lift the WKT even though `y`/`x` imply no CRS themselves.
+    let tmp = build_grid_mapping_fixture(POLAR_STEREO_WKT);
+    let uri = format!("file://{}", tmp.path().display());
+    let arr = read_all(&uri, None).await.unwrap();
+
+    let raster = RasterStructArray::try_new(&arr).unwrap().get(0).unwrap();
+    // Transform still derived from the regular coordinate arrays.
+    assert_eq!(
+        raster.transform().to_vec(),
+        vec![9.5, 1.0, 0.0, 20.5, 0.0, -1.0]
+    );
+    assert_eq!(raster.crs(), Some(POLAR_STEREO_WKT));
+}
+
+#[tokio::test]
+async fn resolves_crs_from_grid_mapping_variable_with_arrays_filter() {
+    // The grid-mapping variable isn't in the filter, but the loader opens it
+    // by name — mirroring how coordinate arrays are resolved.
+    let tmp = build_grid_mapping_fixture(POLAR_STEREO_WKT);
+    let uri = format!("file://{}", tmp.path().display());
+    let arrays = ["temperature".to_string()];
+    let arr = read_all(&uri, Some(&arrays)).await.unwrap();
+
+    let raster = RasterStructArray::try_new(&arr).unwrap().get(0).unwrap();
+    assert_eq!(raster.crs(), Some(POLAR_STEREO_WKT));
+}
+
 #[tokio::test]
 async fn derives_transform_with_explicit_arrays_filter() {
     // The coordinate arrays are not in the `arrays` filter, but the reader

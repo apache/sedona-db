@@ -42,7 +42,7 @@ use zarrs::storage::{AsyncReadableListableStorage, AsyncReadableListableStorageT
 
 use crate::coords;
 use crate::dtype::zarr_to_band_data_type;
-use crate::geozarr::GroupGeoMetadata;
+use crate::geozarr::{crs_from_cf_attributes, GroupGeoMetadata};
 use crate::source_uri::build_chunk_anchor;
 
 /// Streaming reader over the chunk grid of a Zarr group.
@@ -335,6 +335,16 @@ async fn open_and_validate(
         }
     };
 
+    // CF / rioxarray groups declare their CRS on a separate scalar
+    // grid-mapping variable (commonly `spatial_ref`) rather than in the group
+    // attributes. When the group attributes didn't already yield a CRS,
+    // consult that variable before we drop the open array handles.
+    if geo.crs.is_none() {
+        if let Some(crs) = crs_from_grid_mapping_variable(&storage, &arrays).await {
+            geo.crs = Some(crs);
+        }
+    }
+
     let array_infos = collect_array_infos(arrays)?;
     validate_group_constraints(&array_infos)?;
 
@@ -478,6 +488,70 @@ async fn open_named_arrays(
         out.push(array);
     }
     Ok(out)
+}
+
+/// Resolve a CRS from a CF / rioxarray grid-mapping variable.
+///
+/// rioxarray writes the CRS to a scalar variable (conventionally
+/// `spatial_ref`, sometimes `crs`) carrying a `crs_wkt` / `spatial_ref`
+/// attribute, linked from each data variable via the CF `grid_mapping`
+/// attribute — or, as rioxarray does, listed in the data variable's
+/// `coordinates` attribute. That variable is a 0-D scalar, so it never
+/// appears among the rank ≥ 2 data arrays and must be opened on its own.
+///
+/// Candidate names are gathered in priority order — `grid_mapping` targets
+/// first, then `coordinates` tokens, then the conventional `spatial_ref` /
+/// `crs` — and the first that opens and yields a CRS wins. A candidate that
+/// is missing, unreadable, or carries no CRS attribute is skipped, so a group
+/// without a grid-mapping variable simply stays CRS-less.
+async fn crs_from_grid_mapping_variable(
+    storage: &AsyncReadableListableStorage,
+    data_arrays: &[Array<dyn AsyncReadableListableStorageTraits>],
+) -> Option<String> {
+    let candidates = cf_crs_candidate_names(data_arrays.iter().map(|a| a.attributes()));
+    for name in candidates {
+        let path = format!("/{}", name.trim_start_matches('/'));
+        let Ok(array) = Array::async_open(storage.clone(), &path).await else {
+            continue;
+        };
+        match crs_from_cf_attributes(array.attributes()) {
+            Ok(Some(crs)) => return Some(crs),
+            Ok(None) => continue,
+            // A malformed CRS attribute on a candidate variable shouldn't take
+            // the whole read offline; log and keep looking.
+            Err(e) => log::warn!("Zarr grid-mapping variable {name:?}: ignoring CRS: {e}"),
+        }
+    }
+    None
+}
+
+/// Gather candidate grid-mapping variable names from the data arrays'
+/// attributes, in the order they should be tried: every `grid_mapping`
+/// target, then every `coordinates` token, then the conventional
+/// `spatial_ref` / `crs`. De-duplicated, first occurrence wins.
+fn cf_crs_candidate_names<'a>(
+    array_attrs: impl Iterator<Item = &'a serde_json::Map<String, serde_json::Value>>,
+) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    let mut push = |s: &str| {
+        for tok in s.split_whitespace() {
+            if !names.iter().any(|n| n == tok) {
+                names.push(tok.to_string());
+            }
+        }
+    };
+    let attrs: Vec<_> = array_attrs.collect();
+    for key in ["grid_mapping", "coordinates"] {
+        for a in &attrs {
+            if let Some(s) = a.get(key).and_then(|v| v.as_str()) {
+                push(s);
+            }
+        }
+    }
+    for conventional in ["spatial_ref", "crs"] {
+        push(conventional);
+    }
+    names
 }
 
 /// Discover the group's direct child arrays.
@@ -947,6 +1021,39 @@ mod tests {
         let spatial = vec!["lat".to_string(), "lon".to_string()];
         let idx = resolve_spatial_dim_indices(&names, Some(&spatial)).unwrap();
         assert_eq!(idx, vec![0, 1]);
+    }
+
+    fn attrs(json: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
+        json.as_object().unwrap().clone()
+    }
+
+    #[test]
+    fn cf_crs_candidate_names_prioritizes_grid_mapping_then_coordinates() {
+        // grid_mapping target wins, coordinates tokens follow (real coord
+        // vars like `time` get tried too — harmless, they carry no CRS), and
+        // the conventional names are appended last.
+        let a = attrs(serde_json::json!({
+            "grid_mapping": "crs",
+            "coordinates": "spatial_ref time"
+        }));
+        let got = cf_crs_candidate_names(std::iter::once(&a));
+        assert_eq!(got, vec!["crs", "spatial_ref", "time"]);
+    }
+
+    #[test]
+    fn cf_crs_candidate_names_falls_back_to_conventional() {
+        // No grid_mapping / coordinates anywhere: try the conventional names.
+        let a = attrs(serde_json::json!({"units": "K"}));
+        let got = cf_crs_candidate_names(std::iter::once(&a));
+        assert_eq!(got, vec!["spatial_ref", "crs"]);
+    }
+
+    #[test]
+    fn cf_crs_candidate_names_dedupes_across_arrays() {
+        let a = attrs(serde_json::json!({"coordinates": "spatial_ref time"}));
+        let b = attrs(serde_json::json!({"coordinates": "spatial_ref lat lon"}));
+        let got = cf_crs_candidate_names([&a, &b].into_iter());
+        assert_eq!(got, vec!["spatial_ref", "time", "lat", "lon", "crs"]);
     }
 
     #[test]

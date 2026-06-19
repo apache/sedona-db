@@ -31,8 +31,12 @@ use arrow_schema::ArrowError;
 #[derive(Debug, Clone, PartialEq)]
 pub struct GroupGeoMetadata {
     /// CRS string in PROJ or WKT format (whichever the group declared).
-    /// `None` if no `proj:wkt2` / `proj:projjson` / `proj:code` (or the
-    /// legacy `proj:epsg`) attribute is present on the group.
+    /// `None` if the group declares no CRS through either the GeoZarr
+    /// `proj:*` convention (`proj:wkt2` / `proj:projjson` / `proj:code`, or
+    /// the legacy `proj:epsg`) or the CF / rioxarray convention (`crs_wkt` /
+    /// `spatial_ref`). The CF convention also commonly puts these attributes
+    /// on a separate grid-mapping variable rather than the group; that case
+    /// is resolved in the loader (see `crs_from_cf_attributes`).
     pub crs: Option<String>,
     /// Affine transform, stored in GDAL GeoTransform order:
     /// `[origin_x, scale_x, skew_x, origin_y, skew_y, scale_y]`. The source
@@ -96,6 +100,34 @@ fn parse_crs(
             ArrowError::InvalidArgumentError("proj:epsg attribute must be an integer".into())
         })?;
         return Ok(Some(format!("EPSG:{code}")));
+    }
+    // No GeoZarr `proj:*` key; fall back to the CF / rioxarray convention,
+    // which much of the public Zarr corpus (xarray + rioxarray writers) uses.
+    crs_from_cf_attributes(attrs)
+}
+
+/// Read a CRS from the CF / rioxarray attribute convention.
+///
+/// rioxarray writes the CRS as `crs_wkt` (WKT2) and, redundantly, as a
+/// `spatial_ref` attribute holding the same WKT; some writers (and group
+/// roots) put an `authority:code` string in `spatial_ref` instead. `crs_wkt`
+/// wins over `spatial_ref` when both are present.
+///
+/// These attributes live either on the group (handled by `parse_crs`) or on
+/// a separate grid-mapping variable (handled by the loader), so this is
+/// factored out for both callers.
+///
+/// PROJ.4 strings (`proj4` / `proj4_params`) are intentionally not read: the
+/// CRS layer accepts authority codes, WKT and PROJJSON, but not PROJ.4, so
+/// surfacing one would only produce a downstream parse error.
+pub fn crs_from_cf_attributes(
+    attrs: &serde_json::Map<String, serde_json::Value>,
+) -> Result<Option<String>, ArrowError> {
+    if let Some(v) = attrs.get("crs_wkt") {
+        return Ok(Some(json_value_to_string(v, "crs_wkt")?));
+    }
+    if let Some(v) = attrs.get("spatial_ref") {
+        return Ok(Some(json_value_to_string(v, "spatial_ref")?));
     }
     Ok(None)
 }
@@ -233,6 +265,58 @@ mod tests {
         .unwrap();
         let crs = g.crs.unwrap();
         assert!(crs.contains("GeographicCRS"));
+    }
+
+    #[test]
+    fn cf_crs_wkt_parses_to_wkt_string() {
+        let g = GroupGeoMetadata::from_attributes(&map(json!({
+            "crs_wkt": "PROJCS[\"unknown\",GEOGCS[\"unknown\", ...]]"
+        })))
+        .unwrap();
+        assert!(g.crs.as_deref().unwrap().starts_with("PROJCS"));
+    }
+
+    #[test]
+    fn cf_spatial_ref_authority_code_parses() {
+        // rioxarray / CarbonPlan group roots put an authority code here.
+        let g = GroupGeoMetadata::from_attributes(&map(json!({
+            "spatial_ref": "EPSG:3031",
+            "proj4_params": "+proj=stere +lat_0=-90"
+        })))
+        .unwrap();
+        assert_eq!(g.crs.as_deref(), Some("EPSG:3031"));
+    }
+
+    #[test]
+    fn cf_crs_wkt_takes_precedence_over_spatial_ref() {
+        let g = GroupGeoMetadata::from_attributes(&map(json!({
+            "crs_wkt": "PROJCS[\"a\"]",
+            "spatial_ref": "EPSG:3031"
+        })))
+        .unwrap();
+        assert_eq!(g.crs.as_deref(), Some("PROJCS[\"a\"]"));
+    }
+
+    #[test]
+    fn geozarr_proj_code_takes_precedence_over_cf() {
+        // A group declaring both conventions resolves via GeoZarr `proj:*`.
+        let g = GroupGeoMetadata::from_attributes(&map(json!({
+            "proj:code": "EPSG:4326",
+            "crs_wkt": "PROJCS[\"other\"]"
+        })))
+        .unwrap();
+        assert_eq!(g.crs.as_deref(), Some("EPSG:4326"));
+    }
+
+    #[test]
+    fn cf_proj4_alone_is_not_read() {
+        // PROJ.4 is not accepted by the CRS layer, so a group that declares
+        // only `proj4` stays CRS-less rather than surfacing an unusable string.
+        let g = GroupGeoMetadata::from_attributes(&map(json!({
+            "proj4": "+proj=stere +lat_0=-90 +lat_ts=-71"
+        })))
+        .unwrap();
+        assert!(g.crs.is_none());
     }
 
     #[test]
