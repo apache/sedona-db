@@ -20,61 +20,38 @@
 # Working with Zarr and NDArray data in SedonaDB
 
 SedonaDB's raster type is **N-dimensional**: a band isn't limited to a 2-D
-`(y, x)` grid — it can carry additional axes such as `time` or `band`. This
-makes it a natural fit for *datacubes*: climate reanalyses, satellite time
-series, and model outputs.
+`(y, x)` grid — it can carry additional axes such as `time`, `year`, or
+`band`. This makes it a natural fit for *datacubes*: climate reanalyses,
+satellite time series, and model outputs.
 
-The `sedonadb-zarr` extension reads [Zarr](https://zarr.dev/) groups —
-local or in cloud object storage — directly into that raster type, so a
-datacube becomes a table you can query in SQL.
+The `sedonadb-zarr` extension reads [Zarr](https://zarr.dev/) groups (v2 or
+v3) — local or in cloud object storage — directly into that raster type, so
+a datacube becomes a table you can query.
 
-This page walks through loading a Zarr datacube, inspecting its dimensions,
-slicing out a 2-D plane, and handing the result to NumPy.
+This page walks through loading a real Zarr datacube from object storage,
+inspecting its dimensions, slicing out a 2-D plane, drawing its chunk grid on
+a map, and handing a plane to NumPy.
 
 ## Install
 
 `sedonadb-zarr` is an extension, distributed separately from the core
-SedonaDB package:
+SedonaDB package. The examples below also use `sedonadb-expr` (which adds the
+`.rst` raster accessor used in the DataFrame expressions) and, for the map,
+`lonboard`:
 
 ```bash
-pip install "apache-sedona[db]" sedonadb-zarr zarr numpy geoarrow-pyarrow
+pip install "apache-sedona[db]" sedonadb-zarr sedonadb-expr lonboard
 ```
 
-`zarr` and `numpy` are used to build the sample datacube below;
-`geoarrow-pyarrow` is required to export query results with
-`to_arrow_table()`.
-
-## Create a sample datacube
-
-If you don't already have a Zarr group handy, this creates a small
-`[time, y, x]` temperature cube to follow along with:
-
-```python
-import numpy as np
-import zarr  # zarr-python >= 3.0
-
-store = "/tmp/temperature.zarr"
-root = zarr.open_group(store, mode="w")
-arr = root.create_array(
-    "temperature",
-    shape=(3, 10, 20),
-    chunks=(3, 5, 5),
-    dtype="uint16",
-    dimension_names=["time", "y", "x"],
-)
-arr[:] = np.arange(3 * 10 * 20, dtype="uint16").reshape(3, 10, 20)
-```
-
-The `chunks=(3, 5, 5)` argument leaves `time` un-chunked — every chunk
-holds all three time steps — and tiles the `10 × 20` spatial grid into a
-`2 × 4` grid of `5 × 5` patches. That's `8` chunks in total, and that
-chunking is what determines how the data loads, as we'll see next.
+`lonboard` is only needed for the map at the end; everything else works
+without it.
 
 ## Connect and load
 
-Register the extension on your connection, then read the Zarr group. With
-the extension registered, a path ending in `.zarr` is recognized
-automatically — no `format` argument needed:
+Register the extension on your connection, then read a Zarr group. We'll use
+a public, anonymously readable cube: ERA5 rainfall over 2015–2020, stored as
+a multiscale Zarr pyramid in EPSG:3857. We read one pyramid level and the
+`rain_ok` rainfall array:
 
 ```python
 import sedona.db
@@ -83,99 +60,117 @@ import sedonadb_zarr
 sd = sedona.db.connect()
 sd.register(sedonadb_zarr.ZarrExtension())
 
-df = sd.read(f"file://{store}")
-df.to_view("cube")
+url = "https://weathermapdata.rdrn.me/era5_2015_2020_l5.zarr/2"
+# The path doesn't end in `.zarr`, so name the format. `arrays` selects the
+# data array to read (the group also holds coordinate / CRS variables).
+spec = sedonadb_zarr.Zarr().with_options({"arrays": ["rain_ok"]})
+cube = sd.read(url, format=spec)
 ```
 
-If your group's path doesn't end in `.zarr` (common for object-store
-layouts), name the format explicitly:
-`sd.read(uri, format=sedonadb_zarr.Zarr())`.
+When a group's path *does* end in `.zarr` and needs no options, you can name
+the format with the string shorthand instead: `sd.read(uri, format="zarr")`.
 
-`sedonadb-zarr` emits **one row per Zarr chunk**, with one band per array
-in the group. Our cube tiles into eight chunks, so it loads as eight rows
-— each a `[3, 5, 5]` tile holding all three time steps for one `5 × 5`
-spatial patch:
+`sedonadb-zarr` emits **one row per Zarr chunk**, so the storage layout *is*
+the data layout. This level tiles its `512 × 512` grid into a `4 × 4` grid of
+`128 × 128` chunks, and the cube is chunked one year per chunk — so it loads
+as `16 × 6 = 96` rows, each a single year of one spatial tile:
 
 ```python
-sd.sql("SELECT COUNT(*) AS n_chunks FROM cube").show()
+cube.count()
 ```
 
 ```text
-┌──────────┐
-│ n_chunks │
-│   int64  │
-╞══════════╡
-│        8 │
-└──────────┘
+96
 ```
 
 ## Inspect the dimensions
 
-The dimension-query functions read the raster's schema only — **no pixel
-data is loaded** — so they return near-instantly even against a large
-remote cube. Each row reports its **chunk's** shape, not the full cube
-extent. All eight chunks share the same shape here, so we look at one:
+The dimension accessors read the raster's schema only — **no pixel data is
+loaded** — so they return near-instantly even against a large remote cube.
+Each row reports its **chunk's** shape, not the full cube extent. All chunks
+share the same shape here, so we look at one:
 
 ```python
-sd.sql("""
-    SELECT
-        RS_NumDimensions(raster)   AS ndim,
-        RS_DimNames(raster)        AS dims,
-        RS_Shape(raster)           AS shape,
-        RS_DimSize(raster, 'time') AS n_time
-    FROM cube
-    LIMIT 1
-""").show()
+cube.select(
+    cube.raster.rst.num_dimensions().alias("ndim"),
+    cube.raster.rst.dim_names().alias("dims"),
+    cube.raster.rst.shape().alias("shape"),
+    cube.raster.rst.dim_size("year").alias("n_year"),
+).show(1)
 ```
 
 ```text
-┌───────┬──────────────┬───────────┬────────┐
-│  ndim ┆     dims     ┆   shape   ┆ n_time │
-│ int32 ┆     list     ┆    list   ┆  int64 │
-╞═══════╪══════════════╪═══════════╪════════╡
-│     3 ┆ [time, y, x] ┆ [3, 5, 5] ┆      3 │
-└───────┴──────────────┴───────────┴────────┘
+┌───────┬──────────────┬───────────────┬────────┐
+│  ndim ┆     dims     ┆     shape     ┆ n_year │
+│ int32 ┆     list     ┆      list     ┆  int64 │
+╞═══════╪══════════════╪═══════════════╪════════╡
+│     3 ┆ [year, y, x] ┆ [1, 128, 128] ┆      1 │
+└───────┴──────────────┴───────────────┴────────┘
 ```
 
-Each chunk is 3-dimensional (`[time, y, x]`) with all three time steps
-(`n_time = 3`) and a `5 × 5` spatial footprint — one tile of the full
-`10 × 20` grid.
+Each chunk is 3-dimensional (`[year, y, x]`) with a `128 × 128` spatial
+footprint — one tile of the full `512 × 512` grid. `n_year = 1` because the
+cube is chunked one year per chunk: a single row carries one year of one
+tile.
 
 ## Slice out a 2-D plane
 
-`RS_Slice` selects a single index along a named dimension and drops it.
-Picking time step `1` turns every `[3, 5, 5]` chunk into a `[y, x]` plane
-— the `5 × 5` patch at that time step, one per row:
+`RS_Slice` selects a single index along a named dimension and drops it. Here
+each chunk's `year` axis has length 1, so slicing index `0` collapses it,
+turning every `[1, 128, 128]` chunk into a 2-D `[y, x]` plane — the tile's
+rainfall field for its year:
 
 ```python
-sliced = sd.sql("SELECT RS_Slice(raster, 'time', 1) AS plane FROM cube")
-sliced.to_view("plane")
-
-sd.sql("SELECT RS_DimNames(plane) AS dims, RS_Shape(plane) AS shape FROM plane LIMIT 1").show()
+sliced = cube.select(plane=cube.raster.rst.slice("year", 0))
+sliced.select(
+    dims=sliced.plane.rst.dim_names(),
+    shape=sliced.plane.rst.shape(),
+).show(1)
 ```
 
 ```text
-┌────────┬────────┐
-│  dims  ┆  shape │
-│  list  ┆  list  │
-╞════════╪════════╡
-│ [y, x] ┆ [5, 5] │
-└────────┴────────┘
+┌────────┬────────────┐
+│  dims  ┆    shape   │
+│  list  ┆    list    │
+╞════════╪════════════╡
+│ [y, x] ┆ [128, 128] │
+└────────┴────────────┘
 ```
 
 `RS_Slice` needs pixel data, so SedonaDB resolves each row's Zarr chunk on
-demand before slicing — you never call a loader yourself. Because `time`
-isn't chunked, the slice index is the global time step: `0`, `1`, or `2`
-all select a real plane.
+demand before slicing — you never call a loader yourself.
 
-Related functions reshape a cube in other ways:
+Related accessors reshape a cube in other ways:
 
-- `RS_SliceRange(raster, dim, start, end)` keeps a contiguous range of a
-  dimension instead of a single index.
-- `RS_DimToBand(raster, dim)` / `RS_BandToDim(raster, dim_name)` move an
-  axis between the dimension list and the band list.
+- `cube.raster.rst.slice_range(dim, start, end)` keeps a contiguous range of
+  a dimension instead of a single index.
+- `cube.raster.rst.dim_to_band(dim)` / `cube.raster.rst.band_to_dim(name)`
+  move an axis between the dimension list and the band list.
 
-## Bring a slice into NumPy
+## See where the chunks are — on a map
+
+Every row is a chunk with a real, georeferenced footprint (the cube declares
+EPSG:3857), so `RS_Envelope` turns a chunk into its bounding geometry without
+decoding a single pixel. Reproject the footprints to lon/lat and you can draw
+the chunk grid straight onto a map:
+
+```python
+f = sd.funcs
+chunks = cube.select(
+    geom=f.st_transform(cube.raster.rst.envelope(), "EPSG:4326")
+)
+
+# In a notebook with lonboard installed:
+from lonboard import viz
+viz(chunks)
+```
+
+Because each year tiles into a `4 × 4` grid, the envelopes lay out that grid
+over the mapped extent — a picture of the cube's layout, drawn entirely from
+metadata. A `LIMIT` or row filter trims which chunks you draw (and, later,
+fetch).
+
+## Bring a plane into NumPy
 
 A raster band carries its bytes, shape, and pixel type, so a materialized
 band decodes to a correctly-shaped, correctly-typed NumPy array in one call —
@@ -183,58 +178,64 @@ band decodes to a correctly-shaped, correctly-typed NumPy array in one call —
 
 ```python
 planes = sliced.to_arrow_table()["plane"]
-raster = planes[0].as_py()  # each row is one 5x5 spatial tile at time step 1
-print(raster.bands[0].to_numpy())
+raster = planes[0].as_py()  # one 128x128 spatial tile for its year
+band = raster.bands[0].to_numpy()
+print(band.shape, band.dtype)
 ```
 
 ```text
-[[200 201 202 203 204]
- [220 221 222 223 224]
- [240 241 242 243 244]
- [260 261 262 263 264]
- [280 281 282 283 284]]
+(128, 128) float32
 ```
 
-Each of the eight rows decodes to a `5 × 5` spatial tile at time step `1`;
-this is one of them. Rows correspond to chunks rather than a guaranteed
-order, so apply your own `ORDER BY` (or carry a chunk identifier) if you
-need to know which spatial tile a given plane covers.
+Note that `planes[0]` currently forces a copy of the raster out of the Arrow
+buffer (a pyarrow limitation), so this path is **not yet zero-copy**. Rows
+correspond to chunks rather than a guaranteed order, so apply your own
+ordering (or carry a chunk identifier) if you need to know which tile and year
+a given plane covers.
 
 ## Reading from cloud storage
 
-The same code reads a datacube over S3 or HTTP(S) — only the URI changes:
+The same code reads a datacube over S3 or HTTP(S) — only the URI changes.
+Supported schemes are `file://` (and bare local paths), `s3://`, `http://`,
+and `https://`.
+
+For S3, credentials come from the standard AWS environment variables
+(`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`). To read a
+**public** bucket anonymously, set the region and request unsigned access:
+
+```bash
+export AWS_REGION=us-west-2
+export AWS_SKIP_SIGNATURE=true   # read public objects without credentials
+```
 
 ```python
 df = sd.read("s3://my-bucket/temperature.zarr")
 ```
 
-Supported URI schemes are `file://` (and bare local paths), `s3://`,
-`http://`, and `https://`. S3 credentials are read from the standard AWS
-environment variables (for example `AWS_ACCESS_KEY_ID` and `AWS_REGION`).
-
 ### Selecting arrays with the `arrays` option
 
 By default SedonaDB discovers a group's arrays automatically — from the
-group's consolidated metadata when present, otherwise by listing the
-store. The `arrays` option names an explicit subset to read instead:
+group's consolidated metadata when present, otherwise by listing the store.
+The `arrays` option names an explicit subset to read instead (as we did
+above):
 
 ```python
-spec = sedonadb_zarr.Zarr().with_options({"arrays": ["temperature"]})
-df = sd.read("s3://my-bucket/temperature.zarr", format=spec)
+spec = sedonadb_zarr.Zarr().with_options({"arrays": ["rain_ok"]})
+df = sd.read(url, format=spec)
 ```
 
 Naming arrays is needed in two situations:
 
 - **The store can't list and has no consolidated metadata.** Plain HTTP
-  servers generally can't list directories. Cloud Zarr v3 groups usually
-  ship a consolidated-metadata block, so `http(s)://` reads typically work
-  without `arrays` — but a group lacking one can't be auto-discovered over
-  such a store, and you must name the arrays.
-- **The group mixes arrays with different shapes or chunk grids.** Every
-  array read together must share one chunk grid, so name a compatible
-  subset (for example, read the data variables and leave out a
-  differently-shaped coordinate or summary array).
+  servers generally can't list directories. Cloud Zarr groups often ship a
+  consolidated-metadata block, so reads typically work without `arrays` — but
+  a group (or sub-group) lacking one can't be auto-discovered over such a
+  store, and you must name the arrays.
+- **The group mixes arrays with different shapes or chunk grids.** Every array
+  read together must share one chunk grid, so name a compatible subset (for
+  example, read the data array and leave out a differently-shaped coordinate
+  or CRS variable).
 
-Because each row corresponds to one chunk, a `LIMIT` or row filter
-directly bounds how many chunks SedonaDB fetches — handy for sampling a
-large remote cube before committing to a full scan.
+Because each row corresponds to one chunk, a `LIMIT` or row filter directly
+bounds how many chunks SedonaDB fetches — handy for sampling a large remote
+cube before committing to a full scan.
