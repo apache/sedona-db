@@ -64,10 +64,12 @@ jobs:
 
       - name: Install and test
         run: |
+          pip install pytest pyyaml
+
           cd python/sedonadb-expr
           pip install --no-deps --pre --find-links prebuilt sedonadb
           pip install --find-links prebuilt sedonadb
-          pip install "dist/*.whl[test]"
+          pip install "dist/*.whl"
           pytest tests -vv
 
       - uses: actions/upload-artifact@v7
