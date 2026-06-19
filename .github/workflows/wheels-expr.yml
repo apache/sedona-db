@@ -69,7 +69,7 @@ jobs:
           cd python/sedonadb-expr
           pip install --no-deps --pre --find-links prebuilt sedonadb
           pip install --find-links prebuilt sedonadb
-          pip install "dist/*.whl"
+          pip install dist/*.whl
           pytest tests -vv
 
       - uses: actions/upload-artifact@v7
