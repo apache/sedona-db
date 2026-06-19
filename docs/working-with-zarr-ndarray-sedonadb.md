@@ -145,6 +145,8 @@ viz(
 )
 ```
 
+![The cube's chunk envelopes drawn as a grid over a world basemap](image/zarr-chunks-ndarray-map.png)
+
 Because each year tiles into a `4 × 4` grid, the envelopes lay out that grid over the mapped extent — a picture of the cube's layout, drawn entirely from metadata. A `LIMIT` or row filter trims which chunks you draw (and, later, fetch).
 
 ## Bring a plane into NumPy
