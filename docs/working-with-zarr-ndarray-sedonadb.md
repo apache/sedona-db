@@ -72,8 +72,9 @@ chunking is what determines how the data loads, as we'll see next.
 
 ## Connect and load
 
-Register the extension on your connection, then read the Zarr group with
-its format spec:
+Register the extension on your connection, then read the Zarr group. With
+the extension registered, a path ending in `.zarr` is recognized
+automatically — no `format` argument needed:
 
 ```python
 import sedona.db
@@ -82,9 +83,13 @@ import sedonadb_zarr
 sd = sedona.db.connect()
 sd.register(sedonadb_zarr.ZarrExtension())
 
-df = sd.read_format(sedonadb_zarr.Zarr(), f"file://{store}")
+df = sd.read(f"file://{store}")
 df.to_view("cube")
 ```
+
+If your group's path doesn't end in `.zarr` (common for object-store
+layouts), name the format explicitly:
+`sd.read(uri, format=sedonadb_zarr.Zarr())`.
 
 `sedonadb-zarr` emits **one row per Zarr chunk**, with one band per array
 in the group. Our cube tiles into eight chunks, so it loads as eight rows
@@ -98,6 +103,7 @@ sd.sql("SELECT COUNT(*) AS n_chunks FROM cube").show()
 ```text
 ┌──────────┐
 │ n_chunks │
+│   int64  │
 ╞══════════╡
 │        8 │
 └──────────┘
@@ -123,23 +129,18 @@ sd.sql("""
 ```
 
 ```text
-┌──────┬──────────────┬───────────┬────────┐
-│ ndim ┆ dims         ┆ shape     ┆ n_time │
-╞══════╪══════════════╪═══════════╪════════╡
-│    3 ┆ [time, y, x] ┆ [3, 5, 5] ┆      3 │
-└──────┴──────────────┴───────────┴────────┘
+┌───────┬──────────────┬───────────┬────────┐
+│  ndim ┆     dims     ┆   shape   ┆ n_time │
+│ int32 ┆     list     ┆    list   ┆  int64 │
+╞═══════╪══════════════╪═══════════╪════════╡
+│     3 ┆ [time, y, x] ┆ [3, 5, 5] ┆      3 │
+└───────┴──────────────┴───────────┴────────┘
 ```
 
 Each chunk is 3-dimensional (`[time, y, x]`) with all three time steps
 (`n_time = 3`) and a `5 × 5` spatial footprint — one tile of the full
 `10 × 20` grid.
 
-<!-- TODO(reviewer, pending the Zarr byte-loader wiring — DB-36/#897): everything
-     above (read_format, COUNT, RS_NumDimensions/DimNames/Shape/DimSize) is verified
-     working on a local + remote cube. The byte-consuming steps below (RS_Slice and the
-     NumPy section) currently error: with no Zarr loader registered from Python,
-     RS_EnsureLoaded routes the chunk anchors to the GDAL catch-all, which rejects the
-     N-D band. Re-verify this section once the loader lands. -->
 ## Slice out a 2-D plane
 
 `RS_Slice` selects a single index along a named dimension and drops it.
@@ -155,7 +156,8 @@ sd.sql("SELECT RS_DimNames(plane) AS dims, RS_Shape(plane) AS shape FROM plane L
 
 ```text
 ┌────────┬────────┐
-│ dims   ┆ shape  │
+│  dims  ┆  shape │
+│  list  ┆  list  │
 ╞════════╪════════╡
 │ [y, x] ┆ [5, 5] │
 └────────┴────────┘
@@ -175,23 +177,14 @@ Related functions reshape a cube in other ways:
 
 ## Bring a slice into NumPy
 
-A raster band carries its bytes, shape, and pixel type, so decoding a
-materialized band to NumPy is a small `frombuffer` + `reshape`:
+A raster band carries its bytes, shape, and pixel type, so a materialized
+band decodes to a correctly-shaped, correctly-typed NumPy array in one call —
+`Band.to_numpy()`:
 
 ```python
-_NP_DTYPE = {
-    1: np.uint8, 2: np.uint16, 3: np.int16, 4: np.uint32, 5: np.int32,
-    6: np.float32, 7: np.float64, 8: np.uint64, 9: np.int64, 10: np.int8,
-}
-
-def band_to_numpy(raster, band_index=0):
-    band = raster["bands"][band_index]
-    dtype = _NP_DTYPE[band["data_type"]]
-    return np.frombuffer(band["data"], dtype=dtype).reshape(band["source_shape"])
-
 planes = sliced.to_arrow_table()["plane"]
 raster = planes[0].as_py()  # each row is one 5x5 spatial tile at time step 1
-print(band_to_numpy(raster))
+print(raster.bands[0].to_numpy())
 ```
 
 ```text
@@ -212,7 +205,7 @@ need to know which spatial tile a given plane covers.
 The same code reads a datacube over S3 or HTTP(S) — only the URI changes:
 
 ```python
-df = sd.read_format(sedonadb_zarr.Zarr(), "s3://my-bucket/temperature.zarr")
+df = sd.read("s3://my-bucket/temperature.zarr")
 ```
 
 Supported URI schemes are `file://` (and bare local paths), `s3://`,
@@ -227,7 +220,7 @@ store. The `arrays` option names an explicit subset to read instead:
 
 ```python
 spec = sedonadb_zarr.Zarr().with_options({"arrays": ["temperature"]})
-df = sd.read_format(spec, "s3://my-bucket/temperature.zarr")
+df = sd.read("s3://my-bucket/temperature.zarr", format=spec)
 ```
 
 Naming arrays is needed in two situations:

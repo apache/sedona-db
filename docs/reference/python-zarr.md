@@ -28,7 +28,7 @@ import sedonadb_zarr
 
 sd = sedona.db.connect()
 sd.register(sedonadb_zarr.ZarrExtension())
-sd.read_format(sedonadb_zarr.Zarr(), "file:///path/to/foo.zarr").show()
+sd.read("file:///path/to/foo.zarr").show()
 ```
 
 For an end-to-end walkthrough, see
