@@ -41,6 +41,48 @@ def test_rs_function(expr, expected):
     eng.assert_query_result(f"SELECT {expr}", expected)
 
 
+# EPSG:3857 as WKT (carries an embedded EPSG authority) and a bespoke Lambert
+# Conformal Conic WKT with no authority code anywhere.
+WKT_3857 = (
+    'PROJCS["WGS 84 / Pseudo-Mercator",GEOGCS["WGS 84",DATUM["WGS_1984",'
+    'SPHEROID["WGS 84",6378137,298.257223563,AUTHORITY["EPSG","7030"]],'
+    'AUTHORITY["EPSG","6326"]],AUTHORITY["EPSG","4326"]],'
+    'PROJECTION["Mercator_1SP"],AUTHORITY["EPSG","3857"]]'
+)
+WKT_LCC_NO_AUTHORITY = (
+    'PROJCS["Custom LCC",GEOGCS["WGS 84",DATUM["WGS_1984",'
+    'SPHEROID["WGS 84",6378137,298.257223563]]],'
+    'PROJECTION["Lambert_Conformal_Conic_2SP"],'
+    'PARAMETER["standard_parallel_1",33],PARAMETER["standard_parallel_2",45],'
+    'PARAMETER["latitude_of_origin",39],PARAMETER["central_meridian",-96],'
+    'UNIT["metre",1]]'
+)
+
+
+# WKT1/WKT2 CRS strings round-trip through RS_SetCRS/RS_CRS unchanged, whether or
+# not they carry an embedded authority.
+@pytest.mark.parametrize("wkt", [WKT_3857, WKT_LCC_NO_AUTHORITY])
+def test_rs_setcrs_wkt_roundtrips(wkt):
+    eng = SedonaDB()
+    eng.assert_query_result(f"SELECT RS_CRS(RS_SetCRS(RS_Example(), '{wkt}'))", wkt)
+
+
+def test_rs_srid_from_wkt():
+    """A WKT carrying an EPSG authority resolves to that SRID."""
+    eng = SedonaDB()
+    eng.assert_query_result(
+        f"SELECT RS_SRID(RS_SetCRS(RS_Example(), '{WKT_3857}'))", 3857
+    )
+
+
+def test_rs_srid_from_authorityless_wkt_errors(con):
+    """A WKT with no authority code anywhere has no SRID to extract."""
+    with pytest.raises(Exception, match="SRID"):
+        con.sql(
+            f"SELECT RS_SRID(RS_SetCRS(RS_Example(), '{WKT_LCC_NO_AUTHORITY}'))"
+        ).to_arrow_table()
+
+
 def test_rs_ensureloaded(con, sedona_testing):
     path = sedona_testing / "data/raster/sentinel2.tif"
     t = con.sql("SELECT RS_FromPath($1) AS raster", params=(str(path),))

@@ -456,6 +456,33 @@ mod tests {
     const NAD83ZONE6PROJ: &str = "EPSG:2230";
     const NAD83_GEOGRAPHIC: &str = "EPSG:4269";
     const WGS84: &str = "EPSG:4326";
+    // EPSG:3857 as WKT1 (AUTHORITY[...]) and WKT2 (ID[...]), for exercising
+    // both WKT flavors through `deserialize_crs` (the to-CRS argument is
+    // deserialized before being handed to PROJ).
+    const WEB_MERCATOR_WKT1: &str = r#"PROJCS["WGS 84 / Pseudo-Mercator",GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563,AUTHORITY["EPSG","7030"]],AUTHORITY["EPSG","6326"]],AUTHORITY["EPSG","4326"]],PROJECTION["Mercator_1SP"],AUTHORITY["EPSG","3857"]]"#;
+    const WEB_MERCATOR_WKT2: &str = r#"PROJCRS["WGS 84 / Pseudo-Mercator",BASEGEOGCRS["WGS 84",DATUM["World Geodetic System 1984",ELLIPSOID["WGS 84",6378137,298.257223563,LENGTHUNIT["metre",1]]],ID["EPSG",4326]],CONVERSION["Popular Visualisation Pseudo-Mercator",METHOD["Popular Visualisation Pseudo Mercator",ID["EPSG",1024]],PARAMETER["Latitude of natural origin",0,ANGLEUNIT["degree",0.0174532925199433]],PARAMETER["Longitude of natural origin",0,ANGLEUNIT["degree",0.0174532925199433]],PARAMETER["False easting",0,LENGTHUNIT["metre",1]],PARAMETER["False northing",0,LENGTHUNIT["metre",1]]],CS[Cartesian,2],AXIS["easting (X)",east,ORDER[1],LENGTHUNIT["metre",1]],AXIS["northing (Y)",north,ORDER[2],LENGTHUNIT["metre",1]],ID["EPSG",3857]]"#;
+
+    /// A WKT-defined target CRS (both WKT1 and WKT2) must transform identically
+    /// to its authority code — the consumer-side proof that `deserialize_crs`
+    /// now accepts WKT and feeds the verbatim definition to PROJ. Compares
+    /// output WKB, which is independent of how the result's CRS metadata is
+    /// represented.
+    #[rstest]
+    #[case::wkt1(WEB_MERCATOR_WKT1)]
+    #[case::wkt2(WEB_MERCATOR_WKT2)]
+    fn transform_to_wkt_crs_matches_authority_code(#[case] wkt: &str) {
+        let udf = SedonaScalarUDF::from_impl("st_transform", st_transform_impl());
+        let geometry_input = SedonaType::Wkb(Edges::Planar, lnglat());
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![geometry_input.clone(), SedonaType::Arrow(DataType::Utf8)],
+        );
+
+        let wkb = create_array(&[None, Some("POINT (79.3871 43.6426)")], &geometry_input);
+        let via_wkt = tester.invoke_array_scalar(wkb.clone(), wkt).unwrap();
+        let via_code = tester.invoke_array_scalar(wkb, "EPSG:3857").unwrap();
+        assert_array_equal(&via_wkt, &via_code);
+    }
 
     #[test]
     fn test_invoke_with_string() {

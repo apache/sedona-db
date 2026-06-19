@@ -34,9 +34,13 @@ from typing import Any, Mapping, Optional
 
 from sedonadb.context import SedonaContext
 from sedonadb.datasource import ExternalFormatSpec
+from sedonadb.raster_loader import RasterLoader
 from sedonadb.utility import sedona  # noqa: F401
 
-from sedonadb_zarr._lib import PyZarrChunkReader
+from sedonadb_zarr._lib import (
+    PyZarrChunkReader,
+    PyZarrRasterLoader,
+)
 
 
 class ZarrExtension:
@@ -51,12 +55,15 @@ class ZarrExtension:
         >>> sd.register(ZarrExtension())
     """
 
-    def __sedonadb_extension__(self, ctx: SedonaContext, **kwargs) -> None:
+    def __sedonadb_extension__(self, sd: SedonaContext, **kwargs) -> None:
         if kwargs:
             raise ValueError("Registration options not supported for ZarrExtension")
 
+        # Register the ZarrRasterLoader
+        sd.register(ZarrRasterLoader())
+
         # Register the Zarr() format as a FileFormatFactory for SQL and .read(..., format="zarr")
-        ctx.register(Zarr())
+        sd.register(Zarr())
 
 
 class Zarr(ExternalFormatSpec):
@@ -109,4 +116,24 @@ class Zarr(ExternalFormatSpec):
         return PyZarrChunkReader(uri, arrays, batch_size)
 
 
-__all__ = ["Zarr"]
+class ZarrRasterLoader(RasterLoader):
+    """Zarr RasterLoader implementation
+
+    This is registered automatically when registering the ZarrExtension
+    and enables RS_EnsureLoaded() can resolve pixels of a Zarr.
+    """
+
+    def __init__(self):
+        self._impl = PyZarrRasterLoader()
+
+    def name(self):
+        return self._impl.name()
+
+    def supports_format(self, format):
+        return self._impl.supports_format(format)
+
+    def load(self, requests):
+        return self._impl.load(requests)
+
+
+__all__ = ["Zarr", "ZarrExtension"]

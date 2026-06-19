@@ -768,12 +768,14 @@ mod tests {
             }
             async fn load(
                 &self,
-                req: &RasterLoadRequest<'_>,
-            ) -> std::result::Result<RasterLoadResult, arrow_schema::ArrowError> {
-                Ok(RasterLoadResult::unresolved(
-                    Buffer::from_vec(Vec::<u8>::new()),
-                    req,
-                ))
+                reqs: &[&RasterLoadRequest],
+            ) -> std::result::Result<Vec<RasterLoadResult>, arrow_schema::ArrowError> {
+                Ok(reqs
+                    .iter()
+                    .map(|req| {
+                        RasterLoadResult::unresolved(Buffer::from_vec(Vec::<u8>::new()), req)
+                    })
+                    .collect())
             }
         }
         ctx.register_raster_loader(Arc::new(MockLoader));

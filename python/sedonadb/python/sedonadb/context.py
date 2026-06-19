@@ -468,6 +468,7 @@ class SedonaContext:
             "__sedonadb_internal_udf__",
             "__sedonadb_internal_aggregate_udf__",
             "__sedonadb_external_format__",
+            "__sedonadb_raster_loader__",
         )
         for interface in supported_interfaces:
             if hasattr(component, interface):
@@ -671,46 +672,125 @@ def _configure_proj_pyproj():
 
     if sys.platform == "darwin":
         dylibs_dir = Path(pyproj.__file__).parent / ".dylibs"
-        possible_files.extend(dylibs_dir.glob("libproj*.dylib*"))
-        if not dylibs_dir.exists():
-            raise ValueError(
-                f"Expected PROJ dylib directory '{dylibs_dir}' does not exist"
-            )
+        if dylibs_dir.exists():
+            possible_files.extend(dylibs_dir.glob("libproj*.dylib*"))
     else:
         dylibs_dir = Path(pyproj.__file__).parent.parent / "pyproj.libs"
-        if not dylibs_dir.exists():
-            raise ValueError(
-                f"Expected PROJ dll/so directory '{dylibs_dir}' does not exist"
-            )
+        if dylibs_dir.exists():
+            possible_files.extend(dylibs_dir.glob("proj*.dll"))
+            possible_files.extend(dylibs_dir.glob("libproj*.so*"))
 
-        possible_files.extend(dylibs_dir.glob("proj*.dll"))
-        possible_files.extend(dylibs_dir.glob("libproj*.so*"))
-
-    if len(possible_files) != 1:
-        all_files = "\n".join(str(s) for s in dylibs_dir.iterdir())
-        raise ValueError(
-            f"Can't find exactly one PROJ shared library in '{dylibs_dir}'. "
-            f"{len(possible_files)} possible matches:\n{all_files}"
+    # If pyproj has bundled PROJ libraries, use them
+    if len(possible_files) == 1:
+        configure_proj(
+            shared_library=possible_files[0],
+            database_path=database_path,
+            search_path=data_dir,
         )
+        return
 
-    configure_proj(
-        shared_library=possible_files[0],
-        database_path=database_path,
-        search_path=data_dir,
+    # In conda environments, pyproj uses the system PROJ installation.
+    # Fall back to finding PROJ from the data directory's parent structure.
+    # pyproj.datadir.get_data_dir() returns the correct path even in conda.
+    shared_library = _find_proj_shared_library_near_data(data_dir)
+    if shared_library is not None:
+        configure_proj(
+            shared_library=shared_library,
+            database_path=database_path,
+            search_path=data_dir,
+        )
+        return
+
+    raise ValueError(
+        f"Can't find PROJ shared library. pyproj data directory is '{data_dir}'"
     )
 
 
-def _proj_lib_name() -> str:
+def _proj_lib_pattern() -> str:
+    """Return a glob pattern for finding PROJ shared libraries."""
     if sys.platform == "win32":
-        return "proj.dll"
+        return "proj*.dll"
     elif sys.platform == "darwin":
-        return "libproj.dylib"
+        return "libproj*.dylib"
     else:
-        return "libproj.so"
+        return "libproj.so*"
+
+
+def _find_proj_shared_library(lib_dir: Path) -> Path:
+    """Find the PROJ shared library in the given directory.
+
+    Raises ValueError if not found or multiple matches.
+    """
+    pattern = _proj_lib_pattern()
+    possible_files = list(lib_dir.glob(pattern))
+
+    # Filter out debug/test variants if multiple matches
+    if len(possible_files) > 1:
+        # Prefer exact matches or versioned libraries without suffixes like _d
+        filtered = [f for f in possible_files if "_d." not in f.name]
+        if filtered:
+            possible_files = filtered
+
+    if len(possible_files) == 0:
+        raise ValueError(
+            f"Can't find PROJ shared library matching '{pattern}' in '{lib_dir}'"
+        )
+    if len(possible_files) > 1:
+        # Pick the one with shortest name (usually the main library)
+        possible_files.sort(key=lambda p: len(p.name))
+
+    return possible_files[0]
+
+
+def _find_proj_shared_library_near_data(data_dir: Path) -> Optional[Path]:
+    """Find PROJ shared library relative to a data directory.
+
+    This handles conda environments where the data is in share/proj or
+    Library/share/proj and the library is in lib or Library/bin.
+    """
+    # Try to find the library relative to the data directory
+    # data_dir is typically <prefix>/share/proj or <prefix>/Library/share/proj
+    if sys.platform == "win32":
+        # Windows conda: data is in Library/share/proj, lib is in Library/bin
+        lib_dir = data_dir.parent.parent / "bin"
+    else:
+        # Unix: data is in share/proj, lib is in lib
+        lib_dir = data_dir.parent.parent / "lib"
+
+    if lib_dir.exists():
+        try:
+            return _find_proj_shared_library(lib_dir)
+        except ValueError:
+            pass
+
+    return None
 
 
 def _configure_proj_system():
-    configure_proj(shared_library=_proj_lib_name())
+    # For system installs, try common library names that might be on PATH/LD_LIBRARY_PATH
+    import ctypes
+
+    names_to_try = []
+    if sys.platform == "win32":
+        names_to_try = ["proj.dll", "proj_9.dll"]
+    elif sys.platform == "darwin":
+        names_to_try = ["libproj.dylib"]
+    else:
+        names_to_try = ["libproj.so"]
+
+    for name in names_to_try:
+        try:
+            ctypes.CDLL(name)
+            configure_proj(shared_library=name)
+            return
+        except OSError:
+            continue
+
+    raise ValueError(
+        f"Can't load PROJ shared library '{names_to_try[0]}': "
+        "Could not find module (or one of its dependencies). "
+        "Try using the full path with constructor syntax."
+    )
 
 
 def _configure_proj_prefix(prefix: str):
@@ -719,14 +799,19 @@ def _configure_proj_prefix(prefix: str):
         raise ValueError(f"Can't configure PROJ from prefix '{prefix}': does not exist")
 
     if sys.platform == "win32":
-        shared_library = prefix / "Library" / "bin" / _proj_lib_name()
+        # Windows conda uses Library/bin for DLLs and Library/share for data
+        lib_dir = prefix / "Library" / "bin"
+        data_dir = prefix / "Library" / "share" / "proj"
     else:
-        shared_library = prefix / "lib" / _proj_lib_name()
+        lib_dir = prefix / "lib"
+        data_dir = prefix / "share" / "proj"
+
+    shared_library = _find_proj_shared_library(lib_dir)
 
     configure_proj(
         shared_library=shared_library,
-        database_path=prefix / "share" / "proj" / "proj.db",
-        search_path=prefix / "share" / "proj",
+        database_path=data_dir / "proj.db",
+        search_path=data_dir,
     )
 
 
@@ -894,22 +979,64 @@ def _configure_gdal_rasterio():
     configure_gdal(shared_library=_find_gdal_in_package("rasterio"))
 
 
-def _configure_gdal_conda():
-    conda_prefix = os.environ.get("CONDA_PREFIX")
-    if not conda_prefix:
-        raise ValueError("CONDA_PREFIX environment variable is not set")
+def _gdal_lib_pattern() -> str:
+    """Return a glob pattern for finding GDAL shared libraries."""
+    if sys.platform == "win32":
+        return "gdal*.dll"
+    elif sys.platform == "darwin":
+        return "libgdal*.dylib"
+    else:
+        return "libgdal.so*"
 
-    prefix = Path(conda_prefix)
-    if not prefix.exists():
+
+def _find_gdal_shared_library(lib_dir: Path) -> Path:
+    """Find the GDAL shared library in the given directory.
+
+    Raises ValueError if not found or multiple matches.
+    """
+    pattern = _gdal_lib_pattern()
+    possible_files = list(lib_dir.glob(pattern))
+
+    # Filter out debug/test variants if multiple matches
+    if len(possible_files) > 1:
+        # Prefer exact matches or versioned libraries without suffixes like _d
+        filtered = [f for f in possible_files if "_d." not in f.name]
+        if filtered:
+            possible_files = filtered
+
+    if len(possible_files) == 0:
         raise ValueError(
-            f"Can't configure GDAL from CONDA_PREFIX '{prefix}': does not exist"
+            f"Can't find GDAL shared library matching '{pattern}' in '{lib_dir}'"
         )
+    if len(possible_files) > 1:
+        # Pick the one with shortest name (usually the main library)
+        possible_files.sort(key=lambda p: len(p.name))
+
+    return possible_files[0]
+
+
+def _configure_gdal_conda():
+    # Try CONDA_PREFIX first, then fall back to sys.prefix
+    conda_prefix = os.environ.get("CONDA_PREFIX")
+    if conda_prefix:
+        prefix = Path(conda_prefix)
+    else:
+        # When running python directly without `conda activate`, CONDA_PREFIX
+        # may not be set, but sys.prefix points to the environment
+        prefix = Path(sys.prefix)
+
+    if not prefix.exists():
+        raise ValueError(f"Can't configure GDAL from prefix '{prefix}': does not exist")
 
     if sys.platform == "win32":
-        shared_library = prefix / "Library" / "bin" / "gdal.dll"
+        lib_dir = prefix / "Library" / "bin"
     else:
-        shared_library = prefix / "lib" / _gdal_lib_name()
+        lib_dir = prefix / "lib"
 
+    if not lib_dir.exists():
+        raise ValueError(f"Can't find GDAL library directory '{lib_dir}'")
+
+    shared_library = _find_gdal_shared_library(lib_dir)
     configure_gdal(shared_library=shared_library)
 
 

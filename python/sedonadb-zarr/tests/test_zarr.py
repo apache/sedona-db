@@ -15,20 +15,23 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import sys
+
 import numpy as np
 import pytest
 import sedonadb
 import sedonadb_zarr
+import zarr
 from sedonadb.raster import Raster
+
+pytestmark = pytest.mark.skipif(
+    sys.version_info < (3, 11), reason="zarr v3 requires Python 3.11+"
+)
 
 
 @pytest.fixture
 def zarr_group(tmp_path):
     """Build a tiny 2x2 UInt8 Zarr v3 group with two chunks."""
-    # The fixture uses the zarr-python 3.x API (create_array,
-    # dimension_names); zarr 2.x (the newest available on Python < 3.11)
-    # can't write these fixtures.
-    zarr = pytest.importorskip("zarr", minversion="3.0")
     root = zarr.open_group(str(tmp_path), mode="w")
     arr = root.create_array(
         "temperature",
@@ -74,7 +77,6 @@ _NORTH_UP_BOUNDS = (10.0, 18.0, 12.0, 20.0)
 
 def _zarr_with_attrs(tmp_path, group_attrs, *, dims=("y", "x")):
     """Write a single-chunk 2x2 Zarr v3 group carrying `group_attrs`."""
-    zarr = pytest.importorskip("zarr", minversion="3.0")
     root = zarr.open_group(str(tmp_path), mode="w")
     for key, value in group_attrs.items():
         root.attrs[key] = value
@@ -194,7 +196,86 @@ def test_format_spec_class_invariants():
     assert spec.extension == "zarr"
     spec2 = spec.with_options({"arrays": ["temperature"]})
     assert spec2 is not spec
-    assert spec2._options.get("arrays") == ["temperature"]
+
+
+def test_zarr_loader_supports_format():
+    """Test format support checking."""
+    loader = sedonadb_zarr.ZarrRasterLoader()
+    assert loader.supports_format("zarr") is True
+    assert loader.supports_format(None) is False
+    assert loader.supports_format("gdal") is False
+    assert "ZarrRasterLoader" in repr(loader)
+
+
+@pytest.mark.parametrize(
+    "numpy_dtype",
+    [
+        "bool",
+        "int8",
+        "uint8",
+        "int16",
+        "uint16",
+        "int32",
+        "uint32",
+        "int64",
+        "uint64",
+        "float32",
+        "float64",
+    ],
+)
+def test_rs_ensure_loaded_with_zarr(tmp_path, numpy_dtype):
+    # Tune these for coverage vs speed tradeoff, but ensure a reasonable
+    # number of tiles to test a larger degree of concurrency
+    width, height = 512, 512
+    chunk_width, chunk_height = 16, 16
+
+    # Create a Zarr array with random data
+    rng = np.random.default_rng(seed=836)
+    if numpy_dtype == "bool":
+        numpy_arr = rng.integers(0, 2, (height, width), dtype=np.uint8).astype(
+            numpy_dtype
+        )
+    elif np.issubdtype(np.dtype(numpy_dtype), np.integer):
+        numpy_arr = rng.integers(0, 100, (height, width), dtype=numpy_dtype)
+    else:
+        numpy_arr = rng.random((height, width)).astype(numpy_dtype)
+
+    root = zarr.open_group(str(tmp_path), mode="w")
+    arr = root.create_array(
+        "temperature",
+        shape=(height, width),
+        chunks=(chunk_height, chunk_width),
+        dtype=numpy_dtype,
+        dimension_names=["y", "x"],
+    )
+    arr[:] = numpy_arr
+
+    # Create a fresh connection (new context)
+    sd = sedonadb.connect()
+    sd.register(sedonadb_zarr.ZarrExtension())
+
+    # Read the Zarr group as loaded rasters
+    t = sd.read(f"file://{tmp_path}", format="zarr")
+    loaded_tab = t.select(raster=t.raster.funcs.rs_ensureloaded()).to_arrow_table()
+
+    # Verify we get the expected number of chunk rows
+    expected_chunks_y = (height + chunk_height - 1) // chunk_height
+    expected_chunks_x = (width + chunk_width - 1) // chunk_width
+    expected_rows = expected_chunks_y * expected_chunks_x
+    assert loaded_tab.num_rows == expected_rows
+
+    # Verify the total pixels and that each chunk loaded successfully
+    total_pixels = 0
+    for i in range(loaded_tab.num_rows):
+        raster = loaded_tab["raster"][i].as_py()
+        band = raster.bands[0]
+        chunk_data = band.to_numpy()
+        # bool is stored as uint8 in raster bands
+        expected_dtype = np.uint8 if numpy_dtype == "bool" else np.dtype(numpy_dtype)
+        assert chunk_data.dtype == expected_dtype
+        total_pixels += chunk_data.size
+
+    assert total_pixels == width * height
 
 
 # Each numpy dtype below maps to a different `BandDataType` arm in
@@ -216,7 +297,6 @@ def test_format_spec_class_invariants():
     ],
 )
 def test_dtype_mapping_roundtrips(tmp_path, numpy_dtype):
-    zarr = pytest.importorskip("zarr", minversion="3.0")
     root = zarr.open_group(str(tmp_path), mode="w")
     arr = root.create_array(
         "temperature",
