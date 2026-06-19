@@ -839,7 +839,7 @@ class ArrowSQLCache:
     def __init__(self, engine_name: str, path: Path):
         self._engine_name = engine_name
         self._path = path
-        self._header_lines: list[str] = []
+        self._header_lines = []
         self._entries: dict = {}
         self._dirty = False
         if self._path.exists():

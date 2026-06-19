@@ -27,7 +27,7 @@ from __future__ import annotations
 import re
 import textwrap
 from pathlib import Path
-from typing import Any
+from typing import Any, List, Optional
 
 import yaml
 
@@ -97,8 +97,8 @@ class ArgInfo:
     def __init__(
         self,
         type: str,
-        name: str | None = None,
-        description: str | None = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
         optional: bool = False,
     ):
         self.type = type
@@ -112,10 +112,10 @@ class KernelInfo:
 
     def __init__(
         self,
-        args: list[ArgInfo] | None = None,
+        args: Optional[List[ArgInfo]] = None,
         returns: str = "unknown",
         variadic: bool = False,
-        kernel_signatures: list[str] | None = None,
+        kernel_signatures: Optional[List[str]] = None,
     ):
         self.args = args if args is not None else []
         self.returns = returns
@@ -141,8 +141,8 @@ class FunctionInfo:
         kernels: list[dict[str, Any]],
         is_geo_method: bool = False,
         is_raster_method: bool = False,
-        kernel_info: KernelInfo | None = None,
-        sql_name: str | None = None,
+        kernel_info: Optional[KernelInfo] = None,
+        sql_name: Optional[str] = None,
     ):
         self.name = name
         self.title = title

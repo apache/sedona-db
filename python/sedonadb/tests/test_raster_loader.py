@@ -17,6 +17,8 @@
 
 """Tests for Python-backed raster loaders."""
 
+from typing import List, Optional
+
 import pyarrow as pa
 
 import sedonadb
@@ -27,7 +29,7 @@ from sedonadb.raster_loader import RasterLoader, RasterLoadResult
 class MockRasterLoader(RasterLoader):
     """A mock raster loader for testing."""
 
-    def __init__(self, name: str = "mock", supported_formats: list[str | None] = None):
+    def __init__(self, name: str = "mock", supported_formats: List[Optional[str]] = None):
         self._name = name
         self._supported_formats = supported_formats or [None]  # Default: catch-all
         self._load_calls = []
@@ -35,7 +37,7 @@ class MockRasterLoader(RasterLoader):
     def name(self) -> str:
         return self._name
 
-    def supports_format(self, format: str | None) -> bool:
+    def supports_format(self, format: Optional[str]) -> bool:
         return format in self._supported_formats
 
     def load(self, requests):
