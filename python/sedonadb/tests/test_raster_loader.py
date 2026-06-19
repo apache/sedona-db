@@ -29,7 +29,9 @@ from sedonadb.raster_loader import RasterLoader, RasterLoadResult
 class MockRasterLoader(RasterLoader):
     """A mock raster loader for testing."""
 
-    def __init__(self, name: str = "mock", supported_formats: List[Optional[str]] = None):
+    def __init__(
+        self, name: str = "mock", supported_formats: List[Optional[str]] = None
+    ):
         self._name = name
         self._supported_formats = supported_formats or [None]  # Default: catch-all
         self._load_calls = []
