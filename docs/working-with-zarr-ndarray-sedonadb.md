@@ -128,13 +128,10 @@ Every row is a chunk with a real, georeferenced footprint (the cube declares EPS
 
 
 ```python
-f = sd.funcs
-chunks = cube.select(
-    geom=f.st_transform(cube.raster.rst.envelope(), "EPSG:4326")
-)
+from lonboard import viz  # in a notebook with lonboard installed
 
-# In a notebook with lonboard installed:
-from lonboard import viz
+f = sd.funcs
+chunks = cube.select(geom=f.st_transform(cube.raster.rst.envelope(), "EPSG:4326"))
 viz(chunks)
 ```
 
