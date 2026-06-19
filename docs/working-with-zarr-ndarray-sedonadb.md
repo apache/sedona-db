@@ -166,7 +166,8 @@ export AWS_SKIP_SIGNATURE=true   # read public objects without credentials
 ```
 
 ```python
-df = sd.read("s3://my-bucket/temperature.zarr")
+# A real public bucket (CarbonPlan), readable with the settings above:
+df = sd.read("s3://carbonplan-share/zarr-layer-examples/antarctic_era5.zarr")
 ```
 
 ### Selecting arrays with the `arrays` option
