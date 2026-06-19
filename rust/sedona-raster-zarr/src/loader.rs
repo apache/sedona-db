@@ -511,8 +511,15 @@ async fn crs_from_grid_mapping_variable(
     let candidates = cf_crs_candidate_names(data_arrays.iter().map(|a| a.attributes()));
     for name in candidates {
         let path = format!("/{}", name.trim_start_matches('/'));
-        let Ok(array) = Array::async_open(storage.clone(), &path).await else {
-            continue;
+        let array = match Array::async_open(storage.clone(), &path).await {
+            Ok(array) => array,
+            // An absent candidate and a transient/permission failure look
+            // alike here; CRS is optional so we keep trying, but leave a
+            // breadcrumb so a genuinely broken store stays traceable.
+            Err(e) => {
+                log::debug!("Zarr grid-mapping candidate {name:?}: open failed: {e}");
+                continue;
+            }
         };
         match crs_from_cf_attributes(array.attributes()) {
             Ok(Some(crs)) => return Some(crs),
@@ -529,13 +536,19 @@ async fn crs_from_grid_mapping_variable(
 /// attributes, in the order they should be tried: every `grid_mapping`
 /// target, then every `coordinates` token, then the conventional
 /// `spatial_ref` / `crs`. De-duplicated, first occurrence wins.
+///
+/// CF 1.7+ allows an extended `grid_mapping` form, `"<crs var>: <coord>
+/// <coord> ..."`, where the grid-mapping variable name carries a trailing
+/// colon; we strip it so that name resolves. The colon-less coordinate names
+/// in that form are tried too — harmless, they carry no CRS attribute.
 fn cf_crs_candidate_names<'a>(
     array_attrs: impl Iterator<Item = &'a serde_json::Map<String, serde_json::Value>>,
 ) -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
     let mut push = |s: &str| {
         for tok in s.split_whitespace() {
-            if !names.iter().any(|n| n == tok) {
+            let tok = tok.trim_end_matches(':');
+            if !tok.is_empty() && !names.iter().any(|n| n == tok) {
                 names.push(tok.to_string());
             }
         }
@@ -1046,6 +1059,17 @@ mod tests {
         let a = attrs(serde_json::json!({"units": "K"}));
         let got = cf_crs_candidate_names(std::iter::once(&a));
         assert_eq!(got, vec!["spatial_ref", "crs"]);
+    }
+
+    #[test]
+    fn cf_crs_candidate_names_strips_extended_grid_mapping_colon() {
+        // CF 1.7+ extended form: the colon-suffixed token is the grid-mapping
+        // variable; the rest are the coordinates it applies to.
+        let a = attrs(serde_json::json!({"grid_mapping": "crs: lon lat"}));
+        let got = cf_crs_candidate_names(std::iter::once(&a));
+        // `crs` (colon stripped) first, then the coord tokens, then the
+        // conventional `spatial_ref` (`crs` already present, deduped).
+        assert_eq!(got, vec!["crs", "lon", "lat", "spatial_ref"]);
     }
 
     #[test]
