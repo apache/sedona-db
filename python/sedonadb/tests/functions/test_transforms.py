@@ -205,8 +205,12 @@ def test_st_crs_sedonadb(eng):
 WKT_3857 = (
     'PROJCS["WGS 84 / Pseudo-Mercator",GEOGCS["WGS 84",DATUM["WGS_1984",'
     'SPHEROID["WGS 84",6378137,298.257223563,AUTHORITY["EPSG","7030"]],'
-    'AUTHORITY["EPSG","6326"]],AUTHORITY["EPSG","4326"]],'
-    'PROJECTION["Mercator_1SP"],AUTHORITY["EPSG","3857"]]'
+    'AUTHORITY["EPSG","6326"]],PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],'
+    'UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]],'
+    'AUTHORITY["EPSG","4326"]],PROJECTION["Mercator_1SP"],'
+    'PARAMETER["central_meridian",0],PARAMETER["scale_factor",1],'
+    'PARAMETER["false_easting",0],PARAMETER["false_northing",0],'
+    'UNIT["metre",1,AUTHORITY["EPSG","9001"]],AUTHORITY["EPSG","3857"]]'
 )
 WKT_LCC_NO_AUTHORITY = (
     'PROJCS["Custom LCC",GEOGCS["WGS 84",DATUM["WGS_1984",'
