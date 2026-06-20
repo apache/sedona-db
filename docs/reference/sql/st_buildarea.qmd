@@ -16,8 +16,8 @@
 # specific language governing permissions and limitations
 # under the License.
 
-title: ST_PointOnSurface
-description: Returns a point guaranteed to lie on the surface of a geometry or geography.
+title: ST_BuildArea
+description: Returns a geometry that encloses the area formed by the given linework.
 kernels:
   - returns: geometry
     args: [geometry]
@@ -27,13 +27,16 @@ kernels:
 
 ## Description
 
-Unlike ST_Centroid which does not necessarily intersect a geometry or geography, ST_PointOnSurface
-makes an attempt to find an interior point close to the middle (using deterministic heuristics).
+Creates an areal geometry from linework. The input may be any collection of lines, polygons,
+or points. Lines are used to build the polygon boundary, and any unclosed lines are automatically
+closed. Returns NULL for non-polygon input that produces no area.
 
 ## Examples
 
 ```sql
-SELECT ST_PointOnSurface(
-    ST_GeogFromWKT('POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 3, 3 3, 3 1, 1 1))')
-);
+SELECT ST_BuildArea(ST_GeomFromWKT('LINESTRING (0 0, 1 0, 1 1, 0 1, 0 0)'));
+```
+
+```sql
+SELECT ST_BuildArea(ST_GeogFromWKT('LINESTRING (0 0, 1 0, 1 1, 0 1, 0 0)'));
 ```

@@ -16,24 +16,31 @@
 # specific language governing permissions and limitations
 # under the License.
 
-title: ST_PointOnSurface
-description: Returns a point guaranteed to lie on the surface of a geometry or geography.
+title: ST_DelaunayTriangles
+description: Returns a geometry collection of Delaunay triangles covering the vertices of the input geometry.
 kernels:
   - returns: geometry
     args: [geometry]
-  - returns: geography
-    args: [geography]
+  - returns: geometry
+    args:
+      - geometry
+      - name: tolerance
+        type: float64
+        description: Snap-rounding tolerance for vertices. Use 0.0 for exact computation.
 ---
 
 ## Description
 
-Unlike ST_Centroid which does not necessarily intersect a geometry or geography, ST_PointOnSurface
-makes an attempt to find an interior point close to the middle (using deterministic heuristics).
+Computes a Delaunay triangulation of the vertices of the input geometry. The result is a
+`GEOMETRYCOLLECTION` of `POLYGON` triangles. An optional tolerance value can be specified to
+snap nearby vertices together before triangulation.
 
 ## Examples
 
 ```sql
-SELECT ST_PointOnSurface(
-    ST_GeogFromWKT('POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 3, 3 3, 3 1, 1 1))')
-);
+SELECT ST_DelaunayTriangles(ST_GeomFromWKT('MULTIPOINT ((0 0), (1 0), (0 1))'));
+```
+
+```sql
+SELECT ST_DelaunayTriangles(ST_GeomFromWKT('MULTIPOINT ((0 0), (1 0), (0 1))'), 0.0);
 ```
