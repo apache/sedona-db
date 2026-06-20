@@ -1,0 +1,46 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: ST_Transform
+description: Transforms a geometry from one coordinate reference system to another.
+kernels:
+  - returns: geometry
+    args:
+    - geometry
+    - name: target_crs
+      type: string
+  - returns: geometry
+    args:
+    - geometry
+    - name: source_crs
+      type: string
+    - name: target_crs
+      type: string
+---
+
+## Description
+
+Transforms the coordinate reference system of a geometry between EPSG reference systems. If provided with 2 arguments, target_crs can be specified as an EPSG code (e.g., 'EPSG:4326') or as a PROJ string.
+
+When 3 arguments are provided, a source_crs can be used to specify the source CRS in case the input geometry doesn't have an SRID defined. The source_crs takes precedence over the geometry's SRID.
+
+## Examples
+
+```sql
+SELECT ST_Transform(ST_SetCRS(ST_Point(-122.35, 47.65), 'EPSG:4326'), 'EPSG:26910');
+```

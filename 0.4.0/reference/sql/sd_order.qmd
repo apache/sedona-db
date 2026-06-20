@@ -1,0 +1,45 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: SD_Order
+description: Returns a value suitable for ordering or sorting.
+kernels:
+  - returns: any
+    args:
+    - name: value
+      type: any
+---
+
+## Examples
+
+```sql
+SELECT city, geom, SD_Order(geom)
+FROM (
+  VALUES
+    ('San Francisco', ST_Point(-122.4194, 37.7749)),
+    ('Los Angeles',   ST_Point(-118.2437, 34.0522)),
+    ('New York',      ST_Point(-73.9857, 40.7484)),
+    ('Chicago',       ST_Point(-87.6298, 41.8781)),
+    ('Houston',       ST_Point(-95.3698, 29.7604)),
+    ('Phoenix',       ST_Point(-112.0740, 33.4484)),
+    ('Portland',      ST_Point(-122.6765, 45.5231)),
+    ('Miami',         ST_Point(-80.1918, 25.7617)),
+    ('Denver',        ST_Point(-104.9903, 39.7392)),
+    ('Boston',        ST_Point(-71.0589, 42.3601))
+) AS my_table(city, geom);
+```
