@@ -48,6 +48,9 @@ expression = "get_version()"
 
 [tool.hatch.build.targets.wheel]
 packages = ["python/sedonadb_expr"]
+# Exclude _generated and _version.py from packages since force-include handles them
+# (avoids duplicate file errors when building from sdist/tarball)
+exclude = ["python/sedonadb_expr/_generated", "python/sedonadb_expr/_version.py"]
 # Generated files are in .gitignore but must be included in the wheel
 force-include = { "python/sedonadb_expr/_generated" = "sedonadb_expr/_generated", "python/sedonadb_expr/_version.py" = "sedonadb_expr/_version.py" }
 
