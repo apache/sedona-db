@@ -1,6 +1,6 @@
 Package: sedonafns
 Title: Apache SedonaDB Function Definitions and Documentation
-Version: 0.3.0.9000
+Version: 0.4.0
 Authors@R:
     person("Dewey", "Dunnington", , "dewey@dunnington.ca", role = c("aut", "cre"))
 Description: Provides function definitions and documentation for use in 'SedonaDB'.
