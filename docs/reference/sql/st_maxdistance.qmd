@@ -20,14 +20,25 @@ title: ST_MaxDistance
 description: Returns the maximum distance between any pair of points in two geometries or geographies.
 kernels:
   - returns: double
+    args: [geometry, geometry]
+  - returns: double
     args: [geography, geography]
 ---
 
 ## Description
 
+For geometry, returns the 2D Cartesian maximum distance between any pair of vertices across the two geometries, in the units of the coordinate reference system.
+
 For geography, returns the maximum distance in meters calculated using a spherical approximation.
 
 ## Examples
+
+```sql
+SELECT ST_MaxDistance(
+    ST_GeomFromText('POINT (0 0)'),
+    ST_GeomFromText('LINESTRING (3 0, 0 4)')
+);
+```
 
 ```sql
 SELECT ST_MaxDistance(
