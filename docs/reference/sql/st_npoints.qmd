@@ -29,7 +29,7 @@ kernels:
 
 Returns the total number of coordinate points in the geometry, counting all vertices across all components.
 
-This function also has the alias `ST_NumPoints`.
+Aliases: `ST_NumPoints`.
 
 ## Examples
 
