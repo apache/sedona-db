@@ -93,8 +93,9 @@ impl SedonaScalarKernel for RsPolygonize {
             configure_thread_local_options(gdal, config_options)?;
             let provider = thread_local_provider(gdal)
                 .map_err(|e| exec_datafusion_err!("Failed to init GDAL provider: {e}"))?;
+            // Note: We deliberately use "Memory" instead of "MEM" to be compatible with older GDAL versions.
             let mem_driver = gdal
-                .get_driver_by_name("MEM")
+                .get_driver_by_name("Memory")
                 .map_err(|e| exec_datafusion_err!("Failed to get Memory driver: {e}"))?;
 
             executor.execute_raster_void(|_, raster_opt| {
@@ -287,7 +288,7 @@ mod tests {
     fn test_polygonize_raster() {
         let result = with_gdal(|gdal| {
             let provider = thread_local_provider(gdal).unwrap();
-            let mem_driver = gdal.get_driver_by_name("MEM").unwrap();
+            let mem_driver = gdal.get_driver_by_name("Memory").unwrap();
             let raster_array = build_polygonize_test_raster();
             let raster_struct = RasterStructArray::try_new(&raster_array).unwrap();
             let raster = raster_struct.get(0).unwrap();
