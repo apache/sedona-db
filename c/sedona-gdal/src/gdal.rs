@@ -23,6 +23,7 @@
 //! at every call site.
 
 use crate::config;
+use crate::cpl::CslStringList;
 use crate::dataset::Dataset;
 use crate::driver::{Driver, DriverManager};
 use crate::errors::Result;
@@ -177,7 +178,7 @@ impl Gdal {
         &self,
         path: &str,
         recurse_depth: i32,
-        options: Option<&crate::cpl::CslStringList>,
+        options: Option<&CslStringList>,
     ) -> Result<crate::vsi::VsiDir> {
         crate::vsi::open_dir(self.api, path, recurse_depth, options)
     }
