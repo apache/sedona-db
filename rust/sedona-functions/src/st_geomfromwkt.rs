@@ -38,6 +38,18 @@ use wkt::Wkt;
 use crate::executor::WkbExecutor;
 use crate::st_setsrid::SRIDifiedKernel;
 
+/// Geometry type constraint used by ST_XxxFromText functions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExpectedGeomType {
+    Point,
+    LineString,
+    Polygon,
+    MultiPoint,
+    MultiLineString,
+    MultiPolygon,
+    GeometryCollection,
+}
+
 /// ST_GeomFromWKT() UDF implementation
 ///
 /// An implementation of WKT reading using GeoRust's wkt crate.
@@ -45,6 +57,7 @@ use crate::st_setsrid::SRIDifiedKernel;
 pub fn st_geomfromwkt_udf() -> SedonaScalarUDF {
     let kernel = Arc::new(STGeoFromWKT {
         out_type: WKB_GEOMETRY,
+        expected_geom_type: None,
     });
     let sridified_kernel = Arc::new(SRIDifiedKernel::new(kernel.clone()));
 
@@ -67,12 +80,14 @@ pub fn st_geogfromwkt_udf() -> SedonaScalarUDF {
     // Inner kernel for SRIDified has no CRS - the SRID argument sets it
     let inner_kernel = Arc::new(STGeoFromWKT {
         out_type: WKB_GEOGRAPHY,
+        expected_geom_type: None,
     });
     let sridified_kernel = Arc::new(SRIDifiedKernel::new(inner_kernel));
 
     // Standalone kernel returns WGS84 CRS by default
     let standalone_kernel = Arc::new(STGeoFromWKT {
         out_type: WKB_GEOGRAPHY_WGS84.clone(),
+        expected_geom_type: None,
     });
 
     let udf = SedonaScalarUDF::new(
@@ -83,9 +98,48 @@ pub fn st_geogfromwkt_udf() -> SedonaScalarUDF {
     udf.with_aliases(vec!["st_geogfromtext".to_string()])
 }
 
+fn make_typed_geom_udf(name: &'static str, expected: ExpectedGeomType) -> SedonaScalarUDF {
+    let kernel = Arc::new(STGeoFromWKT {
+        out_type: WKB_GEOMETRY,
+        expected_geom_type: Some(expected),
+    });
+    let sridified_kernel = Arc::new(SRIDifiedKernel::new(kernel.clone()));
+    SedonaScalarUDF::new(name, vec![sridified_kernel, kernel], Volatility::Immutable)
+}
+
+pub fn st_geomcollfromtext_udf() -> SedonaScalarUDF {
+    make_typed_geom_udf("st_geomcollfromtext", ExpectedGeomType::GeometryCollection)
+}
+
+pub fn st_linefromtext_udf() -> SedonaScalarUDF {
+    make_typed_geom_udf("st_linefromtext", ExpectedGeomType::LineString)
+        .with_aliases(vec!["st_linestringfromtext".to_string()])
+}
+
+pub fn st_mlinefromtext_udf() -> SedonaScalarUDF {
+    make_typed_geom_udf("st_mlinefromtext", ExpectedGeomType::MultiLineString)
+}
+
+pub fn st_mpointfromtext_udf() -> SedonaScalarUDF {
+    make_typed_geom_udf("st_mpointfromtext", ExpectedGeomType::MultiPoint)
+}
+
+pub fn st_mpolyfromtext_udf() -> SedonaScalarUDF {
+    make_typed_geom_udf("st_mpolyfromtext", ExpectedGeomType::MultiPolygon)
+}
+
+pub fn st_pointfromtext_udf() -> SedonaScalarUDF {
+    make_typed_geom_udf("st_pointfromtext", ExpectedGeomType::Point)
+}
+
+pub fn st_polygonfromtext_udf() -> SedonaScalarUDF {
+    make_typed_geom_udf("st_polygonfromtext", ExpectedGeomType::Polygon)
+}
+
 #[derive(Debug)]
 struct STGeoFromWKT {
     out_type: SedonaType,
+    expected_geom_type: Option<ExpectedGeomType>,
 }
 
 impl SedonaScalarKernel for STGeoFromWKT {
@@ -111,7 +165,7 @@ impl SedonaScalarKernel for STGeoFromWKT {
 
         for item in as_string_view_array(&arg_array)? {
             if let Some(wkt_bytes) = item {
-                invoke_scalar(wkt_bytes, &mut builder)?;
+                invoke_scalar(wkt_bytes, self.expected_geom_type, &mut builder)?;
                 builder.append_value(vec![]);
             } else {
                 builder.append_null();
@@ -123,9 +177,36 @@ impl SedonaScalarKernel for STGeoFromWKT {
     }
 }
 
-fn invoke_scalar(wkt_bytes: &str, builder: &mut BinaryBuilder) -> Result<()> {
+fn invoke_scalar(
+    wkt_bytes: &str,
+    expected_geom_type: Option<ExpectedGeomType>,
+    builder: &mut BinaryBuilder,
+) -> Result<()> {
     let geometry: Wkt<f64> =
         Wkt::from_str(wkt_bytes).map_err(|err| exec_datafusion_err!("WKT parse error: {err}"))?;
+
+    if let Some(expected) = expected_geom_type {
+        let matches = matches!(
+            (&geometry, expected),
+            (Wkt::Point(_), ExpectedGeomType::Point)
+                | (Wkt::LineString(_), ExpectedGeomType::LineString)
+                | (Wkt::Polygon(_), ExpectedGeomType::Polygon)
+                | (Wkt::MultiPoint(_), ExpectedGeomType::MultiPoint)
+                | (Wkt::MultiLineString(_), ExpectedGeomType::MultiLineString)
+                | (Wkt::MultiPolygon(_), ExpectedGeomType::MultiPolygon)
+                | (
+                    Wkt::GeometryCollection(_),
+                    ExpectedGeomType::GeometryCollection
+                )
+        );
+        if !matches {
+            let actual = geom_type_name(&geometry);
+            let expected_name = expected_geom_type_name(expected);
+            return Err(exec_datafusion_err!(
+                "Expected {expected_name} but got {actual}"
+            ));
+        }
+    }
 
     write_geometry(
         builder,
@@ -135,6 +216,30 @@ fn invoke_scalar(wkt_bytes: &str, builder: &mut BinaryBuilder) -> Result<()> {
         },
     )
     .map_err(|err| sedona_internal_datafusion_err!("WKB write error: {err}"))
+}
+
+fn geom_type_name(geom: &Wkt<f64>) -> &'static str {
+    match geom {
+        Wkt::Point(_) => "Point",
+        Wkt::LineString(_) => "LineString",
+        Wkt::Polygon(_) => "Polygon",
+        Wkt::MultiPoint(_) => "MultiPoint",
+        Wkt::MultiLineString(_) => "MultiLineString",
+        Wkt::MultiPolygon(_) => "MultiPolygon",
+        Wkt::GeometryCollection(_) => "GeometryCollection",
+    }
+}
+
+fn expected_geom_type_name(expected: ExpectedGeomType) -> &'static str {
+    match expected {
+        ExpectedGeomType::Point => "Point",
+        ExpectedGeomType::LineString => "LineString",
+        ExpectedGeomType::Polygon => "Polygon",
+        ExpectedGeomType::MultiPoint => "MultiPoint",
+        ExpectedGeomType::MultiLineString => "MultiLineString",
+        ExpectedGeomType::MultiPolygon => "MultiPolygon",
+        ExpectedGeomType::GeometryCollection => "GeometryCollection",
+    }
 }
 
 /// ST_GeomFromEWKT() UDF implementation
@@ -242,7 +347,7 @@ fn invoke_scalar_with_srid(
     geom_builder: &mut BinaryBuilder,
     srid_builder: &mut StringViewBuilder,
 ) -> Result<()> {
-    invoke_scalar(wkt_bytes, geom_builder)?;
+    invoke_scalar(wkt_bytes, None, geom_builder)?;
     srid_builder.append_option(srid);
     Ok(())
 }
@@ -468,5 +573,89 @@ mod tests {
 
         let udf: ScalarUDF = st_geogfromwkt_udf().into();
         assert!(udf.aliases().contains(&"st_geogfromtext".to_string()));
+
+        let udf: ScalarUDF = st_linefromtext_udf().into();
+        assert!(udf.aliases().contains(&"st_linestringfromtext".to_string()));
+    }
+
+    #[test]
+    fn typed_constructors_accept_correct_type() {
+        let cases: &[(&str, SedonaScalarUDF)] = &[
+            ("POINT (1 2)", st_pointfromtext_udf()),
+            ("LINESTRING (0 0, 1 1)", st_linefromtext_udf()),
+            ("POLYGON ((0 0, 1 0, 1 1, 0 0))", st_polygonfromtext_udf()),
+            ("MULTIPOINT ((0 0), (1 1))", st_mpointfromtext_udf()),
+            (
+                "MULTILINESTRING ((0 0, 1 1), (2 2, 3 3))",
+                st_mlinefromtext_udf(),
+            ),
+            (
+                "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 0)))",
+                st_mpolyfromtext_udf(),
+            ),
+            (
+                "GEOMETRYCOLLECTION (POINT (0 0))",
+                st_geomcollfromtext_udf(),
+            ),
+        ];
+        for (wkt, udf) in cases {
+            let tester =
+                ScalarUdfTester::new(udf.clone().into(), vec![SedonaType::Arrow(DataType::Utf8)]);
+            assert!(tester.invoke_scalar(*wkt).is_ok(), "expected Ok for {wkt}");
+        }
+    }
+
+    #[test]
+    fn typed_constructors_reject_wrong_type() {
+        let udf = st_pointfromtext_udf();
+        let tester = ScalarUdfTester::new(udf.into(), vec![SedonaType::Arrow(DataType::Utf8)]);
+        let err = tester.invoke_scalar("LINESTRING (0 0, 1 1)").unwrap_err();
+        assert!(
+            err.message().contains("Expected Point"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn typed_constructors_accept_srid() {
+        let cases: &[(&str, SedonaScalarUDF)] = &[
+            ("POINT (1 2)", st_pointfromtext_udf()),
+            ("LINESTRING (0 0, 1 1)", st_linefromtext_udf()),
+            ("POLYGON ((0 0, 1 0, 1 1, 0 0))", st_polygonfromtext_udf()),
+            ("MULTIPOINT ((0 0), (1 1))", st_mpointfromtext_udf()),
+            (
+                "MULTILINESTRING ((0 0, 1 1), (2 2, 3 3))",
+                st_mlinefromtext_udf(),
+            ),
+            (
+                "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 0)))",
+                st_mpolyfromtext_udf(),
+            ),
+            (
+                "GEOMETRYCOLLECTION (POINT (0 0))",
+                st_geomcollfromtext_udf(),
+            ),
+        ];
+        for (wkt, udf) in cases {
+            let tester = ScalarUdfTester::new(
+                udf.clone().into(),
+                vec![
+                    SedonaType::Arrow(DataType::Utf8),
+                    SedonaType::Arrow(DataType::UInt32),
+                ],
+            );
+            let return_type = tester
+                .return_type_with_scalar_scalar(Some(*wkt), Some(4326u32))
+                .unwrap();
+            assert_eq!(
+                return_type,
+                SedonaType::Wkb(Edges::Planar, lnglat()),
+                "wrong return type for {wkt}"
+            );
+            assert_scalar_equal_wkb_geometry(
+                &tester.invoke_scalar_scalar(*wkt, 4326u32).unwrap(),
+                Some(wkt),
+            );
+        }
     }
 }
