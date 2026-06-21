@@ -24,7 +24,7 @@ use std::sync::Arc;
 use arrow_array::{builder::StringBuilder, builder::UInt32Builder, ArrayRef, RecordBatch};
 use arrow_schema::{DataType, Field, Schema, SchemaRef};
 use async_trait::async_trait;
-use datafusion::catalog::TableFunctionImpl;
+use datafusion::catalog::{Session, TableFunctionImpl, TableProvider};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_plan::execution_plan::{Boundedness, EmissionType};
 use datafusion::physical_plan::expressions::Column;
@@ -45,6 +45,7 @@ use datafusion_common_runtime::SpawnedTask;
 use futures::{StreamExt, TryStreamExt};
 use sedona_gdal::gdal_dyn_bindgen::{VSI_S_IFMT, VSI_S_IFREG};
 use sedona_gdal::spatial_ref::SpatialRef;
+use sedona_gdal::vsi::directory_separator_for_path;
 use sedona_raster::builder::RasterBuilder;
 use sedona_raster::traits::{BandMetadata, RasterMetadata};
 use sedona_schema::raster::StorageType;
@@ -62,7 +63,7 @@ pub fn rs_geotiff_tiles_udtf() -> Arc<dyn TableFunctionImpl> {
 pub struct RsGeoTiffTilesFunction {}
 
 impl TableFunctionImpl for RsGeoTiffTilesFunction {
-    fn call(&self, exprs: &[Expr]) -> Result<Arc<dyn datafusion::catalog::TableProvider>> {
+    fn call(&self, exprs: &[Expr]) -> Result<Arc<dyn TableProvider>> {
         if exprs.is_empty() || exprs.len() > 2 {
             return plan_err!(
                 "rs_geotiff_tiles() expected 1 or 2 arguments (path[, recursive]) but got {}",
@@ -124,7 +125,7 @@ impl GeoTiffTilesProvider {
 }
 
 #[async_trait]
-impl datafusion::catalog::TableProvider for GeoTiffTilesProvider {
+impl TableProvider for GeoTiffTilesProvider {
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -134,12 +135,12 @@ impl datafusion::catalog::TableProvider for GeoTiffTilesProvider {
     }
 
     fn table_type(&self) -> TableType {
-        TableType::View
+        TableType::Base
     }
 
     async fn scan(
         &self,
-        _state: &dyn datafusion::catalog::Session,
+        _state: &dyn Session,
         projection: Option<&Vec<usize>>,
         _filters: &[Expr],
         _limit: Option<usize>,
@@ -178,6 +179,7 @@ impl GeoTiffTilesExec {
     fn new(dir: String, recursive: bool, schema: SchemaRef) -> Self {
         let properties = PlanProperties::new(
             EquivalenceProperties::new(schema.clone()),
+            // TODO: allow split paths to load into multiple partitions to enable parallelism.
             Partitioning::UnknownPartitioning(1),
             EmissionType::Incremental,
             Boundedness::Bounded,
@@ -232,9 +234,13 @@ impl ExecutionPlan for GeoTiffTilesExec {
 
     fn execute(
         &self,
-        _partition: usize,
+        partition: usize,
         _context: Arc<TaskContext>,
     ) -> Result<datafusion::physical_plan::SendableRecordBatchStream> {
+        if partition != 0 {
+            return exec_err!("GeoTiffTilesExec only has one partition (partition 0) but got partition {partition}");
+        }
+
         let schema_worker = self.schema.clone();
         let schema_empty = self.schema.clone();
         let schema_adapter = self.schema.clone();
@@ -248,7 +254,7 @@ impl ExecutionPlan for GeoTiffTilesExec {
                 let schema = schema_worker.clone();
                 SpawnedTask::spawn_blocking(move || build_batch_for_file(path, schema))
             })
-            .buffered(4)
+            .buffered(2)
             .map(move |res| match res {
                 Ok(Ok(Some(batch))) => Ok(batch),
                 Ok(Ok(None)) => Ok(RecordBatch::new_empty(schema_empty.clone())),
@@ -462,16 +468,6 @@ fn list_geotiffs(path: &str, recursive: bool) -> Result<Vec<String>> {
     }
 }
 
-fn directory_separator_for_path(path: &str) -> &'static str {
-    if path.starts_with("/vsi") || path.contains("://") {
-        "/"
-    } else if path.contains('\\') {
-        "\\"
-    } else {
-        "/"
-    }
-}
-
 fn join_vsi_path(base: &str, separator: &str, child_name: &str) -> String {
     if base.ends_with(separator) {
         format!("{base}{child_name}")
@@ -506,11 +502,11 @@ fn div_ceil_u32(n: u32, d: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datafusion::catalog::TableProvider;
     use datafusion::prelude::SessionContext;
     use sedona_gdal::raster::types::Buffer;
     use std::path::PathBuf;
     use tempfile::tempdir;
+    use TableProvider;
 
     fn write_test_geotiff(base: &Path, name: &str) -> PathBuf {
         let path = base.join(name);
@@ -589,11 +585,6 @@ mod tests {
         assert!(is_geotiff_path_str("https://host/data.tif?token=abc#f"));
         assert!(!is_geotiff_path_str("/tmp/a.txt"));
         assert!(!is_geotiff_path_str("/tmp/a"));
-
-        assert_eq!(directory_separator_for_path("/vsis3/bucket/prefix"), "/");
-        assert_eq!(directory_separator_for_path("https://host/data.tif"), "/");
-        assert_eq!(directory_separator_for_path(r"C:\data\dir"), r"\");
-        assert_eq!(directory_separator_for_path("/tmp/data"), "/");
     }
 
     #[tokio::test]
