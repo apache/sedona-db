@@ -755,6 +755,25 @@ def test_st_buffer_style_parameters(
     ("geom", "expected"),
     [
         (None, None),
+        ("LINESTRING (0 0, 1 0, 1 1, 0 0)", "POLYGON ((0 0, 1 0, 1 1, 0 0))"),
+        (
+            "MULTILINESTRING ((0 0, 1 0, 1 1, 0 0), (2 2, 3 2, 3 3, 2 2))",
+            "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 0)), ((2 2, 3 2, 3 3, 2 2)))",
+        ),
+        ("POINT (0 0)", "GEOMETRYCOLLECTION EMPTY"),
+        ("LINESTRING (0 0, 1 1)", "GEOMETRYCOLLECTION EMPTY"),
+    ],
+)
+def test_st_buildarea(eng, geom, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_BuildArea({geom_or_null(geom)})", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        (None, None),
         ("POINT (0 0)", "POINT (0 0)"),
         ("LINESTRING (0 0, 1 1)", "POINT (0.5 0.5)"),
         ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", "POINT (0.5 0.5)"),
@@ -1423,6 +1442,35 @@ def test_st_dump(eng):
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
+    ("geom", "tolerance", "flag", "expected"),
+    [
+        (None, None, None, None),
+        (
+            "POLYGON ((0 0, 1 0, 0.5 1, 0 0))",
+            0.0,
+            0,
+            "GEOMETRYCOLLECTION (POLYGON ((0 0, 0.5 1, 1 0, 0 0)))",
+        ),
+        (
+            "MULTIPOINT ((0 0), (1 0), (0.5 1))",
+            0.0,
+            0,
+            "GEOMETRYCOLLECTION (POLYGON ((0 0, 0.5 1, 1 0, 0 0)))",
+        ),
+    ],
+)
+def test_st_delaunaytriangles(eng, geom, tolerance, flag, expected):
+    eng = eng.create_or_skip()
+    args = geom_or_null(geom)
+    if tolerance is not None:
+        args += f", {tolerance}"
+    if flag is not None:
+        args += f", {flag}"
+    eng.assert_query_result(f"SELECT ST_DelaunayTriangles({args})", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
     ("geom", "expected"),
     [
         (None, None),
@@ -1449,6 +1497,29 @@ def test_st_dump(eng):
 def test_st_envelope(eng, geom, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(f"SELECT ST_Envelope({geom_or_null(geom)})", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        (None, None),
+        (
+            "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
+            "LINESTRING (0 0, 1 0, 1 1, 0 1, 0 0)",
+        ),
+        (
+            "POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))",
+            "LINESTRING (0 0, 4 0, 4 4, 0 4, 0 0)",
+        ),
+        ("POINT (0 0)", None),
+        ("LINESTRING (0 0, 1 1)", None),
+        ("MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)))", None),
+    ],
+)
+def test_st_exteriorring(eng, geom, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_ExteriorRing({geom_or_null(geom)})", expected)
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
@@ -2661,6 +2732,26 @@ def test_st_pointn(eng, geometry, n, expected):
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        (None, None),
+        ("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))", "POINT (2 2)"),
+        (
+            "POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))",
+            "POINT (1.5 1.5)",
+        ),
+        ("LINESTRING (0 0, 1 1, 2 0)", "POINT (1 1)"),
+        ("POINT (1 2)", "POINT (1 2)"),
+        ("MULTIPOLYGON (((0 0, 4 0, 4 4, 0 4, 0 0)))", "POINT (2 2)"),
+    ],
+)
+def test_st_pointonsurface(eng, geom, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_PointOnSurface({geom_or_null(geom)})", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
     ("geometry", "expected"),
     [
         (None, None),
@@ -3763,6 +3854,28 @@ def test_st_numinteriorrings_basic(eng, geom, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(
         f"SELECT ST_NumInteriorRings({geom_or_null(geom)})",
+        expected,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        (None, None),
+        ("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))", 0),
+        (
+            "POLYGON ((0 0,6 0,6 6,0 6,0 0),(2 2,4 2,4 4,2 4,2 2))",
+            1,
+        ),
+        ("POINT (0 0)", None),
+        ("LINESTRING (0 0, 1 1)", None),
+    ],
+)
+def test_st_numinteriorring(eng, geom, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_NumInteriorRing({geom_or_null(geom)})",
         expected,
     )
 
