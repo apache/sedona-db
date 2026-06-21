@@ -156,40 +156,23 @@ impl SedonaScalarKernel for RsAsRaster {
 
         let mut builder = RasterBuilder::new(num_iterations);
 
+        let mut geom_iter = geom_array.iter();
+        let mut pixel_type_iter = pixel_type_array.iter();
+        let mut all_touched_iter = all_touched_array.iter();
+        let mut burn_value_iter = burn_value_array.iter();
+        let mut nodata_value_iter = nodata_value_array.iter();
+        let mut use_geom_extent_iter = use_geom_extent_array.iter();
+
         with_gdal(|gdal| {
             configure_thread_local_options(gdal, config_options)?;
 
-            execute_raster_arg(arg_types, args, 1, num_iterations, |index, raster_opt| {
-                let geom_opt = if geom_array.is_null(index) {
-                    None
-                } else {
-                    Some(geom_array.value(index))
-                };
-                let pixel_type_opt = if pixel_type_array.is_null(index) {
-                    None
-                } else {
-                    Some(pixel_type_array.value(index))
-                };
-                let all_touched_opt = if all_touched_array.is_null(index) {
-                    false
-                } else {
-                    all_touched_array.value(index)
-                };
-                let burn_value_opt = if burn_value_array.is_null(index) {
-                    1.0
-                } else {
-                    burn_value_array.value(index)
-                };
-                let nodata_value_opt = if nodata_value_array.is_null(index) {
-                    None
-                } else {
-                    Some(nodata_value_array.value(index))
-                };
-                let use_geometry_extent_opt = if use_geom_extent_array.is_null(index) {
-                    true
-                } else {
-                    use_geom_extent_array.value(index)
-                };
+            execute_raster_arg(arg_types, args, 1, num_iterations, |_, raster_opt| {
+                let geom_opt = geom_iter.next().unwrap();
+                let pixel_type_opt = pixel_type_iter.next().unwrap();
+                let all_touched_opt = all_touched_iter.next().unwrap().unwrap_or(false);
+                let burn_value_opt = burn_value_iter.next().unwrap().unwrap_or(1.0);
+                let nodata_value_opt = nodata_value_iter.next().unwrap();
+                let use_geometry_extent_opt = use_geom_extent_iter.next().unwrap().unwrap_or(true);
 
                 let raster = match raster_opt {
                     Some(raster) => raster,
@@ -386,7 +369,17 @@ fn as_raster(
     gdal.rasterize_affine(&out_dataset, &[1], &[geometry], &[burn_value], all_touched)
         .map_err(|e| exec_datafusion_err!("Failed to rasterize geometry: {}", e))?;
 
-    let band_bytes = read_band_as_bytes(&out_dataset, 1, out_width, out_height, &band_type)?;
+    let band = out_dataset
+        .rasterband(1)
+        .map_err(|e| exec_datafusion_err!("Failed to get output band: {}", e))?;
+    let band_bytes = band
+        .read_as_bytes(
+            (0, 0),
+            (out_width, out_height),
+            (out_width, out_height),
+            None,
+        )
+        .map_err(|e| exec_datafusion_err!("Failed to read band data: {}", e))?;
 
     Ok((
         RasterMetadata {
@@ -446,102 +439,6 @@ fn initialize_band_t<T: sedona_gdal::raster::types::GdalType + Copy>(
     band.write((0, 0), (width, height), &mut buffer)
         .map_err(|e| exec_datafusion_err!("Failed to initialize band: {}", e))?;
     Ok(())
-}
-
-fn read_band_as_bytes(
-    dataset: &Dataset,
-    band_idx: usize,
-    width: usize,
-    height: usize,
-    band_type: &BandDataType,
-) -> Result<Vec<u8>> {
-    let band = dataset
-        .rasterband(band_idx)
-        .map_err(|e| exec_datafusion_err!("Failed to get band {}: {}", band_idx, e))?;
-
-    let data = match band_type {
-        BandDataType::UInt8 => band
-            .read_as::<u8>((0, 0), (width, height), (width, height), None)
-            .map(|buffer| buffer.data().to_vec()),
-        BandDataType::Int8 => band
-            .read_as::<i8>((0, 0), (width, height), (width, height), None)
-            .map(|buffer| buffer.data().iter().map(|value| *value as u8).collect()),
-        BandDataType::UInt16 => band
-            .read_as::<u16>((0, 0), (width, height), (width, height), None)
-            .map(|buffer| {
-                buffer
-                    .data()
-                    .iter()
-                    .flat_map(|value| value.to_le_bytes())
-                    .collect()
-            }),
-        BandDataType::Int16 => band
-            .read_as::<i16>((0, 0), (width, height), (width, height), None)
-            .map(|buffer| {
-                buffer
-                    .data()
-                    .iter()
-                    .flat_map(|value| value.to_le_bytes())
-                    .collect()
-            }),
-        BandDataType::UInt32 => band
-            .read_as::<u32>((0, 0), (width, height), (width, height), None)
-            .map(|buffer| {
-                buffer
-                    .data()
-                    .iter()
-                    .flat_map(|value| value.to_le_bytes())
-                    .collect()
-            }),
-        BandDataType::Int32 => band
-            .read_as::<i32>((0, 0), (width, height), (width, height), None)
-            .map(|buffer| {
-                buffer
-                    .data()
-                    .iter()
-                    .flat_map(|value| value.to_le_bytes())
-                    .collect()
-            }),
-        BandDataType::UInt64 => band
-            .read_as::<u64>((0, 0), (width, height), (width, height), None)
-            .map(|buffer| {
-                buffer
-                    .data()
-                    .iter()
-                    .flat_map(|value| value.to_le_bytes())
-                    .collect()
-            }),
-        BandDataType::Int64 => band
-            .read_as::<i64>((0, 0), (width, height), (width, height), None)
-            .map(|buffer| {
-                buffer
-                    .data()
-                    .iter()
-                    .flat_map(|value| value.to_le_bytes())
-                    .collect()
-            }),
-        BandDataType::Float32 => band
-            .read_as::<f32>((0, 0), (width, height), (width, height), None)
-            .map(|buffer| {
-                buffer
-                    .data()
-                    .iter()
-                    .flat_map(|value| value.to_le_bytes())
-                    .collect()
-            }),
-        BandDataType::Float64 => band
-            .read_as::<f64>((0, 0), (width, height), (width, height), None)
-            .map(|buffer| {
-                buffer
-                    .data()
-                    .iter()
-                    .flat_map(|value| value.to_le_bytes())
-                    .collect()
-            }),
-    }
-    .map_err(|e| exec_datafusion_err!("Failed to read band {} data: {}", band_idx, e))?;
-
-    Ok(data)
 }
 
 fn calc_num_iterations(args: &[ColumnarValue]) -> usize {
