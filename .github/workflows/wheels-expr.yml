@@ -44,6 +44,16 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set SedonaDB dev version
+        shell: bash
+        run: |
+          # Set the unique development version anywhere except a release branch
+          if [[ "${GITHUB_REF##*/}" =~ ^branch-[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "On release branch - using version from Cargo.toml"
+          else
+            python ci/scripts/set_dev_version.py
+          fi
+
       - name: Install build tools
         run: pip install build
 
