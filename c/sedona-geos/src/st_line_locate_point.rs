@@ -21,14 +21,17 @@ use arrow_schema::DataType;
 use datafusion_common::{DataFusionError, Result};
 use datafusion_expr::ColumnarValue;
 use geos::{Geom, GeometryTypes};
-use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
+use sedona_expr::{
+    item_crs::ItemCrsKernel,
+    scalar_udf::{ScalarKernelRef, SedonaScalarKernel},
+};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 use crate::executor::GeosExecutor;
 
 /// ST_LineLocatePoint() implementation using the geos crate
-pub fn st_line_locate_point_impl() -> ScalarKernelRef {
-    Arc::new(STLineLocatePoint {})
+pub fn st_line_locate_point_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(STLineLocatePoint {})
 }
 
 #[derive(Debug)]
@@ -67,6 +70,17 @@ impl SedonaScalarKernel for STLineLocatePoint {
 }
 
 fn invoke_scalar(line: &geos::Geometry, point: &geos::Geometry) -> Result<Option<f64>> {
+    // Empty input -> NULL (consistent with SedonaDB's general approach to empties)
+    let line_empty = line
+        .is_empty()
+        .map_err(|e| DataFusionError::Execution(format!("Failed to check empty: {e}")))?;
+    let point_empty = point
+        .is_empty()
+        .map_err(|e| DataFusionError::Execution(format!("Failed to check empty: {e}")))?;
+    if line_empty || point_empty {
+        return Ok(None);
+    }
+
     match line
         .geometry_type()
         .map_err(|e| DataFusionError::Execution(format!("Failed to get geometry type: {e}")))?
@@ -87,7 +101,7 @@ mod tests {
     use datafusion_common::ScalarValue;
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
-    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::compare::assert_array_equal;
     use sedona_testing::create::create_array;
     use sedona_testing::testers::ScalarUdfTester;
@@ -120,11 +134,25 @@ mod tests {
             .unwrap();
         assert!(result.is_null());
 
-        // non-LineString first arg returns NULL
+        // Non-LineString first arg returns NULL
         let result = tester
             .invoke_scalar_scalar("POLYGON ((0 0, 1 0, 1 1, 0 0))", "POINT (0.5 0.5)")
             .unwrap();
-        assert!(result.is_null());
+        assert!(
+            result.is_null(),
+            "expected NULL for non-LineString first arg"
+        );
+
+        // Empty inputs return NULL
+        let result = tester
+            .invoke_scalar_scalar("LINESTRING EMPTY", "POINT (0 0)")
+            .unwrap();
+        assert!(result.is_null(), "expected NULL for empty line");
+
+        let result = tester
+            .invoke_scalar_scalar("LINESTRING (0 0, 1 1)", "POINT EMPTY")
+            .unwrap();
+        assert!(result.is_null(), "expected NULL for empty point");
 
         let lines = create_array(
             &[
@@ -143,5 +171,17 @@ mod tests {
             &tester.invoke_array_array(lines, points).unwrap(),
             &expected,
         );
+    }
+
+    #[rstest]
+    fn udf_invoke_item_crs(#[values(WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType) {
+        let udf = SedonaScalarUDF::from_impl("st_linelocatepoint", st_line_locate_point_impl());
+        let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type]);
+        tester.assert_return_type(DataType::Float64);
+
+        let result = tester
+            .invoke_scalar_scalar("LINESTRING (0 0, 0 1)", "POINT (0 0.5)")
+            .unwrap();
+        tester.assert_scalar_result_equals(result, 0.5);
     }
 }

@@ -27,9 +27,7 @@ kernels:
 
 ## Description
 
-For geometry, returns the 2D Cartesian maximum distance between any pair of vertices across the two geometries, in the units of the coordinate reference system.
-
-For geography, returns the maximum distance in meters calculated using a spherical approximation.
+For geometry, returns the 2D Cartesian maximum distance between any pair of vertices across the two geometries, in the units of the coordinate reference system. For geography, returns the maximum distance in meters calculated using a spherical approximation.
 
 ## Examples
 

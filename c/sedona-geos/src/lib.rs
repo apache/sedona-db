@@ -37,7 +37,6 @@ mod st_length;
 mod st_line_locate_point;
 mod st_line_merge;
 mod st_makevalid;
-mod st_max_distance;
 mod st_minimumclearance;
 mod st_minimumclearance_line;
 mod st_normalize;
