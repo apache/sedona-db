@@ -2605,6 +2605,7 @@ def test_st_pointm(eng, x, y, m, expected):
     ],
 )
 def test_st_points(eng, geometry, expected, expected_n):
+    is_postgis = eng is PostGIS
     eng = eng.create_or_skip()
     eng.assert_query_result(
         f"SELECT ST_Points({geom_or_null(geometry)})",
@@ -2614,10 +2615,13 @@ def test_st_points(eng, geometry, expected, expected_n):
         f"SELECT ST_NPoints({geom_or_null(geometry)})",
         expected_n,
     )
-    eng.assert_query_result(
-        f"SELECT ST_NumPoints({geom_or_null(geometry)})",
-        expected_n,
-    )
+    if not is_postgis:
+        # ST_NumPoints is an alias for ST_NPoints in SedonaDB.
+        # PostGIS still treats ST_NumPoints as LineString-only despite documentation.
+        eng.assert_query_result(
+            f"SELECT ST_NumPoints({geom_or_null(geometry)})",
+            expected_n,
+        )
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
