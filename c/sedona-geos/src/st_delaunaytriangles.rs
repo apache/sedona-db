@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use arrow_array::builder::BinaryBuilder;
 use arrow_schema::DataType;
-use datafusion_common::{cast::as_float64_array, DataFusionError, Result};
+use datafusion_common::{cast::as_boolean_array, cast::as_float64_array, DataFusionError, Result};
 use datafusion_expr::ColumnarValue;
 use geos::{Geom, Geometry};
 use sedona_expr::{
@@ -35,30 +35,31 @@ use sedona_schema::{
 use crate::executor::GeosExecutor;
 use crate::geos_to_wkb::write_geos_geometry;
 
-/// ST_DelaunayTriangles(geom) — no tolerance, returns polygons
-pub fn st_delaunay_triangles_impl() -> Vec<ScalarKernelRef> {
-    ItemCrsKernel::wrap_impl(STDelaunayTriangles { tolerance: false })
+fn invoke_scalar(
+    geom: &Geometry,
+    tolerance: f64,
+    only_edges: bool,
+    writer: &mut impl std::io::Write,
+) -> Result<()> {
+    let result = geom
+        .delaunay_triangulation(tolerance, only_edges)
+        .map_err(|e| DataFusionError::Execution(format!("ST_DelaunayTriangles failed: {e}")))?;
+    write_geos_geometry(&result, writer)?;
+    Ok(())
 }
 
-/// ST_DelaunayTriangles(geom, tolerance) — with tolerance
-pub fn st_delaunay_triangles_tolerance_impl() -> Vec<ScalarKernelRef> {
-    ItemCrsKernel::wrap_impl(STDelaunayTriangles { tolerance: true })
+// ── 1-arg: ST_DelaunayTriangles(geom) ────────────────────────────────────────
+
+pub fn st_delaunay_triangles_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(STDelaunayTriangles)
 }
 
 #[derive(Debug)]
-struct STDelaunayTriangles {
-    tolerance: bool,
-}
+struct STDelaunayTriangles;
 
 impl SedonaScalarKernel for STDelaunayTriangles {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        let arg_matchers = if self.tolerance {
-            vec![ArgMatcher::is_geometry(), ArgMatcher::is_numeric()]
-        } else {
-            vec![ArgMatcher::is_geometry()]
-        };
-        let matcher = ArgMatcher::new(arg_matchers, WKB_GEOMETRY);
-        matcher.match_args(args)
+        ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY).match_args(args)
     }
 
     fn invoke_batch(
@@ -71,47 +72,128 @@ impl SedonaScalarKernel for STDelaunayTriangles {
             executor.num_iterations(),
             WKB_MIN_PROBABLE_BYTES * executor.num_iterations(),
         );
-
-        if self.tolerance {
-            let tolerance_value = args[1]
-                .cast_to(&DataType::Float64, None)?
-                .to_array(executor.num_iterations())?;
-            let tolerance_array = as_float64_array(&tolerance_value)?;
-            let mut tolerance_iter = tolerance_array.iter();
-
-            executor.execute_wkb_void(|maybe_geom| {
-                match (maybe_geom, tolerance_iter.next().unwrap()) {
-                    (Some(geom), Some(tol)) => {
-                        invoke_scalar(&geom, tol, &mut builder)?;
-                        builder.append_value([]);
-                    }
-                    _ => builder.append_null(),
+        executor.execute_wkb_void(|maybe_geom| {
+            match maybe_geom {
+                Some(geom) => {
+                    invoke_scalar(&geom, 0.0, false, &mut builder)?;
+                    builder.append_value([]);
                 }
-                Ok(())
-            })?;
-        } else {
-            executor.execute_wkb_void(|maybe_geom| {
-                match maybe_geom {
-                    Some(geom) => {
-                        invoke_scalar(&geom, 0.0, &mut builder)?;
-                        builder.append_value([]);
-                    }
-                    _ => builder.append_null(),
-                }
-                Ok(())
-            })?;
-        }
-
+                None => builder.append_null(),
+            }
+            Ok(())
+        })?;
         executor.finish(Arc::new(builder.finish()))
     }
 }
 
-fn invoke_scalar(geom: &Geometry, tolerance: f64, writer: &mut impl std::io::Write) -> Result<()> {
-    let result = geom
-        .delaunay_triangulation(tolerance, false)
-        .map_err(|e| DataFusionError::Execution(format!("ST_DelaunayTriangles failed: {e}")))?;
-    write_geos_geometry(&result, writer)?;
-    Ok(())
+// ── 2-arg: ST_DelaunayTriangles(geom, tolerance) ─────────────────────────────
+
+pub fn st_delaunay_triangles_tolerance_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(STDelaunayTrianglesWithTolerance)
+}
+
+#[derive(Debug)]
+struct STDelaunayTrianglesWithTolerance;
+
+impl SedonaScalarKernel for STDelaunayTrianglesWithTolerance {
+    fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
+        ArgMatcher::new(
+            vec![ArgMatcher::is_geometry(), ArgMatcher::is_numeric()],
+            WKB_GEOMETRY,
+        )
+        .match_args(args)
+    }
+
+    fn invoke_batch(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+    ) -> Result<ColumnarValue> {
+        let executor = GeosExecutor::new(arg_types, args);
+        let mut builder = BinaryBuilder::with_capacity(
+            executor.num_iterations(),
+            WKB_MIN_PROBABLE_BYTES * executor.num_iterations(),
+        );
+        let tol_value = args[1]
+            .cast_to(&DataType::Float64, None)?
+            .to_array(executor.num_iterations())?;
+        let tol_array = as_float64_array(&tol_value)?;
+        let mut tol_iter = tol_array.iter();
+        executor.execute_wkb_void(|maybe_geom| {
+            match (maybe_geom, tol_iter.next().unwrap()) {
+                (Some(geom), Some(tol)) => {
+                    invoke_scalar(&geom, tol, false, &mut builder)?;
+                    builder.append_value([]);
+                }
+                _ => builder.append_null(),
+            }
+            Ok(())
+        })?;
+        executor.finish(Arc::new(builder.finish()))
+    }
+}
+
+// ── 3-arg: ST_DelaunayTriangles(geom, tolerance, flags) ──────────────────────
+// flags=0 → polygon output (default), flags=1 → multilinestring edges only
+
+pub fn st_delaunay_triangles_flags_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(STDelaunayTrianglesWithFlags)
+}
+
+#[derive(Debug)]
+struct STDelaunayTrianglesWithFlags;
+
+impl SedonaScalarKernel for STDelaunayTrianglesWithFlags {
+    fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
+        ArgMatcher::new(
+            vec![
+                ArgMatcher::is_geometry(),
+                ArgMatcher::is_numeric(),
+                ArgMatcher::is_boolean(),
+            ],
+            WKB_GEOMETRY,
+        )
+        .match_args(args)
+    }
+
+    fn invoke_batch(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+    ) -> Result<ColumnarValue> {
+        let executor = GeosExecutor::new(arg_types, args);
+        let mut builder = BinaryBuilder::with_capacity(
+            executor.num_iterations(),
+            WKB_MIN_PROBABLE_BYTES * executor.num_iterations(),
+        );
+        let tol_value = args[1]
+            .cast_to(&DataType::Float64, None)?
+            .to_array(executor.num_iterations())?;
+        let tol_array = as_float64_array(&tol_value)?;
+        let mut tol_iter = tol_array.iter();
+
+        let flags_value = args[2]
+            .cast_to(&DataType::Boolean, None)?
+            .to_array(executor.num_iterations())?;
+        let flags_array = as_boolean_array(&flags_value)?;
+        let mut flags_iter = flags_array.iter();
+
+        executor.execute_wkb_void(|maybe_geom| {
+            match (
+                maybe_geom,
+                tol_iter.next().unwrap(),
+                flags_iter.next().unwrap(),
+            ) {
+                (Some(geom), Some(tol), Some(only_edges)) => {
+                    invoke_scalar(&geom, tol, only_edges, &mut builder)?;
+                    builder.append_value([]);
+                }
+                _ => builder.append_null(),
+            }
+            Ok(())
+        })?;
+        executor.finish(Arc::new(builder.finish()))
+    }
 }
 
 #[cfg(test)]

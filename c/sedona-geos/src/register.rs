@@ -54,6 +54,7 @@ pub fn scalar_kernels() -> Vec<(&'static str, Vec<ScalarKernelRef>)> {
         "st_crosses" => crate::binary_predicates::st_crosses_impl,
         "st_delaunaytriangles" => crate::st_delaunaytriangles::st_delaunay_triangles_impl,
         "st_delaunaytriangles" => crate::st_delaunaytriangles::st_delaunay_triangles_tolerance_impl,
+        "st_delaunaytriangles" => crate::st_delaunaytriangles::st_delaunay_triangles_flags_impl,
         "st_difference" => crate::overlay::st_difference_impl,
         "st_disjoint" => crate::binary_predicates::st_disjoint_impl,
         "st_distance" => crate::distance::st_distance_impl,

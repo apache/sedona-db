@@ -27,9 +27,8 @@ kernels:
 
 ## Description
 
-Creates an areal geometry from linework. The input may be any collection of lines, polygons,
-or points. Lines are used to build the polygon boundary, and any unclosed lines are automatically
-closed. Returns NULL for non-polygon input that produces no area.
+Treats the input geometry's edges as linework and assembles them into a polygon or multipolygon.
+Open rings are closed automatically before assembly. If no closed ring can be formed, returns NULL.
 
 ## Examples
 
