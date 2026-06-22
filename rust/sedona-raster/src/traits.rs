@@ -19,7 +19,7 @@ use arrow_schema::ArrowError;
 use sedona_schema::raster::BandDataType;
 
 use crate::builder::RasterBuilder;
-use crate::view_entries::ViewEntry;
+use crate::view_entries::{ViewEntries, ViewEntry};
 
 /// Recognized spatial dimension-name pairs, in band C-order: the slower-
 /// varying Y-like (row) axis first, the faster-varying X-like (column) axis
@@ -694,15 +694,30 @@ pub trait BandRef {
     /// data transfer is zero-copy when the implementation supports it (see
     /// [`Self::append_data_into`]).
     ///
-    /// The derived band has an identity view: it carries the source's
-    /// dimension names, shape, data type, nodata, and OutDb pointers, but not a
-    /// non-identity `view`. (View-carrying overrides land with the view
-    /// machinery.)
+    /// The derived band has an identity view, so the **source must also have
+    /// one**: a non-identity source view (slice, broadcast, permutation, or a
+    /// non-zero byte offset) is rejected with an error rather than silently
+    /// copying mislocated bytes, because the builder can't yet persist a
+    /// non-identity view to carry it over. Carrying views is the follow-up
+    /// (the view machinery); materialize with `RS_EnsureContiguous` until then.
     fn copy_into(
         &self,
         builder: &mut RasterBuilder,
         overrides: BandOverrides<'_>,
     ) -> Result<(), ArrowError> {
+        // `start_band_nd` writes the identity view, and the whole-buffer data
+        // copy below assumes the source's visible bytes start at offset 0 with
+        // canonical strides. A non-identity source view breaks both, so refuse
+        // it loudly here — the single dispatch point for both the default and
+        // the Arrow-backed (`append_band_data_from`) data paths.
+        if !ViewEntries::new(self.view().to_vec()).is_identity(self.raw_source_shape()) {
+            return Err(ArrowError::InvalidArgumentError(
+                "copy_into: source band has a non-identity view (slice, broadcast, \
+                 permutation, or offset); carrying views is not yet supported — \
+                 materialize the band (e.g. via RS_EnsureContiguous) first"
+                    .into(),
+            ));
+        }
         let inherited_dims = self.dim_names();
         let dim_names: Vec<&str> = match overrides.dim_names {
             Some(d) => d.to_vec(),
@@ -1004,6 +1019,19 @@ mod tests {
     fn is_spatial_2d_yx_is_true() {
         let b = band(&["y", "x"], &[4, 5], &[ve(0, 0, 1, 4), ve(1, 0, 1, 5)]);
         assert!(b.is_spatial_2d());
+    }
+
+    #[test]
+    fn copy_into_rejects_non_identity_view() {
+        // A sliced view (step 2 on the outer axis) is non-identity; copy_into
+        // can't carry it yet, so it must error rather than copy mislocated bytes.
+        let src = band(&["y", "x"], &[4, 5], &[ve(0, 0, 2, 2), ve(1, 0, 1, 5)]);
+        let mut ob = RasterBuilder::new(1);
+        let err = src
+            .copy_into(&mut ob, BandOverrides::default())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("non-identity view"), "unexpected error: {err}");
     }
 
     #[test]
