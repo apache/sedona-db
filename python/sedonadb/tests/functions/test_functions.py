@@ -2614,6 +2614,10 @@ def test_st_points(eng, geometry, expected, expected_n):
         f"SELECT ST_NPoints({geom_or_null(geometry)})",
         expected_n,
     )
+    eng.assert_query_result(
+        f"SELECT ST_NumPoints({geom_or_null(geometry)})",
+        expected_n,
+    )
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
@@ -3763,38 +3767,6 @@ def test_st_numinteriorrings_basic(eng, geom, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(
         f"SELECT ST_NumInteriorRings({geom_or_null(geom)})",
-        expected,
-    )
-
-
-@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
-@pytest.mark.parametrize(
-    ("geom", "expected"),
-    [
-        (None, None),
-        ("POINT EMPTY", 0),
-        ("LINESTRING EMPTY", 0),
-        ("POLYGON EMPTY", 0),
-        ("MULTIPOINT EMPTY", 0),
-        ("MULTILINESTRING EMPTY", 0),
-        ("MULTIPOLYGON EMPTY", 0),
-        ("GEOMETRYCOLLECTION EMPTY", 0),
-        ("POINT (1 2)", 1),
-        ("LINESTRING (0 0, 1 1, 2 2)", 3),
-        ("LINESTRING (0 0, 1 1, 0 0)", 3),
-        ("LINESTRING Z (0 0 0, 1 1 1, 2 2 2, 3 3 3)", 4),
-        ("LINESTRING M (0 0 0, 1 1 1, 2 2 2, 3 3 3)", 4),
-        ("LINESTRING ZM (0 0 0 2, 1 1 1 4)", 2),
-        ("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))", 5),
-        ("MULTILINESTRING ((0 0, 0 1, 1 1, 0 0),(0 0, 1 1))", 6),
-        ("GEOMETRYCOLLECTION (LINESTRING (0 0, 0 1, 1 1, 0 0))", 4),
-        ("POLYGON ((0 0,6 0,6 6,0 6,0 0),(2 2,4 2,4 4,2 4,2 2))", 10),
-    ],
-)
-def test_st_numpoints(eng, geom, expected):
-    eng = eng.create_or_skip()
-    eng.assert_query_result(
-        f"SELECT ST_NumPoints({geom_or_null(geom)})",
         expected,
     )
 
