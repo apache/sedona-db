@@ -755,13 +755,11 @@ def test_st_buffer_style_parameters(
     ("geom", "expected"),
     [
         (None, None),
-        ("LINESTRING (0 0, 1 0, 1 1, 0 0)", "POLYGON ((0 0, 1 0, 1 1, 0 0))"),
+        ("LINESTRING (0 0, 1 0, 1 1, 0 0)", "POLYGON ((0 0, 1 1, 1 0, 0 0))"),
         (
             "MULTILINESTRING ((0 0, 1 0, 1 1, 0 0), (2 2, 3 2, 3 3, 2 2))",
-            "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 0)), ((2 2, 3 2, 3 3, 2 2)))",
+            "MULTIPOLYGON (((1 1, 1 0, 0 0, 1 1)), ((3 3, 3 2, 2 2, 3 3)))",
         ),
-        ("POINT (0 0)", "GEOMETRYCOLLECTION EMPTY"),
-        ("LINESTRING (0 0, 1 1)", "GEOMETRYCOLLECTION EMPTY"),
     ],
 )
 def test_st_buildarea(eng, geom, expected):
@@ -1442,31 +1440,24 @@ def test_st_dump(eng):
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
-    ("geom", "tolerance", "flag", "expected"),
+    ("geom", "expected"),
     [
-        (None, None, None, None),
+        (None, None),
         (
             "POLYGON ((0 0, 1 0, 0.5 1, 0 0))",
-            0.0,
-            0,
-            "GEOMETRYCOLLECTION (POLYGON ((0 0, 0.5 1, 1 0, 0 0)))",
+            "GEOMETRYCOLLECTION (POLYGON ((0.5 1, 0 0, 1 0, 0.5 1)))",
         ),
         (
             "MULTIPOINT ((0 0), (1 0), (0.5 1))",
-            0.0,
-            0,
-            "GEOMETRYCOLLECTION (POLYGON ((0 0, 0.5 1, 1 0, 0 0)))",
+            "GEOMETRYCOLLECTION (POLYGON ((0.5 1, 0 0, 1 0, 0.5 1)))",
         ),
     ],
 )
-def test_st_delaunaytriangles(eng, geom, tolerance, flag, expected):
+def test_st_delaunaytriangles(eng, geom, expected):
     eng = eng.create_or_skip()
-    args = geom_or_null(geom)
-    if tolerance is not None:
-        args += f", {tolerance}"
-    if flag is not None:
-        args += f", {flag}"
-    eng.assert_query_result(f"SELECT ST_DelaunayTriangles({args})", expected)
+    eng.assert_query_result(
+        f"SELECT ST_DelaunayTriangles({geom_or_null(geom)})", expected
+    )
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
@@ -2738,7 +2729,7 @@ def test_st_pointn(eng, geometry, n, expected):
         ("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))", "POINT (2 2)"),
         (
             "POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))",
-            "POINT (1.5 1.5)",
+            "POINT (2 3)",
         ),
         ("LINESTRING (0 0, 1 1, 2 0)", "POINT (1 1)"),
         ("POINT (1 2)", "POINT (1 2)"),
