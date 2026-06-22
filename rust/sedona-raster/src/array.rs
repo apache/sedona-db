@@ -690,6 +690,61 @@ mod tests {
     }
 
     #[test]
+    fn copy_into_with_identity_override_view_succeeds() {
+        // An explicit identity override composes back to the identity, so it is
+        // accepted and behaves exactly like the inherited (None) case — this
+        // exercises the new `BandOverrides::view` path end to end.
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        let mut ib = RasterBuilder::new(1);
+        ib.start_raster_nd(&transform, &["x"], &[4], None).unwrap();
+        ib.start_band_nd(
+            Some("orig"),
+            &["x"],
+            &[4],
+            BandDataType::UInt8,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        ib.band_data_writer().append_value(vec![1u8, 2, 3, 4]);
+        ib.finish_band().unwrap();
+        ib.finish_raster().unwrap();
+        let in_array = ib.finish().unwrap();
+        let in_rasters = RasterStructArray::new(&in_array);
+        let in_raster = in_rasters.get(0).unwrap();
+        let in_band = in_raster.band(0).unwrap();
+
+        let identity = [ViewEntry {
+            source_axis: 0,
+            start: 0,
+            step: 1,
+            steps: 4,
+        }];
+        let mut ob = RasterBuilder::new(1);
+        ob.start_raster_nd(&transform, &["x"], &[4], None).unwrap();
+        in_band
+            .copy_into(
+                &mut ob,
+                BandOverrides {
+                    view: Some(&identity),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        ob.finish_band().unwrap();
+        ob.finish_raster().unwrap();
+        let out_array = ob.finish().unwrap();
+        let out_rasters = RasterStructArray::new(&out_array);
+        let out_raster = out_rasters.get(0).unwrap();
+        let out_band = out_raster.band(0).unwrap();
+        assert_eq!(
+            out_band.nd_buffer().unwrap().as_contiguous().unwrap(),
+            &[1u8, 2, 3, 4]
+        );
+    }
+
+    #[test]
     fn test_array_basic_functionality() {
         // Create a simple raster for testing using the correct API
         let mut builder = RasterBuilder::new(10); // capacity

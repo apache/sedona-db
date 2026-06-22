@@ -30,6 +30,7 @@ use std::sync::Arc;
 use sedona_schema::raster::{BandDataType, RasterSchema};
 
 use crate::traits::{BandMetadata, MetadataRef};
+use crate::view_entries::{ViewEntries, ViewEntry};
 
 /// Maximum byte length of an inline `BinaryViewArray` view. Views this short
 /// store their bytes in the 16-byte view itself; longer views reference a data
@@ -385,6 +386,53 @@ impl RasterBuilder {
         ));
 
         Ok(())
+    }
+
+    /// Like [`Self::start_band_nd`], but persists an explicit band `view`
+    /// (a window of offsets/steps over the source `shape`) instead of the
+    /// implicit identity.
+    ///
+    /// **Today only the identity view is accepted**: a non-identity view
+    /// returns an error, because persisting one isn't wired through the band
+    /// reader or the `RS_EnsureLoaded` round-trip yet (tracked in
+    /// <https://github.com/apache/sedona-db/issues/897>). An identity `view` is
+    /// stored as the canonical null sentinel, exactly as `start_band_nd` does,
+    /// so this is a drop-in for callers that want to forward a (currently
+    /// always identity) view. When view persistence lands, only this method
+    /// changes — callers routing through it (e.g. `BandRef::copy_into`) are
+    /// unaffected.
+    #[allow(clippy::too_many_arguments)]
+    pub fn start_band_nd_with_view(
+        &mut self,
+        name: Option<&str>,
+        dim_names: &[&str],
+        shape: &[i64],
+        data_type: BandDataType,
+        nodata: Option<&[u8]>,
+        outdb_uri: Option<&str>,
+        outdb_format: Option<&str>,
+        view: &[ViewEntry],
+    ) -> Result<(), ArrowError> {
+        // Reject up front — before any column appends — so a rejected view can
+        // never leave the builder in a half-written state.
+        if !ViewEntries::new(view.to_vec()).is_identity(shape) {
+            return Err(ArrowError::InvalidArgumentError(
+                "start_band_nd_with_view: persisting a non-identity band view is \
+                 not yet supported (see \
+                 https://github.com/apache/sedona-db/issues/897); materialize the \
+                 band (e.g. via RS_EnsureContiguous) first"
+                    .into(),
+            ));
+        }
+        self.start_band_nd(
+            name,
+            dim_names,
+            shape,
+            data_type,
+            nodata,
+            outdb_uri,
+            outdb_format,
+        )
     }
 
     /// Convenience: start a 2D band with `dim_names=["y","x"]` and `shape=[height, width]`.

@@ -512,6 +512,13 @@ pub struct BandOverrides<'a> {
     pub outdb_uri: Option<&'a str>,
     /// Override the OutDb format; `None` inherits the source's.
     pub outdb_format: Option<&'a str>,
+    /// View to apply to the derived band, expressed in the **source's visible
+    /// coordinates**. [`BandRef::copy_into`] composes it onto the source's own
+    /// view for you — you don't manage that composition and don't need to know
+    /// whether the source already carries a view. `None` inherits the source's
+    /// view unchanged. (A non-identity result isn't persistable yet; see
+    /// [`RasterBuilder::start_band_nd_with_view`].)
+    pub view: Option<&'a [ViewEntry]>,
 }
 
 /// Trait for accessing a single band/variable within an N-D raster.
@@ -694,37 +701,39 @@ pub trait BandRef {
     /// data transfer is zero-copy when the implementation supports it (see
     /// [`Self::append_data_into`]).
     ///
-    /// The derived band has an identity view, so the **source must also have
-    /// one**: a non-identity source view (slice, broadcast, permutation, or a
-    /// non-zero byte offset) is rejected with an error rather than silently
-    /// copying mislocated bytes, because the builder can't yet persist a
-    /// non-identity view to carry it over. Carrying views is the follow-up
-    /// (the view machinery); materialize with `RS_EnsureContiguous` until then.
+    /// The derived band's view is the source's own view with any
+    /// `overrides.view` **composed on top for you**: express an override in the
+    /// source's *visible* coordinates and `copy_into` composes it against the
+    /// source's view — callers never manage that composition and don't need to
+    /// know whether the source already carries one. `overrides.view = None`
+    /// inherits the source's view unchanged.
+    ///
+    /// A non-identity effective view can't be persisted yet, so it errors (the
+    /// gate lives in [`RasterBuilder::start_band_nd_with_view`]); in practice
+    /// today the source is identity-viewed and any override must compose back
+    /// to the identity. When view persistence lands
+    /// (<https://github.com/apache/sedona-db/issues/897>) this method is
+    /// unchanged — it already carries the view.
     fn copy_into(
         &self,
         builder: &mut RasterBuilder,
         overrides: BandOverrides<'_>,
     ) -> Result<(), ArrowError> {
-        // `start_band_nd` writes the identity view, and the whole-buffer data
-        // copy below assumes the source's visible bytes start at offset 0 with
-        // canonical strides. A non-identity source view breaks both, so refuse
-        // it loudly here — the single dispatch point for both the default and
-        // the Arrow-backed (`append_band_data_from`) data paths.
-        if !ViewEntries::new(self.view().to_vec()).is_identity(self.raw_source_shape()) {
-            return Err(ArrowError::InvalidArgumentError(
-                "copy_into: source band has a non-identity view (slice, broadcast, \
-                 permutation, or offset); carrying views is not yet supported — \
-                 materialize the band (e.g. via RS_EnsureContiguous) first"
-                    .into(),
-            ));
-        }
         let inherited_dims = self.dim_names();
         let dim_names: Vec<&str> = match overrides.dim_names {
             Some(d) => d.to_vec(),
             None => inherited_dims,
         };
         let shape = self.raw_source_shape().to_vec();
-        builder.start_band_nd(
+        // Compose the caller's override (if any) onto the source's own view, so
+        // the override is interpreted in the source's visible space and the
+        // caller doesn't have to. `None` keeps the source view unchanged.
+        let source_view = ViewEntries::new(self.view().to_vec());
+        let effective_view = match overrides.view {
+            Some(v) => source_view.compose(&ViewEntries::new(v.to_vec()))?,
+            None => source_view,
+        };
+        builder.start_band_nd_with_view(
             overrides.name,
             &dim_names,
             &shape,
@@ -732,6 +741,7 @@ pub trait BandRef {
             overrides.nodata.or_else(|| self.nodata()),
             overrides.outdb_uri.or_else(|| self.outdb_uri()),
             overrides.outdb_format.or_else(|| self.outdb_format()),
+            effective_view.as_slice(),
         )?;
         self.append_data_into(builder)
     }
@@ -1022,16 +1032,37 @@ mod tests {
     }
 
     #[test]
-    fn copy_into_rejects_non_identity_view() {
-        // A sliced view (step 2 on the outer axis) is non-identity; copy_into
-        // can't carry it yet, so it must error rather than copy mislocated bytes.
+    fn copy_into_rejects_non_identity_source_view() {
+        // A sliced source view (step 2 on the outer axis) composes to a
+        // non-identity effective view; copy_into can't persist it yet, so it
+        // must error rather than copy mislocated bytes.
         let src = band(&["y", "x"], &[4, 5], &[ve(0, 0, 2, 2), ve(1, 0, 1, 5)]);
         let mut ob = RasterBuilder::new(1);
         let err = src
             .copy_into(&mut ob, BandOverrides::default())
             .unwrap_err()
             .to_string();
-        assert!(err.contains("non-identity view"), "unexpected error: {err}");
+        assert!(err.contains("non-identity"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn copy_into_rejects_non_identity_override_view() {
+        // Identity source, but the caller's override slices it (step 2); the
+        // composed effective view is non-identity and can't be persisted yet.
+        let src = band(&["y", "x"], &[4, 5], &[ve(0, 0, 1, 4), ve(1, 0, 1, 5)]);
+        let override_view = [ve(0, 0, 2, 2), ve(1, 0, 1, 5)];
+        let mut ob = RasterBuilder::new(1);
+        let err = src
+            .copy_into(
+                &mut ob,
+                BandOverrides {
+                    view: Some(&override_view),
+                    ..Default::default()
+                },
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("non-identity"), "unexpected error: {err}");
     }
 
     #[test]
