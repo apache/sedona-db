@@ -141,7 +141,7 @@ pub trait AsyncRasterLoader: Send + Sync + std::fmt::Debug {
     /// view returns [`RasterLoadResult::unresolved`] (full source, length
     /// `Π source_shape × data_type.byte_size()` in C-order over
     /// `dim_names`). Errors propagate to the caller of `RS_EnsureLoaded`.
-    async fn load(&self, req: &RasterLoadRequest<'_>) -> Result<RasterLoadResult, ArrowError>;
+    async fn load(&self, req: &[&RasterLoadRequest]) -> Result<Vec<RasterLoadResult>, ArrowError>;
 }
 
 /// Process-side registry of raster byte loaders.
@@ -420,17 +420,22 @@ mod tests {
             matches!(format, Some(f) if self.formats.iter().any(|s| s == f))
         }
 
-        async fn load(&self, req: &RasterLoadRequest<'_>) -> Result<RasterLoadResult, ArrowError> {
+        async fn load(
+            &self,
+            req: &[&RasterLoadRequest],
+        ) -> Result<Vec<RasterLoadResult>, ArrowError> {
+            // This mock loader only supports a single request at a time
+            assert_eq!(req.len(), 1);
             self.seen
                 .lock()
                 .unwrap()
-                .push((req.uri.to_string(), req.source_shape.to_vec()));
-            let elements: i64 = req.source_shape.iter().copied().product();
-            let len = elements as usize * req.data_type.byte_size();
-            Ok(RasterLoadResult::unresolved(
+                .push((req[0].uri.to_string(), req[0].source_shape.to_vec()));
+            let elements: i64 = req[0].source_shape.iter().copied().product();
+            let len = elements as usize * req[0].data_type.byte_size();
+            Ok(vec![RasterLoadResult::unresolved(
                 Buffer::from_vec(vec![0u8; len]),
-                req,
-            ))
+                req[0],
+            )])
         }
     }
 
@@ -483,12 +488,14 @@ mod tests {
             }
             async fn load(
                 &self,
-                req: &RasterLoadRequest<'_>,
-            ) -> Result<RasterLoadResult, ArrowError> {
-                Ok(RasterLoadResult::unresolved(
-                    Buffer::from_vec(Vec::<u8>::new()),
-                    req,
-                ))
+                reqs: &[&RasterLoadRequest],
+            ) -> Result<Vec<RasterLoadResult>, ArrowError> {
+                Ok(reqs
+                    .iter()
+                    .map(|req| {
+                        RasterLoadResult::unresolved(Buffer::from_vec(Vec::<u8>::new()), req)
+                    })
+                    .collect())
             }
         }
 
@@ -518,8 +525,9 @@ mod tests {
             view: &[],
             data_type: BandDataType::UInt8,
         };
-        let result = loader.load(&req).await.unwrap();
-        assert_eq!(result.bytes.len(), 12); // 3 × 4 × 1 byte
+        let result = loader.load(&[&req]).await.unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].bytes.len(), 12); // 3 × 4 × 1 byte
         let seen = loader.seen.lock().unwrap();
         assert_eq!(seen.len(), 1);
         assert_eq!(seen[0].0, "file:///tmp/foo.tif");
@@ -542,8 +550,9 @@ mod tests {
             data_type: BandDataType::Float32,
         };
         let loader = r.get(Some("zarr")).unwrap();
-        let result = loader.load(&req).await.unwrap();
-        assert_eq!(result.bytes.len(), 2 * 3 * 4 * 4); // Float32 = 4 bytes
+        let result = loader.load(&[&req]).await.unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].bytes.len(), 2 * 3 * 4 * 4); // Float32 = 4 bytes
 
         // Dispatched to zarr, not gdal.
         assert_eq!(zarr.seen.lock().unwrap().len(), 1);

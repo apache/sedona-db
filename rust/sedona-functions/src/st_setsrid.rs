@@ -17,8 +17,8 @@
 use std::sync::{Arc, OnceLock};
 
 use arrow_array::{
-    builder::{BinaryBuilder, NullBufferBuilder},
-    new_null_array, ArrayRef, StringViewArray,
+    builder::{BinaryBuilder, NullBufferBuilder, StringViewBuilder},
+    new_null_array, Array, ArrayRef, StringViewArray,
 };
 use arrow_buffer::NullBuffer;
 use arrow_schema::DataType;
@@ -39,7 +39,7 @@ use sedona_expr::{
 };
 use sedona_geometry::transform::CrsEngine;
 use sedona_schema::{
-    crs::{deserialize_crs, CachedCrsNormalization, CachedSRIDToCrs, Crs},
+    crs::{deserialize_crs, normalize_crs, CachedSRIDToCrs, Crs},
     datatypes::{Edges, SedonaType},
     matchers::ArgMatcher,
 };
@@ -463,9 +463,11 @@ fn crs_input_nulls(crs_value: &ColumnarValue) -> Option<&NullBuffer> {
 /// to a null value in the CRS array) and 4326 (which maps to a value of OGC:CRS84
 /// in the CRS array).
 ///
-/// For CRS arrays of strings, this function attempts to abbreviate any inputs. For example,
-/// PROJJSON input will attempt to be abbreviated to authority:code if possible (or left
-/// as is otherwise). The special value "0" maps to a null value in the CRS array.
+/// For CRS arrays of strings, this function normalizes each input to its
+/// round-trippable definition (`to_crs_string`): an `authority:code` stays
+/// compact, while a PROJJSON/WKT definition is preserved in full rather than
+/// collapsed to its embedded code. The special value "0" maps to a null value
+/// in the CRS array.
 fn normalize_crs_array(
     crs_value: &ColumnarValue,
     maybe_engine: Option<&Arc<dyn CrsEngine + Send + Sync>>,
@@ -502,23 +504,22 @@ fn normalize_crs_array(
             Ok(Arc::new(utf8_view_array))
         }
         _ => {
-            let mut crs_norm = CachedCrsNormalization::new();
-
             let string_value = crs_value.cast_to(&DataType::Utf8View, None)?;
             let string_array_ref = ColumnarValue::values_to_arrays(&[string_value])?;
             let string_view_array = as_string_view_array(&string_array_ref[0])?;
-            let utf8_view_array = string_view_array
-                .iter()
-                .map(|maybe_crs| -> Result<Option<String>> {
-                    if let Some(crs_str) = maybe_crs {
-                        crs_norm.normalize(crs_str)
-                    } else {
-                        Ok(None)
-                    }
-                })
-                .collect::<Result<StringViewArray>>()?;
+            // Deduplicate: when many rows carry the same (possibly large)
+            // PROJJSON/WKT definition, the bytes are stored once in the view
+            // buffer and shared across rows.
+            let mut builder = StringViewBuilder::with_capacity(string_view_array.len())
+                .with_deduplicate_strings();
+            for maybe_crs in string_view_array.iter() {
+                match maybe_crs {
+                    Some(crs_str) => builder.append_option(normalize_crs(crs_str)?),
+                    None => builder.append_null(),
+                }
+            }
 
-            Ok(Arc::new(utf8_view_array))
+            Ok(Arc::new(builder.finish()))
         }
     }
 }
@@ -633,6 +634,38 @@ mod test {
 
         let udf: ScalarUDF = st_set_crs_udf().into();
         assert_eq!(udf.name(), "st_setcrs");
+    }
+
+    #[test]
+    fn normalize_crs_array_dedups_repeats_and_preserves_nulls() {
+        // A large PROJJSON repeated across rows, interleaved with a null and a
+        // short authority code, exercises the string path of normalize_crs_array.
+        const PROJJSON: &str = r#"{"type":"GeographicCRS","name":"NAD83","datum":{"type":"GeodeticReferenceFrame","name":"NAD83","ellipsoid":{"name":"GRS 1980","semi_major_axis":6378137,"inverse_flattening":298.257222101}},"coordinate_system":{"subtype":"ellipsoidal","axis":[{"name":"Geodetic latitude","abbreviation":"Lat","direction":"north","unit":"degree"},{"name":"Geodetic longitude","abbreviation":"Lon","direction":"east","unit":"degree"}]},"id":{"authority":"EPSG","code":4269}}"#;
+        let input = StringViewArray::from(vec![
+            Some(PROJJSON),
+            None,
+            Some(PROJJSON),
+            Some("EPSG:4326"),
+        ]);
+        let out = normalize_crs_array(&ColumnarValue::Array(Arc::new(input)), None).unwrap();
+        let out = out.as_any().downcast_ref::<StringViewArray>().unwrap();
+
+        // Null placement matches the input row-for-row.
+        assert_eq!(out.len(), 4);
+        assert!(out.is_null(1), "the null row must be preserved");
+        // The PROJJSON is preserved in full (not collapsed to "EPSG:4269") and
+        // is identical across the two rows that carried it.
+        assert!(out.value(0).contains("GeographicCRS"));
+        assert_ne!(out.value(0), "EPSG:4269");
+        assert_eq!(out.value(0), out.value(2));
+        // EPSG:4326 is kept verbatim (<=12 bytes, inlined into the view).
+        assert_eq!(out.value(3), "EPSG:4326");
+
+        // Deduplication: the repeated PROJJSON lives in the shared data buffer
+        // exactly once, so total buffer bytes equal a single copy (the inlined
+        // EPSG:4326 contributes nothing to the buffer).
+        let buffer_bytes: usize = out.data_buffers().iter().map(|b| b.len()).sum();
+        assert_eq!(buffer_bytes, out.value(0).len());
     }
 
     #[test]
@@ -873,7 +906,7 @@ mod test {
                     None
                 ],
                 [
-                    Some("OGC:CRS84"),
+                    Some("EPSG:4326"),
                     Some("EPSG:3857"),
                     Some("EPSG:3857"),
                     None,
@@ -926,7 +959,7 @@ mod test {
                     Some("POINT (4 5)"),
                     None
                 ],
-                [Some("OGC:CRS84"), Some("EPSG:4269"), None, None],
+                [Some("EPSG:4326"), Some("EPSG:4269"), None, None],
                 &WKB_GEOGRAPHY
             )
         );

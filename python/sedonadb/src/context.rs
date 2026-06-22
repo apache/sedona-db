@@ -29,6 +29,7 @@ use crate::{
     datasource::PyExternalFormat,
     error::PySedonaError,
     import_from::import_table_provider_from_any,
+    raster_loader::PyRasterLoaderWrapper,
     runtime::wait_for_future,
     udf::{PyAggregateUdf, PyScalarUdf, PySedonaAggregateUdf, PySedonaScalarUdf},
 };
@@ -303,6 +304,15 @@ impl InternalContext {
             let mut writable = state_ref.write();
             writable
                 .register_file_format(Arc::new(ExternalFormatFactory::new(Arc::new(spec))), true)?;
+            return Ok(());
+        } else if component.hasattr("__sedonadb_raster_loader__")? {
+            let wrapper = component
+                .call_method0("__sedonadb_raster_loader__")?
+                .extract::<PyRasterLoaderWrapper>()?;
+            self.inner.register_raster_loader(wrapper.inner);
+            return Ok(());
+        } else if let Ok(py_raster_loader) = component.extract::<PyRasterLoaderWrapper>() {
+            self.inner.register_raster_loader(py_raster_loader.inner);
             return Ok(());
         }
 

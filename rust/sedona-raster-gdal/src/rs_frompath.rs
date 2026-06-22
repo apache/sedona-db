@@ -120,7 +120,7 @@ mod tests {
             width: i64,
             height: i64,
         ) {
-            let raster_array = RasterStructArray::new(struct_arr);
+            let raster_array = RasterStructArray::try_new(struct_arr).unwrap();
             assert_eq!(raster_array.len(), expected_len);
 
             for idx in 0..expected_len {
@@ -220,7 +220,7 @@ mod tests {
                 assert!(!struct_arr.is_null(0));
                 assert!(struct_arr.is_null(1));
 
-                let raster_array = RasterStructArray::new(struct_arr);
+                let raster_array = RasterStructArray::try_new(struct_arr).unwrap();
                 let raster = raster_array.get(0).unwrap();
                 assert_eq!(raster.metadata().width(), 10);
                 assert_eq!(raster.metadata().height(), 10);

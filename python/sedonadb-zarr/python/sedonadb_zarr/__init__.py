@@ -18,10 +18,12 @@
 """Zarr support for SedonaDB.
 
 ```python
-from sedonadb_zarr import Zarr
+import sedona.db
+from sedonadb_zarr import ZarrExtension
 
 sd = sedona.db.connect()
-sd.read_format(Zarr(), "file:///path/to/foo.zarr").show()
+sd.register(ZarrExtension())
+sd.read("file:///path/to/foo.zarr").show()
 ```
 
 Importing `sedonadb_zarr` is opt-in — applications that don't import
@@ -32,9 +34,13 @@ from typing import Any, Mapping, Optional
 
 from sedonadb.context import SedonaContext
 from sedonadb.datasource import ExternalFormatSpec
+from sedonadb.raster_loader import RasterLoader
 from sedonadb.utility import sedona  # noqa: F401
 
-from sedonadb_zarr._lib import PyZarrChunkReader
+from sedonadb_zarr._lib import (
+    PyZarrChunkReader,
+    PyZarrRasterLoader,
+)
 
 
 class ZarrExtension:
@@ -49,22 +55,26 @@ class ZarrExtension:
         >>> sd.register(ZarrExtension())
     """
 
-    def __sedonadb_extension__(self, ctx: SedonaContext, **kwargs) -> None:
+    def __sedonadb_extension__(self, sd: SedonaContext, **kwargs) -> None:
         if kwargs:
             raise ValueError("Registration options not supported for ZarrExtension")
 
-        # Register the Zarr() format as a FileFormatFactory for SQL support
-        ctx.register(Zarr())
+        # Register the ZarrRasterLoader
+        sd.register(ZarrRasterLoader())
+
+        # Register the Zarr() format as a FileFormatFactory for SQL and .read(..., format="zarr")
+        sd.register(Zarr())
 
 
 class Zarr(ExternalFormatSpec):
     """`ExternalFormatSpec` for Zarr groups.
 
     This is registered automatically when registering the module with a
-    SedonaContext. Use with `sd.read_format(spec, uri)`:
+    SedonaContext. Use with `sd.read(uri, format=Zarr())` or format="zarr"
+    after registering the extension:
 
     ```python
-    sd.read_format(Zarr(), "file:///path/to/foo.zarr")
+    sd.read("file:///path/to/foo.zarr", format="zarr")
     ```
 
     Args:
@@ -106,4 +116,24 @@ class Zarr(ExternalFormatSpec):
         return PyZarrChunkReader(uri, arrays, batch_size)
 
 
-__all__ = ["Zarr"]
+class ZarrRasterLoader(RasterLoader):
+    """Zarr RasterLoader implementation
+
+    This is registered automatically when registering the ZarrExtension
+    and enables RS_EnsureLoaded() can resolve pixels of a Zarr.
+    """
+
+    def __init__(self):
+        self._impl = PyZarrRasterLoader()
+
+    def name(self):
+        return self._impl.name()
+
+    def supports_format(self, format):
+        return self._impl.supports_format(format)
+
+    def load(self, requests):
+        return self._impl.load(requests)
+
+
+__all__ = ["Zarr", "ZarrExtension"]

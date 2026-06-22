@@ -233,19 +233,33 @@ pub(crate) fn create_mem_dataset(
     n_owned_bands: usize,
     owned_bands_data_type: GdalDataType,
 ) -> Result<Dataset> {
-    let empty_filename = c"";
     let c_data_type = owned_bands_data_type.to_c();
     let handle = unsafe {
-        call_gdal_api!(
-            api,
-            MEMDatasetCreate,
-            empty_filename.as_ptr(),
-            width.try_into()?,
-            height.try_into()?,
-            n_owned_bands.try_into()?,
-            c_data_type,
-            std::ptr::null_mut()
-        )
+        if api.inner.MEMCreate.is_some() {
+            // Public C API: no filename parameter.
+            call_gdal_api!(
+                api,
+                MEMCreate,
+                width.try_into()?,
+                height.try_into()?,
+                n_owned_bands.try_into()?,
+                c_data_type,
+                std::ptr::null()
+            )
+        } else {
+            // Fallback: the C++ MEMDataset::Create takes a leading filename.
+            let empty_filename = c"";
+            call_gdal_api!(
+                api,
+                MEMDatasetCreate,
+                empty_filename.as_ptr(),
+                width.try_into()?,
+                height.try_into()?,
+                n_owned_bands.try_into()?,
+                c_data_type,
+                std::ptr::null_mut()
+            )
+        }
     };
 
     if handle.is_null() {

@@ -26,6 +26,13 @@ use sedona_schema::schema::SedonaSchema;
 
 use crate::error::PySedonaError;
 
+#[pyfunction]
+pub fn raster_type() -> PySedonaType {
+    PySedonaType {
+        inner: SedonaType::Raster,
+    }
+}
+
 #[pyclass]
 pub struct PySedonaSchema {
     pub inner: Schema,

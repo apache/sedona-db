@@ -46,7 +46,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 url = { workspace = true }
-zarrs = { workspace = true, features = ["async", "gzip", "zstd", "blosc", "crc32c", "sharding", "transpose"] }
+zarrs = { workspace = true, features = ["async", "gzip", "zlib", "zstd", "blosc", "crc32c", "sharding", "transpose"] }
 zarrs_object_store = { workspace = true }
 
 [dev-dependencies]

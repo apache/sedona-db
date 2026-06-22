@@ -340,7 +340,7 @@ fn raster_value_to_formatted_value(
     match columnar_value {
         ColumnarValue::Array(array) => {
             let struct_array = array.as_struct();
-            let raster_array = RasterStructArray::new(struct_array);
+            let raster_array = RasterStructArray::try_new(struct_array)?;
             let min_output_size = match maybe_width_hint {
                 Some(width_hint) => raster_array.len() * width_hint,
                 None => raster_array.len() * 48,

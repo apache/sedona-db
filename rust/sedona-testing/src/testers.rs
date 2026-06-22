@@ -33,6 +33,7 @@ use sedona_schema::datatypes::SedonaType;
 use crate::{
     compare::assert_scalar_equal,
     create::{create_array, create_scalar},
+    raster_spec::{raster_array, RasterSpec},
 };
 
 /// Low-level tester for aggregate functions
@@ -87,6 +88,16 @@ impl AggregateUdfTester {
         let batches_array = batches
             .into_iter()
             .map(|batch| create_array(&batch, &self.arg_types[0]))
+            .collect::<Vec<_>>();
+        self.aggregate(&batches_array)
+    }
+
+    /// Perform a simple aggregation using [RasterSpec]s as raster input
+    /// (`None` entries become null rasters)
+    pub fn aggregate_rasters(&self, batches: Vec<Vec<Option<RasterSpec>>>) -> Result<ScalarValue> {
+        let batches_array = batches
+            .into_iter()
+            .map(|batch| Arc::new(raster_array(batch)) as ArrayRef)
             .collect::<Vec<_>>();
         self.aggregate(&batches_array)
     }
@@ -486,6 +497,27 @@ impl ScalarUdfTester {
         }
     }
 
+    /// Invoke this function with a raster scalar built from a [RasterSpec]
+    pub fn invoke_raster_scalar(&self, spec: &RasterSpec) -> Result<ScalarValue> {
+        self.invoke_scalar(spec)
+    }
+
+    /// Invoke this function with a raster array built from [RasterSpec]s
+    /// (`None` entries become null rasters)
+    pub fn invoke_raster_array(&self, specs: Vec<Option<RasterSpec>>) -> Result<ArrayRef> {
+        self.invoke_array(Arc::new(raster_array(specs)))
+    }
+
+    /// Invoke this function with a raster array built from [RasterSpec]s and
+    /// a scalar
+    pub fn invoke_raster_array_scalar(
+        &self,
+        specs: Vec<Option<RasterSpec>>,
+        arg: impl Literal,
+    ) -> Result<ArrayRef> {
+        self.invoke_array_scalar(Arc::new(raster_array(specs)), arg)
+    }
+
     /// Invoke this function with a geometry array
     pub fn invoke_wkb_array(&self, wkb_values: Vec<Option<&str>>) -> Result<ArrayRef> {
         self.invoke_array(create_array(&wkb_values, &self.arg_types[0]))
@@ -669,7 +701,18 @@ impl ScalarUdfTester {
                 _ => false,
             };
 
-            if is_geometry_or_geography {
+            if matches!(sedona_type, SedonaType::Raster) {
+                // A raster literal is a one-row struct ScalarValue (e.g. from
+                // RasterSpec::scalar()); anything else (other than null) is a
+                // caller mistake that would otherwise die deep in arrow-cast.
+                if &scalar.data_type() == sedona_type.storage_type() {
+                    Ok(scalar)
+                } else if scalar.is_null() {
+                    scalar.cast_to(sedona_type.storage_type())
+                } else {
+                    sedona_internal_err!("Can't interpret scalar {scalar} as type {sedona_type}")
+                }
+            } else if is_geometry_or_geography {
                 if let ScalarValue::Utf8(expected_wkt) = scalar {
                     Ok(create_scalar(expected_wkt.as_deref(), sedona_type))
                 } else if &scalar.data_type() == sedona_type.storage_type() {

@@ -863,7 +863,7 @@ mod tests {
         let raster_array = builder.finish().unwrap();
 
         // Test the iterator
-        let rasters = RasterStructArray::new(&raster_array);
+        let rasters = RasterStructArray::try_new(&raster_array).unwrap();
 
         assert_eq!(rasters.len(), 1);
         assert!(!rasters.is_empty());
@@ -938,7 +938,7 @@ mod tests {
 
         let raster_array = builder.finish().unwrap();
 
-        let rasters = RasterStructArray::new(&raster_array);
+        let rasters = RasterStructArray::try_new(&raster_array).unwrap();
         let raster = rasters.get(0).unwrap();
         let bands = raster.bands();
 
@@ -1014,7 +1014,7 @@ mod tests {
 
         // Create a new raster using metadata from the iterator
         let mut target_builder = RasterBuilder::new(10);
-        let iterator = RasterStructArray::new(&source_array);
+        let iterator = RasterStructArray::try_new(&source_array).unwrap();
         let source_raster = iterator.get(0).unwrap();
 
         target_builder
@@ -1043,7 +1043,7 @@ mod tests {
         let target_array = target_builder.finish().unwrap();
 
         // Verify the metadata was copied correctly
-        let target_iterator = RasterStructArray::new(&target_array);
+        let target_iterator = RasterStructArray::try_new(&target_array).unwrap();
         let target_raster = target_iterator.get(0).unwrap();
         let target_metadata = target_raster.metadata();
 
@@ -1170,7 +1170,7 @@ mod tests {
         let raster_array = builder.finish().unwrap();
 
         // Test the data type conversion for each band
-        let iterator = RasterStructArray::new(&raster_array);
+        let iterator = RasterStructArray::try_new(&raster_array).unwrap();
         let raster = iterator.get(0).unwrap();
         let bands = raster.bands();
 
@@ -1254,7 +1254,7 @@ mod tests {
         let raster_array = builder.finish().unwrap();
 
         // Verify the band metadata
-        let iterator = RasterStructArray::new(&raster_array);
+        let iterator = RasterStructArray::try_new(&raster_array).unwrap();
         let raster = iterator.get(0).unwrap();
         let bands = raster.bands();
 
@@ -1317,7 +1317,7 @@ mod tests {
         builder.finish_raster().unwrap();
 
         let raster_array = builder.finish().unwrap();
-        let iterator = RasterStructArray::new(&raster_array);
+        let iterator = RasterStructArray::try_new(&raster_array).unwrap();
         let raster = iterator.get(0).unwrap();
         let bands = raster.bands();
 
@@ -1367,7 +1367,7 @@ mod tests {
         builder.finish_raster().unwrap();
 
         let array = builder.finish().unwrap();
-        let rasters = RasterStructArray::new(&array);
+        let rasters = RasterStructArray::try_new(&array).unwrap();
         assert_eq!(rasters.len(), 1);
 
         let r = rasters.get(0).unwrap();
@@ -1416,7 +1416,7 @@ mod tests {
 
         builder.finish_raster().unwrap();
         let array = builder.finish().unwrap();
-        let rasters = RasterStructArray::new(&array);
+        let rasters = RasterStructArray::try_new(&array).unwrap();
         let r = rasters.get(0).unwrap();
 
         assert_eq!(r.num_bands(), 2);
@@ -1444,7 +1444,7 @@ mod tests {
         builder.append_null().unwrap();
 
         let array = builder.finish().unwrap();
-        let rasters = RasterStructArray::new(&array);
+        let rasters = RasterStructArray::try_new(&array).unwrap();
         assert_eq!(rasters.len(), 2);
         assert!(!rasters.is_null(0));
         assert!(rasters.is_null(1));
@@ -1476,7 +1476,7 @@ mod tests {
         builder.finish_raster().unwrap();
 
         let array = builder.finish().unwrap();
-        let rasters = RasterStructArray::new(&array);
+        let rasters = RasterStructArray::try_new(&array).unwrap();
         let r = rasters.get(0).unwrap();
 
         assert_eq!(r.band_name(0), Some("temperature"));
@@ -1525,7 +1525,7 @@ mod tests {
         builder.finish_raster().unwrap();
 
         let array = builder.finish().unwrap();
-        let rasters = RasterStructArray::new(&array);
+        let rasters = RasterStructArray::try_new(&array).unwrap();
         let r = rasters.get(0).unwrap();
 
         assert_eq!(r.x_dim(), "longitude");
@@ -1578,7 +1578,7 @@ mod tests {
 
         builder.finish_raster().unwrap();
         let array = builder.finish().unwrap();
-        let rasters = RasterStructArray::new(&array);
+        let rasters = RasterStructArray::try_new(&array).unwrap();
         let r = rasters.get(0).unwrap();
 
         assert_eq!(r.num_bands(), 2);
@@ -1623,7 +1623,7 @@ mod tests {
         builder.finish_raster().unwrap();
 
         let array = builder.finish().unwrap();
-        let rasters = RasterStructArray::new(&array);
+        let rasters = RasterStructArray::try_new(&array).unwrap();
         let r = rasters.get(0).unwrap();
         let band = r.band(0).unwrap();
 
@@ -1650,7 +1650,7 @@ mod tests {
         builder.finish_raster().unwrap();
 
         let array = builder.finish().unwrap();
-        let rasters = RasterStructArray::new(&array);
+        let rasters = RasterStructArray::try_new(&array).unwrap();
         let r = rasters.get(0).unwrap();
         let band = r.band(0).unwrap();
 
@@ -1723,7 +1723,7 @@ mod tests {
         builder.finish_raster().unwrap();
 
         let array = builder.finish().unwrap();
-        let rasters = RasterStructArray::new(&array);
+        let rasters = RasterStructArray::try_new(&array).unwrap();
 
         let r0 = rasters.get(0).unwrap();
         let b0 = r0.band(0).unwrap();
@@ -1751,7 +1751,7 @@ mod tests {
         builder.finish_raster().unwrap();
 
         let array = builder.finish().unwrap();
-        let rasters = RasterStructArray::new(&array);
+        let rasters = RasterStructArray::try_new(&array).unwrap();
         let r = rasters.get(0).unwrap();
 
         assert_eq!(r.num_bands(), 0);
@@ -1791,7 +1791,7 @@ mod tests {
 
         builder.finish_raster().unwrap();
         let array = builder.finish().unwrap();
-        let rasters = RasterStructArray::new(&array);
+        let rasters = RasterStructArray::try_new(&array).unwrap();
         let r = rasters.get(0).unwrap();
 
         assert_eq!(r.band_name(0), Some("temperature"));
@@ -1824,7 +1824,7 @@ mod tests {
         builder.finish_raster().unwrap();
 
         let array = builder.finish().unwrap();
-        let rasters = RasterStructArray::new(&array);
+        let rasters = RasterStructArray::try_new(&array).unwrap();
         let r = rasters.get(0).unwrap();
 
         assert_eq!(r.spatial_dims(), vec!["longitude", "latitude"]);
@@ -1847,7 +1847,7 @@ mod tests {
         builder.finish_raster().unwrap();
 
         let array = builder.finish().unwrap();
-        let rasters = RasterStructArray::new(&array);
+        let rasters = RasterStructArray::try_new(&array).unwrap();
         let r = rasters.get(0).unwrap();
 
         assert_eq!(r.num_bands(), 0);
@@ -1923,7 +1923,7 @@ mod tests {
         builder.finish_raster().unwrap();
 
         let array = builder.finish().unwrap();
-        let rasters = RasterStructArray::new(&array);
+        let rasters = RasterStructArray::try_new(&array).unwrap();
         let r = rasters.get(0).unwrap();
         let band = r.band(0).unwrap();
 
@@ -2092,7 +2092,7 @@ mod tests {
             "identity-view band must remain a null view row after IPC round-trip"
         );
 
-        let rasters = RasterStructArray::new(restored_struct);
+        let rasters = RasterStructArray::try_new(restored_struct).unwrap();
         let r0 = rasters.get(0).unwrap();
         assert_eq!(r0.band(0).unwrap().shape(), &[2, 3]);
     }
@@ -2133,7 +2133,7 @@ mod tests {
         builder.finish_raster().unwrap();
         let arr = builder.finish().unwrap();
 
-        let rasters = RasterStructArray::new(&arr);
+        let rasters = RasterStructArray::try_new(&arr).unwrap();
         let r = rasters.get(0).unwrap();
         let band = r.band(0).unwrap();
         let out = band.nd_buffer().unwrap().as_contiguous().unwrap();
@@ -2166,7 +2166,7 @@ mod tests {
         // Dedup: one shared data block, not two.
         assert_eq!(output_band_data(&arr).data_buffers().len(), 1);
 
-        let rasters = RasterStructArray::new(&arr);
+        let rasters = RasterStructArray::try_new(&arr).unwrap();
         let r = rasters.get(0).unwrap();
         assert_eq!(
             r.band(0)
@@ -2208,7 +2208,7 @@ mod tests {
         builder.finish_raster().unwrap();
         let arr = builder.finish().unwrap();
 
-        let rasters = RasterStructArray::new(&arr);
+        let rasters = RasterStructArray::try_new(&arr).unwrap();
         let r = rasters.get(0).unwrap();
         assert_eq!(
             r.band(0)
@@ -2259,7 +2259,7 @@ mod tests {
         builder.finish_raster().unwrap();
         let arr = builder.finish().unwrap();
 
-        let rasters = RasterStructArray::new(&arr);
+        let rasters = RasterStructArray::try_new(&arr).unwrap();
         let r = rasters.get(0).unwrap();
         let band = r.band(0).unwrap();
         let out = band.nd_buffer().unwrap().as_contiguous().unwrap();
@@ -2295,7 +2295,7 @@ mod tests {
         builder.finish_raster().unwrap();
         let arr = builder.finish().unwrap();
 
-        let rasters = RasterStructArray::new(&arr);
+        let rasters = RasterStructArray::try_new(&arr).unwrap();
         assert_eq!(
             rasters
                 .get(0)
@@ -2330,7 +2330,7 @@ mod tests {
         // Inline: no backing block attached.
         assert_eq!(output_band_data(&arr).data_buffers().len(), 0);
 
-        let rasters = RasterStructArray::new(&arr);
+        let rasters = RasterStructArray::try_new(&arr).unwrap();
         let r = rasters.get(0).unwrap();
         let band = r.band(0).unwrap();
         assert_eq!(

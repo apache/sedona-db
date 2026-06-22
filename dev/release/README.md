@@ -46,9 +46,11 @@ install the required dependencies:
 ```shell
 conda create -y --name verify-sedona-db
 conda activate verify-sedona-db
-conda install -y compilers curl gnupg geos proj openssl libabseil cmake make pkg-config
+conda install -y compilers curl gnupg geos proj openssl libabseil cmake make pkg-config "gdal<3.13"
 export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$CONDA_PREFIX/lib"
 ```
+
+Note that GDAL 3.13 and greater is supported by SedonaDB; however, for the purposes of verifying a release candidate it is simpler to use an earlier version.
 
 When verifying via Docker or on a smaller machine it may be necessary to limit the
 number of parallel jobs to avoid running out of memory:
@@ -63,6 +65,13 @@ environment variable may be set.
 
 ```shell
 export MATURIN_PEP517_ARGS="--features s2geography"
+```
+
+Users with GDAL 3.13+ (which lacks pre-built bindings in the `gdal-sys` crate) can
+enable runtime binding generation:
+
+```shell
+export SEDONADB_CARGO_TEST_ARGS="--features bindgen"
 ```
 
 ## Pre-release

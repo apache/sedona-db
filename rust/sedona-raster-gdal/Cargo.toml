@@ -43,8 +43,13 @@ sedona-expr = { workspace = true }
 sedona-functions = { workspace = true }
 sedona-gdal = { workspace = true }
 sedona-raster = { workspace = true }
+sedona-raster-functions = { workspace = true }
 sedona-schema = { workspace = true }
 tokio = { workspace = true }
+
+[features]
+# Enable bindgen for GDAL versions without pre-built bindings (e.g., GDAL 3.13+).
+bindgen = ["sedona-gdal/bindgen"]
 
 [dev-dependencies]
 criterion = { workspace = true }
@@ -57,3 +62,8 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 harness = false
 name = "rs_frompath"
 path = "benches/rs_frompath.rs"
+
+[[bench]]
+harness = false
+name = "rs_metadata"
+path = "benches/rs_metadata.rs"

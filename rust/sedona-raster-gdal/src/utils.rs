@@ -430,7 +430,7 @@ mod tests {
         .unwrap();
 
         let raster_array = with_gdal(|gdal| load_as_indb_raster(gdal, &path_str)).unwrap();
-        let raster_struct = RasterStructArray::new(&raster_array);
+        let raster_struct = RasterStructArray::try_new(&raster_array).unwrap();
         let raster = raster_struct.get(0).unwrap();
         let band = raster.bands().band(1).unwrap();
 
@@ -453,7 +453,7 @@ mod tests {
         let path = test_raster("test4.tiff").expect("test4.tiff should exist");
 
         let raster = with_gdal(|gdal| load_as_outdb_raster(gdal, &path)).unwrap();
-        let raster_struct = RasterStructArray::new(&raster);
+        let raster_struct = RasterStructArray::try_new(&raster).unwrap();
         assert_eq!(raster_struct.len(), 1);
 
         let raster = raster_struct.get(0).unwrap();
@@ -483,7 +483,7 @@ mod tests {
         .unwrap();
 
         let raster = with_gdal(|gdal| load_as_outdb_raster(gdal, &path_str)).unwrap();
-        let raster_struct = RasterStructArray::new(&raster);
+        let raster_struct = RasterStructArray::try_new(&raster).unwrap();
         let raster = raster_struct.get(0).unwrap();
         let band = raster.bands().band(1).unwrap();
 
@@ -507,7 +507,7 @@ mod tests {
         .unwrap();
 
         let raster = with_gdal(|gdal| load_as_outdb_raster(gdal, &path_str)).unwrap();
-        let raster_struct = RasterStructArray::new(&raster);
+        let raster_struct = RasterStructArray::try_new(&raster).unwrap();
         let raster = raster_struct.get(0).unwrap();
         let band = raster.bands().band(1).unwrap();
 
@@ -531,7 +531,7 @@ mod tests {
         .unwrap();
 
         let raster_array = with_gdal(|gdal| load_as_indb_raster(gdal, &path_str)).unwrap();
-        let raster_struct = RasterStructArray::new(&raster_array);
+        let raster_struct = RasterStructArray::try_new(&raster_array).unwrap();
         let raster = raster_struct.get(0).unwrap();
         let band = raster.bands().band(1).unwrap();
 
@@ -570,7 +570,7 @@ mod tests {
         .unwrap();
 
         let raster_array = with_gdal(|gdal| load_as_indb_raster(gdal, &path_str)).unwrap();
-        let raster_struct = RasterStructArray::new(&raster_array);
+        let raster_struct = RasterStructArray::try_new(&raster_array).unwrap();
         let raster = raster_struct.get(0).unwrap();
         let band = raster.bands().band(1).unwrap();
 
@@ -605,7 +605,7 @@ mod tests {
         .unwrap();
 
         let raster_array = with_gdal(|gdal| load_as_indb_raster(gdal, &path_str)).unwrap();
-        let raster_struct = RasterStructArray::new(&raster_array);
+        let raster_struct = RasterStructArray::try_new(&raster_array).unwrap();
         let raster = raster_struct.get(0).unwrap();
         let band = raster.bands().band(1).unwrap();
 
@@ -639,7 +639,7 @@ mod tests {
         .unwrap();
 
         let raster_array = with_gdal(|gdal| load_as_indb_raster(gdal, &path_str)).unwrap();
-        let raster_struct = RasterStructArray::new(&raster_array);
+        let raster_struct = RasterStructArray::try_new(&raster_array).unwrap();
         let raster = raster_struct.get(0).unwrap();
         let band1 = raster.bands().band(1).unwrap();
         let band2 = raster.bands().band(2).unwrap();
@@ -670,7 +670,7 @@ mod tests {
         })
         .unwrap();
 
-        let raster_struct = RasterStructArray::new(&raster_array);
+        let raster_struct = RasterStructArray::try_new(&raster_array).unwrap();
         let raster = raster_struct.get(0).unwrap();
         let band1 = raster.bands().band(1).unwrap();
         let band2 = raster.bands().band(2).unwrap();
@@ -723,7 +723,7 @@ mod tests {
         })
         .unwrap();
 
-        let raster_struct = RasterStructArray::new(&raster_array);
+        let raster_struct = RasterStructArray::try_new(&raster_array).unwrap();
         assert_eq!(raster_struct.len(), 2);
 
         let first = raster_struct.get(0).unwrap();

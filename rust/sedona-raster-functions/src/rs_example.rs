@@ -117,7 +117,7 @@ mod tests {
 
         let result = kernel.invoke_batch(&arg_types, &args).unwrap();
         if let ColumnarValue::Scalar(ScalarValue::Struct(arc_struct)) = result {
-            let raster_array = RasterStructArray::new(arc_struct.as_ref());
+            let raster_array = RasterStructArray::try_new(arc_struct.as_ref()).unwrap();
 
             assert_eq!(raster_array.len(), 1);
             let raster = raster_array.get(0).unwrap();

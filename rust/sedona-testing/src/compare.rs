@@ -16,7 +16,7 @@
 // under the License.
 use std::iter::zip;
 
-use arrow_array::ArrayRef;
+use arrow_array::{ArrayRef, StructArray};
 use arrow_schema::DataType;
 use datafusion_common::{
     cast::{as_binary_array, as_binary_view_array},
@@ -24,9 +24,11 @@ use datafusion_common::{
 };
 use datafusion_expr::ColumnarValue;
 use sedona_geometry::{bounds::wkb_bounds_xy, interval::IntervalTrait};
-use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY};
+use sedona_raster::array::RasterStructArray;
+use sedona_schema::datatypes::{SedonaType, RASTER, WKB_GEOMETRY};
 
 use crate::create::create_scalar;
+use crate::rasters::assert_raster_arrays_equal;
 
 /// Assert two [`ColumnarValue`]s are equal
 ///
@@ -79,7 +81,17 @@ pub fn assert_array_equal(actual: &ArrayRef, expected: &ArrayRef) {
 
     match (&actual_sedona, &expected_sedona) {
         (SedonaType::Arrow(_), SedonaType::Arrow(_)) => {
-            assert_eq!(actual, expected)
+            if actual.data_type() == RASTER.storage_type() {
+                // Raster-aware comparison: null rows may differ physically
+                // (cast-from-Null vs builder append_null), and raster
+                // mismatches deserve better messages than a struct dump.
+                assert_raster_structs_equal(
+                    actual.as_any().downcast_ref::<StructArray>().unwrap(),
+                    expected.as_any().downcast_ref::<StructArray>().unwrap(),
+                );
+            } else {
+                assert_eq!(actual, expected)
+            }
         }
 
         (SedonaType::Wkb(_, _), SedonaType::Wkb(_, _)) => {
@@ -193,13 +205,35 @@ pub fn assert_scalar_equal(actual: &ScalarValue, expected: &ScalarValue) {
     );
 
     match (&actual_sedona, &expected_sedona) {
-        (SedonaType::Arrow(_), SedonaType::Arrow(_)) => assert_arrow_scalar_equal(actual, expected),
+        (SedonaType::Arrow(_), SedonaType::Arrow(_)) => {
+            if let (
+                true,
+                ScalarValue::Struct(actual_struct),
+                ScalarValue::Struct(expected_struct),
+            ) = (
+                &actual.data_type() == RASTER.storage_type(),
+                actual,
+                expected,
+            ) {
+                // Raster-aware comparison; see assert_array_equal.
+                assert_raster_structs_equal(actual_struct, expected_struct);
+            } else {
+                assert_arrow_scalar_equal(actual, expected)
+            }
+        }
         (SedonaType::Wkb(_, _), SedonaType::Wkb(_, _))
         | (SedonaType::WkbView(_, _), SedonaType::WkbView(_, _)) => {
             assert_wkb_scalar_equal(actual, expected, false);
         }
         (_, _) => unreachable!(),
     }
+}
+
+fn assert_raster_structs_equal(actual: &StructArray, expected: &StructArray) {
+    assert_raster_arrays_equal(
+        &RasterStructArray::try_new(actual).unwrap(),
+        &RasterStructArray::try_new(expected).unwrap(),
+    );
 }
 
 fn assert_type_equal(
