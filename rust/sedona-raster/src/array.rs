@@ -589,7 +589,7 @@ mod tests {
         ib.finish_band().unwrap();
         ib.finish_raster().unwrap();
         let input_array = ib.finish().unwrap();
-        let input_rasters = RasterStructArray::new(&input_array);
+        let input_rasters = RasterStructArray::try_new(&input_array).unwrap();
         let input_raster = input_rasters.get(0).unwrap();
         let input_band = input_raster.band(0).unwrap();
         let input_ptr = input_band.nd_buffer().unwrap().buffer.as_ptr();
@@ -609,7 +609,7 @@ mod tests {
         ob.finish_band().unwrap();
         ob.finish_raster().unwrap();
         let out_array = ob.finish().unwrap();
-        let out_rasters = RasterStructArray::new(&out_array);
+        let out_rasters = RasterStructArray::try_new(&out_array).unwrap();
         let out_raster = out_rasters.get(0).unwrap();
         let out_band = out_raster.band(0).unwrap();
 
@@ -651,7 +651,7 @@ mod tests {
         ib.finish_band().unwrap();
         ib.finish_raster().unwrap();
         let in_array = ib.finish().unwrap();
-        let in_rasters = RasterStructArray::new(&in_array);
+        let in_rasters = RasterStructArray::try_new(&in_array).unwrap();
         let in_raster = in_rasters.get(0).unwrap();
         let in_band = in_raster.band(0).unwrap();
 
@@ -675,7 +675,7 @@ mod tests {
         ob.finish_band().unwrap();
         ob.finish_raster().unwrap();
         let out_array = ob.finish().unwrap();
-        let out_rasters = RasterStructArray::new(&out_array);
+        let out_rasters = RasterStructArray::try_new(&out_array).unwrap();
         let out_raster = out_rasters.get(0).unwrap();
         let out_band = out_raster.band(0).unwrap();
         assert_eq!(
