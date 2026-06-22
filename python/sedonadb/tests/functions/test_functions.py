@@ -1697,6 +1697,109 @@ def test_st_geomfromewkt(eng, ewkt, expected, expected_srid):
     )
 
 
+# --- ST_XxxFromText typed constructors ---
+
+# (fn_name, matching_wkt, wrong_wkt)
+_TYPED_CONSTRUCTOR_CASES = [
+    ("ST_PointFromText", "POINT (1 2)", "LINESTRING (0 0, 1 1)"),
+    ("ST_LineFromText", "LINESTRING (0 0, 1 1)", "POINT (1 2)"),
+    ("ST_PolygonFromText", "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", "POINT (1 2)"),
+    ("ST_MPointFromText", "MULTIPOINT ((0 0), (1 1))", "POINT (1 2)"),
+    ("ST_MLineFromText", "MULTILINESTRING ((0 0, 1 1))", "POINT (1 2)"),
+    ("ST_MPolyFromText", "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)))", "POINT (1 2)"),
+    (
+        "ST_GeomCollFromText",
+        "GEOMETRYCOLLECTION (POINT (0 0))",
+        "POINT (1 2)",
+    ),
+]
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(("fn_name", "wkt", "_wrong"), _TYPED_CONSTRUCTOR_CASES)
+def test_typed_geom_constructors_accept_correct_type(eng, fn_name, wkt, _wrong):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT {fn_name}('{wkt}')", wkt)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("fn_name", "_matching", "wrong_wkt"), _TYPED_CONSTRUCTOR_CASES
+)
+def test_typed_geom_constructors_reject_wrong_type(eng, fn_name, _matching, wrong_wkt):
+    eng = eng.create_or_skip()
+    with pytest.raises(Exception):
+        eng.assert_query_result(f"SELECT {fn_name}('{wrong_wkt}')", None)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(("fn_name", "wkt", "_wrong"), _TYPED_CONSTRUCTOR_CASES)
+def test_typed_geom_constructors_accept_srid(eng, fn_name, wkt, _wrong):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_SRID({fn_name}('{wkt}', 4326))", 4326)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("fn_name", "empty_wkt"),
+    [
+        ("ST_PointFromText", "POINT EMPTY"),
+        ("ST_LineFromText", "LINESTRING EMPTY"),
+        ("ST_PolygonFromText", "POLYGON EMPTY"),
+        ("ST_MPointFromText", "MULTIPOINT EMPTY"),
+        ("ST_MLineFromText", "MULTILINESTRING EMPTY"),
+        ("ST_MPolyFromText", "MULTIPOLYGON EMPTY"),
+        ("ST_GeomCollFromText", "GEOMETRYCOLLECTION EMPTY"),
+    ],
+)
+def test_typed_geom_constructors_accept_matching_empty(eng, fn_name, empty_wkt):
+    """Each constructor accepts its own EMPTY type (correct type, empty geometry)."""
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT {fn_name}('{empty_wkt}')", empty_wkt)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    "fn_name",
+    [fn for fn, _, _ in _TYPED_CONSTRUCTOR_CASES],
+)
+def test_typed_geom_constructors_null_input(eng, fn_name):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT {fn_name}(NULL)", None)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+def test_st_linestringfromtext_alias(eng):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        "SELECT ST_LineStringFromText('LINESTRING (0 0, 1 1)')", "LINESTRING (0 0, 1 1)"
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("fn_name", "wkt", "wrong_empty"),
+    [
+        ("ST_PointFromText", "POINT (1 2)", "LINESTRING EMPTY"),
+        ("ST_LineFromText", "LINESTRING (0 0, 1 1)", "POINT EMPTY"),
+        ("ST_PolygonFromText", "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", "POINT EMPTY"),
+        ("ST_MPointFromText", "MULTIPOINT ((0 0))", "LINESTRING EMPTY"),
+        ("ST_MLineFromText", "MULTILINESTRING ((0 0, 1 1))", "POINT EMPTY"),
+        (
+            "ST_MPolyFromText",
+            "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)))",
+            "POINT EMPTY",
+        ),
+        ("ST_GeomCollFromText", "GEOMETRYCOLLECTION (POINT (0 0))", "LINESTRING EMPTY"),
+    ],
+)
+def test_typed_geom_constructors_reject_wrong_empty(eng, fn_name, wkt, wrong_empty):
+    """EMPTY of wrong type is rejected just like non-empty wrong type."""
+    eng = eng.create_or_skip()
+    with pytest.raises(Exception):
+        eng.assert_query_result(f"SELECT {fn_name}('{wrong_empty}')", None)
+
+
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
     ("geom"),

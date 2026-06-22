@@ -35,7 +35,7 @@ kernels:
 
 Parses a WKT string and returns a geometry. Raises an error if the WKT does not represent a LineString.
 
-This function also has the alias `ST_LineStringFromText`.
+Aliases: `ST_LineStringFromText`.
 
 ## Examples
 
@@ -43,7 +43,7 @@ This function also has the alias `ST_LineStringFromText`.
 SELECT ST_LineFromText('LINESTRING (0 0, 1 1, 2 2)');
 ```
 
-With an SRID:
+With an SRID or CRS:
 
 ```sql
 SELECT ST_LineFromText('LINESTRING (0 0, 1 1, 2 2)', 4326);

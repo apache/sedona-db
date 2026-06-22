@@ -41,7 +41,7 @@ Parses a WKT string and returns a geometry. Raises an error if the WKT does not 
 SELECT ST_PointFromText('POINT (30 10)');
 ```
 
-With an SRID:
+With an SRID or CRS:
 
 ```sql
 SELECT ST_PointFromText('POINT (30 10)', 4326);

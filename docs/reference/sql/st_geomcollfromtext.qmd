@@ -41,7 +41,7 @@ Parses a WKT string and returns a geometry. Raises an error if the WKT does not 
 SELECT ST_GeomCollFromText('GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1))');
 ```
 
-With an SRID:
+With an SRID or CRS:
 
 ```sql
 SELECT ST_GeomCollFromText('GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1))', 4326);

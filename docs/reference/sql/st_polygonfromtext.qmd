@@ -41,7 +41,7 @@ Parses a WKT string and returns a geometry. Raises an error if the WKT does not 
 SELECT ST_PolygonFromText('POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))');
 ```
 
-With an SRID:
+With an SRID or CRS:
 
 ```sql
 SELECT ST_PolygonFromText('POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))', 4326);
