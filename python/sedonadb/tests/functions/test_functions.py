@@ -1704,7 +1704,8 @@ _TYPED_CONSTRUCTOR_CASES = [
     ("ST_PointFromText", "POINT (1 2)", "LINESTRING (0 0, 1 1)"),
     ("ST_LineFromText", "LINESTRING (0 0, 1 1)", "POINT (1 2)"),
     ("ST_PolygonFromText", "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", "POINT (1 2)"),
-    ("ST_MPointFromText", "MULTIPOINT ((0 0), (1 1))", "POINT (1 2)"),
+    # geoarrow-c renders MULTIPOINT without per-point parens
+    ("ST_MPointFromText", "MULTIPOINT (0 0, 1 1)", "POINT (1 2)"),
     ("ST_MLineFromText", "MULTILINESTRING ((0 0, 1 1))", "POINT (1 2)"),
     ("ST_MPolyFromText", "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)))", "POINT (1 2)"),
     (
@@ -1722,11 +1723,12 @@ def test_typed_geom_constructors_accept_correct_type(eng, fn_name, wkt, _wrong):
     eng.assert_query_result(f"SELECT {fn_name}('{wkt}')", wkt)
 
 
-@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize("eng", [SedonaDB])
 @pytest.mark.parametrize(
     ("fn_name", "_matching", "wrong_wkt"), _TYPED_CONSTRUCTOR_CASES
 )
 def test_typed_geom_constructors_reject_wrong_type(eng, fn_name, _matching, wrong_wkt):
+    # PostGIS typed constructors are aliases for ST_GeomFromText and do not validate type
     eng = eng.create_or_skip()
     with pytest.raises(Exception):
         eng.assert_query_result(f"SELECT {fn_name}('{wrong_wkt}')", None)
@@ -1755,7 +1757,9 @@ def test_typed_geom_constructors_accept_srid(eng, fn_name, wkt, _wrong):
 def test_typed_geom_constructors_accept_matching_empty(eng, fn_name, empty_wkt):
     """Each constructor accepts its own EMPTY type (correct type, empty geometry)."""
     eng = eng.create_or_skip()
-    eng.assert_query_result(f"SELECT {fn_name}('{empty_wkt}')", empty_wkt)
+    # geoarrow-c renders POINT EMPTY as POINT (nan nan)
+    expected = "POINT (nan nan)" if empty_wkt == "POINT EMPTY" else empty_wkt
+    eng.assert_query_result(f"SELECT {fn_name}('{empty_wkt}')", expected)
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
@@ -1768,15 +1772,16 @@ def test_typed_geom_constructors_null_input(eng, fn_name):
     eng.assert_query_result(f"SELECT {fn_name}(NULL)", None)
 
 
-@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize("eng", [SedonaDB])
 def test_st_linestringfromtext_alias(eng):
+    # PostGIS does not have ST_LineStringFromText
     eng = eng.create_or_skip()
     eng.assert_query_result(
         "SELECT ST_LineStringFromText('LINESTRING (0 0, 1 1)')", "LINESTRING (0 0, 1 1)"
     )
 
 
-@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize("eng", [SedonaDB])
 @pytest.mark.parametrize(
     ("fn_name", "wkt", "wrong_empty"),
     [
@@ -1795,6 +1800,7 @@ def test_st_linestringfromtext_alias(eng):
 )
 def test_typed_geom_constructors_reject_wrong_empty(eng, fn_name, wkt, wrong_empty):
     """EMPTY of wrong type is rejected just like non-empty wrong type."""
+    # PostGIS typed constructors are aliases for ST_GeomFromText and do not validate type
     eng = eng.create_or_skip()
     with pytest.raises(Exception):
         eng.assert_query_result(f"SELECT {fn_name}('{wrong_empty}')", None)
