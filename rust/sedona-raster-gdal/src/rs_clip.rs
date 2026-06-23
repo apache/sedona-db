@@ -42,12 +42,12 @@ use arrow_schema::DataType;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_raster::array::RasterRefImpl;
 use sedona_raster::builder::RasterBuilder;
-use sedona_raster::traits::{BandMetadata, RasterMetadata, RasterRef};
+use sedona_raster::traits::RasterRef;
 use sedona_raster_functions::crs_utils::{crs_transform_wkb, resolve_crs};
 use sedona_raster_functions::RasterExecutor;
 use sedona_schema::datatypes::{SedonaType, RASTER};
 use sedona_schema::matchers::ArgMatcher;
-use sedona_schema::raster::{BandDataType, StorageType};
+use sedona_schema::raster::BandDataType;
 
 use crate::gdal_common::with_gdal;
 use crate::gdal_common::{nodata_bytes_to_f64, nodata_f64_to_bytes};
@@ -301,12 +301,26 @@ impl SedonaScalarKernel for RsClip {
     }
 }
 
+/// One clipped band: masked/cropped bytes plus the N-D layout needed to rebuild
+/// it. The clip is a 2-D `(y, x)` operation broadcast across every non-spatial
+/// plane, so `dim_names` are unchanged from the source and only the trailing
+/// `(y, x)` extent of `shape` shrinks when cropping.
+struct ClippedBand {
+    /// Masked/cropped bytes, plane-major in the band's dim order.
+    data: Vec<u8>,
+    /// Visible dim names, unchanged from the source band (e.g. `["time","y","x"]`).
+    dim_names: Vec<String>,
+    /// Output shape: leading non-spatial dims unchanged, trailing `(y, x)` clipped.
+    shape: Vec<i64>,
+    data_type: BandDataType,
+    /// nodata sentinel bytes written for masked-out pixels.
+    nodata: Vec<u8>,
+}
+
 /// Data for a clipped raster
 struct ClippedRasterData {
-    /// Clipped band data (one Vec<u8> per band)
-    band_data: Vec<Vec<u8>>,
-    /// Band metadata (data types, nodata values)
-    band_metadata: Vec<BandMetadata>,
+    /// One entry per processed band.
+    bands: Vec<ClippedBand>,
     /// Crop window in pixel coordinates (col_off, row_off, width, height).
     /// `None` means the full original raster extent was kept (crop=false).
     crop_window: Option<CropWindow>,
@@ -412,9 +426,10 @@ fn clip_raster(
         vec![band_num]
     };
 
-    // Process each band
-    let mut clipped_band_data = Vec::new();
-    let mut clipped_band_metadata = Vec::new();
+    // Process each band. The clip is a 2-D (y, x) operation; for an N-D band
+    // (extra leading dims such as time) the same mask and crop window are
+    // broadcast across every non-spatial plane.
+    let mut clipped_bands = Vec::with_capacity(band_indices.len());
 
     for &band_idx in &band_indices {
         let band = bands
@@ -423,6 +438,32 @@ fn clip_raster(
 
         let band_metadata = band.metadata();
         let data_type = band_metadata.data_type()?;
+
+        // The trailing two axes are the spatial (y, x) plane; anything before
+        // them is a stack of planes the 2-D clip is broadcast over.
+        let shape = band.shape().to_vec();
+        let dim_names: Vec<String> = band.dim_names().iter().map(|s| s.to_string()).collect();
+        let ndim = shape.len();
+        if ndim < 2 {
+            return exec_err!(
+                "RS_Clip: band {} has {} dimension(s); a 2-D (y, x) plane is required",
+                band_idx,
+                ndim
+            );
+        }
+        let (plane_h, plane_w) = (shape[ndim - 2] as usize, shape[ndim - 1] as usize);
+        if plane_w != width || plane_h != height {
+            return exec_err!(
+                "RS_Clip: band {} spatial extent {}x{} does not match the raster {}x{}",
+                band_idx,
+                plane_w,
+                plane_h,
+                width,
+                height
+            );
+        }
+        let n_planes: usize = shape[..ndim - 2].iter().map(|&d| d as usize).product();
+
         let original_data = band
             .nd_buffer()
             .map_err(|e| exec_datafusion_err!("RS_Clip: failed to read band {}: {}", band_idx, e))?
@@ -432,34 +473,56 @@ fn clip_raster(
             })?
             .to_vec();
 
-        // Determine nodata value
         let nodata = custom_nodata
             .or_else(|| nodata_bytes_to_f64(band_metadata.nodata_value(), &data_type))
             .unwrap_or(0.0);
 
-        // Apply mask to band data, optionally cropping
-        let clipped_data = if let Some(cw) = crop_window {
-            apply_mask_and_crop(&original_data, mask, width, &data_type, nodata, &cw)?
-        } else {
-            apply_mask_to_band(&original_data, mask, width, height, &data_type, nodata)?
-        };
+        let byte_size = data_type_byte_size(&data_type);
+        let in_plane_bytes = width * height * byte_size;
+        if original_data.len() != n_planes * in_plane_bytes {
+            return exec_err!(
+                "RS_Clip: band {} byte length {} does not match {} planes of {}x{}",
+                band_idx,
+                original_data.len(),
+                n_planes,
+                width,
+                height
+            );
+        }
 
-        // Build band metadata
-        let new_band_metadata = BandMetadata {
-            nodata_value: Some(nodata_f64_to_bytes(nodata, &data_type)),
-            storage_type: StorageType::InDb,
-            datatype: data_type,
-            outdb_url: None,
-            outdb_band_id: None,
-        };
+        // Apply the (shared) mask/crop to each plane, then concatenate.
+        let mut clipped_data = Vec::new();
+        for plane in 0..n_planes {
+            let plane_bytes = &original_data[plane * in_plane_bytes..(plane + 1) * in_plane_bytes];
+            let clipped_plane = if let Some(cw) = crop_window {
+                apply_mask_and_crop(plane_bytes, mask, width, &data_type, nodata, &cw)?
+            } else {
+                apply_mask_to_band(plane_bytes, mask, width, height, &data_type, nodata)?
+            };
+            clipped_data.extend_from_slice(&clipped_plane);
+        }
 
-        clipped_band_data.push(clipped_data);
-        clipped_band_metadata.push(new_band_metadata);
+        // Output shape: leading dims unchanged; trailing (y, x) becomes the crop
+        // window when cropping, else the original plane extent.
+        let (out_h, out_w) = match crop_window {
+            Some(cw) => (cw.height as i64, cw.width as i64),
+            None => (height as i64, width as i64),
+        };
+        let mut out_shape = shape[..ndim - 2].to_vec();
+        out_shape.push(out_h);
+        out_shape.push(out_w);
+
+        clipped_bands.push(ClippedBand {
+            data: clipped_data,
+            dim_names,
+            shape: out_shape,
+            data_type,
+            nodata: nodata_f64_to_bytes(nodata, &data_type),
+        });
     }
 
     Ok(Some(ClippedRasterData {
-        band_data: clipped_band_data,
-        band_metadata: clipped_band_metadata,
+        bands: clipped_bands,
         crop_window,
     }))
 }
@@ -620,62 +683,70 @@ fn write_nodata_value(
     Ok(())
 }
 
-/// Build clipped raster using RasterBuilder
+/// Build the clipped raster via the N-D builder. A 2-D raster is just the
+/// `["y", "x"]` case; an N-D raster keeps its non-spatial dims and only its
+/// `(y, x)` extent changes when cropping.
 fn build_clipped_raster(
     builder: &mut RasterBuilder,
     original_raster: &RasterRefImpl<'_>,
     clipped_data: &ClippedRasterData,
 ) -> Result<()> {
-    let original_metadata = original_raster.metadata();
-
-    let metadata = if let Some(cw) = clipped_data.crop_window {
-        // Cropped: adjust dimensions and upper-left coordinate.
-        // new_upper_left = original_upper_left + pixel_offset * scale + pixel_offset * skew
-        let new_upper_left_x = original_metadata.upper_left_x()
-            + cw.col_off as f64 * original_metadata.scale_x()
-            + cw.row_off as f64 * original_metadata.skew_x();
-        let new_upper_left_y = original_metadata.upper_left_y()
-            + cw.row_off as f64 * original_metadata.scale_y()
-            + cw.col_off as f64 * original_metadata.skew_y();
-
-        RasterMetadata {
-            width: cw.width as i64,
-            height: cw.height as i64,
-            upperleft_x: new_upper_left_x,
-            upperleft_y: new_upper_left_y,
-            scale_x: original_metadata.scale_x(),
-            scale_y: original_metadata.scale_y(),
-            skew_x: original_metadata.skew_x(),
-            skew_y: original_metadata.skew_y(),
-        }
+    // Geotransform is 2-D and shared across all planes. A crop shifts the
+    // upper-left by the pixel offset; scale/skew are unchanged.
+    // Layout: [upper_left_x, scale_x, skew_x, upper_left_y, skew_y, scale_y].
+    let src = original_raster.transform();
+    let transform: [f64; 6] = if let Some(cw) = clipped_data.crop_window {
+        let new_ulx = src[0] + cw.col_off as f64 * src[1] + cw.row_off as f64 * src[2];
+        let new_uly = src[3] + cw.row_off as f64 * src[5] + cw.col_off as f64 * src[4];
+        [new_ulx, src[1], src[2], new_uly, src[4], src[5]]
     } else {
-        // No crop: use original raster dimensions and geotransform
-        RasterMetadata {
-            width: original_metadata.width(),
-            height: original_metadata.height(),
-            upperleft_x: original_metadata.upper_left_x(),
-            upperleft_y: original_metadata.upper_left_y(),
-            scale_x: original_metadata.scale_x(),
-            scale_y: original_metadata.scale_y(),
-            skew_x: original_metadata.skew_x(),
-            skew_y: original_metadata.skew_y(),
+        [src[0], src[1], src[2], src[3], src[4], src[5]]
+    };
+
+    // Spatial extent after the clip. `spatial_dims`/`spatial_shape` are kept in
+    // the raster's own axis order (X-first, as the readers emit), so map each
+    // spatial dim to its clipped size by name rather than assuming an order.
+    let spatial_dims = original_raster.spatial_dims();
+    let spatial_shape: Vec<i64> = match clipped_data.crop_window {
+        None => original_raster.spatial_shape().to_vec(),
+        Some(cw) => {
+            let x_dim = original_raster.x_dim();
+            spatial_dims
+                .iter()
+                .map(|&d| {
+                    if d == x_dim {
+                        cw.width as i64
+                    } else {
+                        cw.height as i64
+                    }
+                })
+                .collect()
         }
     };
 
     builder
-        .start_raster(&metadata, original_raster.crs())
+        .start_raster_nd(
+            &transform,
+            &spatial_dims,
+            &spatial_shape,
+            original_raster.crs(),
+        )
         .map_err(|e| exec_datafusion_err!("Failed to start raster: {}", e))?;
 
-    // Add clipped bands
-    for (band_data, band_metadata) in clipped_data
-        .band_data
-        .iter()
-        .zip(clipped_data.band_metadata.iter())
-    {
+    for band in &clipped_data.bands {
+        let dim_names: Vec<&str> = band.dim_names.iter().map(String::as_str).collect();
         builder
-            .start_band(band_metadata.clone())
+            .start_band_nd(
+                None,
+                &dim_names,
+                &band.shape,
+                band.data_type,
+                Some(&band.nodata),
+                None,
+                None,
+            )
             .map_err(|e| exec_datafusion_err!("Failed to start band: {}", e))?;
-        builder.band_data_writer().append_value(band_data);
+        builder.band_data_writer().append_value(&band.data);
         builder
             .finish_band()
             .map_err(|e| exec_datafusion_err!("Failed to finish band: {}", e))?;
@@ -757,12 +828,9 @@ mod tests {
                 .as_contiguous()
                 .unwrap()
                 .len();
-            assert!(
-                !clipped.band_data.is_empty(),
-                "Should have at least one band"
-            );
+            assert!(!clipped.bands.is_empty(), "Should have at least one band");
             assert_eq!(
-                clipped.band_data[0].len(),
+                clipped.bands[0].data.len(),
                 original_len,
                 "Clipped band should have same size as original when crop=false"
             );
@@ -793,9 +861,9 @@ mod tests {
                 .crop_window
                 .expect("crop_window should be set when crop=true");
 
-            let byte_size = data_type_byte_size(&clipped.band_metadata[0].datatype);
+            let byte_size = data_type_byte_size(&clipped.bands[0].data_type);
             assert_eq!(
-                clipped.band_data[0].len(),
+                clipped.bands[0].data.len(),
                 cw.width * cw.height * byte_size,
                 "Cropped band data size should match crop window"
             );
@@ -895,6 +963,63 @@ mod tests {
         );
 
         assert_eq!(band_data_4326, band_data_3857);
+    }
+
+    #[test]
+    fn test_rs_clip_nd_broadcasts_across_planes() {
+        // A [time=2, y=2, x=4] raster: clipping with a 2-D polygon crops the
+        // (y, x) plane and broadcasts the same mask across both time planes,
+        // preserving the time dimension. Values 1..=16 (C order): time 0 is
+        // rows [1,2,3,4] / [5,6,7,8], time 1 is [9..12] / [13..16].
+        let array = RasterSpec::nd(&["time", "y", "x"], &[2, 2, 4])
+            .band_values(&[1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
+            .crs(Some("EPSG:4326"))
+            .transform([0.0, 1.0, 0.0, 2.0, 0.0, -1.0])
+            .build();
+
+        let crs_4326 = deserialize_crs("EPSG:4326").unwrap().unwrap();
+        let geom_wkb =
+            with_gdal(|gdal| wkb_from_wkt(gdal, "POLYGON((0 1, 2 1, 2 2, 0 2, 0 1))")).unwrap();
+
+        // RS_Clip(raster, band, geom, allTouched, noData, crop=true).
+        let kernel = RsClip { arg_count: 6 };
+        let result = kernel
+            .invoke_batch(
+                &[
+                    RASTER,
+                    SedonaType::Arrow(DataType::Int32),
+                    SedonaType::Wkb(Edges::Planar, Some(crs_4326)),
+                    SedonaType::Arrow(DataType::Boolean),
+                    SedonaType::Arrow(DataType::Float64),
+                    SedonaType::Arrow(DataType::Boolean),
+                ],
+                &[
+                    ColumnarValue::Scalar(ScalarValue::Struct(Arc::new(array))),
+                    ColumnarValue::Scalar(ScalarValue::Int32(Some(1))),
+                    ColumnarValue::Scalar(ScalarValue::Binary(Some(geom_wkb))),
+                    ColumnarValue::Scalar(ScalarValue::Boolean(Some(false))),
+                    ColumnarValue::Scalar(ScalarValue::Float64(Some(0.0))),
+                    ColumnarValue::Scalar(ScalarValue::Boolean(Some(true))),
+                ],
+            )
+            .unwrap();
+
+        let out = match result {
+            ColumnarValue::Scalar(ScalarValue::Struct(s)) => s,
+            _ => panic!("Expected raster scalar result"),
+        };
+        let rasters = RasterStructArray::try_new(out.as_ref()).unwrap();
+        let raster = rasters.get(0).unwrap();
+        let band = raster.bands().band(1).unwrap();
+
+        // The time dim is preserved; (y, x) is cropped to the 1×2 mask window.
+        assert_eq!(band.dim_names(), vec!["time", "y", "x"]);
+        assert_eq!(band.shape(), &[2, 1, 2]);
+
+        // The crop window is cols 0-1 of row 0, applied to both planes:
+        // time 0 -> [1, 2], time 1 -> [9, 10].
+        let bytes = band.nd_buffer().unwrap().as_contiguous().unwrap();
+        assert_eq!(bytes, &[1u8, 2, 9, 10]);
     }
 
     #[test]
