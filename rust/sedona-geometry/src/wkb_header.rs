@@ -211,7 +211,7 @@ pub fn read_point_xy(buf: &[u8]) -> Result<Option<(f64, f64)>, SedonaGeometryErr
     }
 
     // EWKB carries a 4-byte SRID between the type code and the coordinate.
-    let has_srid = type_code & 0x2000_0000 != 0;
+    let has_srid = type_code & SRID_FLAG_BIT != 0;
     let coord_offset = if has_srid { 9 } else { 5 };
 
     let x = read_f64(coord_offset)?;

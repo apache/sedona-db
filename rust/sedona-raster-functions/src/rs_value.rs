@@ -130,42 +130,22 @@ impl SedonaScalarKernel for RsValuePoint {
                         }
                     };
 
-                // Point-only fast parse: reject non-points up front, and treat
-                // POINT EMPTY (NaN coords) as "no location to sample" -> NULL,
-                // before doing any reprojection work.
-                let Some((px, py)) =
-                    read_point_xy(point_wkb).map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?
+                // Parse the point and bring it into the raster's CRS. Null/empty
+                // points (and non-finite coordinates) have no location to sample.
+                let raster_crs = resolve_crs(raster.crs())?;
+                let Some((x, y)) =
+                    resolve_point_xy(point_wkb, point_crs, raster_crs.as_deref(), false, engine)?
                 else {
                     builder.append_null();
                     return Ok(());
                 };
 
-                // Bring the point into the raster's CRS. A reprojection only
-                // happens when both sides carry a (differing) CRS; otherwise
-                // the original coordinates are sampled directly.
-                let raster_crs = resolve_crs(raster.crs())?;
-                let (x, y) =
-                    match reproject_point(point_wkb, point_crs, raster_crs.as_deref(), engine)? {
-                        Some(reprojected) => read_point_xy(&reprojected)
-                            .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?
-                            .ok_or_else(|| {
-                                exec_datafusion_err!("RS_Value: reprojected point is empty")
-                            })?,
-                        None => (px, py),
-                    };
-                // Floor (not truncate toward zero) so a point just outside the
-                // top/left edge maps to a negative index and is rejected as out
-                // of bounds, rather than truncating to 0 and sampling an edge pixel.
-                let (raster_x, raster_y) = AffineMatrix::from_metadata(&raster.metadata())
-                    .inv_transform(x, y)
-                    .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
-                // `f64 -> i64` is a saturating cast (it never panics): a NaN
-                // index becomes 0 and ±∞ saturate to the i64 bounds, all of
-                // which the bounds check in `sample_pixel` rejects as NULL.
-                let (col, row) = (raster_x.floor() as i64, raster_y.floor() as i64);
-
-                match sample_pixel(raster, col, row, band_num)? {
-                    Some(value) => builder.append_value(value),
+                let affine = AffineMatrix::from_metadata(&raster.metadata());
+                match xy_to_pixel(&affine, x, y)? {
+                    Some((col, row)) => match sample_pixel(raster, col, row, band_num)? {
+                        Some(value) => builder.append_value(value),
+                        None => builder.append_null(),
+                    },
                     None => builder.append_null(),
                 }
                 Ok(())
@@ -178,9 +158,14 @@ impl SedonaScalarKernel for RsValuePoint {
 
 impl RsValuePoint {
     /// Optimized path for a constant (scalar) raster sampled with the default
-    /// band: the band buffer, affine transform, and raster CRS are resolved
-    /// once for the whole batch, then a selection vector drives a tight sample
-    /// loop. Behaviour matches the general path exactly.
+    /// band: the affine transform, raster CRS, and band buffer are resolved once
+    /// for the whole batch, then a selection vector drives a tight sample loop.
+    ///
+    /// Sampling behaviour matches the general path: it uses the same
+    /// [`resolve_point_xy`]/[`xy_to_pixel`] helpers, so null/empty/non-finite
+    /// points yield NULL identically. Band resolution (and its 2-D check) is
+    /// deferred until at least one point needs sampling, so an all-null/all-empty
+    /// batch returns NULL without touching the band — as the general path does.
     fn invoke_scalar_default_band(
         &self,
         arg_types: &[SedonaType],
@@ -197,7 +182,47 @@ impl RsValuePoint {
         }
         let raster = rasters.get(0)?;
 
-        // Resolve the default band (1) and its buffer/nodata once.
+        // Affine transform and raster CRS, resolved once for all points.
+        let affine = AffineMatrix::from_metadata(&raster.metadata());
+        let raster_crs = resolve_crs(raster.crs())?;
+        // Decide reprojection once when the point CRS is column-level (the common
+        // case). This skips a per-point `crs_equals`, which allocates a String —
+        // ~15 ns/point, uniform across CRS types.
+        let needs_reproject = column_reproject_decision(&arg_types[1], raster_crs.as_deref())?;
+        let skip_reproject = needs_reproject == Some(false);
+
+        let mut geom = executor.make_geom_wkb_crs_accessor(1)?;
+
+        // Phase 1 — selection vector: collect (row, x, y) for the points worth
+        // sampling (non-null, non-empty Point), reprojected into the raster CRS.
+        // Null/empty points are left out and stay NULL in the output.
+        let mut selection: Vec<(usize, f64, f64)> = Vec::with_capacity(n);
+        with_global_proj_engine(|engine| {
+            for i in 0..n {
+                let (wkb_opt, point_crs) = geom.get(i)?;
+                let Some(point_wkb) = wkb_opt else {
+                    continue;
+                };
+                if let Some((x, y)) = resolve_point_xy(
+                    point_wkb,
+                    point_crs,
+                    raster_crs.as_deref(),
+                    skip_reproject,
+                    engine,
+                )? {
+                    selection.push((i, x, y));
+                }
+            }
+            Ok(())
+        })?;
+
+        let mut out: Vec<Option<f64>> = vec![None; n];
+        if selection.is_empty() {
+            return executor.finish(Arc::new(Float64Array::from(out)));
+        }
+
+        // Resolve the default band (1) and its buffer/nodata once, now that we
+        // know at least one point needs sampling.
         let band = raster
             .bands()
             .band(1)
@@ -212,60 +237,11 @@ impl RsValuePoint {
             .nodata_as_f64()
             .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
 
-        // Affine transform and raster CRS, resolved once for all points.
-        let affine = AffineMatrix::from_metadata(&raster.metadata());
-        let raster_crs = resolve_crs(raster.crs())?;
-        // Decide reprojection once when the point CRS is column-level (the common
-        // case). This skips a per-point `crs_equals`, which allocates a String —
-        // ~15 ns/point, uniform across CRS types.
-        let needs_reproject = column_reproject_decision(&arg_types[1], raster_crs.as_deref())?;
-
-        let mut geom = executor.make_geom_wkb_crs_accessor(1)?;
-
-        // Phase 1 — selection vector: collect (row, x, y) for the points worth
-        // sampling (non-null, non-empty Point), reprojected into the raster CRS.
-        // Null/empty points are left out and stay NULL in the output.
-        let mut selection: Vec<(usize, f64, f64)> = Vec::with_capacity(n);
-        with_global_proj_engine(|engine| {
-            for i in 0..n {
-                let (wkb_opt, point_crs) = geom.get(i)?;
-                let Some(point_wkb) = wkb_opt else {
-                    continue;
-                };
-                let Some((px, py)) =
-                    read_point_xy(point_wkb).map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?
-                else {
-                    continue;
-                };
-                // Skip the per-point reproject (and its crs_equals) when the
-                // column-level CRSes already match; otherwise reproject per point.
-                let (x, y) = if needs_reproject == Some(false) {
-                    (px, py)
-                } else {
-                    match reproject_point(point_wkb, point_crs, raster_crs.as_deref(), engine)? {
-                        Some(reprojected) => read_point_xy(&reprojected)
-                            .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?
-                            .ok_or_else(|| {
-                                exec_datafusion_err!("RS_Value: reprojected point is empty")
-                            })?,
-                        None => (px, py),
-                    }
-                };
-                selection.push((i, x, y));
-            }
-            Ok(())
-        })?;
-
         // Phase 2 — sample each selected point from the hoisted band buffer.
-        let mut out: Vec<Option<f64>> = vec![None; n];
         for (i, x, y) in selection {
-            let (raster_x, raster_y) = affine
-                .inv_transform(x, y)
-                .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
-            // Saturating `f64 -> i64` cast (never panics); the bounds check in
-            // `read_pixel` rejects NaN/±∞ indices as NULL.
-            let (col, row) = (raster_x.floor() as i64, raster_y.floor() as i64);
-            out[i] = read_pixel(&buffer, nodata, col, row)?;
+            if let Some((col, row)) = xy_to_pixel(&affine, x, y)? {
+                out[i] = read_pixel(&buffer, nodata, col, row)?;
+            }
         }
 
         executor.finish(Arc::new(Float64Array::from(out)))
@@ -352,6 +328,62 @@ fn column_reproject_decision(
         (Some(_), None) => exec_err!("RS_Value: point has a CRS but the raster does not"),
         (None, Some(_)) => exec_err!("RS_Value: raster has a CRS but the point does not"),
     }
+}
+
+/// Parse a Point WKB and return its `(x, y)` in the raster's CRS, or `None` when
+/// there is nothing to sample (the point is empty — both ordinates NaN).
+///
+/// `skip_reproject` is the hoisted column-level decision: when `true` the
+/// original coordinates are returned without consulting [`reproject_point`] (and
+/// its per-point `crs_equals`); when `false` reprojection is decided per point.
+fn resolve_point_xy(
+    point_wkb: &[u8],
+    point_crs: CrsRef<'_>,
+    raster_crs: CrsRef<'_>,
+    skip_reproject: bool,
+    engine: &dyn sedona_geometry::transform::CrsEngine,
+) -> Result<Option<(f64, f64)>> {
+    let Some((px, py)) =
+        read_point_xy(point_wkb).map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?
+    else {
+        return Ok(None);
+    };
+    if skip_reproject {
+        return Ok(Some((px, py)));
+    }
+    // A reprojection only happens when both sides carry a (differing) CRS;
+    // otherwise the original coordinates are sampled directly.
+    match reproject_point(point_wkb, point_crs, raster_crs, engine)? {
+        Some(reprojected) => {
+            let xy = read_point_xy(&reprojected)
+                .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?
+                .ok_or_else(|| exec_datafusion_err!("RS_Value: reprojected point is empty"))?;
+            Ok(Some(xy))
+        }
+        None => Ok(Some((px, py))),
+    }
+}
+
+/// Map a coordinate in the raster's CRS to a 0-based `(col, row)` pixel index,
+/// or `None` when the point has no location to sample.
+///
+/// A non-finite coordinate (a Point with a NaN/Inf ordinate, e.g. `POINT(NaN 5)`)
+/// returns `None`: without this guard a NaN would survive `inv_transform` and the
+/// saturating `f64 -> i64` cast would turn it into 0 (in bounds), silently
+/// sampling pixel column 0 rather than yielding NULL.
+fn xy_to_pixel(affine: &AffineMatrix, x: f64, y: f64) -> Result<Option<(i64, i64)>> {
+    if !x.is_finite() || !y.is_finite() {
+        return Ok(None);
+    }
+    let (raster_x, raster_y) = affine
+        .inv_transform(x, y)
+        .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
+    // Floor (not truncate toward zero) so a point just outside the top/left edge
+    // maps to a negative index and is rejected as out of bounds, rather than
+    // truncating to 0 and sampling an edge pixel. The `f64 -> i64` cast saturates
+    // (never panics); the bounds check in `read_pixel`/`sample_pixel` rejects an
+    // out-of-range index as NULL.
+    Ok(Some((raster_x.floor() as i64, raster_y.floor() as i64)))
 }
 
 /// Sample band `band_num` (1-based) at 0-based pixel `(col, row)` as `f64`.
@@ -691,6 +723,61 @@ mod tests {
         assert_eq!(sample("POINT (0.5 9.5)"), Some(1.0)); // pixel (0, 0)
         assert_eq!(sample("POINT (1.5 8.5)"), Some(4.0)); // pixel (1, 1)
         assert_eq!(sample("POINT (100 100)"), None); // outside the footprint
+    }
+
+    #[test]
+    fn non_finite_point_ordinate_is_none() {
+        // A point with a NaN/Inf ordinate (e.g. POINT(NaN 5)) has no location to
+        // sample. Without the finite guard a NaN survives `inv_transform` and the
+        // saturating cast turns it into pixel column 0, silently sampling a value.
+        let raster = RasterSpec::d2(2, 2)
+            .band_values(&[1u8, 2, 3, 4])
+            .transform([0.0, 1.0, 0.0, 10.0, 0.0, -1.0])
+            .build();
+        let rasters = RasterStructArray::try_new(&raster).unwrap();
+        let affine = AffineMatrix::from_metadata(&rasters.get(0).unwrap().metadata());
+
+        assert_eq!(xy_to_pixel(&affine, f64::NAN, 5.0).unwrap(), None);
+        assert_eq!(xy_to_pixel(&affine, 5.0, f64::NAN).unwrap(), None);
+        assert_eq!(xy_to_pixel(&affine, f64::INFINITY, 5.0).unwrap(), None);
+        // A finite in-bounds point still maps to a real pixel.
+        assert_eq!(xy_to_pixel(&affine, 0.5, 9.5).unwrap(), Some((0, 0)));
+    }
+
+    #[test]
+    fn scalar_all_null_points_defer_band_resolution() {
+        // The scalar fast path defers band/2-D validation until a point needs
+        // sampling: an all-null point column over an unsupported (non-2-D) raster
+        // returns all-NULL rather than erroring, matching the general path. A
+        // valid point over the same raster still surfaces the 2-D error.
+        let udf: ScalarUDF = rs_value_udf().into();
+        let geom_type = SedonaType::Wkb(Edges::Planar, None);
+        let tester = ScalarUdfTester::new(udf, vec![RASTER, geom_type.clone()]);
+        let raster = RasterSpec::nd(&["time", "y", "x"], &[2, 2, 1])
+            .band(BandDataType::UInt8)
+            .crs(None)
+            .build();
+
+        let invoke = |wkt: Option<&str>| {
+            let geoms = create_geom_array(&[wkt], &geom_type);
+            tester.invoke(vec![
+                ColumnarValue::Scalar(ScalarValue::Struct(Arc::new(raster.clone()))),
+                ColumnarValue::Array(geoms),
+            ])
+        };
+
+        // All-null point -> NULL, no band resolution, no error.
+        let result = invoke(None).unwrap();
+        let arr = result.into_array(1).unwrap();
+        let arr = arr.as_any().downcast_ref::<Float64Array>().unwrap();
+        assert!(
+            arr.is_null(0),
+            "all-null point over a non-2-D raster should be NULL"
+        );
+
+        // A real point forces band resolution, which rejects the non-2-D raster.
+        let err = invoke(Some("POINT (0 0)")).unwrap_err().to_string();
+        assert!(err.contains("2-D"), "unexpected error: {err}");
     }
 
     #[test]
