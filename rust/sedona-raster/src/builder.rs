@@ -145,6 +145,28 @@ pub struct RasterBuilder {
     raster_validity: BooleanBuilder,
 }
 
+/// Arguments to [`RasterBuilder::start_band_nd_with_view`]. A named-argument
+/// struct (rather than a long positional list) so callers spell out each
+/// field at the call site.
+pub struct StartBandNdWithViewArgs<'a> {
+    /// Band name, or `None` for an unnamed band.
+    pub name: Option<&'a str>,
+    /// Visible dimension names, in band C-order.
+    pub dim_names: &'a [&'a str],
+    /// Source shape (the natural extent of the band's data buffer).
+    pub shape: &'a [i64],
+    /// Element data type.
+    pub data_type: BandDataType,
+    /// Optional nodata sentinel bytes.
+    pub nodata: Option<&'a [u8]>,
+    /// Optional OutDb URI.
+    pub outdb_uri: Option<&'a str>,
+    /// Optional OutDb format.
+    pub outdb_format: Option<&'a str>,
+    /// Per-axis view; must compose to the identity over `shape` today.
+    pub view: &'a [ViewEntry],
+}
+
 impl RasterBuilder {
     /// Create a new raster builder with the specified capacity.
     pub fn new(capacity: usize) -> Self {
@@ -401,18 +423,20 @@ impl RasterBuilder {
     /// always identity) view. When view persistence lands, only this method
     /// changes — callers routing through it (e.g. `BandRef::copy_into`) are
     /// unaffected.
-    #[allow(clippy::too_many_arguments)]
     pub fn start_band_nd_with_view(
         &mut self,
-        name: Option<&str>,
-        dim_names: &[&str],
-        shape: &[i64],
-        data_type: BandDataType,
-        nodata: Option<&[u8]>,
-        outdb_uri: Option<&str>,
-        outdb_format: Option<&str>,
-        view: &[ViewEntry],
+        args: StartBandNdWithViewArgs<'_>,
     ) -> Result<(), ArrowError> {
+        let StartBandNdWithViewArgs {
+            name,
+            dim_names,
+            shape,
+            data_type,
+            nodata,
+            outdb_uri,
+            outdb_format,
+            view,
+        } = args;
         // Reject up front — before any column appends — so a rejected view can
         // never leave the builder in a half-written state.
         if !ViewEntries::new(view.to_vec()).is_identity(shape) {

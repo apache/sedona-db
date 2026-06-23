@@ -18,7 +18,7 @@
 use arrow_schema::ArrowError;
 use sedona_schema::raster::BandDataType;
 
-use crate::builder::RasterBuilder;
+use crate::builder::{RasterBuilder, StartBandNdWithViewArgs};
 use crate::view_entries::{ViewEntries, ViewEntry};
 
 /// Recognized spatial dimension-name pairs, in band C-order: the slower-
@@ -733,16 +733,16 @@ pub trait BandRef {
             Some(v) => source_view.compose(&ViewEntries::new(v.to_vec()))?,
             None => source_view,
         };
-        builder.start_band_nd_with_view(
-            overrides.name,
-            &dim_names,
-            &shape,
-            self.data_type(),
-            overrides.nodata.or_else(|| self.nodata()),
-            overrides.outdb_uri.or_else(|| self.outdb_uri()),
-            overrides.outdb_format.or_else(|| self.outdb_format()),
-            effective_view.as_slice(),
-        )?;
+        builder.start_band_nd_with_view(StartBandNdWithViewArgs {
+            name: overrides.name,
+            dim_names: &dim_names,
+            shape: &shape,
+            data_type: self.data_type(),
+            nodata: overrides.nodata.or_else(|| self.nodata()),
+            outdb_uri: overrides.outdb_uri.or_else(|| self.outdb_uri()),
+            outdb_format: overrides.outdb_format.or_else(|| self.outdb_format()),
+            view: effective_view.as_slice(),
+        })?;
         self.append_data_into(builder)
     }
 
