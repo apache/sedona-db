@@ -40,8 +40,7 @@ use datafusion_common::cast::as_int32_array;
 use datafusion_common::{exec_datafusion_err, exec_err, Result, ScalarValue};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
-use sedona_geometry::types::GeometryTypeId;
-use sedona_geometry::wkb_header::WkbHeader;
+use sedona_geometry::wkb_header::read_point_xy;
 use sedona_proj::transform::with_global_proj_engine;
 use sedona_raster::affine_transformation::AffineMatrix;
 use sedona_raster::array::RasterStructArray;
@@ -131,25 +130,15 @@ impl SedonaScalarKernel for RsValuePoint {
                         }
                     };
 
-                // Header-only parse: reject non-points up front, and treat
+                // Point-only fast parse: reject non-points up front, and treat
                 // POINT EMPTY (NaN coords) as "no location to sample" -> NULL,
                 // before doing any reprojection work.
-                let header = WkbHeader::try_new(point_wkb)
-                    .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
-                if header
-                    .geometry_type_id()
-                    .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?
-                    != GeometryTypeId::Point
-                {
-                    return exec_err!("RS_Value expects a Point geometry");
-                }
-                if header
-                    .is_empty()
-                    .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?
-                {
+                let Some((px, py)) =
+                    read_point_xy(point_wkb).map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?
+                else {
                     builder.append_null();
                     return Ok(());
-                }
+                };
 
                 // Bring the point into the raster's CRS. A reprojection only
                 // happens when both sides carry a (differing) CRS; otherwise
@@ -157,10 +146,12 @@ impl SedonaScalarKernel for RsValuePoint {
                 let raster_crs = resolve_crs(raster.crs())?;
                 let (x, y) =
                     match reproject_point(point_wkb, point_crs, raster_crs.as_deref(), engine)? {
-                        Some(reprojected) => WkbHeader::try_new(&reprojected)
+                        Some(reprojected) => read_point_xy(&reprojected)
                             .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?
-                            .first_xy(),
-                        None => header.first_xy(),
+                            .ok_or_else(|| {
+                                exec_datafusion_err!("RS_Value: reprojected point is empty")
+                            })?,
+                        None => (px, py),
                     };
                 // Floor (not truncate toward zero) so a point just outside the
                 // top/left edge maps to a negative index and is rejected as out
@@ -241,31 +232,23 @@ impl RsValuePoint {
                 let Some(point_wkb) = wkb_opt else {
                     continue;
                 };
-                let header = WkbHeader::try_new(point_wkb)
-                    .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
-                if header
-                    .geometry_type_id()
-                    .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?
-                    != GeometryTypeId::Point
-                {
-                    return exec_err!("RS_Value expects a Point geometry");
-                }
-                if header
-                    .is_empty()
-                    .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?
-                {
+                let Some((px, py)) =
+                    read_point_xy(point_wkb).map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?
+                else {
                     continue;
-                }
+                };
                 // Skip the per-point reproject (and its crs_equals) when the
                 // column-level CRSes already match; otherwise reproject per point.
                 let (x, y) = if needs_reproject == Some(false) {
-                    header.first_xy()
+                    (px, py)
                 } else {
                     match reproject_point(point_wkb, point_crs, raster_crs.as_deref(), engine)? {
-                        Some(reprojected) => WkbHeader::try_new(&reprojected)
+                        Some(reprojected) => read_point_xy(&reprojected)
                             .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?
-                            .first_xy(),
-                        None => header.first_xy(),
+                            .ok_or_else(|| {
+                                exec_datafusion_err!("RS_Value: reprojected point is empty")
+                            })?,
+                        None => (px, py),
                     }
                 };
                 selection.push((i, x, y));
@@ -623,10 +606,7 @@ mod tests {
             .invoke_arrays(vec![Arc::new(rasters), geoms])
             .unwrap_err()
             .to_string();
-        assert!(
-            err.contains("expects a Point geometry"),
-            "unexpected error: {err}"
-        );
+        assert!(err.contains("expected a Point"), "unexpected error: {err}");
     }
 
     #[test]
