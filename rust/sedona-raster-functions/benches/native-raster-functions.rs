@@ -214,14 +214,6 @@ fn criterion_benchmark(c: &mut Criterion) {
         ),
     );
 
-    // RS_Value(raster, colX, rowY) - grid sampling
-    benchmark::scalar(
-        c,
-        &f,
-        "native-raster",
-        "rs_value",
-        BenchmarkArgs::ArrayScalarScalar(Raster(64, 64), Int32(1, 64), Int32(1, 64)),
-    );
     // RS_Value(raster, point)
     benchmark::scalar(
         c,

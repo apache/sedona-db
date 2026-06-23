@@ -15,19 +15,16 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! `RS_Value` — sample a raster's pixel value at a point or grid cell.
+//! `RS_Value` — sample a raster's pixel value at a point.
 //!
 //! ```text
-//! RS_Value(raster, point)              -> Double  -- band defaults to 1
-//! RS_Value(raster, point, band)        -> Double
-//! RS_Value(raster, colX, rowY)         -> Double  -- 1-based grid coords, band 1
-//! RS_Value(raster, colX, rowY, band)   -> Double
+//! RS_Value(raster, point)        -> Double  -- band defaults to 1
+//! RS_Value(raster, point, band)  -> Double
 //! ```
 //!
-//! Returns the value of the pixel that contains the point (no resampling), or
-//! the value at the given 1-based grid cell. The result is `NULL` when the
-//! raster/arguments are null, the point is empty, the point/cell is out of
-//! bounds, or the value equals the band's nodata.
+//! Returns the value of the pixel that contains the point (no resampling). The
+//! result is `NULL` when the raster/arguments are null, the point is empty, the
+//! point is out of bounds, or the value equals the band's nodata.
 //!
 //! The function is tagged [`NEEDS_PIXELS_METADATA_KEY`], so the planner wraps
 //! its raster argument in `RS_EnsureLoaded`; by the time a kernel runs the band
@@ -55,15 +52,13 @@ use crate::crs_utils::{crs_transform_wkb, resolve_crs};
 use crate::executor::RasterExecutor;
 use crate::rs_ensure_loaded::NEEDS_PIXELS_METADATA_KEY;
 
-/// `RS_Value()` scalar UDF — sample a pixel value at a point or grid cell.
+/// `RS_Value()` scalar UDF — sample a pixel value at a point.
 pub fn rs_value_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "rs_value",
         vec![
             Arc::new(RsValuePoint { with_band: false }), // RS_Value(raster, point)
             Arc::new(RsValuePoint { with_band: true }),  // RS_Value(raster, point, band)
-            Arc::new(RsValueGrid { with_band: false }),  // RS_Value(raster, colX, rowY)
-            Arc::new(RsValueGrid { with_band: true }),   // RS_Value(raster, colX, rowY, band)
         ],
         Volatility::Immutable,
     )
@@ -173,75 +168,6 @@ impl SedonaScalarKernel for RsValuePoint {
                 }
                 Ok(())
             })
-        })?;
-
-        executor.finish(Arc::new(builder.finish()))
-    }
-}
-
-/// Kernel for `RS_Value(raster, colX, rowY[, band])` with **1-based** grid
-/// coordinates.
-#[derive(Debug)]
-struct RsValueGrid {
-    with_band: bool,
-}
-
-impl SedonaScalarKernel for RsValueGrid {
-    fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        let mut matchers = vec![
-            ArgMatcher::is_raster(),
-            ArgMatcher::is_integer(),
-            ArgMatcher::is_integer(),
-        ];
-        if self.with_band {
-            matchers.push(ArgMatcher::is_integer());
-        }
-        let matcher = ArgMatcher::new(matchers, SedonaType::Arrow(DataType::Float64));
-        matcher.match_args(args)
-    }
-
-    fn invoke_batch(
-        &self,
-        arg_types: &[SedonaType],
-        args: &[ColumnarValue],
-    ) -> Result<ColumnarValue> {
-        let executor = RasterExecutor::new(arg_types, args);
-        let num_iterations = executor.num_iterations();
-        let mut builder = Float64Builder::with_capacity(num_iterations);
-
-        // Hold the cast arrays as `ArrayRef`s so the typed views below borrow
-        // them instead of cloning the typed `Int32Array`s.
-        let col_arr = int32_array_arg(&args[1], num_iterations)?;
-        let row_arr = int32_array_arg(&args[2], num_iterations)?;
-        let band_arr = if self.with_band {
-            Some(int32_array_arg(&args[3], num_iterations)?)
-        } else {
-            None
-        };
-        let col_array = as_int32_array(&col_arr)?;
-        let row_array = as_int32_array(&row_arr)?;
-        let band_array = band_arr.as_ref().map(|a| as_int32_array(a)).transpose()?;
-
-        let mut col_iter = col_array.iter();
-        let mut row_iter = row_array.iter();
-        let mut band_iter = band_array.map(|a| a.iter());
-
-        executor.execute_raster_void(|_, raster_opt| {
-            let col = col_iter.next().flatten();
-            let row = row_iter.next().flatten();
-            let band_num = next_band(&mut band_iter);
-
-            match (raster_opt, col, row, band_num) {
-                (Some(raster), Some(col), Some(row), Some(band_num)) => {
-                    // 1-based grid coordinates -> 0-based pixel indices.
-                    match sample_pixel(raster, col as i64 - 1, row as i64 - 1, band_num)? {
-                        Some(value) => builder.append_value(value),
-                        None => builder.append_null(),
-                    }
-                }
-                _ => builder.append_null(),
-            }
-            Ok(())
         })?;
 
         executor.finish(Arc::new(builder.finish()))
@@ -418,13 +344,9 @@ mod tests {
 
     #[test]
     fn return_type_is_float64() {
-        // Grid (raster, int, int) resolves to a Float64 output.
-        let return_type = RsValueGrid { with_band: false }
-            .return_type(&[
-                RASTER,
-                SedonaType::Arrow(DataType::Int32),
-                SedonaType::Arrow(DataType::Int32),
-            ])
+        // (raster, point) resolves to a Float64 output.
+        let return_type = RsValuePoint { with_band: false }
+            .return_type(&[RASTER, SedonaType::Wkb(Edges::Planar, lnglat())])
             .unwrap();
         assert_eq!(return_type, Some(SedonaType::Arrow(DataType::Float64)));
     }

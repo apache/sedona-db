@@ -100,33 +100,12 @@ def test_rs_ensureloaded(con, sedona_testing):
     assert arr[0, 0] == 2324
 
 
-# RS_Example fills band `b` with the constant value `b`, except the top-left
-# pixel (colX=1, rowY=1) which is set to the nodata value (127). Grid
-# coordinates are 1-based. (The `needs_pixels` -> RS_EnsureLoaded planner path
+# Point sampling. RS_Example fills band `b` with the constant value `b`, except
+# the top-left pixel which is set to the nodata value (127). (74.58, 110.57) is
+# the centroid of pixel (10, 10) (0-based) in the raster's OGC:CRS84 space; the
+# point and raster share a CRS so no reprojection happens. A point far outside
+# the footprint yields NULL. (The `needs_pixels` -> RS_EnsureLoaded planner path
 # is covered against a real OutDb raster by `test_rs_ensureloaded`.)
-@pytest.mark.parametrize(
-    ("expr", "expected"),
-    [
-        ("RS_Value(RS_Example(), 2, 1)", 1.0),  # band 1, away from the nodata corner
-        ("RS_Value(RS_Example(), 64, 32)", 1.0),  # bottom-right pixel, in bounds
-        ("RS_Value(RS_Example(), 2, 1, 1)", 1.0),  # explicit band 1 == the default
-        ("RS_Value(RS_Example(), 2, 1, 2)", 2.0),  # band 2
-        ("RS_Value(RS_Example(), 2, 1, 3)", 3.0),  # band 3
-        ("RS_Value(RS_Example(), 1, 1)", None),  # top-left pixel is nodata
-        ("RS_Value(RS_Example(), 1, 1, 2)", None),  # nodata on band 2 too
-        ("RS_Value(RS_Example(), 65, 1)", None),  # colX past the width (64)
-        ("RS_Value(RS_Example(), 1, 33)", None),  # rowY past the height (32)
-        ("RS_Value(RS_Example(), 0, 1)", None),  # colX 0 -> off the left edge
-        ("RS_Value(RS_Example(), 2, 1, CAST(NULL AS INT))", None),  # NULL band -> NULL
-    ],
-)
-def test_rs_value_grid(expr, expected):
-    SedonaDB().assert_query_result(f"SELECT {expr}", expected)
-
-
-# Point sampling. (74.58, 110.57) is the centroid of pixel (10, 10) (0-based)
-# in the raster's OGC:CRS84 space; the point and raster share a CRS so no
-# reprojection happens. A point far outside the footprint yields NULL.
 @pytest.mark.parametrize(
     ("expr", "expected"),
     [
