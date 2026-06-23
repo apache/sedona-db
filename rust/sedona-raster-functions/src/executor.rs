@@ -47,7 +47,7 @@ pub struct RasterExecutor<'a, 'b> {
 // operations are expensive relative to per-element dispatch overhead, the cost
 // of matching on each access is negligible in practice.
 #[derive(Clone)]
-enum ItemWkbAccessor {
+pub(crate) enum ItemWkbAccessor {
     Binary(BinaryArray),
     BinaryView(BinaryViewArray),
 }
@@ -76,7 +76,7 @@ impl ItemWkbAccessor {
 
 // Same enum-dispatch rationale as `ItemWkbAccessor` above: the per-element
 // match cost is dwarfed by the raster and CRS operations performed on each row.
-enum GeomWkbCrsAccessor {
+pub(crate) enum GeomWkbCrsAccessor {
     WkbArray {
         wkb: ItemWkbAccessor,
         static_crs: Crs,
@@ -104,7 +104,7 @@ enum GeomWkbCrsAccessor {
 
 impl GeomWkbCrsAccessor {
     #[inline]
-    fn get(&mut self, i: usize) -> Result<(Option<&[u8]>, CrsRef<'_>)> {
+    pub(crate) fn get(&mut self, i: usize) -> Result<(Option<&[u8]>, CrsRef<'_>)> {
         match self {
             Self::Null => Ok((None, None)),
             Self::WkbArray { wkb, static_crs } => {
@@ -527,7 +527,10 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
         }
     }
 
-    fn make_geom_wkb_crs_accessor(&self, arg_index: usize) -> Result<GeomWkbCrsAccessor> {
+    pub(crate) fn make_geom_wkb_crs_accessor(
+        &self,
+        arg_index: usize,
+    ) -> Result<GeomWkbCrsAccessor> {
         let sedona_type = self
             .arg_types
             .get(arg_index)

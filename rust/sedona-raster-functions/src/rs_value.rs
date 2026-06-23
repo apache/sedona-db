@@ -34,17 +34,18 @@
 
 use std::sync::Arc;
 
-use arrow_array::{builder::Float64Builder, ArrayRef};
+use arrow_array::{builder::Float64Builder, ArrayRef, Float64Array, StructArray};
 use arrow_schema::DataType;
 use datafusion_common::cast::as_int32_array;
-use datafusion_common::{exec_datafusion_err, exec_err, Result};
+use datafusion_common::{exec_datafusion_err, exec_err, Result, ScalarValue};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::types::GeometryTypeId;
 use sedona_geometry::wkb_header::WkbHeader;
 use sedona_proj::transform::with_global_proj_engine;
 use sedona_raster::affine_transformation::AffineMatrix;
-use sedona_raster::traits::{nodata_bytes_to_f64_lossless, RasterRef};
+use sedona_raster::array::RasterStructArray;
+use sedona_raster::traits::{nodata_bytes_to_f64_lossless, NdBuffer, RasterRef};
 use sedona_schema::crs::CrsRef;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
@@ -91,6 +92,16 @@ impl SedonaScalarKernel for RsValuePoint {
         arg_types: &[SedonaType],
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
+        // Fast path: a constant (scalar) raster sampled with the default band
+        // lets us resolve the band buffer, affine transform, and CRS once for
+        // the whole batch instead of per point. This is the common
+        // RS_Value(raster_expr, point_column) shape.
+        if !self.with_band {
+            if let ColumnarValue::Scalar(ScalarValue::Struct(raster_struct)) = &args[0] {
+                return self.invoke_scalar_default_band(arg_types, args, raster_struct.as_ref());
+            }
+        }
+
         let executor = RasterExecutor::new(arg_types, args);
         let num_iterations = executor.num_iterations();
         let mut builder = Float64Builder::with_capacity(num_iterations);
@@ -171,6 +182,101 @@ impl SedonaScalarKernel for RsValuePoint {
         })?;
 
         executor.finish(Arc::new(builder.finish()))
+    }
+}
+
+impl RsValuePoint {
+    /// Optimized path for a constant (scalar) raster sampled with the default
+    /// band: the band buffer, affine transform, and raster CRS are resolved
+    /// once for the whole batch, then a selection vector drives a tight sample
+    /// loop. Behaviour matches the general path exactly.
+    fn invoke_scalar_default_band(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+        raster_struct: &StructArray,
+    ) -> Result<ColumnarValue> {
+        let executor = RasterExecutor::new(arg_types, args);
+        let n = executor.num_iterations();
+
+        let rasters = RasterStructArray::try_new(raster_struct)?;
+        if rasters.is_null(0) {
+            // A NULL raster makes every output NULL.
+            return executor.finish(Arc::new(Float64Array::from(vec![None; n])));
+        }
+        let raster = rasters.get(0)?;
+
+        // Resolve the default band (1) and its buffer/nodata once.
+        let band = raster
+            .bands()
+            .band(1)
+            .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
+        if !band.is_spatial_2d() {
+            return exec_err!("RS_Value supports 2-D rasters only; band is not a 2-D (y, x) grid");
+        }
+        let buffer = band
+            .nd_buffer()
+            .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
+        let nodata = band
+            .nodata_as_f64()
+            .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
+
+        // Affine transform and raster CRS, resolved once for all points.
+        let affine = AffineMatrix::from_metadata(&raster.metadata());
+        let raster_crs = resolve_crs(raster.crs())?;
+
+        let mut geom = executor.make_geom_wkb_crs_accessor(1)?;
+
+        // Phase 1 — selection vector: collect (row, x, y) for the points worth
+        // sampling (non-null, non-empty Point), reprojected into the raster CRS.
+        // Null/empty points are left out and stay NULL in the output.
+        let mut selection: Vec<(usize, f64, f64)> = Vec::with_capacity(n);
+        with_global_proj_engine(|engine| {
+            for i in 0..n {
+                let (wkb_opt, point_crs) = geom.get(i)?;
+                let Some(point_wkb) = wkb_opt else {
+                    continue;
+                };
+                let header = WkbHeader::try_new(point_wkb)
+                    .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
+                if header
+                    .geometry_type_id()
+                    .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?
+                    != GeometryTypeId::Point
+                {
+                    return exec_err!("RS_Value expects a Point geometry");
+                }
+                if header
+                    .is_empty()
+                    .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?
+                {
+                    continue;
+                }
+                let (x, y) =
+                    match reproject_point(point_wkb, point_crs, raster_crs.as_deref(), engine)? {
+                        Some(reprojected) => WkbHeader::try_new(&reprojected)
+                            .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?
+                            .first_xy(),
+                        None => header.first_xy(),
+                    };
+                selection.push((i, x, y));
+            }
+            Ok(())
+        })?;
+
+        // Phase 2 — sample each selected point from the hoisted band buffer.
+        let mut out: Vec<Option<f64>> = vec![None; n];
+        for (i, x, y) in selection {
+            let (raster_x, raster_y) = affine
+                .inv_transform(x, y)
+                .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
+            // Saturating `f64 -> i64` cast (never panics); the bounds check in
+            // `read_pixel` rejects NaN/±∞ indices as NULL.
+            let (col, row) = (raster_x.floor() as i64, raster_y.floor() as i64);
+            out[i] = read_pixel(&buffer, nodata, col, row)?;
+        }
+
+        executor.finish(Arc::new(Float64Array::from(out)))
     }
 }
 
@@ -256,6 +362,17 @@ fn sample_pixel(
     let buffer = band
         .nd_buffer()
         .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
+    let nodata = band
+        .nodata_as_f64()
+        .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
+    read_pixel(&buffer, nodata, col, row)
+}
+
+/// Read pixel `(col, row)` from an already-resolved band buffer and nodata
+/// value. Returns `None` for an out-of-bounds pixel or one that equals nodata.
+/// Hoisting the band resolution out of this function lets callers sample many
+/// points from one buffer without re-resolving per point.
+fn read_pixel(buffer: &NdBuffer, nodata: Option<f64>, col: i64, row: i64) -> Result<Option<f64>> {
     let (height, width) = (buffer.shape[0], buffer.shape[1]);
     if row < 0 || row >= height || col < 0 || col >= width {
         return Ok(None);
@@ -290,10 +407,7 @@ fn sample_pixel(
     let value = nodata_bytes_to_f64_lossless(bytes, &buffer.data_type)
         .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
 
-    if let Some(nodata) = band
-        .nodata_as_f64()
-        .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?
-    {
+    if let Some(nodata) = nodata {
         if value == nodata || (value.is_nan() && nodata.is_nan()) {
             return Ok(None);
         }
@@ -529,5 +643,38 @@ mod tests {
             .unwrap();
         let arr = result.as_any().downcast_ref::<Float64Array>().unwrap();
         assert_eq!(arr.value(0), 1.0);
+    }
+
+    #[test]
+    fn scalar_raster_samples_via_fast_path() {
+        // A constant (scalar) raster with the default band takes the optimized
+        // hoisted path; verify it samples the right pixel and rejects
+        // out-of-bounds, matching the general (array-raster) path.
+        let udf: ScalarUDF = rs_value_udf().into();
+        let geom_type = SedonaType::Wkb(Edges::Planar, lnglat());
+        let tester = ScalarUdfTester::new(udf, vec![RASTER, geom_type.clone()]);
+
+        // North-up 2x2 raster, origin (0, 10), 1x1 pixels; row-major [1,2 / 3,4].
+        let raster = RasterSpec::d2(2, 2)
+            .band_values(&[1u8, 2, 3, 4])
+            .transform([0.0, 1.0, 0.0, 10.0, 0.0, -1.0])
+            .build();
+
+        let sample = |wkt: &str| -> Option<f64> {
+            let geoms = create_geom_array(&[Some(wkt)], &geom_type);
+            let result = tester
+                .invoke(vec![
+                    ColumnarValue::Scalar(ScalarValue::Struct(Arc::new(raster.clone()))),
+                    ColumnarValue::Array(geoms),
+                ])
+                .unwrap();
+            let arr = result.into_array(1).unwrap();
+            let arr = arr.as_any().downcast_ref::<Float64Array>().unwrap();
+            (!arr.is_null(0)).then(|| arr.value(0))
+        };
+
+        assert_eq!(sample("POINT (0.5 9.5)"), Some(1.0)); // pixel (0, 0)
+        assert_eq!(sample("POINT (1.5 8.5)"), Some(4.0)); // pixel (1, 1)
+        assert_eq!(sample("POINT (100 100)"), None); // outside the footprint
     }
 }
