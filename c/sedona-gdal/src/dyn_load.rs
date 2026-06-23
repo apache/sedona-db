@@ -52,10 +52,13 @@ macro_rules! load_fn {
     };
 }
 
-/// Try to load a symbol under one of several names (e.g. for C++ mangled symbols).
-/// Writes the first successful match into `$api.$field`. Returns an error only if
-/// *none* of the names resolve.
-macro_rules! load_fn_any {
+/// Try to load a symbol under one of several names (e.g. for C++ mangled
+/// symbols) and return whether a match was found, writing the first successful
+/// match into `$api.$field`. Unlike [`load_fn!`], it does not error when none
+/// resolve — used when a symbol has acceptable alternatives whose presence
+/// varies by GDAL version (e.g. the public `MEMCreate` C API vs. the mangled
+/// `MEMDataset::Create`), so the caller decides what counts as a fatal miss.
+macro_rules! try_load_fn_any {
     ($lib:expr, $api:expr, $field:ident, [$($name:expr),+ $(,)?]) => {{
         let mut found = false;
         $(
@@ -70,12 +73,7 @@ macro_rules! load_fn_any {
                 }
             }
         )+
-        if !found {
-            return Err(GdalInitLibraryError::LibraryError(format!(
-                "Failed to resolve {} under any known mangled name",
-                stringify!($field),
-            )));
-        }
+        found
     }};
 }
 
@@ -184,20 +182,36 @@ fn load_all_symbols(lib: &Library, api: &mut SedonaGdalApi) -> Result<(), GdalIn
     // --- Data Type ---
     load_fn!(lib, api, GDALGetDataTypeSizeBytes);
 
-    // --- C++ API: MEMDataset::Create (resolved via mangled symbol names) ---
-    // The symbol is mangled differently on Linux, macOS, and MSVC, and the
-    // `char**` vs `const char**` parameter also affects the mangling.
-    load_fn_any!(
+    // --- MEM dataset Create ---
+    // Prefer the stable public C API `MEMCreate`, which GDAL added upstream for
+    // exactly this purpose. It has no `pszFilename` parameter, so it uses its own
+    // signature and call path (see `create_mem_dataset`). Fall back to the C++
+    // `MEMDataset::Create` mangled symbol for GDAL builds that predate the
+    // `MEMCreate` export — that mangled name varies by platform *and* by the
+    // `char**` vs `char const* const*` parameter, so relying on it alone
+    // re-breaks whenever the mangling changes (as it did in GDAL 3.13).
+    // At least one of the two must resolve.
+    let have_mem_create = try_load_fn_any!(lib, api, MEMCreate, [b"MEMCreate\0"]);
+    let have_mem_dataset_create = try_load_fn_any!(
         lib,
         api,
         MEMDatasetCreate,
         [
-            // Linux and macOS
+            // Linux/macOS, GDAL <= 3.12 (last param `char**`).
             b"_ZN10MEMDataset6CreateEPKciii12GDALDataTypePPc\0",
-            // MSVC
+            // Linux/macOS, GDAL >= 3.13 (last param `char const* const*`).
+            b"_ZN10MEMDataset6CreateEPKciii12GDALDataTypePKS1_\0",
+            // MSVC.
             b"?Create@MEMDataset@@SAPEAV1@PEBDHHHW4GDALDataType@@PEAPEAD@Z\0",
         ]
     );
+    if !have_mem_create && !have_mem_dataset_create {
+        return Err(GdalInitLibraryError::LibraryError(
+            "Failed to resolve a MEM dataset Create entry point (tried the \
+             MEMCreate C API and the MEMDataset::Create mangled names)"
+                .to_string(),
+        ));
+    }
 
     Ok(())
 }

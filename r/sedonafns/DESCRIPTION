@@ -7,7 +7,6 @@ Description: Provides function definitions and documentation for use in 'SedonaD
 License: Apache License (>= 2)
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.3.3
 Depends: R (>= 4.1.0)
 Suggests:
     sedonadb,
@@ -20,3 +19,4 @@ Config/Needs/build:
     roxygen2,
     yaml
 Config/testthat/edition: 3
+Config/roxygen2/version: 8.0.0

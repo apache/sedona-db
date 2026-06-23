@@ -37,6 +37,9 @@ Sets a CRS to a geometry/geography. This is metadata-only - no coordinates are t
 
 This is different from ST_Transform which actually transforms coordinates.
 
+`target_crs` accepts an authority code (e.g. `'EPSG:4326'`), PROJJSON, or WKT.
+It is stored as given and read back unchanged by `ST_CRS`.
+
 ## Examples
 
 ```sql

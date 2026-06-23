@@ -21,6 +21,7 @@ use crate::logical_plan_node::SpatialJoinPlanNode;
 use crate::spatial_expr_utils::{
     collect_spatial_predicate_names, find_knn_query_side, KNNJoinQuerySide,
 };
+use crate::wrap_async_udf::WrapAsyncUdfRule;
 use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion_common::tree_node::Transformed;
 use datafusion_common::{NullEquality, Result};
@@ -95,12 +96,13 @@ pub fn register_spatial_join_logical_optimizer(
     Ok(session_state_builder)
 }
 
-/// Register the `RS_EnsureLoaded`-wrapping logical optimizer rule.
+/// Register the `RS_EnsureLoaded`-wrapping logical optimizer rule and the
+/// DF-22662 workaround rule that preserves async UDF return-field metadata.
 ///
-/// Inserts [`EnsureLoadedOptimizerRule`] immediately before DataFusion's
-/// `common_sub_expression_eliminate` so that, in the same optimizer
-/// pass, CSE can dedupe the `RS_EnsureLoaded(col)` wraps this rule
-/// injects across multiple `needs_bytes` UDFs sharing a raster column.
+/// Inserts [`EnsureLoadedOptimizerRule`] and [`WrapAsyncUdfRule`] immediately
+/// before DataFusion's `common_sub_expression_eliminate` so that, in the same
+/// optimizer pass, CSE can dedupe the `RS_EnsureLoaded(col)` wraps and the
+/// `sd_restore_metadata(...)` wrappers this rule injects.
 /// Falls back to appending if CSE isn't present.
 pub fn register_ensure_loaded_optimizer(
     mut session_state_builder: SessionStateBuilder,
@@ -109,14 +111,27 @@ pub fn register_ensure_loaded_optimizer(
         .optimizer()
         .get_or_insert_with(Optimizer::new);
 
-    let rule = Arc::new(EnsureLoadedOptimizerRule);
+    let ensure_loaded_rule = Arc::new(EnsureLoadedOptimizerRule);
+    // DF-22662: wrap async UDFs with sd_restore_metadata to preserve field metadata.
+    let wrap_async_rule = Arc::new(WrapAsyncUdfRule);
+
     match optimizer
         .rules
         .iter()
         .position(|r| r.name() == "common_sub_expression_eliminate")
     {
-        Some(cse_pos) => optimizer.rules.insert(cse_pos, rule),
-        None => optimizer.rules.push(rule),
+        Some(cse_pos) => {
+            // Insert in reverse order so the effective order is:
+            // 1. EnsureLoadedOptimizerRule (wraps raster args with rs_ensureloaded)
+            // 2. WrapAsyncUdfRule (wraps async UDFs with sd_restore_metadata)
+            // 3. CSE (dedupes common subexpressions)
+            optimizer.rules.insert(cse_pos, wrap_async_rule);
+            optimizer.rules.insert(cse_pos, ensure_loaded_rule);
+        }
+        None => {
+            optimizer.rules.push(ensure_loaded_rule);
+            optimizer.rules.push(wrap_async_rule);
+        }
     }
 
     Ok(session_state_builder)

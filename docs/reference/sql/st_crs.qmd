@@ -26,7 +26,8 @@ kernels:
 ## Description
 
 Returns the CRS (Coordinate Reference System) string associated with a geometry
-or geography. This is abbreviated as an authority/code if possible (e.g., `'EPSG:3857'`).
+or geography. Whether it was set as an authority code (e.g. `'EPSG:3857'`),
+PROJJSON, or WKT, the CRS is returned in the same form it was set.
 
 ## Examples
 

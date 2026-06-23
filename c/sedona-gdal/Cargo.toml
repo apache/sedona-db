@@ -37,6 +37,9 @@ thiserror = { workspace = true }
 [features]
 default = ["gdal-sys"]
 gdal-sys = ["dep:gdal-sys"]
+# Enable bindgen for GDAL versions without pre-built bindings (e.g., GDAL 3.13+).
+# Use: cargo build --features bindgen
+bindgen = ["gdal-sys/bindgen"]
 
 [dev-dependencies]
 sedona-testing = { workspace = true }

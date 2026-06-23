@@ -477,9 +477,27 @@ class(`InternalDataFrame`) <- c(
   }
 }
 
+`SedonaDBExpr_is_not_null` <- function(self) {
+  function() {
+    .savvy_wrap_SedonaDBExpr(.Call(savvy_SedonaDBExpr_is_not_null__impl, `self`))
+  }
+}
+
+`SedonaDBExpr_is_null` <- function(self) {
+  function() {
+    .savvy_wrap_SedonaDBExpr(.Call(savvy_SedonaDBExpr_is_null__impl, `self`))
+  }
+}
+
 `SedonaDBExpr_negate` <- function(self) {
   function() {
     .savvy_wrap_SedonaDBExpr(.Call(savvy_SedonaDBExpr_negate__impl, `self`))
+  }
+}
+
+`SedonaDBExpr_not` <- function(self) {
+  function() {
+    .savvy_wrap_SedonaDBExpr(.Call(savvy_SedonaDBExpr_not__impl, `self`))
   }
 }
 
@@ -508,7 +526,10 @@ class(`InternalDataFrame`) <- c(
   e$`cast` <- `SedonaDBExpr_cast`(ptr)
   e$`debug_string` <- `SedonaDBExpr_debug_string`(ptr)
   e$`display` <- `SedonaDBExpr_display`(ptr)
+  e$`is_not_null` <- `SedonaDBExpr_is_not_null`(ptr)
+  e$`is_null` <- `SedonaDBExpr_is_null`(ptr)
   e$`negate` <- `SedonaDBExpr_negate`(ptr)
+  e$`not` <- `SedonaDBExpr_not`(ptr)
   e$`parse_binary` <- `SedonaDBExpr_parse_binary`(ptr)
   e$`qualified_name` <- `SedonaDBExpr_qualified_name`(ptr)
   e$`variant_name` <- `SedonaDBExpr_variant_name`(ptr)

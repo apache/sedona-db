@@ -230,7 +230,7 @@ test_rust() {
   show_header "Build and test Rust libraries"
 
   pushd "${SEDONADB_SOURCE_DIR}"
-  cargo test --workspace --exclude sedona-s2geography
+  cargo test --workspace --exclude sedona-s2geography ${SEDONADB_CARGO_TEST_ARGS:-}
   popd
 }
 
@@ -259,13 +259,17 @@ test_python() {
 
   pushd "${SEDONADB_SOURCE_DIR}/python"
 
-  show_info "Installing Python package"
+  show_info "Installing Python packages"
   rm -rf "${SEDONADB_TMPDIR}/python"
 
+  pip install "sedonadb-expr/[test]" -v
   pip install "sedonadb/[test]" -v
+  pip install "sedonadb-zarr/[test]" -v
 
-  show_info "Testing Python package"
-  python -m pytest -vv
+  show_info "Testing Python packages"
+  python -m pytest -vv sedonadb-expr
+  python -m pytest -vv sedonadb
+  python -m pytest -vv sedonadb-zarr
 
   popd
 }

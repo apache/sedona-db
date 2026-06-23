@@ -57,6 +57,7 @@
 //! [`GdalLoader`] from `SedonaContext::new_from_context` and registers
 //! it during session bootstrap.
 
+use std::iter::zip;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -67,6 +68,7 @@ use datafusion_common::{DataFusionError, Result as DFResult};
 use sedona_gdal::raster::rasterband::RasterBand;
 use sedona_raster::raster_loader::{AsyncRasterLoader, RasterLoadRequest, RasterLoadResult};
 use sedona_raster::traits::is_spatial_dim_pair;
+use sedona_schema::raster::BandDataType;
 
 use crate::gdal_common::{convert_gdal_err, gdal_to_band_data_type, with_gdal};
 use crate::gdal_dataset_provider::thread_local_cache;
@@ -130,7 +132,40 @@ impl AsyncRasterLoader for GdalLoader {
         true
     }
 
-    async fn load(&self, req: &RasterLoadRequest<'_>) -> Result<RasterLoadResult, ArrowError> {
+    async fn load(&self, reqs: &[&RasterLoadRequest]) -> Result<Vec<RasterLoadResult>, ArrowError> {
+        let load_requests = reqs
+            .iter()
+            .map(|req| self.validate_one(req))
+            .collect::<Result<Vec<_>, ArrowError>>()?;
+
+        let buffers = self.load_all(load_requests).await?;
+        if buffers.len() != reqs.len() {
+            return Err(ArrowError::InvalidArgumentError(format!(
+                "GDAL loader returned {} buffer(s) for {} request(s)",
+                buffers.len(),
+                reqs.len()
+            )));
+        }
+
+        let results = zip(buffers, reqs)
+            .map(|(buf, req)| RasterLoadResult::unresolved(buf, req))
+            .collect::<Vec<_>>();
+        Ok(results)
+    }
+}
+
+struct OwnedGdalLoadRequest {
+    uri: String,
+    height: usize,
+    width: usize,
+    expected_bytes: usize,
+    byte_size: usize,
+    expected_dtype: BandDataType,
+}
+
+impl GdalLoader {
+    /// Validate one request and return the information we'll queue onto the worker
+    fn validate_one(&self, req: &RasterLoadRequest) -> Result<OwnedGdalLoadRequest, ArrowError> {
         // Validate request shape synchronously, before spawning a blocking
         // task — these are programming errors, no point queueing them
         // onto a worker.
@@ -140,6 +175,7 @@ impl AsyncRasterLoader for GdalLoader {
                 req.source_shape.len()
             )));
         }
+
         if req.dim_names.len() != 2 || !is_spatial_dim_pair(req.dim_names[0], req.dim_names[1]) {
             return Err(ArrowError::InvalidArgumentError(format!(
                 "GDAL raster loader requires a 2-D spatial dim pair \
@@ -147,6 +183,7 @@ impl AsyncRasterLoader for GdalLoader {
                 req.dim_names
             )));
         }
+
         // The Y-like (row) axis is source_shape[0], the X-like (column) axis
         // is source_shape[1] — guaranteed by the dim-pair check above.
         let height = usize::try_from(req.source_shape[0]).map_err(|_| {
@@ -155,12 +192,14 @@ impl AsyncRasterLoader for GdalLoader {
                 req.source_shape[0]
             ))
         })?;
+
         let width = usize::try_from(req.source_shape[1]).map_err(|_| {
             ArrowError::InvalidArgumentError(format!(
                 "GDAL OutDb source_shape[1]={} exceeds usize::MAX",
                 req.source_shape[1]
             ))
         })?;
+
         let byte_size = req.data_type.byte_size();
 
         // Byte-cap validation: compute Π source_shape × byte_size in u64
@@ -182,13 +221,18 @@ impl AsyncRasterLoader for GdalLoader {
                 expected_bytes_u64, MAX_OUTDB_LOAD_BYTES
             )));
         }
-        let expected_bytes = expected_bytes_u64 as usize;
 
-        // Take owned copies for the spawn_blocking closure (the closure
-        // must be `'static`).
-        let uri = req.uri.to_string();
-        let expected_dtype = req.data_type;
+        Ok(OwnedGdalLoadRequest {
+            uri: req.uri.to_string(),
+            height,
+            width,
+            expected_bytes: expected_bytes_u64 as usize,
+            byte_size,
+            expected_dtype: req.data_type,
+        })
+    }
 
+    async fn load_all(&self, reqs: Vec<OwnedGdalLoadRequest>) -> Result<Vec<Buffer>, ArrowError> {
         // Cancellation plumbing: the guard lives in this async fn's
         // frame. On normal completion `_guard` drops after the await
         // returns, flipping the flag on an already-finished blocking
@@ -199,40 +243,52 @@ impl AsyncRasterLoader for GdalLoader {
         let cancel: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
         let _guard = CancelOnDrop(Arc::clone(&cancel));
 
-        let buffer = tokio::task::spawn_blocking({
+        let buffers = tokio::task::spawn_blocking({
             let cancel = Arc::clone(&cancel);
-            move || -> Result<Buffer, ArrowError> {
+            move || -> Result<Vec<Buffer>, ArrowError> {
                 with_gdal(|gdal| {
-                    // `#band=N` fragment, with N defaulting to 1 if absent.
-                    let (path, band_num) = parse_outdb_source(&uri)?;
-                    let cache = thread_local_cache()?;
-                    let dataset = cache.get_or_create_outdb_source(gdal, &path, None)?;
-                    let band = dataset
-                        .rasterband(band_num as usize)
-                        .map_err(convert_gdal_err)?;
+                    let mut buffers = Vec::new();
+                    for req in reqs {
+                        // `#band=N` fragment, with N defaulting to 1 if absent.
+                        let (path, band_num) = parse_outdb_source(&req.uri)?;
+                        let cache = thread_local_cache()?;
+                        let dataset = cache.get_or_create_outdb_source(gdal, &path, None)?;
+                        let band = dataset
+                            .rasterband(band_num as usize)
+                            .map_err(convert_gdal_err)?;
 
-                    // Verify the file's pixel type matches the band metadata's
-                    // claim BEFORE reading. The bytes-out path doesn't convert;
-                    // a mismatch would produce a 2x-or-N/2 byte count and the
-                    // size check in `RS_EnsureLoaded` would mis-blame the
-                    // loader for size rather than naming the dtype mismatch.
-                    // Catch it cleanly here.
-                    let file_dtype = gdal_to_band_data_type(band.band_type())?;
-                    if file_dtype != expected_dtype {
-                        return sedona_common::sedona_internal_err!(
-                            "GDAL OutDb band metadata claims {:?} but file {} band {} is {:?}",
-                            expected_dtype,
-                            uri,
-                            band_num,
-                            file_dtype
-                        );
+                        // Verify the file's pixel type matches the band metadata's
+                        // claim BEFORE reading. The bytes-out path doesn't convert;
+                        // a mismatch would produce a 2x-or-N/2 byte count and the
+                        // size check in `RS_EnsureLoaded` would mis-blame the
+                        // loader for size rather than naming the dtype mismatch.
+                        // Catch it cleanly here.
+                        let file_dtype = gdal_to_band_data_type(band.band_type())?;
+                        if file_dtype != req.expected_dtype {
+                            return sedona_common::sedona_internal_err!(
+                                "GDAL OutDb band metadata claims {:?} but file {} band {} is {:?}",
+                                req.expected_dtype,
+                                req.uri,
+                                band_num,
+                                file_dtype
+                            );
+                        }
+
+                        // Pre-allocate the output buffer once; each strip read
+                        // writes into a contiguous slice.
+                        let mut output = vec![0u8; req.expected_bytes];
+                        read_band_blockwise(
+                            &band,
+                            &mut output,
+                            req.width,
+                            req.height,
+                            req.byte_size,
+                            &cancel,
+                        )?;
+                        buffers.push(Buffer::from_vec(output));
                     }
 
-                    // Pre-allocate the output buffer once; each strip read
-                    // writes into a contiguous slice.
-                    let mut output = vec![0u8; expected_bytes];
-                    read_band_blockwise(&band, &mut output, width, height, byte_size, &cancel)?;
-                    Ok(Buffer::from_vec(output))
+                    Ok(buffers)
                 })
                 .map_err(|e| ArrowError::ExternalError(Box::new(e)))
             }
@@ -244,7 +300,7 @@ impl AsyncRasterLoader for GdalLoader {
             )))
         })??;
 
-        Ok(RasterLoadResult::unresolved(buffer, req))
+        Ok(buffers)
     }
 }
 
@@ -382,9 +438,9 @@ mod tests {
             data_type: BandDataType::UInt8,
         };
 
-        let result = loader.load(&req).await.unwrap();
-        assert_eq!(result.bytes.len(), 6);
-        assert_eq!(result.bytes.as_slice(), &[0u8, 1, 2, 3, 4, 5]);
+        let result = loader.load(&[&req]).await.unwrap();
+        assert_eq!(result[0].bytes.len(), 6);
+        assert_eq!(result[0].bytes.as_slice(), &[0u8, 1, 2, 3, 4, 5]);
     }
 
     #[tokio::test]
@@ -401,8 +457,8 @@ mod tests {
             view: &[],
             data_type: BandDataType::UInt8,
         };
-        let result = loader.load(&req).await.unwrap();
-        assert_eq!(result.bytes.len(), 6);
+        let result = loader.load(&[&req]).await.unwrap();
+        assert_eq!(result[0].bytes.len(), 6);
     }
 
     #[tokio::test]
@@ -415,7 +471,7 @@ mod tests {
             view: &[],
             data_type: BandDataType::UInt8,
         };
-        let err = loader.load(&req).await.unwrap_err();
+        let err = loader.load(&[&req]).await.unwrap_err();
         assert!(
             err.to_string().contains("2-D"),
             "expected 2-D rejection diagnostic, got: {err}"
@@ -432,7 +488,7 @@ mod tests {
             view: &[],
             data_type: BandDataType::UInt8,
         };
-        let err = loader.load(&req).await.unwrap_err();
+        let err = loader.load(&[&req]).await.unwrap_err();
         assert!(
             err.to_string().contains("spatial dim pair"),
             "expected spatial-dim-pair rejection diagnostic, got: {err}"
@@ -455,8 +511,8 @@ mod tests {
         };
         // lat/lon is a recognized spatial pair, so the request is accepted and
         // the GeoTIFF is read just like a ["y", "x"] band.
-        let result = loader.load(&req).await.unwrap();
-        assert_eq!(result.bytes.len(), 6);
+        let result = loader.load(&[&req]).await.unwrap();
+        assert_eq!(result[0].bytes.len(), 6);
     }
 
     #[tokio::test]
@@ -474,7 +530,7 @@ mod tests {
             // clear dtype-mismatch message, not garbled bytes.
             data_type: BandDataType::Int16,
         };
-        let err = loader.load(&req).await.unwrap_err();
+        let err = loader.load(&[&req]).await.unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("metadata claims") && (msg.contains("UInt8") || msg.contains("Int16")),
@@ -492,7 +548,7 @@ mod tests {
             view: &[],
             data_type: BandDataType::UInt8,
         };
-        let err = loader.load(&req).await.unwrap_err();
+        let err = loader.load(&[&req]).await.unwrap_err();
         // GDAL's "no such file" error message wraps through our convert.
         assert!(err.to_string().to_lowercase().contains("nonexistent"));
     }
@@ -512,7 +568,7 @@ mod tests {
             view: &[],
             data_type: BandDataType::UInt8,
         };
-        let err = loader.load(&req).await.unwrap_err();
+        let err = loader.load(&[&req]).await.unwrap_err();
         let msg = err.to_string();
         // GDAL surfaces this as a band-index error; just verify the
         // dispatch went through and the error was propagated, not the
@@ -536,7 +592,7 @@ mod tests {
             view: &[],
             data_type: BandDataType::Float32,
         };
-        let err = loader.load(&req).await.unwrap_err();
+        let err = loader.load(&[&req]).await.unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("MAX_OUTDB_LOAD_BYTES"),
@@ -560,9 +616,9 @@ mod tests {
             view: &[],
             data_type: BandDataType::UInt8,
         };
-        let result = loader.load(&req).await.unwrap();
+        let result = loader.load(&[&req]).await.unwrap();
         let expected: Vec<u8> = (0..16 * 64).map(|i| (i % 251) as u8).collect();
-        assert_eq!(result.bytes.as_slice(), expected.as_slice());
+        assert_eq!(result[0].bytes.as_slice(), expected.as_slice());
     }
 
     /// Pre-arm the cancellation flag, then drive `read_band_blockwise`

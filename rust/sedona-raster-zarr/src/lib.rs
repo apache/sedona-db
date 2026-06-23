@@ -27,6 +27,7 @@
 //!
 //! Local filesystem stores only — `file://` URIs or bare paths.
 
+mod coords;
 mod dtype;
 mod geozarr;
 mod loader;

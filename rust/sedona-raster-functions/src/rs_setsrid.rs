@@ -28,7 +28,7 @@ use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::transform::CrsEngine;
-use sedona_schema::crs::{CachedCrsNormalization, CachedSRIDToCrs};
+use sedona_schema::crs::{normalize_crs, CachedSRIDToCrs};
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;
 use sedona_schema::raster::{raster_indices, RasterSchema};
@@ -140,7 +140,7 @@ impl SedonaScalarKernel for RsSetCrs {
 
         let input_nulls = extract_input_nulls(crs_arg);
 
-        // Normalize the CRS string(s) — abbreviate PROJJSON to authority:code, map "0" to null
+        // Normalize the CRS string(s) — preserve the full definition, map "0" to null
         let crs_columnar = normalize_crs_columnar(crs_arg, self.engine.as_ref())?;
 
         replace_raster_crs(raster_arg, &crs_columnar, input_nulls)
@@ -323,34 +323,50 @@ fn srid_to_crs_columnar(
 // CRS string normalization
 // ---------------------------------------------------------------------------
 
-/// Normalize a CRS string ColumnarValue — abbreviate PROJJSON to authority:code
-/// where possible, and map "0" to null.
+/// Normalize a CRS string ColumnarValue — preserve the full definition, and
+/// map "0" to null.
 ///
-/// Uses [CachedCrsNormalization] to avoid repeated deserialization of the same CRS
-/// string within a batch.
+/// Handles the scalar and array cases distinctly, because raster batches are
+/// typically high-cardinality in records but low-cardinality in CRS:
+/// - A scalar CRS is normalized once and returned as a single-element array.
+///   `broadcast_string_view` later fans it out to the raster's row count with
+///   `try_append_value_n`, so the (possibly large) definition is stored once
+///   regardless of how many rasters share it.
+/// - An array CRS is normalized per row with a deduplicating builder: a column
+///   of many rasters usually carries only a handful of distinct definitions, so
+///   each is stored once in the shared view buffer and shared across rows.
+///
+/// Parsing is memoized by [deserialize_crs]'s thread-local cache via
+/// [normalize_crs], so repeated definitions in a batch aren't re-parsed.
 fn normalize_crs_columnar(
     crs_arg: &ColumnarValue,
     _maybe_engine: Option<&Arc<dyn CrsEngine + Send + Sync>>,
 ) -> Result<StringViewArray> {
-    let mut crs_norm = CachedCrsNormalization::new();
+    match crs_arg {
+        ColumnarValue::Scalar(scalar) => {
+            let normalized = match scalar.cast_to(&DataType::Utf8)? {
+                ScalarValue::Utf8(Some(crs_str)) => normalize_crs(&crs_str)?,
+                _ => None,
+            };
+            Ok(std::iter::once(normalized).collect())
+        }
+        ColumnarValue::Array(_) => {
+            let string_value = crs_arg.cast_to(&DataType::Utf8View, None)?;
+            let string_array_ref = ColumnarValue::values_to_arrays(&[string_value])?;
+            let string_view_array = as_string_view_array(&string_array_ref[0])?;
 
-    let string_value = crs_arg.cast_to(&DataType::Utf8View, None)?;
-    let string_array_ref = ColumnarValue::values_to_arrays(&[string_value])?;
-    let string_view_array = as_string_view_array(&string_array_ref[0])?;
-
-    let crs_array: StringViewArray = string_view_array
-        .iter()
-        .map(|maybe_crs| -> Result<Option<String>> {
-            if let Some(crs_str) = maybe_crs {
-                let normalized = crs_norm.normalize(crs_str)?;
-                Ok(normalized)
-            } else {
-                Ok(None)
+            let mut builder = StringViewBuilder::with_capacity(string_view_array.len())
+                .with_deduplicate_strings();
+            for maybe_crs in string_view_array.iter() {
+                match maybe_crs {
+                    Some(crs_str) => builder.append_option(normalize_crs(crs_str)?),
+                    None => builder.append_null(),
+                }
             }
-        })
-        .collect::<Result<_>>()?;
 
-    Ok(crs_array)
+            Ok(builder.finish())
+        }
+    }
 }
 
 /// Validate a CRS string
@@ -377,9 +393,84 @@ mod tests {
     use datafusion_expr::ScalarUDF;
     use sedona_raster::array::RasterStructArray;
     use sedona_raster::traits::RasterRef;
+    use sedona_schema::crs::deserialize_crs;
     use sedona_schema::datatypes::RASTER;
     use sedona_testing::rasters::generate_test_rasters;
     use sedona_testing::testers::ScalarUdfTester;
+
+    #[test]
+    fn normalize_crs_columnar_array_dedups_repeats_and_preserves_nulls() {
+        // The array branch: a column of many rasters carries only a few distinct
+        // CRS definitions, so they are deduplicated. A large PROJJSON repeated
+        // across rows, with a null and a short authority code interleaved.
+        const PROJJSON: &str = r#"{"type":"GeographicCRS","name":"NAD83","datum":{"type":"GeodeticReferenceFrame","name":"NAD83","ellipsoid":{"name":"GRS 1980","semi_major_axis":6378137,"inverse_flattening":298.257222101}},"coordinate_system":{"subtype":"ellipsoidal","axis":[{"name":"Geodetic latitude","abbreviation":"Lat","direction":"north","unit":"degree"},{"name":"Geodetic longitude","abbreviation":"Lon","direction":"east","unit":"degree"}]},"id":{"authority":"EPSG","code":4269}}"#;
+        let input = StringViewArray::from(vec![
+            Some(PROJJSON),
+            None,
+            Some(PROJJSON),
+            Some("EPSG:4326"),
+        ]);
+        let out = normalize_crs_columnar(&ColumnarValue::Array(Arc::new(input)), None).unwrap();
+
+        // Null placement matches the input row-for-row.
+        assert_eq!(out.len(), 4);
+        assert!(out.is_null(1), "the null row must be preserved");
+        // The PROJJSON is preserved in full (not collapsed to "EPSG:4269") and
+        // is identical across the two rows that carried it.
+        assert!(out.value(0).contains("GeographicCRS"));
+        assert_ne!(out.value(0), "EPSG:4269");
+        assert_eq!(out.value(0), out.value(2));
+        // EPSG:4326 is kept verbatim (<=12 bytes, inlined into the view).
+        assert_eq!(out.value(3), "EPSG:4326");
+
+        // Deduplication: the repeated PROJJSON lives in the shared data buffer
+        // exactly once, so total buffer bytes equal a single copy.
+        let buffer_bytes: usize = out.data_buffers().iter().map(|b| b.len()).sum();
+        assert_eq!(buffer_bytes, out.value(0).len());
+    }
+
+    #[test]
+    fn normalize_crs_columnar_scalar_normalizes_once() {
+        // The scalar branch: the definition is normalized a single time and
+        // returned as a one-element array; fan-out to the raster row count is
+        // broadcast_string_view's job.
+        const PROJJSON: &str = r#"{"type":"GeographicCRS","name":"NAD83","datum":{"type":"GeodeticReferenceFrame","name":"NAD83","ellipsoid":{"name":"GRS 1980","semi_major_axis":6378137,"inverse_flattening":298.257222101}},"coordinate_system":{"subtype":"ellipsoidal","axis":[{"name":"Geodetic latitude","abbreviation":"Lat","direction":"north","unit":"degree"},{"name":"Geodetic longitude","abbreviation":"Lon","direction":"east","unit":"degree"}]},"id":{"authority":"EPSG","code":4269}}"#;
+        let out = normalize_crs_columnar(
+            &ColumnarValue::Scalar(ScalarValue::Utf8(Some(PROJJSON.to_string()))),
+            None,
+        )
+        .unwrap();
+        assert_eq!(out.len(), 1);
+        // Preserved in full, not collapsed to the embedded "EPSG:4269".
+        assert!(out.value(0).contains("GeographicCRS"));
+        assert_ne!(out.value(0), "EPSG:4269");
+
+        // "0" clears the CRS (maps to null).
+        let out = normalize_crs_columnar(
+            &ColumnarValue::Scalar(ScalarValue::Utf8(Some("0".to_string()))),
+            None,
+        )
+        .unwrap();
+        assert_eq!(out.len(), 1);
+        assert!(out.is_null(0));
+    }
+
+    #[test]
+    fn broadcast_string_view_stores_one_copy_across_many_rows() {
+        // The payoff for the scalar branch: many rasters, one CRS. Fanning the
+        // single definition out to a high row count stores its bytes exactly
+        // once in the shared view buffer (via try_append_value_n).
+        const PROJJSON: &str = r#"{"type":"GeographicCRS","name":"NAD83","datum":{"type":"GeodeticReferenceFrame","name":"NAD83","ellipsoid":{"name":"GRS 1980","semi_major_axis":6378137,"inverse_flattening":298.257222101}},"coordinate_system":{"subtype":"ellipsoidal","axis":[{"name":"Geodetic latitude","abbreviation":"Lat","direction":"north","unit":"degree"},{"name":"Geodetic longitude","abbreviation":"Lon","direction":"east","unit":"degree"}]},"id":{"authority":"EPSG","code":4269}}"#;
+        let scalar = StringViewArray::from(vec![Some(PROJJSON)]);
+        let out = broadcast_string_view(&scalar, 1000).unwrap();
+        let out = out.as_any().downcast_ref::<StringViewArray>().unwrap();
+
+        assert_eq!(out.len(), 1000);
+        assert_eq!(out.value(0), PROJJSON);
+        assert_eq!(out.value(999), PROJJSON);
+        let buffer_bytes: usize = out.data_buffers().iter().map(|b| b.len()).sum();
+        assert_eq!(buffer_bytes, PROJJSON.len());
+    }
 
     #[test]
     fn udf_metadata() {
@@ -405,7 +496,7 @@ mod tests {
 
         // Verify CRS was changed to EPSG:3857
         let result_struct = result.as_any().downcast_ref::<StructArray>().unwrap();
-        let raster_array = RasterStructArray::new(result_struct);
+        let raster_array = RasterStructArray::try_new(result_struct).unwrap();
         assert_eq!(raster_array.len(), 3);
 
         let raster0 = raster_array.get(0).unwrap();
@@ -429,7 +520,7 @@ mod tests {
             .unwrap();
 
         let result_struct = result.as_any().downcast_ref::<StructArray>().unwrap();
-        let raster_array = RasterStructArray::new(result_struct);
+        let raster_array = RasterStructArray::try_new(result_struct).unwrap();
         let raster = raster_array.get(0).unwrap();
         assert_eq!(raster.crs(), Some("OGC:CRS84"));
     }
@@ -443,7 +534,7 @@ mod tests {
         let result = tester.invoke_array_scalar(Arc::new(rasters), 0u32).unwrap();
 
         let result_struct = result.as_any().downcast_ref::<StructArray>().unwrap();
-        let raster_array = RasterStructArray::new(result_struct);
+        let raster_array = RasterStructArray::try_new(result_struct).unwrap();
         let raster = raster_array.get(0).unwrap();
         // CRS should be None (null) for SRID 0
         assert_eq!(raster.crs(), None);
@@ -462,7 +553,7 @@ mod tests {
             .unwrap();
 
         let result_struct = result.as_any().downcast_ref::<StructArray>().unwrap();
-        let raster_array = RasterStructArray::new(result_struct);
+        let raster_array = RasterStructArray::try_new(result_struct).unwrap();
         assert_eq!(raster_array.len(), 3);
 
         let raster0 = raster_array.get(0).unwrap();
@@ -475,7 +566,7 @@ mod tests {
     }
 
     #[test]
-    fn set_crs_epsg_4326_normalizes_to_ogc_crs84() {
+    fn set_crs_epsg_4326_kept_verbatim() {
         let udf: ScalarUDF = rs_set_crs_udf().into();
         let tester = ScalarUdfTester::new(udf, vec![RASTER, SedonaType::Arrow(DataType::Utf8)]);
 
@@ -485,10 +576,15 @@ mod tests {
             .unwrap();
 
         let result_struct = result.as_any().downcast_ref::<StructArray>().unwrap();
-        let raster_array = RasterStructArray::new(result_struct);
+        let raster_array = RasterStructArray::try_new(result_struct).unwrap();
         let raster = raster_array.get(0).unwrap();
-        // EPSG:4326 should normalize to OGC:CRS84
-        assert_eq!(raster.crs(), Some("OGC:CRS84"));
+        // EPSG:4326 is preserved as given (not folded to OGC:CRS84), but the two
+        // still deserialize to equal CRSes.
+        assert_eq!(raster.crs(), Some("EPSG:4326"));
+        assert_eq!(
+            deserialize_crs(raster.crs().unwrap()).unwrap(),
+            deserialize_crs("OGC:CRS84").unwrap()
+        );
     }
 
     #[test]
@@ -500,7 +596,7 @@ mod tests {
         let result = tester.invoke_array_scalar(Arc::new(rasters), "0").unwrap();
 
         let result_struct = result.as_any().downcast_ref::<StructArray>().unwrap();
-        let raster_array = RasterStructArray::new(result_struct);
+        let raster_array = RasterStructArray::try_new(result_struct).unwrap();
         let raster = raster_array.get(0).unwrap();
         assert_eq!(raster.crs(), None);
     }
@@ -511,13 +607,13 @@ mod tests {
         let tester = ScalarUdfTester::new(udf, vec![RASTER, SedonaType::Arrow(DataType::UInt32)]);
 
         let rasters = generate_test_rasters(3, Some(1)).unwrap();
-        let original_array = RasterStructArray::new(&rasters);
+        let original_array = RasterStructArray::try_new(&rasters).unwrap();
 
         let result = tester
             .invoke_array_scalar(Arc::new(rasters.clone()), 3857u32)
             .unwrap();
         let result_struct = result.as_any().downcast_ref::<StructArray>().unwrap();
-        let result_array = RasterStructArray::new(result_struct);
+        let result_array = RasterStructArray::try_new(result_struct).unwrap();
 
         // Verify non-null rasters have same metadata and band data
         for i in [0, 2] {
@@ -603,7 +699,8 @@ mod tests {
             .invoke_array_scalar(Arc::new(rasters), null_srid)
             .unwrap();
         let raster_array =
-            RasterStructArray::new(result.as_any().downcast_ref::<StructArray>().unwrap());
+            RasterStructArray::try_new(result.as_any().downcast_ref::<StructArray>().unwrap())
+                .unwrap();
         for i in 0..raster_array.len() {
             assert!(
                 raster_array.is_null(i),
@@ -624,7 +721,8 @@ mod tests {
             .invoke_array_scalar(Arc::new(rasters), null_crs)
             .unwrap();
         let raster_array =
-            RasterStructArray::new(result.as_any().downcast_ref::<StructArray>().unwrap());
+            RasterStructArray::try_new(result.as_any().downcast_ref::<StructArray>().unwrap())
+                .unwrap();
         for i in 0..raster_array.len() {
             assert!(
                 raster_array.is_null(i),
@@ -650,7 +748,7 @@ mod tests {
             .invoke_array_array(Arc::new(rasters), srid_array)
             .unwrap();
         let result_struct = result.as_any().downcast_ref::<StructArray>().unwrap();
-        let raster_array = RasterStructArray::new(result_struct);
+        let raster_array = RasterStructArray::try_new(result_struct).unwrap();
 
         // Row 0: valid raster + valid SRID -> EPSG:3857
         let raster0 = raster_array.get(0).unwrap();
@@ -683,7 +781,7 @@ mod tests {
             .invoke_array_array(Arc::new(rasters), crs_array)
             .unwrap();
         let result_struct = result.as_any().downcast_ref::<StructArray>().unwrap();
-        let raster_array = RasterStructArray::new(result_struct);
+        let raster_array = RasterStructArray::try_new(result_struct).unwrap();
 
         // Row 0: valid raster + valid CRS -> EPSG:3857
         let raster0 = raster_array.get(0).unwrap();

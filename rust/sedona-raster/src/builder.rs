@@ -1012,7 +1012,7 @@ mod tests {
         let raster_array = builder.finish().unwrap();
 
         // Test the iterator
-        let rasters = RasterStructArray::new(&raster_array);
+        let rasters = RasterStructArray::try_new(&raster_array).unwrap();
 
         assert_eq!(rasters.len(), 1);
         assert!(!rasters.is_empty());
@@ -1087,7 +1087,7 @@ mod tests {
 
         let raster_array = builder.finish().unwrap();
 
-        let rasters = RasterStructArray::new(&raster_array);
+        let rasters = RasterStructArray::try_new(&raster_array).unwrap();
         let raster = rasters.get(0).unwrap();
         let bands = raster.bands();
 
@@ -1163,7 +1163,7 @@ mod tests {
 
         // Create a new raster using metadata from the iterator
         let mut target_builder = RasterBuilder::new(10);
-        let iterator = RasterStructArray::new(&source_array);
+        let iterator = RasterStructArray::try_new(&source_array).unwrap();
         let source_raster = iterator.get(0).unwrap();
 
         target_builder
@@ -1186,7 +1186,7 @@ mod tests {
         let target_array = target_builder.finish().unwrap();
 
         // Verify the metadata was copied correctly
-        let target_iterator = RasterStructArray::new(&target_array);
+        let target_iterator = RasterStructArray::try_new(&target_array).unwrap();
         let target_raster = target_iterator.get(0).unwrap();
         let target_metadata = target_raster.metadata();
 
@@ -1307,7 +1307,7 @@ mod tests {
         let raster_array = builder.finish().unwrap();
 
         // Test the data type conversion for each band
-        let iterator = RasterStructArray::new(&raster_array);
+        let iterator = RasterStructArray::try_new(&raster_array).unwrap();
         let raster = iterator.get(0).unwrap();
         let bands = raster.bands();
 
@@ -1395,7 +1395,7 @@ mod tests {
         let raster_array = builder.finish().unwrap();
 
         // Verify the band metadata
-        let iterator = RasterStructArray::new(&raster_array);
+        let iterator = RasterStructArray::try_new(&raster_array).unwrap();
         let raster = iterator.get(0).unwrap();
         let bands = raster.bands();
 
@@ -1457,7 +1457,7 @@ mod tests {
         builder.finish_raster().unwrap();
 
         let raster_array = builder.finish().unwrap();
-        let iterator = RasterStructArray::new(&raster_array);
+        let iterator = RasterStructArray::try_new(&raster_array).unwrap();
         let raster = iterator.get(0).unwrap();
         let bands = raster.bands();
 
@@ -1507,7 +1507,7 @@ mod tests {
         builder.finish_raster().unwrap();
 
         let array = builder.finish().unwrap();
-        let rasters = RasterStructArray::new(&array);
+        let rasters = RasterStructArray::try_new(&array).unwrap();
         assert_eq!(rasters.len(), 1);
 
         let r = rasters.get(0).unwrap();
@@ -1556,7 +1556,7 @@ mod tests {
 
         builder.finish_raster().unwrap();
         let array = builder.finish().unwrap();
-        let rasters = RasterStructArray::new(&array);
+        let rasters = RasterStructArray::try_new(&array).unwrap();
         let r = rasters.get(0).unwrap();
 
         assert_eq!(r.num_bands(), 2);
@@ -1584,7 +1584,7 @@ mod tests {
         builder.append_null().unwrap();
 
         let array = builder.finish().unwrap();
-        let rasters = RasterStructArray::new(&array);
+        let rasters = RasterStructArray::try_new(&array).unwrap();
         assert_eq!(rasters.len(), 2);
         assert!(!rasters.is_null(0));
         assert!(rasters.is_null(1));
@@ -1616,7 +1616,7 @@ mod tests {
         builder.finish_raster().unwrap();
 
         let array = builder.finish().unwrap();
-        let rasters = RasterStructArray::new(&array);
+        let rasters = RasterStructArray::try_new(&array).unwrap();
         let r = rasters.get(0).unwrap();
 
         assert_eq!(r.band_name(0), Some("temperature"));
@@ -1665,7 +1665,7 @@ mod tests {
         builder.finish_raster().unwrap();
 
         let array = builder.finish().unwrap();
-        let rasters = RasterStructArray::new(&array);
+        let rasters = RasterStructArray::try_new(&array).unwrap();
         let r = rasters.get(0).unwrap();
 
         assert_eq!(r.x_dim(), "longitude");
@@ -1718,7 +1718,7 @@ mod tests {
 
         builder.finish_raster().unwrap();
         let array = builder.finish().unwrap();
-        let rasters = RasterStructArray::new(&array);
+        let rasters = RasterStructArray::try_new(&array).unwrap();
         let r = rasters.get(0).unwrap();
 
         assert_eq!(r.num_bands(), 2);
@@ -1763,7 +1763,7 @@ mod tests {
         builder.finish_raster().unwrap();
 
         let array = builder.finish().unwrap();
-        let rasters = RasterStructArray::new(&array);
+        let rasters = RasterStructArray::try_new(&array).unwrap();
         let r = rasters.get(0).unwrap();
         let band = r.band(0).unwrap();
 
@@ -1779,6 +1779,106 @@ mod tests {
     }
 
     #[test]
+    fn test_as_contiguous_borrows_identity_view() {
+        let mut builder = RasterBuilder::new(1);
+        builder
+            .start_raster_2d(4, 4, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, None)
+            .unwrap();
+        builder.start_band_2d(BandDataType::UInt8, None).unwrap();
+        builder.band_data_writer().append_value([1u8; 16]);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+
+        let array = builder.finish().unwrap();
+        let rasters = RasterStructArray::try_new(&array).unwrap();
+        let r = rasters.get(0).unwrap();
+        let band = r.band(0).unwrap();
+
+        let ndb = band.nd_buffer().unwrap();
+        // Identity-view bands are always contiguous, so as_contiguous borrows
+        // the underlying bytes zero-copy rather than erroring.
+        assert!(ndb.is_contiguous());
+        let data = ndb.as_contiguous().unwrap();
+        assert_eq!(data.len(), 16);
+    }
+
+    #[test]
+    fn test_nd_buffer_strides_various_types() {
+        // Each raster exercises a different shape; strict spatial-grid
+        // validation forbids mixing bands of disagreeing spatial sizes within
+        // one raster.
+        let mut builder = RasterBuilder::new(3);
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+
+        // Raster 0 — UInt8: element size = 1, shape [3, 4] → strides [4, 1]
+        builder
+            .start_raster_nd(&transform, &["x", "y"], &[4, 3], None)
+            .unwrap();
+        builder
+            .start_band_nd(
+                None,
+                &["y", "x"],
+                &[3, 4],
+                BandDataType::UInt8,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        builder.band_data_writer().append_value(vec![0u8; 12]);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+
+        // Raster 1 — Float64: element size = 8, shape [2, 3, 5] → strides [120, 40, 8]
+        builder
+            .start_raster_nd(&transform, &["x", "y"], &[5, 3], None)
+            .unwrap();
+        builder
+            .start_band_nd(
+                None,
+                &["z", "y", "x"],
+                &[2, 3, 5],
+                BandDataType::Float64,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        builder
+            .band_data_writer()
+            .append_value(vec![0u8; 2 * 3 * 5 * 8]);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+
+        // Raster 2 — UInt16: element size = 2, shape [10] → strides [2].
+        // Only has an "x" dim, so declare spatial_dims=["x"].
+        builder
+            .start_raster_nd(&transform, &["x"], &[10], None)
+            .unwrap();
+        builder
+            .start_band_nd(None, &["x"], &[10], BandDataType::UInt16, None, None, None)
+            .unwrap();
+        builder.band_data_writer().append_value(vec![0u8; 20]);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+
+        let array = builder.finish().unwrap();
+        let rasters = RasterStructArray::try_new(&array).unwrap();
+
+        let r0 = rasters.get(0).unwrap();
+        let b0 = r0.band(0).unwrap();
+        assert_eq!(b0.nd_buffer().unwrap().strides, &[4, 1]); // UInt8 [3, 4]
+
+        let r1 = rasters.get(1).unwrap();
+        let b1 = r1.band(0).unwrap();
+        assert_eq!(b1.nd_buffer().unwrap().strides, &[120, 40, 8]); // Float64 [2, 3, 5]
+
+        let r2 = rasters.get(2).unwrap();
+        let b2 = r2.band(0).unwrap();
+        assert_eq!(b2.nd_buffer().unwrap().strides, &[2]); // UInt16 [10]
+    }
+
+    #[test]
     fn test_width_height_no_bands() {
         // Zero-band raster — used as a "target grid" specification (GDAL warp
         // pattern). Width/height come from the top-level spatial_shape, not
@@ -1791,7 +1891,7 @@ mod tests {
         builder.finish_raster().unwrap();
 
         let array = builder.finish().unwrap();
-        let rasters = RasterStructArray::new(&array);
+        let rasters = RasterStructArray::try_new(&array).unwrap();
         let r = rasters.get(0).unwrap();
 
         assert_eq!(r.num_bands(), 0);
@@ -1831,7 +1931,7 @@ mod tests {
 
         builder.finish_raster().unwrap();
         let array = builder.finish().unwrap();
-        let rasters = RasterStructArray::new(&array);
+        let rasters = RasterStructArray::try_new(&array).unwrap();
         let r = rasters.get(0).unwrap();
 
         assert_eq!(r.band_name(0), Some("temperature"));
@@ -1864,7 +1964,7 @@ mod tests {
         builder.finish_raster().unwrap();
 
         let array = builder.finish().unwrap();
-        let rasters = RasterStructArray::new(&array);
+        let rasters = RasterStructArray::try_new(&array).unwrap();
         let r = rasters.get(0).unwrap();
 
         assert_eq!(r.spatial_dims(), vec!["longitude", "latitude"]);
@@ -1887,7 +1987,7 @@ mod tests {
         builder.finish_raster().unwrap();
 
         let array = builder.finish().unwrap();
-        let rasters = RasterStructArray::new(&array);
+        let rasters = RasterStructArray::try_new(&array).unwrap();
         let r = rasters.get(0).unwrap();
 
         assert_eq!(r.num_bands(), 0);
@@ -1947,7 +2047,7 @@ mod tests {
         builder.finish_raster().unwrap();
 
         let array = builder.finish().unwrap();
-        let rasters = RasterStructArray::new(&array);
+        let rasters = RasterStructArray::try_new(&array).unwrap();
         let r = rasters.get(0).unwrap();
         let band = r.band(0).unwrap();
         assert_eq!(band.shape(), &[4, 5]);
@@ -2029,6 +2129,48 @@ mod tests {
             err.to_string().contains("out of range"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn test_as_contiguous_identity_via_start_band_borrows() {
+        // Canonical identity: the row's view list is null, and the read path
+        // synthesises the identity view. Should still hand the underlying
+        // bytes back without copying.
+        let mut builder = RasterBuilder::new(1);
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        builder
+            .start_raster_nd(&transform, &["x", "y"], &[3, 2], None)
+            .unwrap();
+        builder
+            .start_band_nd(
+                None,
+                &["y", "x"],
+                &[2, 3],
+                BandDataType::UInt8,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        let pixels: Vec<u8> = (0..6).collect();
+        builder.band_data_writer().append_value(pixels.clone());
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+
+        let array = builder.finish().unwrap();
+        let rasters = RasterStructArray::try_new(&array).unwrap();
+        let r = rasters.get(0).unwrap();
+        let band = r.band(0).unwrap();
+
+        // Visible shape comes from the synthesised identity view.
+        assert_eq!(band.shape(), &[2, 3]);
+        assert_eq!(band.raw_source_shape(), &[2, 3]);
+
+        let buf = band.nd_buffer().unwrap();
+        assert_eq!(buf.strides, &[3, 1]);
+        assert_eq!(buf.offset, 0);
+        assert!(buf.is_contiguous());
+        assert_eq!(buf.as_contiguous().unwrap(), pixels.as_slice());
     }
 
     #[test]
@@ -2137,7 +2279,7 @@ mod tests {
         builder.finish_band().unwrap();
         builder.finish_raster().unwrap();
         let array = builder.finish().unwrap();
-        let rasters = RasterStructArray::new(&array);
+        let rasters = RasterStructArray::try_new(&array).unwrap();
         let r = rasters.get(0).unwrap();
         let band = r.band(0).unwrap();
         assert_eq!(band.shape(), &[3, 0, 5]);
@@ -2256,7 +2398,7 @@ mod tests {
         );
 
         // Sanity: read paths still produce the expected visible shapes.
-        let rasters = RasterStructArray::new(restored_struct);
+        let rasters = RasterStructArray::try_new(restored_struct).unwrap();
         let r0 = rasters.get(0).unwrap();
         assert_eq!(r0.band(0).unwrap().shape(), &[2, 3]);
         let r1 = rasters.get(1).unwrap();
@@ -2285,7 +2427,7 @@ mod tests {
         // Input is identity over [0..8]. with_view layers a slice
         // (start=1, step=2, steps=3) producing visible bytes [1, 3, 5].
         let input_array = build_1d_identity_raster();
-        let input_rasters = RasterStructArray::new(&input_array);
+        let input_rasters = RasterStructArray::try_new(&input_array).unwrap();
         let input_raster = input_rasters.get(0).unwrap();
         let input_band = input_raster.band(0).unwrap();
 
@@ -2312,7 +2454,7 @@ mod tests {
         b.finish_raster().unwrap();
         let out_array = b.finish().unwrap();
 
-        let out_rasters = RasterStructArray::new(&out_array);
+        let out_rasters = RasterStructArray::try_new(&out_array).unwrap();
         let out_raster = out_rasters.get(0).unwrap();
         let out_band = out_raster.band(0).unwrap();
         assert_eq!(out_band.shape(), &[3]);
@@ -2344,7 +2486,7 @@ mod tests {
         ib.finish_band().unwrap();
         ib.finish_raster().unwrap();
         let input_array = ib.finish().unwrap();
-        let input_rasters = RasterStructArray::new(&input_array);
+        let input_rasters = RasterStructArray::try_new(&input_array).unwrap();
         let input_raster = input_rasters.get(0).unwrap();
         let input_band = input_raster.band(0).unwrap();
         let input_ptr = input_band.nd_buffer().unwrap().buffer.as_ptr();
@@ -2367,7 +2509,7 @@ mod tests {
         ob.finish_band().unwrap();
         ob.finish_raster().unwrap();
         let out_array = ob.finish().unwrap();
-        let out_rasters = RasterStructArray::new(&out_array);
+        let out_rasters = RasterStructArray::try_new(&out_array).unwrap();
         let out_raster = out_rasters.get(0).unwrap();
         let out_band = out_raster.band(0).unwrap();
 
@@ -2394,7 +2536,7 @@ mod tests {
         // 3 and 5. compose_view collapses the chain into one source-space
         // view; the test verifies the bytes round-trip end-to-end.
         let input_array = build_1d_identity_raster();
-        let input_rasters = RasterStructArray::new(&input_array);
+        let input_rasters = RasterStructArray::try_new(&input_array).unwrap();
         let input_raster = input_rasters.get(0).unwrap();
         let input_band = input_raster.band(0).unwrap();
 
@@ -2423,7 +2565,7 @@ mod tests {
         let mid_array = b1.finish().unwrap();
 
         // Sanity: Round 1 alone produces [1, 3, 5, 7].
-        let mid_rasters = RasterStructArray::new(&mid_array);
+        let mid_rasters = RasterStructArray::try_new(&mid_array).unwrap();
         let mid_raster = mid_rasters.get(0).unwrap();
         let mid_band = mid_raster.band(0).unwrap();
         assert_eq!(mid_band.shape(), &[4]);
@@ -2454,7 +2596,7 @@ mod tests {
         b2.finish_raster().unwrap();
         let final_array = b2.finish().unwrap();
 
-        let final_rasters = RasterStructArray::new(&final_array);
+        let final_rasters = RasterStructArray::try_new(&final_array).unwrap();
         let final_raster = final_rasters.get(0).unwrap();
         let final_band = final_raster.band(0).unwrap();
         assert_eq!(final_band.shape(), &[2]);
@@ -2493,7 +2635,7 @@ mod tests {
         b.finish_raster().unwrap();
         let input_array = b.finish().unwrap();
 
-        let input_rasters = RasterStructArray::new(&input_array);
+        let input_rasters = RasterStructArray::try_new(&input_array).unwrap();
         let input_raster = input_rasters.get(0).unwrap();
         let input_band = input_raster.band(0).unwrap();
         assert!(!input_band.is_indb(), "fixture must be OutDb");
@@ -2522,7 +2664,7 @@ mod tests {
         b2.finish_raster().unwrap();
         let out_array = b2.finish().unwrap();
 
-        let out_rasters = RasterStructArray::new(&out_array);
+        let out_rasters = RasterStructArray::try_new(&out_array).unwrap();
         let out_raster = out_rasters.get(0).unwrap();
         let out_band = out_raster.band(0).unwrap();
 
@@ -2586,7 +2728,7 @@ mod tests {
         builder.finish_raster().unwrap();
         let arr = builder.finish().unwrap();
 
-        let rasters = RasterStructArray::new(&arr);
+        let rasters = RasterStructArray::try_new(&arr).unwrap();
         let r = rasters.get(0).unwrap();
         let band = r.band(0).unwrap();
         let out = band.nd_buffer().unwrap().as_contiguous().unwrap();
@@ -2619,7 +2761,7 @@ mod tests {
         // Dedup: one shared data block, not two.
         assert_eq!(output_band_data(&arr).data_buffers().len(), 1);
 
-        let rasters = RasterStructArray::new(&arr);
+        let rasters = RasterStructArray::try_new(&arr).unwrap();
         let r = rasters.get(0).unwrap();
         assert_eq!(
             r.band(0)
@@ -2661,7 +2803,7 @@ mod tests {
         builder.finish_raster().unwrap();
         let arr = builder.finish().unwrap();
 
-        let rasters = RasterStructArray::new(&arr);
+        let rasters = RasterStructArray::try_new(&arr).unwrap();
         let r = rasters.get(0).unwrap();
         assert_eq!(
             r.band(0)
@@ -2712,7 +2854,7 @@ mod tests {
         builder.finish_raster().unwrap();
         let arr = builder.finish().unwrap();
 
-        let rasters = RasterStructArray::new(&arr);
+        let rasters = RasterStructArray::try_new(&arr).unwrap();
         let r = rasters.get(0).unwrap();
         let band = r.band(0).unwrap();
         let out = band.nd_buffer().unwrap().as_contiguous().unwrap();
@@ -2748,7 +2890,7 @@ mod tests {
         builder.finish_raster().unwrap();
         let arr = builder.finish().unwrap();
 
-        let rasters = RasterStructArray::new(&arr);
+        let rasters = RasterStructArray::try_new(&arr).unwrap();
         assert_eq!(
             rasters
                 .get(0)
@@ -2783,7 +2925,7 @@ mod tests {
         // Inline: no backing block attached.
         assert_eq!(output_band_data(&arr).data_buffers().len(), 0);
 
-        let rasters = RasterStructArray::new(&arr);
+        let rasters = RasterStructArray::try_new(&arr).unwrap();
         let r = rasters.get(0).unwrap();
         let band = r.band(0).unwrap();
         assert_eq!(

@@ -2888,6 +2888,7 @@ version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cceef1cc08a1f031c5717cb645bb361a3114470cc142cc96bc5e62b79695632e"
 dependencies = [
+ "bindgen",
  "pkg-config",
  "semver",
 ]
@@ -6150,6 +6151,7 @@ dependencies = [
  "sedona-functions",
  "sedona-gdal",
  "sedona-raster",
+ "sedona-raster-functions",
  "sedona-schema",
  "sedona-testing",
  "tempfile",
@@ -6385,8 +6387,10 @@ version = "0.4.0"
 dependencies = [
  "adbc_core",
  "arrow-array",
+ "arrow-buffer",
  "arrow-schema",
  "async-trait",
+ "bytes",
  "datafusion",
  "datafusion-common",
  "datafusion-execution",
@@ -6404,6 +6408,7 @@ dependencies = [
  "sedona-geometry",
  "sedona-geoparquet",
  "sedona-proj",
+ "sedona-raster",
  "sedona-schema",
  "sedona-tg",
  "serde_json",
@@ -6416,9 +6421,12 @@ name = "sedonadb-zarr"
 version = "0.4.0"
 dependencies = [
  "arrow-array",
+ "arrow-buffer",
  "object_store",
  "pyo3",
+ "sedona-raster",
  "sedona-raster-zarr",
+ "sedona-schema",
  "tokio",
  "url",
 ]

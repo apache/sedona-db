@@ -177,7 +177,11 @@ impl SedonaScalarKernel for StCrs {
         let mut builder = StringViewBuilder::with_capacity(executor.num_iterations());
         let crs_opt: Option<String> = match &arg_types[0] {
             SedonaType::Wkb(_, Some(crs)) | SedonaType::WkbView(_, Some(crs)) => {
-                Some(crs.to_authority_code()?.unwrap_or_else(|| crs.to_json()))
+                // Return the full round-trippable definition rather than
+                // collapsing to the authority code: an `authority:code` CRS
+                // stays compact, while a PROJJSON/WKT definition is preserved
+                // in full instead of being reduced to its embedded code.
+                Some(crs.to_crs_string())
             }
             _ => None,
         };
@@ -419,6 +423,28 @@ mod test {
         // Test with a CRS but null geom
         let result = tester.invoke_scalar(ScalarValue::Null).unwrap();
         tester.assert_scalar_result_equals(result, ScalarValue::Null);
+
+        // A PROJJSON type-CRS with an embedded authority id returns the full
+        // definition, not the collapsed "EPSG:4269" authority code.
+        const NAD83_PROJJSON: &str = r#"{"type":"GeographicCRS","name":"NAD83","datum":{"type":"GeodeticReferenceFrame","name":"NAD83","ellipsoid":{"name":"GRS 1980","semi_major_axis":6378137,"inverse_flattening":298.257222101}},"coordinate_system":{"subtype":"ellipsoidal","axis":[{"name":"Lat","abbreviation":"Lat","direction":"north","unit":"degree"},{"name":"Lon","abbreviation":"Lon","direction":"east","unit":"degree"}]},"id":{"authority":"EPSG","code":4269}}"#;
+        let crs = deserialize_crs(NAD83_PROJJSON).unwrap();
+        let tester = ScalarUdfTester::new(
+            udf.clone(),
+            vec![SedonaType::Wkb(Edges::Planar, crs.clone())],
+        );
+        let result = tester
+            .invoke_scalar("POLYGON ((0 0, 1 0, 0 1, 0 0))")
+            .unwrap();
+        let ScalarValue::Utf8View(Some(crs_out)) = result else {
+            panic!("expected a Utf8View CRS string, got {result:?}");
+        };
+        assert!(
+            crs_out.contains("GeographicCRS"),
+            "expected full PROJJSON, got {crs_out}"
+        );
+        assert_ne!(crs_out, "EPSG:4269");
+        // The returned string round-trips back to the same CRS.
+        assert_eq!(deserialize_crs(&crs_out).unwrap(), crs);
     }
 
     #[test]

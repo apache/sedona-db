@@ -20,6 +20,7 @@ pub mod create;
 pub mod data;
 pub mod datagen;
 pub mod fixtures;
+pub mod raster_spec;
 pub mod rasters;
 pub mod read;
 pub mod testers;
