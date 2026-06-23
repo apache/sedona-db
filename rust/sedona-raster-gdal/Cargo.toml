@@ -60,6 +60,11 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 [[bench]]
 harness = false
+name = "rs_clip"
+path = "benches/rs_clip.rs"
+
+[[bench]]
+harness = false
 name = "rs_frompath"
 path = "benches/rs_frompath.rs"
 
