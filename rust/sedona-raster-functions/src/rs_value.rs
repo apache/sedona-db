@@ -336,12 +336,22 @@ fn sample_pixel(
     }
 
     // Byte offset of the (row, col) pixel via the band's own strides, so the
-    // read stays correct for any layout the producer hands us.
-    let byte_offset = buffer.offset as i64 + row * buffer.strides[0] + col * buffer.strides[1];
+    // read stays correct for any layout the producer hands us. Checked
+    // arithmetic throughout: `row`/`col` are already in bounds, but a corrupt
+    // stride or offset must surface as an error, never an i64 overflow panic.
     let size = buffer.data_type.byte_size() as i64;
+    let byte_offset = row
+        .checked_mul(buffer.strides[0])
+        .zip(col.checked_mul(buffer.strides[1]))
+        .and_then(|(r, c)| r.checked_add(c))
+        .and_then(|rc| rc.checked_add(buffer.offset as i64))
+        .ok_or_else(|| exec_datafusion_err!("RS_Value: pixel byte offset overflow"))?;
+    let end_offset = byte_offset
+        .checked_add(size)
+        .ok_or_else(|| exec_datafusion_err!("RS_Value: pixel byte offset overflow"))?;
     let start = usize::try_from(byte_offset)
         .map_err(|_| exec_datafusion_err!("RS_Value: negative pixel byte offset"))?;
-    let end = usize::try_from(byte_offset + size)
+    let end = usize::try_from(end_offset)
         .map_err(|_| exec_datafusion_err!("RS_Value: pixel byte offset overflow"))?;
     let bytes = buffer.buffer.get(start..end).ok_or_else(|| {
         exec_datafusion_err!("RS_Value: pixel is out of the band's buffer bounds")
