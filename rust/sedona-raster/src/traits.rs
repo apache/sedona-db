@@ -18,7 +18,8 @@
 use arrow_schema::ArrowError;
 use sedona_schema::raster::BandDataType;
 
-use crate::view_entries::ViewEntry;
+use crate::builder::{RasterBuilder, StartBandWithViewArgs};
+use crate::view_entries::{ViewEntries, ViewEntry};
 
 /// Recognized spatial dimension-name pairs, in band C-order: the slower-
 /// varying Y-like (row) axis first, the faster-varying X-like (column) axis
@@ -45,8 +46,14 @@ pub fn is_spatial_dim_pair(y_like: &str, x_like: &str) -> bool {
 /// `source_shape` (the natural extent of `buffer`) with its `view`
 /// (the per-axis `(source_axis, start, step, steps)` slice spec). Stride
 /// can be zero (broadcast) or negative (reverse iteration), and may not be
-/// C-order. Consumers that need a flat row-major buffer should use
-/// `BandRef::contiguous_data()` instead.
+/// C-order. Consumers that need a flat row-major buffer should check
+/// `NdBuffer::is_contiguous()` and borrow via `NdBuffer::as_contiguous()`,
+/// which errors on strided layouts rather than allocating.
+///
+/// `shape` and `offset` are `i64` (not `u64`) to match the surrounding
+/// stride arithmetic (`strides: Vec<i64>` to allow negative steps);
+/// shape elements are always non-negative — `validate_view` enforces
+/// this — and `offset` is non-negative by construction.
 ///
 /// Only `buffer` is tied to the producer's lifetime `'a` (it can be tens of
 /// MBs of pixel data and must not be copied). `shape` and `strides` are
@@ -58,7 +65,7 @@ pub struct NdBuffer<'a> {
     pub buffer: &'a [u8],
     pub shape: Vec<i64>,
     pub strides: Vec<i64>,
-    pub offset: u64,
+    pub offset: i64,
     pub data_type: BandDataType,
 }
 
@@ -496,14 +503,41 @@ pub trait RasterRef {
     }
 }
 
+/// Field overrides for [`BandRef::copy_into`]. Each field defaults to `None`,
+/// meaning "inherit from the source band". `name` has no source on a `BandRef`
+/// (band names live at the raster level), so it defaults to unnamed.
+#[derive(Default)]
+pub struct BandOverrides<'a> {
+    /// Name for the derived band (the source has none to inherit).
+    pub name: Option<&'a str>,
+    /// Override the dimension names; `None` inherits the source's.
+    pub dim_names: Option<&'a [&'a str]>,
+    /// View to apply to the derived band, expressed in the **source's visible
+    /// coordinates**. [`BandRef::copy_into`] composes it onto the source's own
+    /// view for you — you don't manage that composition and don't need to know
+    /// whether the source already carries a view. `None` inherits the source's
+    /// view unchanged.
+    pub view: Option<&'a [ViewEntry]>,
+    /// Override the nodata value; `None` inherits the source's.
+    pub nodata: Option<&'a [u8]>,
+    /// Override the OutDb URI; `None` inherits the source's.
+    pub outdb_uri: Option<&'a str>,
+    /// Override the OutDb format; `None` inherits the source's.
+    pub outdb_format: Option<&'a str>,
+}
+
 /// Trait for accessing a single band/variable within an N-D raster.
 ///
 /// This is the consumer interface. Implementations handle storage details
-/// Two data access paths:
-/// - `contiguous_data()` — flat row-major bytes for consumers that don't need
-///   stride awareness (most RS_* functions, GDAL boundary, serialization).
-/// - `nd_buffer()` — raw buffer + shape + strides + offset for stride-aware
-///   consumers (numpy zero-copy views, Arrow FFI) that want to avoid copies.
+/// and view composition transparently.
+///
+/// `nd_buffer()` is the sole zero-copy byte accessor: it returns the raw
+/// buffer plus shape + strides + offset describing the visible region.
+/// Stride-aware consumers (numpy zero-copy views, Arrow FFI) read it
+/// directly; consumers that need flat row-major bytes borrow via
+/// `NdBuffer::as_contiguous()`, which errors on strided layouts rather than
+/// allocating. The trait never materializes a strided view behind the
+/// caller's back — repacking is an explicit plan-node concern.
 pub trait BandRef {
     // -- Dimension metadata --
 
@@ -581,7 +615,7 @@ pub trait BandRef {
 
     /// OutDb format — how to interpret the bytes at `outdb_uri`
     /// (e.g. `"geotiff"`, `"zarr"`). None means in-memory — the band's
-    /// `contiguous_data()` / `nd_buffer()` is authoritative.
+    /// `nd_buffer()` is authoritative.
     fn outdb_format(&self) -> Option<&str> {
         None
     }
@@ -645,6 +679,18 @@ pub trait BandRef {
     /// `offset` are computed by composing the view with the source's
     /// natural C-order byte strides. Strides may be zero (broadcast) or
     /// negative (reverse iteration).
+    ///
+    /// The returned `shape`, `strides`, and `offset` are guaranteed
+    /// in-bounds for `buffer`: `RasterRef::band()` rejects malformed views,
+    /// overflowing stride composition, and source-shape/data-column length
+    /// mismatches at construction. Stride-aware consumers can walk the
+    /// returned layout without further bound checks against `buffer.len()`.
+    ///
+    /// This is the **sole** byte-access method on the trait — it is
+    /// zero-copy and never allocates. Contiguous-byte consumers call
+    /// [`NdBuffer::as_contiguous`] on the result (borrow-or-error);
+    /// materialization of a strided view is an explicit `RS_EnsureContiguous`
+    /// step, never a transparent allocation behind this interface.
     fn nd_buffer(&self) -> Result<NdBuffer<'_>, ArrowError>;
 
     /// Nodata value interpreted as f64.
@@ -666,6 +712,71 @@ pub trait BandRef {
             None => return Ok(None),
         };
         nodata_bytes_to_f64_lossless(bytes, &self.data_type()).map(Some)
+    }
+
+    /// Write a derived band into `builder`, inheriting every field not set in
+    /// `overrides` from `self`, and carrying the source bytes over.
+    ///
+    /// This is the canonical "derive a band from an existing one" path — it
+    /// replaces hand-rebuilding via `start_band_with_view` + a manual data
+    /// append (which silently drops the view or copies the bytes). The data
+    /// transfer is zero-copy when the implementation supports it; see
+    /// [`Self::append_data_into`].
+    ///
+    /// The derived band's view is the source's own view with any
+    /// `overrides.view` **composed on top for you**: express an override in the
+    /// source's *visible* coordinates and `copy_into` composes it against the
+    /// source's view — callers never manage that composition and don't need to
+    /// know whether the source already carries one. `overrides.view = None`
+    /// inherits the source's view unchanged.
+    fn copy_into(
+        &self,
+        builder: &mut RasterBuilder,
+        overrides: BandOverrides<'_>,
+    ) -> Result<(), ArrowError> {
+        let inherited_dims = self.dim_names();
+        let dim_names: Vec<&str> = match overrides.dim_names {
+            Some(d) => d.to_vec(),
+            None => inherited_dims,
+        };
+        let source_shape = self.raw_source_shape().to_vec();
+        // Compose the caller's override (if any) onto the source's own view, so
+        // the override is interpreted in the source's visible space and the
+        // caller doesn't have to. `None` keeps the source view unchanged.
+        let source_view = ViewEntries::new(self.view().to_vec());
+        let effective_view = match overrides.view {
+            Some(v) => source_view.compose(&ViewEntries::new(v.to_vec()))?,
+            None => source_view,
+        };
+        builder.start_band_with_view(StartBandWithViewArgs {
+            name: overrides.name,
+            dim_names: &dim_names,
+            source_shape: &source_shape,
+            view: effective_view.as_slice(),
+            data_type: self.data_type(),
+            nodata: overrides.nodata.or_else(|| self.nodata()),
+            outdb_uri: overrides.outdb_uri.or_else(|| self.outdb_uri()),
+            outdb_format: overrides.outdb_format.or_else(|| self.outdb_format()),
+        })?;
+        self.append_data_into(builder)
+    }
+
+    /// Append `self`'s band data as the current band's single `data` value.
+    ///
+    /// The default copies the visible source bytes via `append_value`. Arrow-
+    /// backed implementations override this to share the source row's backing
+    /// `Buffer` zero-copy (a refcount bump via
+    /// [`RasterBuilder::append_band_data_from`]), keeping the buffer plumbing
+    /// encapsulated rather than exposing a raw `Buffer` accessor on the trait.
+    /// Call after the band's schema has been written (e.g. by [`Self::copy_into`]).
+    fn append_data_into(&self, builder: &mut RasterBuilder) -> Result<(), ArrowError> {
+        if self.is_indb() {
+            let ndb = self.nd_buffer()?;
+            builder.band_data_writer().append_value(ndb.buffer);
+        } else {
+            builder.band_data_writer().append_value([]);
+        }
+        Ok(())
     }
 }
 
@@ -984,40 +1095,116 @@ mod tests {
         assert!(!b.is_spatial_2d());
     }
 
-    /// Build a bufferless `NdBuffer` for contiguity checks — `is_contiguous`
-    /// inspects only shape/strides/data_type, never the bytes.
-    fn ndbuf(shape: &[i64], strides: &[i64], offset: u64) -> NdBuffer<'static> {
+    // ---- NdBuffer::is_contiguous / as_contiguous ----
+    //
+    // The contiguity predicate is a pure function of (shape, strides,
+    // data_type), so it is exercised here directly on NdBuffer literals
+    // rather than through the full RasterBuilder → reader path. The
+    // builder/reader tests in builder.rs and array.rs cover that the view
+    // composition produces these strides/offsets in the first place.
+
+    fn ndbuf<'a>(
+        buffer: &'a [u8],
+        shape: &[i64],
+        strides: &[i64],
+        offset: i64,
+        data_type: BandDataType,
+    ) -> NdBuffer<'a> {
         NdBuffer {
-            buffer: &[],
+            buffer,
             shape: shape.to_vec(),
             strides: strides.to_vec(),
             offset,
-            data_type: BandDataType::UInt8,
+            data_type,
         }
     }
 
     #[test]
-    fn is_contiguous_packed_identity() {
-        // C-order packed strides for shape [2, 3], byte_size 1.
-        assert!(ndbuf(&[2, 3], &[3, 1], 0).is_contiguous());
+    fn is_contiguous_identity_2d_uint8_borrows_full_buffer() {
+        let bytes: Vec<u8> = (0..6).collect();
+        let b = ndbuf(&bytes, &[2, 3], &[3, 1], 0, BandDataType::UInt8);
+        assert!(b.is_contiguous());
+        assert_eq!(b.as_contiguous().unwrap(), &bytes[..]);
     }
 
     #[test]
-    fn is_contiguous_packed_with_offset() {
-        // Offset is irrelevant to contiguity — a packed sub-window still
-        // counts (this is the relaxation the GDAL gate relies on).
-        assert!(ndbuf(&[2, 3], &[3, 1], 12).is_contiguous());
+    fn is_contiguous_identity_multibyte_float32() {
+        // shape [2, 3] Float32 → C-order byte strides [12, 4].
+        let bytes = vec![7u8; 24];
+        let b = ndbuf(&bytes, &[2, 3], &[12, 4], 0, BandDataType::Float32);
+        assert!(b.is_contiguous());
+        assert_eq!(b.as_contiguous().unwrap().len(), 24);
     }
 
     #[test]
-    fn is_contiguous_strided_is_false() {
-        // Inner stride 2 != byte_size 1 — gaps between elements.
-        assert!(!ndbuf(&[2, 3], &[6, 2], 0).is_contiguous());
+    fn is_contiguous_is_offset_agnostic_for_outer_axis_slice() {
+        // Take rows 1..3 of a [3, 3] UInt8 source: offset 3, packed strides.
+        // Contiguous-but-not-identity → borrows the sub-range zero-copy.
+        let bytes: Vec<u8> = (0..9).collect();
+        let b = ndbuf(&bytes, &[2, 3], &[3, 1], 3, BandDataType::UInt8);
+        assert!(b.is_contiguous());
+        assert_eq!(b.as_contiguous().unwrap(), &bytes[3..9]);
     }
 
     #[test]
-    fn is_contiguous_broadcast_is_false() {
-        // Zero stride (broadcast) is not packed.
-        assert!(!ndbuf(&[2, 3], &[0, 1], 0).is_contiguous());
+    fn is_contiguous_false_for_broadcast_zero_stride() {
+        let bytes = vec![0u8; 3];
+        let b = ndbuf(&bytes, &[4, 3], &[0, 1], 0, BandDataType::UInt8);
+        assert!(!b.is_contiguous());
+        assert!(b.as_contiguous().is_err());
+    }
+
+    #[test]
+    fn is_contiguous_false_for_negative_stride() {
+        let bytes: Vec<u8> = (0..8).collect();
+        let b = ndbuf(&bytes, &[3], &[-2], 6, BandDataType::UInt8);
+        assert!(!b.is_contiguous());
+        assert!(b.as_contiguous().is_err());
+    }
+
+    #[test]
+    fn is_contiguous_false_for_permuted_inner_stride() {
+        // shape [3, 2], strides [1, 6] — inner stride 6 != dtype_size.
+        let bytes = vec![0u8; 12];
+        let b = ndbuf(&bytes, &[3, 2], &[1, 6], 0, BandDataType::UInt8);
+        assert!(!b.is_contiguous());
+        assert!(b.as_contiguous().is_err());
+    }
+
+    #[test]
+    fn is_contiguous_false_for_inner_strided_multibyte() {
+        // UInt16 is 2 bytes; a step-2 view gives byte stride 4 != 2.
+        let bytes = vec![0u8; 12];
+        let b = ndbuf(&bytes, &[3], &[4], 0, BandDataType::UInt16);
+        assert!(!b.is_contiguous());
+        assert!(b.as_contiguous().is_err());
+    }
+
+    #[test]
+    fn is_contiguous_true_for_zero_extent_axis_borrows_empty() {
+        // A zero-extent axis addresses no bytes — trivially contiguous,
+        // regardless of the surrounding strides.
+        let bytes = vec![0u8; 8];
+        let b = ndbuf(&bytes, &[3, 0, 5], &[0, 5, 1], 0, BandDataType::UInt8);
+        assert!(b.is_contiguous());
+        assert!(b.as_contiguous().unwrap().is_empty());
+    }
+
+    #[test]
+    fn is_contiguous_false_for_shape_strides_length_mismatch() {
+        let bytes = vec![0u8; 6];
+        let b = ndbuf(&bytes, &[2, 3], &[3], 0, BandDataType::UInt8);
+        assert!(!b.is_contiguous());
+        assert!(b.as_contiguous().is_err());
+    }
+
+    #[test]
+    fn as_contiguous_errors_when_region_exceeds_buffer() {
+        // Layout is C-order packed, but offset pushes the region past the
+        // buffer end — the defensive bounds check must reject it.
+        let bytes = vec![0u8; 4];
+        let b = ndbuf(&bytes, &[4], &[1], 2, BandDataType::UInt8);
+        assert!(b.is_contiguous());
+        assert!(b.as_contiguous().is_err());
     }
 }
