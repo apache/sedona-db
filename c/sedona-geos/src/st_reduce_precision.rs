@@ -134,6 +134,14 @@ mod tests {
             .unwrap();
         assert!(result.is_null());
 
+        let result = tester
+            .invoke_scalar_scalar("LINESTRING EMPTY", 1.0)
+            .unwrap();
+        tester.assert_scalar_result_equals(result, "LINESTRING EMPTY");
+
+        let result = tester.invoke_scalar_scalar("POLYGON EMPTY", 1.0).unwrap();
+        tester.assert_scalar_result_equals(result, "POLYGON EMPTY");
+
         let input_wkt = vec![
             Some("LINESTRING (1.123 2.456, 3.789 4.012)"),
             Some("LINESTRING (1.3 2.7, 3.2 4.8)"),

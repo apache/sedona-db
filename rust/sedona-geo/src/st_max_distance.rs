@@ -55,9 +55,10 @@ impl SedonaScalarKernel for STMaxDistance {
         let mut builder = Float64Builder::with_capacity(executor.num_iterations());
         executor.execute_wkb_wkb_void(|lhs, rhs| {
             match (lhs, rhs) {
-                (Some(lhs), Some(rhs)) => {
-                    builder.append_value(invoke_scalar(lhs, rhs));
-                }
+                (Some(lhs), Some(rhs)) => match invoke_scalar(lhs, rhs) {
+                    Some(dist) => builder.append_value(dist),
+                    None => builder.append_null(),
+                },
                 _ => builder.append_null(),
             }
             Ok(())
@@ -66,9 +67,13 @@ impl SedonaScalarKernel for STMaxDistance {
     }
 }
 
-fn invoke_scalar(lhs: &Geometry, rhs: &Geometry) -> f64 {
+fn invoke_scalar(lhs: &Geometry, rhs: &Geometry) -> Option<f64> {
     let lhs_coords: Vec<_> = lhs.coords_iter().collect();
     let rhs_coords: Vec<_> = rhs.coords_iter().collect();
+
+    if lhs_coords.is_empty() || rhs_coords.is_empty() {
+        return None;
+    }
 
     let mut max_dist_sq = f64::NEG_INFINITY;
     for a in &lhs_coords {
@@ -82,7 +87,7 @@ fn invoke_scalar(lhs: &Geometry, rhs: &Geometry) -> f64 {
         }
     }
 
-    max_dist_sq.max(0.0).sqrt()
+    Some(max_dist_sq.max(0.0).sqrt())
 }
 
 #[cfg(test)]
@@ -123,6 +128,21 @@ mod tests {
             .invoke_scalar_scalar(ScalarValue::Null, ScalarValue::Null)
             .unwrap();
         assert!(result.is_null());
+
+        let result = tester
+            .invoke_scalar_scalar("LINESTRING EMPTY", "POINT (0 0)")
+            .unwrap();
+        assert!(result.is_null(), "expected NULL for empty lhs");
+
+        let result = tester
+            .invoke_scalar_scalar("POINT (0 0)", "LINESTRING EMPTY")
+            .unwrap();
+        assert!(result.is_null(), "expected NULL for empty rhs");
+
+        let result = tester
+            .invoke_scalar_scalar("LINESTRING EMPTY", "LINESTRING EMPTY")
+            .unwrap();
+        assert!(result.is_null(), "expected NULL for both empty");
 
         let lhs = create_array(
             &[Some("POINT (0 0)"), Some("POINT (0 0)"), None],

@@ -2369,6 +2369,9 @@ def test_st_linelocatepoint_non_linestring_returns_null(eng):
             "MULTIPOINT ((0 10), (10 10))",
             200.0**0.5,
         ),
+        ("LINESTRING EMPTY", "POINT (0 0)", None),
+        ("POINT (0 0)", "LINESTRING EMPTY", None),
+        ("LINESTRING EMPTY", "LINESTRING EMPTY", None),
     ],
 )
 def test_st_maxdistance(eng, geom1, geom2, expected):
@@ -2393,6 +2396,10 @@ def test_st_maxdistance(eng, geom1, geom2, expected):
             1.0,
             "POLYGON ((0 1, 1 1, 1 0, 0 0, 0 1))",
         ),
+        # Empty geometry inputs return empty geometry
+        ("POINT EMPTY", 1.0, "POINT EMPTY"),
+        ("LINESTRING EMPTY", 1.0, "LINESTRING EMPTY"),
+        ("POLYGON EMPTY", 1.0, "POLYGON EMPTY"),
     ],
 )
 def test_st_reduceprecision(eng, geom, grid_size, expected):
