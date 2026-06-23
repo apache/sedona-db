@@ -56,7 +56,7 @@ bindgen = ["sedona-gdal/bindgen"]
 criterion = { workspace = true }
 sedona-gdal = { workspace = true, features = ["gdal-sys"] }
 sedona-proj = { workspace = true, features = ["proj-sys"] }
-sedona-testing = { workspace = true }
+sedona-testing = { workspace = true, features = ["criterion"] }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
