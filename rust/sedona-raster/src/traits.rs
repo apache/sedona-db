@@ -18,7 +18,7 @@
 use arrow_schema::ArrowError;
 use sedona_schema::raster::BandDataType;
 
-use crate::builder::RasterBuilder;
+use crate::builder::{RasterBuilder, StartBandWithViewArgs};
 use crate::view_entries::{ViewEntries, ViewEntry};
 
 /// Recognized spatial dimension-name pairs, in band C-order: the slower-
@@ -708,8 +708,9 @@ pub trait BandRef {
     /// know whether the source already carries one. `overrides.view = None`
     /// inherits the source's view unchanged.
     ///
-    /// Today the band schema stores only the canonical identity view (a null
-    /// sentinel), so a non-identity effective view can't be persisted yet and
+    /// The composition + persistence is delegated to
+    /// [`RasterBuilder::start_band_with_view`]. Today that stores views only as
+    /// the canonical identity null sentinel, so a non-identity effective view
     /// is rejected rather than copying mislocated bytes; in practice the source
     /// is identity-viewed and any override must compose back to the identity.
     /// View persistence is tracked in
@@ -724,7 +725,7 @@ pub trait BandRef {
             Some(d) => d.to_vec(),
             None => inherited_dims,
         };
-        let shape = self.raw_source_shape().to_vec();
+        let source_shape = self.raw_source_shape().to_vec();
         // Compose the caller's override (if any) onto the source's own view, so
         // the override is interpreted in the source's visible space and the
         // caller doesn't have to. `None` keeps the source view unchanged.
@@ -733,26 +734,16 @@ pub trait BandRef {
             Some(v) => source_view.compose(&ViewEntries::new(v.to_vec()))?,
             None => source_view,
         };
-        // The schema stores views only as the identity null sentinel today, so a
-        // non-identity effective view can't round-trip — reject it up front,
-        // before any column append, rather than persisting mislocated bytes.
-        if !effective_view.is_identity(&shape) {
-            return Err(ArrowError::InvalidArgumentError(
-                "copy_into: persisting a non-identity band view is not yet \
-                 supported (see https://github.com/apache/sedona-db/issues/897); \
-                 materialize the band (e.g. via RS_EnsureContiguous) first"
-                    .into(),
-            ));
-        }
-        builder.start_band_nd(
-            overrides.name,
-            &dim_names,
-            &shape,
-            self.data_type(),
-            overrides.nodata.or_else(|| self.nodata()),
-            overrides.outdb_uri.or_else(|| self.outdb_uri()),
-            overrides.outdb_format.or_else(|| self.outdb_format()),
-        )?;
+        builder.start_band_with_view(StartBandWithViewArgs {
+            name: overrides.name,
+            dim_names: &dim_names,
+            source_shape: &source_shape,
+            view: effective_view.as_slice(),
+            data_type: self.data_type(),
+            nodata: overrides.nodata.or_else(|| self.nodata()),
+            outdb_uri: overrides.outdb_uri.or_else(|| self.outdb_uri()),
+            outdb_format: overrides.outdb_format.or_else(|| self.outdb_format()),
+        })?;
         self.append_data_into(builder)
     }
 
