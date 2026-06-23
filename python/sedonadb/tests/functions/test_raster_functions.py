@@ -143,6 +143,11 @@ def test_rs_value_grid(expr, expected):
             3.0,
         ),
         ("RS_Value(RS_Example(), ST_SetCRS(ST_Point(0.0, 0.0), 'OGC:CRS84'))", None),
+        # POINT EMPTY has no location to sample -> NULL (not an error).
+        (
+            "RS_Value(RS_Example(), ST_SetCRS(ST_GeomFromText('POINT EMPTY'), 'OGC:CRS84'))",
+            None,
+        ),
     ],
 )
 def test_rs_value_point(expr, expected):

@@ -26,8 +26,8 @@
 //!
 //! Returns the value of the pixel that contains the point (no resampling), or
 //! the value at the given 1-based grid cell. The result is `NULL` when the
-//! raster/arguments are null, the point/cell is out of bounds, or the value
-//! equals the band's nodata.
+//! raster/arguments are null, the point is empty, the point/cell is out of
+//! bounds, or the value equals the band's nodata.
 //!
 //! The function is tagged [`NEEDS_PIXELS_METADATA_KEY`], so the planner wraps
 //! its raster argument in `RS_EnsureLoaded`; by the time a kernel runs the band
@@ -37,19 +37,19 @@
 
 use std::sync::Arc;
 
-use arrow_array::builder::Float64Builder;
+use arrow_array::{builder::Float64Builder, ArrayRef};
 use arrow_schema::DataType;
 use datafusion_common::cast::as_int32_array;
-use datafusion_common::{exec_datafusion_err, exec_err, DataFusionError, Result};
+use datafusion_common::{exec_datafusion_err, exec_err, Result};
 use datafusion_expr::{ColumnarValue, Volatility};
-use geo_traits::{CoordTrait, GeometryTrait, GeometryType, PointTrait};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_geometry::types::GeometryTypeId;
+use sedona_geometry::wkb_header::WkbHeader;
 use sedona_proj::transform::with_global_proj_engine;
 use sedona_raster::affine_transformation::AffineMatrix;
 use sedona_raster::traits::{nodata_bytes_to_f64_lossless, RasterRef};
 use sedona_schema::crs::CrsRef;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
-use wkb::reader::read_wkb;
 
 use crate::crs_utils::{crs_transform_wkb, resolve_crs};
 use crate::executor::RasterExecutor;
@@ -100,21 +100,16 @@ impl SedonaScalarKernel for RsValuePoint {
         let num_iterations = executor.num_iterations();
         let mut builder = Float64Builder::with_capacity(num_iterations);
 
-        // The optional band argument, materialised once as an Int32 array.
-        let band_array = if self.with_band {
-            Some(
-                as_int32_array(
-                    &args[2]
-                        .clone()
-                        .cast_to(&DataType::Int32, None)?
-                        .into_array(num_iterations)?,
-                )?
-                .clone(),
-            )
+        // The optional band argument, materialised once as an Int32 array. Held
+        // as an `ArrayRef` so the typed view below borrows it instead of cloning
+        // the typed `Int32Array`.
+        let band_arr = if self.with_band {
+            Some(int32_array_arg(&args[2], num_iterations)?)
         } else {
             None
         };
-        let mut band_iter = band_array.as_ref().map(|a| a.iter());
+        let band_array = band_arr.as_ref().map(|a| as_int32_array(a)).transpose()?;
+        let mut band_iter = band_array.map(|a| a.iter());
 
         // Reprojecting the point into the raster CRS needs a PROJ engine.
         with_global_proj_engine(|engine| {
@@ -130,21 +125,46 @@ impl SedonaScalarKernel for RsValuePoint {
                         }
                     };
 
+                // Header-only parse: reject non-points up front, and treat
+                // POINT EMPTY (NaN coords) as "no location to sample" -> NULL,
+                // before doing any reprojection work.
+                let header = WkbHeader::try_new(point_wkb)
+                    .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
+                if header
+                    .geometry_type_id()
+                    .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?
+                    != GeometryTypeId::Point
+                {
+                    return exec_err!("RS_Value expects a Point geometry");
+                }
+                if header
+                    .is_empty()
+                    .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?
+                {
+                    builder.append_null();
+                    return Ok(());
+                }
+
                 // Bring the point into the raster's CRS. A reprojection only
                 // happens when both sides carry a (differing) CRS; otherwise
-                // the original WKB is sampled directly.
+                // the original coordinates are sampled directly.
                 let raster_crs = resolve_crs(raster.crs())?;
-                let reprojected =
-                    reproject_point(point_wkb, point_crs, raster_crs.as_deref(), engine)?;
-                let wkb = reprojected.as_deref().unwrap_or(point_wkb);
-
-                let (x, y) = read_point_xy(wkb)?;
+                let (x, y) =
+                    match reproject_point(point_wkb, point_crs, raster_crs.as_deref(), engine)? {
+                        Some(reprojected) => WkbHeader::try_new(&reprojected)
+                            .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?
+                            .first_xy(),
+                        None => header.first_xy(),
+                    };
                 // Floor (not truncate toward zero) so a point just outside the
                 // top/left edge maps to a negative index and is rejected as out
                 // of bounds, rather than truncating to 0 and sampling an edge pixel.
                 let (raster_x, raster_y) = AffineMatrix::from_metadata(&raster.metadata())
                     .inv_transform(x, y)
                     .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
+                // `f64 -> i64` is a saturating cast (it never panics): a NaN
+                // index becomes 0 and ±∞ saturate to the i64 bounds, all of
+                // which the bounds check in `sample_pixel` rejects as NULL.
                 let (col, row) = (raster_x.floor() as i64, raster_y.floor() as i64);
 
                 match sample_pixel(raster, col, row, band_num)? {
@@ -189,37 +209,22 @@ impl SedonaScalarKernel for RsValueGrid {
         let num_iterations = executor.num_iterations();
         let mut builder = Float64Builder::with_capacity(num_iterations);
 
-        let col_array = as_int32_array(
-            &args[1]
-                .clone()
-                .cast_to(&DataType::Int32, None)?
-                .into_array(num_iterations)?,
-        )?
-        .clone();
-        let row_array = as_int32_array(
-            &args[2]
-                .clone()
-                .cast_to(&DataType::Int32, None)?
-                .into_array(num_iterations)?,
-        )?
-        .clone();
-        let band_array = if self.with_band {
-            Some(
-                as_int32_array(
-                    &args[3]
-                        .clone()
-                        .cast_to(&DataType::Int32, None)?
-                        .into_array(num_iterations)?,
-                )?
-                .clone(),
-            )
+        // Hold the cast arrays as `ArrayRef`s so the typed views below borrow
+        // them instead of cloning the typed `Int32Array`s.
+        let col_arr = int32_array_arg(&args[1], num_iterations)?;
+        let row_arr = int32_array_arg(&args[2], num_iterations)?;
+        let band_arr = if self.with_band {
+            Some(int32_array_arg(&args[3], num_iterations)?)
         } else {
             None
         };
+        let col_array = as_int32_array(&col_arr)?;
+        let row_array = as_int32_array(&row_arr)?;
+        let band_array = band_arr.as_ref().map(|a| as_int32_array(a)).transpose()?;
 
         let mut col_iter = col_array.iter();
         let mut row_iter = row_array.iter();
-        let mut band_iter = band_array.as_ref().map(|a| a.iter());
+        let mut band_iter = band_array.map(|a| a.iter());
 
         executor.execute_raster_void(|_, raster_opt| {
             let col = col_iter.next().flatten();
@@ -241,6 +246,16 @@ impl SedonaScalarKernel for RsValueGrid {
 
         executor.finish(Arc::new(builder.finish()))
     }
+}
+
+/// Materialise an integer argument as an owned `Int32` [`ArrayRef`] for the
+/// batch. Callers keep the returned `ArrayRef` alive and borrow a typed
+/// `&Int32Array` view from it (via `as_int32_array`) rather than cloning the
+/// typed array.
+fn int32_array_arg(arg: &ColumnarValue, num_iterations: usize) -> Result<ArrayRef> {
+    arg.clone()
+        .cast_to(&DataType::Int32, None)?
+        .into_array(num_iterations)
 }
 
 /// Advance the optional band-number iterator one row, yielding the 1-based band
@@ -286,20 +301,6 @@ fn reproject_point(
         (None, Some(_)) => {
             exec_err!("RS_Value: raster has a CRS but the point does not")
         }
-    }
-}
-
-/// Read the (x, y) coordinates of a WKB Point geometry.
-fn read_point_xy(wkb: &[u8]) -> Result<(f64, f64)> {
-    let geom = read_wkb(wkb).map_err(|e| DataFusionError::External(Box::new(e)))?;
-    match geom.as_type() {
-        GeometryType::Point(point) => {
-            let coord = point
-                .coord()
-                .ok_or_else(|| exec_datafusion_err!("RS_Value: empty point geometry"))?;
-            Ok((coord.x(), coord.y()))
-        }
-        _ => exec_err!("RS_Value expects a Point geometry"),
     }
 }
 
@@ -545,6 +546,23 @@ mod tests {
             err.contains("expects a Point geometry"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn empty_point_is_none() {
+        // POINT EMPTY has no location to sample, so the result is NULL rather
+        // than an error. The empty check short-circuits before CRS resolution,
+        // so a missing/again-mismatched point CRS does not matter here.
+        let udf: ScalarUDF = rs_value_udf().into();
+        let geom_type = SedonaType::Wkb(Edges::Planar, lnglat());
+        let tester = ScalarUdfTester::new(udf, vec![RASTER, geom_type.clone()]);
+        let rasters = generate_test_rasters(1, None).unwrap();
+        let geoms = create_geom_array(&[Some("POINT EMPTY")], &geom_type);
+        let result = tester
+            .invoke_arrays(vec![Arc::new(rasters), geoms])
+            .unwrap();
+        let arr = result.as_any().downcast_ref::<Float64Array>().unwrap();
+        assert!(arr.is_null(0), "POINT EMPTY should sample to NULL");
     }
 
     #[test]
