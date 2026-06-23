@@ -56,7 +56,7 @@ impl SedonaScalarKernel for STMaxDistance {
         executor.execute_wkb_wkb_void(|lhs, rhs| {
             match (lhs, rhs) {
                 (Some(lhs), Some(rhs)) => {
-                    builder.append_value(invoke_scalar(&lhs, &rhs));
+                    builder.append_value(invoke_scalar(lhs, rhs));
                 }
                 _ => builder.append_null(),
             }

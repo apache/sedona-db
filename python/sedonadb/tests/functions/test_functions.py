@@ -2358,7 +2358,7 @@ def test_st_linelocatepoint_non_linestring_returns_null(eng):
     [
         (None, None, None),
         ("POINT (0 0)", "POINT (3 4)", 5.0),
-        ("POINT (0 0)", "LINESTRING (3 0, 0 4)", 5.0),
+        ("POINT (0 0)", "LINESTRING (0 0, 3 4)", 5.0),
         ("LINESTRING (0 0, 10 0)", "LINESTRING (0 10, 10 10)", 200.0**0.5),
         ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", "POINT (5 0)", 5.0),
         (
