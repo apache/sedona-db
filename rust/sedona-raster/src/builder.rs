@@ -30,7 +30,6 @@ use std::sync::Arc;
 use sedona_schema::raster::{BandDataType, RasterSchema};
 
 use crate::traits::{BandMetadata, MetadataRef};
-use crate::view_entries::{ViewEntries, ViewEntry};
 
 /// Maximum byte length of an inline `BinaryViewArray` view. Views this short
 /// store their bytes in the 16-byte view itself; longer views reference a data
@@ -143,28 +142,6 @@ pub struct RasterBuilder {
     band_data_blocks: HashMap<usize, u32>,
 
     raster_validity: BooleanBuilder,
-}
-
-/// Arguments to [`RasterBuilder::start_band_nd_with_view`]. A named-argument
-/// struct (rather than a long positional list) so callers spell out each
-/// field at the call site.
-pub struct StartBandNdWithViewArgs<'a> {
-    /// Band name, or `None` for an unnamed band.
-    pub name: Option<&'a str>,
-    /// Visible dimension names, in band C-order.
-    pub dim_names: &'a [&'a str],
-    /// Source shape (the natural extent of the band's data buffer).
-    pub shape: &'a [i64],
-    /// Element data type.
-    pub data_type: BandDataType,
-    /// Optional nodata sentinel bytes.
-    pub nodata: Option<&'a [u8]>,
-    /// Optional OutDb URI.
-    pub outdb_uri: Option<&'a str>,
-    /// Optional OutDb format.
-    pub outdb_format: Option<&'a str>,
-    /// Per-axis view; must compose to the identity over `shape` today.
-    pub view: &'a [ViewEntry],
 }
 
 impl RasterBuilder {
@@ -408,55 +385,6 @@ impl RasterBuilder {
         ));
 
         Ok(())
-    }
-
-    /// Like [`Self::start_band_nd`], but persists an explicit band `view`
-    /// (a window of offsets/steps over the source `shape`) instead of the
-    /// implicit identity.
-    ///
-    /// **Today only the identity view is accepted**: a non-identity view
-    /// returns an error, because persisting one isn't wired through the band
-    /// reader or the `RS_EnsureLoaded` round-trip yet (tracked in
-    /// <https://github.com/apache/sedona-db/issues/897>). An identity `view` is
-    /// stored as the canonical null sentinel, exactly as `start_band_nd` does,
-    /// so this is a drop-in for callers that want to forward a (currently
-    /// always identity) view. When view persistence lands, only this method
-    /// changes — callers routing through it (e.g. `BandRef::copy_into`) are
-    /// unaffected.
-    pub fn start_band_nd_with_view(
-        &mut self,
-        args: StartBandNdWithViewArgs<'_>,
-    ) -> Result<(), ArrowError> {
-        let StartBandNdWithViewArgs {
-            name,
-            dim_names,
-            shape,
-            data_type,
-            nodata,
-            outdb_uri,
-            outdb_format,
-            view,
-        } = args;
-        // Reject up front — before any column appends — so a rejected view can
-        // never leave the builder in a half-written state.
-        if !ViewEntries::new(view.to_vec()).is_identity(shape) {
-            return Err(ArrowError::InvalidArgumentError(
-                "start_band_nd_with_view: persisting a non-identity band view is \
-                 not yet supported (see \
-                 https://github.com/apache/sedona-db/issues/897); materialize the \
-                 band (e.g. via RS_EnsureContiguous) first"
-                    .into(),
-            ));
-        }
-        self.start_band_nd(
-            name,
-            dim_names,
-            shape,
-            data_type,
-            nodata,
-            outdb_uri,
-            outdb_format,
-        )
     }
 
     /// Convenience: start a 2D band with `dim_names=["y","x"]` and `shape=[height, width]`.
