@@ -2328,14 +2328,17 @@ def test_st_linelocatepoint(eng, line, point, expected):
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
-    ("line", "point", "expected"),
+    ("line", "point", "expected_sedona", "expected_postgis"),
     [
-        ("LINESTRING EMPTY", "POINT (0 0)", None),
-        ("LINESTRING (0 0, 1 1)", "POINT EMPTY", None),
+        ("LINESTRING EMPTY", "POINT (0 0)", None, 0.0),
+        ("LINESTRING (0 0, 1 1)", "POINT EMPTY", None, 0.0),
     ],
 )
-def test_st_linelocatepoint_empty_inputs(eng, line, point, expected):
+def test_st_linelocatepoint_empty_inputs(
+    eng, line, point, expected_sedona, expected_postgis
+):
     eng = eng.create_or_skip()
+    expected = expected_postgis if isinstance(eng, PostGIS) else expected_sedona
     eng.assert_query_result(
         f"SELECT ST_LineLocatePoint({geom_or_null(line)}, {geom_or_null(point)})",
         expected,
@@ -2360,7 +2363,7 @@ def test_st_linelocatepoint_non_linestring_returns_null(eng):
         ("POINT (0 0)", "POINT (3 4)", 5.0),
         ("POINT (0 0)", "LINESTRING (0 0, 3 4)", 5.0),
         ("LINESTRING (0 0, 10 0)", "LINESTRING (0 10, 10 10)", 200.0**0.5),
-        ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", "POINT (5 0)", 5.0),
+        ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", "POINT (5 0)", 26.0**0.5),
         (
             "MULTIPOINT ((0 0), (10 0))",
             "MULTIPOINT ((0 10), (10 10))",
@@ -2388,7 +2391,7 @@ def test_st_maxdistance(eng, geom1, geom2, expected):
         (
             "POLYGON ((0.1 0.1, 0.9 0.1, 0.9 0.9, 0.1 0.9, 0.1 0.1))",
             1.0,
-            "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
+            "POLYGON ((0 1, 1 1, 1 0, 0 0, 0 1))",
         ),
     ],
 )
