@@ -81,5 +81,5 @@ SELECT RS_Value(RS_Example(), 2, 1, 2);
 ```
 
 ```sql
-SELECT RS_Value(RS_Example(), ST_SetCRS(ST_Point(74.58, 110.57), 'OGC:CRS84'));
+SELECT RS_Value(RS_Example(), ST_Point(74.58, 110.57, 'OGC:CRS84'));
 ```
