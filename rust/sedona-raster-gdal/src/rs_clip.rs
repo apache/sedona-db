@@ -52,7 +52,6 @@ use sedona_schema::raster::{BandDataType, StorageType};
 use crate::gdal_common::with_gdal;
 use crate::gdal_common::{nodata_bytes_to_f64, nodata_f64_to_bytes};
 use crate::gdal_dataset_provider::configure_thread_local_options;
-use crate::raster_band_reader::RasterBandReader;
 
 /// RS_Clip() scalar UDF implementation
 ///
@@ -337,7 +336,6 @@ fn clip_raster(
 ) -> Result<Option<ClippedRasterData>> {
     let metadata = raster.metadata();
     let bands = raster.bands();
-    let mut band_reader = RasterBandReader::new(gdal, raster);
     let width = metadata.width() as usize;
     let height = metadata.height() as usize;
 
@@ -425,7 +423,14 @@ fn clip_raster(
 
         let band_metadata = band.metadata();
         let data_type = band_metadata.data_type()?;
-        let original_data = band_reader.read_band_bytes(band_idx)?;
+        let original_data = band
+            .nd_buffer()
+            .map_err(|e| exec_datafusion_err!("RS_Clip: failed to read band {}: {}", band_idx, e))?
+            .as_contiguous()
+            .map_err(|e| {
+                exec_datafusion_err!("RS_Clip: band {} is not contiguous: {}", band_idx, e)
+            })?
+            .to_vec();
 
         // Determine nodata value
         let nodata = custom_nodata
@@ -634,8 +639,8 @@ fn build_clipped_raster(
             + cw.col_off as f64 * original_metadata.skew_y();
 
         RasterMetadata {
-            width: cw.width as u64,
-            height: cw.height as u64,
+            width: cw.width as i64,
+            height: cw.height as i64,
             upperleft_x: new_upper_left_x,
             upperleft_y: new_upper_left_y,
             scale_x: original_metadata.scale_x(),
@@ -707,40 +712,51 @@ fn calc_num_iterations(args: &[ColumnarValue]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arrow_array::StructArray;
+    use sedona_expr::scalar_udf::SedonaScalarKernel;
     use sedona_raster::array::RasterStructArray;
     use sedona_schema::crs::deserialize_crs;
     use sedona_schema::datatypes::Edges;
+    use sedona_testing::raster_spec::RasterSpec;
 
     fn wkb_from_wkt(gdal: &sedona_gdal::gdal::Gdal, wkt: &str) -> Result<Vec<u8>> {
         let geometry = gdal.geometry_from_wkt(wkt).unwrap();
         geometry.wkb().map_err(|e| exec_datafusion_err!("{e}"))
     }
 
+    /// A 4×2 EPSG:4326 raster, origin (0, 2), 1×1 north-up pixels — world extent
+    /// x ∈ [0, 4], y ∈ [0, 2]. One UInt8 band with values 1..=8 (row-major).
+    fn test_raster_array() -> StructArray {
+        RasterSpec::d2(4, 2)
+            .band_values(&[1u8, 2, 3, 4, 5, 6, 7, 8])
+            .crs(Some("EPSG:4326"))
+            .transform([0.0, 1.0, 0.0, 2.0, 0.0, -1.0])
+            .build()
+    }
+
     #[test]
     fn test_rs_clip_basic() {
-        // Load test raster
-        let test_file = sedona_testing::data::test_raster("test4.tiff").unwrap();
+        // crop=false: the output keeps the original extent and band byte length;
+        // pixels outside the clip polygon are set to nodata.
+        let array = test_raster_array();
         with_gdal(|gdal| {
-            let raster_array = crate::utils::load_as_indb_raster(gdal, &test_file)?;
-            let raster_struct = RasterStructArray::new(&raster_array);
-            let raster = raster_struct.get(0).unwrap();
+            let rasters = RasterStructArray::try_new(&array).unwrap();
+            let raster = rasters.get(0).unwrap();
 
-            let metadata = raster.metadata();
-            let min_x = metadata.upper_left_x();
-            let max_y = metadata.upper_left_y();
-            let max_x = min_x + (metadata.width() as f64 * metadata.scale_x()) / 2.0;
-            let min_y = max_y + (metadata.height() as f64 * metadata.scale_y()) / 2.0;
-
-            let wkt = format!(
-                "POLYGON(({} {}, {} {}, {} {}, {} {}, {} {}))",
-                min_x, min_y, max_x, min_y, max_x, max_y, min_x, max_y, min_x, min_y
-            );
-
-            let geom_wkb = wkb_from_wkt(gdal, &wkt)?;
+            // Left half of the raster: x ∈ [0, 2], y ∈ [0, 2].
+            let geom_wkb = wkb_from_wkt(gdal, "POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))")?;
             let clipped = clip_raster(gdal, &raster, &geom_wkb, 0, None, false, false)?
                 .expect("Should have intersection");
-            let mut reader = RasterBandReader::new(gdal, &raster);
-            let original_len = reader.read_band_bytes(1)?.len();
+
+            let original_len = raster
+                .bands()
+                .band(1)
+                .unwrap()
+                .nd_buffer()
+                .unwrap()
+                .as_contiguous()
+                .unwrap()
+                .len();
             assert!(
                 !clipped.band_data.is_empty(),
                 "Should have at least one band"
@@ -761,32 +777,22 @@ mod tests {
 
     #[test]
     fn test_rs_clip_crop() {
-        let test_file = sedona_testing::data::test_raster("test4.tiff").unwrap();
+        // crop=true: the output shrinks to the geometry's bbox window.
+        let array = test_raster_array();
         with_gdal(|gdal| {
-            let raster_array = crate::utils::load_as_indb_raster(gdal, &test_file)?;
-            let raster_struct = RasterStructArray::new(&raster_array);
-            let raster = raster_struct.get(0).unwrap();
-
+            let rasters = RasterStructArray::try_new(&array).unwrap();
+            let raster = rasters.get(0).unwrap();
             let metadata = raster.metadata();
-            let min_x = metadata.upper_left_x();
-            let max_y = metadata.upper_left_y();
-            let max_x = min_x + (metadata.width() as f64 * metadata.scale_x()) / 4.0;
-            let min_y = max_y + (metadata.height() as f64 * metadata.scale_y()) / 4.0;
 
-            let wkt = format!(
-                "POLYGON(({} {}, {} {}, {} {}, {} {}, {} {}))",
-                min_x, min_y, max_x, min_y, max_x, max_y, min_x, max_y, min_x, min_y
-            );
-
-            let geom_wkb = wkb_from_wkt(gdal, &wkt)?;
+            // Top-left quadrant: x ∈ [0, 2], y ∈ [1, 2] — covers pixel centers
+            // (0.5, 1.5) and (1.5, 1.5), i.e. a 2×1 window.
+            let geom_wkb = wkb_from_wkt(gdal, "POLYGON((0 1, 2 1, 2 2, 0 2, 0 1))")?;
             let clipped = clip_raster(gdal, &raster, &geom_wkb, 0, None, false, true)?
                 .expect("Should have intersection");
-            assert!(
-                clipped.crop_window.is_some(),
-                "crop_window should be set when crop=true"
-            );
+            let cw = clipped
+                .crop_window
+                .expect("crop_window should be set when crop=true");
 
-            let cw = clipped.crop_window.unwrap();
             let byte_size = data_type_byte_size(&clipped.band_metadata[0].datatype);
             assert_eq!(
                 clipped.band_data[0].len(),
@@ -794,11 +800,11 @@ mod tests {
                 "Cropped band data size should match crop window"
             );
             assert!(
-                (cw.width as u64) < metadata.width(),
+                (cw.width as i64) < metadata.width(),
                 "Cropped width should be smaller"
             );
             assert!(
-                (cw.height as u64) < metadata.height(),
+                (cw.height as i64) < metadata.height(),
                 "Cropped height should be smaller"
             );
             Ok::<_, datafusion_common::DataFusionError>(())
@@ -808,13 +814,15 @@ mod tests {
 
     #[test]
     fn test_rs_clip_no_intersection() {
-        let test_file = sedona_testing::data::test_raster("test4.tiff").unwrap();
+        let array = test_raster_array();
         with_gdal(|gdal| {
-            let raster_array = crate::utils::load_as_indb_raster(gdal, &test_file)?;
-            let raster_struct = RasterStructArray::new(&raster_array);
-            let raster = raster_struct.get(0).unwrap();
-            let wkt = "POLYGON((1000 1000, 1001 1000, 1001 1001, 1000 1001, 1000 1000))";
-            let geom_wkb = wkb_from_wkt(gdal, wkt)?;
+            let rasters = RasterStructArray::try_new(&array).unwrap();
+            let raster = rasters.get(0).unwrap();
+            // Far outside the raster's [0,4]×[0,2] extent.
+            let geom_wkb = wkb_from_wkt(
+                gdal,
+                "POLYGON((100 100, 101 100, 101 101, 100 101, 100 100))",
+            )?;
             let result = clip_raster(gdal, &raster, &geom_wkb, 0, None, false, true)?;
             assert!(result.is_none(), "Should return None for no intersection");
             Ok::<_, datafusion_common::DataFusionError>(())
@@ -824,106 +832,67 @@ mod tests {
 
     #[test]
     fn test_rs_clip_crs_mismatch() {
-        use sedona_expr::scalar_udf::SedonaScalarKernel;
+        // A geometry given in EPSG:3857 must be reprojected to the raster's
+        // EPSG:4326 before clipping, yielding the same result as the equivalent
+        // EPSG:4326 geometry.
+        let array = test_raster_array();
 
-        let test_file = sedona_testing::data::test_raster("test4.tiff").unwrap();
-        let (raster_array, geom_wkb) = with_gdal(|gdal| {
-            let raster_array = crate::utils::load_as_indb_raster(gdal, &test_file)?;
-            let raster_struct = RasterStructArray::new(&raster_array);
-            let raster = raster_struct.get(0).unwrap();
-
-            let metadata = raster.metadata();
-            let min_x = metadata.upper_left_x();
-            let max_y = metadata.upper_left_y();
-            let max_x = min_x + (metadata.width() as f64 * metadata.scale_x()) / 2.0;
-            let min_y = max_y + (metadata.height() as f64 * metadata.scale_y()) / 2.0;
-
-            let wkt = format!(
-                "POLYGON(({} {}, {} {}, {} {}, {} {}, {} {}))",
-                min_x, min_y, max_x, min_y, max_x, max_y, min_x, max_y, min_x, min_y
-            );
-            let geom_wkb = wkb_from_wkt(gdal, &wkt)?;
-            Ok::<_, datafusion_common::DataFusionError>((raster_array, geom_wkb))
-        })
-        .unwrap();
-
-        // Generate the EPSG:3857 geometry using the same PROJ engine that the
-        // UDF uses for CRS transforms. This makes the test robust to axis-order
-        // and normalization differences between build configurations.
+        // Build the EPSG:3857 geometry with the same PROJ engine the UDF uses,
+        // so the test is robust to axis-order / normalization across builds.
         let crs_4326 = deserialize_crs("EPSG:4326").unwrap().unwrap();
         let crs_3857 = deserialize_crs("EPSG:3857").unwrap().unwrap();
 
-        let geom_wkb_merc = with_global_proj_engine(|engine| {
-            crs_transform_wkb(&geom_wkb, crs_4326.as_ref(), crs_3857.as_ref(), engine)
+        let geom_wkb_4326 =
+            with_gdal(|gdal| wkb_from_wkt(gdal, "POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))")).unwrap();
+        let geom_wkb_3857 = with_global_proj_engine(|engine| {
+            crs_transform_wkb(&geom_wkb_4326, crs_4326.as_ref(), crs_3857.as_ref(), engine)
         })
         .unwrap();
 
-        // Test with 3-arg variant: RS_Clip(raster, band, geom)
+        // 3-arg variant: RS_Clip(raster, band, geom).
         let kernel = RsClip { arg_count: 3 };
-
-        let raster_scalar = ColumnarValue::Scalar(ScalarValue::Struct(Arc::new(raster_array)));
-        let geom_type_4326 = SedonaType::Wkb(Edges::Planar, Some(crs_4326));
-        let geom_type_3857 = SedonaType::Wkb(Edges::Planar, Some(crs_3857));
+        let raster_scalar = ColumnarValue::Scalar(ScalarValue::Struct(Arc::new(array)));
         let band_type = SedonaType::Arrow(DataType::Int32);
         let band_val = ColumnarValue::Scalar(ScalarValue::Int32(Some(1)));
 
-        let result_4326 = kernel
-            .invoke_batch(
-                &[RASTER, band_type.clone(), geom_type_4326],
-                &[
-                    raster_scalar.clone(),
-                    band_val.clone(),
-                    ColumnarValue::Scalar(ScalarValue::Binary(Some(geom_wkb))),
-                ],
-            )
-            .unwrap();
-
-        let result_3857 = kernel
-            .invoke_batch(
-                &[RASTER, band_type, geom_type_3857],
-                &[
-                    raster_scalar,
-                    band_val,
-                    ColumnarValue::Scalar(ScalarValue::Binary(Some(geom_wkb_merc))),
-                ],
-            )
-            .unwrap();
-
-        let band_data_4326 = match result_4326 {
-            ColumnarValue::Scalar(ScalarValue::Struct(struct_array)) => {
-                let array = RasterStructArray::new(struct_array.as_ref());
-                let raster = array.get(0).unwrap();
-                let data = raster
-                    .bands()
-                    .band(1)
-                    .unwrap()
-                    .nd_buffer()
-                    .unwrap()
-                    .as_contiguous()
-                    .unwrap()
-                    .to_vec();
-                data
+        let clip_band1 = |geom_type: SedonaType, geom_wkb: Vec<u8>| -> Vec<u8> {
+            let result = kernel
+                .invoke_batch(
+                    &[RASTER, band_type.clone(), geom_type],
+                    &[
+                        raster_scalar.clone(),
+                        band_val.clone(),
+                        ColumnarValue::Scalar(ScalarValue::Binary(Some(geom_wkb))),
+                    ],
+                )
+                .unwrap();
+            match result {
+                ColumnarValue::Scalar(ScalarValue::Struct(struct_array)) => {
+                    let array = RasterStructArray::try_new(struct_array.as_ref()).unwrap();
+                    array
+                        .get(0)
+                        .unwrap()
+                        .bands()
+                        .band(1)
+                        .unwrap()
+                        .nd_buffer()
+                        .unwrap()
+                        .as_contiguous()
+                        .unwrap()
+                        .to_vec()
+                }
+                _ => panic!("Expected raster scalar result"),
             }
-            _ => panic!("Expected raster scalar result"),
         };
 
-        let band_data_3857 = match result_3857 {
-            ColumnarValue::Scalar(ScalarValue::Struct(struct_array)) => {
-                let array = RasterStructArray::new(struct_array.as_ref());
-                let raster = array.get(0).unwrap();
-                let data = raster
-                    .bands()
-                    .band(1)
-                    .unwrap()
-                    .nd_buffer()
-                    .unwrap()
-                    .as_contiguous()
-                    .unwrap()
-                    .to_vec();
-                data
-            }
-            _ => panic!("Expected raster scalar result"),
-        };
+        let band_data_4326 = clip_band1(
+            SedonaType::Wkb(Edges::Planar, Some(crs_4326)),
+            geom_wkb_4326,
+        );
+        let band_data_3857 = clip_band1(
+            SedonaType::Wkb(Edges::Planar, Some(crs_3857)),
+            geom_wkb_3857,
+        );
 
         assert_eq!(band_data_4326, band_data_3857);
     }
