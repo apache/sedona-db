@@ -90,6 +90,17 @@ fn invoke_scalar(
     grid_size: f64,
     writer: &mut impl std::io::Write,
 ) -> Result<()> {
+    // Reducing the precision of an empty geometry is a no-op. Skip GEOS
+    // set_precision here because it promotes empty geometries to the Z
+    // dimension (e.g. LINESTRING EMPTY -> LINESTRING Z EMPTY), which would
+    // change the output dimensionality of the input.
+    let is_empty = geos_geom
+        .is_empty()
+        .map_err(|e| DataFusionError::Execution(format!("Failed to check is_empty: {e}")))?;
+    if is_empty {
+        return write_geos_geometry(geos_geom, writer);
+    }
+
     let geometry = geos_geom
         .set_precision(grid_size, Precision::ValidOutput)
         .map_err(|e| DataFusionError::Execution(format!("Failed to reduce precision: {e}")))?;
@@ -134,10 +145,15 @@ mod tests {
             .unwrap();
         assert!(result.is_null());
 
-        // Empty geometry handling (empty in -> empty out) is verified
-        // in Python integration tests. Rust WKB byte comparison is too
-        // strict here because GEOS may promote empty geometries to Z
-        // dimension (e.g., LINESTRING EMPTY -> LINESTRING Z EMPTY in WKB).
+        // Empty geometry input is a no-op: empty in -> empty out, with the
+        // input dimensionality preserved (no Z promotion from GEOS).
+        let result = tester
+            .invoke_scalar_scalar("LINESTRING EMPTY", 1.0)
+            .unwrap();
+        tester.assert_scalar_result_equals(result, "LINESTRING EMPTY");
+
+        let result = tester.invoke_scalar_scalar("POLYGON EMPTY", 1.0).unwrap();
+        tester.assert_scalar_result_equals(result, "POLYGON EMPTY");
 
         let input_wkt = vec![
             Some("LINESTRING (1.123 2.456, 3.789 4.012)"),

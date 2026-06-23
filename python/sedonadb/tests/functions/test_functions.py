@@ -2337,8 +2337,9 @@ def test_st_linelocatepoint(eng, line, point, expected):
 def test_st_linelocatepoint_empty_inputs(
     eng, line, point, expected_sedona, expected_postgis
 ):
+    is_postgis = eng is PostGIS
     eng = eng.create_or_skip()
-    expected = expected_postgis if isinstance(eng, PostGIS) else expected_sedona
+    expected = expected_postgis if is_postgis else expected_sedona
     eng.assert_query_result(
         f"SELECT ST_LineLocatePoint({geom_or_null(line)}, {geom_or_null(point)})",
         expected,
@@ -2396,8 +2397,11 @@ def test_st_maxdistance(eng, geom1, geom2, expected):
             1.0,
             "POLYGON ((0 1, 1 1, 1 0, 0 0, 0 1))",
         ),
-        # Empty geometry inputs return empty geometry
-        ("POINT EMPTY", 1.0, "POINT EMPTY"),
+        # Empty geometry input is a no-op: empty in -> empty out, input
+        # dimensionality preserved (no Z promotion). POINT EMPTY renders as
+        # "POINT (nan nan)" due to a geoarrow-c serialisation quirk shared by
+        # both engines.
+        ("POINT EMPTY", 1.0, "POINT (nan nan)"),
         ("LINESTRING EMPTY", 1.0, "LINESTRING EMPTY"),
         ("POLYGON EMPTY", 1.0, "POLYGON EMPTY"),
     ],
