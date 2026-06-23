@@ -64,6 +64,7 @@ pub fn scalar_kernels() -> Vec<(&'static str, Vec<ScalarKernelRef>)> {
         "st_isvalidreason" => crate::st_isvalidreason::st_is_valid_reason_impl,
         "st_length" => crate::st_length::st_length_impl,
         "st_linemerge" => crate::st_line_merge::st_line_merge_impl,
+        "st_hausdorffdistance" => crate::st_hausdorffdistance::st_hausdorff_distance_impl,
         "st_makevalid" => crate::st_makevalid::st_make_valid_impl,
         "st_minimumclearance" => crate::st_minimumclearance::st_minimum_clearance_impl,
         "st_minimumclearanceline" => crate::st_minimumclearance_line::st_minimum_clearance_line_impl,
