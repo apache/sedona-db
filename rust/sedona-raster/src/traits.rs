@@ -19,7 +19,7 @@ use arrow_schema::ArrowError;
 use sedona_schema::raster::BandDataType;
 
 use crate::builder::{RasterBuilder, StartBandWithViewArgs};
-use crate::view_entries::ViewEntry;
+use crate::view_entries::{ViewEntries, ViewEntry};
 
 /// Recognized spatial dimension-name pairs, in band C-order: the slower-
 /// varying Y-like (row) axis first, the faster-varying X-like (column) axis
@@ -512,7 +512,11 @@ pub struct BandOverrides<'a> {
     pub name: Option<&'a str>,
     /// Override the dimension names; `None` inherits the source's.
     pub dim_names: Option<&'a [&'a str]>,
-    /// Override the view (e.g. a composed slice); `None` inherits the source's.
+    /// View to apply to the derived band, expressed in the **source's visible
+    /// coordinates**. [`BandRef::copy_into`] composes it onto the source's own
+    /// view for you — you don't manage that composition and don't need to know
+    /// whether the source already carries a view. `None` inherits the source's
+    /// view unchanged.
     pub view: Option<&'a [ViewEntry]>,
     /// Override the nodata value; `None` inherits the source's.
     pub nodata: Option<&'a [u8]>,
@@ -711,13 +715,20 @@ pub trait BandRef {
     }
 
     /// Write a derived band into `builder`, inheriting every field not set in
-    /// `overrides` from `self`, and carrying over the source bytes.
+    /// `overrides` from `self`, and carrying the source bytes over.
     ///
     /// This is the canonical "derive a band from an existing one" path — it
     /// replaces hand-rebuilding via `start_band_with_view` + a manual data
     /// append (which silently drops the view or copies the bytes). The data
     /// transfer is zero-copy when the implementation supports it; see
     /// [`Self::append_data_into`].
+    ///
+    /// The derived band's view is the source's own view with any
+    /// `overrides.view` **composed on top for you**: express an override in the
+    /// source's *visible* coordinates and `copy_into` composes it against the
+    /// source's view — callers never manage that composition and don't need to
+    /// know whether the source already carries one. `overrides.view = None`
+    /// inherits the source's view unchanged.
     fn copy_into(
         &self,
         builder: &mut RasterBuilder,
@@ -729,13 +740,19 @@ pub trait BandRef {
             None => inherited_dims,
         };
         let source_shape = self.raw_source_shape().to_vec();
-        let inherited_view = self.view().to_vec();
-        let view: &[ViewEntry] = overrides.view.unwrap_or(inherited_view.as_slice());
+        // Compose the caller's override (if any) onto the source's own view, so
+        // the override is interpreted in the source's visible space and the
+        // caller doesn't have to. `None` keeps the source view unchanged.
+        let source_view = ViewEntries::new(self.view().to_vec());
+        let effective_view = match overrides.view {
+            Some(v) => source_view.compose(&ViewEntries::new(v.to_vec()))?,
+            None => source_view,
+        };
         builder.start_band_with_view(StartBandWithViewArgs {
             name: overrides.name,
             dim_names: &dim_names,
             source_shape: &source_shape,
-            view,
+            view: effective_view.as_slice(),
             data_type: self.data_type(),
             nodata: overrides.nodata.or_else(|| self.nodata()),
             outdb_uri: overrides.outdb_uri.or_else(|| self.outdb_uri()),

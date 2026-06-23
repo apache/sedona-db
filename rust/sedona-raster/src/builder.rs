@@ -554,19 +554,18 @@ impl RasterBuilder {
             outdb_uri,
             outdb_format,
         } = args;
-        // Compose the input band's existing view with the requested one, then
-        // delegate to `copy_into`: it writes the schema (inheriting source_shape
-        // and any unspecified fields from `input`) and carries the bytes over —
-        // zero-copy for an Arrow-backed input via `append_band_data_from`,
-        // copying only for a generic `BandRef`.
-        let composed =
-            ViewEntries::new(input.view().to_vec()).compose(&ViewEntries::new(view.to_vec()))?;
+        // Delegate to `copy_into`, which composes the requested `view` onto the
+        // input band's existing view for us (the requested view is a delta in
+        // `input`'s visible coordinates), writes the schema (inheriting
+        // source_shape and any unspecified fields from `input`), and carries the
+        // bytes over — zero-copy for an Arrow-backed input via
+        // `append_band_data_from`, copying only for a generic `BandRef`.
         input.copy_into(
             self,
             BandOverrides {
                 name,
                 dim_names: Some(dim_names),
-                view: Some(composed.as_slice()),
+                view: Some(view),
                 nodata,
                 outdb_uri,
                 outdb_format,

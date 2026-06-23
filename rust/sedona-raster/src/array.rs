@@ -805,7 +805,7 @@ impl<'a> RasterStructArray<'a> {
 mod tests {
     use super::*;
     use crate::builder::{RasterBuilder, StartBandWithViewArgs};
-    use crate::traits::{BandMetadata, RasterMetadata};
+    use crate::traits::{BandMetadata, BandOverrides, RasterMetadata};
     use crate::view_entries::ViewEntry;
     use arrow_array::{types::Int64Type, ArrayRef, ListArray, StructArray, UInt32Array};
     use arrow_buffer::{NullBuffer, OffsetBuffer, ScalarBuffer};
@@ -815,6 +815,184 @@ mod tests {
     };
     use sedona_testing::rasters::generate_test_rasters;
     use std::sync::Arc;
+
+    #[test]
+    fn copy_into_shares_buffer_zero_copy_and_overrides() {
+        // 16-byte InDb band (> inline threshold, so block-backed and shareable).
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        let mut ib = RasterBuilder::new(1);
+        ib.start_raster_nd(&transform, &["x"], &[16], None).unwrap();
+        ib.start_band_nd(
+            Some("orig"),
+            &["x"],
+            &[16],
+            BandDataType::UInt8,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        ib.band_data_writer()
+            .append_value((0u8..16).collect::<Vec<u8>>());
+        ib.finish_band().unwrap();
+        ib.finish_raster().unwrap();
+        let input_array = ib.finish().unwrap();
+        let input_rasters = RasterStructArray::try_new(&input_array).unwrap();
+        let input_raster = input_rasters.get(0).unwrap();
+        let input_band = input_raster.band(0).unwrap();
+        let input_ptr = input_band.nd_buffer().unwrap().buffer.as_ptr();
+
+        // copy_into with a name override; everything else inherited.
+        let mut ob = RasterBuilder::new(1);
+        ob.start_raster_nd(&transform, &["x"], &[16], None).unwrap();
+        input_band
+            .copy_into(
+                &mut ob,
+                BandOverrides {
+                    name: Some("derived"),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        ob.finish_band().unwrap();
+        ob.finish_raster().unwrap();
+        let out_array = ob.finish().unwrap();
+        let out_rasters = RasterStructArray::try_new(&out_array).unwrap();
+        let out_raster = out_rasters.get(0).unwrap();
+        let out_band = out_raster.band(0).unwrap();
+
+        // Zero-copy: the derived band references the same backing bytes.
+        assert_eq!(
+            input_ptr,
+            out_band.nd_buffer().unwrap().buffer.as_ptr(),
+            "copy_into must share the source buffer, not copy it"
+        );
+        assert_eq!(
+            out_band.nd_buffer().unwrap().as_contiguous().unwrap(),
+            (0u8..16).collect::<Vec<u8>>().as_slice()
+        );
+        // Name overridden; dim names + data type inherited from the source.
+        assert_eq!(out_raster.band_name(0), Some("derived"));
+        assert_eq!(out_band.dim_names(), vec!["x"]);
+        assert_eq!(out_band.data_type(), BandDataType::UInt8);
+    }
+
+    #[test]
+    fn copy_into_with_identity_override_view_succeeds() {
+        // An explicit identity override composes back to the identity, so it is
+        // accepted and behaves exactly like the inherited (None) case — this
+        // exercises the new `BandOverrides::view` path end to end.
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        let mut ib = RasterBuilder::new(1);
+        ib.start_raster_nd(&transform, &["x"], &[4], None).unwrap();
+        ib.start_band_nd(
+            Some("orig"),
+            &["x"],
+            &[4],
+            BandDataType::UInt8,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        ib.band_data_writer().append_value(vec![1u8, 2, 3, 4]);
+        ib.finish_band().unwrap();
+        ib.finish_raster().unwrap();
+        let in_array = ib.finish().unwrap();
+        let in_rasters = RasterStructArray::try_new(&in_array).unwrap();
+        let in_raster = in_rasters.get(0).unwrap();
+        let in_band = in_raster.band(0).unwrap();
+
+        let identity = [ViewEntry {
+            source_axis: 0,
+            start: 0,
+            step: 1,
+            steps: 4,
+        }];
+        let mut ob = RasterBuilder::new(1);
+        ob.start_raster_nd(&transform, &["x"], &[4], None).unwrap();
+        in_band
+            .copy_into(
+                &mut ob,
+                BandOverrides {
+                    view: Some(&identity),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        ob.finish_band().unwrap();
+        ob.finish_raster().unwrap();
+        let out_array = ob.finish().unwrap();
+        let out_rasters = RasterStructArray::try_new(&out_array).unwrap();
+        let out_raster = out_rasters.get(0).unwrap();
+        let out_band = out_raster.band(0).unwrap();
+        assert_eq!(
+            out_band.nd_buffer().unwrap().as_contiguous().unwrap(),
+            &[1u8, 2, 3, 4]
+        );
+    }
+
+    #[test]
+    fn copy_into_composes_non_identity_override_view() {
+        // Identity source over [4]; the caller's override slices it (step 2,
+        // 2 steps) in the source's visible coordinates. copy_into composes that
+        // onto the source's identity view and persists the resulting
+        // non-identity view, which the derived band reports as a strided window.
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        let mut ib = RasterBuilder::new(1);
+        ib.start_raster_nd(&transform, &["x"], &[4], None).unwrap();
+        ib.start_band_nd(
+            Some("orig"),
+            &["x"],
+            &[4],
+            BandDataType::UInt8,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        ib.band_data_writer().append_value(vec![1u8, 2, 3, 4]);
+        ib.finish_band().unwrap();
+        ib.finish_raster().unwrap();
+        let in_array = ib.finish().unwrap();
+        let in_rasters = RasterStructArray::try_new(&in_array).unwrap();
+        let in_raster = in_rasters.get(0).unwrap();
+        let in_band = in_raster.band(0).unwrap();
+
+        let sliced = [ViewEntry {
+            source_axis: 0,
+            start: 0,
+            step: 2,
+            steps: 2,
+        }];
+        let mut ob = RasterBuilder::new(1);
+        // The derived raster's spatial_shape matches the sliced visible shape.
+        ob.start_raster_nd(&transform, &["x"], &[2], None).unwrap();
+        in_band
+            .copy_into(
+                &mut ob,
+                BandOverrides {
+                    view: Some(&sliced),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        ob.finish_band().unwrap();
+        ob.finish_raster().unwrap();
+        let out_array = ob.finish().unwrap();
+        let out_rasters = RasterStructArray::try_new(&out_array).unwrap();
+        let out_raster = out_rasters.get(0).unwrap();
+        let out_band = out_raster.band(0).unwrap();
+
+        // Visible shape reflects the 2-element stride-2 window.
+        assert_eq!(out_band.shape(), &[2]);
+        let ndb = out_band.nd_buffer().unwrap();
+        assert_eq!(ndb.shape, vec![2]);
+        // Byte stride is step (2) × element size (1 byte).
+        assert_eq!(ndb.strides, vec![2]);
+        // The full source bytes are carried over; the view selects 1 and 3.
+        assert_eq!(&ndb.buffer[..4], &[1u8, 2, 3, 4]);
+    }
 
     #[test]
     fn test_array_basic_functionality() {
