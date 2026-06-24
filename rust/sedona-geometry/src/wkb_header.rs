@@ -448,6 +448,7 @@ fn calc_dimensions(code: u32) -> Result<Dimensions, SedonaGeometryError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sedona_testing::fixtures::*;
     use std::str::FromStr;
     use wkb::writer::{write_geometry, WriteOptions};
     use wkt::Wkt;
@@ -585,8 +586,6 @@ mod tests {
 
     #[test]
     fn ewkb() {
-        use sedona_testing::fixtures::*;
-
         // Test POINT with SRID 4326
         let header = WkbHeader::try_new(&POINT_WITH_SRID_4326_EWKB).unwrap();
         assert_eq!(header.srid(), 4326);
@@ -669,8 +668,6 @@ mod tests {
 
     #[test]
     fn srid_linestring() {
-        use sedona_testing::fixtures::*;
-
         let header = WkbHeader::try_new(&LINESTRING_WITH_SRID_4326_EWKB).unwrap();
         assert_eq!(header.srid(), 4326);
         assert_eq!(
@@ -684,8 +681,6 @@ mod tests {
 
     #[test]
     fn srid_polygon() {
-        use sedona_testing::fixtures::*;
-
         let header = WkbHeader::try_new(&POLYGON_WITH_SRID_4326_EWKB).unwrap();
         assert_eq!(header.srid(), 4326);
         assert_eq!(header.geometry_type_id().unwrap(), GeometryTypeId::Polygon);
@@ -696,8 +691,6 @@ mod tests {
 
     #[test]
     fn multipoint_with_srid() {
-        use sedona_testing::fixtures::*;
-
         let header = WkbHeader::try_new(&MULTIPOINT_WITH_SRID_4326_EWKB).unwrap();
         assert_eq!(header.srid(), 4326);
         assert_eq!(
@@ -711,8 +704,6 @@ mod tests {
 
     #[test]
     fn srid_empty_geometries_with_srid() {
-        use sedona_testing::fixtures::*;
-
         // Test POINT EMPTY with SRID
         let header = WkbHeader::try_new(&POINT_EMPTY_WITH_SRID_4326_EWKB).unwrap();
         assert_eq!(header.srid(), 4326);
@@ -1014,9 +1005,7 @@ mod tests {
     }
 
     #[test]
-    fn incomplete_ewkb_buffers() {
-        use sedona_testing::fixtures::*;
-        // Test incomplete EWKB buffers
+    fn incomplete_ewkb_buffers() {        // Test incomplete EWKB buffers
 
         // 1 byte_order + 4 geometry type + 4 srid + 8 x + 8 y
         let wkb = POINT_WITH_SRID_4326_EWKB;
@@ -1169,8 +1158,6 @@ mod tests {
 
     #[test]
     fn read_point_xy_ewkb_with_srid() {
-        use sedona_testing::fixtures::*;
-
         // The SRID sits between the type code and the coordinate; the reader must
         // skip it for every dimensionality.
         for wkb in [
@@ -1192,8 +1179,6 @@ mod tests {
         // POINT EMPTY is encoded as NaN/NaN and reads back as "no coordinate".
         assert_eq!(read_point_xy(&make_wkb("POINT EMPTY")).unwrap(), None);
         assert_eq!(read_point_xy(&make_wkb("POINT Z EMPTY")).unwrap(), None);
-
-        use sedona_testing::fixtures::*;
         assert_eq!(
             read_point_xy(&POINT_EMPTY_WITH_SRID_4326_EWKB).unwrap(),
             None
