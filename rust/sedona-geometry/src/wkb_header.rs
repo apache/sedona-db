@@ -1005,7 +1005,8 @@ mod tests {
     }
 
     #[test]
-    fn incomplete_ewkb_buffers() {        // Test incomplete EWKB buffers
+    fn incomplete_ewkb_buffers() {
+        // Test incomplete EWKB buffers
 
         // 1 byte_order + 4 geometry type + 4 srid + 8 x + 8 y
         let wkb = POINT_WITH_SRID_4326_EWKB;
