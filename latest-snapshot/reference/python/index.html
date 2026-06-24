@@ -5585,6 +5585,118 @@ such that it can be referred to in SQL.</p>
 <div class="doc doc-object doc-function">
 
 
+<h4 id="sedonadb.dataframe.DataFrame.union" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">union</span>
+
+
+<a href="#sedonadb.dataframe.DataFrame.union" class="headerlink" title="Permanent link">¶</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">union</span><span class="p">(</span><span class="n">other</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Concatenate two DataFrames vertically, keeping duplicate rows.</p>
+<p>This is SQL <code>UNION ALL</code> (and matches PySpark's <code>union</code>): duplicate
+rows are preserved. Use <code>union_distinct</code> for SQL <code>UNION</code> semantics.
+Both DataFrames must have the same column names in the same order;
+otherwise an error is raised. (To union differently-named columns
+positionally, align the names first, e.g. with <code>select</code>.)</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+            <b><code>other</code></b>
+              (<code><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></code>)
+          –
+          <div class="doc-md-description">
+            <p>The DataFrame to append. Must have the same column names,
+in the same order, as this DataFrame.</p>
+          </div>
+        </li>
+    </ul>
+        <p>Examples:</p>
+<div class="codehilite"><pre><span></span><code>&gt;&gt;&gt; sd = sedona.db.connect()
+&gt;&gt;&gt; a = sd.sql("SELECT <span class="gs">* FROM (VALUES (1), (2)) AS t(x)")</span>
+<span class="gs">&gt;&gt;&gt; b = sd.sql("SELECT *</span> FROM (VALUES (2), (3)) AS t(x)")
+&gt;&gt;&gt; a.union(b).sort("x").show()
+┌───────┐
+│   x   │
+│ int64 │
+╞═══════╡
+│     1 │
+├╌╌╌╌╌╌╌┤
+│     2 │
+├╌╌╌╌╌╌╌┤
+│     2 │
+├╌╌╌╌╌╌╌┤
+│     3 │
+└───────┘
+</code></pre></div>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="sedonadb.dataframe.DataFrame.union_distinct" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">union_distinct</span>
+
+
+<a href="#sedonadb.dataframe.DataFrame.union_distinct" class="headerlink" title="Permanent link">¶</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">union_distinct</span><span class="p">(</span><span class="n">other</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Concatenate two DataFrames vertically and drop duplicate rows.</p>
+<p>This is SQL <code>UNION</code>: the result has no duplicate rows (comparing
+all columns). Use <code>union</code> to keep duplicates (<code>UNION ALL</code>). Both
+DataFrames must have the same column names in the same order;
+otherwise an error is raised. (To union differently-named columns
+positionally, align the names first, e.g. with <code>select</code>.)</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+            <b><code>other</code></b>
+              (<code><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></code>)
+          –
+          <div class="doc-md-description">
+            <p>The DataFrame to append. Must have the same column names,
+in the same order, as this DataFrame.</p>
+          </div>
+        </li>
+    </ul>
+        <p>Examples:</p>
+<div class="codehilite"><pre><span></span><code>&gt;&gt;&gt; sd = sedona.db.connect()
+&gt;&gt;&gt; a = sd.sql("SELECT <span class="gs">* FROM (VALUES (1), (2)) AS t(x)")</span>
+<span class="gs">&gt;&gt;&gt; b = sd.sql("SELECT *</span> FROM (VALUES (2), (3)) AS t(x)")
+&gt;&gt;&gt; a.union_distinct(b).sort("x").show()
+┌───────┐
+│   x   │
+│ int64 │
+╞═══════╡
+│     1 │
+├╌╌╌╌╌╌╌┤
+│     2 │
+├╌╌╌╌╌╌╌┤
+│     3 │
+└───────┘
+</code></pre></div>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
 <h4 id="sedonadb.dataframe.DataFrame.with_params" class="doc doc-heading">
             <span class="doc doc-object-name doc-function-name">with_params</span>
 
