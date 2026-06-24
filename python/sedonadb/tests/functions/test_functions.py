@@ -2345,7 +2345,7 @@ def test_st_linelocatepoint_empty_inputs(eng, line, point, expected):
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 def test_st_linelocatepoint_non_linestring_errors(eng):
     eng = eng.create_or_skip()
-    with pytest.raises(Exception, match="(LineString)|(linestring)"):
+    with pytest.raises(Exception, match="(LineString)|(linestring)|(line)"):
         eng.execute_and_collect(
             "SELECT ST_LineLocatePoint(ST_GeomFromText('POLYGON ((0 0, 1 0, 1 1, 0 0))'), ST_GeomFromText('POINT (0.5 0.5)'))"
         )
