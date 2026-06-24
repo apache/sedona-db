@@ -1697,6 +1697,115 @@ def test_st_geomfromewkt(eng, ewkt, expected, expected_srid):
     )
 
 
+# --- ST_XxxFromText typed constructors ---
+
+# (fn_name, matching_wkt, wrong_wkt)
+_TYPED_CONSTRUCTOR_CASES = [
+    ("ST_PointFromText", "POINT (1 2)", "LINESTRING (0 0, 1 1)"),
+    ("ST_LineFromText", "LINESTRING (0 0, 1 1)", "POINT (1 2)"),
+    ("ST_PolygonFromText", "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", "POINT (1 2)"),
+    # geoarrow-c renders MULTIPOINT without per-point parens
+    ("ST_MPointFromText", "MULTIPOINT (0 0, 1 1)", "POINT (1 2)"),
+    ("ST_MLineFromText", "MULTILINESTRING ((0 0, 1 1))", "POINT (1 2)"),
+    ("ST_MPolyFromText", "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)))", "POINT (1 2)"),
+    (
+        "ST_GeomCollFromText",
+        "GEOMETRYCOLLECTION (POINT (0 0))",
+        "POINT (1 2)",
+    ),
+]
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(("fn_name", "wkt", "_wrong"), _TYPED_CONSTRUCTOR_CASES)
+def test_typed_geom_constructors_accept_correct_type(eng, fn_name, wkt, _wrong):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT {fn_name}('{wkt}')", wkt)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize(
+    ("fn_name", "_matching", "wrong_wkt"), _TYPED_CONSTRUCTOR_CASES
+)
+def test_typed_geom_constructors_reject_wrong_type(eng, fn_name, _matching, wrong_wkt):
+    # PostGIS typed constructors are aliases for ST_GeomFromText and do not validate type
+    eng = eng.create_or_skip()
+    with pytest.raises(Exception):
+        eng.assert_query_result(f"SELECT {fn_name}('{wrong_wkt}')", None)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(("fn_name", "wkt", "_wrong"), _TYPED_CONSTRUCTOR_CASES)
+def test_typed_geom_constructors_accept_srid(eng, fn_name, wkt, _wrong):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_SRID({fn_name}('{wkt}', 4326))", 4326)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("fn_name", "empty_wkt"),
+    [
+        ("ST_PointFromText", "POINT EMPTY"),
+        ("ST_LineFromText", "LINESTRING EMPTY"),
+        ("ST_PolygonFromText", "POLYGON EMPTY"),
+        ("ST_MPointFromText", "MULTIPOINT EMPTY"),
+        ("ST_MLineFromText", "MULTILINESTRING EMPTY"),
+        ("ST_MPolyFromText", "MULTIPOLYGON EMPTY"),
+        ("ST_GeomCollFromText", "GEOMETRYCOLLECTION EMPTY"),
+    ],
+)
+def test_typed_geom_constructors_accept_matching_empty(eng, fn_name, empty_wkt):
+    """Each constructor accepts its own EMPTY type (correct type, empty geometry)."""
+    eng = eng.create_or_skip()
+    # geoarrow-c renders POINT EMPTY as POINT (nan nan)
+    expected = "POINT (nan nan)" if empty_wkt == "POINT EMPTY" else empty_wkt
+    eng.assert_query_result(f"SELECT {fn_name}('{empty_wkt}')", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    "fn_name",
+    [fn for fn, _, _ in _TYPED_CONSTRUCTOR_CASES],
+)
+def test_typed_geom_constructors_null_input(eng, fn_name):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT {fn_name}(NULL)", None)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB])
+def test_st_linestringfromtext_alias(eng):
+    # PostGIS does not have ST_LineStringFromText
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        "SELECT ST_LineStringFromText('LINESTRING (0 0, 1 1)')", "LINESTRING (0 0, 1 1)"
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize(
+    ("fn_name", "wkt", "wrong_empty"),
+    [
+        ("ST_PointFromText", "POINT (1 2)", "LINESTRING EMPTY"),
+        ("ST_LineFromText", "LINESTRING (0 0, 1 1)", "POINT EMPTY"),
+        ("ST_PolygonFromText", "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", "POINT EMPTY"),
+        ("ST_MPointFromText", "MULTIPOINT ((0 0))", "LINESTRING EMPTY"),
+        ("ST_MLineFromText", "MULTILINESTRING ((0 0, 1 1))", "POINT EMPTY"),
+        (
+            "ST_MPolyFromText",
+            "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)))",
+            "POINT EMPTY",
+        ),
+        ("ST_GeomCollFromText", "GEOMETRYCOLLECTION (POINT (0 0))", "LINESTRING EMPTY"),
+    ],
+)
+def test_typed_geom_constructors_reject_wrong_empty(eng, fn_name, wkt, wrong_empty):
+    """EMPTY of wrong type is rejected just like non-empty wrong type."""
+    # PostGIS typed constructors are aliases for ST_GeomFromText and do not validate type
+    eng = eng.create_or_skip()
+    with pytest.raises(Exception):
+        eng.assert_query_result(f"SELECT {fn_name}('{wrong_empty}')", None)
+
+
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
     ("geom"),
@@ -2605,6 +2714,7 @@ def test_st_pointm(eng, x, y, m, expected):
     ],
 )
 def test_st_points(eng, geometry, expected, expected_n):
+    is_postgis = eng is PostGIS
     eng = eng.create_or_skip()
     eng.assert_query_result(
         f"SELECT ST_Points({geom_or_null(geometry)})",
@@ -2614,6 +2724,13 @@ def test_st_points(eng, geometry, expected, expected_n):
         f"SELECT ST_NPoints({geom_or_null(geometry)})",
         expected_n,
     )
+    if not is_postgis:
+        # ST_NumPoints is an alias for ST_NPoints in SedonaDB.
+        # PostGIS still treats ST_NumPoints as LineString-only despite documentation.
+        eng.assert_query_result(
+            f"SELECT ST_NumPoints({geom_or_null(geometry)})",
+            expected_n,
+        )
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
@@ -3763,38 +3880,6 @@ def test_st_numinteriorrings_basic(eng, geom, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(
         f"SELECT ST_NumInteriorRings({geom_or_null(geom)})",
-        expected,
-    )
-
-
-@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
-@pytest.mark.parametrize(
-    ("geom", "expected"),
-    [
-        (None, None),
-        ("POINT EMPTY", None),
-        ("LINESTRING EMPTY", 0),
-        ("POLYGON EMPTY", None),
-        ("MULTIPOINT EMPTY", None),
-        ("MULTILINESTRING EMPTY", None),
-        ("MULTIPOLYGON EMPTY", None),
-        ("GEOMETRYCOLLECTION EMPTY", None),
-        ("POINT (1 2)", None),
-        ("LINESTRING (0 0, 1 1, 2 2)", 3),
-        ("LINESTRING (0 0, 1 1, 0 0)", 3),
-        ("LINESTRING Z (0 0 0, 1 1 1, 2 2 2, 3 3 3)", 4),
-        ("LINESTRING M (0 0 0, 1 1 1, 2 2 2, 3 3 3)", 4),
-        ("LINESTRING ZM (0 0 0 2, 1 1 1 4)", 2),
-        ("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))", None),
-        ("MULTILINESTRING ((0 0, 0 1, 1 1, 0 0),(0 0, 1 1))", None),
-        ("GEOMETRYCOLLECTION (LINESTRING (0 0, 0 1, 1 1, 0 0))", None),
-        ("POLYGON ((0 0,6 0,6 6,0 6,0 0),(2 2,4 2,4 4,2 4,2 2))", None),
-    ],
-)
-def test_st_numpoints(eng, geom, expected):
-    eng = eng.create_or_skip()
-    eng.assert_query_result(
-        f"SELECT ST_NumPoints({geom_or_null(geom)})",
         expected,
     )
 

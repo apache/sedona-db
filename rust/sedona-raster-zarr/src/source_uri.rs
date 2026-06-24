@@ -21,8 +21,9 @@
 //!
 //! 1. **Group URI** (the loader entry-point argument). Identifies a Zarr
 //!    group on a backend. Supported schemes: `file://`, bare local path,
-//!    `s3://`, `gs://`/`gcs://`, `az://`/`abfs://`/`abfss://`,
-//!    `http://`, `https://`.
+//!    `s3://`, `http://`, `https://` (the `object_store` `aws`/`http`
+//!    features). Other schemes (e.g. `gs://`, `az://`) error as
+//!    unsupported until their backends are wired in.
 //! 2. **Chunk anchor URI** (written into a band's `outdb_uri`). Addresses
 //!    one chunk in one array within a group:
 //!    `<store-uri>#array=<array-path>&chunk=<i0>,<i1>,...`. The store URI

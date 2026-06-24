@@ -143,3 +143,24 @@ def test_geo_methods_accessor(con):
     # Check piped function from Expr via .geo accessor
     e = con.col("foofy").geo.as_text()
     assert repr(e) == "Expr(st_astext(foofy))"
+
+
+def test_raster_functions_accessor(con):
+    pytest.importorskip("sedonadb_expr")
+
+    # Check function as resolved from the rst accessor
+    e = con.funcs.rst.height(con.col("raster_col"))
+    assert isinstance(e, Expr)
+    assert repr(e) == "Expr(rs_height(raster_col))"
+
+
+def test_raster_methods_accessor(con):
+    pytest.importorskip("sedonadb_expr")
+
+    # Check piped function from Expr via .rst accessor
+    e = con.col("raster_col").rst.height()
+    assert repr(e) == "Expr(rs_height(raster_col))"
+
+    # Check raster function with additional args
+    e = con.col("raster_col").rst.band_no_data_value(1)
+    assert repr(e) == "Expr(rs_bandnodatavalue(raster_col, Int64(1)))"

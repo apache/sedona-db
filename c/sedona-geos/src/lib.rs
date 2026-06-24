@@ -41,7 +41,6 @@ mod st_minimumclearance_line;
 mod st_normalize;
 mod st_nrings;
 mod st_numinteriorrings;
-mod st_numpoints;
 mod st_perimeter;
 mod st_polygonize;
 mod st_polygonize_agg;

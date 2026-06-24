@@ -70,7 +70,6 @@ pub fn scalar_kernels() -> Vec<(&'static str, Vec<ScalarKernelRef>)> {
         "st_normalize" => crate::st_normalize::st_normalize_impl,
         "st_nrings" => crate::st_nrings::st_nrings_impl,
         "st_numinteriorrings" => crate::st_numinteriorrings::st_num_interior_rings_impl,
-        "st_numpoints" => crate::st_numpoints::st_num_points_impl,
         "st_overlaps" => crate::binary_predicates::st_overlaps_impl,
         "st_perimeter" => crate::st_perimeter::st_perimeter_impl,
         "st_polygonize" => crate::st_polygonize::st_polygonize_impl,

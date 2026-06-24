@@ -30,6 +30,7 @@ use std::sync::Arc;
 use sedona_schema::raster::{BandDataType, RasterSchema};
 
 use crate::traits::{BandMetadata, MetadataRef};
+use crate::view_entries::{ViewEntries, ViewEntry};
 
 /// Maximum byte length of an inline `BinaryViewArray` view. Views this short
 /// store their bytes in the 16-byte view itself; longer views reference a data
@@ -142,6 +143,20 @@ pub struct RasterBuilder {
     band_data_blocks: HashMap<usize, u32>,
 
     raster_validity: BooleanBuilder,
+}
+
+/// Arguments to [`RasterBuilder::start_band_with_view`]. Bundled into a
+/// struct to keep the call site readable — eight slots is enough that
+/// positional args invite mis-ordering bugs.
+pub(crate) struct StartBandWithViewArgs<'a> {
+    pub name: Option<&'a str>,
+    pub dim_names: &'a [&'a str],
+    pub source_shape: &'a [i64],
+    pub view: &'a [ViewEntry],
+    pub data_type: BandDataType,
+    pub nodata: Option<&'a [u8]>,
+    pub outdb_uri: Option<&'a str>,
+    pub outdb_format: Option<&'a str>,
 }
 
 impl RasterBuilder {
@@ -385,6 +400,69 @@ impl RasterBuilder {
         ));
 
         Ok(())
+    }
+
+    /// Start a band carrying an explicit `view` — a per-axis window of
+    /// offsets/steps over `source_shape` — rather than the implicit identity.
+    ///
+    /// This is the entry point view persistence will use, so callers such as
+    /// [`BandRef::copy_into`] route through it unchanged once persistence
+    /// lands. Today the band schema stores a view only as the canonical
+    /// identity null sentinel, so a non-identity `view` is rejected; an
+    /// identity view is stored exactly as [`Self::start_band_nd`] does. View
+    /// persistence is tracked in
+    /// <https://github.com/apache/sedona-db/issues/897>.
+    pub(crate) fn start_band_with_view(
+        &mut self,
+        args: StartBandWithViewArgs<'_>,
+    ) -> Result<(), ArrowError> {
+        let StartBandWithViewArgs {
+            name,
+            dim_names,
+            source_shape,
+            view,
+            data_type,
+            nodata,
+            outdb_uri,
+            outdb_format,
+        } = args;
+        let ndim = dim_names.len();
+        if ndim == 0 {
+            return Err(ArrowError::InvalidArgumentError(
+                "start_band_with_view: 0-dimensional bands are not supported".into(),
+            ));
+        }
+        if source_shape.len() != ndim || view.len() != ndim {
+            return Err(ArrowError::InvalidArgumentError(format!(
+                "start_band_with_view: dim_names ({}), source_shape ({}), and view ({}) \
+                 must all have the same length",
+                ndim,
+                source_shape.len(),
+                view.len()
+            )));
+        }
+        let view_entries = ViewEntries::new(view.to_vec());
+        view_entries.validate(source_shape)?;
+        // The schema stores views only as the identity null sentinel today, so a
+        // non-identity view can't round-trip — reject it up front, before any
+        // column append, rather than persisting mislocated bytes.
+        if !view_entries.is_identity(source_shape) {
+            return Err(ArrowError::InvalidArgumentError(
+                "start_band_with_view: persisting a non-identity band view is not yet \
+                 supported (see https://github.com/apache/sedona-db/issues/897); \
+                 materialize the band (e.g. via RS_EnsureContiguous) first"
+                    .into(),
+            ));
+        }
+        self.start_band_nd(
+            name,
+            dim_names,
+            source_shape,
+            data_type,
+            nodata,
+            outdb_uri,
+            outdb_format,
+        )
     }
 
     /// Convenience: start a 2D band with `dim_names=["y","x"]` and `shape=[height, width]`.

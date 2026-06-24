@@ -27,7 +27,7 @@ from __future__ import annotations
 import re
 import textwrap
 from pathlib import Path
-from typing import Any
+from typing import Any, List, Optional
 
 import yaml
 
@@ -48,6 +48,9 @@ TYPE_TO_PARAM: dict[str, str] = {
 
 # Types that qualify for geo methods (first arg piped in)
 GEO_TYPES = {"geometry", "geography"}
+
+# Types that qualify for raster methods (first arg piped in)
+RASTER_TYPES = {"raster"}
 
 DOCS_BASE_URL = "https://sedona.apache.org/sedonadb/latest/reference/sql"
 
@@ -94,8 +97,8 @@ class ArgInfo:
     def __init__(
         self,
         type: str,
-        name: str | None = None,
-        description: str | None = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
         optional: bool = False,
     ):
         self.type = type
@@ -109,10 +112,10 @@ class KernelInfo:
 
     def __init__(
         self,
-        args: list[ArgInfo] | None = None,
+        args: Optional[List[ArgInfo]] = None,
         returns: str = "unknown",
         variadic: bool = False,
-        kernel_signatures: list[str] | None = None,
+        kernel_signatures: Optional[List[str]] = None,
     ):
         self.args = args if args is not None else []
         self.returns = returns
@@ -137,16 +140,18 @@ class FunctionInfo:
         description: str,
         kernels: list[dict[str, Any]],
         is_geo_method: bool = False,
-        kernel_info: KernelInfo | None = None,
-        sql_name: str | None = None,
+        is_raster_method: bool = False,
+        kernel_info: Optional[KernelInfo] = None,
+        sql_name: Optional[str] = None,
     ):
         self.name = name
         self.title = title
         self.description = description
         self.kernels = kernels
         self.is_geo_method = is_geo_method
+        self.is_raster_method = is_raster_method
         self.kernel_info = kernel_info
-        self.sql_name = sql_name or name  # e.g., "ST_AsBinary"
+        self.sql_name = sql_name or name  # e.g., "ST_AsBinary" or "RS_Height"
 
     @property
     def method_name(self) -> str:
@@ -363,7 +368,7 @@ def parse_kernel_params(kernels: list[dict], fn_name: str = "unknown") -> Kernel
 
 def parse_qmd_file(qmd_path: Path) -> FunctionInfo | None:
     """Parse a .qmd file and return FunctionInfo."""
-    fn_name = qmd_path.stem  # e.g., "st_envelope"
+    fn_name = qmd_path.stem  # e.g., "st_envelope" or "rs_height"
 
     try:
         frontmatter = extract_frontmatter(qmd_path)
@@ -374,8 +379,9 @@ def parse_qmd_file(qmd_path: Path) -> FunctionInfo | None:
     if not kernels:
         return None
 
-    # Check if first argument of any kernel is geometry/geography
+    # Check if first argument of any kernel is geometry/geography or raster
     is_geo_method = False
+    is_raster_method = False
     for kernel in kernels:
         args = kernel.get("args", [])
         if args:
@@ -385,6 +391,9 @@ def parse_qmd_file(qmd_path: Path) -> FunctionInfo | None:
             )
             if first_type in GEO_TYPES:
                 is_geo_method = True
+                break
+            if first_type in RASTER_TYPES:
+                is_raster_method = True
                 break
 
     # Get properly-cased SQL function name from title field
@@ -400,6 +409,7 @@ def parse_qmd_file(qmd_path: Path) -> FunctionInfo | None:
         description=description,
         kernels=kernels,
         is_geo_method=is_geo_method,
+        is_raster_method=is_raster_method,
         kernel_info=kernel_info,
         sql_name=sql_name,
     )
@@ -629,6 +639,131 @@ def generate_geo_functions_py(functions: list[FunctionInfo]) -> str:
     return "\n".join(lines)
 
 
+def generate_raster_methods_py(functions: list[FunctionInfo]) -> str:
+    """Generate raster_methods.py content."""
+    # Filter to only raster methods (first arg is raster)
+    raster_funcs = [f for f in functions if f.is_raster_method]
+
+    lines = [
+        LICENSE_HEADER,
+        "",
+        '"""Auto-generated raster methods - do not edit."""',
+        "",
+        "from typing import Generic, TypeVar",
+        "",
+        "from sedonadb_expr.utils import MISSING, filter_missing_args",
+        "",
+        'ExprT = TypeVar("ExprT")',
+        "",
+        "",
+        "class RasterMethods(Generic[ExprT]):",
+        '    """Raster methods accessible via expr.rast."""',
+        "",
+        "    def __init__(self, expr: ExprT) -> None:",
+        "        self._expr = expr",
+    ]
+
+    for func in sorted(raster_funcs, key=lambda f: f.name):
+        # Method name: derived from SQL function name (e.g., RS_Height -> height)
+        method_name = func.method_name
+
+        kernel_info = func.kernel_info
+        if not kernel_info:
+            continue
+
+        # Build method signature - skip first arg (piped in)
+        remaining_args = kernel_info.args[1:] if len(kernel_info.args) > 1 else []
+        # Check if any remaining args are optional
+        has_optional = any(arg.optional for arg in remaining_args)
+
+        if kernel_info.variadic:
+            params = "self, *args"
+            call_args = "*args"
+            use_filter = False
+        elif remaining_args:
+            # Build param strings with MISSING default for optional args
+            param_strs = []
+            for arg in remaining_args:
+                if arg.optional:
+                    param_strs.append(f"{arg.name}=MISSING")
+                else:
+                    param_strs.append(arg.name)
+            params = "self, " + ", ".join(param_strs)
+            call_args = ", ".join(arg.name for arg in remaining_args)
+            use_filter = has_optional
+        else:
+            params = "self"
+            call_args = ""
+            use_filter = False
+
+        docstring = generate_method_docstring(func)
+
+        lines.extend(
+            [
+                "",
+                f"    def {method_name}({params}) -> ExprT:",
+                f"        {docstring}",
+            ]
+        )
+
+        if call_args:
+            if use_filter:
+                lines.append(
+                    f'        return self._expr._call("{func.name}", *filter_missing_args({call_args}))'
+                )
+            else:
+                lines.append(
+                    f'        return self._expr._call("{func.name}", {call_args})'
+                )
+        else:
+            lines.append(f'        return self._expr._call("{func.name}")')
+
+    lines.append("")
+    return "\n".join(lines)
+
+
+def generate_raster_functions_py(functions: list[FunctionInfo]) -> str:
+    """Generate raster_functions.py content."""
+    # Filter to only raster methods (these become callable properties)
+    raster_funcs = [f for f in functions if f.is_raster_method]
+
+    lines = [
+        LICENSE_HEADER,
+        "",
+        '"""Auto-generated raster functions - do not edit."""',
+        "",
+        "from typing import Callable, Generic, TypeVar",
+        "",
+        'ExprT = TypeVar("ExprT")',
+        "",
+        "",
+        "class RasterFunctions(Generic[ExprT]):",
+        '    """Raster functions accessible via a factory."""',
+        "",
+        "    def __init__(self, factory) -> None:",
+        "        self._factory = factory",
+    ]
+
+    for func in sorted(raster_funcs, key=lambda f: f.name):
+        # Property name: derived from SQL function name (e.g., RS_Height -> height)
+        prop_name = func.method_name
+
+        docstring = generate_function_docstring(func)
+
+        lines.extend(
+            [
+                "",
+                "    @property",
+                f"    def {prop_name}(self) -> Callable[..., ExprT]:",
+                f"        {docstring}",
+                f'        return self._factory["{func.name}"]',
+            ]
+        )
+
+    lines.append("")
+    return "\n".join(lines)
+
+
 class GenerationResult:
     """Result of code generation."""
 
@@ -636,10 +771,12 @@ class GenerationResult:
         self,
         total_functions: int,
         geo_method_count: int,
+        raster_method_count: int,
         generated_files: list[Path],
     ):
         self.total_functions = total_functions
         self.geo_method_count = geo_method_count
+        self.raster_method_count = raster_method_count
         self.generated_files = generated_files
 
 
@@ -688,29 +825,48 @@ def generate_sources(docs_sql: Path, output_dir: Path) -> GenerationResult:
         return GenerationResult(
             total_functions=0,
             geo_method_count=0,
+            raster_method_count=0,
             generated_files=generated_files,
         )
 
-    functions = parse_qmd_files(docs_sql, "st_*.qmd")
+    # Parse ST_* functions for geo methods/functions
+    geo_functions = parse_qmd_files(docs_sql, "st_*.qmd")
 
     # Generate geo_methods.py
-    geo_methods_content = generate_geo_methods_py(functions)
+    geo_methods_content = generate_geo_methods_py(geo_functions)
     geo_methods_file = output_dir / "geo_methods.py"
     geo_methods_file.write_text(geo_methods_content)
     generated_files.append(geo_methods_file)
 
     # Generate geo_functions.py
-    geo_functions_content = generate_geo_functions_py(functions)
+    geo_functions_content = generate_geo_functions_py(geo_functions)
     geo_functions_file = output_dir / "geo_functions.py"
     geo_functions_file.write_text(geo_functions_content)
     generated_files.append(geo_functions_file)
 
+    # Parse RS_* functions for raster methods/functions
+    raster_functions = parse_qmd_files(docs_sql, "rs_*.qmd")
+
+    # Generate raster_methods.py
+    raster_methods_content = generate_raster_methods_py(raster_functions)
+    raster_methods_file = output_dir / "raster_methods.py"
+    raster_methods_file.write_text(raster_methods_content)
+    generated_files.append(raster_methods_file)
+
+    # Generate raster_functions.py
+    raster_functions_content = generate_raster_functions_py(raster_functions)
+    raster_functions_file = output_dir / "raster_functions.py"
+    raster_functions_file.write_text(raster_functions_content)
+    generated_files.append(raster_functions_file)
+
     # Count stats
-    geo_method_count = sum(1 for f in functions if f.is_geo_method)
+    geo_method_count = sum(1 for f in geo_functions if f.is_geo_method)
+    raster_method_count = sum(1 for f in raster_functions if f.is_raster_method)
 
     return GenerationResult(
-        total_functions=len(functions),
+        total_functions=len(geo_functions) + len(raster_functions),
         geo_method_count=geo_method_count,
+        raster_method_count=raster_method_count,
         generated_files=generated_files,
     )
 
@@ -725,6 +881,7 @@ if __name__ == "__main__":
 
     print(f"Generated {result.total_functions} functions total")
     print(f"Generated {result.geo_method_count} geo methods")
+    print(f"Generated {result.raster_method_count} raster methods")
     print("Output files:")
     for f in result.generated_files:
         print(f"  - {f}")

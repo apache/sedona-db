@@ -905,6 +905,93 @@ class DataFrame:
 
         return DataFrame(self._ctx, self._impl.distinct_on(coerced))
 
+    def _check_union_compatible(self, other: "DataFrame", method: str) -> None:
+        # Both inputs must line up by column name (in order) so a positional
+        # union can't silently misalign differently-named columns — the
+        # classic footgun. Callers that want a positional union of
+        # differently-named columns opt in by aliasing/selecting to align
+        # the names first.
+        if not isinstance(other, DataFrame):
+            raise TypeError(
+                f"{method}() expects a DataFrame as the first argument, "
+                f"got {type(other).__name__}"
+            )
+        if self.columns != other.columns:
+            raise ValueError(
+                f"{method}() requires both DataFrames to have the same column "
+                f"names in the same order; got {self.columns} and "
+                f"{other.columns}. Align them first (e.g. with select) if you "
+                f"intend a positional union."
+            )
+
+    def union(self, other: "DataFrame") -> "DataFrame":
+        """Concatenate two DataFrames vertically, keeping duplicate rows.
+
+        This is SQL `UNION ALL` (and matches PySpark's `union`): duplicate
+        rows are preserved. Use `union_distinct` for SQL `UNION` semantics.
+        Both DataFrames must have the same column names in the same order;
+        otherwise an error is raised. (To union differently-named columns
+        positionally, align the names first, e.g. with `select`.)
+
+        Args:
+            other: The DataFrame to append. Must have the same column names,
+                in the same order, as this DataFrame.
+
+        Examples:
+
+            >>> sd = sedona.db.connect()
+            >>> a = sd.sql("SELECT * FROM (VALUES (1), (2)) AS t(x)")
+            >>> b = sd.sql("SELECT * FROM (VALUES (2), (3)) AS t(x)")
+            >>> a.union(b).sort("x").show()
+            ┌───────┐
+            │   x   │
+            │ int64 │
+            ╞═══════╡
+            │     1 │
+            ├╌╌╌╌╌╌╌┤
+            │     2 │
+            ├╌╌╌╌╌╌╌┤
+            │     2 │
+            ├╌╌╌╌╌╌╌┤
+            │     3 │
+            └───────┘
+        """
+        self._check_union_compatible(other, "union")
+        return DataFrame(self._ctx, self._impl.union(other._impl))
+
+    def union_distinct(self, other: "DataFrame") -> "DataFrame":
+        """Concatenate two DataFrames vertically and drop duplicate rows.
+
+        This is SQL `UNION`: the result has no duplicate rows (comparing
+        all columns). Use `union` to keep duplicates (`UNION ALL`). Both
+        DataFrames must have the same column names in the same order;
+        otherwise an error is raised. (To union differently-named columns
+        positionally, align the names first, e.g. with `select`.)
+
+        Args:
+            other: The DataFrame to append. Must have the same column names,
+                in the same order, as this DataFrame.
+
+        Examples:
+
+            >>> sd = sedona.db.connect()
+            >>> a = sd.sql("SELECT * FROM (VALUES (1), (2)) AS t(x)")
+            >>> b = sd.sql("SELECT * FROM (VALUES (2), (3)) AS t(x)")
+            >>> a.union_distinct(b).sort("x").show()
+            ┌───────┐
+            │   x   │
+            │ int64 │
+            ╞═══════╡
+            │     1 │
+            ├╌╌╌╌╌╌╌┤
+            │     2 │
+            ├╌╌╌╌╌╌╌┤
+            │     3 │
+            └───────┘
+        """
+        self._check_union_compatible(other, "union_distinct")
+        return DataFrame(self._ctx, self._impl.union_distinct(other._impl))
+
     def limit(self, n: Optional[int], /, *, offset: int = 0) -> "DataFrame":
         """Limit result to n rows starting at offset
 

@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 from sedonadb.utility import sedona  # noqa: F401
 
 if TYPE_CHECKING:
-    from sedonadb_expr import GeoMethods
+    from sedonadb_expr import GeoMethods, RasterMethods
 
     from sedonadb.expr import Expr
     from sedonadb.functions import Functions
@@ -79,6 +79,12 @@ class Literal:
         from sedonadb_expr import GeoMethods
 
         return GeoMethods(self)
+
+    @property
+    def rst(self) -> "RasterMethods[Expr]":
+        from sedonadb_expr import RasterMethods
+
+        return RasterMethods(self)
 
     def _call(self, name, *args) -> "Expr":
         return self.funcs[name](*args)

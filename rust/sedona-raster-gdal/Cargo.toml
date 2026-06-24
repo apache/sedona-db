@@ -47,6 +47,10 @@ sedona-raster-functions = { workspace = true }
 sedona-schema = { workspace = true }
 tokio = { workspace = true }
 
+[features]
+# Enable bindgen for GDAL versions without pre-built bindings (e.g., GDAL 3.13+).
+bindgen = ["sedona-gdal/bindgen"]
+
 [dev-dependencies]
 criterion = { workspace = true }
 sedona-gdal = { workspace = true, features = ["gdal-sys"] }

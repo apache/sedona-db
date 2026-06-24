@@ -24,7 +24,7 @@ from sedonadb.expr.expression import ScalarUdf, AggregateUdf
 if TYPE_CHECKING:
     from sedonadb.functions.table import TableFunctions
     from sedonadb.expr.expression import Expr
-    from sedonadb_expr import GeoFunctions
+    from sedonadb_expr import GeoFunctions, RasterFunctions
 
 
 class Functions:
@@ -53,6 +53,12 @@ class Functions:
         from sedonadb_expr import GeoFunctions
 
         return GeoFunctions(self)
+
+    @property
+    def rst(self) -> "RasterFunctions[Expr]":
+        from sedonadb_expr import RasterFunctions
+
+        return RasterFunctions(self)
 
     def __getattr__(self, name) -> Union["ScalarUdf", "AggregateUdf"]:
         try:

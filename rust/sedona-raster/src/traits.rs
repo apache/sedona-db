@@ -18,7 +18,8 @@
 use arrow_schema::ArrowError;
 use sedona_schema::raster::BandDataType;
 
-use crate::view_entries::ViewEntry;
+use crate::builder::{RasterBuilder, StartBandWithViewArgs};
+use crate::view_entries::{ViewEntries, ViewEntry};
 
 /// Recognized spatial dimension-name pairs, in band C-order: the slower-
 /// varying Y-like (row) axis first, the faster-varying X-like (column) axis
@@ -496,6 +497,30 @@ pub trait RasterRef {
     }
 }
 
+/// Field overrides for [`BandRef::copy_into`]. Each field defaults to `None`,
+/// meaning "inherit from the source band". `name` has no source on a `BandRef`
+/// (band names live at the raster level), so it defaults to unnamed.
+#[derive(Default)]
+pub struct BandOverrides<'a> {
+    /// Name for the derived band (the source has none to inherit).
+    pub name: Option<&'a str>,
+    /// Override the dimension names; `None` inherits the source's.
+    pub dim_names: Option<&'a [&'a str]>,
+    /// Override the nodata value; `None` inherits the source's.
+    pub nodata: Option<&'a [u8]>,
+    /// Override the OutDb URI; `None` inherits the source's.
+    pub outdb_uri: Option<&'a str>,
+    /// Override the OutDb format; `None` inherits the source's.
+    pub outdb_format: Option<&'a str>,
+    /// View to apply to the derived band, expressed in the **source's visible
+    /// coordinates**. [`BandRef::copy_into`] composes it onto the source's own
+    /// view for you — you don't manage that composition and don't need to know
+    /// whether the source already carries a view. `None` inherits the source's
+    /// view unchanged. (A non-identity result isn't persistable yet and
+    /// `copy_into` rejects it; see <https://github.com/apache/sedona-db/issues/897>.)
+    pub view: Option<&'a [ViewEntry]>,
+}
+
 /// Trait for accessing a single band/variable within an N-D raster.
 ///
 /// This is the consumer interface. Implementations handle storage details
@@ -666,6 +691,78 @@ pub trait BandRef {
             None => return Ok(None),
         };
         nodata_bytes_to_f64_lossless(bytes, &self.data_type()).map(Some)
+    }
+
+    /// Write a derived band into `builder`, inheriting every field not set in
+    /// `overrides` from `self`, and carrying the source bytes over.
+    ///
+    /// This is the canonical "derive a band from an existing one" path — it
+    /// replaces hand-rebuilding via `start_band_nd` + a manual data append. The
+    /// data transfer is zero-copy when the implementation supports it (see
+    /// [`Self::append_data_into`]).
+    ///
+    /// The derived band's view is the source's own view with any
+    /// `overrides.view` **composed on top for you**: express an override in the
+    /// source's *visible* coordinates and `copy_into` composes it against the
+    /// source's view — callers never manage that composition and don't need to
+    /// know whether the source already carries one. `overrides.view = None`
+    /// inherits the source's view unchanged.
+    ///
+    /// The composition + persistence is delegated to
+    /// [`RasterBuilder::start_band_with_view`]. Today that stores views only as
+    /// the canonical identity null sentinel, so a non-identity effective view
+    /// is rejected rather than copying mislocated bytes; in practice the source
+    /// is identity-viewed and any override must compose back to the identity.
+    /// View persistence is tracked in
+    /// <https://github.com/apache/sedona-db/issues/897>.
+    fn copy_into(
+        &self,
+        builder: &mut RasterBuilder,
+        overrides: BandOverrides<'_>,
+    ) -> Result<(), ArrowError> {
+        let inherited_dims = self.dim_names();
+        let dim_names: Vec<&str> = match overrides.dim_names {
+            Some(d) => d.to_vec(),
+            None => inherited_dims,
+        };
+        let source_shape = self.raw_source_shape().to_vec();
+        // Compose the caller's override (if any) onto the source's own view, so
+        // the override is interpreted in the source's visible space and the
+        // caller doesn't have to. `None` keeps the source view unchanged.
+        let source_view = ViewEntries::new(self.view().to_vec());
+        let effective_view = match overrides.view {
+            Some(v) => source_view.compose(&ViewEntries::new(v.to_vec()))?,
+            None => source_view,
+        };
+        builder.start_band_with_view(StartBandWithViewArgs {
+            name: overrides.name,
+            dim_names: &dim_names,
+            source_shape: &source_shape,
+            view: effective_view.as_slice(),
+            data_type: self.data_type(),
+            nodata: overrides.nodata.or_else(|| self.nodata()),
+            outdb_uri: overrides.outdb_uri.or_else(|| self.outdb_uri()),
+            outdb_format: overrides.outdb_format.or_else(|| self.outdb_format()),
+        })?;
+        self.append_data_into(builder)
+    }
+
+    /// Append `self`'s band data as the current band's single `data` value.
+    ///
+    /// The default copies the visible source bytes via `append_value`. Arrow-
+    /// backed implementations override this to share the source row's backing
+    /// `Buffer` zero-copy (a refcount bump via
+    /// [`RasterBuilder::append_band_data_from`]), keeping the buffer plumbing
+    /// encapsulated rather than exposing a raw `Buffer` accessor. Call after the
+    /// band's schema has been written (e.g. by [`Self::copy_into`]).
+    fn append_data_into(&self, builder: &mut RasterBuilder) -> Result<(), ArrowError> {
+        if self.is_indb() {
+            let ndb = self.nd_buffer()?;
+            builder.band_data_writer().append_value(ndb.buffer);
+        } else {
+            builder.band_data_writer().append_value([]);
+        }
+        Ok(())
     }
 }
 
@@ -933,6 +1030,40 @@ mod tests {
     fn is_spatial_2d_yx_is_true() {
         let b = band(&["y", "x"], &[4, 5], &[ve(0, 0, 1, 4), ve(1, 0, 1, 5)]);
         assert!(b.is_spatial_2d());
+    }
+
+    #[test]
+    fn copy_into_rejects_non_identity_source_view() {
+        // A sliced source view (step 2 on the outer axis) composes to a
+        // non-identity effective view; copy_into can't persist it yet, so it
+        // must error rather than copy mislocated bytes.
+        let src = band(&["y", "x"], &[4, 5], &[ve(0, 0, 2, 2), ve(1, 0, 1, 5)]);
+        let mut ob = RasterBuilder::new(1);
+        let err = src
+            .copy_into(&mut ob, BandOverrides::default())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("non-identity"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn copy_into_rejects_non_identity_override_view() {
+        // Identity source, but the caller's override slices it (step 2); the
+        // composed effective view is non-identity and can't be persisted yet.
+        let src = band(&["y", "x"], &[4, 5], &[ve(0, 0, 1, 4), ve(1, 0, 1, 5)]);
+        let override_view = [ve(0, 0, 2, 2), ve(1, 0, 1, 5)];
+        let mut ob = RasterBuilder::new(1);
+        let err = src
+            .copy_into(
+                &mut ob,
+                BandOverrides {
+                    view: Some(&override_view),
+                    ..Default::default()
+                },
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("non-identity"), "unexpected error: {err}");
     }
 
     #[test]

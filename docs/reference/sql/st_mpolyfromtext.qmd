@@ -1,3 +1,4 @@
+---
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
 # distributed with this work for additional information
@@ -15,31 +16,33 @@
 # specific language governing permissions and limitations
 # under the License.
 
-[package]
-name = "sedona-gdal"
-version.workspace = true
-license.workspace = true
-keywords.workspace = true
-categories.workspace = true
-authors.workspace = true
-homepage.workspace = true
-repository.workspace = true
-description.workspace = true
-readme.workspace = true
-edition.workspace = true
-rust-version.workspace = true
+title: ST_MPolyFromText
+description: Constructs a MultiPolygon from Well-Known Text (WKT), erroring if the input is not a MultiPolygon.
+kernels:
+  - returns: geometry
+    args:
+    - name: wkt
+      type: string
+  - returns: geometry
+    args:
+    - name: wkt
+      type: string
+    - name: srid
+      type: crs
+---
 
-[dependencies]
-gdal-sys = { version = "0.12.0", optional = true }
-libloading = { workspace = true }
-thiserror = { workspace = true }
+## Description
 
-[features]
-default = ["gdal-sys"]
-gdal-sys = ["dep:gdal-sys"]
-# Enable bindgen for GDAL versions without pre-built bindings (e.g., GDAL 3.13+).
-# Use: cargo build --features bindgen
-bindgen = ["gdal-sys/bindgen"]
+Parses a WKT string and returns a geometry. Raises an error if the WKT does not represent a MultiPolygon.
 
-[dev-dependencies]
-sedona-testing = { workspace = true }
+## Examples
+
+```sql
+SELECT ST_MPolyFromText('MULTIPOLYGON (((0 0, 1 0, 1 1, 0 0)), ((2 2, 3 2, 3 3, 2 2)))');
+```
+
+With an SRID or CRS:
+
+```sql
+SELECT ST_MPolyFromText('MULTIPOLYGON (((0 0, 1 0, 1 1, 0 0)), ((2 2, 3 2, 3 3, 2 2)))', 4326);
+```

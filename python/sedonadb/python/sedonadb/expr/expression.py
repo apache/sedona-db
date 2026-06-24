@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 
 if TYPE_CHECKING:
     from sedonadb_expr import GeoMethods
+    from sedonadb_expr import RasterMethods
 
 
 class Expr:
@@ -221,6 +222,12 @@ class Expr:
         from sedonadb_expr import GeoMethods
 
         return GeoMethods(self)
+
+    @property
+    def rst(self) -> "RasterMethods[Expr]":
+        from sedonadb_expr import RasterMethods
+
+        return RasterMethods(self)
 
     def _call(self, name, *args) -> "Expr":
         return self.funcs[name](*args)
