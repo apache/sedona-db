@@ -85,13 +85,15 @@ fn invoke_scalar(line: &geos::Geometry, point: &geos::Geometry) -> Result<Option
         .geometry_type()
         .map_err(|e| DataFusionError::Execution(format!("Failed to get geometry type: {e}")))?
     {
-        GeometryTypes::LineString | GeometryTypes::MultiLineString => {
+        GeometryTypes::LineString => {
             let fraction = line.project_normalized(point).map_err(|e| {
                 DataFusionError::Execution(format!("Failed to locate point on line: {e}"))
             })?;
             Ok(Some(fraction))
         }
-        _ => Ok(None),
+        _ => Err(DataFusionError::Execution(
+            "First argument to ST_LineLocatePoint must be a single linestring".to_string(),
+        )),
     }
 }
 
@@ -134,14 +136,10 @@ mod tests {
             .unwrap();
         assert!(result.is_null());
 
-        // Non-LineString first arg returns NULL
-        let result = tester
-            .invoke_scalar_scalar("POLYGON ((0 0, 1 0, 1 1, 0 0))", "POINT (0.5 0.5)")
-            .unwrap();
-        assert!(
-            result.is_null(),
-            "expected NULL for non-LineString first arg"
-        );
+        // Non-LineString first arg errors, matching the geography implementation.
+        let result =
+            tester.invoke_scalar_scalar("POLYGON ((0 0, 1 0, 1 1, 0 0))", "POINT (0.5 0.5)");
+        assert!(result.is_err());
 
         // Empty inputs return NULL
         let result = tester

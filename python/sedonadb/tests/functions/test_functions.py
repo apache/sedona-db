@@ -2326,34 +2326,29 @@ def test_st_linelocatepoint(eng, line, point, expected):
     )
 
 
-@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize("eng", [SedonaDB])
 @pytest.mark.parametrize(
-    ("line", "point", "expected_sedona", "expected_postgis"),
+    ("line", "point", "expected"),
     [
-        ("LINESTRING EMPTY", "POINT (0 0)", None, 0.0),
-        ("LINESTRING (0 0, 1 1)", "POINT EMPTY", None, 0.0),
+        ("LINESTRING EMPTY", "POINT (0 0)", None),
+        ("LINESTRING (0 0, 1 1)", "POINT EMPTY", None),
     ],
 )
-def test_st_linelocatepoint_empty_inputs(
-    eng, line, point, expected_sedona, expected_postgis
-):
-    is_postgis = eng is PostGIS
+def test_st_linelocatepoint_empty_inputs(eng, line, point, expected):
     eng = eng.create_or_skip()
-    expected = expected_postgis if is_postgis else expected_sedona
     eng.assert_query_result(
         f"SELECT ST_LineLocatePoint({geom_or_null(line)}, {geom_or_null(point)})",
         expected,
     )
 
 
-@pytest.mark.parametrize("eng", [SedonaDB])
-def test_st_linelocatepoint_non_linestring_returns_null(eng):
-    # PostGIS raises an error for non-LineString first arg; SedonaDB returns NULL
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+def test_st_linelocatepoint_non_linestring_errors(eng):
     eng = eng.create_or_skip()
-    eng.assert_query_result(
-        "SELECT ST_LineLocatePoint(ST_GeomFromText('POLYGON ((0 0, 1 0, 1 1, 0 0))'), ST_GeomFromText('POINT (0.5 0.5)'))",
-        None,
-    )
+    with pytest.raises(Exception, match="(LineString)|(linestring)"):
+        eng.execute_and_collect(
+            "SELECT ST_LineLocatePoint(ST_GeomFromText('POLYGON ((0 0, 1 0, 1 1, 0 0))'), ST_GeomFromText('POINT (0.5 0.5)'))"
+        )
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
@@ -2371,7 +2366,9 @@ def test_st_linelocatepoint_non_linestring_returns_null(eng):
             200.0**0.5,
         ),
         ("LINESTRING EMPTY", "POINT (0 0)", None),
+        ("POINT EMPTY", "POINT (0 0)", None),
         ("POINT (0 0)", "LINESTRING EMPTY", None),
+        ("POINT (0 0)", "POINT EMPTY", None),
         ("LINESTRING EMPTY", "LINESTRING EMPTY", None),
     ],
 )

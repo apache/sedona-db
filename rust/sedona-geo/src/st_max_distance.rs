@@ -20,14 +20,17 @@ use arrow_array::builder::Float64Builder;
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
 use datafusion_expr::ColumnarValue;
-use geo::{CoordsIter, Geometry};
+use geo_traits::{
+    CoordTrait, GeometryCollectionTrait, GeometryTrait, GeometryType, LineStringTrait,
+    MultiLineStringTrait, MultiPointTrait, MultiPolygonTrait, PointTrait, PolygonTrait,
+};
 use sedona_expr::{
     item_crs::ItemCrsKernel,
     scalar_udf::{ScalarKernelRef, SedonaScalarKernel},
 };
+use sedona_functions::executor::WkbExecutor;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
-
-use crate::to_geo::GeoTypesExecutor;
+use wkb::reader::Wkb;
 
 /// ST_MaxDistance() — max pairwise 2D vertex distance using geo-types CoordsIter
 pub fn st_max_distance_impl() -> Vec<ScalarKernelRef> {
@@ -51,7 +54,7 @@ impl SedonaScalarKernel for STMaxDistance {
         arg_types: &[SedonaType],
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
-        let executor = GeoTypesExecutor::new(arg_types, args);
+        let executor = WkbExecutor::new(arg_types, args);
         let mut builder = Float64Builder::with_capacity(executor.num_iterations());
         executor.execute_wkb_wkb_void(|lhs, rhs| {
             match (lhs, rhs) {
@@ -67,9 +70,11 @@ impl SedonaScalarKernel for STMaxDistance {
     }
 }
 
-fn invoke_scalar(lhs: &Geometry, rhs: &Geometry) -> Option<f64> {
-    let lhs_coords: Vec<_> = lhs.coords_iter().collect();
-    let rhs_coords: Vec<_> = rhs.coords_iter().collect();
+fn invoke_scalar(lhs: &Wkb, rhs: &Wkb) -> Option<f64> {
+    let mut lhs_coords = Vec::new();
+    let mut rhs_coords = Vec::new();
+    collect_coords(lhs, &mut lhs_coords);
+    collect_coords(rhs, &mut rhs_coords);
 
     if lhs_coords.is_empty() || rhs_coords.is_empty() {
         return None;
@@ -78,8 +83,8 @@ fn invoke_scalar(lhs: &Geometry, rhs: &Geometry) -> Option<f64> {
     let mut max_dist_sq = f64::NEG_INFINITY;
     for a in &lhs_coords {
         for b in &rhs_coords {
-            let dx = a.x - b.x;
-            let dy = a.y - b.y;
+            let dx = a.0 - b.0;
+            let dy = a.1 - b.1;
             let d2 = dx * dx + dy * dy;
             if d2 > max_dist_sq {
                 max_dist_sq = d2;
@@ -88,6 +93,60 @@ fn invoke_scalar(lhs: &Geometry, rhs: &Geometry) -> Option<f64> {
     }
 
     Some(max_dist_sq.max(0.0).sqrt())
+}
+
+fn collect_coords(geom: &impl GeometryTrait<T = f64>, coords: &mut Vec<(f64, f64)>) {
+    match geom.as_type() {
+        GeometryType::Point(point) => {
+            if let Some(coord) = point.coord() {
+                coords.push(coord.x_y());
+            }
+        }
+        GeometryType::LineString(line_string) => collect_line_string(line_string, coords),
+        GeometryType::Polygon(polygon) => {
+            if let Some(exterior) = polygon.exterior() {
+                collect_line_string(&exterior, coords);
+            }
+            for interior in polygon.interiors() {
+                collect_line_string(&interior, coords);
+            }
+        }
+        GeometryType::MultiPoint(multi_point) => {
+            for point in multi_point.points() {
+                if let Some(coord) = point.coord() {
+                    coords.push(coord.x_y());
+                }
+            }
+        }
+        GeometryType::MultiLineString(multi_line_string) => {
+            for line_string in multi_line_string.line_strings() {
+                collect_line_string(&line_string, coords);
+            }
+        }
+        GeometryType::MultiPolygon(multi_polygon) => {
+            for polygon in multi_polygon.polygons() {
+                if let Some(exterior) = polygon.exterior() {
+                    collect_line_string(&exterior, coords);
+                }
+                for interior in polygon.interiors() {
+                    collect_line_string(&interior, coords);
+                }
+            }
+        }
+        GeometryType::GeometryCollection(geometry_collection) => {
+            for child in geometry_collection.geometries() {
+                collect_coords(&child, coords);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_line_string<LS: LineStringTrait<T = f64>>(
+    line_string: &LS,
+    coords: &mut Vec<(f64, f64)>,
+) {
+    coords.extend(line_string.coords().map(|coord| coord.x_y()));
 }
 
 #[cfg(test)]
@@ -135,9 +194,19 @@ mod tests {
         assert!(result.is_null(), "expected NULL for empty lhs");
 
         let result = tester
+            .invoke_scalar_scalar("POINT EMPTY", "POINT (0 0)")
+            .unwrap();
+        assert!(result.is_null(), "expected NULL for empty point lhs");
+
+        let result = tester
             .invoke_scalar_scalar("POINT (0 0)", "LINESTRING EMPTY")
             .unwrap();
         assert!(result.is_null(), "expected NULL for empty rhs");
+
+        let result = tester
+            .invoke_scalar_scalar("POINT (0 0)", "POINT EMPTY")
+            .unwrap();
+        assert!(result.is_null(), "expected NULL for empty point rhs");
 
         let result = tester
             .invoke_scalar_scalar("LINESTRING EMPTY", "LINESTRING EMPTY")
