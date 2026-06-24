@@ -7,7 +7,7 @@
       
       
       
-        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/reference/sql/st_force2d/">
+        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/reference/sql/rs_value/">
       
       
       
@@ -20,7 +20,7 @@
     
     
       
-        <title>ST_Force2D - Apache Sedona</title>
+        <title>RS_Value - Apache Sedona</title>
       
     
     
@@ -84,7 +84,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#st_force2d" class="md-skip">
+        <a href="#rs_value" class="md-skip">
           Skip to content
         </a>
       
@@ -157,7 +157,7 @@
             <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              ST_Force2D
+              RS_Value
             
           </span>
             </div>
@@ -1621,7 +1621,7 @@
 
 
   
-    <a href="https://github.com/apache/sedona-db/blob/main/docs/reference/sql/st_force2d.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/apache/sedona-db/blob/main/docs/reference/sql/rs_value.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"></path></svg>
     </a>
@@ -1629,38 +1629,37 @@
   
 
 
-<h1 id="st_force2d">ST_Force2D<a class="headerlink" href="#st_force2d" title="Permanent link">¶</a></h1>
-<p>Forces a geometry or geography into a XY coordinate model.</p>
+<h1 id="rs_value">RS_Value<a class="headerlink" href="#rs_value" title="Permanent link">¶</a></h1>
+<p>Returns the value of a single raster pixel as a double, selected by a
+point geometry. Returns null if the location is outside the raster or
+the pixel holds the band’s nodata value.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">¶</a></h2>
-<div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_Force2D</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
-<span class="n">geography</span><span class="w"> </span><span class="n">ST_Force2D</span><span class="p">(</span><span class="n">geog</span><span class="p">:</span><span class="w"> </span><span class="n">geography</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><span class="n">float64</span><span class="w"> </span><span class="n">RS_Value</span><span class="p">(</span><span class="n">rast</span><span class="p">:</span><span class="w"> </span><span class="n">raster</span><span class="p">,</span><span class="w"> </span><span class="n">point</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
+<span class="n">float64</span><span class="w"> </span><span class="n">RS_Value</span><span class="p">(</span><span class="n">rast</span><span class="p">:</span><span class="w"> </span><span class="n">raster</span><span class="p">,</span><span class="w"> </span><span class="n">point</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">band</span><span class="p">:</span><span class="w"> </span><span class="nb">int</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="arguments">Arguments<a class="headerlink" href="#arguments" title="Permanent link">¶</a></h2>
 <ul>
-<li><strong>geog</strong> (geography): Input geography</li>
-<li><strong>geom</strong> (geometry): Input geometry</li>
+<li><strong>rast</strong> (raster): Input raster</li>
+<li><strong>point</strong> (geometry): The pixel that contains this point is sampled
+  (no resampling). Reprojected into the raster CRS when both carry one.</li>
+<li><strong>band</strong> (int): Band index (1-based). Defaults to 1 if not specified.</li>
 </ul>
 <h2 id="description">Description<a class="headerlink" href="#description" title="Permanent link">¶</a></h2>
-<p>Discards any Z and M values present (if any).</p>
+<p><code>RS_Value</code> samples one pixel of a raster. The location is given as a
+point geometry — the value of the pixel that contains the point is
+returned, with no interpolation. The band defaults to 1.</p>
+<p>The result is <code>NULL</code> when the point falls outside the raster, or when
+the sampled pixel equals the band’s nodata value. Only 2-D rasters are
+supported.</p>
 <h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">¶</a></h2>
-<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">ST_Force2D</span><span class="p">(</span><span class="n">ST_GeomFromWKT</span><span class="p">(</span><span class="s1">'POINT Z (1 2 3)'</span><span class="p">));</span>
+<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">RS_Value</span><span class="p">(</span><span class="n">RS_Example</span><span class="p">(),</span><span class="w"> </span><span class="n">ST_Point</span><span class="p">(</span><span class="mi">74</span><span class="p">.</span><span class="mi">58</span><span class="p">,</span><span class="w"> </span><span class="mi">110</span><span class="p">.</span><span class="mi">57</span><span class="p">,</span><span class="w"> </span><span class="s1">'OGC:CRS84'</span><span class="p">));</span>
 </code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌─────────────────────────────────────────────────────┐
-│ st_force2d(st_geomfromwkt(Utf8("POINT Z (1 2 3)"))) │
-│                       geometry                      │
-╞═════════════════════════════════════════════════════╡
-│ POINT(1 2)                                          │
-└─────────────────────────────────────────────────────┘
-</code></pre></div>
-
-<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">ST_Force2D</span><span class="p">(</span><span class="n">ST_GeogFromWKT</span><span class="p">(</span><span class="s1">'POINT Z (1 2 3)'</span><span class="p">));</span>
-</code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌─────────────────────────────────────────────────────┐
-│ st_force2d(st_geogfromwkt(Utf8("POINT Z (1 2 3)"))) │
-│                      geography                      │
-╞═════════════════════════════════════════════════════╡
-│ POINT(1 2)                                          │
-└─────────────────────────────────────────────────────┘
+<div class="codehilite"><pre><span></span><code>┌──────────────────────────────────────────────────────────────────────────────┐
+│ rs_value(rs_example(),st_point(Float64(74.58),Float64(110.57),Utf8("OGC:CRS8 │
+│                                    4")))…                                    │
+╞══════════════════════════════════════════════════════════════════════════════╡
+│                                                                          1.0 │
+└──────────────────────────────────────────────────────────────────────────────┘
 </code></pre></div>
 
 
