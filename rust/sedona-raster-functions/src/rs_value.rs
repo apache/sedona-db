@@ -331,6 +331,14 @@ fn next_band(
 ///
 /// Errors if exactly one of the point / raster carries a CRS: sampling across a
 /// known and an unknown CRS would silently mislocate the point.
+///
+/// Unlike the spatial predicates (`RS_Intersects` et al.), which fall back to a
+/// WGS84 pivot when a direct transform between two CRSes fails, a failed
+/// transform here is propagated as an error. Sampling has to land the point in
+/// the raster's own CRS — that is the only space its affine/pixel grid is
+/// defined in — so there is no neutral CRS to fall back to: a WGS84 pivot would
+/// silently sample the wrong pixel rather than compare geometries in a shared
+/// space.
 fn reproject_point(
     point_wkb: &[u8],
     point_crs: CrsRef<'_>,
