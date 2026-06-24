@@ -27,13 +27,23 @@ kernels:
       - name: tolerance
         type: float64
         description: Snap-rounding tolerance for vertices. Use 0.0 for exact computation.
+  - returns: geometry
+    args:
+      - geometry
+      - name: tolerance
+        type: float64
+        description: Snap-rounding tolerance for vertices. Use 0.0 for exact computation.
+      - name: flags
+        type: integer
+        description: Use 0 for polygon triangles or 1 for edge-only MULTILINESTRING output.
 ---
 
 ## Description
 
 Computes a Delaunay triangulation of the vertices of the input geometry. The result is a
-`GEOMETRYCOLLECTION` of `POLYGON` triangles. An optional tolerance value can be specified to
-snap nearby vertices together before triangulation.
+`GEOMETRYCOLLECTION` of `POLYGON` triangles unless the `flags` parameter is set to request
+`MULTILINESTRING` output. An optional tolerance value can be specified to snap nearby vertices
+together before triangulation.
 
 ## Examples
 
@@ -43,4 +53,8 @@ SELECT ST_DelaunayTriangles(ST_GeomFromWKT('MULTIPOINT ((0 0), (1 0), (0 1))'));
 
 ```sql
 SELECT ST_DelaunayTriangles(ST_GeomFromWKT('MULTIPOINT ((0 0), (1 0), (0 1))'), 0.0);
+```
+
+```sql
+SELECT ST_DelaunayTriangles(ST_GeomFromWKT('MULTIPOINT ((0 0), (1 0), (0 1))'), 0.0, 1);
 ```

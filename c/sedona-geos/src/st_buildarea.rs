@@ -20,7 +20,7 @@ use std::sync::Arc;
 use arrow_array::builder::BinaryBuilder;
 use datafusion_common::{error::Result, DataFusionError};
 use datafusion_expr::ColumnarValue;
-use geos::Geometry;
+use geos::{Geom, Geometry, GeometryTypes};
 use sedona_expr::{
     item_crs::ItemCrsKernel,
     scalar_udf::{ScalarKernelRef, SedonaScalarKernel},
@@ -69,8 +69,11 @@ impl SedonaScalarKernel for STBuildArea {
         executor.execute_wkb_void(|maybe_geom| {
             match maybe_geom {
                 Some(geom) => {
-                    invoke_scalar(&geom, &mut builder)?;
-                    builder.append_value([]);
+                    if invoke_scalar(&geom, &mut builder)? {
+                        builder.append_value([]);
+                    } else {
+                        builder.append_null();
+                    }
                 }
                 _ => builder.append_null(),
             }
@@ -81,12 +84,23 @@ impl SedonaScalarKernel for STBuildArea {
     }
 }
 
-fn invoke_scalar(geom: &Geometry, writer: &mut impl std::io::Write) -> Result<()> {
+fn invoke_scalar(geom: &Geometry, writer: &mut impl std::io::Write) -> Result<bool> {
+    let geom_type = geom
+        .geometry_type()
+        .map_err(|e| DataFusionError::Execution(format!("Failed to get geometry type: {e}")))?;
+
+    match geom_type {
+        GeometryTypes::LineString
+        | GeometryTypes::MultiLineString
+        | GeometryTypes::GeometryCollection => {}
+        _ => return Ok(false),
+    }
+
     let result = geom
         .build_area()
         .map_err(|e| DataFusionError::Execution(format!("ST_BuildArea failed: {e}")))?;
     write_geos_geometry(&result, writer)?;
-    Ok(())
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -112,6 +126,14 @@ mod tests {
             .invoke_scalar("LINESTRING (0 0, 1 0, 1 1, 0 1, 0 0)")
             .unwrap();
         tester.assert_scalar_result_equals(result, "POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))");
+
+        let result = tester.invoke_scalar("POINT (0 0)").unwrap();
+        assert!(result.is_null());
+
+        let result = tester
+            .invoke_scalar("POLYGON ((0 0, 1 0, 1 1, 0 0))")
+            .unwrap();
+        assert!(result.is_null());
 
         let result = tester.invoke_scalar(ScalarValue::Null).unwrap();
         assert!(result.is_null());

@@ -19,7 +19,10 @@ use std::sync::Arc;
 
 use arrow_array::builder::BinaryBuilder;
 use arrow_schema::DataType;
-use datafusion_common::{cast::as_boolean_array, cast::as_float64_array, DataFusionError, Result};
+use datafusion_common::{
+    cast::{as_float64_array, as_int64_array},
+    DataFusionError, Result,
+};
 use datafusion_expr::ColumnarValue;
 use geos::{Geom, Geometry};
 use sedona_expr::{
@@ -133,8 +136,8 @@ impl SedonaScalarKernel for STDelaunayTrianglesWithTolerance {
     }
 }
 
-// ── 3-arg: ST_DelaunayTriangles(geom, tolerance, flags) ──────────────────────
-// flags=0 → polygon output (default), flags=1 → multilinestring edges only
+// -- 3-arg: ST_DelaunayTriangles(geom, tolerance, flags)
+// flags=0 -> polygon output (default), flags=1 -> multilinestring edges only
 
 pub fn st_delaunay_triangles_flags_impl() -> Vec<ScalarKernelRef> {
     ItemCrsKernel::wrap_impl(STDelaunayTrianglesWithFlags)
@@ -149,7 +152,7 @@ impl SedonaScalarKernel for STDelaunayTrianglesWithFlags {
             vec![
                 ArgMatcher::is_geometry(),
                 ArgMatcher::is_numeric(),
-                ArgMatcher::is_boolean(),
+                ArgMatcher::is_integer(),
             ],
             WKB_GEOMETRY,
         )
@@ -173,9 +176,9 @@ impl SedonaScalarKernel for STDelaunayTrianglesWithFlags {
         let mut tol_iter = tol_array.iter();
 
         let flags_value = args[2]
-            .cast_to(&DataType::Boolean, None)?
+            .cast_to(&DataType::Int64, None)?
             .to_array(executor.num_iterations())?;
-        let flags_array = as_boolean_array(&flags_value)?;
+        let flags_array = as_int64_array(&flags_value)?;
         let mut flags_iter = flags_array.iter();
 
         executor.execute_wkb_void(|maybe_geom| {
@@ -184,7 +187,16 @@ impl SedonaScalarKernel for STDelaunayTrianglesWithFlags {
                 tol_iter.next().unwrap(),
                 flags_iter.next().unwrap(),
             ) {
-                (Some(geom), Some(tol), Some(only_edges)) => {
+                (Some(geom), Some(tol), Some(flag)) => {
+                    let only_edges = match flag {
+                        0 => false,
+                        1 => true,
+                        _ => {
+                            return Err(DataFusionError::Execution(format!(
+                                "ST_DelaunayTriangles flags must be 0 or 1, got {flag}"
+                            )))
+                        }
+                    };
                     invoke_scalar(&geom, tol, only_edges, &mut builder)?;
                     builder.append_value([]);
                 }
@@ -202,7 +214,7 @@ mod tests {
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
     use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS};
-    use sedona_testing::testers::ScalarUdfTester;
+    use sedona_testing::{create::create_scalar, testers::ScalarUdfTester};
 
     use super::*;
 
@@ -230,5 +242,47 @@ mod tests {
         let udf = SedonaScalarUDF::from_impl("st_delaunaytriangles", st_delaunay_triangles_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone()]);
         tester.assert_return_type(sedona_type);
+    }
+
+    #[rstest]
+    fn udf_flags(#[values(WKB_GEOMETRY)] sedona_type: SedonaType) {
+        let udf =
+            SedonaScalarUDF::from_impl("st_delaunaytriangles", st_delaunay_triangles_flags_impl());
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![
+                sedona_type.clone(),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Int64),
+            ],
+        );
+
+        tester.assert_return_type(WKB_GEOMETRY);
+
+        let geom = create_scalar(Some("MULTIPOINT ((0 0), (1 1), (0 1))"), &sedona_type);
+
+        let result = tester
+            .invoke_scalar_scalar_scalar(
+                geom.clone(),
+                ScalarValue::Float64(Some(0.0)),
+                ScalarValue::Int64(Some(1)),
+            )
+            .unwrap();
+        tester.assert_scalar_result_equals(
+            result,
+            "MULTILINESTRING ((0 1, 1 1), (0 0, 0 1), (0 0, 1 1))",
+        );
+
+        let result = tester
+            .invoke_scalar_scalar_scalar(
+                geom,
+                ScalarValue::Float64(Some(0.0)),
+                ScalarValue::Int64(Some(0)),
+            )
+            .unwrap();
+        tester.assert_scalar_result_equals(
+            result,
+            "GEOMETRYCOLLECTION (POLYGON ((0 1, 0 0, 1 1, 0 1)))",
+        );
     }
 }

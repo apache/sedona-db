@@ -17,7 +17,7 @@
 # under the License.
 
 title: ST_ExteriorRing
-description: Returns the exterior ring of a polygon as a linear ring geometry.
+description: Returns the exterior ring of a polygon as a linestring geometry.
 kernels:
   - returns: geometry
     args: [geometry]
@@ -27,7 +27,7 @@ kernels:
 
 ## Description
 
-Returns the exterior ring (outer boundary) of a polygon as a `LINEARRING`. Returns NULL for
+Returns the exterior ring (outer boundary) of a polygon as a `LINESTRING`. Returns NULL for
 non-polygon geometry types.
 
 ## Examples

@@ -785,14 +785,16 @@ def test_st_buildarea_empty_linework(eng, geom, sedona_expected, postgis_expecte
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
-def test_st_buildarea_non_linework(eng):
-    """POINT input forms no closed ring: PostGIS returns NULL, SedonaDB returns GEOMETRYCOLLECTION EMPTY."""
-    is_postgis = eng is PostGIS
+@pytest.mark.parametrize(
+    "geom",
+    [
+        "POINT (0 0)",
+        "POLYGON ((0 0, 1 0, 1 1, 0 0))",
+    ],
+)
+def test_st_buildarea_non_linework(eng, geom):
     eng = eng.create_or_skip()
-    expected = None if is_postgis else "GEOMETRYCOLLECTION EMPTY"
-    eng.assert_query_result(
-        "SELECT ST_BuildArea(ST_GeomFromText('POINT (0 0)'))", expected
-    )
+    eng.assert_query_result(f"SELECT ST_BuildArea({geom_or_null(geom)})", None)
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
@@ -1541,14 +1543,8 @@ def test_st_delaunaytriangles_tolerance(eng, geom, tolerance, expected):
     ],
 )
 def test_st_delaunaytriangles_flags(eng, geom, only_edges, expected):
-    is_postgis = eng is PostGIS
     eng = eng.create_or_skip()
-    # PostGIS takes integer flag (0/1); SedonaDB takes boolean (true/false)
-    flag = (
-        ("1" if only_edges else "0")
-        if is_postgis
-        else ("true" if only_edges else "false")
-    )
+    flag = 1 if only_edges else 0
     eng.assert_query_result(
         f"SELECT ST_DelaunayTriangles({geom_or_null(geom)}, 0.0, {flag})", expected
     )

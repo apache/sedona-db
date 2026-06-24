@@ -27,7 +27,7 @@ use sedona_expr::{
 };
 use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
 use sedona_schema::{
-    datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY},
+    datatypes::{SedonaType, WKB_GEOMETRY},
     matchers::ArgMatcher,
 };
 
@@ -36,14 +36,9 @@ use crate::geos_to_wkb::write_geos_geometry;
 
 /// ST_PointOnSurface() implementation using the geos crate
 pub fn st_point_on_surface_impl() -> Vec<ScalarKernelRef> {
-    ItemCrsKernel::wrap_impl(vec![
-        Arc::new(STPointOnSurface {
-            matcher: ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY),
-        }),
-        Arc::new(STPointOnSurface {
-            matcher: ArgMatcher::new(vec![ArgMatcher::is_geography()], WKB_GEOGRAPHY),
-        }),
-    ])
+    ItemCrsKernel::wrap_impl(STPointOnSurface {
+        matcher: ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY),
+    })
 }
 
 #[derive(Debug)]
@@ -94,15 +89,13 @@ mod tests {
     use datafusion_common::ScalarValue;
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
-    use sedona_schema::datatypes::{
-        WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS,
-    };
+    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS};
     use sedona_testing::testers::ScalarUdfTester;
 
     use super::*;
 
     #[rstest]
-    fn udf(#[values(WKB_GEOMETRY, WKB_GEOGRAPHY)] sedona_type: SedonaType) {
+    fn udf(#[values(WKB_GEOMETRY)] sedona_type: SedonaType) {
         let udf = SedonaScalarUDF::from_impl("st_pointonsurface", st_point_on_surface_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone()]);
 
@@ -121,10 +114,7 @@ mod tests {
     }
 
     #[rstest]
-    fn udf_invoke_item_crs(
-        #[values(WKB_GEOMETRY_ITEM_CRS.clone(), WKB_GEOGRAPHY_ITEM_CRS.clone())]
-        sedona_type: SedonaType,
-    ) {
+    fn udf_invoke_item_crs(#[values(WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType) {
         let udf = SedonaScalarUDF::from_impl("st_pointonsurface", st_point_on_surface_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone()]);
         tester.assert_return_type(sedona_type);

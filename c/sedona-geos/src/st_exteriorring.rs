@@ -32,6 +32,7 @@ use sedona_schema::{
 };
 
 use crate::executor::GeosExecutor;
+use crate::geos_to_wkb::write_geos_geometry;
 
 /// ST_ExteriorRing() implementation using the geos crate
 ///
@@ -69,12 +70,13 @@ impl SedonaScalarKernel for STExteriorRing {
         );
         executor.execute_wkb_void(|maybe_geom| {
             match maybe_geom {
-                Some(geom) => match invoke_scalar(&geom)? {
-                    Some(wkb) => {
-                        builder.append_value(&wkb);
+                Some(geom) => {
+                    if invoke_scalar(&geom, &mut builder)? {
+                        builder.append_value([]);
+                    } else {
+                        builder.append_null();
                     }
-                    None => builder.append_null(),
-                },
+                }
                 _ => builder.append_null(),
             }
             Ok(())
@@ -84,24 +86,28 @@ impl SedonaScalarKernel for STExteriorRing {
     }
 }
 
-fn invoke_scalar(geom: &Geometry) -> Result<Option<Vec<u8>>> {
+fn invoke_scalar(geom: &Geometry, writer: &mut impl std::io::Write) -> Result<bool> {
     let geom_type = geom
         .geometry_type()
         .map_err(|e| DataFusionError::Execution(format!("Failed to get geometry type: {e}")))?;
 
     if geom_type != GeometryTypes::Polygon {
-        return Ok(None);
+        return Ok(false);
     }
 
     let ring = geom
         .get_exterior_ring()
         .map_err(|e| DataFusionError::Execution(format!("ST_ExteriorRing failed: {e}")))?;
+    let line =
+        Geometry::create_line_string(ring.get_coord_seq().map_err(|e| {
+            DataFusionError::Execution(format!("Failed to get ring coordinates: {e}"))
+        })?)
+        .map_err(|e| {
+            DataFusionError::Execution(format!("Failed to create exterior linestring: {e}"))
+        })?;
 
-    let wkb = ring
-        .to_wkb()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to write WKB: {e}")))?;
-
-    Ok(Some(wkb))
+    write_geos_geometry(&line, writer)?;
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -126,7 +132,7 @@ mod tests {
         let result = tester
             .invoke_scalar("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))")
             .unwrap();
-        tester.assert_scalar_result_equals(result, "LINEARRING (0 0, 4 0, 4 4, 0 4, 0 0)");
+        tester.assert_scalar_result_equals(result, "LINESTRING (0 0, 4 0, 4 4, 0 4, 0 0)");
 
         // non-polygon returns null
         let result = tester.invoke_scalar("POINT (1 2)").unwrap();
@@ -148,6 +154,6 @@ mod tests {
         let result = tester
             .invoke_scalar("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))")
             .unwrap();
-        tester.assert_scalar_result_equals(result, "LINEARRING (0 0, 4 0, 4 4, 0 4, 0 0)");
+        tester.assert_scalar_result_equals(result, "LINESTRING (0 0, 4 0, 4 4, 0 4, 0 0)");
     }
 }
