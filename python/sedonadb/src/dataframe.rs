@@ -342,6 +342,33 @@ impl InternalDataFrame {
         Ok(InternalDataFrame::new(inner, self.runtime.clone()))
     }
 
+    /// `INTERSECT ALL` — rows present in both DataFrames, preserving
+    /// multiplicity.
+    fn intersect(&self, other: &InternalDataFrame) -> Result<InternalDataFrame, PySedonaError> {
+        let inner = self.inner.clone().intersect(other.inner.clone())?;
+        Ok(InternalDataFrame::new(inner, self.runtime.clone()))
+    }
+
+    /// `INTERSECT` — rows present in both DataFrames, de-duplicated.
+    fn intersect_distinct(
+        &self,
+        other: &InternalDataFrame,
+    ) -> Result<InternalDataFrame, PySedonaError> {
+        let inner = self.inner.clone().intersect_distinct(other.inner.clone())?;
+        Ok(InternalDataFrame::new(inner, self.runtime.clone()))
+    }
+
+    /// `EXCEPT` (distinct) — the distinct rows in this DataFrame that are
+    /// not in the other. Multiplicity-preserving `EXCEPT ALL` is not
+    /// currently supported by the engine, hence only the distinct variant.
+    fn except_distinct(
+        &self,
+        other: &InternalDataFrame,
+    ) -> Result<InternalDataFrame, PySedonaError> {
+        let inner = self.inner.clone().except_distinct(other.inner.clone())?;
+        Ok(InternalDataFrame::new(inner, self.runtime.clone()))
+    }
+
     fn execute<'py>(&self, py: Python<'py>) -> Result<usize, PySedonaError> {
         let df = self.inner.clone();
         let count = wait_for_future(py, &self.runtime, async move {
