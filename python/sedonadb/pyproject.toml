@@ -42,6 +42,7 @@ test = [
     "polars",
     "pytest",
     "pyyaml",
+    "rasterio",
 ]
 geopandas = [
     "adbc-driver-manager[dbapi]",
