@@ -862,6 +862,65 @@ pub fn nodata_bytes_to_f64_lossless(bytes: &[u8], dt: &BandDataType) -> Result<f
     }
 }
 
+/// Pack an `f64` nodata value into the little-endian bytes of a band's data
+/// type — the inverse of [`nodata_bytes_to_f64_lossless`].
+///
+/// Errors when the value can't be represented exactly in `dt`: a non-integral
+/// value for an integer type, a value outside the type's range, or a 64-bit
+/// integer beyond 2^53 (which can't have arrived losslessly through `f64`).
+/// `Float32` is the one lossy case allowed — it rounds to the nearest `f32`, as
+/// any f64 → f32 narrowing does.
+pub fn nodata_f64_to_bytes(value: f64, dt: &BandDataType) -> Result<Vec<u8>, ArrowError> {
+    fn check_integer(value: f64, min: f64, max: f64, dt: &BandDataType) -> Result<(), ArrowError> {
+        if value.fract() != 0.0 || value < min || value > max {
+            return Err(ArrowError::InvalidArgumentError(format!(
+                "nodata value {value} is not a valid {dt:?} value"
+            )));
+        }
+        Ok(())
+    }
+
+    // The largest magnitude an integer can have and still round-trip through f64.
+    const F64_INT_MAX: f64 = (1u64 << 53) as f64;
+
+    Ok(match dt {
+        BandDataType::UInt8 => {
+            check_integer(value, 0.0, u8::MAX as f64, dt)?;
+            (value as u8).to_le_bytes().to_vec()
+        }
+        BandDataType::Int8 => {
+            check_integer(value, i8::MIN as f64, i8::MAX as f64, dt)?;
+            (value as i8).to_le_bytes().to_vec()
+        }
+        BandDataType::UInt16 => {
+            check_integer(value, 0.0, u16::MAX as f64, dt)?;
+            (value as u16).to_le_bytes().to_vec()
+        }
+        BandDataType::Int16 => {
+            check_integer(value, i16::MIN as f64, i16::MAX as f64, dt)?;
+            (value as i16).to_le_bytes().to_vec()
+        }
+        BandDataType::UInt32 => {
+            check_integer(value, 0.0, u32::MAX as f64, dt)?;
+            (value as u32).to_le_bytes().to_vec()
+        }
+        BandDataType::Int32 => {
+            check_integer(value, i32::MIN as f64, i32::MAX as f64, dt)?;
+            (value as i32).to_le_bytes().to_vec()
+        }
+        BandDataType::UInt64 => {
+            check_integer(value, 0.0, F64_INT_MAX, dt)?;
+            (value as u64).to_le_bytes().to_vec()
+        }
+        BandDataType::Int64 => {
+            check_integer(value, -F64_INT_MAX, F64_INT_MAX, dt)?;
+            (value as i64).to_le_bytes().to_vec()
+        }
+        BandDataType::Float32 => (value as f32).to_le_bytes().to_vec(),
+        BandDataType::Float64 => value.to_le_bytes().to_vec(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -870,6 +929,40 @@ mod tests {
     fn test_nodata_bytes_to_f64_uint8() {
         let val = nodata_bytes_to_f64(&[42], &BandDataType::UInt8).unwrap();
         assert_eq!(val, 42.0);
+    }
+
+    #[test]
+    fn test_nodata_f64_to_bytes_round_trips() {
+        for (dt, value) in [
+            (BandDataType::UInt8, 127.0),
+            (BandDataType::Int8, -2.0),
+            (BandDataType::UInt16, 65535.0),
+            (BandDataType::Int16, -1000.0),
+            (BandDataType::UInt32, 4_000_000_000.0),
+            (BandDataType::Int32, -2_000_000.0),
+            (BandDataType::UInt64, 9_007_199_254_740_992.0), // 2^53
+            (BandDataType::Int64, -9_007_199_254_740_992.0), // -2^53
+            (BandDataType::Float32, -9999.5),
+            (BandDataType::Float64, -9999.0),
+        ] {
+            let bytes = nodata_f64_to_bytes(value, &dt).unwrap();
+            assert_eq!(bytes.len(), dt.byte_size(), "{dt:?}");
+            assert_eq!(
+                nodata_bytes_to_f64_lossless(&bytes, &dt).unwrap(),
+                value,
+                "{dt:?} round-trip"
+            );
+        }
+    }
+
+    #[test]
+    fn test_nodata_f64_to_bytes_rejects_out_of_range() {
+        // Non-integral for an integer type, and out of range.
+        nodata_f64_to_bytes(1.5, &BandDataType::UInt8).unwrap_err();
+        nodata_f64_to_bytes(300.0, &BandDataType::UInt8).unwrap_err();
+        nodata_f64_to_bytes(-1.0, &BandDataType::UInt8).unwrap_err();
+        // Beyond 2^53 can't have arrived losslessly through f64.
+        nodata_f64_to_bytes(1e18, &BandDataType::Int64).unwrap_err();
     }
 
     #[test]
