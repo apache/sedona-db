@@ -29,8 +29,17 @@ use std::sync::Arc;
 
 use sedona_schema::raster::{BandDataType, RasterSchema};
 
-use crate::traits::{BandMetadata, MetadataRef};
+use crate::traits::{BandMetadata, BandOverrides, MetadataRef, RasterRef};
 use crate::view_entries::{ViewEntries, ViewEntry};
+
+/// Raster-level metadata overrides for [`RasterBuilder::start_raster_from`] and
+/// [`RasterBuilder::copy_raster_from`]. A `None` field inherits the source
+/// raster's value. The band-level analog is [`BandOverrides`].
+#[derive(Debug, Default, Clone)]
+pub struct RasterOverrides {
+    /// Override the 6-element GDAL geotransform; `None` inherits the source's.
+    pub transform: Option<[f64; 6]>,
+}
 
 /// Maximum byte length of an inline `BinaryViewArray` view. Views this short
 /// store their bytes in the 16-byte view itself; longer views reference a data
@@ -265,6 +274,53 @@ impl RasterBuilder {
         self.current_height = 0;
 
         Ok(())
+    }
+
+    /// Start a raster from `source`, copying its geotransform, spatial
+    /// dims/shape, and CRS — with [`RasterOverrides`] applied — but **not** its
+    /// bands. The caller adds bands (e.g. via
+    /// [`BandRef::copy_into`](crate::traits::BandRef::copy_into)) and then calls
+    /// [`finish_raster`](Self::finish_raster). Use this when bands need
+    /// per-band changes; see [`copy_raster_from`](Self::copy_raster_from) to
+    /// copy a raster whole.
+    pub fn start_raster_from(
+        &mut self,
+        source: &dyn RasterRef,
+        overrides: RasterOverrides,
+    ) -> Result<(), ArrowError> {
+        let transform: [f64; 6] = match overrides.transform {
+            Some(transform) => transform,
+            None => source.transform().try_into().map_err(|_| {
+                ArrowError::InvalidArgumentError("raster transform is not 6 elements".to_string())
+            })?,
+        };
+        let spatial_dims = source.spatial_dims();
+        self.start_raster_nd(
+            &transform,
+            &spatial_dims,
+            source.spatial_shape(),
+            source.crs(),
+        )
+    }
+
+    /// Copy `source` whole: its metadata (with [`RasterOverrides`] applied) and
+    /// every band, each derived via
+    /// [`BandRef::copy_into`](crate::traits::BandRef::copy_into) so pixel buffers
+    /// are shared zero-copy. Finishes the raster — no further calls are needed
+    /// for this row.
+    pub fn copy_raster_from(
+        &mut self,
+        source: &dyn RasterRef,
+        overrides: RasterOverrides,
+    ) -> Result<(), ArrowError> {
+        self.start_raster_from(source, overrides)?;
+        for band_idx in 0..source.num_bands() {
+            source
+                .band(band_idx)?
+                .copy_into(self, BandOverrides::default())?;
+            self.finish_band()?;
+        }
+        self.finish_raster()
     }
 
     /// Convenience: start a 2-D raster with positional geotransform parameters.
@@ -1105,6 +1161,38 @@ mod tests {
 
         let result = target_raster.bands().band(2);
         assert!(result.is_err(), "Band number 2 should be out of range");
+    }
+
+    #[test]
+    fn copy_raster_from_overrides_transform_and_preserves_bands() {
+        use sedona_testing::raster_spec::{assert_rasters_equal, RasterSpec};
+
+        // Source: a CRS, a nodata sentinel, and pixel values to preserve.
+        let source = RasterSpec::d2(2, 1)
+            .band_values(&[1u8, 2])
+            .nodata(9u8)
+            .crs(Some("OGC:CRS84"))
+            .build();
+        let source = RasterStructArray::try_new(&source).unwrap();
+
+        let mut builder = RasterBuilder::new(1);
+        builder
+            .copy_raster_from(
+                &source.get(0).unwrap(),
+                RasterOverrides {
+                    transform: Some([100.0, 2.0, 0.0, 200.0, 0.0, -3.0]),
+                },
+            )
+            .unwrap();
+        let out: ArrayRef = Arc::new(builder.finish().unwrap());
+
+        // Only the transform changed; CRS, nodata, and pixels carried over.
+        let expected = RasterSpec::d2(2, 1)
+            .band_values(&[1u8, 2])
+            .nodata(9u8)
+            .crs(Some("OGC:CRS84"))
+            .transform([100.0, 2.0, 0.0, 200.0, 0.0, -3.0]);
+        assert_rasters_equal(&out, &[Some(expected)]);
     }
 
     #[test]
