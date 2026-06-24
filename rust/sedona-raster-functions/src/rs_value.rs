@@ -34,7 +34,7 @@
 
 use std::sync::Arc;
 
-use arrow_array::{builder::Float64Builder, ArrayRef, Float64Array, StructArray};
+use arrow_array::{builder::Float64Builder, Array, ArrayRef, Float64Array, StructArray};
 use arrow_schema::DataType;
 use datafusion_common::cast::as_int32_array;
 use datafusion_common::{exec_datafusion_err, exec_err, Result, ScalarValue};
@@ -91,14 +91,13 @@ impl SedonaScalarKernel for RsValuePoint {
         arg_types: &[SedonaType],
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
-        // Fast path: a constant (scalar) raster sampled with the default band
-        // lets us resolve the band buffer, affine transform, and CRS once for
-        // the whole batch instead of per point. This is the common
-        // RS_Value(raster_expr, point_column) shape.
-        if !self.with_band {
-            if let ColumnarValue::Scalar(ScalarValue::Struct(raster_struct)) = &args[0] {
-                return self.invoke_scalar_default_band(arg_types, args, raster_struct.as_ref());
-            }
+        // Fast path: a constant (scalar) raster lets us resolve the affine
+        // transform and CRS once for the whole batch instead of per point — the
+        // common RS_Value(raster_expr, point_column[, band]) shape. The band
+        // argument does not change this: a constant band also hoists its buffer,
+        // and only a band *column* falls back to per-row band resolution.
+        if let ColumnarValue::Scalar(ScalarValue::Struct(raster_struct)) = &args[0] {
+            return self.invoke_scalar_raster(arg_types, args, raster_struct.as_ref());
         }
 
         let executor = RasterExecutor::new(arg_types, args);
@@ -157,16 +156,20 @@ impl SedonaScalarKernel for RsValuePoint {
 }
 
 impl RsValuePoint {
-    /// Optimized path for a constant (scalar) raster sampled with the default
-    /// band: the affine transform, raster CRS, and band buffer are resolved once
-    /// for the whole batch, then a selection vector drives a tight sample loop.
+    /// Optimized path for a constant (scalar) raster: the affine transform and
+    /// raster CRS are resolved once for the whole batch, then a selection vector
+    /// drives a tight sample loop. This serves every band shape:
+    /// - no band argument or a constant band → the band buffer is hoisted too;
+    /// - a band *column* → the band buffer is resolved per row (its `NdBuffer`
+    ///   borrows from the band, which can't be cached across distinct bands),
+    ///   but the affine/CRS/reproject work is still hoisted.
     ///
     /// Sampling behaviour matches the general path: it uses the same
     /// [`resolve_point_xy`]/[`xy_to_pixel`] helpers, so null/empty/non-finite
     /// points yield NULL identically. Band resolution (and its 2-D check) is
     /// deferred until at least one point needs sampling, so an all-null/all-empty
     /// batch returns NULL without touching the band — as the general path does.
-    fn invoke_scalar_default_band(
+    fn invoke_scalar_raster(
         &self,
         arg_types: &[SedonaType],
         args: &[ColumnarValue],
@@ -182,6 +185,35 @@ impl RsValuePoint {
         }
         let raster = rasters.get(0)?;
 
+        // Band selection: a missing band argument (default 1) or a scalar band is
+        // constant for the batch and lets us hoist the band buffer; a band column
+        // is resolved per row. A NULL scalar band makes every output NULL.
+        let mut const_band: Option<usize> = None;
+        let mut band_values: Option<ArrayRef> = None;
+        if self.with_band {
+            match &args[2] {
+                ColumnarValue::Scalar(scalar) => {
+                    let arr = ColumnarValue::Scalar(scalar.clone())
+                        .cast_to(&DataType::Int32, None)?
+                        .into_array(1)?;
+                    let arr = as_int32_array(&arr)?;
+                    if arr.is_null(0) {
+                        return executor.finish(Arc::new(Float64Array::from(vec![None; n])));
+                    }
+                    // Match `next_band`: clamp to 0 so band 0/negative surface as a
+                    // not-1-based error from `Bands::band` rather than being coerced.
+                    const_band = Some(arr.value(0).max(0) as usize);
+                }
+                other => band_values = Some(int32_array_arg(other, n)?),
+            }
+        } else {
+            const_band = Some(1);
+        }
+        let band_array = band_values
+            .as_ref()
+            .map(|a| as_int32_array(a))
+            .transpose()?;
+
         // Affine transform and raster CRS, resolved once for all points.
         let affine = AffineMatrix::from_metadata(&raster.metadata());
         let raster_crs = resolve_crs(raster.crs())?;
@@ -193,12 +225,22 @@ impl RsValuePoint {
 
         let mut geom = executor.make_geom_wkb_crs_accessor(1)?;
 
-        // Phase 1 — selection vector: collect (row, x, y) for the points worth
-        // sampling (non-null, non-empty Point), reprojected into the raster CRS.
-        // Null/empty points are left out and stay NULL in the output.
-        let mut selection: Vec<(usize, f64, f64)> = Vec::with_capacity(n);
+        // Phase 1 — selection vector: collect (row, x, y, band) for the points
+        // worth sampling (non-null, non-empty Point with a non-null band),
+        // reprojected into the raster CRS. Skipped rows stay NULL in the output.
+        let mut selection: Vec<(usize, f64, f64, usize)> = Vec::with_capacity(n);
+        let mut band_iter = band_array.map(|a| a.iter());
         with_global_proj_engine(|engine| {
             for i in 0..n {
+                // Advance the band column in lockstep with the row index; a NULL
+                // band element leaves the row NULL (matching the general path).
+                let band_num = match const_band {
+                    Some(b) => b,
+                    None => match next_band(&mut band_iter) {
+                        Some(b) => b,
+                        None => continue,
+                    },
+                };
                 let (wkb_opt, point_crs) = geom.get(i)?;
                 let Some(point_wkb) = wkb_opt else {
                     continue;
@@ -210,7 +252,7 @@ impl RsValuePoint {
                     skip_reproject,
                     engine,
                 )? {
-                    selection.push((i, x, y));
+                    selection.push((i, x, y, band_num));
                 }
             }
             Ok(())
@@ -221,26 +263,37 @@ impl RsValuePoint {
             return executor.finish(Arc::new(Float64Array::from(out)));
         }
 
-        // Resolve the default band (1) and its buffer/nodata once, now that we
-        // know at least one point needs sampling.
-        let band = raster
-            .bands()
-            .band(1)
-            .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
-        if !band.is_spatial_2d() {
-            return exec_err!("RS_Value supports 2-D rasters only; band is not a 2-D (y, x) grid");
-        }
-        let buffer = band
-            .nd_buffer()
-            .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
-        let nodata = band
-            .nodata_as_f64()
-            .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
-
-        // Phase 2 — sample each selected point from the hoisted band buffer.
-        for (i, x, y) in selection {
-            if let Some((col, row)) = xy_to_pixel(&affine, x, y)? {
-                out[i] = read_pixel(&buffer, nodata, col, row)?;
+        // Phase 2 — sample. A constant band resolves its buffer/nodata once (now
+        // that we know a point needs sampling); a band column resolves per row.
+        match const_band {
+            Some(band_num) => {
+                let band = raster
+                    .bands()
+                    .band(band_num)
+                    .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
+                if !band.is_spatial_2d() {
+                    return exec_err!(
+                        "RS_Value supports 2-D rasters only; band is not a 2-D (y, x) grid"
+                    );
+                }
+                let buffer = band
+                    .nd_buffer()
+                    .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
+                let nodata = band
+                    .nodata_as_f64()
+                    .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
+                for (i, x, y, _band) in selection {
+                    if let Some((col, row)) = xy_to_pixel(&affine, x, y)? {
+                        out[i] = read_pixel(&buffer, nodata, col, row)?;
+                    }
+                }
+            }
+            None => {
+                for (i, x, y, band_num) in selection {
+                    if let Some((col, row)) = xy_to_pixel(&affine, x, y)? {
+                        out[i] = sample_pixel(&raster, col, row, band_num)?;
+                    }
+                }
             }
         }
 
@@ -469,7 +522,7 @@ fn read_pixel(buffer: &NdBuffer, nodata: Option<f64>, col: i64, row: i64) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::{Array, Float64Array};
+    use arrow_array::{Array, Float64Array, Int32Array};
     use datafusion_expr::ScalarUDF;
     use sedona_raster::array::RasterStructArray;
     use sedona_schema::crs::lnglat;
@@ -723,6 +776,109 @@ mod tests {
         assert_eq!(sample("POINT (0.5 9.5)"), Some(1.0)); // pixel (0, 0)
         assert_eq!(sample("POINT (1.5 8.5)"), Some(4.0)); // pixel (1, 1)
         assert_eq!(sample("POINT (100 100)"), None); // outside the footprint
+    }
+
+    #[test]
+    fn scalar_raster_constant_band_uses_fast_path() {
+        // A scalar raster with a constant (scalar) band argument takes the same
+        // hoisted fast path as the 2-arg default-band case, just on that band.
+        let udf: ScalarUDF = rs_value_udf().into();
+        let geom_type = SedonaType::Wkb(Edges::Planar, lnglat());
+        let tester = ScalarUdfTester::new(
+            udf,
+            vec![
+                RASTER,
+                geom_type.clone(),
+                SedonaType::Arrow(DataType::Int32),
+            ],
+        );
+        // North-up 2x2, two bands: band 1 [1,2,3,4], band 2 [10,20,30,40].
+        let raster = RasterSpec::d2(2, 2)
+            .band_values(&[1u8, 2, 3, 4])
+            .band_values(&[10u8, 20, 30, 40])
+            .transform([0.0, 1.0, 0.0, 10.0, 0.0, -1.0])
+            .build();
+        let geoms = create_geom_array(&[Some("POINT (0.5 9.5)")], &geom_type); // pixel (0, 0)
+        let result = tester
+            .invoke(vec![
+                ColumnarValue::Scalar(ScalarValue::Struct(Arc::new(raster))),
+                ColumnarValue::Array(geoms),
+                ColumnarValue::Scalar(ScalarValue::Int32(Some(2))),
+            ])
+            .unwrap();
+        let arr = result.into_array(1).unwrap();
+        let arr = arr.as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_eq!(arr.value(0), 10.0); // band 2, pixel (0, 0)
+    }
+
+    #[test]
+    fn scalar_raster_band_column_resolves_per_row() {
+        // A scalar raster with a band *column* still hoists affine/CRS/reproject,
+        // but resolves the band buffer per row. A NULL band element -> NULL.
+        let udf: ScalarUDF = rs_value_udf().into();
+        let geom_type = SedonaType::Wkb(Edges::Planar, lnglat());
+        let tester = ScalarUdfTester::new(
+            udf,
+            vec![
+                RASTER,
+                geom_type.clone(),
+                SedonaType::Arrow(DataType::Int32),
+            ],
+        );
+        let raster = RasterSpec::d2(2, 2)
+            .band_values(&[1u8, 2, 3, 4])
+            .band_values(&[10u8, 20, 30, 40])
+            .transform([0.0, 1.0, 0.0, 10.0, 0.0, -1.0])
+            .build();
+        // Three points at pixel (0, 0), sampling band 1, band 2, then a NULL band.
+        let geoms = create_geom_array(
+            &[
+                Some("POINT (0.5 9.5)"),
+                Some("POINT (0.5 9.5)"),
+                Some("POINT (0.5 9.5)"),
+            ],
+            &geom_type,
+        );
+        let bands = Arc::new(Int32Array::from(vec![Some(1), Some(2), None]));
+        let result = tester
+            .invoke(vec![
+                ColumnarValue::Scalar(ScalarValue::Struct(Arc::new(raster))),
+                ColumnarValue::Array(geoms),
+                ColumnarValue::Array(bands),
+            ])
+            .unwrap();
+        let arr = result.into_array(3).unwrap();
+        let arr = arr.as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_eq!(arr.value(0), 1.0); // band 1
+        assert_eq!(arr.value(1), 10.0); // band 2
+        assert!(arr.is_null(2), "NULL band element should be NULL");
+    }
+
+    #[test]
+    fn scalar_raster_null_scalar_band_is_all_null() {
+        // A NULL scalar band makes every output NULL without touching the band.
+        let udf: ScalarUDF = rs_value_udf().into();
+        let geom_type = SedonaType::Wkb(Edges::Planar, lnglat());
+        let tester = ScalarUdfTester::new(
+            udf,
+            vec![
+                RASTER,
+                geom_type.clone(),
+                SedonaType::Arrow(DataType::Int32),
+            ],
+        );
+        let raster = RasterSpec::d2(2, 2).band_values(&[1u8, 2, 3, 4]).build();
+        let geoms = create_geom_array(&[Some("POINT (0.5 0.5)")], &geom_type);
+        let result = tester
+            .invoke(vec![
+                ColumnarValue::Scalar(ScalarValue::Struct(Arc::new(raster))),
+                ColumnarValue::Array(geoms),
+                ColumnarValue::Scalar(ScalarValue::Int32(None)),
+            ])
+            .unwrap();
+        let arr = result.into_array(1).unwrap();
+        let arr = arr.as_any().downcast_ref::<Float64Array>().unwrap();
+        assert!(arr.is_null(0), "NULL scalar band should sample to NULL");
     }
 
     #[test]
