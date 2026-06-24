@@ -146,6 +146,19 @@ def test_raster_zero_copy_access(con):
     # Verify the arrays are views, not copies (same base memory)
     assert np.shares_memory(arr, arr_from_tab)
 
+
+def test_raster_zero_copy_pandas(con):
+    # Earlier versions of Pandas seem to error with a BlockManager issue
+    # regarding a 1D/2D block. This may be workaroundable if we need to
+    # support older Python/Pandas.
+    pytest.importorskip("pandas", minversion="3.0")
+
+    t = con.sql("SELECT RS_Example() as raster")
+    tab = t.to_arrow_table()
+    r = Raster(tab["raster"], 0)
+    b = r.bands[0]
+    arr = b.to_numpy()
+
     # This should also be true of the collected Pandas DataFrame
     df = con.create_data_frame(tab).to_pandas()
 

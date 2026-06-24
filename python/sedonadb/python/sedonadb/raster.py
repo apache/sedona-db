@@ -339,6 +339,8 @@ class RasterArray(pa.ExtensionArray):
         """Convert to a Pandas Series of Raster objects (zero-copy where possible)."""
         import pandas as pd
 
+        _check_pandas_version()
+
         # Create Raster objects that reference the underlying storage directly
         rasters = [Raster(self.storage, i) for i in range(len(self))]
         return pd.array(rasters, dtype=object)
@@ -413,6 +415,8 @@ class RasterDtype:
         object wraps a slice of the Arrow array for zero-copy access.
         """
         import pandas as pd
+
+        _check_pandas_version()
 
         # Handle ChunkedArray by iterating over chunks
         if isinstance(arr, pa.ChunkedArray):
@@ -697,3 +701,24 @@ def _build_raster(
     raster_struct = raster_struct.cast(RASTER_STORAGE_TYPE)
 
     return Raster(raster_struct)
+
+
+def _check_pandas_version():
+    """Check that pandas version is >= 3.0 for raster to_pandas conversion.
+
+    Older Pandas versions have an issue with Arrow conversion for the
+    current strategy of Raster array -> Pandas conversion. This may
+    be able to be worked around (the original error was a BlockManager
+    error regarding a 1D/2D block).
+
+    Raises:
+        ImportError: If pandas version is less than 3.0.
+    """
+    import pandas as pd
+    from packaging.version import Version
+
+    if Version(pd.__version__) < Version("3.0"):
+        raise ImportError(
+            f"Converting raster columns to pandas requires pandas >= 3.0, "
+            f"but found pandas {pd.__version__}. Use .to_arrow_table() instead."
+        )
