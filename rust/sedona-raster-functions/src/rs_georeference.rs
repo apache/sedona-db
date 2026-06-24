@@ -46,9 +46,16 @@ pub fn rs_georeference_udf() -> SedonaScalarUDF {
 /// [world file](https://en.wikipedia.org/wiki/World_file).
 ///
 /// Both formats output six lines: scalex, skewy, skewx, scaley, upperleftx, upperlefty.
-/// The difference is how the upper-left coordinate is reported:
+/// The difference is how the upper-left coordinate is reported. Shared with the
+/// [`RS_SetGeoReference`](crate::rs_set_georeference) setter so the two agree on
+/// accepted format strings.
+///
+/// NOTE: the ESRI center shift uses `scale * 0.5` only and ignores skew; it is
+/// exact for north-up (zero-skew) rasters but off by `skew * 0.5` for rotated
+/// ones. The getter and setter share this approximation, so they round-trip;
+/// interop with a true ESRI world file for a skewed raster is not exact.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum GeoReferenceFormat {
+pub(crate) enum GeoReferenceFormat {
     /// GDAL format: upperleftx and upperlefty are the coordinates of the upper-left corner
     /// of the upper-left pixel.
     Gdal,
@@ -58,7 +65,7 @@ enum GeoReferenceFormat {
 }
 
 impl GeoReferenceFormat {
-    fn from_str(s: &str) -> Result<Self> {
+    pub(crate) fn from_str(s: &str) -> Result<Self> {
         match s.to_uppercase().as_str() {
             "GDAL" => Ok(GeoReferenceFormat::Gdal),
             "ESRI" => Ok(GeoReferenceFormat::Esri),

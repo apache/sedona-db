@@ -222,3 +222,41 @@ def test_rs_value_matches_rasterio(con):
         con.drop_view(view)
 
     assert got == pytest.approx(expected)
+
+
+def test_rs_setgeoreference_roundtrips_with_getter():
+    # RS_GeoReference emits scaleX, skewY, skewX, scaleY, upperLeftX, upperLeftY;
+    # RS_SetGeoReference accepts the same six values back (GDAL order).
+    eng = SedonaDB()
+    eng.assert_query_result(
+        "SELECT RS_GeoReference(RS_SetGeoReference(RS_Example(), '2 0 0 -3 100 200'))",
+        "2.0000000000\n0.0000000000\n0.0000000000\n-3.0000000000\n100.0000000000\n200.0000000000",
+    )
+
+
+def test_rs_setgeoreference_esri_shifts_to_corner():
+    # ESRI upper-left is the pixel center; the stored (GDAL) upper-left is the
+    # corner: 101 - 2*0.5 = 100 and 198.5 - (-3)*0.5 = 200.
+    eng = SedonaDB()
+    eng.assert_query_result(
+        "SELECT RS_GeoReference(RS_SetGeoReference(RS_Example(), '2 0 0 -3 101 198.5', 'ESRI'))",
+        "2.0000000000\n0.0000000000\n0.0000000000\n-3.0000000000\n100.0000000000\n200.0000000000",
+    )
+
+
+@pytest.mark.parametrize(
+    ("expr", "expected"),
+    [
+        # Two-arg form sets band 1; read it back with the getter.
+        ("RS_BandNoDataValue(RS_SetBandNoDataValue(RS_Example(), 0), 1)", 0.0),
+        # Three-arg form targets a specific band.
+        ("RS_BandNoDataValue(RS_SetBandNoDataValue(RS_Example(), 2, 255), 2)", 255.0),
+        # A null nodata value yields a null raster, so the getter returns null.
+        (
+            "RS_BandNoDataValue(RS_SetBandNoDataValue(RS_Example(), CAST(NULL AS DOUBLE)), 1)",
+            None,
+        ),
+    ],
+)
+def test_rs_setbandnodatavalue(expr, expected):
+    SedonaDB().assert_query_result(f"SELECT {expr}", expected)

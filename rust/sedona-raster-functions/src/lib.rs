@@ -33,6 +33,8 @@ pub mod rs_isempty;
 pub mod rs_numbands;
 pub mod rs_pixel_functions;
 pub mod rs_rastercoordinate;
+pub mod rs_set_band_nodata;
+pub mod rs_set_georeference;
 pub mod rs_setsrid;
 pub mod rs_size;
 pub mod rs_slice;
