@@ -786,15 +786,21 @@ def test_st_buildarea_empty_linework(eng, geom, sedona_expected, postgis_expecte
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
-    "geom",
+    ("geom", "sedona_expected", "postgis_expected"),
     [
-        "POINT (0 0)",
-        "POLYGON ((0 0, 1 0, 1 1, 0 0))",
+        ("POINT (0 0)", None, None),
+        (
+            "POLYGON ((0 0, 1 0, 1 1, 0 0))",
+            None,
+            "POLYGON ((0 0, 1 1, 1 0, 0 0))",
+        ),
     ],
 )
-def test_st_buildarea_non_linework(eng, geom):
+def test_st_buildarea_non_linework(eng, geom, sedona_expected, postgis_expected):
+    is_postgis = eng is PostGIS
     eng = eng.create_or_skip()
-    eng.assert_query_result(f"SELECT ST_BuildArea({geom_or_null(geom)})", None)
+    expected = postgis_expected if is_postgis else sedona_expected
+    eng.assert_query_result(f"SELECT ST_BuildArea({geom_or_null(geom)})", expected)
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
