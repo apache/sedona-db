@@ -60,7 +60,12 @@ fn criterion_benchmark(c: &mut Criterion) {
         ArrayScalar(Point, Polygon(500)),
     );
 
+    benchmark::scalar(c, &f, "geo", "st_distance", ArrayArray(Point, Point));
+    benchmark::scalar(c, &f, "geo", "st_distance", ArrayScalar(Point, Point));
+    benchmark::scalar(c, &f, "geo", "st_distance", ScalarArray(Point, Point));
     benchmark::scalar(c, &f, "geo", "st_distance", ArrayScalar(Point, Polygon(10)));
+    benchmark::scalar(c, &f, "geo", "st_distance", ArrayScalar(Polygon(10), Point));
+    benchmark::scalar(c, &f, "geo", "st_distance", ArrayArray(Point, Polygon(10)));
     benchmark::scalar(
         c,
         &f,
