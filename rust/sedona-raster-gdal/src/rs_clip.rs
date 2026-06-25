@@ -43,6 +43,9 @@ use sedona_raster::array::RasterRefImpl;
 use sedona_raster::builder::RasterBuilder;
 use sedona_raster::traits::RasterRef;
 use sedona_raster_functions::crs_utils::{crs_transform_wkb, resolve_crs};
+use sedona_raster_functions::rs_ensure_loaded::{
+    NEEDS_PIXELS_METADATA_KEY, RETURNS_BYTES_METADATA_KEY,
+};
 use sedona_raster_functions::RasterExecutor;
 use sedona_schema::datatypes::{SedonaType, RASTER};
 use sedona_schema::matchers::ArgMatcher;
@@ -74,6 +77,11 @@ pub fn rs_clip_udf() -> SedonaScalarUDF {
         ],
         Volatility::Immutable,
     )
+    // Reads band pixels (so the planner materializes OutDb rasters via
+    // RS_EnsureLoaded first) and emits a fresh InDb raster (so its output is
+    // already loaded and isn't wrapped again).
+    .with_metadata(NEEDS_PIXELS_METADATA_KEY, "true")
+    .with_metadata(RETURNS_BYTES_METADATA_KEY, "true")
 }
 
 /// Kernel implementation for RS_Clip
