@@ -108,7 +108,8 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_xyzm::st_y_udf,
         crate::st_xyzm::st_z_udf,
         crate::st_zmflag::st_zmflag_udf,
-        crate::st_linesubstring::st_line_substring_udf
+        crate::st_linesubstring::st_line_substring_udf,
+        crate::st_max_distance::st_max_distance_udf
     );
 
     register_aggregate_udfs!(

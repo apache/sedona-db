@@ -19,22 +19,29 @@ use std::sync::Arc;
 use arrow_array::builder::Float64Builder;
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
-use datafusion_expr::ColumnarValue;
+use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::{
     CoordTrait, GeometryCollectionTrait, GeometryTrait, GeometryType, LineStringTrait,
     MultiLineStringTrait, MultiPointTrait, MultiPolygonTrait, PointTrait, PolygonTrait,
 };
 use sedona_expr::{
     item_crs::ItemCrsKernel,
-    scalar_udf::{ScalarKernelRef, SedonaScalarKernel},
+    scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
 };
-use sedona_functions::executor::WkbExecutor;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use wkb::reader::Wkb;
 
-/// ST_MaxDistance() — max pairwise 2D vertex distance using geo-types CoordsIter
-pub fn st_max_distance_impl() -> Vec<ScalarKernelRef> {
-    ItemCrsKernel::wrap_impl(STMaxDistance {})
+use crate::executor::WkbExecutor;
+
+/// ST_MaxDistance() scalar UDF
+///
+/// Native implementation to calculate max pairwise 2D vertex distance using geo-traits iteration
+pub fn st_max_distance_udf() -> SedonaScalarUDF {
+    SedonaScalarUDF::new(
+        "st_maxdistance",
+        ItemCrsKernel::wrap_impl(STMaxDistance {}),
+        Volatility::Immutable,
+    )
 }
 
 #[derive(Debug)]
@@ -56,12 +63,17 @@ impl SedonaScalarKernel for STMaxDistance {
     ) -> Result<ColumnarValue> {
         let executor = WkbExecutor::new(arg_types, args);
         let mut builder = Float64Builder::with_capacity(executor.num_iterations());
+        let mut lhs_coords = Vec::new();
+        let mut rhs_coords = Vec::new();
+
         executor.execute_wkb_wkb_void(|lhs, rhs| {
             match (lhs, rhs) {
-                (Some(lhs), Some(rhs)) => match invoke_scalar(lhs, rhs) {
-                    Some(dist) => builder.append_value(dist),
-                    None => builder.append_null(),
-                },
+                (Some(lhs), Some(rhs)) => {
+                    match invoke_scalar(lhs, rhs, &mut lhs_coords, &mut rhs_coords) {
+                        Some(dist) => builder.append_value(dist),
+                        None => builder.append_null(),
+                    }
+                }
                 _ => builder.append_null(),
             }
             Ok(())
@@ -70,19 +82,25 @@ impl SedonaScalarKernel for STMaxDistance {
     }
 }
 
-fn invoke_scalar(lhs: &Wkb, rhs: &Wkb) -> Option<f64> {
-    let mut lhs_coords = Vec::new();
-    let mut rhs_coords = Vec::new();
-    collect_coords(lhs, &mut lhs_coords);
-    collect_coords(rhs, &mut rhs_coords);
+fn invoke_scalar(
+    lhs: &Wkb,
+    rhs: &Wkb,
+    lhs_coords: &mut Vec<(f64, f64)>,
+    rhs_coords: &mut Vec<(f64, f64)>,
+) -> Option<f64> {
+    lhs_coords.clear();
+    rhs_coords.clear();
+
+    collect_coords(lhs, lhs_coords);
+    collect_coords(rhs, rhs_coords);
 
     if lhs_coords.is_empty() || rhs_coords.is_empty() {
         return None;
     }
 
     let mut max_dist_sq = f64::NEG_INFINITY;
-    for a in &lhs_coords {
-        for b in &rhs_coords {
+    for a in lhs_coords {
+        for b in &*rhs_coords {
             let dx = a.0 - b.0;
             let dy = a.1 - b.1;
             let d2 = dx * dx + dy * dy;
@@ -154,7 +172,6 @@ mod tests {
     use arrow_array::{create_array as arrow_array, ArrayRef};
     use datafusion_common::ScalarValue;
     use rstest::rstest;
-    use sedona_expr::scalar_udf::SedonaScalarUDF;
     use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::compare::assert_array_equal;
     use sedona_testing::create::create_array;
@@ -164,8 +181,10 @@ mod tests {
 
     #[rstest]
     fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let udf = SedonaScalarUDF::from_impl("st_maxdistance", st_max_distance_impl());
-        let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type]);
+        let tester = ScalarUdfTester::new(
+            st_max_distance_udf().into(),
+            vec![sedona_type.clone(), sedona_type],
+        );
         tester.assert_return_type(DataType::Float64);
 
         let result = tester
@@ -227,8 +246,10 @@ mod tests {
 
     #[rstest]
     fn udf_invoke_item_crs(#[values(WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType) {
-        let udf = SedonaScalarUDF::from_impl("st_maxdistance", st_max_distance_impl());
-        let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type]);
+        let tester = ScalarUdfTester::new(
+            st_max_distance_udf().into(),
+            vec![sedona_type.clone(), sedona_type],
+        );
         tester.assert_return_type(DataType::Float64);
 
         let result = tester
