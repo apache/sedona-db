@@ -16,6 +16,7 @@
 // under the License.
 use std::sync::Arc;
 
+use crate::st_distance::point_or_wkb_distance;
 use arrow_array::builder::BooleanBuilder;
 use arrow_schema::DataType;
 use datafusion_common::{cast::as_float64_array, error::Result};
@@ -24,10 +25,8 @@ use sedona_expr::{
     item_crs::ItemCrsKernel,
     scalar_udf::{ScalarKernelRef, SedonaScalarKernel},
 };
-use sedona_functions::executor::WkbExecutor;
-use sedona_geo_generic_alg::line_measures::DistanceExt;
+use sedona_functions::executor::PointXYExecutor;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
-use wkb::reader::Wkb;
 
 /// ST_DWithin() implementation using [DistanceExt]
 pub fn st_dwithin_impl() -> Vec<ScalarKernelRef> {
@@ -57,15 +56,17 @@ impl SedonaScalarKernel for STDWithin {
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
         let arg2 = args[2].cast_to(&DataType::Float64, None)?;
-        let executor = WkbExecutor::new(arg_types, args);
+        // Same PointXY fast path as ST_Distance's backend: Point/Point pairs
+        // skip the parse; the bound comparison is `distance <= bound`.
+        let executor = PointXYExecutor::new(arg_types, args);
         let arg2_array = arg2.to_array(executor.num_iterations())?;
         let arg2_f64_array = as_float64_array(&arg2_array)?;
         let mut arg2_iter = arg2_f64_array.iter();
         let mut builder = BooleanBuilder::with_capacity(executor.num_iterations());
-        executor.execute_wkb_wkb_void(|maybe_wkb0, maybe_wkb1| {
-            match (maybe_wkb0, maybe_wkb1, arg2_iter.next().unwrap()) {
-                (Some(wkb0), Some(wkb1), Some(distance)) => {
-                    builder.append_value(invoke_scalar(wkb0, wkb1, distance)?);
+        executor.execute_wkb_wkb_void(|maybe0, maybe1| {
+            match (maybe0, maybe1, arg2_iter.next().unwrap()) {
+                (Some(a), Some(b), Some(bound)) => {
+                    builder.append_value(point_or_wkb_distance(a, b) <= bound);
                 }
                 _ => builder.append_null(),
             }
@@ -75,11 +76,6 @@ impl SedonaScalarKernel for STDWithin {
 
         executor.finish(Arc::new(builder.finish()))
     }
-}
-
-fn invoke_scalar(wkb_a: &Wkb, wkb_b: &Wkb, distance_bound: f64) -> Result<bool> {
-    let actual_distance = wkb_a.distance_ext(wkb_b);
-    Ok(actual_distance <= distance_bound)
 }
 
 #[cfg(test)]

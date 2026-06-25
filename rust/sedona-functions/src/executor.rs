@@ -23,8 +23,9 @@ use datafusion_common::error::Result;
 use datafusion_common::{DataFusionError, ScalarValue};
 use datafusion_expr::ColumnarValue;
 use sedona_common::sedona_internal_err;
+use sedona_geometry::wkb_header::WkbPointLayout;
 use sedona_schema::datatypes::SedonaType;
-use wkb::reader::Wkb;
+use wkb::reader::{read_wkb, Wkb};
 
 /// Helper for writing general kernel implementations with geometry
 ///
@@ -268,6 +269,51 @@ impl GeometryFactory for WkbBytesFactory {
 /// but it requires additional manual processing of the raw [Wkb] bytes compared to
 /// the [WkbExecutor].
 pub type WkbBytesExecutor<'a, 'b> = GenericExecutor<'a, 'b, WkbBytesFactory, WkbBytesFactory>;
+
+/// A finite Point's `(x, y)`, or the parsed geometry for anything else.
+///
+/// Produced by [PointXYGeometryFactory] for kernels whose hot path only needs a
+/// Point's coordinates (ST_X, ST_Distance, ST_DWithin, …): a Point is decoded
+/// straight from its fixed WKB offset (no full parse), while every other
+/// geometry — including `POINT EMPTY` — falls back to a parsed [Wkb] so the
+/// kernel can handle it with the general path.
+pub enum PointOrWkb<'a> {
+    /// A finite Point, decoded from its fixed WKB offset without a full parse.
+    Point(f64, f64),
+    /// Any non-Point (or `POINT EMPTY`), fully parsed.
+    Other(Wkb<'a>),
+}
+
+/// A [GeometryFactory] that decodes a finite Point's `(x, y)` from its fixed WKB
+/// offset and parses anything else into a [Wkb].
+///
+/// Because [GenericExecutor] parses each scalar argument once (and each array
+/// element per row), a kernel built on this factory gets parse-once-for-scalars
+/// for free and only pays a coordinate read where the Point fast path applies.
+#[derive(Default)]
+pub struct PointXYGeometryFactory {}
+
+impl GeometryFactory for PointXYGeometryFactory {
+    type Geom<'a> = PointOrWkb<'a>;
+
+    #[inline]
+    fn try_from_wkb<'a>(&self, wkb_bytes: &'a [u8]) -> Result<Self::Geom<'a>> {
+        // A finite Point: read its coordinate from the fixed offset, no parse.
+        // POINT EMPTY (NaN/NaN) and any header error fall through to the parser.
+        if let Ok(Some(layout)) = WkbPointLayout::try_from_wkb(wkb_bytes) {
+            if let Ok(Some((x, y))) = layout.read_xy(wkb_bytes) {
+                return Ok(PointOrWkb::Point(x, y));
+            }
+        }
+        let wkb = read_wkb(wkb_bytes).map_err(|e| DataFusionError::External(Box::new(e)))?;
+        Ok(PointOrWkb::Other(wkb))
+    }
+}
+
+/// Alias for an executor that iterates geometries as [PointOrWkb] — the Point
+/// fast path for point-coordinate kernels.
+pub type PointXYExecutor<'a, 'b> =
+    GenericExecutor<'a, 'b, PointXYGeometryFactory, PointXYGeometryFactory>;
 
 /// Trait for iterating over a container type as geometry scalars
 ///
