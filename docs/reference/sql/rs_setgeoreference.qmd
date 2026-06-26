@@ -44,8 +44,10 @@ kernels:
     - name: format
       type: string
       description: >
-        Coordinate convention for the upper-left values, either 'GDAL' (default,
-        pixel corner) or 'ESRI' (pixel center).
+        Coordinate convention for the upper-left values: 'GDAL' (default; alias
+        'PIXEL') places them at the pixel corner, 'ESRI' (alias 'NODE') at the
+        pixel center. The center convention ('ESRI'/'NODE') is rejected for
+        skewed (rotated) rasters, where the half-pixel shift would be inexact.
 ---
 
 ## Examples

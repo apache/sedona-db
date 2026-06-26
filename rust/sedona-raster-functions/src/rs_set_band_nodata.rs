@@ -18,7 +18,7 @@
 //! `RS_SetBandNoDataValue` — set a band's nodata sentinel.
 //!
 //! ```text
-//! RS_SetBandNoDataValue(raster, nodata)        -> Raster  -- band defaults to 1
+//! RS_SetBandNoDataValue(raster, nodata)        -> Raster  -- single-band rasters only
 //! RS_SetBandNoDataValue(raster, band, nodata)  -> Raster
 //! ```
 //!
@@ -91,8 +91,9 @@ impl SedonaScalarKernel for RsSetBandNoDataValue {
         let executor = RasterExecutor::new(arg_types, args);
         let n = executor.num_iterations();
 
-        // The band column (1-based; absent for the 2-arg form, which defaults to
-        // band 1) and the nodata value column, read inline per row.
+        // The band column (1-based; absent for the 2-arg form, where the band is
+        // resolved in `set_band_nodata`) and the nodata value column, read inline
+        // per row.
         let band_array = if self.with_band {
             Some(
                 args[1]
@@ -105,6 +106,12 @@ impl SedonaScalarKernel for RsSetBandNoDataValue {
         };
         let band_values = band_array.as_ref().map(|a| a.as_primitive::<Int64Type>());
 
+        // nodata is taken as f64. An integer sentinel is cast losslessly here so
+        // long as it is within f64's exact-integer range (±2^53); a larger
+        // i64/u64 would lose precision in this cast. Whether the value fits the
+        // *band's* data type is validated later by `nodata_f64_to_bytes`, which
+        // errors rather than truncating. (Dedicated integer kernels could be
+        // registered if exact large-integer sentinels are ever needed.)
         let value_arg = if self.with_band { &args[2] } else { &args[1] };
         let value_array = value_arg
             .clone()
@@ -123,8 +130,8 @@ impl SedonaScalarKernel for RsSetBandNoDataValue {
             };
             let band = match band_values {
                 Some(bands) if bands.is_null(i) => return null_out(&mut builder),
-                Some(bands) => bands.value(i),
-                None => 1,
+                Some(bands) => Some(bands.value(i)),
+                None => None,
             };
             if value_values.is_null(i) {
                 return null_out(&mut builder);
@@ -132,22 +139,34 @@ impl SedonaScalarKernel for RsSetBandNoDataValue {
             set_band_nodata(&mut builder, raster, band, value_values.value(i))
         })?;
 
-        executor.finish(Arc::new(
-            builder.finish().map_err(|e| arrow_datafusion_err!(e))?,
-        ))
+        executor.finish(Arc::new(builder.finish()?))
     }
 }
 
-/// Copy `raster` into `builder`, overriding the `band`-th (1-based) band's
+/// Copy `raster` into `builder`, overriding the addressed (1-based) band's
 /// nodata with `value` packed into that band's data type. Every other band is
 /// copied with its data shared and metadata inherited.
+///
+/// `band` is `None` for the 2-argument form (no band given): it defaults to band
+/// 1 only when the raster is single-band, and errors on a multiband raster so a
+/// caller can't silently set nodata on just band 1.
 fn set_band_nodata(
     builder: &mut RasterBuilder,
     raster: &dyn RasterRef,
-    band: i64,
+    band: Option<i64>,
     value: f64,
 ) -> Result<()> {
     let num_bands = raster.num_bands();
+    let band = match band {
+        Some(band) => band,
+        None if num_bands == 1 => 1,
+        None => {
+            return exec_err!(
+                "RS_SetBandNoDataValue: raster has {num_bands} bands; specify which band to set \
+                 (the 2-argument form is only allowed for a single-band raster)"
+            )
+        }
+    };
     if band < 1 || band as usize > num_bands {
         return exec_err!(
             "RS_SetBandNoDataValue: band {band} out of range (raster has {num_bands} band(s))"
@@ -156,40 +175,27 @@ fn set_band_nodata(
 
     // Copy the raster header (transform/dims/crs) verbatim; we rebuild the bands
     // below so we can override the addressed band's nodata.
-    builder
-        .start_raster_from(raster, RasterOverrides::default())
-        .map_err(|e| arrow_datafusion_err!(e))?;
+    builder.start_raster_from(raster, RasterOverrides::default())?;
 
     for band_idx in 0..num_bands {
-        let band_ref = raster
-            .band(band_idx)
-            .map_err(|e| arrow_datafusion_err!(e))?;
+        let band_ref = raster.band(band_idx)?;
         // Override the nodata only on the addressed band; others inherit.
         let nodata_bytes = if band_idx + 1 == band as usize {
-            Some(
-                nodata_f64_to_bytes(value, &band_ref.data_type())
-                    .map_err(|e| arrow_datafusion_err!(e))?,
-            )
+            Some(nodata_f64_to_bytes(value, &band_ref.data_type())?)
         } else {
             None
         };
-        band_ref
-            .copy_into(
-                builder,
-                BandOverrides {
-                    nodata: nodata_bytes.as_deref(),
-                    ..Default::default()
-                },
-            )
-            .map_err(|e| arrow_datafusion_err!(e))?;
-        builder
-            .finish_band()
-            .map_err(|e| arrow_datafusion_err!(e))?;
+        band_ref.copy_into(
+            builder,
+            BandOverrides {
+                nodata: nodata_bytes.as_deref(),
+                ..Default::default()
+            },
+        )?;
+        builder.finish_band()?;
     }
 
-    builder
-        .finish_raster()
-        .map_err(|e| arrow_datafusion_err!(e))?;
+    builder.finish_raster()?;
     Ok(())
 }
 
@@ -236,19 +242,32 @@ mod tests {
 
     #[test]
     fn sets_default_band_nodata_preserving_everything_else() {
-        // Two-arg form sets band 1's nodata; band 2, pixels, transform, CRS
-        // are all preserved (the whole-raster comparison proves it).
+        // Two-arg form sets the sole band's nodata on a single-band raster;
+        // pixels, transform, CRS are all preserved (the whole-raster comparison
+        // proves it).
         let tester = tester_2arg();
         tester.assert_return_type(RASTER);
 
+        let one_band = RasterSpec::d2(2, 1).band_values(&[1u8, 2]);
         let result = tester
-            .invoke_array_scalar(Arc::new(two_band().build()), 5.0)
+            .invoke_array_scalar(Arc::new(one_band.build()), 5.0)
             .unwrap();
-        let expected = RasterSpec::d2(2, 1)
-            .band_values(&[1u8, 2])
-            .nodata(5u8)
-            .band_values(&[3u8, 4]);
+        let expected = RasterSpec::d2(2, 1).band_values(&[1u8, 2]).nodata(5u8);
         assert_rasters_equal(&result, &[Some(expected)]);
+    }
+
+    #[test]
+    fn two_arg_form_on_multiband_errors() {
+        // The 2-arg form is ambiguous on a multiband raster — require an
+        // explicit band rather than silently setting only band 1.
+        let err = tester_2arg()
+            .invoke_array_scalar(Arc::new(two_band().build()), 5.0)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("specify which band"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -291,9 +310,11 @@ mod tests {
 
     #[test]
     fn value_out_of_dtype_range_errors() {
-        // 300 doesn't fit in a UInt8 band.
+        // 300 doesn't fit in a UInt8 band. Use a single-band raster so the 2-arg
+        // form resolves a band and reaches the dtype range check.
+        let one_band = RasterSpec::d2(2, 1).band_values(&[1u8, 2]);
         let err = tester_2arg()
-            .invoke_array_scalar(Arc::new(two_band().build()), 300.0)
+            .invoke_array_scalar(Arc::new(one_band.build()), 300.0)
             .unwrap_err()
             .to_string();
         assert!(err.contains("UInt8"), "unexpected error: {err}");

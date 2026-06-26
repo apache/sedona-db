@@ -25,9 +25,10 @@
 //! The setter companion to [`rs_georeference`](crate::rs_georeference): `georef`
 //! is a world-file string of six whitespace-separated numbers in the same order
 //! the getter emits — `scaleX skewY skewX scaleY upperLeftX upperLeftY`. The
-//! `format` is `GDAL` (default) or `ESRI`; in ESRI the upper-left coordinates
-//! refer to the *center* of the upper-left pixel and are shifted back to the
-//! pixel corner on the way in.
+//! `format` is `GDAL` (default, alias `PIXEL`) or `ESRI` (alias `NODE`); in the
+//! ESRI/center convention the upper-left coordinates refer to the *center* of
+//! the upper-left pixel and are shifted back to the pixel corner on the way in
+//! (rejected for skewed rasters, where the shift would be inexact).
 //!
 //! The raster is rebuilt with [`RasterBuilder::copy_raster_from`] overriding the
 //! transform; each band's pixel buffers are shared zero-copy, and the CRS is
@@ -108,20 +109,14 @@ impl SedonaScalarKernel for RsSetGeoReference {
             .map(|a| as_string_array(a))
             .transpose()?;
 
-        // The executor yields `None` for null raster rows, which short-circuit to
-        // a null output before the georef is parsed — so a malformed georef
-        // aligned to an already-null raster doesn't raise a spurious error.
         let mut builder = RasterBuilder::new(n);
         executor.execute_raster_void(|i, raster_opt| {
             let null_out =
                 |b: &mut RasterBuilder| b.append_null().map_err(|e| arrow_datafusion_err!(e));
 
-            let Some(raster) = raster_opt else {
-                return null_out(&mut builder);
-            };
-            // A null georef or format yields a null raster (matching RS_SetCRS).
-            // Check both for null before validating the format string, so a
-            // null-driven row never raises a spurious "invalid format" error.
+            // A null georef or format is a null *input* and yields a null raster
+            // (matching RS_SetCRS); check those first so a null-driven row never
+            // raises an error.
             if georef_array.is_null(i) {
                 return null_out(&mut builder);
             }
@@ -131,7 +126,15 @@ impl SedonaScalarKernel for RsSetGeoReference {
                 None => GeoReferenceFormat::Gdal,
             };
 
+            // Parse and validate the georef up front — before the null-raster
+            // check — so an invalid (non-null) georef errors for every row,
+            // rather than being masked on the rows that happen to align with a
+            // null raster.
             let transform = parse_georeference(georef_array.value(i), format)?;
+
+            let Some(raster) = raster_opt else {
+                return null_out(&mut builder);
+            };
             builder
                 .copy_raster_from(
                     raster,
@@ -154,6 +157,10 @@ impl SedonaScalarKernel for RsSetGeoReference {
 /// The input lists six whitespace-separated numbers in world-file order
 /// (`scaleX skewY skewX scaleY upperLeftX upperLeftY`); for ESRI the upper-left
 /// coordinates are pixel-center and shifted back to the corner.
+///
+/// The stringly-typed six-value format is a bit unwieldy; a future dedicated
+/// affine-matrix type (cf. `sedona_raster::affine_transformation::AffineMatrix`,
+/// which could also back `ST_Affine`) would be a cleaner input.
 fn parse_georeference(georef: &str, format: GeoReferenceFormat) -> Result<[f64; 6]> {
     let values: Vec<f64> = georef
         .split_whitespace()
@@ -177,7 +184,10 @@ fn parse_georeference(georef: &str, format: GeoReferenceFormat) -> Result<[f64; 
     ];
 
     if format == GeoReferenceFormat::Esri {
-        // ESRI reports the upper-left *pixel center*; shift to the corner.
+        // ESRI reports the upper-left *pixel center*; shift to the corner. The
+        // shift can't represent skew, so a skewed raster is rejected rather than
+        // approximated (shared with the getter via reject_skew).
+        format.reject_skew(skew_x, skew_y)?;
         upper_left_x -= scale_x * 0.5;
         upper_left_y -= scale_y * 0.5;
     }
@@ -262,20 +272,42 @@ mod tests {
     }
 
     #[test]
-    fn null_raster_skips_georef_parse() {
-        // A null raster row stays null even when its georef is malformed — null
-        // propagation wins over validating an unrelated, masked row (no error).
+    fn invalid_georef_errors_even_for_null_raster() {
+        // A malformed (non-null) georef errors for the whole batch even when its
+        // row's raster is null — invalid georeferences are always reported, not
+        // masked by a null raster (only a null *georef* yields a null raster).
         let rasters = raster_array([None, Some(base())]);
         let georefs: ArrayRef = Arc::new(arrow_array::StringArray::from(vec![
             Some("not a georeference"),
             Some("2 0 0 -3 100 200"),
         ]));
 
-        let result = tester_2arg()
+        let err = tester_2arg()
             .invoke_array_array(Arc::new(rasters), georefs)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("invalid number"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn esri_skewed_raster_errors() {
+        // ESRI/center georeference can't represent skew; reject rather than
+        // silently approximate. World-file order: scaleX skewY skewX scaleY ...
+        let err = tester_3arg()
+            .invoke_array_scalar_scalar(Arc::new(base().build()), "2 0.5 0.25 -3 100 200", "ESRI")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("skewed"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn node_alias_sets_transform_like_esri() {
+        // "NODE" is an alias for the ESRI/center convention.
+        let result = tester_3arg()
+            .invoke_array_scalar_scalar(Arc::new(base().build()), "2 0 0 -3 101 198.5", "NODE")
             .unwrap();
         let expected = base().transform([100.0, 2.0, 0.0, 200.0, 0.0, -3.0]);
-        assert_rasters_equal(&result, &[None, Some(expected)]);
+        assert_rasters_equal(&result, &[Some(expected)]);
     }
 
     #[test]
