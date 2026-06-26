@@ -27,7 +27,9 @@ kernels:
     - raster
     - name: nodata
       type: float64
-      description: Nodata value to set on band 1.
+      description: >
+        Nodata value to set. The raster must be single-band; for a multiband
+        raster, specify the band with the three-argument form below.
   - returns: raster
     args:
     - raster
@@ -42,7 +44,7 @@ kernels:
 ## Examples
 
 ```sql
-SELECT RS_BandNoDataValue(RS_SetBandNoDataValue(RS_Example(), 0));
+SELECT RS_BandNoDataValue(RS_SetBandNoDataValue(RS_Example(), 1, 0), 1);
 ```
 
 ```sql
