@@ -147,6 +147,62 @@ pub fn crs_from_cf_attributes(
     Ok(None)
 }
 
+/// Parse a CF `GeoTransform` attribute (as written by GDAL / rioxarray on a
+/// `spatial_ref` / grid-mapping variable) into a GDAL-order transform.
+///
+/// Unlike the GeoZarr `spatial:transform` (a JSON array in affine order, see
+/// [`parse_transform`]), the CF `GeoTransform` is a space-separated **string**
+/// already in GDAL GeoTransform order
+/// `[origin_x, scale_x, skew_x, origin_y, skew_y, scale_y]`, so it is used
+/// verbatim with no reordering. (Some writers store it as a JSON array of
+/// numbers instead; that form is accepted too.)
+///
+/// Returns `None` — so the caller falls back to other georeferencing sources —
+/// when the attribute is absent, and logs and returns `None` when it is present
+/// but malformed (not six numbers).
+pub fn geotransform_from_cf_attributes(
+    attrs: &serde_json::Map<String, serde_json::Value>,
+) -> Option<[f64; 6]> {
+    let raw = attrs.get("GeoTransform")?;
+
+    let values: Vec<f64> = if let Some(s) = raw.as_str() {
+        let mut out = Vec::with_capacity(6);
+        for token in s.split_whitespace() {
+            match token.parse::<f64>() {
+                Ok(v) => out.push(v),
+                Err(_) => {
+                    log::warn!("Zarr CF GeoTransform has a non-numeric value {token:?}; ignoring");
+                    return None;
+                }
+            }
+        }
+        out
+    } else if let Some(arr) = raw.as_array() {
+        match arr.iter().map(|v| v.as_f64()).collect::<Option<Vec<f64>>>() {
+            Some(out) => out,
+            None => {
+                log::warn!("Zarr CF GeoTransform array has a non-numeric element; ignoring");
+                return None;
+            }
+        }
+    } else {
+        log::warn!("Zarr CF GeoTransform attribute is neither a string nor an array; ignoring");
+        return None;
+    };
+
+    match <[f64; 6]>::try_from(values) {
+        // Already in GDAL GeoTransform order — no reordering.
+        Ok(transform) => Some(transform),
+        Err(values) => {
+            log::warn!(
+                "Zarr CF GeoTransform must have 6 values (GDAL order); got {}; ignoring",
+                values.len()
+            );
+            None
+        }
+    }
+}
+
 fn parse_transform(
     attrs: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<Option<[f64; 6]>, ArrowError> {
@@ -363,6 +419,49 @@ mod tests {
         })))
         .unwrap();
         assert_eq!(g.crs.as_deref(), Some("PROJCS[\"a\"]"));
+    }
+
+    #[test]
+    fn cf_geotransform_string_parses_in_gdal_order() {
+        // The CF GeoTransform is already GDAL order [origin_x, scale_x, skew_x,
+        // origin_y, skew_y, scale_y] — used verbatim, no reordering. Values from
+        // a real rioxarray spatial_ref (EPSG:3857).
+        let attrs = map(json!({
+            "GeoTransform": "-8630308.0188 1.2874707 0 4772553.2794 0 -1.2874707"
+        }));
+        assert_eq!(
+            geotransform_from_cf_attributes(&attrs),
+            Some([-8630308.0188, 1.2874707, 0.0, 4772553.2794, 0.0, -1.2874707])
+        );
+    }
+
+    #[test]
+    fn cf_geotransform_array_form_parses() {
+        // Some writers store it as a JSON array of numbers rather than a string.
+        let attrs = map(json!({ "GeoTransform": [100.0, 2.0, 0.0, 200.0, 0.0, -3.0] }));
+        assert_eq!(
+            geotransform_from_cf_attributes(&attrs),
+            Some([100.0, 2.0, 0.0, 200.0, 0.0, -3.0])
+        );
+    }
+
+    #[test]
+    fn cf_geotransform_absent_is_none() {
+        assert_eq!(geotransform_from_cf_attributes(&map(json!({}))), None);
+    }
+
+    #[test]
+    fn cf_geotransform_malformed_is_none() {
+        // Wrong value count and a non-numeric token are both ignored (non-fatal):
+        // the loader falls back to other georeferencing sources.
+        assert_eq!(
+            geotransform_from_cf_attributes(&map(json!({ "GeoTransform": "1 2 3" }))),
+            None
+        );
+        assert_eq!(
+            geotransform_from_cf_attributes(&map(json!({ "GeoTransform": "a b c d e f" }))),
+            None
+        );
     }
 
     #[test]
