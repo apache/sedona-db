@@ -6150,6 +6150,7 @@ dependencies = [
  "sedona-expr",
  "sedona-functions",
  "sedona-gdal",
+ "sedona-proj",
  "sedona-raster",
  "sedona-raster-functions",
  "sedona-schema",
