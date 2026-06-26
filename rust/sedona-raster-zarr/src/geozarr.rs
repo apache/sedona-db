@@ -50,7 +50,7 @@ pub struct GroupGeoMetadata {
     /// to derive a transform when no explicit `spatial:transform` is present.
     /// The grid shape is read from the array itself (not a separate
     /// `spatial:shape` attribute, which could drift from the real shape), so the
-    /// loader supplies it to [`derive_transform_from_bbox`].
+    /// loader supplies it to `AffineMatrix::from_bbox_and_spatial_shape`.
     pub bbox: Option<[f64; 4]>,
     /// `spatial:registration` — `"pixel"` or `"node"`; `None` defaults to
     /// `"pixel"`. Governs how `bbox` maps to the grid (outer edge vs. cell
@@ -143,7 +143,7 @@ fn parse_transform(
 
 /// Parse the optional `spatial:bbox` attribute into `[xmin, ymin, xmax, ymax]`.
 /// `None` when absent. The grid shape is *not* read from `spatial:shape`; the
-/// loader supplies the array's own shape to [`derive_transform_from_bbox`].
+/// loader supplies the array's own shape to `AffineMatrix::from_bbox_and_spatial_shape`.
 ///
 /// A malformed `spatial:bbox` (not a 4-element numeric array) is treated as
 /// absent — it warns and returns `None` rather than failing the load, so the
@@ -167,7 +167,7 @@ fn parse_bbox(attrs: &serde_json::Map<String, serde_json::Value>) -> Option<[f64
 }
 
 /// Parse the optional `spatial:registration` attribute (a string). `Ok(None)`
-/// when absent; [`derive_transform_from_bbox`] then defaults to `"pixel"`.
+/// when absent; `AffineMatrix::from_bbox_and_spatial_shape` then defaults to `"pixel"`.
 fn parse_registration(
     attrs: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<Option<String>, ArrowError> {
@@ -181,78 +181,6 @@ fn parse_registration(
         )),
         None => Ok(None),
     }
-}
-
-/// Derive a GDAL-order transform from a `spatial:bbox` and the grid's `height`
-/// and `width` — the array's *own* spatial dimensions, not a `spatial:shape`
-/// attribute (which could drift from the real shape).
-///
-/// `bbox` is `[xmin, ymin, xmax, ymax]`. `registration` (default `"pixel"`) sets
-/// how the bbox relates to the grid, per the GeoZarr spatial convention
-/// (<https://github.com/zarr-conventions/spatial>): `"pixel"` means the bbox is
-/// the grid's outer edge, spanning all `N` cells (`scale = extent / N`) with the
-/// top-left corner on the bbox edge `(xmin, ymax)`; `"node"` means the bbox
-/// endpoints are the *centers* of the border cells, so `N` centers span `N - 1`
-/// intervals (`scale = extent / (N - 1)`) and the corner sits half a cell outside
-/// the bbox. `scale_y` is negative (rows increase downward).
-pub(crate) fn derive_transform_from_bbox(
-    bbox: [f64; 4],
-    height: u64,
-    width: u64,
-    registration: Option<&str>,
-) -> Result<[f64; 6], ArrowError> {
-    let [xmin, ymin, xmax, ymax] = bbox;
-    // Reject a degenerate or inverted bbox: a zero span gives a non-invertible
-    // (zero-scale) transform and a negative span isn't north-up. Mirrors the
-    // coordinate-array path's strictness about a wrong scale.
-    if !(xmax > xmin && ymax > ymin) {
-        return Err(ArrowError::InvalidArgumentError(format!(
-            "spatial:bbox must have xmin < xmax and ymin < ymax; got [{xmin}, {ymin}, {xmax}, {ymax}]"
-        )));
-    }
-    // The array's spatial dims; a real raster axis is at least 1.
-    if height == 0 || width == 0 {
-        return Err(ArrowError::InvalidArgumentError(
-            "raster spatial dimensions must be non-zero to derive a transform from spatial:bbox"
-                .into(),
-        ));
-    }
-    let (height, width) = (height as f64, width as f64);
-
-    // cell-area registration is the conventional default
-    let registration = registration.unwrap_or("pixel");
-    // scale_y is negative throughout: rows increase downward.
-    let (scale_x, scale_y, origin_x, origin_y) = match registration {
-        // Pixel-registered: the bbox is the grid's outer edge, spanning all N
-        // cells, so the top-left corner is the bbox edge.
-        "pixel" => {
-            let scale_x = (xmax - xmin) / width;
-            let scale_y = (ymin - ymax) / height;
-            (scale_x, scale_y, xmin, ymax)
-        }
-        // Node-registered: the bbox endpoints are the *centers* of the border
-        // cells, so N centers span N-1 intervals and the footprint extends half
-        // a cell beyond — the corner sits half a cell outside the bbox.
-        "node" => {
-            if width < 2.0 || height < 2.0 {
-                return Err(ArrowError::InvalidArgumentError(
-                    "node-registered grid must be at least 2 cells in each spatial dimension"
-                        .into(),
-                ));
-            }
-            let scale_x = (xmax - xmin) / (width - 1.0);
-            let scale_y = (ymin - ymax) / (height - 1.0);
-            (scale_x, scale_y, xmin - scale_x / 2.0, ymax - scale_y / 2.0)
-        }
-        other => {
-            return Err(ArrowError::InvalidArgumentError(format!(
-                "spatial:registration must be \"pixel\" or \"node\"; got {other:?}"
-            )))
-        }
-    };
-
-    // GDAL GeoTransform order; axis-aligned, so the skews are 0.
-    Ok([origin_x, scale_x, 0.0, origin_y, 0.0, scale_y])
 }
 
 /// Parse a JSON value as an array of `f64`. Caller validates the length.
@@ -395,80 +323,6 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert!(err.contains("6 elements"), "{err}");
-    }
-
-    #[test]
-    fn bbox_pixel_registration_derives_transform() {
-        // The worked example from docs/research/zarr-geozarr.md: a bbox over a
-        // 1000x1000 grid with "pixel" registration derives the same transform
-        // the dataset also declares explicitly ([10, 0, 600000, 0, -10, 5700000]
-        // affine). Height/width are the array's own dims, passed in by the loader.
-        let t = derive_transform_from_bbox(
-            [600000.0, 5690000.0, 610000.0, 5700000.0],
-            1000,
-            1000,
-            Some("pixel"),
-        )
-        .unwrap();
-        assert_eq!(t, [600000.0, 10.0, 0.0, 5700000.0, 0.0, -10.0]);
-    }
-
-    #[test]
-    fn bbox_registration_defaults_to_pixel() {
-        // `None` registration behaves as cell-area ("pixel").
-        let t = derive_transform_from_bbox(
-            [600000.0, 5690000.0, 610000.0, 5700000.0],
-            1000,
-            1000,
-            None,
-        )
-        .unwrap();
-        assert_eq!(t, [600000.0, 10.0, 0.0, 5700000.0, 0.0, -10.0]);
-    }
-
-    #[test]
-    fn bbox_node_registration_uses_n_minus_1_intervals() {
-        // "node": the bbox endpoints are cell centers, so 11 centers span 10
-        // intervals -> scale = 100 / 10 = 10, and the corner sits half a cell
-        // (5) outside the bbox: origin (-5, 105).
-        let t = derive_transform_from_bbox([0.0, 0.0, 100.0, 100.0], 11, 11, Some("node")).unwrap();
-        assert_eq!(t, [-5.0, 10.0, 0.0, 105.0, 0.0, -10.0]);
-    }
-
-    #[test]
-    fn node_registration_requires_at_least_two_cells() {
-        // A single-cell node grid can't define a spacing from its bbox alone.
-        let err = derive_transform_from_bbox([0.0, 0.0, 100.0, 100.0], 1, 1, Some("node"))
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("at least 2"), "{err}");
-    }
-
-    #[test]
-    fn unknown_registration_errors() {
-        let err = derive_transform_from_bbox([0.0, 0.0, 100.0, 100.0], 10, 10, Some("corner"))
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("pixel") && err.contains("node"), "{err}");
-    }
-
-    #[test]
-    fn degenerate_or_inverted_bbox_errors() {
-        // Zero x-span (non-invertible) and inverted y (not north-up) are both
-        // rejected, matching the coordinate-array path's strictness about a
-        // wrong scale.
-        for bbox in [
-            [10.0, 0.0, 10.0, 5.0], // xmin == xmax
-            [0.0, 5.0, 5.0, 0.0],   // ymax < ymin
-        ] {
-            let err = derive_transform_from_bbox(bbox, 10, 10, None)
-                .unwrap_err()
-                .to_string();
-            assert!(
-                err.contains("xmin < xmax") || err.contains("ymin < ymax"),
-                "{err}"
-            );
-        }
     }
 
     #[test]

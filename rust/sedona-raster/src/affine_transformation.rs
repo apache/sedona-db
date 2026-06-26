@@ -47,6 +47,103 @@ impl AffineMatrix {
         }
     }
 
+    /// Derive a north-up `AffineMatrix` from a spatial bounding box and the
+    /// grid's spatial shape.
+    ///
+    /// `bbox` is `[xmin, ymin, xmax, ymax]`; `height` and `width` are the number
+    /// of cells along the y and x axes. `registration` controls how the bbox
+    /// maps to the grid and defaults to `"pixel"` when `None`:
+    /// - `"pixel"` (cell-area): the bbox is the grid's outer edge, spanning all
+    ///   N cells, so the top-left corner is the bbox edge. Matches
+    ///   `rasterio.transform.from_bounds`.
+    /// - `"node"` (cell-center): the bbox endpoints are the centers of the
+    ///   border cells, so N centers span N-1 intervals and the footprint extends
+    ///   half a cell beyond the bbox.
+    ///
+    /// The result is axis-aligned (zero skews) with a negative `scale_y` (rows
+    /// increase downward). Errors on a degenerate/inverted bbox, a zero
+    /// dimension, a node-registered grid smaller than 2 cells, or an unknown
+    /// registration.
+    pub fn from_bbox_and_spatial_shape(
+        bbox: [f64; 4],
+        height: u64,
+        width: u64,
+        registration: Option<&str>,
+    ) -> Result<Self, ArrowError> {
+        let [xmin, ymin, xmax, ymax] = bbox;
+        // Reject a degenerate or inverted bbox: a zero span gives a
+        // non-invertible (zero-scale) transform and a negative span isn't
+        // north-up.
+        if !(xmax > xmin && ymax > ymin) {
+            return Err(ArrowError::InvalidArgumentError(format!(
+                "bbox must have xmin < xmax and ymin < ymax; got [{xmin}, {ymin}, {xmax}, {ymax}]"
+            )));
+        }
+        // A real raster axis is at least 1 cell.
+        if height == 0 || width == 0 {
+            return Err(ArrowError::InvalidArgumentError(
+                "raster spatial dimensions must be non-zero to derive a transform from a bbox"
+                    .into(),
+            ));
+        }
+        let (height, width) = (height as f64, width as f64);
+
+        // cell-area registration is the conventional default.
+        let registration = registration.unwrap_or("pixel");
+        // scale_y is negative throughout: rows increase downward.
+        let (scale_x, scale_y, offset_x, offset_y) = match registration {
+            // Pixel-registered: the bbox is the grid's outer edge, spanning all
+            // N cells, so the top-left corner is the bbox edge.
+            "pixel" => {
+                let scale_x = (xmax - xmin) / width;
+                let scale_y = (ymin - ymax) / height;
+                (scale_x, scale_y, xmin, ymax)
+            }
+            // Node-registered: the bbox endpoints are the *centers* of the border
+            // cells, so N centers span N-1 intervals and the footprint extends
+            // half a cell beyond — the corner sits half a cell outside the bbox.
+            "node" => {
+                if width < 2.0 || height < 2.0 {
+                    return Err(ArrowError::InvalidArgumentError(
+                        "node-registered grid must be at least 2 cells in each spatial dimension"
+                            .into(),
+                    ));
+                }
+                let scale_x = (xmax - xmin) / (width - 1.0);
+                let scale_y = (ymin - ymax) / (height - 1.0);
+                (scale_x, scale_y, xmin - scale_x / 2.0, ymax - scale_y / 2.0)
+            }
+            other => {
+                return Err(ArrowError::InvalidArgumentError(format!(
+                    "registration must be \"pixel\" or \"node\"; got {other:?}"
+                )))
+            }
+        };
+
+        Ok(Self {
+            offset_x,
+            offset_y,
+            scale_x,
+            scale_y,
+            skew_x: 0.0,
+            skew_y: 0.0,
+        })
+    }
+
+    /// The coefficients in GDAL `GeoTransform` order:
+    /// `[origin_x, scale_x, skew_x, origin_y, skew_y, scale_y]`.
+    #[inline]
+    pub fn to_gdal_geotransform(&self) -> [f64; 6] {
+        [
+            self.offset_x,
+            self.scale_x,
+            self.skew_x,
+            self.offset_y,
+            self.skew_y,
+            self.scale_y,
+        ]
+    }
+
     /// Forward affine transform: pixel (x, y) → world (wx, wy).
     ///
     /// Accepts `f64` coordinates so callers can pass fractional offsets
@@ -383,5 +480,113 @@ mod tests {
         assert_eq!(a.scale_y, -2.0);
         assert_eq!(a.skew_x, 0.25);
         assert_eq!(a.skew_y, 0.5);
+    }
+
+    #[test]
+    fn bbox_pixel_registration_derives_transform() {
+        // A bbox over a 1000x1000 grid with "pixel" registration. Height/width
+        // are the array's own dims.
+        let gt = AffineMatrix::from_bbox_and_spatial_shape(
+            [600000.0, 5690000.0, 610000.0, 5700000.0],
+            1000,
+            1000,
+            Some("pixel"),
+        )
+        .unwrap()
+        .to_gdal_geotransform();
+        assert_eq!(gt, [600000.0, 10.0, 0.0, 5700000.0, 0.0, -10.0]);
+    }
+
+    #[test]
+    fn bbox_pixel_registration_matches_rasterio_from_bounds() {
+        // Cross-check against rasterio: for the same bounds and raster size,
+        // `rasterio.transform.from_bounds(west, south, east, north, width, height)`
+        // returns Affine(a, b, c, d, e, f) with a = (east-west)/width = 0.25,
+        // e = (south-north)/height = -0.5, c = west = -100, f = north = 40, and
+        // b = d = 0. In GDAL order that is [c, a, b, f, d, e].
+        let gt =
+            AffineMatrix::from_bbox_and_spatial_shape([-100.0, -10.0, 0.0, 40.0], 100, 400, None)
+                .unwrap()
+                .to_gdal_geotransform();
+        assert_eq!(gt, [-100.0, 0.25, 0.0, 40.0, 0.0, -0.5]);
+    }
+
+    #[test]
+    fn bbox_registration_defaults_to_pixel() {
+        // `None` registration behaves as cell-area ("pixel").
+        let gt = AffineMatrix::from_bbox_and_spatial_shape(
+            [600000.0, 5690000.0, 610000.0, 5700000.0],
+            1000,
+            1000,
+            None,
+        )
+        .unwrap()
+        .to_gdal_geotransform();
+        assert_eq!(gt, [600000.0, 10.0, 0.0, 5700000.0, 0.0, -10.0]);
+    }
+
+    #[test]
+    fn bbox_node_registration_uses_n_minus_1_intervals() {
+        // "node": the bbox endpoints are cell centers, so 11 centers span 10
+        // intervals -> scale = 100 / 10 = 10, and the corner sits half a cell
+        // (5) outside the bbox: origin (-5, 105).
+        let gt = AffineMatrix::from_bbox_and_spatial_shape(
+            [0.0, 0.0, 100.0, 100.0],
+            11,
+            11,
+            Some("node"),
+        )
+        .unwrap()
+        .to_gdal_geotransform();
+        assert_eq!(gt, [-5.0, 10.0, 0.0, 105.0, 0.0, -10.0]);
+    }
+
+    #[test]
+    fn bbox_node_registration_requires_at_least_two_cells() {
+        // A single-cell node grid can't define a spacing from its bbox alone.
+        let err =
+            AffineMatrix::from_bbox_and_spatial_shape([0.0, 0.0, 100.0, 100.0], 1, 1, Some("node"))
+                .unwrap_err()
+                .to_string();
+        assert!(err.contains("at least 2"), "{err}");
+    }
+
+    #[test]
+    fn bbox_unknown_registration_errors() {
+        let err = AffineMatrix::from_bbox_and_spatial_shape(
+            [0.0, 0.0, 100.0, 100.0],
+            10,
+            10,
+            Some("corner"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("pixel") && err.contains("node"), "{err}");
+    }
+
+    #[test]
+    fn degenerate_or_inverted_bbox_errors() {
+        // Zero x-span (non-invertible) and inverted y (not north-up) are both
+        // rejected.
+        for bbox in [
+            [10.0, 0.0, 10.0, 5.0], // xmin == xmax
+            [0.0, 5.0, 5.0, 0.0],   // ymax < ymin
+        ] {
+            let err = AffineMatrix::from_bbox_and_spatial_shape(bbox, 10, 10, None)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("xmin < xmax") || err.contains("ymin < ymax"),
+                "{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn zero_dimension_bbox_errors() {
+        let err = AffineMatrix::from_bbox_and_spatial_shape([0.0, 0.0, 10.0, 10.0], 0, 10, None)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("non-zero"), "{err}");
     }
 }
