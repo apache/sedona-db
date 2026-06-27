@@ -1067,6 +1067,61 @@ class DataFrame:
         self._check_set_op_compatible(other, "except_distinct")
         return DataFrame(self._ctx, self._impl.except_distinct(other._impl))
 
+    def mutate(self, **exprs: Union[Expr, str, _SedonaLit]) -> "DataFrame":
+        """Add or replace columns, keeping all existing ones.
+
+        Each keyword adds a column named by the keyword and computed from
+        its value (Ibis / dplyr `mutate`). A keyword matching an existing
+        column replaces it in place; new columns are appended in the order
+        given. Unlike `select`, you don't re-list the columns you want to
+        keep — `mutate` keeps them all.
+
+        Args:
+            **exprs: Keyword column definitions. Each value is an `Expr`, a
+                column-name `str` (copied), or a `lit()` literal. At least
+                one is required. (Column names that aren't valid Python
+                identifiers can be produced via `select`.)
+
+        Examples:
+
+            >>> sd = sedona.db.connect()
+            >>> df = sd.sql("SELECT 1 AS a, 2 AS b")
+            >>> df.mutate(c=df.a + df.b, b=df.b * 10).show()
+            ┌───────┬───────┬───────┐
+            │   a   ┆   b   ┆   c   │
+            │ int64 ┆ int64 ┆ int64 │
+            ╞═══════╪═══════╪═══════╡
+            │     1 ┆    20 ┆     3 │
+            └───────┴───────┴───────┘
+        """
+        if not exprs:
+            raise ValueError("mutate() requires at least one keyword column")
+
+        # Coerce each value to an Expr aliased to its target name, mirroring
+        # how select(**kwargs) handles keyword columns.
+        mutations = {}
+        for name, e in exprs.items():
+            if isinstance(e, Expr):
+                mutations[name] = e.alias(name)
+            elif isinstance(e, str):
+                mutations[name] = _col(e).alias(name)
+            elif isinstance(e, _SedonaLit):
+                mutations[name] = _to_expr(e).alias(name)
+            else:
+                raise TypeError(
+                    f"mutate() expects Expr, str, or Literal values, "
+                    f"got {type(e).__name__} for '{name}'"
+                )
+
+        # Build a single projection: existing columns (replaced in place
+        # where a mutation matches the name), then the new columns appended.
+        # One projection node rather than a chain of per-column ones.
+        current = self._impl.columns()
+        projection = [mutations[c] if c in mutations else _col(c) for c in current]
+        projection += [m for name, m in mutations.items() if name not in current]
+
+        return self.select(*projection)
+
     def limit(self, n: Optional[int], /, *, offset: int = 0) -> "DataFrame":
         """Limit result to n rows starting at offset
 
