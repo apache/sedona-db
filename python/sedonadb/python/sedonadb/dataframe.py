@@ -1067,6 +1067,89 @@ class DataFrame:
         self._check_set_op_compatible(other, "except_distinct")
         return DataFrame(self._ctx, self._impl.except_distinct(other._impl))
 
+    def with_column(self, name: str, expr: Union[Expr, str, _SedonaLit]) -> "DataFrame":
+        """Add a column, or replace an existing column of the same name.
+
+        Returns a new lazy DataFrame with all existing columns plus `name`
+        (Spark / Polars `with_column` naming). If `name` already exists it
+        is replaced in place; otherwise it is appended. To build several
+        columns at once, `select(...)` with keyword arguments is usually
+        more convenient.
+
+        Args:
+            name: The output column name.
+            expr: The column expression. An `Expr`, a column-name `str`
+                (copied as that column), or a `lit()` literal.
+
+        Examples:
+
+            >>> sd = sedona.db.connect()
+            >>> df = sd.sql("SELECT 1 AS a, 2 AS b")
+            >>> df.with_column("c", df.a + df.b).show()
+            ┌───────┬───────┬───────┐
+            │   a   ┆   b   ┆   c   │
+            │ int64 ┆ int64 ┆ int64 │
+            ╞═══════╪═══════╪═══════╡
+            │     1 ┆     2 ┆     3 │
+            └───────┴───────┴───────┘
+        """
+        if not isinstance(name, str):
+            raise TypeError(
+                f"with_column() name must be a str, got {type(name).__name__}"
+            )
+
+        if isinstance(expr, Expr):
+            inner_expr = expr._impl
+        elif isinstance(expr, str):
+            inner_expr = _col(expr)._impl
+        elif isinstance(expr, _SedonaLit):
+            inner_expr = _to_expr(expr)._impl
+        else:
+            raise TypeError(
+                f"with_column() expects an Expr, str, or Literal value, "
+                f"got {type(expr).__name__}"
+            )
+
+        return DataFrame(self._ctx, self._impl.with_column(name, inner_expr))
+
+    def with_column_renamed(self, old_name: str, new_name: str) -> "DataFrame":
+        """Rename a single column.
+
+        Returns a new lazy DataFrame with `old_name` renamed to `new_name`
+        (Spark naming); all other columns are unchanged. To rename several
+        columns, chain calls or use `select(*[col(k).alias(v) ...])`.
+
+        Args:
+            old_name: The existing column name.
+            new_name: The new name.
+
+        Raises:
+            KeyError: If `old_name` is not a column. (The message lists the
+                available columns.)
+
+        Examples:
+
+            >>> sd = sedona.db.connect()
+            >>> df = sd.sql("SELECT 1 AS a, 2 AS b")
+            >>> df.with_column_renamed("b", "c").show()
+            ┌───────┬───────┐
+            │   a   ┆   c   │
+            │ int64 ┆ int64 │
+            ╞═══════╪═══════╡
+            │     1 ┆     2 │
+            └───────┴───────┘
+        """
+        # DataFusion silently no-ops when the column is missing, which hides
+        # typos. Validate Python-side so the caller gets a clear KeyError
+        # listing the available columns (matching `drop`).
+        columns = self._impl.columns()
+        if old_name not in columns:
+            raise KeyError(
+                f"Column '{old_name}' not found. Available columns: {columns}"
+            )
+
+        return DataFrame(self._ctx, self._impl.with_column_renamed(old_name, new_name))
+
     def limit(self, n: Optional[int], /, *, offset: int = 0) -> "DataFrame":
         """Limit result to n rows starting at offset
 
