@@ -369,6 +369,24 @@ impl InternalDataFrame {
         Ok(InternalDataFrame::new(inner, self.runtime.clone()))
     }
 
+    /// Add a new column `name` evaluated from `expr`, or replace the column
+    /// of that name if it already exists.
+    fn with_column(&self, name: &str, expr: PyExpr) -> Result<InternalDataFrame, PySedonaError> {
+        let inner = self.inner.clone().with_column(name, expr.inner)?;
+        Ok(InternalDataFrame::new(inner, self.runtime.clone()))
+    }
+
+    /// Rename column `old_name` to `new_name`. The Python wrapper validates
+    /// that `old_name` exists (DataFusion otherwise silently no-ops).
+    fn with_column_renamed(
+        &self,
+        old_name: &str,
+        new_name: &str,
+    ) -> Result<InternalDataFrame, PySedonaError> {
+        let inner = self.inner.clone().with_column_renamed(old_name, new_name)?;
+        Ok(InternalDataFrame::new(inner, self.runtime.clone()))
+    }
+
     fn execute<'py>(&self, py: Python<'py>) -> Result<usize, PySedonaError> {
         let df = self.inner.clone();
         let count = wait_for_future(py, &self.runtime, async move {
