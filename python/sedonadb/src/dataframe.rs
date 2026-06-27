@@ -356,17 +356,14 @@ impl InternalDataFrame {
     ) -> Result<(), PySedonaError> {
         let provider = self.inner.clone().into_view();
         let table_ref = table_ref.to_string();
-        let inner = ctx.inner.clone();
-        wait_for_future(py, &self.runtime, async move {
-            let ctx = inner.lock().await;
+        ctx.with_context(py, move |ctx| {
             if overwrite && ctx.ctx.table_exist(&table_ref)? {
                 ctx.ctx.deregister_table(&table_ref)?;
             }
 
             ctx.ctx.register_table(&table_ref, provider)?;
-            Ok::<_, PySedonaError>(())
-        })??;
-        Ok(())
+            Ok(())
+        })
     }
 
     fn to_memtable<'py>(
@@ -381,11 +378,7 @@ impl InternalDataFrame {
             schema.as_arrow().clone().into(),
             partitions,
         )?);
-        let inner = ctx.inner.clone();
-        let df = wait_for_future(py, &self.runtime, async move {
-            let ctx = inner.lock().await;
-            ctx.ctx.read_table(provider)
-        })??;
+        let df = ctx.with_context(py, move |ctx| Ok(ctx.ctx.read_table(provider)?))?;
 
         Ok(Self::new(df, self.runtime.clone()))
     }
@@ -423,11 +416,9 @@ impl InternalDataFrame {
         let mut reader: Box<dyn RecordBatchReader + Send> = Box::new(reader);
 
         if simplify.unwrap_or(false) {
-            let inner = ctx.inner.clone();
-            reader = wait_for_future(py, &self.runtime, async move {
-                let ctx = inner.lock().await;
-                simplify_record_batch_reader(&ctx.ctx.state(), reader)
-            })??;
+            reader = ctx.with_context(py, move |ctx| {
+                Ok(simplify_record_batch_reader(&ctx.ctx.state(), reader)?)
+            })?;
         }
 
         Ok(StreamingResult {
@@ -481,14 +472,10 @@ impl InternalDataFrame {
         }
 
         let order_udf = if needs_sd_order {
-            let inner = ctx.inner.clone();
             Some(
-                wait_for_future(py, &self.runtime, async move {
-                    let ctx = inner.lock().await;
-                    Ok::<_, PySedonaError>(
-                        ctx.ctx.state().scalar_functions().get("sd_order").cloned(),
-                    )
-                })??
+                ctx.with_context(py, |ctx| {
+                    Ok(ctx.ctx.state().scalar_functions().get("sd_order").cloned())
+                })?
                 .ok_or_else(|| {
                     PySedonaError::SedonaPython(
                         "Can't order by geometry field when sd_order() is not available"
@@ -525,11 +512,9 @@ impl InternalDataFrame {
         let mut writer_options = TableGeoParquetOptions::default();
 
         // Resolve writer options from the context configuration
-        let inner = ctx.inner.clone();
-        let global_parquet_options = wait_for_future(py, &self.runtime, async move {
-            let ctx = inner.lock().await;
-            Ok::<_, PySedonaError>(ctx.ctx.state().config().options().execution.parquet.clone())
-        })??;
+        let global_parquet_options = ctx.with_context(py, |ctx| {
+            Ok(ctx.ctx.state().config().options().execution.parquet.clone())
+        })?;
         writer_options.inner.global = global_parquet_options;
 
         // Set values from options dictionary
@@ -538,12 +523,13 @@ impl InternalDataFrame {
         }
 
         let df = self.inner.clone();
-        let inner = ctx.inner.clone();
-        wait_for_future(py, &self.runtime, async move {
-            let ctx = inner.lock().await;
-            df.write_geoparquet(&ctx, &path, write_options, Some(writer_options))
-                .await
-        })??;
+        ctx.with_context_async(py, move |ctx| {
+            Box::pin(async move {
+                Ok(df
+                    .write_geoparquet(ctx, &path, write_options, Some(writer_options))
+                    .await?)
+            })
+        })?;
         Ok(())
     }
 
@@ -563,11 +549,9 @@ impl InternalDataFrame {
         }
 
         let df = self.inner.clone();
-        let inner = ctx.inner.clone();
-        let content = wait_for_future(py, &self.runtime, async move {
-            let ctx = inner.lock().await;
-            df.show_sedona(&ctx, limit, options).await
-        })??;
+        let content = ctx.with_context_async(py, move |ctx| {
+            Box::pin(async move { Ok(df.show_sedona(ctx, limit, options).await?) })
+        })?;
 
         Ok(content)
     }
