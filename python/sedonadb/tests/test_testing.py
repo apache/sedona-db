@@ -91,6 +91,24 @@ def test_assert_result_spatial(eng):
             wkt_precision=1,
         )
         eng.assert_query_result(
+            "SELECT "
+            "ST_GeomFromText("
+            "'POLYGON Z ((0 0 5, 0 1 5, 1 1 5, 1 0 5, 0 0 5))'"
+            ") as geom",
+            "POLYGON Z ((0 0 5,0 1 5,1 1 5,1 0 5,0 0 5))",
+        )
+        eng.assert_query_result(
+            "SELECT "
+            "ST_GeomFromText("
+            "'POLYGON Z ((0 0 5, 0 1 5, 1 1 5, 1 0 5, 0 0 5))'"
+            ") as geom, "
+            "'POLYGON Z ((0 0 5,0 1 5,1 1 5,1 0 5,0 0 5))' as txt",
+            (
+                "POLYGON Z ((0 0 5,0 1 5,1 1 5,1 0 5,0 0 5))",
+                "POLYGON Z ((0 0 5,0 1 5,1 1 5,1 0 5,0 0 5))",
+            ),
+        )
+        eng.assert_query_result(
             q,
             geopandas.GeoDataFrame(
                 {"geom": geopandas.GeoSeries.from_wkt(["POINT (0 1)"])}

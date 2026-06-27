@@ -225,6 +225,31 @@ class DBEngine:
 
         return list(zip(*columns))
 
+    def normalize_expected_tuples(
+        self, result, expected, *, wkt_precision=None, **kwargs
+    ) -> List[Tuple[str]]:
+        """Normalize expected WKT cells using the result geometry columns."""
+        tab = self.result_to_table(result)
+        geometry_col_indices = {
+            i for i, type in enumerate(tab.schema.types) if _type_is_geoarrow(type)
+        }
+
+        rows = []
+        for row in expected:
+            normalized_row = []
+            for i, value in enumerate(row):
+                if i in geometry_col_indices and value is not None:
+                    try:
+                        value = ga.format_wkt(
+                            ga.as_wkb([value]), precision=wkt_precision
+                        ).to_pylist()[0]
+                    except Exception:
+                        pass
+                normalized_row.append(value)
+            rows.append(tuple(normalized_row))
+
+        return rows
+
     def assert_result(self, result, expected, **kwargs) -> "DBEngine":
         """Assert a result against an expected target
 
@@ -293,9 +318,10 @@ class DBEngine:
             pandas.testing.assert_frame_equal(result_pandas, expected, **kwargs)
         elif isinstance(expected, list):
             result_tuples = self.result_to_tuples(result, **kwargs)
-            if result_tuples != expected:
+            expected_tuples = self.normalize_expected_tuples(result, expected, **kwargs)
+            if result_tuples != expected_tuples:
                 raise AssertionError(
-                    f"Expected:\n  {expected}\nGot:\n  {result_tuples}"
+                    f"Expected:\n  {expected_tuples}\nGot:\n  {result_tuples}"
                 )
         elif isinstance(expected, tuple):
             self.assert_result(result, [expected], **kwargs)
