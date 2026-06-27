@@ -88,6 +88,13 @@ impl PyExpr {
         self.inner.variant_name().to_string()
     }
 
+    /// The output column name this expression would produce (its alias if
+    /// aliased, the column name if a bare column, etc.). Used to match
+    /// positional `mutate()` expressions against existing columns.
+    fn output_name(&self) -> String {
+        self.inner.schema_name().to_string()
+    }
+
     /// Wrap this expression in `Expr::Alias { name }`.
     ///
     /// We use DataFusion's `alias_if_changed` helper so that aliasing an
