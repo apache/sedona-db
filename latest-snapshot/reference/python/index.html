@@ -4384,6 +4384,58 @@ required.</p>
 <div class="doc doc-object doc-function">
 
 
+<h4 id="sedonadb.dataframe.DataFrame.except_distinct" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">except_distinct</span>
+
+
+<a href="#sedonadb.dataframe.DataFrame.except_distinct" class="headerlink" title="Permanent link">¶</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">except_distinct</span><span class="p">(</span><span class="n">other</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Distinct rows in this DataFrame that are not in <code>other</code>.</p>
+<p>This is SQL <code>EXCEPT</code>: the result has no duplicate rows. Both
+DataFrames must have the same column names in the same order.</p>
+<p>There is intentionally no <code>except</code>/<code>except_all</code> counterpart:
+multiplicity-preserving <code>EXCEPT ALL</code> is not supported by the
+underlying engine (a true anti-difference would instead be a
+<code>join(how="anti")</code>), so only the distinct variant is exposed.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+            <b><code>other</code></b>
+              (<code><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></code>)
+          –
+          <div class="doc-md-description">
+            <p>The DataFrame whose rows to subtract. Must have the same
+column names, in the same order, as this DataFrame.</p>
+          </div>
+        </li>
+    </ul>
+        <p>Examples:</p>
+<div class="codehilite"><pre><span></span><code>&gt;&gt;&gt; sd = sedona.db.connect()
+&gt;&gt;&gt; a = sd.sql("SELECT <span class="gs">* FROM (VALUES (1), (2), (3)) AS t(x)")</span>
+<span class="gs">&gt;&gt;&gt; b = sd.sql("SELECT *</span> FROM (VALUES (2), (3), (4)) AS t(x)")
+&gt;&gt;&gt; a.except_distinct(b).sort("x").show()
+┌───────┐
+│   x   │
+│ int64 │
+╞═══════╡
+│     1 │
+└───────┘
+</code></pre></div>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
 <h4 id="sedonadb.dataframe.DataFrame.execute" class="doc doc-heading">
             <span class="doc doc-object-name doc-function-name">execute</span>
 
@@ -4661,6 +4713,95 @@ At least one is required.</p>
 │ one  │
 └──────┘
 </code></pre></div>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="sedonadb.dataframe.DataFrame.intersect" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">intersect</span>
+
+
+<a href="#sedonadb.dataframe.DataFrame.intersect" class="headerlink" title="Permanent link">¶</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">intersect</span><span class="p">(</span><span class="n">other</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Rows present in both DataFrames, keeping duplicate rows.</p>
+<p>This is SQL <code>INTERSECT ALL</code>: a row that appears <code>m</code> times on the
+left and <code>n</code> times on the right appears <code>min(m, n)</code> times in the
+result. Use <code>intersect_distinct</code> for SQL <code>INTERSECT</code> semantics.
+Both DataFrames must have the same column names in the same order.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+            <b><code>other</code></b>
+              (<code><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></code>)
+          –
+          <div class="doc-md-description">
+            <p>The DataFrame to intersect with. Must have the same
+column names, in the same order, as this DataFrame.</p>
+          </div>
+        </li>
+    </ul>
+        <p>Examples:</p>
+<div class="codehilite"><pre><span></span><code>&gt;&gt;&gt; sd = sedona.db.connect()
+&gt;&gt;&gt; a = sd.sql("SELECT <span class="gs">* FROM (VALUES (1), (2), (3)) AS t(x)")</span>
+<span class="gs">&gt;&gt;&gt; b = sd.sql("SELECT *</span> FROM (VALUES (2), (3), (4)) AS t(x)")
+&gt;&gt;&gt; a.intersect(b).sort("x").show()
+┌───────┐
+│   x   │
+│ int64 │
+╞═══════╡
+│     2 │
+├╌╌╌╌╌╌╌┤
+│     3 │
+└───────┘
+</code></pre></div>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="sedonadb.dataframe.DataFrame.intersect_distinct" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">intersect_distinct</span>
+
+
+<a href="#sedonadb.dataframe.DataFrame.intersect_distinct" class="headerlink" title="Permanent link">¶</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">intersect_distinct</span><span class="p">(</span><span class="n">other</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Distinct rows present in both DataFrames.</p>
+<p>This is SQL <code>INTERSECT</code>: the result has no duplicate rows. Use
+<code>intersect</code> to preserve multiplicity (<code>INTERSECT ALL</code>). Both
+DataFrames must have the same column names in the same order.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+            <b><code>other</code></b>
+              (<code><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></code>)
+          –
+          <div class="doc-md-description">
+            <p>The DataFrame to intersect with. Must have the same
+column names, in the same order, as this DataFrame.</p>
+          </div>
+        </li>
+    </ul>
 
 
     </div>
