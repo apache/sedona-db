@@ -197,7 +197,15 @@
          <lastmod>2026-06-27</lastmod>
     </url>
     <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/rs_setbandnodatavalue/</loc>
+         <lastmod>2026-06-27</lastmod>
+    </url>
+    <url>
          <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/rs_setcrs/</loc>
+         <lastmod>2026-06-27</lastmod>
+    </url>
+    <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/rs_setgeoreference/</loc>
          <lastmod>2026-06-27</lastmod>
     </url>
     <url>
