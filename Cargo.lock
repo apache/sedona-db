@@ -5781,13 +5781,24 @@ version = "0.4.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
+ "async-trait",
+ "datafusion",
+ "datafusion-catalog",
  "datafusion-common",
+ "datafusion-execution",
  "datafusion-expr",
+ "datafusion-physical-expr",
+ "datafusion-physical-plan",
+ "futures",
  "libc",
  "sedona-common",
  "sedona-expr",
+ "sedona-geometry",
  "sedona-schema",
  "sedona-testing",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -6404,6 +6415,7 @@ dependencies = [
  "sedona-adbc",
  "sedona-datasource",
  "sedona-expr",
+ "sedona-extension",
  "sedona-gdal",
  "sedona-geometry",
  "sedona-geoparquet",

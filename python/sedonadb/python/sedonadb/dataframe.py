@@ -1290,8 +1290,8 @@ class DataFrame:
         """
         return DataFrame(self._ctx, self._impl.to_memtable(self._ctx._impl))
 
-    def __datafusion_table_provider__(self):
-        return self._impl.__datafusion_table_provider__()
+    def __sedonadb_table_provider__(self):
+        return self._impl.__sedonadb_table_provider__()
 
     def to_arrow_table(self, schema: Any = None) -> "pa.Table":
         """Execute and collect results as a PyArrow Table
@@ -1676,7 +1676,7 @@ def _create_data_frame(ctx, obj, schema) -> DataFrame:
     """
     # If we're dealing with an anonymous data frame on the same context,
     # just return it. Otherwise, fall back to the default interpretation
-    # (which uses __datafusion_table_provider__).
+    # (which uses __sedonadb_table_provider__).
     if isinstance(obj, DataFrame) and obj._ctx is ctx and schema is None:
         return obj
 
@@ -1689,7 +1689,7 @@ def _create_data_frame(ctx, obj, schema) -> DataFrame:
         return SPECIAL_CASED_SCANS[type_name](ctx, obj, schema)
 
     # The default implementation handles objects that implement
-    # __datafusion_table_provider__ or __arrow_c_stream__. For objects implementing
+    # __sedonadb_table_provider__ or __arrow_c_stream__. For objects implementing
     # __arrow_c_stream__, this currently will only work for a single scan (i.e.,
     # the returned data frame can't be previewed before the query is computed).
     return _scan_default(ctx, obj, schema)

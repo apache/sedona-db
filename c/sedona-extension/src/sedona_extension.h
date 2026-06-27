@@ -18,6 +18,7 @@
 #ifndef SEDONA_EXTENSION_H
 #define SEDONA_EXTENSION_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -198,6 +199,156 @@ struct SedonaCScalarKernel {
   ///
   /// Implementations of this callback must set self->release to NULL.
   void (*release)(struct SedonaCScalarKernel* self);
+
+  /// \brief Opaque implementation-specific data
+  void* private_data;
+};
+
+struct SedonaCError {
+  const char* err;
+
+  uint32_t err_len;
+
+  uint32_t reserved;
+
+  /// \brief Release this instance
+  ///
+  /// Implementations of this callback must set self->release to NULL.
+  void (*release)(struct SedonaCError* self);
+};
+
+struct SedonaCExpr {
+  // Get a property of this expression (e.g., serialize, extract bbox)
+  int (*get_property_schema)(const struct SedonaCExpr* self, const char* property,
+                             struct SedonaCError* err);
+  int (*get_property)(const struct SedonaCExpr* self, const char* property,
+                      const char* args, struct ArrowArray* out, struct SedonaCError* err);
+
+  void* reserved;
+
+  /// \brief Release this instance
+  ///
+  /// Implementations of this callback must set self->release to NULL.
+  void (*release)(struct SedonaCExecutionPlan* self);
+
+  /// \brief Opaque implementation-specific data
+  void* private_data;
+};
+
+struct SedonaCExecutionPlan;
+
+/// \brief Arguments for execution plan and table provider operations
+///
+/// This structure is passed to methods that need JSON-serialized arguments,
+/// optional execution plans, and/or expressions.
+struct SedonaCExecutionPlanArgs {
+  /// JSON-serialized arguments
+  const uint8_t* args;
+  size_t args_len;
+  /// Optional array of execution plans
+  const struct SedonaCExecutionPlan** exec_plans;
+  size_t num_exec_plans;
+  /// Optional array of expressions
+  const struct SedonaCExpr** exprs;
+  size_t num_exprs;
+  void* reserved;
+};
+
+struct SedonaCExecutionPlan {
+  void (*get_schema)(const struct SedonaCExecutionPlan* self, struct ArrowSchema* out);
+
+  // Extract some serializable property from this plan (e.g., plan properties)
+  int (*get_property_schema)(const struct SedonaCExecutionPlan* self,
+                             const char* property, struct ArrowSchema* out,
+                             struct SedonaCError* err);
+  int (*get_property)(const struct SedonaCExecutionPlan* self, const char* property,
+                      struct SedonaCExecutionPlanArgs* args, struct ArrowArray* out,
+                      struct SedonaCError* err);
+
+  // Clone this plan based on some new information (e.g., try pushdown filters)
+  int (*with_property)(const struct SedonaCExecutionPlan* self, const char* property,
+                       struct SedonaCExecutionPlanArgs* args,
+                       struct SedonaCExecutionPlan* out, struct SedonaCError* err);
+
+  // Resolve a synchronous stream for one partition from this plan
+  int (*execute)(const struct SedonaCExecutionPlan* self,
+                 struct SedonaCExecutionPlanArgs* args, struct ArrowArrayStream* out,
+                 struct SedonaCError* err);
+
+  // Future implementation with async streams (don't implement now)
+  int (*execute_async)(const struct SedonaCExecutionPlan* self,
+                       struct SedonaCExecutionPlanArgs* args, void* out,
+                       struct SedonaCError* err);
+
+  // Reserved for future use
+  void* reserved;
+
+  /// \brief Release this instance
+  ///
+  /// Implementations of this callback must set self->release to NULL.
+  void (*release)(struct SedonaCExecutionPlan* self);
+
+  /// \brief Opaque implementation-specific data
+  void* private_data;
+};
+
+/// \brief ABI-stable table provider interface
+///
+/// This provides a minimal interface for importing a table provider
+/// across an FFI boundary in a version-agnostic manner.
+struct SedonaCTableProvider {
+  /// Get the schema of this table provider
+  void (*get_schema)(const struct SedonaCTableProvider* self, struct ArrowSchema* out);
+
+  // Extract some serializable property from this table provider
+  int (*get_property_schema)(const struct SedonaCTableProvider* self,
+                             const char* property, struct ArrowSchema* out,
+                             struct SedonaCError* err);
+  int (*get_property)(const struct SedonaCTableProvider* self, const char* property,
+                      struct SedonaCExecutionPlanArgs* args, struct ArrowArray* out,
+                      struct SedonaCError* err);
+
+  /// Perform a scan operation and return an execution plan
+  ///
+  /// The args parameter contains JSON-serialized scan arguments.
+  /// Returns an execution plan that can be used to read the data.
+  int (*scan)(const struct SedonaCTableProvider* self,
+              struct SedonaCExecutionPlanArgs* args, struct SedonaCExecutionPlan* out,
+              struct SedonaCError* err);
+
+  /// Perform an insert operation
+  ///
+  /// The args parameter contains JSON-serialized insert arguments.
+  /// The exec_plans field should contain the plan providing rows to insert.
+  /// Returns an execution plan that performs the insert.
+  int (*insert)(const struct SedonaCTableProvider* self,
+                struct SedonaCExecutionPlanArgs* args, struct SedonaCExecutionPlan* out,
+                struct SedonaCError* err);
+
+  /// Perform an update operation
+  ///
+  /// The args parameter contains JSON-serialized update arguments
+  /// (filters, column assignments, etc.).
+  /// Returns an execution plan that performs the update.
+  int (*update)(const struct SedonaCTableProvider* self,
+                struct SedonaCExecutionPlanArgs* args, struct SedonaCExecutionPlan* out,
+                struct SedonaCError* err);
+
+  /// Perform a delete operation
+  ///
+  /// The args parameter contains JSON-serialized delete arguments
+  /// (filters, etc.).
+  /// Returns an execution plan that performs the delete.
+  int (*delete_rows)(const struct SedonaCTableProvider* self,
+                     struct SedonaCExecutionPlanArgs* args,
+                     struct SedonaCExecutionPlan* out, struct SedonaCError* err);
+
+  void* reserved;
+
+  /// \brief Release this instance
+  ///
+  /// Implementations of this callback must set self->release to NULL.
+  void (*release)(struct SedonaCTableProvider* self);
 
   /// \brief Opaque implementation-specific data
   void* private_data;

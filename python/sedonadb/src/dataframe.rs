@@ -27,9 +27,7 @@ use datafusion::config::ConfigField;
 use datafusion::logical_expr::SortExpr;
 use datafusion::prelude::{DataFrame, SessionContext};
 use datafusion_common::{Column, DataFusionError, ParamValues};
-use datafusion_execution::TaskContextProvider;
 use datafusion_expr::{ExplainFormat, ExplainOption, Expr, JoinType, LogicalPlanBuilder};
-use datafusion_ffi::table_provider::FFI_TableProvider;
 use futures::lock::Mutex;
 use futures::TryStreamExt;
 use pyo3::prelude::*;
@@ -648,20 +646,22 @@ impl InternalDataFrame {
         Ok(InternalDataFrame::new(df, self.runtime.clone()))
     }
 
-    fn __datafusion_table_provider__<'py>(
+    fn __sedonadb_table_provider__<'py>(
         &self,
         py: Python<'py>,
     ) -> Result<Bound<'py, PyCapsule>, PySedonaError> {
-        let name = cr"datafusion_table_provider".into();
+        let name = cr"sedonadb_table_provider".into();
         let provider = self.inner.clone().into_view();
-        let ctx = Arc::new(SessionContext::new()) as Arc<dyn TaskContextProvider>;
-        let ffi_provider = FFI_TableProvider::new(
+        // Create a session context for FFI - the consuming side will use its own
+        // session for actual execution, this is just needed for the FFI interface.
+        let ctx = SessionContext::new();
+        let session = Arc::new(ctx.state());
+        let exported = sedona_extension::table_provider::ExportedTableProvider::new(
             provider,
-            true,
-            Some(self.runtime.handle().clone()),
-            &ctx,
-            None,
+            session,
+            self.runtime.handle().clone(),
         );
+        let ffi_provider: sedona_extension::extension::SedonaCTableProvider = exported.into();
         Ok(PyCapsule::new(py, ffi_provider, Some(name))?)
     }
 }
