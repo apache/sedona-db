@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -53,6 +54,23 @@ def test_options():
 
     sd.options.interactive = True
     assert "DataFrame object at" not in repr(sd.sql("SELECT 1 as one"))
+
+
+def test_shared_context_and_dataframe_from_threads():
+    sd = sedonadb.connect()
+    df = sd.sql("SELECT * FROM (VALUES (1), (2), (3)) AS t(x)")
+
+    def count_shared_dataframe(_):
+        return df.count()
+
+    def create_and_read_view(i):
+        name = f"threaded_view_{i}"
+        sd.sql(f"SELECT {i} AS x").to_view(name, overwrite=True)
+        return sd.view(name).count()
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        assert list(executor.map(count_shared_dataframe, range(16))) == [3] * 16
+        assert list(executor.map(create_and_read_view, range(16))) == [1] * 16
 
 
 def test_read_parquet(con, geoarrow_data):

@@ -118,7 +118,7 @@ fn gdal_version() -> Result<Option<String>, PySedonaError> {
     }
 }
 
-#[pymodule]
+#[pymodule(gil_used = false)]
 fn _lib(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "mimalloc")]
     configure_tg_allocator();

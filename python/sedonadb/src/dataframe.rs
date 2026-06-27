@@ -98,7 +98,7 @@ impl InternalDataFrame {
         Ok(names)
     }
 
-    fn qualified_column_expr(&self, py: Python<'_>, key: PyObject) -> Result<PyExpr, PyErr> {
+    fn qualified_column_expr(&self, py: Python<'_>, key: Py<PyAny>) -> Result<PyExpr, PyErr> {
         let num_fields = self.inner.schema().fields().len();
         let all_names = || self.inner.schema().field_names();
 
@@ -349,16 +349,23 @@ impl InternalDataFrame {
 
     fn to_view(
         &self,
+        py: Python<'_>,
         ctx: &InternalContext,
         table_ref: &str,
         overwrite: bool,
     ) -> Result<(), PySedonaError> {
         let provider = self.inner.clone().into_view();
-        if overwrite && ctx.inner.ctx.table_exist(table_ref)? {
-            ctx.drop_view(table_ref)?;
-        }
+        let table_ref = table_ref.to_string();
+        let inner = ctx.inner.clone();
+        wait_for_future(py, &self.runtime, async move {
+            let ctx = inner.lock().await;
+            if overwrite && ctx.ctx.table_exist(&table_ref)? {
+                ctx.ctx.deregister_table(&table_ref)?;
+            }
 
-        ctx.inner.ctx.register_table(table_ref, provider)?;
+            ctx.ctx.register_table(&table_ref, provider)?;
+            Ok::<_, PySedonaError>(())
+        })??;
         Ok(())
     }
 
@@ -370,12 +377,17 @@ impl InternalDataFrame {
         let schema = self.inner.schema();
         let partitions =
             wait_for_future(py, &self.runtime, self.inner.clone().collect_partitioned())??;
-        let provider = MemTable::try_new(schema.as_arrow().clone().into(), partitions)?;
+        let provider = Arc::new(MemTable::try_new(
+            schema.as_arrow().clone().into(),
+            partitions,
+        )?);
+        let inner = ctx.inner.clone();
+        let df = wait_for_future(py, &self.runtime, async move {
+            let ctx = inner.lock().await;
+            ctx.ctx.read_table(provider)
+        })??;
 
-        Ok(Self::new(
-            ctx.inner.ctx.read_table(Arc::new(provider))?,
-            self.runtime.clone(),
-        ))
+        Ok(Self::new(df, self.runtime.clone()))
     }
 
     fn to_batches<'py>(
@@ -411,7 +423,11 @@ impl InternalDataFrame {
         let mut reader: Box<dyn RecordBatchReader + Send> = Box::new(reader);
 
         if simplify.unwrap_or(false) {
-            reader = simplify_record_batch_reader(&ctx.inner.ctx.state(), reader)?;
+            let inner = ctx.inner.clone();
+            reader = wait_for_future(py, &self.runtime, async move {
+                let ctx = inner.lock().await;
+                simplify_record_batch_reader(&ctx.ctx.state(), reader)
+            })??;
         }
 
         Ok(StreamingResult {
@@ -445,36 +461,55 @@ impl InternalDataFrame {
         #[cfg(not(feature = "s2geography"))]
         let has_geography = false;
 
-        let sort_by_expr = sort_by
-            .into_iter()
-            .map(|name| {
-                let column = Expr::Column(Column::new_unqualified(name.clone()));
-                if geometry_column_names.contains(name.as_str()) {
-                    // Create the call sd_order(column). If we're ordering by geometry but don't have
-                    // the required feature for high quality sort output, give an error. This is mostly
-                    // an issue when using maturin develop because geography is not a default feature.
-                    if has_geography {
-                        let state = ctx.inner.ctx.state();
-                        let order_udf_opt = state.scalar_functions().get("sd_order");
-                        if let Some(order_udf) = order_udf_opt {
-                            Ok(SortExpr::new(order_udf.call(vec![column]), true, false))
-                        } else {
-                            Err(PySedonaError::SedonaPython(
-                                "Can't order by geometry field when sd_order() is not available"
-                                    .to_string(),
-                            ))
-                        }
-                    } else {
-                        Err(PySedonaError::SedonaPython(
-                                "Use maturin develop --features 's2geography,pyo3/extension-module' for dev geography support"
-                                    .to_string(),
-                            ))
-                    }
+        let mut sort_by_expr = Vec::with_capacity(sort_by.len());
+        let mut needs_sd_order = false;
+        for name in sort_by {
+            let column = Expr::Column(Column::new_unqualified(name.clone()));
+            if geometry_column_names.contains(name.as_str()) {
+                if has_geography {
+                    needs_sd_order = true;
+                    sort_by_expr.push((Some(name), column));
                 } else {
-                    Ok(SortExpr::new(column, true, false))
+                    return Err(PySedonaError::SedonaPython(
+                        "Use maturin develop --features 's2geography,pyo3/extension-module' for dev geography support"
+                            .to_string(),
+                    ));
+                }
+            } else {
+                sort_by_expr.push((None, column));
+            }
+        }
+
+        let order_udf = if needs_sd_order {
+            let inner = ctx.inner.clone();
+            Some(
+                wait_for_future(py, &self.runtime, async move {
+                    let ctx = inner.lock().await;
+                    Ok::<_, PySedonaError>(
+                        ctx.ctx.state().scalar_functions().get("sd_order").cloned(),
+                    )
+                })??
+                .ok_or_else(|| {
+                    PySedonaError::SedonaPython(
+                        "Can't order by geometry field when sd_order() is not available"
+                            .to_string(),
+                    )
+                })?,
+            )
+        } else {
+            None
+        };
+
+        let sort_by_expr = sort_by_expr
+            .into_iter()
+            .map(|(geometry_name, column)| {
+                if geometry_name.is_some() {
+                    SortExpr::new(order_udf.as_ref().unwrap().call(vec![column]), true, false)
+                } else {
+                    SortExpr::new(column, true, false)
                 }
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Vec<_>>();
 
         let write_options = SedonaWriteOptions::new()
             .with_partition_by(partition_by)
@@ -490,15 +525,11 @@ impl InternalDataFrame {
         let mut writer_options = TableGeoParquetOptions::default();
 
         // Resolve writer options from the context configuration
-        let global_parquet_options = ctx
-            .inner
-            .ctx
-            .state()
-            .config()
-            .options()
-            .execution
-            .parquet
-            .clone();
+        let inner = ctx.inner.clone();
+        let global_parquet_options = wait_for_future(py, &self.runtime, async move {
+            let ctx = inner.lock().await;
+            Ok::<_, PySedonaError>(ctx.ctx.state().config().options().execution.parquet.clone())
+        })??;
         writer_options.inner.global = global_parquet_options;
 
         // Set values from options dictionary
@@ -506,16 +537,13 @@ impl InternalDataFrame {
             writer_options.set(k, v)?;
         }
 
-        wait_for_future(
-            py,
-            &self.runtime,
-            self.inner.clone().write_geoparquet(
-                &ctx.inner,
-                &path,
-                write_options,
-                Some(writer_options),
-            ),
-        )??;
+        let df = self.inner.clone();
+        let inner = ctx.inner.clone();
+        wait_for_future(py, &self.runtime, async move {
+            let ctx = inner.lock().await;
+            df.write_geoparquet(&ctx, &path, write_options, Some(writer_options))
+                .await
+        })??;
         Ok(())
     }
 
@@ -534,11 +562,12 @@ impl InternalDataFrame {
             options.display_mode = DisplayMode::Utf8;
         }
 
-        let content = wait_for_future(
-            py,
-            &self.runtime,
-            self.inner.clone().show_sedona(&ctx.inner, limit, options),
-        )??;
+        let df = self.inner.clone();
+        let inner = ctx.inner.clone();
+        let content = wait_for_future(py, &self.runtime, async move {
+            let ctx = inner.lock().await;
+            df.show_sedona(&ctx, limit, options).await
+        })??;
 
         Ok(content)
     }
