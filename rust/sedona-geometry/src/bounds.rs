@@ -14,6 +14,9 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
+use std::sync::Arc;
+
 use geo_traits::{
     CoordTrait, Dimensions, GeometryCollectionTrait, GeometryTrait, GeometryType, LineStringTrait,
     MultiLineStringTrait, MultiPointTrait, MultiPolygonTrait, PointTrait, PolygonTrait,
@@ -23,7 +26,42 @@ use crate::{
     bounding_box::BoundingBox,
     error::SedonaGeometryError,
     interval::{Interval, IntervalTrait, WraparoundInterval},
+    types::Edges,
 };
+
+#[derive(Debug, Clone, Default)]
+pub struct WkbBounder2DFactory {
+    planar_bounder: Option<Arc<dyn WkbBounder2D>>,
+    spherical_bounder: Option<Arc<dyn WkbBounder2D>>,
+}
+
+impl WkbBounder2DFactory {
+    /// Replace the runtime [WkbBounder2D] reference for a specific [Edges]
+    pub fn with_bounder(&self, edges: Edges, bounder: Arc<dyn WkbBounder2D>) -> Self {
+        match edges {
+            Edges::Planar => Self {
+                planar_bounder: Some(bounder),
+                ..self.clone()
+            },
+            Edges::Spherical => Self {
+                spherical_bounder: Some(bounder),
+                ..self.clone()
+            },
+        }
+    }
+
+    /// Get a bounder for a specific edge type
+    pub fn bounder_for_edge_type(&self, edges: Edges) -> Option<Box<dyn WkbBounder2D>> {
+        match edges {
+            Edges::Planar => self
+                .planar_bounder
+                .as_ref()
+                .map(|b| b.create_instance())
+                .or_else(|| Some(Box::new(WkbGeometryBounder::default()))),
+            Edges::Spherical => self.spherical_bounder.as_ref().map(|b| b.create_instance()),
+        }
+    }
+}
 
 /// Trait defining an abstract bounder
 ///
@@ -54,6 +92,12 @@ pub trait WkbBounder2D: std::fmt::Debug + Send + Sync {
 
     /// Compute the memory used by this instance
     fn mem_used(&self) -> usize;
+
+    /// Create a new empty instance of this bounder
+    ///
+    /// This is used to create temporary bounders for computing bounds without
+    /// requiring mutable access to a shared instance.
+    fn create_instance(&self) -> Box<dyn WkbBounder2D>;
 }
 
 #[derive(Debug, Default)]
@@ -107,6 +151,10 @@ impl WkbBounder2D for WkbGeometryBounder {
 
     fn mem_used(&self) -> usize {
         size_of::<Self>()
+    }
+
+    fn create_instance(&self) -> Box<dyn WkbBounder2D> {
+        Box::new(Self::default())
     }
 }
 
@@ -539,5 +587,40 @@ mod test {
             wkb_bounds_xy(&out).unwrap(),
             BoundingBox::xy((0, 0), (1, 1))
         );
+    }
+
+    #[test]
+    fn test_bounder_factory_basic() {
+        // Create a factory with default settings
+        let factory = WkbBounder2DFactory::default();
+
+        // Planar bounder should be available via bounder_for_edge_type (falls back to default)
+        let planar_bounder = factory.bounder_for_edge_type(Edges::Planar);
+        assert!(planar_bounder.is_some());
+
+        // Spherical bounder is not available by default
+        let spherical_bounder = factory.bounder_for_edge_type(Edges::Spherical);
+        assert!(spherical_bounder.is_none());
+
+        // Create a bounder instance and bound a simple linestring
+        let mut bounder = factory.bounder_for_edge_type(Edges::Planar).unwrap();
+        let wkt: Wkt = Wkt::from_str("LINESTRING (0 1, 2 3)").unwrap();
+        let mut wkb_bytes = Vec::new();
+        wkb::writer::write_geometry(
+            &mut wkb_bytes,
+            &wkt,
+            &WriteOptions {
+                endianness: Endianness::LittleEndian,
+            },
+        )
+        .unwrap();
+
+        bounder.update_wkb_bytes(&wkb_bytes).unwrap();
+        let (x, y) = bounder.finish();
+
+        assert_eq!(x.lo(), 0.0);
+        assert_eq!(x.hi(), 2.0);
+        assert_eq!(y.lo(), 1.0);
+        assert_eq!(y.hi(), 3.0);
     }
 }

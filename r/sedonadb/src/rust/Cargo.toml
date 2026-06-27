@@ -37,6 +37,7 @@ savvy-ffi = "*"
 sedona = { workspace = true }
 sedona-adbc = { workspace = true }
 sedona-expr = { workspace = true }
+sedona-geometry = { workspace = true }
 sedona-geoparquet = { workspace = true }
 sedona-proj = { workspace = true }
 sedona-schema = { workspace = true }

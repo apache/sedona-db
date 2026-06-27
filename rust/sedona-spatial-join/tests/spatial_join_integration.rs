@@ -58,7 +58,7 @@ use sedona_testing::datagen::RandomPartitionedDataBuilder;
 use tokio::sync::OnceCell;
 
 use sedona_common::{
-    option::{add_sedona_option_extension, ExecutionMode, SpatialJoinOptions},
+    option::{ExecutionMode, SpatialJoinOptions},
     NumSpatialPartitionsConfig, SpatialJoinDebugOptions, SpatialLibrary,
 };
 
@@ -154,7 +154,7 @@ fn setup_context(options: Option<SpatialJoinOptions>, batch_size: usize) -> Resu
     let mut session_config = SessionConfig::from_env()?
         .with_information_schema(true)
         .with_batch_size(batch_size);
-    session_config = add_sedona_option_extension(session_config);
+    session_config = session_config.with_option_extension(SedonaOptions::default());
     let mut state_builder = SessionStateBuilder::new();
     if let Some(options) = options {
         state_builder = register_spatial_join_logical_optimizer(state_builder)?;

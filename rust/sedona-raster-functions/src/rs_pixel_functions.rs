@@ -26,10 +26,10 @@ use datafusion_common::{DataFusionError, Result, ScalarValue};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::item_crs::make_item_crs;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_geometry::types::Edges;
 use sedona_geometry::wkb_factory::{write_wkb_point, write_wkb_polygon, WKB_MIN_PROBABLE_BYTES};
 use sedona_raster::affine_transformation::{to_world_coordinate, AffineMatrix};
 use sedona_raster::traits::RasterRef;
-use sedona_schema::datatypes::Edges;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 // ===========================================================================
