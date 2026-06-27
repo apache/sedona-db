@@ -18,7 +18,7 @@
 use std::sync::Arc;
 
 use arrow_array::builder::BinaryBuilder;
-use datafusion_common::{error::Result, DataFusionError};
+use datafusion_common::{error::Result, exec_datafusion_err};
 use datafusion_expr::ColumnarValue;
 use geos::{Geom, Geometry, GeometryTypes};
 use sedona_expr::{
@@ -89,7 +89,7 @@ impl SedonaScalarKernel for STExteriorRing {
 fn invoke_scalar(geom: &Geometry, writer: &mut impl std::io::Write) -> Result<bool> {
     let geom_type = geom
         .geometry_type()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to get geometry type: {e}")))?;
+        .map_err(|e| exec_datafusion_err!("Failed to get geometry type: {e}"))?;
 
     if geom_type != GeometryTypes::Polygon {
         return Ok(false);
@@ -97,14 +97,12 @@ fn invoke_scalar(geom: &Geometry, writer: &mut impl std::io::Write) -> Result<bo
 
     let ring = geom
         .get_exterior_ring()
-        .map_err(|e| DataFusionError::Execution(format!("ST_ExteriorRing failed: {e}")))?;
-    let line =
-        Geometry::create_line_string(ring.get_coord_seq().map_err(|e| {
-            DataFusionError::Execution(format!("Failed to get ring coordinates: {e}"))
-        })?)
-        .map_err(|e| {
-            DataFusionError::Execution(format!("Failed to create exterior linestring: {e}"))
-        })?;
+        .map_err(|e| exec_datafusion_err!("ST_ExteriorRing failed: {e}"))?;
+    let line = Geometry::create_line_string(
+        ring.get_coord_seq()
+            .map_err(|e| exec_datafusion_err!("Failed to get ring coordinates: {e}"))?,
+    )
+    .map_err(|e| exec_datafusion_err!("Failed to create exterior linestring: {e}"))?;
 
     write_geos_geometry(&line, writer)?;
     Ok(true)

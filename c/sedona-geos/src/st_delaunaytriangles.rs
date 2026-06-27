@@ -21,7 +21,7 @@ use arrow_array::builder::BinaryBuilder;
 use arrow_schema::DataType;
 use datafusion_common::{
     cast::{as_float64_array, as_int64_array},
-    DataFusionError, Result,
+    exec_datafusion_err, Result,
 };
 use datafusion_expr::ColumnarValue;
 use geos::{Geom, Geometry};
@@ -46,7 +46,7 @@ fn invoke_scalar(
 ) -> Result<()> {
     let result = geom
         .delaunay_triangulation(tolerance, only_edges)
-        .map_err(|e| DataFusionError::Execution(format!("ST_DelaunayTriangles failed: {e}")))?;
+        .map_err(|e| exec_datafusion_err!("ST_DelaunayTriangles failed: {e}"))?;
     write_geos_geometry(&result, writer)?;
     Ok(())
 }
@@ -192,9 +192,9 @@ impl SedonaScalarKernel for STDelaunayTrianglesWithFlags {
                         0 => false,
                         1 => true,
                         _ => {
-                            return Err(DataFusionError::Execution(format!(
+                            return Err(exec_datafusion_err!(
                                 "ST_DelaunayTriangles flags must be 0 or 1, got {flag}"
-                            )))
+                            ))
                         }
                     };
                     invoke_scalar(&geom, tol, only_edges, &mut builder)?;

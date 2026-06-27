@@ -18,7 +18,7 @@
 use std::sync::Arc;
 
 use arrow_array::builder::BinaryBuilder;
-use datafusion_common::{error::Result, DataFusionError};
+use datafusion_common::{error::Result, exec_datafusion_err};
 use datafusion_expr::ColumnarValue;
 use geos::{Geom, Geometry, GeometryTypes};
 use sedona_expr::{
@@ -27,7 +27,7 @@ use sedona_expr::{
 };
 use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
 use sedona_schema::{
-    datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY},
+    datatypes::{SedonaType, WKB_GEOMETRY},
     matchers::ArgMatcher,
 };
 
@@ -36,14 +36,9 @@ use crate::geos_to_wkb::write_geos_geometry;
 
 /// ST_BuildArea() implementation using the geos crate
 pub fn st_build_area_impl() -> Vec<ScalarKernelRef> {
-    ItemCrsKernel::wrap_impl(vec![
-        Arc::new(STBuildArea {
-            matcher: ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY),
-        }),
-        Arc::new(STBuildArea {
-            matcher: ArgMatcher::new(vec![ArgMatcher::is_geography()], WKB_GEOGRAPHY),
-        }),
-    ])
+    ItemCrsKernel::wrap_impl(STBuildArea {
+        matcher: ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY),
+    })
 }
 
 #[derive(Debug)]
@@ -87,7 +82,7 @@ impl SedonaScalarKernel for STBuildArea {
 fn invoke_scalar(geom: &Geometry, writer: &mut impl std::io::Write) -> Result<bool> {
     let geom_type = geom
         .geometry_type()
-        .map_err(|e| DataFusionError::Execution(format!("Failed to get geometry type: {e}")))?;
+        .map_err(|e| exec_datafusion_err!("Failed to get geometry type: {e}"))?;
 
     match geom_type {
         GeometryTypes::LineString
@@ -98,7 +93,7 @@ fn invoke_scalar(geom: &Geometry, writer: &mut impl std::io::Write) -> Result<bo
 
     let result = geom
         .build_area()
-        .map_err(|e| DataFusionError::Execution(format!("ST_BuildArea failed: {e}")))?;
+        .map_err(|e| exec_datafusion_err!("ST_BuildArea failed: {e}"))?;
     write_geos_geometry(&result, writer)?;
     Ok(true)
 }
@@ -108,15 +103,13 @@ mod tests {
     use datafusion_common::ScalarValue;
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
-    use sedona_schema::datatypes::{
-        WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS,
-    };
+    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS};
     use sedona_testing::testers::ScalarUdfTester;
 
     use super::*;
 
     #[rstest]
-    fn udf(#[values(WKB_GEOMETRY, WKB_GEOGRAPHY)] sedona_type: SedonaType) {
+    fn udf(#[values(WKB_GEOMETRY)] sedona_type: SedonaType) {
         let udf = SedonaScalarUDF::from_impl("st_buildarea", st_build_area_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone()]);
 
@@ -140,10 +133,7 @@ mod tests {
     }
 
     #[rstest]
-    fn udf_invoke_item_crs(
-        #[values(WKB_GEOMETRY_ITEM_CRS.clone(), WKB_GEOGRAPHY_ITEM_CRS.clone())]
-        sedona_type: SedonaType,
-    ) {
+    fn udf_invoke_item_crs(#[values(WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType) {
         let udf = SedonaScalarUDF::from_impl("st_buildarea", st_build_area_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone()]);
         tester.assert_return_type(sedona_type);

@@ -21,8 +21,6 @@ description: Returns a geometry that encloses the area formed by the given linew
 kernels:
   - returns: geometry
     args: [geometry]
-  - returns: geography
-    args: [geography]
 ---
 
 ## Description
@@ -34,8 +32,4 @@ Open rings are closed automatically before assembly. If no closed ring can be fo
 
 ```sql
 SELECT ST_BuildArea(ST_GeomFromWKT('LINESTRING (0 0, 1 0, 1 1, 0 1, 0 0)'));
-```
-
-```sql
-SELECT ST_BuildArea(ST_GeogFromWKT('LINESTRING (0 0, 1 0, 1 1, 0 1, 0 0)'));
 ```
