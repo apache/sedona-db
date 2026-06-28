@@ -33,14 +33,14 @@ where
     py.run(cr"pass", None, None)?;
     py.check_signals()?;
 
-    py.allow_threads(|| {
+    py.detach(|| {
         runtime.block_on(async {
             tokio::pin!(fut);
             loop {
                 tokio::select! {
                     res = &mut fut => break Ok(res),
                     _ = sleep(INTERVAL_CHECK_SIGNALS) => {
-                        Python::with_gil(|py| {
+                        Python::attach(|py| {
                             py.run(cr"pass", None, None)?;
                             py.check_signals()
                         })?;
@@ -65,7 +65,7 @@ where
             tokio::select! {
                 res = &mut fut => break Ok(res),
                 _ = sleep(INTERVAL_CHECK_SIGNALS) => {
-                    Python::with_gil(|py| {
+                    Python::attach(|py| {
                         py.run(cr"pass", None, None)?;
                         py.check_signals()
                     })?;

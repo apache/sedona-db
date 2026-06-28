@@ -84,7 +84,7 @@ impl PySedonaSchema {
     fn field<'py>(
         &self,
         py: Python<'py>,
-        index_or_name: PyObject,
+        index_or_name: Py<PyAny>,
     ) -> Result<PySedonaField, PySedonaError> {
         if let Ok(index) = index_or_name.extract::<usize>(py) {
             if index < self.inner.fields().len() {
@@ -211,7 +211,7 @@ impl PySedonaType {
 #[pymethods]
 impl PySedonaType {
     #[getter]
-    fn crs<'py>(&self, py: Python<'py>) -> Result<Option<PyObject>, PySedonaError> {
+    fn crs<'py>(&self, py: Python<'py>) -> Result<Option<Py<PyAny>>, PySedonaError> {
         if let Some(crs) = self.inner.crs() {
             let json = py.import("json")?;
             let geoarrow_types_crs = py.import("geoarrow.types.crs")?;
@@ -229,7 +229,7 @@ impl PySedonaType {
     }
 
     #[getter]
-    fn edge_type<'py>(&self, py: Python<'py>) -> Result<Option<PyObject>, PySedonaError> {
+    fn edge_type<'py>(&self, py: Python<'py>) -> Result<Option<Py<PyAny>>, PySedonaError> {
         match &self.inner {
             SedonaType::Wkb(edges, _) | SedonaType::WkbView(edges, _) => {
                 let geoarrow_types = py.import("geoarrow.types")?;

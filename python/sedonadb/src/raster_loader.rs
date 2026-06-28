@@ -25,7 +25,7 @@ use pyo3::{
     buffer::PyBuffer,
     pyclass, pyfunction, pymethods,
     types::{PyAnyMethods, PyList, PyListMethods},
-    PyObject, Python,
+    Py, PyAny, Python,
 };
 use sedona_raster::{
     raster_loader::{AsyncRasterLoader, RasterLoadRequest, RasterLoadResult},
@@ -45,15 +45,15 @@ pub struct PyRasterLoader {
     /// Cached loader name (called once at construction)
     name: String,
     /// Python callable that checks if a format is supported
-    py_supports_format: PyObject,
+    py_supports_format: Py<PyAny>,
     /// Python callable that loads raster data
-    py_load: PyObject,
+    py_load: Py<PyAny>,
 }
 
 impl PyRasterLoader {
-    pub fn new(py_name: PyObject, py_supports_format: PyObject, py_load: PyObject) -> Self {
+    pub fn new(py_name: Py<PyAny>, py_supports_format: Py<PyAny>, py_load: Py<PyAny>) -> Self {
         // Call py_name() once and cache the result
-        let name = Python::with_gil(|py| {
+        let name = Python::attach(|py| {
             py_name
                 .call(py, (), None)
                 .and_then(|obj| obj.extract::<String>(py))
@@ -75,7 +75,7 @@ impl AsyncRasterLoader for PyRasterLoader {
     }
 
     fn supports_format(&self, format: Option<&str>) -> bool {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let result = self
                 .py_supports_format
                 .call(py, (format,), None)
@@ -97,11 +97,11 @@ impl AsyncRasterLoader for PyRasterLoader {
             })
             .collect();
 
-        let py_load = Python::with_gil(|py| self.py_load.clone_ref(py));
+        let py_load = Python::attach(|py| self.py_load.clone_ref(py));
 
         // Spawn a blocking task to hold the GIL and call Python
         let results = tokio::task::spawn_blocking(move || {
-            Python::with_gil(|py| -> Result<Vec<PyRasterLoadResultData>, ArrowError> {
+            Python::attach(|py| -> Result<Vec<PyRasterLoadResultData>, ArrowError> {
                 // Helper to convert pyo3 errors to ArrowError
                 fn py_err(e: impl std::fmt::Display) -> ArrowError {
                     ArrowError::InvalidArgumentError(format!("Python raster loader error: {e}"))
@@ -449,9 +449,9 @@ impl PyRasterLoadResult {
 /// Create a Python-backed raster loader
 #[pyfunction]
 pub fn py_raster_loader(
-    py_name: PyObject,
-    py_supports_format: PyObject,
-    py_load: PyObject,
+    py_name: Py<PyAny>,
+    py_supports_format: Py<PyAny>,
+    py_load: Py<PyAny>,
 ) -> PyRasterLoaderWrapper {
     PyRasterLoaderWrapper {
         inner: Arc::new(PyRasterLoader::new(py_name, py_supports_format, py_load)),
