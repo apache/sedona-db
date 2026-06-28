@@ -16,7 +16,7 @@
 // under the License.
 use std::{
     collections::{HashMap, VecDeque},
-    sync::{Arc, RwLock},
+    sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard},
 };
 
 use crate::exec::create_plan_from_sql;
@@ -45,7 +45,7 @@ use datafusion::{dataframe::DataFrameWriteOptions, execution::memory_pool::Memor
 use datafusion_common::not_impl_err;
 use datafusion_expr::dml::InsertOp;
 use datafusion_expr::sqlparser::dialect::{dialect_from_str, Dialect};
-use datafusion_expr::{LogicalPlan, LogicalPlanBuilder, SortExpr};
+use datafusion_expr::{AggregateUDFImpl, LogicalPlan, LogicalPlanBuilder, ScalarUDFImpl, SortExpr};
 use parking_lot::Mutex;
 use sedona_common::{
     option::add_sedona_option_extension, sedona_internal_datafusion_err, CrsProviderOption,
@@ -53,8 +53,11 @@ use sedona_common::{
 };
 use sedona_datasource::provider::external_table;
 use sedona_datasource::spec::ExternalFormatSpec;
-use sedona_expr::scalar_udf::IntoScalarKernelRefs;
-use sedona_expr::{aggregate_udf::IntoSedonaAccumulatorRefs, function_set::FunctionSet};
+use sedona_expr::scalar_udf::{IntoScalarKernelRefs, SedonaScalarUDF};
+use sedona_expr::{
+    aggregate_udf::{IntoSedonaAccumulatorRefs, SedonaAggregateUDF},
+    function_set::FunctionSet,
+};
 use sedona_geoparquet::options::TableGeoParquetOptions;
 use sedona_geoparquet::{
     format::GeoParquetFormatFactory,
@@ -83,7 +86,7 @@ use sedona_raster::raster_loader::{AsyncRasterLoader, RasterLoaderConfig, Raster
 /// interface for configuring the behaviour of
 pub struct SedonaContext {
     pub ctx: SessionContext,
-    pub functions: FunctionSet,
+    functions: RwLock<FunctionSet>,
     /// Per-session registry of async raster byte loaders, keyed by
     /// `outdb_format`. Held behind an `Arc<RwLock<…>>` so the registered
     /// `RS_EnsureLoaded` UDF instance and any extension crates' `register(&ctx)`
@@ -235,7 +238,7 @@ impl SedonaContext {
     pub fn new_from_context(ctx: SessionContext) -> Result<Self> {
         let mut out = Self {
             ctx,
-            functions: FunctionSet::new(),
+            functions: RwLock::new(FunctionSet::new()),
             raster_loader_registry: Arc::new(RwLock::new(RasterLoaderRegistry::new())),
         };
 
@@ -367,15 +370,67 @@ impl SedonaContext {
         }
     }
 
+    fn functions(&self) -> Result<RwLockReadGuard<'_, FunctionSet>> {
+        self.functions
+            .read()
+            .map_err(|_| sedona_internal_datafusion_err!("Function registry lock poisoned"))
+    }
+
+    fn functions_mut(&self) -> Result<RwLockWriteGuard<'_, FunctionSet>> {
+        self.functions
+            .write()
+            .map_err(|_| sedona_internal_datafusion_err!("Function registry lock poisoned"))
+    }
+
+    pub fn scalar_udf(&self, name: &str) -> Result<Option<SedonaScalarUDF>> {
+        Ok(self.functions()?.scalar_udf(name).cloned())
+    }
+
+    pub fn scalar_udf_names(&self) -> Result<Vec<String>> {
+        Ok(self
+            .ctx
+            .state()
+            .scalar_functions()
+            .keys()
+            .cloned()
+            .collect())
+    }
+
+    pub fn register_sedona_scalar_udf(&self, udf: SedonaScalarUDF) -> Result<()> {
+        let name = udf.name().to_string();
+        let mut functions = self.functions_mut()?;
+        functions.insert_scalar_udf(udf);
+        let udf = functions.scalar_udf(&name).unwrap().clone();
+        drop(functions);
+
+        self.ctx.register_udf(udf.into());
+        Ok(())
+    }
+
+    pub fn register_sedona_aggregate_udf(&self, udf: SedonaAggregateUDF) -> Result<()> {
+        let name = udf.name().to_string();
+        let mut functions = self.functions_mut()?;
+        functions.insert_aggregate_udf(udf);
+        let udf = functions.aggregate_udf(&name).unwrap().clone();
+        drop(functions);
+
+        self.ctx.register_udaf(udf.into());
+        Ok(())
+    }
+
     /// Register all functions in a [FunctionSet] with this context
     pub fn register_function_set(&mut self, function_set: FunctionSet) {
+        let mut functions = self
+            .functions
+            .write()
+            .expect("fresh SedonaContext function registry lock should not be poisoned");
         for udf in function_set.scalar_udfs() {
-            self.functions.insert_scalar_udf(udf.clone());
+            functions.insert_scalar_udf(udf.clone());
             self.ctx.register_udf(udf.clone().into());
         }
 
         for udf in function_set.aggregate_udfs() {
-            self.functions.insert_aggregate_udf(udf.clone());
+            functions.insert_aggregate_udf(udf.clone());
             self.ctx.register_udaf(udf.clone().into());
         }
     }
@@ -385,8 +440,9 @@ impl SedonaContext {
         &mut self,
         kernels: impl Iterator<Item = (&'a str, impl IntoScalarKernelRefs)>,
     ) -> Result<()> {
+        let mut functions = self.functions_mut()?;
         for (name, kernel) in kernels {
-            let udf = self.functions.add_scalar_udf_impl(name, kernel)?;
+            let udf = functions.add_scalar_udf_impl(name, kernel)?;
             self.ctx.register_udf(udf.clone().into());
         }
 
@@ -397,8 +453,9 @@ impl SedonaContext {
         &mut self,
         kernels: impl Iterator<Item = (&'a str, impl IntoSedonaAccumulatorRefs)>,
     ) -> Result<()> {
+        let mut functions = self.functions_mut()?;
         for (name, kernel) in kernels {
-            let udf = self.functions.add_aggregate_udf_kernel(name, kernel)?;
+            let udf = functions.add_aggregate_udf_kernel(name, kernel)?;
             self.ctx.register_udaf(udf.clone().into());
         }
 

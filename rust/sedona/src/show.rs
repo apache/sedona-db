@@ -44,12 +44,10 @@ pub fn show_batches<'a, W: std::io::Write>(
     options: DisplayTableOptions<'a>,
 ) -> Result<()> {
     let format_fn = ctx
-        .functions
-        .scalar_udf("sd_format")
+        .scalar_udf("sd_format")?
         .ok_or(sedona_internal_datafusion_err!(
             "sd_format UDF does not exist"
-        ))?
-        .clone();
+        ))?;
 
     let session_config = ctx.ctx.copied_config();
     let session_config_options = session_config.options();
