@@ -17,7 +17,6 @@
 
 //! RS_Polygonize UDF - Convert a raster band to vector polygons.
 
-use std::convert::TryInto;
 use std::sync::Arc;
 
 use arrow_array::builder::{
@@ -35,6 +34,7 @@ use sedona_gdal::driver::Driver;
 use sedona_gdal::gdal::Gdal;
 use sedona_gdal::gdal_dyn_bindgen::{OGRFieldType, OGRwkbGeometryType};
 use sedona_gdal::raster::polygonize::PolygonizeOptions;
+use sedona_gdal::raster::types::GdalDataType;
 use sedona_raster::traits::RasterRef;
 use sedona_raster_functions::RasterExecutor;
 use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY_ITEM_CRS};
@@ -113,12 +113,12 @@ impl SedonaScalarKernel for RsPolygonize {
                     }
                 };
 
-                let band_num: usize = band_opt.unwrap().max(1).try_into().unwrap_or(1);
-
+                let band_index = band_opt.unwrap();
                 let bands = raster.bands();
-                if band_num == 0 || band_num > bands.len() {
-                    return exec_err!("Band {} is out of range (1-{})", band_num, bands.len());
+                if band_index <= 0 || band_index as usize > bands.len() {
+                    return exec_err!("Band {} is out of range (1-{})", band_index, bands.len());
                 }
+                let band_num = band_index as usize;
 
                 let raster_ds = provider
                     .raster_ref_to_gdal(raster)
@@ -259,8 +259,16 @@ where
         .map_err(|e| exec_datafusion_err!("Failed to add field to layer: {e}"))?;
 
     // Polygonize the raster band into the vector layer, using the "value" field to store pixel values.
-    gdal.polygonize(&raster_band, None, &layer, 0, &PolygonizeOptions::default())
-        .map_err(|e| exec_datafusion_err!("GDAL polygonize failed: {e}"))?;
+    let band_type = raster_band.band_type();
+    let is_float = matches!(band_type, GdalDataType::Float32 | GdalDataType::Float64);
+
+    if is_float {
+        gdal.fpolygonize(&raster_band, None, &layer, 0, &PolygonizeOptions::default())
+            .map_err(|e| exec_datafusion_err!("GDAL fpolygonize failed: {e}"))?;
+    } else {
+        gdal.polygonize(&raster_band, None, &layer, 0, &PolygonizeOptions::default())
+            .map_err(|e| exec_datafusion_err!("GDAL polygonize failed: {e}"))?;
+    }
 
     // Extract the WKB geometry and value for each feature in the layer.
     let mut value_field_idx: Option<i32> = None;
