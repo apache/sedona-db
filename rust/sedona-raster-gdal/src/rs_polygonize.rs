@@ -304,7 +304,9 @@ mod tests {
     use super::*;
 
     use arrow_array::Array;
-    use datafusion_common::cast::{as_list_array, as_string_view_array, as_struct_array};
+    use datafusion_common::cast::{
+        as_float64_array, as_list_array, as_string_view_array, as_struct_array,
+    };
     use datafusion_common::ScalarValue;
     use datafusion_expr::{ScalarUDF, ScalarUDFImpl};
     use sedona_gdal::raster::types::Buffer;
@@ -319,6 +321,13 @@ mod tests {
             .transform([0.0, 1.0, 0.0, 3.0, 0.0, -1.0])
             .band_values(&[1u8, 1, 0, 1, 2, 2, 0, 2, 2])
             .nodata(255u8)
+    }
+
+    fn test_float_raster_spec() -> RasterSpec {
+        RasterSpec::d2(3, 3)
+            .transform([0.0, 1.0, 0.0, 3.0, 0.0, -1.0])
+            .band_values(&[1.5f64, 1.5, 0.0, 1.5, 2.7, 2.7, 0.0, 2.7, 2.7])
+            .nodata(255.0f64)
     }
 
     fn build_polygonize_test_raster() -> arrow_array::StructArray {
@@ -413,7 +422,11 @@ mod tests {
         let udf: ScalarUDF = rs_polygonize_udf().into();
         let tester = ScalarUdfTester::new(udf, vec![RASTER, SedonaType::Arrow(DataType::Int32)]);
 
-        let rasters = vec![Some(test_raster_spec()), None, Some(test_raster_spec())];
+        let rasters = vec![
+            Some(test_raster_spec()),
+            None,
+            Some(test_float_raster_spec()),
+        ];
         let raster_array = Arc::new(raster_array(rasters));
         let band_array = Arc::new(Int32Array::from(vec![Some(1), Some(1), Some(1)]));
 
@@ -424,22 +437,42 @@ mod tests {
 
         assert_eq!(list_array.len(), 3);
 
-        // Row 0, 2: non-null, non-empty list of polygons
-        for k in [0, 2] {
-            assert!(!list_array.is_null(k));
-            let row = list_array.value(k);
-            let row = as_struct_array(&row).unwrap();
-            assert!(!row.is_empty());
-            let geom = as_struct_array(row.column(0)).unwrap();
-            let crs = as_string_view_array(geom.column(1)).unwrap();
-            assert!(!crs.is_empty());
-            for i in 0..crs.len() {
-                assert_eq!(crs.value(i), "OGC:CRS84");
-            }
+        // Row 0: non-null, non-empty list of polygons for integer raster
+        assert!(!list_array.is_null(0));
+        let row0 = list_array.value(0);
+        let row0 = as_struct_array(&row0).unwrap();
+        assert!(!row0.is_empty());
+        let geom0 = as_struct_array(row0.column(0)).unwrap();
+        let crs0 = as_string_view_array(geom0.column(1)).unwrap();
+        for i in 0..crs0.len() {
+            assert_eq!(crs0.value(i), "OGC:CRS84");
         }
+        let values0 = as_float64_array(row0.column(1)).unwrap();
+        let mut sorted_vals0 = (0..values0.len())
+            .map(|i| values0.value(i))
+            .collect::<Vec<_>>();
+        sorted_vals0.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert_eq!(sorted_vals0, vec![0.0, 0.0, 1.0, 2.0]);
 
         // Row 1: null list (None)
         assert!(list_array.is_null(1));
+
+        // Row 2: non-null, non-empty list of polygons for float raster (preserving floating point precision)
+        assert!(!list_array.is_null(2));
+        let row2 = list_array.value(2);
+        let row2 = as_struct_array(&row2).unwrap();
+        assert!(!row2.is_empty());
+        let geom2 = as_struct_array(row2.column(0)).unwrap();
+        let crs2 = as_string_view_array(geom2.column(1)).unwrap();
+        for i in 0..crs2.len() {
+            assert_eq!(crs2.value(i), "OGC:CRS84");
+        }
+        let values2 = as_float64_array(row2.column(1)).unwrap();
+        let mut sorted_vals2 = (0..values2.len())
+            .map(|i| values2.value(i))
+            .collect::<Vec<_>>();
+        sorted_vals2.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert_eq!(sorted_vals2, vec![0.0, 0.0, 1.5, 2.7f32 as f64]);
     }
 
     #[test]
