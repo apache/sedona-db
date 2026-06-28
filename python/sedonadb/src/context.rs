@@ -174,7 +174,7 @@ impl InternalContext {
         Ok(InternalDataFrame::new(df, self.runtime.clone()))
     }
 
-    pub fn drop_view(&self, _py: Python<'_>, table_ref: &str) -> Result<(), PySedonaError> {
+    pub fn drop_view(&self, table_ref: &str) -> Result<(), PySedonaError> {
         self.inner.ctx.deregister_table(table_ref)?;
         Ok(())
     }
@@ -243,11 +243,11 @@ impl InternalContext {
         }
     }
 
-    pub fn list_scalar_udfs(&self, _py: Python<'_>) -> Result<Vec<String>, PySedonaError> {
+    pub fn list_scalar_udfs(&self) -> Result<Vec<String>, PySedonaError> {
         Ok(self.inner.scalar_udf_names()?)
     }
 
-    pub fn list_aggregate_udfs(&self, _py: Python<'_>) -> Result<Vec<String>, PySedonaError> {
+    pub fn list_aggregate_udfs(&self) -> Result<Vec<String>, PySedonaError> {
         Ok(self
             .inner
             .ctx

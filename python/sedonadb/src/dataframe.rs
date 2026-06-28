@@ -349,14 +349,13 @@ impl InternalDataFrame {
 
     fn to_view(
         &self,
-        py: Python<'_>,
         ctx: &InternalContext,
         table_ref: &str,
         overwrite: bool,
     ) -> Result<(), PySedonaError> {
         let provider = self.inner.clone().into_view();
         if overwrite && ctx.inner.ctx.table_exist(table_ref)? {
-            ctx.drop_view(py, table_ref)?;
+            ctx.drop_view(table_ref)?;
         }
 
         ctx.inner.ctx.register_table(table_ref, provider)?;
