@@ -20,8 +20,10 @@
 use std::convert::TryInto;
 use std::sync::Arc;
 
-use arrow_array::builder::{BinaryBuilder, Float64Builder, ListBuilder, StructBuilder};
-use arrow_array::{ArrayRef, Int32Array};
+use arrow_array::builder::{
+    BinaryBuilder, Float64Builder, NullBufferBuilder, OffsetBufferBuilder, StringViewBuilder,
+};
+use arrow_array::{ArrayRef, Int32Array, ListArray, StructArray};
 use arrow_schema::{DataType, Field, Fields};
 use datafusion_common::cast::as_int32_array;
 use datafusion_common::config::ConfigOptions;
@@ -35,7 +37,7 @@ use sedona_gdal::gdal_dyn_bindgen::{OGRFieldType, OGRwkbGeometryType};
 use sedona_gdal::raster::polygonize::PolygonizeOptions;
 use sedona_raster::traits::RasterRef;
 use sedona_raster_functions::RasterExecutor;
-use sedona_schema::datatypes::SedonaType;
+use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY_ITEM_CRS};
 use sedona_schema::matchers::ArgMatcher;
 
 use crate::gdal_common::with_gdal;
@@ -84,10 +86,11 @@ impl SedonaScalarKernel for RsPolygonize {
         let band_array = band_argument_array(&args[1], num_iterations)?;
         let mut band_iter = band_array.iter();
 
-        let mut list_builder = ListBuilder::new(StructBuilder::from_fields(
-            polygon_value_struct_fields(),
-            num_iterations,
-        ));
+        let mut list_offsets = OffsetBufferBuilder::<i32>::new(num_iterations);
+        let mut geom_item_builder = BinaryBuilder::new();
+        let mut geom_crs_builder = StringViewBuilder::new();
+        let mut value_builder = Float64Builder::new();
+        let mut valid_list_items = NullBufferBuilder::new(num_iterations);
 
         with_gdal(|gdal| {
             configure_thread_local_options(gdal, config_options)?;
@@ -104,7 +107,8 @@ impl SedonaScalarKernel for RsPolygonize {
                 let raster = match (raster_opt, band_opt) {
                     (Some(raster), Some(_)) => raster,
                     _ => {
-                        list_builder.append_null();
+                        valid_list_items.append_null();
+                        list_offsets.push_length(0);
                         return Ok(());
                     }
                 };
@@ -120,26 +124,30 @@ impl SedonaScalarKernel for RsPolygonize {
                     .raster_ref_to_gdal(raster)
                     .map_err(|e| exec_datafusion_err!("Failed to create GDAL dataset: {e}"))?;
 
-                let polygon_values = polygonize_raster(gdal, &mem_driver, raster_ds, band_num)?;
-                let struct_builder = list_builder.values();
-                for (wkb, value) in polygon_values {
-                    let geom_builder = struct_builder
-                        .field_builder::<BinaryBuilder>(0)
-                        .expect("Expected BinaryBuilder for geom field");
-                    geom_builder.append_value(&wkb);
-
-                    let value_builder = struct_builder
-                        .field_builder::<Float64Builder>(1)
-                        .expect("Expected Float64Builder for value field");
+                let crs_str = raster.crs();
+                let mut num_polygons = 0;
+                polygonize_raster(gdal, &mem_driver, raster_ds, band_num, |wkb, value| {
+                    geom_item_builder.append_value(wkb);
+                    geom_crs_builder.append_option(crs_str);
                     value_builder.append_value(value);
+                    num_polygons += 1;
+                    Ok(())
+                })?;
 
-                    struct_builder.append(true);
-                }
-                list_builder.append(true);
+                valid_list_items.append_non_null();
+                list_offsets.push_length(num_polygons);
                 Ok(())
             })?;
 
-            let result: ArrayRef = Arc::new(list_builder.finish());
+            let list_array = assemble_polygon_values_list(
+                geom_item_builder,
+                geom_crs_builder,
+                value_builder,
+                list_offsets,
+                valid_list_items,
+            );
+
+            let result: ArrayRef = Arc::new(list_array);
             executor.finish(result)
         })
     }
@@ -163,18 +171,65 @@ fn polygon_value_list_type() -> DataType {
 
 fn polygon_value_struct_fields() -> Fields {
     Fields::from(vec![
-        Field::new("geom", DataType::Binary, false),
+        WKB_GEOMETRY_ITEM_CRS
+            .to_storage_field("geom", false)
+            .unwrap(),
         Field::new("value", DataType::Float64, false),
     ])
 }
 
-/// Perform GDAL polygonize on the given raster dataset and band, returning a list of (WKB, value) tuples.
-fn polygonize_raster(
+fn assemble_polygon_values_list(
+    mut geom_item_builder: BinaryBuilder,
+    mut geom_crs_builder: StringViewBuilder,
+    mut value_builder: Float64Builder,
+    list_offsets: OffsetBufferBuilder<i32>,
+    mut valid_list_items: NullBufferBuilder,
+) -> ListArray {
+    let item_array = Arc::new(geom_item_builder.finish()) as ArrayRef;
+    let crs_array = Arc::new(geom_crs_builder.finish()) as ArrayRef;
+
+    let geom_field = WKB_GEOMETRY_ITEM_CRS
+        .to_storage_field("geom", false)
+        .unwrap();
+    let geom_fields = match geom_field.data_type() {
+        DataType::Struct(fields) => fields.clone(),
+        _ => unreachable!(),
+    };
+
+    let geom_struct = StructArray::new(geom_fields, vec![item_array, crs_array], None);
+
+    let value_array = Arc::new(value_builder.finish()) as ArrayRef;
+    let element_struct = StructArray::new(
+        polygon_value_struct_fields(),
+        vec![Arc::new(geom_struct) as ArrayRef, value_array],
+        None,
+    );
+
+    let list_field = Arc::new(Field::new(
+        "item",
+        DataType::Struct(polygon_value_struct_fields()),
+        true,
+    ));
+
+    ListArray::new(
+        list_field,
+        list_offsets.finish(),
+        Arc::new(element_struct),
+        valid_list_items.finish(),
+    )
+}
+
+/// Perform GDAL polygonize on the given raster dataset and band, executing a callback closure for each polygonized output.
+fn polygonize_raster<F>(
     gdal: &Gdal,
     mem_driver: &Driver,
     raster_ds: RasterDataset<'_>,
     band_num: usize,
-) -> Result<Vec<(Vec<u8>, f64)>> {
+    mut callback: F,
+) -> Result<()>
+where
+    F: FnMut(&[u8], f64) -> Result<()>,
+{
     let gdal_dataset = raster_ds.as_dataset();
 
     let raster_band = gdal_dataset
@@ -208,7 +263,6 @@ fn polygonize_raster(
         .map_err(|e| exec_datafusion_err!("GDAL polygonize failed: {e}"))?;
 
     // Extract the WKB geometry and value for each feature in the layer.
-    let mut polygon_values = Vec::new();
     let mut value_field_idx: Option<i32> = None;
     for feature in layer.features() {
         let geom = feature
@@ -229,10 +283,12 @@ fn polygonize_raster(
             }
         };
 
-        polygon_values.push((wkb, feature.field_as_double(idx)));
+        let value = feature.field_as_double(idx);
+
+        callback(&wkb, value)?;
     }
 
-    Ok(polygon_values)
+    Ok(())
 }
 
 #[cfg(test)]
@@ -240,13 +296,13 @@ mod tests {
     use super::*;
 
     use arrow_array::Array;
-    use datafusion_common::cast::{as_list_array, as_struct_array};
+    use datafusion_common::cast::{as_list_array, as_string_view_array, as_struct_array};
     use datafusion_common::ScalarValue;
     use datafusion_expr::{ScalarUDF, ScalarUDFImpl};
     use sedona_gdal::raster::types::Buffer;
     use sedona_raster::array::RasterStructArray;
     use sedona_schema::datatypes::RASTER;
-    use sedona_testing::raster_spec::RasterSpec;
+    use sedona_testing::raster_spec::{raster_array, RasterSpec};
     use sedona_testing::testers::ScalarUdfTester;
     use tempfile::tempdir;
 
@@ -286,22 +342,26 @@ mod tests {
 
     #[test]
     fn test_polygonize_raster() {
-        let result = with_gdal(|gdal| {
+        let mut results = Vec::new();
+        with_gdal(|gdal| {
             let provider = thread_local_provider(gdal).unwrap();
             let mem_driver = gdal.get_driver_by_name("Memory").unwrap();
             let raster_array = build_polygonize_test_raster();
             let raster_struct = RasterStructArray::try_new(&raster_array).unwrap();
             let raster = raster_struct.get(0).unwrap();
             let raster_ds = provider.raster_ref_to_gdal(&raster).unwrap();
-            polygonize_raster(gdal, &mem_driver, raster_ds, 1)
+            polygonize_raster(gdal, &mem_driver, raster_ds, 1, |wkb, value| {
+                results.push((wkb.to_vec(), value));
+                Ok(())
+            })
         })
         .unwrap();
 
         assert!(
-            !result.is_empty(),
+            !results.is_empty(),
             "Polygonize should return at least one polygon"
         );
-        for (wkb, value) in &result {
+        for (wkb, value) in &results {
             assert!(wkb.len() >= 5, "WKB should be at least 5 bytes");
             assert!(value.is_finite(), "Value should be a finite number");
         }
@@ -327,11 +387,16 @@ mod tests {
             .invoke_scalar_scalar(test_raster_spec(), ScalarValue::Int32(Some(1)))
             .unwrap();
 
-        match result {
-            ScalarValue::List(list) => {
-                assert!(!list.is_empty());
-            }
-            other => panic!("Expected scalar list result, got {other:?}"),
+        let array = result.to_array_of_size(1).unwrap();
+        let list_array = as_list_array(&array).unwrap();
+        let binding = list_array.value(0);
+        let struct_array = as_struct_array(&binding).unwrap();
+        let geom_array = as_struct_array(struct_array.column(0)).unwrap();
+        let crs_array = as_string_view_array(geom_array.column(1)).unwrap();
+
+        assert!(!crs_array.is_empty());
+        for i in 0..crs_array.len() {
+            assert_eq!(crs_array.value(i), "OGC:CRS84");
         }
     }
 
@@ -340,22 +405,33 @@ mod tests {
         let udf: ScalarUDF = rs_polygonize_udf().into();
         let tester = ScalarUdfTester::new(udf, vec![RASTER, SedonaType::Arrow(DataType::Int32)]);
 
-        let band_array = Arc::new(Int32Array::from(vec![Some(1), None]));
-        let raster_array = ScalarValue::Struct(Arc::new(build_polygonize_test_raster()))
-            .to_array_of_size(2)
-            .unwrap();
+        let rasters = vec![Some(test_raster_spec()), None, Some(test_raster_spec())];
+        let raster_array = Arc::new(raster_array(rasters));
+        let band_array = Arc::new(Int32Array::from(vec![Some(1), Some(1), Some(1)]));
+
         let result = tester
             .invoke_arrays(vec![raster_array, band_array])
             .unwrap();
         let list_array = as_list_array(&result).unwrap();
 
-        assert_eq!(list_array.len(), 2);
-        assert!(!list_array.is_null(0));
-        assert!(list_array.is_null(1));
+        assert_eq!(list_array.len(), 3);
 
-        let row0 = list_array.value(0);
-        let row0 = as_struct_array(&row0).unwrap();
-        assert!(!row0.is_empty());
+        // Row 0, 2: non-null, non-empty list of polygons
+        for k in [0, 2] {
+            assert!(!list_array.is_null(k));
+            let row = list_array.value(k);
+            let row = as_struct_array(&row).unwrap();
+            assert!(!row.is_empty());
+            let geom = as_struct_array(row.column(0)).unwrap();
+            let crs = as_string_view_array(geom.column(1)).unwrap();
+            assert!(!crs.is_empty());
+            for i in 0..crs.len() {
+                assert_eq!(crs.value(i), "OGC:CRS84");
+            }
+        }
+
+        // Row 1: null list (None)
+        assert!(list_array.is_null(1));
     }
 
     #[test]
