@@ -67,3 +67,8 @@ path = "benches/rs_frompath.rs"
 harness = false
 name = "rs_metadata"
 path = "benches/rs_metadata.rs"
+
+[[bench]]
+harness = false
+name = "rs_polygonize"
+path = "benches/rs_polygonize.rs"
