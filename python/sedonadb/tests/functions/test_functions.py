@@ -2525,7 +2525,7 @@ def test_st_reduceprecision(eng, geom, grid_size, expected):
     ("geom", "expected"),
     [
         (None, None),
-        ("POINT EMPTY", "POINT EMPTY"),
+        ("POINT EMPTY", "POINT (nan nan)"),
         ("LINESTRING EMPTY", "LINESTRING EMPTY"),
         ("POLYGON EMPTY", "POLYGON EMPTY"),
         ("MULTIPOINT EMPTY", "MULTIPOINT EMPTY"),
@@ -2542,7 +2542,7 @@ def test_st_reduceprecision(eng, geom, grid_size, expected):
             "POLYGON ((5 5, 5 0, 0 0, 0 5, 5 5), (4 4, 1 4, 1 1, 4 1, 4 4))",
             "POLYGON ((0 0, 0 5, 5 5, 5 0, 0 0), (1 1, 4 1, 4 4, 1 4, 1 1))",
         ),
-        ("MULTIPOINT ((2 2), (1 1), (0 0))", "MULTIPOINT ((2 2), (1 1), (0 0))"),
+        ("MULTIPOINT (2 2, 1 1, 0 0)", "MULTIPOINT (2 2, 1 1, 0 0)"),
         (
             "MULTILINESTRING ((2 2, 1 1), (4 4, 3 3))",
             "MULTILINESTRING ((3 3, 4 4), (1 1, 2 2))",
@@ -2586,21 +2586,7 @@ def test_st_normalize(eng, geom, expected):
         elif geom == "POLYGON ZM ((1 1 5 7, 1 0 5 7, 0 0 5 7, 0 1 5 7, 1 1 5 7))":
             expected = "POLYGON Z ((0 0 5, 0 1 5, 1 1 5, 1 0 5, 0 0 5))"
 
-    if isinstance(eng, PostGIS) and expected is not None:
-        # Normalize expected WKT to PostGIS's compact ST_AsText formatting.
-        expected = expected.replace(", ", ",")
-        expected = expected.replace(" (", "(")
-        expected = expected.replace(r"ZM(", r"ZM (")
-        expected = expected.replace(r"M(", r"M (")
-        expected = expected.replace(r"Z(", r"Z (")
-
-    if isinstance(eng, SedonaDB) and expected is not None:
-        expected = expected.replace(", ", ",")
-        expected = expected.replace(" (", "(")
-
-    eng.assert_query_result(
-        f"SELECT ST_AsText(ST_Normalize({geom_or_null(geom)}))", expected
-    )
+    eng.assert_query_result(f"SELECT ST_Normalize({geom_or_null(geom)})", expected)
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
