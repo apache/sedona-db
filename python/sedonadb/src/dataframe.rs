@@ -15,7 +15,6 @@ use std::collections::{HashMap, HashSet};
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::ffi::CString;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -50,7 +49,7 @@ use crate::runtime::wait_for_future;
 use crate::schema::PySedonaSchema;
 
 #[pyclass]
-#[derive(Clone)]
+
 pub struct InternalDataFrame {
     pub inner: DataFrame,
     pub runtime: Arc<Runtime>,
@@ -671,7 +670,6 @@ impl InternalDataFrame {
         &self,
         py: Python<'py>,
     ) -> Result<Bound<'py, PyCapsule>, PySedonaError> {
-        let name = cr"datafusion_table_provider".into();
         let provider = self.inner.clone().into_view();
         let ctx = Arc::new(SessionContext::new()) as Arc<dyn TaskContextProvider>;
         let ffi_provider = FFI_TableProvider::new(
@@ -681,7 +679,11 @@ impl InternalDataFrame {
             &ctx,
             None,
         );
-        Ok(PyCapsule::new(py, ffi_provider, Some(name))?)
+        Ok(PyCapsule::new_with_value(
+            py,
+            ffi_provider,
+            c"datafusion_table_provider",
+        )?)
     }
 }
 
@@ -708,8 +710,11 @@ impl Batches {
         let reader: Box<dyn RecordBatchReader + Send> = Box::new(reader);
 
         let ffi_stream = FFI_ArrowArrayStream::new(reader);
-        let stream_capsule_name = CString::new("arrow_array_stream").unwrap();
-        Ok(PyCapsule::new(py, ffi_stream, Some(stream_capsule_name))?)
+        Ok(PyCapsule::new_with_value(
+            py,
+            ffi_stream,
+            c"arrow_array_stream",
+        )?)
     }
 }
 
@@ -736,8 +741,11 @@ impl StreamingResult {
         if let Some(reader) = reader_opt.take() {
             check_py_requested_schema(requested_schema, &reader.schema())?;
             let ffi_stream = FFI_ArrowArrayStream::new(reader);
-            let stream_capsule_name = CString::new("arrow_array_stream").unwrap();
-            Ok(PyCapsule::new(py, ffi_stream, Some(stream_capsule_name))?)
+            Ok(PyCapsule::new_with_value(
+                py,
+                ffi_stream,
+                c"arrow_array_stream",
+            )?)
         } else {
             Err(PySedonaError::SedonaPython(
                 "SedonaDB DataFrame streaming result may only be consumed once".to_string(),

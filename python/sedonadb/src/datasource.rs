@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::{collections::HashMap, ffi::CString, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use arrow_array::{ffi_stream::FFI_ArrowArrayStream, RecordBatch, RecordBatchReader};
 use arrow_schema::{ArrowError, Schema, SchemaRef};
@@ -43,7 +43,7 @@ use crate::{
 ///
 /// The main purpose of this object is to implement [ExternalFormatSpec] such
 /// that it can be used by SedonaDB/DataFusion internals.
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Debug)]
 pub struct PyExternalFormat {
     extension: String,
@@ -218,7 +218,7 @@ impl ExternalFormatSpec for PyExternalFormat {
 /// Currently this only exposes `to_url()`; however, we can and should expose
 /// the ability to read portions of files using the underlying object_store.
 #[pyclass]
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct PyDataSourceObject {
     pub inner: Object,
 }
@@ -233,7 +233,7 @@ impl PyDataSourceObject {
 /// Wrapper around the [OpenReaderArgs] such that the [PyExternalFormat] can pass
 /// required information into Python method calls
 #[pyclass]
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct PyOpenReaderArgs {
     pub inner: OpenReaderArgs,
 }
@@ -385,8 +385,11 @@ impl PyProjectedRecordBatchReader {
         };
 
         let ffi_stream = FFI_ArrowArrayStream::new(Box::new(reader));
-        let stream_capsule_name = CString::new("arrow_array_stream").unwrap();
-        Ok(PyCapsule::new(py, ffi_stream, Some(stream_capsule_name))?)
+        Ok(PyCapsule::new_with_value(
+            py,
+            ffi_stream,
+            c"arrow_array_stream",
+        )?)
     }
 }
 
