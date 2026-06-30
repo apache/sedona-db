@@ -67,8 +67,8 @@ keywords = ["geospatial", "gis", "spatial", "datafusion", "arrow"]
 categories = ["science::geo", "database"]
 
 [workspace.dependencies]
-adbc_core = ">=0.22.0"
-adbc_ffi = ">=0.22.0"
+adbc_core = ">=0.23.0"
+adbc_ffi = ">=0.23.0"
 approx = "0.5"
 arrow = { version = "57.1.0", features = ["prettyprint", "ffi", "chrono-tz"] }
 arrow-array = { version = "57.1.0" }
