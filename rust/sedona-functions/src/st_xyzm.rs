@@ -16,7 +16,7 @@
 // under the License.
 use std::{sync::Arc, vec};
 
-use crate::executor::WkbExecutor;
+use crate::executor::{WkbBytesExecutor, WkbExecutor};
 use arrow_array::builder::Float64Builder;
 use arrow_schema::DataType;
 use datafusion_common::error::{DataFusionError, Result};
@@ -30,6 +30,7 @@ use sedona_expr::{
     item_crs::ItemCrsKernel,
     scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
 };
+use sedona_geometry::wkb_header::read_point_xy;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use wkb::reader::Wkb;
 
@@ -104,6 +105,35 @@ impl SedonaScalarKernel for STXyzm {
             "m" => 3,
             _ => sedona_internal_err!("unexpected dimension")?,
         };
+
+        // ST_X / ST_Y fast path: the overwhelmingly common Point case reads its
+        // (x, y) straight from the fixed WKB offset via `read_point_xy`, skipping
+        // a full geometry parse. Non-Point inputs (MultiPoint, the various
+        // EMPTYs, type errors) fall back to the general parse, which preserves
+        // the exact semantics. ST_Z / ST_M need dimensionality that
+        // `read_point_xy` doesn't carry, so they always take the general path.
+        if dim_index <= 1 {
+            let executor = WkbBytesExecutor::new(arg_types, args);
+            let mut builder = Float64Builder::with_capacity(executor.num_iterations());
+            executor.execute_wkb_void(|maybe_bytes| {
+                match maybe_bytes {
+                    None => builder.append_null(),
+                    Some(bytes) => match read_point_xy(bytes) {
+                        // A Point: pick the requested ordinate (None = POINT EMPTY).
+                        Ok(xy) => builder
+                            .append_option(xy.map(|(x, y)| if dim_index == 0 { x } else { y })),
+                        // Not a Point — defer to the general parser.
+                        Err(_) => {
+                            let item = wkb::reader::read_wkb(bytes)
+                                .map_err(|e| DataFusionError::External(Box::new(e)))?;
+                            builder.append_option(invoke_scalar(&item, dim_index)?);
+                        }
+                    },
+                }
+                Ok(())
+            })?;
+            return executor.finish(Arc::new(builder.finish()));
+        }
 
         let executor = WkbExecutor::new(arg_types, args);
         let mut builder = Float64Builder::with_capacity(executor.num_iterations());

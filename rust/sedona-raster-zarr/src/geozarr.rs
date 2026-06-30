@@ -39,16 +39,27 @@ pub struct GroupGeoMetadata {
     /// is resolved in the loader (see `crs_from_cf_attributes`).
     pub crs: Option<String>,
     /// Affine transform, stored in GDAL GeoTransform order:
-    /// `[origin_x, scale_x, skew_x, origin_y, skew_y, scale_y]`. The source
-    /// `spatial:transform` attribute is in affine order `[a, b, c, d, e, f]`
-    /// and is reordered on parse. `None` when no `spatial:transform`
-    /// attribute is present.
+    /// `[origin_x, scale_x, skew_x, origin_y, skew_y, scale_y]`. Parsed from the
+    /// `spatial:transform` attribute (affine order `[a, b, c, d, e, f]`,
+    /// reordered on parse). `None` when the group declares no explicit
+    /// transform; the loader then derives one from `bbox` (below) or the
+    /// spatial coordinate arrays, where the array shape is in hand.
     pub transform: Option<[f64; 6]>,
     /// Names of the spatial dimensions in the order the group declares them
     /// (typically `["y", "x"]`), from `spatial:dimensions` (or the legacy
     /// `spatial:dims`). `None` falls back to a 2-D default at construction
     /// time in the loader.
     pub spatial_dims: Option<Vec<String>>,
+    /// Spatial bounding box `[xmin, ymin, xmax, ymax]` from `spatial:bbox`, used
+    /// to derive a transform when no explicit `spatial:transform` is present.
+    /// The grid shape is read from the array itself (not a separate
+    /// `spatial:shape` attribute, which could drift from the real shape), so the
+    /// loader supplies it to `AffineMatrix::from_bbox_and_spatial_shape`.
+    pub bbox: Option<[f64; 4]>,
+    /// `spatial:registration` — `"pixel"` or `"node"`; `None` defaults to
+    /// `"pixel"`. Governs how `bbox` maps to the grid (outer edge vs. cell
+    /// centers).
+    pub registration: Option<String>,
 }
 
 impl GroupGeoMetadata {
@@ -64,10 +75,14 @@ impl GroupGeoMetadata {
         let crs = parse_crs(attrs)?;
         let transform = parse_transform(attrs)?;
         let spatial_dims = parse_spatial_dims(attrs)?;
+        let bbox = parse_bbox(attrs);
+        let registration = parse_registration(attrs)?;
         Ok(Self {
             crs,
             transform,
             spatial_dims,
+            bbox,
+            registration,
         })
     }
 }
@@ -132,15 +147,71 @@ pub fn crs_from_cf_attributes(
     Ok(None)
 }
 
+/// Parse a CF `GeoTransform` attribute (as written by GDAL / rioxarray on a
+/// `spatial_ref` / grid-mapping variable) into a GDAL-order transform.
+///
+/// Unlike the GeoZarr `spatial:transform` (a JSON array in affine order, see
+/// [`parse_transform`]), the CF `GeoTransform` is a space-separated **string**
+/// already in GDAL GeoTransform order
+/// `[origin_x, scale_x, skew_x, origin_y, skew_y, scale_y]`, so it is used
+/// verbatim with no reordering. (Some writers store it as a JSON array of
+/// numbers instead; that form is accepted too.)
+///
+/// Returns `None` — so the caller falls back to other georeferencing sources —
+/// when the attribute is absent, and logs and returns `None` when it is present
+/// but malformed (not six numbers).
+pub fn geotransform_from_cf_attributes(
+    attrs: &serde_json::Map<String, serde_json::Value>,
+) -> Option<[f64; 6]> {
+    let raw = attrs.get("GeoTransform")?;
+
+    let values: Vec<f64> = if let Some(s) = raw.as_str() {
+        let mut out = Vec::with_capacity(6);
+        for token in s.split_whitespace() {
+            match token.parse::<f64>() {
+                Ok(v) => out.push(v),
+                Err(_) => {
+                    log::warn!("Zarr CF GeoTransform has a non-numeric value {token:?}; ignoring");
+                    return None;
+                }
+            }
+        }
+        out
+    } else if let Some(arr) = raw.as_array() {
+        match arr.iter().map(|v| v.as_f64()).collect::<Option<Vec<f64>>>() {
+            Some(out) => out,
+            None => {
+                log::warn!("Zarr CF GeoTransform array has a non-numeric element; ignoring");
+                return None;
+            }
+        }
+    } else {
+        log::warn!("Zarr CF GeoTransform attribute is neither a string nor an array; ignoring");
+        return None;
+    };
+
+    match <[f64; 6]>::try_from(values) {
+        // Already in GDAL GeoTransform order — no reordering.
+        Ok(transform) => Some(transform),
+        Err(values) => {
+            log::warn!(
+                "Zarr CF GeoTransform must have 6 values (GDAL order); got {}; ignoring",
+                values.len()
+            );
+            None
+        }
+    }
+}
+
 fn parse_transform(
     attrs: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<Option<[f64; 6]>, ArrowError> {
     let Some(t) = attrs.get("spatial:transform") else {
+        // No explicit transform; the loader derives one from `bbox` or the
+        // coordinate arrays, where the array's own shape is available.
         return Ok(None);
     };
-    let arr = t.as_array().ok_or_else(|| {
-        ArrowError::InvalidArgumentError("spatial:transform attribute must be a JSON array".into())
-    })?;
+    let arr = parse_f64_array(t, "spatial:transform")?;
     if arr.len() != 6 {
         return Err(ArrowError::InvalidArgumentError(format!(
             "spatial:transform must have 6 elements (affine order [a, b, c, d, e, f]); got {}",
@@ -154,14 +225,65 @@ fn parse_transform(
     // `[origin_x, scale_x, skew_x, origin_y, skew_y, scale_y]`, so reorder:
     //   origin_x = c, scale_x = a, skew_x = b,
     //   origin_y = f, skew_y = d, scale_y = e.
-    let mut aff = [0f64; 6];
-    for (i, v) in arr.iter().enumerate() {
-        aff[i] = v.as_f64().ok_or_else(|| {
-            ArrowError::InvalidArgumentError(format!("spatial:transform[{i}] must be a number"))
-        })?;
-    }
-    let [a, b, c, d, e, f] = aff;
+    let [a, b, c, d, e, f] = [arr[0], arr[1], arr[2], arr[3], arr[4], arr[5]];
     Ok(Some([c, a, b, f, d, e]))
+}
+
+/// Parse the optional `spatial:bbox` attribute into `[xmin, ymin, xmax, ymax]`.
+/// `None` when absent. The grid shape is *not* read from `spatial:shape`; the
+/// loader supplies the array's own shape to `AffineMatrix::from_bbox_and_spatial_shape`.
+///
+/// A malformed `spatial:bbox` (not a 4-element numeric array) is treated as
+/// absent — it warns and returns `None` rather than failing the load, so the
+/// loader can fall back to coordinate arrays, mirroring how a bad coordinate
+/// array is handled.
+fn parse_bbox(attrs: &serde_json::Map<String, serde_json::Value>) -> Option<[f64; 4]> {
+    let v = attrs.get("spatial:bbox")?;
+    let bbox: Option<Vec<f64>> = v
+        .as_array()
+        .and_then(|a| a.iter().map(|e| e.as_f64()).collect());
+    match bbox.as_deref() {
+        Some([xmin, ymin, xmax, ymax]) => Some([*xmin, *ymin, *xmax, *ymax]),
+        _ => {
+            log::warn!(
+                "Zarr group has a malformed `spatial:bbox` (expected a 4-element numeric array \
+                 [xmin, ymin, xmax, ymax]); ignoring it"
+            );
+            None
+        }
+    }
+}
+
+/// Parse the optional `spatial:registration` attribute (a string). `Ok(None)`
+/// when absent; `AffineMatrix::from_bbox_and_spatial_shape` then defaults to `"pixel"`.
+fn parse_registration(
+    attrs: &serde_json::Map<String, serde_json::Value>,
+) -> Result<Option<String>, ArrowError> {
+    match attrs.get("spatial:registration") {
+        Some(v) => Ok(Some(
+            v.as_str()
+                .ok_or_else(|| {
+                    ArrowError::InvalidArgumentError("spatial:registration must be a string".into())
+                })?
+                .to_string(),
+        )),
+        None => Ok(None),
+    }
+}
+
+/// Parse a JSON value as an array of `f64`. Caller validates the length.
+fn parse_f64_array(v: &serde_json::Value, attr_name: &str) -> Result<Vec<f64>, ArrowError> {
+    let arr = v.as_array().ok_or_else(|| {
+        ArrowError::InvalidArgumentError(format!("{attr_name} attribute must be a JSON array"))
+    })?;
+    arr.iter()
+        .enumerate()
+        .map(|(i, e)| {
+            e.as_f64().ok_or_else(|| {
+                ArrowError::InvalidArgumentError(format!("{attr_name}[{i}] must be a number"))
+            })
+        })
+        .collect()
 }
 
 fn parse_spatial_dims(
@@ -223,6 +345,8 @@ mod tests {
         assert!(g.crs.is_none());
         assert!(g.transform.is_none());
         assert!(g.spatial_dims.is_none());
+        assert!(g.bbox.is_none());
+        assert!(g.registration.is_none());
     }
 
     #[test]
@@ -298,6 +422,49 @@ mod tests {
     }
 
     #[test]
+    fn cf_geotransform_string_parses_in_gdal_order() {
+        // The CF GeoTransform is already GDAL order [origin_x, scale_x, skew_x,
+        // origin_y, skew_y, scale_y] — used verbatim, no reordering. Values from
+        // a real rioxarray spatial_ref (EPSG:3857).
+        let attrs = map(json!({
+            "GeoTransform": "-8630308.0188 1.2874707 0 4772553.2794 0 -1.2874707"
+        }));
+        assert_eq!(
+            geotransform_from_cf_attributes(&attrs),
+            Some([-8630308.0188, 1.2874707, 0.0, 4772553.2794, 0.0, -1.2874707])
+        );
+    }
+
+    #[test]
+    fn cf_geotransform_array_form_parses() {
+        // Some writers store it as a JSON array of numbers rather than a string.
+        let attrs = map(json!({ "GeoTransform": [100.0, 2.0, 0.0, 200.0, 0.0, -3.0] }));
+        assert_eq!(
+            geotransform_from_cf_attributes(&attrs),
+            Some([100.0, 2.0, 0.0, 200.0, 0.0, -3.0])
+        );
+    }
+
+    #[test]
+    fn cf_geotransform_absent_is_none() {
+        assert_eq!(geotransform_from_cf_attributes(&map(json!({}))), None);
+    }
+
+    #[test]
+    fn cf_geotransform_malformed_is_none() {
+        // Wrong value count and a non-numeric token are both ignored (non-fatal):
+        // the loader falls back to other georeferencing sources.
+        assert_eq!(
+            geotransform_from_cf_attributes(&map(json!({ "GeoTransform": "1 2 3" }))),
+            None
+        );
+        assert_eq!(
+            geotransform_from_cf_attributes(&map(json!({ "GeoTransform": "a b c d e f" }))),
+            None
+        );
+    }
+
+    #[test]
     fn geozarr_proj_code_takes_precedence_over_cf() {
         // A group declaring both conventions resolves via GeoZarr `proj:*`.
         let g = GroupGeoMetadata::from_attributes(&map(json!({
@@ -339,6 +506,50 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert!(err.contains("6 elements"), "{err}");
+    }
+
+    #[test]
+    fn explicit_transform_surfaced_alongside_bbox() {
+        // from_attributes surfaces both the explicit transform and the bbox; the
+        // loader prefers the explicit transform (see the fallback chain there).
+        let g = GroupGeoMetadata::from_attributes(&map(json!({
+            "spatial:transform": [1.0, 0.0, 100.0, 0.0, -1.0, 200.0],
+            "spatial:bbox": [600000.0, 5690000.0, 610000.0, 5700000.0]
+        })))
+        .unwrap();
+        assert_eq!(g.transform, Some([100.0, 1.0, 0.0, 200.0, 0.0, -1.0]));
+        assert_eq!(g.bbox, Some([600000.0, 5690000.0, 610000.0, 5700000.0]));
+    }
+
+    #[test]
+    fn bbox_parsed_without_shape() {
+        // No `spatial:shape` is needed: the bbox and registration are surfaced
+        // and the loader supplies the array's shape. transform stays None (the
+        // loader derives it).
+        let g = GroupGeoMetadata::from_attributes(&map(json!({
+            "spatial:bbox": [600000.0, 5690000.0, 610000.0, 5700000.0],
+            "spatial:registration": "node"
+        })))
+        .unwrap();
+        assert!(g.transform.is_none());
+        assert_eq!(g.bbox, Some([600000.0, 5690000.0, 610000.0, 5700000.0]));
+        assert_eq!(g.registration.as_deref(), Some("node"));
+    }
+
+    #[test]
+    fn malformed_bbox_is_ignored() {
+        // A malformed spatial:bbox (wrong length, non-array, or a non-numeric
+        // element) is treated as absent rather than failing the load — the
+        // loader falls back to coordinate arrays. (It also logs a warning.)
+        for bad in [
+            json!([1.0, 2.0, 3.0]),      // wrong length
+            json!("not-an-array"),       // not an array
+            json!([1.0, 2.0, "x", 4.0]), // non-numeric element
+        ] {
+            let g =
+                GroupGeoMetadata::from_attributes(&map(json!({ "spatial:bbox": bad }))).unwrap();
+            assert!(g.bbox.is_none(), "expected bbox ignored for {bad:?}");
+        }
     }
 
     #[test]

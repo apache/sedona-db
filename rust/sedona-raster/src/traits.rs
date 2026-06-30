@@ -18,7 +18,8 @@
 use arrow_schema::ArrowError;
 use sedona_schema::raster::BandDataType;
 
-use crate::view_entries::ViewEntry;
+use crate::builder::{RasterBuilder, StartBandWithViewArgs};
+use crate::view_entries::{ViewEntries, ViewEntry};
 
 /// Recognized spatial dimension-name pairs, in band C-order: the slower-
 /// varying Y-like (row) axis first, the faster-varying X-like (column) axis
@@ -496,6 +497,30 @@ pub trait RasterRef {
     }
 }
 
+/// Field overrides for [`BandRef::copy_into`]. Each field defaults to `None`,
+/// meaning "inherit from the source band". `name` has no source on a `BandRef`
+/// (band names live at the raster level), so it defaults to unnamed.
+#[derive(Default)]
+pub struct BandOverrides<'a> {
+    /// Name for the derived band (the source has none to inherit).
+    pub name: Option<&'a str>,
+    /// Override the dimension names; `None` inherits the source's.
+    pub dim_names: Option<&'a [&'a str]>,
+    /// Override the nodata value; `None` inherits the source's.
+    pub nodata: Option<&'a [u8]>,
+    /// Override the OutDb URI; `None` inherits the source's.
+    pub outdb_uri: Option<&'a str>,
+    /// Override the OutDb format; `None` inherits the source's.
+    pub outdb_format: Option<&'a str>,
+    /// View to apply to the derived band, expressed in the **source's visible
+    /// coordinates**. [`BandRef::copy_into`] composes it onto the source's own
+    /// view for you — you don't manage that composition and don't need to know
+    /// whether the source already carries a view. `None` inherits the source's
+    /// view unchanged. (A non-identity result isn't persistable yet and
+    /// `copy_into` rejects it; see <https://github.com/apache/sedona-db/issues/897>.)
+    pub view: Option<&'a [ViewEntry]>,
+}
+
 /// Trait for accessing a single band/variable within an N-D raster.
 ///
 /// This is the consumer interface. Implementations handle storage details
@@ -667,6 +692,78 @@ pub trait BandRef {
         };
         nodata_bytes_to_f64_lossless(bytes, &self.data_type()).map(Some)
     }
+
+    /// Write a derived band into `builder`, inheriting every field not set in
+    /// `overrides` from `self`, and carrying the source bytes over.
+    ///
+    /// This is the canonical "derive a band from an existing one" path — it
+    /// replaces hand-rebuilding via `start_band_nd` + a manual data append. The
+    /// data transfer is zero-copy when the implementation supports it (see
+    /// [`Self::append_data_into`]).
+    ///
+    /// The derived band's view is the source's own view with any
+    /// `overrides.view` **composed on top for you**: express an override in the
+    /// source's *visible* coordinates and `copy_into` composes it against the
+    /// source's view — callers never manage that composition and don't need to
+    /// know whether the source already carries one. `overrides.view = None`
+    /// inherits the source's view unchanged.
+    ///
+    /// The composition + persistence is delegated to
+    /// [`RasterBuilder::start_band_with_view`]. Today that stores views only as
+    /// the canonical identity null sentinel, so a non-identity effective view
+    /// is rejected rather than copying mislocated bytes; in practice the source
+    /// is identity-viewed and any override must compose back to the identity.
+    /// View persistence is tracked in
+    /// <https://github.com/apache/sedona-db/issues/897>.
+    fn copy_into(
+        &self,
+        builder: &mut RasterBuilder,
+        overrides: BandOverrides<'_>,
+    ) -> Result<(), ArrowError> {
+        let inherited_dims = self.dim_names();
+        let dim_names: Vec<&str> = match overrides.dim_names {
+            Some(d) => d.to_vec(),
+            None => inherited_dims,
+        };
+        let source_shape = self.raw_source_shape().to_vec();
+        // Compose the caller's override (if any) onto the source's own view, so
+        // the override is interpreted in the source's visible space and the
+        // caller doesn't have to. `None` keeps the source view unchanged.
+        let source_view = ViewEntries::new(self.view().to_vec());
+        let effective_view = match overrides.view {
+            Some(v) => source_view.compose(&ViewEntries::new(v.to_vec()))?,
+            None => source_view,
+        };
+        builder.start_band_with_view(StartBandWithViewArgs {
+            name: overrides.name,
+            dim_names: &dim_names,
+            source_shape: &source_shape,
+            view: effective_view.as_slice(),
+            data_type: self.data_type(),
+            nodata: overrides.nodata.or_else(|| self.nodata()),
+            outdb_uri: overrides.outdb_uri.or_else(|| self.outdb_uri()),
+            outdb_format: overrides.outdb_format.or_else(|| self.outdb_format()),
+        })?;
+        self.append_data_into(builder)
+    }
+
+    /// Append `self`'s band data as the current band's single `data` value.
+    ///
+    /// The default copies the visible source bytes via `append_value`. Arrow-
+    /// backed implementations override this to share the source row's backing
+    /// `Buffer` zero-copy (a refcount bump via
+    /// [`RasterBuilder::append_band_data_from`]), keeping the buffer plumbing
+    /// encapsulated rather than exposing a raw `Buffer` accessor. Call after the
+    /// band's schema has been written (e.g. by [`Self::copy_into`]).
+    fn append_data_into(&self, builder: &mut RasterBuilder) -> Result<(), ArrowError> {
+        if self.is_indb() {
+            let ndb = self.nd_buffer()?;
+            builder.band_data_writer().append_value(ndb.buffer);
+        } else {
+            builder.band_data_writer().append_value([]);
+        }
+        Ok(())
+    }
 }
 
 /// Convert raw nodata bytes to f64 given a [`BandDataType`].
@@ -765,6 +862,65 @@ pub fn nodata_bytes_to_f64_lossless(bytes: &[u8], dt: &BandDataType) -> Result<f
     }
 }
 
+/// Pack an `f64` nodata value into the little-endian bytes of a band's data
+/// type — the inverse of [`nodata_bytes_to_f64_lossless`].
+///
+/// Errors when the value can't be represented exactly in `dt`: a non-integral
+/// value for an integer type, a value outside the type's range, or a 64-bit
+/// integer beyond 2^53 (which can't have arrived losslessly through `f64`).
+/// `Float32` is the one lossy case allowed — it rounds to the nearest `f32`, as
+/// any f64 → f32 narrowing does.
+pub fn nodata_f64_to_bytes(value: f64, dt: &BandDataType) -> Result<Vec<u8>, ArrowError> {
+    fn check_integer(value: f64, min: f64, max: f64, dt: &BandDataType) -> Result<(), ArrowError> {
+        if value.fract() != 0.0 || value < min || value > max {
+            return Err(ArrowError::InvalidArgumentError(format!(
+                "nodata value {value} is not a valid {dt:?} value"
+            )));
+        }
+        Ok(())
+    }
+
+    // The largest magnitude an integer can have and still round-trip through f64.
+    const F64_INT_MAX: f64 = (1u64 << 53) as f64;
+
+    Ok(match dt {
+        BandDataType::UInt8 => {
+            check_integer(value, 0.0, u8::MAX as f64, dt)?;
+            (value as u8).to_le_bytes().to_vec()
+        }
+        BandDataType::Int8 => {
+            check_integer(value, i8::MIN as f64, i8::MAX as f64, dt)?;
+            (value as i8).to_le_bytes().to_vec()
+        }
+        BandDataType::UInt16 => {
+            check_integer(value, 0.0, u16::MAX as f64, dt)?;
+            (value as u16).to_le_bytes().to_vec()
+        }
+        BandDataType::Int16 => {
+            check_integer(value, i16::MIN as f64, i16::MAX as f64, dt)?;
+            (value as i16).to_le_bytes().to_vec()
+        }
+        BandDataType::UInt32 => {
+            check_integer(value, 0.0, u32::MAX as f64, dt)?;
+            (value as u32).to_le_bytes().to_vec()
+        }
+        BandDataType::Int32 => {
+            check_integer(value, i32::MIN as f64, i32::MAX as f64, dt)?;
+            (value as i32).to_le_bytes().to_vec()
+        }
+        BandDataType::UInt64 => {
+            check_integer(value, 0.0, F64_INT_MAX, dt)?;
+            (value as u64).to_le_bytes().to_vec()
+        }
+        BandDataType::Int64 => {
+            check_integer(value, -F64_INT_MAX, F64_INT_MAX, dt)?;
+            (value as i64).to_le_bytes().to_vec()
+        }
+        BandDataType::Float32 => (value as f32).to_le_bytes().to_vec(),
+        BandDataType::Float64 => value.to_le_bytes().to_vec(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -773,6 +929,40 @@ mod tests {
     fn test_nodata_bytes_to_f64_uint8() {
         let val = nodata_bytes_to_f64(&[42], &BandDataType::UInt8).unwrap();
         assert_eq!(val, 42.0);
+    }
+
+    #[test]
+    fn test_nodata_f64_to_bytes_round_trips() {
+        for (dt, value) in [
+            (BandDataType::UInt8, 127.0),
+            (BandDataType::Int8, -2.0),
+            (BandDataType::UInt16, 65535.0),
+            (BandDataType::Int16, -1000.0),
+            (BandDataType::UInt32, 4_000_000_000.0),
+            (BandDataType::Int32, -2_000_000.0),
+            (BandDataType::UInt64, 9_007_199_254_740_992.0), // 2^53
+            (BandDataType::Int64, -9_007_199_254_740_992.0), // -2^53
+            (BandDataType::Float32, -9999.5),
+            (BandDataType::Float64, -9999.0),
+        ] {
+            let bytes = nodata_f64_to_bytes(value, &dt).unwrap();
+            assert_eq!(bytes.len(), dt.byte_size(), "{dt:?}");
+            assert_eq!(
+                nodata_bytes_to_f64_lossless(&bytes, &dt).unwrap(),
+                value,
+                "{dt:?} round-trip"
+            );
+        }
+    }
+
+    #[test]
+    fn test_nodata_f64_to_bytes_rejects_out_of_range() {
+        // Non-integral for an integer type, and out of range.
+        nodata_f64_to_bytes(1.5, &BandDataType::UInt8).unwrap_err();
+        nodata_f64_to_bytes(300.0, &BandDataType::UInt8).unwrap_err();
+        nodata_f64_to_bytes(-1.0, &BandDataType::UInt8).unwrap_err();
+        // Beyond 2^53 can't have arrived losslessly through f64.
+        nodata_f64_to_bytes(1e18, &BandDataType::Int64).unwrap_err();
     }
 
     #[test]
@@ -933,6 +1123,40 @@ mod tests {
     fn is_spatial_2d_yx_is_true() {
         let b = band(&["y", "x"], &[4, 5], &[ve(0, 0, 1, 4), ve(1, 0, 1, 5)]);
         assert!(b.is_spatial_2d());
+    }
+
+    #[test]
+    fn copy_into_rejects_non_identity_source_view() {
+        // A sliced source view (step 2 on the outer axis) composes to a
+        // non-identity effective view; copy_into can't persist it yet, so it
+        // must error rather than copy mislocated bytes.
+        let src = band(&["y", "x"], &[4, 5], &[ve(0, 0, 2, 2), ve(1, 0, 1, 5)]);
+        let mut ob = RasterBuilder::new(1);
+        let err = src
+            .copy_into(&mut ob, BandOverrides::default())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("non-identity"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn copy_into_rejects_non_identity_override_view() {
+        // Identity source, but the caller's override slices it (step 2); the
+        // composed effective view is non-identity and can't be persisted yet.
+        let src = band(&["y", "x"], &[4, 5], &[ve(0, 0, 1, 4), ve(1, 0, 1, 5)]);
+        let override_view = [ve(0, 0, 2, 2), ve(1, 0, 1, 5)];
+        let mut ob = RasterBuilder::new(1);
+        let err = src
+            .copy_into(
+                &mut ob,
+                BandOverrides {
+                    view: Some(&override_view),
+                    ..Default::default()
+                },
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("non-identity"), "unexpected error: {err}");
     }
 
     #[test]

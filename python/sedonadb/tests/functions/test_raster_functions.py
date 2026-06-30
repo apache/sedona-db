@@ -102,3 +102,169 @@ def test_rs_ensureloaded(con, sedona_testing):
     assert arr.shape == (512, 512)
     assert arr.dtype == "uint16"
     assert arr[0, 0] == 2324
+
+
+# Point sampling. RS_Example fills band `b` with the constant value `b`, except
+# the top-left pixel which is set to the nodata value (127). (74.58, 110.57) is
+# the centroid of pixel (10, 10) (0-based) in the raster's OGC:CRS84 space; the
+# point and raster share a CRS so no reprojection happens. A point far outside
+# the footprint yields NULL. (The `needs_pixels` -> RS_EnsureLoaded planner path
+# is covered against a real OutDb raster by `test_rs_ensureloaded`.)
+@pytest.mark.parametrize(
+    ("expr", "expected"),
+    [
+        (
+            "RS_Value(RS_Example(), ST_SetCRS(ST_Point(74.58, 110.57), 'OGC:CRS84'))",
+            1.0,
+        ),
+        (
+            "RS_Value(RS_Example(), ST_SetCRS(ST_Point(74.58, 110.57), 'OGC:CRS84'), 2)",
+            2.0,
+        ),
+        (
+            "RS_Value(RS_Example(), ST_SetCRS(ST_Point(74.58, 110.57), 'OGC:CRS84'), 3)",
+            3.0,
+        ),
+        ("RS_Value(RS_Example(), ST_SetCRS(ST_Point(0.0, 0.0), 'OGC:CRS84'))", None),
+        # POINT EMPTY has no location to sample -> NULL (not an error).
+        (
+            "RS_Value(RS_Example(), ST_SetCRS(ST_GeomFromText('POINT EMPTY'), 'OGC:CRS84'))",
+            None,
+        ),
+    ],
+)
+def test_rs_value_point(expr, expected):
+    SedonaDB().assert_query_result(f"SELECT {expr}", expected)
+
+
+def test_rs_value_matches_rasterio(con):
+    """Cross-check RS_Value against rasterio on a random raster.
+
+    Builds an in-memory raster from a random numpy array with a known
+    geotransform and no CRS (so neither engine reprojects), then samples a dense
+    set of points and asserts RS_Value returns exactly what rasterio reads at the
+    same world coordinates. Points cover every pixel center plus four off-center
+    positions per pixel (toward the corners, kept inside the pixel to avoid floor
+    ambiguity at exact boundaries) and a batch of random interior points.
+    """
+    import numpy as np
+    import pandas as pd
+
+    pytest.importorskip("rasterio")
+    from rasterio.io import MemoryFile
+    from rasterio.transform import Affine
+
+    from sedonadb.raster import Raster
+
+    rng = np.random.default_rng(42)
+    height, width = 7, 5
+    data = rng.random((height, width)) * 1000.0
+
+    # GDAL-order geotransform: origin (100, 500), 2-wide pixels, -3 tall
+    # (north-up), no skew. Shared verbatim by both engines.
+    gdal_transform = (100.0, 2.0, 0.0, 500.0, 0.0, -3.0)
+    affine = Affine.from_gdal(*gdal_transform)
+
+    # Sample points in pixel space (col_frac, row_frac).
+    pixel_points = []
+    for row in range(height):
+        for col in range(width):
+            for du, dv in [
+                (0.5, 0.5),
+                (0.25, 0.25),
+                (0.75, 0.75),
+                (0.25, 0.75),
+                (0.75, 0.25),
+            ]:
+                pixel_points.append((col + du, row + dv))
+    n_random = 150
+    rand_cols = rng.integers(0, width, n_random)
+    rand_rows = rng.integers(0, height, n_random)
+    pixel_points.extend(
+        zip(
+            rand_cols + rng.uniform(0.1, 0.9, n_random),
+            rand_rows + rng.uniform(0.1, 0.9, n_random),
+        )
+    )
+
+    # Map pixel-space positions to world coordinates via the shared affine.
+    xs, ys = zip(*(affine * (u, v) for u, v in pixel_points))
+
+    # rasterio reference: a real GDAL read of the same array (no CRS).
+    with MemoryFile() as mem:
+        with mem.open(
+            driver="GTiff",
+            height=height,
+            width=width,
+            count=1,
+            dtype="float64",
+            transform=affine,
+        ) as dst:
+            dst.write(data, 1)
+        with mem.open() as src:
+            expected = [vals[0] for vals in src.sample(list(zip(xs, ys)))]
+
+    # sedonadb: sample the same points via RS_Value over a scalar raster.
+    raster = Raster.from_numpy(data, transform=gdal_transform)
+    pts = con.create_data_frame(pd.DataFrame({"idx": range(len(xs)), "x": xs, "y": ys}))
+    view = "test_rs_value_matches_rasterio_pts"
+    pts.to_view(view)
+    try:
+        got = (
+            con.sql(
+                f"SELECT RS_Value($1, ST_Point(x, y)) AS v FROM {view} ORDER BY idx",
+                params=(raster,),
+            )
+            .to_arrow_table()["v"]
+            .to_pylist()
+        )
+    finally:
+        con.drop_view(view)
+
+    assert got == pytest.approx(expected)
+
+
+def test_rs_setgeoreference_roundtrips_with_getter():
+    # RS_GeoReference emits scaleX, skewY, skewX, scaleY, upperLeftX, upperLeftY;
+    # RS_SetGeoReference accepts the same six values back (GDAL order).
+    eng = SedonaDB()
+    eng.assert_query_result(
+        "SELECT RS_GeoReference(RS_SetGeoReference(RS_Example(), '2 0 0 -3 100 200'))",
+        "2.0000000000\n0.0000000000\n0.0000000000\n-3.0000000000\n100.0000000000\n200.0000000000",
+    )
+
+
+def test_rs_setgeoreference_esri_shifts_to_corner():
+    # ESRI upper-left is the pixel center; the stored (GDAL) upper-left is the
+    # corner: 101 - 2*0.5 = 100 and 198.5 - (-3)*0.5 = 200.
+    eng = SedonaDB()
+    eng.assert_query_result(
+        "SELECT RS_GeoReference(RS_SetGeoReference(RS_Example(), '2 0 0 -3 101 198.5', 'ESRI'))",
+        "2.0000000000\n0.0000000000\n0.0000000000\n-3.0000000000\n100.0000000000\n200.0000000000",
+    )
+
+
+@pytest.mark.parametrize(
+    ("expr", "expected"),
+    [
+        # Three-arg form targets a specific band; read it back with the getter.
+        ("RS_BandNoDataValue(RS_SetBandNoDataValue(RS_Example(), 1, 0), 1)", 0.0),
+        ("RS_BandNoDataValue(RS_SetBandNoDataValue(RS_Example(), 2, 255), 2)", 255.0),
+        # A null nodata value yields a null raster, so the getter returns null.
+        (
+            "RS_BandNoDataValue(RS_SetBandNoDataValue(RS_Example(), CAST(NULL AS DOUBLE)), 1)",
+            None,
+        ),
+    ],
+)
+def test_rs_setbandnodatavalue(expr, expected):
+    SedonaDB().assert_query_result(f"SELECT {expr}", expected)
+
+
+def test_rs_setbandnodatavalue_two_arg_requires_single_band():
+    # The 2-arg form is ambiguous on a multiband raster (RS_Example has multiple
+    # bands), so it errors rather than silently setting only band 1.
+    with pytest.raises(Exception, match="specify which band"):
+        SedonaDB().assert_query_result(
+            "SELECT RS_SetBandNoDataValue(RS_Example(), 0)", None
+        )

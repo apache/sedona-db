@@ -115,6 +115,7 @@ pub fn st_npoints_udf() -> SedonaScalarUDF {
         ItemCrsKernel::wrap_impl(vec![Arc::new(STNPoints)]),
         Volatility::Immutable,
     )
+    .with_aliases(vec!["st_numpoints".to_string()])
 }
 
 #[derive(Debug)]
@@ -294,6 +295,12 @@ mod tests {
         let st_npoints_udf: ScalarUDF = st_npoints_udf().into();
         assert_eq!(st_npoints_udf.name(), "st_npoints");
         assert!(st_npoints_udf.documentation().is_none());
+    }
+
+    #[test]
+    fn npoints_aliases() {
+        let udf: ScalarUDF = st_npoints_udf().into();
+        assert!(udf.aliases().contains(&"st_numpoints".to_string()));
     }
 
     #[rstest]

@@ -164,7 +164,7 @@ print(band.shape, band.dtype)
     (128, 128) float32
 
 
-Note that `planes[0]` currently forces a copy of the raster out of the Arrow buffer (a pyarrow limitation), so this path is **not yet zero-copy**. Rows correspond to chunks rather than a guaranteed order, so apply your own ordering (or carry a chunk identifier) if you need to know which tile and year a given plane covers.
+Rows correspond to chunks rather than a guaranteed order, so apply your own ordering (or carry a chunk identifier) if you need to know which tile and year a given plane covers.
 
 ## Reading from cloud storage
 

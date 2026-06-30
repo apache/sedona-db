@@ -77,8 +77,7 @@ pub fn import_arrow_array_stream<'py>(
     let capsule = if let Some(requested_schema) = requested_schema {
         let schema = import_arrow_schema(requested_schema)?;
         let ffi_schema = FFI_ArrowSchema::try_from(schema)?;
-        let ffi_schema_capsule =
-            PyCapsule::new(py, ffi_schema, Some(CString::new("arrow_schema").unwrap()))?;
+        let ffi_schema_capsule = PyCapsule::new_with_value(py, ffi_schema, c"arrow_schema")?;
 
         obj.getattr("__arrow_c_stream__")?
             .call1((ffi_schema_capsule,))?
@@ -175,24 +174,14 @@ pub fn import_arrow_schema(obj: &Bound<PyAny>) -> Result<Schema, PySedonaError> 
 
 pub fn check_pycapsule(obj: &Bound<PyAny>, name: &str) -> Result<*mut c_void, PySedonaError> {
     let capsule = obj
-        .downcast::<PyCapsule>()
+        .cast::<PyCapsule>()
         .map_err(|e| PySedonaError::SedonaPython(e.to_string()))?;
 
-    let actual_name = capsule
-        .name()?
-        .map(|obj| obj.to_string_lossy().to_string())
-        .unwrap_or("<unnamed>".to_string());
-    if actual_name != name {
-        return Err(PySedonaError::SedonaPython(format!(
-            "Expected PyCapsule with name '{name}' but got PyCapsule with name '{actual_name}'"
-        )));
-    }
+    // Validate name and get pointer in one step
+    let name_cstr = CString::new(name).map_err(|e| PySedonaError::SedonaPython(e.to_string()))?;
+    let pointer = capsule
+        .pointer_checked(Some(&name_cstr))
+        .map_err(|e| PySedonaError::SedonaPython(e.to_string()))?;
 
-    if capsule.pointer().is_null() {
-        return Err(PySedonaError::SedonaPython(format!(
-            "PyCapsule with name '{name}' is NULL"
-        )));
-    }
-
-    Ok(capsule.pointer())
+    Ok(pointer.as_ptr())
 }

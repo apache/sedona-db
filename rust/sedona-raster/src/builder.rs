@@ -29,7 +29,17 @@ use std::sync::Arc;
 
 use sedona_schema::raster::{BandDataType, RasterSchema};
 
-use crate::traits::{BandMetadata, MetadataRef};
+use crate::traits::{BandMetadata, BandOverrides, MetadataRef, RasterRef};
+use crate::view_entries::{ViewEntries, ViewEntry};
+
+/// Raster-level metadata overrides for [`RasterBuilder::start_raster_from`] and
+/// [`RasterBuilder::copy_raster_from`]. A `None` field inherits the source
+/// raster's value. The band-level analog is [`BandOverrides`].
+#[derive(Debug, Default, Clone)]
+pub struct RasterOverrides {
+    /// Override the 6-element GDAL geotransform; `None` inherits the source's.
+    pub transform: Option<[f64; 6]>,
+}
 
 /// Maximum byte length of an inline `BinaryViewArray` view. Views this short
 /// store their bytes in the 16-byte view itself; longer views reference a data
@@ -144,6 +154,20 @@ pub struct RasterBuilder {
     raster_validity: BooleanBuilder,
 }
 
+/// Arguments to [`RasterBuilder::start_band_with_view`]. Bundled into a
+/// struct to keep the call site readable — eight slots is enough that
+/// positional args invite mis-ordering bugs.
+pub(crate) struct StartBandWithViewArgs<'a> {
+    pub name: Option<&'a str>,
+    pub dim_names: &'a [&'a str],
+    pub source_shape: &'a [i64],
+    pub view: &'a [ViewEntry],
+    pub data_type: BandDataType,
+    pub nodata: Option<&'a [u8]>,
+    pub outdb_uri: Option<&'a str>,
+    pub outdb_format: Option<&'a str>,
+}
+
 impl RasterBuilder {
     /// Create a new raster builder with the specified capacity.
     pub fn new(capacity: usize) -> Self {
@@ -250,6 +274,53 @@ impl RasterBuilder {
         self.current_height = 0;
 
         Ok(())
+    }
+
+    /// Start a raster from `source`, copying its geotransform, spatial
+    /// dims/shape, and CRS — with [`RasterOverrides`] applied — but **not** its
+    /// bands. The caller adds bands (e.g. via
+    /// [`BandRef::copy_into`](crate::traits::BandRef::copy_into)) and then calls
+    /// [`finish_raster`](Self::finish_raster). Use this when bands need
+    /// per-band changes; see [`copy_raster_from`](Self::copy_raster_from) to
+    /// copy a raster whole.
+    pub fn start_raster_from(
+        &mut self,
+        source: &dyn RasterRef,
+        overrides: RasterOverrides,
+    ) -> Result<(), ArrowError> {
+        let transform: [f64; 6] = match overrides.transform {
+            Some(transform) => transform,
+            None => source.transform().try_into().map_err(|_| {
+                ArrowError::InvalidArgumentError("raster transform is not 6 elements".to_string())
+            })?,
+        };
+        let spatial_dims = source.spatial_dims();
+        self.start_raster_nd(
+            &transform,
+            &spatial_dims,
+            source.spatial_shape(),
+            source.crs(),
+        )
+    }
+
+    /// Copy `source` whole: its metadata (with [`RasterOverrides`] applied) and
+    /// every band, each derived via
+    /// [`BandRef::copy_into`](crate::traits::BandRef::copy_into) so pixel buffers
+    /// are shared zero-copy. Finishes the raster — no further calls are needed
+    /// for this row.
+    pub fn copy_raster_from(
+        &mut self,
+        source: &dyn RasterRef,
+        overrides: RasterOverrides,
+    ) -> Result<(), ArrowError> {
+        self.start_raster_from(source, overrides)?;
+        for band_idx in 0..source.num_bands() {
+            source
+                .band(band_idx)?
+                .copy_into(self, BandOverrides::default())?;
+            self.finish_band()?;
+        }
+        self.finish_raster()
     }
 
     /// Convenience: start a 2-D raster with positional geotransform parameters.
@@ -385,6 +456,69 @@ impl RasterBuilder {
         ));
 
         Ok(())
+    }
+
+    /// Start a band carrying an explicit `view` — a per-axis window of
+    /// offsets/steps over `source_shape` — rather than the implicit identity.
+    ///
+    /// This is the entry point view persistence will use, so callers such as
+    /// [`BandRef::copy_into`] route through it unchanged once persistence
+    /// lands. Today the band schema stores a view only as the canonical
+    /// identity null sentinel, so a non-identity `view` is rejected; an
+    /// identity view is stored exactly as [`Self::start_band_nd`] does. View
+    /// persistence is tracked in
+    /// <https://github.com/apache/sedona-db/issues/897>.
+    pub(crate) fn start_band_with_view(
+        &mut self,
+        args: StartBandWithViewArgs<'_>,
+    ) -> Result<(), ArrowError> {
+        let StartBandWithViewArgs {
+            name,
+            dim_names,
+            source_shape,
+            view,
+            data_type,
+            nodata,
+            outdb_uri,
+            outdb_format,
+        } = args;
+        let ndim = dim_names.len();
+        if ndim == 0 {
+            return Err(ArrowError::InvalidArgumentError(
+                "start_band_with_view: 0-dimensional bands are not supported".into(),
+            ));
+        }
+        if source_shape.len() != ndim || view.len() != ndim {
+            return Err(ArrowError::InvalidArgumentError(format!(
+                "start_band_with_view: dim_names ({}), source_shape ({}), and view ({}) \
+                 must all have the same length",
+                ndim,
+                source_shape.len(),
+                view.len()
+            )));
+        }
+        let view_entries = ViewEntries::new(view.to_vec());
+        view_entries.validate(source_shape)?;
+        // The schema stores views only as the identity null sentinel today, so a
+        // non-identity view can't round-trip — reject it up front, before any
+        // column append, rather than persisting mislocated bytes.
+        if !view_entries.is_identity(source_shape) {
+            return Err(ArrowError::InvalidArgumentError(
+                "start_band_with_view: persisting a non-identity band view is not yet \
+                 supported (see https://github.com/apache/sedona-db/issues/897); \
+                 materialize the band (e.g. via RS_EnsureContiguous) first"
+                    .into(),
+            ));
+        }
+        self.start_band_nd(
+            name,
+            dim_names,
+            source_shape,
+            data_type,
+            nodata,
+            outdb_uri,
+            outdb_format,
+        )
     }
 
     /// Convenience: start a 2D band with `dim_names=["y","x"]` and `shape=[height, width]`.
@@ -1027,6 +1161,38 @@ mod tests {
 
         let result = target_raster.bands().band(2);
         assert!(result.is_err(), "Band number 2 should be out of range");
+    }
+
+    #[test]
+    fn copy_raster_from_overrides_transform_and_preserves_bands() {
+        use sedona_testing::raster_spec::{assert_rasters_equal, RasterSpec};
+
+        // Source: a CRS, a nodata sentinel, and pixel values to preserve.
+        let source = RasterSpec::d2(2, 1)
+            .band_values(&[1u8, 2])
+            .nodata(9u8)
+            .crs(Some("OGC:CRS84"))
+            .build();
+        let source = RasterStructArray::try_new(&source).unwrap();
+
+        let mut builder = RasterBuilder::new(1);
+        builder
+            .copy_raster_from(
+                &source.get(0).unwrap(),
+                RasterOverrides {
+                    transform: Some([100.0, 2.0, 0.0, 200.0, 0.0, -3.0]),
+                },
+            )
+            .unwrap();
+        let out: ArrayRef = Arc::new(builder.finish().unwrap());
+
+        // Only the transform changed; CRS, nodata, and pixels carried over.
+        let expected = RasterSpec::d2(2, 1)
+            .band_values(&[1u8, 2])
+            .nodata(9u8)
+            .crs(Some("OGC:CRS84"))
+            .transform([100.0, 2.0, 0.0, 200.0, 0.0, -3.0]);
+        assert_rasters_equal(&out, &[Some(expected)]);
     }
 
     #[test]

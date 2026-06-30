@@ -152,6 +152,77 @@ impl WkbHeader {
     }
 }
 
+/// Read the `(x, y)` of a WKB Point without parsing the geometry generally.
+///
+/// This is a fast path for the common case of sampling/indexing by a single
+/// point: a Point WKB has a fixed layout (`byte order`, `type code`, optional
+/// SRID, then the coordinate), so the coordinate is at a known offset and can
+/// be read with a couple of fixed-offset loads. It deliberately handles only
+/// Points — any other geometry is an error.
+///
+/// Returns `Ok(None)` for `POINT EMPTY` (encoded as `NaN`/`NaN`), `Ok(Some((x, y)))`
+/// for a finite point, and an error if the bytes are not a Point or are truncated.
+/// Accepts both ISO (with Z/M dimension flags) and EWKB (with Z/M/SRID flags)
+/// encodings; only the first two ordinates are read.
+pub fn read_point_xy(buf: &[u8]) -> Result<Option<(f64, f64)>, SedonaGeometryError> {
+    let little_endian = match buf.first() {
+        Some(1) => true,
+        Some(0) => false,
+        _ => {
+            return Err(SedonaGeometryError::Invalid(
+                "WKB: missing or invalid byte order".to_string(),
+            ))
+        }
+    };
+
+    let read_u32 = |offset: usize| -> Result<u32, SedonaGeometryError> {
+        let bytes: [u8; 4] = buf
+            .get(offset..offset + 4)
+            .ok_or_else(|| SedonaGeometryError::Invalid("WKB: truncated header".to_string()))?
+            .try_into()
+            .unwrap();
+        Ok(if little_endian {
+            u32::from_le_bytes(bytes)
+        } else {
+            u32::from_be_bytes(bytes)
+        })
+    };
+
+    let read_f64 = |offset: usize| -> Result<f64, SedonaGeometryError> {
+        let bytes: [u8; 8] = buf
+            .get(offset..offset + 8)
+            .ok_or_else(|| SedonaGeometryError::Invalid("WKB: truncated coordinate".to_string()))?
+            .try_into()
+            .unwrap();
+        Ok(if little_endian {
+            f64::from_le_bytes(bytes)
+        } else {
+            f64::from_be_bytes(bytes)
+        })
+    };
+
+    let type_code = read_u32(1)?;
+    // The low three bits of the base type identify a Point (1) regardless of the
+    // ISO dimension digits or EWKB high-bit flags.
+    if type_code & 0x7 != 1 {
+        return Err(SedonaGeometryError::Invalid(format!(
+            "WKB: expected a Point (type code {type_code})"
+        )));
+    }
+
+    // EWKB carries a 4-byte SRID between the type code and the coordinate.
+    let has_srid = type_code & SRID_FLAG_BIT != 0;
+    let coord_offset = if has_srid { 9 } else { 5 };
+
+    let x = read_f64(coord_offset)?;
+    let y = read_f64(coord_offset + 8)?;
+    if x.is_nan() && y.is_nan() {
+        Ok(None)
+    } else {
+        Ok(Some((x, y)))
+    }
+}
+
 // A helper struct for calculating the WKBHeader
 struct WkbBuffer<'a> {
     buf: &'a [u8],
@@ -377,6 +448,7 @@ fn calc_dimensions(code: u32) -> Result<Dimensions, SedonaGeometryError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sedona_testing::fixtures::*;
     use std::str::FromStr;
     use wkb::writer::{write_geometry, WriteOptions};
     use wkt::Wkt;
@@ -514,8 +586,6 @@ mod tests {
 
     #[test]
     fn ewkb() {
-        use sedona_testing::fixtures::*;
-
         // Test POINT with SRID 4326
         let header = WkbHeader::try_new(&POINT_WITH_SRID_4326_EWKB).unwrap();
         assert_eq!(header.srid(), 4326);
@@ -598,8 +668,6 @@ mod tests {
 
     #[test]
     fn srid_linestring() {
-        use sedona_testing::fixtures::*;
-
         let header = WkbHeader::try_new(&LINESTRING_WITH_SRID_4326_EWKB).unwrap();
         assert_eq!(header.srid(), 4326);
         assert_eq!(
@@ -613,8 +681,6 @@ mod tests {
 
     #[test]
     fn srid_polygon() {
-        use sedona_testing::fixtures::*;
-
         let header = WkbHeader::try_new(&POLYGON_WITH_SRID_4326_EWKB).unwrap();
         assert_eq!(header.srid(), 4326);
         assert_eq!(header.geometry_type_id().unwrap(), GeometryTypeId::Polygon);
@@ -625,8 +691,6 @@ mod tests {
 
     #[test]
     fn multipoint_with_srid() {
-        use sedona_testing::fixtures::*;
-
         let header = WkbHeader::try_new(&MULTIPOINT_WITH_SRID_4326_EWKB).unwrap();
         assert_eq!(header.srid(), 4326);
         assert_eq!(
@@ -640,8 +704,6 @@ mod tests {
 
     #[test]
     fn srid_empty_geometries_with_srid() {
-        use sedona_testing::fixtures::*;
-
         // Test POINT EMPTY with SRID
         let header = WkbHeader::try_new(&POINT_EMPTY_WITH_SRID_4326_EWKB).unwrap();
         assert_eq!(header.srid(), 4326);
@@ -944,7 +1006,6 @@ mod tests {
 
     #[test]
     fn incomplete_ewkb_buffers() {
-        use sedona_testing::fixtures::*;
         // Test incomplete EWKB buffers
 
         // 1 byte_order + 4 geometry type + 4 srid + 8 x + 8 y
@@ -1058,5 +1119,99 @@ mod tests {
         let wkb = make_wkb("GEOMETRYCOLLECTION ZM EMPTY");
         let header = WkbHeader::try_new(&wkb).unwrap();
         assert!(header.is_empty().unwrap());
+    }
+
+    #[test]
+    fn read_point_xy_iso_little_endian() {
+        // 2-D / 3-D / 4-D ISO points all expose the same leading (x, y), and the
+        // result must agree with the general parser's `first_xy`.
+        for wkt_value in [
+            "POINT (1 2)",
+            "POINT Z (1 2 3)",
+            "POINT M (1 2 3)",
+            "POINT ZM (1 2 3 4)",
+        ] {
+            let wkb = make_wkb(wkt_value);
+            assert_eq!(
+                read_point_xy(&wkb).unwrap(),
+                Some((1.0, 2.0)),
+                "{wkt_value}"
+            );
+            assert_eq!(
+                read_point_xy(&wkb).unwrap(),
+                Some(WkbHeader::try_new(&wkb).unwrap().first_xy()),
+                "disagrees with first_xy for {wkt_value}"
+            );
+        }
+    }
+
+    #[test]
+    fn read_point_xy_big_endian() {
+        // Byte order 0x00, type 1 (BE), x = 1.0, y = 2.0 — all big-endian.
+        let wkb: [u8; 21] = [
+            0x00, // big-endian
+            0x00, 0x00, 0x00, 0x01, // type code 1 (Point)
+            0x3F, 0xF0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // x = 1.0
+            0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // y = 2.0
+        ];
+        assert_eq!(read_point_xy(&wkb).unwrap(), Some((1.0, 2.0)));
+    }
+
+    #[test]
+    fn read_point_xy_ewkb_with_srid() {
+        // The SRID sits between the type code and the coordinate; the reader must
+        // skip it for every dimensionality.
+        for wkb in [
+            &POINT_WITH_SRID_4326_EWKB[..],
+            &POINT_Z_WITH_SRID_3857_EWKB[..],
+            &POINT_M_WITH_SRID_4326_EWKB[..],
+            &POINT_ZM_WITH_SRID_4326_EWKB[..],
+        ] {
+            assert_eq!(read_point_xy(wkb).unwrap(), Some((1.0, 2.0)));
+            assert_eq!(
+                read_point_xy(wkb).unwrap(),
+                Some(WkbHeader::try_new(wkb).unwrap().first_xy())
+            );
+        }
+    }
+
+    #[test]
+    fn read_point_xy_empty_is_none() {
+        // POINT EMPTY is encoded as NaN/NaN and reads back as "no coordinate".
+        assert_eq!(read_point_xy(&make_wkb("POINT EMPTY")).unwrap(), None);
+        assert_eq!(read_point_xy(&make_wkb("POINT Z EMPTY")).unwrap(), None);
+        assert_eq!(
+            read_point_xy(&POINT_EMPTY_WITH_SRID_4326_EWKB).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn read_point_xy_rejects_non_point() {
+        for wkt_value in [
+            "LINESTRING (1 2, 3 4)",
+            "POLYGON ((0 0, 0 1, 1 0, 0 0))",
+            "MULTIPOINT ((1 2))",
+            "GEOMETRYCOLLECTION (POINT (1 2))",
+        ] {
+            let err = read_point_xy(&make_wkb(wkt_value)).unwrap_err().to_string();
+            assert!(err.contains("expected a Point"), "{wkt_value}: {err}");
+        }
+    }
+
+    #[test]
+    fn read_point_xy_rejects_truncated() {
+        let wkb = make_wkb("POINT (1 2)");
+        // Empty input has no byte order; everything shorter than a full 2-D point
+        // header + coordinate must error rather than read past the end.
+        assert!(read_point_xy(&[]).is_err());
+        for i in 1..wkb.len() {
+            assert!(
+                read_point_xy(&wkb[0..i]).is_err(),
+                "0..{i} unexpectedly succeeded"
+            );
+        }
+        // Invalid byte-order flag.
+        assert!(read_point_xy(&[0x02, 0, 0, 0, 1]).is_err());
     }
 }

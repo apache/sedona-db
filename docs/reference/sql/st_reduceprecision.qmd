@@ -19,6 +19,11 @@
 title: ST_ReducePrecision
 description: Reduces the coordinate precision of a geometry or geography to the specified grid size.
 kernels:
+  - returns: geometry
+    args:
+    - geometry
+    - name: grid_size
+      type: double
   - returns: geography
     args:
     - geography

@@ -29,6 +29,7 @@ use std::sync::Arc;
 use arrow_array::{RecordBatch, RecordBatchReader};
 use arrow_schema::{ArrowError, Schema, SchemaRef};
 use sedona_common::sedona_internal_datafusion_err;
+use sedona_raster::affine_transformation::AffineMatrix;
 use sedona_raster::builder::RasterBuilder;
 use sedona_raster::traits::is_spatial_dim_pair;
 use sedona_schema::datatypes::SedonaType;
@@ -42,7 +43,7 @@ use zarrs::storage::{AsyncReadableListableStorage, AsyncReadableListableStorageT
 
 use crate::coords;
 use crate::dtype::zarr_to_band_data_type;
-use crate::geozarr::{crs_from_cf_attributes, GroupGeoMetadata};
+use crate::geozarr::{crs_from_cf_attributes, geotransform_from_cf_attributes, GroupGeoMetadata};
 use crate::source_uri::build_chunk_anchor;
 
 /// Streaming reader over the chunk grid of a Zarr group.
@@ -335,15 +336,22 @@ async fn open_and_validate(
         }
     };
 
-    // CF / rioxarray groups declare their CRS on a separate scalar
-    // grid-mapping variable (commonly `spatial_ref`) rather than in the group
-    // attributes. When the group attributes didn't already yield a CRS,
-    // consult that variable before we drop the open array handles.
-    if geo.crs.is_none() {
-        if let Some(crs) = crs_from_grid_mapping_variable(&storage, &arrays).await {
-            geo.crs = Some(crs);
+    // CF / rioxarray groups declare their CRS — and often the affine
+    // `GeoTransform` — on a separate scalar grid-mapping variable (commonly
+    // `spatial_ref`) rather than in the group attributes. When the group
+    // attributes left either unresolved, consult that variable before we drop
+    // the open array handles.
+    let cf_transform = if geo.crs.is_none() || geo.transform.is_none() {
+        let cf = cf_georeference_from_grid_mapping(&storage, &arrays).await;
+        if geo.crs.is_none() {
+            geo.crs = cf.crs;
         }
-    }
+        // Only relevant when the group declared no `spatial:transform`; otherwise
+        // the explicit group transform wins in `resolve_group_transform`.
+        geo.transform.is_none().then_some(cf.transform).flatten()
+    } else {
+        None
+    };
 
     let array_infos = collect_array_infos(arrays)?;
     validate_group_constraints(&array_infos)?;
@@ -359,86 +367,19 @@ async fn open_and_validate(
     let spatial_dim_indices =
         resolve_spatial_dim_indices(&array_infos[0].dim_names, geo.spatial_dims.as_deref())?;
 
-    // Effective transform + CRS. An explicit GeoZarr `spatial:transform` wins;
-    // failing that, derive one from the spatial coordinate arrays (the common
-    // CF / non-GeoZarr case); failing that, fall back to identity pixel coords.
-    let group_transform = match geo.transform {
-        Some(t) => t,
-        None => {
-            let y_axis = spatial_dim_indices[0];
-            let x_axis = spatial_dim_indices[1];
-            let y_name = array_infos[0].dim_names[y_axis].clone();
-            let x_name = array_infos[0].dim_names[x_axis].clone();
-            let x_vals = coords::read_coord_values(&storage, &x_name).await?;
-            let y_vals = coords::read_coord_values(&storage, &y_name).await?;
-
-            // A coordinate array must span the data extent along its axis; a
-            // length mismatch is a malformed coord variable that would yield a
-            // wrong scale, so refuse to derive a transform from it.
-            let x_ok = x_vals
-                .as_ref()
-                .is_none_or(|v| v.len() as u64 == array_infos[0].shape[x_axis]);
-            let y_ok = y_vals
-                .as_ref()
-                .is_none_or(|v| v.len() as u64 == array_infos[0].shape[y_axis]);
-            if !(x_ok && y_ok) {
-                log::warn!(
-                    "Zarr group at {group_uri}: a spatial coordinate array's length does \
-                     not match the data extent; ignoring coordinates for georeferencing"
-                );
-            }
-            let derived = match (x_ok && y_ok, x_vals, y_vals) {
-                (true, Some(x), Some(y)) => coords::transform_from_coords(&x, &y),
-                _ => None,
-            };
-            match derived {
-                Some(t) => {
-                    // Regular CF coordinate arrays imply geographic lon/lat;
-                    // infer the CRS from the dim names only when none was
-                    // declared. Generic y/x stay CRS-less (attach via RS_SetCRS).
-                    let crs_note = if let Some(declared) = geo.crs.as_deref() {
-                        format!("keeping the declared CRS {declared:?}")
-                    } else if let Some(inferred) = coords::infer_geographic_crs(&y_name, &x_name) {
-                        geo.crs = Some(inferred.to_string());
-                        format!("inferred CRS {inferred} from the dim names")
-                    } else {
-                        "no CRS inferred (spatial dims are not lat/lon) — set one with RS_SetCRS"
-                            .to_string()
-                    };
-                    log::debug!(
-                        "Zarr group at {group_uri} has no `spatial:transform`; derived a \
-                         geotransform from the {x_name:?}/{y_name:?} coordinate arrays; {crs_note}"
-                    );
-                    t
-                }
-                // CRS-without-transform and no usable coordinate arrays is
-                // almost always malformed metadata; error rather than silently
-                // using pixel coordinates in spatial joins.
-                None if geo.crs.is_some() => {
-                    return Err(ArrowError::InvalidArgumentError(format!(
-                        "Zarr group at {group_uri} declares a CRS but has neither a \
-                         `spatial:transform` attribute nor regularly-spaced numeric \
-                         spatial coordinate arrays; refusing to fall back to the \
-                         identity transform because that would silently produce wrong \
-                         results in spatial joins. Declare `spatial:transform`, provide \
-                         regular coordinate arrays, or remove the CRS to read this as a \
-                         non-georeferenced datacube."
-                    )));
-                }
-                // No CRS and no usable coordinates: index space, with a
-                // breadcrumb so spatial-join surprises are debuggable.
-                None => {
-                    log::warn!(
-                        "Zarr group at {group_uri} has no `spatial:transform` and no \
-                         usable spatial coordinate arrays; falling back to the identity \
-                         pixel-coordinate transform [0, 1, 0, 0, 0, -1]. Spatial \
-                         operations against this raster will use pixel coordinates."
-                    );
-                    [0.0, 1.0, 0.0, 0.0, 0.0, -1.0]
-                }
-            }
-        }
-    };
+    // Effective transform + CRS. An explicit transform wins (GeoZarr
+    // `spatial:transform`, then the CF `GeoTransform`); failing that a
+    // `spatial:bbox`; failing that the spatial coordinate arrays (the common
+    // CF / non-GeoZarr case); failing that identity pixel coords.
+    let group_transform = resolve_group_transform(
+        &storage,
+        group_uri,
+        &mut geo,
+        cf_transform,
+        &array_infos,
+        &spatial_dim_indices,
+    )
+    .await?;
 
     // chunk_grid_shape comes from untrusted Zarr metadata; bound-check the
     // product so a hostile or malformed grid can't make per-batch
@@ -462,6 +403,174 @@ async fn open_and_validate(
         group_transform,
         spatial_dim_indices,
     })
+}
+
+/// Resolve the group's GDAL geotransform. An explicit `spatial:transform` wins;
+/// failing that a `spatial:bbox`; failing that the spatial coordinate arrays;
+/// failing that the identity pixel transform. Infers and sets `geo.crs` from the
+/// spatial dim names when deriving from a bbox or coordinate arrays and none is
+/// declared.
+async fn resolve_group_transform(
+    storage: &AsyncReadableListableStorage,
+    group_uri: &str,
+    geo: &mut GroupGeoMetadata,
+    cf_transform: Option<[f64; 6]>,
+    array_infos: &[ArrayInfo],
+    spatial_dim_indices: &[usize],
+) -> Result<[f64; 6], ArrowError> {
+    // An explicit transform wins, GeoZarr `spatial:transform` first and then the
+    // CF `GeoTransform` from the grid-mapping variable (both already GDAL order).
+    if let Some(t) = geo.transform {
+        return Ok(t);
+    }
+    if let Some(t) = cf_transform {
+        log::debug!(
+            "Zarr group at {group_uri} has no `spatial:transform`; using the CF \
+             `GeoTransform` from the grid-mapping variable"
+        );
+        return Ok(t);
+    }
+    // spatial_dim_indices is validated upstream to be [y_index, x_index].
+    let y_axis = spatial_dim_indices[0];
+    let x_axis = spatial_dim_indices[1];
+
+    // A declared `spatial:bbox` is a stronger georeferencing signal than CF
+    // coordinate arrays, so try it first. An unusable bbox is non-fatal — warn
+    // and fall through to the coordinate arrays.
+    if let Some(t) = transform_from_bbox(group_uri, geo, array_infos, y_axis, x_axis) {
+        return Ok(t);
+    }
+    transform_from_coordinate_arrays(storage, group_uri, geo, array_infos, y_axis, x_axis).await
+}
+
+/// Try to derive a transform from `spatial:bbox` and the array's *own* shape (no
+/// separate `spatial:shape` attribute that could drift). Returns `None` — so the
+/// caller falls back to coordinate arrays — when there is no bbox or it is
+/// unusable. Infers `geo.crs` from the spatial dim names when none is declared.
+fn transform_from_bbox(
+    group_uri: &str,
+    geo: &mut GroupGeoMetadata,
+    array_infos: &[ArrayInfo],
+    y_axis: usize,
+    x_axis: usize,
+) -> Option<[f64; 6]> {
+    let bbox = geo.bbox?;
+    let height = array_infos[0].shape[y_axis];
+    let width = array_infos[0].shape[x_axis];
+    match AffineMatrix::from_bbox_and_spatial_shape(
+        bbox,
+        height,
+        width,
+        geo.registration.as_deref(),
+    ) {
+        Ok(matrix) => {
+            // Mirror the coordinate-array path: when the group declares no CRS,
+            // infer a geographic one from the spatial dim names (lat/lon).
+            // Generic y/x stay CRS-less (attach via RS_SetCRS).
+            if geo.crs.is_none() {
+                if let Some(inferred) = coords::infer_geographic_crs(
+                    &array_infos[0].dim_names[y_axis],
+                    &array_infos[0].dim_names[x_axis],
+                ) {
+                    geo.crs = Some(inferred.to_string());
+                }
+            }
+            log::debug!(
+                "Zarr group at {group_uri} has no `spatial:transform`; derived a \
+                 geotransform from `spatial:bbox` and the {height}x{width} array shape"
+            );
+            Some(matrix.to_gdal_geotransform())
+        }
+        Err(e) => {
+            log::warn!(
+                "Zarr group at {group_uri}: `spatial:bbox` is unusable ({e}); \
+                 falling back to coordinate arrays for georeferencing"
+            );
+            None
+        }
+    }
+}
+
+/// Derive a transform from the spatial coordinate arrays, falling back to the
+/// identity pixel transform when they are absent or unusable. Errors if a CRS is
+/// declared but no transform can be derived (silently using pixel coordinates
+/// would produce wrong spatial-join results). Infers `geo.crs` from the spatial
+/// dim names when none is declared and the coordinates are usable.
+async fn transform_from_coordinate_arrays(
+    storage: &AsyncReadableListableStorage,
+    group_uri: &str,
+    geo: &mut GroupGeoMetadata,
+    array_infos: &[ArrayInfo],
+    y_axis: usize,
+    x_axis: usize,
+) -> Result<[f64; 6], ArrowError> {
+    let y_name = array_infos[0].dim_names[y_axis].clone();
+    let x_name = array_infos[0].dim_names[x_axis].clone();
+    let x_vals = coords::read_coord_values(storage, &x_name).await?;
+    let y_vals = coords::read_coord_values(storage, &y_name).await?;
+
+    // A coordinate array must span the data extent along its axis; a length
+    // mismatch is a malformed coord variable that would yield a wrong scale, so
+    // refuse to derive a transform from it.
+    let x_ok = x_vals
+        .as_ref()
+        .is_none_or(|v| v.len() as u64 == array_infos[0].shape[x_axis]);
+    let y_ok = y_vals
+        .as_ref()
+        .is_none_or(|v| v.len() as u64 == array_infos[0].shape[y_axis]);
+    if !(x_ok && y_ok) {
+        log::warn!(
+            "Zarr group at {group_uri}: a spatial coordinate array's length does not \
+             match the data extent; ignoring coordinates for georeferencing"
+        );
+    }
+    let derived = match (x_ok && y_ok, x_vals, y_vals) {
+        (true, Some(x), Some(y)) => coords::transform_from_coords(&x, &y),
+        _ => None,
+    };
+    match derived {
+        Some(t) => {
+            // Regular CF coordinate arrays imply geographic lon/lat; infer the
+            // CRS from the dim names only when none was declared. Generic y/x stay
+            // CRS-less (attach via RS_SetCRS).
+            let crs_note = if let Some(declared) = geo.crs.as_deref() {
+                format!("keeping the declared CRS {declared:?}")
+            } else if let Some(inferred) = coords::infer_geographic_crs(&y_name, &x_name) {
+                geo.crs = Some(inferred.to_string());
+                format!("inferred CRS {inferred} from the dim names")
+            } else {
+                "no CRS inferred (spatial dims are not lat/lon) — set one with RS_SetCRS"
+                    .to_string()
+            };
+            log::debug!(
+                "Zarr group at {group_uri} has no `spatial:transform`; derived a \
+                 geotransform from the {x_name:?}/{y_name:?} coordinate arrays; {crs_note}"
+            );
+            Ok(t)
+        }
+        // CRS-without-transform and no usable coordinate arrays is almost always
+        // malformed metadata; error rather than silently using pixel coordinates
+        // in spatial joins.
+        None if geo.crs.is_some() => Err(ArrowError::InvalidArgumentError(format!(
+            "Zarr group at {group_uri} declares a CRS but has neither a \
+             `spatial:transform` attribute nor regularly-spaced numeric spatial \
+             coordinate arrays; refusing to fall back to the identity transform \
+             because that would silently produce wrong results in spatial joins. \
+             Declare `spatial:transform`, provide regular coordinate arrays, or \
+             remove the CRS to read this as a non-georeferenced datacube."
+        ))),
+        // No CRS and no usable coordinates: index space, with a breadcrumb so
+        // spatial-join surprises are debuggable.
+        None => {
+            log::warn!(
+                "Zarr group at {group_uri} has no `spatial:transform` and no usable \
+                 spatial coordinate arrays; falling back to the identity \
+                 pixel-coordinate transform [0, 1, 0, 0, 0, -1]. Spatial operations \
+                 against this raster will use pixel coordinates."
+            );
+            Ok([0.0, 1.0, 0.0, 0.0, 0.0, -1.0])
+        }
+    }
 }
 
 /// Open arrays at the explicit paths requested by the caller, skipping
@@ -490,46 +599,64 @@ async fn open_named_arrays(
     Ok(out)
 }
 
-/// Resolve a CRS from a CF / rioxarray grid-mapping variable.
+/// CRS and/or affine transform read from a CF grid-mapping variable.
+#[derive(Default)]
+struct CfGeoreference {
+    crs: Option<String>,
+    transform: Option<[f64; 6]>,
+}
+
+/// Resolve the CRS and affine `GeoTransform` from a CF / rioxarray grid-mapping
+/// variable.
 ///
-/// rioxarray writes the CRS to a scalar variable (conventionally
-/// `spatial_ref`, sometimes `crs`) carrying a `crs_wkt` / `spatial_ref`
-/// attribute, linked from each data variable via the CF `grid_mapping`
-/// attribute — or, as rioxarray does, listed in the data variable's
-/// `coordinates` attribute. That variable is a 0-D scalar, so it never
-/// appears among the rank ≥ 2 data arrays and must be opened on its own.
+/// rioxarray writes the CRS (and usually the `GeoTransform`) to a scalar
+/// variable (conventionally `spatial_ref`, sometimes `crs`) carrying `crs_wkt` /
+/// `spatial_ref` and `GeoTransform` attributes, linked from each data variable
+/// via the CF `grid_mapping` attribute — or, as rioxarray does, listed in the
+/// data variable's `coordinates` attribute. That variable is a 0-D scalar, so it
+/// never appears among the rank ≥ 2 data arrays and must be opened on its own.
 ///
 /// Candidate names are gathered in priority order — `grid_mapping` targets
 /// first, then `coordinates` tokens, then the conventional `spatial_ref` /
-/// `crs` — and the first that opens and yields a CRS wins. A candidate that
-/// is missing, unreadable, or carries no CRS attribute is skipped, so a group
-/// without a grid-mapping variable simply stays CRS-less.
-async fn crs_from_grid_mapping_variable(
+/// `crs` — and the first candidate that opens and carries either a CRS or a
+/// `GeoTransform` wins (both are read from that one variable). A candidate that
+/// is missing, unreadable, or carries neither is skipped, so a group without a
+/// grid-mapping variable simply stays unreferenced.
+async fn cf_georeference_from_grid_mapping(
     storage: &AsyncReadableListableStorage,
     data_arrays: &[Array<dyn AsyncReadableListableStorageTraits>],
-) -> Option<String> {
+) -> CfGeoreference {
     let candidates = cf_crs_candidate_names(data_arrays.iter().map(|a| a.attributes()));
     for name in candidates {
         let path = format!("/{}", name.trim_start_matches('/'));
         let array = match Array::async_open(storage.clone(), &path).await {
             Ok(array) => array,
             // An absent candidate and a transient/permission failure look
-            // alike here; CRS is optional so we keep trying, but leave a
-            // breadcrumb so a genuinely broken store stays traceable.
+            // alike here; georeferencing is optional so we keep trying, but
+            // leave a breadcrumb so a genuinely broken store stays traceable.
             Err(e) => {
                 log::debug!("Zarr grid-mapping candidate {name:?}: open failed: {e}");
                 continue;
             }
         };
-        match crs_from_cf_attributes(array.attributes()) {
-            Ok(Some(crs)) => return Some(crs),
-            Ok(None) => continue,
+        let attrs = array.attributes();
+        let crs = match crs_from_cf_attributes(attrs) {
+            Ok(crs) => crs,
             // A malformed CRS attribute on a candidate variable shouldn't take
-            // the whole read offline; log and keep looking.
-            Err(e) => log::warn!("Zarr grid-mapping variable {name:?}: ignoring CRS: {e}"),
+            // the whole read offline; log and treat it as absent.
+            Err(e) => {
+                log::warn!("Zarr grid-mapping variable {name:?}: ignoring CRS: {e}");
+                None
+            }
+        };
+        let transform = geotransform_from_cf_attributes(attrs);
+        // The first variable that carries either is the grid-mapping variable;
+        // both come from it, so stop here.
+        if crs.is_some() || transform.is_some() {
+            return CfGeoreference { crs, transform };
         }
     }
-    None
+    CfGeoreference::default()
 }
 
 /// Gather candidate grid-mapping variable names from the data arrays'

@@ -17,7 +17,6 @@
 use std::{collections::HashMap, sync::Arc};
 
 use arrow_schema::DataType;
-use datafusion_expr::{AggregateUDFImpl, ScalarUDFImpl};
 use pyo3::prelude::*;
 use sedona::context::SedonaContext;
 use sedona::context_builder::SedonaContextBuilder;
@@ -87,7 +86,7 @@ impl InternalContext {
         &self,
         py: Python<'py>,
         table_paths: Vec<String>,
-        options: HashMap<String, PyObject>,
+        options: HashMap<String, Py<PyAny>>,
         geometry_columns: Option<String>,
         validate: bool,
         partitioning: Option<Vec<String>>,
@@ -186,23 +185,28 @@ impl InternalContext {
         name: &str,
     ) -> Result<Bound<'py, PyAny>, PySedonaError> {
         let name_lower = name.to_lowercase();
-        if let Some(sedona_scalar_udf) = self.inner.functions.scalar_udf(&name_lower) {
+        let inner = if let Some(sedona_scalar_udf) = self.inner.scalar_udf(&name_lower)? {
+            Some(ScalarUdfLookup::Sedona(sedona_scalar_udf))
+        } else {
+            self.inner
+                .ctx
+                .state()
+                .scalar_functions()
+                .get(&name_lower)
+                .cloned()
+                .map(ScalarUdfLookup::DataFusion)
+        };
+
+        if let Some(ScalarUdfLookup::Sedona(sedona_scalar_udf)) = inner {
             Ok(Bound::new(
                 py,
                 PySedonaScalarUdf {
-                    inner: sedona_scalar_udf.clone(),
+                    inner: sedona_scalar_udf,
                 },
             )?
             .into_any())
-        } else if let Some(scalar_udf) = self.inner.ctx.state().scalar_functions().get(&name_lower)
-        {
-            Ok(Bound::new(
-                py,
-                PyScalarUdf {
-                    inner: scalar_udf.clone(),
-                },
-            )?
-            .into_any())
+        } else if let Some(ScalarUdfLookup::DataFusion(scalar_udf)) = inner {
+            Ok(Bound::new(py, PyScalarUdf { inner: scalar_udf })?.into_any())
         } else {
             Err(PySedonaError::SedonaPython(format!(
                 "Scalar UDF with name {name} was not found"
@@ -216,17 +220,19 @@ impl InternalContext {
         name: &str,
     ) -> Result<Bound<'py, PyAny>, PySedonaError> {
         let name_lower = name.to_lowercase();
-        if let Some(aggregate_udf) = self
+        let aggregate_udf = self
             .inner
             .ctx
             .state()
             .aggregate_functions()
             .get(&name_lower)
-        {
+            .cloned();
+
+        if let Some(aggregate_udf) = aggregate_udf {
             Ok(Bound::new(
                 py,
                 PyAggregateUdf {
-                    inner: aggregate_udf.clone(),
+                    inner: aggregate_udf,
                 },
             )?
             .into_any())
@@ -238,14 +244,7 @@ impl InternalContext {
     }
 
     pub fn list_scalar_udfs(&self) -> Result<Vec<String>, PySedonaError> {
-        Ok(self
-            .inner
-            .ctx
-            .state()
-            .scalar_functions()
-            .keys()
-            .cloned()
-            .collect())
+        Ok(self.inner.scalar_udf_names()?)
     }
 
     pub fn list_aggregate_udfs(&self) -> Result<Vec<String>, PySedonaError> {
@@ -259,42 +258,22 @@ impl InternalContext {
             .collect())
     }
 
-    pub fn register_component(&mut self, component: Bound<PyAny>) -> Result<(), PySedonaError> {
+    pub fn register_component(&self, component: Bound<PyAny>) -> Result<(), PySedonaError> {
         if component.hasattr("__sedonadb_internal_udf__")? {
             let py_scalar_udf = component
                 .getattr("__sedonadb_internal_udf__")?
                 .call0()?
                 .extract::<PySedonaScalarUdf>()?;
-            let name = py_scalar_udf.inner.name();
             self.inner
-                .functions
-                .insert_scalar_udf(py_scalar_udf.inner.clone());
-            self.inner.ctx.register_udf(
-                self.inner
-                    .functions
-                    .scalar_udf(name)
-                    .unwrap()
-                    .clone()
-                    .into(),
-            );
+                .register_sedona_scalar_udf(py_scalar_udf.inner.clone())?;
             return Ok(());
         } else if component.hasattr("__sedonadb_internal_aggregate_udf__")? {
             let py_agg_udf = component
                 .getattr("__sedonadb_internal_aggregate_udf__")?
                 .call0()?
                 .extract::<PySedonaAggregateUdf>()?;
-            let name = py_agg_udf.inner.name();
             self.inner
-                .functions
-                .insert_aggregate_udf(py_agg_udf.inner.clone());
-            self.inner.ctx.register_udaf(
-                self.inner
-                    .functions
-                    .aggregate_udf(name)
-                    .unwrap()
-                    .clone()
-                    .into(),
-            );
+                .register_sedona_aggregate_udf(py_agg_udf.inner.clone())?;
             return Ok(());
         } else if component.hasattr("__sedonadb_external_format__")? {
             let spec = component
@@ -321,4 +300,9 @@ impl InternalContext {
             "Unsupported object".to_string(),
         ))
     }
+}
+
+enum ScalarUdfLookup {
+    Sedona(sedona_expr::scalar_udf::SedonaScalarUDF),
+    DataFusion(Arc<datafusion_expr::ScalarUDF>),
 }

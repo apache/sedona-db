@@ -81,12 +81,12 @@ jobs:
 
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: 'recursive'
 
       - name: Clone vcpkg
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: microsoft/vcpkg
           ref: ${{ env.VCPKG_REF }}
@@ -175,7 +175,7 @@ jobs:
       # Cache vcpkg installed packages (expensive to rebuild)
       - name: Cache vcpkg binaries
         id: cache-vcpkg
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: vcpkg/packages
           # Bump the number at the end of this line to force a new dependency build

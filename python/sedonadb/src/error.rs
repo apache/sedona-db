@@ -16,6 +16,7 @@
 // under the License.
 use arrow_schema::ArrowError;
 use datafusion_common::DataFusionError;
+use pyo3::pyclass::PyClassGuardError;
 use pyo3::{create_exception, PyErr};
 
 use thiserror::Error;
@@ -66,5 +67,11 @@ impl From<PyErr> for PySedonaError {
 impl From<ArrowError> for PySedonaError {
     fn from(other: ArrowError) -> Self {
         PySedonaError::DF(Box::new(DataFusionError::ArrowError(Box::new(other), None)))
+    }
+}
+
+impl From<PyClassGuardError<'_, '_>> for PySedonaError {
+    fn from(other: PyClassGuardError) -> Self {
+        PySedonaError::SedonaPython(other.to_string())
     }
 }

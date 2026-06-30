@@ -32,9 +32,11 @@ kernels:
     - name: format
       type: utf8
       description: >
-        Output format, either 'GDAL' (default) or 'ESRI'. GDAL reports the
-        upper-left corner of the upper-left pixel; ESRI shifts the coordinates
-        to the center of the upper-left pixel.
+        Output format: 'GDAL' (default; alias 'PIXEL') reports the upper-left
+        corner of the upper-left pixel; 'ESRI' (alias 'NODE') shifts the
+        coordinates to the center of the upper-left pixel. The center convention
+        ('ESRI'/'NODE') is rejected for skewed (rotated) rasters, where the
+        half-pixel shift would be inexact.
 ---
 
 ## Examples

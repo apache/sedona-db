@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::{ffi::CString, iter::zip, sync::Arc};
+use std::{iter::zip, sync::Arc};
 
 use arrow_array::{
     ffi::{FFI_ArrowArray, FFI_ArrowSchema},
@@ -32,7 +32,7 @@ use datafusion_ffi::udf::FFI_ScalarUDF;
 use pyo3::{
     pyclass, pyfunction, pymethods,
     types::{PyAnyMethods, PyCapsule, PyTuple, PyTupleMethods},
-    Bound, PyObject, Python,
+    Bound, Py, PyAny, Python,
 };
 use sedona_expr::aggregate_udf::{SedonaAccumulator, SedonaAccumulatorRef, SedonaAggregateUDF};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
@@ -51,7 +51,7 @@ use crate::{
 /// implement overloading such that registration adds to existing overloads instead
 /// of replacing a function with a given name. This struct is primarily used to
 /// generate an Expr scalar function call.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyScalarUdf {
     pub inner: Arc<ScalarUDF>,
@@ -77,9 +77,12 @@ impl PyScalarUdf {
         &self,
         py: Python<'py>,
     ) -> Result<Bound<'py, PyCapsule>, PySedonaError> {
-        let capsule_name = CString::new("datafusion_scalar_udf").unwrap();
         let ffi_scalar_udf = FFI_ScalarUDF::from(self.inner.clone());
-        Ok(PyCapsule::new(py, ffi_scalar_udf, Some(capsule_name))?)
+        Ok(PyCapsule::new_with_value(
+            py,
+            ffi_scalar_udf,
+            c"datafusion_scalar_udf",
+        )?)
     }
 }
 
@@ -89,7 +92,7 @@ impl PyScalarUdf {
 /// implement overloading such that registration adds to existing overloads instead
 /// of replacing a function with a given name. This struct is primarily used to
 /// generate an Expr aggregate function call.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyAggregateUdf {
     pub inner: Arc<AggregateUDF>,
@@ -118,7 +121,7 @@ impl PyAggregateUdf {
 /// UDFs implement overloading such that multiple implementations of a single function
 /// can be combined instead of replaced. This struct is primarily used to represent
 /// a Python-implemented user-defined function before registration.
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PySedonaScalarUdf {
     pub inner: SedonaScalarUDF,
@@ -145,10 +148,13 @@ impl PySedonaScalarUdf {
         &self,
         py: Python<'py>,
     ) -> Result<Bound<'py, PyCapsule>, PySedonaError> {
-        let capsule_name = CString::new("datafusion_scalar_udf").unwrap();
         let scalar_udf: ScalarUDF = self.inner.clone().into();
         let ffi_scalar_udf = FFI_ScalarUDF::from(Arc::new(scalar_udf));
-        Ok(PyCapsule::new(py, ffi_scalar_udf, Some(capsule_name))?)
+        Ok(PyCapsule::new_with_value(
+            py,
+            ffi_scalar_udf,
+            c"datafusion_scalar_udf",
+        )?)
     }
 }
 
@@ -185,9 +191,9 @@ fn validate_imported_type(
 #[pyfunction]
 pub fn sedona_scalar_udf<'py>(
     py: Python<'py>,
-    py_invoke_batch: PyObject,
-    py_return_type: PyObject,
-    py_input_types: Option<Vec<PyObject>>,
+    py_invoke_batch: Py<PyAny>,
+    py_return_type: Py<PyAny>,
+    py_input_types: Option<Vec<Py<PyAny>>>,
     volatility: &str,
     name: &str,
 ) -> Result<PySedonaScalarUdf, PySedonaError> {
@@ -203,9 +209,9 @@ pub fn sedona_scalar_udf<'py>(
 
 fn sedona_scalar_kernel<'py>(
     py: Python<'py>,
-    input_types: Option<Vec<PyObject>>,
-    py_return_field: PyObject,
-    py_invoke_batch: PyObject,
+    input_types: Option<Vec<Py<PyAny>>>,
+    py_return_field: Py<PyAny>,
+    py_invoke_batch: Py<PyAny>,
 ) -> Result<PySedonaScalarKernel, PySedonaError> {
     let matcher = if let Some(input_types) = input_types {
         let arg_matchers = input_types
@@ -230,8 +236,8 @@ fn sedona_scalar_kernel<'py>(
 #[derive(Debug)]
 struct PySedonaScalarKernel {
     matcher: Option<ArgMatcher>,
-    py_return_field: PyObject,
-    py_invoke_batch: PyObject,
+    py_return_field: Py<PyAny>,
+    py_invoke_batch: Py<PyAny>,
 }
 
 impl SedonaScalarKernel for PySedonaScalarKernel {
@@ -257,7 +263,7 @@ impl SedonaScalarKernel for PySedonaScalarKernel {
             return Ok(return_type);
         }
 
-        let return_type = Python::with_gil(|py| -> Result<Option<SedonaType>, PySedonaError> {
+        let return_type = Python::attach(|py| -> Result<Option<SedonaType>, PySedonaError> {
             let py_sedona_types = args
                 .iter()
                 .map(|arg| -> Result<_, PySedonaError> { Ok(PySedonaType::new(arg.clone())) })
@@ -294,7 +300,7 @@ impl SedonaScalarKernel for PySedonaScalarKernel {
         num_rows: usize,
         _config_options: Option<&ConfigOptions>,
     ) -> Result<ColumnarValue> {
-        let result = Python::with_gil(|py| -> Result<ArrayRef, PySedonaError> {
+        let result = Python::attach(|py| -> Result<ArrayRef, PySedonaError> {
             let py_values = zip(arg_types, args)
                 .map(|(sedona_type, arg)| PySedonaValue {
                     sedona_type: PySedonaType::new(sedona_type.clone()),
@@ -396,10 +402,9 @@ impl PySedonaValue {
         &self,
         py: Python<'py>,
     ) -> Result<Bound<'py, PyCapsule>, PySedonaError> {
-        let schema_capsule_name = CString::new("arrow_schema").unwrap();
         let storage_field = self.sedona_type.inner.to_storage_field("", true)?;
         let ffi_schema = FFI_ArrowSchema::try_from(storage_field)?;
-        Ok(PyCapsule::new(py, ffi_schema, Some(schema_capsule_name))?)
+        Ok(PyCapsule::new_with_value(py, ffi_schema, c"arrow_schema")?)
     }
 
     #[pyo3(signature = (requested_schema=None))]
@@ -421,11 +426,9 @@ impl PySedonaValue {
             }
         }
 
-        let schema_capsule_name = CString::new("arrow_schema").unwrap();
         let field = self.sedona_type.inner.to_storage_field("", true)?;
         let ffi_schema = FFI_ArrowSchema::try_from(&field)?;
 
-        let array_capsule_name = CString::new("arrow_array").unwrap();
         let out_size = match &self.value {
             ColumnarValue::Array(array) => array.len(),
             ColumnarValue::Scalar(_) => 1,
@@ -434,8 +437,8 @@ impl PySedonaValue {
         let ffi_array = FFI_ArrowArray::new(&array.to_data());
 
         Ok((
-            PyCapsule::new(py, ffi_schema, Some(schema_capsule_name))?,
-            PyCapsule::new(py, ffi_array, Some(array_capsule_name))?,
+            PyCapsule::new_with_value(py, ffi_schema, c"arrow_schema")?,
+            PyCapsule::new_with_value(py, ffi_array, c"arrow_array")?,
         ))
     }
 
@@ -458,7 +461,7 @@ impl PySedonaValue {
 /// Python class which produces accumulator instances. Registration goes
 /// through `__sedona_internal_udf__()` on the Python side; `InternalContext`
 /// recognizes the capsule and routes to `insert_aggregate_udf`.
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PySedonaAggregateUdf {
     pub inner: SedonaAggregateUDF,
@@ -485,10 +488,10 @@ impl PySedonaAggregateUdf {
 #[pyfunction]
 pub fn sedona_aggregate_udf<'py>(
     py: Python<'py>,
-    py_factory: PyObject,
-    py_return_type: PyObject,
-    py_input_types: Vec<PyObject>,
-    py_state_types: Vec<PyObject>,
+    py_factory: Py<PyAny>,
+    py_return_type: Py<PyAny>,
+    py_input_types: Vec<Py<PyAny>>,
+    py_state_types: Vec<Py<PyAny>>,
     volatility: &str,
     name: &str,
 ) -> Result<PySedonaAggregateUdf, PySedonaError> {
@@ -523,7 +526,7 @@ pub fn sedona_aggregate_udf<'py>(
 struct PySedonaAggregateKernel {
     matcher: ArgMatcher,
     state_types: Vec<SedonaType>,
-    py_factory: PyObject,
+    py_factory: Py<PyAny>,
 }
 
 impl SedonaAccumulator for PySedonaAggregateKernel {
@@ -536,7 +539,7 @@ impl SedonaAccumulator for PySedonaAggregateKernel {
         args: &[SedonaType],
         output_type: &SedonaType,
     ) -> Result<Box<dyn Accumulator>> {
-        let instance = Python::with_gil(|py| -> Result<PyObject, PySedonaError> {
+        let instance = Python::attach(|py| -> Result<Py<PyAny>, PySedonaError> {
             Ok(self.py_factory.call0(py)?)
         })?;
         Ok(Box::new(PySedonaAccumulator {
@@ -558,7 +561,7 @@ impl SedonaAccumulator for PySedonaAggregateKernel {
 
 #[derive(Debug)]
 struct PySedonaAccumulator {
-    instance: PyObject,
+    instance: Py<PyAny>,
     input_types: Vec<SedonaType>,
     state_types: Vec<SedonaType>,
     output_type: SedonaType,
@@ -594,7 +597,7 @@ impl PySedonaAccumulator {
     /// SedonaType is used to validate the array's logical type.
     fn import_scalar(
         py: Python<'_>,
-        result: PyObject,
+        result: Py<PyAny>,
         expected: &SedonaType,
         context: &str,
     ) -> Result<ScalarValue, PySedonaError> {
@@ -619,7 +622,7 @@ impl PySedonaAccumulator {
 
 impl Accumulator for PySedonaAccumulator {
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
-        Python::with_gil(|py| -> Result<(), PySedonaError> {
+        Python::attach(|py| -> Result<(), PySedonaError> {
             let args = Self::arrays_to_py_values(py, &self.input_types, values)?;
             self.instance.call_method1(py, "update", (args,))?;
             Ok(())
@@ -628,7 +631,7 @@ impl Accumulator for PySedonaAccumulator {
     }
 
     fn evaluate(&mut self) -> Result<ScalarValue> {
-        let scalar = Python::with_gil(|py| -> Result<ScalarValue, PySedonaError> {
+        let scalar = Python::attach(|py| -> Result<ScalarValue, PySedonaError> {
             let result = self.instance.call_method0(py, "evaluate")?;
             Self::import_scalar(py, result, &self.output_type, "aggregate UDF evaluate()")
         })?;
@@ -636,10 +639,10 @@ impl Accumulator for PySedonaAccumulator {
     }
 
     fn state(&mut self) -> Result<Vec<ScalarValue>> {
-        let scalars = Python::with_gil(|py| -> Result<Vec<ScalarValue>, PySedonaError> {
+        let scalars = Python::attach(|py| -> Result<Vec<ScalarValue>, PySedonaError> {
             let result = self.instance.call_method0(py, "state")?;
-            let result_bound = result.bind(py);
-            let tuple = result_bound.downcast::<PyTuple>().map_err(|_| {
+            let result_bound = result.into_bound(py);
+            let tuple = result_bound.cast::<PyTuple>().map_err(|_| {
                 PySedonaError::SedonaPython(
                     "Expected aggregate UDF state() to return a tuple".to_string(),
                 )
@@ -667,7 +670,7 @@ impl Accumulator for PySedonaAccumulator {
     }
 
     fn merge_batch(&mut self, states: &[ArrayRef]) -> Result<()> {
-        Python::with_gil(|py| -> Result<(), PySedonaError> {
+        Python::attach(|py| -> Result<(), PySedonaError> {
             let args = Self::arrays_to_py_values(py, &self.state_types, states)?;
             self.instance.call_method1(py, "merge", (args,))?;
             Ok(())

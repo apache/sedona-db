@@ -14,7 +14,6 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::ffi::CString;
 
 use arrow_array::ffi::FFI_ArrowSchema;
 use arrow_schema::{Field, Schema};
@@ -47,9 +46,8 @@ impl PySedonaSchema {
         &self,
         py: Python<'py>,
     ) -> Result<Bound<'py, PyCapsule>, PySedonaError> {
-        let schema_capsule_name = CString::new("arrow_schema").unwrap();
         let ffi_schema = FFI_ArrowSchema::try_from(self.inner.clone())?;
-        Ok(PyCapsule::new(py, ffi_schema, Some(schema_capsule_name))?)
+        Ok(PyCapsule::new_with_value(py, ffi_schema, c"arrow_schema")?)
     }
 
     fn field_by_index(&self, i: usize) -> PySedonaField {
@@ -84,7 +82,7 @@ impl PySedonaSchema {
     fn field<'py>(
         &self,
         py: Python<'py>,
-        index_or_name: PyObject,
+        index_or_name: Py<PyAny>,
     ) -> Result<PySedonaField, PySedonaError> {
         if let Ok(index) = index_or_name.extract::<usize>(py) {
             if index < self.inner.fields().len() {
@@ -182,9 +180,8 @@ impl PySedonaField {
         &self,
         py: Python<'py>,
     ) -> Result<Bound<'py, PyCapsule>, PySedonaError> {
-        let schema_capsule_name = CString::new("arrow_schema").unwrap();
         let ffi_schema = FFI_ArrowSchema::try_from(self.inner.clone())?;
-        Ok(PyCapsule::new(py, ffi_schema, Some(schema_capsule_name))?)
+        Ok(PyCapsule::new_with_value(py, ffi_schema, c"arrow_schema")?)
     }
 
     fn __repr__(&self) -> String {
@@ -192,7 +189,7 @@ impl PySedonaField {
     }
 }
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PySedonaType {
     pub inner: SedonaType,
@@ -211,7 +208,7 @@ impl PySedonaType {
 #[pymethods]
 impl PySedonaType {
     #[getter]
-    fn crs<'py>(&self, py: Python<'py>) -> Result<Option<PyObject>, PySedonaError> {
+    fn crs<'py>(&self, py: Python<'py>) -> Result<Option<Py<PyAny>>, PySedonaError> {
         if let Some(crs) = self.inner.crs() {
             let json = py.import("json")?;
             let geoarrow_types_crs = py.import("geoarrow.types.crs")?;
@@ -229,7 +226,7 @@ impl PySedonaType {
     }
 
     #[getter]
-    fn edge_type<'py>(&self, py: Python<'py>) -> Result<Option<PyObject>, PySedonaError> {
+    fn edge_type<'py>(&self, py: Python<'py>) -> Result<Option<Py<PyAny>>, PySedonaError> {
         match &self.inner {
             SedonaType::Wkb(edges, _) | SedonaType::WkbView(edges, _) => {
                 let geoarrow_types = py.import("geoarrow.types")?;
@@ -247,10 +244,9 @@ impl PySedonaType {
         &self,
         py: Python<'py>,
     ) -> Result<Bound<'py, PyCapsule>, PySedonaError> {
-        let schema_capsule_name = CString::new("arrow_schema").unwrap();
         let field = self.inner.to_storage_field("", true)?;
         let ffi_schema = FFI_ArrowSchema::try_from(field)?;
-        Ok(PyCapsule::new(py, ffi_schema, Some(schema_capsule_name))?)
+        Ok(PyCapsule::new_with_value(py, ffi_schema, c"arrow_schema")?)
     }
 
     fn __repr__(&self) -> String {

@@ -43,7 +43,7 @@ jobs:
   source:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           submodules: 'true'
@@ -94,7 +94,7 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           submodules: 'true'
@@ -106,7 +106,7 @@ jobs:
       - uses: quarto-dev/quarto-actions/setup@v2
 
       - name: Clone vcpkg
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: microsoft/vcpkg
           ref: ${{ env.VCPKG_REF }}
@@ -127,7 +127,7 @@ jobs:
 
       - name: Cache vcpkg binaries
         id: cache-vcpkg
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: vcpkg/packages
           # Bump the number at the end of this line to force a new dependency build

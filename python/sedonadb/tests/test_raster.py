@@ -16,9 +16,16 @@
 # under the License.
 
 import numpy as np
+import pyarrow as pa
 import pytest
 
-from sedonadb.raster import Raster, RasterArray, RasterScalar, RasterType
+from sedonadb.raster import (
+    Raster,
+    RasterArray,
+    RasterScalar,
+    RasterType,
+    _get_binary_view_buffer,
+)
 
 
 def test_type_class_resolution(con):
@@ -32,10 +39,48 @@ def test_type_class_resolution(con):
     assert isinstance(tab["raster"][0].as_py(), Raster)
 
 
+def test_raster_from_chunked_array(con):
+    t = con.sql("SELECT RS_Example() as raster")
+    tab = pa.concat_tables([t.to_arrow_table(), t.to_arrow_table()])
+    chunked = tab["raster"]
+
+    # Ensure we created a chunked array with two chunks
+    assert tab["raster"].num_chunks == 2
+
+    # Check the first element (first chunk)
+
+    r = Raster(chunked, 0)
+    assert r.width == 64
+    assert r.height == 32
+    assert len(r.bands) == 3
+
+    # Verify zero-copy: compare with constructing from the chunk directly
+    r_from_chunk = Raster(chunked.chunk(0), 0)
+    arr1 = r.bands[0].to_numpy()
+    arr2 = r_from_chunk.bands[0].to_numpy()
+    assert np.shares_memory(arr1, arr2), "ChunkedArray constructor should be zero-copy"
+
+    # Check the second element (second chunk)
+    r = Raster(chunked, 1)
+    assert r.width == 64
+    assert r.height == 32
+    assert len(r.bands) == 3
+
+    # Verify zero-copy: compare with constructing from the chunk directly
+    r_from_chunk = Raster(chunked.chunk(1), 0)
+    arr1 = r.bands[0].to_numpy()
+    arr2 = r_from_chunk.bands[0].to_numpy()
+    assert np.shares_memory(arr1, arr2), "ChunkedArray constructor should be zero-copy"
+
+    # Test index out of bounds
+    with pytest.raises(IndexError):
+        Raster(chunked, 100)
+
+
 def test_raster_accessors(con):
     t = con.sql("SELECT RS_Example() as raster")
     tab = t.to_arrow_table()
-    r: Raster = tab["raster"][0].as_py()
+    r = tab["raster"][0].as_py()
 
     assert r.crs.to_json_dict()["id"] == {"authority": "OGC", "code": "CRS84"}
     assert r.width == 64
@@ -72,6 +117,73 @@ def test_raster_to_lit(con):
     ).to_pandas()
     assert t2.iloc[0, 0] == r.width
     assert t2.iloc[0, 1] == r.height
+
+
+def test_raster_zero_copy_access(con):
+    t = con.sql("SELECT RS_Example() as raster")
+    tab = t.to_arrow_table()
+    r = Raster(tab["raster"], 0)
+    b = r.bands[0]
+
+    # to_numpy should return array backed by the same buffer
+    arr = b.to_numpy()
+    assert arr.shape == b.shape
+
+    # Verify the data matches
+    expected_first_value = 127  # Known value from RS_Example
+    assert arr[0, 0] == expected_first_value
+
+    # Check a roundtripped table through SedonaDB
+    tab_roundtrip = con.create_data_frame(tab).to_arrow_table()
+    r_from_tab = Raster(tab_roundtrip["raster"].chunk(0), 0)
+    b_from_tab = r_from_tab.bands[0]
+    arr_from_tab = b_from_tab.to_numpy()
+    assert (
+        arr.__array_interface__["data"][0]
+        == arr_from_tab.__array_interface__["data"][0]
+    ), "to_numpy should return zero-copy view sharing the same buffer"
+
+    # Verify the arrays are views, not copies (same base memory)
+    assert np.shares_memory(arr, arr_from_tab)
+
+
+def test_raster_zero_copy_pandas(con):
+    # Earlier versions of Pandas seem to error with a BlockManager issue
+    # regarding a 1D/2D block. This may be workaroundable if we need to
+    # support older Python/Pandas.
+    pytest.importorskip("pandas", minversion="3.0")
+
+    t = con.sql("SELECT RS_Example() as raster")
+    tab = t.to_arrow_table()
+    r = Raster(tab["raster"], 0)
+    b = r.bands[0]
+    arr = b.to_numpy()
+
+    # This should also be true of the collected Pandas DataFrame
+    df = con.create_data_frame(tab).to_pandas()
+
+    # The DataFrame should contain Raster objects
+    assert len(df) == 1
+    r_from_df = df["raster"].iloc[0]
+    assert isinstance(r_from_df, Raster)
+
+    # Verify the Raster has the expected properties
+    assert r_from_df.width == 64
+    assert r_from_df.height == 32
+    assert len(r_from_df.bands) == 3
+
+    # Verify zero-copy: the band data should be backed by the same buffer
+    b_from_df = r_from_df.bands[0]
+    arr_from_df = b_from_df.to_numpy()
+    assert arr_from_df[0, 0] == 127  # Known value from RS_Example
+
+    # They should share the same underlying buffer (same data pointer)
+    assert (
+        arr.__array_interface__["data"][0] == arr_from_df.__array_interface__["data"][0]
+    ), "to_numpy should return zero-copy view sharing the same buffer"
+
+    # Verify the arrays are views, not copies (same base memory)
+    assert np.shares_memory(arr, arr_from_df)
 
 
 def test_raster_lazy():
@@ -155,15 +267,19 @@ def test_raster_lazy_nd():
 
 
 def test_raster_from_numpy_2d():
-    arr = np.arange(2 * 3, dtype="uint8").reshape(2, 3)
+    # Use array >12 bytes so BinaryView uses out-of-line storage (zero-copy eligible)
+    arr = np.arange(4 * 5, dtype="uint8").reshape(4, 5)
     r = Raster.from_numpy(arr)
 
-    assert r.width == 3
-    assert r.height == 2
+    assert r.width == 5
+    assert r.height == 4
     b = r.bands[0]
-    assert b.source_shape == (2, 3)
+    assert b.source_shape == (4, 5)
     assert b.data_type == "uint8"
     np.testing.assert_array_equal(b.to_numpy(), arr)
+
+    # Ensure that the stored data is zero copy (only works for >12 byte arrays)
+    assert np.shares_memory(b.to_numpy(), arr)
 
 
 def test_raster_from_numpy_nd_with_crs():
@@ -197,8 +313,89 @@ def test_raster_lazy_zero_size():
     assert b.source_shape == (0, 64)
     assert b.data_size == 0
     assert b.source_data_size == 0
-    assert b.data == memoryview(b"")
+    np.testing.assert_array_equal(b.data, np.empty((0, 64), dtype="float32"))
 
     arr = b.to_numpy()
     assert arr.shape == (0, 64)
     assert arr.dtype == "float32"
+
+
+def test_get_binary_view_buffer():
+    # Out-of-line data (>12 bytes) should return a memoryview
+    large_data = b"x" * 100
+    arr = pa.array([large_data], type=pa.binary_view())
+    mv = _get_binary_view_buffer(arr, index=0)
+    assert mv is not None
+    assert len(mv) == 100
+    assert bytes(mv) == large_data
+
+    # Inline data (≤12 bytes) should return None
+    small_data = b"hello"
+    arr_small = pa.array([small_data], type=pa.binary_view())
+    mv_small = _get_binary_view_buffer(arr_small, index=0)
+    assert mv_small is None
+
+    # Empty array should raise IndexError
+    arr_empty = pa.array([], type=pa.binary_view())
+    with pytest.raises(IndexError, match="index 0 is out of bounds"):
+        _get_binary_view_buffer(arr_empty, index=0)
+
+    # Null element should return None (inline with length 0)
+    arr_null = pa.array([None], type=pa.binary_view())
+    mv_null = _get_binary_view_buffer(arr_null, index=0)
+    assert mv_null is None
+
+
+def test_get_binary_view_buffer_index_out_of_bounds():
+    # Create an array with one element, then access index 1
+    data = b"x" * 20
+    arr = pa.array([data], type=pa.binary_view())
+
+    with pytest.raises(IndexError, match="index 1 is out of bounds"):
+        _get_binary_view_buffer(arr, index=1)
+
+    # Also test negative-ish scenario with index beyond array length
+    with pytest.raises(IndexError, match="index 5 is out of bounds"):
+        _get_binary_view_buffer(arr, index=5)
+
+
+def test_get_binary_view_buffer_invalid_buffer_index():
+    import struct
+
+    # Create a BinaryView that references a non-existent variadic buffer.
+    # BinaryView format for out-of-line (len > 12):
+    #   length:i4, prefix:4bytes, buf_idx:i4, offset:i4
+    length = 100  # > 12, so out-of-line
+    prefix = b"xxxx"
+    buf_idx = 99  # References non-existent buffer
+    offset = 0
+    view_bytes = (
+        struct.pack("=I", length) + prefix + struct.pack("=II", buf_idx, offset)
+    )
+
+    views_buffer = pa.py_buffer(view_bytes)
+    # BinaryView buffers: [validity, views, variadic_buffers...]
+    # We provide no variadic buffers, so buf_idx=99 is invalid
+    arr = pa.Array.from_buffers(pa.binary_view(), 1, [None, views_buffer])
+
+    with pytest.raises(IndexError, match="buffer index 99"):
+        _get_binary_view_buffer(arr, index=0)
+
+
+def test_get_binary_view_buffer_sliced():
+    # Create array with multiple out-of-line elements
+    data = [b"a" * 20, b"b" * 30, b"c" * 40]
+    arr = pa.array(data, type=pa.binary_view())
+
+    # Slice to get second element at index 0 of the slice
+    sliced = arr.slice(1, 1)
+    mv = _get_binary_view_buffer(sliced, index=0)
+    assert mv is not None
+    assert len(mv) == 30
+    assert bytes(mv) == b"b" * 30
+
+    # Access different indices in the original array
+    for i, expected in enumerate(data):
+        mv = _get_binary_view_buffer(arr, index=i)
+        assert mv is not None
+        assert bytes(mv) == expected

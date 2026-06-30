@@ -27,110 +27,6 @@ from sedonadb._lib import raster_type
 if TYPE_CHECKING:
     import numpy as np
 
-EXTENSION_NAME = "sedona.raster"
-
-# Band data type IDs (matches sedona-schema BandDataType enum discriminants)
-BAND_DATA_TYPES = {
-    1: "UInt8",
-    2: "UInt16",
-    3: "Int16",
-    4: "UInt32",
-    5: "Int32",
-    6: "Float32",
-    7: "Float64",
-    8: "UInt64",
-    9: "Int64",
-    10: "Int8",
-}
-
-BAND_DATA_TYPE_IDS = {v.lower(): k for k, v in BAND_DATA_TYPES.items()}
-
-# Python struct module format characters for band data types
-BAND_DATA_TYPE_STRUCT_CHARS = {
-    1: "B",
-    2: "H",
-    3: "h",
-    4: "I",
-    5: "i",
-    6: "f",
-    7: "d",
-    8: "Q",
-    9: "q",
-    10: "b",
-}
-
-
-def _resolve_dim_names(ndim, dim_names):
-    """Resolve a band's dimension names. The trailing two are the spatial
-    ``(y, x)`` pair; a 2-D raster defaults to ``["y", "x"]`` and higher
-    dimensionalities must name every axis explicitly."""
-    if dim_names is None:
-        if ndim == 2:
-            return ["y", "x"]
-        raise ValueError(
-            f"dim_names is required for a {ndim}-dimensional raster "
-            "(only 2-D defaults to ['y', 'x'])"
-        )
-    dim_names = list(dim_names)
-    if len(dim_names) != ndim:
-        raise ValueError(
-            f"dim_names has {len(dim_names)} entries but the raster has {ndim} dimensions"
-        )
-    return dim_names
-
-
-def _build_raster(
-    dim_names,
-    shape,
-    data_type_id,
-    *,
-    data,
-    crs=None,
-    nodata=None,
-    transform=None,
-    outdb_uri=None,
-    outdb_format=None,
-):
-    """Assemble a single-band raster from its components, shared by the
-    `Raster.lazy` (OutDb) and `Raster.from_numpy` (InDb) constructors. The
-    trailing two `dim_names`/`shape` entries are the spatial `(y, x)` axes."""
-    if crs is not None:
-        crs = gat.type_spec(crs=crs).crs.to_json()
-    nodata_bytes = None
-    if nodata is not None:
-        nodata_bytes = struct.pack(
-            "<" + BAND_DATA_TYPE_STRUCT_CHARS[data_type_id], nodata
-        )
-
-    # spatial_dims / spatial_shape reference the trailing (y, x) axes, in x,y order.
-    y_name, x_name = dim_names[-2], dim_names[-1]
-    height, width = shape[-2], shape[-1]
-
-    band = {
-        "name": None,
-        "dim_names": list(dim_names),
-        "source_shape": list(shape),
-        "data_type": data_type_id,
-        "nodata": nodata_bytes,
-        "view": None,
-        "outdb_uri": outdb_uri,
-        "outdb_format": outdb_format,
-        "data": data,
-    }
-    raster = {
-        "crs": crs,
-        "transform": list(transform)
-        if transform is not None
-        else [0.0, 1.0, 0.0, 0.0, 0.0, -1.0],
-        "spatial_dims": [x_name, y_name],
-        "spatial_shape": [width, height],
-        "bands": [band],
-    }
-    storage_type = pa.DataType._import_from_c_capsule(
-        raster_type().__arrow_c_schema__()
-    )
-    return Raster(pa.array([raster], type=storage_type))
-
 
 class Raster:
     """Python representation of a sedona.raster scalar value."""
@@ -207,8 +103,7 @@ class Raster:
         The mirror of `lazy`: identical dimension/CRS conventions, but the
         pixel data is carried in the raster rather than referenced by URI.
 
-        **Warning:** this copies the *entire* array into the raster value; it
-        is not zero-copy.
+        This operation is zero-copy for contiguous arrays.
 
         Args:
             array: The pixel data. The trailing two axes are the spatial `(y, x)`
@@ -248,7 +143,7 @@ class Raster:
             dim_names,
             shape,
             BAND_DATA_TYPE_IDS[dtype],
-            data=array.tobytes(),
+            data=array,
             crs=crs,
             nodata=nodata,
             transform=transform,
@@ -256,10 +151,24 @@ class Raster:
 
     def __init__(self, array, i=0):
         """Create a Raster from an Arrow array at index i."""
+        # It is convenient to handle this case because this is what to_arrow_table()
+        # returns.
+        if isinstance(array, pa.ChunkedArray):
+            for chunk in array.chunks:
+                if i < len(chunk):
+                    chunk = (
+                        chunk.storage if isinstance(chunk, pa.ExtensionArray) else chunk
+                    )
+                    self._array = chunk.slice(i, 1)
+                    return
+                i -= len(chunk)
+            raise IndexError("Index out of bounds for chunked array")
+
         if isinstance(array, pa.ExtensionArray):
             array = array.storage
 
-        self._array = pa.array(array.slice(i, i + 1))
+        # Use slice directly - pa.array() would copy
+        self._array = array.slice(i, 1)
 
     def _py_field(self, k):
         """Extract a field value as a Python object."""
@@ -307,7 +216,8 @@ class Band:
 
     def __init__(self, array, i=0):
         """Create a Band from an Arrow array at index i."""
-        self._array = pa.array(array.slice(i, i + 1))
+        # Use slice directly - pa.array() would copy
+        self._array = array.slice(i, 1)
 
     def _py_field(self, k):
         """Extract a field value as a Python object."""
@@ -345,9 +255,20 @@ class Band:
 
     @property
     def source_data(self) -> memoryview:
-        """The raw source data buffer as a memoryview."""
-        view_scalar = self._array.field("data")[0]
-        return memoryview(view_scalar.as_buffer())
+        """The raw source data buffer as a memoryview.
+
+        Zero-copy for out-of-line BinaryView data by decoding the view descriptor
+        and resolving the correct variadic buffer. Falls back to copying for
+        inline data (≤12 bytes).
+        """
+        # Try zero-copy path for out-of-line data
+        data_array = self._array.field("data")
+        result = _get_binary_view_buffer(data_array, index=0)
+        if result is not None:
+            return result
+
+        # Fallback: inline data or missing buffer - must copy
+        return memoryview(data_array[0].as_buffer())
 
     @property
     def source_data_size(self) -> int:
@@ -371,11 +292,11 @@ class Band:
         buffer_type_id = self._py_field("data_type")
         buffer_type_char = BAND_DATA_TYPE_STRUCT_CHARS[buffer_type_id]
 
-        # This is not quite right, but shapes that contain zeroes are not well
-        # supported by the memoryview yet. Callers should check data_size for
-        # empty handling with non-numpy views.
+        # Shapes that contain zeroes are supported by memroyview.cast().
+        # Callers should check data_size for empty handling with non-numpy views
+        # if they want to avoid a numpy dependency.
         if self.data_size == 0:
-            return memoryview(b"")
+            return memoryview(self.to_numpy())
 
         source_data = self.source_data
         if self.outdb_uri is not None and len(source_data) == 0:
@@ -390,13 +311,13 @@ class Band:
         return self.source_data.cast(buffer_type_char, self.shape)
 
     def to_numpy(self) -> "np.ndarray":
-        """Convert this band's data to a numpy array."""
+        """Convert this band's data to a numpy array (zero-copy when possible)."""
         import numpy as np
 
         if self.data_size == 0:
             return np.empty(self.shape, dtype=self.data_type)
 
-        return np.array(self.data)
+        return np.array(self.data, dtype=self.data_type, copy=False).reshape(self.shape)
 
     def __repr__(self) -> str:
         """Return a string representation of this band."""
@@ -414,7 +335,15 @@ class RasterScalar(pa.ExtensionScalar):
 class RasterArray(pa.ExtensionArray):
     """Array type for sedona.raster extension arrays."""
 
-    pass
+    def to_pandas(self, **kwargs):
+        """Convert to a Pandas Series of Raster objects (zero-copy where possible)."""
+        import pandas as pd
+
+        _check_pandas_version()
+
+        # Create Raster objects that reference the underlying storage directly
+        rasters = [Raster(self.storage, i) for i in range(len(self))]
+        return pd.array(rasters, dtype=object)
 
 
 class RasterType(pa.ExtensionType):
@@ -454,6 +383,57 @@ class RasterType(pa.ExtensionType):
     def __arrow_ext_scalar_class__(self):
         return RasterScalar
 
+    def to_pandas_dtype(self):
+        """Return the Pandas dtype for this extension type."""
+        return RasterDtype()
+
+
+class RasterDtype:
+    """Pandas-compatible dtype for Raster arrays.
+
+    This dtype enables conversion from Arrow to Pandas with zero-copy
+    Raster objects that reference the underlying Arrow buffers.
+    """
+
+    name = "raster"
+    na_value = None
+
+    def __repr__(self):
+        return "RasterDtype()"
+
+    def __eq__(self, other):
+        return isinstance(other, RasterDtype)
+
+    def __hash__(self):
+        return hash("RasterDtype")
+
+    @classmethod
+    def __from_arrow__(cls, arr):
+        """Convert an Arrow array to a numpy array of Raster objects.
+
+        This is called by PyArrow when converting to Pandas. Each Raster
+        object wraps a slice of the Arrow array for zero-copy access.
+        """
+        import pandas as pd
+
+        _check_pandas_version()
+
+        # Handle ChunkedArray by iterating over chunks
+        if isinstance(arr, pa.ChunkedArray):
+            rasters = []
+            for chunk in arr.chunks:
+                storage = (
+                    chunk.storage if isinstance(chunk, pa.ExtensionArray) else chunk
+                )
+                for i in range(len(storage)):
+                    rasters.append(Raster(storage, i))
+            return pd.array(rasters, dtype=object)
+
+        # Handle single array
+        storage = arr.storage if isinstance(arr, pa.ExtensionArray) else arr
+        rasters = [Raster(storage, i) for i in range(len(storage))]
+        return pd.array(rasters, dtype=object)
+
 
 def register_extension_type():
     """Register the sedona.raster extension type with PyArrow.
@@ -476,3 +456,269 @@ def register_extension_type():
 RASTER_STORAGE_TYPE = pa.DataType._import_from_c_capsule(
     raster_type().__arrow_c_schema__()
 )
+
+
+EXTENSION_NAME = "sedona.raster"
+
+# Band data type IDs (matches sedona-schema BandDataType enum discriminants)
+BAND_DATA_TYPES = {
+    1: "UInt8",
+    2: "UInt16",
+    3: "Int16",
+    4: "UInt32",
+    5: "Int32",
+    6: "Float32",
+    7: "Float64",
+    8: "UInt64",
+    9: "Int64",
+    10: "Int8",
+}
+
+BAND_DATA_TYPE_IDS = {v.lower(): k for k, v in BAND_DATA_TYPES.items()}
+
+# Python struct module format characters for band data types
+BAND_DATA_TYPE_STRUCT_CHARS = {
+    1: "B",
+    2: "H",
+    3: "h",
+    4: "I",
+    5: "i",
+    6: "f",
+    7: "d",
+    8: "Q",
+    9: "q",
+    10: "b",
+}
+
+
+def _get_binary_view_buffer(
+    data_array: pa.BinaryViewArray, index: int = 0
+) -> Optional[memoryview]:
+    """Extract a zero-copy memoryview from a BinaryViewArray element.
+
+    Decodes the BinaryView format to resolve the correct variadic buffer
+    for out-of-line data. Returns None for inline data (≤12 bytes) which
+    requires copying. This in theory should be possible with a normal
+    pyarrow array[index].as_py().as_buffer(); however, something about
+    this operation forces a copy with the current PyArrow version.
+
+    Args:
+        data_array: A BinaryViewArray (may be sliced).
+        index: The element index within the array (after any slicing).
+
+    Returns:
+        A memoryview pointing directly into the variadic buffer for out-of-line
+        data, or None if the data is inline and must be copied.
+    """
+    # BinaryView layout: [validity, views, variadic_buffers...]
+    # Each view is 16 bytes:
+    #   - Inline (len ≤ 12): length:i4, data:12bytes
+    #   - Out-of-line (len > 12): length:i4, prefix:4bytes, buf_idx:i4, offset:i4
+    buffers = data_array.buffers()
+    if len(buffers) < 2 or buffers[1] is None:
+        return None
+
+    views_buf = memoryview(buffers[1])
+    # Account for array offset (e.g., from slicing) plus the requested index
+    array_offset = data_array.offset + index
+    view_start = array_offset * 16
+    view_end = view_start + 16
+    if view_end > len(views_buf):
+        raise IndexError(
+            f"index {index} is out of bounds for BinaryViewArray with "
+            f"{len(views_buf) // 16} elements"
+        )
+    view_bytes = views_buf[view_start:view_end]
+
+    # Decode length from first 4 bytes
+    length = struct.unpack_from("=I", view_bytes, 0)[0]
+
+    if length <= 12:
+        # Inline data - caller must copy
+        return None
+
+    # Out-of-line: decode buffer_index and offset
+    buf_idx = struct.unpack_from("=I", view_bytes, 8)[0]
+    offset = struct.unpack_from("=I", view_bytes, 12)[0]
+
+    # Variadic buffers start at index 2
+    variadic_buf_idx = 2 + buf_idx
+    if variadic_buf_idx >= len(buffers) or buffers[variadic_buf_idx] is None:
+        raise IndexError(
+            f"BinaryView references buffer index {buf_idx} but only "
+            f"{len(buffers) - 2} variadic buffers are available"
+        )
+
+    data_buf = memoryview(buffers[variadic_buf_idx])
+    return data_buf[offset : offset + length]
+
+
+def _wrap_data_zero_copy(data) -> pa.BinaryViewArray:
+    """Wrap data as a single-element BinaryViewArray without copying.
+
+    For numpy arrays and memoryviews, this creates a zero-copy view.
+    For bytes, pyarrow handles the wrapping efficiently.
+    """
+    import numpy as np
+
+    view = memoryview(data)
+    if not view.c_contiguous:
+        # Must copy if not contiguous
+        data = np.ascontiguousarray(data)
+        view = memoryview(data)
+
+    nbytes = view.nbytes
+    if nbytes == 0:
+        return pa.array([b""], type=pa.binary_view())
+    elif nbytes >= 2**31:
+        raise ValueError(f"Can't store {nbytes} (>2GB) in a single raster band")
+
+    # Build BinaryArray zero-copy using from_buffers, then cast to binary_view
+    # BinaryArray buffers: [validity, offsets, data]
+    offsets = pa.py_buffer(np.array([0, nbytes], dtype=np.int32))
+    data_buffer = pa.py_buffer(view)
+    binary_array = pa.BinaryArray.from_buffers(
+        pa.binary(),
+        length=1,
+        buffers=[None, offsets, data_buffer],
+    )
+
+    # Cast to binary_view is zero-copy at array buffer level
+    return binary_array.cast(pa.binary_view())
+
+
+def _resolve_dim_names(ndim, dim_names):
+    """Resolve a band's dimension names. The trailing two are the spatial
+    ``(y, x)`` pair; a 2-D raster defaults to ``["y", "x"]`` and higher
+    dimensionalities must name every axis explicitly."""
+    if dim_names is None:
+        if ndim == 2:
+            return ["y", "x"]
+        raise ValueError(
+            f"dim_names is required for a {ndim}-dimensional raster "
+            "(only 2-D defaults to ['y', 'x'])"
+        )
+    dim_names = list(dim_names)
+    if len(dim_names) != ndim:
+        raise ValueError(
+            f"dim_names has {len(dim_names)} entries but the raster has {ndim} dimensions"
+        )
+    return dim_names
+
+
+def _build_raster(
+    dim_names,
+    shape,
+    data_type_id,
+    *,
+    data,
+    crs=None,
+    nodata=None,
+    transform=None,
+    outdb_uri=None,
+    outdb_format=None,
+):
+    """Assemble a single-band raster from its components, shared by the
+    `Raster.lazy` (OutDb) and `Raster.from_numpy` (InDb) constructors. The
+    trailing two `dim_names`/`shape` entries are the spatial `(y, x)` axes."""
+    if crs is not None:
+        crs = gat.type_spec(crs=crs).crs.to_json()
+    nodata_bytes = None
+    if nodata is not None:
+        nodata_bytes = struct.pack(
+            "<" + BAND_DATA_TYPE_STRUCT_CHARS[data_type_id], nodata
+        )
+
+    # spatial_dims / spatial_shape reference the trailing (y, x) axes, in x,y order.
+    y_name, x_name = dim_names[-2], dim_names[-1]
+    height, width = shape[-2], shape[-1]
+
+    # Build band struct array with zero-copy data field
+    band_data_array = _wrap_data_zero_copy(data)
+
+    band_struct = pa.StructArray.from_arrays(
+        [
+            pa.array([None], type=pa.utf8()),  # name
+            pa.array([list(dim_names)], type=pa.list_(pa.utf8())),  # dim_names
+            pa.array([list(shape)], type=pa.list_(pa.int64())),  # source_shape
+            pa.array([data_type_id], type=pa.uint32()),  # data_type
+            pa.array([nodata_bytes], type=pa.binary()),  # nodata
+            pa.array(
+                [None],
+                type=pa.list_(
+                    pa.struct(
+                        [  # view
+                            pa.field("source_axis", pa.int64()),
+                            pa.field("start", pa.int64()),
+                            pa.field("step", pa.int64()),
+                            pa.field("steps", pa.int64()),
+                        ]
+                    )
+                ),
+            ),
+            pa.array([outdb_uri], type=pa.utf8()),  # outdb_uri
+            pa.array([outdb_format], type=pa.string_view()),  # outdb_format
+            band_data_array,  # data (zero-copy)
+        ],
+        names=[
+            "name",
+            "dim_names",
+            "source_shape",
+            "data_type",
+            "nodata",
+            "view",
+            "outdb_uri",
+            "outdb_format",
+            "data",
+        ],
+    )
+
+    # Wrap band in a list array (single element list containing one band)
+    bands_list = pa.ListArray.from_arrays(
+        pa.array([0, 1], type=pa.int32()),
+        band_struct,
+    )
+
+    transform_values = (
+        list(transform) if transform is not None else [0.0, 1.0, 0.0, 0.0, 0.0, -1.0]
+    )
+
+    # Build raster struct array
+    raster_struct = pa.StructArray.from_arrays(
+        [
+            pa.array([crs], type=pa.string_view()),  # crs
+            pa.array([transform_values], type=pa.list_(pa.float64())),  # transform
+            pa.array(
+                [[x_name, y_name]], type=pa.list_(pa.string_view())
+            ),  # spatial_dims
+            pa.array([[width, height]], type=pa.list_(pa.int64())),  # spatial_shape
+            bands_list,  # bands
+        ],
+        names=["crs", "transform", "spatial_dims", "spatial_shape", "bands"],
+    )
+
+    # Cast to the canonical storage type to ensure nullability matches
+    raster_struct = raster_struct.cast(RASTER_STORAGE_TYPE)
+
+    return Raster(raster_struct)
+
+
+def _check_pandas_version():
+    """Check that pandas version is >= 3.0 for raster to_pandas conversion.
+
+    Older Pandas versions have an issue with Arrow conversion for the
+    current strategy of Raster array -> Pandas conversion. This may
+    be able to be worked around (the original error was a BlockManager
+    error regarding a 1D/2D block).
+
+    Raises:
+        ImportError: If pandas version is less than 3.0.
+    """
+    import pandas as pd
+    from packaging.version import Version
+
+    if Version(pd.__version__) < Version("3.0"):
+        raise ImportError(
+            f"Converting raster columns to pandas requires pandas >= 3.0, "
+            f"but found pandas {pd.__version__}. Use .to_arrow_table() instead."
+        )

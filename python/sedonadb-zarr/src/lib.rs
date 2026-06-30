@@ -21,7 +21,7 @@
 //! - `ZarrRasterLoader`: a Python class implementing the raster loader interface
 //!   that can be registered with `sedonadb` via `py_raster_loader`.
 
-use std::ffi::{c_int, CString};
+use std::ffi::c_int;
 use std::sync::{Mutex, OnceLock};
 
 use arrow_array::ffi_stream::FFI_ArrowArrayStream;
@@ -99,9 +99,7 @@ impl PyZarrChunkReader {
                 )
             })?;
         let ffi_stream = FFI_ArrowArrayStream::new(Box::new(reader));
-        let capsule_name = CString::new("arrow_array_stream")
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        PyCapsule::new(py, ffi_stream, Some(capsule_name))
+        PyCapsule::new_with_value(py, ffi_stream, c"arrow_array_stream")
     }
 }
 
@@ -224,7 +222,7 @@ impl ZarrLoadResult {
 }
 
 /// View entry for Zarr load results.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone, Copy)]
 pub struct ZarrViewEntry {
     #[pyo3(get)]
@@ -372,9 +370,8 @@ impl PyZarrRasterLoader {
             rust_requests.iter().collect();
 
         // Run the async load on the shared runtime
-        let results = py.allow_threads(|| {
-            shared_runtime().block_on(async { self.loader.load(&request_refs).await })
-        });
+        let results = py
+            .detach(|| shared_runtime().block_on(async { self.loader.load(&request_refs).await }));
 
         let results = results.map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
 
@@ -418,7 +415,7 @@ struct OwnedLoadRequest {
     data_type: sedona_schema::raster::BandDataType,
 }
 
-#[pymodule]
+#[pymodule(gil_used = false)]
 fn _lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyZarrChunkReader>()?;
     m.add_class::<PyZarrRasterLoader>()?;

@@ -61,8 +61,15 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_geomfromwkb::st_geomfromwkb_udf,
         crate::st_geomfromwkb::st_geomfromwkbunchecked_udf,
         crate::st_geomfromwkt::st_geogfromwkt_udf,
+        crate::st_geomfromwkt::st_geomcollfromtext_udf,
         crate::st_geomfromwkt::st_geomfromewkt_udf,
         crate::st_geomfromwkt::st_geomfromwkt_udf,
+        crate::st_geomfromwkt::st_linefromtext_udf,
+        crate::st_geomfromwkt::st_mlinefromtext_udf,
+        crate::st_geomfromwkt::st_mpointfromtext_udf,
+        crate::st_geomfromwkt::st_mpolyfromtext_udf,
+        crate::st_geomfromwkt::st_pointfromtext_udf,
+        crate::st_geomfromwkt::st_polygonfromtext_udf,
         crate::st_haszm::st_hasm_udf,
         crate::st_haszm::st_hasz_udf,
         crate::st_interiorringn::st_interiorringn_udf,
@@ -108,7 +115,8 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_xyzm::st_y_udf,
         crate::st_xyzm::st_z_udf,
         crate::st_zmflag::st_zmflag_udf,
-        crate::st_linesubstring::st_line_substring_udf
+        crate::st_linesubstring::st_line_substring_udf,
+        crate::st_max_distance::st_max_distance_udf
     );
 
     register_aggregate_udfs!(
