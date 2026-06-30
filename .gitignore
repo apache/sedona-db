@@ -50,6 +50,9 @@ __pycache__
 
 # .env file for release management
 dev/release/.env
+.mcp.env
 
 /.luarc.json
 .positai
+
+.venv/*
