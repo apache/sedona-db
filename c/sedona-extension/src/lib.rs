@@ -16,4 +16,5 @@
 // under the License.
 
 pub mod extension;
+pub mod object_store;
 pub mod scalar_kernel;
