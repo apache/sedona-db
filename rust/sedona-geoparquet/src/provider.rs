@@ -393,8 +393,13 @@ mod test {
         ] {
             let mut opts = HashMap::new();
             opts.insert(rejected.to_string(), "x".to_string());
-            let err =
-                GeoParquetReadOptions::from_table_options(opts).expect_err(rejected);
+            // Avoid `expect_err`/`unwrap_err`: they require `Debug` on the
+            // `Ok` type, but `GeoParquetReadOptions` (via `ParquetReadOptions`)
+            // does not implement `Debug`.
+            let err = match GeoParquetReadOptions::from_table_options(opts) {
+                Ok(_) => panic!("{rejected} should be rejected"),
+                Err(e) => e,
+            };
             assert!(
                 err.contains("Unknown AWS option"),
                 "{rejected} should be rejected, got: {err}"
