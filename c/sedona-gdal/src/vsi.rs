@@ -24,6 +24,7 @@
 use std::ffi::CString;
 use std::ops::Deref;
 
+use crate::cpl::CslStringList;
 use crate::errors::{GdalError, Result};
 use crate::gdal_api::{call_gdal_api, GdalApi};
 
@@ -147,6 +148,36 @@ pub fn unlink_mem_file(api: &'static GdalApi, file_name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Return the directory separator for the specified path.
+///
+/// Default is forward slash. The only exception currently is the Windows
+/// file system which returns backslash, unless the specified path is of the
+/// form "{drive_letter}:/{rest_of_the_path}".
+///
+/// This function replicates the `VSIGetDirectorySeparator` function of GDAL 3.9+.
+/// We do not call the GDAL function directly since we want to be compatible with older
+/// GDAL versions.
+pub fn directory_separator_for_path(path: &str) -> &'static str {
+    if path.starts_with("http://") || path.starts_with("https://") {
+        "/"
+    } else {
+        #[cfg(windows)]
+        {
+            // Return forward slash for paths of the form
+            // "{drive_letter}:/{rest_of_the_path}", and backslash otherwise.
+            if path.len() >= 3 && path.as_bytes()[1] == b':' && path.as_bytes()[2] == b'/' {
+                "/"
+            } else {
+                "\\"
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            "/"
+        }
+    }
+}
+
 #[cfg(test)]
 pub(crate) fn with_memfile<T>(
     api: &'static GdalApi,
@@ -206,6 +237,80 @@ pub fn get_vsi_mem_file_buffer_owned(api: &'static GdalApi, file_name: &str) -> 
 pub fn get_vsi_mem_file_bytes_owned(api: &'static GdalApi, file_name: &str) -> Result<Vec<u8>> {
     let buffer = get_vsi_mem_file_buffer_owned(api, file_name)?;
     Ok(buffer.as_ref().to_vec())
+}
+
+pub struct VsiDirEntry {
+    pub name: String,
+    pub mode: Option<i32>,
+    pub size: Option<crate::gdal_dyn_bindgen::vsi_l_offset>,
+    pub mtime: Option<crate::gdal_dyn_bindgen::GIntBig>,
+}
+
+pub struct VsiDir {
+    api: &'static crate::gdal_api::GdalApi,
+    handle: *mut crate::gdal_dyn_bindgen::VSIDIR,
+}
+
+impl VsiDir {
+    pub fn next_entry(&mut self) -> Option<VsiDirEntry> {
+        let entry = unsafe { (self.api.inner.VSIGetNextDirEntry?)(self.handle) };
+        if entry.is_null() {
+            return None;
+        }
+        let entry = unsafe { &*entry };
+
+        let name = if entry.pszName.is_null() {
+            String::new()
+        } else {
+            unsafe { std::ffi::CStr::from_ptr(entry.pszName) }
+                .to_string_lossy()
+                .into_owned()
+        };
+
+        Some(VsiDirEntry {
+            name,
+            mode: (entry.bModeKnown != 0).then_some(entry.nMode),
+            size: (entry.bSizeKnown != 0).then_some(entry.nSize),
+            mtime: (entry.bMTimeKnown != 0).then_some(entry.nMTime),
+        })
+    }
+}
+
+impl Iterator for VsiDir {
+    type Item = VsiDirEntry;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.next_entry()
+    }
+}
+
+impl Drop for VsiDir {
+    fn drop(&mut self) {
+        if !self.handle.is_null() {
+            if let Some(close) = self.api.inner.VSICloseDir {
+                unsafe { close(self.handle) };
+            }
+            self.handle = std::ptr::null_mut();
+        }
+    }
+}
+
+pub fn open_dir(
+    api: &'static crate::gdal_api::GdalApi,
+    path: &str,
+    recurse_depth: i32,
+    options: Option<&CslStringList>,
+) -> crate::errors::Result<VsiDir> {
+    let c_path = std::ffi::CString::new(path)?;
+    let options_ptr: *const *const std::os::raw::c_char = options
+        .map(|opts| opts.as_ptr() as *const *const std::os::raw::c_char)
+        .unwrap_or(std::ptr::null());
+    let handle =
+        unsafe { call_gdal_api!(api, VSIOpenDir, c_path.as_ptr(), recurse_depth, options_ptr) };
+    if handle.is_null() {
+        return Err(api.last_null_pointer_err("VSIOpenDir"));
+    }
+    Ok(VsiDir { api, handle })
 }
 
 #[cfg(all(test, feature = "gdal-sys"))]
@@ -299,5 +404,25 @@ mod tests {
             assert!(bytes.is_empty());
         })
         .unwrap();
+    }
+
+    #[test]
+    fn test_directory_separator_for_path() {
+        #[cfg(windows)]
+        {
+            assert_eq!(directory_separator_for_path("/vsis3/bucket/prefix"), r"\");
+            assert_eq!(directory_separator_for_path("https://host/data.tif"), "/");
+            assert_eq!(directory_separator_for_path(r"C:\data\dir"), r"\");
+            assert_eq!(directory_separator_for_path(r"C:/data/dir"), "/");
+            assert_eq!(directory_separator_for_path("/tmp/data"), r"\");
+        }
+        #[cfg(not(windows))]
+        {
+            assert_eq!(directory_separator_for_path("/vsis3/bucket/prefix"), "/");
+            assert_eq!(directory_separator_for_path("https://host/data.tif"), "/");
+            assert_eq!(directory_separator_for_path(r"C:\data\dir"), "/");
+            assert_eq!(directory_separator_for_path(r"C:/data/dir"), "/");
+            assert_eq!(directory_separator_for_path("/tmp/data"), "/");
+        }
     }
 }

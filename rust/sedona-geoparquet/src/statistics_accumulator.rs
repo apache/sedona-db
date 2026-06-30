@@ -255,6 +255,7 @@ impl GeoStatsAccumulator for GeographyGeoStatsAccumulator {
 #[cfg(test)]
 mod test {
     use super::*;
+    #[cfg(feature = "s2geography")]
     use parquet::geospatial::bounding_box::BoundingBox;
     use sedona_schema::datatypes::{WKB_GEOGRAPHY, WKB_VIEW_GEOGRAPHY};
     use sedona_testing::create::create_scalar;

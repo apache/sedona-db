@@ -293,6 +293,10 @@ impl SedonaContext {
         );
 
         out.register_function_set(sedona_raster_gdal::register::default_function_set());
+        out.ctx.register_udtf(
+            "rs_geotiff_tiles",
+            sedona_raster_gdal::rs_geotiff_tiles_udtf(),
+        );
 
         // Always register default function set
         out.register_function_set(sedona_functions::register::default_function_set());
