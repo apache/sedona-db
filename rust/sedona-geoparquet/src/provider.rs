@@ -125,16 +125,23 @@ impl GeoParquetReadOptions<'_> {
     pub fn from_table_options(options: HashMap<String, String>) -> Result<Self, String> {
         for key in options.keys() {
             if key.starts_with("aws.") {
+                // Keep this list in sync with the options consumed by
+                // `AwsOptions::set` in `sedona::object_storage`. The previous
+                // list accepted several options (`aws.bucket_name`,
+                // `aws.use_ssl`, `aws.force_path_style`, `aws.nosign`) that are
+                // never consumed there -- they passed validation here but were
+                // silently dropped by `to_listing_options`, so a user setting
+                // them got no effect and no error. Conversely it rejected
+                // `aws.allow_http` and `aws.session_token`, which _are_
+                // consumed. The list below now matches the consumer exactly.
                 let common_aws_options = [
                     "aws.access_key_id",
                     "aws.secret_access_key",
+                    "aws.session_token",
                     "aws.region",
                     "aws.endpoint",
+                    "aws.allow_http",
                     "aws.skip_signature",
-                    "aws.nosign",
-                    "aws.bucket_name",
-                    "aws.use_ssl",
-                    "aws.force_path_style",
                 ];
 
                 if !common_aws_options.contains(&key.as_str()) {
@@ -357,6 +364,48 @@ mod test {
     use crate::format::GeoParquetFormatFactory;
 
     use super::*;
+
+    #[test]
+    fn aws_option_allowlist_matches_consumer() {
+        // Options consumed by AwsOptions::set in sedona::object_storage must be
+        // accepted here; options NOT consumed there must be rejected (otherwise
+        // they are silently dropped in to_listing_options and mislead users).
+        for accepted in [
+            "aws.access_key_id",
+            "aws.secret_access_key",
+            "aws.session_token",
+            "aws.region",
+            "aws.endpoint",
+            "aws.allow_http",
+            "aws.skip_signature",
+        ] {
+            let mut opts = HashMap::new();
+            opts.insert(accepted.to_string(), "x".to_string());
+            GeoParquetReadOptions::from_table_options(opts)
+                .unwrap_or_else(|e| panic!("{accepted} should be accepted, got: {e}"));
+        }
+
+        for rejected in [
+            "aws.bucket_name",
+            "aws.use_ssl",
+            "aws.force_path_style",
+            "aws.nosign",
+        ] {
+            let mut opts = HashMap::new();
+            opts.insert(rejected.to_string(), "x".to_string());
+            // Avoid `expect_err`/`unwrap_err`: they require `Debug` on the
+            // `Ok` type, but `GeoParquetReadOptions` (via `ParquetReadOptions`)
+            // does not implement `Debug`.
+            let err = match GeoParquetReadOptions::from_table_options(opts) {
+                Ok(_) => panic!("{rejected} should be rejected"),
+                Err(e) => e,
+            };
+            assert!(
+                err.contains("Unknown AWS option"),
+                "{rejected} should be rejected, got: {err}"
+            );
+        }
+    }
 
     #[tokio::test]
     async fn listing_table() {
