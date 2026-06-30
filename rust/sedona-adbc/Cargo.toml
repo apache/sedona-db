@@ -38,4 +38,5 @@ arrow-schema = { workspace = true }
 datafusion = { workspace = true }
 futures = { workspace = true }
 sedona = { workspace = true }
+sedona-extension = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread"] }

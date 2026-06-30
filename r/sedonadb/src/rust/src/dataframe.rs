@@ -29,8 +29,8 @@ use datafusion_expr::{select_expr::SelectExpr, Expr, SortExpr};
 use datafusion_ffi::table_provider::FFI_TableProvider;
 use savvy::{savvy, savvy_err, sexp, IntoExtPtrSexp, Result};
 use sedona::context::{SedonaDataFrame, SedonaWriteOptions};
-use sedona::reader::SedonaStreamReader;
 use sedona::show::{DisplayMode, DisplayTableOptions};
+use sedona_extension::streaming::StreamingRecordBatchReader;
 use sedona_geoparquet::options::TableGeoParquetOptions;
 use sedona_schema::schema::SedonaSchema;
 use std::{iter::zip, ptr::swap_nonoverlapping, sync::Arc};
@@ -115,7 +115,8 @@ impl InternalDataFrame {
                 async move { inner.execute_stream().await },
             )??;
 
-        let reader = SedonaStreamReader::new(self.runtime.clone(), stream);
+        let reader = StreamingRecordBatchReader::new(stream, self.runtime.handle().clone())
+            .with_skip_empty_batches(true);
         let reader: Box<dyn RecordBatchReader + Send> = Box::new(reader);
 
         let mut ffi_stream = FFI_ArrowArrayStream::new(reader);

@@ -36,7 +36,7 @@ def test_dataframe_from_dataframe(con):
 
     # On a separate context the table should still be collected the same
     # but should be a separate Python reference. This also has the effect
-    # of testing the __datafusion_table_provider__ interface.
+    # of testing the __sedonadb_table_provider__ interface.
     new_con = sedonadb.connect()
     new_df = new_con.create_data_frame(df)
     assert new_df is not df

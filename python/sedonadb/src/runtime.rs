@@ -50,27 +50,3 @@ where
         })
     })
 }
-
-// A version of the above except for use from an arbitrary Rust function instead
-// of from somewhere that had already acquired the GIL.
-pub fn wait_for_future_from_rust<F>(runtime: &Runtime, fut: F) -> Result<F::Output, PySedonaError>
-where
-    F: Future + Send,
-    F::Output: Send,
-{
-    const INTERVAL_CHECK_SIGNALS: Duration = Duration::from_millis(2_000);
-    runtime.block_on(async {
-        tokio::pin!(fut);
-        loop {
-            tokio::select! {
-                res = &mut fut => break Ok(res),
-                _ = sleep(INTERVAL_CHECK_SIGNALS) => {
-                    Python::attach(|py| {
-                        py.run(cr"pass", None, None)?;
-                        py.check_signals()
-                    })?;
-                }
-            }
-        }
-    })
-}
