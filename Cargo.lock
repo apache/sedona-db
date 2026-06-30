@@ -5759,12 +5759,15 @@ dependencies = [
  "arrow-array",
  "arrow-schema",
  "datafusion-common",
+ "datafusion-execution",
  "datafusion-expr",
+ "futures",
  "libc",
  "sedona-common",
  "sedona-expr",
  "sedona-schema",
  "sedona-testing",
+ "tokio",
 ]
 
 [[package]]
