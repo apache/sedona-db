@@ -33,6 +33,7 @@ mod gdal_common;
 mod gdal_dataset_provider;
 
 mod raster_loader;
+mod rs_clip;
 mod rs_frompath;
 mod rs_metadata;
 mod source_uri;
