@@ -23,8 +23,8 @@ use datafusion_common::cast::as_int64_array;
 use datafusion_common::error::Result;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_geometry::types::Edges;
 use sedona_raster::affine_transformation::to_world_coordinate;
-use sedona_schema::datatypes::Edges;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 /// RS_RasterToWorldCoordY() scalar UDF implementation

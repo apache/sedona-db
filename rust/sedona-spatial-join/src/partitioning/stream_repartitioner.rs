@@ -1018,8 +1018,9 @@ mod tests {
     #[test]
     fn interleave_binary_view_array() -> Result<()> {
         use arrow_array::BinaryViewArray;
+        use sedona_geometry::types::Edges;
         use sedona_schema::crs::Crs;
-        use sedona_schema::datatypes::{Edges, SedonaType};
+        use sedona_schema::datatypes::SedonaType;
         let wkb_view_geometry = SedonaType::WkbView(Edges::Planar, Crs::None);
 
         let wkbs1 = [

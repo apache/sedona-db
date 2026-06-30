@@ -77,7 +77,7 @@ pub const RETURNS_BYTES_METADATA_KEY: &str = "returns_bytes";
 /// dispatch time. This matches DataFusion's
 /// `AsyncScalarUDFImpl::invoke_async_with_args` surface (only
 /// `Arc<ConfigOptions>` is reachable from the async fn) and mirrors how
-/// `CrsProvider` flows through the session's options.
+/// `SedonaRuntime` flows through the session's options.
 #[derive(Debug)]
 pub struct RsEnsureLoaded {
     signature: Signature,

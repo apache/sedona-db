@@ -38,7 +38,7 @@ async-trait = { workspace = true }
 datafusion-common = { workspace = true }
 futures = { workspace = true }
 log = { workspace = true }
-object_store = { workspace = true, features = ["aws", "http"] }
+object_store = { workspace = true, features = ["aws", "fs", "http"] }
 sedona-common = { workspace = true }
 sedona-raster = { workspace = true }
 sedona-schema = { workspace = true }

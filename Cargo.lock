@@ -5702,9 +5702,9 @@ dependencies = [
 name = "sedona-common"
 version = "0.4.0"
 dependencies = [
- "datafusion",
  "datafusion-common",
  "regex",
+ "sedona-geometry",
 ]
 
 [[package]]
@@ -6196,6 +6196,7 @@ dependencies = [
  "datafusion-common",
  "lru 0.18.0",
  "sedona-common",
+ "sedona-geometry",
  "serde_json",
 ]
 
@@ -6424,6 +6425,7 @@ dependencies = [
  "sedona",
  "sedona-adbc",
  "sedona-expr",
+ "sedona-geometry",
  "sedona-geoparquet",
  "sedona-proj",
  "sedona-schema",

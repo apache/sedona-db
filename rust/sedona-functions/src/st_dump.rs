@@ -275,7 +275,8 @@ mod tests {
     use arrow_array::{Array, ArrayRef, ListArray, StructArray, UInt32Array};
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
-    use sedona_schema::{crs::lnglat, datatypes::Edges};
+    use sedona_geometry::types::Edges;
+    use sedona_schema::crs::lnglat;
     use sedona_testing::{
         compare::assert_array_equal, create::create_array, testers::ScalarUdfTester,
     };

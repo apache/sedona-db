@@ -347,10 +347,8 @@ mod test {
     use datafusion::execution::SessionStateBuilder;
     use datafusion::prelude::{col, lit};
     use datafusion_expr::LogicalPlanBuilder;
-    use sedona_schema::{
-        crs::lnglat,
-        datatypes::{Edges, SedonaType},
-    };
+    use sedona_geometry::types::Edges;
+    use sedona_schema::{crs::lnglat, datatypes::SedonaType};
     use sedona_testing::data::{geoarrow_data_dir, test_geoparquet};
     use tempfile::tempdir;
 

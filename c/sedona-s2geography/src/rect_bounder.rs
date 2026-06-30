@@ -105,6 +105,10 @@ impl WkbBounder2D for WkbGeographyBounder {
         // (up to geometry with the largest number of nodes seen).
         size_of::<WkbGeographyBounder>() + self.geog.mem_used() + 4 * size_of::<f64>() + 64
     }
+
+    fn create_instance(&self) -> Box<dyn WkbBounder2D> {
+        Box::new(Self::default())
+    }
 }
 
 /// Safe wrapper around S2GeogRectBounder for computing bounding rectangles

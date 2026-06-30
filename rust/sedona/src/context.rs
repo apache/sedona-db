@@ -47,10 +47,7 @@ use datafusion_expr::dml::InsertOp;
 use datafusion_expr::sqlparser::dialect::{dialect_from_str, Dialect};
 use datafusion_expr::{AggregateUDFImpl, LogicalPlan, LogicalPlanBuilder, ScalarUDFImpl, SortExpr};
 use parking_lot::Mutex;
-use sedona_common::{
-    option::add_sedona_option_extension, sedona_internal_datafusion_err, CrsProviderOption,
-    SedonaOptions,
-};
+use sedona_common::{sedona_internal_datafusion_err, SedonaOptions};
 use sedona_datasource::provider::external_table;
 use sedona_datasource::spec::ExternalFormatSpec;
 use sedona_expr::scalar_udf::{IntoScalarKernelRefs, SedonaScalarUDF};
@@ -122,18 +119,19 @@ impl SedonaContext {
         // and perhaps for all of these initializing them optionally from environment
         // variables.
         let session_config = SessionConfig::from_env()?.with_information_schema(true);
-        let mut session_config = add_sedona_option_extension(session_config);
+        let mut session_config = session_config.with_option_extension(SedonaOptions::default());
         let target_partitions = session_config.target_partitions();
 
-        // Always register the PROJ CrsProvider by default (if PROJ is not configured
+        // Always register the PROJ LazyProjEngine by default (if PROJ is not configured
         // before it is used an error will be raised).
         let opts = session_config
             .options_mut()
             .extensions
             .get_mut::<SedonaOptions>()
             .ok_or_else(|| sedona_internal_datafusion_err!("SedonaOptions not available"))?;
-        opts.crs_provider =
-            CrsProviderOption::new(Arc::new(sedona_proj::provider::ProjCrsProvider::default()));
+        opts.runtime = opts
+            .runtime
+            .with_crs_engine(Arc::new(sedona_proj::transform::LazyProjEngine));
 
         // Set the spilled batch in-memory size threshold to 5% of the per-partition memory limit,
         // with a minimum of 10MB. Batches larger than this threshold will be broken into smaller batches
@@ -147,22 +145,6 @@ impl SedonaContext {
                 .div_ceil(SPILLED_BATCH_THRESHOLD_PERCENT_DIVISOR)
                 .max(MIN_SPILLED_BATCH_IN_MEMORY_THRESHOLD_BYTES);
         }
-
-        #[cfg(feature = "pointcloud")]
-        let session_config = session_config.with_option_extension(
-            LasOptions::default()
-                .with_geometry_encoding(GeometryEncoding::Wkb)
-                .with_las_extra_bytes(LasExtraBytes::Typed),
-        );
-
-        #[cfg(feature = "gpu")]
-        let session_config = session_config.with_option_extension(GpuOptions::default());
-
-        #[allow(unused_mut)]
-        let mut state_builder = SessionStateBuilder::new()
-            .with_default_features()
-            .with_runtime_env(runtime_env)
-            .with_config(session_config);
 
         // Register the spatial join planner extension
         #[allow(unused_mut)]
@@ -184,6 +166,11 @@ impl SedonaContext {
                 planner = planner.with_spatial_join_physical_planner(Arc::new(
                     GeographySpatialJoinPhysicalPlanner::new(),
                 ));
+
+                opts.runtime = opts.runtime.with_bounder(
+                    sedona_geometry::types::Edges::Spherical,
+                    Arc::new(sedona_s2geography::rect_bounder::WkbGeographyBounder::default()),
+                )?;
             }
 
             // Register the GPU join after the default planner
@@ -198,6 +185,33 @@ impl SedonaContext {
             }
         }
 
+        // Inject the statically-set accumulator factory, which allows arrow-rs Parquet writer
+        // to write Geography statistics based on the geography bounders in our SedonaRuntime.
+        let init_result =
+            sedona_geoparquet::statistics_accumulator::SedonaGeoStatsAccumulatorFactory::try_init(
+                &opts.runtime,
+            );
+        if let Err(init_err) = init_result {
+            if !matches!(init_err, DataFusionError::ParquetError(_)) {
+                return Err(init_err);
+            }
+        }
+
+        #[cfg(feature = "pointcloud")]
+        let session_config = session_config.with_option_extension(
+            LasOptions::default()
+                .with_geometry_encoding(GeometryEncoding::Wkb)
+                .with_las_extra_bytes(LasExtraBytes::Typed),
+        );
+
+        #[cfg(feature = "gpu")]
+        let session_config = session_config.with_option_extension(GpuOptions::default());
+
+        let mut state_builder = SessionStateBuilder::new()
+            .with_default_features()
+            .with_runtime_env(runtime_env)
+            .with_config(session_config);
+
         state_builder = register_spatial_join_logical_optimizer(state_builder)?;
         state_builder = register_ensure_loaded_optimizer(state_builder)?;
         state_builder = state_builder.with_query_planner(Arc::new(planner));
@@ -207,13 +221,6 @@ impl SedonaContext {
         // Register GeoParquet and try to initialize our statistics accumulator. It is OK if this fails
         // because we already registered it, but we propagate other errors for safety.
         state.register_file_format(Arc::new(GeoParquetFormatFactory::new()), true)?;
-        let init_result =
-            sedona_geoparquet::statistics_accumulator::SedonaGeoStatsAccumulatorFactory::try_init();
-        if let Err(init_err) = init_result {
-            if !matches!(init_err, DataFusionError::ParquetError(_)) {
-                return Err(init_err);
-            }
-        }
 
         #[cfg(feature = "pointcloud")]
         {
@@ -248,7 +255,7 @@ impl SedonaContext {
         // `AsyncScalarUDFImpl::invoke_async_with_args` only receives
         // `Arc<ConfigOptions>`, so this is the path that keeps the
         // registry reachable at the UDF's invocation site. Mirrors how
-        // `CrsProviderOption` works inside `SedonaOptions`.
+        // `SedonaRuntime` works inside `SedonaOptions`.
         //
         // Writes through `SedonaContext::register_raster_loader` (which
         // mutates the Arc held in `out.raster_loader_registry`) are immediately
@@ -782,9 +789,10 @@ mod tests {
     use arrow_schema::{DataType, Field, Schema};
     use datafusion::assert_batches_eq;
     use sedona_datasource::spec::{Object, OpenReaderArgs};
+    use sedona_geometry::types::Edges;
     use sedona_schema::{
         crs::{deserialize_crs, lnglat},
-        datatypes::{Edges, SedonaType},
+        datatypes::SedonaType,
         schema::SedonaSchema,
     };
     use sedona_testing::data::test_geoparquet;
