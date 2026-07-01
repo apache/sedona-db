@@ -206,6 +206,20 @@ fn criterion_benchmark(c: &mut Criterion) {
         "st_azimuth",
         BenchmarkArgs::ArrayArray(Point, Point),
     );
+    benchmark::scalar(
+        c,
+        &f,
+        "native",
+        "st_azimuth",
+        BenchmarkArgs::ArrayScalar(Point, Point),
+    );
+    benchmark::scalar(
+        c,
+        &f,
+        "native",
+        "st_azimuth",
+        BenchmarkArgs::ScalarArray(Point, Point),
+    );
 
     benchmark::aggregate(c, &f, "native", "st_envelope_agg", Point);
     benchmark::aggregate(c, &f, "native", "st_envelope_agg", LineString(10));
