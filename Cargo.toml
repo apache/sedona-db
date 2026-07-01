@@ -70,14 +70,14 @@ categories = ["science::geo", "database"]
 adbc_core = ">=0.23.0"
 adbc_ffi = ">=0.23.0"
 approx = "0.5"
-arrow = { version = "59.0.0", features = ["prettyprint", "ffi", "chrono-tz"] }
-arrow-array = { version = "59.0.0" }
-arrow-buffer = { version = "57.1.0" }
-arrow-cast = { version = "59.0.0" }
-arrow-data = { version = "57.1.0" }
-arrow-ipc = { version = "59.0.0" }
-arrow-json = { version = "59.0.0" }
-arrow-schema = { version = "57.1.0" }
+arrow = { version = "58.3.0", features = ["prettyprint", "ffi", "chrono-tz"] }
+arrow-array = { version = "58.3.0" }
+arrow-buffer = { version = "58.3.0" }
+arrow-cast = { version = "58.3.0" }
+arrow-data = { version = "58.3.0" }
+arrow-ipc = { version = "58.3.0" }
+arrow-json = { version = "58.3.0" }
+arrow-schema = { version = "58.3.0" }
 async-trait = { version = "0.1.87" }
 bytemuck = "1.25"
 byteorder = "1"
