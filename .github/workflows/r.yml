@@ -145,6 +145,11 @@ jobs:
       # These two packages are quick to CMD check after sedonadb is installed,
       # so do that here
       - uses: r-lib/actions/check-r-package@v2
+        env:
+          # The install/test step above already bootstraps generated sedonafns
+          # sources. Avoid running the same roxygen bootstrap again here, which
+          # can crash Rscript on Windows while building the check tarball.
+          R_SEDONADB_FNS_SKIP_BOOTSTRAP: "1"
         with:
           working-directory: r/sedonafns
 
