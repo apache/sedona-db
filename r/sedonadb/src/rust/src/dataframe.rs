@@ -130,11 +130,7 @@ impl InternalDataFrame {
         // Use the actual session state so that object stores, UDFs, and other
         // registrations are available when the consumer scans the provider.
         let session = Arc::new(ctx.inner.ctx.state());
-        let exported = ExportedTableProvider::new(
-            provider,
-            session,
-            self.runtime.handle().clone(),
-        );
+        let exported = ExportedTableProvider::new(provider, session, self.runtime.handle().clone());
         let ffi_provider: sedona_extension::extension::SedonaCTableProvider = exported.into();
 
         let mut ffi_xptr = SedonaCTableProviderR(ffi_provider).into_external_pointer();
