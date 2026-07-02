@@ -49,34 +49,21 @@ pub unsafe fn cstr_from_ptr_or_empty<'a>(ptr: *const c_char) -> Cow<'a, str> {
     }
 }
 
-/// Get the schema for a property from a [SedonaCExecutionPlan].
-///
-/// Returns the DataType describing the property's data type.
-/// If `get_property_schema` is not implemented, defaults to Binary.
-fn get_plan_property_data_type(plan: &SedonaCExecutionPlan, property: &str) -> Result<DataType> {
-    let Some(get_property_schema) = plan.get_property_schema else {
-        // Default to Binary if get_property_schema is not implemented
-        return Ok(DataType::Binary);
+/// Get a string property from a [SedonaCTableProvider].
+pub fn get_table_provider_string_property(
+    provider: &SedonaCTableProvider,
+    property: &str,
+) -> Result<String> {
+    let Some(get_property) = provider.get_property else {
+        return sedona_internal_err!("SedonaCTableProvider does not have get_property");
     };
 
-    let property_cstr = CString::new(property)
-        .map_err(|e| sedona_internal_datafusion_err!("Invalid property name: {}", e))?;
-
-    let mut ffi_schema = FFI_ArrowSchema::empty();
-    let mut err = SedonaCError::default();
-
-    let code =
-        unsafe { get_property_schema(plan, property_cstr.as_ptr(), &mut ffi_schema, &mut err) };
-
-    if code != ERRNO_OK {
-        return sedona_internal_err!("Failed to get property schema for '{}': {}", property, err);
-    }
-
-    // Try to convert the FFI schema to a Field
-    let field = Field::try_from(&ffi_schema).map_err(|e| {
-        sedona_internal_datafusion_err!("Failed to parse property schema for '{}': {}", property, e)
-    })?;
-    Ok(field.data_type().clone())
+    call_get_string_property_impl(
+        property,
+        "SedonaCTableProvider",
+        |prop, args, out, err| unsafe { get_property(provider, prop, args, out, err) },
+        || get_table_provider_property_data_type(provider, property),
+    )
 }
 
 /// Call `get_property` on a [SedonaCExecutionPlan] and deserialize the result.
@@ -161,6 +148,98 @@ where
     parse_ffi_array(ffi_array, &data_type)
 }
 
+/// Core implementation for getting property data type via FFI.
+///
+/// The caller provides a closure that performs the actual FFI call with
+/// the correct self pointer type.
+fn call_get_property_schema_impl<F>(property: &str, call_ffi: F) -> Result<DataType>
+where
+    F: FnOnce(*const c_char, *mut FFI_ArrowSchema, *mut SedonaCError) -> c_int,
+{
+    let property_cstr = CString::new(property)
+        .map_err(|e| sedona_internal_datafusion_err!("Invalid property name: {}", e))?;
+
+    let mut ffi_schema = FFI_ArrowSchema::empty();
+    let mut err = SedonaCError::default();
+
+    let code = call_ffi(property_cstr.as_ptr(), &mut ffi_schema, &mut err);
+
+    if code != ERRNO_OK {
+        return sedona_internal_err!("Failed to get property schema for '{}': {}", property, err);
+    }
+
+    // Try to convert the FFI schema to a Field
+    let field = Field::try_from(&ffi_schema).map_err(|e| {
+        sedona_internal_datafusion_err!("Failed to parse property schema for '{}': {}", property, e)
+    })?;
+    Ok(field.data_type().clone())
+}
+
+/// Core implementation for getting a string property via FFI.
+///
+/// The caller provides closures for the FFI call and data type lookup.
+fn call_get_string_property_impl<F, G>(
+    property: &str,
+    type_name: &str,
+    call_get_property: F,
+    get_data_type: G,
+) -> Result<String>
+where
+    F: FnOnce(
+        *const c_char,
+        *mut SedonaCExecutionPlanArgs,
+        *mut arrow_array::ffi::FFI_ArrowArray,
+        *mut SedonaCError,
+    ) -> c_int,
+    G: FnOnce() -> Result<DataType>,
+{
+    let property_cstr = CString::new(property)
+        .map_err(|e| sedona_internal_datafusion_err!("Invalid property name: {}", e))?;
+
+    let mut ffi_args = SedonaCExecutionPlanArgs {
+        args: std::ptr::null(),
+        args_len: 0,
+        exec_plans: std::ptr::null(),
+        num_exec_plans: 0,
+        exprs: std::ptr::null(),
+        num_exprs: 0,
+        reserved: null_mut(),
+    };
+
+    let mut ffi_array = arrow_array::ffi::FFI_ArrowArray::empty();
+    let mut err = SedonaCError::default();
+
+    let code = call_get_property(
+        property_cstr.as_ptr(),
+        &mut ffi_args,
+        &mut ffi_array,
+        &mut err,
+    );
+
+    if code != ERRNO_OK {
+        return sedona_internal_err!("{} failed to get '{}': {}", type_name, property, err);
+    }
+
+    let data_type = get_data_type()?;
+    let bytes = parse_ffi_array_to_bytes(ffi_array, &data_type)?;
+    String::from_utf8(bytes)
+        .map_err(|e| sedona_internal_datafusion_err!("Invalid UTF-8 in '{}': {}", property, e))
+}
+
+/// Get the schema for a property from a [SedonaCExecutionPlan].
+///
+/// Returns the DataType describing the property's data type.
+/// If `get_property_schema` is not implemented, defaults to Binary.
+fn get_plan_property_data_type(plan: &SedonaCExecutionPlan, property: &str) -> Result<DataType> {
+    let Some(get_property_schema) = plan.get_property_schema else {
+        return Ok(DataType::Binary);
+    };
+
+    call_get_property_schema_impl(property, |prop, schema, err| unsafe {
+        get_property_schema(plan, prop, schema, err)
+    })
+}
+
 /// Parse an FFI array containing JSON and deserialize to the target type.
 fn parse_ffi_array<T: DeserializeOwned>(
     ffi_array: arrow_array::ffi::FFI_ArrowArray,
@@ -235,42 +314,12 @@ pub fn get_plan_string_property(plan: &SedonaCExecutionPlan, property: &str) -> 
         return sedona_internal_err!("SedonaCExecutionPlan does not have get_property");
     };
 
-    let property_cstr = CString::new(property)
-        .map_err(|e| sedona_internal_datafusion_err!("Invalid property name: {}", e))?;
-
-    let mut ffi_args = SedonaCExecutionPlanArgs {
-        args: std::ptr::null(),
-        args_len: 0,
-        exec_plans: std::ptr::null(),
-        num_exec_plans: 0,
-        exprs: std::ptr::null(),
-        num_exprs: 0,
-        reserved: null_mut(),
-    };
-
-    let mut ffi_array = arrow_array::ffi::FFI_ArrowArray::empty();
-    let mut err = SedonaCError::default();
-
-    let code = unsafe {
-        get_property(
-            plan,
-            property_cstr.as_ptr(),
-            &mut ffi_args,
-            &mut ffi_array,
-            &mut err,
-        )
-    };
-
-    if code != ERRNO_OK {
-        return sedona_internal_err!("Failed to get '{}': {}", property, err);
-    }
-
-    // Get the property schema to know how to interpret the array
-    let data_type = get_plan_property_data_type(plan, property)?;
-
-    let bytes = parse_ffi_array_to_bytes(ffi_array, &data_type)?;
-    String::from_utf8(bytes)
-        .map_err(|e| sedona_internal_datafusion_err!("Invalid UTF-8 in '{}': {}", property, e))
+    call_get_string_property_impl(
+        property,
+        "SedonaCExecutionPlan",
+        |prop, args, out, err| unsafe { get_property(plan, prop, args, out, err) },
+        || get_plan_property_data_type(plan, property),
+    )
 }
 
 /// Get the schema for a property from a [SedonaCTableProvider].
@@ -282,73 +331,10 @@ fn get_table_provider_property_data_type(
     property: &str,
 ) -> Result<DataType> {
     let Some(get_property_schema) = provider.get_property_schema else {
-        // Default to Binary if get_property_schema is not implemented
         return Ok(DataType::Binary);
     };
 
-    let property_cstr = CString::new(property)
-        .map_err(|e| sedona_internal_datafusion_err!("Invalid property name: {}", e))?;
-
-    let mut ffi_schema = FFI_ArrowSchema::empty();
-    let mut err = SedonaCError::default();
-
-    let code =
-        unsafe { get_property_schema(provider, property_cstr.as_ptr(), &mut ffi_schema, &mut err) };
-
-    if code != ERRNO_OK {
-        return sedona_internal_err!("Failed to get property schema for '{}': {}", property, err);
-    }
-
-    // Try to convert the FFI schema to a Field
-    let field = Field::try_from(&ffi_schema).map_err(|e| {
-        sedona_internal_datafusion_err!("Failed to parse property schema for '{}': {}", property, e)
-    })?;
-    Ok(field.data_type().clone())
-}
-
-/// Get a string property from a [SedonaCTableProvider].
-pub fn get_table_provider_string_property(
-    provider: &SedonaCTableProvider,
-    property: &str,
-) -> Result<String> {
-    let Some(get_property) = provider.get_property else {
-        return sedona_internal_err!("SedonaCTableProvider does not have get_property");
-    };
-
-    let property_cstr = CString::new(property)
-        .map_err(|e| sedona_internal_datafusion_err!("Invalid property name: {}", e))?;
-
-    let mut ffi_args = SedonaCExecutionPlanArgs {
-        args: std::ptr::null(),
-        args_len: 0,
-        exec_plans: std::ptr::null(),
-        num_exec_plans: 0,
-        exprs: std::ptr::null(),
-        num_exprs: 0,
-        reserved: null_mut(),
-    };
-
-    let mut ffi_array = arrow_array::ffi::FFI_ArrowArray::empty();
-    let mut err = SedonaCError::default();
-
-    let code = unsafe {
-        get_property(
-            provider,
-            property_cstr.as_ptr(),
-            &mut ffi_args,
-            &mut ffi_array,
-            &mut err,
-        )
-    };
-
-    if code != ERRNO_OK {
-        return sedona_internal_err!("Failed to get '{}': {}", property, err);
-    }
-
-    // Get the property schema to know how to interpret the array
-    let data_type = get_table_provider_property_data_type(provider, property)?;
-
-    let bytes = parse_ffi_array_to_bytes(ffi_array, &data_type)?;
-    String::from_utf8(bytes)
-        .map_err(|e| sedona_internal_datafusion_err!("Invalid UTF-8 in '{}': {}", property, e))
+    call_get_property_schema_impl(property, |prop, schema, err| unsafe {
+        get_property_schema(provider, prop, schema, err)
+    })
 }
