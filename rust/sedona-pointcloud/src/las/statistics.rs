@@ -33,7 +33,7 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use datafusion_common::{arrow::compute::concat_batches, Column, DataFusionError, ScalarValue};
 use datafusion_pruning::PruningStatistics;
 use las::Header;
-use object_store::{path::Path, ObjectMeta, ObjectStore, PutPayload};
+use object_store::{path::Path, ObjectMeta, ObjectStore, ObjectStoreExt, PutPayload};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use sedona_geometry::bounding_box::BoundingBox;
 

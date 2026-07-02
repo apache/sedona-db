@@ -291,6 +291,7 @@ impl TableProvider for SingleObjectExternalTable {
                     extensions: None,
                     statistics: None,
                     metadata_size_hint: None,
+                    ordering: None,
                 }])
             })
             .collect();

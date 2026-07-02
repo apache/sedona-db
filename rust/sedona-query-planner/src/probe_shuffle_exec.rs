@@ -124,7 +124,7 @@ impl ExecutionPlan for ProbeShuffleExec {
         self
     }
 
-    fn properties(&self) -> &PlanProperties {
+    fn properties(&self) -> &Arc<PlanProperties> {
         self.inner_repartition.properties()
     }
 

@@ -28,13 +28,15 @@ use arrow_schema::{DataType, Schema, SchemaRef};
 use datafusion_common::{
     error::DataFusionError, scalar::ScalarValue, stats::Precision, ColumnStatistics, Statistics,
 };
-use datafusion_execution::cache::cache_manager::{FileMetadata, FileMetadataCache};
+use datafusion_execution::cache::cache_manager::{
+    CachedFileMetadataEntry, FileMetadata, FileMetadataCache,
+};
 use las::{
     raw::{Header as RawHeader, Vlr as RawVlr},
     Builder, Header, Vlr,
 };
 use laz::laszip::ChunkTable;
-use object_store::{ObjectMeta, ObjectStore};
+use object_store::{ObjectMeta, ObjectStore, ObjectStoreExt};
 
 use crate::las::{
     options::LasOptions,
@@ -129,9 +131,13 @@ impl<'a> LasMetadataReader<'a> {
 
         if let Some(las_file_metadata) = file_metadata_cache
             .as_ref()
-            .and_then(|file_metadata_cache| file_metadata_cache.get(object_meta))
-            .and_then(|file_metadata| {
-                file_metadata
+            .and_then(|file_metadata_cache| {
+                file_metadata_cache.get(&object_meta.location)
+            })
+            .filter(|entry| entry.is_valid_for(object_meta))
+            .and_then(|entry| {
+                entry
+                    .file_metadata
                     .as_any()
                     .downcast_ref::<LasMetadata>()
                     .map(|las_file_metadata| Arc::new(las_file_metadata.to_owned()))
@@ -167,7 +173,11 @@ impl<'a> LasMetadataReader<'a> {
         });
 
         if let Some(file_metadata_cache) = file_metadata_cache {
-            file_metadata_cache.put(object_meta, metadata.clone());
+            let entry = CachedFileMetadataEntry::new(
+                (*object_meta).clone(),
+                metadata.clone(),
+            );
+            file_metadata_cache.put(&object_meta.location, entry);
         }
 
         Ok(metadata)
