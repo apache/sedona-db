@@ -185,7 +185,12 @@ impl Drop for SedonaCError {
     }
 }
 
-extern "C" fn sedona_c_noop_release(_self: *mut SedonaCError) {}
+extern "C" fn sedona_c_noop_release(self_: *mut SedonaCError) {
+    // Must set release to NULL per Arrow C Data Interface contract
+    unsafe {
+        (*self_).release = None;
+    }
+}
 
 pub const UNKNOWN_SEDONA_C_ERROR: SedonaCError = SedonaCError {
     err: c"Unknown error".as_ptr(),
