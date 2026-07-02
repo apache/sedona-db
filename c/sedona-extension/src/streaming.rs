@@ -34,6 +34,17 @@ use futures::StreamExt;
 /// cancellation mechanisms.
 pub type CancelChecker = Box<dyn Fn() -> bool + Send + Sync>;
 
+/// Create a cancellation error for FFI stream operations.
+///
+/// This is the single source of truth for cancellation errors, ensuring
+/// consistent error format across all cancellation sites.
+fn cancellation_arrow_error() -> ArrowError {
+    ArrowError::ExternalError(Box::new(std::io::Error::new(
+        std::io::ErrorKind::Interrupted,
+        "Operation cancelled",
+    )))
+}
+
 /// Result type for batch fetching from the worker thread.
 type BatchResult = Option<std::result::Result<RecordBatch, ArrowError>>;
 
@@ -196,12 +207,7 @@ impl StreamingRecordBatchReader {
                             if let Some(ref checker) = self.cancel_checker {
                                 if checker() {
                                     self.cancelled = true;
-                                    return Some(Err(ArrowError::ExternalError(Box::new(
-                                        std::io::Error::new(
-                                            std::io::ErrorKind::Interrupted,
-                                            "Operation cancelled",
-                                        ),
-                                    ))));
+                                    return Some(Err(cancellation_arrow_error()));
                                 }
                             }
                             // Continue waiting
@@ -241,9 +247,7 @@ impl Iterator for StreamingRecordBatchReader {
         if let Some(ref checker) = self.cancel_checker {
             if checker() {
                 self.cancelled = true;
-                return Some(Err(ArrowError::ExternalError(Box::new(
-                    std::io::Error::new(std::io::ErrorKind::Interrupted, "Operation cancelled"),
-                ))));
+                return Some(Err(cancellation_arrow_error()));
             }
         }
 
