@@ -471,8 +471,14 @@ mod tests {
         Ok(ctx)
     }
 
-    #[tokio::test]
-    async fn test_roundtrip_simple_select() -> Result<()> {
+    /// Helper to test FFI table provider roundtrip with a SQL query.
+    ///
+    /// This handles the common pattern of:
+    /// 1. Creating a test context with test_data table
+    /// 2. Exporting the table provider through FFI
+    /// 3. Importing it and registering in a new context
+    /// 4. Running the SQL query and asserting results
+    async fn test_roundtrip_query(sql: &str, expected: &[&str]) -> Result<()> {
         let ctx = create_test_context().await?;
 
         // Get the table provider from the context
@@ -492,228 +498,110 @@ mod tests {
         ctx2.register_table("imported_data", Arc::new(imported))?;
 
         // Query and verify
-        let result = ctx2
-            .sql("SELECT id, value_a FROM imported_data ORDER BY id LIMIT 5")
-            .await?
-            .collect()
-            .await?;
-
-        let expected = [
-            "+----+---------+",
-            "| id | value_a |",
-            "+----+---------+",
-            "| 1  | 100     |",
-            "| 2  | 200     |",
-            "| 3  | 300     |",
-            "| 4  | 400     |",
-            "| 5  | 500     |",
-            "+----+---------+",
-        ];
-
+        let result = ctx2.sql(sql).await?.collect().await?;
         assert_batches_eq!(expected, &result);
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_roundtrip_simple_select() -> Result<()> {
+        test_roundtrip_query(
+            "SELECT id, value_a FROM imported_data ORDER BY id LIMIT 5",
+            &[
+                "+----+---------+",
+                "| id | value_a |",
+                "+----+---------+",
+                "| 1  | 100     |",
+                "| 2  | 200     |",
+                "| 3  | 300     |",
+                "| 4  | 400     |",
+                "| 5  | 500     |",
+                "+----+---------+",
+            ],
+        )
+        .await
     }
 
     #[tokio::test]
     async fn test_roundtrip_projection() -> Result<()> {
-        let ctx = create_test_context().await?;
-
-        // Get the table provider from the context
-        let table = ctx.table_provider("test_data").await?;
-
-        // Export the table provider
-        let runtime = tokio::runtime::Handle::current();
-        let session = Arc::new(ctx.state());
-        let exported = ExportedTableProvider::new(table, session, runtime);
-        let ffi_provider: SedonaCTableProvider = exported.into();
-
-        // Import the table provider
-        let imported = ImportedTableProvider::try_new(ffi_provider)?;
-
-        // Create a new context and register the imported table
-        let ctx2 = SessionContext::new();
-        ctx2.register_table("imported_data", Arc::new(imported))?;
-
-        // Test projection with only specific columns
-        let result = ctx2
-            .sql("SELECT value_b, value_d FROM imported_data ORDER BY value_b LIMIT 3")
-            .await?
-            .collect()
-            .await?;
-
-        let expected = [
-            "+---------+---------+",
-            "| value_b | value_d |",
-            "+---------+---------+",
-            "| 1.5     | 1000    |",
-            "| 3.0     | 2000    |",
-            "| 4.5     | 3000    |",
-            "+---------+---------+",
-        ];
-
-        assert_batches_eq!(expected, &result);
-        Ok(())
+        test_roundtrip_query(
+            "SELECT value_b, value_d FROM imported_data ORDER BY value_b LIMIT 3",
+            &[
+                "+---------+---------+",
+                "| value_b | value_d |",
+                "+---------+---------+",
+                "| 1.5     | 1000    |",
+                "| 3.0     | 2000    |",
+                "| 4.5     | 3000    |",
+                "+---------+---------+",
+            ],
+        )
+        .await
     }
 
     #[tokio::test]
     async fn test_roundtrip_filter() -> Result<()> {
-        let ctx = create_test_context().await?;
-
-        // Get the table provider from the context
-        let table = ctx.table_provider("test_data").await?;
-
-        // Export the table provider
-        let runtime = tokio::runtime::Handle::current();
-        let session = Arc::new(ctx.state());
-        let exported = ExportedTableProvider::new(table, session, runtime);
-        let ffi_provider: SedonaCTableProvider = exported.into();
-
-        // Import the table provider
-        let imported = ImportedTableProvider::try_new(ffi_provider)?;
-
-        // Create a new context and register the imported table
-        let ctx2 = SessionContext::new();
-        ctx2.register_table("imported_data", Arc::new(imported))?;
-
-        // Test filter (filter is applied on the DataFusion side, not pushed to FFI yet)
-        let result = ctx2
-            .sql("SELECT id, value_a FROM imported_data WHERE id > 20 ORDER BY id LIMIT 5")
-            .await?
-            .collect()
-            .await?;
-
-        let expected = [
-            "+----+---------+",
-            "| id | value_a |",
-            "+----+---------+",
-            "| 21 | 2100    |",
-            "| 22 | 2200    |",
-            "| 23 | 2300    |",
-            "| 24 | 2400    |",
-            "| 25 | 2500    |",
-            "+----+---------+",
-        ];
-
-        assert_batches_eq!(expected, &result);
-        Ok(())
+        test_roundtrip_query(
+            "SELECT id, value_a FROM imported_data WHERE id > 20 ORDER BY id LIMIT 5",
+            &[
+                "+----+---------+",
+                "| id | value_a |",
+                "+----+---------+",
+                "| 21 | 2100    |",
+                "| 22 | 2200    |",
+                "| 23 | 2300    |",
+                "| 24 | 2400    |",
+                "| 25 | 2500    |",
+                "+----+---------+",
+            ],
+        )
+        .await
     }
 
     #[tokio::test]
     async fn test_roundtrip_sort() -> Result<()> {
-        let ctx = create_test_context().await?;
-
-        // Get the table provider from the context
-        let table = ctx.table_provider("test_data").await?;
-
-        // Export the table provider
-        let runtime = tokio::runtime::Handle::current();
-        let session = Arc::new(ctx.state());
-        let exported = ExportedTableProvider::new(table, session, runtime);
-        let ffi_provider: SedonaCTableProvider = exported.into();
-
-        // Import the table provider
-        let imported = ImportedTableProvider::try_new(ffi_provider)?;
-
-        // Create a new context and register the imported table
-        let ctx2 = SessionContext::new();
-        ctx2.register_table("imported_data", Arc::new(imported))?;
-
-        // Test sorting in descending order
-        let result = ctx2
-            .sql("SELECT id, value_c FROM imported_data ORDER BY id DESC LIMIT 5")
-            .await?
-            .collect()
-            .await?;
-
-        let expected = [
-            "+----+---------+",
-            "| id | value_c |",
-            "+----+---------+",
-            "| 45 | 90      |",
-            "| 44 | 88      |",
-            "| 43 | 86      |",
-            "| 42 | 84      |",
-            "| 41 | 82      |",
-            "+----+---------+",
-        ];
-
-        assert_batches_eq!(expected, &result);
-        Ok(())
+        test_roundtrip_query(
+            "SELECT id, value_c FROM imported_data ORDER BY id DESC LIMIT 5",
+            &[
+                "+----+---------+",
+                "| id | value_c |",
+                "+----+---------+",
+                "| 45 | 90      |",
+                "| 44 | 88      |",
+                "| 43 | 86      |",
+                "| 42 | 84      |",
+                "| 41 | 82      |",
+                "+----+---------+",
+            ],
+        )
+        .await
     }
 
     #[tokio::test]
     async fn test_roundtrip_limit() -> Result<()> {
-        let ctx = create_test_context().await?;
-
-        // Get the table provider from the context
-        let table = ctx.table_provider("test_data").await?;
-
-        // Export the table provider
-        let runtime = tokio::runtime::Handle::current();
-        let session = Arc::new(ctx.state());
-        let exported = ExportedTableProvider::new(table, session, runtime);
-        let ffi_provider: SedonaCTableProvider = exported.into();
-
-        // Import the table provider
-        let imported = ImportedTableProvider::try_new(ffi_provider)?;
-
-        // Create a new context and register the imported table
-        let ctx2 = SessionContext::new();
-        ctx2.register_table("imported_data", Arc::new(imported))?;
-
-        // Test limit
-        let result = ctx2
-            .sql("SELECT id FROM imported_data ORDER BY id LIMIT 3")
-            .await?
-            .collect()
-            .await?;
-
-        let expected = [
-            "+----+", "| id |", "+----+", "| 1  |", "| 2  |", "| 3  |", "+----+",
-        ];
-
-        assert_batches_eq!(expected, &result);
-        Ok(())
+        test_roundtrip_query(
+            "SELECT id FROM imported_data ORDER BY id LIMIT 3",
+            &[
+                "+----+", "| id |", "+----+", "| 1  |", "| 2  |", "| 3  |", "+----+",
+            ],
+        )
+        .await
     }
 
     #[tokio::test]
     async fn test_roundtrip_all_columns() -> Result<()> {
-        let ctx = create_test_context().await?;
-
-        // Get the table provider from the context
-        let table = ctx.table_provider("test_data").await?;
-
-        // Export the table provider
-        let runtime = tokio::runtime::Handle::current();
-        let session = Arc::new(ctx.state());
-        let exported = ExportedTableProvider::new(table, session, runtime);
-        let ffi_provider: SedonaCTableProvider = exported.into();
-
-        // Import the table provider
-        let imported = ImportedTableProvider::try_new(ffi_provider)?;
-
-        // Create a new context and register the imported table
-        let ctx2 = SessionContext::new();
-        ctx2.register_table("imported_data", Arc::new(imported))?;
-
-        // Test selecting all columns
-        let result = ctx2
-            .sql("SELECT * FROM imported_data ORDER BY id LIMIT 2")
-            .await?
-            .collect()
-            .await?;
-
-        let expected = [
-            "+----+---------+---------+---------+---------+",
-            "| id | value_a | value_b | value_c | value_d |",
-            "+----+---------+---------+---------+---------+",
-            "| 1  | 100     | 1.5     | 2       | 1000    |",
-            "| 2  | 200     | 3.0     | 4       | 2000    |",
-            "+----+---------+---------+---------+---------+",
-        ];
-
-        assert_batches_eq!(expected, &result);
-        Ok(())
+        test_roundtrip_query(
+            "SELECT * FROM imported_data ORDER BY id LIMIT 2",
+            &[
+                "+----+---------+---------+---------+---------+",
+                "| id | value_a | value_b | value_c | value_d |",
+                "+----+---------+---------+---------+---------+",
+                "| 1  | 100     | 1.5     | 2       | 1000    |",
+                "| 2  | 200     | 3.0     | 4       | 2000    |",
+                "+----+---------+---------+---------+---------+",
+            ],
+        )
+        .await
     }
 
     /// A dummy TableProvider with configurable table_type for testing FFI roundtrip.
