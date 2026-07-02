@@ -101,6 +101,21 @@ as_sedonadb_dataframe.datafusion_table_provider <- function(
   new_sedonadb_dataframe(ctx, df)
 }
 
+#' @export
+as_sedonadb_dataframe.sedonadb_table_provider <- function(
+  x,
+  ...,
+  schema = NULL,
+  ctx = NULL
+) {
+  if (is.null(ctx)) {
+    ctx <- ctx()
+  }
+
+  df <- ctx$data_frame_from_table_provider(x)
+  new_sedonadb_dataframe(ctx, df)
+}
+
 #' Count rows in a DataFrame
 #'
 #' @param .data A sedonadb_dataframe or an object that can be coerced to one.

@@ -20,17 +20,16 @@ use arrow_array::ffi_stream::FFI_ArrowArrayStream;
 use arrow_array::{RecordBatchIterator, RecordBatchReader};
 use datafusion::catalog::MemTable;
 use datafusion::config::ConfigField;
-use datafusion::prelude::{DataFrame, SessionContext};
+use datafusion::prelude::DataFrame;
 use datafusion_common::Column;
-use datafusion_execution::TaskContextProvider;
 use datafusion_expr::utils::conjunction;
 use datafusion_expr::JoinType;
 use datafusion_expr::{select_expr::SelectExpr, Expr, SortExpr};
-use datafusion_ffi::table_provider::FFI_TableProvider;
 use savvy::{savvy, savvy_err, sexp, IntoExtPtrSexp, Result};
 use sedona::context::{SedonaDataFrame, SedonaWriteOptions};
 use sedona::show::{DisplayMode, DisplayTableOptions};
 use sedona_extension::streaming::StreamingRecordBatchReader;
+use sedona_extension::table_provider::ExportedTableProvider;
 use sedona_geoparquet::options::TableGeoParquetOptions;
 use sedona_schema::schema::SedonaSchema;
 use std::{iter::zip, ptr::swap_nonoverlapping, sync::Arc};
@@ -38,7 +37,7 @@ use tokio::runtime::Runtime;
 
 use crate::context::InternalContext;
 use crate::expression::SedonaDBExprFactory;
-use crate::ffi::{import_schema, FFITableProviderR};
+use crate::ffi::{import_schema, SedonaCTableProviderR};
 use crate::runtime::wait_for_future_captured_r;
 
 #[savvy]
@@ -126,22 +125,21 @@ impl InternalDataFrame {
         Ok(())
     }
 
-    fn to_provider(&self) -> Result<savvy::Sexp> {
+    fn to_provider(&self, ctx: &InternalContext) -> Result<savvy::Sexp> {
         let provider = self.inner.clone().into_view();
-        // Literal true is because the TableProvider that wraps this DataFrame
-        // can support filters being pushed down.
-        let ctx = Arc::new(SessionContext::new()) as Arc<dyn TaskContextProvider>;
-        let ffi_provider = FFI_TableProvider::new(
+        // Use the actual session state so that object stores, UDFs, and other
+        // registrations are available when the consumer scans the provider.
+        let session = Arc::new(ctx.inner.ctx.state());
+        let exported = ExportedTableProvider::new(
             provider,
-            true,
-            Some(self.runtime.handle().clone()),
-            &ctx,
-            None,
+            session,
+            self.runtime.handle().clone(),
         );
+        let ffi_provider: sedona_extension::extension::SedonaCTableProvider = exported.into();
 
-        let mut ffi_xptr = FFITableProviderR(ffi_provider).into_external_pointer();
+        let mut ffi_xptr = SedonaCTableProviderR(ffi_provider).into_external_pointer();
         unsafe { savvy_ffi::Rf_protect(ffi_xptr.0) };
-        ffi_xptr.set_class(vec!["datafusion_table_provider"])?;
+        ffi_xptr.set_class(vec!["sedonadb_table_provider"])?;
         unsafe { savvy_ffi::Rf_unprotect(1) };
 
         Ok(ffi_xptr)
