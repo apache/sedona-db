@@ -130,7 +130,8 @@ impl From<ExportedTableProvider> for SedonaCTableProvider {
 unsafe extern "C" fn c_table_provider_get_schema(
     self_: *const SedonaCTableProvider,
     out: *mut FFI_ArrowSchema,
-) {
+    err: *mut SedonaCError,
+) -> c_int {
     debug_assert!(!self_.is_null(), "self pointer is null");
     debug_assert!(!out.is_null(), "out pointer is null");
     let self_ref = &*self_;
@@ -138,8 +139,17 @@ unsafe extern "C" fn c_table_provider_get_schema(
     let provider = &*(self_ref.private_data as *const ExportedTableProvider);
 
     let schema = provider.inner.schema();
-    if let Ok(ffi_schema) = FFI_ArrowSchema::try_from(schema.as_ref()) {
-        std::ptr::write(out, ffi_schema);
+    match FFI_ArrowSchema::try_from(schema.as_ref()) {
+        Ok(ffi_schema) => {
+            std::ptr::write(out, ffi_schema);
+            ERRNO_OK
+        }
+        Err(e) => {
+            if !err.is_null() {
+                *err = SedonaCError::new(&format!("Failed to convert schema to FFI: {}", e));
+            }
+            libc::EINVAL
+        }
     }
 }
 
@@ -296,7 +306,11 @@ impl ImportedTableProvider {
         };
 
         let mut ffi_schema = FFI_ArrowSchema::empty();
-        unsafe { get_schema(&inner, &mut ffi_schema) };
+        let mut err = SedonaCError::default();
+        let code = unsafe { get_schema(&inner, &mut ffi_schema, &mut err) };
+        if code != ERRNO_OK {
+            return sedona_internal_err!("Failed to get schema: {}", err);
+        }
         let schema = Arc::new(Schema::try_from(&ffi_schema)?);
 
         // Get table type via get_property

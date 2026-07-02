@@ -277,7 +277,10 @@ struct SedonaCExecutionPlanArgs {
 /// Instances with a NULL release callback are not valid and must not be used.
 struct SedonaCExecutionPlan {
   /// \brief Get the schema associated with the output of this plan
-  void (*get_schema)(const struct SedonaCExecutionPlan* self, struct ArrowSchema* out);
+  ///
+  /// Returns 0 on success, or an errno value on failure.
+  int (*get_schema)(const struct SedonaCExecutionPlan* self, struct ArrowSchema* out,
+                    struct SedonaCError* err);
 
   /// \brief Get the data type of a property
   int (*get_property_schema)(const struct SedonaCExecutionPlan* self,
@@ -335,7 +338,10 @@ struct SedonaCExecutionPlan {
 /// Instances with a NULL release callback are not valid and must not be used.
 struct SedonaCTableProvider {
   /// \brief Get the schema of this table provider
-  void (*get_schema)(const struct SedonaCTableProvider* self, struct ArrowSchema* out);
+  ///
+  /// Returns 0 on success, or an errno value on failure.
+  int (*get_schema)(const struct SedonaCTableProvider* self, struct ArrowSchema* out,
+                    struct SedonaCError* err);
 
   /// \brief Get the data type of a property
   int (*get_property_schema)(const struct SedonaCTableProvider* self,

@@ -264,8 +264,13 @@ pub struct SedonaCExecutionPlanArgs {
 #[derive(Default)]
 #[repr(C)]
 pub struct SedonaCExecutionPlan {
-    pub get_schema:
-        Option<unsafe extern "C" fn(self_: *const SedonaCExecutionPlan, out: *mut FFI_ArrowSchema)>,
+    pub get_schema: Option<
+        unsafe extern "C" fn(
+            self_: *const SedonaCExecutionPlan,
+            out: *mut FFI_ArrowSchema,
+            err: *mut SedonaCError,
+        ) -> c_int,
+    >,
 
     pub get_property_schema: Option<
         unsafe extern "C" fn(
@@ -342,8 +347,13 @@ impl Drop for SedonaCExecutionPlan {
 #[repr(C)]
 pub struct SedonaCTableProvider {
     /// Get the schema of this table provider
-    pub get_schema:
-        Option<unsafe extern "C" fn(self_: *const SedonaCTableProvider, out: *mut FFI_ArrowSchema)>,
+    pub get_schema: Option<
+        unsafe extern "C" fn(
+            self_: *const SedonaCTableProvider,
+            out: *mut FFI_ArrowSchema,
+            err: *mut SedonaCError,
+        ) -> c_int,
+    >,
 
     /// Get the schema of a property
     pub get_property_schema: Option<
