@@ -195,6 +195,7 @@ impl StreamingRecordBatchReader {
                             // Check for cancellation
                             if let Some(ref checker) = self.cancel_checker {
                                 if checker() {
+                                    self.cancelled = true;
                                     return Some(Err(ArrowError::ExternalError(Box::new(
                                         std::io::Error::new(
                                             std::io::ErrorKind::Interrupted,
@@ -255,14 +256,6 @@ impl Iterator for StreamingRecordBatchReader {
                     return Some(Ok(batch));
                 }
                 Some(Err(e)) => {
-                    // Check if this was a cancellation error from periodic checking
-                    if let ArrowError::ExternalError(box_err) = &e {
-                        if let Some(io_err) = box_err.downcast_ref::<std::io::Error>() {
-                            if io_err.kind() == std::io::ErrorKind::Interrupted {
-                                self.cancelled = true;
-                            }
-                        }
-                    }
                     return Some(Err(e));
                 }
                 None => return None,
