@@ -41,7 +41,6 @@ futures = { workspace = true }
 libc = "0.2.178"
 sedona-common = { workspace = true }
 sedona-expr = { workspace = true }
-sedona-geometry = { workspace = true }
 sedona-schema = { workspace = true }
 sedona-testing = { path = "../../rust/sedona-testing" }
 serde = { workspace = true }
