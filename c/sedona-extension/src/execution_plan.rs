@@ -315,17 +315,17 @@ impl Debug for ImportedSedonaCExec {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Try to get debug string from the FFI plan
         if let Ok(debug_str) = self.get_debug_string() {
-            f.debug_struct("ImportedTableProviderExec")
+            f.debug_struct("ImportedSedonaCExec")
                 .field("inner", &debug_str)
                 .finish()
         } else {
-            f.debug_struct("ImportedTableProviderExec").finish()
+            f.debug_struct("ImportedSedonaCExec").finish()
         }
     }
 }
 
 impl ImportedSedonaCExec {
-    /// Create a new ImportedTableProviderExec from a SedonaCExecutionPlan.
+    /// Create a new ImportedSedonaCExec from a SedonaCExecutionPlan.
     ///
     /// This will query the plan for its schema and properties.
     pub fn try_new(inner: SedonaCExecutionPlan) -> Result<Self> {
@@ -480,7 +480,7 @@ impl ExecutionPlan for ImportedSedonaCExec {
         children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         if !children.is_empty() {
-            return exec_err!("ImportedTableProviderExec does not support children");
+            return exec_err!("ImportedSedonaCExec does not support children");
         }
         Ok(self)
     }
