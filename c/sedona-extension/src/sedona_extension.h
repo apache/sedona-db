@@ -204,6 +204,12 @@ struct SedonaCScalarKernel {
   void* private_data;
 };
 
+/// \brief Error information returned by FFI callbacks
+///
+/// This structure is written to by FFI callbacks on error. Callers may pass
+/// uninitialized memory; the implementation uses ptr::write to avoid reading
+/// the previous contents. However, for best practice, callers should
+/// zero-initialize: `struct SedonaCError err = {0};`
 struct SedonaCError {
   /// \brief A UTF-8 encoded error message
   ///

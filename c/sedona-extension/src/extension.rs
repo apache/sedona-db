@@ -199,6 +199,43 @@ pub const UNKNOWN_SEDONA_C_ERROR: SedonaCError = SedonaCError {
     release: Some(sedona_c_noop_release),
 };
 
+/// Write an error to an FFI error pointer safely.
+///
+/// This uses `ptr::write` instead of assignment to avoid running Drop on
+/// potentially uninitialized memory. C consumers may pass uninitialized
+/// SedonaCError structs, so we cannot assume the previous value is valid.
+///
+/// # Safety
+///
+/// The caller must ensure `err` points to valid memory for a SedonaCError,
+/// but the memory does not need to be initialized.
+#[inline]
+pub unsafe fn write_ffi_error(err: *mut SedonaCError, message: &str) {
+    if !err.is_null() {
+        std::ptr::write(err, SedonaCError::new(message));
+    }
+}
+
+/// Macro to write an error to an FFI error pointer with formatting.
+///
+/// This is a convenience wrapper around `write_ffi_error` that supports
+/// format strings like `format!()`.
+///
+/// # Example
+///
+/// ```ignore
+/// set_ffi_error!(err, "Failed to parse: {}", e);
+/// ```
+#[macro_export]
+macro_rules! set_ffi_error {
+    ($err:expr, $msg:expr) => {
+        $crate::extension::write_ffi_error($err, $msg)
+    };
+    ($err:expr, $fmt:expr, $($arg:tt)*) => {
+        $crate::extension::write_ffi_error($err, &format!($fmt, $($arg)*))
+    };
+}
+
 /// Raw FFI representation of the SedonaCExpr
 #[derive(Default)]
 #[repr(C)]

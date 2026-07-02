@@ -37,6 +37,7 @@ use crate::execution_plan::{ExportedExecutionPlan, ImportedSedonaCExec};
 use crate::extension::{
     SedonaCError, SedonaCExecutionPlan, SedonaCExecutionPlanArgs, SedonaCTableProvider,
 };
+use crate::set_ffi_error;
 use crate::utils::{cstr_from_ptr_or_empty, get_table_provider_string_property, ERRNO_OK};
 
 /// A TableProvider wrapper that can be exported across FFI.
@@ -145,9 +146,7 @@ unsafe extern "C" fn c_table_provider_get_schema(
             ERRNO_OK
         }
         Err(e) => {
-            if !err.is_null() {
-                *err = SedonaCError::new(&format!("Failed to convert schema to FFI: {}", e));
-            }
+            set_ffi_error!(err, "Failed to convert schema to FFI: {}", e);
             libc::EINVAL
         }
     }
@@ -169,9 +168,7 @@ unsafe extern "C" fn c_table_provider_get_property_schema(
             ERRNO_OK
         }
         Err(e) => {
-            if !err.is_null() {
-                *err = SedonaCError::new(&format!("Failed to convert field to FFI schema: {}", e));
-            }
+            set_ffi_error!(err, "Failed to convert field to FFI schema: {}", e);
             libc::EINVAL
         }
     }
@@ -203,9 +200,7 @@ unsafe extern "C" fn c_table_provider_get_property(
             ERRNO_OK
         }
         Err(e) => {
-            if !err.is_null() {
-                *err = SedonaCError::new(&e.to_string());
-            }
+            set_ffi_error!(err, "{}", e);
             libc::EINVAL
         }
     }
@@ -241,9 +236,7 @@ unsafe extern "C" fn c_table_provider_scan(
         match serde_json::from_slice(args_slice) {
             Ok(a) => a,
             Err(e) => {
-                if !err.is_null() {
-                    *err = SedonaCError::new(&format!("Failed to parse scan args: {}", e));
-                }
+                set_ffi_error!(err, "Failed to parse scan args: {}", e);
                 return libc::EINVAL;
             }
         }
@@ -258,9 +251,7 @@ unsafe extern "C" fn c_table_provider_scan(
             ERRNO_OK
         }
         Err(e) => {
-            if !err.is_null() {
-                *err = SedonaCError::new(&e.to_string());
-            }
+            set_ffi_error!(err, "{}", e);
             libc::EINVAL
         }
     }
