@@ -55,7 +55,7 @@ use crate::import_from::{import_arrow_field, import_arrow_scalar};
 /// The `inner` field is intentionally `pub` so that other PyO3 modules in
 /// this crate (e.g. `dataframe.rs`) can take `Vec<PyExpr>` arguments and
 /// move the inner `Expr` out without going through accessor methods.
-#[pyclass(name = "InternalExpr")]
+#[pyclass(name = "InternalExpr", from_py_object)]
 #[derive(Clone)]
 pub struct PyExpr {
     pub inner: Expr,
@@ -197,7 +197,7 @@ impl PyExpr {
 /// (the common case, with `nulls_first` defaulting to false), or via
 /// `sedonadb.expr.sort_expr(expr, asc=..., nulls_first=...)` for full
 /// control. They are consumed by `DataFrame.sort(*keys)`.
-#[pyclass(name = "InternalSortExpr")]
+#[pyclass(name = "InternalSortExpr", from_py_object)]
 #[derive(Clone)]
 pub struct PySortExpr {
     pub inner: SortExpr,

@@ -21,7 +21,7 @@
 //! - `ZarrRasterLoader`: a Python class implementing the raster loader interface
 //!   that can be registered with `sedonadb` via `py_raster_loader`.
 
-use std::ffi::{c_int, CString};
+use std::ffi::c_int;
 use std::sync::{Mutex, OnceLock};
 
 use arrow_array::ffi_stream::FFI_ArrowArrayStream;
@@ -99,9 +99,7 @@ impl PyZarrChunkReader {
                 )
             })?;
         let ffi_stream = FFI_ArrowArrayStream::new(Box::new(reader));
-        let capsule_name = CString::new("arrow_array_stream")
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        PyCapsule::new(py, ffi_stream, Some(capsule_name))
+        PyCapsule::new_with_value(py, ffi_stream, c"arrow_array_stream")
     }
 }
 
@@ -224,7 +222,7 @@ impl ZarrLoadResult {
 }
 
 /// View entry for Zarr load results.
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone, Copy)]
 pub struct ZarrViewEntry {
     #[pyo3(get)]

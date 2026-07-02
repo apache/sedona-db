@@ -126,7 +126,7 @@ impl AsyncRasterLoader for PyRasterLoader {
                     .call(py, (py_requests_list,), None)
                     .map_err(py_err)?;
                 let result_list: &pyo3::Bound<'_, PyList> =
-                    result.bind(py).downcast().map_err(py_err)?;
+                    result.bind(py).cast().map_err(py_err)?;
 
                 // Extract results
                 let mut results = Vec::new();
@@ -144,8 +144,7 @@ impl AsyncRasterLoader for PyRasterLoader {
                         .extract()
                         .map_err(py_err)?;
                     let view_attr = item.getattr("view").map_err(py_err)?;
-                    let view_list: &pyo3::Bound<'_, PyList> =
-                        view_attr.downcast().map_err(py_err)?;
+                    let view_list: &pyo3::Bound<'_, PyList> = view_attr.cast().map_err(py_err)?;
 
                     let mut view = Vec::new();
                     for v in view_list.iter() {
@@ -291,7 +290,6 @@ impl AsRef<[u8]> for PyBufferWrapper {
 
 /// Python-visible raster load request
 #[pyclass]
-#[derive(Clone)]
 pub struct PyRasterLoadRequest {
     #[pyo3(get)]
     pub uri: String,
@@ -316,7 +314,7 @@ impl PyRasterLoadRequest {
 }
 
 /// Python-visible view entry
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone, Copy)]
 pub struct PyViewEntry {
     #[pyo3(get)]
@@ -372,7 +370,7 @@ impl From<PyViewEntry> for ViewEntry {
 }
 
 /// Python-visible band data type wrapper
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone, Copy)]
 pub struct PyBandDataType(pub BandDataType);
 
@@ -406,7 +404,6 @@ impl PyBandDataType {
 
 /// Python-visible raster load result
 #[pyclass]
-#[derive(Clone)]
 pub struct PyRasterLoadResult {
     #[pyo3(get, set)]
     pub bytes: Vec<u8>,
@@ -459,7 +456,7 @@ pub fn py_raster_loader(
 }
 
 /// Wrapper to expose PyRasterLoader to Python for registration
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyRasterLoaderWrapper {
     pub inner: Arc<PyRasterLoader>,

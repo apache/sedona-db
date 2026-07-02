@@ -43,7 +43,7 @@ use zarrs::storage::{AsyncReadableListableStorage, AsyncReadableListableStorageT
 
 use crate::coords;
 use crate::dtype::zarr_to_band_data_type;
-use crate::geozarr::{crs_from_cf_attributes, GroupGeoMetadata};
+use crate::geozarr::{crs_from_cf_attributes, geotransform_from_cf_attributes, GroupGeoMetadata};
 use crate::source_uri::build_chunk_anchor;
 
 /// Streaming reader over the chunk grid of a Zarr group.
@@ -336,15 +336,22 @@ async fn open_and_validate(
         }
     };
 
-    // CF / rioxarray groups declare their CRS on a separate scalar
-    // grid-mapping variable (commonly `spatial_ref`) rather than in the group
-    // attributes. When the group attributes didn't already yield a CRS,
-    // consult that variable before we drop the open array handles.
-    if geo.crs.is_none() {
-        if let Some(crs) = crs_from_grid_mapping_variable(&storage, &arrays).await {
-            geo.crs = Some(crs);
+    // CF / rioxarray groups declare their CRS — and often the affine
+    // `GeoTransform` — on a separate scalar grid-mapping variable (commonly
+    // `spatial_ref`) rather than in the group attributes. When the group
+    // attributes left either unresolved, consult that variable before we drop
+    // the open array handles.
+    let cf_transform = if geo.crs.is_none() || geo.transform.is_none() {
+        let cf = cf_georeference_from_grid_mapping(&storage, &arrays).await;
+        if geo.crs.is_none() {
+            geo.crs = cf.crs;
         }
-    }
+        // Only relevant when the group declared no `spatial:transform`; otherwise
+        // the explicit group transform wins in `resolve_group_transform`.
+        geo.transform.is_none().then_some(cf.transform).flatten()
+    } else {
+        None
+    };
 
     let array_infos = collect_array_infos(arrays)?;
     validate_group_constraints(&array_infos)?;
@@ -360,13 +367,15 @@ async fn open_and_validate(
     let spatial_dim_indices =
         resolve_spatial_dim_indices(&array_infos[0].dim_names, geo.spatial_dims.as_deref())?;
 
-    // Effective transform + CRS. An explicit GeoZarr `spatial:transform` wins;
-    // failing that a `spatial:bbox`; failing that the spatial coordinate arrays
-    // (the common CF / non-GeoZarr case); failing that identity pixel coords.
+    // Effective transform + CRS. An explicit transform wins (GeoZarr
+    // `spatial:transform`, then the CF `GeoTransform`); failing that a
+    // `spatial:bbox`; failing that the spatial coordinate arrays (the common
+    // CF / non-GeoZarr case); failing that identity pixel coords.
     let group_transform = resolve_group_transform(
         &storage,
         group_uri,
         &mut geo,
+        cf_transform,
         &array_infos,
         &spatial_dim_indices,
     )
@@ -405,10 +414,20 @@ async fn resolve_group_transform(
     storage: &AsyncReadableListableStorage,
     group_uri: &str,
     geo: &mut GroupGeoMetadata,
+    cf_transform: Option<[f64; 6]>,
     array_infos: &[ArrayInfo],
     spatial_dim_indices: &[usize],
 ) -> Result<[f64; 6], ArrowError> {
+    // An explicit transform wins, GeoZarr `spatial:transform` first and then the
+    // CF `GeoTransform` from the grid-mapping variable (both already GDAL order).
     if let Some(t) = geo.transform {
+        return Ok(t);
+    }
+    if let Some(t) = cf_transform {
+        log::debug!(
+            "Zarr group at {group_uri} has no `spatial:transform`; using the CF \
+             `GeoTransform` from the grid-mapping variable"
+        );
         return Ok(t);
     }
     // spatial_dim_indices is validated upstream to be [y_index, x_index].
@@ -580,46 +599,64 @@ async fn open_named_arrays(
     Ok(out)
 }
 
-/// Resolve a CRS from a CF / rioxarray grid-mapping variable.
+/// CRS and/or affine transform read from a CF grid-mapping variable.
+#[derive(Default)]
+struct CfGeoreference {
+    crs: Option<String>,
+    transform: Option<[f64; 6]>,
+}
+
+/// Resolve the CRS and affine `GeoTransform` from a CF / rioxarray grid-mapping
+/// variable.
 ///
-/// rioxarray writes the CRS to a scalar variable (conventionally
-/// `spatial_ref`, sometimes `crs`) carrying a `crs_wkt` / `spatial_ref`
-/// attribute, linked from each data variable via the CF `grid_mapping`
-/// attribute — or, as rioxarray does, listed in the data variable's
-/// `coordinates` attribute. That variable is a 0-D scalar, so it never
-/// appears among the rank ≥ 2 data arrays and must be opened on its own.
+/// rioxarray writes the CRS (and usually the `GeoTransform`) to a scalar
+/// variable (conventionally `spatial_ref`, sometimes `crs`) carrying `crs_wkt` /
+/// `spatial_ref` and `GeoTransform` attributes, linked from each data variable
+/// via the CF `grid_mapping` attribute — or, as rioxarray does, listed in the
+/// data variable's `coordinates` attribute. That variable is a 0-D scalar, so it
+/// never appears among the rank ≥ 2 data arrays and must be opened on its own.
 ///
 /// Candidate names are gathered in priority order — `grid_mapping` targets
 /// first, then `coordinates` tokens, then the conventional `spatial_ref` /
-/// `crs` — and the first that opens and yields a CRS wins. A candidate that
-/// is missing, unreadable, or carries no CRS attribute is skipped, so a group
-/// without a grid-mapping variable simply stays CRS-less.
-async fn crs_from_grid_mapping_variable(
+/// `crs` — and the first candidate that opens and carries either a CRS or a
+/// `GeoTransform` wins (both are read from that one variable). A candidate that
+/// is missing, unreadable, or carries neither is skipped, so a group without a
+/// grid-mapping variable simply stays unreferenced.
+async fn cf_georeference_from_grid_mapping(
     storage: &AsyncReadableListableStorage,
     data_arrays: &[Array<dyn AsyncReadableListableStorageTraits>],
-) -> Option<String> {
+) -> CfGeoreference {
     let candidates = cf_crs_candidate_names(data_arrays.iter().map(|a| a.attributes()));
     for name in candidates {
         let path = format!("/{}", name.trim_start_matches('/'));
         let array = match Array::async_open(storage.clone(), &path).await {
             Ok(array) => array,
             // An absent candidate and a transient/permission failure look
-            // alike here; CRS is optional so we keep trying, but leave a
-            // breadcrumb so a genuinely broken store stays traceable.
+            // alike here; georeferencing is optional so we keep trying, but
+            // leave a breadcrumb so a genuinely broken store stays traceable.
             Err(e) => {
                 log::debug!("Zarr grid-mapping candidate {name:?}: open failed: {e}");
                 continue;
             }
         };
-        match crs_from_cf_attributes(array.attributes()) {
-            Ok(Some(crs)) => return Some(crs),
-            Ok(None) => continue,
+        let attrs = array.attributes();
+        let crs = match crs_from_cf_attributes(attrs) {
+            Ok(crs) => crs,
             // A malformed CRS attribute on a candidate variable shouldn't take
-            // the whole read offline; log and keep looking.
-            Err(e) => log::warn!("Zarr grid-mapping variable {name:?}: ignoring CRS: {e}"),
+            // the whole read offline; log and treat it as absent.
+            Err(e) => {
+                log::warn!("Zarr grid-mapping variable {name:?}: ignoring CRS: {e}");
+                None
+            }
+        };
+        let transform = geotransform_from_cf_attributes(attrs);
+        // The first variable that carries either is the grid-mapping variable;
+        // both come from it, so stop here.
+        if crs.is_some() || transform.is_some() {
+            return CfGeoreference { crs, transform };
         }
     }
-    None
+    CfGeoreference::default()
 }
 
 /// Gather candidate grid-mapping variable names from the data arrays'

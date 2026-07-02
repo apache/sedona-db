@@ -682,3 +682,72 @@ async fn derives_transform_with_explicit_arrays_filter() {
     );
     assert_eq!(raster.crs(), Some("EPSG:4326"));
 }
+
+// A real EPSG:3857 WKT (carries the embedded authority), as rioxarray writes to
+// the `spatial_ref` variable's `crs_wkt` attribute.
+const WKT_3857: &str = "PROJCS[\"WGS 84 / Pseudo-Mercator\",GEOGCS[\"WGS 84\",\
+DATUM[\"WGS_1984\",SPHEROID[\"WGS 84\",6378137,298.257223563]],\
+PRIMEM[\"Greenwich\",0],UNIT[\"degree\",0.0174532925199433]],\
+PROJECTION[\"Mercator_1SP\"],PARAMETER[\"central_meridian\",0],\
+PARAMETER[\"scale_factor\",1],PARAMETER[\"false_easting\",0],\
+PARAMETER[\"false_northing\",0],UNIT[\"metre\",1],AUTHORITY[\"EPSG\",\"3857\"]]";
+
+/// CF / rioxarray group: no `proj:`/`spatial:` group attributes; georeferencing
+/// lives on a scalar `spatial_ref` variable (linked via `grid_mapping`) carrying
+/// `crs_wkt` + a GDAL-order `GeoTransform` string.
+fn build_cf_spatial_ref_fixture() -> TempDir {
+    let tmp = TempDir::new().unwrap();
+    let store = Arc::new(FilesystemStore::new(tmp.path()).unwrap());
+
+    GroupBuilder::new()
+        .build(store.clone(), "/")
+        .unwrap()
+        .store_metadata()
+        .unwrap();
+
+    // Data variable, linked to the grid-mapping variable by name.
+    let mut data_attrs = serde_json::Map::new();
+    data_attrs.insert("grid_mapping".into(), serde_json::json!("spatial_ref"));
+    ArrayBuilder::new(vec![4u64, 4u64], vec![2u64, 2u64], data_type::uint8(), 0u8)
+        .dimension_names(Some(["y", "x"]))
+        .attributes(data_attrs)
+        .build(store.clone(), "/variables")
+        .unwrap()
+        .store_metadata()
+        .unwrap();
+
+    // Scalar grid-mapping variable: crs_wkt + GeoTransform (already GDAL order).
+    let mut sr_attrs = serde_json::Map::new();
+    sr_attrs.insert("crs_wkt".into(), serde_json::json!(WKT_3857));
+    sr_attrs.insert(
+        "GeoTransform".into(),
+        serde_json::json!("-8630308.0188 1.2874707 0 4772553.2794 0 -1.2874707"),
+    );
+    ArrayBuilder::new(vec![1u64], vec![1u64], data_type::uint8(), 0u8)
+        .attributes(sr_attrs)
+        .build(store.clone(), "/spatial_ref")
+        .unwrap()
+        .store_metadata()
+        .unwrap();
+
+    tmp
+}
+
+#[tokio::test]
+async fn cf_spatial_ref_georeferences_from_crs_wkt_and_geotransform() {
+    // The rioxarray/CF convention: CRS + affine on a `spatial_ref` variable, not
+    // in group attributes. The reader resolves the CRS from `crs_wkt` and uses
+    // the `GeoTransform` verbatim (GDAL order, no reorder). First chunk row sits
+    // at the grid origin, so its transform equals the GeoTransform.
+    let tmp = build_cf_spatial_ref_fixture();
+    let uri = format!("file://{}", tmp.path().display());
+    let arr = read_all(&uri, None).await.unwrap();
+
+    let raster = RasterStructArray::try_new(&arr).unwrap().get(0).unwrap();
+    assert_eq!(
+        raster.transform().to_vec(),
+        vec![-8630308.0188, 1.2874707, 0.0, 4772553.2794, 0.0, -1.2874707]
+    );
+    let crs = raster.crs().expect("CRS resolved from spatial_ref crs_wkt");
+    assert!(crs.contains("3857"), "expected EPSG:3857 WKT, got: {crs}");
+}

@@ -31,7 +31,7 @@ doc = false
 arrow-array = { workspace = true, features = ["ffi"] }
 arrow-buffer = { workspace = true }
 object_store = { workspace = true, features = ["aws", "http"] }
-pyo3 = { version = "0.26.0" }
+pyo3 = { workspace = true }
 sedona-raster = { workspace = true }
 sedona-raster-zarr = { workspace = true }
 sedona-schema = { workspace = true }

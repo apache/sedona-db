@@ -48,7 +48,7 @@ jobs:
     runs-on: windows-2022
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: 'true'
           fetch-depth: 0
@@ -59,7 +59,7 @@ jobs:
           delvewheel: "true"
 
       - name: Clone vcpkg
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: microsoft/vcpkg
           ref: ${{ env.VCPKG_REF }}
@@ -86,7 +86,7 @@ jobs:
     runs-on: macOS-latest
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: 'true'
           fetch-depth: 0
@@ -97,7 +97,7 @@ jobs:
           cache-bin: "false"
 
       - name: Clone vcpkg
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: microsoft/vcpkg
           ref: ${{ env.VCPKG_REF }}
@@ -121,7 +121,7 @@ jobs:
     runs-on: macos-15-intel
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: 'true'
           fetch-depth: 0
@@ -132,7 +132,7 @@ jobs:
           cache-bin: "false"
 
       - name: Clone vcpkg
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: microsoft/vcpkg
           ref: ${{ env.VCPKG_REF }}
@@ -163,7 +163,7 @@ jobs:
           - {os: "ubuntu-24.04-arm", label: "linux-arm64", arch: "aarch64"}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: 'true'
           fetch-depth: 0

@@ -81,12 +81,12 @@ jobs:
 
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: 'recursive'
 
       - name: Clone vcpkg
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: microsoft/vcpkg
           ref: ${{ env.VCPKG_REF }}

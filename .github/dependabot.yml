@@ -40,8 +40,9 @@ updates:
         patterns:
           - "datafusion*"
           - "arrow*"
-          - "parquet"
-          - "objstore"
+          - "parquet*"
+          - "object_store"
+          - "zarrs_object_store"
       wasm-bindgen:
         applies-to: version-updates
         patterns:
