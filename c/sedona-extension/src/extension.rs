@@ -207,6 +207,7 @@ pub struct SedonaCExpr {
         unsafe extern "C" fn(
             self_: *const SedonaCExpr,
             property: *const c_char,
+            out: *mut FFI_ArrowSchema,
             err: *mut SedonaCError,
         ) -> c_int,
     >,

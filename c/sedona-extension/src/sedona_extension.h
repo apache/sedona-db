@@ -226,7 +226,7 @@ struct SedonaCError {
 struct SedonaCExpr {
   /// \brief Get the data type of a property
   int (*get_property_schema)(const struct SedonaCExpr* self, const char* property,
-                             struct SedonaCError* err);
+                             struct ArrowSchema* out, struct SedonaCError* err);
 
   /// \brief Extract a serializable property from this expression
   ///
