@@ -24,7 +24,7 @@ use arrow_schema::{Schema, SchemaRef};
 use datafusion::catalog::MemTable;
 use datafusion::config::ConfigField;
 use datafusion::logical_expr::SortExpr;
-use datafusion::prelude::{DataFrame, SessionContext};
+use datafusion::prelude::DataFrame;
 use datafusion_common::{Column, DataFusionError, ParamValues};
 use datafusion_expr::{ExplainFormat, ExplainOption, Expr, JoinType, LogicalPlanBuilder};
 use futures::lock::Mutex;
@@ -667,12 +667,12 @@ impl InternalDataFrame {
     fn __sedonadb_table_provider__<'py>(
         &self,
         py: Python<'py>,
+        ctx: &InternalContext,
     ) -> Result<Bound<'py, PyCapsule>, PySedonaError> {
         let provider = self.inner.clone().into_view();
-        // Create a session context for FFI - the consuming side will use its own
-        // session for actual execution, this is just needed for the FFI interface.
-        let ctx = SessionContext::new();
-        let session = Arc::new(ctx.state());
+        // Use the actual session state so that object stores, UDFs, and other
+        // registrations are available when the consumer scans the provider.
+        let session = Arc::new(ctx.inner.ctx.state());
         let exported = sedona_extension::table_provider::ExportedTableProvider::new(
             provider,
             session,

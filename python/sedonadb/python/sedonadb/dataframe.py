@@ -1291,7 +1291,7 @@ class DataFrame:
         return DataFrame(self._ctx, self._impl.to_memtable(self._ctx._impl))
 
     def __sedonadb_table_provider__(self):
-        return self._impl.__sedonadb_table_provider__()
+        return self._impl.__sedonadb_table_provider__(self._ctx._impl)
 
     def to_arrow_table(self, schema: Any = None) -> "pa.Table":
         """Execute and collect results as a PyArrow Table
