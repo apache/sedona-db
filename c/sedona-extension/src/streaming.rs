@@ -20,6 +20,7 @@
 //! This module provides [`StreamingRecordBatchReader`] for exporting DataFusion streams
 //! over FFI, and [`ffi_stream_to_sendable`] for importing FFI streams back into DataFusion.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use arrow_array::ffi_stream::FFI_ArrowArrayStream;
@@ -57,6 +58,9 @@ struct StreamWorker {
     request_tx: std::sync::mpsc::SyncSender<()>,
     /// Channel to receive batch results.
     response_rx: std::sync::mpsc::Receiver<BatchResult>,
+    /// Cancellation flag shared with worker thread.
+    /// When set to true, the worker will abort the current fetch and exit.
+    cancel_flag: Arc<AtomicBool>,
     /// Worker thread handle for cleanup.
     _handle: std::thread::JoinHandle<()>,
 }
@@ -164,21 +168,59 @@ impl StreamingRecordBatchReader {
         // stops early due to periodic cancellation before receiving the response
         let (response_tx, response_rx) = std::sync::mpsc::sync_channel::<BatchResult>(1);
 
+        // Cancellation flag - when set, worker will abort current fetch
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        let worker_cancel_flag = cancel_flag.clone();
+
         // Spawn the worker thread
         let handle = std::thread::spawn(move || {
             let mut stream = stream;
             // Process requests until the channel is closed
             while request_rx.recv().is_ok() {
+                // Check if cancelled before starting fetch
+                if worker_cancel_flag.load(Ordering::Relaxed) {
+                    // Send cancellation error and exit
+                    let _ = response_tx.send(Some(Err(cancellation_arrow_error())));
+                    break;
+                }
+
                 let result = runtime.handle().block_on(async {
-                    match stream.next().await {
-                        Some(Ok(batch)) => Some(Ok(batch)),
-                        Some(Err(e)) => Some(Err(ArrowError::ExternalError(Box::new(e)))),
-                        None => None,
+                    // Poll cancellation periodically while waiting for the next batch.
+                    // This allows us to abort the fetch if cancellation is requested.
+                    let cancel_check = async {
+                        loop {
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            if worker_cancel_flag.load(Ordering::Relaxed) {
+                                return;
+                            }
+                        }
+                    };
+
+                    tokio::select! {
+                        biased;
+                        // Check cancellation first
+                        _ = cancel_check => {
+                            Some(Err(ArrowError::ExternalError(Box::new(std::io::Error::new(
+                                std::io::ErrorKind::Interrupted,
+                                "Operation cancelled",
+                            )))))
+                        }
+                        // Then try to get the next batch
+                        batch = stream.next() => {
+                            match batch {
+                                Some(Ok(batch)) => Some(Ok(batch)),
+                                Some(Err(e)) => Some(Err(ArrowError::ExternalError(Box::new(e)))),
+                                None => None,
+                            }
+                        }
                     }
                 });
 
+                // If cancelled, exit after sending response
+                let is_cancelled = worker_cancel_flag.load(Ordering::Relaxed);
+
                 // Send the result back; if send fails, the reader was dropped
-                if response_tx.send(result).is_err() {
+                if response_tx.send(result).is_err() || is_cancelled {
                     break;
                 }
             }
@@ -187,6 +229,7 @@ impl StreamingRecordBatchReader {
         self.worker = Some(StreamWorker {
             request_tx,
             response_rx,
+            cancel_flag,
             _handle: handle,
         });
     }
@@ -219,6 +262,15 @@ impl StreamingRecordBatchReader {
                             if let Some(ref checker) = self.cancel_checker {
                                 if checker() {
                                     self.cancelled = true;
+                                    // Signal the worker to abort the current fetch
+                                    // This will cause the worker's select! to see the
+                                    // cancellation and drop the stream future.
+                                    worker.cancel_flag.store(true, Ordering::Relaxed);
+                                    // Wait briefly for the worker to send its response
+                                    // then return the cancellation error
+                                    let _ = worker
+                                        .response_rx
+                                        .recv_timeout(std::time::Duration::from_millis(200));
                                     return Some(Err(cancellation_arrow_error()));
                                 }
                             }
