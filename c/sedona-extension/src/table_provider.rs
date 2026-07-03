@@ -32,6 +32,7 @@ use datafusion_expr::{Expr, TableType};
 use datafusion_physical_plan::ExecutionPlan;
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use serde::{Deserialize, Serialize};
+use tokio::runtime::Runtime;
 
 use crate::execution_plan::{ExportedExecutionPlan, ImportedSedonaCExec};
 use crate::extension::{
@@ -47,7 +48,9 @@ use crate::utils::{cstr_from_ptr_or_empty, get_table_provider_string_property, E
 pub struct ExportedTableProvider {
     inner: Arc<dyn TableProvider>,
     session: Arc<dyn Session>,
-    runtime: tokio::runtime::Handle,
+    /// We hold Arc<Runtime> instead of just Handle to keep the runtime alive
+    /// as long as this provider exists.
+    runtime: Arc<Runtime>,
 }
 
 impl Debug for ExportedTableProvider {
@@ -63,10 +66,13 @@ impl ExportedTableProvider {
     ///
     /// The session is used during scan operations and must support physical planning
     /// if the inner TableProvider requires it (e.g., for Views).
+    ///
+    /// Takes an `Arc<Runtime>` to ensure the runtime stays alive for the lifetime
+    /// of the provider, preventing "Worker thread terminated" errors.
     pub fn new(
         inner: Arc<dyn TableProvider>,
         session: Arc<dyn Session>,
-        runtime: tokio::runtime::Handle,
+        runtime: Arc<Runtime>,
     ) -> Self {
         Self {
             inner,
@@ -86,7 +92,7 @@ impl ExportedTableProvider {
 
         std::thread::spawn(move || {
             let projection_ref = projection.as_ref();
-            runtime.block_on(inner.scan(session.as_ref(), projection_ref, &[], limit))
+            runtime.handle().block_on(inner.scan(session.as_ref(), projection_ref, &[], limit))
         })
         .join()
         .map_err(|_| {
@@ -483,33 +489,35 @@ mod tests {
     /// 2. Exporting the table provider through FFI
     /// 3. Importing it and registering in a new context
     /// 4. Running the SQL query and asserting results
-    async fn test_roundtrip_query(sql: &str, expected: &[&str]) -> Result<()> {
-        let ctx = create_test_context().await?;
+    fn test_roundtrip_query(sql: &str, expected: &[&str]) -> Result<()> {
+        let runtime = test_runtime();
+        runtime.block_on(async {
+            let ctx = create_test_context().await?;
 
-        // Get the table provider from the context
-        let table = ctx.table_provider("test_data").await?;
+            // Get the table provider from the context
+            let table = ctx.table_provider("test_data").await?;
 
-        // Export the table provider
-        let runtime = tokio::runtime::Handle::current();
-        let session = Arc::new(ctx.state());
-        let exported = ExportedTableProvider::new(table, session, runtime);
-        let ffi_provider: SedonaCTableProvider = exported.into();
+            // Export the table provider
+            let session = Arc::new(ctx.state());
+            let exported = ExportedTableProvider::new(table, session, runtime.clone());
+            let ffi_provider: SedonaCTableProvider = exported.into();
 
-        // Import the table provider
-        let imported = ImportedTableProvider::try_new(ffi_provider)?;
+            // Import the table provider
+            let imported = ImportedTableProvider::try_new(ffi_provider)?;
 
-        // Create a new context and register the imported table
-        let ctx2 = SessionContext::new();
-        ctx2.register_table("imported_data", Arc::new(imported))?;
+            // Create a new context and register the imported table
+            let ctx2 = SessionContext::new();
+            ctx2.register_table("imported_data", Arc::new(imported))?;
 
-        // Query and verify
-        let result = ctx2.sql(sql).await?.collect().await?;
-        assert_batches_eq!(expected, &result);
-        Ok(())
+            // Query and verify
+            let result = ctx2.sql(sql).await?.collect().await?;
+            assert_batches_eq!(expected, &result);
+            Ok(())
+        })
     }
 
-    #[tokio::test]
-    async fn test_roundtrip_simple_select() -> Result<()> {
+    #[test]
+    fn test_roundtrip_simple_select() {
         test_roundtrip_query(
             "SELECT id, value_a FROM imported_data ORDER BY id LIMIT 5",
             &[
@@ -524,11 +532,11 @@ mod tests {
                 "+----+---------+",
             ],
         )
-        .await
+        .unwrap();
     }
 
-    #[tokio::test]
-    async fn test_roundtrip_projection() -> Result<()> {
+    #[test]
+    fn test_roundtrip_projection() {
         test_roundtrip_query(
             "SELECT value_b, value_d FROM imported_data ORDER BY value_b LIMIT 3",
             &[
@@ -541,11 +549,11 @@ mod tests {
                 "+---------+---------+",
             ],
         )
-        .await
+        .unwrap();
     }
 
-    #[tokio::test]
-    async fn test_roundtrip_filter() -> Result<()> {
+    #[test]
+    fn test_roundtrip_filter() {
         test_roundtrip_query(
             "SELECT id, value_a FROM imported_data WHERE id > 20 ORDER BY id LIMIT 5",
             &[
@@ -560,11 +568,11 @@ mod tests {
                 "+----+---------+",
             ],
         )
-        .await
+        .unwrap();
     }
 
-    #[tokio::test]
-    async fn test_roundtrip_sort() -> Result<()> {
+    #[test]
+    fn test_roundtrip_sort() {
         test_roundtrip_query(
             "SELECT id, value_c FROM imported_data ORDER BY id DESC LIMIT 5",
             &[
@@ -579,22 +587,22 @@ mod tests {
                 "+----+---------+",
             ],
         )
-        .await
+        .unwrap();
     }
 
-    #[tokio::test]
-    async fn test_roundtrip_limit() -> Result<()> {
+    #[test]
+    fn test_roundtrip_limit() {
         test_roundtrip_query(
             "SELECT id FROM imported_data ORDER BY id LIMIT 3",
             &[
                 "+----+", "| id |", "+----+", "| 1  |", "| 2  |", "| 3  |", "+----+",
             ],
         )
-        .await
+        .unwrap();
     }
 
-    #[tokio::test]
-    async fn test_roundtrip_all_columns() -> Result<()> {
+    #[test]
+    fn test_roundtrip_all_columns() {
         test_roundtrip_query(
             "SELECT * FROM imported_data ORDER BY id LIMIT 2",
             &[
@@ -606,7 +614,7 @@ mod tests {
                 "+----+---------+---------+---------+---------+",
             ],
         )
-        .await
+        .unwrap();
     }
 
     /// A dummy TableProvider with configurable table_type for testing FFI roundtrip.
@@ -651,20 +659,32 @@ mod tests {
         }
     }
 
-    /// Helper to set up an imported table provider from a DummyTableProvider through FFI roundtrip.
-    fn setup_imported_provider_with(table_type: TableType) -> ImportedTableProvider {
-        let dummy = Arc::new(DummyTableProvider::with_table_type(table_type));
-        let ctx = SessionContext::new();
-        let runtime = tokio::runtime::Handle::current();
-        let session = Arc::new(ctx.state());
-        let exported = ExportedTableProvider::new(dummy, session, runtime);
-        let ffi_provider: SedonaCTableProvider = exported.into();
-        ImportedTableProvider::try_new(ffi_provider).expect("Failed to import table provider")
+    /// Create a test runtime wrapped in Arc.
+    fn test_runtime() -> Arc<Runtime> {
+        Arc::new(
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap(),
+        )
     }
 
-    #[tokio::test]
-    async fn test_table_provider_roundtrip_schema() -> Result<()> {
-        let imported = setup_imported_provider_with(TableType::Base);
+    /// Helper to set up an imported table provider from a DummyTableProvider through FFI roundtrip.
+    /// Returns the runtime to keep it alive for the duration of the test.
+    fn setup_imported_provider_with(table_type: TableType) -> (ImportedTableProvider, Arc<Runtime>) {
+        let dummy = Arc::new(DummyTableProvider::with_table_type(table_type));
+        let ctx = SessionContext::new();
+        let runtime = test_runtime();
+        let session = Arc::new(ctx.state());
+        let exported = ExportedTableProvider::new(dummy, session, runtime.clone());
+        let ffi_provider: SedonaCTableProvider = exported.into();
+        let imported = ImportedTableProvider::try_new(ffi_provider).expect("Failed to import table provider");
+        (imported, runtime)
+    }
+
+    #[test]
+    fn test_table_provider_roundtrip_schema() {
+        let (imported, _runtime) = setup_imported_provider_with(TableType::Base);
 
         // Check schema roundtrip
         let schema = imported.schema();
@@ -673,16 +693,13 @@ mod tests {
         assert_eq!(schema.field(0).data_type(), &DataType::Int32);
         assert_eq!(schema.field(1).name(), "value");
         assert_eq!(schema.field(1).data_type(), &DataType::Int32);
-
-        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_table_provider_roundtrip_table_type() -> Result<()> {
+    #[test]
+    fn test_table_provider_roundtrip_table_type() {
         for table_type in [TableType::Base, TableType::View, TableType::Temporary] {
-            let imported = setup_imported_provider_with(table_type);
+            let (imported, _runtime) = setup_imported_provider_with(table_type);
             assert_eq!(imported.table_type(), table_type);
         }
-        Ok(())
     }
 }

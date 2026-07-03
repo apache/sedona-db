@@ -20,12 +20,15 @@
 //! This module provides [`StreamingRecordBatchReader`] for exporting DataFusion streams
 //! over FFI, and [`ffi_stream_to_sendable`] for importing FFI streams back into DataFusion.
 
+use std::sync::Arc;
+
 use arrow_array::ffi_stream::FFI_ArrowArrayStream;
 use arrow_array::{RecordBatch, RecordBatchReader};
 use arrow_schema::{ArrowError, SchemaRef};
 use datafusion_common::{exec_err, Result};
 use datafusion_physical_plan::SendableRecordBatchStream;
 use futures::StreamExt;
+use tokio::runtime::Runtime;
 
 /// A cancellation check callback for FFI operations.
 ///
@@ -68,7 +71,9 @@ struct StreamWorker {
 pub struct StreamingRecordBatchReader {
     schema: SchemaRef,
     /// Stream and runtime, wrapped in Option so they can be moved to the worker.
-    stream_and_runtime: Option<(SendableRecordBatchStream, tokio::runtime::Handle)>,
+    /// We hold Arc<Runtime> instead of just Handle to keep the runtime alive
+    /// as long as this reader exists.
+    stream_and_runtime: Option<(SendableRecordBatchStream, Arc<Runtime>)>,
     /// Worker thread state, lazily initialized on first fetch.
     worker: Option<StreamWorker>,
     cancel_checker: Option<CancelChecker>,
@@ -79,7 +84,11 @@ pub struct StreamingRecordBatchReader {
 
 impl StreamingRecordBatchReader {
     /// Create a new StreamingRecordBatchReader from a SendableRecordBatchStream.
-    pub fn new(stream: SendableRecordBatchStream, runtime: tokio::runtime::Handle) -> Self {
+    ///
+    /// Takes an `Arc<Runtime>` to ensure the runtime stays alive for the lifetime
+    /// of the reader. This prevents "Worker thread terminated" errors when the
+    /// runtime would otherwise be dropped while the stream is still being read.
+    pub fn new(stream: SendableRecordBatchStream, runtime: Arc<Runtime>) -> Self {
         Self {
             schema: stream.schema(),
             stream_and_runtime: Some((stream, runtime)),
@@ -96,9 +105,12 @@ impl StreamingRecordBatchReader {
     /// The cancellation checker is called before each batch is fetched. If it
     /// returns `true`, iteration stops with a cancellation error on the next
     /// call and `None` on subsequent calls.
+    ///
+    /// Takes an `Arc<Runtime>` to ensure the runtime stays alive for the lifetime
+    /// of the reader.
     pub fn with_cancel_checker(
         stream: SendableRecordBatchStream,
-        runtime: tokio::runtime::Handle,
+        runtime: Arc<Runtime>,
         cancel_checker: CancelChecker,
     ) -> Self {
         Self {
@@ -157,7 +169,7 @@ impl StreamingRecordBatchReader {
             let mut stream = stream;
             // Process requests until the channel is closed
             while request_rx.recv().is_ok() {
-                let result = runtime.block_on(async {
+                let result = runtime.handle().block_on(async {
                     match stream.next().await {
                         Some(Ok(batch)) => Some(Ok(batch)),
                         Some(Err(e)) => Some(Err(ArrowError::ExternalError(Box::new(e)))),
@@ -330,6 +342,16 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
+    /// Create a test runtime wrapped in Arc.
+    fn test_runtime() -> Arc<Runtime> {
+        Arc::new(
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap(),
+        )
+    }
+
     /// Create a slow stream that yields batches with a configurable delay.
     fn create_slow_stream(
         num_batches: usize,
@@ -363,9 +385,9 @@ mod tests {
         )
     }
 
-    #[tokio::test]
-    async fn test_streaming_reader_basic() {
-        let runtime = tokio::runtime::Handle::current();
+    #[test]
+    fn test_streaming_reader_basic() {
+        let runtime = test_runtime();
         let (_schema, stream) = create_slow_stream(5, 10);
 
         let reader = StreamingRecordBatchReader::new(stream, runtime);
@@ -383,9 +405,9 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn test_streaming_reader_cancel() {
-        let runtime = tokio::runtime::Handle::current();
+    #[test]
+    fn test_streaming_reader_cancel() {
+        let runtime = test_runtime();
         let (_schema, stream) = create_slow_stream(10, 50);
 
         // Cancel after reading 3 batches
@@ -419,11 +441,11 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn test_ffi_stream_to_sendable_basic() {
+    #[test]
+    fn test_ffi_stream_to_sendable_basic() {
         use arrow_array::ffi_stream::FFI_ArrowArrayStream;
 
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = test_runtime();
         let (_schema, stream) = create_slow_stream(5, 10);
 
         // Export to FFI stream
@@ -434,7 +456,7 @@ mod tests {
         let imported = unsafe { ffi_stream_to_sendable(&mut ffi_stream).unwrap() };
 
         // Collect results
-        let batches: Vec<_> = imported.collect::<Vec<_>>().await;
+        let batches: Vec<_> = runtime.block_on(imported.collect::<Vec<_>>());
 
         assert_eq!(batches.len(), 5);
         for (i, batch) in batches.iter().enumerate() {
@@ -448,11 +470,11 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn test_ffi_stream_to_sendable_cancel() {
+    #[test]
+    fn test_ffi_stream_to_sendable_cancel() {
         use arrow_array::ffi_stream::FFI_ArrowArrayStream;
 
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = test_runtime();
         let (_schema, stream) = create_slow_stream(10, 50);
 
         // Export to FFI stream (no cancellation on export side)
@@ -470,18 +492,21 @@ mod tests {
         };
 
         // Collect with cancellation after 3 batches, stop on first error
-        let mut batches = Vec::new();
-        let mut stream = imported;
-        while let Some(result) = stream.next().await {
-            let is_err = result.is_err();
-            batches.push(result);
-            if batches.len() == 3 {
-                cancelled.store(true, Ordering::SeqCst);
+        let batches = runtime.block_on(async {
+            let mut batches = Vec::new();
+            let mut stream = imported;
+            while let Some(result) = stream.next().await {
+                let is_err = result.is_err();
+                batches.push(result);
+                if batches.len() == 3 {
+                    cancelled.store(true, Ordering::SeqCst);
+                }
+                if is_err {
+                    break; // Stop on first error
+                }
             }
-            if is_err {
-                break; // Stop on first error
-            }
-        }
+            batches
+        });
 
         // Should have 3 successful batches + 1 cancellation error
         assert_eq!(batches.len(), 4);
@@ -529,9 +554,9 @@ mod tests {
         )
     }
 
-    #[tokio::test]
-    async fn test_streaming_reader_skip_empty_batches() {
-        let runtime = tokio::runtime::Handle::current();
+    #[test]
+    fn test_streaming_reader_skip_empty_batches() {
+        let runtime = test_runtime();
         // Create stream with: 2 rows, 0 rows, 3 rows, 0 rows, 0 rows, 1 row
         let (_schema, stream) = create_stream_with_empty_batches(vec![2, 0, 3, 0, 0, 1]);
 
@@ -547,9 +572,9 @@ mod tests {
         assert_eq!(batches[2].as_ref().unwrap().num_rows(), 1);
     }
 
-    #[tokio::test]
-    async fn test_streaming_reader_no_skip_empty_batches() {
-        let runtime = tokio::runtime::Handle::current();
+    #[test]
+    fn test_streaming_reader_no_skip_empty_batches() {
+        let runtime = test_runtime();
         // Create stream with: 2 rows, 0 rows, 3 rows
         let (_schema, stream) = create_stream_with_empty_batches(vec![2, 0, 3]);
 
@@ -564,9 +589,9 @@ mod tests {
         assert_eq!(batches[2].as_ref().unwrap().num_rows(), 3);
     }
 
-    #[tokio::test]
-    async fn test_streaming_reader_periodic_check_interval() {
-        let runtime = tokio::runtime::Handle::current();
+    #[test]
+    fn test_streaming_reader_periodic_check_interval() {
+        let runtime = test_runtime();
         // Create a slow stream where each batch takes 200ms
         let (_schema, stream) = create_slow_stream(5, 200);
 

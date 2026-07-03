@@ -449,7 +449,7 @@ impl InternalDataFrame {
         simplify: Option<bool>,
     ) -> Result<StreamingResult, PySedonaError> {
         let stream = wait_for_future(py, &self.runtime, self.inner.clone().execute_stream())??;
-        let reader = new_py_streaming_reader(stream, self.runtime.handle().clone());
+        let reader = new_py_streaming_reader(stream, self.runtime.clone());
         let mut reader: Box<dyn RecordBatchReader + Send> = Box::new(reader);
 
         if simplify.unwrap_or(false) {
@@ -676,7 +676,7 @@ impl InternalDataFrame {
         let exported = sedona_extension::table_provider::ExportedTableProvider::new(
             provider,
             session,
-            self.runtime.handle().clone(),
+            self.runtime.clone(),
         );
         let ffi_provider: sedona_extension::extension::SedonaCTableProvider = exported.into();
         Ok(PyCapsule::new_with_value(

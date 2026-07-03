@@ -99,7 +99,7 @@ impl Statement for SedonaStatement {
             self.runtime.block_on(async {
                 let df = self.ctx.sql(&query).await.map_err(from_datafusion_error)?;
                 let stream = df.execute_stream().await.map_err(from_datafusion_error)?;
-                let reader = StreamingRecordBatchReader::new(stream, self.runtime.handle().clone())
+                let reader = StreamingRecordBatchReader::new(stream, self.runtime.clone())
                     .with_skip_empty_batches(true);
                 Ok(Box::new(reader) as Box<dyn RecordBatchReader + Send + 'static>)
             })

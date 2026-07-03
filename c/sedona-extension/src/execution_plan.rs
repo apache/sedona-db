@@ -35,6 +35,7 @@ use datafusion_physical_plan::{
 };
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use serde::{Deserialize, Serialize};
+use tokio::runtime::Runtime;
 
 use crate::extension::{SedonaCError, SedonaCExecutionPlan, SedonaCExecutionPlanArgs};
 use crate::set_ffi_error;
@@ -42,10 +43,13 @@ use crate::streaming::{ffi_stream_to_sendable, StreamingRecordBatchReader};
 use crate::utils::{cstr_from_ptr_or_empty, get_plan_property, get_plan_string_property, ERRNO_OK};
 
 /// Wrapper around an [ExecutionPlan] that can be exported across FFI.
+///
+/// Holds an `Arc<Runtime>` to ensure the runtime stays alive for the lifetime
+/// of the exported plan.
 pub struct ExportedExecutionPlan {
     plan: Arc<dyn ExecutionPlan>,
     task_context: Arc<TaskContext>,
-    runtime: tokio::runtime::Handle,
+    runtime: Arc<Runtime>,
 }
 
 impl Debug for ExportedExecutionPlan {
@@ -58,10 +62,13 @@ impl Debug for ExportedExecutionPlan {
 
 impl ExportedExecutionPlan {
     /// Create a new ExportedExecutionPlan from an ExecutionPlan.
+    ///
+    /// Takes an `Arc<Runtime>` to ensure the runtime stays alive for the lifetime
+    /// of the exported plan, preventing "Worker thread terminated" errors.
     pub fn new(
         plan: Arc<dyn ExecutionPlan>,
         task_context: Arc<TaskContext>,
-        runtime: tokio::runtime::Handle,
+        runtime: Arc<Runtime>,
     ) -> Self {
         Self {
             plan,
@@ -752,42 +759,53 @@ mod tests {
         }
     }
 
+    /// Create a test runtime wrapped in Arc.
+    fn test_runtime() -> Arc<Runtime> {
+        Arc::new(
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap(),
+        )
+    }
+
     /// Helper to set up an imported plan from a DummyExec through FFI roundtrip.
-    fn setup_imported_plan() -> (ImportedSedonaCExec, Arc<TaskContext>) {
+    /// Returns the runtime to keep it alive for the duration of the test.
+    fn setup_imported_plan() -> (ImportedSedonaCExec, Arc<TaskContext>, Arc<Runtime>) {
         let dummy = Arc::new(DummyExec::new());
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = test_runtime();
         let task_ctx = Arc::new(TaskContext::default());
 
-        let exported = ExportedExecutionPlan::new(dummy, task_ctx.clone(), runtime);
+        let exported = ExportedExecutionPlan::new(dummy, task_ctx.clone(), runtime.clone());
         let ffi_plan: SedonaCExecutionPlan = exported.into();
         let imported = ImportedSedonaCExec::try_new(ffi_plan).unwrap();
 
-        (imported, task_ctx)
+        (imported, task_ctx, runtime)
     }
 
     fn setup_imported_plan_with(
         emission_type: EmissionType,
         boundedness: Boundedness,
         supports_limit_pushdown: bool,
-    ) -> (ImportedSedonaCExec, Arc<TaskContext>) {
+    ) -> (ImportedSedonaCExec, Arc<TaskContext>, Arc<Runtime>) {
         let dummy = Arc::new(DummyExec::with_properties(
             emission_type,
             boundedness,
             supports_limit_pushdown,
         ));
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = test_runtime();
         let task_ctx = Arc::new(TaskContext::default());
 
-        let exported = ExportedExecutionPlan::new(dummy, task_ctx.clone(), runtime);
+        let exported = ExportedExecutionPlan::new(dummy, task_ctx.clone(), runtime.clone());
         let ffi_plan: SedonaCExecutionPlan = exported.into();
         let imported = ImportedSedonaCExec::try_new(ffi_plan).unwrap();
 
-        (imported, task_ctx)
+        (imported, task_ctx, runtime)
     }
 
-    #[tokio::test]
-    async fn test_execution_plan_roundtrip_schema() {
-        let (imported, _) = setup_imported_plan();
+    #[test]
+    fn test_execution_plan_roundtrip_schema() {
+        let (imported, _, _runtime) = setup_imported_plan();
 
         // Verify schema matches
         assert_eq!(imported.schema().fields().len(), 2);
@@ -795,21 +813,21 @@ mod tests {
         assert_eq!(imported.schema().field(1).name(), "value");
     }
 
-    #[tokio::test]
-    async fn test_execution_plan_roundtrip_name() {
-        let (imported, _) = setup_imported_plan();
+    #[test]
+    fn test_execution_plan_roundtrip_name() {
+        let (imported, _, _runtime) = setup_imported_plan();
         assert_eq!(imported.name(), "ImportedSedonaCExec<DummyExec>");
     }
 
-    #[tokio::test]
-    async fn test_execution_plan_roundtrip_properties() {
+    #[test]
+    fn test_execution_plan_roundtrip_properties() {
         // Test all EmissionType variants
         for (emission_type, expected_str) in [
             (EmissionType::Incremental, "Incremental"),
             (EmissionType::Final, "Final"),
             (EmissionType::Both, "Both"),
         ] {
-            let (imported, _) = setup_imported_plan_with(emission_type, Boundedness::Bounded, true);
+            let (imported, _, _runtime) = setup_imported_plan_with(emission_type, Boundedness::Bounded, true);
             let props = PlanPropertiesArgs::from_plan(&imported);
             assert_eq!(
                 props.emission_type, expected_str,
@@ -834,7 +852,7 @@ mod tests {
                 "UnboundedInfiniteMemory",
             ),
         ] {
-            let (imported, _) =
+            let (imported, _, _runtime) =
                 setup_imported_plan_with(EmissionType::Incremental, boundedness, true);
             let props = PlanPropertiesArgs::from_plan(&imported);
             assert_eq!(
@@ -845,16 +863,16 @@ mod tests {
         }
 
         // Test supports_limit_pushdown
-        let (imported_with, _) =
+        let (imported_with, _, _runtime) =
             setup_imported_plan_with(EmissionType::Incremental, Boundedness::Bounded, true);
         assert!(imported_with.supports_limit_pushdown());
 
-        let (imported_without, _) =
+        let (imported_without, _, _runtime) =
             setup_imported_plan_with(EmissionType::Incremental, Boundedness::Bounded, false);
         assert!(!imported_without.supports_limit_pushdown());
 
         // Test partition count
-        let (imported, _) = setup_imported_plan();
+        let (imported, _, _runtime) = setup_imported_plan();
         assert_eq!(
             imported
                 .properties()
@@ -864,9 +882,9 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn test_execution_plan_roundtrip_display_as() {
-        let (imported, _) = setup_imported_plan();
+    #[test]
+    fn test_execution_plan_roundtrip_display_as() {
+        let (imported, _, _runtime) = setup_imported_plan();
 
         // Helper struct to format DisplayAs with a specific format type
         struct DisplayAsFormat<'a, T: DisplayAs>(&'a T, DisplayFormatType);
@@ -894,9 +912,9 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn test_execution_plan_roundtrip_debug_string() {
-        let (imported, _) = setup_imported_plan();
+    #[test]
+    fn test_execution_plan_roundtrip_debug_string() {
+        let (imported, _, _runtime) = setup_imported_plan();
 
         let debug_str = imported.get_debug_string().unwrap();
         assert!(
@@ -906,48 +924,50 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn test_execution_plan_roundtrip_execute() {
-        let (imported, task_ctx) = setup_imported_plan();
+    #[test]
+    fn test_execution_plan_roundtrip_execute() {
+        let (imported, task_ctx, runtime) = setup_imported_plan();
 
-        // Execute partition 0
-        let stream = imported.execute(0, task_ctx.clone()).unwrap();
-        let batches: Vec<RecordBatch> = stream
-            .collect::<Vec<_>>()
-            .await
-            .into_iter()
-            .collect::<Result<Vec<_>>>()
-            .unwrap();
+        runtime.block_on(async {
+            // Execute partition 0
+            let stream = imported.execute(0, task_ctx.clone()).unwrap();
+            let batches: Vec<RecordBatch> = stream
+                .collect::<Vec<_>>()
+                .await
+                .into_iter()
+                .collect::<Result<Vec<_>>>()
+                .unwrap();
 
-        let expected = [
-            "+----+-------+",
-            "| id | value |",
-            "+----+-------+",
-            "| 1  | 100   |",
-            "| 2  | 200   |",
-            "| 3  | 300   |",
-            "+----+-------+",
-        ];
-        assert_batches_eq!(expected, &batches);
+            let expected = [
+                "+----+-------+",
+                "| id | value |",
+                "+----+-------+",
+                "| 1  | 100   |",
+                "| 2  | 200   |",
+                "| 3  | 300   |",
+                "+----+-------+",
+            ];
+            assert_batches_eq!(expected, &batches);
 
-        // Execute partition 1 - needs a fresh import since we consumed the first
-        let stream2 = imported.execute(1, task_ctx).unwrap();
-        let batches2: Vec<RecordBatch> = stream2
-            .collect::<Vec<_>>()
-            .await
-            .into_iter()
-            .collect::<Result<Vec<_>>>()
-            .unwrap();
+            // Execute partition 1 - needs a fresh import since we consumed the first
+            let stream2 = imported.execute(1, task_ctx).unwrap();
+            let batches2: Vec<RecordBatch> = stream2
+                .collect::<Vec<_>>()
+                .await
+                .into_iter()
+                .collect::<Result<Vec<_>>>()
+                .unwrap();
 
-        let expected2 = [
-            "+----+-------+",
-            "| id | value |",
-            "+----+-------+",
-            "| 11 | 100   |",
-            "| 12 | 200   |",
-            "| 13 | 300   |",
-            "+----+-------+",
-        ];
-        assert_batches_eq!(expected2, &batches2);
+            let expected2 = [
+                "+----+-------+",
+                "| id | value |",
+                "+----+-------+",
+                "| 11 | 100   |",
+                "| 12 | 200   |",
+                "| 13 | 300   |",
+                "+----+-------+",
+            ];
+            assert_batches_eq!(expected2, &batches2);
+        });
     }
 }
