@@ -19,7 +19,9 @@
 	url = https://github.com/geoarrow/geoarrow-data.git
 [submodule "c/sedona-s2geography/s2geography"]
 	path = c/sedona-s2geography/s2geography
-	url = https://github.com/paleolimbot/s2geography.git
+	# TEMPORARY: points at a fork branch pending paleolimbot/s2geography#123.
+	# Revert to https://github.com/paleolimbot/s2geography.git once merged.
+	url = https://github.com/ajaypadwal73/s2geography.git
 [submodule "c/sedona-s2geography/s2geometry"]
 	path = c/sedona-s2geography/s2geometry
 	url = https://github.com/google/s2geometry.git
