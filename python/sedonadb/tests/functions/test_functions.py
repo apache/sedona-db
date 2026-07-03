@@ -762,11 +762,11 @@ def test_st_buffer_style_parameters(
         ),
         (
             "POLYGON ((0 0, 1 0, 1 1, 0 0))",
-            "POLYGON ((0 0, 1 0, 1 1, 0 0))",
+            "POLYGON ((0 0, 1 1, 1 0, 0 0))",
         ),
         (
             "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 0)))",
-            "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 0)))",
+            "POLYGON ((0 0, 1 1, 1 0, 0 0))",
         ),
     ],
 )
@@ -795,11 +795,11 @@ def test_st_buildarea_empty_linework(eng, geom, expected):
         ("POINT (0 0)", None),
         (
             "POLYGON ((0 0, 1 0, 1 1, 0 0))",
-            "POLYGON ((0 0, 1 0, 1 1, 0 0))",
+            "POLYGON ((0 0, 1 1, 1 0, 0 0))",
         ),
         (
             "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 0)))",
-            "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 0)))",
+            "POLYGON ((0 0, 1 1, 1 0, 0 0))",
         ),
     ],
 )

@@ -97,13 +97,9 @@ fn invoke_scalar(geom: &Geometry, writer: &mut impl std::io::Write) -> Result<bo
     match geom_type {
         GeometryTypes::LineString
         | GeometryTypes::MultiLineString
-        | GeometryTypes::GeometryCollection => {}
-        GeometryTypes::Polygon | GeometryTypes::MultiPolygon => {
-            let result = Geom::clone(geom)
-                .map_err(|e| exec_datafusion_err!("Failed to clone area geometry: {e}"))?;
-            write_geos_geometry(&result, writer)?;
-            return Ok(true);
-        }
+        | GeometryTypes::GeometryCollection
+        | GeometryTypes::Polygon
+        | GeometryTypes::MultiPolygon => {}
         _ => return Ok(false),
     }
 
@@ -142,7 +138,7 @@ mod tests {
         let result = tester
             .invoke_scalar("POLYGON ((0 0, 1 0, 1 1, 0 0))")
             .unwrap();
-        tester.assert_scalar_result_equals(result, "POLYGON ((0 0, 1 0, 1 1, 0 0))");
+        tester.assert_scalar_result_equals(result, "POLYGON ((0 0, 1 1, 1 0, 0 0))");
 
         let result = tester.invoke_scalar("LINESTRING EMPTY").unwrap();
         tester.assert_scalar_result_equals(result, "POLYGON EMPTY");
