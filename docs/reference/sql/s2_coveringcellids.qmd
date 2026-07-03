@@ -21,6 +21,12 @@ description: Returns an array of S2 cell IDs that cover the given geography.
 kernels:
   - returns: array
     args: [geography]
+  - returns: array
+    args: [geography, int64]
+  - returns: array
+    args: [geography, int64, int64]
+  - returns: array
+    args: [geography, int64, int64, int64]
 ---
 
 ## Description
@@ -29,8 +35,20 @@ Returns an array of 64-bit S2 cell IDs that form a covering of the given geograp
 
 This is useful for spatial indexing and efficient spatial queries. The returned cells may be at different S2 levels depending on the size and shape of the geography.
 
+Optional positional arguments can control the covering:
+
+| Argument | Description | Default |
+| --- | --- | --- |
+| `min_level` | Minimum S2 cell level to return. Must be between 0 and 30. | 0 |
+| `max_level` | Maximum S2 cell level to return. Must be between 0 and 30. | 30 |
+| `max_cells` | Maximum number of cells to return. Must be greater than 0. | 8 |
+
 ## Examples
 
 ```sql
 SELECT S2_CoveringCellIds(ST_GeogFromWKT('LINESTRING (0 0, 1 1)'));
+```
+
+```sql
+SELECT S2_CoveringCellIds(ST_GeogFromWKT('LINESTRING (0 0, 1 1)'), 10, 12, 16);
 ```

@@ -92,3 +92,14 @@ def test_s2_coveringcellids(eng, geog, expected):
     )
     df = eng.result_to_pandas(result)
     assert len(df.iloc[0, 0]) == len(expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB])
+def test_s2_coveringcellids_parameters(eng):
+    eng = eng.create_or_skip()
+    result = eng.execute_and_collect(
+        "SELECT S2_CoveringCellIds("
+        "ST_GeogFromText('LINESTRING (0 0, 100 50)'), 0, 30, 2)"
+    )
+    df = eng.result_to_pandas(result)
+    assert len(df.iloc[0, 0]) <= 2
