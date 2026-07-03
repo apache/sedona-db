@@ -26,7 +26,8 @@ kernels:
 ## Description
 
 Treats the input geometry's edges as linework and assembles them into a polygon or multipolygon.
-Open rings are closed automatically before assembly. If no closed ring can be formed, returns NULL.
+Open rings are closed automatically before assembly. Empty input returns an empty polygon, and
+polygon or multipolygon input is returned unchanged. If no closed ring can be formed, returns NULL.
 
 ## Examples
 

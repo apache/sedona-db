@@ -80,6 +80,16 @@ impl SedonaScalarKernel for STBuildArea {
 }
 
 fn invoke_scalar(geom: &Geometry, writer: &mut impl std::io::Write) -> Result<bool> {
+    if geom
+        .is_empty()
+        .map_err(|e| exec_datafusion_err!("Failed to check if geometry is empty: {e}"))?
+    {
+        let empty_polygon = Geometry::create_empty_polygon()
+            .map_err(|e| exec_datafusion_err!("Failed to create empty polygon: {e}"))?;
+        write_geos_geometry(&empty_polygon, writer)?;
+        return Ok(true);
+    }
+
     let geom_type = geom
         .geometry_type()
         .map_err(|e| exec_datafusion_err!("Failed to get geometry type: {e}"))?;
@@ -88,6 +98,12 @@ fn invoke_scalar(geom: &Geometry, writer: &mut impl std::io::Write) -> Result<bo
         GeometryTypes::LineString
         | GeometryTypes::MultiLineString
         | GeometryTypes::GeometryCollection => {}
+        GeometryTypes::Polygon | GeometryTypes::MultiPolygon => {
+            let result = Geom::clone(geom)
+                .map_err(|e| exec_datafusion_err!("Failed to clone area geometry: {e}"))?;
+            write_geos_geometry(&result, writer)?;
+            return Ok(true);
+        }
         _ => return Ok(false),
     }
 
@@ -126,7 +142,10 @@ mod tests {
         let result = tester
             .invoke_scalar("POLYGON ((0 0, 1 0, 1 1, 0 0))")
             .unwrap();
-        assert!(result.is_null());
+        tester.assert_scalar_result_equals(result, "POLYGON ((0 0, 1 0, 1 1, 0 0))");
+
+        let result = tester.invoke_scalar("LINESTRING EMPTY").unwrap();
+        tester.assert_scalar_result_equals(result, "POLYGON EMPTY");
 
         let result = tester.invoke_scalar(ScalarValue::Null).unwrap();
         assert!(result.is_null());
