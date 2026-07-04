@@ -488,7 +488,7 @@ fn calc_dimensions(code: u32) -> Result<Dimensions, SedonaGeometryError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sedona_testing::fixtures::*;
+    use sedona_testing_base::fixtures::*;
     use std::str::FromStr;
     use wkb::writer::{write_geometry, WriteOptions};
     use wkt::Wkt;

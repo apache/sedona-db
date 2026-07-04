@@ -73,7 +73,7 @@ use wkb::Endianness;
 /// # Example
 ///
 /// ```rust
-/// use sedona_testing::datagen::RandomPartitionedDataBuilder;
+/// use sedona_datagen::RandomPartitionedDataBuilder;
 /// use sedona_geometry::types::GeometryTypeId;
 /// use geo_types::{Coord, Rect};
 ///

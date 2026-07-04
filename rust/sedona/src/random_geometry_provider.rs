@@ -36,8 +36,8 @@ use datafusion::{
 use datafusion_common::{plan_err, DataFusionError, ScalarValue};
 use geo_types::Rect;
 use sedona_common::sedona_internal_err;
+use sedona_datagen::RandomPartitionedDataBuilder;
 use sedona_geometry::types::GeometryTypeId;
-use sedona_testing::datagen::RandomPartitionedDataBuilder;
 use serde::{Deserialize, Serialize};
 
 use crate::record_batch_reader_provider::RowLimitedIterator;

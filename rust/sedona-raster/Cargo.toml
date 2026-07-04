@@ -30,17 +30,24 @@ rust-version.workspace = true
 [lints.clippy]
 result_large_err = "allow"
 
+[features]
+default = []
+testing = ["dep:datafusion-expr", "dep:fastrand"]
+
 [dependencies]
 arrow-schema = { workspace = true }
 arrow-array = { workspace = true }
 arrow-buffer = { workspace = true }
 async-trait = { workspace = true }
 datafusion-common = { workspace = true }
+datafusion-expr = { workspace = true, optional = true }
+fastrand = { workspace = true, optional = true }
 sedona-common = { workspace = true }
 sedona-schema = { workspace = true }
 
 [dev-dependencies]
-sedona-testing = { workspace = true }
 approx = { workspace = true }
 arrow-ipc = { workspace = true }
+datafusion-expr = { workspace = true }
+fastrand = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }

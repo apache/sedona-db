@@ -346,8 +346,8 @@ impl ScalarUDFImpl for SedonaScalarUDF {
 #[cfg(test)]
 mod tests {
 
+    use crate::test_util::ScalarUdfTester;
     use datafusion_common::{scalar::ScalarValue, DFSchema};
-    use sedona_testing::testers::ScalarUdfTester;
 
     use datafusion_expr::{lit, ExprSchemable, ScalarUDF};
     use sedona_geometry::types::Edges;

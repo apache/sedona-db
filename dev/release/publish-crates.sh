@@ -20,11 +20,14 @@
 # SedonaDB Crates.io Publishing Script
 #
 # This script publishes all SedonaDB crates to crates.io in the correct dependency order.
-# Run with --dry-run first to validate everything before actual publishing.
+# Run with --dry-run-local first to validate everything before actual publishing.
 #
 # Usage:
-#   ./scripts/publish-crates.sh --dry-run    # Validate only (recommended first)
-#   ./scripts/publish-crates.sh --publish    # Actually publish to crates.io
+#   dev/release/publish-crates.sh --dry-run-local  # Validate locally (recommended first)
+#   dev/release/publish-crates.sh --dry-run        # Validate against crates.io (fails for
+#                                                   # crates whose dependencies haven't been
+#                                                   # published in this release yet)
+#   dev/release/publish-crates.sh --publish        # Actually publish to crates.io
 #
 # Prerequisites:
 #   1. Create account at https://crates.io (via GitHub login)
@@ -44,7 +47,7 @@ NC='\033[0m' # No Color
 
 # Script directory and workspace root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # Parse arguments
 DRY_RUN=true
@@ -110,59 +113,6 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Crates in dependency order (leaf crates first)
-# This order ensures that when publishing a crate, all its dependencies are already published
-CRATES=(
-    # Tier 1 - Foundation crates (no internal dependencies)
-    "rust/sedona-geo-traits-ext"
-    "rust/sedona-geo-generic-alg"
-
-    # Tier 2 - Core types (no internal deps)
-    "rust/sedona-geometry"
-    "rust/sedona-common"
-
-    # Tier 3 - Schema (depends on common)
-    "rust/sedona-schema"
-
-    # Tier 4 - Expression (depends on common, geometry, schema)
-    "rust/sedona-expr"
-
-    # Tier 5 - Functions (depends on expr, geometry, schema, common)
-    "rust/sedona-functions"
-
-    # Tier 6 - C wrappers and sedona-geo (all depend on functions)
-    "c/sedona-tg"
-    "c/sedona-geos"
-    "c/sedona-proj"
-    "c/sedona-s2geography"
-    "c/sedona-geoarrow-c"
-    "rust/sedona-geo"
-
-    # Tier 7 - Higher-level features
-    "rust/sedona-geoparquet"
-    "rust/sedona-raster"
-    "rust/sedona-raster-functions"
-    "rust/sedona-spatial-join"
-    "rust/sedona-datasource"
-
-    # Tier 8 - Testing utilities (depends on expr, geometry, schema, raster)
-    "rust/sedona-testing"
-
-    # Tier 9 - Main library (depends on most crates including sedona-testing)
-    "rust/sedona"
-
-    # Tier 10 - Crates that depend on main library
-    "rust/sedona-adbc"
-    "sedona-cli"
-)
-
-# Crates that should NOT be published
-EXCLUDED_CRATES=(
-    "python/sedonadb"      # Python bindings - use PyPI
-    "r/sedonadb/src/rust"  # R bindings - use CRAN
-    "rust/sedona-testing"  # Test utilities only
-)
-
 echo -e "${BLUE}============================================${NC}"
 echo -e "${BLUE}  SedonaDB Crates.io Publishing Script${NC}"
 echo -e "${BLUE}============================================${NC}"
@@ -186,6 +136,15 @@ cd "$WORKSPACE_ROOT"
 # ============================================
 echo -e "${BLUE}Step 1: Pre-flight checks${NC}"
 echo "----------------------------------------"
+
+echo "Checking cargo workspace dependency graph"
+if ! PUBLISH_ORDER_OUTPUT=$(python3 "$SCRIPT_DIR/check-cargo-dependencies.py" --print-publish-order); then
+    echo -e "${RED}Circular dependency check failed${NC}"
+    exit 1
+fi
+echo -e "${GREEN}No circular workspace dependencies found.${NC}"
+mapfile -t CRATES <<< "$PUBLISH_ORDER_OUTPUT"
+echo ""
 
 # Check if logged in to crates.io
 if ! cargo login --help &>/dev/null; then

@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 use sedona_expr::function_set::FunctionSet;
+use sedona_expr::scalar_udf::ScalarKernelRef;
 
 /// Export the set of functions defined in this crate
 pub fn default_function_set() -> FunctionSet {
@@ -88,4 +89,9 @@ pub fn default_function_set() -> FunctionSet {
     register_aggregate_udfs!(function_set,);
 
     function_set
+}
+
+/// Export raster-specific kernels that extend functions defined in other crates.
+pub fn scalar_kernels() -> Vec<(&'static str, ScalarKernelRef)> {
+    vec![("sd_format", crate::sd_format::sd_format_raster_kernel())]
 }

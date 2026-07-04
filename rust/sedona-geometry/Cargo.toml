@@ -33,7 +33,7 @@ result_large_err = "allow"
 [dev-dependencies]
 geo-types = { workspace = true }
 rstest = { workspace = true }
-sedona-testing = { workspace = true }
+sedona-testing-base = { workspace = true }
 serde_json = { workspace = true }
 wkt = { workspace = true }
 

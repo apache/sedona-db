@@ -34,8 +34,7 @@ cc = { version = "1" }
 [dev-dependencies]
 criterion = { workspace = true }
 rstest = { workspace = true }
-sedona = { workspace = true }
-sedona-testing = { workspace = true }
+sedona-testing = { workspace = true, features = ["criterion"] }
 
 [dependencies]
 arrow-schema = { workspace = true }
