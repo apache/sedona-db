@@ -333,6 +333,15 @@ impl RecordBatchReader for StreamingRecordBatchReader {
     }
 }
 
+impl Drop for StreamingRecordBatchReader {
+    fn drop(&mut self) {
+        if let Some(worker) = &self.worker {
+            // Ensure the worker wakes up and exits promptly if it is blocked.
+            worker.cancel_flag.store(true, Ordering::Relaxed);
+        }
+    }
+}
+
 /// Convert an FFI ArrowArrayStream into a SendableRecordBatchStream with cancellation support.
 ///
 /// Uses a dedicated OS thread to read from the synchronous FFI stream, sending
