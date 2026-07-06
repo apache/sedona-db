@@ -232,9 +232,9 @@ fn make_workload(kind: WorkloadKind) -> QueryBatchWorkload {
 
 fn chunk_label(chunk_size: usize) -> String {
     if chunk_size == 0 {
-        "off".to_string()
+        "before".to_string()
     } else {
-        chunk_size.to_string()
+        format!("after_chunk_{chunk_size}")
     }
 }
 
