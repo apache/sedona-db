@@ -92,7 +92,9 @@ impl ExportedTableProvider {
 
         std::thread::spawn(move || {
             let projection_ref = projection.as_ref();
-            runtime.handle().block_on(inner.scan(session.as_ref(), projection_ref, &[], limit))
+            runtime
+                .handle()
+                .block_on(inner.scan(session.as_ref(), projection_ref, &[], limit))
         })
         .join()
         .map_err(|_| {
@@ -671,14 +673,17 @@ mod tests {
 
     /// Helper to set up an imported table provider from a DummyTableProvider through FFI roundtrip.
     /// Returns the runtime to keep it alive for the duration of the test.
-    fn setup_imported_provider_with(table_type: TableType) -> (ImportedTableProvider, Arc<Runtime>) {
+    fn setup_imported_provider_with(
+        table_type: TableType,
+    ) -> (ImportedTableProvider, Arc<Runtime>) {
         let dummy = Arc::new(DummyTableProvider::with_table_type(table_type));
         let ctx = SessionContext::new();
         let runtime = test_runtime();
         let session = Arc::new(ctx.state());
         let exported = ExportedTableProvider::new(dummy, session, runtime.clone());
         let ffi_provider: SedonaCTableProvider = exported.into();
-        let imported = ImportedTableProvider::try_new(ffi_provider).expect("Failed to import table provider");
+        let imported =
+            ImportedTableProvider::try_new(ffi_provider).expect("Failed to import table provider");
         (imported, runtime)
     }
 

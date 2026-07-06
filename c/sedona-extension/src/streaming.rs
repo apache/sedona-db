@@ -53,11 +53,15 @@ fn cancellation_arrow_error() -> ArrowError {
 type BatchResult = Option<std::result::Result<RecordBatch, ArrowError>>;
 
 /// Worker thread state for streaming record batch reads.
+///
+/// Uses eager prefetch: the worker fetches batches into a bounded buffer as fast
+/// as possible, providing one-batch pipelining. This allows producer fetch and
+/// consumer processing to overlap, roughly halving per-batch wall time compared
+/// to a zero-capacity rendezvous protocol.
 struct StreamWorker {
-    /// Channel to request the next batch (send () to request).
-    request_tx: std::sync::mpsc::SyncSender<()>,
-    /// Channel to receive batch results.
-    response_rx: std::sync::mpsc::Receiver<BatchResult>,
+    /// Channel to receive prefetched batch results.
+    /// The worker eagerly pushes batches here; bounded capacity provides backpressure.
+    batch_rx: std::sync::mpsc::Receiver<BatchResult>,
     /// Cancellation flag shared with worker thread.
     /// When set to true, the worker will abort the current fetch and exit.
     cancel_flag: Arc<AtomicBool>,
@@ -161,26 +165,24 @@ impl StreamingRecordBatchReader {
             return;
         };
 
-        // Create channels for communication
-        // Use bounded channel with size 0 (rendezvous) for backpressure
-        let (request_tx, request_rx) = std::sync::mpsc::sync_channel::<()>(0);
-        // Use bounded channel with size 1 for response to prevent deadlock if reader
-        // stops early due to periodic cancellation before receiving the response
-        let (response_tx, response_rx) = std::sync::mpsc::sync_channel::<BatchResult>(1);
+        // Create bounded channel for prefetched batches.
+        // Capacity 2 allows one-batch pipelining: while consumer processes batch N,
+        // worker can fetch batch N+1 and have it ready. This roughly halves per-batch
+        // wall time (max(T_produce, T_consume) instead of T_produce + T_consume).
+        let (batch_tx, batch_rx) = std::sync::mpsc::sync_channel::<BatchResult>(2);
 
         // Cancellation flag - when set, worker will abort current fetch
         let cancel_flag = Arc::new(AtomicBool::new(false));
         let worker_cancel_flag = cancel_flag.clone();
 
-        // Spawn the worker thread
+        // Spawn the worker thread - eagerly fetches batches into the buffer
         let handle = std::thread::spawn(move || {
             let mut stream = stream;
-            // Process requests until the channel is closed
-            while request_rx.recv().is_ok() {
+
+            loop {
                 // Check if cancelled before starting fetch
                 if worker_cancel_flag.load(Ordering::Relaxed) {
-                    // Send cancellation error and exit
-                    let _ = response_tx.send(Some(Err(cancellation_arrow_error())));
+                    let _ = batch_tx.send(Some(Err(cancellation_arrow_error())));
                     break;
                 }
 
@@ -216,19 +218,19 @@ impl StreamingRecordBatchReader {
                     }
                 });
 
-                // If cancelled, exit after sending response
+                let is_end = result.is_none();
                 let is_cancelled = worker_cancel_flag.load(Ordering::Relaxed);
 
-                // Send the result back; if send fails, the reader was dropped
-                if response_tx.send(result).is_err() || is_cancelled {
+                // Send eagerly - blocks if buffer is full (backpressure)
+                // If send fails, the reader was dropped
+                if batch_tx.send(result).is_err() || is_end || is_cancelled {
                     break;
                 }
             }
         });
 
         self.worker = Some(StreamWorker {
-            request_tx,
-            response_rx,
+            batch_rx,
             cancel_flag,
             _handle: handle,
         });
@@ -243,19 +245,12 @@ impl StreamingRecordBatchReader {
             )));
         };
 
-        // Request the next batch
-        if worker.request_tx.send(()).is_err() {
-            return Some(Err(ArrowError::InvalidArgumentError(
-                "Worker thread terminated".to_string(),
-            )));
-        }
-
-        // Wait for the response, with optional periodic cancellation checking
+        // Receive from the prefetch buffer, with optional periodic cancellation checking
         match &self.periodic_check_interval {
             Some(interval) => {
                 let interval = *interval;
                 loop {
-                    match worker.response_rx.recv_timeout(interval) {
+                    match worker.batch_rx.recv_timeout(interval) {
                         Ok(result) => return result,
                         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                             // Check for cancellation
@@ -269,7 +264,7 @@ impl StreamingRecordBatchReader {
                                     // Wait briefly for the worker to send its response
                                     // then return the cancellation error
                                     let _ = worker
-                                        .response_rx
+                                        .batch_rx
                                         .recv_timeout(std::time::Duration::from_millis(200));
                                     return Some(Err(cancellation_arrow_error()));
                                 }
@@ -285,8 +280,8 @@ impl StreamingRecordBatchReader {
                 }
             }
             None => {
-                // Simple blocking receive
-                match worker.response_rx.recv() {
+                // Simple blocking receive from prefetch buffer
+                match worker.batch_rx.recv() {
                     Ok(result) => result,
                     Err(_) => Some(Err(ArrowError::InvalidArgumentError(
                         "Worker thread terminated".to_string(),
@@ -356,7 +351,13 @@ pub unsafe fn ffi_stream_to_sendable(
 
 /// Convert an FFI ArrowArrayStream into a SendableRecordBatchStream with cancellation support.
 ///
-/// The cancellation checker is called before each batch is read. If it returns
+/// Uses a dedicated OS thread to read from the synchronous FFI stream, sending
+/// batches through an async channel. This avoids blocking tokio worker threads,
+/// which would otherwise cause deadlocks if the producer side also needs the
+/// same runtime via `block_on()` (especially fatal with current-thread
+/// runtimes, but problematic with any shared runtime).
+///
+/// The cancellation checker is called before each batch is yielded. If it returns
 /// `true`, the stream yields a cancellation error.
 ///
 /// # Safety
@@ -368,9 +369,24 @@ pub unsafe fn ffi_stream_to_sendable_with_cancel(
     cancel_checker: Option<CancelChecker>,
 ) -> Result<SendableRecordBatchStream> {
     let reader = arrow_array::ffi_stream::ArrowArrayStreamReader::from_raw(ffi_stream)?;
-
     let schema = reader.schema();
-    let stream = futures::stream::iter(reader).map(move |result| {
+
+    // Use an async channel with capacity 2 for one-batch pipelining.
+    // The dedicated thread reads blocking batches from FFI, the async stream
+    // receives them without blocking tokio workers.
+    let (tx, rx) = tokio::sync::mpsc::channel::<std::result::Result<RecordBatch, ArrowError>>(2);
+
+    // Dedicated thread for blocking reads - keeps blocking I/O off tokio workers
+    std::thread::spawn(move || {
+        for batch in reader {
+            // blocking_send blocks this thread if buffer is full (backpressure)
+            if tx.blocking_send(batch).is_err() {
+                break; // Receiver dropped, stop reading
+            }
+        }
+    });
+
+    let stream = tokio_stream::wrappers::ReceiverStream::new(rx).map(move |result| {
         // Check for cancellation before yielding each batch
         if let Some(ref checker) = cancel_checker {
             if checker() {

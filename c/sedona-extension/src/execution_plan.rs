@@ -827,7 +827,8 @@ mod tests {
             (EmissionType::Final, "Final"),
             (EmissionType::Both, "Both"),
         ] {
-            let (imported, _, _runtime) = setup_imported_plan_with(emission_type, Boundedness::Bounded, true);
+            let (imported, _, _runtime) =
+                setup_imported_plan_with(emission_type, Boundedness::Bounded, true);
             let props = PlanPropertiesArgs::from_plan(&imported);
             assert_eq!(
                 props.emission_type, expected_str,
