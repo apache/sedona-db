@@ -19,6 +19,8 @@
 title: ST_PointOnSurface
 description: Returns a point guaranteed to lie on the surface of a geometry or geography.
 kernels:
+  - returns: geometry
+    args: [geometry]
   - returns: geography
     args: [geography]
 ---
