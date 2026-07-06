@@ -129,6 +129,9 @@ impl QueryBatchRowOutput {
     }
 }
 
+/// Row results of one probe chunk, keyed by the global probe-row index.
+type ProbeChunkRowResults = Vec<(usize, Result<QueryBatchRowOutput>)>;
+
 impl DefaultSpatialIndex {
     pub(crate) fn empty(
         spatial_predicate: SpatialPredicate,
@@ -394,7 +397,7 @@ impl DefaultSpatialIndex {
         }
 
         // Collect chunks by chunk index so rows can be committed in global probe-row order.
-        let mut chunk_results: Vec<Option<Vec<(usize, Result<QueryBatchRowOutput>)>>> =
+        let mut chunk_results: Vec<Option<ProbeChunkRowResults>> =
             Vec::with_capacity(join_set.len());
         chunk_results.resize_with(join_set.len(), || None);
         while let Some(res) = join_set.join_next().await {
