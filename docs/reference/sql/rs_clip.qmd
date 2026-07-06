@@ -52,7 +52,9 @@ kernels:
     - raster
     - name: band
       type: integer
-      description: 1-based index of the band to clip.
+      description: >
+        1-based index of the band to clip, or 0 to clip every band. A NULL
+        band yields a NULL result.
     - name: geom
       type: geometry
       description: >
@@ -67,7 +69,8 @@ kernels:
       type: double
       description: >
         Value written to pixels outside the geometry. Defaults to the band's
-        own nodata value.
+        own nodata value, or the band data type's minimum if it has none. It is
+        an error if the value does not fit the band's data type.
     - name: crop
       type: boolean
       description: Crop the output to the geometry's bounding box. Defaults to true.

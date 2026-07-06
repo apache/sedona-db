@@ -46,6 +46,7 @@ pub use gdal_common::{
     nodata_bytes_to_f64, nodata_f64_to_bytes, GdalBandLayout, GdalBandPlan,
 };
 pub use raster_loader::{GdalLoader, GDAL_FORMAT};
+pub use rs_clip::rs_clip_udf;
 pub use rs_frompath::rs_frompath_udf;
 pub use rs_metadata::rs_metadata_udf;
 pub use rs_polygonize::rs_polygonize_udf;

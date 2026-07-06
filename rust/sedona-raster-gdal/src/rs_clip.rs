@@ -41,7 +41,7 @@ use arrow_schema::DataType;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_raster::array::RasterRefImpl;
 use sedona_raster::builder::RasterBuilder;
-use sedona_raster::traits::RasterRef;
+use sedona_raster::traits::{is_spatial_dim_pair, RasterRef};
 use sedona_raster_functions::crs_utils::{crs_transform_wkb, resolve_crs};
 use sedona_raster_functions::rs_ensure_loaded::{
     NEEDS_PIXELS_METADATA_KEY, RETURNS_BYTES_METADATA_KEY,
@@ -233,14 +233,23 @@ impl SedonaScalarKernel for RsClip {
             configure_thread_local_options(gdal, config_options)?;
             with_global_proj_engine(|engine| {
                 executor.execute_raster_wkb_crs_void(|raster_opt, wkb_opt, geom_crs| {
-                let band = band_iter.next().unwrap_or(Some(0)).unwrap_or(0);
-                let all_touched = all_touched_iter
-                    .next()
-                    .unwrap_or(Some(false))
-                    .unwrap_or(false);
-                let nodata_value = nodata_iter.next().unwrap_or(None);
-                let crop = crop_iter.next().unwrap_or(Some(true)).unwrap_or(true);
-                let lenient = lenient_iter.next().unwrap_or(Some(true)).unwrap_or(true);
+                // Advance every option iterator in lockstep. A NULL in the band
+                // or any boolean flag propagates to a NULL output row (SQL
+                // semantics) — in particular a NULL band must NOT fall through
+                // to the "band 0 = all bands" mode. `no_data_value` is the
+                // exception: its NULL is the meaningful "not supplied" sentinel
+                // (the 3/4-arg signatures pass NULL here), so it stays an Option.
+                let band = band_iter.next().flatten();
+                let all_touched = all_touched_iter.next().flatten();
+                let nodata_value = nodata_iter.next().flatten();
+                let crop = crop_iter.next().flatten();
+                let lenient = lenient_iter.next().flatten();
+                let (Some(band), Some(all_touched), Some(crop), Some(lenient)) =
+                    (band, all_touched, crop, lenient)
+                else {
+                    builder.append_null()?;
+                    return Ok(());
+                };
 
                 let (raster, geom_wkb) = match (raster_opt, wkb_opt) {
                     (Some(r), Some(w)) => (r, w),
@@ -337,6 +346,9 @@ struct ClippedBand {
     data_type: BandDataType,
     /// nodata sentinel bytes written for masked-out pixels.
     nodata: Vec<u8>,
+    /// Source band name, preserved so clipping a named/N-D band keeps it
+    /// addressable by name on the output.
+    name: Option<String>,
 }
 
 /// Data for a clipped raster
@@ -450,6 +462,8 @@ fn clip_raster(
         let band = bands
             .band(band_idx)
             .map_err(|e| exec_datafusion_err!("Failed to get band {}: {}", band_idx, e))?;
+        // `band_idx` is 1-based; the `band_name` accessor is 0-based.
+        let band_name = raster.band_name(band_idx - 1).map(|s| s.to_string());
 
         let band_metadata = band.metadata();
         let data_type = band_metadata.data_type()?;
@@ -466,6 +480,17 @@ fn clip_raster(
                 ndim
             );
         }
+        // The trailing two dims must actually be the spatial (y, x) pair. A band
+        // whose trailing dims are e.g. ["x","y"] is legal at the format level and
+        // would otherwise be masked/cropped transposed on a square raster; mirror
+        // the `is_spatial_dim_pair` guard the GDAL bridge (gdal_common) performs.
+        if !is_spatial_dim_pair(&dim_names[ndim - 2], &dim_names[ndim - 1]) {
+            return exec_err!(
+                "RS_Clip: band {} trailing dims {:?} are not a (y, x) spatial pair",
+                band_idx,
+                &dim_names[ndim - 2..]
+            );
+        }
         let (plane_h, plane_w) = (shape[ndim - 2] as usize, shape[ndim - 1] as usize);
         if plane_w != width || plane_h != height {
             return exec_err!(
@@ -479,14 +504,29 @@ fn clip_raster(
         }
         let n_planes: usize = shape[..ndim - 2].iter().map(|&d| d as usize).product();
 
-        let original_data = band
-            .nd_buffer()
-            .map_err(|e| exec_datafusion_err!("RS_Clip: failed to read band {}: {}", band_idx, e))?
-            .as_contiguous()
-            .map_err(|e| {
-                exec_datafusion_err!("RS_Clip: band {} is not contiguous: {}", band_idx, e)
-            })?
-            .to_vec();
+        // `as_contiguous` borrows the band bytes; we only ever read them here
+        // (the mask/crop helpers allocate their own output), so no copy is needed.
+        let nd_buffer = band.nd_buffer().map_err(|e| {
+            exec_datafusion_err!("RS_Clip: failed to read band {}: {}", band_idx, e)
+        })?;
+        let original_data = nd_buffer.as_contiguous().map_err(|e| {
+            exec_datafusion_err!("RS_Clip: band {} is not contiguous: {}", band_idx, e)
+        })?;
+
+        // A custom nodata that isn't representable in the band's data type would
+        // be silently saturated by `nodata_f64_to_bytes` (e.g. -9999 -> 0 on
+        // UInt8, colliding with real data), so reject it explicitly here.
+        if let Some(cn) = custom_nodata {
+            let (lo, hi) = (
+                band_data_type_min(&data_type),
+                band_data_type_max(&data_type),
+            );
+            if cn < lo || cn > hi {
+                return exec_err!(
+                    "RS_Clip: no_data_value {cn} is outside the representable range [{lo}, {hi}] of band {band_idx}'s data type {data_type:?}"
+                );
+            }
+        }
 
         // nodata precedence: the explicit argument, then the band's own nodata,
         // then the band data type's minimum value — never a silent 0.0, which
@@ -509,7 +549,11 @@ fn clip_raster(
         }
 
         // Apply the (shared) mask/crop to each plane, then concatenate.
-        let mut clipped_data = Vec::new();
+        let out_plane_bytes = match crop_window {
+            Some(cw) => cw.width * cw.height * byte_size,
+            None => in_plane_bytes,
+        };
+        let mut clipped_data = Vec::with_capacity(n_planes * out_plane_bytes);
         for plane in 0..n_planes {
             let plane_bytes = &original_data[plane * in_plane_bytes..(plane + 1) * in_plane_bytes];
             let clipped_plane = if let Some(cw) = crop_window {
@@ -536,6 +580,7 @@ fn clip_raster(
             shape: out_shape,
             data_type,
             nodata: nodata_f64_to_bytes(nodata, &data_type),
+            name: band_name,
         });
     }
 
@@ -690,7 +735,7 @@ fn build_clipped_raster(
         let dim_names: Vec<&str> = band.dim_names.iter().map(String::as_str).collect();
         builder
             .start_band_nd(
-                None,
+                band.name.as_deref(),
                 &dim_names,
                 &band.shape,
                 band.data_type,
@@ -727,6 +772,24 @@ fn band_data_type_min(data_type: &BandDataType) -> f64 {
         BandDataType::Int64 => i64::MIN as f64,
         BandDataType::Float32 => f32::MIN as f64,
         BandDataType::Float64 => f64::MIN,
+    }
+}
+
+/// The maximum representable value of a band data type, as `f64` — paired with
+/// [`band_data_type_min`] to range-check a custom `no_data_value` before it is
+/// narrowed to the band's type (which would otherwise saturate silently).
+fn band_data_type_max(data_type: &BandDataType) -> f64 {
+    match data_type {
+        BandDataType::UInt8 => u8::MAX as f64,
+        BandDataType::UInt16 => u16::MAX as f64,
+        BandDataType::UInt32 => u32::MAX as f64,
+        BandDataType::UInt64 => u64::MAX as f64,
+        BandDataType::Int8 => i8::MAX as f64,
+        BandDataType::Int16 => i16::MAX as f64,
+        BandDataType::Int32 => i32::MAX as f64,
+        BandDataType::Int64 => i64::MAX as f64,
+        BandDataType::Float32 => f32::MAX as f64,
+        BandDataType::Float64 => f64::MAX,
     }
 }
 
@@ -1142,5 +1205,89 @@ mod tests {
             .unwrap_err();
         // The point is it errored rather than returning a NULL raster.
         let _ = err;
+    }
+
+    #[test]
+    fn null_band_yields_null() {
+        // A NULL band must propagate to NULL, not silently clip every band.
+        let crs_4326 = deserialize_crs("EPSG:4326").unwrap().unwrap();
+        let geom_wkb =
+            with_gdal(|gdal| wkb_from_wkt(gdal, "POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))")).unwrap();
+        let kernel = RsClip { arg_count: 3 };
+        let result = kernel
+            .invoke_batch(
+                &[
+                    RASTER,
+                    SedonaType::Arrow(DataType::Int32),
+                    SedonaType::Wkb(Edges::Planar, Some(crs_4326)),
+                ],
+                &[
+                    ColumnarValue::Scalar(ScalarValue::Struct(Arc::new(two_band_raster()))),
+                    ColumnarValue::Scalar(ScalarValue::Int32(None)),
+                    ColumnarValue::Scalar(ScalarValue::Binary(Some(geom_wkb))),
+                ],
+            )
+            .unwrap();
+        match result {
+            ColumnarValue::Scalar(sv) => {
+                assert!(
+                    sv.is_null(),
+                    "NULL band should yield NULL, not clip all bands"
+                )
+            }
+            other => panic!("expected scalar, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn custom_nodata_out_of_range_errors() {
+        // A UInt8 band can't represent -9999; reject it rather than saturating
+        // it to 0 (which would collide with real zero-valued data).
+        let array = test_raster_array(); // one UInt8 band
+        with_gdal(|gdal| {
+            let rasters = RasterStructArray::try_new(&array).unwrap();
+            let raster = rasters.get(0).unwrap();
+            let geom_wkb = wkb_from_wkt(gdal, "POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))")?;
+
+            let err = match clip_raster(gdal, &raster, &geom_wkb, 1, Some(-9999.0), false, false) {
+                Err(e) => e.to_string(),
+                Ok(_) => panic!("expected out-of-range nodata to error"),
+            };
+            assert!(
+                err.contains("outside the representable range"),
+                "unexpected error: {err}"
+            );
+
+            // An in-range custom nodata is accepted.
+            let ok = clip_raster(gdal, &raster, &geom_wkb, 1, Some(200.0), false, false)?;
+            assert!(ok.is_some(), "in-range custom nodata should be accepted");
+            Ok::<_, datafusion_common::DataFusionError>(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn preserves_band_name() {
+        // Clipping a named band keeps the name on the output band.
+        let array = RasterSpec::d2(4, 2)
+            .band_values(&[1u8, 2, 3, 4, 5, 6, 7, 8])
+            .name("elevation")
+            .crs(Some("EPSG:4326"))
+            .transform([0.0, 1.0, 0.0, 2.0, 0.0, -1.0])
+            .build();
+        with_gdal(|gdal| {
+            let rasters = RasterStructArray::try_new(&array).unwrap();
+            let raster = rasters.get(0).unwrap();
+            let geom_wkb = wkb_from_wkt(gdal, "POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))")?;
+            let clipped = clip_raster(gdal, &raster, &geom_wkb, 1, None, false, false)?
+                .expect("Should have intersection");
+            assert_eq!(
+                clipped.bands[0].name.as_deref(),
+                Some("elevation"),
+                "clipped band should keep the source band name"
+            );
+            Ok::<_, datafusion_common::DataFusionError>(())
+        })
+        .unwrap();
     }
 }
