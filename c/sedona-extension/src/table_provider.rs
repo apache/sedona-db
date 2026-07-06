@@ -21,6 +21,7 @@ use std::{
     fmt::Debug,
     ptr::null_mut,
     sync::Arc,
+    time::Duration,
 };
 
 use arrow_array::ffi::FFI_ArrowArray;
@@ -285,6 +286,8 @@ pub struct ImportedTableProvider {
     table_type: TableType,
     /// Stored as Arc so it can be cloned for each scan execution.
     cancel_checker: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+    /// Interval for periodic cancellation checking during stream consumption.
+    check_interval: Option<Duration>,
 }
 
 impl Debug for ImportedTableProvider {
@@ -322,18 +325,30 @@ impl ImportedTableProvider {
             schema,
             table_type,
             cancel_checker: None,
+            check_interval: None,
         })
     }
 
     /// Set a cancellation checker for this table provider.
     ///
-    /// The checker is called before each batch is read when scanning.
+    /// The checker is called periodically (controlled by `with_check_interval`)
+    /// before batches are read when scanning.
     /// If it returns `true`, the stream yields a cancellation error.
     pub fn with_cancel_checker<F>(mut self, cancel_checker: F) -> Self
     where
         F: Fn() -> bool + Send + Sync + 'static,
     {
         self.cancel_checker = Some(Arc::new(cancel_checker));
+        self
+    }
+
+    /// Set the interval for periodic cancellation checking.
+    ///
+    /// When set, the cancel checker will only be called when this interval
+    /// has elapsed since the last check, reducing overhead for fast streams.
+    /// If not set, the checker is called before every batch.
+    pub fn with_check_interval(mut self, interval: Duration) -> Self {
+        self.check_interval = Some(interval);
         self
     }
 
@@ -409,10 +424,13 @@ impl TableProvider for ImportedTableProvider {
 
         let mut exec = ImportedSedonaCExec::try_new(ffi_plan)?;
 
-        // Pipe through the cancel checker if one is configured
+        // Pipe through the cancel checker and interval if configured
         if let Some(ref checker) = self.cancel_checker {
             let checker = checker.clone();
             exec = exec.with_cancel_checker(move || checker());
+        }
+        if let Some(interval) = self.check_interval {
+            exec = exec.with_check_interval(interval);
         }
 
         Ok(Arc::new(exec))

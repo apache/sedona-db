@@ -22,6 +22,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use arrow_array::ffi_stream::FFI_ArrowArrayStream;
 use arrow_array::{RecordBatch, RecordBatchReader};
@@ -350,8 +351,9 @@ impl Drop for StreamingRecordBatchReader {
 /// same runtime via `block_on()` (especially fatal with current-thread
 /// runtimes, but problematic with any shared runtime).
 ///
-/// The cancellation checker is called before each batch is yielded. If it returns
-/// `true`, the stream yields a cancellation error.
+/// The cancellation checker is called periodically (at most once per `check_interval`)
+/// before yielding batches. If it returns `true`, the stream yields a cancellation error.
+/// If `check_interval` is `None`, the checker is called before every batch.
 ///
 /// # Safety
 ///
@@ -360,6 +362,7 @@ impl Drop for StreamingRecordBatchReader {
 pub unsafe fn ffi_stream_to_sendable(
     ffi_stream: &mut FFI_ArrowArrayStream,
     cancel_checker: Option<CancelChecker>,
+    check_interval: Option<Duration>,
 ) -> Result<SendableRecordBatchStream> {
     let reader = arrow_array::ffi_stream::ArrowArrayStreamReader::from_raw(ffi_stream)?;
     let schema = reader.schema();
@@ -379,10 +382,26 @@ pub unsafe fn ffi_stream_to_sendable(
         }
     });
 
+    // Track last check time for periodic cancellation checking
+    let mut last_check = Instant::now();
+
     let stream = tokio_stream::wrappers::ReceiverStream::new(rx).map(move |result| {
-        // Check for cancellation before yielding each batch
+        // Check for cancellation periodically (or every batch if no interval)
         if let Some(ref checker) = cancel_checker {
-            if checker() {
+            let should_check = match check_interval {
+                Some(interval) => {
+                    let now = Instant::now();
+                    if now.duration_since(last_check) >= interval {
+                        last_check = now;
+                        true
+                    } else {
+                        false
+                    }
+                }
+                None => true, // No interval means check every batch
+            };
+
+            if should_check && checker() {
                 return exec_err!("Operation cancelled");
             }
         }
@@ -514,7 +533,7 @@ mod tests {
         let mut ffi_stream = FFI_ArrowArrayStream::new(Box::new(reader));
 
         // Import back
-        let imported = unsafe { ffi_stream_to_sendable(&mut ffi_stream, None).unwrap() };
+        let imported = unsafe { ffi_stream_to_sendable(&mut ffi_stream, None, None).unwrap() };
 
         // Collect results
         let batches: Vec<_> = runtime.block_on(imported.collect::<Vec<_>>());
@@ -549,7 +568,7 @@ mod tests {
             Box::new(move || cancelled_clone.load(Ordering::SeqCst));
 
         let imported =
-            unsafe { ffi_stream_to_sendable(&mut ffi_stream, Some(cancel_checker)).unwrap() };
+            unsafe { ffi_stream_to_sendable(&mut ffi_stream, Some(cancel_checker), None).unwrap() };
 
         // Collect with cancellation after 3 batches, stop on first error
         let batches = runtime.block_on(async {

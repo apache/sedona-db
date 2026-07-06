@@ -21,6 +21,7 @@ use std::{
     fmt::{Debug, Display, Formatter},
     ptr::null_mut,
     sync::Arc,
+    time::Duration,
 };
 
 use arrow_array::ffi_stream::FFI_ArrowArrayStream;
@@ -319,6 +320,8 @@ pub struct ImportedSedonaCExec {
     name: String,
     /// Stored as Arc so it can be cloned for each partition execution.
     cancel_checker: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+    /// Interval for periodic cancellation checking during stream consumption.
+    check_interval: Option<Duration>,
 }
 
 impl Debug for ImportedSedonaCExec {
@@ -373,18 +376,30 @@ impl ImportedSedonaCExec {
             supports_limit_pushdown,
             name,
             cancel_checker: None,
+            check_interval: None,
         })
     }
 
     /// Set a cancellation checker for this execution plan.
     ///
-    /// The checker is called before each batch is read from the FFI stream.
+    /// The checker is called periodically (controlled by `with_check_interval`)
+    /// before batches are read from the FFI stream.
     /// If it returns `true`, the stream yields a cancellation error.
     pub fn with_cancel_checker<F>(mut self, cancel_checker: F) -> Self
     where
         F: Fn() -> bool + Send + Sync + 'static,
     {
         self.cancel_checker = Some(Arc::new(cancel_checker));
+        self
+    }
+
+    /// Set the interval for periodic cancellation checking.
+    ///
+    /// When set, the cancel checker will only be called when this interval
+    /// has elapsed since the last check, reducing overhead for fast streams.
+    /// If not set, the checker is called before every batch.
+    pub fn with_check_interval(mut self, interval: Duration) -> Self {
+        self.check_interval = Some(interval);
         self
     }
 
@@ -500,7 +515,7 @@ impl ExecutionPlan for ImportedSedonaCExec {
             let c = c.clone();
             Box::new(move || c()) as CancelChecker
         });
-        unsafe { ffi_stream_to_sendable(&mut ffi_stream, cancel_checker) }
+        unsafe { ffi_stream_to_sendable(&mut ffi_stream, cancel_checker, self.check_interval) }
     }
 
     fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {

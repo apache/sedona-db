@@ -17,6 +17,7 @@
 use std::{
     ffi::{c_void, CString},
     sync::Arc,
+    time::Duration,
 };
 
 use arrow_array::{
@@ -78,15 +79,18 @@ pub fn import_sedona_ffi_table_provider(
     let provider = ImportedTableProvider::try_new(ffi_provider)?;
 
     // Add a Python-aware cancel checker that checks for Ctrl+C signals
-    let provider = provider.with_cancel_checker(|| {
-        Python::attach(|py| {
-            // Run `pass` to process any pending signals, then check for errors
-            if py.run(cr"pass", None, None).is_err() {
-                return true;
-            }
-            py.check_signals().is_err()
+    // Use a 2 second interval to match the StreamingRecordBatchReader behavior
+    let provider = provider
+        .with_cancel_checker(|| {
+            Python::attach(|py| {
+                // Run `pass` to process any pending signals, then check for errors
+                if py.run(cr"pass", None, None).is_err() {
+                    return true;
+                }
+                py.check_signals().is_err()
+            })
         })
-    });
+        .with_check_interval(Duration::from_millis(2_000));
 
     Ok(Arc::new(provider))
 }
