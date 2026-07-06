@@ -125,6 +125,12 @@ config_namespace! {
         /// for small datasets, while lower values enable more fine-grained parallelism.
         pub parallel_refinement_chunk_size: usize, default = 8192
 
+        /// The number of probe rows per spawned task when parallelizing spatial join refinement
+        /// across probe rows. Specify 0 to disable probe-row parallelism. This is useful for
+        /// skewed workloads where many probe rows each have moderate candidate counts that do not
+        /// individually trigger `parallel_refinement_chunk_size`.
+        pub parallel_probe_chunk_size: usize, default = 0
+
         /// Options for debugging or testing spatial join
         pub debug : SpatialJoinDebugOptions, default = SpatialJoinDebugOptions::default()
     }
