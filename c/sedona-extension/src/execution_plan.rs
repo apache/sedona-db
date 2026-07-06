@@ -39,7 +39,7 @@ use tokio::runtime::Runtime;
 
 use crate::extension::{SedonaCError, SedonaCExecutionPlan, SedonaCExecutionPlanArgs};
 use crate::set_ffi_error;
-use crate::streaming::{ffi_stream_to_sendable, StreamingRecordBatchReader};
+use crate::streaming::{ffi_stream_to_sendable, CancelChecker, StreamingRecordBatchReader};
 use crate::utils::{cstr_from_ptr_or_empty, get_plan_property, get_plan_string_property, ERRNO_OK};
 
 /// Wrapper around an [ExecutionPlan] that can be exported across FFI.
@@ -317,6 +317,8 @@ pub struct ImportedSedonaCExec {
     properties: PlanProperties,
     supports_limit_pushdown: bool,
     name: String,
+    /// Stored as Arc so it can be cloned for each partition execution.
+    cancel_checker: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
 }
 
 impl Debug for ImportedSedonaCExec {
@@ -370,7 +372,20 @@ impl ImportedSedonaCExec {
             properties,
             supports_limit_pushdown,
             name,
+            cancel_checker: None,
         })
+    }
+
+    /// Set a cancellation checker for this execution plan.
+    ///
+    /// The checker is called before each batch is read from the FFI stream.
+    /// If it returns `true`, the stream yields a cancellation error.
+    pub fn with_cancel_checker<F>(mut self, cancel_checker: F) -> Self
+    where
+        F: Fn() -> bool + Send + Sync + 'static,
+    {
+        self.cancel_checker = Some(Arc::new(cancel_checker));
+        self
     }
 
     fn get_debug_string(&self) -> Result<String> {
@@ -480,7 +495,12 @@ impl ExecutionPlan for ImportedSedonaCExec {
         }
 
         // Convert FFI stream to SendableRecordBatchStream
-        unsafe { ffi_stream_to_sendable(&mut ffi_stream) }
+        // Clone the Arc and wrap in a new Box for this execution
+        let cancel_checker: Option<CancelChecker> = self.cancel_checker.as_ref().map(|c| {
+            let c = c.clone();
+            Box::new(move || c()) as CancelChecker
+        });
+        unsafe { ffi_stream_to_sendable(&mut ffi_stream, cancel_checker) }
     }
 
     fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {

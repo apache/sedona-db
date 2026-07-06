@@ -333,22 +333,6 @@ impl RecordBatchReader for StreamingRecordBatchReader {
     }
 }
 
-/// Convert an FFI ArrowArrayStream into a SendableRecordBatchStream.
-///
-/// This is the inverse of StreamingRecordBatchReader - it takes an FFI stream
-/// and converts it back to a DataFusion stream. Used when importing execution
-/// plans from across FFI boundaries.
-///
-/// # Safety
-///
-/// The caller must ensure that the FFI stream pointer is valid and properly
-/// initialized.
-pub unsafe fn ffi_stream_to_sendable(
-    ffi_stream: &mut FFI_ArrowArrayStream,
-) -> Result<SendableRecordBatchStream> {
-    ffi_stream_to_sendable_with_cancel(ffi_stream, None)
-}
-
 /// Convert an FFI ArrowArrayStream into a SendableRecordBatchStream with cancellation support.
 ///
 /// Uses a dedicated OS thread to read from the synchronous FFI stream, sending
@@ -364,7 +348,7 @@ pub unsafe fn ffi_stream_to_sendable(
 ///
 /// The caller must ensure that the FFI stream pointer is valid and properly
 /// initialized.
-pub unsafe fn ffi_stream_to_sendable_with_cancel(
+pub unsafe fn ffi_stream_to_sendable(
     ffi_stream: &mut FFI_ArrowArrayStream,
     cancel_checker: Option<CancelChecker>,
 ) -> Result<SendableRecordBatchStream> {
@@ -521,7 +505,7 @@ mod tests {
         let mut ffi_stream = FFI_ArrowArrayStream::new(Box::new(reader));
 
         // Import back
-        let imported = unsafe { ffi_stream_to_sendable(&mut ffi_stream).unwrap() };
+        let imported = unsafe { ffi_stream_to_sendable(&mut ffi_stream, None).unwrap() };
 
         // Collect results
         let batches: Vec<_> = runtime.block_on(imported.collect::<Vec<_>>());
@@ -555,9 +539,8 @@ mod tests {
         let cancel_checker: CancelChecker =
             Box::new(move || cancelled_clone.load(Ordering::SeqCst));
 
-        let imported = unsafe {
-            ffi_stream_to_sendable_with_cancel(&mut ffi_stream, Some(cancel_checker)).unwrap()
-        };
+        let imported =
+            unsafe { ffi_stream_to_sendable(&mut ffi_stream, Some(cancel_checker)).unwrap() };
 
         // Collect with cancellation after 3 batches, stop on first error
         let batches = runtime.block_on(async {

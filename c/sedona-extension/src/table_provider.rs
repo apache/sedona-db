@@ -283,6 +283,8 @@ pub struct ImportedTableProvider {
     inner: SedonaCTableProvider,
     schema: SchemaRef,
     table_type: TableType,
+    /// Stored as Arc so it can be cloned for each scan execution.
+    cancel_checker: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
 }
 
 impl Debug for ImportedTableProvider {
@@ -319,7 +321,20 @@ impl ImportedTableProvider {
             inner,
             schema,
             table_type,
+            cancel_checker: None,
         })
+    }
+
+    /// Set a cancellation checker for this table provider.
+    ///
+    /// The checker is called before each batch is read when scanning.
+    /// If it returns `true`, the stream yields a cancellation error.
+    pub fn with_cancel_checker<F>(mut self, cancel_checker: F) -> Self
+    where
+        F: Fn() -> bool + Send + Sync + 'static,
+    {
+        self.cancel_checker = Some(Arc::new(cancel_checker));
+        self
     }
 
     fn get_table_type(provider: &SedonaCTableProvider) -> Result<TableType> {
@@ -392,7 +407,14 @@ impl TableProvider for ImportedTableProvider {
             return exec_err!("Failed to scan table: {}", err);
         }
 
-        let exec = ImportedSedonaCExec::try_new(ffi_plan)?;
+        let mut exec = ImportedSedonaCExec::try_new(ffi_plan)?;
+
+        // Pipe through the cancel checker if one is configured
+        if let Some(ref checker) = self.cancel_checker {
+            let checker = checker.clone();
+            exec = exec.with_cancel_checker(move || checker());
+        }
+
         Ok(Arc::new(exec))
     }
 }
