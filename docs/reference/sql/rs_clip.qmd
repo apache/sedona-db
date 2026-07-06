@@ -93,6 +93,11 @@ The geometry is reprojected into the raster's CRS when both carry one. If
 exactly one side has a CRS, the call errors; if neither does, the geometry is
 used as-is.
 
+A pixel is selected only when its center falls inside the geometry. A geometry
+smaller than a pixel, or a thin sliver, can therefore select no pixels even
+though it overlaps the raster; set `all_touched` to true to keep every pixel the
+geometry touches instead.
+
 The clip is a 2-D `(y, x)` operation. For an N-D raster (bands with extra
 dimensions such as `time`), the same mask and crop window are broadcast across
 every non-spatial plane, so the non-spatial dimensions are preserved and only

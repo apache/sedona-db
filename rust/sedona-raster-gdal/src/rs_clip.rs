@@ -299,13 +299,21 @@ impl SedonaScalarKernel for RsClip {
                         build_clipped_raster(&mut builder, raster, &clipped_data)?
                     }
                     Ok(None) => {
-                        // `lenient` governs only the no-intersection case: the
-                        // raster and geometry don't overlap, so there's nothing
-                        // to clip. Lenient yields NULL; strict errors.
+                        // The clip mask is empty — no pixel was selected. `lenient`
+                        // yields NULL either way; strict errors, with a message
+                        // conditioned on `all_touched`: when it is already true an
+                        // empty mask means the geometry is genuinely disjoint,
+                        // whereas with the default `all_touched = false` the
+                        // geometry may still overlap but fall between pixel centers.
                         if lenient {
                             builder.append_null()?;
-                        } else {
+                        } else if all_touched {
                             return exec_err!("RS_Clip: raster and geometry do not intersect");
+                        } else {
+                            return exec_err!(
+                                "RS_Clip: geometry selects no pixels; it may fall between \
+                                 pixel centers — pass all_touched => true to keep any pixel it touches"
+                            );
                         }
                     }
                     // A genuine failure (malformed WKB, GDAL error, …) always
@@ -1289,5 +1297,62 @@ mod tests {
             Ok::<_, datafusion_common::DataFusionError>(())
         })
         .unwrap();
+    }
+
+    #[test]
+    fn strict_no_pixel_message_depends_on_all_touched() {
+        // With lenient=false and an empty clip mask, the strict error is
+        // conditioned on all_touched: a plain "do not intersect" when every
+        // touched pixel was already considered, and a sub-pixel hint otherwise.
+        let geom_wkb = with_gdal(|gdal| {
+            wkb_from_wkt(
+                gdal,
+                "POLYGON((100 100, 101 100, 101 101, 100 101, 100 100))",
+            )
+        })
+        .unwrap();
+        // No CRS on raster or geom, so we reach the mask check rather than a
+        // CRS-mismatch error first.
+        let raster = RasterSpec::d2(4, 2)
+            .band_values(&[1u8, 2, 3, 4, 5, 6, 7, 8])
+            .crs(None)
+            .transform([0.0, 1.0, 0.0, 2.0, 0.0, -1.0])
+            .build();
+        let arg_types = [
+            RASTER,
+            SedonaType::Arrow(DataType::Int32),
+            SedonaType::Wkb(Edges::Planar, None),
+            SedonaType::Arrow(DataType::Boolean),
+            SedonaType::Arrow(DataType::Float64),
+            SedonaType::Arrow(DataType::Boolean),
+            SedonaType::Arrow(DataType::Boolean),
+        ];
+        let kernel = RsClip { arg_count: 7 };
+        let invoke = |all_touched: bool| {
+            kernel
+                .invoke_batch(
+                    &arg_types,
+                    &[
+                        ColumnarValue::Scalar(ScalarValue::Struct(Arc::new(raster.clone()))),
+                        ColumnarValue::Scalar(ScalarValue::Int32(Some(1))),
+                        ColumnarValue::Scalar(ScalarValue::Binary(Some(geom_wkb.clone()))),
+                        ColumnarValue::Scalar(ScalarValue::Boolean(Some(all_touched))),
+                        ColumnarValue::Scalar(ScalarValue::Float64(None)),
+                        ColumnarValue::Scalar(ScalarValue::Boolean(Some(false))), // crop
+                        ColumnarValue::Scalar(ScalarValue::Boolean(Some(false))), // lenient
+                    ],
+                )
+                .unwrap_err()
+                .to_string()
+        };
+        assert!(
+            invoke(true).contains("do not intersect"),
+            "all_touched=true should give the disjoint message"
+        );
+        let msg = invoke(false);
+        assert!(
+            msg.contains("selects no pixels") && msg.contains("all_touched"),
+            "all_touched=false should hint at the sub-pixel case: {msg}"
+        );
     }
 }
