@@ -24,6 +24,8 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/rust.yml'
+      - 'dev/release/check-cargo-dependencies.py'
+      - 'dev/release/publish-crates.sh'
       - 'rust/**'
       - 'c/**'
   push:
@@ -50,7 +52,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        name: ["clippy", "docs", "test", "check", "build", "fmt"]
+        name: ["clippy", "docs", "test", "check", "check-publish", "build", "fmt"]
 
     name: "${{ matrix.name }}"
     runs-on: ubuntu-latest
@@ -67,6 +69,7 @@ jobs:
           submodules: 'true'
 
       - name: Clone vcpkg
+        if: matrix.name != 'check-publish'
         uses: actions/checkout@v7
         with:
           repository: microsoft/vcpkg
@@ -74,6 +77,7 @@ jobs:
           path: vcpkg
 
       - name: Set up environment variables and bootstrap vcpkg
+        if: matrix.name != 'check-publish'
         env:
           VCPKG_ROOT: ${{ github.workspace }}/vcpkg
           CMAKE_TOOLCHAIN_FILE: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
@@ -87,6 +91,7 @@ jobs:
           echo "CMAKE_TOOLCHAIN_FILE=$CMAKE_TOOLCHAIN_FILE" >> $GITHUB_ENV
 
       - name: Cache vcpkg binaries
+        if: matrix.name != 'check-publish'
         id: cache-vcpkg
         uses: actions/cache@v6
         with:
@@ -95,7 +100,7 @@ jobs:
           key: vcpkg-installed-${{ runner.os }}-${{ runner.arch }}-${{ env.VCPKG_REF }}-3
 
       - name: Install vcpkg dependencies
-        if: steps.cache-vcpkg.outputs.cache-hit != 'true'
+        if: matrix.name != 'check-publish' && steps.cache-vcpkg.outputs.cache-hit != 'true'
         run: |
           ./vcpkg/vcpkg install abseil openssl
           # Clean up vcpkg buildtrees and downloads to save space
@@ -114,6 +119,7 @@ jobs:
           prefix-key: "rust-${{ matrix.name }}-v5"
 
       - name: Free Disk Space (Ubuntu)
+        if: matrix.name != 'check-publish'
         uses: jlumbroso/free-disk-space@main
         with:
           # Free up space by removing tools we don't need
@@ -126,9 +132,14 @@ jobs:
           docker-images: true    # Remove docker images (not needed)
 
       - name: Install dependencies
+        if: matrix.name != 'check-publish'
         shell: bash
         run: |
           sudo apt-get update && sudo apt-get install -y libgeos-dev libgdal-dev
+
+      - name: Check publish dependencies
+        if: matrix.name == 'check-publish'
+        run: python3 dev/release/check-cargo-dependencies.py --print-publish-order
 
       - name: Check
         if: matrix.name == 'check'
