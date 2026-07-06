@@ -662,26 +662,27 @@ fn apply_mask_and_crop(
     cw: &CropWindow,
 ) -> Result<Vec<u8>> {
     let byte_size = data_type.byte_size();
-    let crop_pixel_count = cw.width * cw.height;
     let nodata_bytes = nodata_f64_to_bytes(nodata, data_type);
-    let mut result = vec![0u8; crop_pixel_count * byte_size];
+    let row_bytes = cw.width * byte_size;
+    let mut result = vec![0u8; cw.height * row_bytes];
 
+    // The crop-window columns of a source row are contiguous, so copy each row
+    // in one bulk memcpy (which vectorizes) rather than per pixel, then overwrite
+    // only the masked-out pixels with nodata. Masked pixels are written twice —
+    // once by the bulk copy, once here — but the bulk memcpy is far cheaper than
+    // the dynamic-width per-pixel copy it replaces.
     for row in 0..cw.height {
         let src_row = cw.row_off + row;
-        for col in 0..cw.width {
-            let src_col = cw.col_off + col;
-            let src_pixel_idx = src_row * full_width + src_col;
-            let dst_pixel_idx = row * cw.width + col;
-            let src_byte_offset = src_pixel_idx * byte_size;
-            let dst_byte_offset = dst_pixel_idx * byte_size;
+        let row_pixel_start = src_row * full_width + cw.col_off;
+        let src_start = row_pixel_start * byte_size;
+        let dst_start = row * row_bytes;
+        result[dst_start..dst_start + row_bytes]
+            .copy_from_slice(&original_data[src_start..src_start + row_bytes]);
 
-            if mask[src_pixel_idx] != 0 {
-                // Inside geometry — copy original pixel
-                result[dst_byte_offset..dst_byte_offset + byte_size]
-                    .copy_from_slice(&original_data[src_byte_offset..src_byte_offset + byte_size]);
-            } else {
-                // Outside geometry — write nodata
-                result[dst_byte_offset..dst_byte_offset + byte_size].copy_from_slice(&nodata_bytes);
+        for col in 0..cw.width {
+            if mask[row_pixel_start + col] == 0 {
+                let dst = dst_start + col * byte_size;
+                result[dst..dst + byte_size].copy_from_slice(&nodata_bytes);
             }
         }
     }
@@ -896,6 +897,14 @@ mod tests {
                 clipped.bands[0].data.len(),
                 cw.width * cw.height * byte_size,
                 "Cropped band data size should match crop window"
+            );
+            // Both window pixels are inside the polygon, so the cropped band
+            // holds the source values for that 2×1 window (row-major) — this
+            // pins the row-copy offsets in `apply_mask_and_crop`.
+            assert_eq!(
+                clipped.bands[0].data,
+                vec![1u8, 2],
+                "cropped band should keep the source pixel values in the window"
             );
             assert!(
                 (cw.width as i64) < metadata.width(),
