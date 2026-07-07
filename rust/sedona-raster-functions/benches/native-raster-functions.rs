@@ -214,31 +214,36 @@ fn criterion_benchmark(c: &mut Criterion) {
         ),
     );
 
-    // RS_Value(raster, point) — array raster (a distinct raster per row).
+    // RS_Value(raster, point, band) — array raster (a distinct raster per row).
+    // The band is explicit because the benchmark raster is multiband (band is
+    // only optional for single-band rasters).
     benchmark::scalar(
         c,
         &f,
         "native-raster",
         "rs_value",
-        BenchmarkArgs::ArrayArray(
+        BenchmarkArgs::ArrayArrayScalar(
             Raster(64, 64),
             Transformed(Box::new(Point), sd_apply_default_crs_udf().into()),
+            Int32(1, 2),
         ),
     );
-    // RS_Value(raster, point) — scalar raster (one raster, many points). This
-    // is the case where per-point band/nodata/buffer resolution can be hoisted
-    // out of the sample loop, so it is the primary target for optimization.
+    // RS_Value(raster, point, band) — scalar raster (one raster, many points).
+    // This is the case where per-point band/nodata/buffer resolution can be
+    // hoisted out of the sample loop, so it is the primary target for
+    // optimization.
     benchmark::scalar(
         c,
         &f,
         "native-raster",
         "rs_value",
-        BenchmarkArgs::ScalarArray(
+        BenchmarkArgs::ScalarArrayScalar(
             Raster(64, 64),
             Transformed(Box::new(Point), sd_apply_default_crs_udf().into()),
+            Int32(1, 2),
         ),
     );
-    // RS_Value(raster, point, band)
+    // RS_Value(raster, point, band) — band column
     benchmark::scalar(
         c,
         &f,
