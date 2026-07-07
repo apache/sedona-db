@@ -163,11 +163,6 @@ impl SedonaContext {
                 planner = planner.with_spatial_join_physical_planner(Arc::new(
                     GeographySpatialJoinPhysicalPlanner::new(),
                 ));
-
-                opts.runtime = opts.runtime.with_bounder(
-                    sedona_geometry::types::Edges::Spherical,
-                    Arc::new(sedona_s2geography::rect_bounder::WkbGeographyBounder::default()),
-                )?;
             }
 
             // Register the GPU join after the default planner
@@ -180,6 +175,16 @@ impl SedonaContext {
                     GpuSpatialJoinPhysicalPlanner::new(),
                 ));
             }
+        }
+
+        // Register the geography bounder for spherical edge types. This enables geography
+        // statistics in Parquet files and geography row-group pruning.
+        #[cfg(feature = "s2geography")]
+        {
+            opts.runtime = opts.runtime.with_bounder(
+                sedona_geometry::types::Edges::Spherical,
+                Arc::new(sedona_s2geography::rect_bounder::WkbGeographyBounder::default()),
+            )?;
         }
 
         // Inject the statically-set accumulator factory, which allows arrow-rs Parquet writer

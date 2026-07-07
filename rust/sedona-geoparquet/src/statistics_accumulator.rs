@@ -170,7 +170,6 @@ impl GeoStatsAccumulator for GeographyGeoStatsAccumulator {
 
 #[cfg(test)]
 mod test {
-    #[allow(unused_imports)]
     use super::*;
 
     #[cfg(feature = "s2geography")]
