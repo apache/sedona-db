@@ -36,6 +36,11 @@ pub enum Edges {
     Spherical,
 }
 
+/// Formats as lowercase string ("planar" or "spherical") for GeoArrow/GeoParquet metadata.
+///
+/// This output is persisted to on-disk metadata and must round-trip through
+/// `deserialize_edges` in `sedona-schema`. Any new variant added here must also
+/// be added to the deserialization logic, or SedonaDB will reject files it wrote.
 impl std::fmt::Display for Edges {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let lower_str = match self {

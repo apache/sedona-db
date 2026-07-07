@@ -449,6 +449,8 @@ impl SedonaRuntime {
     }
 
     /// Replace the runtime [WkbBounder2D] reference for a specific [Edges]
+    ///
+    /// Errors for edges that are not currently supported by SedonaDB.
     pub fn with_bounder(&self, edges: Edges, bounder: Arc<dyn WkbBounder2D>) -> Result<Self> {
         Ok(Self {
             bounder_factory: self.bounder_factory.with_bounder(edges, bounder),

@@ -423,6 +423,10 @@ fn serialize_edges_and_crs(edges: &Edges, crs: &Crs) -> String {
 }
 
 /// Deserialize a specific GeoArrow "edges" value
+///
+/// This must accept all strings produced by `Edges::Display` in `sedona-geometry`.
+/// Any new variant added to `Edges` must be handled here, or SedonaDB will reject
+/// files it wrote.
 fn deserialize_edges(edges: &Value) -> Result<Edges> {
     match edges.as_str() {
         Some(edges_str) => {
