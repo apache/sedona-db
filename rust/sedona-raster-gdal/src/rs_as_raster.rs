@@ -17,9 +17,9 @@
 
 //! RS_AsRaster UDF - rasterize a vector geometry onto a raster grid.
 
-use std::sync::Arc;
+use std::{convert::TryFrom, sync::Arc};
 
-use arrow_array::{Array, StructArray};
+use arrow_array::ArrayRef;
 use arrow_schema::DataType;
 use datafusion_common::cast::{
     as_binary_array, as_boolean_array, as_float64_array, as_string_array,
@@ -28,20 +28,20 @@ use datafusion_common::config::ConfigOptions;
 use datafusion_common::error::Result;
 use datafusion_common::{exec_datafusion_err, exec_err, ScalarValue};
 use datafusion_expr::{ColumnarValue, Volatility};
-use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_gdal::dataset::Dataset;
 use sedona_gdal::gdal::Gdal;
 use sedona_gdal::mem::MemDatasetBuilder;
-use sedona_gdal::raster::types::Buffer;
-use sedona_raster::array::{RasterRefImpl, RasterStructArray};
+use sedona_gdal::raster::{rasterband::RasterBand, types::Buffer};
+use sedona_raster::array::RasterRefImpl;
 use sedona_raster::builder::RasterBuilder;
 use sedona_raster::traits::{BandMetadata, RasterMetadata, RasterRef};
+use sedona_raster_functions::RasterExecutor;
 use sedona_schema::datatypes::{SedonaType, RASTER};
 use sedona_schema::matchers::ArgMatcher;
 use sedona_schema::raster::{BandDataType, StorageType};
 
-use crate::gdal_common::{band_data_type_to_gdal, nodata_f64_to_bytes, with_gdal};
+use crate::gdal_common::{band_data_type_to_gdal, with_gdal};
 use crate::gdal_dataset_provider::{configure_thread_local_options, thread_local_provider};
 
 pub fn rs_as_raster_udf() -> SedonaScalarUDF {
@@ -103,7 +103,18 @@ impl SedonaScalarKernel for RsAsRaster {
         _num_rows: usize,
         config_options: Option<&ConfigOptions>,
     ) -> Result<ColumnarValue> {
-        let num_iterations = calc_num_iterations(args);
+        let num_iterations = args
+            .iter()
+            .find_map(|arg| match arg {
+                ColumnarValue::Array(array) => Some(array.len()),
+                ColumnarValue::Scalar(_) => None,
+            })
+            .unwrap_or(1);
+
+        let exec_arg_types = vec![arg_types[1].clone(), arg_types[0].clone()];
+        let exec_args = vec![args[1].clone(), args[0].clone()];
+        let executor =
+            RasterExecutor::new_with_num_iterations(&exec_arg_types, &exec_args, num_iterations);
 
         let geom_array = args[0].clone().into_array(num_iterations)?;
         let geom_array = as_binary_array(&geom_array)?;
@@ -166,8 +177,10 @@ impl SedonaScalarKernel for RsAsRaster {
         with_gdal(|gdal| {
             configure_thread_local_options(gdal, config_options)?;
 
-            execute_raster_arg(arg_types, args, 1, num_iterations, |_, raster_opt| {
-                let geom_opt = geom_iter.next().unwrap();
+            executor.execute_raster_void(|row_index, raster_opt| {
+                let geom_opt = geom_iter
+                    .next()
+                    .expect("geometry iteration should match rows");
                 let pixel_type_opt = pixel_type_iter.next().unwrap();
                 let all_touched_opt = all_touched_iter.next().unwrap().unwrap_or(false);
                 let burn_value_opt = burn_value_iter.next().unwrap().unwrap_or(1.0);
@@ -198,7 +211,7 @@ impl SedonaScalarKernel for RsAsRaster {
 
                 let band_type = parse_pixel_type(pixel_type)?;
 
-                match as_raster(
+                let (out_metadata, out_band_metadata, out_band_bytes) = as_raster(
                     gdal,
                     geom_wkb,
                     raster,
@@ -207,51 +220,168 @@ impl SedonaScalarKernel for RsAsRaster {
                     burn_value_opt,
                     nodata_value_opt,
                     use_geometry_extent_opt,
-                ) {
-                    Ok((out_metadata, out_band_metadata, out_band_bytes)) => {
-                        builder
-                            .start_raster(&out_metadata, raster.crs())
-                            .map_err(|e| {
-                                exec_datafusion_err!("Failed to start output raster: {}", e)
-                            })?;
-                        builder.start_band(out_band_metadata).map_err(|e| {
-                            exec_datafusion_err!("Failed to start output raster band: {}", e)
-                        })?;
-                        builder.band_data_writer().append_value(out_band_bytes);
-                        builder.finish_band().map_err(|e| {
-                            exec_datafusion_err!("Failed to finish output raster band: {}", e)
-                        })?;
-                        builder.finish_raster().map_err(|e| {
-                            exec_datafusion_err!("Failed to finish output raster: {}", e)
-                        })?;
-                    }
-                    Err(_) => builder.append_null()?,
-                }
+                )
+                .map_err(|e| {
+                    exec_datafusion_err!("RS_AsRaster failed at row {}: {}", row_index, e)
+                })?;
+
+                builder
+                    .start_raster(&out_metadata, raster.crs())
+                    .map_err(|e| exec_datafusion_err!("Failed to start output raster: {}", e))?;
+                builder.start_band(out_band_metadata).map_err(|e| {
+                    exec_datafusion_err!("Failed to start output raster band: {}", e)
+                })?;
+                builder.band_data_writer().append_value(out_band_bytes);
+                builder.finish_band().map_err(|e| {
+                    exec_datafusion_err!("Failed to finish output raster band: {}", e)
+                })?;
+                builder
+                    .finish_raster()
+                    .map_err(|e| exec_datafusion_err!("Failed to finish output raster: {}", e))?;
 
                 Ok(())
             })?;
 
-            finish_result(args, Arc::new(builder.finish()?))
+            let result: ArrayRef = Arc::new(builder.finish()?);
+            executor.finish(result)
         })
     }
 }
 
 fn parse_pixel_type(value: &str) -> Result<BandDataType> {
-    match value.trim().to_ascii_uppercase().as_str() {
-        "D" => Ok(BandDataType::Float64),
-        "F" => Ok(BandDataType::Float32),
-        "I" => Ok(BandDataType::Int32),
-        "S" => Ok(BandDataType::Int16),
-        "US" => Ok(BandDataType::UInt16),
-        "B" => Ok(BandDataType::UInt8),
-        "I8" | "INT8" => Ok(BandDataType::Int8),
-        "U64" | "UINT64" => Ok(BandDataType::UInt64),
-        "I64" | "INT64" => Ok(BandDataType::Int64),
+    match value.trim().to_ascii_lowercase().as_str() {
+        "d" | "float64" => Ok(BandDataType::Float64),
+        "f" | "float32" => Ok(BandDataType::Float32),
+        "i" | "int32" => Ok(BandDataType::Int32),
+        "ui" | "uint32" => Ok(BandDataType::UInt32),
+        "s" | "int16" => Ok(BandDataType::Int16),
+        "us" | "uint16" => Ok(BandDataType::UInt16),
+        "b" | "uint8" => Ok(BandDataType::UInt8),
+        "i8" | "int8" => Ok(BandDataType::Int8),
+        "u64" | "uint64" => Ok(BandDataType::UInt64),
+        "i64" | "int64" => Ok(BandDataType::Int64),
         other => exec_err!(
-            "Unsupported pixelType: {} (expected one of D, F, I, S, US, B, I8, U64, I64)",
+            "Unsupported pixelType: {} (expected one of D/F/I/UI/S/US/B/I8/U64/I64 or int8/uint8/int16/uint16/int32/uint32/int64/uint64/float32/float64)",
             other
         ),
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum TypedBandValue {
+    UInt8(u8),
+    Int8(i8),
+    UInt16(u16),
+    Int16(i16),
+    UInt32(u32),
+    Int32(i32),
+    UInt64(u64),
+    Int64(i64),
+    Float32(f32),
+    Float64(f64),
+}
+
+impl TypedBandValue {
+    fn metadata_bytes(self) -> Vec<u8> {
+        match self {
+            Self::UInt8(value) => vec![value],
+            Self::Int8(value) => value.to_le_bytes().to_vec(),
+            Self::UInt16(value) => value.to_le_bytes().to_vec(),
+            Self::Int16(value) => value.to_le_bytes().to_vec(),
+            Self::UInt32(value) => value.to_le_bytes().to_vec(),
+            Self::Int32(value) => value.to_le_bytes().to_vec(),
+            Self::UInt64(value) => value.to_le_bytes().to_vec(),
+            Self::Int64(value) => value.to_le_bytes().to_vec(),
+            Self::Float32(value) => value.to_le_bytes().to_vec(),
+            Self::Float64(value) => value.to_le_bytes().to_vec(),
+        }
+    }
+}
+
+fn checked_floor_to_i64(value: f64, label: &str) -> Result<i64> {
+    checked_float_to_i64(value.floor(), label)
+}
+
+fn checked_ceil_to_i64(value: f64, label: &str) -> Result<i64> {
+    checked_float_to_i64(value.ceil(), label)
+}
+
+fn checked_float_to_i64(value: f64, label: &str) -> Result<i64> {
+    if !value.is_finite() {
+        return exec_err!("{} must be finite", label);
+    }
+
+    if value < i64::MIN as f64 || value > i64::MAX as f64 {
+        return exec_err!("{} is out of range for i64: {}", label, value);
+    }
+
+    Ok(value as i64)
+}
+
+fn cast_f64_to_band_value(
+    value: f64,
+    band_type: BandDataType,
+    role: &str,
+) -> Result<TypedBandValue> {
+    if !value.is_finite() && !matches!(band_type, BandDataType::Float32 | BandDataType::Float64) {
+        return exec_err!("{} must be finite for {:?}: {}", role, band_type, value);
+    }
+
+    match band_type {
+        BandDataType::UInt8 => Ok(TypedBandValue::UInt8(checked_integral_cast::<u8>(
+            value, role, band_type,
+        )?)),
+        BandDataType::Int8 => Ok(TypedBandValue::Int8(checked_integral_cast::<i8>(
+            value, role, band_type,
+        )?)),
+        BandDataType::UInt16 => Ok(TypedBandValue::UInt16(checked_integral_cast::<u16>(
+            value, role, band_type,
+        )?)),
+        BandDataType::Int16 => Ok(TypedBandValue::Int16(checked_integral_cast::<i16>(
+            value, role, band_type,
+        )?)),
+        BandDataType::UInt32 => Ok(TypedBandValue::UInt32(checked_integral_cast::<u32>(
+            value, role, band_type,
+        )?)),
+        BandDataType::Int32 => Ok(TypedBandValue::Int32(checked_integral_cast::<i32>(
+            value, role, band_type,
+        )?)),
+        BandDataType::UInt64 => Ok(TypedBandValue::UInt64(checked_integral_cast::<u64>(
+            value, role, band_type,
+        )?)),
+        BandDataType::Int64 => Ok(TypedBandValue::Int64(checked_integral_cast::<i64>(
+            value, role, band_type,
+        )?)),
+        BandDataType::Float32 => {
+            let casted = value as f32;
+            if value.is_finite() && !casted.is_finite() {
+                return exec_err!("{} is out of range for {:?}: {}", role, band_type, value);
+            }
+            Ok(TypedBandValue::Float32(casted))
+        }
+        BandDataType::Float64 => Ok(TypedBandValue::Float64(value)),
+    }
+}
+
+fn checked_integral_cast<T>(value: f64, role: &str, band_type: BandDataType) -> Result<T>
+where
+    T: TryFrom<i128>,
+    <T as TryFrom<i128>>::Error: std::fmt::Debug,
+{
+    if !value.is_finite() {
+        return exec_err!("{} must be finite for {:?}: {}", role, band_type, value);
+    }
+    if value.fract() != 0.0 {
+        return exec_err!("{} must be an integer for {:?}: {}", role, band_type, value);
+    }
+
+    let integer = value as i128;
+    T::try_from(integer).map_err(|_| {
+        datafusion_common::DataFusionError::Execution(format!(
+            "{} is out of range for {:?}: {}",
+            role, band_type, value
+        ))
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -288,13 +418,21 @@ fn as_raster(
             return exec_err!("Reference raster has zero scale");
         }
 
-        let start_col = ((env.MinX - ulx) / scale_x).floor() as isize;
-        let end_col_excl = ((env.MaxX - ulx) / scale_x).ceil() as isize;
-        let start_row = ((env.MaxY - uly) / scale_y).floor() as isize;
-        let end_row_excl = ((env.MinY - uly) / scale_y).ceil() as isize;
+        let start_col = checked_floor_to_i64((env.MinX - ulx) / scale_x, "start_col")?;
+        let end_col_excl = checked_ceil_to_i64((env.MaxX - ulx) / scale_x, "end_col_excl")?;
+        let start_row = checked_floor_to_i64((env.MaxY - uly) / scale_y, "start_row")?;
+        let end_row_excl = checked_ceil_to_i64((env.MinY - uly) / scale_y, "end_row_excl")?;
 
-        let width = (end_col_excl - start_col).max(0) as usize;
-        let height = (end_row_excl - start_row).max(0) as usize;
+        let width = usize::try_from((end_col_excl - start_col).max(0)).map_err(|_| {
+            datafusion_common::DataFusionError::Execution(
+                "Geometry extent width is out of range for usize".to_string(),
+            )
+        })?;
+        let height = usize::try_from((end_row_excl - start_row).max(0)).map_err(|_| {
+            datafusion_common::DataFusionError::Execution(
+                "Geometry extent height is out of range for usize".to_string(),
+            )
+        })?;
 
         if width == 0 || height == 0 {
             return exec_err!("Geometry extent produced an empty raster");
@@ -346,24 +484,16 @@ fn as_raster(
             .map_err(|e| exec_datafusion_err!("Failed to set spatial reference: {}", e))?;
     }
 
-    let init_value = nodata_value.unwrap_or(0.0);
-    initialize_band(&out_dataset, &band_type, out_width, out_height, init_value)?;
+    let init_value =
+        cast_f64_to_band_value(nodata_value.unwrap_or(0.0), band_type, "initial fill value")?;
+    initialize_band(&out_dataset, out_width, out_height, init_value)?;
 
     if let Some(nodata) = nodata_value {
+        let nodata = cast_f64_to_band_value(nodata, band_type, "nodata value")?;
         let band = out_dataset
             .rasterband(1)
             .map_err(|e| exec_datafusion_err!("Failed to get output band: {}", e))?;
-        match band_type {
-            BandDataType::UInt64 => band
-                .set_no_data_value_u64(Some(nodata as u64))
-                .map_err(|e| exec_datafusion_err!("Failed to set nodata value: {}", e))?,
-            BandDataType::Int64 => band
-                .set_no_data_value_i64(Some(nodata as i64))
-                .map_err(|e| exec_datafusion_err!("Failed to set nodata value: {}", e))?,
-            _ => band
-                .set_no_data_value(Some(nodata))
-                .map_err(|e| exec_datafusion_err!("Failed to set nodata value: {}", e))?,
-        }
+        set_band_nodata(&band, nodata)?;
     }
 
     gdal.rasterize_affine(&out_dataset, &[1], &[geometry], &[burn_value], all_touched)
@@ -393,7 +523,10 @@ fn as_raster(
             skew_y: ref_md.skew_y(),
         },
         BandMetadata {
-            nodata_value: nodata_value.map(|value| nodata_f64_to_bytes(value, &band_type)),
+            nodata_value: nodata_value
+                .map(|value| cast_f64_to_band_value(value, band_type, "nodata value"))
+                .transpose()?
+                .map(TypedBandValue::metadata_bytes),
             storage_type: StorageType::InDb,
             datatype: band_type,
             outdb_url: None,
@@ -405,24 +538,56 @@ fn as_raster(
 
 fn initialize_band(
     dataset: &Dataset,
-    band_type: &BandDataType,
     width: usize,
     height: usize,
-    init_value: f64,
+    init_value: TypedBandValue,
 ) -> Result<()> {
-    match band_type {
-        BandDataType::UInt8 => initialize_band_t::<u8>(dataset, width, height, init_value as u8),
-        BandDataType::Int8 => initialize_band_t::<i8>(dataset, width, height, init_value as i8),
-        BandDataType::UInt16 => initialize_band_t::<u16>(dataset, width, height, init_value as u16),
-        BandDataType::Int16 => initialize_band_t::<i16>(dataset, width, height, init_value as i16),
-        BandDataType::UInt32 => initialize_band_t::<u32>(dataset, width, height, init_value as u32),
-        BandDataType::Int32 => initialize_band_t::<i32>(dataset, width, height, init_value as i32),
-        BandDataType::UInt64 => initialize_band_t::<u64>(dataset, width, height, init_value as u64),
-        BandDataType::Int64 => initialize_band_t::<i64>(dataset, width, height, init_value as i64),
-        BandDataType::Float32 => {
-            initialize_band_t::<f32>(dataset, width, height, init_value as f32)
-        }
-        BandDataType::Float64 => initialize_band_t::<f64>(dataset, width, height, init_value),
+    match init_value {
+        TypedBandValue::UInt8(value) => initialize_band_t::<u8>(dataset, width, height, value),
+        TypedBandValue::Int8(value) => initialize_band_t::<i8>(dataset, width, height, value),
+        TypedBandValue::UInt16(value) => initialize_band_t::<u16>(dataset, width, height, value),
+        TypedBandValue::Int16(value) => initialize_band_t::<i16>(dataset, width, height, value),
+        TypedBandValue::UInt32(value) => initialize_band_t::<u32>(dataset, width, height, value),
+        TypedBandValue::Int32(value) => initialize_band_t::<i32>(dataset, width, height, value),
+        TypedBandValue::UInt64(value) => initialize_band_t::<u64>(dataset, width, height, value),
+        TypedBandValue::Int64(value) => initialize_band_t::<i64>(dataset, width, height, value),
+        TypedBandValue::Float32(value) => initialize_band_t::<f32>(dataset, width, height, value),
+        TypedBandValue::Float64(value) => initialize_band_t::<f64>(dataset, width, height, value),
+    }
+}
+
+fn set_band_nodata(band: &RasterBand<'_>, nodata: TypedBandValue) -> Result<()> {
+    match nodata {
+        TypedBandValue::UInt64(value) => band
+            .set_no_data_value_u64(Some(value))
+            .map_err(|e| exec_datafusion_err!("Failed to set nodata value: {}", e)),
+        TypedBandValue::Int64(value) => band
+            .set_no_data_value_i64(Some(value))
+            .map_err(|e| exec_datafusion_err!("Failed to set nodata value: {}", e)),
+        TypedBandValue::UInt8(value) => band
+            .set_no_data_value(Some(value as f64))
+            .map_err(|e| exec_datafusion_err!("Failed to set nodata value: {}", e)),
+        TypedBandValue::Int8(value) => band
+            .set_no_data_value(Some(value as f64))
+            .map_err(|e| exec_datafusion_err!("Failed to set nodata value: {}", e)),
+        TypedBandValue::UInt16(value) => band
+            .set_no_data_value(Some(value as f64))
+            .map_err(|e| exec_datafusion_err!("Failed to set nodata value: {}", e)),
+        TypedBandValue::Int16(value) => band
+            .set_no_data_value(Some(value as f64))
+            .map_err(|e| exec_datafusion_err!("Failed to set nodata value: {}", e)),
+        TypedBandValue::UInt32(value) => band
+            .set_no_data_value(Some(value as f64))
+            .map_err(|e| exec_datafusion_err!("Failed to set nodata value: {}", e)),
+        TypedBandValue::Int32(value) => band
+            .set_no_data_value(Some(value as f64))
+            .map_err(|e| exec_datafusion_err!("Failed to set nodata value: {}", e)),
+        TypedBandValue::Float32(value) => band
+            .set_no_data_value(Some(value as f64))
+            .map_err(|e| exec_datafusion_err!("Failed to set nodata value: {}", e)),
+        TypedBandValue::Float64(value) => band
+            .set_no_data_value(Some(value))
+            .map_err(|e| exec_datafusion_err!("Failed to set nodata value: {}", e)),
     }
 }
 
@@ -439,85 +604,6 @@ fn initialize_band_t<T: sedona_gdal::raster::types::GdalType + Copy>(
     band.write((0, 0), (width, height), &mut buffer)
         .map_err(|e| exec_datafusion_err!("Failed to initialize band: {}", e))?;
     Ok(())
-}
-
-fn calc_num_iterations(args: &[ColumnarValue]) -> usize {
-    args.iter()
-        .find_map(|arg| match arg {
-            ColumnarValue::Array(array) => Some(array.len()),
-            ColumnarValue::Scalar(_) => None,
-        })
-        .unwrap_or(1)
-}
-
-fn finish_result(args: &[ColumnarValue], out: Arc<dyn Array>) -> Result<ColumnarValue> {
-    if args
-        .iter()
-        .any(|arg| matches!(arg, ColumnarValue::Array(_)))
-    {
-        Ok(ColumnarValue::Array(out))
-    } else {
-        Ok(ColumnarValue::Scalar(ScalarValue::try_from_array(&out, 0)?))
-    }
-}
-
-fn execute_raster_arg<F>(
-    arg_types: &[SedonaType],
-    args: &[ColumnarValue],
-    index: usize,
-    num_iterations: usize,
-    mut func: F,
-) -> Result<()>
-where
-    F: FnMut(usize, Option<&RasterRefImpl<'_>>) -> Result<()>,
-{
-    if arg_types.get(index) != Some(&RASTER) {
-        return sedona_internal_err!("Argument {index} must be a raster type");
-    }
-
-    match &args[index] {
-        ColumnarValue::Array(array) => {
-            let raster_struct = array
-                .as_any()
-                .downcast_ref::<StructArray>()
-                .ok_or_else(|| {
-                    sedona_internal_datafusion_err!("Expected StructArray for raster data")
-                })?;
-            let raster_array = RasterStructArray::try_new(raster_struct)?;
-
-            for i in 0..num_iterations {
-                if raster_array.is_null(i) {
-                    func(i, None)?;
-                } else {
-                    let raster = raster_array.get(i)?;
-                    func(i, Some(&raster))?;
-                }
-            }
-
-            Ok(())
-        }
-        ColumnarValue::Scalar(ScalarValue::Struct(raster_struct)) => {
-            let raster_array = RasterStructArray::try_new(raster_struct.as_ref())?;
-            let raster = if raster_array.is_null(0) {
-                None
-            } else {
-                Some(raster_array.get(0)?)
-            };
-
-            for i in 0..num_iterations {
-                func(i, raster.as_ref())?;
-            }
-
-            Ok(())
-        }
-        ColumnarValue::Scalar(ScalarValue::Null) => {
-            for i in 0..num_iterations {
-                func(i, None)?;
-            }
-            Ok(())
-        }
-        _ => sedona_internal_err!("Expected Struct scalar for raster"),
-    }
 }
 
 #[cfg(test)]
@@ -570,8 +656,37 @@ mod tests {
         assert_eq!(parse_pixel_type("US").unwrap(), BandDataType::UInt16);
         assert_eq!(parse_pixel_type("B").unwrap(), BandDataType::UInt8);
         assert_eq!(parse_pixel_type("I8").unwrap(), BandDataType::Int8);
+        assert_eq!(parse_pixel_type("uint32").unwrap(), BandDataType::UInt32);
         assert_eq!(parse_pixel_type("U64").unwrap(), BandDataType::UInt64);
         assert_eq!(parse_pixel_type("I64").unwrap(), BandDataType::Int64);
+        assert_eq!(parse_pixel_type("float64").unwrap(), BandDataType::Float64);
+        assert_eq!(parse_pixel_type("float32").unwrap(), BandDataType::Float32);
+        assert_eq!(parse_pixel_type("int16").unwrap(), BandDataType::Int16);
+        assert_eq!(parse_pixel_type("uint16").unwrap(), BandDataType::UInt16);
+        assert_eq!(parse_pixel_type("int32").unwrap(), BandDataType::Int32);
+        assert_eq!(parse_pixel_type("uint8").unwrap(), BandDataType::UInt8);
+    }
+
+    #[test]
+    fn test_checked_integral_nodata_cast_errors() {
+        let err = cast_f64_to_band_value(1.5, BandDataType::UInt8, "nodata value").unwrap_err();
+        assert!(err.to_string().contains("must be an integer"));
+
+        let err = cast_f64_to_band_value(-1.0, BandDataType::UInt8, "nodata value").unwrap_err();
+        assert!(err.to_string().contains("out of range"));
+    }
+
+    #[test]
+    fn test_checked_extent_conversion_errors_on_infinite_values() {
+        let err = checked_floor_to_i64(f64::INFINITY, "start_col").unwrap_err();
+        assert!(err.to_string().contains("must be finite"));
+    }
+
+    #[test]
+    fn test_float32_nodata_overflow_errors() {
+        let err =
+            cast_f64_to_band_value(f64::MAX, BandDataType::Float32, "nodata value").unwrap_err();
+        assert!(err.to_string().contains("out of range"));
     }
 
     #[test]

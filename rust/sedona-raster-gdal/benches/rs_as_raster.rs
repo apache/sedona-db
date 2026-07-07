@@ -23,73 +23,32 @@ use arrow_array::{ArrayRef, BooleanArray, Float64Array, StringArray};
 use arrow_schema::DataType;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use datafusion_expr::ScalarUDF;
-use sedona_gdal::global::with_global_gdal;
-use sedona_gdal::raster::types::Buffer;
-use sedona_raster::array::RasterStructArray;
-use sedona_raster::builder::RasterBuilder;
-use sedona_raster::traits::RasterRef;
 use sedona_schema::datatypes::{SedonaType, RASTER, WKB_GEOMETRY};
-use sedona_testing::{create::create_array, testers::ScalarUdfTester};
+use sedona_testing::{
+    create::create_array,
+    raster_spec::{raster_array as build_raster_array, RasterSpec},
+    testers::ScalarUdfTester,
+};
 
-fn base_raster() -> arrow_array::StructArray {
-    with_global_gdal(|gdal| {
-        let driver = gdal.get_driver_by_name("MEM").unwrap();
-        let dataset = driver.create_with_band_type::<u8>("", 4, 3, 1).unwrap();
-        dataset
-            .set_geo_transform(&[10.0, 2.0, 0.0, 20.0, 0.0, -2.0])
-            .unwrap();
-        dataset.set_projection("EPSG:4326").unwrap();
-        let band = dataset.rasterband(1).unwrap();
-        band.set_no_data_value(Some(0.0)).unwrap();
-        let mut buffer = Buffer::new((4, 3), vec![0u8; 12]);
-        band.write((0, 0), (4, 3), &mut buffer).unwrap();
-        sedona_raster_gdal::dataset_to_indb_raster(&dataset).unwrap()
-    })
-    .unwrap()
+fn reference_raster_spec() -> RasterSpec {
+    RasterSpec::d2(4, 3)
+        .transform([10.0, 2.0, 0.0, 20.0, 0.0, -2.0])
+        .crs(Some("EPSG:4326"))
+        .band_values(&[0u8; 12])
+        .nodata(0u8)
 }
 
 fn raster_array(rows: usize) -> ArrayRef {
-    let raster = base_raster();
-
-    if rows == 1 {
-        Arc::new(raster)
-    } else {
-        let raster_struct = RasterStructArray::try_new(&raster).unwrap();
-        let raster_ref = raster_struct.get(0).unwrap();
-        let mut builder = RasterBuilder::new(rows);
-        for _ in 0..rows {
-            builder
-                .start_raster(&raster_ref.metadata(), raster_ref.crs())
-                .unwrap();
-            let band = raster_ref.bands().band(1).unwrap();
-            builder.start_band(band.metadata()).unwrap();
-            builder
-                .band_data_writer()
-                .append_value(band.nd_buffer().unwrap().as_contiguous().unwrap());
-            builder.finish_band().unwrap();
-            builder.finish_raster().unwrap();
-        }
-        Arc::new(builder.finish().unwrap())
-    }
+    Arc::new(build_raster_array(vec![
+        Some(reference_raster_spec());
+        rows
+    ]))
 }
 
 fn geometry_array(rows: usize) -> ArrayRef {
-    let polygon = with_global_gdal(|_gdal| {
-        let raster = base_raster();
-        let raster_struct = RasterStructArray::try_new(&raster).unwrap();
-        let raster = raster_struct.get(0).unwrap();
-        let md = raster.metadata();
-        format!(
-            "POLYGON(({x0} {y1}, {x0} {y0}, {x1} {y0}, {x1} {y1}, {x0} {y1}))",
-            x0 = md.upper_left_x(),
-            x1 = md.upper_left_x() + md.scale_x(),
-            y0 = md.upper_left_y(),
-            y1 = md.upper_left_y() + md.scale_y(),
-        )
-    })
-    .unwrap();
+    let polygon = "POLYGON((10 18, 10 20, 12 20, 12 18, 10 18))";
 
-    create_array(&vec![Some(polygon.as_str()); rows], &WKB_GEOMETRY)
+    create_array(&vec![Some(polygon); rows], &WKB_GEOMETRY)
 }
 
 fn bench_rs_as_raster(c: &mut Criterion) {

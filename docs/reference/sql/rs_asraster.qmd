@@ -110,16 +110,19 @@ geometry extent or kept equal to the full reference raster extent.
 ## Examples
 
 ```sql
-SELECT
-  RS_Width(
-    RS_AsRaster(
-      ST_GeomFromWKT('POLYGON((1 1, 1 2, 2 2, 2 1, 1 1))'),
-      RS_FromPath('../../../submodules/sedona-testing/data/raster/test4.tiff'),
-      'D',
-      false,
-      1.0,
-      0.0,
-      true
-    )
-  );
+WITH r AS (
+  SELECT RS_FromPath('https://download.osgeo.org/geotiff/samples/gdal_eg/cea.tif') AS raster
+)
+SELECT RS_Width(
+  RS_AsRaster(
+    RS_ConvexHull(raster),
+    raster,
+    'float64',
+    false,
+    1.0,
+    0.0,
+    false
+  )
+)
+FROM r;
 ```
