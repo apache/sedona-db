@@ -38,6 +38,23 @@ pub struct SedonaGeoStatsAccumulatorFactory {
 }
 
 impl SedonaGeoStatsAccumulatorFactory {
+    /// Initialize the global geo-statistics accumulator factory from the given runtime.
+    ///
+    /// # First-Session-Wins Semantics
+    ///
+    /// This function snapshots the runtime's `bounder_factory` into arrow-rs's process-wide
+    /// `OnceLock`. Subsequent calls with different runtimes will fail with a `ParquetError`
+    /// (typically swallowed by the caller). This means:
+    ///
+    /// - The first `SedonaContext` created in a process determines the bounders used for
+    ///   writing Parquet geography statistics for the lifetime of that process.
+    /// - Bounders registered via `SedonaRuntime::with_bounder` *after* context creation,
+    ///   or in a second context with a different runtime, will **not** affect Parquet writes.
+    /// - The read path (`GeoParquetFormat`) re-reads live options per plan, so pruning uses
+    ///   fresh bounders while writes use the snapshotted ones.
+    ///
+    /// This asymmetry is forced by arrow-rs's global API and cannot be worked around without
+    /// upstream changes.
     pub fn try_init(runtime: &SedonaRuntime) -> Result<()> {
         let bounder_factory = runtime.bounder_factory().clone();
         init_geo_stats_accumulator_factory(Arc::new(Self { bounder_factory }))?;
