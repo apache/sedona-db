@@ -1,0 +1,86 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: RS_AsGeoTiff
+description: >
+  Encodes a raster as a GeoTIFF and returns the bytes as binary, with optional
+  compression and tiling.
+kernels:
+  - returns: binary
+    args:
+    - raster
+  - returns: binary
+    args:
+    - raster
+    - {name: tile_size, type: integer}
+  - returns: binary
+    args:
+    - raster
+    - {name: compression, type: string}
+    - {name: quality, type: double}
+  - returns: binary
+    args:
+    - raster
+    - {name: compression, type: string}
+    - {name: quality, type: double}
+    - {name: tile_size, type: integer}
+  - returns: binary
+    args:
+    - raster
+    - name: compression
+      type: string
+      description: >
+        GeoTIFF compression codec (case-insensitive): None, PackBits, Deflate,
+        Huffman, LZW, or JPEG. Deflate and LZW additionally enable a horizontal
+        predictor to improve the compression ratio.
+    - name: quality
+      type: double
+      description: Quality factor for lossy JPEG compression; ignored by the other codecs.
+    - name: tile_width
+      type: integer
+      description: >
+        Tile width. When given together with tile_height, the GeoTIFF is written
+        tiled rather than stripped.
+    - name: tile_height
+      type: integer
+      description: Tile height.
+---
+
+## Description
+
+`RS_AsGeoTiff` encodes a raster as a GeoTIFF (via GDAL) and returns the file
+bytes as a binary value — the inverse of reading a GeoTIFF into a raster. The
+result is `NULL` for a `NULL` raster.
+
+The two-argument form `RS_AsGeoTiff(raster, tile_size)` writes a tiled GeoTIFF
+with square `tile_size` blocks. Compression is selected by name; a JPEG quality
+factor and explicit tile dimensions can be supplied via the longer overloads.
+
+## Examples
+
+```sql
+SELECT RS_AsGeoTiff(RS_Example()) IS NOT NULL;
+```
+
+```sql
+SELECT RS_AsGeoTiff(RS_Example(), 'DEFLATE', 6) IS NOT NULL;
+```
+
+```sql
+SELECT RS_AsGeoTiff(RS_Example(), 'LZW', 75, 256, 256) IS NOT NULL;
+```
