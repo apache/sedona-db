@@ -38,15 +38,21 @@ kernels:
       type: geometry
     - name: band
       type: int
-      description: Band index (1-based). Defaults to 1 if not specified.
+      description: >
+        Band index (1-based). When omitted, defaults to band 1, but only for a
+        single-band raster; sampling an unspecified band of a multiband raster
+        is ambiguous and raises an error.
 ---
 
 ## Description
 
 `RS_Values` is the plural form of [`RS_Value`](rs_value.qmd): it samples one
 pixel per point of a MultiPoint and returns the values as a list of doubles, in
-the same order as the input points. The band defaults to 1. A single Point is
-accepted as well and produces a one-element list.
+the same order as the input points. A single Point is accepted as well and
+produces a one-element list.
+
+The band defaults to 1 when omitted, but only for a single-band raster; on a
+multiband raster the band is ambiguous and must be given explicitly.
 
 Each list element is `NULL` when its point falls outside the raster or the
 sampled pixel equals the band's nodata value; the whole result is `NULL` when
@@ -58,6 +64,7 @@ list. Only 2-D rasters are supported.
 ```sql
 SELECT RS_Values(
   RS_Example(),
-  ST_SetCRS(ST_GeomFromText('MULTIPOINT (74.58 110.57, 500 500)'), 'OGC:CRS84')
+  ST_GeomFromText('MULTIPOINT (74.58 110.57, 500 500)', 'OGC:CRS84'),
+  1
 );
 ```

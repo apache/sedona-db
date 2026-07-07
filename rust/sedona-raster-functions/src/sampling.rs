@@ -60,6 +60,22 @@ pub(crate) fn next_band(
     }
 }
 
+/// Resolve the 1-based band to sample when no band argument was given: band 1
+/// for a single-band raster, otherwise an error. Sampling an unspecified band of
+/// a multiband raster is ambiguous, so the caller must name the band rather than
+/// silently getting band 1 (matches `RS_SetBandNoDataValue`'s 2-argument form).
+/// `func` names the calling UDF for the error message.
+pub(crate) fn default_band(func: &str, num_bands: usize) -> Result<usize> {
+    if num_bands == 1 {
+        Ok(1)
+    } else {
+        exec_err!(
+            "{func}: raster has {num_bands} bands; specify which band to sample (the \
+             2-argument form is only allowed for a single-band raster)"
+        )
+    }
+}
+
 /// Reproject `wkb` from its CRS into the raster CRS, returning the transformed
 /// WKB only when a reprojection actually happened (so the caller can sample the
 /// original bytes otherwise — no allocation in the common case).

@@ -108,33 +108,42 @@ def test_rs_ensureloaded(con, sedona_testing):
 # the top-left pixel which is set to the nodata value (127). (74.58, 110.57) is
 # the centroid of pixel (10, 10) (0-based) in the raster's OGC:CRS84 space; the
 # point and raster share a CRS so no reprojection happens. A point far outside
-# the footprint yields NULL. (The `needs_pixels` -> RS_EnsureLoaded planner path
-# is covered against a real OutDb raster by `test_rs_ensureloaded`.)
+# the footprint yields NULL. RS_Example is multiband, so the band is given
+# explicitly. (The `needs_pixels` -> RS_EnsureLoaded planner path is covered
+# against a real OutDb raster by `test_rs_ensureloaded`.)
 @pytest.mark.parametrize(
     ("expr", "expected"),
     [
         (
-            "RS_Value(RS_Example(), ST_SetCRS(ST_Point(74.58, 110.57), 'OGC:CRS84'))",
+            "RS_Value(RS_Example(), ST_Point(74.58, 110.57, 'OGC:CRS84'), 1)",
             1.0,
         ),
         (
-            "RS_Value(RS_Example(), ST_SetCRS(ST_Point(74.58, 110.57), 'OGC:CRS84'), 2)",
+            "RS_Value(RS_Example(), ST_Point(74.58, 110.57, 'OGC:CRS84'), 2)",
             2.0,
         ),
         (
-            "RS_Value(RS_Example(), ST_SetCRS(ST_Point(74.58, 110.57), 'OGC:CRS84'), 3)",
+            "RS_Value(RS_Example(), ST_Point(74.58, 110.57, 'OGC:CRS84'), 3)",
             3.0,
         ),
-        ("RS_Value(RS_Example(), ST_SetCRS(ST_Point(0.0, 0.0), 'OGC:CRS84'))", None),
+        ("RS_Value(RS_Example(), ST_Point(0.0, 0.0, 'OGC:CRS84'), 1)", None),
         # POINT EMPTY has no location to sample -> NULL (not an error).
         (
-            "RS_Value(RS_Example(), ST_SetCRS(ST_GeomFromText('POINT EMPTY'), 'OGC:CRS84'))",
+            "RS_Value(RS_Example(), ST_GeomFromText('POINT EMPTY', 'OGC:CRS84'), 1)",
             None,
         ),
     ],
 )
 def test_rs_value_point(expr, expected):
     SedonaDB().assert_query_result(f"SELECT {expr}", expected)
+
+
+def test_rs_value_default_band_requires_single_band(con):
+    # RS_Example has 3 bands, so omitting the band is ambiguous and errors.
+    with pytest.raises(Exception, match="specify which band"):
+        con.sql(
+            "SELECT RS_Value(RS_Example(), ST_Point(74.58, 110.57, 'OGC:CRS84'))"
+        ).to_arrow_table()
 
 
 def test_rs_value_matches_rasterio(con):
@@ -279,34 +288,42 @@ def test_rs_setbandnodatavalue_two_arg_requires_single_band():
 @pytest.mark.parametrize(
     ("expr", "expected"),
     [
-        # Default band: two in-bounds points + one outside.
+        # Two in-bounds points + one outside, on band 1.
         (
-            "RS_Values(RS_Example(), ST_SetCRS(ST_GeomFromText('MULTIPOINT (74.58 110.57, 74.58 110.57, 0 0)'), 'OGC:CRS84'))",
+            "RS_Values(RS_Example(), ST_GeomFromText('MULTIPOINT (74.58 110.57, 74.58 110.57, 0 0)', 'OGC:CRS84'), 1)",
             [1.0, 1.0, None],
         ),
         # Explicit band selects the plane; nodata corner and outside are NULL.
         (
-            "RS_Values(RS_Example(), ST_SetCRS(ST_GeomFromText('MULTIPOINT (74.58 110.57, 44.58 80.57, 0 0)'), 'OGC:CRS84'), 2)",
+            "RS_Values(RS_Example(), ST_GeomFromText('MULTIPOINT (74.58 110.57, 44.58 80.57, 0 0)', 'OGC:CRS84'), 2)",
             [2.0, None, None],
         ),
         (
-            "RS_Values(RS_Example(), ST_SetCRS(ST_GeomFromText('MULTIPOINT (74.58 110.57)'), 'OGC:CRS84'), 3)",
+            "RS_Values(RS_Example(), ST_GeomFromText('MULTIPOINT (74.58 110.57)', 'OGC:CRS84'), 3)",
             [3.0],
         ),
         # A bare Point is accepted and yields a one-element list.
         (
-            "RS_Values(RS_Example(), ST_SetCRS(ST_Point(74.58, 110.57), 'OGC:CRS84'))",
+            "RS_Values(RS_Example(), ST_Point(74.58, 110.57, 'OGC:CRS84'), 1)",
             [1.0],
         ),
         # An empty MultiPoint is an empty list (not NULL).
         (
-            "RS_Values(RS_Example(), ST_SetCRS(ST_GeomFromText('MULTIPOINT EMPTY'), 'OGC:CRS84'))",
+            "RS_Values(RS_Example(), ST_GeomFromText('MULTIPOINT EMPTY', 'OGC:CRS84'), 1)",
             [],
         ),
     ],
 )
 def test_rs_values_multipoint(expr, expected):
     SedonaDB().assert_query_result(f"SELECT {expr}", [(expected,)])
+
+
+def test_rs_values_default_band_requires_single_band(con):
+    # RS_Example has 3 bands, so omitting the band is ambiguous and errors.
+    with pytest.raises(Exception, match="specify which band"):
+        con.sql(
+            "SELECT RS_Values(RS_Example(), ST_GeomFromText('MULTIPOINT (74.58 110.57)', 'OGC:CRS84'))"
+        ).to_arrow_table()
 
 
 def test_rs_values_matches_rasterio(con):

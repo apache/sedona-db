@@ -52,7 +52,8 @@ use crate::crs_utils::resolve_crs;
 use crate::executor::RasterExecutor;
 use crate::rs_ensure_loaded::NEEDS_PIXELS_METADATA_KEY;
 use crate::sampling::{
-    column_reproject_decision, int32_array_arg, next_band, read_pixel, reproject_wkb, xy_to_pixel,
+    column_reproject_decision, default_band, int32_array_arg, next_band, read_pixel, reproject_wkb,
+    xy_to_pixel,
 };
 
 /// `RS_Value()` scalar UDF — sample a pixel value at a point.
@@ -121,16 +122,30 @@ impl SedonaScalarKernel for RsValuePoint {
         // Reprojecting the point into the raster CRS needs a PROJ engine.
         with_global_proj_engine(|engine| {
             executor.execute_raster_wkb_crs_void(|raster_opt, wkb_opt, point_crs| {
-                let (raster, point_wkb, band_num) =
-                    match (raster_opt, wkb_opt, next_band(&mut band_iter)) {
-                        (Some(raster), Some(point_wkb), Some(band_num)) => {
-                            (raster, point_wkb, band_num)
-                        }
-                        _ => {
+                // Advance the band column every row so it stays in lockstep with
+                // the row index (a no-op when there is no band argument).
+                let band_arg = next_band(&mut band_iter);
+                let (raster, point_wkb) = match (raster_opt, wkb_opt) {
+                    (Some(raster), Some(point_wkb)) => (raster, point_wkb),
+                    _ => {
+                        builder.append_null();
+                        return Ok(());
+                    }
+                };
+                // An explicit band column drives the band (a NULL element yields a
+                // NULL row); with no band argument it defaults to band 1, but only
+                // for a single-band raster.
+                let band_num = if self.with_band {
+                    match band_arg {
+                        Some(band_num) => band_num,
+                        None => {
                             builder.append_null();
                             return Ok(());
                         }
-                    };
+                    }
+                } else {
+                    default_band("RS_Value", raster.num_bands())?
+                };
 
                 // Parse the point and bring it into the raster's CRS. Null/empty
                 // points (and non-finite coordinates) have no location to sample.
@@ -188,9 +203,10 @@ impl RsValuePoint {
         }
         let raster = rasters.get(0)?;
 
-        // Band selection: a missing band argument (default 1) or a scalar band is
-        // constant for the batch and lets us hoist the band buffer; a band column
-        // is resolved per row. A NULL scalar band makes every output NULL.
+        // Band selection: a missing band argument (default band 1, single-band
+        // rasters only) or a scalar band is constant for the batch and lets us
+        // hoist the band buffer; a band column is resolved per row. A NULL scalar
+        // band makes every output NULL.
         let mut const_band: Option<usize> = None;
         let mut band_values: Option<ArrayRef> = None;
         if self.with_band {
@@ -210,7 +226,8 @@ impl RsValuePoint {
                 other => band_values = Some(int32_array_arg(other, n)?),
             }
         } else {
-            const_band = Some(1);
+            // No band argument: default to band 1 only for a single-band raster.
+            const_band = Some(default_band("RS_Value", raster.num_bands())?);
         }
         let band_array = band_values
             .as_ref()
@@ -627,6 +644,53 @@ mod tests {
         assert_eq!(sample("POINT (0.5 9.5)"), Some(1.0)); // pixel (0, 0)
         assert_eq!(sample("POINT (1.5 8.5)"), Some(4.0)); // pixel (1, 1)
         assert_eq!(sample("POINT (100 100)"), None); // outside the footprint
+    }
+
+    /// A two-band raster used to exercise the default-band ambiguity error.
+    fn two_band_raster() -> StructArray {
+        RasterSpec::d2(2, 2)
+            .band_values(&[1u8, 2, 3, 4])
+            .band_values(&[10u8, 20, 30, 40])
+            .transform([0.0, 1.0, 0.0, 10.0, 0.0, -1.0])
+            .build()
+    }
+
+    #[test]
+    fn default_band_requires_single_band_raster_array_path() {
+        // No band argument + multiband raster is ambiguous -> error (general,
+        // array-raster path) rather than silently sampling band 1.
+        let udf: ScalarUDF = rs_value_udf().into();
+        let geom_type = SedonaType::Wkb(Edges::Planar, lnglat());
+        let tester = ScalarUdfTester::new(udf, vec![RASTER, geom_type.clone()]);
+        let geoms = create_geom_array(&[Some("POINT (0.5 9.5)")], &geom_type);
+        let err = tester
+            .invoke_arrays(vec![Arc::new(two_band_raster()), geoms])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("specify which band"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn default_band_requires_single_band_raster_scalar_path() {
+        // Same ambiguity on the scalar-raster fast path.
+        let udf: ScalarUDF = rs_value_udf().into();
+        let geom_type = SedonaType::Wkb(Edges::Planar, lnglat());
+        let tester = ScalarUdfTester::new(udf, vec![RASTER, geom_type.clone()]);
+        let geoms = create_geom_array(&[Some("POINT (0.5 9.5)")], &geom_type);
+        let err = tester
+            .invoke(vec![
+                ColumnarValue::Scalar(ScalarValue::Struct(Arc::new(two_band_raster()))),
+                ColumnarValue::Array(geoms),
+            ])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("specify which band"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

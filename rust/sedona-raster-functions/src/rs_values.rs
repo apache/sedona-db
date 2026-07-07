@@ -18,7 +18,7 @@
 //! `RS_Values` — sample a raster's pixel value at each point of a MultiPoint.
 //!
 //! ```text
-//! RS_Values(raster, points)        -> List<Double>  -- band defaults to 1
+//! RS_Values(raster, points)        -> List<Double>  -- single-band rasters only
 //! RS_Values(raster, points, band)  -> List<Double>
 //! ```
 //!
@@ -55,7 +55,9 @@ use wkb::reader::read_wkb;
 use crate::crs_utils::resolve_crs;
 use crate::executor::RasterExecutor;
 use crate::rs_ensure_loaded::NEEDS_PIXELS_METADATA_KEY;
-use crate::sampling::{int32_array_arg, next_band, read_pixel, reproject_wkb, xy_to_pixel};
+use crate::sampling::{
+    default_band, int32_array_arg, next_band, read_pixel, reproject_wkb, xy_to_pixel,
+};
 
 /// The `List<Float64>` output type, matching what a default
 /// `ListBuilder<Float64Builder>` produces (field "item", nullable).
@@ -120,17 +122,34 @@ impl SedonaScalarKernel for RsValues {
         // Reprojecting the points into the raster CRS needs a PROJ engine.
         with_global_proj_engine(|engine| {
             executor.execute_raster_wkb_crs_void(|raster_opt, wkb_opt, geom_crs| {
-                let (raster, geom_wkb, band_num) =
-                    match (raster_opt, wkb_opt, next_band(&mut band_iter)) {
-                        (Some(raster), Some(geom_wkb), Some(band_num)) => {
-                            (raster, geom_wkb, band_num)
-                        }
-                        // A NULL raster, geometry, or band yields a NULL row.
-                        _ => {
+                // Advance the band column every row so it stays in lockstep with
+                // the row index (a no-op when there is no band argument).
+                let band_arg = next_band(&mut band_iter);
+                let (raster, geom_wkb) = match (raster_opt, wkb_opt) {
+                    (Some(raster), Some(geom_wkb)) => (raster, geom_wkb),
+                    // A NULL raster or geometry yields a NULL row.
+                    _ => {
+                        list_builder.append_null();
+                        return Ok(());
+                    }
+                };
+
+                // Resolve the band to sample. An explicit band column drives it
+                // (a NULL element yields a NULL row); with no band argument it
+                // defaults to band 1, but only for a single-band raster — sampling
+                // an unspecified band of a multiband raster is ambiguous, so it
+                // errors rather than silently picking band 1.
+                let band_num = if self.with_band {
+                    match band_arg {
+                        Some(band_num) => band_num,
+                        None => {
                             list_builder.append_null();
                             return Ok(());
                         }
-                    };
+                    }
+                } else {
+                    default_band("RS_Values", raster.num_bands())?
+                };
 
                 // Resolve the band buffer, nodata, and affine transform once for
                 // this row, then sample every sub-point against them.
@@ -405,6 +424,29 @@ mod tests {
             .invoke_arrays(vec![Arc::new(raster), geoms, bands])
             .unwrap();
         assert_eq!(row(&result, 0), vec![Some(10.0)]);
+    }
+
+    #[test]
+    fn default_band_requires_single_band_raster() {
+        // With no band argument, a multiband raster is ambiguous and errors
+        // rather than silently sampling band 1 (matches RS_SetBandNoDataValue).
+        let udf: ScalarUDF = rs_values_udf().into();
+        let geom_type = SedonaType::Wkb(Edges::Planar, lnglat());
+        let tester = ScalarUdfTester::new(udf, vec![RASTER, geom_type.clone()]);
+        let raster = RasterSpec::d2(2, 2)
+            .band_values(&[1u8, 2, 3, 4])
+            .band_values(&[10u8, 20, 30, 40])
+            .transform([0.0, 1.0, 0.0, 10.0, 0.0, -1.0])
+            .build();
+        let geoms = create_geom_array(&[Some("MULTIPOINT (0.5 9.5)")], &geom_type);
+        let err = tester
+            .invoke_arrays(vec![Arc::new(raster), geoms])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("specify which band"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
