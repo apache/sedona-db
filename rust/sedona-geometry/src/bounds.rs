@@ -53,6 +53,17 @@ impl PartialEq for WkbBounder2DFactory {
     }
 }
 
+impl std::fmt::Display for WkbBounder2DFactory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "WkbBounder2DFactory {{ planar: {}, spherical: {} }}",
+            self.planar_bounder.is_some(),
+            self.spherical_bounder.is_some()
+        )
+    }
+}
+
 impl WkbBounder2DFactory {
     /// Replace the runtime [WkbBounder2D] reference for a specific [Edges]
     pub fn with_bounder(&self, edges: Edges, bounder: Arc<dyn WkbBounder2D>) -> Self {

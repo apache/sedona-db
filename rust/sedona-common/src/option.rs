@@ -483,9 +483,15 @@ impl PartialEq for SedonaRuntime {
     }
 }
 
+impl std::fmt::Display for SedonaRuntime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SedonaRuntime {{ bounder_factory: {} }}", self.bounder_factory)
+    }
+}
+
 impl ConfigField for SedonaRuntime {
     fn visit<V: Visit>(&self, v: &mut V, key: &str, description: &'static str) {
-        v.some(key, format!("{:?}", self), description);
+        v.some(key, self.to_string(), description);
     }
 
     fn set(&mut self, key: &str, _value: &str) -> Result<()> {
