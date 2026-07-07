@@ -80,6 +80,11 @@ impl WkbBounder2DFactory {
     }
 
     /// Get a bounder for a specific edge type
+    ///
+    /// Note the asymmetry: for `Edges::Planar`, this returns a default
+    /// `WkbGeometryBounder` if no custom bounder is registered. For
+    /// `Edges::Spherical`, this returns `None` if no bounder is registered,
+    /// since spherical bounding requires external dependencies (e.g., s2geography).
     pub fn bounder_for_edge_type(&self, edges: Edges) -> Option<Box<dyn WkbBounder2D>> {
         match edges {
             Edges::Planar => self

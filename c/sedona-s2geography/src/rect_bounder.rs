@@ -214,7 +214,9 @@ impl Drop for RectBounder {
 unsafe impl Send for RectBounder {}
 
 // Safety: RectBounder owns its C++ object exclusively and doesn't share state
-// with other instances (mut methods ensure unique ownership)
+// with other instances. When used as a shared prototype in SedonaOptions
+// (via Arc<WkbGeographyBounder>), only `create_instance()` is called on the
+// shared reference, which is safe because it creates a new independent instance.
 unsafe impl Sync for RectBounder {}
 
 #[cfg(test)]
