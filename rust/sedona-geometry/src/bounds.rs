@@ -35,6 +35,24 @@ pub struct WkbBounder2DFactory {
     spherical_bounder: Option<Arc<dyn WkbBounder2D>>,
 }
 
+// This is needed because the ConfigOption needs this to be implemented;
+// however, the exact equality of these objects isn't typically important
+impl PartialEq for WkbBounder2DFactory {
+    fn eq(&self, other: &Self) -> bool {
+        let planar_eq = match (&self.planar_bounder, &other.planar_bounder) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        };
+        let spherical_eq = match (&self.spherical_bounder, &other.spherical_bounder) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        };
+        planar_eq && spherical_eq
+    }
+}
+
 impl WkbBounder2DFactory {
     /// Replace the runtime [WkbBounder2D] reference for a specific [Edges]
     pub fn with_bounder(&self, edges: Edges, bounder: Arc<dyn WkbBounder2D>) -> Self {

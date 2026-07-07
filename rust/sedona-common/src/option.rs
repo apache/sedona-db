@@ -479,6 +479,7 @@ impl Default for SedonaRuntime {
 impl PartialEq for SedonaRuntime {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.crs_engine, &other.crs_engine)
+            && self.bounder_factory == other.bounder_factory
     }
 }
 
