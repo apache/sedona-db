@@ -438,7 +438,10 @@ impl SpatialFilterFactory {
         }
     }
 
-    fn literal_bounds(&self, literal: &Literal, distance: Option<f64>) -> Result<BoundingBox> {
+    /// Compute bounding box for a literal geometry/geography value
+    ///
+    /// Optionally expand the bounds by a given distance (in meters for geography).
+    pub fn literal_bounds(&self, literal: &Literal, distance: Option<f64>) -> Result<BoundingBox> {
         let literal_field = literal.return_field(&Schema::empty())?;
         let sedona_type = SedonaType::from_storage_field(&literal_field)?;
 

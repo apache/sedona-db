@@ -1213,4 +1213,105 @@ mod tests {
             .expect("SedonaOptions not found");
         assert_eq!(opts.spatial_join.spilled_batch_in_memory_size_threshold, 0);
     }
+
+    /// Test geography literal bounding via the WkbBounder2DFactory → SpatialFilterFactory path.
+    ///
+    /// This covers antimeridian wraparound, distance expansion (~100km), and NULL handling.
+    #[cfg(feature = "s2geography")]
+    #[tokio::test]
+    async fn test_geography_literal_bounder() {
+        use datafusion::physical_expr::expressions::Literal as PhysicalLiteral;
+        use sedona_common::option::SedonaOptions;
+        use sedona_expr::spatial_filter::SpatialFilterFactory;
+        use sedona_geometry::interval::IntervalTrait;
+        use sedona_schema::datatypes::{WKB_GEOGRAPHY, WKB_VIEW_GEOGRAPHY};
+        use sedona_testing::create::create_scalar;
+
+        let ctx = SedonaContext::new_local_interactive().await.unwrap();
+
+        // Derive the factory from the context's SedonaOptions (which has the geography
+        // bounder registered during context creation when s2geography feature is enabled)
+        let state = ctx.ctx.state();
+        let sedona_options = state
+            .config_options()
+            .extensions
+            .get::<SedonaOptions>()
+            .expect("SedonaOptions should be registered");
+        let factory = SpatialFilterFactory::default()
+            .with_bounder_factory(sedona_options.runtime.bounder_factory().clone());
+
+        for sedona_type in [WKB_GEOGRAPHY, WKB_VIEW_GEOGRAPHY] {
+            let storage_field = sedona_type.to_storage_field("", true).unwrap();
+
+            // Test antimeridian wraparound bounds
+            let scalar = create_scalar(Some("MULTIPOINT ((-179 42), (179 43))"), &sedona_type);
+            let literal =
+                PhysicalLiteral::new_with_metadata(scalar, Some(storage_field.metadata().into()));
+            let raw_bounds = factory.literal_bounds(&literal, None).unwrap();
+
+            // Should produce a wraparound interval crossing the antimeridian
+            assert!(
+                raw_bounds.x().is_wraparound(),
+                "Expected wraparound x interval for antimeridian-crossing input"
+            );
+            // Check x bounds are reasonable (near ±179)
+            assert!(
+                raw_bounds.x().lo() > 178.99999 && raw_bounds.x().lo() <= 179.0,
+                "x.lo() {} should be near 179",
+                raw_bounds.x().lo()
+            );
+            assert!(
+                raw_bounds.x().hi() >= -179.0 && raw_bounds.x().hi() < -178.99999,
+                "x.hi() {} should be near -179",
+                raw_bounds.x().hi()
+            );
+            // Check y bounds
+            assert!(
+                raw_bounds.y().lo() > 41.0 && raw_bounds.y().lo() <= 42.0,
+                "y.lo() {} should be near 42",
+                raw_bounds.y().lo()
+            );
+            assert!(
+                raw_bounds.y().hi() >= 43.0 && raw_bounds.y().hi() < 44.0,
+                "y.hi() {} should be near 43",
+                raw_bounds.y().hi()
+            );
+
+            // Test distance expansion (~100km ≈ 0.9 degrees)
+            let expanded_bounds = factory.literal_bounds(&literal, Some(100_000.0)).unwrap();
+            assert!(
+                expanded_bounds.x().is_wraparound(),
+                "Expanded bounds should still be wraparound"
+            );
+            // Expanded bounds should be larger than raw bounds
+            assert!(
+                raw_bounds.x().lo() - expanded_bounds.x().lo() > 0.5,
+                "Expanded x.lo() should be > 0.5 degrees larger"
+            );
+            assert!(
+                expanded_bounds.x().hi() - raw_bounds.x().hi() > 0.5,
+                "Expanded x.hi() should be > 0.5 degrees larger"
+            );
+            assert!(
+                raw_bounds.y().lo() - expanded_bounds.y().lo() > 0.5,
+                "Expanded y.lo() should be > 0.5 degrees larger"
+            );
+            assert!(
+                expanded_bounds.y().hi() - raw_bounds.y().hi() > 0.5,
+                "Expanded y.hi() should be > 0.5 degrees larger"
+            );
+
+            // Test NULL literal → empty bounds
+            let null_scalar = create_scalar(None, &sedona_type);
+            let null_literal = PhysicalLiteral::new_with_metadata(
+                null_scalar,
+                Some(storage_field.metadata().into()),
+            );
+            let null_bounds = factory.literal_bounds(&null_literal, None).unwrap();
+            assert!(
+                null_bounds.is_empty(),
+                "NULL literal should produce empty bounds"
+            );
+        }
+    }
 }
