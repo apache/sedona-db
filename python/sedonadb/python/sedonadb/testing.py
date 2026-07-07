@@ -213,6 +213,11 @@ class DBEngine:
         This option strips away fine-grained type information but is helpful for
         generally asserting a query result or verifying results between engines
         that have (e.g.) differing integer handling.
+
+        Geometry columns are rendered as WKT strings. List columns (e.g. the
+        `List<Double>` returned by `RS_Values`) can't be cast to string, so they
+        pass through as Python lists and are compared by value — assert them with
+        an expected cell that is itself a list, e.g. ``[([1.0, None],)]``.
         """
         tab = self.result_to_table(result)
         columns = []
@@ -220,6 +225,8 @@ class DBEngine:
             # isinstance() does not always work with pyarrow in pytest
             if _type_is_geoarrow(col.type):
                 columns.append(ga.format_wkt(col, precision=wkt_precision).to_pylist())
+            elif pa.types.is_list(col.type) or pa.types.is_large_list(col.type):
+                columns.append(col.to_pylist())
             else:
                 columns.append(col.cast(pa.string()).to_pylist())
 

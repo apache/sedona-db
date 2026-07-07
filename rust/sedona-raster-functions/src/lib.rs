@@ -41,4 +41,6 @@ pub mod rs_slice;
 pub mod rs_spatial_predicates;
 pub mod rs_srid;
 pub mod rs_value;
+pub mod rs_values;
 pub mod rs_worldcoordinate;
+mod sampling;

@@ -44,13 +44,16 @@ use sedona_geometry::wkb_header::read_point_xy;
 use sedona_proj::transform::with_global_proj_engine;
 use sedona_raster::affine_transformation::AffineMatrix;
 use sedona_raster::array::RasterStructArray;
-use sedona_raster::traits::{nodata_bytes_to_f64_lossless, NdBuffer, RasterRef};
+use sedona_raster::traits::RasterRef;
 use sedona_schema::crs::CrsRef;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
-use crate::crs_utils::{crs_transform_wkb, resolve_crs};
+use crate::crs_utils::resolve_crs;
 use crate::executor::RasterExecutor;
 use crate::rs_ensure_loaded::NEEDS_PIXELS_METADATA_KEY;
+use crate::sampling::{
+    column_reproject_decision, int32_array_arg, next_band, read_pixel, reproject_wkb, xy_to_pixel,
+};
 
 /// `RS_Value()` scalar UDF — sample a pixel value at a point.
 pub fn rs_value_udf() -> SedonaScalarUDF {
@@ -301,101 +304,11 @@ impl RsValuePoint {
     }
 }
 
-/// Materialise an integer argument as an owned `Int32` [`ArrayRef`] for the
-/// batch. Callers keep the returned `ArrayRef` alive and borrow a typed
-/// `&Int32Array` view from it (via `as_int32_array`) rather than cloning the
-/// typed array.
-fn int32_array_arg(arg: &ColumnarValue, num_iterations: usize) -> Result<ArrayRef> {
-    arg.clone()
-        .cast_to(&DataType::Int32, None)?
-        .into_array(num_iterations)
-}
-
-/// Advance the optional band-number iterator one row, yielding the 1-based band
-/// to sample. A missing band argument defaults to band 1; a NULL band element
-/// returns `None`, which the caller propagates to a NULL result. Band 0 and
-/// negative values map to 0 so [`Bands::band`](sedona_raster::traits::Bands::band)
-/// rejects them as not 1-based rather than being silently coerced.
-fn next_band(
-    band_iter: &mut Option<arrow_array::iterator::ArrayIter<&arrow_array::Int32Array>>,
-) -> Option<usize> {
-    match band_iter.as_mut() {
-        None => Some(1),
-        Some(iter) => iter.next().flatten().map(|b| b.max(0) as usize),
-    }
-}
-
-/// Reproject `point_wkb` from its CRS into the raster CRS, returning the
-/// transformed WKB only when a reprojection actually happened (so the caller
-/// can sample the original bytes otherwise — no allocation in the common case).
-///
-/// Errors if exactly one of the point / raster carries a CRS: sampling across a
-/// known and an unknown CRS would silently mislocate the point.
-///
-/// Unlike the spatial predicates (`RS_Intersects` et al.), which fall back to a
-/// WGS84 pivot when a direct transform between two CRSes fails, a failed
-/// transform here is propagated as an error. Sampling has to land the point in
-/// the raster's own CRS — that is the only space its affine/pixel grid is
-/// defined in — so there is no neutral CRS to fall back to: a WGS84 pivot would
-/// silently sample the wrong pixel rather than compare geometries in a shared
-/// space.
-fn reproject_point(
-    point_wkb: &[u8],
-    point_crs: CrsRef<'_>,
-    raster_crs: CrsRef<'_>,
-    engine: &dyn sedona_geometry::transform::CrsEngine,
-) -> Result<Option<Vec<u8>>> {
-    match (point_crs, raster_crs) {
-        (Some(point_crs), Some(raster_crs)) => {
-            if point_crs.crs_equals(raster_crs) {
-                Ok(None)
-            } else {
-                Ok(Some(crs_transform_wkb(
-                    point_wkb, point_crs, raster_crs, engine,
-                )?))
-            }
-        }
-        (None, None) => Ok(None),
-        (Some(_), None) => {
-            exec_err!("RS_Value: point has a CRS but the raster does not")
-        }
-        (None, Some(_)) => {
-            exec_err!("RS_Value: raster has a CRS but the point does not")
-        }
-    }
-}
-
-/// For a **column-level** point CRS, decide once whether sampling needs a
-/// reprojection into the raster CRS:
-/// - `Some(true)`  — CRSes differ, reproject each point;
-/// - `Some(false)` — CRSes match (or both absent), sample original coordinates;
-/// - `None`        — the point CRS is carried per row, so decide per point.
-///
-/// Errors when exactly one side carries a CRS. Hoisting this out of the per-point
-/// loop avoids a per-point `crs_equals`, whose `to_authority_code()` allocates a
-/// `String` every call (~15 ns/point, uniform across CRS types).
-fn column_reproject_decision(
-    point_type: &SedonaType,
-    raster_crs: CrsRef<'_>,
-) -> Result<Option<bool>> {
-    let point_crs = match point_type {
-        SedonaType::Wkb(_, c) | SedonaType::WkbView(_, c) => c.as_deref(),
-        // A per-item CRS varies by row; the caller decides per point.
-        _ => return Ok(None),
-    };
-    match (point_crs, raster_crs) {
-        (Some(p), Some(r)) => Ok(Some(!p.crs_equals(r))),
-        (None, None) => Ok(Some(false)),
-        (Some(_), None) => exec_err!("RS_Value: point has a CRS but the raster does not"),
-        (None, Some(_)) => exec_err!("RS_Value: raster has a CRS but the point does not"),
-    }
-}
-
 /// Parse a Point WKB and return its `(x, y)` in the raster's CRS, or `None` when
 /// there is nothing to sample (the point is empty — both ordinates NaN).
 ///
 /// `skip_reproject` is the hoisted column-level decision: when `true` the
-/// original coordinates are returned without consulting [`reproject_point`] (and
+/// original coordinates are returned without consulting [`reproject_wkb`] (and
 /// its per-point `crs_equals`); when `false` reprojection is decided per point.
 fn resolve_point_xy(
     point_wkb: &[u8],
@@ -414,7 +327,7 @@ fn resolve_point_xy(
     }
     // A reprojection only happens when both sides carry a (differing) CRS;
     // otherwise the original coordinates are sampled directly.
-    match reproject_point(point_wkb, point_crs, raster_crs, engine)? {
+    match reproject_wkb(point_wkb, point_crs, raster_crs, engine)? {
         Some(reprojected) => {
             let xy = read_point_xy(&reprojected)
                 .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?
@@ -423,28 +336,6 @@ fn resolve_point_xy(
         }
         None => Ok(Some((px, py))),
     }
-}
-
-/// Map a coordinate in the raster's CRS to a 0-based `(col, row)` pixel index,
-/// or `None` when the point has no location to sample.
-///
-/// A non-finite coordinate (a Point with a NaN/Inf ordinate, e.g. `POINT(NaN 5)`)
-/// returns `None`: without this guard a NaN would survive `inv_transform` and the
-/// saturating `f64 -> i64` cast would turn it into 0 (in bounds), silently
-/// sampling pixel column 0 rather than yielding NULL.
-fn xy_to_pixel(affine: &AffineMatrix, x: f64, y: f64) -> Result<Option<(i64, i64)>> {
-    if !x.is_finite() || !y.is_finite() {
-        return Ok(None);
-    }
-    let (raster_x, raster_y) = affine
-        .inv_transform(x, y)
-        .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
-    // Floor (not truncate toward zero) so a point just outside the top/left edge
-    // maps to a negative index and is rejected as out of bounds, rather than
-    // truncating to 0 and sampling an edge pixel. The `f64 -> i64` cast saturates
-    // (never panics); the bounds check in `read_pixel`/`sample_pixel` rejects an
-    // out-of-range index as NULL.
-    Ok(Some((raster_x.floor() as i64, raster_y.floor() as i64)))
 }
 
 /// Sample band `band_num` (1-based) at 0-based pixel `(col, row)` as `f64`.
@@ -477,54 +368,6 @@ fn sample_pixel(
         .nodata_as_f64()
         .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
     read_pixel(&buffer, nodata, col, row)
-}
-
-/// Read pixel `(col, row)` from an already-resolved band buffer and nodata
-/// value. Returns `None` for an out-of-bounds pixel or one that equals nodata.
-/// Hoisting the band resolution out of this function lets callers sample many
-/// points from one buffer without re-resolving per point.
-fn read_pixel(buffer: &NdBuffer, nodata: Option<f64>, col: i64, row: i64) -> Result<Option<f64>> {
-    let (height, width) = (buffer.shape[0], buffer.shape[1]);
-    if row < 0 || row >= height || col < 0 || col >= width {
-        return Ok(None);
-    }
-
-    // Byte offset of the (row, col) pixel via the band's own strides, so the
-    // read stays correct for any layout the producer hands us. Checked
-    // arithmetic throughout: `row`/`col` are already in bounds, but a corrupt
-    // stride or offset must surface as an error, never an i64 overflow panic.
-    let size = buffer.data_type.byte_size() as i64;
-    let byte_offset = row
-        .checked_mul(buffer.strides[0])
-        .zip(col.checked_mul(buffer.strides[1]))
-        .and_then(|(r, c)| r.checked_add(c))
-        .and_then(|rc| rc.checked_add(buffer.offset as i64))
-        .ok_or_else(|| exec_datafusion_err!("RS_Value: pixel byte offset overflow"))?;
-    let end_offset = byte_offset
-        .checked_add(size)
-        .ok_or_else(|| exec_datafusion_err!("RS_Value: pixel byte offset overflow"))?;
-    let start = usize::try_from(byte_offset)
-        .map_err(|_| exec_datafusion_err!("RS_Value: negative pixel byte offset"))?;
-    let end = usize::try_from(end_offset)
-        .map_err(|_| exec_datafusion_err!("RS_Value: pixel byte offset overflow"))?;
-    let bytes = buffer.buffer.get(start..end).ok_or_else(|| {
-        exec_datafusion_err!("RS_Value: pixel is out of the band's buffer bounds")
-    })?;
-
-    // Decode the pixel to f64. The lossless converter errors (rather than
-    // silently rounding) on Int64/UInt64 values beyond f64's exact-integer
-    // range (2^53) — RS_Value returns a Double, so such a pixel can't be
-    // represented faithfully; failing loudly is preferred over a wrong value.
-    let value = nodata_bytes_to_f64_lossless(bytes, &buffer.data_type)
-        .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
-
-    if let Some(nodata) = nodata {
-        if value == nodata || (value.is_nan() && nodata.is_nan()) {
-            return Ok(None);
-        }
-    }
-
-    Ok(Some(value))
 }
 
 #[cfg(test)]

@@ -268,3 +268,123 @@ def test_rs_setbandnodatavalue_two_arg_requires_single_band():
         SedonaDB().assert_query_result(
             "SELECT RS_SetBandNoDataValue(RS_Example(), 0)", None
         )
+
+
+# RS_Values samples one pixel per sub-point and returns a List<Double> in input
+# order. Same raster facts as `test_rs_value_point`: band `b` is filled with `b`,
+# (74.58, 110.57) is the centroid of pixel (10, 10), and (44.58, 80.57) is the
+# centroid of the top-left pixel (0, 0), which is set to nodata. A point far
+# outside the footprint yields a NULL element; the whole result is never NULL
+# here because the geometry is non-null.
+@pytest.mark.parametrize(
+    ("expr", "expected"),
+    [
+        # Default band: two in-bounds points + one outside.
+        (
+            "RS_Values(RS_Example(), ST_SetCRS(ST_GeomFromText('MULTIPOINT (74.58 110.57, 74.58 110.57, 0 0)'), 'OGC:CRS84'))",
+            [1.0, 1.0, None],
+        ),
+        # Explicit band selects the plane; nodata corner and outside are NULL.
+        (
+            "RS_Values(RS_Example(), ST_SetCRS(ST_GeomFromText('MULTIPOINT (74.58 110.57, 44.58 80.57, 0 0)'), 'OGC:CRS84'), 2)",
+            [2.0, None, None],
+        ),
+        (
+            "RS_Values(RS_Example(), ST_SetCRS(ST_GeomFromText('MULTIPOINT (74.58 110.57)'), 'OGC:CRS84'), 3)",
+            [3.0],
+        ),
+        # A bare Point is accepted and yields a one-element list.
+        (
+            "RS_Values(RS_Example(), ST_SetCRS(ST_Point(74.58, 110.57), 'OGC:CRS84'))",
+            [1.0],
+        ),
+        # An empty MultiPoint is an empty list (not NULL).
+        (
+            "RS_Values(RS_Example(), ST_SetCRS(ST_GeomFromText('MULTIPOINT EMPTY'), 'OGC:CRS84'))",
+            [],
+        ),
+    ],
+)
+def test_rs_values_multipoint(expr, expected):
+    SedonaDB().assert_query_result(f"SELECT {expr}", [(expected,)])
+
+
+def test_rs_values_matches_rasterio(con):
+    """Cross-check RS_Values against rasterio on a random raster.
+
+    The plural counterpart of `test_rs_value_matches_rasterio`: the same dense
+    set of sample points is passed as a single MultiPoint, so one `RS_Values`
+    call returns a list that must match rasterio's per-point reads element for
+    element, in order.
+    """
+    import numpy as np
+
+    pytest.importorskip("rasterio")
+    from rasterio.io import MemoryFile
+    from rasterio.transform import Affine
+
+    from sedonadb.raster import Raster
+
+    rng = np.random.default_rng(42)
+    height, width = 7, 5
+    data = rng.random((height, width)) * 1000.0
+
+    # GDAL-order geotransform: origin (100, 500), 2-wide pixels, -3 tall
+    # (north-up), no skew. Shared verbatim by both engines.
+    gdal_transform = (100.0, 2.0, 0.0, 500.0, 0.0, -3.0)
+    affine = Affine.from_gdal(*gdal_transform)
+
+    # Sample points in pixel space (col_frac, row_frac): every pixel center plus
+    # four off-center positions (kept inside the pixel to avoid floor ambiguity),
+    # then a batch of random interior points.
+    pixel_points = []
+    for row in range(height):
+        for col in range(width):
+            for du, dv in [
+                (0.5, 0.5),
+                (0.25, 0.25),
+                (0.75, 0.75),
+                (0.25, 0.75),
+                (0.75, 0.25),
+            ]:
+                pixel_points.append((col + du, row + dv))
+    n_random = 150
+    rand_cols = rng.integers(0, width, n_random)
+    rand_rows = rng.integers(0, height, n_random)
+    pixel_points.extend(
+        zip(
+            rand_cols + rng.uniform(0.1, 0.9, n_random),
+            rand_rows + rng.uniform(0.1, 0.9, n_random),
+        )
+    )
+
+    # Map pixel-space positions to world coordinates via the shared affine.
+    xs, ys = zip(*(affine * (u, v) for u, v in pixel_points))
+
+    # rasterio reference: a real GDAL read of the same array (no CRS).
+    with MemoryFile() as mem:
+        with mem.open(
+            driver="GTiff",
+            height=height,
+            width=width,
+            count=1,
+            dtype="float64",
+            transform=affine,
+        ) as dst:
+            dst.write(data, 1)
+        with mem.open() as src:
+            expected = [vals[0] for vals in src.sample(list(zip(xs, ys)))]
+
+    # sedonadb: sample every point in one MultiPoint via a single RS_Values call.
+    raster = Raster.from_numpy(data, transform=gdal_transform)
+    wkt = "MULTIPOINT (" + ", ".join(f"{x} {y}" for x, y in zip(xs, ys)) + ")"
+    got = (
+        con.sql(
+            "SELECT RS_Values($1, ST_GeomFromText($2)) AS v",
+            params=(raster, wkt),
+        )
+        .to_arrow_table()["v"]
+        .to_pylist()[0]
+    )
+
+    assert got == pytest.approx(expected)
