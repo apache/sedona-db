@@ -46,10 +46,9 @@ impl CrsEngine for LazyProjEngine {
         options: &str,
     ) -> Result<Rc<dyn CrsTransform>, SedonaGeometryError> {
         with_global_proj_engine(|e| {
-            e.get_transform_crs_to_crs(from, to, area_of_interest.clone(), options)
-                .map_err(|e| DataFusionError::External(Box::new(e)))
+            Ok(e.get_transform_crs_to_crs(from, to, area_of_interest.clone(), options))
         })
-        .map_err(|e| SedonaGeometryError::External(Box::new(e)))
+        .map_err(|e| SedonaGeometryError::External(Box::new(e)))?
     }
 
     fn get_transform_pipeline(
@@ -57,19 +56,13 @@ impl CrsEngine for LazyProjEngine {
         pipeline: &str,
         options: &str,
     ) -> Result<Rc<dyn CrsTransform>, SedonaGeometryError> {
-        with_global_proj_engine(|e| {
-            e.get_transform_pipeline(pipeline, options)
-                .map_err(|e| DataFusionError::External(Box::new(e)))
-        })
-        .map_err(|e| SedonaGeometryError::External(Box::new(e)))
+        with_global_proj_engine(|e| Ok(e.get_transform_pipeline(pipeline, options)))
+            .map_err(|e| SedonaGeometryError::External(Box::new(e)))?
     }
 
     fn to_projjson(&self, crs_string: &str) -> Result<String, SedonaGeometryError> {
-        with_global_proj_engine(|e| {
-            e.to_projjson(crs_string)
-                .map_err(|e| DataFusionError::External(Box::new(e)))
-        })
-        .map_err(|e| SedonaGeometryError::External(Box::new(e)))
+        with_global_proj_engine(|e| Ok(e.to_projjson(crs_string)))
+            .map_err(|e| SedonaGeometryError::External(Box::new(e)))?
     }
 }
 
