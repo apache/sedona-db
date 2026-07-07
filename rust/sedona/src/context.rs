@@ -1314,4 +1314,56 @@ mod tests {
             );
         }
     }
+
+    /// Test that LazyProjEngine is properly wired up through the global PROJ engine.
+    ///
+    /// This covers the three CrsEngine methods: to_projjson, get_transform_crs_to_crs,
+    /// and get_transform_pipeline.
+    #[cfg(feature = "proj")]
+    #[tokio::test]
+    async fn test_lazy_proj_engine() {
+        use sedona_common::option::SedonaOptions;
+
+        let ctx = SedonaContext::new_local_interactive().await.unwrap();
+
+        // Derive the CrsEngine from the context's SedonaOptions
+        let state = ctx.ctx.state();
+        let sedona_options = state
+            .config_options()
+            .extensions
+            .get::<SedonaOptions>()
+            .expect("SedonaOptions should be registered");
+        let engine = sedona_options.runtime.crs_engine();
+
+        // Test to_projjson: convert EPSG:4326 to PROJJSON
+        let projjson = engine.to_projjson("EPSG:4326").unwrap();
+        assert!(
+            projjson.contains("WGS 84") || projjson.contains("\"id\""),
+            "PROJJSON should contain WGS 84 or id field: {}",
+            projjson
+        );
+
+        // Test get_transform_crs_to_crs: WGS84 to Web Mercator
+        let transform = engine
+            .get_transform_crs_to_crs("EPSG:4326", "EPSG:3857", None, "")
+            .unwrap();
+        let mut coord = (0.0, 0.0); // (lng, lat) = (0, 0)
+        transform.transform_coord(&mut coord).unwrap();
+        // (0, 0) in WGS84 should transform to (0, 0) in Web Mercator
+        assert!(
+            coord.0.abs() < 1.0 && coord.1.abs() < 1.0,
+            "Origin should map to near-origin in Web Mercator: {:?}",
+            coord
+        );
+
+        // Test get_transform_pipeline: a simple pipeline that does nothing
+        let pipeline_transform = engine.get_transform_pipeline("+proj=noop", "").unwrap();
+        let mut coord2 = (10.0, 20.0);
+        pipeline_transform.transform_coord(&mut coord2).unwrap();
+        assert!(
+            (coord2.0 - 10.0).abs() < 1e-10 && (coord2.1 - 20.0).abs() < 1e-10,
+            "noop pipeline should preserve coordinates: {:?}",
+            coord2
+        );
+    }
 }

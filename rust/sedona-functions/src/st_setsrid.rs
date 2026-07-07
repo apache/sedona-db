@@ -1041,10 +1041,7 @@ mod test {
             Err(SedonaGeometryError::Unknown)
         }
 
-        fn to_projjson(
-            &self,
-            _crs_string: &str,
-        ) -> Result<String, SedonaGeometryError> {
+        fn to_projjson(&self, _crs_string: &str) -> Result<String, SedonaGeometryError> {
             Err(SedonaGeometryError::Invalid(
                 "don't even think about it".to_string(),
             ))

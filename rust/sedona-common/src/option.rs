@@ -487,7 +487,11 @@ impl PartialEq for SedonaRuntime {
 
 impl std::fmt::Display for SedonaRuntime {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "SedonaRuntime {{ bounder_factory: {} }}", self.bounder_factory)
+        write!(
+            f,
+            "SedonaRuntime {{ bounder_factory: {} }}",
+            self.bounder_factory
+        )
     }
 }
 
