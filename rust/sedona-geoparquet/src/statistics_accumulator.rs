@@ -189,10 +189,10 @@ impl GeoStatsAccumulator for GeographyGeoStatsAccumulator {
 mod test {
     use super::*;
 
-    #[cfg(feature = "s2geography")]
+    #[cfg(feature = "s2geography_tests")]
     use parquet::geospatial::bounding_box::BoundingBox;
 
-    #[cfg(feature = "s2geography")]
+    #[cfg(feature = "s2geography_tests")]
     fn assert_bbox_contains(actual: &BoundingBox, expected: &BoundingBox, epsilon: f64) {
         // actual.xmin should be <= expected.xmin (can be slightly smaller)
         assert!(
@@ -237,7 +237,7 @@ mod test {
         assert_eq!(actual.get_mmax(), expected.get_mmax(), "m_max mismatch");
     }
 
-    #[cfg(feature = "s2geography")]
+    #[cfg(feature = "s2geography_tests")]
     #[test]
     fn test_geography_accumulator() {
         use parquet_geospatial::testing::{wkb_point_xy, wkb_point_xyzm};
