@@ -38,7 +38,7 @@ use datafusion::{
         runtime_env::{RuntimeEnv, RuntimeEnvBuilder},
         SessionStateBuilder,
     },
-    prelude::{DataFrame, SessionConfig, SessionContext},
+    prelude::{CsvReadOptions, DataFrame, NdJsonReadOptions, SessionConfig, SessionContext},
     sql::parser::{DFParser, Statement},
 };
 use datafusion::{dataframe::DataFrameWriteOptions, execution::memory_pool::MemoryLimit};
@@ -565,6 +565,63 @@ impl SedonaContext {
         };
 
         self.ctx.read_table(provider)
+    }
+
+    /// Creates a [`DataFrame`] for reading CSV file(s).
+    ///
+    /// `options` carries object-store / cloud credentials (e.g. `aws.*`,
+    /// `gcs.*`) used to register the object store before reading, matching
+    /// [`Self::read_parquet`]. `delimiter` must be a single byte.
+    pub async fn read_csv(
+        &self,
+        table_paths: Vec<String>,
+        options: &HashMap<String, String>,
+        has_header: bool,
+        delimiter: &str,
+    ) -> Result<DataFrame> {
+        let bytes = delimiter.as_bytes();
+        if bytes.len() != 1 {
+            return plan_err!("CSV delimiter must be a single byte, got {delimiter:?}");
+        }
+
+        let urls = table_paths.clone().to_urls()?;
+        if !urls.is_empty() {
+            ensure_object_store_registered_with_options(
+                &mut self.ctx.state(),
+                urls[0].as_str(),
+                Some(options),
+            )
+            .await?;
+        }
+
+        let csv_options = CsvReadOptions::new()
+            .has_header(has_header)
+            .delimiter(bytes[0]);
+        self.ctx.read_csv(table_paths, csv_options).await
+    }
+
+    /// Creates a [`DataFrame`] for reading newline-delimited JSON file(s).
+    ///
+    /// `options` carries object-store / cloud credentials used to register
+    /// the object store before reading, matching [`Self::read_parquet`].
+    pub async fn read_json(
+        &self,
+        table_paths: Vec<String>,
+        options: &HashMap<String, String>,
+    ) -> Result<DataFrame> {
+        let urls = table_paths.clone().to_urls()?;
+        if !urls.is_empty() {
+            ensure_object_store_registered_with_options(
+                &mut self.ctx.state(),
+                urls[0].as_str(),
+                Some(options),
+            )
+            .await?;
+        }
+
+        self.ctx
+            .read_json(table_paths, NdJsonReadOptions::default())
+            .await
     }
 }
 
