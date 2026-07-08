@@ -167,7 +167,8 @@ mod tests {
     #[rstest]
     fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
         let udf = SedonaScalarUDF::from_impl("st_hausdorffdistance", st_hausdorff_distance_impl());
-        let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type.clone()]);
+        let tester =
+            ScalarUdfTester::new(udf.into(), vec![sedona_type.clone(), sedona_type.clone()]);
         tester.assert_return_type(DataType::Float64);
 
         // Point to point - Hausdorff distance equals Euclidean distance
@@ -245,20 +246,20 @@ mod tests {
             ],
             &sedona_type,
         );
-        let expected: ArrayRef = arrow_array!(Float64, [
-            Some(5.0),  // Point to Point
-            Some(1.0),  // LineString to LineString
-            Some(2.0),  // Polygon to Polygon
-            Some(5.0),  // MultiPoint to MultiPoint
-            Some(2.0),  // MultiLineString to MultiLineString
-            Some(2.0),  // MultiPolygon to MultiPolygon
-            Some(5.0),  // GeometryCollection to GeometryCollection
-            None        // NULL
-        ]);
-        assert_array_equal(
-            &tester.invoke_arrays(vec![arg1, arg2]).unwrap(),
-            &expected,
+        let expected: ArrayRef = arrow_array!(
+            Float64,
+            [
+                Some(5.0), // Point to Point
+                Some(1.0), // LineString to LineString
+                Some(2.0), // Polygon to Polygon
+                Some(5.0), // MultiPoint to MultiPoint
+                Some(2.0), // MultiLineString to MultiLineString
+                Some(2.0), // MultiPolygon to MultiPolygon
+                Some(5.0), // GeometryCollection to GeometryCollection
+                None       // NULL
+            ]
         );
+        assert_array_equal(&tester.invoke_arrays(vec![arg1, arg2]).unwrap(), &expected);
     }
 
     #[rstest]
@@ -315,7 +316,9 @@ mod tests {
         );
         let densify_frac = arrow_array!(Float64, [Some(0.5), Some(0.5), Some(0.5), Some(0.5)]);
 
-        let result = tester.invoke_arrays(vec![arg1, arg2, densify_frac]).unwrap();
+        let result = tester
+            .invoke_arrays(vec![arg1, arg2, densify_frac])
+            .unwrap();
         // Just verify it runs without error and returns correct nulls
         assert_eq!(result.len(), 4);
     }

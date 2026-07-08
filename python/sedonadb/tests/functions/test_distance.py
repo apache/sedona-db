@@ -70,7 +70,11 @@ def test_st_distance(eng, geom1, geom2, expected):
         ("POINT (0 0)", "POLYGON ((1 0, 2 0, 2 1, 1 1, 1 0))", 2.23606797749979),
         # LineString to LineString
         ("LINESTRING (0 0, 2 0)", "LINESTRING (0 1, 1 1, 2 1)", 1.0),
-        ("LINESTRING (0 0, 100 0, 10 100, 10 100)", "LINESTRING (0 100, 0 10, 80 10)", 22.360679774997898),
+        (
+            "LINESTRING (0 0, 100 0, 10 100, 10 100)",
+            "LINESTRING (0 100, 0 10, 80 10)",
+            22.360679774997898,
+        ),
         # LineString to Polygon
         (
             "LINESTRING (0 0, 1 0)",
