@@ -36,7 +36,7 @@ kernels:
 
 ## Description
 
-Returns the Hausdorff distance between its inputs. The Hausdorff distance is a measure of the similarity between two geometric shapes. This implementation returns the greatest of all distances from a point in one geometry to the closest point in the other geometry.
+The Hausdorff distance is a measure of the similarity between two geometric shapes. This implementation returns the greatest of all distances from a point in one geometry to the closest point in the other geometry.
 
 Returns `NULL` if either geometry is `NULL`. Returns 0 if either geometry is empty.
 
