@@ -23,6 +23,12 @@ if "s2geography" not in sedonadb.__features__:
     pytest.skip("Python package built without s2geography", allow_module_level=True)
 
 
+def _s2_cell_level(cell_id):
+    # The least significant set bit encodes the S2 cell level.
+    marker_bit_index = (int(cell_id) & -int(cell_id)).bit_length() - 1
+    return 30 - (marker_bit_index // 2)
+
+
 # S2_CellIdFromPoint tests - returns the S2 cell ID containing a point
 @pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
 @pytest.mark.parametrize(
@@ -97,9 +103,20 @@ def test_s2_coveringcellids(eng, geog, expected):
 @pytest.mark.parametrize("eng", [SedonaDB])
 def test_s2_coveringcellids_parameters(eng):
     eng = eng.create_or_skip()
-    result = eng.execute_and_collect(
-        "SELECT S2_CoveringCellIds("
-        "ST_GeogFromText('LINESTRING (0 0, 100 50)'), 0, 30, 2)"
-    )
-    df = eng.result_to_pandas(result)
-    assert len(df.iloc[0, 0]) <= 2
+    geog = "ST_GeogFromText('LINESTRING (0 0, 100 50)')"
+    cases = [
+        (f"S2_CoveringCellIds({geog})", 0, 30, 8),
+        (f"S2_CoveringCellIds({geog}, 4)", 4, 30, 8),
+        (f"S2_CoveringCellIds({geog}, 4, 6)", 4, 6, 8),
+        (f"S2_CoveringCellIds({geog}, 4, 6, 2)", 4, 6, 2),
+    ]
+
+    for expr, min_level, max_level, max_cells in cases:
+        result = eng.execute_and_collect(f"SELECT {expr}")
+        df = eng.result_to_pandas(result)
+        cells = df.iloc[0, 0]
+        levels = [_s2_cell_level(cell_id) for cell_id in cells]
+
+        assert len(cells) > 0
+        assert len(cells) <= max_cells
+        assert all(min_level <= level <= max_level for level in levels)

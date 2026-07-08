@@ -22,11 +22,32 @@ kernels:
   - returns: array
     args: [geography]
   - returns: array
-    args: [geography, int64]
+    args:
+    - geography
+    - name: min_level
+      type: int64
+      description: Minimum S2 cell level to return. Must be between 0 and 30. Defaults to 0.
   - returns: array
-    args: [geography, int64, int64]
+    args:
+    - geography
+    - name: min_level
+      type: int64
+      description: Minimum S2 cell level to return. Must be between 0 and 30. Defaults to 0.
+    - name: max_level
+      type: int64
+      description: Maximum S2 cell level to return. Must be between 0 and 30. Defaults to 30.
   - returns: array
-    args: [geography, int64, int64, int64]
+    args:
+    - geography
+    - name: min_level
+      type: int64
+      description: Minimum S2 cell level to return. Must be between 0 and 30. Defaults to 0.
+    - name: max_level
+      type: int64
+      description: Maximum S2 cell level to return. Must be between 0 and 30. Defaults to 30.
+    - name: max_cells
+      type: int64
+      description: Maximum number of cells to return. Must be greater than 0. Defaults to 8.
 ---
 
 ## Description
@@ -34,14 +55,6 @@ kernels:
 Returns an array of 64-bit S2 cell IDs that form a covering of the given geography. A covering is a set of cells that completely contains the geography with minimal overlap. For a point, returns an array with a single cell ID. For empty geometries, returns an empty array.
 
 This is useful for spatial indexing and efficient spatial queries. The returned cells may be at different S2 levels depending on the size and shape of the geography.
-
-Optional positional arguments can control the covering:
-
-| Argument | Description | Default |
-| --- | --- | --- |
-| `min_level` | Minimum S2 cell level to return. Must be between 0 and 30. | 0 |
-| `max_level` | Maximum S2 cell level to return. Must be between 0 and 30. | 30 |
-| `max_cells` | Maximum number of cells to return. Must be greater than 0. | 8 |
 
 ## Examples
 
