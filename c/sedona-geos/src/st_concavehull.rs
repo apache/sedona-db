@@ -121,7 +121,7 @@ fn invoke_batch_impl(arg_types: &[SedonaType], args: &[ColumnarValue]) -> Result
             allow_holes_iter.next().unwrap(),
         ) {
             (Some(wkb), Some(pct_convex), Some(allow_holes)) => {
-                invoke_scalar(&wkb, pct_convex, allow_holes, &mut builder)?;
+                invoke_scalar(wkb, pct_convex, allow_holes, &mut builder)?;
                 builder.append_value([]);
             }
             _ => builder.append_null(),

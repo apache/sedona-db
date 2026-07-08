@@ -58,7 +58,7 @@ impl SedonaScalarKernel for STMinimumClearance {
         executor.execute_wkb_void(|maybe_wkb| {
             match maybe_wkb {
                 Some(wkb) => {
-                    builder.append_value(invoke_scalar(&wkb)?);
+                    builder.append_value(invoke_scalar(wkb)?);
                 }
                 _ => builder.append_null(),
             }

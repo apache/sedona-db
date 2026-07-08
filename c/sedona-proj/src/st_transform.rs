@@ -177,7 +177,7 @@ impl SedonaScalarKernel for STTransform {
                     executor.execute_wkb_void(|maybe_wkb| {
                         match maybe_wkb {
                             Some(wkb) => {
-                                invoke_scalar(&wkb, crs_transform.as_ref(), &mut builder)?;
+                                invoke_scalar(wkb, crs_transform.as_ref(), &mut builder)?;
                                 builder.append_value([]);
                             }
                             None => builder.append_null(),
@@ -226,7 +226,7 @@ impl SedonaScalarKernel for STTransform {
                         }
 
                         if maybe_from_crs == maybe_to_crs {
-                            invoke_noop(&wkb, &mut builder)?;
+                            invoke_noop(wkb, &mut builder)?;
                             builder.append_value([]);
                             return Ok(());
                         }
@@ -242,7 +242,7 @@ impl SedonaScalarKernel for STTransform {
                             )
                         };
 
-                        invoke_scalar(&wkb, crs_transform.as_ref(), &mut builder)?;
+                        invoke_scalar(wkb, crs_transform.as_ref(), &mut builder)?;
                         builder.append_value([]);
                     }
                     _ => {

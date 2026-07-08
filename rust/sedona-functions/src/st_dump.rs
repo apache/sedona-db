@@ -233,7 +233,7 @@ impl SedonaScalarKernel for STDump {
         let mut builder = STDumpBuilder::new(executor.num_iterations(), return_type.clone());
         executor.execute_wkb_void(|maybe_wkb| {
             if let Some(wkb) = maybe_wkb {
-                builder.append(&wkb)?;
+                builder.append(wkb)?;
             } else {
                 builder.append_null();
             }

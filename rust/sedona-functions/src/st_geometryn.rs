@@ -88,7 +88,7 @@ impl SedonaScalarKernel for STGeometryN {
         executor.execute_wkb_void(|maybe_wkb| {
             match (maybe_wkb, index_iter.next().unwrap()) {
                 (Some(wkb), Some(index)) => {
-                    if invoke_scalar(&wkb, (index - 1) as usize, &mut builder)? {
+                    if invoke_scalar(wkb, (index - 1) as usize, &mut builder)? {
                         builder.append_value([]);
                     } else {
                         // Unsupported Geometry Type, Invalid index encountered

@@ -73,7 +73,7 @@ impl SedonaScalarKernel for STLineInterpolatePoint {
             let maybe_ratio = arg1_iter.next().unwrap();
             match (maybe_geom, maybe_ratio) {
                 (Some(geom), Some(ratio)) => {
-                    let (x, y) = invoke_scalar(&geom, ratio)?;
+                    let (x, y) = invoke_scalar(geom, ratio)?;
                     write_wkb_point(&mut builder, (x, y))
                         .map_err(|e| DataFusionError::External(Box::new(e)))?;
                     builder.append_value([]);

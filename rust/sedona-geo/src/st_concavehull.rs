@@ -84,7 +84,7 @@ fn invoke_batch_impl(arg_types: &[SedonaType], args: &[ColumnarValue]) -> Result
     executor.execute_wkb_void(|maybe_wkb| {
         match (maybe_wkb, pct_convex_iter.next().unwrap()) {
             (Some(wkb), Some(pct_convex)) => {
-                invoke_scalar(&wkb, pct_convex, &mut builder)?;
+                invoke_scalar(wkb, pct_convex, &mut builder)?;
                 builder.append_value([]);
             }
             _ => builder.append_null(),

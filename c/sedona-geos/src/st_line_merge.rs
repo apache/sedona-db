@@ -89,7 +89,7 @@ impl SedonaScalarKernel for STLineMerge {
         executor.execute_wkb_void(|maybe_wkb| {
             match maybe_wkb {
                 Some(wkb) => {
-                    invoke_scalar(&wkb, &mut builder, directed)?;
+                    invoke_scalar(wkb, &mut builder, directed)?;
                     builder.append_value([]);
                 }
                 None => builder.append_null(),
