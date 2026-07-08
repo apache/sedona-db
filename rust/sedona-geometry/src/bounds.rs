@@ -159,7 +159,7 @@ impl WkbBounder2D for WkbGeometryBounder {
     fn update_wkb_bytes(&mut self, wkb_value: &[u8]) -> Result<(), SedonaGeometryError> {
         let wkb = wkb::reader::read_wkb(wkb_value)
             .map_err(|e| SedonaGeometryError::External(Box::new(e)))?;
-        geo_traits_update_xy_bounds(wkb, &mut self.x, &mut self.y)?;
+        geo_traits_update_xy_bounds(&wkb, &mut self.x, &mut self.y)?;
         Ok(())
     }
 
@@ -211,7 +211,7 @@ pub fn geo_traits_bounds_xy(
 ) -> Result<BoundingBox, SedonaGeometryError> {
     let mut x = Interval::empty();
     let mut y = Interval::empty();
-    geo_traits_update_xy_bounds(geom, &mut x, &mut y)?;
+    geo_traits_update_xy_bounds(&geom, &mut x, &mut y)?;
     Ok(BoundingBox::xy(x, y))
 }
 
@@ -238,7 +238,7 @@ pub fn geo_traits_bounds_m(
 /// Useful for updating bounds in-place when accumulating
 /// bounds for statistics or function implementations.
 pub fn geo_traits_update_xy_bounds(
-    geom: impl GeometryTrait<T = f64>,
+    geom: &impl GeometryTrait<T = f64>,
     x: &mut Interval,
     y: &mut Interval,
 ) -> Result<(), SedonaGeometryError> {
@@ -272,22 +272,22 @@ pub fn geo_traits_update_xy_bounds(
         }
         GeometryType::MultiPoint(multi_pt) => {
             for pt in multi_pt.points() {
-                geo_traits_update_xy_bounds(pt, x, y)?;
+                geo_traits_update_xy_bounds(&pt, x, y)?;
             }
         }
         GeometryType::MultiLineString(multi_ls) => {
             for ls in multi_ls.line_strings() {
-                geo_traits_update_xy_bounds(ls, x, y)?;
+                geo_traits_update_xy_bounds(&ls, x, y)?;
             }
         }
         GeometryType::MultiPolygon(multi_pl) => {
             for pl in multi_pl.polygons() {
-                geo_traits_update_xy_bounds(pl, x, y)?;
+                geo_traits_update_xy_bounds(&pl, x, y)?;
             }
         }
         GeometryType::GeometryCollection(collection) => {
             for geom in collection.geometries() {
-                geo_traits_update_xy_bounds(geom, x, y)?;
+                geo_traits_update_xy_bounds(&geom, x, y)?;
             }
         }
         _ => {

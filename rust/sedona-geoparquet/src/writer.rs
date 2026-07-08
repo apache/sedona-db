@@ -503,7 +503,7 @@ impl SedonaScalarKernel for GeoParquetBbox {
             match maybe_item {
                 Some(item) => {
                     nulls.append(true);
-                    append_float_bbox(&item, &mut builders)?;
+                    append_float_bbox(item, &mut builders)?;
                 }
                 None => {
                     // If we have a null, we set the outer validity bitmap to null
@@ -550,7 +550,7 @@ fn bbox_fields() -> Fields {
 // a set of builders, ensuring the float bounds always include the double
 // bounds.
 fn append_float_bbox(
-    wkb: impl GeometryTrait<T = f64>,
+    wkb: &impl GeometryTrait<T = f64>,
     builders: &mut [Float32Builder],
 ) -> Result<()> {
     let mut x = Interval::empty();

@@ -1264,7 +1264,7 @@ fn extract_geoms_and_ids(partitions: &[Vec<RecordBatch>]) -> Vec<(i32, geo::Geom
                 .execute_wkb_void(|maybe_geom| {
                     if let Some(id_opt) = id_iter.next() {
                         if let (Some(id), Some(geom)) = (id_opt, maybe_geom) {
-                            result.push((id, geom))
+                            result.push((id, geom.clone()))
                         }
                     }
                     Ok(())

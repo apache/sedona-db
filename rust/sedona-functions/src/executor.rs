@@ -103,7 +103,7 @@ impl<'a, 'b, Factory0: GeometryFactory, Factory1: GeometryFactory>
     /// a [Wkb] scalar. For [SedonaType::Wkb] and [SedonaType::WkbView] arrays, this
     /// is the conversion that would normally happen. For other future supported geometry
     /// array types, this may incur a cast of item-wise conversion overhead.
-    pub fn execute_wkb_void<F: FnMut(Option<Factory0::Geom<'b>>) -> Result<()>>(
+    pub fn execute_wkb_void<F: FnMut(Option<&Factory0::Geom<'b>>) -> Result<()>>(
         &self,
         mut func: F,
     ) -> Result<()> {
@@ -114,7 +114,7 @@ impl<'a, 'b, Factory0: GeometryFactory, Factory1: GeometryFactory>
             }
             ColumnarValue::Scalar(scalar_value) => {
                 let wkb0 = scalar_value.scalar_from_factory(&self.factory0)?;
-                func(wkb0)
+                func(wkb0.as_ref())
             }
         }
     }
@@ -146,7 +146,7 @@ impl<'a, 'b, Factory0: GeometryFactory, Factory1: GeometryFactory>
                     &self.factory0,
                     &self.arg_types[0],
                     self.num_iterations(),
-                    |wkb0| func(wkb0.as_ref(), wkb1.as_ref()),
+                    |wkb0| func(wkb0, wkb1.as_ref()),
                 )
             }
             (ColumnarValue::Scalar(scalar_value), ColumnarValue::Array(array)) => {
@@ -155,7 +155,7 @@ impl<'a, 'b, Factory0: GeometryFactory, Factory1: GeometryFactory>
                     &self.factory1,
                     &self.arg_types[1],
                     self.num_iterations(),
-                    |wkb1| func(wkb0.as_ref(), wkb1.as_ref()),
+                    |wkb1| func(wkb0.as_ref(), wkb1),
                 )
             }
             (ColumnarValue::Scalar(scalar_value0), ColumnarValue::Scalar(scalar_value1)) => {
@@ -285,7 +285,7 @@ pub trait IterGeo {
     fn iter_with_factory<
         'a,
         Factory: GeometryFactory,
-        F: FnMut(Option<Factory::Geom<'a>>) -> Result<()>,
+        F: FnMut(Option<&Factory::Geom<'a>>) -> Result<()>,
     >(
         &'a self,
         factory: &Factory,
@@ -299,7 +299,7 @@ pub trait IterGeo {
             |maybe_bytes| match maybe_bytes {
                 Some(wkb_bytes) => {
                     let geom = factory.try_from_wkb(wkb_bytes)?;
-                    func(Some(geom))
+                    func(Some(&geom))
                 }
                 None => func(None),
             },
@@ -311,7 +311,7 @@ pub trait IterGeo {
     /// The function will always be called num_iteration types to support
     /// efficient iteration over scalar containers (e.g., so that implementations
     /// can parse the Wkb once and reuse the object).
-    fn iter_as_wkb<'a, F: FnMut(Option<Wkb<'a>>) -> Result<()>>(
+    fn iter_as_wkb<'a, F: FnMut(Option<&Wkb<'a>>) -> Result<()>>(
         &'a self,
         sedona_type: &SedonaType,
         num_iterations: usize,
@@ -552,7 +552,7 @@ mod tests {
         let mut i = 0;
         wkb_array_ref
             .iter_as_wkb(&WKB_GEOMETRY, 3, |maybe_geom| {
-                write_to_test_output(&mut wkt_out, i, maybe_geom.as_ref()).unwrap();
+                write_to_test_output(&mut wkt_out, i, maybe_geom).unwrap();
                 i += 1;
                 Ok(())
             })
@@ -578,7 +578,7 @@ mod tests {
         let mut i = 0;
         wkb_view_array_ref
             .iter_as_wkb(&WKB_VIEW_GEOMETRY, 3, |maybe_geom| {
-                write_to_test_output(&mut wkt_out, i, maybe_geom.as_ref()).unwrap();
+                write_to_test_output(&mut wkt_out, i, maybe_geom).unwrap();
                 i += 1;
                 Ok(())
             })
