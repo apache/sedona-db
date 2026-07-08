@@ -114,7 +114,10 @@ impl<'a, 'b, Factory0: GeometryFactory, Factory1: GeometryFactory>
             }
             ColumnarValue::Scalar(scalar_value) => {
                 let wkb0 = scalar_value.scalar_from_factory(&self.factory0)?;
-                func(wkb0.as_ref())
+                for _ in 0..self.num_iterations {
+                    func(wkb0.as_ref())?;
+                }
+                Ok(())
             }
         }
     }
@@ -161,7 +164,10 @@ impl<'a, 'b, Factory0: GeometryFactory, Factory1: GeometryFactory>
             (ColumnarValue::Scalar(scalar_value0), ColumnarValue::Scalar(scalar_value1)) => {
                 let wkb0 = scalar_value0.scalar_from_factory(&self.factory0)?;
                 let wkb1 = scalar_value1.scalar_from_factory(&self.factory1)?;
-                func(wkb0.as_ref(), wkb1.as_ref())
+                for _ in 0..self.num_iterations {
+                    func(wkb0.as_ref(), wkb1.as_ref())?;
+                }
+                Ok(())
             }
         }
     }
@@ -797,5 +803,67 @@ mod tests {
             .scalar_from_factory(&factory)
             .unwrap_err();
         assert!(err.message().contains("Can't iterate over"));
+    }
+
+    #[test]
+    fn execute_wkb_void_scalar_with_num_iterations() {
+        let wkb_scalar = ColumnarValue::Scalar(ScalarValue::Binary(Some(POINT.to_vec())));
+        // A non-geometry array that drives num_iterations
+        let float_array: ArrayRef = create_array!(Float64, [1.0, 2.0, 3.0]);
+        let float_value = ColumnarValue::Array(float_array);
+
+        let arg_types = [WKB_GEOMETRY, SedonaType::Arrow(DataType::Float64)];
+        let args = [wkb_scalar, float_value];
+        let executor = WkbExecutor::new(&arg_types, &args);
+
+        assert_eq!(executor.num_iterations(), 3);
+
+        let mut count = 0;
+        executor
+            .execute_wkb_void(|maybe_geom| {
+                assert!(maybe_geom.is_some());
+                count += 1;
+                Ok(())
+            })
+            .unwrap();
+
+        assert_eq!(
+            count, 3,
+            "Scalar geometry should iterate num_iterations times"
+        );
+    }
+
+    #[test]
+    fn execute_wkb_wkb_void_scalars_with_num_iterations() {
+        let wkb_scalar0 = ColumnarValue::Scalar(ScalarValue::Binary(Some(POINT.to_vec())));
+        let wkb_scalar1 = ColumnarValue::Scalar(ScalarValue::Binary(Some(POINT.to_vec())));
+        // A non-geometry array that drives num_iterations
+        let float_array: ArrayRef = create_array!(Float64, [0.1, 0.25, 0.5, 1.0]);
+        let float_value = ColumnarValue::Array(float_array);
+
+        let arg_types = [
+            WKB_GEOMETRY,
+            WKB_GEOMETRY,
+            SedonaType::Arrow(DataType::Float64),
+        ];
+        let args = [wkb_scalar0, wkb_scalar1, float_value];
+        let executor = WkbExecutor::new(&arg_types, &args);
+
+        assert_eq!(executor.num_iterations(), 4);
+
+        let mut count = 0;
+        executor
+            .execute_wkb_wkb_void(|maybe_geom0, maybe_geom1| {
+                assert!(maybe_geom0.is_some());
+                assert!(maybe_geom1.is_some());
+                count += 1;
+                Ok(())
+            })
+            .unwrap();
+
+        assert_eq!(
+            count, 4,
+            "Two scalar geometries should iterate num_iterations times"
+        );
     }
 }
