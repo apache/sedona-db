@@ -29,7 +29,7 @@ kernels:
 
 Returns the number of interior rings (holes) in a polygon. For a polygon without holes, returns 0. For multipolygons, returns the number of interior rings in the first polygon. Returns NULL for non-polygon geometry types.
 
-Alias: `ST_NumInteriorRing`.
+Aliases: `ST_NumInteriorRing`.
 
 ## Examples
 

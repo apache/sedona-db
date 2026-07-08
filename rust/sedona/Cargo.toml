@@ -46,7 +46,7 @@ gdal = ["sedona-gdal/gdal-sys"]
 bindgen = ["sedona-gdal/bindgen"]
 spatial-join = ["dep:sedona-spatial-join"]
 gpu = ["dep:sedona-spatial-join-gpu", "sedona-spatial-join-gpu/gpu"]
-s2geography = ["dep:sedona-s2geography", "dep:sedona-spatial-join-geography", "sedona-geoparquet/s2geography"]
+s2geography = ["dep:sedona-s2geography", "dep:sedona-spatial-join-geography"]
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -16,8 +16,8 @@
 # specific language governing permissions and limitations
 # under the License.
 
-title: ST_PointOnSurface
-description: Returns a point guaranteed to lie on the surface of a geometry or geography.
+title: ST_ExteriorRing
+description: Returns the exterior ring of a polygon as a linestring geometry.
 kernels:
   - returns: geometry
     args: [geometry]
@@ -27,13 +27,15 @@ kernels:
 
 ## Description
 
-Unlike ST_Centroid which does not necessarily intersect a geometry or geography, ST_PointOnSurface
-makes an attempt to find an interior point close to the middle (using deterministic heuristics).
+Returns the exterior ring (outer boundary) of a polygon as a `LINESTRING`. Returns NULL for
+non-polygon geometry types.
 
 ## Examples
 
 ```sql
-SELECT ST_PointOnSurface(
-    ST_GeogFromWKT('POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 3, 3 3, 3 1, 1 1))')
-);
+SELECT ST_ExteriorRing(ST_GeomFromWKT('POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 3, 3 3, 3 1, 1 1))'));
+```
+
+```sql
+SELECT ST_ExteriorRing(ST_GeogFromWKT('POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 3, 3 3, 3 1, 1 1))'));
 ```

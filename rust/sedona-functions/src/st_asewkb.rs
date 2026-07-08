@@ -176,10 +176,11 @@ mod tests {
     use datafusion_common::scalar::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
+    use sedona_geometry::types::Edges;
     use sedona_schema::{
         crs::lnglat,
         datatypes::{
-            Edges, WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS,
+            WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS,
             WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY,
         },
     };

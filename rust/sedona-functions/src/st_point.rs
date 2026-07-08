@@ -153,8 +153,8 @@ mod tests {
     use datafusion_expr::Literal;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
+    use sedona_geometry::types::Edges;
     use sedona_schema::crs::lnglat;
-    use sedona_schema::datatypes::Edges;
     use sedona_testing::compare::assert_array_equal;
     use sedona_testing::create::create_array_item_crs;
     use sedona_testing::{create::create_array, testers::ScalarUdfTester};

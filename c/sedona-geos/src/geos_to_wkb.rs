@@ -19,7 +19,7 @@ use std::io::Write;
 use byteorder::{LittleEndian, WriteBytesExt};
 use datafusion_common::{error::Result, DataFusionError};
 use geo_traits::Dimensions;
-use geos::{CoordType, Geom, Geometry, GeometryTypes};
+use geos::{CoordType, Geom, GeometryTypes};
 use sedona_common::sedona_internal_err;
 use sedona_geometry::wkb_factory::{
     write_wkb_geometrycollection_header, write_wkb_linestring_header,
@@ -31,7 +31,7 @@ use sedona_geometry::wkb_factory::{
 ///
 /// This is a fast, custom implementation that directly extracts coordinates
 /// from GEOS geometries and writes them in WKB format into a buffer.
-pub fn write_geos_geometry(geom: &Geometry, writer: &mut impl Write) -> Result<()> {
+pub fn write_geos_geometry(geom: &impl Geom, writer: &mut impl Write) -> Result<()> {
     write_geometry(geom, writer)
 }
 

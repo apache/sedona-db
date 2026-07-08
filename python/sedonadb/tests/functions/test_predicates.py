@@ -36,6 +36,11 @@ from sedonadb.testing import geom_or_null, PostGIS, SedonaDB, val_or_null
             False,
         ),
         (
+            "POLYGON ((0 0, 3 0, 3 3, 0 3, 0 0), (1 1, 1 2, 2 1, 1 1))",
+            "POLYGON ((1 1, 1 2, 2 1, 1 1))",
+            False,
+        ),
+        (
             "POINT (1 1)",
             "GEOMETRYCOLLECTION (POINT (0 0), POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0)), LINESTRING (0 0, 1 1))",
             False,
@@ -97,6 +102,11 @@ def test_st_covered_by(eng, geom1, geom2, expected):
         (
             "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
             "POLYGON ((5 5, 6 5, 6 6, 5 6, 5 5))",
+            False,
+        ),
+        (
+            "POLYGON ((0 0, 3 0, 3 3, 0 3, 0 0), (1 1, 1 2, 2 1, 1 1))",
+            "POLYGON ((1 1, 1 2, 2 1, 1 1))",
             False,
         ),
         (

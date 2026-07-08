@@ -29,7 +29,7 @@ use crate::errors::Result;
 use crate::gdal_api::GdalApi;
 use crate::gdal_dyn_bindgen::{GDALOpenFlags, OGRFieldType};
 use crate::mem::create_mem_dataset;
-use crate::raster::polygonize::{polygonize, PolygonizeOptions};
+use crate::raster::polygonize::{fpolygonize, polygonize, PolygonizeOptions};
 use crate::raster::rasterband::RasterBand;
 use crate::raster::rasterize::{rasterize, RasterizeOptions};
 use crate::raster::rasterize_affine::rasterize_affine;
@@ -242,6 +242,26 @@ impl Gdal {
         options: &PolygonizeOptions,
     ) -> Result<()> {
         polygonize(
+            self.api,
+            src_band,
+            mask_band,
+            out_layer,
+            pixel_value_field,
+            options,
+        )
+    }
+
+    /// Polygonize a raster band into a vector layer using float pixels.
+    /// See also [`fpolygonize`].
+    pub fn fpolygonize(
+        &self,
+        src_band: &RasterBand<'_>,
+        mask_band: Option<&RasterBand<'_>>,
+        out_layer: &Layer<'_>,
+        pixel_value_field: i32,
+        options: &PolygonizeOptions,
+    ) -> Result<()> {
+        fpolygonize(
             self.api,
             src_band,
             mask_band,

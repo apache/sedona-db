@@ -138,7 +138,8 @@ mod test {
 
     use arrow_array::{create_array, ArrayRef};
     use sedona_expr::scalar_udf::SedonaScalarUDF;
-    use sedona_schema::datatypes::{Edges, WKB_GEOMETRY};
+    use sedona_geometry::types::Edges;
+    use sedona_schema::datatypes::WKB_GEOMETRY;
     use sedona_testing::{create::create_array, testers::ScalarUdfTester};
 
     use super::*;

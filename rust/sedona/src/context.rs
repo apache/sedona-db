@@ -47,10 +47,7 @@ use datafusion_expr::dml::InsertOp;
 use datafusion_expr::sqlparser::dialect::{dialect_from_str, Dialect};
 use datafusion_expr::{AggregateUDFImpl, LogicalPlan, LogicalPlanBuilder, ScalarUDFImpl, SortExpr};
 use parking_lot::Mutex;
-use sedona_common::{
-    option::add_sedona_option_extension, sedona_internal_datafusion_err, CrsProviderOption,
-    SedonaOptions,
-};
+use sedona_common::{sedona_internal_datafusion_err, SedonaOptions};
 use sedona_datasource::provider::external_table;
 use sedona_datasource::spec::ExternalFormatSpec;
 use sedona_expr::scalar_udf::{IntoScalarKernelRefs, SedonaScalarUDF};
@@ -122,18 +119,19 @@ impl SedonaContext {
         // and perhaps for all of these initializing them optionally from environment
         // variables.
         let session_config = SessionConfig::from_env()?.with_information_schema(true);
-        let mut session_config = add_sedona_option_extension(session_config);
+        let mut session_config = session_config.with_option_extension(SedonaOptions::default());
         let target_partitions = session_config.target_partitions();
 
-        // Always register the PROJ CrsProvider by default (if PROJ is not configured
+        // Always register the PROJ LazyProjEngine by default (if PROJ is not configured
         // before it is used an error will be raised).
         let opts = session_config
             .options_mut()
             .extensions
             .get_mut::<SedonaOptions>()
             .ok_or_else(|| sedona_internal_datafusion_err!("SedonaOptions not available"))?;
-        opts.crs_provider =
-            CrsProviderOption::new(Arc::new(sedona_proj::provider::ProjCrsProvider::default()));
+        opts.runtime = opts
+            .runtime
+            .with_crs_engine(Arc::new(sedona_proj::transform::LazyProjEngine));
 
         // Set the spilled batch in-memory size threshold to 5% of the per-partition memory limit,
         // with a minimum of 10MB. Batches larger than this threshold will be broken into smaller batches
@@ -147,22 +145,6 @@ impl SedonaContext {
                 .div_ceil(SPILLED_BATCH_THRESHOLD_PERCENT_DIVISOR)
                 .max(MIN_SPILLED_BATCH_IN_MEMORY_THRESHOLD_BYTES);
         }
-
-        #[cfg(feature = "pointcloud")]
-        let session_config = session_config.with_option_extension(
-            LasOptions::default()
-                .with_geometry_encoding(GeometryEncoding::Wkb)
-                .with_las_extra_bytes(LasExtraBytes::Typed),
-        );
-
-        #[cfg(feature = "gpu")]
-        let session_config = session_config.with_option_extension(GpuOptions::default());
-
-        #[allow(unused_mut)]
-        let mut state_builder = SessionStateBuilder::new()
-            .with_default_features()
-            .with_runtime_env(runtime_env)
-            .with_config(session_config);
 
         // Register the spatial join planner extension
         #[allow(unused_mut)]
@@ -198,22 +180,51 @@ impl SedonaContext {
             }
         }
 
+        // Register the geography bounder for spherical edge types. This enables geography
+        // statistics in Parquet files and geography row-group pruning.
+        #[cfg(feature = "s2geography")]
+        {
+            opts.runtime = opts.runtime.with_bounder(
+                sedona_geometry::types::Edges::Spherical,
+                Arc::new(sedona_s2geography::rect_bounder::WkbGeographyBounder::default()),
+            )?;
+        }
+
+        // Inject the statically-set accumulator factory, which allows arrow-rs Parquet writer
+        // to write Geography statistics based on the geography bounders in our SedonaRuntime.
+        let init_result =
+            sedona_geoparquet::statistics_accumulator::SedonaGeoStatsAccumulatorFactory::try_init(
+                &opts.runtime,
+            );
+        if let Err(init_err) = init_result {
+            if !matches!(init_err, DataFusionError::ParquetError(_)) {
+                return Err(init_err);
+            }
+        }
+
+        #[cfg(feature = "pointcloud")]
+        let session_config = session_config.with_option_extension(
+            LasOptions::default()
+                .with_geometry_encoding(GeometryEncoding::Wkb)
+                .with_las_extra_bytes(LasExtraBytes::Typed),
+        );
+
+        #[cfg(feature = "gpu")]
+        let session_config = session_config.with_option_extension(GpuOptions::default());
+
+        let mut state_builder = SessionStateBuilder::new()
+            .with_default_features()
+            .with_runtime_env(runtime_env)
+            .with_config(session_config);
+
         state_builder = register_spatial_join_logical_optimizer(state_builder)?;
         state_builder = register_ensure_loaded_optimizer(state_builder)?;
         state_builder = state_builder.with_query_planner(Arc::new(planner));
 
         let mut state = state_builder.build();
 
-        // Register GeoParquet and try to initialize our statistics accumulator. It is OK if this fails
-        // because we already registered it, but we propagate other errors for safety.
+        // Register GeoParquet file format
         state.register_file_format(Arc::new(GeoParquetFormatFactory::new()), true)?;
-        let init_result =
-            sedona_geoparquet::statistics_accumulator::SedonaGeoStatsAccumulatorFactory::try_init();
-        if let Err(init_err) = init_result {
-            if !matches!(init_err, DataFusionError::ParquetError(_)) {
-                return Err(init_err);
-            }
-        }
 
         #[cfg(feature = "pointcloud")]
         {
@@ -248,7 +259,7 @@ impl SedonaContext {
         // `AsyncScalarUDFImpl::invoke_async_with_args` only receives
         // `Arc<ConfigOptions>`, so this is the path that keeps the
         // registry reachable at the UDF's invocation site. Mirrors how
-        // `CrsProviderOption` works inside `SedonaOptions`.
+        // `SedonaRuntime` works inside `SedonaOptions`.
         //
         // Writes through `SedonaContext::register_raster_loader` (which
         // mutates the Arc held in `out.raster_loader_registry`) are immediately
@@ -782,9 +793,10 @@ mod tests {
     use arrow_schema::{DataType, Field, Schema};
     use datafusion::assert_batches_eq;
     use sedona_datasource::spec::{Object, OpenReaderArgs};
+    use sedona_geometry::types::Edges;
     use sedona_schema::{
         crs::{deserialize_crs, lnglat},
-        datatypes::{Edges, SedonaType},
+        datatypes::SedonaType,
         schema::SedonaSchema,
     };
     use sedona_testing::data::test_geoparquet;
@@ -1257,5 +1269,158 @@ mod tests {
             .get::<SedonaOptions>()
             .expect("SedonaOptions not found");
         assert_eq!(opts.spatial_join.spilled_batch_in_memory_size_threshold, 0);
+    }
+
+    /// Test geography literal bounding via the WkbBounder2DFactory → SpatialFilterFactory path.
+    ///
+    /// This covers antimeridian wraparound, distance expansion (~100km), and NULL handling.
+    #[cfg(feature = "s2geography")]
+    #[tokio::test]
+    async fn test_geography_literal_bounder() {
+        use datafusion::physical_expr::expressions::Literal as PhysicalLiteral;
+        use sedona_common::option::SedonaOptions;
+        use sedona_expr::spatial_filter::SpatialFilterFactory;
+        use sedona_geometry::interval::IntervalTrait;
+        use sedona_schema::datatypes::{WKB_GEOGRAPHY, WKB_VIEW_GEOGRAPHY};
+        use sedona_testing::create::create_scalar;
+
+        let ctx = SedonaContext::new_local_interactive().await.unwrap();
+
+        // Derive the factory from the context's SedonaOptions (which has the geography
+        // bounder registered during context creation when s2geography feature is enabled)
+        let state = ctx.ctx.state();
+        let sedona_options = state
+            .config_options()
+            .extensions
+            .get::<SedonaOptions>()
+            .expect("SedonaOptions should be registered");
+        let factory = SpatialFilterFactory::default()
+            .with_bounder_factory(sedona_options.runtime.bounder_factory().clone());
+
+        for sedona_type in [WKB_GEOGRAPHY, WKB_VIEW_GEOGRAPHY] {
+            let storage_field = sedona_type.to_storage_field("", true).unwrap();
+
+            // Test antimeridian wraparound bounds
+            let scalar = create_scalar(Some("MULTIPOINT ((-179 42), (179 43))"), &sedona_type);
+            let literal =
+                PhysicalLiteral::new_with_metadata(scalar, Some(storage_field.metadata().into()));
+            let raw_bounds = factory.literal_bounds(&literal, None).unwrap();
+
+            // Should produce a wraparound interval crossing the antimeridian
+            assert!(
+                raw_bounds.x().is_wraparound(),
+                "Expected wraparound x interval for antimeridian-crossing input"
+            );
+            // Check x bounds are reasonable (near ±179)
+            assert!(
+                raw_bounds.x().lo() > 178.99999 && raw_bounds.x().lo() <= 179.0,
+                "x.lo() {} should be near 179",
+                raw_bounds.x().lo()
+            );
+            assert!(
+                raw_bounds.x().hi() >= -179.0 && raw_bounds.x().hi() < -178.99999,
+                "x.hi() {} should be near -179",
+                raw_bounds.x().hi()
+            );
+            // Check y bounds
+            assert!(
+                raw_bounds.y().lo() > 41.0 && raw_bounds.y().lo() <= 42.0,
+                "y.lo() {} should be near 42",
+                raw_bounds.y().lo()
+            );
+            assert!(
+                raw_bounds.y().hi() >= 43.0 && raw_bounds.y().hi() < 44.0,
+                "y.hi() {} should be near 43",
+                raw_bounds.y().hi()
+            );
+
+            // Test distance expansion (~100km ≈ 0.9 degrees)
+            let expanded_bounds = factory.literal_bounds(&literal, Some(100_000.0)).unwrap();
+            assert!(
+                expanded_bounds.x().is_wraparound(),
+                "Expanded bounds should still be wraparound"
+            );
+            // Expanded bounds should be larger than raw bounds
+            assert!(
+                raw_bounds.x().lo() - expanded_bounds.x().lo() > 0.5,
+                "Expanded x.lo() should be > 0.5 degrees larger"
+            );
+            assert!(
+                expanded_bounds.x().hi() - raw_bounds.x().hi() > 0.5,
+                "Expanded x.hi() should be > 0.5 degrees larger"
+            );
+            assert!(
+                raw_bounds.y().lo() - expanded_bounds.y().lo() > 0.5,
+                "Expanded y.lo() should be > 0.5 degrees larger"
+            );
+            assert!(
+                expanded_bounds.y().hi() - raw_bounds.y().hi() > 0.5,
+                "Expanded y.hi() should be > 0.5 degrees larger"
+            );
+
+            // Test NULL literal → empty bounds
+            let null_scalar = create_scalar(None, &sedona_type);
+            let null_literal = PhysicalLiteral::new_with_metadata(
+                null_scalar,
+                Some(storage_field.metadata().into()),
+            );
+            let null_bounds = factory.literal_bounds(&null_literal, None).unwrap();
+            assert!(
+                null_bounds.is_empty(),
+                "NULL literal should produce empty bounds"
+            );
+        }
+    }
+
+    /// Test that LazyProjEngine is properly wired up through the global PROJ engine.
+    ///
+    /// This covers the three CrsEngine methods: to_projjson, get_transform_crs_to_crs,
+    /// and get_transform_pipeline.
+    #[cfg(feature = "proj")]
+    #[tokio::test]
+    async fn test_lazy_proj_engine() {
+        use sedona_common::option::SedonaOptions;
+
+        let ctx = SedonaContext::new_local_interactive().await.unwrap();
+
+        // Derive the CrsEngine from the context's SedonaOptions
+        let state = ctx.ctx.state();
+        let sedona_options = state
+            .config_options()
+            .extensions
+            .get::<SedonaOptions>()
+            .expect("SedonaOptions should be registered");
+        let engine = sedona_options.runtime.crs_engine();
+
+        // Test to_projjson: convert EPSG:4326 to PROJJSON
+        let projjson = engine.to_projjson("EPSG:4326").unwrap();
+        assert!(
+            projjson.contains("WGS 84") || projjson.contains("\"id\""),
+            "PROJJSON should contain WGS 84 or id field: {}",
+            projjson
+        );
+
+        // Test get_transform_crs_to_crs: WGS84 to Web Mercator
+        let transform = engine
+            .get_transform_crs_to_crs("EPSG:4326", "EPSG:3857", None, "")
+            .unwrap();
+        let mut coord = (0.0, 0.0); // (lng, lat) = (0, 0)
+        transform.transform_coord(&mut coord).unwrap();
+        // (0, 0) in WGS84 should transform to (0, 0) in Web Mercator
+        assert!(
+            coord.0.abs() < 1.0 && coord.1.abs() < 1.0,
+            "Origin should map to near-origin in Web Mercator: {:?}",
+            coord
+        );
+
+        // Test get_transform_pipeline: a simple pipeline that does nothing
+        let pipeline_transform = engine.get_transform_pipeline("+proj=noop", "").unwrap();
+        let mut coord2 = (10.0, 20.0);
+        pipeline_transform.transform_coord(&mut coord2).unwrap();
+        assert!(
+            (coord2.0 - 10.0).abs() < 1e-10 && (coord2.1 - 20.0).abs() < 1e-10,
+            "noop pipeline should preserve coordinates: {:?}",
+            coord2
+        );
     }
 }

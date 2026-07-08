@@ -703,10 +703,10 @@ mod tests {
     use arrow_array::builder::Int64Builder;
     use arrow_array::Int64Array;
     use arrow_schema::Field;
+    use sedona_geometry::types::Edges;
     use sedona_raster::traits::RasterRef;
     use sedona_schema::crs::{deserialize_crs, lnglat};
-    use sedona_schema::datatypes::RASTER;
-    use sedona_schema::datatypes::{Edges, WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{RASTER, WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
     use sedona_testing::create::{create_array, create_array_item_crs};
     use sedona_testing::rasters::generate_test_rasters;
     use std::sync::Arc;

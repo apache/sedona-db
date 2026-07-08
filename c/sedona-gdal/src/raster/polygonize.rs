@@ -100,6 +100,38 @@ pub fn polygonize(
     Ok(())
 }
 
+/// Polygonize a raster band into a vector layer.
+/// This uses `GDALFPolygonize`, which reads source pixels as floats.
+pub fn fpolygonize(
+    api: &'static GdalApi,
+    src_band: &RasterBand<'_>,
+    mask_band: Option<&RasterBand<'_>>,
+    out_layer: &Layer<'_>,
+    pixel_value_field: i32,
+    options: &PolygonizeOptions,
+) -> Result<()> {
+    let mask = mask_band.map_or(ptr::null_mut(), |b| b.c_rasterband());
+    let csl = options.to_options_list()?;
+
+    let rv = unsafe {
+        call_gdal_api!(
+            api,
+            GDALFPolygonize,
+            src_band.c_rasterband(),
+            mask,
+            out_layer.c_layer(),
+            pixel_value_field,
+            csl.as_ptr(),
+            ptr::null_mut(), // pfnProgress
+            ptr::null_mut()  // pProgressData
+        )
+    };
+    if rv != CE_None {
+        return Err(api.last_cpl_err(rv as u32));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
