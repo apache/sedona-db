@@ -56,3 +56,4 @@ mod st_simplifypreservetopology;
 mod st_snap;
 mod st_unaryunion;
 pub mod wkb_to_geos;
+mod st_hausdorffdistance;
