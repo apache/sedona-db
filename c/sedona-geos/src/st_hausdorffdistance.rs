@@ -18,9 +18,12 @@ use std::sync::Arc;
 
 use arrow_array::builder::Float64Builder;
 use arrow_schema::DataType;
-use datafusion_common::{cast::as_float64_array, error::Result, DataFusionError};
+use datafusion_common::{
+    cast::as_float64_array, error::Result, exec_datafusion_err, DataFusionError,
+};
 use datafusion_expr::ColumnarValue;
 use geos::Geom;
+use sedona_common::sedona_internal_datafusion_err;
 use sedona_expr::{
     item_crs::ItemCrsKernel,
     scalar_udf::{ScalarKernelRef, SedonaScalarKernel},
@@ -30,8 +33,8 @@ use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use crate::executor::GeosExecutor;
 
 /// ST_HausdorffDistance(geometry, geometry) implementation using the geos crate
-pub fn st_hausdorff_distance_impl() -> ScalarKernelRef {
-    Arc::new(STHausdorffDistance {})
+pub fn st_hausdorff_distance_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(STHausdorffDistance {})
 }
 
 /// ST_HausdorffDistance(geometry, geometry, densifyFrac) implementation using the geos crate
@@ -79,13 +82,19 @@ impl SedonaScalarKernel for STHausdorffDistance {
 }
 
 fn invoke_scalar(lhs: &geos::Geometry, rhs: &geos::Geometry) -> Result<Option<f64>> {
-    // Return NULL for empty geometries (PostGIS compatibility)
-    if lhs.is_empty().unwrap_or(false) || rhs.is_empty().unwrap_or(false) {
+    // Return NULL for empty geometries
+    if lhs
+        .is_empty()
+        .map_err(|e| sedona_internal_datafusion_err!("is_empty() call failed: {e}"))?
+        || rhs
+            .is_empty()
+            .map_err(|e| sedona_internal_datafusion_err!("is_empty() call failed: {e}"))?
+    {
         return Ok(None);
     }
-    let distance = lhs.hausdorff_distance(rhs).map_err(|e| {
-        DataFusionError::Execution(format!("Failed to calculate hausdorff distance: {e}"))
-    })?;
+    let distance = lhs
+        .hausdorff_distance(rhs)
+        .map_err(|e| exec_datafusion_err!("Failed to calculate hausdorff distance: {e}"))?;
     Ok(Some(distance))
 }
 
@@ -140,9 +149,16 @@ fn invoke_scalar_densify(
     densify_frac: f64,
 ) -> Result<Option<f64>> {
     // Return NULL for empty geometries (PostGIS compatibility)
-    if lhs.is_empty().unwrap_or(false) || rhs.is_empty().unwrap_or(false) {
+    if lhs
+        .is_empty()
+        .map_err(|e| sedona_internal_datafusion_err!("is_empty() call failed: {e}"))?
+        || rhs
+            .is_empty()
+            .map_err(|e| sedona_internal_datafusion_err!("is_empty() call failed: {e}"))?
+    {
         return Ok(None);
     }
+
     let distance = lhs
         .hausdorff_distance_densify(rhs, densify_frac)
         .map_err(|e| {
@@ -153,7 +169,8 @@ fn invoke_scalar_densify(
 
 #[cfg(test)]
 mod tests {
-    use arrow_array::{create_array as arrow_array, ArrayRef};
+    use arrow_array::{create_array as arrow_array, Array, ArrayRef};
+    use datafusion_common::cast::as_float64_array;
     use datafusion_common::ScalarValue;
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
@@ -281,13 +298,20 @@ mod tests {
         );
         tester.assert_return_type(DataType::Float64);
 
-        // With densify fraction
+        // With densify fraction - this example shows different results for different fractions
+        // The densify fraction of 0.5 adds interpolated points, improving the accuracy
         let result = tester
-            .invoke_scalar_scalar_scalar("LINESTRING (0 0, 100 0)", "LINESTRING (0 1, 0 1)", 0.5)
+            .invoke_scalar_scalar_scalar(
+                "LINESTRING (130 0, 0 0, 0 150)",
+                "LINESTRING (10 10, 10 150, 130 10)",
+                0.5,
+            )
             .unwrap();
-        // Without densification this would be 1.0, with densification it should be sqrt(100^2 + 1^2) ≈ 100.005
         let result_f64: f64 = result.try_into().unwrap();
-        assert!(result_f64 > 1.0);
+        assert!(
+            (result_f64 - 70.0).abs() < 0.01,
+            "Expected ~70.0, got {result_f64}"
+        );
 
         // NULL handling
         let result = tester
@@ -295,11 +319,12 @@ mod tests {
             .unwrap();
         assert!(result.is_null());
 
-        // Array batch test
+        // Array batch test - varying densify fractions show different results
         let arg1 = create_array(
             &[
-                Some("POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))"),
-                Some("POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))"),
+                Some("LINESTRING (130 0, 0 0, 0 150)"),
+                Some("LINESTRING (130 0, 0 0, 0 150)"),
+                Some("LINESTRING (130 0, 0 0, 0 150)"),
                 None,
                 Some("POINT EMPTY"),
             ],
@@ -307,20 +332,43 @@ mod tests {
         );
         let arg2 = create_array(
             &[
-                Some("POINT (0.5 0.5)"),
-                Some("POINT (5 5)"),
-                Some("POINT (0 0)"),
+                Some("LINESTRING (10 10, 10 150, 130 10)"),
+                Some("LINESTRING (10 10, 10 150, 130 10)"),
+                Some("LINESTRING (10 10, 10 150, 130 10)"),
+                Some("LINESTRING (0 0, 1 1)"),
                 Some("POINT EMPTY"),
             ],
             &sedona_type,
         );
-        let densify_frac = arrow_array!(Float64, [Some(0.5), Some(0.5), Some(0.5), Some(0.5)]);
+        // Different densify fractions: smaller fractions create more segments, improving accuracy
+        let densify_frac = arrow_array!(
+            Float64,
+            [Some(0.5), Some(0.25), Some(0.1), Some(0.5), Some(0.5)]
+        );
 
         let result = tester
             .invoke_arrays(vec![arg1, arg2, densify_frac])
             .unwrap();
-        // Just verify it runs without error and returns correct nulls
-        assert_eq!(result.len(), 4);
+        assert_eq!(result.len(), 5);
+        // First three results should all be close to ~70.0 (the continuous Hausdorff distance)
+        let result_array = as_float64_array(&result).unwrap();
+        assert!(
+            (result_array.value(0) - 70.0).abs() < 0.01,
+            "Expected ~70.0, got {}",
+            result_array.value(0)
+        );
+        assert!(
+            (result_array.value(1) - 70.0).abs() < 0.01,
+            "Expected ~70.0, got {}",
+            result_array.value(1)
+        );
+        assert!(
+            (result_array.value(2) - 70.0).abs() < 0.01,
+            "Expected ~70.0, got {}",
+            result_array.value(2)
+        );
+        assert!(result_array.is_null(3)); // NULL input
+        assert!(result_array.is_null(4)); // EMPTY geometry
     }
 
     #[test]
