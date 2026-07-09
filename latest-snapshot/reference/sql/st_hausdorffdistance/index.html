@@ -7,7 +7,7 @@
       
       
       
-        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/reference/sql/st_simplifypreservetopology/">
+        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/reference/sql/st_hausdorffdistance/">
       
       
       
@@ -20,7 +20,7 @@
     
     
       
-        <title>ST_SimplifyPreserveTopology - Apache Sedona</title>
+        <title>ST_HausdorffDistance - Apache Sedona</title>
       
     
     
@@ -84,7 +84,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#st_simplifypreservetopology" class="md-skip">
+        <a href="#st_hausdorffdistance" class="md-skip">
           Skip to content
         </a>
       
@@ -157,7 +157,7 @@
             <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              ST_SimplifyPreserveTopology
+              ST_HausdorffDistance
             
           </span>
             </div>
@@ -1621,7 +1621,7 @@
 
 
   
-    <a href="https://github.com/apache/sedona-db/blob/main/docs/reference/sql/st_simplifypreservetopology.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/apache/sedona-db/blob/main/docs/reference/sql/st_hausdorffdistance.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"></path></svg>
     </a>
@@ -1629,33 +1629,68 @@
   
 
 
-<h1 id="st_simplifypreservetopology">ST_SimplifyPreserveTopology<a class="headerlink" href="#st_simplifypreservetopology" title="Permanent link">¶</a></h1>
-<p>Simplifies a geometry, ensuring the result is a valid geometry with the
-same topology.</p>
+<h1 id="st_hausdorffdistance">ST_HausdorffDistance<a class="headerlink" href="#st_hausdorffdistance" title="Permanent link">¶</a></h1>
+<p>Returns the Hausdorff distance between two geometries.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">¶</a></h2>
-<div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_SimplifyPreserveTopology</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">tolerance</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><span class="n">double</span><span class="w"> </span><span class="n">ST_HausdorffDistance</span><span class="p">(</span><span class="n">geomA</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">geomB</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
+<span class="n">double</span><span class="w"> </span><span class="n">ST_HausdorffDistance</span><span class="p">(</span><span class="n">geomA</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">geomB</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">densifyFrac</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="arguments">Arguments<a class="headerlink" href="#arguments" title="Permanent link">¶</a></h2>
 <ul>
-<li><strong>geom</strong> (geometry): Input geometry</li>
-<li><strong>tolerance</strong> (double)</li>
+<li><strong>geomA</strong> (geometry): Input geometry</li>
+<li><strong>geomB</strong> (geometry): Input geometry</li>
+<li><strong>densifyFrac</strong> (double): A fraction by which to densify each segment
+  of the geometries before computing the distance. A value of 0.25 will
+  densify the segment by adding vertices every ¼ of the segment
+  length. Densification can give a more accurate result for geometries
+  with long segments or complex shapes.</li>
 </ul>
 <h2 id="description">Description<a class="headerlink" href="#description" title="Permanent link">¶</a></h2>
-<p>Simplifies a geometry, ensuring that the result is a valid geometry
-having the same dimension and number of components as the input, and
-with the components having the same topological relationship.</p>
+<p>The Hausdorff distance is a measure of the similarity between two
+geometric shapes. This implementation returns the greatest of all
+distances from a point in one geometry to the closest point in the other
+geometry.</p>
+<p>Returns <code>NULL</code> if either geometry is <code>NULL</code>. Returns 0 if either
+geometry is empty.</p>
 <h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">¶</a></h2>
-<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">ST_SimplifyPreserveTopology</span><span class="p">(</span>
-<span class="w">    </span><span class="n">ST_GeomFromText</span><span class="p">(</span><span class="s1">'POLYGON((8 25, 28 22, 28 20, 15 11, 33 3, 56 30, 46 33,46 34, 47 44, 35 36, 45 33, 43 19, 29 21, 29 22,35 26, 24 39, 8 25))'</span><span class="p">),</span>
-<span class="w">    </span><span class="mi">10</span>
+<p>Basic Hausdorff distance between two points:</p>
+<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">ST_HausdorffDistance</span><span class="p">(</span><span class="n">ST_Point</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">),</span><span class="w"> </span><span class="n">ST_Point</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="mi">4</span><span class="p">));</span>
+</code></pre></div>
+<div class="codehilite"><pre><span></span><code>┌──────────────────────────────────────────────────────────────────────────────┐
+│ st_hausdorffdistance(st_point(Int64(0),Int64(0)),st_point(Int64(3),Int64(4)) │
+│                                      )…                                      │
+╞══════════════════════════════════════════════════════════════════════════════╡
+│                                                                          5.0 │
+└──────────────────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<p>Hausdorff distance between two linestrings:</p>
+<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">ST_HausdorffDistance</span><span class="p">(</span>
+<span class="w">    </span><span class="n">ST_GeomFromText</span><span class="p">(</span><span class="s1">'LINESTRING (0 0, 2 0)'</span><span class="p">),</span>
+<span class="w">    </span><span class="n">ST_GeomFromText</span><span class="p">(</span><span class="s1">'LINESTRING (0 1, 2 1)'</span><span class="p">)</span>
 <span class="p">);</span>
 </code></pre></div>
-<div class="codehilite"><pre><span></span><code><span class="err">┌──────────────────────────────────────────────────────────────────────────────┐</span>
-<span class="err">│</span><span class="w"> </span><span class="nx">st_simplifypreservetopology</span><span class="p">(</span><span class="nx">st_geomfromtext</span><span class="p">(</span><span class="nx">Utf8</span><span class="p">(</span><span class="err">"</span><span class="nx">POLYGON</span><span class="p">((</span><span class="mi">8</span><span class="w"> </span><span class="mi">25</span><span class="p">,</span><span class="w"> </span><span class="mi">28</span><span class="w"> </span><span class="mi">22</span><span class="p">,</span><span class="w"> </span><span class="mi">28</span><span class="w"> </span><span class="mi">2</span><span class="w"> </span><span class="err">│</span>
-<span class="err">│</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">15</span><span class="w"> </span><span class="mi">11</span><span class="p">,</span><span class="w"> </span><span class="mi">33</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="mi">56</span><span class="w"> </span><span class="mi">30</span><span class="p">,</span><span class="w"> </span><span class="mi">46</span><span class="w"> </span><span class="mi">33</span><span class="p">,</span><span class="mi">46</span><span class="w"> </span><span class="mi">34</span><span class="p">,</span><span class="w"> </span><span class="mi">47</span><span class="w"> </span><span class="mi">44</span><span class="p">,</span><span class="w"> </span><span class="mi">35</span><span class="w"> </span><span class="mi">36</span><span class="p">,</span><span class="w"> </span><span class="mi">45</span><span class="w"> </span><span class="mi">33</span><span class="p">,</span><span class="w"> </span><span class="mi">43</span><span class="w"> </span><span class="mi">19</span><span class="p">,</span><span class="w"> </span><span class="mi">29</span><span class="w"> </span><span class="mi">21</span><span class="p">,</span><span class="w"> </span><span class="mi">29</span><span class="w"> </span><span class="mi">2</span><span class="err">…</span><span class="w"> </span><span class="err">│</span>
-<span class="err">╞══════════════════════════════════════════════════════════════════════════════╡</span>
-<span class="err">│</span><span class="w"> </span><span class="nx">POLYGON</span><span class="p">((</span><span class="mi">8</span><span class="w"> </span><span class="mi">25</span><span class="p">,</span><span class="mi">28</span><span class="w"> </span><span class="mi">22</span><span class="p">,</span><span class="mi">15</span><span class="w"> </span><span class="mi">11</span><span class="p">,</span><span class="mi">33</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span><span class="mi">56</span><span class="w"> </span><span class="mi">30</span><span class="p">,</span><span class="mi">47</span><span class="w"> </span><span class="mi">44</span><span class="p">,</span><span class="mi">35</span><span class="w"> </span><span class="mi">36</span><span class="p">,</span><span class="mi">43</span><span class="w"> </span><span class="mi">19</span><span class="p">,</span><span class="mi">24</span><span class="w"> </span><span class="mi">39</span><span class="p">,</span><span class="mi">8</span><span class="w"> </span><span class="mi">25</span><span class="p">))</span><span class="w">          </span><span class="err">│</span>
-<span class="err">└──────────────────────────────────────────────────────────────────────────────┘</span>
+<div class="codehilite"><pre><span></span><code>┌──────────────────────────────────────────────────────────────────────────────┐
+│ st_hausdorffdistance(st_geomfromtext(Utf8("LINESTRING (0 0, 2 0)")),st_geomf │
+│                   romtext(Utf8("LINESTRING (0 1, 2 1)")))…                   │
+╞══════════════════════════════════════════════════════════════════════════════╡
+│                                                                          1.0 │
+└──────────────────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<p>Using densification for more accurate results as needed:</p>
+<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">ST_HausdorffDistance</span><span class="p">(</span>
+<span class="w">    </span><span class="n">ST_GeomFromText</span><span class="p">(</span><span class="s1">'LINESTRING (130 0, 0 0, 0 150)'</span><span class="p">),</span>
+<span class="w">    </span><span class="n">ST_GeomFromText</span><span class="p">(</span><span class="s1">'LINESTRING (10 10, 10 150, 130 10)'</span><span class="p">),</span>
+<span class="w">    </span><span class="mi">0</span><span class="p">.</span><span class="mi">5</span>
+<span class="p">);</span>
+</code></pre></div>
+<div class="codehilite"><pre><span></span><code>┌──────────────────────────────────────────────────────────────────────────────┐
+│ st_hausdorffdistance(st_geomfromtext(Utf8("LINESTRING (130 0, 0 0, 0 150)")) │
+│  ,st_geomfromtext(Utf8("LINESTRING (10 10, 10 150, 130 10)")),Float64(0.5))… │
+╞══════════════════════════════════════════════════════════════════════════════╡
+│                                                                         70.0 │
+└──────────────────────────────────────────────────────────────────────────────┘
 </code></pre></div>
 
 
