@@ -33,8 +33,10 @@ use datafusion_common::{exec_datafusion_err, ScalarValue};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::sedona_internal_err;
 use sedona_gdal::gdal::Gdal;
+use sedona_gdal::geo_transform::{GeoTransform, GeoTransformEx};
 use sedona_gdal::mem::MemDatasetBuilder;
 use sedona_gdal::raster::types::GdalDataType;
+use sedona_gdal::vector::geometry::Geometry;
 use sedona_proj::transform::with_global_proj_engine;
 
 use arrow_schema::DataType;
@@ -363,8 +365,10 @@ struct ClippedBand {
 struct ClippedRasterData {
     /// One entry per processed band.
     bands: Vec<ClippedBand>,
-    /// Crop window in pixel coordinates (col_off, row_off, width, height).
-    /// `None` means the full original raster extent was kept (crop=false).
+    /// Crop window in pixel coordinates (col_off, row_off, width, height):
+    /// the geometry's envelope intersected with the raster extent, snapped
+    /// outward to the pixel grid. `None` means the full original raster
+    /// extent was kept (crop=false).
     crop_window: Option<CropWindow>,
 }
 
@@ -400,11 +404,6 @@ fn clip_raster(
         .geometry_from_wkb(geom_wkb)
         .map_err(|e| exec_datafusion_err!("Failed to parse geometry from WKB: {}", e))?;
 
-    // Create a mask raster (same dimensions as input)
-    let mask_dataset = MemDatasetBuilder::create(gdal, width, height, 1, GdalDataType::UInt8)
-        .map_err(|e| exec_datafusion_err!("Failed to create mask dataset: {}", e))?;
-
-    // Set the same geotransform as the input raster
     let geotransform = [
         metadata.upper_left_x(),
         metadata.scale_x(),
@@ -413,8 +412,32 @@ fn clip_raster(
         metadata.skew_y(),
         metadata.scale_y(),
     ];
+
+    // The clip window is the geometry's envelope intersected with the raster
+    // extent, snapped outward to the pixel grid — the window PostGIS ST_Clip,
+    // `gdalwarp -crop_to_cutline`, and Sedona Spark's RS_Clip use. Knowing it
+    // up front rejects disjoint geometries before any GDAL work and bounds the
+    // mask to the window instead of the full raster.
+    let Some(window) = envelope_window(&geometry, &geotransform, width, height)? else {
+        return Ok(None);
+    };
+
+    // Create a mask raster covering only the clip window, with the geotransform
+    // shifted to the window's upper-left corner.
+    let mask_dataset =
+        MemDatasetBuilder::create(gdal, window.width, window.height, 1, GdalDataType::UInt8)
+            .map_err(|e| exec_datafusion_err!("Failed to create mask dataset: {}", e))?;
+    let (window_ulx, window_uly) = geotransform.apply(window.col_off as f64, window.row_off as f64);
+    let mask_geotransform = [
+        window_ulx,
+        geotransform[1],
+        geotransform[2],
+        window_uly,
+        geotransform[4],
+        geotransform[5],
+    ];
     mask_dataset
-        .set_geo_transform(&geotransform)
+        .set_geo_transform(&mask_geotransform)
         .map_err(|e| exec_datafusion_err!("Failed to set geotransform: {}", e))?;
 
     // GDAL's MEM driver zero-fills owned band buffers at creation, so the mask
@@ -429,27 +452,29 @@ fn clip_raster(
     )
     .map_err(|e| exec_datafusion_err!("Failed to rasterize geometry: {}", e))?;
 
-    // Read the mask
+    // Read the (window-sized) mask
     let mask_band = mask_dataset
         .rasterband(1)
         .map_err(|e| exec_datafusion_err!("Failed to get mask band: {}", e))?;
     let mask_buffer = mask_band
-        .read_as::<u8>((0, 0), (width, height), (width, height), None)
+        .read_as::<u8>(
+            (0, 0),
+            (window.width, window.height),
+            (window.width, window.height),
+            None,
+        )
         .map_err(|e| exec_datafusion_err!("Failed to read mask: {}", e))?;
     let mask = mask_buffer.data();
 
-    // Check if there are any non-zero pixels in the mask (i.e. geometry intersects raster)
+    // The envelope may overlap the raster while the geometry itself selects no
+    // pixel (e.g. it falls between pixel centers); that is still the
+    // no-intersection case.
     let has_intersection = mask.iter().any(|&v| v != 0);
     if !has_intersection {
         return Ok(None);
     }
 
-    // Compute crop window if crop=true
-    let crop_window = if crop {
-        compute_crop_window(mask, width, height)
-    } else {
-        None
-    };
+    let crop_window = if crop { Some(window) } else { None };
 
     // Determine which bands to process
     let band_indices: Vec<usize> = if band_num == 0 {
@@ -567,7 +592,15 @@ fn clip_raster(
             let clipped_plane = if let Some(cw) = crop_window {
                 apply_mask_and_crop(plane_bytes, mask, width, &data_type, nodata, &cw)?
             } else {
-                apply_mask_to_band(plane_bytes, mask, width, height, &data_type, nodata)?
+                apply_mask_to_band(
+                    plane_bytes,
+                    mask,
+                    width,
+                    height,
+                    &data_type,
+                    nodata,
+                    &window,
+                )?
             };
             clipped_data.extend_from_slice(&clipped_plane);
         }
@@ -598,37 +631,70 @@ fn clip_raster(
     }))
 }
 
-/// Compute the minimal bounding pixel window that contains all non-zero mask pixels.
-fn compute_crop_window(mask: &[u8], width: usize, height: usize) -> Option<CropWindow> {
-    let mut min_col = width;
-    let mut max_col = 0usize;
-    let mut min_row = height;
-    let mut max_row = 0usize;
+/// Compute the clip window: the geometry's envelope intersected with the
+/// raster extent, snapped outward to the pixel grid. Returns `None` when the
+/// envelope is disjoint from the raster extent (no clipping possible).
+///
+/// The envelope corners are mapped through the inverse geotransform (all four,
+/// so a skewed/rotated raster still gets a correct superset window) and the
+/// resulting pixel-space bbox is floored/ceiled to whole pixels. A degenerate
+/// envelope (point/line) landing exactly on a grid line is widened to one
+/// pixel so the rasterizer — not the snapping — decides whether it burns.
+fn envelope_window(
+    geometry: &Geometry,
+    geotransform: &GeoTransform,
+    width: usize,
+    height: usize,
+) -> Result<Option<CropWindow>> {
+    let env = geometry.envelope();
+    let inverse = geotransform
+        .invert()
+        .map_err(|e| exec_datafusion_err!("RS_Clip: geotransform is not invertible: {}", e))?;
 
-    for row in 0..height {
-        for col in 0..width {
-            if mask[row * width + col] != 0 {
-                min_col = min_col.min(col);
-                max_col = max_col.max(col);
-                min_row = min_row.min(row);
-                max_row = max_row.max(row);
-            }
-        }
+    let corners = [
+        (env.MinX, env.MinY),
+        (env.MinX, env.MaxY),
+        (env.MaxX, env.MinY),
+        (env.MaxX, env.MaxY),
+    ];
+    let mut min_col = f64::INFINITY;
+    let mut max_col = f64::NEG_INFINITY;
+    let mut min_row = f64::INFINITY;
+    let mut max_row = f64::NEG_INFINITY;
+    for (x, y) in corners {
+        let (col, row) = inverse.apply(x, y);
+        min_col = min_col.min(col);
+        max_col = max_col.max(col);
+        min_row = min_row.min(row);
+        max_row = max_row.max(row);
     }
 
-    if min_col > max_col || min_row > max_row {
-        return None; // no non-zero pixels (shouldn't happen if caller checked)
+    let col0 = min_col.floor();
+    let row0 = min_row.floor();
+    let col1 = max_col.ceil().max(col0 + 1.0);
+    let row1 = max_row.ceil().max(row0 + 1.0);
+
+    // Intersect with the raster extent. `>=` also rejects the NaN envelope of
+    // an empty geometry.
+    let col0 = col0.max(0.0);
+    let row0 = row0.max(0.0);
+    let col1 = col1.min(width as f64);
+    let row1 = row1.min(height as f64);
+    if !(col0 < col1 && row0 < row1) {
+        return Ok(None);
     }
 
-    Some(CropWindow {
-        col_off: min_col,
-        row_off: min_row,
-        width: max_col - min_col + 1,
-        height: max_row - min_row + 1,
-    })
+    Ok(Some(CropWindow {
+        col_off: col0 as usize,
+        row_off: row0 as usize,
+        width: (col1 - col0) as usize,
+        height: (row1 - row0) as usize,
+    }))
 }
 
 /// Apply mask to band data (no cropping — preserves original dimensions).
+/// The mask covers only `window`; every pixel outside it is outside the
+/// geometry's envelope and therefore nodata.
 fn apply_mask_to_band(
     original_data: &[u8],
     mask: &[u8],
@@ -636,23 +702,45 @@ fn apply_mask_to_band(
     height: usize,
     data_type: &BandDataType,
     nodata: f64,
+    window: &CropWindow,
 ) -> Result<Vec<u8>> {
     let byte_size = data_type.byte_size();
     let nodata_bytes = nodata_f64_to_bytes(nodata, data_type);
-    let mut result = original_data.to_vec();
+    let nodata_row: Vec<u8> = nodata_bytes.repeat(width);
+    let mut result = vec![0u8; width * height * byte_size];
 
-    for (pixel_idx, &mask_val) in mask.iter().enumerate().take(width * height) {
-        if mask_val == 0 {
-            // Pixel is outside geometry - set to nodata
-            let byte_offset = pixel_idx * byte_size;
-            result[byte_offset..byte_offset + byte_size].copy_from_slice(&nodata_bytes);
+    let row_bytes = width * byte_size;
+    for row in 0..height {
+        let dst_row = &mut result[row * row_bytes..(row + 1) * row_bytes];
+        if row < window.row_off || row >= window.row_off + window.height {
+            dst_row.copy_from_slice(&nodata_row);
+            continue;
+        }
+        // Within a window row: nodata left and right of the window, source
+        // bytes inside it (masked-out pixels overwritten below).
+        let win_start = window.col_off * byte_size;
+        let win_end = (window.col_off + window.width) * byte_size;
+        dst_row[..win_start].copy_from_slice(&nodata_row[..win_start]);
+        dst_row[win_end..].copy_from_slice(&nodata_row[win_end..]);
+        let src_start = row * row_bytes + win_start;
+        dst_row[win_start..win_end]
+            .copy_from_slice(&original_data[src_start..src_start + (win_end - win_start)]);
+
+        let mask_row_start = (row - window.row_off) * window.width;
+        for col in 0..window.width {
+            if mask[mask_row_start + col] == 0 {
+                let dst = win_start + col * byte_size;
+                dst_row[dst..dst + byte_size].copy_from_slice(&nodata_bytes);
+            }
         }
     }
 
     Ok(result)
 }
 
-/// Apply mask AND crop to the given crop window in one pass.
+/// Apply mask AND crop to the given crop window in one pass. The mask is
+/// window-sized (row-major over `cw.width`×`cw.height`); the source data is
+/// the full raster plane.
 fn apply_mask_and_crop(
     original_data: &[u8],
     mask: &[u8],
@@ -673,14 +761,14 @@ fn apply_mask_and_crop(
     // the dynamic-width per-pixel copy it replaces.
     for row in 0..cw.height {
         let src_row = cw.row_off + row;
-        let row_pixel_start = src_row * full_width + cw.col_off;
-        let src_start = row_pixel_start * byte_size;
+        let src_start = (src_row * full_width + cw.col_off) * byte_size;
         let dst_start = row * row_bytes;
         result[dst_start..dst_start + row_bytes]
             .copy_from_slice(&original_data[src_start..src_start + row_bytes]);
 
+        let mask_row_start = row * cw.width;
         for col in 0..cw.width {
-            if mask[row_pixel_start + col] == 0 {
+            if mask[mask_row_start + col] == 0 {
                 let dst = dst_start + col * byte_size;
                 result[dst..dst + byte_size].copy_from_slice(&nodata_bytes);
             }
@@ -865,6 +953,10 @@ mod tests {
                 original_len,
                 "Clipped band should have same size as original when crop=false"
             );
+            // The polygon covers cols 0-1 of both rows; cols 2-3 lie outside
+            // the geometry envelope entirely and must also read nodata (0, the
+            // UInt8 minimum) — this pins the outside-window fill.
+            assert_eq!(clipped.bands[0].data, vec![1u8, 2, 0, 0, 5, 6, 0, 0]);
             assert!(
                 clipped.crop_window.is_none(),
                 "crop_window should be None when crop=false"
@@ -914,6 +1006,38 @@ mod tests {
                 (cw.height as i64) < metadata.height(),
                 "Cropped height should be smaller"
             );
+            Ok::<_, datafusion_common::DataFusionError>(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn crop_uses_envelope_window_not_tight_mask_bbox() {
+        // PostGIS ST_Clip / gdalwarp -crop_to_cutline semantics: the crop
+        // window is the geometry's envelope ∩ raster extent snapped to the
+        // grid, keeping unselected envelope pixels as nodata padding — not the
+        // tight bbox of the selected mask pixels.
+        let array = test_raster_array();
+        with_gdal(|gdal| {
+            let rasters = RasterStructArray::try_new(&array).unwrap();
+            let raster = rasters.get(0).unwrap();
+
+            // Right triangle with envelope x ∈ [0, 3], y ∈ [0, 2] — a 3×2
+            // pixel window. Only three pixel centers fall inside it: (0.5, 1.5)
+            // -> 1, (0.5, 0.5) -> 5, (1.5, 0.5) -> 6. The tight mask bbox
+            // would be 2×2; the envelope window must be 3×2 with nodata (0)
+            // padding on the unselected pixels.
+            let geom_wkb = wkb_from_wkt(gdal, "POLYGON((0 0, 3 0, 0 2, 0 0))")?;
+            let clipped = clip_raster(gdal, &raster, &geom_wkb, 0, None, false, true)?
+                .expect("Should have intersection");
+
+            let cw = clipped.crop_window.expect("crop_window should be set");
+            assert_eq!(
+                (cw.col_off, cw.row_off, cw.width, cw.height),
+                (0, 0, 3, 2),
+                "crop window should be the snapped envelope, not the mask bbox"
+            );
+            assert_eq!(clipped.bands[0].data, vec![1u8, 0, 0, 5, 6, 0]);
             Ok::<_, datafusion_common::DataFusionError>(())
         })
         .unwrap();

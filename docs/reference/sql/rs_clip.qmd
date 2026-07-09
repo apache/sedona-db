@@ -87,7 +87,9 @@ kernels:
 Pixels of the selected band that fall outside the geometry are set to the
 band's nodata value (or `no_data_value` if given); pixels inside are kept. When
 `crop` is true (the default) the output is cropped to the geometry's bounding
-box, otherwise the original extent is preserved.
+box intersected with the raster extent, snapped to the pixel grid; unselected
+pixels within that window remain as nodata padding. Otherwise the original
+extent is preserved.
 
 The geometry is reprojected into the raster's CRS when both carry one. If
 exactly one side has a CRS, the call errors; if neither does, the geometry is
