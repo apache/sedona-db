@@ -77,6 +77,18 @@ struct StreamWorker {
 ///
 /// Internally uses a dedicated worker thread to avoid blocking issues when
 /// called from within a tokio runtime context.
+///
+/// # Runtime Requirements
+///
+/// For responsive mid-batch cancellation, a **multi-thread runtime** is recommended.
+/// On current_thread runtimes, `Handle::block_on` does not drive the time driver,
+/// so the cancellation timer cannot fire while waiting for `stream.next()`. In this
+/// case, cancellation only takes effect between batch fetches (via reader-side
+/// `recv_timeout` and the cancel flag check before each fetch).
+///
+/// If your use case requires responsive cancellation during long-running batch
+/// fetches, ensure the runtime passed to [`StreamingRecordBatchReader::new`] is
+/// created with [`tokio::runtime::Builder::new_multi_thread`].
 pub struct StreamingRecordBatchReader {
     schema: SchemaRef,
     /// Stream and runtime, wrapped in Option so they can be moved to the worker.
@@ -111,9 +123,13 @@ impl StreamingRecordBatchReader {
 
     /// Create a new StreamingRecordBatchReader with a cancellation checker.
     ///
-    /// The cancellation checker is called before each batch is fetched. If it
-    /// returns `true`, iteration stops with a cancellation error on the next
-    /// call and `None` on subsequent calls.
+    /// The cancellation checker is called periodically at `check_interval` while
+    /// waiting for batches to be fetched. If it returns `true`, iteration stops
+    /// with a cancellation error on the next call and `None` on subsequent calls.
+    ///
+    /// The `check_interval` controls how frequently the checker is called. This
+    /// is useful for Python where we need to periodically check for signals
+    /// (Ctrl+C) during long-running operations.
     ///
     /// Takes an `Arc<Runtime>` to ensure the runtime stays alive for the lifetime
     /// of the reader.
@@ -121,6 +137,7 @@ impl StreamingRecordBatchReader {
         stream: SendableRecordBatchStream,
         runtime: Arc<Runtime>,
         cancel_checker: CancelChecker,
+        check_interval: Duration,
     ) -> Self {
         Self {
             schema: stream.schema(),
@@ -129,7 +146,7 @@ impl StreamingRecordBatchReader {
             cancel_checker: Some(cancel_checker),
             cancelled: false,
             skip_empty_batches: false,
-            periodic_check_interval: None,
+            periodic_check_interval: Some(check_interval),
         }
     }
 
@@ -139,19 +156,6 @@ impl StreamingRecordBatchReader {
     /// that have no rows and continue to the next batch.
     pub fn with_skip_empty_batches(mut self, skip: bool) -> Self {
         self.skip_empty_batches = skip;
-        self
-    }
-
-    /// Set a periodic interval for checking cancellation during batch fetches.
-    ///
-    /// When set, the cancel checker will be called periodically at this interval
-    /// even while waiting for a single batch to be fetched. This is useful for
-    /// Python where we need to periodically check for signals (Ctrl+C) during
-    /// long-running operations.
-    ///
-    /// Without this, the cancel checker is only called between batch fetches.
-    pub fn with_periodic_check_interval(mut self, interval: std::time::Duration) -> Self {
-        self.periodic_check_interval = Some(interval);
         self
     }
 
@@ -302,15 +306,6 @@ impl Iterator for StreamingRecordBatchReader {
             return None;
         }
 
-        // Check for cancellation before fetching the next batch
-        // (periodic checking during fetch is handled by fetch_next_batch if configured)
-        if let Some(ref checker) = self.cancel_checker {
-            if checker() {
-                self.cancelled = true;
-                return Some(Err(cancellation_arrow_error()));
-            }
-        }
-
         loop {
             match self.fetch_next_batch() {
                 Some(Ok(batch)) => {
@@ -418,7 +413,7 @@ mod tests {
     use super::*;
     use arrow_array::Int32Array;
     use arrow_schema::{DataType, Field, Schema};
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -488,25 +483,41 @@ mod tests {
     #[test]
     fn test_streaming_reader_cancel() {
         let runtime = test_runtime();
+        // 10 batches, 50ms each = 500ms total
         let (_schema, stream) = create_slow_stream(10, 50);
 
-        // Cancel after reading 3 batches
-        let counter = Arc::new(AtomicUsize::new(0));
-        let counter_clone = counter.clone();
-        let cancel_checker: CancelChecker = Box::new(move || {
-            let count = counter_clone.fetch_add(1, Ordering::SeqCst);
-            count >= 3
+        // Cancel after 175ms - should allow ~3 batches (at 50ms each) to complete
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let cancelled_clone = cancelled.clone();
+        let cancel_checker: CancelChecker =
+            Box::new(move || cancelled_clone.load(Ordering::SeqCst));
+
+        let reader = StreamingRecordBatchReader::with_cancel_checker(
+            stream,
+            runtime,
+            cancel_checker,
+            Duration::from_millis(25),
+        );
+
+        // Set cancel flag after 175ms from a separate thread
+        let cancelled_setter = cancelled.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(175));
+            cancelled_setter.store(true, Ordering::SeqCst);
         });
 
-        let reader =
-            StreamingRecordBatchReader::with_cancel_checker(stream, runtime, cancel_checker);
         let batches: Vec<_> = reader.collect();
 
-        // Should have 3 successful batches + 1 cancellation error
-        assert_eq!(batches.len(), 4);
+        // Should have ~3 successful batches + 1 cancellation error
+        // (timing can vary slightly, so we check for at least 2 and at most 5)
+        assert!(
+            batches.len() >= 2 && batches.len() <= 5,
+            "expected 2-5 batches, got {}",
+            batches.len()
+        );
 
-        // First 3 should be Ok
-        for (i, batch) in batches.iter().enumerate().take(3) {
+        // All but the last should be Ok
+        for (i, batch) in batches.iter().take(batches.len() - 1).enumerate() {
             assert!(batch.is_ok(), "batch {} should be Ok", i);
         }
 
@@ -680,9 +691,12 @@ mod tests {
         let cancel_checker: CancelChecker =
             Box::new(move || cancelled_clone.load(Ordering::SeqCst));
 
-        let reader =
-            StreamingRecordBatchReader::with_cancel_checker(stream, runtime, cancel_checker)
-                .with_periodic_check_interval(Duration::from_millis(50));
+        let reader = StreamingRecordBatchReader::with_cancel_checker(
+            stream,
+            runtime,
+            cancel_checker,
+            Duration::from_millis(50),
+        );
 
         // Spawn a task to set cancelled after 150ms
         let cancelled_setter = cancelled.clone();

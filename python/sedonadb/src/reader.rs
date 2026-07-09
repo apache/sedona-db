@@ -49,7 +49,11 @@ pub fn new_py_streaming_reader(
         })
     });
 
-    StreamingRecordBatchReader::with_cancel_checker(stream, runtime, cancel_checker)
-        .with_skip_empty_batches(true)
-        .with_periodic_check_interval(INTERVAL_CHECK_SIGNALS)
+    StreamingRecordBatchReader::with_cancel_checker(
+        stream,
+        runtime,
+        cancel_checker,
+        INTERVAL_CHECK_SIGNALS,
+    )
+    .with_skip_empty_batches(true)
 }

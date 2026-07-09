@@ -156,6 +156,8 @@ impl ExportedExecutionPlan {
     }
 
     fn execute(&self, partition: usize) -> Result<SendableRecordBatchStream> {
+        // Enter the runtime context so that plan.execute() can spawn tasks
+        let _guard = self.runtime.enter();
         self.plan.execute(partition, self.task_context.clone())
     }
 }
@@ -985,7 +987,7 @@ mod tests {
             ];
             assert_batches_eq!(expected, &batches);
 
-            // Execute partition 1 - needs a fresh import since we consumed the first
+            // Execute partition 1
             let stream2 = imported.execute(1, task_ctx).unwrap();
             let batches2: Vec<RecordBatch> = stream2
                 .collect::<Vec<_>>()
