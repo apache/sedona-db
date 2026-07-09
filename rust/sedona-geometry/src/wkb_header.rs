@@ -1162,6 +1162,133 @@ mod tests {
     }
 
     #[test]
+    fn wkb_point_layout_accepts_point_encodings() {
+        // ISO points of every dimensionality: the layout is found and the
+        // coordinate read matches the leading (x, y).
+        for wkt_value in [
+            "POINT (1 2)",
+            "POINT Z (1 2 3)",
+            "POINT M (1 2 3)",
+            "POINT ZM (1 2 3 4)",
+        ] {
+            let wkb = make_wkb(wkt_value);
+            let layout = WkbPointLayout::try_from_wkb(&wkb)
+                .unwrap()
+                .unwrap_or_else(|| panic!("{wkt_value} not recognized as a Point"));
+            assert_eq!(
+                layout.read_xy(&wkb).unwrap(),
+                Some((1.0, 2.0)),
+                "{wkt_value}"
+            );
+        }
+
+        // EWKB points: the SRID between the type code and the coordinate must be
+        // skipped for every dimensionality.
+        for wkb in [
+            &POINT_WITH_SRID_4326_EWKB[..],
+            &POINT_Z_WITH_SRID_3857_EWKB[..],
+            &POINT_M_WITH_SRID_4326_EWKB[..],
+            &POINT_ZM_WITH_SRID_4326_EWKB[..],
+        ] {
+            let layout = WkbPointLayout::try_from_wkb(wkb).unwrap().unwrap();
+            assert_eq!(layout.read_xy(wkb).unwrap(), Some((1.0, 2.0)));
+        }
+
+        // Big-endian EWKB: SRID flag and coordinate both decoded big-endian.
+        let be_ewkb: [u8; 25] = [
+            0x00, // big-endian
+            0x20, 0x00, 0x00, 0x01, // type code 1 (Point) with SRID flag
+            0x00, 0x00, 0x10, 0xE6, // SRID 4326
+            0x3F, 0xF0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // x = 1.0
+            0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // y = 2.0
+        ];
+        let layout = WkbPointLayout::try_from_wkb(&be_ewkb).unwrap().unwrap();
+        assert_eq!(layout.read_xy(&be_ewkb).unwrap(), Some((1.0, 2.0)));
+    }
+
+    #[test]
+    fn wkb_point_layout_non_point_is_none() {
+        for wkt_value in [
+            "LINESTRING (1 2, 3 4)",
+            "POLYGON ((0 0, 0 1, 1 0, 0 0))",
+            "MULTIPOINT ((1 2))",
+            "GEOMETRYCOLLECTION (POINT (1 2))",
+        ] {
+            let wkb = make_wkb(wkt_value);
+            assert!(
+                WkbPointLayout::try_from_wkb(&wkb).unwrap().is_none(),
+                "{wkt_value} unexpectedly recognized as a Point"
+            );
+        }
+
+        // Non-point EWKB: the SRID flag must not confuse type detection.
+        assert!(
+            WkbPointLayout::try_from_wkb(&LINESTRING_WITH_SRID_4326_EWKB)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            WkbPointLayout::try_from_wkb(&MULTIPOINT_WITH_SRID_4326_EWKB)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn wkb_point_layout_incomplete_iso_buffer() {
+        let wkb = make_wkb("POINT (1 2)");
+
+        // No byte order at all, and an invalid byte-order flag.
+        assert!(WkbPointLayout::try_from_wkb(&[]).is_err());
+        assert!(WkbPointLayout::try_from_wkb(&[0x02, 0, 0, 0, 1]).is_err());
+
+        // Shorter than byte order + type code: the header itself is truncated.
+        for i in 1..5 {
+            assert!(
+                WkbPointLayout::try_from_wkb(&wkb[0..i]).is_err(),
+                "header 0..{i} unexpectedly succeeded"
+            );
+        }
+
+        // Header is readable but the coordinate is truncated: read_xy must
+        // error rather than read out of bounds.
+        for i in 5..wkb.len() {
+            let layout = WkbPointLayout::try_from_wkb(&wkb[0..i]).unwrap().unwrap();
+            assert!(
+                layout.read_xy(&wkb[0..i]).is_err(),
+                "coordinate 0..{i} unexpectedly succeeded"
+            );
+        }
+    }
+
+    #[test]
+    fn wkb_point_layout_incomplete_ewkb_buffer() {
+        // 1 byte order + 4 type code + 4 SRID + 8 x + 8 y
+        let wkb = POINT_WITH_SRID_4326_EWKB;
+        assert_eq!(wkb.len(), 25);
+
+        for i in 1..5 {
+            assert!(
+                WkbPointLayout::try_from_wkb(&wkb[0..i]).is_err(),
+                "header 0..{i} unexpectedly succeeded"
+            );
+        }
+
+        // Everything shorter than the full SRID + coordinate must error: the
+        // coordinate offset accounts for the SRID, so a buffer that would fit an
+        // ISO point is still too short here.
+        for i in 5..wkb.len() {
+            let layout = WkbPointLayout::try_from_wkb(&wkb[0..i]).unwrap().unwrap();
+            assert!(
+                layout.read_xy(&wkb[0..i]).is_err(),
+                "coordinate 0..{i} unexpectedly succeeded"
+            );
+        }
+        let layout = WkbPointLayout::try_from_wkb(&wkb).unwrap().unwrap();
+        assert_eq!(layout.read_xy(&wkb).unwrap(), Some((1.0, 2.0)));
+    }
+
+    #[test]
     fn read_point_xy_iso_little_endian() {
         // 2-D / 3-D / 4-D ISO points all expose the same leading (x, y), and the
         // result must agree with the general parser's `first_xy`.
