@@ -98,9 +98,7 @@ impl ExportedTableProvider {
                 .block_on(inner.scan(session.as_ref(), projection_ref, &[], limit))
         })
         .join()
-        .map_err(|_| {
-            datafusion_common::DataFusionError::Internal("Scan thread panicked".to_string())
-        })?
+        .map_err(|e| sedona_internal_datafusion_err!("Scan thread panicked {e:?}"))?
     }
 
     fn get_property(&self, property: &str) -> Result<String> {
