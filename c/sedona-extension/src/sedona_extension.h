@@ -281,6 +281,8 @@ struct SedonaCExecutionPlanArgs {
 ///
 /// Before using this structure, the release callback MUST be checked.
 /// Instances with a NULL release callback are not valid and must not be used.
+///
+/// Members that accept const* self must be thread safe.
 struct SedonaCExecutionPlan {
   /// \brief Get the schema associated with the output of this plan
   ///
@@ -342,6 +344,8 @@ struct SedonaCExecutionPlan {
 ///
 /// Before using this structure, the release callback MUST be checked.
 /// Instances with a NULL release callback are not valid and must not be used.
+///
+/// Members that accept const* self must be thread safe.
 struct SedonaCTableProvider {
   /// \brief Get the schema of this table provider
   ///
