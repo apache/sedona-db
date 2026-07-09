@@ -15,5 +15,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
-pub mod extension;
+pub mod extension_ffi;
 pub mod scalar_kernel;
+
+#[cfg(feature = "async")]
+pub mod export_sendable_record_batch_stream;
+
+#[cfg(feature = "async")]
+pub mod import_sendable_record_batch_stream;
