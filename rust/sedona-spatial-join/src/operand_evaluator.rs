@@ -199,11 +199,9 @@ impl EvaluatedGeometryArray {
                 // `wkbs` are both owned by the `EvaluatedGeometryArray`, so they have the same lifetime. We'll never
                 // have a situation where the `EvaluatedGeometryArray` is dropped while the `wkbs` are still in use
                 // (guaranteed by the scope of the `wkbs` field and lifetime signature of the `wkbs` method).
-                wkbs.push(unsafe {
-                    transmute::<Option<wkb::reader::Wkb<'_>>, Option<wkb::reader::Wkb<'_>>>(Some(
-                        wkb,
-                    ))
-                });
+                wkbs.push(Some(unsafe {
+                    transmute::<Wkb<'_>, Wkb<'static>>(wkb)
+                }));
             } else {
                 rect_vec.push(Bounds2D::empty());
                 wkbs.push(None);
@@ -237,11 +235,9 @@ impl EvaluatedGeometryArray {
             if let Some(wkb_bytes) = wkb_opt {
                 let wkb = wkb::reader::read_wkb(wkb_bytes)
                     .map_err(|e| exec_datafusion_err!("WKB parse failed: {e}"))?;
-                wkbs.push(unsafe {
-                    transmute::<Option<wkb::reader::Wkb<'_>>, Option<wkb::reader::Wkb<'_>>>(Some(
-                        wkb,
-                    ))
-                });
+                wkbs.push(Some(unsafe {
+                    transmute::<Wkb<'_>, Wkb<'static>>(wkb)
+                }));
             } else {
                 wkbs.push(None);
             }
