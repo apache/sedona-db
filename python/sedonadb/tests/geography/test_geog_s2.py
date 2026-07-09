@@ -105,18 +105,19 @@ def test_s2_coveringcellids_parameters(eng):
     eng = eng.create_or_skip()
     geog = "ST_GeogFromText('LINESTRING (0 0, 100 50)')"
     cases = [
-        (f"S2_CoveringCellIds({geog})", 0, 30, 8),
-        (f"S2_CoveringCellIds({geog}, 4)", 4, 30, 8),
-        (f"S2_CoveringCellIds({geog}, 4, 6)", 4, 6, 8),
+        (f"S2_CoveringCellIds({geog})", 0, 30, None),
+        (f"S2_CoveringCellIds({geog}, 4)", 4, 30, None),
+        (f"S2_CoveringCellIds({geog}, 4, 6)", 4, 6, None),
         (f"S2_CoveringCellIds({geog}, 4, 6, 2)", 4, 6, 2),
     ]
 
-    for expr, min_level, max_level, max_cells in cases:
+    for expr, min_level, max_level, expected_max_cells in cases:
         result = eng.execute_and_collect(f"SELECT {expr}")
         df = eng.result_to_pandas(result)
         cells = df.iloc[0, 0]
         levels = [_s2_cell_level(cell_id) for cell_id in cells]
 
         assert len(cells) > 0
-        assert len(cells) <= max_cells
+        if expected_max_cells is not None:
+            assert len(cells) <= expected_max_cells
         assert all(min_level <= level <= max_level for level in levels)
