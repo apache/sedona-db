@@ -108,7 +108,7 @@ def test_s2_coveringcellids_parameters(eng):
         (f"S2_CoveringCellIds({geog})", 0, 30, None),
         (f"S2_CoveringCellIds({geog}, 4)", 4, 30, None),
         (f"S2_CoveringCellIds({geog}, 4, 6)", 4, 6, None),
-        (f"S2_CoveringCellIds({geog}, 4, 6, 2)", 4, 6, 2),
+        (f"S2_CoveringCellIds({geog}, 0, 30, 2)", 0, 30, 2),
     ]
 
     for expr, min_level, max_level, expected_max_cells in cases:
