@@ -30,9 +30,13 @@ rust-version.workspace = true
 [dependencies]
 arrow-array = { workspace = true, features = ["ffi"]}
 arrow-schema = { workspace = true, features = ["ffi"]}
+async-trait = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
+futures = { workspace = true }
+object_store = { workspace = true, default-features = false }
 libc = "0.2.178"
+tokio = { workspace = true }
 sedona-common = { workspace = true }
 sedona-expr = { workspace = true }
 sedona-schema = { workspace = true }

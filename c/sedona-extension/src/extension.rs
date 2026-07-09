@@ -23,6 +23,185 @@ use std::{
 
 use arrow_array::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 
+// -----------------------------------------------------------------------------
+// Async Result Handler
+// -----------------------------------------------------------------------------
+
+/// Raw FFI representation of an async result handler.
+///
+/// This follows the Arrow Async Stream interface pattern where the consumer
+/// provides callback handlers that the producer calls when the async operation
+/// completes. This enables high-concurrency scenarios without blocking threads.
+///
+/// The producer MUST call exactly one of `on_success` or `on_error`, followed
+/// by `release`. The handler is invalid after `release` is called.
+///
+/// Similar to Arrow's `ArrowAsyncDeviceStreamHandler`, but for single operations
+/// rather than streams.
+#[derive(Default)]
+#[repr(C)]
+pub struct SedonaCAsyncResultHandler {
+    /// Called on successful completion with optional payload data.
+    ///
+    /// `data` and `data_len` provide an optional byte payload. If no payload,
+    /// `data` is NULL and `data_len` is 0. The data is only valid for the
+    /// duration of this callback - the consumer must copy if needed longer.
+    ///
+    /// After this callback returns, the producer MUST call `release`.
+    pub on_success: Option<
+        unsafe extern "C" fn(
+            self_: *mut SedonaCAsyncResultHandler,
+            data: *const u8,
+            data_len: usize,
+        ),
+    >,
+
+    /// Called on error with an error code and message.
+    ///
+    /// `code` is an `errno`-compatible error code.
+    /// `message` is a null-terminated error string, valid only for this callback.
+    ///
+    /// After this callback returns, the producer MUST call `release`.
+    pub on_error: Option<
+        unsafe extern "C" fn(
+            self_: *mut SedonaCAsyncResultHandler,
+            code: c_int,
+            message: *const c_char,
+        ),
+    >,
+
+    /// Release callback to clean up the handler's resources.
+    ///
+    /// The producer MUST call this after calling either `on_success` or `on_error`.
+    /// After this is called, the handler is invalid and must not be used.
+    pub release: Option<unsafe extern "C" fn(self_: *mut SedonaCAsyncResultHandler)>,
+
+    /// Opaque consumer-specific data
+    pub private_data: *mut c_void,
+}
+
+unsafe impl Send for SedonaCAsyncResultHandler {}
+
+impl Drop for SedonaCAsyncResultHandler {
+    fn drop(&mut self) {
+        if let Some(releaser) = self.release {
+            unsafe { releaser(self) }
+            self.release = None;
+            self.private_data = null_mut();
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Object Store
+// -----------------------------------------------------------------------------
+
+/// Raw FFI representation of an ObjectStore
+///
+/// This follows the Arrow C Data Interface pattern with function pointers
+/// for callbacks and a `release` callback for cleanup.
+///
+/// See the ImportedObjectStore and ExportedObjectStore for high-level
+/// APIs to import and export implementations using this struct.
+#[derive(Default)]
+#[repr(C)]
+pub struct SedonaCObjectStore {
+    /// Callback to get a display string for the object store.
+    ///
+    /// The returned pointer must remain valid until the next call to any
+    /// method on this struct or until `release` is called.
+    ///
+    /// Return value: pointer to a null-terminated character array.
+    pub display: Option<unsafe extern "C" fn(self_: *const SedonaCObjectStore) -> *const c_char>,
+
+    /// Callback to get a debug string for the object store.
+    ///
+    /// The returned pointer must remain valid until the next call to any
+    /// method on this struct or until `release` is called.
+    ///
+    /// Return value: pointer to a null-terminated character array.
+    pub debug: Option<unsafe extern "C" fn(self_: *const SedonaCObjectStore) -> *const c_char>,
+
+    /// Delete the object at the specified location.
+    ///
+    /// This is an async operation. The implementation MUST eventually call
+    /// either `on_success` or `on_error` on the handler, followed by `release`.
+    ///
+    /// `location` is a null-terminated path string that remains valid for the
+    /// duration of this call only.
+    ///
+    /// Return value: 0 if the operation was successfully initiated,
+    /// `errno`-compatible error code if the operation could not be started.
+    /// If non-zero is returned, the handler callbacks must NOT be called.
+    pub delete: Option<
+        unsafe extern "C" fn(
+            self_: *const SedonaCObjectStore,
+            location: *const c_char,
+            handler: *mut SedonaCAsyncResultHandler,
+        ) -> c_int,
+    >,
+
+    /// Copy an object from one location to another.
+    ///
+    /// This is an async operation. The implementation MUST eventually call
+    /// either `on_success` or `on_error` on the handler, followed by `release`.
+    ///
+    /// `from` and `to` are null-terminated path strings that remain valid for
+    /// the duration of this call only.
+    ///
+    /// Return value: 0 if the operation was successfully initiated,
+    /// `errno`-compatible error code if the operation could not be started.
+    /// If non-zero is returned, the handler callbacks must NOT be called.
+    pub copy: Option<
+        unsafe extern "C" fn(
+            self_: *const SedonaCObjectStore,
+            from: *const c_char,
+            to: *const c_char,
+            handler: *mut SedonaCAsyncResultHandler,
+        ) -> c_int,
+    >,
+
+    /// Copy an object from one location to another, only if the destination
+    /// does not already exist.
+    ///
+    /// This is an async operation. The implementation MUST eventually call
+    /// either `on_success` or `on_error` on the handler, followed by `release`.
+    ///
+    /// `from` and `to` are null-terminated path strings that remain valid for
+    /// the duration of this call only.
+    ///
+    /// Return value: 0 if the operation was successfully initiated,
+    /// `errno`-compatible error code if the operation could not be started.
+    /// If non-zero is returned, the handler callbacks must NOT be called.
+    pub copy_if_not_exists: Option<
+        unsafe extern "C" fn(
+            self_: *const SedonaCObjectStore,
+            from: *const c_char,
+            to: *const c_char,
+            handler: *mut SedonaCAsyncResultHandler,
+        ) -> c_int,
+    >,
+
+    /// Release callback: release the object store's own resources.
+    pub release: Option<unsafe extern "C" fn(self_: *mut SedonaCObjectStore)>,
+
+    /// Opaque producer-specific data
+    pub private_data: *mut c_void,
+}
+
+unsafe impl Send for SedonaCObjectStore {}
+unsafe impl Sync for SedonaCObjectStore {}
+
+impl Drop for SedonaCObjectStore {
+    fn drop(&mut self) {
+        if let Some(releaser) = self.release {
+            unsafe { releaser(self) }
+            self.release = None;
+            self.private_data = null_mut();
+        }
+    }
+}
+
 /// Raw FFI representation of the SedonaCScalarKernel
 ///
 /// See the ImportedScalarKernel and ExportedScalarKernel for high-level
