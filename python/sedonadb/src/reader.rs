@@ -45,16 +45,13 @@ impl Iterator for PySedonaStreamReader {
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             match wait_for_future_from_rust(&self.runtime, self.stream.try_next()) {
-                Ok(Ok(maybe_batch)) => match maybe_batch {
-                    Some(batch) => {
-                        if batch.num_rows() == 0 {
-                            continue;
-                        }
-
-                        return Some(Ok(batch));
+                Ok(Ok(maybe_batch)) => {
+                    let batch = maybe_batch?;
+                    if batch.num_rows() == 0 {
+                        continue;
                     }
-                    None => return None,
-                },
+                    return Some(Ok(batch));
+                }
                 Ok(Err(df_err)) => return Some(Err(ArrowError::ExternalError(Box::new(df_err)))),
                 Err(py_err) => return Some(Err(ArrowError::ExternalError(Box::new(py_err)))),
             }

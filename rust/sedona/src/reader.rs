@@ -43,16 +43,13 @@ impl Iterator for SedonaStreamReader {
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             match self.runtime.block_on(self.stream.try_next()) {
-                Ok(maybe_batch) => match maybe_batch {
-                    Some(batch) => {
-                        if batch.num_rows() == 0 {
-                            continue;
-                        }
-
-                        return Some(Ok(batch));
+                Ok(maybe_batch) => {
+                    let batch = maybe_batch?;
+                    if batch.num_rows() == 0 {
+                        continue;
                     }
-                    None => return None,
-                },
+                    return Some(Ok(batch));
+                }
                 Err(err) => return Some(Err(ArrowError::ExternalError(Box::new(err)))),
             }
         }
