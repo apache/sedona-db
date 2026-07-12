@@ -133,7 +133,7 @@ impl SedonaScalarKernel for RsValuePoint {
                 // points (and non-finite coordinates) have no location to sample.
                 let raster_crs = resolve_crs(raster.crs())?;
                 let Some((x, y)) =
-                    resolve_point_xy(point_wkb, point_crs, raster_crs.as_deref(), engine)?
+                    resolve_point_xy(point_wkb, point_crs, raster_crs.as_deref(), false, engine)?
                 else {
                     builder.append_null();
                     return Ok(());
@@ -217,6 +217,10 @@ impl RsValuePoint {
         // Affine transform and raster CRS are shared by every point in this batch.
         let affine = AffineMatrix::from_metadata(&raster.metadata());
         let raster_crs = resolve_crs(raster.crs())?;
+        // A type-level CRS is constant for this batch, so avoid resolving and
+        // comparing it for every point when alignment cannot change coordinates.
+        let skip_reproject =
+            column_reproject_decision(&arg_types[1], raster_crs.as_deref())? == Some(false);
 
         let mut geom = executor.make_geom_wkb_crs_accessor(1)?;
 
@@ -240,9 +244,13 @@ impl RsValuePoint {
                 let Some(point_wkb) = wkb_opt else {
                     continue;
                 };
-                if let Some((x, y)) =
-                    resolve_point_xy(point_wkb, point_crs, raster_crs.as_deref(), engine)?
-                {
+                if let Some((x, y)) = resolve_point_xy(
+                    point_wkb,
+                    point_crs,
+                    raster_crs.as_deref(),
+                    skip_reproject,
+                    engine,
+                )? {
                     selection.push((i, x, y, band_num));
                 }
             }
@@ -318,10 +326,14 @@ fn next_band(
 
 /// Parse a Point WKB and return its `(x, y)` in the raster's CRS, or `None` when
 /// there is nothing to sample (the point is empty — both ordinates NaN).
+///
+/// `skip_reproject` is the scalar-raster fast path's column-level decision. Item
+/// CRS values always pass `false` because their CRS can vary by row.
 fn resolve_point_xy(
     point_wkb: &[u8],
     point_crs: CrsRef<'_>,
     raster_crs: CrsRef<'_>,
+    skip_reproject: bool,
     engine: &dyn sedona_geometry::transform::CrsEngine,
 ) -> Result<Option<(f64, f64)>> {
     let Some((px, py)) =
@@ -330,6 +342,10 @@ fn resolve_point_xy(
         return Ok(None);
     };
 
+    if skip_reproject {
+        return Ok(Some((px, py)));
+    }
+
     match align_wkb_to_crs(point_wkb, point_crs, raster_crs, engine)? {
         Cow::Borrowed(_) => Ok(Some((px, py))),
         Cow::Owned(reprojected) => read_point_xy(&reprojected)
@@ -337,6 +353,25 @@ fn resolve_point_xy(
             .ok_or_else(|| exec_datafusion_err!("RS_Value: reprojected point is empty"))
             .map(Some),
     }
+}
+
+/// For a column-level geometry CRS, decide once whether every point can skip
+/// CRS alignment. Item-level CRS values vary by row and must be handled by the
+/// shared alignment helper for each point.
+fn column_reproject_decision(
+    point_type: &SedonaType,
+    raster_crs: CrsRef<'_>,
+) -> Result<Option<bool>> {
+    let point_crs = match point_type {
+        SedonaType::Wkb(_, crs) | SedonaType::WkbView(_, crs) => crs.as_deref(),
+        _ => return Ok(None),
+    };
+
+    Ok(Some(match (point_crs, raster_crs) {
+        (Some(point_crs), Some(raster_crs)) => !point_crs.crs_equals(raster_crs),
+        // Without CRS metadata on either input, coordinates are already used as-is.
+        _ => false,
+    }))
 }
 
 /// Map a coordinate in the raster's CRS to a 0-based `(col, row)` pixel index,
@@ -872,5 +907,48 @@ mod tests {
         // A real point forces band resolution, which rejects the non-2-D raster.
         let err = invoke(Some("POINT (0 0)")).unwrap_err().to_string();
         assert!(err.contains("2-D"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn crs_decision_skips_equal_or_missing_crs() {
+        use sedona_schema::crs::deserialize_crs;
+
+        let raster_crs = deserialize_crs("EPSG:4326").unwrap();
+        let equal_point = SedonaType::Wkb(Edges::Planar, deserialize_crs("EPSG:4326").unwrap());
+        let untagged_point = SedonaType::Wkb(Edges::Planar, None);
+
+        assert_eq!(
+            column_reproject_decision(&equal_point, raster_crs.as_deref()).unwrap(),
+            Some(false)
+        );
+        assert_eq!(
+            column_reproject_decision(&untagged_point, raster_crs.as_deref()).unwrap(),
+            Some(false)
+        );
+        assert_eq!(
+            column_reproject_decision(&equal_point, None).unwrap(),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn crs_decision_reprojects_differing_type_level_crs() {
+        use sedona_schema::crs::deserialize_crs;
+
+        let raster_crs = deserialize_crs("EPSG:3857").unwrap();
+        let point_type = SedonaType::Wkb(Edges::Planar, deserialize_crs("EPSG:4326").unwrap());
+
+        assert_eq!(
+            column_reproject_decision(&point_type, raster_crs.as_deref()).unwrap(),
+            Some(true)
+        );
+        assert_eq!(
+            column_reproject_decision(
+                &SedonaType::new_item_crs(&point_type).unwrap(),
+                raster_crs.as_deref()
+            )
+            .unwrap(),
+            None
+        );
     }
 }
