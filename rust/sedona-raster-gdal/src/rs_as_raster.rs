@@ -28,7 +28,10 @@ use datafusion_common::config::ConfigOptions;
 use datafusion_common::error::Result;
 use datafusion_common::{exec_datafusion_err, exec_err, ScalarValue};
 use datafusion_expr::{ColumnarValue, Volatility};
-use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_expr::{
+    item_crs::ItemCrsKernel,
+    scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
+};
 use sedona_gdal::dataset::Dataset;
 use sedona_gdal::gdal::Gdal;
 use sedona_gdal::mem::MemDatasetBuilder;
@@ -47,13 +50,13 @@ use crate::gdal_dataset_provider::{configure_thread_local_options, thread_local_
 pub fn rs_as_raster_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "rs_asraster",
-        vec![
+        ItemCrsKernel::wrap_impl(vec![
             Arc::new(RsAsRaster { arg_count: 3 }),
             Arc::new(RsAsRaster { arg_count: 4 }),
             Arc::new(RsAsRaster { arg_count: 5 }),
             Arc::new(RsAsRaster { arg_count: 6 }),
             Arc::new(RsAsRaster { arg_count: 7 }),
-        ],
+        ]),
         Volatility::Immutable,
     )
 }
@@ -618,7 +621,7 @@ mod tests {
     use sedona_schema::raster::BandDataType;
     use sedona_testing::raster_spec::{assert_rasters_equal, RasterSpec};
     use sedona_testing::{
-        create::{create_array, make_wkb},
+        create::{create_array, create_array_item_crs, make_wkb},
         testers::ScalarUdfTester,
     };
 
@@ -810,6 +813,42 @@ mod tests {
             .crs(Some("EPSG:4326"))
             .band_values(&[255.0f64])
             .nodata(0.0f64);
+        assert_rasters_equal(&result, &[Some(expected)]);
+    }
+
+    #[test]
+    fn test_rs_as_raster_udf_accepts_item_crs_geometry() {
+        let metadata = load_reference_raster();
+        let geom = format!(
+            "POLYGON(({x0} {y1}, {x0} {y0}, {x1} {y0}, {x1} {y1}, {x0} {y1}))",
+            x0 = metadata.upper_left_x(),
+            x1 = metadata.upper_left_x() + metadata.scale_x(),
+            y0 = metadata.upper_left_y(),
+            y1 = metadata.upper_left_y() + metadata.scale_y(),
+        );
+
+        let udf: ScalarUDF = rs_as_raster_udf().into();
+        let tester = ScalarUdfTester::new(
+            udf,
+            vec![
+                SedonaType::new_item_crs(&WKB_GEOMETRY).unwrap(),
+                RASTER,
+                SedonaType::Arrow(DataType::Utf8),
+            ],
+        );
+
+        let result = tester
+            .invoke_arrays(vec![
+                create_array_item_crs(&[Some(geom.as_str())], [Some("EPSG:4326")], &WKB_GEOMETRY),
+                Arc::new(reference_raster_spec().build()),
+                Arc::new(StringArray::from(vec!["D"])),
+            ])
+            .unwrap();
+
+        let expected = RasterSpec::d2(1, 1)
+            .transform([10.0, 2.0, 0.0, 20.0, 0.0, -2.0])
+            .crs(Some("EPSG:4326"))
+            .band_values(&[1.0f64]);
         assert_rasters_equal(&result, &[Some(expected)]);
     }
 }
