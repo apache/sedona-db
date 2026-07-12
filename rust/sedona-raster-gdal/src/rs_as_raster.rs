@@ -221,8 +221,14 @@ impl SedonaScalarKernel for RsAsRaster {
 
                     let band_type = parse_pixel_type(pixel_type)?;
                     let raster_crs = resolve_crs(raster.crs())?;
-                    let geom_wkb =
-                        align_wkb_to_crs(geom_wkb, geom_crs, raster_crs.as_deref(), engine)?;
+                    let geom_wkb = align_wkb_to_crs(
+                        geom_wkb,
+                        geom_crs,
+                        raster_crs.as_deref(),
+                        "geometry",
+                        "reference raster",
+                        engine,
+                    )?;
 
                     let (out_metadata, out_band_metadata, out_band_bytes) = as_raster(
                         gdal,
@@ -791,6 +797,7 @@ mod tests {
     #[test]
     fn test_rs_as_raster_udf_batch() {
         let metadata = load_reference_raster();
+        let geometry_type = SedonaType::Wkb(Edges::Planar, deserialize_crs("EPSG:4326").unwrap());
         let geom = format!(
             "POLYGON(({x0} {y1}, {x0} {y0}, {x1} {y0}, {x1} {y1}, {x0} {y1}))",
             x0 = metadata.upper_left_x(),
@@ -803,7 +810,7 @@ mod tests {
         let tester = ScalarUdfTester::new(
             udf,
             vec![
-                WKB_GEOMETRY,
+                geometry_type.clone(),
                 RASTER,
                 SedonaType::Arrow(DataType::Utf8),
                 SedonaType::Arrow(DataType::Boolean),
@@ -815,7 +822,7 @@ mod tests {
 
         let result = tester
             .invoke_arrays(vec![
-                create_array(&[Some(geom.as_str())], &WKB_GEOMETRY),
+                create_array(&[Some(geom.as_str())], &geometry_type),
                 Arc::new(reference_raster_spec().build()),
                 Arc::new(StringArray::from(vec!["D"])),
                 Arc::new(BooleanArray::from(vec![false])),
@@ -831,6 +838,57 @@ mod tests {
             .band_values(&[255.0f64])
             .nodata(0.0f64);
         assert_rasters_equal(&result, &[Some(expected)]);
+    }
+
+    #[test]
+    fn test_rs_as_raster_udf_rejects_one_sided_crs() {
+        let geometry_with_crs =
+            SedonaType::Wkb(Edges::Planar, deserialize_crs("EPSG:4326").unwrap());
+        let udf: ScalarUDF = rs_as_raster_udf().into();
+
+        let tester = ScalarUdfTester::new(
+            udf.clone(),
+            vec![WKB_GEOMETRY, RASTER, SedonaType::Arrow(DataType::Utf8)],
+        );
+        let err = tester
+            .invoke_arrays(vec![
+                create_array(
+                    &[Some("POLYGON((10 20, 10 18, 12 18, 12 20, 10 20))")],
+                    &WKB_GEOMETRY,
+                ),
+                Arc::new(reference_raster_spec().build()),
+                Arc::new(StringArray::from(vec!["D"])),
+            ])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("reference raster has a CRS but the geometry does not"),
+            "unexpected error: {err}"
+        );
+
+        let tester = ScalarUdfTester::new(
+            udf,
+            vec![
+                geometry_with_crs.clone(),
+                RASTER,
+                SedonaType::Arrow(DataType::Utf8),
+            ],
+        );
+        let err = tester
+            .invoke_arrays(vec![
+                create_array(
+                    &[Some("POLYGON((0 0, 0 1, 1 1, 1 0, 0 0))")],
+                    &geometry_with_crs,
+                ),
+                Arc::new(RasterSpec::d2(1, 1).crs(None).band_values(&[0u8]).build()),
+                Arc::new(StringArray::from(vec!["D"])),
+            ])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("geometry has a CRS but the reference raster does not"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

@@ -113,7 +113,7 @@ geometry extent or kept equal to the full reference raster extent.
 
 When both `geometry` and `reference_raster` have a CRS and they differ,
 `geometry` is reprojected into the reference raster's CRS before rasterization.
-Geometries without a CRS are rasterized using their coordinates as given.
+An error is returned if exactly one of them has a CRS.
 
 ## Examples
 

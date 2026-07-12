@@ -278,7 +278,7 @@ def _rs_as_raster_sql(
     return f"""
         WITH src AS (SELECT RS_FromPath($1) AS raster)
         SELECT RS_AsRaster(
-            ST_GeomFromText('POLYGON((2 8, 2 5, 5 5, 5 8, 2 8))'),
+            ST_GeomFromText('POLYGON((2 8, 2 5, 5 5, 5 8, 2 8))', 'EPSG:4326'),
             raster,
             '{pixel_type}',
             {str(all_touched).upper()},
@@ -350,7 +350,7 @@ def test_rs_as_raster_all_touched_changes_pixels(con, sedona_testing):
 
     false_result = (
         con.sql(
-            f"WITH src AS (SELECT RS_FromPath($1) AS raster) SELECT RS_AsRaster(ST_GeomFromText('{geom}'), raster, 'uint8', FALSE, 1, 0, FALSE) AS raster FROM src",
+            f"WITH src AS (SELECT RS_FromPath($1) AS raster) SELECT RS_AsRaster(ST_GeomFromText('{geom}', 'EPSG:4326'), raster, 'uint8', FALSE, 1, 0, FALSE) AS raster FROM src",
             params=(str(path),),
         )
         .to_arrow_table()["raster"][0]
@@ -358,7 +358,7 @@ def test_rs_as_raster_all_touched_changes_pixels(con, sedona_testing):
     )
     true_result = (
         con.sql(
-            f"WITH src AS (SELECT RS_FromPath($1) AS raster) SELECT RS_AsRaster(ST_GeomFromText('{geom}'), raster, 'uint8', TRUE, 1, 0, FALSE) AS raster FROM src",
+            f"WITH src AS (SELECT RS_FromPath($1) AS raster) SELECT RS_AsRaster(ST_GeomFromText('{geom}', 'EPSG:4326'), raster, 'uint8', TRUE, 1, 0, FALSE) AS raster FROM src",
             params=(str(path),),
         )
         .to_arrow_table()["raster"][0]
@@ -400,7 +400,7 @@ def test_rs_as_raster_rejects_fractional_integer_nodata(con, sedona_testing):
             """
             WITH src AS (SELECT RS_FromPath($1) AS raster)
             SELECT RS_AsRaster(
-                ST_GeomFromText('POLYGON((0 2, 0 0, 2 0, 2 2, 0 2))'),
+                ST_GeomFromText('POLYGON((0 2, 0 0, 2 0, 2 2, 0 2))', 'EPSG:4326'),
                 raster,
                 'uint8',
                 FALSE,
@@ -423,7 +423,7 @@ def test_rs_as_raster_sets_output_nodata(con, sedona_testing):
         WITH src AS (SELECT RS_FromPath($1) AS raster)
         SELECT
             RS_AsRaster(
-                ST_GeomFromText('POLYGON((0 10, 0 9, 1 9, 1 10, 0 10))'),
+                ST_GeomFromText('POLYGON((0 10, 0 9, 1 9, 1 10, 0 10))', 'EPSG:4326'),
                 raster,
                 'uint8',
                 FALSE,
@@ -433,7 +433,7 @@ def test_rs_as_raster_sets_output_nodata(con, sedona_testing):
             ) AS raster,
             RS_BandNoDataValue(
                 RS_AsRaster(
-                    ST_GeomFromText('POLYGON((0 10, 0 9, 1 9, 1 10, 0 10))'),
+                    ST_GeomFromText('POLYGON((0 10, 0 9, 1 9, 1 10, 0 10))', 'EPSG:4326'),
                     raster,
                     'uint8',
                     FALSE,
