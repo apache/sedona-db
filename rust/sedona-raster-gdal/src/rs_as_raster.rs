@@ -185,11 +185,8 @@ impl SedonaScalarKernel for RsAsRaster {
         with_global_proj_engine(|engine| {
             with_gdal(|gdal| {
                 configure_thread_local_options(gdal, config_options)?;
-                let mut row_index = 0;
 
                 executor.execute_raster_wkb_crs_void(|raster_opt, geom_opt, geom_crs| {
-                    let current_row = row_index;
-                    row_index += 1;
                     let pixel_type_opt = pixel_type_iter.next().unwrap();
                     let all_touched_opt = all_touched_iter.next().unwrap().unwrap_or(false);
                     let burn_value_opt = burn_value_iter.next().unwrap().unwrap_or(1.0);
@@ -240,9 +237,7 @@ impl SedonaScalarKernel for RsAsRaster {
                         nodata_value_opt,
                         use_geometry_extent_opt,
                     )
-                    .map_err(|e| {
-                        exec_datafusion_err!("RS_AsRaster failed at row {}: {}", current_row, e)
-                    })?;
+                    .map_err(|e| exec_datafusion_err!("RS_AsRaster failed: {}", e))?;
 
                     builder
                         .start_raster(&out_metadata, raster.crs())
