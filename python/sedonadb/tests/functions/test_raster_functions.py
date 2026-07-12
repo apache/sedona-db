@@ -16,8 +16,10 @@
 # under the License.
 
 import pytest
+import numpy as np
 
 from sedonadb.testing import SedonaDB
+from sedonadb.raster import Raster
 
 
 @pytest.mark.parametrize(
@@ -295,8 +297,6 @@ def _rs_as_raster_sql(
 def test_rs_as_raster_matches_rasterio(
     con, sedona_testing, all_touched, use_geometry_extent
 ):
-    import numpy as np
-
     pytest.importorskip("rasterio")
     from rasterio.features import rasterize
     from rasterio.transform import Affine
@@ -305,14 +305,11 @@ def test_rs_as_raster_matches_rasterio(
     path = sedona_testing / "data/raster/test4.tiff"
     transform = (0.0, 1.0, 0.0, 10.0, 0.0, -1.0)
 
-    result = (
-        con.sql(
-            _rs_as_raster_sql("float64", all_touched, 7.0, 0.0, use_geometry_extent),
-            params=(str(path),),
-        )
-        .to_arrow_table()["raster"][0]
-        .as_py()
-    )
+    table = con.sql(
+        _rs_as_raster_sql("float64", all_touched, 7.0, 0.0, use_geometry_extent),
+        params=(str(path),),
+    ).to_arrow_table()
+    result = Raster(table["raster"], 0)
 
     got = result.bands[0].to_numpy()
     geom = wkt.loads("POLYGON((2 8, 2 5, 5 5, 5 8, 2 8))")

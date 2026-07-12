@@ -617,9 +617,13 @@ mod tests {
     use sedona_schema::datatypes::WKB_GEOMETRY;
     use sedona_schema::raster::BandDataType;
     use sedona_testing::raster_spec::{assert_rasters_equal, RasterSpec};
-    use sedona_testing::{create::create_array, testers::ScalarUdfTester};
+    use sedona_testing::{
+        create::{create_array, make_wkb},
+        testers::ScalarUdfTester,
+    };
 
     use super::*;
+    use crate::gdal_common::bytes_to_f64;
 
     fn reference_raster_spec() -> RasterSpec {
         RasterSpec::d2(4, 3)
@@ -627,18 +631,6 @@ mod tests {
             .crs(Some("EPSG:4326"))
             .band_values(&[0u8; 12])
             .nodata(0u8)
-    }
-
-    fn wkb_from_wkt(gdal: &Gdal, wkt: &str) -> Result<Vec<u8>> {
-        let geom = gdal.geometry_from_wkt(wkt).unwrap();
-        geom.wkb().map_err(|e| exec_datafusion_err!("{e}"))
-    }
-
-    fn bytes_to_f64_vec(bytes: &[u8]) -> Vec<f64> {
-        bytes
-            .chunks_exact(8)
-            .map(|chunk| f64::from_le_bytes(chunk.try_into().unwrap()))
-            .collect()
     }
 
     fn load_reference_raster() -> RasterMetadata {
@@ -704,7 +696,7 @@ mod tests {
                 y0 = md.upper_left_y(),
                 y1 = md.upper_left_y() + md.scale_y(),
             );
-            let geom_wkb = wkb_from_wkt(gdal, &wkt)?;
+            let geom_wkb = make_wkb(&wkt);
 
             let (out_md, _band_md, out_bytes) = as_raster(
                 gdal,
@@ -721,7 +713,10 @@ mod tests {
             assert_eq!(out_md.height, md.height());
             assert_eq!(out_md.upperleft_x, md.upper_left_x());
             assert_eq!(out_md.upperleft_y, md.upper_left_y());
-            assert_eq!(bytes_to_f64_vec(&out_bytes)[0], 255.0);
+            assert_eq!(
+                bytes_to_f64(&out_bytes[..8], &BandDataType::Float64).unwrap(),
+                255.0
+            );
             Ok::<_, datafusion_common::DataFusionError>(())
         })
         .unwrap();
@@ -742,7 +737,7 @@ mod tests {
                 y0 = md.upper_left_y(),
                 y1 = md.upper_left_y() + md.scale_y(),
             );
-            let geom_wkb = wkb_from_wkt(gdal, &wkt)?;
+            let geom_wkb = make_wkb(&wkt);
 
             let (out_md, _band_md, out_bytes) = as_raster(
                 gdal,
@@ -759,7 +754,10 @@ mod tests {
             assert_eq!(out_md.height, 1);
             assert_eq!(out_md.upperleft_x, md.upper_left_x());
             assert_eq!(out_md.upperleft_y, md.upper_left_y());
-            assert_eq!(bytes_to_f64_vec(&out_bytes), vec![255.0]);
+            assert_eq!(
+                bytes_to_f64(&out_bytes, &BandDataType::Float64).unwrap(),
+                255.0
+            );
             Ok::<_, datafusion_common::DataFusionError>(())
         })
         .unwrap();

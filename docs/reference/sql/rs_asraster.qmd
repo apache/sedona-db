@@ -97,6 +97,10 @@ kernels:
       type: boolean
 ---
 
+::: callout-warning
+**Experimental.** This function is experimental; its behavior may change without notice.
+:::
+
 ## Description
 
 Creates a single-band in-db raster by rasterizing `geometry` onto the grid
