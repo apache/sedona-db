@@ -32,7 +32,7 @@
 //! [`NdBuffer`](sedona_raster::traits::NdBuffer) — no GDAL involved. Only 2-D
 //! rasters are supported; a band with extra (non-spatial) dimensions errors.
 
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
 use arrow_array::{builder::Float64Builder, Array, ArrayRef, Float64Array, StructArray};
 use arrow_schema::DataType;
@@ -48,7 +48,7 @@ use sedona_raster::traits::{nodata_bytes_to_f64_lossless, NdBuffer, RasterRef};
 use sedona_schema::crs::CrsRef;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
-use crate::crs_utils::{crs_transform_wkb, resolve_crs};
+use crate::crs_utils::{align_wkb_to_crs, resolve_crs};
 use crate::executor::RasterExecutor;
 use crate::rs_ensure_loaded::NEEDS_PIXELS_METADATA_KEY;
 
@@ -133,7 +133,7 @@ impl SedonaScalarKernel for RsValuePoint {
                 // points (and non-finite coordinates) have no location to sample.
                 let raster_crs = resolve_crs(raster.crs())?;
                 let Some((x, y)) =
-                    resolve_point_xy(point_wkb, point_crs, raster_crs.as_deref(), false, engine)?
+                    resolve_point_xy(point_wkb, point_crs, raster_crs.as_deref(), engine)?
                 else {
                     builder.append_null();
                     return Ok(());
@@ -214,14 +214,9 @@ impl RsValuePoint {
             .map(|a| as_int32_array(a))
             .transpose()?;
 
-        // Affine transform and raster CRS, resolved once for all points.
+        // Affine transform and raster CRS are shared by every point in this batch.
         let affine = AffineMatrix::from_metadata(&raster.metadata());
         let raster_crs = resolve_crs(raster.crs())?;
-        // Decide reprojection once when the point CRS is column-level (the common
-        // case). This skips a per-point `crs_equals`, which allocates a String —
-        // ~15 ns/point, uniform across CRS types.
-        let needs_reproject = column_reproject_decision(&arg_types[1], raster_crs.as_deref())?;
-        let skip_reproject = needs_reproject == Some(false);
 
         let mut geom = executor.make_geom_wkb_crs_accessor(1)?;
 
@@ -245,13 +240,9 @@ impl RsValuePoint {
                 let Some(point_wkb) = wkb_opt else {
                     continue;
                 };
-                if let Some((x, y)) = resolve_point_xy(
-                    point_wkb,
-                    point_crs,
-                    raster_crs.as_deref(),
-                    skip_reproject,
-                    engine,
-                )? {
+                if let Some((x, y)) =
+                    resolve_point_xy(point_wkb, point_crs, raster_crs.as_deref(), engine)?
+                {
                     selection.push((i, x, y, band_num));
                 }
             }
@@ -325,83 +316,12 @@ fn next_band(
     }
 }
 
-/// Reproject `point_wkb` from its CRS into the raster CRS, returning the
-/// transformed WKB only when a reprojection actually happened (so the caller
-/// can sample the original bytes otherwise — no allocation in the common case).
-///
-/// Errors if exactly one of the point / raster carries a CRS: sampling across a
-/// known and an unknown CRS would silently mislocate the point.
-///
-/// Unlike the spatial predicates (`RS_Intersects` et al.), which fall back to a
-/// WGS84 pivot when a direct transform between two CRSes fails, a failed
-/// transform here is propagated as an error. Sampling has to land the point in
-/// the raster's own CRS — that is the only space its affine/pixel grid is
-/// defined in — so there is no neutral CRS to fall back to: a WGS84 pivot would
-/// silently sample the wrong pixel rather than compare geometries in a shared
-/// space.
-fn reproject_point(
-    point_wkb: &[u8],
-    point_crs: CrsRef<'_>,
-    raster_crs: CrsRef<'_>,
-    engine: &dyn sedona_geometry::transform::CrsEngine,
-) -> Result<Option<Vec<u8>>> {
-    match (point_crs, raster_crs) {
-        (Some(point_crs), Some(raster_crs)) => {
-            if point_crs.crs_equals(raster_crs) {
-                Ok(None)
-            } else {
-                Ok(Some(crs_transform_wkb(
-                    point_wkb, point_crs, raster_crs, engine,
-                )?))
-            }
-        }
-        (None, None) => Ok(None),
-        (Some(_), None) => {
-            exec_err!("RS_Value: point has a CRS but the raster does not")
-        }
-        (None, Some(_)) => {
-            exec_err!("RS_Value: raster has a CRS but the point does not")
-        }
-    }
-}
-
-/// For a **column-level** point CRS, decide once whether sampling needs a
-/// reprojection into the raster CRS:
-/// - `Some(true)`  — CRSes differ, reproject each point;
-/// - `Some(false)` — CRSes match (or both absent), sample original coordinates;
-/// - `None`        — the point CRS is carried per row, so decide per point.
-///
-/// Errors when exactly one side carries a CRS. Hoisting this out of the per-point
-/// loop avoids a per-point `crs_equals`, whose `to_authority_code()` allocates a
-/// `String` every call (~15 ns/point, uniform across CRS types).
-fn column_reproject_decision(
-    point_type: &SedonaType,
-    raster_crs: CrsRef<'_>,
-) -> Result<Option<bool>> {
-    let point_crs = match point_type {
-        SedonaType::Wkb(_, c) | SedonaType::WkbView(_, c) => c.as_deref(),
-        // A per-item CRS varies by row; the caller decides per point.
-        _ => return Ok(None),
-    };
-    match (point_crs, raster_crs) {
-        (Some(p), Some(r)) => Ok(Some(!p.crs_equals(r))),
-        (None, None) => Ok(Some(false)),
-        (Some(_), None) => exec_err!("RS_Value: point has a CRS but the raster does not"),
-        (None, Some(_)) => exec_err!("RS_Value: raster has a CRS but the point does not"),
-    }
-}
-
 /// Parse a Point WKB and return its `(x, y)` in the raster's CRS, or `None` when
 /// there is nothing to sample (the point is empty — both ordinates NaN).
-///
-/// `skip_reproject` is the hoisted column-level decision: when `true` the
-/// original coordinates are returned without consulting [`reproject_point`] (and
-/// its per-point `crs_equals`); when `false` reprojection is decided per point.
 fn resolve_point_xy(
     point_wkb: &[u8],
     point_crs: CrsRef<'_>,
     raster_crs: CrsRef<'_>,
-    skip_reproject: bool,
     engine: &dyn sedona_geometry::transform::CrsEngine,
 ) -> Result<Option<(f64, f64)>> {
     let Some((px, py)) =
@@ -409,19 +329,13 @@ fn resolve_point_xy(
     else {
         return Ok(None);
     };
-    if skip_reproject {
-        return Ok(Some((px, py)));
-    }
-    // A reprojection only happens when both sides carry a (differing) CRS;
-    // otherwise the original coordinates are sampled directly.
-    match reproject_point(point_wkb, point_crs, raster_crs, engine)? {
-        Some(reprojected) => {
-            let xy = read_point_xy(&reprojected)
-                .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?
-                .ok_or_else(|| exec_datafusion_err!("RS_Value: reprojected point is empty"))?;
-            Ok(Some(xy))
-        }
-        None => Ok(Some((px, py))),
+
+    match align_wkb_to_crs(point_wkb, point_crs, raster_crs, engine)? {
+        Cow::Borrowed(_) => Ok(Some((px, py))),
+        Cow::Owned(reprojected) => read_point_xy(&reprojected)
+            .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?
+            .ok_or_else(|| exec_datafusion_err!("RS_Value: reprojected point is empty"))
+            .map(Some),
     }
 }
 
@@ -653,39 +567,55 @@ mod tests {
     }
 
     #[test]
-    fn point_crs_mismatch_errors() {
+    fn point_with_missing_crs_is_sampled_without_transform() {
         let udf: ScalarUDF = rs_value_udf().into();
 
-        // Raster has a CRS (generate_test_rasters sets OGC:CRS84), point does not.
+        let raster = || {
+            RasterSpec::d2(2, 2)
+                .band_values(&[1u8, 2, 3, 4])
+                .transform([0.0, 1.0, 0.0, 2.0, 0.0, -1.0])
+        };
+
+        // A raster CRS does not reinterpret an untagged point's coordinates.
         let geom_type = SedonaType::Wkb(Edges::Planar, None);
         let tester = ScalarUdfTester::new(udf.clone(), vec![RASTER, geom_type.clone()]);
-        let rasters = generate_test_rasters(1, None).unwrap();
-        let geoms = create_geom_array(&[Some("POINT (2.1 2.6)")], &geom_type);
-        let err = tester
-            .invoke_arrays(vec![Arc::new(rasters), geoms])
-            .unwrap_err()
-            .to_string();
-        assert!(
-            err.contains("raster has a CRS but the point does not"),
-            "unexpected error: {err}"
-        );
+        let geoms = create_geom_array(&[Some("POINT (0.5 1.5)")], &geom_type);
+        let result = tester
+            .invoke_arrays(vec![
+                Arc::new(raster().crs(Some("EPSG:4326")).build()),
+                geoms,
+            ])
+            .unwrap();
+        let result = result.as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_eq!(result.value(0), 1.0);
 
-        // Point has a CRS, raster does not.
+        // A point CRS does not reinterpret coordinates when the raster lacks one.
         let geom_type = SedonaType::Wkb(Edges::Planar, lnglat());
         let tester = ScalarUdfTester::new(udf, vec![RASTER, geom_type.clone()]);
-        let rasters = RasterSpec::d2(2, 2)
-            .band(BandDataType::UInt8)
-            .crs(None)
+        let geoms = create_geom_array(&[Some("POINT (0.5 1.5)")], &geom_type);
+        let result = tester
+            .invoke_arrays(vec![Arc::new(raster().crs(None).build()), geoms])
+            .unwrap();
+        let result = result.as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_eq!(result.value(0), 1.0);
+    }
+
+    #[test]
+    fn point_with_differing_crs_is_reprojected() {
+        use sedona_schema::crs::deserialize_crs;
+
+        let udf: ScalarUDF = rs_value_udf().into();
+        let geom_type = SedonaType::Wkb(Edges::Planar, deserialize_crs("OGC:CRS84").unwrap());
+        let tester = ScalarUdfTester::new(udf, vec![RASTER, geom_type.clone()]);
+        let raster = RasterSpec::d2(1, 1)
+            .band_values(&[9u8])
+            .transform([111_000.0, 1_000.0, 0.0, 112_000.0, 0.0, -1_000.0])
+            .crs(Some("EPSG:3857"))
             .build();
-        let geoms = create_geom_array(&[Some("POINT (0 0)")], &geom_type);
-        let err = tester
-            .invoke_arrays(vec![Arc::new(rasters), geoms])
-            .unwrap_err()
-            .to_string();
-        assert!(
-            err.contains("point has a CRS but the raster does not"),
-            "unexpected error: {err}"
-        );
+        let geoms = create_geom_array(&[Some("POINT (1 1)")], &geom_type);
+        let result = tester.invoke_arrays(vec![Arc::new(raster), geoms]).unwrap();
+        let result = result.as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_eq!(result.value(0), 9.0);
     }
 
     #[test]
@@ -942,51 +872,5 @@ mod tests {
         // A real point forces band resolution, which rejects the non-2-D raster.
         let err = invoke(Some("POINT (0 0)")).unwrap_err().to_string();
         assert!(err.contains("2-D"), "unexpected error: {err}");
-    }
-
-    #[test]
-    fn crs_decision_equal_crs_skips_reproject() {
-        // The common case: a lng/lat point CRS and a lng/lat raster are detected
-        // as equal, so the per-point reproject (and its crs_equals) is skipped.
-        // This is what the B1 hoist relies on — if it returned Some(true) the
-        // optimization would silently no-op.
-        let raster = RasterSpec::d2(2, 2).band(BandDataType::UInt8).build(); // default lng/lat
-        let rasters = RasterStructArray::try_new(&raster).unwrap();
-        let raster_crs = resolve_crs(rasters.get(0).unwrap().crs()).unwrap();
-        let point_type = SedonaType::Wkb(Edges::Planar, lnglat());
-        assert_eq!(
-            column_reproject_decision(&point_type, raster_crs.as_deref()).unwrap(),
-            Some(false),
-            "lng/lat point + lng/lat raster must be detected as equal (skip reproject)"
-        );
-    }
-
-    #[test]
-    fn crs_decision_differing_crs_reprojects() {
-        use sedona_schema::crs::deserialize_crs;
-        let raster = RasterSpec::d2(2, 2)
-            .crs(Some("EPSG:4326"))
-            .band(BandDataType::UInt8)
-            .build();
-        let rasters = RasterStructArray::try_new(&raster).unwrap();
-        let raster_crs = resolve_crs(rasters.get(0).unwrap().crs()).unwrap();
-        let point_type = SedonaType::Wkb(Edges::Planar, deserialize_crs("EPSG:3857").unwrap());
-        assert_eq!(
-            column_reproject_decision(&point_type, raster_crs.as_deref()).unwrap(),
-            Some(true),
-            "EPSG:3857 point + EPSG:4326 raster must require reprojection"
-        );
-    }
-
-    #[test]
-    fn crs_decision_one_sided_crs_errors() {
-        let raster = RasterSpec::d2(2, 2)
-            .crs(None)
-            .band(BandDataType::UInt8)
-            .build();
-        let rasters = RasterStructArray::try_new(&raster).unwrap();
-        let raster_crs = resolve_crs(rasters.get(0).unwrap().crs()).unwrap();
-        let point_type = SedonaType::Wkb(Edges::Planar, lnglat());
-        assert!(column_reproject_decision(&point_type, raster_crs.as_deref()).is_err());
     }
 }

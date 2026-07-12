@@ -21,25 +21,27 @@ use std::{convert::TryFrom, sync::Arc};
 
 use arrow_array::ArrayRef;
 use arrow_schema::DataType;
-use datafusion_common::cast::{
-    as_binary_array, as_boolean_array, as_float64_array, as_string_array,
-};
+use datafusion_common::cast::{as_boolean_array, as_float64_array, as_string_array};
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::error::Result;
 use datafusion_common::{exec_datafusion_err, exec_err, ScalarValue};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::{
-    item_crs::ItemCrsKernel,
+    item_crs::parse_item_crs_arg_type,
     scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
 };
 use sedona_gdal::dataset::Dataset;
 use sedona_gdal::gdal::Gdal;
 use sedona_gdal::mem::MemDatasetBuilder;
 use sedona_gdal::raster::{rasterband::RasterBand, types::Buffer};
+use sedona_proj::transform::with_global_proj_engine;
 use sedona_raster::array::RasterRefImpl;
 use sedona_raster::builder::RasterBuilder;
 use sedona_raster::traits::{BandMetadata, RasterMetadata, RasterRef};
-use sedona_raster_functions::RasterExecutor;
+use sedona_raster_functions::{
+    crs_utils::{align_wkb_to_crs, resolve_crs},
+    RasterExecutor,
+};
 use sedona_schema::datatypes::{SedonaType, RASTER};
 use sedona_schema::matchers::ArgMatcher;
 use sedona_schema::raster::{BandDataType, StorageType};
@@ -50,13 +52,13 @@ use crate::gdal_dataset_provider::{configure_thread_local_options, thread_local_
 pub fn rs_as_raster_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "rs_asraster",
-        ItemCrsKernel::wrap_impl(vec![
+        vec![
             Arc::new(RsAsRaster { arg_count: 3 }),
             Arc::new(RsAsRaster { arg_count: 4 }),
             Arc::new(RsAsRaster { arg_count: 5 }),
             Arc::new(RsAsRaster { arg_count: 6 }),
             Arc::new(RsAsRaster { arg_count: 7 }),
-        ]),
+        ],
         Volatility::Immutable,
     )
 }
@@ -68,6 +70,13 @@ struct RsAsRaster {
 
 impl SedonaScalarKernel for RsAsRaster {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
+        let Some(first_arg) = args.first() else {
+            return Ok(None);
+        };
+        let (geometry_type, _) = parse_item_crs_arg_type(first_arg)?;
+        let mut arg_types = args.to_vec();
+        arg_types[0] = geometry_type;
+
         let mut matchers = vec![
             ArgMatcher::is_geometry_or_geography(),
             ArgMatcher::is_raster(),
@@ -87,7 +96,7 @@ impl SedonaScalarKernel for RsAsRaster {
             matchers.push(ArgMatcher::is_boolean());
         }
 
-        ArgMatcher::new(matchers, RASTER).match_args(args)
+        ArgMatcher::new(matchers, RASTER).match_args(&arg_types)
     }
 
     fn invoke_batch(
@@ -118,9 +127,6 @@ impl SedonaScalarKernel for RsAsRaster {
         let exec_args = vec![args[1].clone(), args[0].clone()];
         let executor =
             RasterExecutor::new_with_num_iterations(&exec_arg_types, &exec_args, num_iterations);
-
-        let geom_array = args[0].clone().into_array(num_iterations)?;
-        let geom_array = as_binary_array(&geom_array)?;
 
         let pixel_type_array = args[2]
             .clone()
@@ -170,84 +176,93 @@ impl SedonaScalarKernel for RsAsRaster {
 
         let mut builder = RasterBuilder::new(num_iterations);
 
-        let mut geom_iter = geom_array.iter();
         let mut pixel_type_iter = pixel_type_array.iter();
         let mut all_touched_iter = all_touched_array.iter();
         let mut burn_value_iter = burn_value_array.iter();
         let mut nodata_value_iter = nodata_value_array.iter();
         let mut use_geom_extent_iter = use_geom_extent_array.iter();
 
-        with_gdal(|gdal| {
-            configure_thread_local_options(gdal, config_options)?;
+        with_global_proj_engine(|engine| {
+            with_gdal(|gdal| {
+                configure_thread_local_options(gdal, config_options)?;
+                let mut row_index = 0;
 
-            executor.execute_raster_void(|row_index, raster_opt| {
-                let geom_opt = geom_iter
-                    .next()
-                    .expect("geometry iteration should match rows");
-                let pixel_type_opt = pixel_type_iter.next().unwrap();
-                let all_touched_opt = all_touched_iter.next().unwrap().unwrap_or(false);
-                let burn_value_opt = burn_value_iter.next().unwrap().unwrap_or(1.0);
-                let nodata_value_opt = nodata_value_iter.next().unwrap();
-                let use_geometry_extent_opt = use_geom_extent_iter.next().unwrap().unwrap_or(true);
+                executor.execute_raster_wkb_crs_void(|raster_opt, geom_opt, geom_crs| {
+                    let current_row = row_index;
+                    row_index += 1;
+                    let pixel_type_opt = pixel_type_iter.next().unwrap();
+                    let all_touched_opt = all_touched_iter.next().unwrap().unwrap_or(false);
+                    let burn_value_opt = burn_value_iter.next().unwrap().unwrap_or(1.0);
+                    let nodata_value_opt = nodata_value_iter.next().unwrap();
+                    let use_geometry_extent_opt =
+                        use_geom_extent_iter.next().unwrap().unwrap_or(true);
 
-                let raster = match raster_opt {
-                    Some(raster) => raster,
-                    None => {
-                        builder.append_null()?;
-                        return Ok(());
-                    }
-                };
-                let geom_wkb = match geom_opt {
-                    Some(geom_wkb) => geom_wkb,
-                    None => {
-                        builder.append_null()?;
-                        return Ok(());
-                    }
-                };
-                let pixel_type = match pixel_type_opt {
-                    Some(pixel_type) => pixel_type,
-                    None => {
-                        builder.append_null()?;
-                        return Ok(());
-                    }
-                };
+                    let raster = match raster_opt {
+                        Some(raster) => raster,
+                        None => {
+                            builder.append_null()?;
+                            return Ok(());
+                        }
+                    };
+                    let geom_wkb = match geom_opt {
+                        Some(geom_wkb) => geom_wkb,
+                        None => {
+                            builder.append_null()?;
+                            return Ok(());
+                        }
+                    };
+                    let pixel_type = match pixel_type_opt {
+                        Some(pixel_type) => pixel_type,
+                        None => {
+                            builder.append_null()?;
+                            return Ok(());
+                        }
+                    };
 
-                let band_type = parse_pixel_type(pixel_type)?;
+                    let band_type = parse_pixel_type(pixel_type)?;
+                    let raster_crs = resolve_crs(raster.crs())?;
+                    let geom_wkb =
+                        align_wkb_to_crs(geom_wkb, geom_crs, raster_crs.as_deref(), engine)?;
 
-                let (out_metadata, out_band_metadata, out_band_bytes) = as_raster(
-                    gdal,
-                    geom_wkb,
-                    raster,
-                    band_type,
-                    all_touched_opt,
-                    burn_value_opt,
-                    nodata_value_opt,
-                    use_geometry_extent_opt,
-                )
-                .map_err(|e| {
-                    exec_datafusion_err!("RS_AsRaster failed at row {}: {}", row_index, e)
+                    let (out_metadata, out_band_metadata, out_band_bytes) = as_raster(
+                        gdal,
+                        &geom_wkb,
+                        raster,
+                        band_type,
+                        all_touched_opt,
+                        burn_value_opt,
+                        nodata_value_opt,
+                        use_geometry_extent_opt,
+                    )
+                    .map_err(|e| {
+                        exec_datafusion_err!("RS_AsRaster failed at row {}: {}", current_row, e)
+                    })?;
+
+                    builder
+                        .start_raster(&out_metadata, raster.crs())
+                        .map_err(|e| {
+                            exec_datafusion_err!("Failed to start output raster: {}", e)
+                        })?;
+                    builder.start_band(out_band_metadata).map_err(|e| {
+                        exec_datafusion_err!("Failed to start output raster band: {}", e)
+                    })?;
+                    builder.band_data_writer().append_value(out_band_bytes);
+                    builder.finish_band().map_err(|e| {
+                        exec_datafusion_err!("Failed to finish output raster band: {}", e)
+                    })?;
+                    builder.finish_raster().map_err(|e| {
+                        exec_datafusion_err!("Failed to finish output raster: {}", e)
+                    })?;
+
+                    Ok(())
                 })?;
-
-                builder
-                    .start_raster(&out_metadata, raster.crs())
-                    .map_err(|e| exec_datafusion_err!("Failed to start output raster: {}", e))?;
-                builder.start_band(out_band_metadata).map_err(|e| {
-                    exec_datafusion_err!("Failed to start output raster band: {}", e)
-                })?;
-                builder.band_data_writer().append_value(out_band_bytes);
-                builder.finish_band().map_err(|e| {
-                    exec_datafusion_err!("Failed to finish output raster band: {}", e)
-                })?;
-                builder
-                    .finish_raster()
-                    .map_err(|e| exec_datafusion_err!("Failed to finish output raster: {}", e))?;
 
                 Ok(())
-            })?;
+            })
+        })?;
 
-            let result: ArrayRef = Arc::new(builder.finish()?);
-            executor.finish(result)
-        })
+        let result: ArrayRef = Arc::new(builder.finish()?);
+        executor.finish(result)
     }
 }
 
@@ -616,6 +631,8 @@ mod tests {
     use arrow_array::{BooleanArray, Float64Array, StringArray};
     use datafusion_expr::{ScalarUDF, ScalarUDFImpl};
     use sedona_raster::array::RasterStructArray;
+    use sedona_schema::crs::deserialize_crs;
+    use sedona_schema::datatypes::Edges;
     use sedona_schema::datatypes::RASTER;
     use sedona_schema::datatypes::WKB_GEOMETRY;
     use sedona_schema::raster::BandDataType;
@@ -813,6 +830,96 @@ mod tests {
             .crs(Some("EPSG:4326"))
             .band_values(&[255.0f64])
             .nodata(0.0f64);
+        assert_rasters_equal(&result, &[Some(expected)]);
+    }
+
+    #[test]
+    fn test_rs_as_raster_udf_reprojects_type_level_crs_geometry() {
+        let geometry_type = SedonaType::Wkb(Edges::Planar, deserialize_crs("OGC:CRS84").unwrap());
+        let udf: ScalarUDF = rs_as_raster_udf().into();
+        let tester = ScalarUdfTester::new(
+            udf,
+            vec![
+                geometry_type.clone(),
+                RASTER,
+                SedonaType::Arrow(DataType::Utf8),
+                SedonaType::Arrow(DataType::Boolean),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Boolean),
+            ],
+        );
+        let reference = RasterSpec::d2(1, 1)
+            .transform([111_000.0, 1_000.0, 0.0, 112_000.0, 0.0, -1_000.0])
+            .crs(Some("EPSG:3857"))
+            .band_values(&[0u8]);
+
+        let result = tester
+            .invoke_arrays(vec![
+                create_array(
+                    &[Some(
+                        "POLYGON((0.99 0.99, 0.99 1.01, 1.01 1.01, 1.01 0.99, 0.99 0.99))",
+                    )],
+                    &geometry_type,
+                ),
+                Arc::new(reference.build()),
+                Arc::new(StringArray::from(vec!["D"])),
+                Arc::new(BooleanArray::from(vec![false])),
+                Arc::new(Float64Array::from(vec![1.0])),
+                Arc::new(Float64Array::from(vec![None])),
+                Arc::new(BooleanArray::from(vec![false])),
+            ])
+            .unwrap();
+
+        let expected = RasterSpec::d2(1, 1)
+            .transform([111_000.0, 1_000.0, 0.0, 112_000.0, 0.0, -1_000.0])
+            .crs(Some("EPSG:3857"))
+            .band_values(&[1.0f64]);
+        assert_rasters_equal(&result, &[Some(expected)]);
+    }
+
+    #[test]
+    fn test_rs_as_raster_udf_reprojects_item_crs_geometry() {
+        let udf: ScalarUDF = rs_as_raster_udf().into();
+        let tester = ScalarUdfTester::new(
+            udf,
+            vec![
+                SedonaType::new_item_crs(&WKB_GEOMETRY).unwrap(),
+                RASTER,
+                SedonaType::Arrow(DataType::Utf8),
+                SedonaType::Arrow(DataType::Boolean),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Boolean),
+            ],
+        );
+        let reference = RasterSpec::d2(1, 1)
+            .transform([111_000.0, 1_000.0, 0.0, 112_000.0, 0.0, -1_000.0])
+            .crs(Some("EPSG:3857"))
+            .band_values(&[0u8]);
+
+        let result = tester
+            .invoke_arrays(vec![
+                create_array_item_crs(
+                    &[Some(
+                        "POLYGON((0.99 0.99, 0.99 1.01, 1.01 1.01, 1.01 0.99, 0.99 0.99))",
+                    )],
+                    [Some("OGC:CRS84")],
+                    &WKB_GEOMETRY,
+                ),
+                Arc::new(reference.build()),
+                Arc::new(StringArray::from(vec!["D"])),
+                Arc::new(BooleanArray::from(vec![false])),
+                Arc::new(Float64Array::from(vec![1.0])),
+                Arc::new(Float64Array::from(vec![None])),
+                Arc::new(BooleanArray::from(vec![false])),
+            ])
+            .unwrap();
+
+        let expected = RasterSpec::d2(1, 1)
+            .transform([111_000.0, 1_000.0, 0.0, 112_000.0, 0.0, -1_000.0])
+            .crs(Some("EPSG:3857"))
+            .band_values(&[1.0f64]);
         assert_rasters_equal(&result, &[Some(expected)]);
     }
 

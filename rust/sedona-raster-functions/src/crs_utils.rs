@@ -15,9 +15,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use std::borrow::Cow;
+
 use datafusion_common::{exec_datafusion_err, DataFusionError, Result};
 use sedona_geometry::transform::{transform, CrsEngine};
-use sedona_schema::crs::{deserialize_crs, CoordinateReferenceSystem, Crs};
+use sedona_schema::crs::{deserialize_crs, CoordinateReferenceSystem, Crs, CrsRef};
 use wkb::reader::read_wkb;
 
 /// Resolve an optional CRS string to a concrete CRS object.
@@ -64,6 +66,25 @@ pub fn crs_transform_wkb(
     Ok(out)
 }
 
+/// Align WKB coordinates with a target CRS when both CRSes are known.
+///
+/// Missing CRS metadata leaves coordinates unchanged. This preserves existing
+/// behavior for untagged geometries while transforming values that explicitly
+/// identify a differing CRS.
+pub fn align_wkb_to_crs<'a>(
+    wkb: &'a [u8],
+    source_crs: CrsRef<'_>,
+    target_crs: CrsRef<'_>,
+    engine: &dyn CrsEngine,
+) -> Result<Cow<'a, [u8]>> {
+    match (source_crs, target_crs) {
+        (Some(source_crs), Some(target_crs)) if !source_crs.crs_equals(target_crs) => Ok(
+            Cow::Owned(crs_transform_wkb(wkb, source_crs, target_crs, engine)?),
+        ),
+        _ => Ok(Cow::Borrowed(wkb)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -84,12 +105,45 @@ mod tests {
     ) -> Result<Vec<u8>> {
         let from_crs = resolve_crs(from)?;
         let to_crs = resolve_crs(to)?;
-        match (from_crs, to_crs) {
-            (Some(from_crs), Some(to_crs)) => {
-                crs_transform_wkb(wkb, from_crs.as_ref(), to_crs.as_ref(), engine)
-            }
-            _ => Ok(wkb.to_vec()),
-        }
+        align_wkb_to_crs(wkb, from_crs.as_deref(), to_crs.as_deref(), engine).map(Cow::into_owned)
+    }
+
+    #[test]
+    fn align_wkb_borrows_when_a_crs_is_missing_or_equal() {
+        let wkb = sample_wkb();
+        with_global_proj_engine(|engine| {
+            let source = resolve_crs(Some("EPSG:4326"))?;
+            let target = resolve_crs(Some("EPSG:4326"))?;
+
+            assert!(matches!(
+                align_wkb_to_crs(&wkb, None, target.as_deref(), engine)?,
+                Cow::Borrowed(_)
+            ));
+            assert!(matches!(
+                align_wkb_to_crs(&wkb, source.as_deref(), None, engine)?,
+                Cow::Borrowed(_)
+            ));
+            assert!(matches!(
+                align_wkb_to_crs(&wkb, source.as_deref(), target.as_deref(), engine)?,
+                Cow::Borrowed(_)
+            ));
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn align_wkb_owns_transformed_coordinates() {
+        let wkb = sample_wkb();
+        with_global_proj_engine(|engine| {
+            let source = resolve_crs(Some("EPSG:4326"))?;
+            let target = resolve_crs(Some("EPSG:3857"))?;
+            let aligned = align_wkb_to_crs(&wkb, source.as_deref(), target.as_deref(), engine)?;
+            assert!(matches!(aligned, Cow::Owned(_)));
+            assert_ne!(aligned.as_ref(), wkb);
+            Ok(())
+        })
+        .unwrap();
     }
 
     // -----------------------------------------------------------------------
