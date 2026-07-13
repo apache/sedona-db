@@ -244,6 +244,17 @@ def test_rs_setgeoreference_esri_shifts_to_corner():
     )
 
 
+def test_rs_setgeoreference_esri_skewed_roundtrips():
+    # The ESRI center shift maps through the full affine (scale and skew
+    # halves), so a skewed georeference round-trips exactly through the
+    # setter/getter pair in the ESRI convention.
+    eng = SedonaDB()
+    eng.assert_query_result(
+        "SELECT RS_GeoReference(RS_SetGeoReference(RS_Example(), '2 0.5 0.25 -3 100 200', 'ESRI'), 'ESRI')",
+        "2.0000000000\n0.5000000000\n0.2500000000\n-3.0000000000\n100.0000000000\n200.0000000000",
+    )
+
+
 @pytest.mark.parametrize(
     ("expr", "expected"),
     [
