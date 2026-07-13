@@ -326,6 +326,48 @@ def test_rs_values_default_band_requires_single_band(con):
         ).to_arrow_table()
 
 
+def test_rs_values_ensureloaded_outdb(con, sedona_testing):
+    """RS_Values over an OutDb raster exercises the needs_pixels ->
+    RS_EnsureLoaded planner path end to end: the raster from RS_FromPath carries
+    no pixels, so the planner must materialise it before the kernel samples.
+
+    sentinel2.tif's top-left pixel holds 2324 (see test_rs_ensureloaded); its
+    world center is derived from the raster's own georeference so the test does
+    not hard-code the file's geotransform.
+    """
+    path = sedona_testing / "data/raster/sentinel2.tif"
+    t = con.sql("SELECT RS_FromPath($1) AS raster", params=(str(path),))
+    view = "test_rs_values_ensureloaded_outdb_raster"
+    t.to_view(view)
+    try:
+        meta = con.sql(
+            f"SELECT RS_GeoReference(raster) AS georef, RS_SRID(raster) AS srid FROM {view}"
+        ).to_arrow_table()
+        georef = [float(v) for v in meta["georef"][0].as_py().split()]
+        scale_x, skew_y, skew_x, scale_y, ul_x, ul_y = georef
+        srid = meta["srid"][0].as_py()
+        # World center of pixel (0, 0): upper-left corner + half a pixel step.
+        cx = ul_x + 0.5 * scale_x + 0.5 * skew_x
+        cy = ul_y + 0.5 * skew_y + 0.5 * scale_y
+
+        result = (
+            con.sql(
+                f"""
+            SELECT RS_Values(
+                raster,
+                ST_GeomFromText('MULTIPOINT ({cx} {cy})', 'EPSG:{srid}'),
+                1
+            ) AS v FROM {view}
+            """
+            )
+            .to_arrow_table()["v"][0]
+            .as_py()
+        )
+        assert result == [2324.0]
+    finally:
+        con.drop_view(view)
+
+
 def test_rs_values_matches_rasterio(con):
     """Cross-check RS_Values against rasterio on a random raster.
 

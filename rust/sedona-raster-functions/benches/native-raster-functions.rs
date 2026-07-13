@@ -256,6 +256,34 @@ fn criterion_benchmark(c: &mut Criterion) {
         ),
     );
 
+    // RS_Values(raster, points, band) — array raster (a distinct raster per
+    // row), four sub-points per MultiPoint.
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
+        "rs_values",
+        BenchmarkArgs::ArrayArrayScalar(
+            Raster(64, 64),
+            Transformed(Box::new(MultiPoint(4)), sd_apply_default_crs_udf().into()),
+            Int32(1, 2),
+        ),
+    );
+    // RS_Values(raster, points, band) — scalar raster (one raster, many
+    // MultiPoints). This is the shape the hoisted fast path serves: per-row
+    // CRS/affine/band resolution collapses to once per batch.
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
+        "rs_values",
+        BenchmarkArgs::ScalarArrayScalar(
+            Raster(64, 64),
+            Transformed(Box::new(MultiPoint(4)), sd_apply_default_crs_udf().into()),
+            Int32(1, 2),
+        ),
+    );
+
     // RS_Intersects(raster, geometry) - point
     benchmark::scalar(
         c,

@@ -90,7 +90,10 @@ pub(crate) fn default_band(func: &str, num_bands: usize) -> Result<usize> {
 /// defined in — so there is no neutral CRS to fall back to: a WGS84 pivot would
 /// silently sample the wrong pixel rather than compare geometries in a shared
 /// space.
+///
+/// `func` names the calling UDF for the error messages.
 pub(crate) fn reproject_wkb(
+    func: &str,
     wkb: &[u8],
     geom_crs: CrsRef<'_>,
     raster_crs: CrsRef<'_>,
@@ -105,8 +108,8 @@ pub(crate) fn reproject_wkb(
             }
         }
         (None, None) => Ok(None),
-        (Some(_), None) => exec_err!("point has a CRS but the raster does not"),
-        (None, Some(_)) => exec_err!("raster has a CRS but the point does not"),
+        (Some(_), None) => exec_err!("{func}: geometry has a CRS but the raster does not"),
+        (None, Some(_)) => exec_err!("{func}: raster has a CRS but the geometry does not"),
     }
 }
 
@@ -118,8 +121,10 @@ pub(crate) fn reproject_wkb(
 ///
 /// Errors when exactly one side carries a CRS. Hoisting this out of the per-row
 /// loop avoids a per-row `crs_equals`, whose `to_authority_code()` allocates a
-/// `String` every call (~15 ns/row, uniform across CRS types).
+/// `String` every call (~15 ns/row, uniform across CRS types). `func` names the
+/// calling UDF for the error messages.
 pub(crate) fn column_reproject_decision(
+    func: &str,
     geom_type: &SedonaType,
     raster_crs: CrsRef<'_>,
 ) -> Result<Option<bool>> {
@@ -131,8 +136,8 @@ pub(crate) fn column_reproject_decision(
     match (geom_crs, raster_crs) {
         (Some(p), Some(r)) => Ok(Some(!p.crs_equals(r))),
         (None, None) => Ok(Some(false)),
-        (Some(_), None) => exec_err!("point has a CRS but the raster does not"),
-        (None, Some(_)) => exec_err!("raster has a CRS but the point does not"),
+        (Some(_), None) => exec_err!("{func}: geometry has a CRS but the raster does not"),
+        (None, Some(_)) => exec_err!("{func}: raster has a CRS but the geometry does not"),
     }
 }
 
@@ -142,14 +147,20 @@ pub(crate) fn column_reproject_decision(
 /// A non-finite coordinate (e.g. `POINT(NaN 5)`) returns `None`: without this
 /// guard a NaN would survive `inv_transform` and the saturating `f64 -> i64`
 /// cast would turn it into 0 (in bounds), silently sampling pixel column 0
-/// rather than yielding NULL.
-pub(crate) fn xy_to_pixel(affine: &AffineMatrix, x: f64, y: f64) -> Result<Option<(i64, i64)>> {
+/// rather than yielding NULL. `func` names the calling UDF for the error
+/// message.
+pub(crate) fn xy_to_pixel(
+    func: &str,
+    affine: &AffineMatrix,
+    x: f64,
+    y: f64,
+) -> Result<Option<(i64, i64)>> {
     if !x.is_finite() || !y.is_finite() {
         return Ok(None);
     }
     let (raster_x, raster_y) = affine
         .inv_transform(x, y)
-        .map_err(|e| exec_datafusion_err!("raster sampling: {e}"))?;
+        .map_err(|e| exec_datafusion_err!("{func}: {e}"))?;
     // Floor (not truncate toward zero) so a point just outside the top/left edge
     // maps to a negative index and is rejected as out of bounds, rather than
     // truncating to 0 and sampling an edge pixel. The `f64 -> i64` cast saturates
@@ -164,8 +175,10 @@ pub(crate) fn xy_to_pixel(affine: &AffineMatrix, x: f64, y: f64) -> Result<Optio
 /// points from one buffer without re-resolving per point.
 ///
 /// Reads exactly one pixel by computing its byte offset from the band's strides
-/// — zero-copy and O(1), no whole-band materialisation.
+/// — zero-copy and O(1), no whole-band materialisation. `func` names the
+/// calling UDF for the error messages.
 pub(crate) fn read_pixel(
+    func: &str,
     buffer: &NdBuffer,
     nodata: Option<f64>,
     col: i64,
@@ -186,24 +199,25 @@ pub(crate) fn read_pixel(
         .zip(col.checked_mul(buffer.strides[1]))
         .and_then(|(r, c)| r.checked_add(c))
         .and_then(|rc| rc.checked_add(buffer.offset as i64))
-        .ok_or_else(|| exec_datafusion_err!("raster sampling: pixel byte offset overflow"))?;
+        .ok_or_else(|| exec_datafusion_err!("{func}: pixel byte offset overflow"))?;
     let end_offset = byte_offset
         .checked_add(size)
-        .ok_or_else(|| exec_datafusion_err!("raster sampling: pixel byte offset overflow"))?;
+        .ok_or_else(|| exec_datafusion_err!("{func}: pixel byte offset overflow"))?;
     let start = usize::try_from(byte_offset)
-        .map_err(|_| exec_datafusion_err!("raster sampling: negative pixel byte offset"))?;
+        .map_err(|_| exec_datafusion_err!("{func}: negative pixel byte offset"))?;
     let end = usize::try_from(end_offset)
-        .map_err(|_| exec_datafusion_err!("raster sampling: pixel byte offset overflow"))?;
-    let bytes = buffer.buffer.get(start..end).ok_or_else(|| {
-        exec_datafusion_err!("raster sampling: pixel is out of the band's buffer bounds")
-    })?;
+        .map_err(|_| exec_datafusion_err!("{func}: pixel byte offset overflow"))?;
+    let bytes = buffer
+        .buffer
+        .get(start..end)
+        .ok_or_else(|| exec_datafusion_err!("{func}: pixel is out of the band's buffer bounds"))?;
 
     // Decode the pixel to f64. The lossless converter errors (rather than
     // silently rounding) on Int64/UInt64 values beyond f64's exact-integer
     // range (2^53) — the value functions return a Double, so such a pixel can't
     // be represented faithfully; failing loudly is preferred over a wrong value.
     let value = nodata_bytes_to_f64_lossless(bytes, &buffer.data_type)
-        .map_err(|e| exec_datafusion_err!("raster sampling: {e}"))?;
+        .map_err(|e| exec_datafusion_err!("{func}: {e}"))?;
 
     if let Some(nodata) = nodata {
         if value == nodata || (value.is_nan() && nodata.is_nan()) {
