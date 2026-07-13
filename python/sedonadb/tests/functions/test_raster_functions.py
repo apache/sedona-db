@@ -268,3 +268,27 @@ def test_rs_setbandnodatavalue_two_arg_requires_single_band():
         SedonaDB().assert_query_result(
             "SELECT RS_SetBandNoDataValue(RS_Example(), 0)", None
         )
+
+
+# RS_AsGeoTiff smoke coverage: the GDAL-backed export is tested in depth in
+# Rust (rust/sedona-raster-gdal/src/rs_as_geotiff.rs); these only guard that
+# the function is registered in the Python build and returns GeoTIFF bytes.
+@pytest.mark.parametrize(
+    "expr",
+    [
+        "RS_AsGeoTiff(RS_Example())",
+        "RS_AsGeoTiff(RS_Example(), 16)",
+        "RS_AsGeoTiff(RS_Example(), 'DEFLATE', 0.85)",
+        "RS_AsGeoTiff(RS_Example(), 'LZW', 0.85, 16, 16)",
+    ],
+)
+def test_rs_asgeotiff_returns_tiff_bytes(con, expr):
+    result = con.sql(f"SELECT {expr} AS t").to_arrow_table()["t"][0].as_py()
+    assert result[:2] in (b"II", b"MM"), "should start with a TIFF byte-order mark"
+
+
+def test_rs_asgeotiff_out_of_range_quality_errors(con):
+    # Quality is a 0.0-1.0 fraction; a 0-100 style value errors rather than
+    # silently clamping to maximum quality.
+    with pytest.raises(Exception, match="between 0.0 and 1.0"):
+        con.sql("SELECT RS_AsGeoTiff(RS_Example(), 'JPEG', 75)").to_arrow_table()
