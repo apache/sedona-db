@@ -23,7 +23,8 @@ use arrow_array::{ArrayRef, BooleanArray, Float64Array, StringArray};
 use arrow_schema::DataType;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use datafusion_expr::ScalarUDF;
-use sedona_schema::datatypes::{SedonaType, RASTER, WKB_GEOMETRY};
+use sedona_schema::crs::deserialize_crs;
+use sedona_schema::datatypes::{Edges, SedonaType, RASTER};
 use sedona_testing::{
     create::create_array,
     raster_spec::{raster_array as build_raster_array, RasterSpec},
@@ -45,18 +46,19 @@ fn raster_array(rows: usize) -> ArrayRef {
     ]))
 }
 
-fn geometry_array(rows: usize) -> ArrayRef {
+fn geometry_array(rows: usize, geom_type: &SedonaType) -> ArrayRef {
     let polygon = "POLYGON((10 18, 10 20, 12 20, 12 18, 10 18))";
 
-    create_array(&vec![Some(polygon); rows], &WKB_GEOMETRY)
+    create_array(&vec![Some(polygon); rows], geom_type)
 }
 
 fn bench_rs_as_raster(c: &mut Criterion) {
     let udf: ScalarUDF = sedona_raster_gdal::rs_as_raster_udf().into();
+    let geom_type = SedonaType::Wkb(Edges::Planar, deserialize_crs("EPSG:4326").unwrap());
     let tester = ScalarUdfTester::new(
         udf,
         vec![
-            WKB_GEOMETRY,
+            geom_type.clone(),
             RASTER,
             SedonaType::Arrow(DataType::Utf8),
             SedonaType::Arrow(DataType::Boolean),
@@ -66,9 +68,9 @@ fn bench_rs_as_raster(c: &mut Criterion) {
         ],
     );
 
-    let single_geom = geometry_array(1);
+    let single_geom = geometry_array(1, &geom_type);
     let single_raster = raster_array(1);
-    let batch_geom = geometry_array(128);
+    let batch_geom = geometry_array(128, &geom_type);
     let batch_raster = raster_array(128);
     let pixel_type_single = Arc::new(StringArray::from(vec!["D"]));
     let pixel_type_batch = Arc::new(StringArray::from(vec!["D"; 128]));
