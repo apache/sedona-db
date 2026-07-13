@@ -68,7 +68,8 @@ fn bench_rs_as_geotiff_compression(c: &mut Criterion) {
     );
 
     let rasters = raster_array(32);
-    let quality = ColumnarValue::Scalar(ScalarValue::Float64(Some(75.0)));
+    // Quality is a 0.0-1.0 fraction (ignored by these codecs, but must be valid).
+    let quality = ColumnarValue::Scalar(ScalarValue::Float64(Some(0.75)));
 
     let mut group = c.benchmark_group("rs_as_geotiff_compression");
     group.throughput(Throughput::Elements(rasters.len() as u64));

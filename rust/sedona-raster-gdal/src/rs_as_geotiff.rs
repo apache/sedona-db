@@ -33,16 +33,20 @@ use arrow_schema::DataType;
 use datafusion_common::cast::{as_float64_array, as_string_array, as_uint32_array};
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::error::Result;
-use datafusion_common::{exec_datafusion_err, ScalarValue};
+use datafusion_common::{exec_datafusion_err, exec_err, ScalarValue};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_raster::array::RasterRefImpl;
+use sedona_raster::traits::RasterRef;
 use sedona_raster_functions::RasterExecutor;
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;
+use sedona_schema::raster::BandDataType;
 
 // Use thread-local provider to create GDAL datasets from `RasterRef`.
-use crate::gdal_dataset_provider::configure_thread_local_options;
+use crate::gdal_dataset_provider::{
+    configure_thread_local_options, thread_local_provider, GDALDatasetProvider,
+};
 
 /// Counter for generating unique VSI memory file names
 static VSI_FILE_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -123,9 +127,10 @@ impl RsAsGeoTiff {
         Self { variant }
     }
 
-    /// Generate a unique VSI memory file path
+    /// Generate a unique VSI memory file path. `Relaxed` suffices: the counter
+    /// only has to hand out distinct values, no ordering with other memory.
     fn generate_vsi_path() -> String {
-        let counter = VSI_FILE_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let counter = VSI_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
         let thread_id = std::thread::current().id();
         format!("/vsimem/rs_as_geotiff_{:?}_{}.tif", thread_id, counter)
     }
@@ -133,14 +138,13 @@ impl RsAsGeoTiff {
     /// Convert raster to GeoTiff bytes
     fn raster_to_geotiff(
         gdal: &sedona_gdal::gdal::Gdal,
+        provider: &GDALDatasetProvider,
         raster: &RasterRefImpl,
         compression: Option<CompressionType>,
         quality: Option<f64>,
         tile_width: Option<u32>,
         tile_height: Option<u32>,
     ) -> Result<Vec<u8>> {
-        let provider = crate::gdal_dataset_provider::thread_local_provider(gdal)
-            .map_err(|e| exec_datafusion_err!("Failed to init GDAL provider: {}", e))?;
         let raster_ds = provider
             .raster_ref_to_gdal(raster)
             .map_err(|e| exec_datafusion_err!("Failed to create GDAL dataset: {}", e))?;
@@ -149,6 +153,11 @@ impl RsAsGeoTiff {
         let driver = gdal
             .get_driver_by_name("GTiff")
             .map_err(|e| exec_datafusion_err!("Failed to get GTiff driver: {}", e))?;
+
+        // Validate and map the quality up front so an out-of-range value errors
+        // for every codec, not only JPEG (the codecs that ignore quality should
+        // not silently accept nonsense either).
+        let jpeg_quality = quality.map(jpeg_quality_option).transpose()?;
 
         // Build creation options as string list
         let mut options_list: Vec<String> = Vec::new();
@@ -159,16 +168,18 @@ impl RsAsGeoTiff {
 
             // Add quality for JPEG
             if comp == CompressionType::Jpeg {
-                if let Some(q) = quality {
-                    // JPEG quality is 1-100, we receive 0.0-1.0
-                    let jpeg_quality = (q * 100.0).round() as i32;
-                    options_list.push(format!("JPEG_QUALITY={}", jpeg_quality.clamp(1, 100)));
+                if let Some(q) = jpeg_quality {
+                    options_list.push(format!("JPEG_QUALITY={}", q));
                 }
             }
 
-            // Add predictor for Deflate/LZW (improves compression)
+            // Add a predictor for Deflate/LZW (improves compression): horizontal
+            // differencing (2) for integer samples, floating-point prediction (3)
+            // for float samples — predictor 2 on float data is legal but usually
+            // hurts the ratio. GTiff requires uniform band types, so the first
+            // band's type decides for the whole file.
             if comp == CompressionType::Deflate || comp == CompressionType::Lzw {
-                options_list.push("PREDICTOR=2".to_string());
+                options_list.push(format!("PREDICTOR={}", predictor_for(raster)?));
             }
         }
 
@@ -182,28 +193,85 @@ impl RsAsGeoTiff {
         // Convert to creation options slice
         let options_refs: Vec<&str> = options_list.iter().map(|s| s.as_str()).collect();
 
-        // Generate VSI path for output
+        // Output VSI path, unlinked on every exit path by the guard: without it
+        // a failed `create_copy` (invalid creation options, incompatible band
+        // layout, ...) can leave a partially written file in process-lifetime
+        // vsimem memory, accumulating across failures.
         let vsi_path = Self::generate_vsi_path();
+        let guard = VsiMemFileGuard {
+            gdal,
+            path: &vsi_path,
+        };
 
-        // Create copy to VSI memory file
-        let _output_dataset = source_dataset
+        // Create the copy in the VSI memory file. The returned dataset is
+        // dropped immediately (end of statement), which closes it and flushes
+        // the bytes to the vsimem file.
+        source_dataset
             .create_copy(&driver, &vsi_path, &options_refs)
             .map_err(|e| exec_datafusion_err!("Failed to create GeoTiff: {}", e))?;
 
-        // Close the output dataset to flush data
-        drop(_output_dataset);
+        // Read bytes from the VSI memory file; the guard cleans up.
+        let bytes = gdal
+            .get_vsi_mem_file_bytes_owned(&vsi_path)
+            .map_err(|e| exec_datafusion_err!("Failed to read GeoTiff bytes: {}", e))?;
 
-        // Read bytes from VSI memory file and clean up
-        let bytes = gdal.get_vsi_mem_file_bytes_owned(&vsi_path).map_err(|e| {
-            let _ = gdal.unlink_mem_file(&vsi_path);
-            exec_datafusion_err!("Failed to read GeoTiff bytes: {}", e)
-        })?;
-
-        // Clean up VSI file
-        let _ = gdal.unlink_mem_file(&vsi_path);
-
+        drop(guard);
         Ok(bytes)
     }
+}
+
+/// Unlinks a vsimem file when dropped, so every exit path of
+/// [`RsAsGeoTiff::raster_to_geotiff`] — including failed `create_copy` —
+/// releases the process-lifetime vsimem allocation.
+struct VsiMemFileGuard<'a> {
+    gdal: &'a sedona_gdal::gdal::Gdal,
+    path: &'a str,
+}
+
+impl Drop for VsiMemFileGuard<'_> {
+    fn drop(&mut self) {
+        // Unlinking a file that create_copy never managed to create is a no-op
+        // error, which is fine to ignore.
+        let _ = self.gdal.unlink_mem_file(self.path);
+    }
+}
+
+/// Map a quality fraction in `[0.0, 1.0]` to GDAL's 1–100 `JPEG_QUALITY`.
+///
+/// The fractional scale matches Apache Sedona (GeoTools' `setCompressionQuality`);
+/// a value outside the range errors rather than clamping — silently clamping
+/// would turn the most likely mistake (passing a 0–100 quality like `75`) into
+/// maximum quality with no warning.
+fn jpeg_quality_option(quality: f64) -> Result<i32> {
+    if !(0.0..=1.0).contains(&quality) {
+        return exec_err!(
+            "RS_AsGeoTiff: quality must be a fraction between 0.0 and 1.0 (got {quality}); \
+             e.g. use 0.75 for JPEG quality 75"
+        );
+    }
+    // Round to 1-100; GDAL rejects 0, so 0.0 maps to the minimum quality 1.
+    Ok(((quality * 100.0).round() as i32).max(1))
+}
+
+/// TIFF predictor for Deflate/LZW: 3 (floating-point prediction) for float
+/// bands, 2 (horizontal differencing) for integer bands. Decided by the first
+/// band's sample type; GTiff creation requires uniform band types anyway.
+fn predictor_for(raster: &RasterRefImpl) -> Result<i32> {
+    let bands = raster.bands();
+    if bands.is_empty() {
+        return Ok(2);
+    }
+    let band = bands
+        .band(1)
+        .map_err(|e| exec_datafusion_err!("RS_AsGeoTiff: {e}"))?;
+    let data_type = band
+        .metadata()
+        .data_type()
+        .map_err(|e| exec_datafusion_err!("RS_AsGeoTiff: {e}"))?;
+    Ok(match data_type {
+        BandDataType::Float32 | BandDataType::Float64 => 3,
+        _ => 2,
+    })
 }
 
 impl SedonaScalarKernel for RsAsGeoTiff {
@@ -348,6 +416,8 @@ impl SedonaScalarKernel for RsAsGeoTiff {
 
         with_gdal(|gdal| {
             configure_thread_local_options(gdal, config_options)?;
+            let provider = thread_local_provider(gdal)
+                .map_err(|e| exec_datafusion_err!("Failed to init GDAL provider: {e}"))?;
             executor.execute_raster_void(|_i, raster_opt| {
                 let compression_opt = compression_iter.next().unwrap();
                 let quality_opt = quality_iter.next().unwrap();
@@ -378,6 +448,7 @@ impl SedonaScalarKernel for RsAsGeoTiff {
 
                 let bytes = Self::raster_to_geotiff(
                     gdal,
+                    &provider,
                     raster,
                     compression,
                     quality,
@@ -397,6 +468,7 @@ impl SedonaScalarKernel for RsAsGeoTiff {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arrow_array::Array;
     use datafusion_expr::ScalarUDF;
     use sedona_gdal::gdal_dyn_bindgen::{GDAL_OF_RASTER, GDAL_OF_READONLY};
     use sedona_gdal::raster::types::DatasetOptions;
@@ -479,7 +551,9 @@ mod tests {
             let rasters = RasterStructArray::try_new(&arr).unwrap();
             let raster = rasters.get(0).unwrap();
 
-            let bytes = RsAsGeoTiff::raster_to_geotiff(gdal, &raster, None, None, None, None)?;
+            let provider = thread_local_provider(gdal).unwrap();
+            let bytes =
+                RsAsGeoTiff::raster_to_geotiff(gdal, &provider, &raster, None, None, None, None)?;
             assert!(&bytes[0..2] == b"II" || &bytes[0..2] == b"MM");
 
             let tmp = tempfile::tempdir().unwrap();
@@ -501,6 +575,267 @@ mod tests {
             assert_eq!(rt_raster.metadata().width(), raster.metadata().width());
             assert_eq!(rt_raster.metadata().height(), raster.metadata().height());
             assert_eq!(rt_raster.bands().len(), raster.bands().len());
+            // Pixel values must survive too — this would catch predictor or
+            // compression corruption that dimension checks cannot.
+            assert_eq!(
+                rt_raster
+                    .bands()
+                    .band(1)
+                    .unwrap()
+                    .nd_buffer()
+                    .unwrap()
+                    .as_contiguous()
+                    .unwrap(),
+                raster
+                    .bands()
+                    .band(1)
+                    .unwrap()
+                    .nd_buffer()
+                    .unwrap()
+                    .as_contiguous()
+                    .unwrap(),
+            );
+            Ok::<_, datafusion_common::DataFusionError>(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn jpeg_quality_maps_fraction_to_1_100() {
+        // The subtle bit of the options plumbing: a 0.0-1.0 fraction (Sedona /
+        // GeoTools scale) maps to GDAL's 1-100 JPEG_QUALITY.
+        assert_eq!(jpeg_quality_option(0.85).unwrap(), 85);
+        assert_eq!(jpeg_quality_option(1.0).unwrap(), 100);
+        // GDAL rejects 0, so the bottom of the range maps to minimum quality 1.
+        assert_eq!(jpeg_quality_option(0.0).unwrap(), 1);
+        assert_eq!(jpeg_quality_option(0.004).unwrap(), 1);
+    }
+
+    #[test]
+    fn jpeg_quality_out_of_range_errors() {
+        // A 0-100 style quality (the likely mistake) errors instead of clamping
+        // to maximum quality silently.
+        for q in [75.0, -0.1, 1.01, f64::NAN] {
+            let err = jpeg_quality_option(q).unwrap_err().to_string();
+            assert!(
+                err.contains("between 0.0 and 1.0"),
+                "unexpected error for {q}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn out_of_range_quality_errors_for_every_codec() {
+        // The validation is not JPEG-only: LZW ignores quality, but nonsense
+        // still errors rather than being silently dropped.
+        with_gdal(|gdal| {
+            let arr = as_raster_array(test_raster_spec());
+            let rasters = RasterStructArray::try_new(&arr).unwrap();
+            let raster = rasters.get(0).unwrap();
+            let provider = thread_local_provider(gdal).unwrap();
+            let err = RsAsGeoTiff::raster_to_geotiff(
+                gdal,
+                &provider,
+                &raster,
+                Some(CompressionType::Lzw),
+                Some(75.0),
+                None,
+                None,
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(
+                err.contains("between 0.0 and 1.0"),
+                "unexpected error: {err}"
+            );
+            Ok::<_, datafusion_common::DataFusionError>(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn predictor_matches_band_type() {
+        // Horizontal differencing (2) for integer bands, floating-point
+        // prediction (3) for float bands.
+        let int_arr = as_raster_array(test_raster_spec());
+        let int_rasters = RasterStructArray::try_new(&int_arr).unwrap();
+        assert_eq!(predictor_for(&int_rasters.get(0).unwrap()).unwrap(), 2);
+
+        let float_arr = as_raster_array(
+            RasterSpec::d2(3, 3)
+                .transform([0.0, 1.0, 0.0, 3.0, 0.0, -1.0])
+                .band_values(&[1.5f32, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5]),
+        );
+        let float_rasters = RasterStructArray::try_new(&float_arr).unwrap();
+        assert_eq!(predictor_for(&float_rasters.get(0).unwrap()).unwrap(), 3);
+    }
+
+    #[test]
+    fn float_band_exports_with_float_predictor() {
+        // End-to-end: a Float32 band under DEFLATE goes out with PREDICTOR=3
+        // and the values survive a roundtrip (a wrong predictor that libtiff
+        // rejects, or value corruption, would fail here).
+        with_gdal(|gdal| {
+            let spec = RasterSpec::d2(3, 3)
+                .transform([0.0, 1.0, 0.0, 3.0, 0.0, -1.0])
+                .band_values(&[1.5f32, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5]);
+            let arr = as_raster_array(spec);
+            let rasters = RasterStructArray::try_new(&arr).unwrap();
+            let raster = rasters.get(0).unwrap();
+            let provider = thread_local_provider(gdal).unwrap();
+
+            let bytes = RsAsGeoTiff::raster_to_geotiff(
+                gdal,
+                &provider,
+                &raster,
+                Some(CompressionType::Deflate),
+                None,
+                None,
+                None,
+            )?;
+
+            let tmp = tempfile::tempdir().unwrap();
+            let path = tmp.path().join("float_predictor.tif");
+            std::fs::write(&path, &bytes).unwrap();
+            let dataset = gdal
+                .open_ex_with_options(
+                    path.to_str().unwrap(),
+                    DatasetOptions {
+                        open_flags: GDAL_OF_RASTER | GDAL_OF_READONLY,
+                        ..Default::default()
+                    },
+                )
+                .map_err(crate::gdal_common::convert_gdal_err)?;
+            let roundtrip = crate::utils::dataset_to_indb_raster(&dataset)?;
+            let rt = RasterStructArray::try_new(&roundtrip).unwrap();
+            let rt_raster = rt.get(0).unwrap();
+            assert_eq!(
+                rt_raster
+                    .bands()
+                    .band(1)
+                    .unwrap()
+                    .nd_buffer()
+                    .unwrap()
+                    .as_contiguous()
+                    .unwrap(),
+                raster
+                    .bands()
+                    .band(1)
+                    .unwrap()
+                    .nd_buffer()
+                    .unwrap()
+                    .as_contiguous()
+                    .unwrap(),
+            );
+            Ok::<_, datafusion_common::DataFusionError>(())
+        })
+        .unwrap();
+    }
+
+    /// Reopen exported GeoTIFF bytes and return band 1's (block_x, block_y).
+    fn reopened_block_size(gdal: &sedona_gdal::gdal::Gdal, bytes: &[u8]) -> (usize, usize) {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("block_size.tif");
+        std::fs::write(&path, bytes).unwrap();
+        let dataset = gdal
+            .open_ex_with_options(
+                path.to_str().unwrap(),
+                DatasetOptions {
+                    open_flags: GDAL_OF_RASTER | GDAL_OF_READONLY,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        dataset.rasterband(1).unwrap().block_size()
+    }
+
+    #[test]
+    fn tile_options_survive_export() {
+        // The tiling plumbing end to end: TILED=YES + BLOCKXSIZE/BLOCKYSIZE
+        // reach GDAL, and a reopened dataset exposes them as the block size.
+        // TIFF tile dimensions must be multiples of 16.
+        with_gdal(|gdal| {
+            let arr = as_raster_array(test_raster_spec());
+            let rasters = RasterStructArray::try_new(&arr).unwrap();
+            let raster = rasters.get(0).unwrap();
+            let provider = thread_local_provider(gdal).unwrap();
+
+            let bytes = RsAsGeoTiff::raster_to_geotiff(
+                gdal,
+                &provider,
+                &raster,
+                None,
+                None,
+                Some(16),
+                Some(32),
+            )?;
+            assert_eq!(reopened_block_size(gdal, &bytes), (16, 32));
+            Ok::<_, datafusion_common::DataFusionError>(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn tile_size_udf_overload_tiles_squares() {
+        // RS_AsGeoTiff(raster, tile_size) writes square tiles of that size.
+        let udf: ScalarUDF = rs_as_geotiff_udf().into();
+        let tester = ScalarUdfTester::new(udf, vec![RASTER, SedonaType::Arrow(DataType::Int32)]);
+        let result = tester
+            .invoke_arrays(vec![
+                Arc::new(as_raster_array(test_raster_spec())) as arrow_array::ArrayRef,
+                Arc::new(arrow_array::Int32Array::from(vec![Some(16)])),
+            ])
+            .unwrap();
+        let binary = result
+            .as_any()
+            .downcast_ref::<arrow_array::BinaryArray>()
+            .unwrap();
+        with_gdal(|gdal| {
+            assert_eq!(reopened_block_size(gdal, binary.value(0)), (16, 16));
+            Ok::<_, datafusion_common::DataFusionError>(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn null_raster_yields_null_output() {
+        let udf: ScalarUDF = rs_as_geotiff_udf().into();
+        let tester = ScalarUdfTester::new(udf, vec![RASTER]);
+        let rasters = sedona_testing::rasters::generate_test_rasters(1, Some(0)).unwrap();
+        let result = tester
+            .invoke_arrays(vec![Arc::new(rasters) as arrow_array::ArrayRef])
+            .unwrap();
+        let binary = result
+            .as_any()
+            .downcast_ref::<arrow_array::BinaryArray>()
+            .unwrap();
+        assert!(binary.is_null(0), "NULL raster should export as NULL");
+    }
+
+    #[test]
+    fn per_row_options_broadcast() {
+        // An array raster with a per-row tile_size column: each row's option
+        // reaches its own GDAL export (the broadcast path through the upfront
+        // into_array casts).
+        let udf: ScalarUDF = rs_as_geotiff_udf().into();
+        let tester = ScalarUdfTester::new(udf, vec![RASTER, SedonaType::Arrow(DataType::Int32)]);
+
+        // Two raster rows, tiled 16 and 32 respectively.
+        let rasters = sedona_testing::rasters::generate_test_rasters(2, None).unwrap();
+        let tiles = arrow_array::Int32Array::from(vec![Some(16), Some(32)]);
+        let result = tester
+            .invoke_arrays(vec![
+                Arc::new(rasters) as arrow_array::ArrayRef,
+                Arc::new(tiles),
+            ])
+            .unwrap();
+        let binary = result
+            .as_any()
+            .downcast_ref::<arrow_array::BinaryArray>()
+            .unwrap();
+        with_gdal(|gdal| {
+            assert_eq!(reopened_block_size(gdal, binary.value(0)), (16, 16));
+            assert_eq!(reopened_block_size(gdal, binary.value(1)), (32, 32));
             Ok::<_, datafusion_common::DataFusionError>(())
         })
         .unwrap();
@@ -514,12 +849,14 @@ mod tests {
             let rasters = RasterStructArray::try_new(&arr).unwrap();
             let raster = rasters.get(0).unwrap();
 
+            let provider = thread_local_provider(gdal).unwrap();
             for comp in [CompressionType::Lzw, CompressionType::Deflate] {
                 let bytes = RsAsGeoTiff::raster_to_geotiff(
                     gdal,
+                    &provider,
                     &raster,
                     Some(comp),
-                    Some(75.0),
+                    Some(0.75),
                     None,
                     None,
                 )?;

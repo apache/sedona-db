@@ -46,26 +46,35 @@ kernels:
       type: string
       description: >
         GeoTIFF compression codec (case-insensitive): None, PackBits, Deflate,
-        Huffman, LZW, or JPEG. Deflate and LZW additionally enable a horizontal
-        predictor to improve the compression ratio.
+        Huffman, LZW, or JPEG. Deflate and LZW additionally enable a predictor
+        to improve the compression ratio (horizontal differencing for integer
+        bands, floating-point prediction for float bands). Huffman maps to
+        CCITT RLE, which GDAL only accepts for 1-bit single-band data — it is
+        kept for Apache Sedona parity but errors on ordinary rasters.
     - name: quality
       type: double
-      description: Quality factor for lossy JPEG compression; ignored by the other codecs.
+      description: >
+        Quality factor for lossy JPEG compression as a fraction between 0.0
+        and 1.0 (e.g. 0.75 for JPEG quality 75, matching Apache Sedona);
+        values outside that range raise an error. Ignored by the other codecs.
     - name: tile_width
       type: integer
       description: >
-        Tile width. When given together with tile_height, the GeoTIFF is written
-        tiled rather than stripped.
+        Tile width in pixels. When given together with tile_height, the
+        GeoTIFF is written tiled rather than stripped. TIFF tile dimensions
+        must be multiples of 16.
     - name: tile_height
       type: integer
-      description: Tile height.
+      description: Tile height in pixels; must be a multiple of 16.
 ---
 
 ## Description
 
 `RS_AsGeoTiff` encodes a raster as a GeoTIFF (via GDAL) and returns the file
 bytes as a binary value — the inverse of reading a GeoTIFF into a raster. The
-result is `NULL` for a `NULL` raster.
+result is `NULL` for a `NULL` raster. A `NULL` option argument means "not
+specified": e.g. a `NULL` compression writes an uncompressed GeoTIFF rather
+than propagating `NULL` to the result.
 
 The two-argument form `RS_AsGeoTiff(raster, tile_size)` writes a tiled GeoTIFF
 with square `tile_size` blocks. Compression is selected by name; a JPEG quality
@@ -78,9 +87,13 @@ SELECT RS_AsGeoTiff(RS_Example()) IS NOT NULL;
 ```
 
 ```sql
-SELECT RS_AsGeoTiff(RS_Example(), 'DEFLATE', 6) IS NOT NULL;
+SELECT RS_AsGeoTiff(RS_Example(), 16) IS NOT NULL;
 ```
 
 ```sql
-SELECT RS_AsGeoTiff(RS_Example(), 'LZW', 75, 256, 256) IS NOT NULL;
+SELECT RS_AsGeoTiff(RS_Example(), 'DEFLATE', 0.85) IS NOT NULL;
+```
+
+```sql
+SELECT RS_AsGeoTiff(RS_Example(), 'LZW', 0.85, 16, 16) IS NOT NULL;
 ```
