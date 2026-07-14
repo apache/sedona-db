@@ -340,17 +340,24 @@ def test_rs_values_ensureloaded_outdb(con, sedona_testing):
     view = "test_rs_values_ensureloaded_outdb_raster"
     t.to_view(view)
     try:
-        meta = con.sql(
-            f"SELECT RS_GeoReference(raster) AS georef, RS_SRID(raster) AS srid FROM {view}"
-        ).to_arrow_table()
-        georef = [float(v) for v in meta["georef"][0].as_py().split()]
+        # `.to_pylist()` converts the whole (one-row) table in one pass;
+        # indexing a column with `[0]` first would force a chunk-combining
+        # copy in pyarrow.
+        meta = (
+            con.sql(
+                f"SELECT RS_GeoReference(raster) AS georef, RS_SRID(raster) AS srid FROM {view}"
+            )
+            .to_arrow_table()
+            .to_pylist()[0]
+        )
+        georef = [float(v) for v in meta["georef"].split()]
         scale_x, skew_y, skew_x, scale_y, ul_x, ul_y = georef
-        srid = meta["srid"][0].as_py()
+        srid = meta["srid"]
         # World center of pixel (0, 0): upper-left corner + half a pixel step.
         cx = ul_x + 0.5 * scale_x + 0.5 * skew_x
         cy = ul_y + 0.5 * skew_y + 0.5 * scale_y
 
-        result = (
+        values = (
             con.sql(
                 f"""
             SELECT RS_Values(
@@ -360,10 +367,10 @@ def test_rs_values_ensureloaded_outdb(con, sedona_testing):
             ) AS v FROM {view}
             """
             )
-            .to_arrow_table()["v"][0]
-            .as_py()
+            .to_arrow_table()["v"]
+            .to_pylist()
         )
-        assert result == [2324.0]
+        assert values == [[2324.0]]
     finally:
         con.drop_view(view)
 

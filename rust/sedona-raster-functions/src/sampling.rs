@@ -25,16 +25,19 @@
 //! single Point, `RS_Values` with each sub-point of a MultiPoint — so the pixel
 //! math and CRS handling live in exactly one place.
 
+use std::rc::Rc;
+
 use arrow_array::ArrayRef;
 use arrow_schema::DataType;
-use datafusion_common::{exec_datafusion_err, exec_err, Result};
+use datafusion_common::{exec_datafusion_err, exec_err, DataFusionError, Result};
 use datafusion_expr::ColumnarValue;
+use sedona_geometry::error::SedonaGeometryError;
+use sedona_geometry::transform::{visit_point_coords, CrsEngine, CrsTransform};
 use sedona_raster::affine_transformation::AffineMatrix;
 use sedona_raster::traits::{nodata_bytes_to_f64_lossless, NdBuffer};
 use sedona_schema::crs::CrsRef;
 use sedona_schema::datatypes::SedonaType;
-
-use crate::crs_utils::crs_transform_wkb;
+use wkb::reader::read_wkb;
 
 /// Materialise an integer argument as an owned `Int32` [`ArrayRef`] for the
 /// batch. Callers keep the returned `ArrayRef` alive and borrow a typed
@@ -76,12 +79,12 @@ pub(crate) fn default_band(func: &str, num_bands: usize) -> Result<usize> {
     }
 }
 
-/// Reproject `wkb` from its CRS into the raster CRS, returning the transformed
-/// WKB only when a reprojection actually happened (so the caller can sample the
-/// original bytes otherwise — no allocation in the common case).
+/// Resolve the coordinate transform that lands a geometry in the raster's
+/// CRS, or `None` when the coordinates can be sampled as-is (equal CRSes, or
+/// both absent).
 ///
-/// Errors if exactly one of the geometry / raster carries a CRS: sampling across
-/// a known and an unknown CRS would silently mislocate the geometry.
+/// Errors if exactly one of the geometry / raster carries a CRS: sampling
+/// across a known and an unknown CRS would silently mislocate the geometry.
 ///
 /// Unlike the spatial predicates (`RS_Intersects` et al.), which fall back to a
 /// WGS84 pivot when a direct transform between two CRSes fails, a failed
@@ -92,19 +95,26 @@ pub(crate) fn default_band(func: &str, num_bands: usize) -> Result<usize> {
 /// space.
 ///
 /// `func` names the calling UDF for the error messages.
-pub(crate) fn reproject_wkb(
+pub(crate) fn point_crs_transform(
     func: &str,
-    wkb: &[u8],
     geom_crs: CrsRef<'_>,
     raster_crs: CrsRef<'_>,
-    engine: &dyn sedona_geometry::transform::CrsEngine,
-) -> Result<Option<Vec<u8>>> {
+    engine: &dyn CrsEngine,
+) -> Result<Option<Rc<dyn CrsTransform>>> {
     match (geom_crs, raster_crs) {
         (Some(geom_crs), Some(raster_crs)) => {
             if geom_crs.crs_equals(raster_crs) {
                 Ok(None)
             } else {
-                Ok(Some(crs_transform_wkb(wkb, geom_crs, raster_crs, engine)?))
+                engine
+                    .get_transform_crs_to_crs(
+                        &geom_crs.to_crs_string(),
+                        &raster_crs.to_crs_string(),
+                        None,
+                        "",
+                    )
+                    .map(Some)
+                    .map_err(|e| exec_datafusion_err!("{func}: CRS transform error: {e}"))
             }
         }
         (None, None) => Ok(None),
@@ -113,32 +123,56 @@ pub(crate) fn reproject_wkb(
     }
 }
 
-/// For a **column-level** geometry CRS, decide once whether sampling needs a
-/// reprojection into the raster CRS:
-/// - `Some(true)`  — CRSes differ, reproject each geometry;
-/// - `Some(false)` — CRSes match (or both absent), sample original coordinates;
-/// - `None`        — the geometry CRS is carried per row, so decide per row.
+/// For a **column-level** geometry CRS, resolve the raster-CRS transform once
+/// for the whole batch:
+/// - `Some(None)`     — CRSes match (or both absent), sample original coordinates;
+/// - `Some(Some(t))`  — CRSes differ, apply `t` to every geometry;
+/// - `None`           — the geometry CRS is carried per row, so resolve per row.
 ///
 /// Errors when exactly one side carries a CRS. Hoisting this out of the per-row
-/// loop avoids a per-row `crs_equals`, whose `to_authority_code()` allocates a
-/// `String` every call (~15 ns/row, uniform across CRS types). `func` names the
-/// calling UDF for the error messages.
-pub(crate) fn column_reproject_decision(
+/// loop avoids both a per-row `crs_equals` (whose `to_authority_code()`
+/// allocates a `String` every call) and a per-row transform lookup. `func`
+/// names the calling UDF for the error messages.
+#[allow(clippy::type_complexity)]
+pub(crate) fn column_point_crs_transform(
     func: &str,
     geom_type: &SedonaType,
     raster_crs: CrsRef<'_>,
-) -> Result<Option<bool>> {
+    engine: &dyn CrsEngine,
+) -> Result<Option<Option<Rc<dyn CrsTransform>>>> {
     let geom_crs = match geom_type {
         SedonaType::Wkb(_, c) | SedonaType::WkbView(_, c) => c.as_deref(),
-        // A per-item CRS varies by row; the caller decides per row.
+        // A per-item CRS varies by row; the caller resolves per row.
         _ => return Ok(None),
     };
-    match (geom_crs, raster_crs) {
-        (Some(p), Some(r)) => Ok(Some(!p.crs_equals(r))),
-        (None, None) => Ok(Some(false)),
-        (Some(_), None) => exec_err!("{func}: geometry has a CRS but the raster does not"),
-        (None, Some(_)) => exec_err!("{func}: raster has a CRS but the geometry does not"),
-    }
+    point_crs_transform(func, geom_crs, raster_crs, engine).map(Some)
+}
+
+/// Visit each point of a Point/MultiPoint WKB as `Some((x, y))` in the
+/// raster's CRS (`None` for an empty sub-point), applying `trans` to each
+/// coordinate when given.
+///
+/// A thin [`visit_point_coords`] adapter that parses the WKB and threads
+/// DataFusion errors out of the geometry-crate callback (via
+/// `SedonaGeometryError::External`), so callers sample in one pass with no
+/// transformed-WKB materialisation or coordinate scratch buffer.
+pub(crate) fn visit_points(
+    func: &str,
+    wkb: &[u8],
+    trans: Option<&dyn CrsTransform>,
+    mut visit: impl FnMut(Option<(f64, f64)>) -> Result<()>,
+) -> Result<()> {
+    let geom = read_wkb(wkb).map_err(|e| exec_datafusion_err!("{func}: {e}"))?;
+    visit_point_coords(&geom, trans, |xy| {
+        visit(xy).map_err(|e| SedonaGeometryError::External(Box::new(e)))
+    })
+    .map_err(|e| match e {
+        SedonaGeometryError::External(inner) => match inner.downcast::<DataFusionError>() {
+            Ok(df) => *df,
+            Err(other) => exec_datafusion_err!("{func}: {other}"),
+        },
+        other => exec_datafusion_err!("{func}: {other}"),
+    })
 }
 
 /// Map a coordinate in the raster's CRS to a 0-based `(col, row)` pixel index,

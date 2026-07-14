@@ -41,31 +41,29 @@ use std::sync::Arc;
 
 use arrow_array::builder::{Float64Builder, ListBuilder};
 use arrow_array::{Array, ArrayRef, StructArray};
-use arrow_schema::{DataType, Field};
+use arrow_schema::DataType;
 use datafusion_common::cast::as_int32_array;
+use datafusion_common::config::ConfigOptions;
 use datafusion_common::{exec_datafusion_err, exec_err, Result, ScalarValue};
 use datafusion_expr::{ColumnarValue, Volatility};
-use geo_traits::{CoordTrait, GeometryTrait, GeometryType, MultiPointTrait, PointTrait};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
-use sedona_proj::transform::with_global_proj_engine;
 use sedona_raster::affine_transformation::AffineMatrix;
 use sedona_raster::array::RasterStructArray;
 use sedona_raster::traits::{BandRef, NdBuffer, RasterRef};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
-use wkb::reader::read_wkb;
 
-use crate::crs_utils::resolve_crs;
+use crate::crs_utils::{resolve_crs, with_crs_engine};
 use crate::executor::RasterExecutor;
 use crate::rs_ensure_loaded::NEEDS_PIXELS_METADATA_KEY;
 use crate::sampling::{
-    column_reproject_decision, default_band, int32_array_arg, next_band, read_pixel, reproject_wkb,
-    xy_to_pixel,
+    column_point_crs_transform, default_band, int32_array_arg, next_band, point_crs_transform,
+    read_pixel, visit_points, xy_to_pixel,
 };
 
 /// The `List<Float64>` output type, matching what a default
 /// `ListBuilder<Float64Builder>` produces (field "item", nullable).
 fn list_float64_type() -> DataType {
-    DataType::List(Arc::new(Field::new("item", DataType::Float64, true)))
+    DataType::new_list(DataType::Float64, true)
 }
 
 /// `RS_Values()` scalar UDF — sample pixel values at each point of a MultiPoint.
@@ -107,20 +105,39 @@ impl SedonaScalarKernel for RsValues {
         arg_types: &[SedonaType],
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
+        self.invoke(arg_types, args, None)
+    }
+
+    fn invoke_batch_from_args(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+        _return_type: &SedonaType,
+        _num_rows: usize,
+        config_options: Option<&ConfigOptions>,
+    ) -> Result<ColumnarValue> {
+        self.invoke(arg_types, args, config_options)
+    }
+}
+
+impl RsValues {
+    fn invoke(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+        config_options: Option<&ConfigOptions>,
+    ) -> Result<ColumnarValue> {
         // Fast path: a constant (scalar) raster lets us resolve the affine
         // transform, CRS, and band buffer once for the whole batch instead of
         // per row — the common RS_Values(raster_expr, points_column[, band])
         // shape. Only a band *column* falls back to per-row band resolution.
         if let ColumnarValue::Scalar(ScalarValue::Struct(raster_struct)) = &args[0] {
-            return self.invoke_scalar_raster(arg_types, args, raster_struct.as_ref());
+            return self.invoke_scalar_raster(arg_types, args, config_options, raster_struct);
         }
 
         let executor = RasterExecutor::new(arg_types, args);
         let num_iterations = executor.num_iterations();
         let mut list_builder = ListBuilder::new(Float64Builder::new());
-        // Per-row scratch for the parsed sub-point coordinates, reused across
-        // rows so the parse does not allocate per row.
-        let mut points_scratch: Vec<Option<(f64, f64)>> = Vec::new();
 
         // The optional band argument, materialised once as an Int32 array. Held
         // as an `ArrayRef` so the typed view below borrows it instead of cloning
@@ -133,8 +150,8 @@ impl SedonaScalarKernel for RsValues {
         let band_array = band_arr.as_ref().map(|a| as_int32_array(a)).transpose()?;
         let mut band_iter = band_array.map(|a| a.iter());
 
-        // Reprojecting the points into the raster CRS needs a PROJ engine.
-        with_global_proj_engine(|engine| {
+        // Reprojecting the points into the raster CRS needs a CRS engine.
+        with_crs_engine(config_options, |engine| {
             executor.execute_raster_wkb_crs_void(|raster_opt, wkb_opt, geom_crs| {
                 // Advance the band column every row so it stays in lockstep with
                 // the row index (a no-op when there is no band argument).
@@ -177,22 +194,14 @@ impl SedonaScalarKernel for RsValues {
                     .map_err(|e| exec_datafusion_err!("RS_Values: {e}"))?;
                 let affine = AffineMatrix::from_metadata(&raster.metadata());
 
-                // Reproject the whole geometry into the raster CRS (a no-op that
-                // borrows the original bytes when the CRSes match or are absent).
-                let reprojected = reproject_wkb(
-                    "RS_Values",
-                    geom_wkb,
-                    geom_crs,
-                    raster_crs.as_deref(),
-                    engine,
-                )?;
-                let effective = reprojected.as_deref().unwrap_or(geom_wkb);
-
-                points_scratch.clear();
-                collect_point_xys(effective, &mut points_scratch)?;
-                for xy in &points_scratch {
-                    append_sample(*xy, &affine, &buffer, nodata, &mut list_builder)?;
-                }
+                // Sample each sub-point in one pass: the visitor transforms
+                // each coordinate into the raster CRS in place, so there is no
+                // reprojected-WKB copy and no coordinate scratch buffer.
+                let trans =
+                    point_crs_transform("RS_Values", geom_crs, raster_crs.as_deref(), engine)?;
+                visit_points("RS_Values", geom_wkb, trans.as_deref(), |xy| {
+                    append_sample(xy, &affine, &buffer, nodata, &mut list_builder)
+                })?;
                 list_builder.append(true);
                 Ok(())
             })
@@ -200,9 +209,6 @@ impl SedonaScalarKernel for RsValues {
 
         executor.finish(Arc::new(list_builder.finish()))
     }
-}
-
-impl RsValues {
     /// Optimized path for a constant (scalar) raster: the affine transform and
     /// raster CRS are resolved once for the whole batch, and the per-row work
     /// reduces to parsing the points and reading pixels. This serves every band
@@ -213,7 +219,7 @@ impl RsValues {
     ///   but the affine/CRS/reproject work is still hoisted.
     ///
     /// Sampling behaviour matches the general path: it uses the same
-    /// [`collect_point_xys`]/[`append_sample`] helpers, so per-element and
+    /// [`visit_points`]/[`append_sample`] helpers, so per-element and
     /// per-row NULL semantics are identical. Band resolution — including the
     /// default-band ambiguity check and the 2-D check — is deferred until at
     /// least one row has a geometry to sample, so an all-null batch returns
@@ -222,6 +228,7 @@ impl RsValues {
         &self,
         arg_types: &[SedonaType],
         args: &[ColumnarValue],
+        config_options: Option<&ConfigOptions>,
         raster_struct: &StructArray,
     ) -> Result<ColumnarValue> {
         let executor = RasterExecutor::new(arg_types, args);
@@ -229,9 +236,7 @@ impl RsValues {
 
         let all_null = |executor: &RasterExecutor| {
             let mut builder = ListBuilder::new(Float64Builder::new());
-            for _ in 0..n {
-                builder.append_null();
-            }
+            builder.append_nulls(n);
             executor.finish(Arc::new(builder.finish()))
         };
 
@@ -274,25 +279,30 @@ impl RsValues {
             .map(|a| as_int32_array(a))
             .transpose()?;
 
-        // Affine transform and raster CRS, resolved once for all rows. Decide
-        // reprojection once when the geometry CRS is column-level (the common
-        // case), skipping a per-row `crs_equals` and its String allocation.
+        // Affine transform and raster CRS, resolved once for all rows.
         let affine = AffineMatrix::from_metadata(&raster.metadata());
         let raster_crs = resolve_crs(raster.crs())?;
-        let needs_reproject =
-            column_reproject_decision("RS_Values", &arg_types[1], raster_crs.as_deref())?;
-        let skip_reproject = needs_reproject == Some(false);
 
         let mut geom = executor.make_geom_wkb_crs_accessor(1)?;
 
-        // Phase 1 — parse each row's Point/MultiPoint (reprojected into the
-        // raster CRS) into owned sub-point coordinates. All rows share one
-        // coordinate arena with per-row (start, len, band) spans; a `None` row
-        // is NULL output (NULL geometry or band element).
+        // Phase 1 — parse each row's Point/MultiPoint into owned sub-point
+        // coordinates, transformed into the raster CRS in place by the visitor
+        // (no reprojected-WKB copy). All rows share one coordinate arena with
+        // per-row (start, len, band) spans; a `None` row is NULL output (NULL
+        // geometry or band element).
         let mut coords: Vec<Option<(f64, f64)>> = Vec::new();
         let mut rows: Vec<Option<(usize, usize, usize)>> = Vec::with_capacity(n);
         let mut band_iter = band_array.map(|a| a.iter());
-        with_global_proj_engine(|engine| {
+        with_crs_engine(config_options, |engine| {
+            // Resolve the raster-CRS transform once when the geometry CRS is
+            // column-level (the common case), skipping a per-row `crs_equals`
+            // (and its String allocation) and a per-row transform lookup.
+            let hoisted_trans = column_point_crs_transform(
+                "RS_Values",
+                &arg_types[1],
+                raster_crs.as_deref(),
+                engine,
+            )?;
             for i in 0..n {
                 // Advance the band column in lockstep with the row index; with
                 // no band argument this yields a placeholder that the hoisted
@@ -306,20 +316,18 @@ impl RsValues {
                     rows.push(None);
                     continue;
                 };
-                let reprojected = if skip_reproject {
-                    None
-                } else {
-                    reproject_wkb(
-                        "RS_Values",
-                        geom_wkb,
-                        geom_crs,
-                        raster_crs.as_deref(),
-                        engine,
-                    )?
+                // A per-item geometry CRS (hoisted_trans == None) resolves per row.
+                let trans = match &hoisted_trans {
+                    Some(trans) => trans.clone(),
+                    None => {
+                        point_crs_transform("RS_Values", geom_crs, raster_crs.as_deref(), engine)?
+                    }
                 };
-                let effective = reprojected.as_deref().unwrap_or(geom_wkb);
                 let start = coords.len();
-                collect_point_xys(effective, &mut coords)?;
+                visit_points("RS_Values", geom_wkb, trans.as_deref(), |xy| {
+                    coords.push(xy);
+                    Ok(())
+                })?;
                 rows.push(Some((start, coords.len() - start, band_num)));
             }
             Ok(())
@@ -388,25 +396,6 @@ impl RsValues {
     }
 }
 
-/// Collect each sub-point of a Point/MultiPoint WKB as an owned `(x, y)`,
-/// appending to `out` in input order. An empty sub-point contributes `None`. A
-/// non-Point/MultiPoint geometry is an error.
-fn collect_point_xys(wkb: &[u8], out: &mut Vec<Option<(f64, f64)>>) -> Result<()> {
-    let geom = read_wkb(wkb).map_err(|e| exec_datafusion_err!("RS_Values: {e}"))?;
-    match geom.as_type() {
-        GeometryType::Point(point) => {
-            out.push(point.coord().map(|c| (c.x(), c.y())));
-        }
-        GeometryType::MultiPoint(multi_point) => {
-            for point in multi_point.points() {
-                out.push(point.coord().map(|c| (c.x(), c.y())));
-            }
-        }
-        _ => return exec_err!("RS_Values expects a Point or MultiPoint geometry"),
-    }
-    Ok(())
-}
-
 /// Resolve 1-based band `band_num` of `raster`, requiring a spatial 2-D
 /// (y, x) grid — the only shape the sampling affine is defined for.
 fn resolve_band_2d<'a>(
@@ -450,39 +439,53 @@ fn append_sample(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::{Array, Float64Array, Int32Array, ListArray};
+    use arrow_array::{Array, BinaryArray, Float64Array, Int32Array, ListArray};
     use datafusion_expr::ScalarUDF;
     use sedona_schema::crs::lnglat;
-    use sedona_schema::datatypes::{Edges, RASTER};
+    use sedona_schema::datatypes::{Edges, RASTER, WKB_GEOMETRY};
     use sedona_schema::raster::BandDataType;
-    use sedona_testing::create::create_array as create_geom_array;
+    use sedona_testing::create::{create_array as create_geom_array, make_multipoint_wkb};
     use sedona_testing::raster_spec::RasterSpec;
     use sedona_testing::rasters::generate_test_rasters;
     use sedona_testing::testers::ScalarUdfTester;
 
-    /// North-up 2x2 raster, origin (0, 10), 1x1 pixels, band values row-major
-    /// `[1, 2, 3, 4]` (row0 = [1, 2], row1 = [3, 4]). Pixel (0, 0) covers world
-    /// x∈[0,1), y∈[9,10) and holds 1; pixel (1, 1) holds 4.
+    /// The lng/lat geometry argument type shared by most tests.
+    fn geom_type() -> SedonaType {
+        SedonaType::Wkb(Edges::Planar, lnglat())
+    }
+
+    /// Tester for `RS_Values(raster, points)` with a lng/lat geometry column.
+    fn tester() -> ScalarUdfTester {
+        ScalarUdfTester::new(rs_values_udf().into(), vec![RASTER, geom_type()])
+    }
+
+    /// Tester for `RS_Values(raster, points, band)`.
+    fn tester_with_band() -> ScalarUdfTester {
+        ScalarUdfTester::new(
+            rs_values_udf().into(),
+            vec![RASTER, geom_type(), SedonaType::Arrow(DataType::Int32)],
+        )
+    }
+
+    /// North-up 2x2 raster spanning world bbox (0, 8)–(2, 10) with 1x1 pixels,
+    /// band values row-major `[1, 2, 3, 4]` (row0 = [1, 2], row1 = [3, 4]).
+    /// Pixel (0, 0) covers x∈[0,1), y∈[9,10) and holds 1; pixel (1, 1) holds 4.
     fn raster_2x2() -> RasterSpec {
         RasterSpec::d2(2, 2)
             .band_values(&[1u8, 2, 3, 4])
-            .transform([0.0, 1.0, 0.0, 10.0, 0.0, -1.0])
+            .bbox(0.0, 8.0, 2.0, 10.0)
     }
 
-    /// Build MultiPoint WKB by hand: the test WKT parser cannot express an
-    /// EMPTY sub-point, which WKB encodes as a point with NaN ordinates.
-    fn multipoint_wkb(points: &[Option<(f64, f64)>]) -> Vec<u8> {
-        let mut out = vec![1u8]; // little-endian
-        out.extend(4u32.to_le_bytes()); // MultiPoint
-        out.extend((points.len() as u32).to_le_bytes());
-        for point in points {
-            out.push(1);
-            out.extend(1u32.to_le_bytes()); // Point
-            let (x, y) = point.unwrap_or((f64::NAN, f64::NAN));
-            out.extend(x.to_le_bytes());
-            out.extend(y.to_le_bytes());
-        }
-        out
+    /// Two-band variant of [`raster_2x2`]: band 2 holds `[10, 20, 30, 40]`.
+    fn two_band_raster() -> RasterSpec {
+        raster_2x2().band_values(&[10u8, 20, 30, 40])
+    }
+
+    /// A `List<Float64>` scalar for comparing one list row via
+    /// `assert_scalar_result_equals`.
+    fn list_f64(values: &[Option<f64>]) -> ScalarValue {
+        let values: Vec<ScalarValue> = values.iter().map(|v| ScalarValue::Float64(*v)).collect();
+        ScalarValue::List(ScalarValue::new_list_nullable(&values, &DataType::Float64))
     }
 
     /// Extract one list row as a `Vec<Option<f64>>`.
@@ -515,36 +518,27 @@ mod tests {
     #[test]
     fn return_type_is_list_float64() {
         let return_type = RsValues { with_band: false }
-            .return_type(&[RASTER, SedonaType::Wkb(Edges::Planar, lnglat())])
+            .return_type(&[RASTER, geom_type()])
             .unwrap();
         assert_eq!(return_type, Some(SedonaType::Arrow(list_float64_type())));
     }
 
     #[test]
     fn multipoint_samples_each_point_in_order() {
-        let udf: ScalarUDF = rs_values_udf().into();
-        let geom_type = SedonaType::Wkb(Edges::Planar, lnglat());
-        let tester = ScalarUdfTester::new(udf, vec![RASTER, geom_type.clone()]);
-
         // Pixel (0,0)=1, pixel (1,1)=4, and a point far outside -> NULL element.
-        let geoms = create_geom_array(
-            &[Some("MULTIPOINT (0.5 9.5, 1.5 8.5, 100 100)")],
-            &geom_type,
-        );
+        let tester = tester();
         let result = tester
-            .invoke_arrays(vec![Arc::new(raster_2x2().build()), geoms])
+            .invoke_scalar_scalar(raster_2x2(), "MULTIPOINT (0.5 9.5, 1.5 8.5, 100 100)")
             .unwrap();
-        assert_eq!(row(&result, 0), vec![Some(1.0), Some(4.0), None]);
+        tester.assert_scalar_result_equals(result, list_f64(&[Some(1.0), Some(4.0), None]));
     }
 
     #[test]
     fn single_point_yields_one_element_list() {
-        // A plain Point is accepted and produces a one-element list.
-        let udf: ScalarUDF = rs_values_udf().into();
-        let geom_type = SedonaType::Wkb(Edges::Planar, lnglat());
-        let tester = ScalarUdfTester::new(udf, vec![RASTER, geom_type.clone()]);
-
-        let geoms = create_geom_array(&[Some("POINT (1.5 8.5)")], &geom_type);
+        // A plain Point is accepted and produces a one-element list (general,
+        // array-raster path).
+        let tester = tester();
+        let geoms = create_geom_array(&[Some("POINT (1.5 8.5)")], &geom_type());
         let result = tester
             .invoke_arrays(vec![Arc::new(raster_2x2().build()), geoms])
             .unwrap();
@@ -553,11 +547,8 @@ mod tests {
 
     #[test]
     fn empty_multipoint_yields_empty_list() {
-        let udf: ScalarUDF = rs_values_udf().into();
-        let geom_type = SedonaType::Wkb(Edges::Planar, lnglat());
-        let tester = ScalarUdfTester::new(udf, vec![RASTER, geom_type.clone()]);
-
-        let geoms = create_geom_array(&[Some("MULTIPOINT EMPTY")], &geom_type);
+        let tester = tester();
+        let geoms = create_geom_array(&[Some("MULTIPOINT EMPTY")], &geom_type());
         let result = tester
             .invoke_arrays(vec![Arc::new(raster_2x2().build()), geoms])
             .unwrap();
@@ -571,28 +562,18 @@ mod tests {
 
     #[test]
     fn nodata_element_is_null() {
-        let udf: ScalarUDF = rs_values_udf().into();
-        let geom_type = SedonaType::Wkb(Edges::Planar, lnglat());
-        let tester = ScalarUdfTester::new(udf, vec![RASTER, geom_type.clone()]);
-
         // Band [1, 2, 3, 4] with nodata=4: sampling pixel (1,1) reads nodata.
-        let raster = RasterSpec::d2(2, 2)
-            .band_values(&[1u8, 2, 3, 4])
-            .nodata(4u8)
-            .transform([0.0, 1.0, 0.0, 10.0, 0.0, -1.0])
-            .build();
-        let geoms = create_geom_array(&[Some("MULTIPOINT (0.5 9.5, 1.5 8.5)")], &geom_type);
-        let result = tester.invoke_arrays(vec![Arc::new(raster), geoms]).unwrap();
-        assert_eq!(row(&result, 0), vec![Some(1.0), None]);
+        let tester = tester();
+        let result = tester
+            .invoke_scalar_scalar(raster_2x2().nodata(4u8), "MULTIPOINT (0.5 9.5, 1.5 8.5)")
+            .unwrap();
+        tester.assert_scalar_result_equals(result, list_f64(&[Some(1.0), None]));
     }
 
     #[test]
     fn null_geometry_yields_null_list() {
-        let udf: ScalarUDF = rs_values_udf().into();
-        let geom_type = SedonaType::Wkb(Edges::Planar, lnglat());
-        let tester = ScalarUdfTester::new(udf, vec![RASTER, geom_type.clone()]);
-
-        let geoms = create_geom_array(&[None], &geom_type);
+        let tester = tester();
+        let geoms = create_geom_array(&[None], &geom_type());
         let result = tester
             .invoke_arrays(vec![Arc::new(raster_2x2().build()), geoms])
             .unwrap();
@@ -602,19 +583,9 @@ mod tests {
 
     #[test]
     fn null_band_element_yields_null_list() {
-        let udf: ScalarUDF = rs_values_udf().into();
-        let geom_type = SedonaType::Wkb(Edges::Planar, lnglat());
-        let tester = ScalarUdfTester::new(
-            udf,
-            vec![
-                RASTER,
-                geom_type.clone(),
-                SedonaType::Arrow(DataType::Int32),
-            ],
-        );
-
-        let geoms = create_geom_array(&[Some("MULTIPOINT (0.5 9.5)")], &geom_type);
-        let bands: arrow_array::ArrayRef = Arc::new(Int32Array::from(vec![None::<i32>]));
+        let tester = tester_with_band();
+        let geoms = create_geom_array(&[Some("MULTIPOINT (0.5 9.5)")], &geom_type());
+        let bands: ArrayRef = Arc::new(Int32Array::from(vec![None::<i32>]));
         let result = tester
             .invoke_arrays(vec![Arc::new(raster_2x2().build()), geoms, bands])
             .unwrap();
@@ -624,27 +595,12 @@ mod tests {
 
     #[test]
     fn second_band_is_addressable() {
-        let udf: ScalarUDF = rs_values_udf().into();
-        let geom_type = SedonaType::Wkb(Edges::Planar, lnglat());
-        let tester = ScalarUdfTester::new(
-            udf,
-            vec![
-                RASTER,
-                geom_type.clone(),
-                SedonaType::Arrow(DataType::Int32),
-            ],
-        );
-
-        // Band 1 [1,2,3,4], band 2 [10,20,30,40]; sample band 2 at pixel (0,0).
-        let raster = RasterSpec::d2(2, 2)
-            .band_values(&[1u8, 2, 3, 4])
-            .band_values(&[10u8, 20, 30, 40])
-            .transform([0.0, 1.0, 0.0, 10.0, 0.0, -1.0])
-            .build();
-        let geoms = create_geom_array(&[Some("MULTIPOINT (0.5 9.5)")], &geom_type);
-        let bands: arrow_array::ArrayRef = Arc::new(Int32Array::from(vec![Some(2)]));
+        // Sample band 2 at pixel (0, 0) via a band column (general path).
+        let tester = tester_with_band();
+        let geoms = create_geom_array(&[Some("MULTIPOINT (0.5 9.5)")], &geom_type());
+        let bands: ArrayRef = Arc::new(Int32Array::from(vec![Some(2)]));
         let result = tester
-            .invoke_arrays(vec![Arc::new(raster), geoms, bands])
+            .invoke_arrays(vec![Arc::new(two_band_raster().build()), geoms, bands])
             .unwrap();
         assert_eq!(row(&result, 0), vec![Some(10.0)]);
     }
@@ -653,17 +609,10 @@ mod tests {
     fn default_band_requires_single_band_raster() {
         // With no band argument, a multiband raster is ambiguous and errors
         // rather than silently sampling band 1 (matches RS_SetBandNoDataValue).
-        let udf: ScalarUDF = rs_values_udf().into();
-        let geom_type = SedonaType::Wkb(Edges::Planar, lnglat());
-        let tester = ScalarUdfTester::new(udf, vec![RASTER, geom_type.clone()]);
-        let raster = RasterSpec::d2(2, 2)
-            .band_values(&[1u8, 2, 3, 4])
-            .band_values(&[10u8, 20, 30, 40])
-            .transform([0.0, 1.0, 0.0, 10.0, 0.0, -1.0])
-            .build();
-        let geoms = create_geom_array(&[Some("MULTIPOINT (0.5 9.5)")], &geom_type);
-        let err = tester
-            .invoke_arrays(vec![Arc::new(raster), geoms])
+        // Array raster -> general path.
+        let geoms = create_geom_array(&[Some("MULTIPOINT (0.5 9.5)")], &geom_type());
+        let err = tester()
+            .invoke_arrays(vec![Arc::new(two_band_raster().build()), geoms])
             .unwrap_err()
             .to_string();
         assert!(
@@ -674,20 +623,12 @@ mod tests {
 
     #[test]
     fn non_point_geometry_errors() {
-        let udf: ScalarUDF = rs_values_udf().into();
-        let geom_type = SedonaType::Wkb(Edges::Planar, lnglat());
-        let tester = ScalarUdfTester::new(udf, vec![RASTER, geom_type.clone()]);
-
-        let geoms = create_geom_array(&[Some("LINESTRING (0 0, 1 1)")], &geom_type);
-        let err = tester
-            .invoke_arrays(vec![
-                Arc::new(generate_test_rasters(1, None).unwrap()),
-                geoms,
-            ])
+        let err = tester()
+            .invoke_scalar_scalar(raster_2x2(), "LINESTRING (0 0, 1 1)")
             .unwrap_err()
             .to_string();
         assert!(
-            err.contains("expects a Point or MultiPoint"),
+            err.contains("expected a Point or MultiPoint"),
             "unexpected error: {err}"
         );
     }
@@ -696,10 +637,9 @@ mod tests {
     fn crs_mismatch_errors() {
         // Raster has a CRS (generate_test_rasters sets OGC:CRS84), points do not.
         let udf: ScalarUDF = rs_values_udf().into();
-        let geom_type = SedonaType::Wkb(Edges::Planar, None);
-        let tester = ScalarUdfTester::new(udf, vec![RASTER, geom_type.clone()]);
+        let tester = ScalarUdfTester::new(udf, vec![RASTER, WKB_GEOMETRY]);
         let rasters = generate_test_rasters(1, None).unwrap();
-        let geoms = create_geom_array(&[Some("MULTIPOINT (2.1 2.6)")], &geom_type);
+        let geoms = create_geom_array(&[Some("MULTIPOINT (2.1 2.6)")], &WKB_GEOMETRY);
         let err = tester
             .invoke_arrays(vec![Arc::new(rasters), geoms])
             .unwrap_err()
@@ -713,13 +653,12 @@ mod tests {
     #[test]
     fn non_2d_band_errors() {
         let udf: ScalarUDF = rs_values_udf().into();
-        let geom_type = SedonaType::Wkb(Edges::Planar, None);
-        let tester = ScalarUdfTester::new(udf, vec![RASTER, geom_type.clone()]);
+        let tester = ScalarUdfTester::new(udf, vec![RASTER, WKB_GEOMETRY]);
         let raster = RasterSpec::nd(&["time", "y", "x"], &[2, 2, 1])
             .band(BandDataType::UInt8)
             .crs(None)
             .build();
-        let geoms = create_geom_array(&[Some("MULTIPOINT (0 0)")], &geom_type);
+        let geoms = create_geom_array(&[Some("MULTIPOINT (0 0)")], &WKB_GEOMETRY);
         let err = tester
             .invoke_arrays(vec![Arc::new(raster), geoms])
             .unwrap_err()
@@ -731,14 +670,11 @@ mod tests {
     fn empty_sub_point_yields_null_element() {
         // A MultiPoint containing an EMPTY sub-point (`MULTIPOINT (0.5 9.5,
         // EMPTY, 1.5 8.5)`): the empty sub-point has no location to sample, so
-        // it contributes a NULL element while its neighbours sample normally.
-        let udf: ScalarUDF = rs_values_udf().into();
-        let geom_type = SedonaType::Wkb(Edges::Planar, lnglat());
-        let tester = ScalarUdfTester::new(udf, vec![RASTER, geom_type.clone()]);
-
-        let wkb = multipoint_wkb(&[Some((0.5, 9.5)), None, Some((1.5, 8.5))]);
-        let geoms: arrow_array::ArrayRef =
-            Arc::new(arrow_array::BinaryArray::from(vec![Some(wkb.as_slice())]));
+        // it contributes a NULL element while its neighbours sample normally
+        // and in order (general, array-raster path).
+        let tester = tester();
+        let wkb = make_multipoint_wkb(&[Some((0.5, 9.5)), None, Some((1.5, 8.5))]);
+        let geoms: ArrayRef = Arc::new(BinaryArray::from(vec![Some(wkb.as_slice())]));
         let result = tester
             .invoke_arrays(vec![Arc::new(raster_2x2().build()), geoms])
             .unwrap();
@@ -750,26 +686,24 @@ mod tests {
         // A constant (scalar) raster takes the optimized hoisted path; verify
         // the per-element semantics match the general (array-raster) path:
         // in-bounds points sample, out-of-bounds and empty sub-points are NULL.
-        let udf: ScalarUDF = rs_values_udf().into();
-        let geom_type = SedonaType::Wkb(Edges::Planar, lnglat());
-        let tester = ScalarUdfTester::new(udf, vec![RASTER, geom_type.clone()]);
+        let tester = tester();
 
         // MULTIPOINT (0.5 9.5, 1.5 8.5, 100 100, EMPTY), NULL, MULTIPOINT EMPTY
-        let full = multipoint_wkb(&[
+        let full = make_multipoint_wkb(&[
             Some((0.5, 9.5)),
             Some((1.5, 8.5)),
             Some((100.0, 100.0)),
             None,
         ]);
-        let empty = multipoint_wkb(&[]);
-        let geoms: arrow_array::ArrayRef = Arc::new(arrow_array::BinaryArray::from(vec![
+        let empty = make_multipoint_wkb(&[]);
+        let geoms: ArrayRef = Arc::new(BinaryArray::from(vec![
             Some(full.as_slice()),
             None,
             Some(empty.as_slice()),
         ]));
         let result = tester
             .invoke(vec![
-                ColumnarValue::Scalar(ScalarValue::Struct(Arc::new(raster_2x2().build()))),
+                ColumnarValue::Scalar(raster_2x2().scalar()),
                 ColumnarValue::Array(geoms),
             ])
             .unwrap();
@@ -789,64 +723,30 @@ mod tests {
     fn scalar_raster_constant_band_uses_fast_path() {
         // A scalar raster with a constant (scalar) band hoists that band's
         // buffer for the whole batch.
-        let udf: ScalarUDF = rs_values_udf().into();
-        let geom_type = SedonaType::Wkb(Edges::Planar, lnglat());
-        let tester = ScalarUdfTester::new(
-            udf,
-            vec![
-                RASTER,
-                geom_type.clone(),
-                SedonaType::Arrow(DataType::Int32),
-            ],
-        );
-        let raster = RasterSpec::d2(2, 2)
-            .band_values(&[1u8, 2, 3, 4])
-            .band_values(&[10u8, 20, 30, 40])
-            .transform([0.0, 1.0, 0.0, 10.0, 0.0, -1.0])
-            .build();
-        let geoms = create_geom_array(&[Some("MULTIPOINT (0.5 9.5, 1.5 8.5)")], &geom_type);
+        let tester = tester_with_band();
         let result = tester
-            .invoke(vec![
-                ColumnarValue::Scalar(ScalarValue::Struct(Arc::new(raster))),
-                ColumnarValue::Array(geoms),
-                ColumnarValue::Scalar(ScalarValue::Int32(Some(2))),
-            ])
+            .invoke_scalar_scalar_scalar(two_band_raster(), "MULTIPOINT (0.5 9.5, 1.5 8.5)", 2)
             .unwrap();
-        let result = result.into_array(1).unwrap();
-        assert_eq!(row(&result, 0), vec![Some(10.0), Some(40.0)]);
+        tester.assert_scalar_result_equals(result, list_f64(&[Some(10.0), Some(40.0)]));
     }
 
     #[test]
     fn scalar_raster_band_column_resolves_per_row() {
         // A scalar raster with a band *column* still hoists affine/CRS/reproject
         // but resolves the band buffer per row; a NULL band element -> NULL row.
-        let udf: ScalarUDF = rs_values_udf().into();
-        let geom_type = SedonaType::Wkb(Edges::Planar, lnglat());
-        let tester = ScalarUdfTester::new(
-            udf,
-            vec![
-                RASTER,
-                geom_type.clone(),
-                SedonaType::Arrow(DataType::Int32),
-            ],
-        );
-        let raster = RasterSpec::d2(2, 2)
-            .band_values(&[1u8, 2, 3, 4])
-            .band_values(&[10u8, 20, 30, 40])
-            .transform([0.0, 1.0, 0.0, 10.0, 0.0, -1.0])
-            .build();
+        let tester = tester_with_band();
         let geoms = create_geom_array(
             &[
                 Some("MULTIPOINT (0.5 9.5)"),
                 Some("MULTIPOINT (0.5 9.5)"),
                 Some("MULTIPOINT (0.5 9.5)"),
             ],
-            &geom_type,
+            &geom_type(),
         );
-        let bands: arrow_array::ArrayRef = Arc::new(Int32Array::from(vec![Some(1), Some(2), None]));
+        let bands: ArrayRef = Arc::new(Int32Array::from(vec![Some(1), Some(2), None]));
         let result = tester
             .invoke(vec![
-                ColumnarValue::Scalar(ScalarValue::Struct(Arc::new(raster))),
+                ColumnarValue::Scalar(two_band_raster().scalar()),
                 ColumnarValue::Array(geoms),
                 ColumnarValue::Array(bands),
             ])
@@ -861,46 +761,25 @@ mod tests {
     #[test]
     fn scalar_raster_null_scalar_band_is_all_null() {
         // A NULL scalar band makes every output NULL without touching the band.
-        let udf: ScalarUDF = rs_values_udf().into();
-        let geom_type = SedonaType::Wkb(Edges::Planar, lnglat());
-        let tester = ScalarUdfTester::new(
-            udf,
-            vec![
-                RASTER,
-                geom_type.clone(),
-                SedonaType::Arrow(DataType::Int32),
-            ],
-        );
-        let geoms = create_geom_array(&[Some("MULTIPOINT (0.5 9.5)")], &geom_type);
+        let tester = tester_with_band();
         let result = tester
-            .invoke(vec![
-                ColumnarValue::Scalar(ScalarValue::Struct(Arc::new(raster_2x2().build()))),
-                ColumnarValue::Array(geoms),
-                ColumnarValue::Scalar(ScalarValue::Int32(None)),
-            ])
+            .invoke_scalar_scalar_scalar(
+                raster_2x2(),
+                "MULTIPOINT (0.5 9.5)",
+                ScalarValue::Int32(None),
+            )
             .unwrap();
-        let result = result.into_array(1).unwrap();
-        let list = result.as_any().downcast_ref::<ListArray>().unwrap();
-        assert!(list.is_null(0), "NULL scalar band should yield a NULL list");
+        assert!(
+            result.is_null(),
+            "NULL scalar band should yield a NULL list"
+        );
     }
 
     #[test]
     fn default_band_requires_single_band_raster_scalar_path() {
         // Same default-band ambiguity error on the scalar-raster fast path.
-        let udf: ScalarUDF = rs_values_udf().into();
-        let geom_type = SedonaType::Wkb(Edges::Planar, lnglat());
-        let tester = ScalarUdfTester::new(udf, vec![RASTER, geom_type.clone()]);
-        let raster = RasterSpec::d2(2, 2)
-            .band_values(&[1u8, 2, 3, 4])
-            .band_values(&[10u8, 20, 30, 40])
-            .transform([0.0, 1.0, 0.0, 10.0, 0.0, -1.0])
-            .build();
-        let geoms = create_geom_array(&[Some("MULTIPOINT (0.5 9.5)")], &geom_type);
-        let err = tester
-            .invoke(vec![
-                ColumnarValue::Scalar(ScalarValue::Struct(Arc::new(raster))),
-                ColumnarValue::Array(geoms),
-            ])
+        let err = tester()
+            .invoke_scalar_scalar(two_band_raster(), "MULTIPOINT (0.5 9.5)")
             .unwrap_err()
             .to_string();
         assert!(
@@ -915,18 +794,11 @@ mod tests {
         // row has a geometry to sample: an all-NULL geometry column over a
         // multiband raster returns NULL rather than erroring — matching the
         // general path, which only resolves the band on rows with a geometry.
-        let udf: ScalarUDF = rs_values_udf().into();
-        let geom_type = SedonaType::Wkb(Edges::Planar, lnglat());
-        let tester = ScalarUdfTester::new(udf, vec![RASTER, geom_type.clone()]);
-        let raster = RasterSpec::d2(2, 2)
-            .band_values(&[1u8, 2, 3, 4])
-            .band_values(&[10u8, 20, 30, 40])
-            .transform([0.0, 1.0, 0.0, 10.0, 0.0, -1.0])
-            .build();
-        let geoms = create_geom_array(&[None, None], &geom_type);
+        let tester = tester();
+        let geoms = create_geom_array(&[None, None], &geom_type());
         let result = tester
             .invoke(vec![
-                ColumnarValue::Scalar(ScalarValue::Struct(Arc::new(raster))),
+                ColumnarValue::Scalar(two_band_raster().scalar()),
                 ColumnarValue::Array(geoms),
             ])
             .unwrap();
@@ -938,11 +810,9 @@ mod tests {
     #[test]
     fn scalar_null_raster_is_all_null() {
         // A NULL scalar raster makes every row NULL.
-        let udf: ScalarUDF = rs_values_udf().into();
-        let geom_type = SedonaType::Wkb(Edges::Planar, lnglat());
-        let tester = ScalarUdfTester::new(udf, vec![RASTER, geom_type.clone()]);
+        let tester = tester();
         let raster = generate_test_rasters(1, Some(0)).unwrap();
-        let geoms = create_geom_array(&[Some("MULTIPOINT (0.5 9.5)")], &geom_type);
+        let geoms = create_geom_array(&[Some("MULTIPOINT (0.5 9.5)")], &geom_type());
         let result = tester
             .invoke(vec![
                 ColumnarValue::Scalar(ScalarValue::Struct(Arc::new(raster))),
