@@ -45,7 +45,6 @@ sedona-gdal = { workspace = true }
 sedona-raster = { workspace = true }
 sedona-raster-functions = { workspace = true }
 sedona-schema = { workspace = true }
-sedona-proj = { workspace = true, features = ["proj-sys"] }
 tokio = { workspace = true }
 
 [features]
@@ -56,6 +55,7 @@ bindgen = ["sedona-gdal/bindgen"]
 criterion = { workspace = true }
 sedona-gdal = { workspace = true, features = ["gdal-sys"] }
 sedona-testing = { workspace = true }
+sedona-proj = { workspace = true, features = ["proj-sys"] }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
