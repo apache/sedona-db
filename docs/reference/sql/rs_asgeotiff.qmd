@@ -68,6 +68,10 @@ kernels:
       description: Tile height in pixels; must be a multiple of 16.
 ---
 
+::: callout-warning
+**Experimental.** This function is experimental; its behavior may change without notice.
+:::
+
 ## Description
 
 `RS_AsGeoTiff` encodes a raster as a GeoTIFF (via GDAL) and returns the file

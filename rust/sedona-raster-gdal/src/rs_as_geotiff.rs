@@ -36,6 +36,7 @@ use datafusion_common::error::Result;
 use datafusion_common::{exec_datafusion_err, exec_err, ScalarValue};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_gdal::vsi::VSIBuffer;
 use sedona_raster::array::RasterRefImpl;
 use sedona_raster::traits::RasterRef;
 use sedona_raster_functions::RasterExecutor;
@@ -144,7 +145,7 @@ impl RsAsGeoTiff {
         quality: Option<f64>,
         tile_width: Option<u32>,
         tile_height: Option<u32>,
-    ) -> Result<Vec<u8>> {
+    ) -> Result<VSIBuffer> {
         let raster_ds = provider
             .raster_ref_to_gdal(raster)
             .map_err(|e| exec_datafusion_err!("Failed to create GDAL dataset: {}", e))?;
@@ -210,9 +211,13 @@ impl RsAsGeoTiff {
             .create_copy(&driver, &vsi_path, &options_refs)
             .map_err(|e| exec_datafusion_err!("Failed to create GeoTiff: {}", e))?;
 
-        // Read bytes from the VSI memory file; the guard cleans up.
+        // Seize the vsimem file's buffer without copying: `VSIBuffer` owns the
+        // GDAL allocation (freed on drop) and unlinks the file, so the only
+        // byte copy left is the append into the output builder. The guard's
+        // unlink becomes a no-op on this path but still cleans up when
+        // `create_copy` or the seize fails.
         let bytes = gdal
-            .get_vsi_mem_file_bytes_owned(&vsi_path)
+            .get_vsi_mem_file_buffer_owned(&vsi_path)
             .map_err(|e| exec_datafusion_err!("Failed to read GeoTiff bytes: {}", e))?;
 
         drop(guard);
@@ -455,7 +460,7 @@ impl SedonaScalarKernel for RsAsGeoTiff {
                     tile_width,
                     tile_height,
                 )?;
-                builder.append_value(&bytes);
+                builder.append_value(bytes.as_ref());
 
                 Ok(())
             })?;
@@ -622,6 +627,37 @@ mod tests {
                 "unexpected error for {q}: {err}"
             );
         }
+    }
+
+    #[test]
+    fn failed_create_copy_surfaces_gdal_error() {
+        // A creation-option combination GDAL rejects at CreateCopy time —
+        // CCITTRLE (Huffman) only accepts 1-bit single-band data, so an
+        // ordinary UInt8 raster fails. The error must surface (and the vsimem
+        // guard cleans up the partial file rather than leaking it).
+        with_gdal(|gdal| {
+            let arr = as_raster_array(test_raster_spec());
+            let rasters = RasterStructArray::try_new(&arr).unwrap();
+            let raster = rasters.get(0).unwrap();
+            let provider = thread_local_provider(gdal).unwrap();
+            let err = RsAsGeoTiff::raster_to_geotiff(
+                gdal,
+                &provider,
+                &raster,
+                Some(CompressionType::Huffman),
+                None,
+                None,
+                None,
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(
+                err.contains("Failed to create GeoTiff"),
+                "unexpected error: {err}"
+            );
+            Ok::<_, datafusion_common::DataFusionError>(())
+        })
+        .unwrap();
     }
 
     #[test]

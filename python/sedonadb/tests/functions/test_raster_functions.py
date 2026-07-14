@@ -292,3 +292,38 @@ def test_rs_asgeotiff_out_of_range_quality_errors(con):
     # silently clamping to maximum quality.
     with pytest.raises(Exception, match="between 0.0 and 1.0"):
         con.sql("SELECT RS_AsGeoTiff(RS_Example(), 'JPEG', 75)").to_arrow_table()
+
+
+# Cross-check RS_AsGeoTiff against rasterio: export a random raster of each
+# band data type and confirm rasterio decodes the bytes back to the identical
+# array, dtype, and geotransform. The DEFLATE/LZW variants also exercise the
+# per-dtype predictor selection (horizontal differencing for integers,
+# floating-point prediction for float bands).
+@pytest.mark.parametrize("dtype", ["uint8", "uint16", "int32", "float32", "float64"])
+@pytest.mark.parametrize("compression_args", ["", ", 'DEFLATE', 0.85", ", 'LZW', 0.85"])
+def test_rs_asgeotiff_roundtrips_contents(con, dtype, compression_args):
+    import numpy as np
+
+    pytest.importorskip("rasterio")
+    from rasterio.io import MemoryFile
+
+    from sedonadb.raster import Raster
+
+    rng = np.random.default_rng(7)
+    data = (rng.random((5, 4)) * 100).astype(dtype)
+    gdal_transform = (10.0, 1.0, 0.0, 20.0, 0.0, -1.0)
+    raster = Raster.from_numpy(data, transform=gdal_transform)
+
+    tiff_bytes = (
+        con.sql(
+            f"SELECT RS_AsGeoTiff($1{compression_args}) AS t",
+            params=(raster,),
+        )
+        .to_arrow_table()["t"]
+        .to_pylist()[0]
+    )
+    with MemoryFile(bytes(tiff_bytes)) as mem, mem.open() as src:
+        decoded = src.read(1)
+        assert decoded.dtype == data.dtype
+        np.testing.assert_array_equal(decoded, data)
+        assert src.transform.to_gdal() == gdal_transform
