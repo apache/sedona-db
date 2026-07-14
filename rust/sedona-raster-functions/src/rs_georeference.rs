@@ -25,6 +25,7 @@ use datafusion_common::error::Result;
 use datafusion_common::DataFusionError;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_raster::affine_transformation::AffineMatrix;
 use sedona_raster::traits::RasterRef;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
@@ -188,8 +189,8 @@ fn format_georeference(
                 GeoReferenceFormat::Esri => {
                     // World coordinates of pixel-space (0.5, 0.5) — the full
                     // affine keeps the center shift exact under skew.
-                    let esri_upper_left_x = upper_left_x + (scale_x + skew_x) * 0.5;
-                    let esri_upper_left_y = upper_left_y + (skew_y + scale_y) * 0.5;
+                    let affine = AffineMatrix::from_metadata(&metadata);
+                    let (esri_upper_left_x, esri_upper_left_y) = affine.transform(0.5, 0.5);
                     format!(
                         "{:.10}\n{:.10}\n{:.10}\n{:.10}\n{:.10}\n{:.10}",
                         scale_x, skew_y, skew_x, scale_y, esri_upper_left_x, esri_upper_left_y
