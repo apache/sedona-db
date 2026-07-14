@@ -5970,6 +5970,80 @@ in the same order, as this DataFrame.</p>
 <div class="doc doc-object doc-function">
 
 
+<h4 id="sedonadb.dataframe.DataFrame.unnest" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">unnest</span>
+
+
+<a href="#sedonadb.dataframe.DataFrame.unnest" class="headerlink" title="Permanent link">¶</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">unnest</span><span class="p">(</span><span class="o">*</span><span class="n">columns</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="DataFrame (sedonadb.dataframe.DataFrame)" href="#sedonadb.dataframe.DataFrame">DataFrame</a></span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Expand list/array column(s) so each element becomes its own row.</p>
+<p>This is the relational form of <code>pandas</code>/<code>GeoPandas</code> <code>explode()</code>: for
+each input row, a list-typed column is expanded to one output row per
+element, with the other columns repeated. When several columns are
+given, they are unnested in parallel (position by position).</p>
+<p>A common spatial use is flattening a multi-geometry: <code>ST_Dump(geom)</code>
+returns a list of parts, and <code>unnest()</code> turns each part into its own
+row.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+            <b><code>*columns</code></b>
+              (<code><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></code>, default:
+                  <code>()</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>One or more list/array column names to expand. At least
+one is required.</p>
+          </div>
+        </li>
+    </ul>
+        <p>Examples:</p>
+<div class="codehilite"><pre><span></span><code><span class="o">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">sd</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sedona</span><span class="p">.</span><span class="n">db</span><span class="p">.</span><span class="n">connect</span><span class="p">()</span>
+<span class="o">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">df</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sd</span><span class="p">.</span><span class="k">sql</span><span class="p">(</span><span class="s2">"SELECT 'a' AS label, [10, 20, 30] AS vals"</span><span class="p">)</span>
+<span class="o">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">df</span><span class="p">.</span><span class="n">unnest</span><span class="p">(</span><span class="s2">"vals"</span><span class="p">).</span><span class="k">show</span><span class="p">()</span>
+<span class="n">┌───────┬───────┐</span>
+<span class="n">│</span><span class="w"> </span><span class="n">label</span><span class="w"> </span><span class="n">┆</span><span class="w">  </span><span class="n">vals</span><span class="w"> </span><span class="n">│</span>
+<span class="n">│</span><span class="w">  </span><span class="n">utf8</span><span class="w"> </span><span class="n">┆</span><span class="w"> </span><span class="n">int64</span><span class="w"> </span><span class="n">│</span>
+<span class="n">╞═══════╪═══════╡</span>
+<span class="n">│</span><span class="w"> </span><span class="n">a</span><span class="w">     </span><span class="n">┆</span><span class="w">    </span><span class="mi">10</span><span class="w"> </span><span class="n">│</span>
+<span class="n">├╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┤</span>
+<span class="n">│</span><span class="w"> </span><span class="n">a</span><span class="w">     </span><span class="n">┆</span><span class="w">    </span><span class="mi">20</span><span class="w"> </span><span class="n">│</span>
+<span class="n">├╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┤</span>
+<span class="n">│</span><span class="w"> </span><span class="n">a</span><span class="w">     </span><span class="n">┆</span><span class="w">    </span><span class="mi">30</span><span class="w"> </span><span class="n">│</span>
+<span class="n">└───────┴───────┘</span>
+
+<span class="n">Explode</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="n">multi</span><span class="o">-</span><span class="kt">geometry</span><span class="w"> </span><span class="k">into</span><span class="w"> </span><span class="k">one</span><span class="w"> </span><span class="k">row</span><span class="w"> </span><span class="n">per</span><span class="w"> </span><span class="n">part</span><span class="o">:</span><span class="w"> </span><span class="n">dump</span><span class="w"> </span><span class="n">the</span><span class="w"> </span><span class="n">parts</span><span class="w"> </span><span class="k">with</span>
+<span class="n n-Quoted">`ST_Dump`</span><span class="p">,</span><span class="w"> </span><span class="n n-Quoted">`unnest`</span><span class="w"> </span><span class="n">the</span><span class="w"> </span><span class="n">resulting</span><span class="w"> </span><span class="k">list</span><span class="p">,</span><span class="w"> </span><span class="k">then</span><span class="w"> </span><span class="k">read</span><span class="w"> </span><span class="n">the</span><span class="w"> </span><span class="kt">geometry</span><span class="w"> </span><span class="k">out</span>
+<span class="k">of</span><span class="w"> </span><span class="n">the</span><span class="w"> </span><span class="n n-Quoted">`{path, geom}`</span><span class="w"> </span><span class="n">struct</span><span class="w"> </span><span class="k">each</span><span class="w"> </span><span class="n">element</span><span class="w"> </span><span class="n">carries</span><span class="p">.</span>
+
+<span class="o">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">multi</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sd</span><span class="p">.</span><span class="k">sql</span><span class="p">(</span><span class="s2">"SELECT ST_GeomFromText('MULTIPOINT (0 0, 1 1)') AS geometry"</span><span class="p">)</span>
+<span class="o">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">dumped</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">multi</span><span class="p">.</span><span class="k">select</span><span class="p">(</span><span class="n">multi</span><span class="err">[</span><span class="s2">"geometry"</span><span class="err">]</span><span class="p">.</span><span class="n">geo</span><span class="p">.</span><span class="n">dump</span><span class="p">().</span><span class="n">alias</span><span class="p">(</span><span class="s2">"dump"</span><span class="p">)).</span><span class="n">unnest</span><span class="p">(</span><span class="s2">"dump"</span><span class="p">)</span>
+<span class="o">&gt;&gt;&gt;</span><span class="w"> </span><span class="n">dumped</span><span class="p">.</span><span class="k">select</span><span class="p">(</span><span class="n">dumped</span><span class="err">[</span><span class="s2">"dump"</span><span class="err">][</span><span class="s2">"geom"</span><span class="err">]</span><span class="p">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">"geometry"</span><span class="p">)).</span><span class="k">show</span><span class="p">()</span>
+<span class="n">┌────────────┐</span>
+<span class="n">│</span><span class="w">  </span><span class="kt">geometry</span><span class="w">  </span><span class="n">│</span>
+<span class="n">│</span><span class="w">  </span><span class="kt">geometry</span><span class="w">  </span><span class="n">│</span>
+<span class="n">╞════════════╡</span>
+<span class="n">│</span><span class="w"> </span><span class="kt">POINT</span><span class="p">(</span><span class="mi">0</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="n">│</span>
+<span class="n">├╌╌╌╌╌╌╌╌╌╌╌╌┤</span>
+<span class="n">│</span><span class="w"> </span><span class="kt">POINT</span><span class="p">(</span><span class="mi">1</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="n">│</span>
+<span class="n">└────────────┘</span>
+</code></pre></div>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
 <h4 id="sedonadb.dataframe.DataFrame.with_params" class="doc doc-heading">
             <span class="doc doc-object-name doc-function-name">with_params</span>
 
