@@ -81,6 +81,10 @@ kernels:
         if false, it raises an error. Defaults to true.
 ---
 
+::: callout-warning
+**Experimental.** This function is experimental; its behavior may change without notice.
+:::
+
 ## Description
 
 `RS_Clip` clips a raster to a geometry, in the spirit of PostGIS `ST_Clip`.

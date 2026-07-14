@@ -24,7 +24,7 @@
 
 use std::sync::Arc;
 
-use arrow_array::{Array, ArrayRef};
+use arrow_array::ArrayRef;
 use datafusion_common::cast::{as_boolean_array, as_float64_array, as_int32_array};
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::error::Result;
@@ -37,14 +37,13 @@ use sedona_gdal::geo_transform::{GeoTransform, GeoTransformEx};
 use sedona_gdal::mem::MemDatasetBuilder;
 use sedona_gdal::raster::types::GdalDataType;
 use sedona_gdal::vector::geometry::Geometry;
-use sedona_proj::transform::with_global_proj_engine;
 
 use arrow_schema::DataType;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_raster::array::RasterRefImpl;
 use sedona_raster::builder::RasterBuilder;
 use sedona_raster::traits::{is_spatial_dim_pair, RasterRef};
-use sedona_raster_functions::crs_utils::{crs_transform_wkb, resolve_crs};
+use sedona_raster_functions::crs_utils::{crs_transform_wkb, resolve_crs, with_crs_engine};
 use sedona_raster_functions::rs_ensure_loaded::{
     NEEDS_PIXELS_METADATA_KEY, RETURNS_BYTES_METADATA_KEY,
 };
@@ -54,8 +53,8 @@ use sedona_schema::matchers::ArgMatcher;
 use sedona_schema::raster::BandDataType;
 
 use crate::gdal_common::with_gdal;
-use crate::gdal_common::{nodata_bytes_to_f64, nodata_f64_to_bytes};
 use crate::gdal_dataset_provider::configure_thread_local_options;
+use sedona_raster::traits::nodata_f64_to_bytes;
 
 /// RS_Clip() scalar UDF implementation
 ///
@@ -161,7 +160,7 @@ impl SedonaScalarKernel for RsClip {
         _num_rows: usize,
         config_options: Option<&ConfigOptions>,
     ) -> Result<ColumnarValue> {
-        let num_iterations = calc_num_iterations(args);
+        let num_iterations = RasterExecutor::num_iterations_over(args);
 
         // Band is always at index 1, geom is always at index 2.
         let geom_arg_idx: usize = 2;
@@ -233,7 +232,7 @@ impl SedonaScalarKernel for RsClip {
 
         with_gdal(|gdal| {
             configure_thread_local_options(gdal, config_options)?;
-            with_global_proj_engine(|engine| {
+            with_crs_engine(config_options, |engine| {
                 executor.execute_raster_wkb_crs_void(|raster_opt, wkb_opt, geom_crs| {
                 // Advance every option iterator in lockstep. A NULL in the band
                 // or any boolean flag propagates to a NULL output row (SQL
@@ -330,14 +329,9 @@ impl SedonaScalarKernel for RsClip {
 
             // Decide array-vs-scalar over *all* args, not just the raster/geom
             // the executor was given: a per-row band/option column over a scalar
-            // raster+geom must still yield an N-row array. (`executor.finish`
-            // only inspects its two exec args and would collapse to row 0.)
+            // raster+geom must still yield an N-row array.
             let out: ArrayRef = Arc::new(builder.finish()?);
-            if args.iter().any(|a| matches!(a, ColumnarValue::Array(_))) {
-                Ok(ColumnarValue::Array(out))
-            } else {
-                Ok(ColumnarValue::Scalar(ScalarValue::try_from_array(&out, 0)?))
-            }
+            RasterExecutor::finish_over(args, out)
         })
     }
 }
@@ -546,27 +540,22 @@ fn clip_raster(
             exec_datafusion_err!("RS_Clip: band {} is not contiguous: {}", band_idx, e)
         })?;
 
-        // A custom nodata that isn't representable in the band's data type would
-        // be silently saturated by `nodata_f64_to_bytes` (e.g. -9999 -> 0 on
-        // UInt8, colliding with real data), so reject it explicitly here.
-        if let Some(cn) = custom_nodata {
-            let (lo, hi) = (
-                band_data_type_min(&data_type),
-                band_data_type_max(&data_type),
-            );
-            if cn < lo || cn > hi {
-                return exec_err!(
-                    "RS_Clip: no_data_value {cn} is outside the representable range [{lo}, {hi}] of band {band_idx}'s data type {data_type:?}"
-                );
-            }
-        }
-
-        // nodata precedence: the explicit argument, then the band's own nodata,
-        // then the band data type's minimum value — never a silent 0.0, which
-        // would be indistinguishable from real zero-valued pixels.
-        let nodata = custom_nodata
-            .or_else(|| nodata_bytes_to_f64(band_metadata.nodata_value(), &data_type))
-            .unwrap_or_else(|| band_data_type_min(&data_type));
+        // nodata precedence: the explicit argument, then the band's own nodata
+        // bytes (used verbatim — no lossy f64 round-trip for Int64/UInt64),
+        // then the band data type's minimum value. An explicit value that is
+        // not exactly representable in the band's data type (fractional for an
+        // integer band, out of range, or a 64-bit integer beyond 2^53) errors
+        // rather than silently saturating — e.g. -9999 on UInt8 would collide
+        // with real zero-adjacent data.
+        let nodata_bytes: Vec<u8> = match custom_nodata {
+            Some(cn) => nodata_f64_to_bytes(cn, &data_type).map_err(|e| {
+                exec_datafusion_err!("RS_Clip: invalid no_data_value for band {band_idx}: {e}")
+            })?,
+            None => match band_metadata.nodata_value() {
+                Some(bytes) => bytes.to_vec(),
+                None => data_type.min_value_le_bytes(),
+            },
+        };
 
         let byte_size = data_type.byte_size();
         let in_plane_bytes = width * height * byte_size;
@@ -590,7 +579,7 @@ fn clip_raster(
         for plane in 0..n_planes {
             let plane_bytes = &original_data[plane * in_plane_bytes..(plane + 1) * in_plane_bytes];
             let clipped_plane = if let Some(cw) = crop_window {
-                apply_mask_and_crop(plane_bytes, mask, width, &data_type, nodata, &cw)?
+                apply_mask_and_crop(plane_bytes, mask, width, &data_type, &nodata_bytes, &cw)?
             } else {
                 apply_mask_to_band(
                     plane_bytes,
@@ -598,7 +587,7 @@ fn clip_raster(
                     width,
                     height,
                     &data_type,
-                    nodata,
+                    &nodata_bytes,
                     &window,
                 )?
             };
@@ -620,7 +609,7 @@ fn clip_raster(
             dim_names,
             shape: out_shape,
             data_type,
-            nodata: nodata_f64_to_bytes(nodata, &data_type),
+            nodata: nodata_bytes,
             name: band_name,
         });
     }
@@ -701,11 +690,10 @@ fn apply_mask_to_band(
     width: usize,
     height: usize,
     data_type: &BandDataType,
-    nodata: f64,
+    nodata_bytes: &[u8],
     window: &CropWindow,
 ) -> Result<Vec<u8>> {
     let byte_size = data_type.byte_size();
-    let nodata_bytes = nodata_f64_to_bytes(nodata, data_type);
     let nodata_row: Vec<u8> = nodata_bytes.repeat(width);
     let mut result = vec![0u8; width * height * byte_size];
 
@@ -730,7 +718,7 @@ fn apply_mask_to_band(
         for col in 0..window.width {
             if mask[mask_row_start + col] == 0 {
                 let dst = win_start + col * byte_size;
-                dst_row[dst..dst + byte_size].copy_from_slice(&nodata_bytes);
+                dst_row[dst..dst + byte_size].copy_from_slice(nodata_bytes);
             }
         }
     }
@@ -746,11 +734,10 @@ fn apply_mask_and_crop(
     mask: &[u8],
     full_width: usize,
     data_type: &BandDataType,
-    nodata: f64,
+    nodata_bytes: &[u8],
     cw: &CropWindow,
 ) -> Result<Vec<u8>> {
     let byte_size = data_type.byte_size();
-    let nodata_bytes = nodata_f64_to_bytes(nodata, data_type);
     let row_bytes = cw.width * byte_size;
     let mut result = vec![0u8; cw.height * row_bytes];
 
@@ -770,7 +757,7 @@ fn apply_mask_and_crop(
         for col in 0..cw.width {
             if mask[mask_row_start + col] == 0 {
                 let dst = dst_start + col * byte_size;
-                result[dst..dst + byte_size].copy_from_slice(&nodata_bytes);
+                result[dst..dst + byte_size].copy_from_slice(nodata_bytes);
             }
         }
     }
@@ -854,65 +841,17 @@ fn build_clipped_raster(
     Ok(())
 }
 
-/// The minimum representable value of a band data type, as `f64` — the default
-/// nodata sentinel when neither an explicit value nor the band's own nodata is
-/// available, so masked-out pixels stay distinguishable from real data.
-fn band_data_type_min(data_type: &BandDataType) -> f64 {
-    match data_type {
-        BandDataType::UInt8
-        | BandDataType::UInt16
-        | BandDataType::UInt32
-        | BandDataType::UInt64 => 0.0,
-        BandDataType::Int8 => i8::MIN as f64,
-        BandDataType::Int16 => i16::MIN as f64,
-        BandDataType::Int32 => i32::MIN as f64,
-        BandDataType::Int64 => i64::MIN as f64,
-        BandDataType::Float32 => f32::MIN as f64,
-        BandDataType::Float64 => f64::MIN,
-    }
-}
-
-/// The maximum representable value of a band data type, as `f64` — paired with
-/// [`band_data_type_min`] to range-check a custom `no_data_value` before it is
-/// narrowed to the band's type (which would otherwise saturate silently).
-fn band_data_type_max(data_type: &BandDataType) -> f64 {
-    match data_type {
-        BandDataType::UInt8 => u8::MAX as f64,
-        BandDataType::UInt16 => u16::MAX as f64,
-        BandDataType::UInt32 => u32::MAX as f64,
-        BandDataType::UInt64 => u64::MAX as f64,
-        BandDataType::Int8 => i8::MAX as f64,
-        BandDataType::Int16 => i16::MAX as f64,
-        BandDataType::Int32 => i32::MAX as f64,
-        BandDataType::Int64 => i64::MAX as f64,
-        BandDataType::Float32 => f32::MAX as f64,
-        BandDataType::Float64 => f64::MAX,
-    }
-}
-
-fn calc_num_iterations(args: &[ColumnarValue]) -> usize {
-    for arg in args {
-        if let ColumnarValue::Array(array) = arg {
-            return array.len();
-        }
-    }
-    1
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use arrow_array::StructArray;
     use sedona_expr::scalar_udf::SedonaScalarKernel;
+    use sedona_proj::transform::with_global_proj_engine;
     use sedona_raster::array::RasterStructArray;
     use sedona_schema::crs::deserialize_crs;
     use sedona_schema::datatypes::Edges;
+    use sedona_testing::create::make_wkb;
     use sedona_testing::raster_spec::RasterSpec;
-
-    fn wkb_from_wkt(gdal: &sedona_gdal::gdal::Gdal, wkt: &str) -> Result<Vec<u8>> {
-        let geometry = gdal.geometry_from_wkt(wkt).unwrap();
-        geometry.wkb().map_err(|e| exec_datafusion_err!("{e}"))
-    }
 
     /// A 4×2 EPSG:4326 raster, origin (0, 2), 1×1 north-up pixels — world extent
     /// x ∈ [0, 4], y ∈ [0, 2]. One UInt8 band with values 1..=8 (row-major).
@@ -934,7 +873,7 @@ mod tests {
             let raster = rasters.get(0).unwrap();
 
             // Left half of the raster: x ∈ [0, 2], y ∈ [0, 2].
-            let geom_wkb = wkb_from_wkt(gdal, "POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))")?;
+            let geom_wkb = make_wkb("POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))");
             let clipped = clip_raster(gdal, &raster, &geom_wkb, 0, None, false, false)?
                 .expect("Should have intersection");
 
@@ -977,7 +916,7 @@ mod tests {
 
             // Top-left quadrant: x ∈ [0, 2], y ∈ [1, 2] — covers pixel centers
             // (0.5, 1.5) and (1.5, 1.5), i.e. a 2×1 window.
-            let geom_wkb = wkb_from_wkt(gdal, "POLYGON((0 1, 2 1, 2 2, 0 2, 0 1))")?;
+            let geom_wkb = make_wkb("POLYGON((0 1, 2 1, 2 2, 0 2, 0 1))");
             let clipped = clip_raster(gdal, &raster, &geom_wkb, 0, None, false, true)?
                 .expect("Should have intersection");
             let cw = clipped
@@ -1027,7 +966,7 @@ mod tests {
             // -> 1, (0.5, 0.5) -> 5, (1.5, 0.5) -> 6. The tight mask bbox
             // would be 2×2; the envelope window must be 3×2 with nodata (0)
             // padding on the unselected pixels.
-            let geom_wkb = wkb_from_wkt(gdal, "POLYGON((0 0, 3 0, 0 2, 0 0))")?;
+            let geom_wkb = make_wkb("POLYGON((0 0, 3 0, 0 2, 0 0))");
             let clipped = clip_raster(gdal, &raster, &geom_wkb, 0, None, false, true)?
                 .expect("Should have intersection");
 
@@ -1050,10 +989,7 @@ mod tests {
             let rasters = RasterStructArray::try_new(&array).unwrap();
             let raster = rasters.get(0).unwrap();
             // Far outside the raster's [0,4]×[0,2] extent.
-            let geom_wkb = wkb_from_wkt(
-                gdal,
-                "POLYGON((100 100, 101 100, 101 101, 100 101, 100 100))",
-            )?;
+            let geom_wkb = make_wkb("POLYGON((100 100, 101 100, 101 101, 100 101, 100 100))");
             let result = clip_raster(gdal, &raster, &geom_wkb, 0, None, false, true)?;
             assert!(result.is_none(), "Should return None for no intersection");
             Ok::<_, datafusion_common::DataFusionError>(())
@@ -1073,8 +1009,7 @@ mod tests {
         let crs_4326 = deserialize_crs("EPSG:4326").unwrap().unwrap();
         let crs_3857 = deserialize_crs("EPSG:3857").unwrap().unwrap();
 
-        let geom_wkb_4326 =
-            with_gdal(|gdal| wkb_from_wkt(gdal, "POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))")).unwrap();
+        let geom_wkb_4326 = make_wkb("POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))");
         let geom_wkb_3857 = with_global_proj_engine(|engine| {
             crs_transform_wkb(&geom_wkb_4326, crs_4326.as_ref(), crs_3857.as_ref(), engine)
         })
@@ -1141,8 +1076,7 @@ mod tests {
             .build();
 
         let crs_4326 = deserialize_crs("EPSG:4326").unwrap().unwrap();
-        let geom_wkb =
-            with_gdal(|gdal| wkb_from_wkt(gdal, "POLYGON((0 1, 2 1, 2 2, 0 2, 0 1))")).unwrap();
+        let geom_wkb = make_wkb("POLYGON((0 1, 2 1, 2 2, 0 2, 0 1))");
 
         // RS_Clip(raster, band, geom, allTouched, noData, crop=true).
         let kernel = RsClip { arg_count: 6 };
@@ -1186,15 +1120,25 @@ mod tests {
     }
 
     #[test]
-    fn test_band_data_type_min() {
+    fn test_default_nodata_sentinel_is_type_minimum() {
         // Unsigned types floor at 0; signed/float at their most-negative value.
-        assert_eq!(band_data_type_min(&BandDataType::UInt8), 0.0);
-        assert_eq!(band_data_type_min(&BandDataType::UInt64), 0.0);
-        assert_eq!(band_data_type_min(&BandDataType::Int8), -128.0);
-        assert_eq!(band_data_type_min(&BandDataType::Int16), i16::MIN as f64);
-        assert_eq!(band_data_type_min(&BandDataType::Int32), i32::MIN as f64);
-        assert_eq!(band_data_type_min(&BandDataType::Float32), f32::MIN as f64);
-        assert_eq!(band_data_type_min(&BandDataType::Float64), f64::MIN);
+        assert_eq!(BandDataType::UInt8.min_value_le_bytes(), vec![0u8]);
+        assert_eq!(
+            BandDataType::UInt64.min_value_le_bytes(),
+            0u64.to_le_bytes()
+        );
+        assert_eq!(
+            BandDataType::Int8.min_value_le_bytes(),
+            i8::MIN.to_le_bytes()
+        );
+        assert_eq!(
+            BandDataType::Int64.min_value_le_bytes(),
+            i64::MIN.to_le_bytes()
+        );
+        assert_eq!(
+            BandDataType::Float64.min_value_le_bytes(),
+            f64::MIN.to_le_bytes()
+        );
     }
 
     /// A 2×1, two-band EPSG:4326 raster (band 1 = [1,2], band 2 = [10,20]) — the
@@ -1214,8 +1158,7 @@ mod tests {
         // produce an N-row array, not collapse to row 0. (The executor only sees
         // [raster, geom], so output packaging must consider all args.)
         let crs_4326 = deserialize_crs("EPSG:4326").unwrap().unwrap();
-        let geom_wkb =
-            with_gdal(|gdal| wkb_from_wkt(gdal, "POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))")).unwrap();
+        let geom_wkb = make_wkb("POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))");
 
         let kernel = RsClip { arg_count: 3 };
         let result = kernel
@@ -1265,8 +1208,7 @@ mod tests {
         // Band 0 means "all bands" — it must reach clip_raster as 0, not be
         // clamped to 1.
         let crs_4326 = deserialize_crs("EPSG:4326").unwrap().unwrap();
-        let geom_wkb =
-            with_gdal(|gdal| wkb_from_wkt(gdal, "POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))")).unwrap();
+        let geom_wkb = make_wkb("POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))");
         let kernel = RsClip { arg_count: 3 };
         let result = kernel
             .invoke_batch(
@@ -1296,8 +1238,7 @@ mod tests {
     #[test]
     fn negative_band_errors() {
         let crs_4326 = deserialize_crs("EPSG:4326").unwrap().unwrap();
-        let geom_wkb =
-            with_gdal(|gdal| wkb_from_wkt(gdal, "POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))")).unwrap();
+        let geom_wkb = make_wkb("POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))");
         let kernel = RsClip { arg_count: 3 };
         let err = kernel
             .invoke_batch(
@@ -1352,8 +1293,7 @@ mod tests {
     fn null_band_yields_null() {
         // A NULL band must propagate to NULL, not silently clip every band.
         let crs_4326 = deserialize_crs("EPSG:4326").unwrap().unwrap();
-        let geom_wkb =
-            with_gdal(|gdal| wkb_from_wkt(gdal, "POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))")).unwrap();
+        let geom_wkb = make_wkb("POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))");
         let kernel = RsClip { arg_count: 3 };
         let result = kernel
             .invoke_batch(
@@ -1388,14 +1328,24 @@ mod tests {
         with_gdal(|gdal| {
             let rasters = RasterStructArray::try_new(&array).unwrap();
             let raster = rasters.get(0).unwrap();
-            let geom_wkb = wkb_from_wkt(gdal, "POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))")?;
+            let geom_wkb = make_wkb("POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))");
 
             let err = match clip_raster(gdal, &raster, &geom_wkb, 1, Some(-9999.0), false, false) {
                 Err(e) => e.to_string(),
                 Ok(_) => panic!("expected out-of-range nodata to error"),
             };
             assert!(
-                err.contains("outside the representable range"),
+                err.contains("not a valid UInt8 value"),
+                "unexpected error: {err}"
+            );
+
+            // A fractional nodata can't be represented in an integer band either.
+            let err = match clip_raster(gdal, &raster, &geom_wkb, 1, Some(2.5), false, false) {
+                Err(e) => e.to_string(),
+                Ok(_) => panic!("expected fractional nodata to error"),
+            };
+            assert!(
+                err.contains("not a valid UInt8 value"),
                 "unexpected error: {err}"
             );
 
@@ -1419,7 +1369,7 @@ mod tests {
         with_gdal(|gdal| {
             let rasters = RasterStructArray::try_new(&array).unwrap();
             let raster = rasters.get(0).unwrap();
-            let geom_wkb = wkb_from_wkt(gdal, "POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))")?;
+            let geom_wkb = make_wkb("POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))");
             let clipped = clip_raster(gdal, &raster, &geom_wkb, 1, None, false, false)?
                 .expect("Should have intersection");
             assert_eq!(
@@ -1437,13 +1387,7 @@ mod tests {
         // With lenient=false and an empty clip mask, the strict error is
         // conditioned on all_touched: a plain "do not intersect" when every
         // touched pixel was already considered, and a sub-pixel hint otherwise.
-        let geom_wkb = with_gdal(|gdal| {
-            wkb_from_wkt(
-                gdal,
-                "POLYGON((100 100, 101 100, 101 101, 100 101, 100 100))",
-            )
-        })
-        .unwrap();
+        let geom_wkb = make_wkb("POLYGON((100 100, 101 100, 101 101, 100 101, 100 100))");
         // No CRS on raster or geom, so we reach the mask check rather than a
         // CRS-mismatch error first.
         let raster = RasterSpec::d2(4, 2)
