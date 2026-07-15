@@ -28,7 +28,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use crate::gdal_common::with_gdal;
-use arrow_array::builder::BinaryBuilder;
+use arrow_array::builder::BinaryViewBuilder;
 use arrow_schema::DataType;
 use datafusion_common::cast::{as_float64_array, as_string_array, as_uint32_array};
 use datafusion_common::config::ConfigOptions;
@@ -307,7 +307,7 @@ impl SedonaScalarKernel for RsAsGeoTiff {
             ],
         };
 
-        let matcher = ArgMatcher::new(matchers, SedonaType::Arrow(DataType::Binary));
+        let matcher = ArgMatcher::new(matchers, SedonaType::Arrow(DataType::BinaryView));
         matcher.match_args(args)
     }
 
@@ -417,7 +417,7 @@ impl SedonaScalarKernel for RsAsGeoTiff {
         let mut tile_height_iter = tile_height_array.iter();
 
         // Build output binary array
-        let mut builder = BinaryBuilder::with_capacity(num_iterations, num_iterations * 1024);
+        let mut builder = BinaryViewBuilder::with_capacity(num_iterations);
 
         with_gdal(|gdal| {
             configure_thread_local_options(gdal, config_options)?;
@@ -536,13 +536,36 @@ mod tests {
         let udf: ScalarUDF = rs_as_geotiff_udf().into();
         let tester = ScalarUdfTester::new(udf, vec![RASTER]);
         let result = tester.invoke_scalar(test_raster_spec()).unwrap();
-        let ScalarValue::Binary(Some(bytes)) = result else {
-            panic!("expected a Binary result, got {result:?}");
+        let ScalarValue::BinaryView(Some(bytes)) = result else {
+            panic!("expected a BinaryView result, got {result:?}");
         };
         assert!(bytes.len() > 4, "GeoTIFF should have content");
         assert!(
             &bytes[0..2] == b"II" || &bytes[0..2] == b"MM",
             "should be a valid TIFF header"
+        );
+    }
+
+    #[test]
+    fn unknown_compression_type_errors_through_udf() {
+        // The compression-string parse error surfaces through the UDF itself,
+        // not only from CompressionType::parse in isolation.
+        let udf: ScalarUDF = rs_as_geotiff_udf().into();
+        let tester = ScalarUdfTester::new(
+            udf,
+            vec![
+                RASTER,
+                SedonaType::Arrow(DataType::Utf8),
+                SedonaType::Arrow(DataType::Float64),
+            ],
+        );
+        let err = tester
+            .invoke_scalar_scalar_scalar(test_raster_spec(), "GZIP", 0.5)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("Unknown compression type: GZIP"),
+            "unexpected error: {err}"
         );
     }
 
@@ -824,7 +847,7 @@ mod tests {
             .unwrap();
         let binary = result
             .as_any()
-            .downcast_ref::<arrow_array::BinaryArray>()
+            .downcast_ref::<arrow_array::BinaryViewArray>()
             .unwrap();
         with_gdal(|gdal| {
             assert_eq!(reopened_block_size(gdal, binary.value(0)), (16, 16));
@@ -843,7 +866,7 @@ mod tests {
             .unwrap();
         let binary = result
             .as_any()
-            .downcast_ref::<arrow_array::BinaryArray>()
+            .downcast_ref::<arrow_array::BinaryViewArray>()
             .unwrap();
         assert!(binary.is_null(0), "NULL raster should export as NULL");
     }
@@ -867,7 +890,7 @@ mod tests {
             .unwrap();
         let binary = result
             .as_any()
-            .downcast_ref::<arrow_array::BinaryArray>()
+            .downcast_ref::<arrow_array::BinaryViewArray>()
             .unwrap();
         with_gdal(|gdal| {
             assert_eq!(reopened_block_size(gdal, binary.value(0)), (16, 16));
