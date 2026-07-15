@@ -6037,7 +6037,6 @@ dependencies = [
  "geo-types",
  "lru 0.18.0",
  "rstest",
- "sedona-testing-base",
  "serde",
  "serde_json",
  "serde_with",
