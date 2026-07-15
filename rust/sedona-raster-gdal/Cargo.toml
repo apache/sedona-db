@@ -55,6 +55,7 @@ bindgen = ["sedona-gdal/bindgen"]
 criterion = { workspace = true }
 sedona-gdal = { workspace = true, features = ["gdal-sys"] }
 sedona-testing = { workspace = true }
+sedona-proj = { workspace = true, features = ["proj-sys"] }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
@@ -72,3 +73,8 @@ path = "benches/rs_metadata.rs"
 harness = false
 name = "rs_polygonize"
 path = "benches/rs_polygonize.rs"
+
+[[bench]]
+harness = false
+name = "rs_as_raster"
+path = "benches/rs_as_raster.rs"

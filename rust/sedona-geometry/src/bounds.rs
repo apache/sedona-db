@@ -242,57 +242,70 @@ pub fn geo_traits_update_xy_bounds(
     x: &mut Interval,
     y: &mut Interval,
 ) -> Result<(), SedonaGeometryError> {
+    visit_xy_coords(geom, true, &mut |cx, cy| {
+        x.update_value(cx);
+        y.update_value(cy);
+    })
+}
+
+/// Visit every XY coordinate in a geometry, calling `callback` for each one
+///
+/// Ignores Z or M coordinates. Interior rings of a polygon are only visited
+/// when `include_interior_rings` is true.
+pub fn visit_xy_coords(
+    geom: &impl GeometryTrait<T = f64>,
+    include_interior_rings: bool,
+    callback: &mut impl FnMut(f64, f64),
+) -> Result<(), SedonaGeometryError> {
     match geom.as_type() {
         GeometryType::Point(pt) => {
             if let Some(coord) = PointTrait::coord(pt) {
-                x.update_value(coord.x());
-                y.update_value(coord.y());
+                callback(coord.x(), coord.y());
             }
         }
         GeometryType::LineString(ls) => {
             for coord in ls.coords() {
-                x.update_value(coord.x());
-                y.update_value(coord.y());
+                callback(coord.x(), coord.y());
             }
         }
         GeometryType::Polygon(pl) => {
             if let Some(exterior) = pl.exterior() {
                 for coord in exterior.coords() {
-                    x.update_value(coord.x());
-                    y.update_value(coord.y());
+                    callback(coord.x(), coord.y());
                 }
             }
 
-            for interior in pl.interiors() {
-                for coord in interior.coords() {
-                    x.update_value(coord.x());
-                    y.update_value(coord.y());
+            if include_interior_rings {
+                for interior in pl.interiors() {
+                    for coord in interior.coords() {
+                        callback(coord.x(), coord.y());
+                    }
                 }
             }
         }
         GeometryType::MultiPoint(multi_pt) => {
             for pt in multi_pt.points() {
-                geo_traits_update_xy_bounds(&pt, x, y)?;
+                visit_xy_coords(&pt, include_interior_rings, callback)?;
             }
         }
         GeometryType::MultiLineString(multi_ls) => {
             for ls in multi_ls.line_strings() {
-                geo_traits_update_xy_bounds(&ls, x, y)?;
+                visit_xy_coords(&ls, include_interior_rings, callback)?;
             }
         }
         GeometryType::MultiPolygon(multi_pl) => {
             for pl in multi_pl.polygons() {
-                geo_traits_update_xy_bounds(&pl, x, y)?;
+                visit_xy_coords(&pl, include_interior_rings, callback)?;
             }
         }
         GeometryType::GeometryCollection(collection) => {
             for geom in collection.geometries() {
-                geo_traits_update_xy_bounds(&geom, x, y)?;
+                visit_xy_coords(&geom, include_interior_rings, callback)?;
             }
         }
         _ => {
             return Err(SedonaGeometryError::Invalid(
-                "GeometryType not supported for XY bounds".to_string(),
+                "GeometryType not supported for coordinate visiting".to_string(),
             ))
         }
     }

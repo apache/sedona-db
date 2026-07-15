@@ -504,6 +504,65 @@ class DataFrame:
 
         return DataFrame(self._ctx, self._impl.drop_columns(list(cols)))
 
+    def unnest(self, *columns: str) -> "DataFrame":
+        """Expand list/array column(s) so each element becomes its own row.
+
+        This is the relational form of `pandas`/`GeoPandas` `explode()`: for
+        each input row, a list-typed column is expanded to one output row per
+        element, with the other columns repeated. When several columns are
+        given, they are unnested in parallel (position by position).
+
+        A common spatial use is flattening a multi-geometry: `ST_Dump(geom)`
+        returns a list of parts, and `unnest()` turns each part into its own
+        row.
+
+        Args:
+            *columns: One or more list/array column names to expand. At least
+                one is required.
+
+        Examples:
+
+            >>> sd = sedona.db.connect()
+            >>> df = sd.sql("SELECT 'a' AS label, [10, 20, 30] AS vals")
+            >>> df.unnest("vals").show()
+            ┌───────┬───────┐
+            │ label ┆  vals │
+            │  utf8 ┆ int64 │
+            ╞═══════╪═══════╡
+            │ a     ┆    10 │
+            ├╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┤
+            │ a     ┆    20 │
+            ├╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┤
+            │ a     ┆    30 │
+            └───────┴───────┘
+
+            Explode a multi-geometry into one row per part: dump the parts with
+            `ST_Dump`, `unnest` the resulting list, then read the geometry out
+            of the `{path, geom}` struct each element carries.
+
+            >>> multi = sd.sql("SELECT ST_GeomFromText('MULTIPOINT (0 0, 1 1)') AS geometry")
+            >>> dumped = multi.select(multi["geometry"].geo.dump().alias("dump")).unnest("dump")
+            >>> dumped.select(dumped["dump"]["geom"].alias("geometry")).show()
+            ┌────────────┐
+            │  geometry  │
+            │  geometry  │
+            ╞════════════╡
+            │ POINT(0 0) │
+            ├╌╌╌╌╌╌╌╌╌╌╌╌┤
+            │ POINT(1 1) │
+            └────────────┘
+        """
+        if not columns:
+            raise ValueError("unnest() requires at least one column name")
+
+        for c in columns:
+            if not isinstance(c, str):
+                raise TypeError(
+                    f"unnest() expects str arguments, got {type(c).__name__}"
+                )
+
+        return DataFrame(self._ctx, self._impl.unnest(list(columns)))
+
     def agg(self, *exprs: Expr, **named_exprs: Expr) -> "DataFrame":
         """Aggregate the entire DataFrame to a single row.
 
