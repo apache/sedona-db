@@ -28,8 +28,10 @@ RS_Clip's documented behavior.
 """
 
 import numpy as np
+import pyarrow as pa
 import pytest
 
+from sedonadb.expr import lit
 from sedonadb.raster_testing import (
     Rasterio,
     SedonaDB,
@@ -243,22 +245,38 @@ def test_rs_clip_signature_defaults(con, tmp_path):
         gdal_transform=GDAL_TRANSFORM,
         nodata=BAND_NODATA["uint8"],
     )
+    df = con.create_data_frame(
+        pa.table({"path": pa.array([str(tiff)]), "wkt": pa.array([GEOM_TRIANGLE])})
+    )
 
-    def clip(args):
-        tab = con.sql(
-            f"SELECT RS_Clip(RS_FromPath($1), 1, ST_GeomFromText($2){args}) AS r",
-            params=(str(tiff), GEOM_TRIANGLE),
-        ).to_arrow_table()
-        return decode_raster(tab["r"][0])
-
-    full = clip(", false, CAST(NULL AS DOUBLE), true, true")
-    for args in ["", ", false", ", false, CAST(NULL AS DOUBLE)"]:
-        result = clip(args)
-        np.testing.assert_array_equal(
-            result.pixels, full.pixels, err_msg=f"args: {args!r}"
+    def clip(**kwargs):
+        expr = df.path.funcs.rs_frompath().rst.clip(
+            1, con.funcs.st_geomfromtext(df.wkt), **kwargs
         )
-        assert result.gdal_transform == full.gdal_transform, f"args: {args!r}"
-        assert result.nodata == full.nodata, f"args: {args!r}"
+        return decode_raster(df.select(r=expr).to_arrow_table()["r"][0])
+
+    full = clip(all_touched=False, no_data_value=lit(None), crop=True, lenient=True)
+    for kwargs in [
+        {},
+        {"all_touched": False},
+        {"all_touched": False, "no_data_value": lit(None)},
+    ]:
+        result = clip(**kwargs)
+        np.testing.assert_array_equal(
+            result.pixels, full.pixels, err_msg=f"kwargs: {kwargs!r}"
+        )
+        assert result.gdal_transform == full.gdal_transform, f"kwargs: {kwargs!r}"
+        assert result.nodata == full.nodata, f"kwargs: {kwargs!r}"
+
+    # One SQL-text invocation retained so the SQL parser path stays covered
+    # (everything else in this module routes through the expression API).
+    sql_tab = con.sql(
+        "SELECT RS_Clip(RS_FromPath($1), 1, ST_GeomFromText($2)) AS r",
+        params=(str(tiff), GEOM_TRIANGLE),
+    ).to_arrow_table()
+    sql_result = decode_raster(sql_tab["r"][0])
+    np.testing.assert_array_equal(sql_result.pixels, full.pixels)
+    assert sql_result.nodata == full.nodata
 
 
 def test_rs_clip_empty_mask_is_null_when_lenient(sedona, reference, tmp_path):
@@ -318,18 +336,25 @@ def test_rs_clip_strict_and_argument_errors(con, tmp_path):
         nodata=BAND_NODATA["uint8"],
     )
 
-    def clip_sql(geom, *, all_touched="false", nodata="CAST(NULL AS DOUBLE)", band=1):
-        return con.sql(
-            f"SELECT RS_Clip(RS_FromPath($1), {band}, ST_GeomFromText($2),"
-            f"               {all_touched}, {nodata}, true, false)",
-            params=(str(tiff), geom),
-        ).to_arrow_table()
+    def clip_strict(geom_wkt, *, all_touched=False, nodata=None, band=1):
+        df = con.create_data_frame(
+            pa.table({"path": pa.array([str(tiff)]), "wkt": pa.array([geom_wkt])})
+        )
+        expr = df.path.funcs.rs_frompath().rst.clip(
+            band,
+            con.funcs.st_geomfromtext(df.wkt),
+            all_touched=all_touched,
+            no_data_value=lit(None) if nodata is None else nodata,
+            crop=True,
+            lenient=False,
+        )
+        return df.select(r=expr).to_arrow_table()
 
     with pytest.raises(Exception, match="do not intersect"):
-        clip_sql(GEOM_DISJOINT, all_touched="true")
+        clip_strict(GEOM_DISJOINT, all_touched=True)
     with pytest.raises(Exception, match="selects no pixels"):
-        clip_sql(GEOM_SLIVER)
+        clip_strict(GEOM_SLIVER)
     with pytest.raises(Exception, match="not a valid UInt8 value"):
-        clip_sql(GEOM_RECT, nodata="-5.0")
+        clip_strict(GEOM_RECT, nodata=-5.0)
     with pytest.raises(Exception, match="out of range"):
-        clip_sql(GEOM_RECT, band=4)
+        clip_strict(GEOM_RECT, band=4)
