@@ -32,6 +32,7 @@ mod st_convexhull;
 mod st_delaunaytriangles;
 mod st_dwithin;
 mod st_exteriorring;
+mod st_hausdorffdistance;
 mod st_isring;
 mod st_issimple;
 mod st_isvalid;

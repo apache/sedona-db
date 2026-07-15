@@ -34,9 +34,9 @@ kernels:
       description: >
         Output format: 'GDAL' (default; alias 'PIXEL') reports the upper-left
         corner of the upper-left pixel; 'ESRI' (alias 'NODE') shifts the
-        coordinates to the center of the upper-left pixel. The center convention
-        ('ESRI'/'NODE') is rejected for skewed (rotated) rasters, where the
-        half-pixel shift would be inexact.
+        coordinates to the center of the upper-left pixel. The center shift maps
+        through the full affine transform, so it is exact for skewed (rotated)
+        rasters too.
 ---
 
 ## Examples

@@ -57,7 +57,7 @@ impl SedonaScalarKernel for STNumInteriorRings {
             match maybe_geom {
                 None => builder.append_null(),
                 Some(geom) => {
-                    let res = invoke_scalar(&geom)?;
+                    let res = invoke_scalar(geom)?;
                     match res {
                         Some(n) => builder.append_value(n),
                         None => builder.append_null(),

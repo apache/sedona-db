@@ -306,15 +306,81 @@ mod test {
 
         test_predicate::<Contains>("POLYGON ((0 0, 5 0, 0 5, 0 0))", "POINT (1 1)", true);
         test_predicate::<Contains>("POLYGON ((0 0, 5 0, 0 5, 0 0))", "POINT (-1 -1)", false);
+        test_predicate::<Contains>(
+            "POLYGON ((0 0, 3 0, 3 3, 0 3, 0 0), (1 1, 1 2, 2 1, 1 1))",
+            "POLYGON ((1 1, 1 2, 2 1, 1 1))",
+            false,
+        );
+        test_predicate::<Contains>("GEOMETRYCOLLECTION (POINT (0 0))", "POINT (0 0)", true);
+        test_predicate::<Contains>(
+            "GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 0 1))",
+            "POINT (0 0)",
+            false,
+        );
+        test_predicate::<Contains>(
+            "GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 0 1))",
+            "POINT (0 0.5)",
+            true,
+        );
+        test_predicate::<Contains>(
+            "GEOMETRYCOLLECTION (POINT (-1 -1), LINESTRING (0 0, 0 1))",
+            "POINT (-1 -1)",
+            true,
+        );
+        test_predicate::<Contains>(
+            "GEOMETRYCOLLECTION (POINT (0 0), POLYGON ((0 0, 0 1, 1 0, 0 0)))",
+            "POINT (0 0)",
+            false,
+        );
+        test_predicate::<Contains>(
+            "GEOMETRYCOLLECTION (POINT (0 0), POLYGON ((0 0, 0 1, 1 0, 0 0)))",
+            "POINT (0.25 0.25)",
+            true,
+        );
+        test_predicate::<Contains>(
+            "MULTILINESTRING ((0 0, 0 1), (0 0, 1 0))",
+            "POINT (0 0)",
+            true,
+        );
+        test_predicate::<Contains>(
+            "GEOMETRYCOLLECTION (LINESTRING (0 0, 0 1), POLYGON ((0 0, 0 1, 1 0, 0 0)))",
+            "LINESTRING (0 0, 0 1)",
+            false,
+        );
+        test_predicate::<Contains>(
+            "GEOMETRYCOLLECTION (LINESTRING (0 0, 0 1), POLYGON ((0 0, 0 1, 1 0, 0 0)))",
+            "LINESTRING (0 0, 0.25 0.25)",
+            true,
+        );
 
         test_predicate::<Within>("POINT (1 1)", "POLYGON ((0 0, 5 0, 0 5, 0 0))", true);
         test_predicate::<Within>("POINT (-1 -1)", "POLYGON ((0 0, 5 0, 0 5, 0 0))", false);
+        test_predicate::<Within>(
+            "POINT (0 0)",
+            "GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 0 1))",
+            false,
+        );
 
         test_predicate::<Covers>("POLYGON ((0 0, 5 0, 0 5, 0 0))", "POINT (1 1)", true);
         test_predicate::<Covers>("POLYGON ((0 0, 5 0, 0 5, 0 0))", "POINT (-1 -1)", false);
+        test_predicate::<Covers>(
+            "POLYGON ((0 0, 3 0, 3 3, 0 3, 0 0), (1 1, 1 2, 2 1, 1 1))",
+            "POLYGON ((1 1, 1 2, 2 1, 1 1))",
+            false,
+        );
+        test_predicate::<Covers>(
+            "GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 0 1))",
+            "POINT (0 0)",
+            true,
+        );
 
         test_predicate::<CoveredBy>("POINT (1 1)", "POLYGON ((0 0, 5 0, 0 5, 0 0))", true);
         test_predicate::<CoveredBy>("POINT (-1 -1)", "POLYGON ((0 0, 5 0, 0 5, 0 0))", false);
+        test_predicate::<CoveredBy>(
+            "POINT (0 0)",
+            "GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 0 1))",
+            true,
+        );
 
         test_predicate::<Touches>("POLYGON ((0 0, 5 0, 0 5, 0 0))", "POINT (0 0)", true);
         test_predicate::<Touches>("POLYGON ((0 0, 5 0, 0 5, 0 0))", "POINT (1 1)", false);

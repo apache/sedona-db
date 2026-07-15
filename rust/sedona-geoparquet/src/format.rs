@@ -52,9 +52,10 @@ use datafusion_physical_plan::{
 use futures::{StreamExt, TryStreamExt};
 use object_store::{ObjectMeta, ObjectStore};
 
-use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
+use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err, SedonaOptions};
 
 use sedona_expr::metadata_preserving_column::MetadataPreservingColumn;
+use sedona_geometry::bounds::WkbBounder2DFactory;
 use sedona_schema::extension_type::ExtensionType;
 
 use crate::{
@@ -351,6 +352,11 @@ impl FileFormat for GeoParquetFormat {
             CachedParquetFileReaderFactory::new(object_store, file_metadata_cache),
         ));
 
+        // Inject bounder factory from SedonaOptions for geography pruning support
+        if let Some(sedona_options) = state.config().options().extensions.get::<SedonaOptions>() {
+            source.bounder_factory = sedona_options.runtime.bounder_factory().clone();
+        }
+
         let conf = FileScanConfigBuilder::from(config)
             .with_source(Arc::new(source))
             .build();
@@ -404,6 +410,11 @@ pub struct GeoParquetFileSource {
     predicate: Option<Arc<dyn PhysicalExpr>>,
     options: TableGeoParquetOptions,
     metadata_cache: Option<Arc<dyn FileMetadataCache>>,
+    /// Factory for creating bounders used for spatial pruning
+    ///
+    /// Enables spatial pruning for both GEOMETRY and GEOGRAPHY columns.
+    /// This is typically obtained from `SedonaOptions::runtime.bounder_factory()`.
+    bounder_factory: WkbBounder2DFactory,
 }
 
 impl GeoParquetFileSource {
@@ -416,7 +427,17 @@ impl GeoParquetFileSource {
             predicate: None,
             options,
             metadata_cache: None,
+            bounder_factory: WkbBounder2DFactory::default(),
         }
+    }
+
+    /// Set the bounder factory for spatial pruning support
+    ///
+    /// This factory is used for spatial pruning of GEOMETRY and GEOGRAPHY columns.
+    /// Typically obtained from `SedonaOptions::runtime.bounder_factory()`.
+    pub fn with_bounder_factory(mut self, factory: WkbBounder2DFactory) -> Self {
+        self.bounder_factory = factory;
+        self
     }
 
     pub fn with_options(&self, options: TableGeoParquetOptions) -> Self {
@@ -474,6 +495,7 @@ impl GeoParquetFileSource {
                     parquet_source.table_parquet_options().clone(),
                 ),
                 metadata_cache: None,
+                bounder_factory: WkbBounder2DFactory::default(),
             })
         } else {
             sedona_internal_err!("GeoParquetFileSource constructed from non-ParquetSource")
@@ -488,6 +510,7 @@ impl GeoParquetFileSource {
             predicate: Some(predicate),
             options: self.options.clone(),
             metadata_cache: self.metadata_cache.clone(),
+            bounder_factory: self.bounder_factory.clone(),
         }
     }
 
@@ -499,6 +522,7 @@ impl GeoParquetFileSource {
             predicate: self.predicate.clone(),
             options: self.options.clone(),
             metadata_cache: self.metadata_cache.clone(),
+            bounder_factory: self.bounder_factory.clone(),
         }
     }
 
@@ -513,6 +537,7 @@ impl GeoParquetFileSource {
             predicate: self.predicate.clone(),
             options: self.options.clone(),
             metadata_cache: self.metadata_cache.clone(),
+            bounder_factory: self.bounder_factory.clone(),
         }
     }
 }
@@ -544,6 +569,7 @@ impl FileSource for GeoParquetFileSource {
             metrics: GeoParquetFileOpenerMetrics::new(self.inner.metrics()),
             options: self.options.clone(),
             metadata_cache: self.metadata_cache.clone(),
+            bounder_factory: self.bounder_factory.clone(),
         }))
     }
 
@@ -563,6 +589,7 @@ impl FileSource for GeoParquetFileSource {
                 )?;
                 updated_inner.options = self.options.clone();
                 updated_inner.metadata_cache = self.metadata_cache.clone();
+                updated_inner.bounder_factory = self.bounder_factory.clone();
                 Ok(inner_result.with_updated_node(Arc::new(updated_inner)))
             }
             None => Ok(inner_result),
@@ -581,6 +608,7 @@ impl FileSource for GeoParquetFileSource {
         );
         source.options = self.options.clone();
         source.metadata_cache = self.metadata_cache.clone();
+        source.bounder_factory = self.bounder_factory.clone();
         Arc::new(source)
     }
 
@@ -615,6 +643,7 @@ impl FileSource for GeoParquetFileSource {
                 )?;
                 updated_source.options = self.options.clone();
                 updated_source.metadata_cache = self.metadata_cache.clone();
+                updated_source.bounder_factory = self.bounder_factory.clone();
                 Ok(Some(Arc::new(updated_source)))
             }
             None => Ok(None),
@@ -701,8 +730,9 @@ mod test {
     use datafusion_physical_expr::PhysicalExpr;
 
     use rstest::rstest;
+    use sedona_geometry::types::Edges;
     use sedona_schema::crs::{deserialize_crs, lnglat};
-    use sedona_schema::datatypes::{Edges, SedonaType, WKB_GEOMETRY};
+    use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY};
     use sedona_schema::schema::SedonaSchema;
     use sedona_testing::create::create_scalar;
     use sedona_testing::data::{geoarrow_data_dir, test_geoparquet};

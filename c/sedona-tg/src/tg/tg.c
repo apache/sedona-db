@@ -4067,10 +4067,12 @@ bool tg_poly_covers_poly(const struct tg_poly *a, const struct tg_poly *b) {
     if (!tg_ring_contains_ring(a_exterior, b_exterior, true)) {
         return false;
     }
-    // 2) ring cannot intersect poly holes
+    // 2) ring cannot intersect or be contained by poly holes
     bool covers = true;
     for (int i = 0; i < a_nholes; i++) {
-        if (tg_ring_intersects_ring(a_holes[i], b_exterior, false)) {
+        if (tg_ring_contains_ring(a_holes[i], b_exterior, true) ||
+            tg_ring_intersects_ring(a_holes[i], b_exterior, false))
+        {
             covers = false;
             // 3) unless the poly hole is contain inside of a other hole
             for (int j = 0; j < b_nholes; j++) {
@@ -6193,37 +6195,295 @@ static bool point_contains_base_geom(struct tg_point point,
     return false;
 }
 
-struct geom_contains_iter_ctx {
+struct geom_contains_point_ctx {
+    struct tg_point point;
+    bool point_hit;
+    bool line_interior_hit;
+    int line_boundary_hits;
+    bool poly_interior_hit;
+    bool poly_boundary_hit;
+};
+
+static bool geom_as_point(const struct tg_geom *geom, struct tg_point *point) {
+    if (!geom) {
+        return false;
+    }
+    switch (geom->head.base) {
+    case BASE_GEOM:
+        if (geom->head.type == TG_POINT) {
+            *point = geom->point;
+            return true;
+        }
+        return false;
+    case BASE_POINT:
+        *point = ((struct boxed_point*)geom)->point;
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool geom_contains_point_iter(const struct tg_geom *geom, void *udata) {
+    struct geom_contains_point_ctx *ctx = udata;
+    if (tg_geom_is_empty(geom)) {
+        return true;
+    }
+
+    switch (geom->head.base) {
+    case BASE_GEOM:
+        switch (geom->head.type) {
+        case TG_POINT:
+            if (tg_point_contains_point(geom->point, ctx->point)) {
+                ctx->point_hit = true;
+            }
+            break;
+        case TG_LINESTRING:
+            if (tg_line_contains_point(geom->line, ctx->point)) {
+                ctx->line_interior_hit = true;
+            } else if (tg_line_touches_point(geom->line, ctx->point)) {
+                ctx->line_boundary_hits++;
+            }
+            break;
+        case TG_POLYGON:
+            if (tg_poly_contains_point(geom->poly, ctx->point)) {
+                ctx->poly_interior_hit = true;
+            } else if (tg_poly_touches_point(geom->poly, ctx->point)) {
+                ctx->poly_boundary_hit = true;
+            }
+            break;
+        case TG_MULTIPOINT:
+        case TG_MULTILINESTRING:
+        case TG_MULTIPOLYGON:
+        case TG_GEOMETRYCOLLECTION:
+            tg_geom_foreach(geom, geom_contains_point_iter, ctx);
+            break;
+        }
+        break;
+    case BASE_POINT:
+        if (tg_point_contains_point(((struct boxed_point*)geom)->point,
+            ctx->point))
+        {
+            ctx->point_hit = true;
+        }
+        break;
+    case BASE_LINE:
+        if (tg_line_contains_point((struct tg_line*)geom, ctx->point)) {
+            ctx->line_interior_hit = true;
+        } else if (tg_line_touches_point((struct tg_line*)geom, ctx->point)) {
+            ctx->line_boundary_hits++;
+        }
+        break;
+    case BASE_RING:
+    case BASE_POLY:
+        if (tg_poly_contains_point((struct tg_poly*)geom, ctx->point)) {
+            ctx->poly_interior_hit = true;
+        } else if (tg_poly_touches_point((struct tg_poly*)geom, ctx->point)) {
+            ctx->poly_boundary_hit = true;
+        }
+        break;
+    }
+    return true;
+}
+
+static bool geom_collection_contains_point(const struct tg_geom *geom,
+    struct tg_point point)
+{
+    struct geom_contains_point_ctx ctx = { .point = point };
+    tg_geom_foreach(geom, geom_contains_point_iter, &ctx);
+
+    if (ctx.poly_interior_hit) {
+        return true;
+    }
+    if (ctx.poly_boundary_hit) {
+        return false;
+    }
+    if (ctx.line_boundary_hits % 2 == 1) {
+        return false;
+    }
+    if (ctx.line_interior_hit || ctx.line_boundary_hits > 0) {
+        return true;
+    }
+    return ctx.point_hit;
+}
+
+struct geom_contains_line_ctx {
+    const struct tg_line *line;
+    bool poly_interior_hit;
+    bool poly_boundary_cover;
+    bool line_interior_hit;
+};
+
+static void geom_contains_line_check_poly(struct geom_contains_line_ctx *ctx,
+    const struct tg_poly *poly)
+{
+    if (tg_poly_intersects_line(poly, ctx->line)) {
+        if (!tg_poly_touches_line(poly, ctx->line)) {
+            ctx->poly_interior_hit = true;
+        } else if (tg_poly_covers_line(poly, ctx->line)) {
+            ctx->poly_boundary_cover = true;
+        }
+    }
+}
+
+static bool geom_contains_line_iter(const struct tg_geom *geom, void *udata) {
+    struct geom_contains_line_ctx *ctx = udata;
+    if (tg_geom_is_empty(geom)) {
+        return true;
+    }
+
+    switch (geom->head.base) {
+    case BASE_GEOM:
+        switch (geom->head.type) {
+        case TG_LINESTRING:
+            if (tg_line_contains_line(geom->line, ctx->line)) {
+                ctx->line_interior_hit = true;
+            }
+            break;
+        case TG_POLYGON:
+            geom_contains_line_check_poly(ctx, geom->poly);
+            break;
+        case TG_POINT:
+        case TG_MULTIPOINT:
+        case TG_MULTILINESTRING:
+        case TG_MULTIPOLYGON:
+        case TG_GEOMETRYCOLLECTION:
+            break;
+        }
+        break;
+    case BASE_LINE:
+        if (tg_line_contains_line((struct tg_line*)geom, ctx->line)) {
+            ctx->line_interior_hit = true;
+        }
+        break;
+    case BASE_RING:
+    case BASE_POLY:
+        geom_contains_line_check_poly(ctx, (struct tg_poly*)geom);
+        break;
+    case BASE_POINT:
+        break;
+    }
+
+    return !ctx->poly_interior_hit;
+}
+
+static bool geom_collection_contains_line(const struct tg_geom *geom,
+    const struct tg_line *line)
+{
+    struct geom_contains_line_ctx ctx = { .line = line };
+    tg_geom_foreach(geom, geom_contains_line_iter, &ctx);
+    return ctx.poly_interior_hit ||
+        (!ctx.poly_boundary_cover && ctx.line_interior_hit);
+}
+
+struct geom_contains_poly_ctx {
+    const struct tg_poly *poly;
+    bool poly_interior_hit;
+};
+
+static bool geom_contains_poly_iter(const struct tg_geom *geom, void *udata) {
+    struct geom_contains_poly_ctx *ctx = udata;
+    if (tg_geom_is_empty(geom)) {
+        return true;
+    }
+
+    switch (geom->head.base) {
+    case BASE_GEOM:
+        if (geom->head.type == TG_POLYGON &&
+            tg_poly_intersects_poly(geom->poly, ctx->poly) &&
+            !tg_poly_touches_poly(geom->poly, ctx->poly))
+        {
+            ctx->poly_interior_hit = true;
+            return false;
+        }
+        break;
+    case BASE_RING:
+    case BASE_POLY:
+        if (tg_poly_intersects_poly((struct tg_poly*)geom, ctx->poly) &&
+            !tg_poly_touches_poly((struct tg_poly*)geom, ctx->poly))
+        {
+            ctx->poly_interior_hit = true;
+            return false;
+        }
+        break;
+    case BASE_POINT:
+    case BASE_LINE:
+        break;
+    }
+
+    return true;
+}
+
+static bool geom_collection_contains_poly(const struct tg_geom *geom,
+    const struct tg_poly *poly)
+{
+    struct geom_contains_poly_ctx ctx = { .poly = poly };
+    tg_geom_foreach(geom, geom_contains_poly_iter, &ctx);
+    return ctx.poly_interior_hit;
+}
+
+static bool geom_collection_component_interior_intersects(
+    const struct tg_geom *geom, const struct tg_geom *other)
+{
+    struct tg_point point;
+    if (geom_as_point(other, &point)) {
+        return geom_collection_contains_point(geom, point);
+    }
+
+    switch (other->head.base) {
+    case BASE_GEOM:
+        switch (other->head.type) {
+        case TG_LINESTRING:
+            return geom_collection_contains_line(geom, other->line);
+        case TG_POLYGON:
+            return geom_collection_contains_poly(geom, other->poly);
+        case TG_POINT:
+        case TG_MULTIPOINT:
+        case TG_MULTILINESTRING:
+        case TG_MULTIPOLYGON:
+        case TG_GEOMETRYCOLLECTION:
+            return false;
+        }
+        break;
+    case BASE_LINE:
+        return geom_collection_contains_line(geom, (struct tg_line*)other);
+    case BASE_RING:
+    case BASE_POLY:
+        return geom_collection_contains_poly(geom, (struct tg_poly*)other);
+    case BASE_POINT:
+        break;
+    }
+
+    return false;
+}
+
+struct geom_contains_interior_ctx {
     const struct tg_geom *geom;
     bool result;
 };
 
-
-static bool geom_contains_iter0(const struct tg_geom *geom, void *udata) {
-    struct geom_contains_iter_ctx *ctx = udata;
-    if (tg_geom_contains(geom, ctx->geom)) {
-        // found a child object that contains geom, end inner loop
+static bool geom_contains_interior_iter(const struct tg_geom *geom,
+    void *udata)
+{
+    struct geom_contains_interior_ctx *ctx = udata;
+    if (!tg_geom_is_empty(geom) &&
+        geom_collection_component_interior_intersects(ctx->geom, geom))
+    {
         ctx->result = true;
         return false;
     }
     return true;
 }
 
-static bool geom_contains_iter(const struct tg_geom *geom, void *udata) {
-    struct geom_contains_iter_ctx *ctx = udata;
-    // skip empty geometries
-    if (!tg_geom_is_empty(geom)) {
-        struct geom_contains_iter_ctx ctx0 = { .geom = geom };
-        tg_geom_foreach(ctx->geom, geom_contains_iter0, &ctx0);
-        if (!ctx0.result) {
-            // unmark and quit the loop
-            ctx->result = false;
-            return false;
-        }
-        // mark that at least one geom is contained
-        ctx->result = true;
+static bool geom_collection_contains_geom(const struct tg_geom *geom,
+    const struct tg_geom *other)
+{
+    if (!tg_geom_covers(geom, other)) {
+        return false;
     }
-    return true;
+
+    struct geom_contains_interior_ctx ctx = { .geom = geom };
+    tg_geom_foreach(other, geom_contains_interior_iter, &ctx);
+    return ctx.result;
 }
 
 static bool base_geom_contains_geom(const struct tg_geom *geom,
@@ -6240,12 +6500,8 @@ static bool base_geom_contains_geom(const struct tg_geom *geom,
         case TG_MULTIPOINT:
         case TG_MULTILINESTRING:
         case TG_MULTIPOLYGON:
-        case TG_GEOMETRYCOLLECTION: {
-            // all children of 'other' must be fully within 'geom'
-            struct geom_contains_iter_ctx ctx = { .geom = geom };
-            tg_geom_foreach(other, geom_contains_iter, &ctx);
-            return ctx.result;
-        }
+        case TG_GEOMETRYCOLLECTION:
+            return geom_collection_contains_geom(geom, other);
         }
     }
     return false;

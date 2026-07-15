@@ -25,8 +25,10 @@ use arrow_array::{
 use arrow_schema::{Field, Schema};
 use datafusion::catalog::TableProvider;
 use datafusion_expr::{ScalarUDF, ScalarUDFImpl};
-use datafusion_ffi::{table_provider::FFI_TableProvider, udf::FFI_ScalarUDF};
+use datafusion_ffi::udf::FFI_ScalarUDF;
 use savvy::{savvy_err, IntoExtPtrSexp};
+use sedona_extension::extension::SedonaCTableProvider;
+use sedona_extension::table_provider::ImportedTableProvider;
 
 pub fn import_schema(mut xptr: savvy::Sexp) -> savvy::Result<Schema> {
     let ffi_schema: &FFI_ArrowSchema = import_xptr(&mut xptr, "nanoarrow_schema")?;
@@ -62,10 +64,19 @@ pub fn import_array_stream(mut xptr: savvy::Sexp) -> savvy::Result<ArrowArrayStr
 pub fn import_table_provider(
     mut provider_xptr: savvy::Sexp,
 ) -> savvy::Result<Arc<dyn TableProvider>> {
-    let ffi_provider: &FFI_TableProvider =
-        import_xptr(&mut provider_xptr, "datafusion_table_provider")?;
-    let provider = Arc::<dyn TableProvider>::from(ffi_provider);
-    Ok(provider)
+    let ffi_provider: &mut SedonaCTableProvider =
+        import_xptr(&mut provider_xptr, "sedonadb_table_provider")?;
+    // Move the SedonaCTableProvider out of the external pointer.
+    // Clear the structure after reading to prevent double-free when R garbage collects.
+    let ffi_provider = unsafe {
+        let provider = std::ptr::read(ffi_provider);
+        // Clear the entire structure to prevent any accidental use
+        std::ptr::write_bytes(ffi_provider as *mut SedonaCTableProvider, 0, 1);
+        provider
+    };
+    // try_new validates the release callback
+    let provider = ImportedTableProvider::try_new(ffi_provider)?;
+    Ok(Arc::new(provider))
 }
 
 pub fn import_scalar_udf(mut scalar_udf_xptr: savvy::Sexp) -> savvy::Result<ScalarUDF> {
@@ -106,5 +117,5 @@ pub struct FFIScalarUdfR(pub FFI_ScalarUDF);
 impl IntoExtPtrSexp for FFIScalarUdfR {}
 
 #[repr(C)]
-pub struct FFITableProviderR(pub FFI_TableProvider);
-impl IntoExtPtrSexp for FFITableProviderR {}
+pub struct SedonaCTableProviderR(pub SedonaCTableProvider);
+impl IntoExtPtrSexp for SedonaCTableProviderR {}

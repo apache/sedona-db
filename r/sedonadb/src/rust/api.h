@@ -74,7 +74,7 @@ SEXP savvy_InternalDataFrame_to_parquet__ffi(
     SEXP self__, SEXP c_arg__ctx, SEXP c_arg__path, SEXP c_arg__option_keys,
     SEXP c_arg__option_values, SEXP c_arg__partition_by, SEXP c_arg__sort_by,
     SEXP c_arg__single_file_output);
-SEXP savvy_InternalDataFrame_to_provider__ffi(SEXP self__);
+SEXP savvy_InternalDataFrame_to_provider__ffi(SEXP self__, SEXP c_arg__ctx);
 SEXP savvy_InternalDataFrame_to_view__ffi(SEXP self__, SEXP c_arg__ctx,
                                           SEXP c_arg__table_ref,
                                           SEXP c_arg__overwrite);

@@ -325,8 +325,8 @@ mod tests {
     use datafusion_common::scalar::ScalarValue;
     use datafusion_expr::{Literal, ScalarUDF};
     use rstest::rstest;
+    use sedona_geometry::types::Edges;
     use sedona_schema::crs::lnglat;
-    use sedona_schema::datatypes::Edges;
     use sedona_testing::{
         compare::{assert_array_equal, assert_scalar_equal, assert_scalar_equal_wkb_geometry},
         create::{create_array, create_array_item_crs, create_scalar, create_scalar_item_crs},

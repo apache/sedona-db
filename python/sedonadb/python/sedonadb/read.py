@@ -160,6 +160,19 @@ class Read:
                     None if partitioning is None else list(partitioning),
                 ),
             )
+        elif format == "csv":
+            options = options.copy()
+            has_header = options.pop("has_header", True)
+            delimiter = options.pop("delimiter", ",")
+            return DataFrame(
+                self._ctx,
+                self._ctx._impl.read_csv(table_paths, options, has_header, delimiter),
+            )
+        elif format == "json":
+            return DataFrame(
+                self._ctx,
+                self._ctx._impl.read_json(table_paths, options),
+            )
         else:
             raise ValueError(f"No format registered for extension '{format}'")
 
@@ -254,6 +267,85 @@ class Read:
         return self(
             table_paths, options=options, partitioning=partitioning, format="parquet"
         )
+
+    def csv(
+        self,
+        table_paths: Union[str, Path, Iterable[str]],
+        options: Optional[Dict[str, Any]] = None,
+        has_header: bool = True,
+        delimiter: str = ",",
+    ) -> DataFrame:
+        """Create a [DataFrame][sedonadb.dataframe.DataFrame] from one or more CSV files.
+
+        The schema is inferred from the file(s). Geometry is not inferred;
+        parse WKT/WKB columns explicitly (e.g. `ST_GeomFromText`) after reading.
+
+        Args:
+            table_paths: A str, Path, or iterable of paths/URLs to CSV files.
+            options: Optional dictionary of reader/object-store options. For
+                S3 access, use `{"aws.skip_signature": True, "aws.region": "us-west-2"}`
+                for anonymous access to public buckets.
+            has_header: Whether the first row is a header. Defaults to `True`.
+            delimiter: The field delimiter, as a single byte (i.e. a
+                one-character ASCII string). Defaults to `","`.
+
+        Examples:
+
+            >>> import tempfile
+            >>> from pathlib import Path
+            >>> sd = sedona.db.connect()
+            >>> with tempfile.TemporaryDirectory() as td:
+            ...     path = Path(td) / "t.csv"
+            ...     _ = path.write_text("a,b\\n1,x\\n2,y\\n")
+            ...     sd.read.csv(path).sort("a").show()
+            ┌───────┬──────┐
+            │   a   ┆   b  │
+            │ int64 ┆ utf8 │
+            ╞═══════╪══════╡
+            │     1 ┆ x    │
+            ├╌╌╌╌╌╌╌┼╌╌╌╌╌╌┤
+            │     2 ┆ y    │
+            └───────┴──────┘
+        """
+        options = (options or {}).copy()
+        options["has_header"] = has_header
+        options["delimiter"] = delimiter
+        return self(table_paths, options=options, format="csv")
+
+    def json(
+        self,
+        table_paths: Union[str, Path, Iterable[str]],
+        options: Optional[Dict[str, Any]] = None,
+    ) -> DataFrame:
+        """Create a [DataFrame][sedonadb.dataframe.DataFrame] from newline-delimited JSON.
+
+        Reads newline-delimited JSON (NDJSON / JSON Lines) — one JSON object
+        per line — not a single JSON array. The schema is inferred.
+
+        Args:
+            table_paths: A str, Path, or iterable of paths/URLs to NDJSON files.
+            options: Optional dictionary of reader/object-store options (e.g.
+                cloud credentials for `s3://` / `gs://` paths).
+
+        Examples:
+
+            >>> import tempfile
+            >>> from pathlib import Path
+            >>> sd = sedona.db.connect()
+            >>> with tempfile.TemporaryDirectory() as td:
+            ...     path = Path(td) / "t.json"
+            ...     _ = path.write_text('{"a": 1, "b": "x"}\\n{"a": 2, "b": "y"}\\n')
+            ...     sd.read.json(path).sort("a").show()
+            ┌───────┬──────┐
+            │   a   ┆   b  │
+            │ int64 ┆ utf8 │
+            ╞═══════╪══════╡
+            │     1 ┆ x    │
+            ├╌╌╌╌╌╌╌┼╌╌╌╌╌╌┤
+            │     2 ┆ y    │
+            └───────┴──────┘
+        """
+        return self(table_paths, options=options or {}, format="json")
 
     def pyogrio(
         self,

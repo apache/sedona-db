@@ -84,13 +84,13 @@ impl SedonaScalarKernel for STPoints {
         executor.execute_wkb_void(|maybe_wkb| {
             if let Some(wkb) = maybe_wkb {
                 // We need to know the number of points before actually writing the points.
-                let n_points = count_wkb_points_recursively(&wkb);
+                let n_points = count_wkb_points_recursively(wkb);
 
                 if write_wkb_multipoint_header(&mut builder, wkb.dim(), n_points).is_err() {
                     return sedona_internal_err!("Failed to write WKB point header");
                 };
 
-                if write_wkb_points_recursively(&mut builder, &wkb).is_err() {
+                if write_wkb_points_recursively(&mut builder, wkb).is_err() {
                     return sedona_internal_err!("Failed to write WKB point header");
                 };
 
@@ -141,7 +141,7 @@ impl SedonaScalarKernel for STNPoints {
 
         executor.execute_wkb_void(|maybe_wkb| {
             if let Some(wkb) = maybe_wkb {
-                builder.append_value(count_wkb_points_recursively(&wkb) as u64);
+                builder.append_value(count_wkb_points_recursively(wkb) as u64);
             } else {
                 builder.append_null();
             }

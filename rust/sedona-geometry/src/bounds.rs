@@ -14,6 +14,9 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
+use std::sync::Arc;
+
 use geo_traits::{
     CoordTrait, Dimensions, GeometryCollectionTrait, GeometryTrait, GeometryType, LineStringTrait,
     MultiLineStringTrait, MultiPointTrait, MultiPolygonTrait, PointTrait, PolygonTrait,
@@ -23,7 +26,76 @@ use crate::{
     bounding_box::BoundingBox,
     error::SedonaGeometryError,
     interval::{Interval, IntervalTrait, WraparoundInterval},
+    types::Edges,
 };
+
+#[derive(Debug, Clone, Default)]
+pub struct WkbBounder2DFactory {
+    planar_bounder: Option<Arc<dyn WkbBounder2D>>,
+    spherical_bounder: Option<Arc<dyn WkbBounder2D>>,
+}
+
+// This is needed because the ConfigOption needs this to be implemented;
+// however, the exact equality of these objects isn't typically important
+impl PartialEq for WkbBounder2DFactory {
+    fn eq(&self, other: &Self) -> bool {
+        let planar_eq = match (&self.planar_bounder, &other.planar_bounder) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        };
+        let spherical_eq = match (&self.spherical_bounder, &other.spherical_bounder) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        };
+        planar_eq && spherical_eq
+    }
+}
+
+impl std::fmt::Display for WkbBounder2DFactory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "WkbBounder2DFactory {{ planar: {}, spherical: {} }}",
+            self.planar_bounder.is_some(),
+            self.spherical_bounder.is_some()
+        )
+    }
+}
+
+impl WkbBounder2DFactory {
+    /// Replace the runtime [WkbBounder2D] reference for a specific [Edges]
+    pub fn with_bounder(&self, edges: Edges, bounder: Arc<dyn WkbBounder2D>) -> Self {
+        match edges {
+            Edges::Planar => Self {
+                planar_bounder: Some(bounder),
+                ..self.clone()
+            },
+            Edges::Spherical => Self {
+                spherical_bounder: Some(bounder),
+                ..self.clone()
+            },
+        }
+    }
+
+    /// Get a bounder for a specific edge type
+    ///
+    /// Note the asymmetry: for `Edges::Planar`, this returns a default
+    /// `WkbGeometryBounder` if no custom bounder is registered. For
+    /// `Edges::Spherical`, this returns `None` if no bounder is registered,
+    /// since spherical bounding requires external dependencies (e.g., s2geography).
+    pub fn bounder_for_edge_type(&self, edges: Edges) -> Option<Box<dyn WkbBounder2D>> {
+        match edges {
+            Edges::Planar => self
+                .planar_bounder
+                .as_ref()
+                .map(|b| b.create_instance())
+                .or_else(|| Some(Box::new(WkbGeometryBounder::default()))),
+            Edges::Spherical => self.spherical_bounder.as_ref().map(|b| b.create_instance()),
+        }
+    }
+}
 
 /// Trait defining an abstract bounder
 ///
@@ -54,6 +126,12 @@ pub trait WkbBounder2D: std::fmt::Debug + Send + Sync {
 
     /// Compute the memory used by this instance
     fn mem_used(&self) -> usize;
+
+    /// Create a new empty instance of this bounder
+    ///
+    /// This is used to create temporary bounders for computing bounds without
+    /// requiring mutable access to a shared instance.
+    fn create_instance(&self) -> Box<dyn WkbBounder2D>;
 }
 
 #[derive(Debug, Default)]
@@ -81,7 +159,7 @@ impl WkbBounder2D for WkbGeometryBounder {
     fn update_wkb_bytes(&mut self, wkb_value: &[u8]) -> Result<(), SedonaGeometryError> {
         let wkb = wkb::reader::read_wkb(wkb_value)
             .map_err(|e| SedonaGeometryError::External(Box::new(e)))?;
-        geo_traits_update_xy_bounds(wkb, &mut self.x, &mut self.y)?;
+        geo_traits_update_xy_bounds(&wkb, &mut self.x, &mut self.y)?;
         Ok(())
     }
 
@@ -108,6 +186,10 @@ impl WkbBounder2D for WkbGeometryBounder {
     fn mem_used(&self) -> usize {
         size_of::<Self>()
     }
+
+    fn create_instance(&self) -> Box<dyn WkbBounder2D> {
+        Box::new(Self::default())
+    }
 }
 
 /// Calculate the Cartesian XY bounds of a well-known binary geometry blob
@@ -129,7 +211,7 @@ pub fn geo_traits_bounds_xy(
 ) -> Result<BoundingBox, SedonaGeometryError> {
     let mut x = Interval::empty();
     let mut y = Interval::empty();
-    geo_traits_update_xy_bounds(geom, &mut x, &mut y)?;
+    geo_traits_update_xy_bounds(&geom, &mut x, &mut y)?;
     Ok(BoundingBox::xy(x, y))
 }
 
@@ -156,61 +238,74 @@ pub fn geo_traits_bounds_m(
 /// Useful for updating bounds in-place when accumulating
 /// bounds for statistics or function implementations.
 pub fn geo_traits_update_xy_bounds(
-    geom: impl GeometryTrait<T = f64>,
+    geom: &impl GeometryTrait<T = f64>,
     x: &mut Interval,
     y: &mut Interval,
+) -> Result<(), SedonaGeometryError> {
+    visit_xy_coords(geom, true, &mut |cx, cy| {
+        x.update_value(cx);
+        y.update_value(cy);
+    })
+}
+
+/// Visit every XY coordinate in a geometry, calling `callback` for each one
+///
+/// Ignores Z or M coordinates. Interior rings of a polygon are only visited
+/// when `include_interior_rings` is true.
+pub fn visit_xy_coords(
+    geom: &impl GeometryTrait<T = f64>,
+    include_interior_rings: bool,
+    callback: &mut impl FnMut(f64, f64),
 ) -> Result<(), SedonaGeometryError> {
     match geom.as_type() {
         GeometryType::Point(pt) => {
             if let Some(coord) = PointTrait::coord(pt) {
-                x.update_value(coord.x());
-                y.update_value(coord.y());
+                callback(coord.x(), coord.y());
             }
         }
         GeometryType::LineString(ls) => {
             for coord in ls.coords() {
-                x.update_value(coord.x());
-                y.update_value(coord.y());
+                callback(coord.x(), coord.y());
             }
         }
         GeometryType::Polygon(pl) => {
             if let Some(exterior) = pl.exterior() {
                 for coord in exterior.coords() {
-                    x.update_value(coord.x());
-                    y.update_value(coord.y());
+                    callback(coord.x(), coord.y());
                 }
             }
 
-            for interior in pl.interiors() {
-                for coord in interior.coords() {
-                    x.update_value(coord.x());
-                    y.update_value(coord.y());
+            if include_interior_rings {
+                for interior in pl.interiors() {
+                    for coord in interior.coords() {
+                        callback(coord.x(), coord.y());
+                    }
                 }
             }
         }
         GeometryType::MultiPoint(multi_pt) => {
             for pt in multi_pt.points() {
-                geo_traits_update_xy_bounds(pt, x, y)?;
+                visit_xy_coords(&pt, include_interior_rings, callback)?;
             }
         }
         GeometryType::MultiLineString(multi_ls) => {
             for ls in multi_ls.line_strings() {
-                geo_traits_update_xy_bounds(ls, x, y)?;
+                visit_xy_coords(&ls, include_interior_rings, callback)?;
             }
         }
         GeometryType::MultiPolygon(multi_pl) => {
             for pl in multi_pl.polygons() {
-                geo_traits_update_xy_bounds(pl, x, y)?;
+                visit_xy_coords(&pl, include_interior_rings, callback)?;
             }
         }
         GeometryType::GeometryCollection(collection) => {
             for geom in collection.geometries() {
-                geo_traits_update_xy_bounds(geom, x, y)?;
+                visit_xy_coords(&geom, include_interior_rings, callback)?;
             }
         }
         _ => {
             return Err(SedonaGeometryError::Invalid(
-                "GeometryType not supported for XY bounds".to_string(),
+                "GeometryType not supported for coordinate visiting".to_string(),
             ))
         }
     }
@@ -539,5 +634,40 @@ mod test {
             wkb_bounds_xy(&out).unwrap(),
             BoundingBox::xy((0, 0), (1, 1))
         );
+    }
+
+    #[test]
+    fn test_bounder_factory_basic() {
+        // Create a factory with default settings
+        let factory = WkbBounder2DFactory::default();
+
+        // Planar bounder should be available via bounder_for_edge_type (falls back to default)
+        let planar_bounder = factory.bounder_for_edge_type(Edges::Planar);
+        assert!(planar_bounder.is_some());
+
+        // Spherical bounder is not available by default
+        let spherical_bounder = factory.bounder_for_edge_type(Edges::Spherical);
+        assert!(spherical_bounder.is_none());
+
+        // Create a bounder instance and bound a simple linestring
+        let mut bounder = factory.bounder_for_edge_type(Edges::Planar).unwrap();
+        let wkt: Wkt = Wkt::from_str("LINESTRING (0 1, 2 3)").unwrap();
+        let mut wkb_bytes = Vec::new();
+        wkb::writer::write_geometry(
+            &mut wkb_bytes,
+            &wkt,
+            &WriteOptions {
+                endianness: Endianness::LittleEndian,
+            },
+        )
+        .unwrap();
+
+        bounder.update_wkb_bytes(&wkb_bytes).unwrap();
+        let (x, y) = bounder.finish();
+
+        assert_eq!(x.lo(), 0.0);
+        assert_eq!(x.hi(), 2.0);
+        assert_eq!(y.lo(), 1.0);
+        assert_eq!(y.hi(), 3.0);
     }
 }

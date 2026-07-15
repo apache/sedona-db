@@ -102,7 +102,7 @@ impl SedonaScalarKernel for STStartOrEndPoint {
 
         executor.execute_wkb_void(|maybe_wkb| {
             if let Some(wkb) = maybe_wkb {
-                if let Some(coord) = extract_start_or_end_coord(&wkb, self.from_start) {
+                if let Some(coord) = extract_start_or_end_coord(wkb, self.from_start) {
                     if write_wkb_point_from_coord(&mut builder, coord).is_err() {
                         return sedona_internal_err!("Failed to write WKB point header");
                     };

@@ -38,9 +38,10 @@ use sedona_expr::{
     scalar_udf::{ScalarKernelRef, SedonaScalarKernel, SedonaScalarUDF},
 };
 use sedona_geometry::transform::CrsEngine;
+use sedona_geometry::types::Edges;
 use sedona_schema::{
     crs::{deserialize_crs, normalize_crs, CachedSRIDToCrs, Crs},
-    datatypes::{Edges, SedonaType},
+    datatypes::SedonaType,
     matchers::ArgMatcher,
 };
 
@@ -615,9 +616,7 @@ mod test {
     use sedona_geometry::{error::SedonaGeometryError, transform::CrsTransform};
     use sedona_schema::{
         crs::lnglat,
-        datatypes::{
-            Edges, WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS,
-        },
+        datatypes::{WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS},
     };
     use sedona_testing::{
         compare::assert_value_equal,
@@ -1040,6 +1039,12 @@ mod test {
             _options: &str,
         ) -> Result<Rc<dyn CrsTransform>, SedonaGeometryError> {
             Err(SedonaGeometryError::Unknown)
+        }
+
+        fn to_projjson(&self, _crs_string: &str) -> Result<String, SedonaGeometryError> {
+            Err(SedonaGeometryError::Invalid(
+                "don't even think about it".to_string(),
+            ))
         }
     }
 }

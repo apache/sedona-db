@@ -105,6 +105,10 @@ impl WkbBounder2D for WkbGeographyBounder {
         // (up to geometry with the largest number of nodes seen).
         size_of::<WkbGeographyBounder>() + self.geog.mem_used() + 4 * size_of::<f64>() + 64
     }
+
+    fn create_instance(&self) -> Box<dyn WkbBounder2D> {
+        Box::new(Self::default())
+    }
 }
 
 /// Safe wrapper around S2GeogRectBounder for computing bounding rectangles
@@ -210,7 +214,9 @@ impl Drop for RectBounder {
 unsafe impl Send for RectBounder {}
 
 // Safety: RectBounder owns its C++ object exclusively and doesn't share state
-// with other instances (mut methods ensure unique ownership)
+// with other instances. When used as a shared prototype in SedonaOptions
+// (via Arc<WkbGeographyBounder>), only `create_instance()` is called on the
+// shared reference, which is safe because it creates a new independent instance.
 unsafe impl Sync for RectBounder {}
 
 #[cfg(test)]

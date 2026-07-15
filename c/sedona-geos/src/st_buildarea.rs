@@ -64,7 +64,7 @@ impl SedonaScalarKernel for STBuildArea {
         executor.execute_wkb_void(|maybe_geom| {
             match maybe_geom {
                 Some(geom) => {
-                    if invoke_scalar(&geom, &mut builder)? {
+                    if invoke_scalar(geom, &mut builder)? {
                         builder.append_value([]);
                     } else {
                         builder.append_null();

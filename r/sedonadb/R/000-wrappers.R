@@ -376,8 +376,9 @@ class(`InternalContext`) <- c(
 }
 
 `InternalDataFrame_to_provider` <- function(self) {
-  function() {
-    .Call(savvy_InternalDataFrame_to_provider__impl, `self`)
+  function(`ctx`) {
+    `ctx` <- .savvy_extract_ptr(`ctx`, "sedonadb::InternalContext")
+    .Call(savvy_InternalDataFrame_to_provider__impl, `self`, `ctx`)
   }
 }
 

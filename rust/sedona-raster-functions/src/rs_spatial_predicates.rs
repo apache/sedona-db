@@ -400,11 +400,11 @@ mod tests {
     use arrow_array::{create_array, ArrayRef};
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
+    use sedona_geometry::types::Edges;
     use sedona_raster::builder::RasterBuilder;
     use sedona_raster::traits::{BandMetadata, RasterMetadata};
     use sedona_schema::crs::deserialize_crs;
     use sedona_schema::crs::OGC_CRS84_PROJJSON;
-    use sedona_schema::datatypes::Edges;
     use sedona_schema::datatypes::RASTER;
     use sedona_schema::datatypes::WKB_GEOMETRY;
     use sedona_schema::raster::{BandDataType, StorageType};

@@ -472,7 +472,18 @@ mod tests {
             .map(|i| values2.value(i))
             .collect::<Vec<_>>();
         sorted_vals2.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        assert_eq!(sorted_vals2, vec![0.0, 0.0, 1.5, 2.7f32 as f64]);
+        // Compare with a tolerance rather than exact equality: the raster's
+        // float value can come back at f32 or f64 precision depending on the
+        // GDAL version (e.g. 2.7 vs the f32-widened 2.700000047683716), so an
+        // exact `assert_eq!` is brittle across GDAL versions.
+        let expected2 = [0.0, 0.0, 1.5, 2.7];
+        assert_eq!(sorted_vals2.len(), expected2.len());
+        for (got, want) in sorted_vals2.iter().zip(expected2.iter()) {
+            assert!(
+                (got - want).abs() < 1e-6,
+                "expected ~{want}, got {got} (all: {sorted_vals2:?})"
+            );
+        }
     }
 
     #[test]

@@ -74,7 +74,7 @@ impl SedonaScalarKernel for STSimplify {
         executor.execute_wkb_void(|wkb| {
             match (wkb, tolerance_iter.next().unwrap()) {
                 (Some(wkb), Some(tolerance)) => {
-                    invoke_scalar(&wkb, tolerance, &mut builder)?;
+                    invoke_scalar(wkb, tolerance, &mut builder)?;
                     builder.append_value([]);
                 }
                 _ => builder.append_null(),

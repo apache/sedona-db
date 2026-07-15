@@ -149,7 +149,7 @@ impl UnionAccumulator {
     fn execute_update(&mut self, executor: WkbExecutor) -> Result<()> {
         executor.execute_wkb_void(|maybe_item| {
             if let Some(item) = maybe_item {
-                self.update_union(&item)?;
+                self.update_union(item)?;
             }
             Ok(())
         })?;

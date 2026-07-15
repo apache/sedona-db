@@ -45,3 +45,109 @@ def test_st_distance(eng, geom1, geom2, expected):
         expected,
         numeric_epsilon=1e-8,
     )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom1", "geom2", "expected"),
+    [
+        # NULL handling
+        (None, None, None),
+        ("POINT (0 0)", None, None),
+        (None, "POINT (0 0)", None),
+        # EMPTY geometries return NULL
+        ("POINT EMPTY", "POINT EMPTY", None),
+        ("POINT EMPTY", "POINT (0 0)", None),
+        ("POINT (0 0)", "POINT EMPTY", None),
+        ("LINESTRING EMPTY", "LINESTRING (0 0, 1 1)", None),
+        ("POLYGON EMPTY", "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", None),
+        # Point to Point
+        ("POINT (0 0)", "POINT (0 0)", 0),
+        ("POINT (0 0)", "POINT (3 4)", 5.0),
+        # Point to LineString
+        ("POINT (0 0)", "LINESTRING (1 0, 2 0)", 2.0),
+        # Point to Polygon
+        ("POINT (0 0)", "POLYGON ((1 0, 2 0, 2 1, 1 1, 1 0))", 2.23606797749979),
+        # LineString to LineString
+        ("LINESTRING (0 0, 2 0)", "LINESTRING (0 1, 1 1, 2 1)", 1.0),
+        (
+            "LINESTRING (0 0, 100 0, 10 100, 10 100)",
+            "LINESTRING (0 100, 0 10, 80 10)",
+            22.360679774997898,
+        ),
+        # LineString to Polygon
+        (
+            "LINESTRING (0 0, 1 0)",
+            "POLYGON ((2 0, 3 0, 3 1, 2 1, 2 0))",
+            2.23606797749979,
+        ),
+        # Polygon to Polygon
+        (
+            "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
+            "POLYGON ((2 0, 3 0, 3 1, 2 1, 2 0))",
+            2.0,
+        ),
+        (
+            "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
+            "POLYGON ((5 5, 6 5, 6 6, 5 6, 5 5))",
+            7.0710678118654755,
+        ),
+        # MultiPoint
+        ("MULTIPOINT ((0 0), (1 0))", "MULTIPOINT ((3 4), (4 4))", 5.0),
+        # MultiLineString
+        (
+            "MULTILINESTRING ((0 0, 1 0), (0 1, 1 1))",
+            "MULTILINESTRING ((0 2, 1 2))",
+            2.0,
+        ),
+        # MultiPolygon
+        (
+            "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)))",
+            "MULTIPOLYGON (((2 0, 3 0, 3 1, 2 1, 2 0)))",
+            2.0,
+        ),
+        # GeometryCollection
+        (
+            "GEOMETRYCOLLECTION (POINT (0 0))",
+            "GEOMETRYCOLLECTION (POINT (3 4))",
+            5.0,
+        ),
+    ],
+)
+def test_st_hausdorffdistance(eng, geom1, geom2, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_HausdorffDistance({geom_or_null(geom1)}, {geom_or_null(geom2)})",
+        expected,
+        numeric_epsilon=1e-8,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom1", "geom2", "densify_frac", "expected"),
+    [
+        # NULL handling
+        (None, None, 0.5, None),
+        ("POINT (0 0)", None, 0.5, None),
+        (None, "POINT (0 0)", 0.5, None),
+        # EMPTY geometries return NULL
+        ("POINT EMPTY", "POINT EMPTY", 0.5, None),
+        # Basic densified distance
+        ("LINESTRING (0 0, 100 0)", "LINESTRING (0 1, 100 1)", 0.5, 1.0),
+        # Densification makes a difference for complex shapes
+        (
+            "LINESTRING (130 0, 0 0, 0 150)",
+            "LINESTRING (10 10, 10 150, 130 10)",
+            0.5,
+            70.0,
+        ),
+    ],
+)
+def test_st_hausdorffdistance_densify(eng, geom1, geom2, densify_frac, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_HausdorffDistance({geom_or_null(geom1)}, {geom_or_null(geom2)}, {densify_frac})",
+        expected,
+        numeric_epsilon=1e-8,
+    )

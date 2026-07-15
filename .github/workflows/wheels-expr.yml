@@ -103,6 +103,7 @@ jobs:
       - name: Install gemfury client
         run: |
           brew tap gemfury/tap
+          brew trust gemfury/tap
           brew install fury-cli
           fury --version
 

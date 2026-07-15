@@ -48,6 +48,7 @@ use sedona_expr::{
 };
 use sedona_geometry::{
     bounding_box::BoundingBox,
+    bounds::WkbBounder2DFactory,
     interval::{Interval, IntervalTrait},
     types::{GeometryTypeAndDimensions, GeometryTypeAndDimensionsSet},
 };
@@ -56,7 +57,6 @@ use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use crate::{
     metadata::{GeoParquetColumnEncoding, GeoParquetMetadata},
     options::TableGeoParquetOptions,
-    statistics_accumulator::GeographyLiteralBounder,
 };
 
 #[derive(Clone)]
@@ -114,6 +114,11 @@ pub(crate) struct GeoParquetFileOpener {
     pub metrics: GeoParquetFileOpenerMetrics,
     pub options: TableGeoParquetOptions,
     pub metadata_cache: Option<Arc<dyn FileMetadataCache>>,
+    /// Factory for creating bounders used for spatial pruning
+    ///
+    /// Enables spatial pruning for both GEOMETRY and GEOGRAPHY columns.
+    /// This is typically obtained from `SedonaOptions::runtime.bounder_factory()`.
+    pub bounder_factory: WkbBounder2DFactory,
 }
 
 impl FileOpener for GeoParquetFileOpener {
@@ -138,7 +143,7 @@ impl FileOpener for GeoParquetFileOpener {
             if self_clone.enable_pruning {
                 if let Some(predicate) = self_clone.predicate.as_ref() {
                     let factory = SpatialFilterFactory::default()
-                        .with_bounder(Arc::new(GeographyLiteralBounder));
+                        .with_bounder_factory(self_clone.bounder_factory.clone());
 
                     let spatial_filter = factory.try_from_expr(predicate)?;
 

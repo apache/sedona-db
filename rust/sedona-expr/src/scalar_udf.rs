@@ -350,10 +350,8 @@ mod tests {
     use sedona_testing::testers::ScalarUdfTester;
 
     use datafusion_expr::{lit, ExprSchemable, ScalarUDF};
-    use sedona_schema::{
-        crs::lnglat,
-        datatypes::{Edges, WKB_GEOMETRY},
-    };
+    use sedona_geometry::types::Edges;
+    use sedona_schema::{crs::lnglat, datatypes::WKB_GEOMETRY};
 
     use super::*;
 

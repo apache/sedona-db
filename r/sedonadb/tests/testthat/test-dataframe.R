@@ -55,7 +55,7 @@ test_that("dataframe can be created from nanoarrow objects", {
 
 test_that("dataframe can be created from an FFI table provider", {
   df <- as_sedonadb_dataframe(data.frame(one = 1, two = "two"))
-  provider <- df$df$to_provider()
+  provider <- df$df$to_provider(df$ctx)
   df2 <- as_sedonadb_dataframe(provider)
   expect_identical(
     sd_collect(df2),

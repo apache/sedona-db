@@ -60,6 +60,8 @@ pub fn scalar_kernels() -> Vec<(&'static str, Vec<ScalarKernelRef>)> {
         "st_distance" => crate::distance::st_distance_impl,
         "st_dwithin" => crate::st_dwithin::st_dwithin_impl,
         "st_equals" => crate::binary_predicates::st_equals_impl,
+        "st_hausdorffdistance" => crate::st_hausdorffdistance::st_hausdorff_distance_impl,
+        "st_hausdorffdistance" => crate::st_hausdorffdistance::st_hausdorff_distance_densify_impl,
         "st_exteriorring" => crate::st_exteriorring::st_exterior_ring_impl,
         "st_intersection" => crate::overlay::st_intersection_impl,
         "st_intersects" => crate::binary_predicates::st_intersects_impl,

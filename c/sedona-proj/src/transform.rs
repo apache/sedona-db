@@ -17,7 +17,7 @@
 
 use crate::error::SedonaProjError;
 use crate::proj::{Proj, ProjContext};
-use datafusion_common::{exec_datafusion_err, DataFusionError, Result};
+use datafusion_common::{DataFusionError, Result};
 use geo_traits::Dimensions;
 use sedona_common::sedona_internal_datafusion_err;
 use sedona_geometry::bounding_box::BoundingBox;
@@ -28,6 +28,43 @@ use std::cell::{OnceCell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::RwLock;
+
+/// Wrapper around a lazy static [ProjCrsEngine]
+///
+/// This wrapper allows access to the engine to be delayed such that it need not
+/// be resolved until use, and allows the engine to be `Send` + `Sync` for use
+/// in the global options.
+#[derive(Debug)]
+pub struct LazyProjEngine;
+
+impl CrsEngine for LazyProjEngine {
+    fn get_transform_crs_to_crs(
+        &self,
+        from: &str,
+        to: &str,
+        area_of_interest: Option<BoundingBox>,
+        options: &str,
+    ) -> Result<Rc<dyn CrsTransform>, SedonaGeometryError> {
+        with_global_proj_engine(|e| {
+            Ok(e.get_transform_crs_to_crs(from, to, area_of_interest.clone(), options))
+        })
+        .map_err(|e| SedonaGeometryError::External(Box::new(e)))?
+    }
+
+    fn get_transform_pipeline(
+        &self,
+        pipeline: &str,
+        options: &str,
+    ) -> Result<Rc<dyn CrsTransform>, SedonaGeometryError> {
+        with_global_proj_engine(|e| Ok(e.get_transform_pipeline(pipeline, options)))
+            .map_err(|e| SedonaGeometryError::External(Box::new(e)))?
+    }
+
+    fn to_projjson(&self, crs_string: &str) -> Result<String, SedonaGeometryError> {
+        with_global_proj_engine(|e| Ok(e.to_projjson(crs_string)))
+            .map_err(|e| SedonaGeometryError::External(Box::new(e)))?
+    }
+}
 
 /// Builder for a [ProjCrsEngine]
 ///
@@ -215,19 +252,6 @@ pub struct ProjCrsEngine {
     ctx: Rc<ProjContext>,
 }
 
-impl ProjCrsEngine {
-    /// Resolve the CRS represented by this object to a PROJJSON string
-    pub fn to_projjson(&self, crs_string: &str) -> Result<String> {
-        let source_crs = Proj::try_new(self.ctx.clone(), crs_string).map_err(|e| {
-            exec_datafusion_err!("Failed to create CRS from source '{crs_string}': {e}")
-        })?;
-
-        source_crs
-            .to_projjson()
-            .map_err(|e| exec_datafusion_err!("Failed to export '{crs_string}' as PROJJSON: {e}"))
-    }
-}
-
 impl CrsEngine for ProjCrsEngine {
     fn get_transform_crs_to_crs(
         &self,
@@ -288,6 +312,20 @@ impl CrsEngine for ProjCrsEngine {
         })?;
 
         Ok(Rc::new(ProjTransform::new(transform)))
+    }
+
+    fn to_projjson(&self, crs_string: &str) -> Result<String, SedonaGeometryError> {
+        let source_crs = Proj::try_new(self.ctx.clone(), crs_string).map_err(|e| {
+            SedonaGeometryError::Invalid(format!(
+                "Failed to create CRS from source '{crs_string}': {e}"
+            ))
+        })?;
+
+        source_crs.to_projjson().map_err(|e| {
+            SedonaGeometryError::Invalid(format!(
+                "Failed to export '{crs_string}' as PROJJSON: {e}"
+            ))
+        })
     }
 }
 
@@ -354,7 +392,7 @@ mod test {
 
         let err = engine.to_projjson("gazornenplat").unwrap_err();
         assert_eq!(
-            err.message(),
+            err.to_string(),
             "Failed to create CRS from source 'gazornenplat': Invalid PROJ string syntax"
         );
     }

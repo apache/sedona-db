@@ -17,6 +17,7 @@
 use std::{
     ffi::{c_void, CString},
     sync::Arc,
+    time::Duration,
 };
 
 use arrow_array::{
@@ -28,12 +29,12 @@ use arrow_schema::{Field, Schema};
 use datafusion::catalog::TableProvider;
 use datafusion_common::{metadata::ScalarAndMetadata, ScalarValue};
 use datafusion_expr::expr::FieldMetadata;
-use datafusion_ffi::table_provider::FFI_TableProvider;
 use pyo3::{
     types::{PyAnyMethods, PyCapsule, PyCapsuleMethods},
     Bound, PyAny, Python,
 };
 use sedona::record_batch_reader_provider::RecordBatchReaderProvider;
+use sedona_extension::{extension::SedonaCTableProvider, table_provider::ImportedTableProvider};
 use sedona_schema::{
     datatypes::SedonaType,
     matchers::{ArgMatcher, TypeMatcher},
@@ -46,8 +47,8 @@ pub fn import_table_provider_from_any<'py>(
     obj: &Bound<PyAny>,
     requested_schema: Option<&Bound<PyAny>>,
 ) -> Result<Arc<dyn TableProvider>, PySedonaError> {
-    if obj.hasattr("__datafusion_table_provider__")? {
-        let provider = import_ffi_table_provider(obj)?;
+    if obj.hasattr("__sedonadb_table_provider__")? {
+        let provider = import_sedona_ffi_table_provider(obj)?;
         Ok(provider)
     } else if obj.hasattr("__arrow_c_stream__")? {
         let reader = import_arrow_array_stream(py, obj, requested_schema)?;
@@ -59,14 +60,39 @@ pub fn import_table_provider_from_any<'py>(
     }
 }
 
-pub fn import_ffi_table_provider(
+pub fn import_sedona_ffi_table_provider(
     obj: &Bound<PyAny>,
 ) -> Result<Arc<dyn TableProvider>, PySedonaError> {
-    let capsule = obj.getattr("__datafusion_table_provider__")?.call0()?;
+    let capsule = obj.getattr("__sedonadb_table_provider__")?.call0()?;
     let contents =
-        check_pycapsule(&capsule, "datafusion_table_provider")? as *mut FFI_TableProvider;
-    let provider = Arc::<dyn TableProvider>::from(unsafe { contents.as_ref().unwrap() });
-    Ok(provider)
+        check_pycapsule(&capsule, "sedonadb_table_provider")? as *mut SedonaCTableProvider;
+
+    // Move the SedonaCTableProvider out of the capsule into our ImportedTableProvider.
+    // Clear the structure after reading to prevent double-free when the capsule is dropped.
+    let ffi_provider = unsafe {
+        let provider = std::ptr::read(contents);
+        // Clear the entire structure to prevent any accidental use
+        std::ptr::write_bytes(contents, 0, 1);
+        provider
+    };
+    // try_new validates the release callback
+    let provider = ImportedTableProvider::try_new(ffi_provider)?;
+
+    // Add a Python-aware cancel checker that checks for Ctrl+C signals
+    // Use a 2 second interval to match the StreamingRecordBatchReader behavior
+    let provider = provider
+        .with_cancel_checker(|| {
+            Python::attach(|py| {
+                // Run `pass` to process any pending signals, then check for errors
+                if py.run(cr"pass", None, None).is_err() {
+                    return true;
+                }
+                py.check_signals().is_err()
+            })
+        })
+        .with_check_interval(Duration::from_millis(2_000));
+
+    Ok(Arc::new(provider))
 }
 
 pub fn import_arrow_array_stream<'py>(

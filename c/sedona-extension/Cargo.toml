@@ -30,10 +30,23 @@ rust-version.workspace = true
 [dependencies]
 arrow-array = { workspace = true, features = ["ffi"]}
 arrow-schema = { workspace = true, features = ["ffi"]}
+async-trait = { workspace = true }
 datafusion-common = { workspace = true }
+datafusion-catalog = { workspace = true }
+datafusion-execution = { workspace = true }
 datafusion-expr = { workspace = true }
+datafusion-physical-expr = { workspace = true }
+datafusion-physical-plan = { workspace = true }
+futures = { workspace = true }
 libc = "0.2.178"
 sedona-common = { workspace = true }
 sedona-expr = { workspace = true }
 sedona-schema = { workspace = true }
 sedona-testing = { path = "../../rust/sedona-testing" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+
+[dev-dependencies]
+datafusion = { workspace = true, features = ["sql"] }

@@ -20,8 +20,9 @@ use std::{fmt::Debug, iter::zip, sync::Arc};
 use arrow_schema::DataType;
 use datafusion_common::{plan_err, Result};
 use sedona_common::sedona_internal_err;
+use sedona_geometry::types::Edges;
 
-use crate::datatypes::{Edges, SedonaType, RASTER, WKB_GEOGRAPHY, WKB_GEOMETRY};
+use crate::datatypes::{SedonaType, RASTER, WKB_GEOGRAPHY, WKB_GEOMETRY};
 
 /// Helper to match arguments and compute return types
 #[derive(Debug)]

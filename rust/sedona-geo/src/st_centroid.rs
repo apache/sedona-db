@@ -64,7 +64,7 @@ impl SedonaScalarKernel for STCentroid {
         executor.execute_wkb_void(|maybe_wkb| {
             match maybe_wkb {
                 Some(wkb) => {
-                    let centroid_wkb = invoke_scalar(&wkb)?;
+                    let centroid_wkb = invoke_scalar(wkb)?;
                     builder.append_value(&centroid_wkb);
                 }
                 _ => builder.append_null(),
