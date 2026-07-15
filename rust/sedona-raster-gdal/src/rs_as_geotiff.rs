@@ -24,11 +24,13 @@
 //! - RS_AsGeoTiff(raster, compressionType, imageQuality, tileSize)
 //! - RS_AsGeoTiff(raster, compressionType, imageQuality, tileWidth, tileHeight)
 
+use std::ptr::NonNull;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use crate::gdal_common::with_gdal;
 use arrow_array::builder::BinaryViewBuilder;
+use arrow_buffer::Buffer;
 use arrow_schema::DataType;
 use datafusion_common::cast::{as_float64_array, as_string_array, as_uint32_array};
 use datafusion_common::config::ConfigOptions;
@@ -247,6 +249,36 @@ impl Drop for VsiMemFileGuard<'_> {
 /// a value outside the range errors rather than clamping — silently clamping
 /// would turn the most likely mistake (passing a 0–100 quality like `75`) into
 /// maximum quality with no warning.
+/// Append one encoded GeoTIFF to the output as a view over the GDAL
+/// allocation itself — the bytes are not copied. The [`VSIBuffer`] becomes an
+/// external Arrow allocation owned by the output array, so its lifetime (and
+/// `VSIFree`) follows the array rather than this call.
+fn append_geotiff_view(builder: &mut BinaryViewBuilder, bytes: VSIBuffer) -> Result<()> {
+    let len = bytes.len();
+    // A binary-view element addresses at most u32::MAX bytes.
+    let Ok(view_len) = u32::try_from(len) else {
+        return exec_err!("RS_AsGeoTiff: {len}-byte GeoTIFF exceeds the 4 GiB binary output limit");
+    };
+    // Views this small are stored inline in the view struct; wrapping the
+    // allocation would save nothing (and a zero-length buffer has no pointer).
+    if len <= 12 {
+        builder.append_value(bytes.as_ref());
+        return Ok(());
+    }
+    let Some(ptr) = NonNull::new(bytes.as_ref().as_ptr() as *mut u8) else {
+        return exec_err!("RS_AsGeoTiff: GDAL returned a null buffer for a {len}-byte GeoTIFF");
+    };
+    // SAFETY: `ptr`/`len` describe exactly the allocation owned by `bytes`,
+    // which stores a raw pointer (the bytes never move) and stays alive inside
+    // the Arc — freeing via `VSIFree` — until the last Arrow reference to
+    // `buffer` drops.
+    let buffer = unsafe { Buffer::from_custom_allocation(ptr, len, Arc::new(bytes)) };
+    let block = builder.append_block(buffer);
+    builder
+        .try_append_view(block, 0, view_len)
+        .map_err(|e| exec_datafusion_err!("RS_AsGeoTiff: failed to append binary view: {e}"))
+}
+
 fn jpeg_quality_option(quality: f64) -> Result<i32> {
     if !(0.0..=1.0).contains(&quality) {
         return exec_err!(
@@ -460,7 +492,7 @@ impl SedonaScalarKernel for RsAsGeoTiff {
                     tile_width,
                     tile_height,
                 )?;
-                builder.append_value(bytes.as_ref());
+                append_geotiff_view(&mut builder, bytes)?;
 
                 Ok(())
             })?;
@@ -892,6 +924,9 @@ mod tests {
             .as_any()
             .downcast_ref::<arrow_array::BinaryViewArray>()
             .unwrap();
+        // Each row's bytes are a view over its own GDAL allocation (one
+        // variadic buffer per row), not a copy into a shared builder buffer.
+        assert_eq!(binary.data_buffers().len(), 2);
         with_gdal(|gdal| {
             assert_eq!(reopened_block_size(gdal, binary.value(0)), (16, 16));
             assert_eq!(reopened_block_size(gdal, binary.value(1)), (32, 32));

@@ -21,6 +21,7 @@
 //! fixtures): the uncompressed default and the compression axis (none/lzw/deflate).
 
 use std::hint::black_box;
+use std::sync::Arc;
 
 use arrow_array::ArrayRef;
 use arrow_schema::DataType;
@@ -28,6 +29,8 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Through
 use datafusion_common::ScalarValue;
 use datafusion_expr::{ColumnarValue, ScalarUDF};
 use sedona_schema::datatypes::{SedonaType, RASTER};
+use sedona_schema::raster::BandDataType;
+use sedona_testing::raster_spec::RasterSpec;
 use sedona_testing::testers::ScalarUdfTester;
 
 fn raster_array(rows: usize) -> ArrayRef {
@@ -53,6 +56,19 @@ fn bench_rs_as_geotiff_basic(c: &mut Criterion) {
             b.iter(|| black_box(tester.invoke_arrays(vec![input.clone()]).unwrap()))
         });
     }
+
+    // A single ~16 MB raster: large enough that per-row byte handling
+    // (vsimem buffer -> output array) registers against the GDAL encode.
+    const LARGE: i64 = 4096;
+    let large: ArrayRef = Arc::new(
+        RasterSpec::d2(LARGE, LARGE)
+            .band(BandDataType::UInt8)
+            .build(),
+    );
+    group.throughput(Throughput::Bytes((LARGE * LARGE) as u64));
+    group.bench_with_input(BenchmarkId::new("large", "16MiB"), &large, |b, input| {
+        b.iter(|| black_box(tester.invoke_arrays(vec![input.clone()]).unwrap()))
+    });
     group.finish();
 }
 
