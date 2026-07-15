@@ -31,6 +31,7 @@ rust-version.workspace = true
 result_large_err = "allow"
 
 [dev-dependencies]
+arrow-buffer = { workspace = true }
 criterion = { workspace = true }
 rstest = { workspace = true }
 sedona-geometry = { workspace = true }

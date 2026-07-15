@@ -5935,6 +5935,7 @@ name = "sedona-geo"
 version = "0.4.0"
 dependencies = [
  "arrow-array",
+ "arrow-buffer",
  "arrow-schema",
  "criterion",
  "datafusion-common",

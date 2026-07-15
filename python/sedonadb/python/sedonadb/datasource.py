@@ -16,6 +16,7 @@
 # under the License.
 
 import sys
+import threading
 from typing import Any, Mapping
 
 from sedonadb._lib import PyExternalFormat, PyProjectedRecordBatchReader
@@ -202,13 +203,26 @@ class PyogrioReaderShelter:
     is no longer required).
     """
 
+    # Serializes dataset open/close. pyogrio releases the GIL around the
+    # GDAL open, so a multi-file scan otherwise opens datasets from several
+    # threads at once, which can crash the process (SIGABRT) depending on
+    # the GDAL build and driver. Reentrant because a garbage-collected
+    # shelter's __del__ may run on a thread that is already holding the
+    # lock in __init__.
+    _open_close_lock = threading.RLock()
+
     def __init__(self, inner, output_names=None):
         self._inner = inner
         self._output_names = output_names
-        self._meta, self._reader = self._inner.__enter__()
+        self._entered = False
+        with PyogrioReaderShelter._open_close_lock:
+            self._meta, self._reader = self._inner.__enter__()
+            self._entered = True
 
     def __del__(self):
-        self._inner.__exit__(None, None, None)
+        if self._entered:
+            with PyogrioReaderShelter._open_close_lock:
+                self._inner.__exit__(None, None, None)
 
     def __arrow_c_stream__(self, requested_schema=None):
         if self._output_names is None:

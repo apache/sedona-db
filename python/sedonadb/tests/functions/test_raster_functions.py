@@ -16,8 +16,10 @@
 # under the License.
 
 import pytest
+import numpy as np
 
 from sedonadb.testing import SedonaDB
+from sedonadb.raster import Raster
 
 
 @pytest.mark.parametrize(
@@ -279,3 +281,186 @@ def test_rs_setbandnodatavalue_two_arg_requires_single_band():
         SedonaDB().assert_query_result(
             "SELECT RS_SetBandNoDataValue(RS_Example(), 0)", None
         )
+
+
+def _rs_as_raster_sql(
+    pixel_type, all_touched, burn_value, nodata_value, use_geometry_extent
+):
+    return f"""
+        WITH src AS (SELECT RS_FromPath($1) AS raster)
+        SELECT RS_AsRaster(
+            ST_GeomFromText('POLYGON((2 8, 2 5, 5 5, 5 8, 2 8))', 'EPSG:4326'),
+            raster,
+            '{pixel_type}',
+            {str(all_touched).upper()},
+            {burn_value},
+            {nodata_value},
+            {str(use_geometry_extent).upper()}
+        ) AS raster
+        FROM src
+    """
+
+
+@pytest.mark.parametrize(
+    ("all_touched", "use_geometry_extent"),
+    [(False, False), (False, True), (True, False)],
+)
+def test_rs_as_raster_matches_rasterio(
+    con, sedona_testing, all_touched, use_geometry_extent
+):
+    pytest.importorskip("rasterio")
+    from rasterio.features import rasterize
+    from rasterio.transform import Affine
+    from shapely import wkt
+
+    path = sedona_testing / "data/raster/test4.tiff"
+    transform = (0.0, 1.0, 0.0, 10.0, 0.0, -1.0)
+
+    table = con.sql(
+        _rs_as_raster_sql("float64", all_touched, 7.0, 0.0, use_geometry_extent),
+        params=(str(path),),
+    ).to_arrow_table()
+    result = Raster(table["raster"], 0)
+
+    got = result.bands[0].to_numpy()
+    geom = wkt.loads("POLYGON((2 8, 2 5, 5 5, 5 8, 2 8))")
+
+    if use_geometry_extent:
+        expected_shape = (3, 3)
+        expected_transform = (2.0, 1.0, 0.0, 8.0, 0.0, -1.0)
+    else:
+        expected_shape = (10, 10)
+        expected_transform = transform
+
+    expected = rasterize(
+        [(geom, 7.0)],
+        out_shape=expected_shape,
+        transform=Affine.from_gdal(*expected_transform),
+        all_touched=all_touched,
+        fill=0.0,
+        dtype="float64",
+    )
+
+    assert tuple(result.transform) == expected_transform
+    assert result.width == expected_shape[1]
+    assert result.height == expected_shape[0]
+    np.testing.assert_array_equal(got, expected)
+
+
+def test_rs_as_raster_all_touched_changes_pixels(con, sedona_testing):
+    import numpy as np
+
+    pytest.importorskip("rasterio")
+    from rasterio.features import rasterize
+    from rasterio.transform import Affine
+    from shapely import wkt
+
+    path = sedona_testing / "data/raster/test4.tiff"
+    transform = (0.0, 1.0, 0.0, 10.0, 0.0, -1.0)
+    geom = "POLYGON((1.9 8.9, 1.9 6.1, 3.1 6.1, 3.1 8.9, 1.9 8.9))"
+
+    false_result = (
+        con.sql(
+            f"WITH src AS (SELECT RS_FromPath($1) AS raster) SELECT RS_AsRaster(ST_GeomFromText('{geom}', 'EPSG:4326'), raster, 'uint8', FALSE, 1, 0, FALSE) AS raster FROM src",
+            params=(str(path),),
+        )
+        .to_arrow_table()["raster"][0]
+        .as_py()
+    )
+    true_result = (
+        con.sql(
+            f"WITH src AS (SELECT RS_FromPath($1) AS raster) SELECT RS_AsRaster(ST_GeomFromText('{geom}', 'EPSG:4326'), raster, 'uint8', TRUE, 1, 0, FALSE) AS raster FROM src",
+            params=(str(path),),
+        )
+        .to_arrow_table()["raster"][0]
+        .as_py()
+    )
+
+    false_pixels = false_result.bands[0].to_numpy()
+    true_pixels = true_result.bands[0].to_numpy()
+
+    geom = wkt.loads(geom)
+    expected_false = rasterize(
+        [(geom, 1)],
+        out_shape=(10, 10),
+        transform=Affine.from_gdal(*transform),
+        all_touched=False,
+        fill=0,
+        dtype="uint8",
+    )
+    expected_true = rasterize(
+        [(geom, 1)],
+        out_shape=(10, 10),
+        transform=Affine.from_gdal(*transform),
+        all_touched=True,
+        fill=0,
+        dtype="uint8",
+    )
+
+    np.testing.assert_array_equal(false_pixels, expected_false)
+    np.testing.assert_array_equal(true_pixels, expected_true)
+    assert np.count_nonzero(true_pixels) >= np.count_nonzero(false_pixels)
+    assert not np.array_equal(true_pixels, false_pixels)
+
+
+def test_rs_as_raster_rejects_fractional_integer_nodata(con, sedona_testing):
+    path = sedona_testing / "data/raster/test4.tiff"
+
+    with pytest.raises(Exception, match="initial fill value must be an integer"):
+        con.sql(
+            """
+            WITH src AS (SELECT RS_FromPath($1) AS raster)
+            SELECT RS_AsRaster(
+                ST_GeomFromText('POLYGON((0 2, 0 0, 2 0, 2 2, 0 2))', 'EPSG:4326'),
+                raster,
+                'uint8',
+                FALSE,
+                1,
+                1.5,
+                FALSE
+            )
+            FROM src
+            """,
+            params=(str(path),),
+        ).to_arrow_table()
+
+
+def test_rs_as_raster_sets_output_nodata(con, sedona_testing):
+    import numpy as np
+
+    path = sedona_testing / "data/raster/test4.tiff"
+    tab = con.sql(
+        """
+        WITH src AS (SELECT RS_FromPath($1) AS raster)
+        SELECT
+            RS_AsRaster(
+                ST_GeomFromText('POLYGON((0 10, 0 9, 1 9, 1 10, 0 10))', 'EPSG:4326'),
+                raster,
+                'uint8',
+                FALSE,
+                5,
+                9,
+                FALSE
+            ) AS raster,
+            RS_BandNoDataValue(
+                RS_AsRaster(
+                    ST_GeomFromText('POLYGON((0 10, 0 9, 1 9, 1 10, 0 10))', 'EPSG:4326'),
+                    raster,
+                    'uint8',
+                    FALSE,
+                    5,
+                    9,
+                    FALSE
+                ),
+                1
+            ) AS nodata
+        FROM src
+        """,
+        params=(str(path),),
+    ).to_arrow_table()
+
+    assert tab["nodata"][0].as_py() == 9.0
+    raster = tab["raster"][0].as_py()
+    expected = np.full((10, 10), 9, dtype="uint8")
+    expected[0, 0] = 5
+    np.testing.assert_array_equal(raster.bands[0].to_numpy(), expected)
