@@ -399,3 +399,48 @@ def test_get_binary_view_buffer_sliced():
         mv = _get_binary_view_buffer(arr, index=i)
         assert mv is not None
         assert bytes(mv) == expected
+
+
+@pytest.mark.parametrize(
+    ("dtype", "nodata"),
+    [
+        ("uint8", 200),
+        ("int8", -100),
+        ("uint16", 60000),
+        ("int16", -8888),
+        ("uint32", 4_000_000_000),
+        ("int32", -88888),
+        ("uint64", 2**64 - 1),
+        ("int64", -(2**63)),
+        ("float32", -9999.5),
+        ("float64", -12345.5),
+    ],
+)
+def test_band_nodata(dtype, nodata):
+    r = Raster.from_numpy(np.zeros((2, 3), dtype=dtype), nodata=nodata)
+    assert r.bands[0].nodata == nodata
+
+
+def test_band_nodata_unset():
+    r = Raster.from_numpy(np.zeros((2, 3), dtype="uint8"))
+    assert r.bands[0].nodata is None
+
+
+def test_raster_to_numpy_single_band_is_zero_copy():
+    data = np.arange(6, dtype="float32").reshape(2, 3)
+    r = Raster.from_numpy(data)
+    out = r.to_numpy()
+
+    assert out.shape == (1, 2, 3)
+    np.testing.assert_array_equal(out[0], data)
+    assert np.shares_memory(out, r.bands[0].to_numpy())
+
+
+def test_raster_to_numpy_multiband_stacks(con):
+    tab = con.sql("SELECT RS_Example() AS raster").to_arrow_table()
+    r = tab["raster"][0].as_py()
+    out = r.to_numpy()
+
+    assert out.shape == (3, 32, 64)
+    for i, band in enumerate(r.bands):
+        np.testing.assert_array_equal(out[i], band.to_numpy())

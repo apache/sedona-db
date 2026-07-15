@@ -28,12 +28,8 @@ rasterio is imported lazily inside each helper so importing this module does
 not require it; test modules gate on ``pytest.importorskip("rasterio")``.
 """
 
-import struct
-
 import numpy as np
 import pyarrow as pa
-
-from sedonadb.raster import BAND_DATA_TYPE_STRUCT_CHARS, BAND_DATA_TYPE_IDS, Raster
 
 
 def dtype_min(dtype) -> float:
@@ -118,20 +114,10 @@ def rasterio_clip(path, geom_wkt: str, *, all_touched, nodata, crop):
     return out, tuple(transform.to_gdal())
 
 
-def band_nodata(band):
-    """A band's nodata sentinel unpacked in its dtype, or None."""
-    raw = band._py_field("nodata")
-    if raw is None:
-        return None
-    type_id = BAND_DATA_TYPE_IDS[band.data_type]
-    return struct.unpack("<" + BAND_DATA_TYPE_STRUCT_CHARS[type_id], raw)[0]
-
-
-def raster_to_numpy(raster: Raster):
+def raster_to_numpy(raster):
     """Extract ``(array(bands, h, w), gdal_transform, [nodata per band])``."""
-    arrays = [band.to_numpy() for band in raster.bands]
-    nodatas = [band_nodata(band) for band in raster.bands]
-    return np.stack(arrays), tuple(raster.transform), nodatas
+    nodatas = [band.nodata for band in raster.bands]
+    return raster.to_numpy(), tuple(raster.transform), nodatas
 
 
 def run_clip_rows(con, tiff_path, rows):
