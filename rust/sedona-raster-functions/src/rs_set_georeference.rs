@@ -27,8 +27,9 @@
 //! the getter emits — `scaleX skewY skewX scaleY upperLeftX upperLeftY`. The
 //! `format` is `GDAL` (default, alias `PIXEL`) or `ESRI` (alias `NODE`); in the
 //! ESRI/center convention the upper-left coordinates refer to the *center* of
-//! the upper-left pixel and are shifted back to the pixel corner on the way in
-//! (rejected for skewed rasters, where the shift would be inexact).
+//! the upper-left pixel and are shifted back to the pixel corner on the way in.
+//! The shift uses the full affine (scale and skew halves), so it is exact for
+//! skewed rasters and round-trips with the getter.
 //!
 //! The raster is rebuilt with [`RasterBuilder::copy_raster_from`] overriding the
 //! transform; each band's pixel buffers are shared zero-copy, and the CRS is
@@ -184,12 +185,11 @@ fn parse_georeference(georef: &str, format: GeoReferenceFormat) -> Result<[f64; 
     ];
 
     if format == GeoReferenceFormat::Esri {
-        // ESRI reports the upper-left *pixel center*; shift to the corner. The
-        // shift can't represent skew, so a skewed raster is rejected rather than
-        // approximated (shared with the getter via reject_skew).
-        format.reject_skew(skew_x, skew_y)?;
-        upper_left_x -= scale_x * 0.5;
-        upper_left_y -= scale_y * 0.5;
+        // ESRI reports the upper-left *pixel center*, i.e. the world coordinates
+        // of pixel-space (0.5, 0.5); shift back to the corner through the full
+        // affine so skewed rasters stay exact (the inverse of the getter's shift).
+        upper_left_x -= (scale_x + skew_x) * 0.5;
+        upper_left_y -= (skew_y + scale_y) * 0.5;
     }
 
     // GDAL geotransform order.
@@ -290,14 +290,35 @@ mod tests {
     }
 
     #[test]
-    fn esri_skewed_raster_errors() {
-        // ESRI/center georeference can't represent skew; reject rather than
-        // silently approximate. World-file order: scaleX skewY skewX scaleY ...
-        let err = tester_3arg()
+    fn esri_skewed_shifts_through_full_affine() {
+        // For a skewed georeference the center-to-corner shift includes the skew
+        // halves: x = 100 - (2 + 0.25)*0.5 = 98.875, y = 200 - (0.5 - 3)*0.5 = 201.25.
+        let result = tester_3arg()
             .invoke_array_scalar_scalar(Arc::new(base().build()), "2 0.5 0.25 -3 100 200", "ESRI")
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("skewed"), "unexpected error: {err}");
+            .unwrap();
+        let expected = base().transform([98.875, 2.0, 0.25, 201.25, 0.5, -3.0]);
+        assert_rasters_equal(&result, &[Some(expected)]);
+    }
+
+    #[test]
+    fn esri_round_trips_skewed_raster_with_getter() {
+        // RS_GeoReference(r, 'ESRI') fed back through RS_SetGeoReference(..., 'ESRI')
+        // must reproduce the original transform exactly, skew included.
+        let transform = [100.0, 2.0, 0.25, 200.0, 0.5, -3.0];
+        let skewed = Arc::new(raster_array([Some(base().transform(transform))]));
+
+        let getter: ScalarUDF = crate::rs_georeference::rs_georeference_udf().into();
+        let getter_tester =
+            ScalarUdfTester::new(getter, vec![RASTER, SedonaType::Arrow(DataType::Utf8)]);
+        let georef = getter_tester
+            .invoke_array_scalar(skewed.clone(), "ESRI")
+            .unwrap();
+        let georef = as_string_array(&georef).unwrap().value(0).to_string();
+
+        let result = tester_3arg()
+            .invoke_array_scalar_scalar(skewed, georef, "ESRI")
+            .unwrap();
+        assert_rasters_equal(&result, &[Some(base().transform(transform))]);
     }
 
     #[test]

@@ -25,6 +25,7 @@ use datafusion_common::error::Result;
 use datafusion_common::DataFusionError;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_raster::affine_transformation::AffineMatrix;
 use sedona_raster::traits::RasterRef;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
@@ -55,17 +56,16 @@ pub fn rs_georeference_udf() -> SedonaScalarUDF {
 /// vs `"node"` (cell-center) registration — so `"PIXEL"` and `"NODE"` are
 /// accepted as aliases for `GDAL` and `ESRI` respectively.
 ///
-/// NOTE: the center shift (`ESRI`/`NODE`) uses `scale * 0.5` and cannot
-/// represent skew, so it is only well-defined for north-up (zero-skew) rasters.
-/// A skewed raster is rejected for the center convention rather than silently
-/// approximated.
+/// The center shift (`ESRI`/`NODE`) maps pixel-space `(0.5, 0.5)` through the
+/// full affine, so it is exact for skewed (rotated) rasters too:
+/// `dx = (scalex + skewx) * 0.5`, `dy = (skewy + scaley) * 0.5`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GeoReferenceFormat {
     /// GDAL format (alias `PIXEL`): upperleftx and upperlefty are the coordinates of
     /// the upper-left corner of the upper-left pixel.
     Gdal,
     /// ESRI format (alias `NODE`): upperleftx and upperlefty are shifted to the center
-    /// of the upper-left pixel, i.e. `upperleftx + scalex * 0.5` and `upperlefty + scaley * 0.5`.
+    /// of the upper-left pixel, i.e. the world coordinates of pixel-space `(0.5, 0.5)`.
     Esri,
 }
 
@@ -80,20 +80,6 @@ impl GeoReferenceFormat {
                 s
             ))),
         }
-    }
-
-    /// Error if this is the center convention (`ESRI`/`NODE`) applied to a
-    /// skewed raster: the pixel-center shift uses only `scale` and would be
-    /// inexact in the presence of skew, so we reject rather than approximate.
-    pub(crate) fn reject_skew(&self, skew_x: f64, skew_y: f64) -> Result<()> {
-        if *self == GeoReferenceFormat::Esri && (skew_x != 0.0 || skew_y != 0.0) {
-            return Err(DataFusionError::Execution(
-                "ESRI/NODE (pixel-center) georeference is not supported for skewed (rotated) \
-                 rasters because the center shift would be inexact; use 'GDAL'/'PIXEL' instead."
-                    .to_string(),
-            ));
-        }
-        Ok(())
     }
 }
 
@@ -201,9 +187,10 @@ fn format_georeference(
                     )
                 }
                 GeoReferenceFormat::Esri => {
-                    format.reject_skew(skew_x, skew_y)?;
-                    let esri_upper_left_x = upper_left_x + scale_x * 0.5;
-                    let esri_upper_left_y = upper_left_y + scale_y * 0.5;
+                    // World coordinates of pixel-space (0.5, 0.5) — the full
+                    // affine keeps the center shift exact under skew.
+                    let affine = AffineMatrix::from_metadata(&metadata);
+                    let (esri_upper_left_x, esri_upper_left_y) = affine.transform(0.5, 0.5);
                     format!(
                         "{:.10}\n{:.10}\n{:.10}\n{:.10}\n{:.10}\n{:.10}",
                         scale_x, skew_y, skew_x, scale_y, esri_upper_left_x, esri_upper_left_y
@@ -268,35 +255,22 @@ mod tests {
         let udf: ScalarUDF = rs_georeference_udf().into();
         let tester = ScalarUdfTester::new(udf, vec![RASTER, SedonaType::Arrow(DataType::Utf8)]);
 
-        // Only the index-0 test raster is north-up; the center (ESRI) convention
-        // requires that (skewed rasters are rejected — see the test below).
+        // Index 0 is north-up (plain half-scale shift); index 2 is skewed, so
+        // its center shift includes the skew halves: dx = (0.2 + 0.06) * 0.5,
+        // dy = (0.08 - 0.4) * 0.5.
         let expected: Arc<dyn Array> = Arc::new(StringArray::from(vec![
             Some("0.1000000000\n0.0000000000\n0.0000000000\n-0.2000000000\n1.0500000000\n1.9000000000"),
             None,
+            Some("0.2000000000\n0.0800000000\n0.0600000000\n-0.4000000000\n3.1300000000\n3.8400000000"),
         ]));
 
         for format in ["ESRI", "esri", "NODE", "node"] {
-            let rasters = generate_test_rasters(2, Some(1)).unwrap();
+            let rasters = generate_test_rasters(3, Some(1)).unwrap();
             let result = tester
                 .invoke_array_scalar(Arc::new(rasters), format)
                 .unwrap();
             assert_array_equal(&result, &expected);
         }
-    }
-
-    #[test]
-    fn udf_georeference_esri_skewed_errors() {
-        // The ESRI/NODE center shift can't represent skew, so it's rejected for a
-        // skewed raster rather than silently approximated. Test raster index 2 is
-        // skewed (skew scales with the generator index).
-        let udf: ScalarUDF = rs_georeference_udf().into();
-        let tester = ScalarUdfTester::new(udf, vec![RASTER, SedonaType::Arrow(DataType::Utf8)]);
-        let rasters = generate_test_rasters(3, Some(1)).unwrap();
-        let err = tester
-            .invoke_array_scalar(Arc::new(rasters), "ESRI")
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("skewed"), "unexpected error: {err}");
     }
 
     #[test]
@@ -316,24 +290,25 @@ mod tests {
 
         let rasters = generate_test_rasters(4, Some(1)).unwrap();
         let formats = Arc::new(StringArray::from(vec![
-            Some("ESRI"), // explicit ESRI on the north-up index-0 raster
+            Some("GDAL"), // explicit GDAL
             Some("ESRI"), // won't matter since raster 1 is null
             None,         // null format -> NULL output
-            Some("GDAL"), // explicit GDAL (raster 3 is skewed; ESRI would be rejected)
+            Some("ESRI"), // explicit ESRI on a skewed raster
         ]));
 
         let result = tester
             .invoke_arrays(vec![Arc::new(rasters), formats])
             .unwrap();
         let expected: Arc<dyn Array> = Arc::new(StringArray::from(vec![
-                // explicit ESRI (north-up): upper-left shifted to pixel center
-                Some("0.1000000000\n0.0000000000\n0.0000000000\n-0.2000000000\n1.0500000000\n1.9000000000"),
+                // explicit GDAL
+                Some("0.1000000000\n0.0000000000\n0.0000000000\n-0.2000000000\n1.0000000000\n2.0000000000"),
                 // null raster
                 None,
                 // null format -> NULL output
                 None,
-                // explicit GDAL on a skewed raster (GDAL has no center shift)
-                Some("0.3000000000\n0.1200000000\n0.0900000000\n-0.6000000000\n4.0000000000\n5.0000000000"),
+                // explicit ESRI on a skewed raster: the center shift uses the
+                // full affine, dx = (0.3 + 0.09) * 0.5, dy = (0.12 - 0.6) * 0.5
+                Some("0.3000000000\n0.1200000000\n0.0900000000\n-0.6000000000\n4.1950000000\n4.7600000000"),
         ]));
         assert_array_equal(&result, &expected);
     }

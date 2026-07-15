@@ -232,6 +232,17 @@ impl InternalDataFrame {
         Ok(InternalDataFrame::new(inner, self.runtime.clone()))
     }
 
+    fn unnest(&self, columns: Vec<String>) -> Result<InternalDataFrame, PySedonaError> {
+        if columns.is_empty() {
+            return Err(PySedonaError::SedonaPython(
+                "unnest() requires at least one column name".to_string(),
+            ));
+        }
+        let borrowed: Vec<&str> = columns.iter().map(String::as_str).collect();
+        let inner = self.inner.clone().unnest_columns(&borrowed)?;
+        Ok(InternalDataFrame::new(inner, self.runtime.clone()))
+    }
+
     /// Aggregate the rows of the DataFrame, optionally partitioned by
     /// `group_exprs`. Both inputs are `Vec<PyExpr>` so the same Rust
     /// method serves global aggregation (`group_exprs` empty, called
