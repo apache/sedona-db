@@ -15,8 +15,9 @@
 # specific language governing permissions and limitations
 # under the License.
 
-import pytest
 import numpy as np
+import pandas as pd
+import pytest
 
 from sedonadb.testing import SedonaDB
 from sedonadb.raster import Raster
@@ -149,14 +150,10 @@ def test_rs_value_matches_rasterio(con):
     positions per pixel (toward the corners, kept inside the pixel to avoid floor
     ambiguity at exact boundaries) and a batch of random interior points.
     """
-    import numpy as np
-    import pandas as pd
 
     pytest.importorskip("rasterio")
     from rasterio.io import MemoryFile
     from rasterio.transform import Affine
-
-    from sedonadb.raster import Raster
 
     rng = np.random.default_rng(42)
     height, width = 7, 5
@@ -315,12 +312,8 @@ def test_rs_asgeotiff_out_of_range_quality_errors(con):
 @pytest.mark.parametrize("dtype", ["uint8", "uint16", "int32", "float32", "float64"])
 @pytest.mark.parametrize("compression_args", ["", ", 'DEFLATE', 0.85", ", 'LZW', 0.85"])
 def test_rs_asgeotiff_roundtrips_contents(con, dtype, compression_args):
-    import numpy as np
-
     pytest.importorskip("rasterio")
     from rasterio.io import MemoryFile
-
-    from sedonadb.raster import Raster
 
     rng = np.random.default_rng(7)
     data = (rng.random((5, 4)) * 100).astype(dtype)
@@ -407,8 +400,6 @@ def test_rs_as_raster_matches_rasterio(
 
 
 def test_rs_as_raster_all_touched_changes_pixels(con, sedona_testing):
-    import numpy as np
-
     pytest.importorskip("rasterio")
     from rasterio.features import rasterize
     from rasterio.transform import Affine
@@ -485,8 +476,6 @@ def test_rs_as_raster_rejects_fractional_integer_nodata(con, sedona_testing):
 
 
 def test_rs_as_raster_sets_output_nodata(con, sedona_testing):
-    import numpy as np
-
     path = sedona_testing / "data/raster/test4.tiff"
     tab = con.sql(
         """
