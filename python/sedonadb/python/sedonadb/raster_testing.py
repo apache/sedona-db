@@ -704,6 +704,223 @@ class Rasterio(RasterEngine):
             pixels = pixels[band - 1 : band]
         return DecodedRaster(pixels, tuple(transform.to_gdal()), [nodata] * len(pixels))
 
+    def value(self, path, x, y, *, band=1):
+        return self.values(path, [(x, y)], band=band)[0]
+
+    def values(self, path, points, *, band=1):
+        import rasterio
+
+        with rasterio.open(str(path)) as src:
+            data = src.read(band)
+            nodata = src.nodatavals[band - 1]
+            out = []
+            for x, y in points:
+                # index() floors through the inverse transform, so a pixel
+                # owns its upper-left edges — the same ownership rule the
+                # dialects use. Fixture points avoid pixel boundaries anyway.
+                row, col = src.index(x, y)
+                if not (0 <= row < src.height and 0 <= col < src.width):
+                    out.append(None)
+                    continue
+                sampled = data[row, col]
+                out.append(None if sampled == nodata else float(sampled))
+        return out
+
+    def band_nodata(self, path, *, band=1):
+        import rasterio
+
+        with rasterio.open(str(path)) as src:
+            return src.nodatavals[band - 1]
+
+    def _pixel_corner(self, src, col, row):
+        x, y = src.transform * (col - 1, row - 1)
+        return (x, y)
+
+    def pixel_as_point(self, path, col, row):
+        import rasterio
+
+        with rasterio.open(str(path)) as src:
+            return self._pixel_corner(src, col, row)
+
+    def pixel_as_centroid(self, path, col, row):
+        import rasterio
+
+        with rasterio.open(str(path)) as src:
+            x, y = src.transform * (col - 0.5, row - 0.5)
+            return (x, y)
+
+    def pixel_as_polygon(self, path, col, row):
+        import rasterio
+        import shapely
+
+        with rasterio.open(str(path)) as src:
+            # Ring order matches both dialects: UL, UR, LR, LL (closed).
+            corners = [
+                (col - 1, row - 1),
+                (col, row - 1),
+                (col, row),
+                (col - 1, row),
+            ]
+            return shapely.Polygon([src.transform * corner for corner in corners])
+
+    def as_raster(
+        self,
+        geometry_wkt,
+        path,
+        pixel_type,
+        *,
+        all_touched=False,
+        burn_value=1.0,
+        nodata=None,
+        use_geometry_extent=True,
+        fill=None,
+    ):
+        """Rasterize with `rasterio.features.rasterize`.
+
+        The dialects disagree on what pixels outside the geometry get —
+        SedonaDB initializes the grid with the nodata value while Sedona
+        Spark burns into zeros and records nodata as metadata only — so as a
+        reference engine this takes the resolved `fill` from the caller
+        (defaulting to 0, the value the dialects agree on when nodata is
+        unset or zero).
+        """
+        import rasterio
+        import rasterio.features
+        import shapely
+
+        geom = shapely.from_wkt(geometry_wkt)
+        with rasterio.open(str(path)) as src:
+            if use_geometry_extent:
+                window = rasterio.features.geometry_window(src, [geom])
+                transform = src.window_transform(window)
+                shape = (int(window.height), int(window.width))
+            else:
+                transform = src.transform
+                shape = (src.height, src.width)
+
+        fill = 0.0 if fill is None else fill
+        for name, value in [("fill", fill), ("burn_value", burn_value)]:
+            if np.asarray(value, dtype=pixel_type) != np.asarray(
+                value, dtype="float64"
+            ):
+                raise ValueError(
+                    f"{name} {value} is not exactly representable as {pixel_type}"
+                )
+        pixels = rasterio.features.rasterize(
+            [(geom, burn_value)],
+            out_shape=shape,
+            transform=transform,
+            fill=fill,
+            all_touched=all_touched,
+            dtype=pixel_type,
+        )
+        return DecodedRaster(pixels[np.newaxis], tuple(transform.to_gdal()), [nodata])
+
+    def resample(self, path, *, width, height, algorithm="nearestneighbor"):
+        import rasterio
+        import rasterio.crs
+        from rasterio.enums import Resampling
+        from rasterio.warp import reproject
+
+        resampling = {
+            "nearestneighbor": Resampling.nearest,
+            "bilinear": Resampling.bilinear,
+            "bicubic": Resampling.cubic,
+        }[algorithm.lower()]
+        with rasterio.open(str(path)) as src:
+            source = src.read()
+            dst_transform = src.transform * src.transform.scale(
+                src.width / width, src.height / height
+            )
+            # reproject() insists on a CRS; with the same one on both sides
+            # nothing reprojects, so an arbitrary CRS keeps a CRS-less
+            # fixture a pure grid resample.
+            crs = src.crs or rasterio.crs.CRS.from_epsg(3857)
+            destination = np.zeros((src.count, height, width), dtype=source.dtype)
+            reproject(
+                source,
+                destination,
+                src_transform=src.transform,
+                src_crs=crs,
+                dst_transform=dst_transform,
+                dst_crs=crs,
+                resampling=resampling,
+            )
+            return DecodedRaster(
+                destination, tuple(dst_transform.to_gdal()), list(src.nodatavals)
+            )
+
+    def zonal_stats(
+        self, path, geometry_wkt, *, band=1, stat="mean", all_touched=False
+    ):
+        import rasterio
+        import rasterio.features
+        import shapely
+
+        geom = shapely.from_wkt(geometry_wkt)
+        with rasterio.open(str(path)) as src:
+            data = src.read(band)
+            nodata = src.nodatavals[band - 1]
+            inside = rasterio.features.geometry_mask(
+                [geom],
+                out_shape=(src.height, src.width),
+                transform=src.transform,
+                all_touched=all_touched,
+                invert=True,
+            )
+        values = data[inside].astype(np.float64)
+        if nodata is not None:
+            values = values[values != nodata]
+        # Sedona's stddev/variance are the sample statistics (ddof=1).
+        reducers = {
+            "count": np.size,
+            "sum": np.sum,
+            "mean": np.mean,
+            "min": np.min,
+            "max": np.max,
+            "stddev": lambda v: v.std(ddof=1),
+            "variance": lambda v: v.var(ddof=1),
+            "median": np.median,
+        }
+        return float(reducers[stat](values))
+
+    def tile_explode(self, path, tile_width, tile_height):
+        import rasterio
+        from rasterio.windows import Window
+
+        out = []
+        with rasterio.open(str(path)) as src:
+            for tile_y, row_off in enumerate(range(0, src.height, tile_height)):
+                for tile_x, col_off in enumerate(range(0, src.width, tile_width)):
+                    window = Window(
+                        col_off,
+                        row_off,
+                        min(tile_width, src.width - col_off),
+                        min(tile_height, src.height - row_off),
+                    )
+                    out.append(
+                        (
+                            tile_x,
+                            tile_y,
+                            DecodedRaster(
+                                src.read(window=window),
+                                tuple(src.window_transform(window).to_gdal()),
+                                list(src.nodatavals),
+                            ),
+                        )
+                    )
+        return out
+
+    def as_geotiff(self, path):
+        # The reference for an encode round-trip is the source content
+        # itself: lossless codecs must preserve pixels, transform, and
+        # nodata bit for bit, so compression options don't change the
+        # expectation and this override doesn't take them.
+        return decode_geotiff(path)
+
+    def from_binary(self, data):
+        return decode_geotiff_bytes(data)
+
 
 def create_dialect_engine(engine_cls, con=None):
     """Build one dialect engine for a parametrized test.
