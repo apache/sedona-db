@@ -29,6 +29,7 @@ import pytest
 
 from sedonadb.raster_testing import (
     Rasterio,
+    SedonaDB,
     SedonaSpark,
     create_dialect_engine,
     random_raster_data,
@@ -38,7 +39,7 @@ from sedonadb.raster_testing import (
 pytest.importorskip("rasterio")
 pytest.importorskip("shapely")
 
-DIALECTS = [SedonaSpark]
+DIALECTS = [SedonaDB, SedonaSpark]
 # RS_Values dialects: Sedona Spark only — SedonaDB does not implement
 # RS_Values.
 VALUES_DIALECTS = [SedonaSpark]

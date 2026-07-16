@@ -31,6 +31,7 @@ import pytest
 
 from sedonadb.raster_testing import (
     Rasterio,
+    SedonaDB,
     SedonaSpark,
     approx_geotransform,
     create_dialect_engine,
@@ -41,7 +42,7 @@ from sedonadb.raster_testing import (
 pytest.importorskip("rasterio")
 shapely = pytest.importorskip("shapely")
 
-DIALECTS = [SedonaSpark]
+DIALECTS = [SedonaDB, SedonaSpark]
 
 TRANSFORMS = {
     "north-up": (100.0, 2.0, 0.0, 500.0, 0.0, -3.0),
@@ -97,3 +98,34 @@ def test_rs_pixelaspolygon_matches_reference(dialect, reference, tiff, col, row)
         rtol=1e-12,
         atol=1e-12,
     )
+
+
+def test_rs_pixelas_sql_text_smoke(con, tmp_path):
+    """One SQL-text invocation per pixel function so the parser path stays
+    covered (everything else in this module routes through the engine seam).
+    Pixel (2, 3) of the north-up grid: upper-left corner (102, 494), pixel
+    extent x [102, 104], y [491, 494]."""
+    path = tmp_path / "smoke.tif"
+    write_geotiff(
+        path,
+        random_raster_data("uint8", bands=1, height=HEIGHT, width=WIDTH),
+        gdal_transform=TRANSFORMS["north-up"],
+    )
+
+    expected = {
+        "RS_PixelAsPoint": shapely.Point(102, 494),
+        "RS_PixelAsCentroid": shapely.Point(103, 492.5),
+        "RS_PixelAsPolygon": shapely.Polygon(
+            [(102, 494), (104, 494), (104, 491), (102, 491)]
+        ),
+    }
+    for function, want in expected.items():
+        got = (
+            con.sql(
+                f"SELECT ST_AsText({function}(RS_FromPath($1), 2, 3)) AS g",
+                params=(str(path),),
+            )
+            .to_arrow_table()["g"][0]
+            .as_py()
+        )
+        assert shapely.equals_exact(shapely.from_wkt(got), want), (function, got)

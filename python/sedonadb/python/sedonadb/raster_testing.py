@@ -340,6 +340,105 @@ class SedonaDB(RasterEngine):
         )
         return [decode_raster(result[i]) for i in range(len(result))]
 
+    def _one_row_df(self, columns):
+        """A one-row DataFrame from `{name: (value, pa_type)}` — arguments
+        travel as table columns so kernels run their real array path
+        (literals constant-fold)."""
+        return self._con.create_data_frame(
+            pa.table(
+                {
+                    name: pa.array([value], type=t)
+                    for name, (value, t) in columns.items()
+                }
+            )
+        )
+
+    def value(self, path, x, y, *, band=1):
+        df = self._one_row_df(
+            {
+                "path": (str(path), pa.utf8()),
+                "x": (float(x), pa.float64()),
+                "y": (float(y), pa.float64()),
+                "band": (int(band), pa.int32()),
+            }
+        )
+        result = df.select(
+            v=df.path.funcs.rs_frompath().funcs.rs_value(
+                self._con.funcs.st_point(df.x, df.y), df.band
+            )
+        ).to_arrow_table()["v"]
+        return result[0].as_py()
+
+    def band_nodata(self, path, *, band=1):
+        df = self._one_row_df(
+            {"path": (str(path), pa.utf8()), "band": (int(band), pa.int32())}
+        )
+        result = df.select(
+            v=df.path.funcs.rs_frompath().funcs.rs_bandnodatavalue(df.band)
+        ).to_arrow_table()["v"]
+        return result[0].as_py()
+
+    def _pixel_geometry(self, function, path, col, row):
+        import shapely
+
+        df = self._one_row_df(
+            {
+                "path": (str(path), pa.utf8()),
+                "col": (int(col), pa.int32()),
+                "row": (int(row), pa.int32()),
+            }
+        )
+        raster = df.path.funcs.rs_frompath()
+        expr = getattr(raster.funcs, function)(df.col, df.row)
+        wkt = df.select(g=expr.funcs.st_astext()).to_arrow_table()["g"][0].as_py()
+        return shapely.from_wkt(wkt)
+
+    def pixel_as_point(self, path, col, row):
+        point = self._pixel_geometry("rs_pixelaspoint", path, col, row)
+        return (point.x, point.y)
+
+    def pixel_as_centroid(self, path, col, row):
+        point = self._pixel_geometry("rs_pixelascentroid", path, col, row)
+        return (point.x, point.y)
+
+    def pixel_as_polygon(self, path, col, row):
+        return self._pixel_geometry("rs_pixelaspolygon", path, col, row)
+
+    def as_raster(
+        self,
+        geometry_wkt,
+        path,
+        pixel_type,
+        *,
+        all_touched=False,
+        burn_value=1.0,
+        nodata=None,
+        use_geometry_extent=True,
+    ):
+        df = self._one_row_df(
+            {
+                "path": (str(path), pa.utf8()),
+                "wkt": (geometry_wkt, pa.utf8()),
+                "pixel_type": (pixel_type, pa.utf8()),
+                "all_touched": (all_touched, pa.bool_()),
+                "burn": (float(burn_value), pa.float64()),
+                "nodata": (None if nodata is None else float(nodata), pa.float64()),
+                "extent": (use_geometry_extent, pa.bool_()),
+            }
+        )
+        result = df.select(
+            r=self._con.funcs.rs_asraster(
+                self._con.funcs.st_geomfromtext(df.wkt),
+                df.path.funcs.rs_frompath(),
+                df.pixel_type,
+                df.all_touched,
+                df.burn,
+                df.nodata,
+                df.extent,
+            )
+        ).to_arrow_table()["r"]
+        return decode_raster(result[0])
+
 
 class SedonaSpark(RasterEngine):
     """Runs Sedona Spark SQL `RS_*` functions — the compatibility-target dialect.

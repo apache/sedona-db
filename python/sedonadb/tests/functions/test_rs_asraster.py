@@ -50,7 +50,7 @@ from sedonadb.raster_testing import (
 pytest.importorskip("rasterio")
 pytest.importorskip("shapely")
 
-DIALECTS = [SedonaSpark]
+DIALECTS = [SedonaDB, SedonaSpark]
 
 # The band types both dialects can express (Sedona Spark has no int8/64-bit
 # integer band types).
