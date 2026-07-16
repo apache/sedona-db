@@ -32,7 +32,6 @@ kernels:
     - geography
     - name: min_level
       type: int64
-      description: Minimum S2 cell level to return. Must be between 0 and 30. Defaults to 0.
     - name: max_level
       type: int64
       description: Maximum S2 cell level to return. Must be between 0 and 30. Defaults to 30.
@@ -41,10 +40,8 @@ kernels:
     - geography
     - name: min_level
       type: int64
-      description: Minimum S2 cell level to return. Must be between 0 and 30. Defaults to 0.
     - name: max_level
       type: int64
-      description: Maximum S2 cell level to return. Must be between 0 and 30. Defaults to 30.
     - name: max_cells
       type: int64
       description: Maximum number of cells to return. Must be greater than 0. Defaults to 8.

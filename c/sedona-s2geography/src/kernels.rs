@@ -32,11 +32,7 @@ use sedona_schema::{
 use crate::{s2geog_check, s2geography_c_bindgen::*};
 
 fn covering_cell_ids_type() -> SedonaType {
-    SedonaType::Arrow(DataType::List(Arc::new(arrow_schema::Field::new(
-        "item",
-        DataType::Int64,
-        true,
-    ))))
+    SedonaType::Arrow(DataType::new_list(DataType::Int64, true))
 }
 
 pub fn s2_scalar_kernels() -> Result<Vec<(String, ScalarKernelRef)>> {
