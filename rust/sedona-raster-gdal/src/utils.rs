@@ -84,12 +84,11 @@ pub fn append_as_indb_raster(dataset: &Dataset, builder: &mut RasterBuilder) -> 
             .map_err(|e| exec_datafusion_err!("Failed to read band {} data: {}", band_idx, e))?;
         let band_data_len = u32::try_from(band_data.len())
             .map_err(|_| exec_datafusion_err!("Band {} data too large for Arrow view", band_idx))?;
-        let block = builder
-            .band_data_writer()
-            .append_block(Buffer::from_vec(band_data));
+        // Hand the freshly-read allocation to Arrow as a shared data block (a
+        // refcount bump, never a copy). `append_band_data_buffer` also stores
+        // sub-inline-threshold bands inline, keeping the view canonical.
         builder
-            .band_data_writer()
-            .try_append_view(block, 0, band_data_len)
+            .append_band_data_buffer(&Buffer::from_vec(band_data), 0, band_data_len)
             .map_err(|e| exec_datafusion_err!("Failed to append band {} data: {}", band_idx, e))?;
 
         builder
