@@ -243,12 +243,6 @@ impl Drop for VsiMemFileGuard<'_> {
     }
 }
 
-/// Map a quality fraction in `[0.0, 1.0]` to GDAL's 1–100 `JPEG_QUALITY`.
-///
-/// The fractional scale matches Apache Sedona (GeoTools' `setCompressionQuality`);
-/// a value outside the range errors rather than clamping — silently clamping
-/// would turn the most likely mistake (passing a 0–100 quality like `75`) into
-/// maximum quality with no warning.
 /// Append one encoded GeoTIFF to the output as a view over the GDAL
 /// allocation itself — the bytes are not copied. The [`VSIBuffer`] becomes an
 /// external Arrow allocation owned by the output array, so its lifetime (and
@@ -279,6 +273,12 @@ fn append_geotiff_view(builder: &mut BinaryViewBuilder, bytes: VSIBuffer) -> Res
         .map_err(|e| exec_datafusion_err!("RS_AsGeoTiff: failed to append binary view: {e}"))
 }
 
+/// Map a quality fraction in `[0.0, 1.0]` to GDAL's 1–100 `JPEG_QUALITY`.
+///
+/// The fractional scale matches Apache Sedona (GeoTools' `setCompressionQuality`);
+/// a value outside the range errors rather than clamping — silently clamping
+/// would turn the most likely mistake (passing a 0–100 quality like `75`) into
+/// maximum quality with no warning.
 fn jpeg_quality_option(quality: f64) -> Result<i32> {
     if !(0.0..=1.0).contains(&quality) {
         return exec_err!(
