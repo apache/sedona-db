@@ -176,18 +176,23 @@ impl SedonaScalarKernel for RsFromGDALRaster {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gdal_common::with_gdal;
-    use arrow_array::{ArrayRef, BinaryArray};
-    use datafusion_common::cast::as_struct_array;
+    use arrow_array::{ArrayRef, BinaryArray, BinaryViewArray, ListArray, StructArray};
     use sedona_gdal::raster::types::Buffer;
-    use sedona_raster::array::RasterStructArray;
-    use sedona_raster::traits::RasterRef;
+    use sedona_schema::raster::{band_indices, raster_indices};
+    use sedona_testing::raster_spec::{
+        assert_raster_scalar_equals, assert_rasters_equal, RasterSpec,
+    };
     use sedona_testing::testers::ScalarUdfTester;
 
     /// Build a small 4x4 single-band GeoTIFF (EPSG:4326) with GDAL and return its
-    /// bytes — the fixture-free stand-in for a `.tiff` on disk, so tests exercise
-    /// the real decode path without shipping a binary fixture.
-    fn make_geotiff_bytes(gdal: &Gdal) -> Vec<u8> {
+    /// bytes together with the CRS GDAL reads back from them (PROJJSON) — the
+    /// fixture-free stand-in for a `.tiff` on disk, so tests exercise the real
+    /// decode path without shipping a binary fixture.
+    ///
+    /// The CRS is read from the fixture itself, not copied from a decode result,
+    /// so a [`RasterSpec`] can pin CRS preservation without hard-coding a
+    /// PROJJSON blob that drifts across PROJ versions.
+    fn make_geotiff_fixture(gdal: &Gdal) -> (Vec<u8>, Option<String>) {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("src.tif");
         let path_str = path.to_string_lossy().to_string();
@@ -204,7 +209,63 @@ mod tests {
             let mut buffer = Buffer::new((4, 4), (0..16u8).collect::<Vec<_>>());
             band.write((0, 0), (4, 4), &mut buffer).unwrap();
         } // drop flushes the dataset to disk
+        let bytes = std::fs::read(&path).unwrap();
+        let crs = gdal
+            .open_ex_with_options(
+                &path_str,
+                DatasetOptions {
+                    open_flags: GDAL_OF_RASTER | GDAL_OF_READONLY,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .spatial_ref()
+            .ok()
+            .and_then(|sr| sr.to_projjson().ok());
+        (bytes, crs)
+    }
+
+    /// Build a 4x4 two-band UInt8 GeoTIFF (no CRS). Each band's 16 bytes exceed
+    /// the inline view threshold, so an in-db decode attaches one shared data
+    /// block per band — the property [`decoded_two_band_raster_is_zero_copy`]
+    /// pins.
+    fn make_two_band_geotiff_bytes(gdal: &Gdal) -> Vec<u8> {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("two_band.tif");
+        let path_str = path.to_string_lossy().to_string();
+        {
+            let driver = gdal.get_driver_by_name("GTiff").unwrap();
+            let dataset = driver
+                .create_with_band_type::<u8>(&path_str, 4, 4, 2)
+                .unwrap();
+            dataset
+                .set_geo_transform(&[0.0, 1.0, 0.0, 4.0, 0.0, -1.0])
+                .unwrap();
+            let band1 = dataset.rasterband(1).unwrap();
+            let mut b1 = Buffer::new((4, 4), (0..16u8).collect::<Vec<_>>());
+            band1.write((0, 0), (4, 4), &mut b1).unwrap();
+            let band2 = dataset.rasterband(2).unwrap();
+            let mut b2 = Buffer::new((4, 4), (100..116u8).collect::<Vec<_>>());
+            band2.write((0, 0), (4, 4), &mut b2).unwrap();
+        } // drop flushes the dataset to disk
         std::fs::read(&path).unwrap()
+    }
+
+    /// The band-data `BinaryViewArray` inside a raster `StructArray`
+    /// (bands list -> band struct -> data column).
+    fn band_data_view(arr: &StructArray) -> &BinaryViewArray {
+        arr.column(raster_indices::BANDS)
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .unwrap()
+            .values()
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap()
+            .column(band_indices::DATA)
+            .as_any()
+            .downcast_ref::<BinaryViewArray>()
+            .unwrap()
     }
 
     fn from_gdal_tester() -> ScalarUdfTester {
@@ -212,6 +273,16 @@ mod tests {
             rs_from_gdal_raster_udf().into(),
             vec![SedonaType::Arrow(DataType::Binary)],
         )
+    }
+
+    /// The single-band fixture's declarative expectation, derived from the
+    /// fixture's construction: 4x4 UInt8, north-up unit pixels with origin
+    /// (0, 4), sequential values 0..16, no nodata, in-db.
+    fn single_band_spec(crs: Option<&str>) -> RasterSpec {
+        RasterSpec::d2(4, 4)
+            .transform([0.0, 1.0, 0.0, 4.0, 0.0, -1.0])
+            .crs(crs)
+            .band_values(&(0..16u8).collect::<Vec<_>>())
     }
 
     #[test]
@@ -232,45 +303,88 @@ mod tests {
 
     #[test]
     fn parse_gdal_raster_builds_indb_raster() {
-        // GeoTIFF bytes decode to an in-db raster with the source dimensions/CRS.
+        // The direct builder path: GeoTIFF bytes decode to an in-db raster
+        // matching the fixture's dimensions, transform, CRS and pixel values.
+        // The spec's in-db bands assert (via storage_type) that band data was
+        // materialised inline rather than left as an out-db reference.
         with_gdal(|gdal| {
-            let bytes = make_geotiff_bytes(gdal);
-            let arr = RsFromGDALRaster::parse_gdal_raster(gdal, &bytes)?;
-            let rasters = RasterStructArray::try_new(&arr).unwrap();
-            assert_eq!(rasters.len(), 1);
-            let raster = rasters.get(0).unwrap();
-            assert_eq!(raster.metadata().width(), 4);
-            assert_eq!(raster.metadata().height(), 4);
-            assert_eq!(raster.num_bands(), 1);
-            assert!(raster.crs().is_some(), "EPSG:4326 should survive decode");
-            // In-db: band data is materialised inline, not an out-db reference.
-            assert!(raster.band_outdb_uri(0).is_none());
-            Ok::<_, datafusion_common::DataFusionError>(())
+            let (bytes, crs) = make_geotiff_fixture(gdal);
+            let arr: ArrayRef = Arc::new(RsFromGDALRaster::parse_gdal_raster(gdal, &bytes)?);
+            assert_rasters_equal(&arr, &[Some(single_band_spec(crs.as_deref()))]);
+            Ok(())
         })
         .unwrap();
     }
 
     #[test]
     fn from_gdal_raster_decodes_via_udf() {
-        // End-to-end through the UDF: GeoTIFF binary in, raster out.
-        let bytes = with_gdal(|gdal| Ok(make_geotiff_bytes(gdal))).unwrap();
-        let input: ArrayRef = Arc::new(BinaryArray::from(vec![bytes.as_slice()]));
-        let result = from_gdal_tester().invoke_arrays(vec![input]).unwrap();
-        let rasters = RasterStructArray::try_new(as_struct_array(&result).unwrap()).unwrap();
-        let raster = rasters.get(0).unwrap();
-        assert_eq!(raster.metadata().width(), 4);
-        assert_eq!(raster.metadata().height(), 4);
-        assert_eq!(raster.num_bands(), 1);
+        // End-to-end through the UDF's scalar path: GeoTIFF binary in, raster out.
+        let (bytes, crs) = with_gdal(|gdal| Ok(make_geotiff_fixture(gdal))).unwrap();
+        let result = from_gdal_tester()
+            .invoke_scalar(ScalarValue::Binary(Some(bytes)))
+            .unwrap();
+        assert_raster_scalar_equals(&result, &single_band_spec(crs.as_deref()));
+    }
+
+    #[test]
+    fn decoded_two_band_raster_is_zero_copy() {
+        with_gdal(|gdal| {
+            let bytes = make_two_band_geotiff_bytes(gdal);
+            let arr = RsFromGDALRaster::parse_gdal_raster(gdal, &bytes)?;
+
+            // Zero-copy: each band's freshly-read allocation is attached as its
+            // own shared data block (a refcount bump), so the band-data view
+            // has one buffer per band. A copying `append_value` path would
+            // consolidate both bands into a single builder-owned buffer.
+            assert_eq!(band_data_view(&arr).data_buffers().len(), 2);
+
+            // ...and the decoded values/structure match the fixture.
+            let arr: ArrayRef = Arc::new(arr);
+            assert_rasters_equal(
+                &arr,
+                &[Some(
+                    RasterSpec::d2(4, 4)
+                        .crs(None)
+                        .transform([0.0, 1.0, 0.0, 4.0, 0.0, -1.0])
+                        .band_values(&(0..16u8).collect::<Vec<_>>())
+                        .band_values(&(100..116u8).collect::<Vec<_>>()),
+                )],
+            );
+            Ok(())
+        })
+        .unwrap();
     }
 
     #[test]
     fn null_binary_yields_null_raster() {
         let input: ArrayRef = Arc::new(BinaryArray::from(vec![None::<&[u8]>]));
         let result = from_gdal_tester().invoke_arrays(vec![input]).unwrap();
-        let struct_arr = as_struct_array(&result).unwrap();
-        assert!(
-            struct_arr.is_null(0),
-            "NULL bytes should yield a NULL raster"
-        );
+        assert_rasters_equal(&result, &[None]);
+    }
+
+    #[test]
+    fn empty_binary_errors() {
+        // Non-null but empty bytes: GDAL has nothing to open. A clean error,
+        // not a panic.
+        let input: ArrayRef = Arc::new(BinaryArray::from(vec![Some(&b""[..])]));
+        assert!(from_gdal_tester().invoke_arrays(vec![input]).is_err());
+    }
+
+    #[test]
+    fn unparseable_bytes_error() {
+        // Bytes GDAL cannot identify as any raster format.
+        let input: ArrayRef = Arc::new(BinaryArray::from(vec![Some(&b"not a raster at all"[..])]));
+        assert!(from_gdal_tester().invoke_arrays(vec![input]).is_err());
+    }
+
+    #[test]
+    fn truncated_geotiff_errors() {
+        // A real GeoTIFF cut down to its 8-byte header: the IFD offset now
+        // points past EOF, so GDAL cannot open it. Exercises the malformed
+        // header path without a panic.
+        let (bytes, _) = with_gdal(|gdal| Ok(make_geotiff_fixture(gdal))).unwrap();
+        let truncated = bytes[..8.min(bytes.len())].to_vec();
+        let input: ArrayRef = Arc::new(BinaryArray::from(vec![Some(truncated.as_slice())]));
+        assert!(from_gdal_tester().invoke_arrays(vec![input]).is_err());
     }
 }
