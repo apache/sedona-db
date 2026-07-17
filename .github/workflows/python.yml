@@ -144,6 +144,30 @@ jobs:
           cd python/sedonadb
           python -m pytest -vv
 
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Cache Sedona Spark jars
+        uses: actions/cache@v6
+        with:
+          path: ~/.ivy2
+          # Keep in sync with SEDONA_SPARK_VERSION in
+          # python/sedonadb/python/sedonadb/raster_testing.py
+          key: sedona-spark-jars-${{ runner.os }}-1.9.0
+
+      - name: Run Sedona Spark raster parity tests
+        # Observe-first: report failures without failing the job while the
+        # Spark lane proves itself stable.
+        continue-on-error: true
+        env:
+          SEDONADB_RUN_SPARK_TESTS: "true"
+        run: |
+          pip install pyspark apache-sedona
+          cd python/sedonadb
+          python -m pytest tests/functions -q -k "sedonaspark" -rX
+
       - name: Run doctests (sedonadb)
         run: |
           cd python/sedonadb
