@@ -14,12 +14,12 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+use crate::array::RasterStructArray;
+use crate::builder::RasterBuilder;
+use crate::traits::{BandMetadata, RasterMetadata, RasterRef};
 use arrow_array::StructArray;
 use datafusion_common::Result;
 use fastrand::Rng;
-use sedona_raster::array::RasterStructArray;
-use sedona_raster::builder::RasterBuilder;
-use sedona_raster::traits::{BandMetadata, RasterMetadata, RasterRef};
 use sedona_schema::crs::lnglat;
 use sedona_schema::raster::{BandDataType, StorageType};
 
@@ -533,8 +533,8 @@ pub fn assert_raster_equal(raster1: &impl RasterRef, raster2: &impl RasterRef) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sedona_raster::array::RasterStructArray;
-    use sedona_raster::traits::RasterRef;
+    use crate::array::RasterStructArray;
+    use crate::traits::RasterRef;
 
     #[test]
     fn test_generate_test_rasters() {
@@ -620,7 +620,7 @@ mod tests {
     fn test_raster_crs_mismatch_is_caught() {
         // Two rasters identical except for CRS must not compare equal — this
         // regresses against assert_raster_equal ignoring crs().
-        use crate::raster_spec::RasterSpec;
+        use crate::testing::raster_spec::RasterSpec;
         let with_crs = RasterSpec::d2(2, 2)
             .crs(Some("EPSG:4326"))
             .band(BandDataType::UInt8)

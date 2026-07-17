@@ -119,7 +119,7 @@ impl fmt::Display for RasterDisplay<'_> {
 mod tests {
     use super::*;
     use crate::array::RasterStructArray;
-    use sedona_testing::rasters::generate_test_rasters;
+    use crate::testing::rasters::generate_test_rasters;
 
     #[test]
     fn display_non_skewed_raster() {

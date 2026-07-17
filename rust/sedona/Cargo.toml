@@ -52,6 +52,7 @@ s2geography = ["dep:sedona-s2geography", "dep:sedona-spatial-join-geography"]
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 rstest = { workspace = true }
+sedona-testing = { workspace = true }
 
 [dependencies]
 arrow-schema = { workspace = true }
@@ -74,6 +75,7 @@ object_store = { workspace = true }
 parking_lot = { workspace = true }
 regex = { workspace = true }
 sedona-common = { workspace = true }
+sedona-datagen = { workspace = true }
 sedona-datasource = { workspace = true }
 sedona-expr = { workspace = true }
 sedona-functions = { workspace = true }
@@ -93,7 +95,6 @@ sedona-spatial-join-gpu = { workspace = true, optional = true }
 sedona-spatial-join-geography = { workspace = true, optional = true }
 sedona-query-planner = { workspace = true }
 sedona-s2geography = { workspace = true, optional = true }
-sedona-testing = { workspace = true }
 sedona-tg = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

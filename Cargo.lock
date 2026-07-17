@@ -5744,6 +5744,7 @@ dependencies = [
  "regex",
  "rstest",
  "sedona-common",
+ "sedona-datagen",
  "sedona-datasource",
  "sedona-expr",
  "sedona-functions",
@@ -5823,6 +5824,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "sedona-datagen"
+version = "0.4.0"
+dependencies = [
+ "arrow-array",
+ "arrow-schema",
+ "datafusion-common",
+ "geo-traits",
+ "geo-types",
+ "rand 0.10.1",
+ "rstest",
+ "sedona-common",
+ "sedona-geometry",
+ "sedona-schema",
+ "wkb",
+]
+
+[[package]]
 name = "sedona-datasource"
 version = "0.4.0"
 dependencies = [
@@ -5862,7 +5880,7 @@ dependencies = [
  "sedona-common",
  "sedona-geometry",
  "sedona-schema",
- "sedona-testing",
+ "sedona-testing-base",
  "serde",
  "serde_json",
 ]
@@ -5911,7 +5929,6 @@ dependencies = [
  "sedona-common",
  "sedona-expr",
  "sedona-geometry",
- "sedona-raster",
  "sedona-schema",
  "sedona-testing",
  "serde_json",
@@ -5976,7 +5993,7 @@ dependencies = [
  "robust",
  "rstar 0.13.0",
  "sedona-geo-traits-ext",
- "sedona-testing",
+ "sedona-testing-base",
  "wkb",
  "wkt 0.14.0",
 ]
@@ -6006,7 +6023,6 @@ dependencies = [
  "datafusion-expr",
  "errno",
  "rstest",
- "sedona",
  "sedona-expr",
  "sedona-functions",
  "sedona-schema",
@@ -6022,7 +6038,6 @@ dependencies = [
  "geo-types",
  "lru 0.18.0",
  "rstest",
- "sedona-testing",
  "serde",
  "serde_json",
  "serde_with",
@@ -6086,7 +6101,6 @@ dependencies = [
  "geo-types",
  "geos",
  "rstest",
- "sedona",
  "sedona-common",
  "sedona-expr",
  "sedona-functions",
@@ -6143,7 +6157,6 @@ dependencies = [
  "laz",
  "object_store",
  "rayon",
- "sedona",
  "sedona-expr",
  "sedona-geometry",
  "tempfile",
@@ -6206,9 +6219,10 @@ dependencies = [
  "arrow-schema",
  "async-trait",
  "datafusion-common",
+ "datafusion-expr",
+ "fastrand",
  "sedona-common",
  "sedona-schema",
- "sedona-testing",
  "tokio",
 ]
 
@@ -6303,7 +6317,6 @@ dependencies = [
  "paste",
  "regex",
  "rstest",
- "sedona",
  "sedona-common",
  "sedona-expr",
  "sedona-extension",
@@ -6458,9 +6471,26 @@ dependencies = [
  "rand 0.10.1",
  "rstest",
  "sedona-common",
+ "sedona-datagen",
  "sedona-expr",
  "sedona-geometry",
  "sedona-raster",
+ "sedona-schema",
+ "sedona-testing-base",
+ "wkb",
+ "wkt 0.14.0",
+]
+
+[[package]]
+name = "sedona-testing-base"
+version = "0.4.0"
+dependencies = [
+ "arrow-array",
+ "arrow-schema",
+ "datafusion-common",
+ "datafusion-expr",
+ "geo-types",
+ "sedona-common",
  "sedona-schema",
  "wkb",
  "wkt 0.14.0",
@@ -6478,7 +6508,6 @@ dependencies = [
  "datafusion-expr",
  "geo",
  "rstest",
- "sedona",
  "sedona-expr",
  "sedona-functions",
  "sedona-schema",

@@ -256,7 +256,8 @@ A script is provided to upload the crates to <https://crates.io>.
 
 ```shell
 cargo login
-dev/release/upload-crates-io.sh
+dev/release/publish-crates.sh --dry-run-local
+dev/release/publish-crates.sh --publish
 ```
 
 ### Publish release blog post

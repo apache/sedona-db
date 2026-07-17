@@ -25,7 +25,7 @@
 //!
 //! ```
 //! use sedona_schema::raster::BandDataType;
-//! use sedona_testing::raster_spec::RasterSpec;
+//! use sedona_raster::testing::raster_spec::RasterSpec;
 //!
 //! // A 4x5 raster with one Float32 band of sequential pixel values:
 //! let raster = RasterSpec::d2(4, 5).band(BandDataType::Float32).build();
@@ -36,19 +36,19 @@
 //!     .build();
 //! ```
 
+use crate::array::RasterStructArray;
+use crate::builder::RasterBuilder;
+use crate::traits::is_spatial_dim_pair;
 use arrow_array::{
     Array, ArrayRef, Int64Array, ListArray, StringArray, StringViewArray, StructArray,
 };
 use datafusion_common::ScalarValue;
 use datafusion_expr::{Expr, Literal};
-use sedona_raster::array::RasterStructArray;
-use sedona_raster::builder::RasterBuilder;
-use sedona_raster::traits::is_spatial_dim_pair;
 use sedona_schema::crs::lnglat;
 use sedona_schema::raster::BandDataType;
 use std::sync::Arc;
 
-use crate::rasters::assert_raster_arrays_equal;
+use super::rasters::assert_raster_arrays_equal;
 
 /// A pixel type that can fill a test band.
 ///
@@ -491,7 +491,7 @@ pub fn list_i64_row(result: &ArrayRef, row: usize) -> Option<Vec<i64>> {
 /// Decode the pixel values of one band (1-based `band_number`) of one row of
 /// a raster `StructArray`. `T` must match the band's data type.
 pub fn band_pixels<T: PixelValue>(rasters: &StructArray, row: usize, band_number: usize) -> Vec<T> {
-    use sedona_raster::traits::RasterRef;
+    use crate::traits::RasterRef;
 
     let array = RasterStructArray::try_new(rasters).unwrap();
     assert!(!array.is_null(row), "raster row {row} is null");
@@ -514,7 +514,7 @@ pub fn band_pixels<T: PixelValue>(rasters: &StructArray, row: usize, band_number
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sedona_raster::traits::RasterRef;
+    use crate::traits::RasterRef;
 
     #[test]
     fn d2_defaults() {

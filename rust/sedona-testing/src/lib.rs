@@ -16,11 +16,13 @@
 // under the License.
 pub mod benchmark_util;
 pub mod compare;
-pub mod create;
-pub mod data;
-pub mod datagen;
-pub mod fixtures;
-pub mod raster_spec;
-pub mod rasters;
+pub use sedona_testing_base::create;
+pub use sedona_testing_base::data;
+pub mod datagen {
+    pub use sedona_datagen::*;
+}
+pub use sedona_raster::testing::raster_spec;
+pub use sedona_raster::testing::rasters;
+pub use sedona_testing_base::fixtures;
 pub mod read;
 pub mod testers;

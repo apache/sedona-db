@@ -687,6 +687,7 @@ fn ensure_crs_string_arrays_equal2(lhs: &ArrayRef, rhs: &ArrayRef) -> Result<()>
 
 #[cfg(test)]
 mod test {
+    use crate::test_util::ScalarUdfTester;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_geometry::types::Edges;
@@ -694,9 +695,7 @@ mod test {
         crs::lnglat,
         datatypes::{SedonaType, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS},
     };
-    use sedona_testing::{
-        create::create_array_item_crs, create::create_scalar_item_crs, testers::ScalarUdfTester,
-    };
+    use sedona_testing_base::create::{create_array_item_crs, create_scalar_item_crs};
 
     use crate::scalar_udf::{SedonaScalarUDF, SimpleSedonaScalarKernel};
 

@@ -52,10 +52,12 @@ geo-types = { workspace = true }
 parquet = { workspace = true, features = ["arrow", "snap", "zstd"] }
 rand = { workspace = true }
 sedona-common = { workspace = true }
+sedona-datagen = { workspace = true }
 sedona-geometry = { workspace = true }
 sedona-expr = { workspace = true }
-sedona-raster = { workspace = true }
+sedona-raster = { workspace = true, features = ["testing"] }
 sedona-schema = { workspace = true }
+sedona-testing-base = { workspace = true }
 wkb = { workspace = true }
 wkt = { workspace = true }
 geo = { workspace = true, optional = true }

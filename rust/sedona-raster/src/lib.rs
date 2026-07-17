@@ -20,5 +20,7 @@ pub mod array;
 pub mod builder;
 pub mod display;
 pub mod raster_loader;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 pub mod traits;
 pub mod view_entries;

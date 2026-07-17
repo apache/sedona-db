@@ -1797,7 +1797,7 @@ mod tests {
         }
         #[test]
         fn test_large_polygon_distance() {
-            let ls = sedona_testing::fixtures::norway_main::<f64>();
+            let ls = sedona_testing_base::fixtures::norway_main::<f64>();
             let poly1 = Polygon::new(ls, vec![]);
             let vec2 = vec![
                 (4.921875, 66.33750501996518),
@@ -1823,9 +1823,9 @@ mod tests {
         // A polygon inside another polygon's ring; they're disjoint in the DE-9IM sense:
         // FF2FF1212
         fn test_poly_in_ring() {
-            let shell = sedona_testing::fixtures::shell::<f64>();
-            let ring = sedona_testing::fixtures::ring::<f64>();
-            let poly_in_ring = sedona_testing::fixtures::poly_in_ring::<f64>();
+            let shell = sedona_testing_base::fixtures::shell::<f64>();
+            let ring = sedona_testing_base::fixtures::ring::<f64>();
+            let poly_in_ring = sedona_testing_base::fixtures::poly_in_ring::<f64>();
             // inside is "inside" outside's ring, but they are disjoint
             let outside = Polygon::new(shell, vec![ring]);
             let inside = Polygon::new(poly_in_ring, vec![]);
@@ -1844,8 +1844,8 @@ mod tests {
         #[test]
         // two ring LineStrings; one encloses the other but they neither touch nor intersect
         fn test_linestring_distance() {
-            let ring = sedona_testing::fixtures::ring::<f64>();
-            let poly_in_ring = sedona_testing::fixtures::poly_in_ring::<f64>();
+            let ring = sedona_testing_base::fixtures::ring::<f64>();
+            let poly_in_ring = sedona_testing_base::fixtures::poly_in_ring::<f64>();
 
             // Test original implementation
             let distance = Euclidean.distance(&ring, &poly_in_ring);

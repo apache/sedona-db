@@ -14,13 +14,6 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-pub mod aggregate_udf;
-pub mod function_set;
-pub mod item_crs;
-pub mod metadata_preserving_column;
-pub mod scalar_udf;
-pub mod spatial_filter;
-pub mod statistics;
-#[cfg(test)]
-pub(crate) mod test_util;
-pub mod utils;
+
+pub mod raster_spec;
+pub mod rasters;

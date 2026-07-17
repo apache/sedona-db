@@ -28,6 +28,7 @@ members = [
     "python/sedonadb-zarr",
     "r/sedonadb/src/rust",
     "rust/sedona-adbc",
+    "rust/sedona-datagen",
     "rust/sedona-datasource",
     "rust/sedona-expr",
     "rust/sedona-functions",
@@ -47,6 +48,7 @@ members = [
     "rust/sedona-spatial-join-gpu",
     "rust/sedona-query-planner",
     "rust/sedona-testing",
+    "rust/sedona-testing-base",
     "rust/sedona",
     "sedona-cli",
 ]
@@ -145,6 +147,7 @@ zarrs_object_store = "0.5"
 sedona = { version = "0.4.0", path = "rust/sedona" }
 sedona-adbc = { version = "0.4.0", path = "rust/sedona-adbc" }
 sedona-common = { version = "0.4.0", path = "rust/sedona-common" }
+sedona-datagen = { version = "0.4.0", path = "rust/sedona-datagen" }
 sedona-datasource = { version = "0.4.0", path = "rust/sedona-datasource" }
 sedona-expr = { version = "0.4.0", path = "rust/sedona-expr" }
 sedona-functions = { version = "0.4.0", path = "rust/sedona-functions" }
@@ -164,6 +167,7 @@ sedona-spatial-join-gpu = { version = "0.4.0", path = "rust/sedona-spatial-join-
 sedona-spatial-join-geography = { version = "0.4.0", path = "rust/sedona-spatial-join-geography" }
 sedona-query-planner = { version = "0.4.0", path = "rust/sedona-query-planner" }
 sedona-testing = { version = "0.4.0", path = "rust/sedona-testing" }
+sedona-testing-base = { version = "0.4.0", path = "rust/sedona-testing-base" }
 
 # C wrapper crates
 sedona-extension = { version = "0.4.0", path = "c/sedona-extension" }

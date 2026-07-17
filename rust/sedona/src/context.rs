@@ -338,6 +338,9 @@ impl SedonaContext {
 
         // Always register raster functions
         out.register_function_set(sedona_raster_functions::register::default_function_set());
+        out.register_scalar_kernels(
+            sedona_raster_functions::register::scalar_kernels().into_iter(),
+        )?;
 
         Ok(out)
     }

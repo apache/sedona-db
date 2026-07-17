@@ -1165,7 +1165,7 @@ mod tests {
 
     #[test]
     fn copy_raster_from_overrides_transform_and_preserves_bands() {
-        use sedona_testing::raster_spec::{assert_rasters_equal, RasterSpec};
+        use crate::testing::raster_spec::{assert_rasters_equal, RasterSpec};
 
         // Source: a CRS, a nodata sentinel, and pixel values to preserve.
         let source = RasterSpec::d2(2, 1)

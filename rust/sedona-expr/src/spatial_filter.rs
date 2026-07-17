@@ -602,7 +602,7 @@ mod test {
     use rstest::rstest;
     use sedona_geometry::{bounding_box::BoundingBox, interval::Interval};
     use sedona_schema::datatypes::{WKB_GEOGRAPHY, WKB_GEOMETRY};
-    use sedona_testing::create::create_scalar;
+    use sedona_testing_base::create::create_scalar;
 
     use super::*;
 

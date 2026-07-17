@@ -558,6 +558,7 @@ impl<'a> RasterStructArray<'a> {
 mod tests {
     use super::*;
     use crate::builder::RasterBuilder;
+    use crate::testing::rasters::generate_test_rasters;
     use crate::traits::{BandMetadata, BandOverrides, RasterMetadata};
     use arrow_array::{ArrayRef, ListArray, StructArray, UInt32Array};
     use arrow_buffer::{OffsetBuffer, ScalarBuffer};
@@ -565,7 +566,6 @@ mod tests {
     use sedona_schema::raster::{
         band_indices, raster_indices, BandDataType, RasterSchema, StorageType,
     };
-    use sedona_testing::rasters::generate_test_rasters;
     use std::sync::Arc;
 
     #[test]
