@@ -628,7 +628,7 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(
-            err.contains("expected a Point or MultiPoint"),
+            err.contains("expected a Point, MultiPoint, or GeometryCollection"),
             "unexpected error: {err}"
         );
     }
