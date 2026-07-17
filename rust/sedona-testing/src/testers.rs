@@ -28,6 +28,7 @@ use datafusion_expr::{
 };
 use datafusion_physical_expr::{expressions::Column, PhysicalExpr};
 use sedona_common::{sedona_internal_err, SedonaOptions};
+use sedona_geometry::transform::CrsEngine;
 use sedona_schema::datatypes::SedonaType;
 
 use crate::{
@@ -298,6 +299,18 @@ impl ScalarUdfTester {
             .extensions
             .get_mut::<SedonaOptions>()
             .expect("SedonaOptions does not exist")
+    }
+
+    /// Replace the CRS engine in this tester's [`SedonaOptions`].
+    ///
+    /// UDFs that reproject read the engine from the session options; the
+    /// default engine errors on use, so a test exercising a reprojecting
+    /// path adds a real engine crate (e.g. `sedona-proj`) as a
+    /// dev-dependency and passes its engine here.
+    pub fn with_crs_engine(mut self, crs_engine: Arc<dyn CrsEngine + Send + Sync>) -> Self {
+        let options = self.sedona_options_mut();
+        options.runtime = options.runtime.with_crs_engine(crs_engine);
+        self
     }
 
     /// Assert the return type of the function for the argument types used

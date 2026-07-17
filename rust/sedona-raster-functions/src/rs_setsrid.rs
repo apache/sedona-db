@@ -395,7 +395,8 @@ mod tests {
     use sedona_raster::traits::RasterRef;
     use sedona_schema::crs::deserialize_crs;
     use sedona_schema::datatypes::RASTER;
-    use sedona_testing::rasters::generate_test_rasters;
+    use sedona_testing::raster_spec::assert_rasters_equal;
+    use sedona_testing::rasters::{generate_test_raster_spec, generate_test_rasters};
     use sedona_testing::testers::ScalarUdfTester;
 
     #[test]
@@ -494,19 +495,16 @@ mod tests {
             .invoke_array_scalar(Arc::new(rasters), 3857u32)
             .unwrap();
 
-        // Verify CRS was changed to EPSG:3857
-        let result_struct = result.as_any().downcast_ref::<StructArray>().unwrap();
-        let raster_array = RasterStructArray::try_new(result_struct).unwrap();
-        assert_eq!(raster_array.len(), 3);
-
-        let raster0 = raster_array.get(0).unwrap();
-        assert_eq!(raster0.crs(), Some("EPSG:3857"));
-
-        // Null raster at index 1 should remain null
-        assert!(raster_array.is_null(1));
-
-        let raster2 = raster_array.get(2).unwrap();
-        assert_eq!(raster2.crs(), Some("EPSG:3857"));
+        // Rows 0 and 2 have their CRS swapped to EPSG:3857 with all other
+        // fields preserved; the null raster at row 1 stays null.
+        assert_rasters_equal(
+            &result,
+            &[
+                Some(generate_test_raster_spec(0).crs(Some("EPSG:3857"))),
+                None,
+                Some(generate_test_raster_spec(2).crs(Some("EPSG:3857"))),
+            ],
+        );
     }
 
     #[test]
@@ -519,10 +517,11 @@ mod tests {
             .invoke_array_scalar(Arc::new(rasters), 4326u32)
             .unwrap();
 
-        let result_struct = result.as_any().downcast_ref::<StructArray>().unwrap();
-        let raster_array = RasterStructArray::try_new(result_struct).unwrap();
-        let raster = raster_array.get(0).unwrap();
-        assert_eq!(raster.crs(), Some("OGC:CRS84"));
+        // SRID 4326 maps to the OGC:CRS84 authority code.
+        assert_rasters_equal(
+            &result,
+            &[Some(generate_test_raster_spec(0).crs(Some("OGC:CRS84")))],
+        );
     }
 
     #[test]
@@ -533,11 +532,8 @@ mod tests {
         let rasters = generate_test_rasters(1, None).unwrap();
         let result = tester.invoke_array_scalar(Arc::new(rasters), 0u32).unwrap();
 
-        let result_struct = result.as_any().downcast_ref::<StructArray>().unwrap();
-        let raster_array = RasterStructArray::try_new(result_struct).unwrap();
-        let raster = raster_array.get(0).unwrap();
-        // CRS should be None (null) for SRID 0
-        assert_eq!(raster.crs(), None);
+        // SRID 0 clears the CRS (maps to null) while preserving the raster.
+        assert_rasters_equal(&result, &[Some(generate_test_raster_spec(0).crs(None))]);
     }
 
     #[test]
@@ -552,17 +548,16 @@ mod tests {
             .invoke_array_scalar(Arc::new(rasters), "EPSG:3857")
             .unwrap();
 
-        let result_struct = result.as_any().downcast_ref::<StructArray>().unwrap();
-        let raster_array = RasterStructArray::try_new(result_struct).unwrap();
-        assert_eq!(raster_array.len(), 3);
-
-        let raster0 = raster_array.get(0).unwrap();
-        assert_eq!(raster0.crs(), Some("EPSG:3857"));
-
-        assert!(raster_array.is_null(1));
-
-        let raster2 = raster_array.get(2).unwrap();
-        assert_eq!(raster2.crs(), Some("EPSG:3857"));
+        // Rows 0 and 2 have their CRS swapped to EPSG:3857 with all other
+        // fields preserved; the null raster at row 1 stays null.
+        assert_rasters_equal(
+            &result,
+            &[
+                Some(generate_test_raster_spec(0).crs(Some("EPSG:3857"))),
+                None,
+                Some(generate_test_raster_spec(2).crs(Some("EPSG:3857"))),
+            ],
+        );
     }
 
     #[test]
@@ -595,10 +590,8 @@ mod tests {
         let rasters = generate_test_rasters(1, None).unwrap();
         let result = tester.invoke_array_scalar(Arc::new(rasters), "0").unwrap();
 
-        let result_struct = result.as_any().downcast_ref::<StructArray>().unwrap();
-        let raster_array = RasterStructArray::try_new(result_struct).unwrap();
-        let raster = raster_array.get(0).unwrap();
-        assert_eq!(raster.crs(), None);
+        // CRS "0" clears the CRS (maps to null) while preserving the raster.
+        assert_rasters_equal(&result, &[Some(generate_test_raster_spec(0).crs(None))]);
     }
 
     #[test]
@@ -698,15 +691,8 @@ mod tests {
         let result = tester
             .invoke_array_scalar(Arc::new(rasters), null_srid)
             .unwrap();
-        let raster_array =
-            RasterStructArray::try_new(result.as_any().downcast_ref::<StructArray>().unwrap())
-                .unwrap();
-        for i in 0..raster_array.len() {
-            assert!(
-                raster_array.is_null(i),
-                "Expected null raster at index {i} for null SRID input"
-            );
-        }
+        // A null SRID input nulls out every raster row.
+        assert_rasters_equal(&result, &[None, None, None]);
     }
 
     #[test]
@@ -720,15 +706,8 @@ mod tests {
         let result = tester
             .invoke_array_scalar(Arc::new(rasters), null_crs)
             .unwrap();
-        let raster_array =
-            RasterStructArray::try_new(result.as_any().downcast_ref::<StructArray>().unwrap())
-                .unwrap();
-        for i in 0..raster_array.len() {
-            assert!(
-                raster_array.is_null(i),
-                "Expected null raster at index {i} for null SRID input"
-            );
-        }
+        // A null CRS input nulls out every raster row.
+        assert_rasters_equal(&result, &[None, None, None]);
     }
 
     #[test]
@@ -747,20 +726,17 @@ mod tests {
         let result = tester
             .invoke_array_array(Arc::new(rasters), srid_array)
             .unwrap();
-        let result_struct = result.as_any().downcast_ref::<StructArray>().unwrap();
-        let raster_array = RasterStructArray::try_new(result_struct).unwrap();
 
-        // Row 0: valid raster + valid SRID -> EPSG:3857
-        let raster0 = raster_array.get(0).unwrap();
-        assert_eq!(raster0.crs(), Some("EPSG:3857"));
-
-        // Row 1: null raster (from input) -> still null
-        assert!(raster_array.is_null(1));
-
-        // Row 2: valid raster + null SRID -> null raster
-        assert!(
-            raster_array.is_null(2),
-            "Expected null raster at index 2 (null SRID input)"
+        // Row 0: valid raster + valid SRID -> EPSG:3857.
+        // Row 1: null raster (from input) -> still null.
+        // Row 2: valid raster + null SRID -> null raster.
+        assert_rasters_equal(
+            &result,
+            &[
+                Some(generate_test_raster_spec(0).crs(Some("EPSG:3857"))),
+                None,
+                None,
+            ],
         );
     }
 
@@ -780,20 +756,17 @@ mod tests {
         let result = tester
             .invoke_array_array(Arc::new(rasters), crs_array)
             .unwrap();
-        let result_struct = result.as_any().downcast_ref::<StructArray>().unwrap();
-        let raster_array = RasterStructArray::try_new(result_struct).unwrap();
 
-        // Row 0: valid raster + valid CRS -> EPSG:3857
-        let raster0 = raster_array.get(0).unwrap();
-        assert_eq!(raster0.crs(), Some("EPSG:3857"));
-
-        // Row 1: null raster (from input) -> still null
-        assert!(raster_array.is_null(1));
-
-        // Row 2: valid raster + null CRS -> null raster
-        assert!(
-            raster_array.is_null(2),
-            "Expected null raster at index 2 (null CRS input)"
+        // Row 0: valid raster + valid CRS -> EPSG:3857.
+        // Row 1: null raster (from input) -> still null.
+        // Row 2: valid raster + null CRS -> null raster.
+        assert_rasters_equal(
+            &result,
+            &[
+                Some(generate_test_raster_spec(0).crs(Some("EPSG:3857"))),
+                None,
+                None,
+            ],
         );
     }
 }

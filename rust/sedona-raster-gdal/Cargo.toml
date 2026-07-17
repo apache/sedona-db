@@ -62,6 +62,11 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 [[bench]]
 harness = false
+name = "rs_as_geotiff"
+path = "benches/rs_as_geotiff.rs"
+
+[[bench]]
+harness = false
 name = "rs_clip"
 path = "benches/rs_clip.rs"
 
