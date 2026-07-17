@@ -171,6 +171,15 @@ impl Gdal {
         vsi::get_vsi_mem_file_bytes_owned(self.api, file_name)
     }
 
+    /// Take ownership of a VSI in-memory file's buffer without copying: the
+    /// file is unlinked and its GDAL-allocated bytes are returned as a
+    /// [`vsi::VSIBuffer`] (freed on drop). Prefer this over
+    /// [`Self::get_vsi_mem_file_bytes_owned`] when the bytes are consumed as a
+    /// slice — it skips the `Vec` copy.
+    pub fn get_vsi_mem_file_buffer_owned(&self, file_name: &str) -> Result<vsi::VSIBuffer> {
+        vsi::get_vsi_mem_file_buffer_owned(self.api, file_name)
+    }
+
     // -- Raster operations ---------------------------------------------------
 
     /// Create a bare in-memory MEM dataset with GDAL-owned bands.

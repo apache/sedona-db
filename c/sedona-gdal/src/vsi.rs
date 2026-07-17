@@ -28,6 +28,7 @@ use crate::errors::{GdalError, Result};
 use crate::gdal_api::{call_gdal_api, GdalApi};
 
 /// An owned GDAL-allocated VSI memory buffer.
+#[derive(Debug)]
 pub struct VSIBuffer {
     api: &'static GdalApi,
     ptr: *mut u8,

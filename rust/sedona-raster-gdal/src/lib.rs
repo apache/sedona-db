@@ -33,6 +33,7 @@ mod gdal_common;
 mod gdal_dataset_provider;
 
 mod raster_loader;
+mod rs_as_geotiff;
 mod rs_as_raster;
 mod rs_clip;
 mod rs_frompath;
@@ -47,6 +48,7 @@ pub use gdal_common::{
     nodata_bytes_to_f64, nodata_f64_to_bytes, GdalBandLayout, GdalBandPlan,
 };
 pub use raster_loader::{GdalLoader, GDAL_FORMAT};
+pub use rs_as_geotiff::rs_as_geotiff_udf;
 pub use rs_as_raster::rs_as_raster_udf;
 pub use rs_clip::rs_clip_udf;
 pub use rs_frompath::rs_frompath_udf;
