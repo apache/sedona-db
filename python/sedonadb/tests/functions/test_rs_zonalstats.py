@@ -21,8 +21,9 @@ The rasterio comparator selects pixels with
 `rasterio.features.geometry_mask`, drops pixels valued at the band nodata,
 and reduces in float64. stddev/variance are the sample (ddof=1) statistics —
 that is what Sedona computes. The diagonal-edged zone under the centroid
-rule is on the Sedona Spark deviation ledger (its geotools/JAI rasterizer
-drops some center-inside pixels there). Zones that select no pixels are not
+rule is on the Sedona Spark deviation ledger (its scanline rasterizer
+mis-places x-intercepts on non-square pixels and drops some center-inside
+pixels there, apache/sedona#3111). Zones that select no pixels are not
 compared here.
 """
 
@@ -64,8 +65,10 @@ DEVIATIONS = [
         SedonaSpark,
         "zonal_stats",
         matches=lambda p: p.get("wkt") == GEOM_TRIANGLE and not p.get("all_touched"),
-        reason="geotools/JAI drops some center-inside pixels along diagonal "
-        "edges under the centroid rule; GDAL selects every center-inside pixel",
+        reason="Sedona's scanline rasterizer mis-places x-intercepts on "
+        "non-square pixels and drops some center-inside pixels along "
+        "diagonal edges; GDAL selects every center-inside pixel "
+        "(https://github.com/apache/sedona/issues/3111)",
     ),
 ]
 

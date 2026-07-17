@@ -21,10 +21,11 @@ The rasterio comparator is `rasterio.features.rasterize` on the same grid,
 filling outside the geometry with the subject's policy (SedonaDB
 initializes the grid with the nodata value, 0 when none is given). Two
 Sedona Spark deviations are on the ledger rather than shrinking the matrix:
-Spark burns outside pixels to 0 regardless of nodata (metadata-only
-nodata), and its geotools/JAI rasterizer drops some center-inside pixels
-along diagonal edges under the centroid rule where GDAL (SedonaDB,
-rasterio) burns them. Geometries stay inside the reference raster's extent;
+Spark burns outside pixels to 0 regardless of nodata (metadata-only nodata,
+apache/sedona#3112), and its scanline rasterizer mis-places x-intercepts on
+non-square pixels so some center-inside pixels along diagonal edges are
+dropped under the centroid rule where GDAL (SedonaDB, rasterio) burns them
+(apache/sedona#3111). Geometries stay inside the reference raster's extent;
 behavior for overhanging geometry envelopes is not compared here.
 """
 
@@ -61,8 +62,10 @@ DEVIATIONS = [
         SedonaSpark,
         "as_raster",
         matches=lambda p: p.get("wkt") == GEOM_TRIANGLE and not p.get("all_touched"),
-        reason="geotools/JAI drops some center-inside pixels along diagonal "
-        "edges under the centroid rule; GDAL burns every center-inside pixel",
+        reason="Sedona's scanline rasterizer mis-places x-intercepts on "
+        "non-square pixels and drops some center-inside pixels along "
+        "diagonal edges; GDAL burns every center-inside pixel "
+        "(https://github.com/apache/sedona/issues/3111)",
     ),
     Deviation(
         SedonaSpark,
@@ -70,7 +73,7 @@ DEVIATIONS = [
         matches=lambda p: p.get("nodata") not in (None, 0.0),
         reason="Sedona Spark burns outside pixels to 0 and records nodata as "
         "band metadata only; SedonaDB initializes the grid with the nodata "
-        "value",
+        "value (https://github.com/apache/sedona/issues/3112)",
     ),
 ]
 
