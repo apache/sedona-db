@@ -17,10 +17,31 @@
 
 use std::borrow::Cow;
 
+use datafusion_common::config::ConfigOptions;
 use datafusion_common::{exec_datafusion_err, exec_err, DataFusionError, Result};
+use sedona_common::option::SedonaOptions;
 use sedona_geometry::transform::{transform, CrsEngine};
+use sedona_proj::transform::with_global_proj_engine;
 use sedona_schema::crs::{deserialize_crs, CoordinateReferenceSystem, Crs, CrsRef};
 use wkb::reader::read_wkb;
+
+/// Run `f` with the session's CRS engine: the [`SedonaOptions`] runtime engine
+/// when config options are available (the query path), falling back to the
+/// process-global PROJ engine otherwise (e.g. direct `invoke_batch` calls).
+pub fn with_crs_engine<T>(
+    config_options: Option<&ConfigOptions>,
+    f: impl FnOnce(&dyn CrsEngine) -> Result<T>,
+) -> Result<T> {
+    if let Some(options) = config_options.and_then(|o| o.extensions.get::<SedonaOptions>()) {
+        f(options.runtime.crs_engine().as_ref())
+    } else {
+        let mut f = Some(f);
+        with_global_proj_engine(|engine| {
+            let f = f.take().expect("engine closure runs once");
+            f(engine)
+        })
+    }
+}
 
 /// Resolve an optional CRS string to a concrete CRS object.
 ///

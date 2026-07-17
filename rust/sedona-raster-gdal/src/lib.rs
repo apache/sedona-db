@@ -35,6 +35,7 @@ mod gdal_dataset_provider;
 mod raster_loader;
 mod rs_as_geotiff;
 mod rs_as_raster;
+mod rs_clip;
 mod rs_frompath;
 mod rs_metadata;
 mod rs_polygonize;
@@ -49,6 +50,7 @@ pub use gdal_common::{
 pub use raster_loader::{GdalLoader, GDAL_FORMAT};
 pub use rs_as_geotiff::rs_as_geotiff_udf;
 pub use rs_as_raster::rs_as_raster_udf;
+pub use rs_clip::rs_clip_udf;
 pub use rs_frompath::rs_frompath_udf;
 pub use rs_metadata::rs_metadata_udf;
 pub use rs_polygonize::rs_polygonize_udf;

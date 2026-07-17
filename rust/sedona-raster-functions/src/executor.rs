@@ -665,18 +665,32 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
     /// Converts the output into a [ColumnarValue::Scalar] if all arguments were scalars,
     /// or a [ColumnarValue::Array] otherwise.
     pub fn finish(&self, out: ArrayRef) -> Result<ColumnarValue> {
-        for arg in self.args {
-            match arg {
-                // If any argument was an array, we return an array
-                ColumnarValue::Array(_) => {
-                    return Ok(ColumnarValue::Array(out));
-                }
-                ColumnarValue::Scalar(_) => {}
-            }
-        }
+        Self::finish_over(self.args, out)
+    }
 
-        // All arguments are scalars, return a scalar
-        Ok(ColumnarValue::Scalar(ScalarValue::try_from_array(&out, 0)?))
+    /// Like [`Self::finish`], but decides array-vs-scalar over an explicit
+    /// argument list. For kernels that project only their raster/geometry
+    /// arguments into the executor (via [`Self::new_with_num_iterations`]),
+    /// pass the *full* UDF argument list: a per-row option column over a
+    /// scalar raster/geometry must still yield an N-row array.
+    pub fn finish_over(args: &[ColumnarValue], out: ArrayRef) -> Result<ColumnarValue> {
+        if args
+            .iter()
+            .any(|arg| matches!(arg, ColumnarValue::Array(_)))
+        {
+            Ok(ColumnarValue::Array(out))
+        } else {
+            Ok(ColumnarValue::Scalar(ScalarValue::try_from_array(&out, 0)?))
+        }
+    }
+
+    /// The number of rows implied by an argument list: the length of the first
+    /// array argument, or 1 when every argument is a scalar. The public
+    /// counterpart of the row count the constructor derives, for kernels that
+    /// need it over their *full* argument list before projecting a subset into
+    /// the executor (see [`Self::new_with_num_iterations`]).
+    pub fn num_iterations_over(args: &[ColumnarValue]) -> usize {
+        Self::calc_num_iterations(args)
     }
 
     /// Calculates the number of iterations that should happen based on the

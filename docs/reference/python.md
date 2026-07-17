@@ -24,6 +24,8 @@
 
 ::: sedonadb.testing
 
+::: sedonadb.raster_testing
+
 ::: sedonadb.dbapi
 
 ::: sedonadb.udf
