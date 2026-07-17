@@ -395,32 +395,9 @@ mod tests {
     use sedona_raster::traits::RasterRef;
     use sedona_schema::crs::deserialize_crs;
     use sedona_schema::datatypes::RASTER;
-    use sedona_testing::raster_spec::{assert_rasters_equal, RasterSpec};
-    use sedona_testing::rasters::generate_test_rasters;
+    use sedona_testing::raster_spec::assert_rasters_equal;
+    use sedona_testing::rasters::{generate_test_raster_spec, generate_test_rasters};
     use sedona_testing::testers::ScalarUdfTester;
-
-    /// The non-null raster that [`generate_test_rasters`] produces at index
-    /// `i`, expressed as a declarative spec: the same per-index geotransform
-    /// arithmetic and sequential UInt16 pixels with nodata 0. Used as the
-    /// expected side after an RS_SetSRID/RS_SetCRS, which only swaps the CRS
-    /// and preserves everything else — so callers append `.crs(...)` with the
-    /// CRS they expect.
-    fn generated_raster_spec(i: usize) -> RasterSpec {
-        let width = i as i64 + 1;
-        let height = i as i64 + 2;
-        let pixels: Vec<u16> = (0..(width * height) as u16).collect();
-        RasterSpec::d2(width, height)
-            .transform([
-                i as f64 + 1.0,
-                i.max(1) as f64 * 0.1,
-                i as f64 * 0.03,
-                i as f64 + 2.0,
-                i as f64 * 0.04,
-                i.max(1) as f64 * -0.2,
-            ])
-            .band_values(&pixels)
-            .nodata(0u16)
-    }
 
     #[test]
     fn normalize_crs_columnar_array_dedups_repeats_and_preserves_nulls() {
@@ -523,9 +500,9 @@ mod tests {
         assert_rasters_equal(
             &result,
             &[
-                Some(generated_raster_spec(0).crs(Some("EPSG:3857"))),
+                Some(generate_test_raster_spec(0).crs(Some("EPSG:3857"))),
                 None,
-                Some(generated_raster_spec(2).crs(Some("EPSG:3857"))),
+                Some(generate_test_raster_spec(2).crs(Some("EPSG:3857"))),
             ],
         );
     }
@@ -543,7 +520,7 @@ mod tests {
         // SRID 4326 maps to the OGC:CRS84 authority code.
         assert_rasters_equal(
             &result,
-            &[Some(generated_raster_spec(0).crs(Some("OGC:CRS84")))],
+            &[Some(generate_test_raster_spec(0).crs(Some("OGC:CRS84")))],
         );
     }
 
@@ -556,7 +533,7 @@ mod tests {
         let result = tester.invoke_array_scalar(Arc::new(rasters), 0u32).unwrap();
 
         // SRID 0 clears the CRS (maps to null) while preserving the raster.
-        assert_rasters_equal(&result, &[Some(generated_raster_spec(0).crs(None))]);
+        assert_rasters_equal(&result, &[Some(generate_test_raster_spec(0).crs(None))]);
     }
 
     #[test]
@@ -576,9 +553,9 @@ mod tests {
         assert_rasters_equal(
             &result,
             &[
-                Some(generated_raster_spec(0).crs(Some("EPSG:3857"))),
+                Some(generate_test_raster_spec(0).crs(Some("EPSG:3857"))),
                 None,
-                Some(generated_raster_spec(2).crs(Some("EPSG:3857"))),
+                Some(generate_test_raster_spec(2).crs(Some("EPSG:3857"))),
             ],
         );
     }
@@ -614,7 +591,7 @@ mod tests {
         let result = tester.invoke_array_scalar(Arc::new(rasters), "0").unwrap();
 
         // CRS "0" clears the CRS (maps to null) while preserving the raster.
-        assert_rasters_equal(&result, &[Some(generated_raster_spec(0).crs(None))]);
+        assert_rasters_equal(&result, &[Some(generate_test_raster_spec(0).crs(None))]);
     }
 
     #[test]
@@ -756,7 +733,7 @@ mod tests {
         assert_rasters_equal(
             &result,
             &[
-                Some(generated_raster_spec(0).crs(Some("EPSG:3857"))),
+                Some(generate_test_raster_spec(0).crs(Some("EPSG:3857"))),
                 None,
                 None,
             ],
@@ -786,7 +763,7 @@ mod tests {
         assert_rasters_equal(
             &result,
             &[
-                Some(generated_raster_spec(0).crs(Some("EPSG:3857"))),
+                Some(generate_test_raster_spec(0).crs(Some("EPSG:3857"))),
                 None,
                 None,
             ],

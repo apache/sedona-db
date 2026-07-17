@@ -23,6 +23,8 @@ use sedona_raster::traits::{BandMetadata, RasterMetadata, RasterRef};
 use sedona_schema::crs::lnglat;
 use sedona_schema::raster::{BandDataType, StorageType};
 
+use crate::raster_spec::RasterSpec;
+
 /// Describes a single in-db band used by test raster builders.
 pub struct InDbTestBand {
     pub datatype: BandDataType,
@@ -77,6 +79,29 @@ pub fn generate_test_rasters(
     }
 
     Ok(builder.finish()?)
+}
+
+/// The non-null raster that [`generate_test_rasters`] produces at index `i`,
+/// as a declarative [`RasterSpec`]: identical dimensions, geotransform,
+/// sequential UInt16 pixels, lng/lat CRS, and nodata 0. Kept beside the
+/// generator so the two can't drift (a test asserts they stay identical), and
+/// so callers can use it as the expected side of assertions over
+/// `generate_test_rasters` output.
+pub fn generate_test_raster_spec(i: usize) -> RasterSpec {
+    let width = i as i64 + 1;
+    let height = i as i64 + 2;
+    let pixels: Vec<u16> = (0..(width * height) as u16).collect();
+    RasterSpec::d2(width, height)
+        .transform([
+            i as f64 + 1.0,
+            i.max(1) as f64 * 0.1,
+            i as f64 * 0.03,
+            i as f64 + 2.0,
+            i as f64 * 0.04,
+            i.max(1) as f64 * -0.2,
+        ])
+        .band_values(&pixels)
+        .nodata(0u16)
 }
 
 /// Generates a set of tiled rasters arranged in a grid
@@ -533,8 +558,24 @@ pub fn assert_raster_equal(raster1: &impl RasterRef, raster2: &impl RasterRef) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::raster_spec::assert_rasters_equal;
+    use arrow_array::ArrayRef;
     use sedona_raster::array::RasterStructArray;
     use sedona_raster::traits::RasterRef;
+    use std::sync::Arc;
+
+    #[test]
+    fn generate_test_raster_spec_matches_generator() {
+        // The declarative spec and the builder-based generator must stay in
+        // lockstep so callers can assert generator output against the spec;
+        // pin that they produce identical rasters.
+        let count = 5;
+        let actual: ArrayRef = Arc::new(generate_test_rasters(count, None).unwrap());
+        let expected: Vec<Option<RasterSpec>> = (0..count)
+            .map(|i| Some(generate_test_raster_spec(i)))
+            .collect();
+        assert_rasters_equal(&actual, &expected);
+    }
 
     #[test]
     fn test_generate_test_rasters() {
