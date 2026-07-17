@@ -109,7 +109,7 @@ impl SedonaScalarKernel for STRotate {
             let maybe_mat = affine_iter.next().unwrap();
             match (maybe_wkb, maybe_mat) {
                 (Some(wkb), Some(mat)) => {
-                    transform(&wkb, &mat, &mut builder)
+                    transform(wkb, &mat, &mut builder)
                         .map_err(|e| DataFusionError::Execution(e.to_string()))?;
                     builder.append_value([]);
                 }

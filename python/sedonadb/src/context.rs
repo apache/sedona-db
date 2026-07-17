@@ -39,6 +39,28 @@ pub struct InternalContext {
     pub runtime: Arc<Runtime>,
 }
 
+/// Convert a Python options dict to a string map for the reader/object-store
+/// layer, dropping `None` values (so callers can pass `None` to mean "unset").
+fn stringify_options(
+    py: Python<'_>,
+    options: HashMap<String, Py<PyAny>>,
+) -> HashMap<String, String> {
+    options
+        .into_iter()
+        .filter_map(|(k, v)| {
+            if v.is_none(py) {
+                None
+            } else {
+                v.bind(py)
+                    .str()
+                    .and_then(|s| s.extract())
+                    .map(|s: String| (k, s))
+                    .ok()
+            }
+        })
+        .collect()
+}
+
 #[pymethods]
 impl InternalContext {
     #[new]
@@ -92,20 +114,7 @@ impl InternalContext {
         partitioning: Option<Vec<String>>,
     ) -> Result<InternalDataFrame, PySedonaError> {
         // Convert Python options to strings, filtering out None values
-        let rust_options: HashMap<String, String> = options
-            .into_iter()
-            .filter_map(|(k, v)| {
-                if v.is_none(py) {
-                    None
-                } else {
-                    v.bind(py)
-                        .str()
-                        .and_then(|s| s.extract())
-                        .map(|s: String| (k, s))
-                        .ok()
-                }
-            })
-            .collect();
+        let rust_options = stringify_options(py, options);
 
         let mut geo_options =
             sedona_geoparquet::provider::GeoParquetReadOptions::from_table_options(rust_options)
@@ -162,6 +171,39 @@ impl InternalContext {
             ),
         )??;
 
+        Ok(InternalDataFrame::new(df, self.runtime.clone()))
+    }
+
+    pub fn read_csv<'py>(
+        &self,
+        py: Python<'py>,
+        table_paths: Vec<String>,
+        options: HashMap<String, Py<PyAny>>,
+        has_header: bool,
+        delimiter: &str,
+    ) -> Result<InternalDataFrame, PySedonaError> {
+        let rust_options = stringify_options(py, options);
+        let df = wait_for_future(
+            py,
+            &self.runtime,
+            self.inner
+                .read_csv(table_paths, &rust_options, has_header, delimiter),
+        )??;
+        Ok(InternalDataFrame::new(df, self.runtime.clone()))
+    }
+
+    pub fn read_json<'py>(
+        &self,
+        py: Python<'py>,
+        table_paths: Vec<String>,
+        options: HashMap<String, Py<PyAny>>,
+    ) -> Result<InternalDataFrame, PySedonaError> {
+        let rust_options = stringify_options(py, options);
+        let df = wait_for_future(
+            py,
+            &self.runtime,
+            self.inner.read_json(table_paths, &rust_options),
+        )??;
         Ok(InternalDataFrame::new(df, self.runtime.clone()))
     }
 

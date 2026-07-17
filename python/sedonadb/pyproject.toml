@@ -43,6 +43,7 @@ test = [
     "pytest",
     "pyyaml",
     "rasterio",
+    "sedonadb-expr",
 ]
 geopandas = [
     "adbc-driver-manager[dbapi]",

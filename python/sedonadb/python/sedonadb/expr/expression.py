@@ -106,6 +106,14 @@ class Expr:
         """
         return Expr(self._impl.alias(name), self._ctx)
 
+    def _output_name(self) -> str:
+        """The output column name this expression would produce.
+
+        Internal helper: `mutate()` uses it to match positional
+        expressions against existing columns for in-place replacement.
+        """
+        return self._impl.output_name()
+
     def cast(self, target) -> "Expr":
         """Cast the expression to the given Arrow type.
 
@@ -526,3 +534,36 @@ def _binary(op: str, lhs: Any, rhs: Any) -> Expr:
     rhs_expr = _to_expr(rhs)
     ctx = lhs_expr._ctx if lhs_expr._ctx is not None else rhs_expr._ctx
     return Expr(_expr_binary(op, lhs_expr._impl, rhs_expr._impl), ctx)
+
+
+def collect_exprs(caller: str, exprs, named_exprs) -> "list[Expr]":
+    """Coerce positional + keyword column expressions to a list of `Expr`.
+
+    Shared by `DataFrame.select` and `DataFrame.mutate`, which accept the
+    same kinds of input: positional column-name `str`s / `Expr`s / `Literal`s
+    used as-is, plus keyword arguments aliased to their key. `caller` names
+    the calling method for error messages.
+    """
+
+    def coerce(value: Any, kw_name: Optional[str] = None) -> Expr:
+        if isinstance(value, Expr):
+            expr = value
+        elif isinstance(value, str):
+            expr = col(value)
+        elif isinstance(value, Literal):
+            expr = _to_expr(value)
+        elif kw_name is None:
+            raise TypeError(
+                f"{caller}() expects str, Expr, or Literal arguments, "
+                f"got {type(value).__name__}"
+            )
+        else:
+            raise TypeError(
+                f"{caller}() expects str, Expr, or Literal keyword arguments, "
+                f"got {type(value).__name__} for '{kw_name}'"
+            )
+        return expr.alias(kw_name) if kw_name is not None else expr
+
+    coerced = [coerce(e) for e in exprs]
+    coerced += [coerce(e, name) for name, e in named_exprs.items()]
+    return coerced

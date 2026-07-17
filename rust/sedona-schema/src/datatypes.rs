@@ -21,6 +21,9 @@ use serde_json::Value;
 use std::fmt::{Debug, Display};
 use std::sync::LazyLock;
 
+/// Re-export for external crates that depended on this enum in this crate
+pub use sedona_geometry::types::Edges;
+
 use crate::crs::{deserialize_crs, deserialize_crs_from_obj, lnglat, Crs};
 use crate::extension_type::ExtensionType;
 use crate::raster::RasterSchema;
@@ -38,19 +41,6 @@ impl From<DataType> for SedonaType {
     fn from(value: DataType) -> Self {
         Self::Arrow(value)
     }
-}
-
-/// Edge interpolations
-///
-/// While at the logical level we refer to geometries and geographies, at the execution
-/// layer we can reuse implementations for structural manipulation more efficiently if
-/// we consider the edge interpolation as a parameter of the physical type. This maps to
-/// the concept of "edges" in GeoArrow and "algorithm" in Parquet and Iceberg (where the
-/// planar case would be resolved to a geometry instead of a geography).
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum Edges {
-    Planar,
-    Spherical,
 }
 
 /// Sentinel for [`SedonaType::Wkb`] with planar edges
@@ -241,9 +231,7 @@ impl SedonaType {
             SedonaType::Wkb(Edges::Planar, _) | SedonaType::WkbView(Edges::Planar, _) => {
                 "geometry".to_string()
             }
-            SedonaType::Wkb(Edges::Spherical, _) | SedonaType::WkbView(Edges::Spherical, _) => {
-                "geography".to_string()
-            }
+            SedonaType::Wkb(_, _) | SedonaType::WkbView(_, _) => "geography".to_string(),
             SedonaType::Raster => "raster".to_string(),
             SedonaType::Arrow(data_type) => match data_type {
                 DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View => "utf8".to_string(),
@@ -340,8 +328,8 @@ fn display_geometry(
 
     match edges {
         Edges::Planar => {}
-        Edges::Spherical => {
-            params.push("Spherical".to_string());
+        other => {
+            params.push(format!("{other:?}"));
         }
     }
 
@@ -423,7 +411,7 @@ fn serialize_edges_and_crs(edges: &Edges, crs: &Crs) -> String {
 
     let edges_component = match edges {
         Edges::Planar => None,
-        Edges::Spherical => Some(r#""edges":"spherical""#),
+        other => Some(format!(r#""edges":"{other}""#)),
     };
 
     match (crs_component, edges_component) {
@@ -435,6 +423,10 @@ fn serialize_edges_and_crs(edges: &Edges, crs: &Crs) -> String {
 }
 
 /// Deserialize a specific GeoArrow "edges" value
+///
+/// This must accept all strings produced by `Edges::Display` in `sedona-geometry`.
+/// Any new variant added to `Edges` must be handled here, or SedonaDB will reject
+/// files it wrote.
 fn deserialize_edges(edges: &Value) -> Result<Edges> {
     match edges.as_str() {
         Some(edges_str) => {

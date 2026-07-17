@@ -50,6 +50,7 @@ pyo3 = { workspace = true }
 sedona = { workspace = true }
 sedona-adbc = { workspace = true }
 sedona-datasource = { workspace = true }
+sedona-extension = { workspace = true }
 sedona-geometry = { workspace = true }
 sedona-expr = { workspace = true }
 sedona-geoparquet = { workspace = true }

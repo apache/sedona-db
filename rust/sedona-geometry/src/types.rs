@@ -22,6 +22,36 @@ use serde_with::{DeserializeFromStr, SerializeDisplay};
 
 use crate::error::SedonaGeometryError;
 
+/// Edge interpolations
+///
+/// While at the logical level we refer to geometries and geographies, at the execution
+/// layer we can reuse implementations for structural manipulation more efficiently if
+/// we consider the edge interpolation as a parameter of the physical type. This maps to
+/// the concept of "edges" in GeoArrow and "algorithm" in Parquet and Iceberg (where the
+/// planar case would be resolved to a geometry instead of a geography).
+#[derive(Debug, PartialEq, Clone, Copy)]
+#[non_exhaustive]
+pub enum Edges {
+    Planar,
+    Spherical,
+}
+
+/// Formats as lowercase string ("planar" or "spherical") for GeoArrow/GeoParquet metadata.
+///
+/// This output is persisted to on-disk metadata and must round-trip through
+/// `deserialize_edges` in `sedona-schema`. Any new variant added here must also
+/// be added to the deserialization logic, or SedonaDB will reject files it wrote.
+impl std::fmt::Display for Edges {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let lower_str = match self {
+            Edges::Planar => "planar",
+            Edges::Spherical => "spherical",
+        };
+
+        write!(f, "{lower_str}")
+    }
+}
+
 /// Geometry types
 ///
 /// An enumerator for the set of natively supported geometry types without

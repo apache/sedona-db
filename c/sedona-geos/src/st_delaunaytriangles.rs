@@ -78,7 +78,7 @@ impl SedonaScalarKernel for STDelaunayTriangles {
         executor.execute_wkb_void(|maybe_geom| {
             match maybe_geom {
                 Some(geom) => {
-                    invoke_scalar(&geom, 0.0, false, &mut builder)?;
+                    invoke_scalar(geom, 0.0, false, &mut builder)?;
                     builder.append_value([]);
                 }
                 None => builder.append_null(),
@@ -125,7 +125,7 @@ impl SedonaScalarKernel for STDelaunayTrianglesWithTolerance {
         executor.execute_wkb_void(|maybe_geom| {
             match (maybe_geom, tol_iter.next().unwrap()) {
                 (Some(geom), Some(tol)) => {
-                    invoke_scalar(&geom, tol, false, &mut builder)?;
+                    invoke_scalar(geom, tol, false, &mut builder)?;
                     builder.append_value([]);
                 }
                 _ => builder.append_null(),
@@ -197,7 +197,7 @@ impl SedonaScalarKernel for STDelaunayTrianglesWithFlags {
                             ))
                         }
                     };
-                    invoke_scalar(&geom, tol, only_edges, &mut builder)?;
+                    invoke_scalar(geom, tol, only_edges, &mut builder)?;
                     builder.append_value([]);
                 }
                 _ => builder.append_null(),

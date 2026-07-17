@@ -70,7 +70,7 @@ impl SedonaScalarKernel for STBoundary {
         executor.execute_wkb_void(|maybe_wkb| {
             match maybe_wkb {
                 Some(wkb) => {
-                    invoke_scalar(&wkb, &mut builder)?;
+                    invoke_scalar(wkb, &mut builder)?;
                     builder.append_value([]);
                 }
                 _ => builder.append_null(),

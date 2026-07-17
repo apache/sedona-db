@@ -20,7 +20,9 @@ use std::{mem::transmute, sync::Arc};
 use arrow::compute::{concat as arrow_concat, interleave as arrow_interleave};
 use arrow_array::{Array, ArrayRef, Float64Array, RecordBatch};
 use arrow_schema::DataType;
-use datafusion_common::{utils::proxy::VecAllocExt, JoinSide, Result, ScalarValue};
+use datafusion_common::{
+    exec_datafusion_err, utils::proxy::VecAllocExt, JoinSide, Result, ScalarValue,
+};
 use datafusion_expr::ColumnarValue;
 use datafusion_physical_expr::PhysicalExpr;
 use sedona_functions::executor::IterGeo;
@@ -183,22 +185,26 @@ impl EvaluatedGeometryArray {
         let mut wkbs = Vec::with_capacity(num_rows);
         let mut x = Interval::empty();
         let mut y = Interval::empty();
-        geometry_array.iter_as_wkb(sedona_type, num_rows, |wkb_opt| {
-            if let Some(wkb) = &wkb_opt {
+        geometry_array.iter_as_wkb_bytes(sedona_type, num_rows, |wkb_opt| {
+            if let Some(wkb_bytes) = &wkb_opt {
+                let wkb = wkb::reader::read_wkb(wkb_bytes)
+                    .map_err(|e| exec_datafusion_err!("WKB parse failed: {e}"))?;
                 x = Interval::empty();
                 y = Interval::empty();
-                geo_traits_update_xy_bounds(wkb, &mut x, &mut y)
+                geo_traits_update_xy_bounds(&wkb, &mut x, &mut y)
                     .map_err(|e| sedona_internal_datafusion_err!("{e}"))?;
                 rect_vec.push(Bounds2D::new(x, y));
+
+                // Safety: The wkbs must reference buffers inside the `geometry_array`. Since the `geometry_array` and
+                // `wkbs` are both owned by the `EvaluatedGeometryArray`, so they have the same lifetime. We'll never
+                // have a situation where the `EvaluatedGeometryArray` is dropped while the `wkbs` are still in use
+                // (guaranteed by the scope of the `wkbs` field and lifetime signature of the `wkbs` method).
+                wkbs.push(Some(unsafe { transmute::<Wkb<'_>, Wkb<'static>>(wkb) }));
             } else {
-                rect_vec.push(Bounds2D::empty())
+                rect_vec.push(Bounds2D::empty());
+                wkbs.push(None);
             }
 
-            // Safety: The wkbs must reference buffers inside the `geometry_array`. Since the `geometry_array` and
-            // `wkbs` are both owned by the `EvaluatedGeometryArray`, so they have the same lifetime. We'll never
-            // have a situation where the `EvaluatedGeometryArray` is dropped while the `wkbs` are still in use
-            // (guaranteed by the scope of the `wkbs` field and lifetime signature of the `wkbs` method).
-            wkbs.push(wkb_opt.map(|wkb| unsafe { transmute(wkb) }));
             Ok(())
         })?;
 
@@ -223,8 +229,14 @@ impl EvaluatedGeometryArray {
         // (guaranteed by the scope of the `wkbs` field and lifetime signature of the `wkbs` method).
         let num_rows = geometry_array.len();
         let mut wkbs = Vec::with_capacity(num_rows);
-        geometry_array.iter_as_wkb(sedona_type, num_rows, |wkb_opt| {
-            wkbs.push(wkb_opt.map(|wkb| unsafe { transmute(wkb) }));
+        geometry_array.iter_as_wkb_bytes(sedona_type, num_rows, |wkb_opt| {
+            if let Some(wkb_bytes) = wkb_opt {
+                let wkb = wkb::reader::read_wkb(wkb_bytes)
+                    .map_err(|e| exec_datafusion_err!("WKB parse failed: {e}"))?;
+                wkbs.push(Some(unsafe { transmute::<Wkb<'_>, Wkb<'static>>(wkb) }));
+            } else {
+                wkbs.push(None);
+            }
             Ok(())
         })?;
 

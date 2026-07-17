@@ -200,6 +200,30 @@ class Raster:
         bands_array = self._array.field("bands").flatten()
         return [Band(bands_array, i) for i in range(len(bands_array))]
 
+    def to_numpy(self) -> "np.ndarray":
+        """Convert this raster's bands to a single `(band, ...)` numpy array.
+
+        A single-band raster returns a view of the band's buffer, zero-copy
+        when `Band.to_numpy` is. Stacking a multiband raster allocates a new
+        contiguous array and copies each band into it, because every band
+        lives in its own buffer. All bands must share one shape and dtype;
+        mixed-dtype rasters raise rather than silently promoting.
+        """
+        import numpy as np
+
+        bands = self.bands
+        if not bands:
+            raise ValueError("Raster has no bands")
+        dtypes = {band.data_type for band in bands}
+        if len(dtypes) > 1:
+            raise ValueError(
+                f"Bands have mixed data types {sorted(dtypes)}; "
+                "convert them individually with Band.to_numpy()"
+            )
+        if len(bands) == 1:
+            return np.expand_dims(bands[0].to_numpy(), 0)
+        return np.stack([band.to_numpy() for band in bands])
+
     def __repr__(self) -> str:
         """Return a string representation of this raster."""
         return f"<Raster {self.width}x{self.height}, {len(self.bands)} band(s)>"
@@ -252,6 +276,19 @@ class Band:
         """The pixel data type name (e.g., 'uint8', 'float32')."""
         type_id = self._py_field("data_type")
         return BAND_DATA_TYPES[type_id].lower()
+
+    @property
+    def nodata(self):
+        """The band's nodata sentinel unpacked in the band's dtype, or None.
+
+        Integer bands return an int (exact for the full Int64/UInt64 range);
+        floating bands return a float.
+        """
+        raw = self._py_field("nodata")
+        if raw is None:
+            return None
+        type_id = self._py_field("data_type")
+        return struct.unpack("<" + BAND_DATA_TYPE_STRUCT_CHARS[type_id], raw)[0]
 
     @property
     def source_data(self) -> memoryview:

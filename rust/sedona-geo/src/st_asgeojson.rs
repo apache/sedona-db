@@ -67,7 +67,7 @@ impl SedonaScalarKernel for STAsGeoJSON {
         executor.execute_wkb_void(|maybe_wkb| {
             match maybe_wkb {
                 Some(wkb) => {
-                    let json_str = geom_to_geojson(&wkb)?;
+                    let json_str = geom_to_geojson(wkb)?;
                     builder.append_value(&json_str);
                 }
                 None => builder.append_null(),

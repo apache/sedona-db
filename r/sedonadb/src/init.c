@@ -251,8 +251,8 @@ SEXP savvy_InternalDataFrame_to_parquet__impl(
   return handle_result(res);
 }
 
-SEXP savvy_InternalDataFrame_to_provider__impl(SEXP self__) {
-  SEXP res = savvy_InternalDataFrame_to_provider__ffi(self__);
+SEXP savvy_InternalDataFrame_to_provider__impl(SEXP self__, SEXP c_arg__ctx) {
+  SEXP res = savvy_InternalDataFrame_to_provider__ffi(self__, c_arg__ctx);
   return handle_result(res);
 }
 
@@ -438,7 +438,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"savvy_InternalDataFrame_to_parquet__impl",
      (DL_FUNC)&savvy_InternalDataFrame_to_parquet__impl, 8},
     {"savvy_InternalDataFrame_to_provider__impl",
-     (DL_FUNC)&savvy_InternalDataFrame_to_provider__impl, 1},
+     (DL_FUNC)&savvy_InternalDataFrame_to_provider__impl, 2},
     {"savvy_InternalDataFrame_to_view__impl",
      (DL_FUNC)&savvy_InternalDataFrame_to_view__impl, 4},
     {"savvy_InternalDataFrame_with_params__impl",

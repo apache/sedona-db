@@ -18,6 +18,7 @@
 #ifndef SEDONA_EXTENSION_H
 #define SEDONA_EXTENSION_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -198,6 +199,216 @@ struct SedonaCScalarKernel {
   ///
   /// Implementations of this callback must set self->release to NULL.
   void (*release)(struct SedonaCScalarKernel* self);
+
+  /// \brief Opaque implementation-specific data
+  void* private_data;
+};
+
+/// \brief Error information returned by FFI callbacks
+///
+/// This structure is written to by FFI callbacks on error. Callers may pass
+/// uninitialized memory; the implementation uses ptr::write to avoid reading
+/// the previous contents. However, for best practice, callers should
+/// zero-initialize: `struct SedonaCError err = {0};`
+struct SedonaCError {
+  /// \brief A UTF-8 encoded error message
+  ///
+  /// May be NULL if err_len is 0. This string is not necessarily null
+  /// terminated.
+  const char* err;
+
+  /// \brief The number of bytes pointed to be err.
+  uint32_t err_len;
+
+  /// \brief Reserved for future use. Must be 0.
+  uint32_t reserved;
+
+  /// \brief Release this instance
+  ///
+  /// Implementations of this callback must set self->release to NULL.
+  void (*release)(struct SedonaCError* self);
+};
+
+struct SedonaCExpr {
+  /// \brief Get the data type of a property
+  int (*get_property_schema)(const struct SedonaCExpr* self, const char* property,
+                             struct ArrowSchema* out, struct SedonaCError* err);
+
+  /// \brief Extract a serializable property from this expression
+  ///
+  /// This is used to implement PlanProperties and other values that can be
+  /// easily retrieved and serialized. The data type associated with the out
+  /// array may be retrieved with the get_property_schema callback.
+  int (*get_property)(const struct SedonaCExpr* self, const char* property,
+                      const char* args, struct ArrowArray* out, struct SedonaCError* err);
+
+  void* reserved;
+
+  /// \brief Release this instance
+  ///
+  /// Implementations of this callback must set self->release to NULL.
+  void (*release)(struct SedonaCExpr* self);
+
+  /// \brief Opaque implementation-specific data
+  void* private_data;
+};
+
+/// Forward declaration of the execution plan
+struct SedonaCExecutionPlan;
+
+/// \brief Arguments for execution plan and table provider operations
+///
+/// This structure is passed to methods that need JSON-serialized arguments,
+/// optional execution plans, and/or expressions.
+struct SedonaCExecutionPlanArgs {
+  /// \brief JSON-serialized arguments
+  const uint8_t* args;
+  size_t args_len;
+
+  /// \brief Optional array of execution plans
+  const struct SedonaCExecutionPlan** exec_plans;
+  size_t num_exec_plans;
+
+  /// \brief Optional array of expressions
+  const struct SedonaCExpr** exprs;
+  size_t num_exprs;
+
+  /// \brief Reserved for future use. Must be NULL.
+  void* reserved;
+};
+
+/// \brief FFI interface for a physical execution operator
+///
+/// Before using this structure, the release callback MUST be checked.
+/// Instances with a NULL release callback are not valid and must not be used.
+///
+/// Members that accept const* self must be thread safe.
+struct SedonaCExecutionPlan {
+  /// \brief Get the schema associated with the output of this plan
+  ///
+  /// Returns 0 on success, or an errno value on failure.
+  int (*get_schema)(const struct SedonaCExecutionPlan* self, struct ArrowSchema* out,
+                    struct SedonaCError* err);
+
+  /// \brief Get the data type of a property
+  int (*get_property_schema)(const struct SedonaCExecutionPlan* self,
+                             const char* property, struct ArrowSchema* out,
+                             struct SedonaCError* err);
+
+  /// \brief Extract a serializable property from this plan
+  ///
+  /// This is used to implement PlanProperties and other values that can be
+  /// easily retrieved and serialized. The data type associated with the out
+  /// array may be retrieved with the get_property_schema callback.
+  int (*get_property)(const struct SedonaCExecutionPlan* self, const char* property,
+                      struct SedonaCExecutionPlanArgs* args, struct ArrowArray* out,
+                      struct SedonaCError* err);
+
+  /// \brief Clone this plan based on information about a property
+  ///
+  /// This can used to implement operations that require modifying a plan.
+  int (*with_property)(const struct SedonaCExecutionPlan* self, const char* property,
+                       struct SedonaCExecutionPlanArgs* args,
+                       struct SedonaCExecutionPlan* out, struct SedonaCError* err);
+
+  /// \brief Resolve a synchronous stream for one partition from this plan
+  int (*execute)(const struct SedonaCExecutionPlan* self,
+                 struct SedonaCExecutionPlanArgs* args, struct ArrowArrayStream* out,
+                 struct SedonaCError* err);
+
+  /// \brief Resolve an asynchronous stream for one partition from this plan
+  ///
+  /// This is not currently implemented and must be NULL. In the future,
+  /// out must point to a caller-supplied struct ArrowAsyncDeviceStreamHandler
+  /// as specified in the Arrow C Device Async Stream specification.
+  int (*execute_async)(const struct SedonaCExecutionPlan* self,
+                       struct SedonaCExecutionPlanArgs* args, void* out,
+                       struct SedonaCError* err);
+
+  /// \brief Reserved for future use (must be NULL).
+  void* reserved;
+
+  /// \brief Release this instance
+  ///
+  /// Implementations of this callback must set self->release to NULL.
+  void (*release)(struct SedonaCExecutionPlan* self);
+
+  /// \brief Opaque implementation-specific data
+  void* private_data;
+};
+
+/// \brief ABI-stable table provider interface
+///
+/// This provides a minimal interface for importing a table provider
+/// across an FFI boundary in a version-agnostic manner.
+///
+/// Before using this structure, the release callback MUST be checked.
+/// Instances with a NULL release callback are not valid and must not be used.
+///
+/// Members that accept const* self must be thread safe.
+struct SedonaCTableProvider {
+  /// \brief Get the schema of this table provider
+  ///
+  /// Returns 0 on success, or an errno value on failure.
+  int (*get_schema)(const struct SedonaCTableProvider* self, struct ArrowSchema* out,
+                    struct SedonaCError* err);
+
+  /// \brief Get the data type of a property
+  int (*get_property_schema)(const struct SedonaCTableProvider* self,
+                             const char* property, struct ArrowSchema* out,
+                             struct SedonaCError* err);
+
+  /// \brief Extract a serializable property from this table provider
+  ///
+  /// This is used to implement PlanProperties and other values that can be
+  /// easily retrieved and serialized. The data type associated with the out
+  /// array may be retrieved with the get_property_schema callback.
+  int (*get_property)(const struct SedonaCTableProvider* self, const char* property,
+                      struct SedonaCExecutionPlanArgs* args, struct ArrowArray* out,
+                      struct SedonaCError* err);
+
+  /// \brief Perform a scan operation and return an execution plan
+  ///
+  /// The args parameter contains JSON-serialized scan arguments.
+  /// Returns an execution plan that can be used to read the data.
+  int (*scan)(const struct SedonaCTableProvider* self,
+              struct SedonaCExecutionPlanArgs* args, struct SedonaCExecutionPlan* out,
+              struct SedonaCError* err);
+
+  /// \brief Perform an insert operation
+  ///
+  /// The args parameter contains JSON-serialized insert arguments.
+  /// The exec_plans field should contain the plan providing rows to insert.
+  /// Returns an execution plan that performs the insert.
+  int (*insert)(const struct SedonaCTableProvider* self,
+                struct SedonaCExecutionPlanArgs* args, struct SedonaCExecutionPlan* out,
+                struct SedonaCError* err);
+
+  /// \brief Perform an update operation
+  ///
+  /// The args parameter contains JSON-serialized update arguments
+  /// (filters, column assignments, etc.).
+  /// Returns an execution plan that performs the update.
+  int (*update)(const struct SedonaCTableProvider* self,
+                struct SedonaCExecutionPlanArgs* args, struct SedonaCExecutionPlan* out,
+                struct SedonaCError* err);
+
+  /// \brief Perform a delete operation
+  ///
+  /// The args parameter contains JSON-serialized delete arguments
+  /// (filters, etc.).
+  /// Returns an execution plan that performs the delete.
+  int (*delete_rows)(const struct SedonaCTableProvider* self,
+                     struct SedonaCExecutionPlanArgs* args,
+                     struct SedonaCExecutionPlan* out, struct SedonaCError* err);
+
+  /// \brief Reserved for future use. Must be NULL.
+  void* reserved;
+
+  /// \brief Release this instance
+  ///
+  /// Implementations of this callback must set self->release to NULL.
+  void (*release)(struct SedonaCTableProvider* self);
 
   /// \brief Opaque implementation-specific data
   void* private_data;

@@ -43,12 +43,12 @@ mod tests {
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
-
+    use sedona_geometry::types::Edges;
     use sedona_schema::{
         crs::lnglat,
         datatypes::{
-            Edges, SedonaType, WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY,
-            WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOGRAPHY,
+            SedonaType, WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS,
+            WKB_VIEW_GEOGRAPHY,
         },
     };
     use sedona_testing::{

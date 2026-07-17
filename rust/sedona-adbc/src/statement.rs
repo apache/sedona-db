@@ -17,7 +17,8 @@
 use adbc_core::PartitionedResult;
 use arrow_array::{RecordBatch, RecordBatchReader};
 use arrow_schema::Schema;
-use sedona::{context::SedonaContext, reader::SedonaStreamReader};
+use sedona::context::SedonaContext;
+use sedona_extension::streaming::StreamingRecordBatchReader;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 
@@ -98,10 +99,9 @@ impl Statement for SedonaStatement {
             self.runtime.block_on(async {
                 let df = self.ctx.sql(&query).await.map_err(from_datafusion_error)?;
                 let stream = df.execute_stream().await.map_err(from_datafusion_error)?;
-                Ok(
-                    Box::new(SedonaStreamReader::new(self.runtime.clone(), stream))
-                        as Box<dyn RecordBatchReader + Send + 'static>,
-                )
+                let reader = StreamingRecordBatchReader::new(stream, self.runtime.clone())
+                    .with_skip_empty_batches(true);
+                Ok(Box::new(reader) as Box<dyn RecordBatchReader + Send + 'static>)
             })
         } else {
             Err(Error::with_message_and_status(

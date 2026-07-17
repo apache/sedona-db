@@ -59,7 +59,7 @@ impl SedonaScalarKernel for STPerimeter {
         executor.execute_wkb_void(|maybe_wkb| {
             match maybe_wkb {
                 Some(wkb) => {
-                    builder.append_value(invoke_scalar(&wkb).map_err(|e| {
+                    builder.append_value(invoke_scalar(wkb).map_err(|e| {
                         DataFusionError::Execution(format!("Failed to calculate perimeter: {e}"))
                     })?);
                 }

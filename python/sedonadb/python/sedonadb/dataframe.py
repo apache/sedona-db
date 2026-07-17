@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Literal, Optional, 
 from sedonadb.expr import Expr, SortExpr
 from sedonadb.expr import Literal as _SedonaLit
 from sedonadb.expr import col as _col
-from sedonadb.expr.expression import _to_expr
+from sedonadb.expr.expression import collect_exprs
 from sedonadb.utility import sedona  # noqa: F401
 
 if TYPE_CHECKING:
@@ -337,38 +337,8 @@ class DataFrame:
         if not exprs and not kwargs:
             raise ValueError("select() requires at least one column or expression")
 
-        coerced = []
-        for e in exprs:
-            if isinstance(e, Expr):
-                coerced.append(e._impl)
-            elif isinstance(e, str):
-                coerced.append(_col(e)._impl)
-            elif isinstance(e, _SedonaLit):
-                # `lit(value)` returns Literal; route it through the same
-                # coercion path operators use so the resulting Expr lands
-                # in the plan with metadata preserved.
-                coerced.append(_to_expr(e)._impl)
-            else:
-                raise TypeError(
-                    f"select() expects str, Expr, or Literal arguments, "
-                    f"got {type(e).__name__}"
-                )
-
-        # Process keyword arguments: alias each value with its key
-        for name, e in kwargs.items():
-            if isinstance(e, Expr):
-                coerced.append(e.alias(name)._impl)
-            elif isinstance(e, str):
-                coerced.append(_col(e).alias(name)._impl)
-            elif isinstance(e, _SedonaLit):
-                coerced.append(_to_expr(e).alias(name)._impl)
-            else:
-                raise TypeError(
-                    f"select() expects str, Expr, or Literal keyword arguments, "
-                    f"got {type(e).__name__} for '{name}'"
-                )
-
-        return DataFrame(self._ctx, self._impl.select(coerced))
+        coerced = collect_exprs("select", exprs, kwargs)
+        return DataFrame(self._ctx, self._impl.select([e._impl for e in coerced]))
 
     def filter(self, *exprs: Expr) -> "DataFrame":
         """Filter rows by one or more boolean expressions.
@@ -533,6 +503,65 @@ class DataFrame:
             )
 
         return DataFrame(self._ctx, self._impl.drop_columns(list(cols)))
+
+    def unnest(self, *columns: str) -> "DataFrame":
+        """Expand list/array column(s) so each element becomes its own row.
+
+        This is the relational form of `pandas`/`GeoPandas` `explode()`: for
+        each input row, a list-typed column is expanded to one output row per
+        element, with the other columns repeated. When several columns are
+        given, they are unnested in parallel (position by position).
+
+        A common spatial use is flattening a multi-geometry: `ST_Dump(geom)`
+        returns a list of parts, and `unnest()` turns each part into its own
+        row.
+
+        Args:
+            *columns: One or more list/array column names to expand. At least
+                one is required.
+
+        Examples:
+
+            >>> sd = sedona.db.connect()
+            >>> df = sd.sql("SELECT 'a' AS label, [10, 20, 30] AS vals")
+            >>> df.unnest("vals").show()
+            ┌───────┬───────┐
+            │ label ┆  vals │
+            │  utf8 ┆ int64 │
+            ╞═══════╪═══════╡
+            │ a     ┆    10 │
+            ├╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┤
+            │ a     ┆    20 │
+            ├╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌┤
+            │ a     ┆    30 │
+            └───────┴───────┘
+
+            Explode a multi-geometry into one row per part: dump the parts with
+            `ST_Dump`, `unnest` the resulting list, then read the geometry out
+            of the `{path, geom}` struct each element carries.
+
+            >>> multi = sd.sql("SELECT ST_GeomFromText('MULTIPOINT (0 0, 1 1)') AS geometry")
+            >>> dumped = multi.select(multi["geometry"].geo.dump().alias("dump")).unnest("dump")
+            >>> dumped.select(dumped["dump"]["geom"].alias("geometry")).show()
+            ┌────────────┐
+            │  geometry  │
+            │  geometry  │
+            ╞════════════╡
+            │ POINT(0 0) │
+            ├╌╌╌╌╌╌╌╌╌╌╌╌┤
+            │ POINT(1 1) │
+            └────────────┘
+        """
+        if not columns:
+            raise ValueError("unnest() requires at least one column name")
+
+        for c in columns:
+            if not isinstance(c, str):
+                raise TypeError(
+                    f"unnest() expects str arguments, got {type(c).__name__}"
+                )
+
+        return DataFrame(self._ctx, self._impl.unnest(list(columns)))
 
     def agg(self, *exprs: Expr, **named_exprs: Expr) -> "DataFrame":
         """Aggregate the entire DataFrame to a single row.
@@ -1067,6 +1096,130 @@ class DataFrame:
         self._check_set_op_compatible(other, "except_distinct")
         return DataFrame(self._ctx, self._impl.except_distinct(other._impl))
 
+    def mutate(
+        self,
+        *exprs: Union[Expr, str, _SedonaLit],
+        **named_exprs: Union[Expr, str, _SedonaLit],
+    ) -> "DataFrame":
+        """Add or replace columns, keeping all existing ones.
+
+        Adds each given column (Ibis / dplyr `mutate`). Positional and
+        keyword arguments follow the same rules as `select`: a positional
+        value is used as-is (its own output name applies), a keyword value
+        is aliased to the keyword. A column whose output name matches an
+        existing column replaces it in place; genuinely new columns are
+        appended in the order given. Unlike `select`, you don't re-list the
+        columns you want to keep — `mutate` keeps them all.
+
+        Args:
+            *exprs: Positional column definitions (`Expr` / column-name
+                `str` / `lit()` literal), used with their own output names.
+            **named_exprs: Keyword column definitions, aliased to the key.
+                At least one positional or keyword argument is required.
+
+        Examples:
+
+            >>> sd = sedona.db.connect()
+            >>> df = sd.sql("SELECT 1 AS a, 2 AS b")
+            >>> df.mutate(c=df.a + df.b, b=df.b * 10).show()
+            ┌───────┬───────┬───────┐
+            │   a   ┆   b   ┆   c   │
+            │ int64 ┆ int64 ┆ int64 │
+            ╞═══════╪═══════╪═══════╡
+            │     1 ┆    20 ┆     3 │
+            └───────┴───────┴───────┘
+        """
+        if not exprs and not named_exprs:
+            raise ValueError("mutate() requires at least one column")
+
+        # Coerce with the same rules as select, then key each result by its
+        # output name so an existing column can be replaced in place.
+        coerced = collect_exprs("mutate", exprs, named_exprs)
+        by_name: Dict[str, Expr] = {}
+        order: List[str] = []
+        for e in coerced:
+            name = e._output_name()
+            if name not in by_name:
+                order.append(name)
+            by_name[name] = e
+
+        # Single projection: existing columns (replaced in place where a
+        # mutation matches the name), then the new columns in input order.
+        current = self._impl.columns()
+        projection = [by_name[c] if c in by_name else _col(c) for c in current]
+        projection += [by_name[name] for name in order if name not in current]
+
+        return DataFrame(self._ctx, self._impl.select([e._impl for e in projection]))
+
+    def rename(self, *args: Any, **new_to_old: str) -> "DataFrame":
+        """Rename columns, keeping all others and their order.
+
+        Follows the Ibis / dplyr convention: each keyword is the **new**
+        name and its value is the existing (**old**) name — i.e.
+        `df.rename(new_name="old_name")`. This is the reverse of pandas /
+        Polars, which map old→new; passing a dict raises a clear error
+        pointing at the keyword form.
+
+        Args:
+            **new_to_old: `new_name="old_name"` pairs. At least one is
+                required.
+
+        Raises:
+            KeyError: If an old column name doesn't exist (the message
+                lists the available columns).
+
+        Examples:
+
+            >>> sd = sedona.db.connect()
+            >>> df = sd.sql("SELECT 1 AS a, 2 AS b")
+            >>> df.rename(c="b").show()
+            ┌───────┬───────┐
+            │   a   ┆   c   │
+            │ int64 ┆ int64 │
+            ╞═══════╪═══════╡
+            │     1 ┆     2 │
+            └───────┴───────┘
+        """
+        # The common pandas/Polars habit is `rename({"old": "new"})`; catch a
+        # positional (dict) argument and redirect to the keyword form. A clear,
+        # actionable message so it's an easy fix (including for LLMs iterating).
+        if args:
+            hint = ""
+            if len(args) == 1 and isinstance(args[0], dict):
+                pairs = ", ".join(f'{v}="{k}"' for k, v in args[0].items())
+                hint = f" Rewrite {args[0]!r} as rename({pairs})."
+            raise TypeError(
+                'rename() takes new_name="old_name" keyword arguments '
+                "(Ibis/dplyr style), not positional/dict arguments — this is "
+                "the reverse of the pandas/Polars {old: new} mapping." + hint
+            )
+
+        if not new_to_old:
+            raise ValueError('rename() requires at least one new_name="old_name" pair')
+
+        old_to_new: Dict[str, str] = {}
+        for new_name, old_name in new_to_old.items():
+            if not isinstance(old_name, str):
+                raise TypeError(
+                    'rename() takes new_name="old_name" keyword pairs '
+                    "(the value is the existing column name as a str); got "
+                    f"{type(old_name).__name__} for '{new_name}'"
+                )
+            old_to_new[old_name] = new_name
+
+        columns = self._impl.columns()
+        missing = [old for old in old_to_new if old not in columns]
+        if missing:
+            raise KeyError(
+                f"Column(s) {missing} not found. Available columns: {columns}"
+            )
+
+        projection = [
+            _col(c).alias(old_to_new[c]) if c in old_to_new else _col(c)
+            for c in columns
+        ]
+        return DataFrame(self._ctx, self._impl.select([e._impl for e in projection]))
+
     def limit(self, n: Optional[int], /, *, offset: int = 0) -> "DataFrame":
         """Limit result to n rows starting at offset
 
@@ -1290,8 +1443,8 @@ class DataFrame:
         """
         return DataFrame(self._ctx, self._impl.to_memtable(self._ctx._impl))
 
-    def __datafusion_table_provider__(self):
-        return self._impl.__datafusion_table_provider__()
+    def __sedonadb_table_provider__(self):
+        return self._impl.__sedonadb_table_provider__(self._ctx._impl)
 
     def to_arrow_table(self, schema: Any = None) -> "pa.Table":
         """Execute and collect results as a PyArrow Table
@@ -1676,7 +1829,7 @@ def _create_data_frame(ctx, obj, schema) -> DataFrame:
     """
     # If we're dealing with an anonymous data frame on the same context,
     # just return it. Otherwise, fall back to the default interpretation
-    # (which uses __datafusion_table_provider__).
+    # (which uses __sedonadb_table_provider__).
     if isinstance(obj, DataFrame) and obj._ctx is ctx and schema is None:
         return obj
 
@@ -1689,7 +1842,7 @@ def _create_data_frame(ctx, obj, schema) -> DataFrame:
         return SPECIAL_CASED_SCANS[type_name](ctx, obj, schema)
 
     # The default implementation handles objects that implement
-    # __datafusion_table_provider__ or __arrow_c_stream__. For objects implementing
+    # __sedonadb_table_provider__ or __arrow_c_stream__. For objects implementing
     # __arrow_c_stream__, this currently will only work for a single scan (i.e.,
     # the returned data frame can't be previewed before the query is computed).
     return _scan_default(ctx, obj, schema)

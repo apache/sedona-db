@@ -22,10 +22,8 @@ use arrow_array::{
 };
 use arrow_schema::{ArrowError, Schema};
 use savvy::{savvy, savvy_err};
-use sedona_schema::{
-    crs::deserialize_crs,
-    datatypes::{Edges, SedonaType},
-};
+use sedona_geometry::types::Edges;
+use sedona_schema::{crs::deserialize_crs, datatypes::SedonaType};
 
 use crate::ffi::import_array_stream;
 

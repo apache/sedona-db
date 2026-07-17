@@ -168,6 +168,67 @@ def test_st_envelope_nontrivial_input(eng, geoarrow_data):
     geopandas.testing.assert_geodataframe_equal(df, expected, check_crs=False)
 
 
+@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize("num_groups", [None, 1, 7, 2000])
+def test_st_convexhull_agg_matches_collect_chain(eng, con, num_groups):
+    eng = eng.create_or_skip()
+
+    df_points = con.sql("""
+        SELECT id, geometry FROM sd_random_geometry(
+            '{"geom_type": "Point", "num_rows": 2000, "seed": 9728}'
+        )
+    """)
+    eng.create_table_arrow("df_points", df_points.to_arrow_table())
+
+    if num_groups is None:
+        select_prefix = ""
+        group_by_clause = ""
+    else:
+        select_prefix = f"(id % {num_groups}) AS id_mod,"
+        group_by_clause = "GROUP BY id_mod ORDER BY id_mod"
+
+    result_new = eng.execute_and_collect(f"""
+        SELECT {select_prefix} ST_ConvexHull_Agg(geometry) AS hull
+        FROM df_points
+        {group_by_clause}
+    """)
+    result_old = eng.execute_and_collect(f"""
+        SELECT {select_prefix} ST_ConvexHull(ST_Collect_Agg(geometry)) AS hull
+        FROM df_points
+        {group_by_clause}
+    """)
+
+    geopandas.testing.assert_geodataframe_equal(
+        eng.result_to_pandas(result_new),
+        eng.result_to_pandas(result_old),
+        normalize=True,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB])
+def test_st_convexhull_agg_zero_rows(eng):
+    eng = eng.create_or_skip()
+
+    eng.assert_query_result(
+        """SELECT ST_ConvexHull_Agg(ST_GeomFromText(geom)) FROM (
+            VALUES ('POINT (1 2)')
+        ) AS t(geom) WHERE false""",
+        None,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB])
+def test_st_convexhull_agg_all_null_input(eng):
+    eng = eng.create_or_skip()
+
+    eng.assert_query_result(
+        """SELECT ST_ConvexHull_Agg(ST_GeomFromText(geom)) FROM (
+            VALUES (NULL), (NULL), (NULL)
+        ) AS t(geom)""",
+        None,
+    )
+
+
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 def test_st_collect_points(eng):
     eng = eng.create_or_skip()

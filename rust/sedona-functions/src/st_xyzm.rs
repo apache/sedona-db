@@ -141,7 +141,7 @@ impl SedonaScalarKernel for STXyzm {
         executor.execute_wkb_void(|maybe_item| {
             match maybe_item {
                 Some(item) => {
-                    builder.append_option(invoke_scalar(&item, dim_index)?);
+                    builder.append_option(invoke_scalar(item, dim_index)?);
                 }
                 None => builder.append_null(),
             }

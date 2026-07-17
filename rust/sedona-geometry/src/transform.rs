@@ -60,6 +60,11 @@ pub trait CrsEngine: Debug {
         pipeline: &str,
         options: &str,
     ) -> Result<Rc<dyn CrsTransform>, SedonaGeometryError>;
+
+    /// Convert an arbitrary CRS represented by a string to its PROJJSON string representation
+    ///
+    /// This may be used to write valid GeoParquet files from arbitrary CRSes
+    fn to_projjson(&self, _crs_string: &str) -> Result<String, SedonaGeometryError>;
 }
 
 /// Trait for transforming coordinates in a geometry from one CRS to another.
@@ -320,6 +325,10 @@ impl<T: CrsEngine> CrsEngine for CachingCrsEngine<T> {
             .borrow_mut()
             .put(static_cache_key, transform.clone());
         Ok(transform)
+    }
+
+    fn to_projjson(&self, crs_string: &str) -> Result<String, SedonaGeometryError> {
+        self.engine.to_projjson(crs_string)
     }
 }
 
@@ -1023,6 +1032,10 @@ mod test {
             *self.pipeline_call_count.borrow_mut() += 1;
             Ok(Rc::new(MockTransform {}))
         }
+
+        fn to_projjson(&self, _crs_string: &str) -> Result<String, SedonaGeometryError> {
+            Ok("projjson!".to_string())
+        }
     }
 
     #[test]
@@ -1151,5 +1164,15 @@ mod test {
             .get_transform_pipeline("+proj=utm +zone=33 +datum=WGS84", "+over")
             .unwrap();
         assert_eq!(caching_engine.engine.pipeline_calls(), 3);
+    }
+
+    #[test]
+    fn test_caching_crs_engine_to_projjson() {
+        let mock_engine = MockCrsEngine::new();
+        let caching_engine = CachingCrsEngine::new(mock_engine);
+        assert_eq!(
+            caching_engine.to_projjson("not projjson!").unwrap(),
+            "projjson!".to_string()
+        )
     }
 }

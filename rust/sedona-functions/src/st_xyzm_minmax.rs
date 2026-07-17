@@ -149,7 +149,7 @@ impl SedonaScalarKernel for STXyzmMinMax {
         executor.execute_wkb_void(|maybe_item| {
             match maybe_item {
                 Some(item) => {
-                    builder.append_option(invoke_scalar(&item, self.dim, self.is_max)?);
+                    builder.append_option(invoke_scalar(item, self.dim, self.is_max)?);
                 }
                 None => builder.append_null(),
             }

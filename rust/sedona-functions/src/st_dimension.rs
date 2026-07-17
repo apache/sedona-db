@@ -62,7 +62,7 @@ impl SedonaScalarKernel for STDimension {
         executor.execute_wkb_void(|maybe_item| {
             match maybe_item {
                 Some(item) => {
-                    builder.append_value(invoke_scalar(&item)?);
+                    builder.append_value(invoke_scalar(item)?);
                 }
                 None => builder.append_null(),
             }

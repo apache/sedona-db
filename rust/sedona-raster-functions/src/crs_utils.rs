@@ -15,10 +15,33 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use datafusion_common::{exec_datafusion_err, DataFusionError, Result};
+use std::borrow::Cow;
+
+use datafusion_common::config::ConfigOptions;
+use datafusion_common::{exec_datafusion_err, exec_err, DataFusionError, Result};
+use sedona_common::option::SedonaOptions;
 use sedona_geometry::transform::{transform, CrsEngine};
-use sedona_schema::crs::{deserialize_crs, CoordinateReferenceSystem, Crs};
+use sedona_proj::transform::with_global_proj_engine;
+use sedona_schema::crs::{deserialize_crs, CoordinateReferenceSystem, Crs, CrsRef};
 use wkb::reader::read_wkb;
+
+/// Run `f` with the session's CRS engine: the [`SedonaOptions`] runtime engine
+/// when config options are available (the query path), falling back to the
+/// process-global PROJ engine otherwise (e.g. direct `invoke_batch` calls).
+pub fn with_crs_engine<T>(
+    config_options: Option<&ConfigOptions>,
+    f: impl FnOnce(&dyn CrsEngine) -> Result<T>,
+) -> Result<T> {
+    if let Some(options) = config_options.and_then(|o| o.extensions.get::<SedonaOptions>()) {
+        f(options.runtime.crs_engine().as_ref())
+    } else {
+        let mut f = Some(f);
+        with_global_proj_engine(|engine| {
+            let f = f.take().expect("engine closure runs once");
+            f(engine)
+        })
+    }
+}
 
 /// Resolve an optional CRS string to a concrete CRS object.
 ///
@@ -64,6 +87,45 @@ pub fn crs_transform_wkb(
     Ok(out)
 }
 
+/// Align WKB coordinates with a target CRS when both CRSes are known.
+///
+/// Both inputs must either carry a CRS or omit one. When present CRSes differ,
+/// the WKB is transformed into the target CRS.
+pub fn crs_transform_required(
+    source_crs: CrsRef<'_>,
+    target_crs: CrsRef<'_>,
+    source_name: &str,
+    target_name: &str,
+) -> Result<bool> {
+    match (source_crs, target_crs) {
+        (Some(source_crs), Some(target_crs)) => Ok(!source_crs.crs_equals(target_crs)),
+        (None, None) => Ok(false),
+        (Some(_), None) => exec_err!("{source_name} has a CRS but the {target_name} does not"),
+        (None, Some(_)) => exec_err!("{target_name} has a CRS but the {source_name} does not"),
+    }
+}
+
+/// Align WKB coordinates with a target CRS.
+pub fn align_wkb_to_crs<'a>(
+    wkb: &'a [u8],
+    source_crs: CrsRef<'_>,
+    target_crs: CrsRef<'_>,
+    source_name: &str,
+    target_name: &str,
+    engine: &dyn CrsEngine,
+) -> Result<Cow<'a, [u8]>> {
+    if !crs_transform_required(source_crs, target_crs, source_name, target_name)? {
+        return Ok(Cow::Borrowed(wkb));
+    }
+
+    let (Some(source_crs), Some(target_crs)) = (source_crs, target_crs) else {
+        unreachable!("a CRS transform requires both source and target CRSes")
+    };
+    Ok(Cow::Owned(crs_transform_wkb(
+        wkb, source_crs, target_crs, engine,
+    )?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -85,11 +147,91 @@ mod tests {
         let from_crs = resolve_crs(from)?;
         let to_crs = resolve_crs(to)?;
         match (from_crs, to_crs) {
-            (Some(from_crs), Some(to_crs)) => {
+            (Some(from_crs), Some(to_crs)) if !from_crs.crs_equals(to_crs.as_ref()) => {
                 crs_transform_wkb(wkb, from_crs.as_ref(), to_crs.as_ref(), engine)
             }
             _ => Ok(wkb.to_vec()),
         }
+    }
+
+    #[test]
+    fn align_wkb_borrows_when_crses_are_missing_or_equal() {
+        let wkb = sample_wkb();
+        with_global_proj_engine(|engine| {
+            let source = resolve_crs(Some("EPSG:4326"))?;
+            let target = resolve_crs(Some("EPSG:4326"))?;
+
+            assert!(matches!(
+                align_wkb_to_crs(&wkb, None, None, "source", "target", engine)?,
+                Cow::Borrowed(_)
+            ));
+            assert!(matches!(
+                align_wkb_to_crs(
+                    &wkb,
+                    source.as_deref(),
+                    target.as_deref(),
+                    "source",
+                    "target",
+                    engine,
+                )?,
+                Cow::Borrowed(_)
+            ));
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn align_wkb_owns_transformed_coordinates() {
+        let wkb = sample_wkb();
+        with_global_proj_engine(|engine| {
+            let source = resolve_crs(Some("EPSG:4326"))?;
+            let target = resolve_crs(Some("EPSG:3857"))?;
+            let aligned = align_wkb_to_crs(
+                &wkb,
+                source.as_deref(),
+                target.as_deref(),
+                "source",
+                "target",
+                engine,
+            )?;
+            assert!(matches!(aligned, Cow::Owned(_)));
+            assert_ne!(aligned.as_ref(), wkb);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn align_wkb_errors_when_only_one_crs_is_present() {
+        let wkb = sample_wkb();
+        with_global_proj_engine(|engine| {
+            let crs = resolve_crs(Some("EPSG:4326"))?;
+            assert!(align_wkb_to_crs(
+                &wkb,
+                crs.as_deref(),
+                None,
+                "geometry",
+                "reference raster",
+                engine,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("geometry has a CRS but the reference raster does not"));
+            assert!(align_wkb_to_crs(
+                &wkb,
+                None,
+                crs.as_deref(),
+                "geometry",
+                "reference raster",
+                engine,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("reference raster has a CRS but the geometry does not"));
+            Ok(())
+        })
+        .unwrap();
     }
 
     // -----------------------------------------------------------------------

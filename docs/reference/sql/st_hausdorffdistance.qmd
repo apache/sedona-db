@@ -1,0 +1,68 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: ST_HausdorffDistance
+description: Returns the Hausdorff distance between two geometries.
+kernels:
+  - returns: double
+    args: [geometry, geometry]
+  - returns: double
+    args:
+    - geometry
+    - geometry
+    - name: densifyFrac
+      type: double
+      description: >
+        A fraction by which to densify each segment of the geometries before computing
+        the distance. A value of 0.25 will densify the segment by adding vertices every
+        1/4 of the segment length. Densification can give a more accurate result for
+        geometries with long segments or complex shapes.
+---
+
+## Description
+
+The Hausdorff distance is a measure of the similarity between two geometric shapes. This implementation returns the greatest of all distances from a point in one geometry to the closest point in the other geometry.
+
+Returns `NULL` if either geometry is `NULL`. Returns 0 if either geometry is empty.
+
+## Examples
+
+Basic Hausdorff distance between two points:
+
+```sql
+SELECT ST_HausdorffDistance(ST_Point(0, 0), ST_Point(3, 4));
+```
+
+Hausdorff distance between two linestrings:
+
+```sql
+SELECT ST_HausdorffDistance(
+    ST_GeomFromText('LINESTRING (0 0, 2 0)'),
+    ST_GeomFromText('LINESTRING (0 1, 2 1)')
+);
+```
+
+Using densification for more accurate results as needed:
+
+```sql
+SELECT ST_HausdorffDistance(
+    ST_GeomFromText('LINESTRING (130 0, 0 0, 0 150)'),
+    ST_GeomFromText('LINESTRING (10 10, 10 150, 130 10)'),
+    0.5
+);
+```

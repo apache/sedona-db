@@ -132,7 +132,7 @@ fn invoke_batch_impl(arg_types: &[SedonaType], args: &[ColumnarValue]) -> Result
                 if (is_left && distance < 0.0) || (is_right && distance > 0.0) {
                     distance = -distance;
                 }
-                invoke_scalar(&wkb, distance, &params, &mut builder)?;
+                invoke_scalar(wkb, distance, &params, &mut builder)?;
                 builder.append_value([]);
             }
             _ => builder.append_null(),

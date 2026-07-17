@@ -233,7 +233,7 @@ impl SedonaScalarKernel for STDump {
         let mut builder = STDumpBuilder::new(executor.num_iterations(), return_type.clone());
         executor.execute_wkb_void(|maybe_wkb| {
             if let Some(wkb) = maybe_wkb {
-                builder.append(&wkb)?;
+                builder.append(wkb)?;
             } else {
                 builder.append_null();
             }
@@ -275,7 +275,8 @@ mod tests {
     use arrow_array::{Array, ArrayRef, ListArray, StructArray, UInt32Array};
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
-    use sedona_schema::{crs::lnglat, datatypes::Edges};
+    use sedona_geometry::types::Edges;
+    use sedona_schema::crs::lnglat;
     use sedona_testing::{
         compare::assert_array_equal, create::create_array, testers::ScalarUdfTester,
     };

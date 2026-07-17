@@ -88,7 +88,7 @@ impl SedonaScalarKernel for STReverse {
         executor.execute_wkb_void(|maybe_wkb| {
             match maybe_wkb {
                 Some(wkb) => {
-                    invoke_scalar(&wkb, &mut builder)
+                    invoke_scalar(wkb, &mut builder)
                         .map_err(|e| exec_datafusion_err!("ST_Reverse error: {e}"))?;
                     builder.append_value([]);
                 }

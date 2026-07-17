@@ -64,7 +64,7 @@ impl SedonaScalarKernel for STPointOnSurface {
         executor.execute_wkb_void(|maybe_geom| {
             match maybe_geom {
                 Some(geom) => {
-                    invoke_scalar(&geom, &mut builder)?;
+                    invoke_scalar(geom, &mut builder)?;
                     builder.append_value([]);
                 }
                 _ => builder.append_null(),

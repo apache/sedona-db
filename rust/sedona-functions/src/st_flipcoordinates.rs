@@ -81,7 +81,7 @@ impl SedonaScalarKernel for STFlipCoordinates {
         executor.execute_wkb_void(|maybe_item| {
             match maybe_item {
                 Some(item) => {
-                    invoke_scalar(&item, &mut transform, &mut builder)?;
+                    invoke_scalar(item, &mut transform, &mut builder)?;
                     builder.append_value([]);
                 }
                 None => builder.append_null(),

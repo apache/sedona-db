@@ -82,7 +82,7 @@ impl SedonaScalarKernel for STAsEWKB {
         executor.execute_wkb_void(|maybe_wkb| {
             match maybe_wkb {
                 Some(wkb) => {
-                    write_ewkb_geometry(&mut builder, &wkb, maybe_srid)
+                    write_ewkb_geometry(&mut builder, wkb, maybe_srid)
                         .map_err(|e| exec_datafusion_err!("EWKB writer error {e}"))?;
                     builder.append_value([]);
                 }
@@ -156,7 +156,7 @@ impl SedonaScalarKernel for STAsEWKBItemCrs {
             let maybe_srid = srid_iter.next().unwrap()?;
             match maybe_wkb {
                 Some(wkb) => {
-                    write_ewkb_geometry(&mut builder, &wkb, maybe_srid)
+                    write_ewkb_geometry(&mut builder, wkb, maybe_srid)
                         .map_err(|e| exec_datafusion_err!("EWKB writer error {e}"))?;
                     builder.append_value([]);
                 }
@@ -176,10 +176,11 @@ mod tests {
     use datafusion_common::scalar::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
+    use sedona_geometry::types::Edges;
     use sedona_schema::{
         crs::lnglat,
         datatypes::{
-            Edges, WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS,
+            WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS,
             WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY,
         },
     };

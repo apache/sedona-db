@@ -73,7 +73,7 @@ impl SedonaScalarKernel for STReducePrecision {
         executor.execute_wkb_void(|wkb| {
             match (wkb, grid_size_iter.next().unwrap()) {
                 (Some(wkb), Some(grid_size)) => {
-                    invoke_scalar(&wkb, grid_size, &mut builder)?;
+                    invoke_scalar(wkb, grid_size, &mut builder)?;
                     builder.append_value([]);
                 }
                 _ => builder.append_null(),

@@ -18,16 +18,15 @@ use arrow_array::builder::Float64Builder;
 use arrow_schema::DataType;
 use datafusion_common::{error::Result, exec_err};
 use datafusion_expr::{ColumnarValue, Volatility};
-use geo_traits::{CoordTrait, GeometryTrait, GeometryType, PointTrait};
 use sedona_expr::{
     item_crs::ItemCrsKernel,
     scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
 };
+use sedona_geometry::wkb_header::read_point_xy;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use std::sync::Arc;
-use wkb::reader::Wkb;
 
-use crate::executor::WkbExecutor;
+use crate::executor::WkbBytesExecutor;
 
 /// ST_Azimuth() scalar UDF
 ///
@@ -58,14 +57,17 @@ impl SedonaScalarKernel for STAzimuth {
         arg_types: &[SedonaType],
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
-        let executor = WkbExecutor::new(arg_types, args);
+        // ST_Azimuth is defined only for two non-empty POINTs, so it never needs
+        // the full geometry: read each operand's (x, y) straight from the WKB
+        // offset via `read_point_xy` (no parse, no enum). POINT EMPTY or any
+        // non-Point maps to the same error the general path raised.
+        let executor = WkbBytesExecutor::new(arg_types, args);
         let mut builder = Float64Builder::with_capacity(executor.num_iterations());
         executor.execute_wkb_wkb_void(|maybe_start, maybe_end| {
             match (maybe_start, maybe_end) {
-                (Some(start), Some(end)) => match invoke_scalar(start, end)? {
-                    Some(angle) => builder.append_value(angle),
-                    None => builder.append_null(),
-                },
+                (Some(start), Some(end)) => {
+                    builder.append_option(azimuth_from_bytes(start, end)?);
+                }
                 _ => builder.append_null(),
             }
 
@@ -76,22 +78,13 @@ impl SedonaScalarKernel for STAzimuth {
     }
 }
 
-fn invoke_scalar(start: &Wkb, end: &Wkb) -> Result<Option<f64>> {
-    match (start.as_type(), end.as_type()) {
-        (GeometryType::Point(start_point), GeometryType::Point(end_point)) => {
-            match (start_point.coord(), end_point.coord()) {
-                // If both geometries are non-empty points, calculate the angle
-                (Some(start_coord), Some(end_coord)) => Ok(calc_azimuth(
-                    start_coord.x(),
-                    start_coord.y(),
-                    end_coord.x(),
-                    end_coord.y(),
-                )),
-                // If either of the points is empty, raise an error.
-                _ => {
-                    exec_err!("ST_Azimuth expects both arguments to be non-empty POINT geometries")
-                }
-            }
+/// Azimuth between two operands read as raw WKB. Both must be non-empty POINTs;
+/// `read_point_xy` returns `Ok(None)` for POINT EMPTY and `Err` for non-Point
+/// input, both of which map to the same error the general parser raised.
+fn azimuth_from_bytes(start: &[u8], end: &[u8]) -> Result<Option<f64>> {
+    match (read_point_xy(start), read_point_xy(end)) {
+        (Ok(Some((start_x, start_y))), Ok(Some((end_x, end_y)))) => {
+            Ok(calc_azimuth(start_x, start_y, end_x, end_y))
         }
         _ => exec_err!("ST_Azimuth expects both arguments to be non-empty POINT geometries"),
     }

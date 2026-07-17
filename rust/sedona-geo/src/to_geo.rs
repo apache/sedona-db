@@ -183,7 +183,7 @@ mod tests {
         let executor = GeoTypesExecutor::new(&[WKB_GEOMETRY], &args);
         executor
             .execute_wkb_void(|geo| {
-                actual_items.push(geo);
+                actual_items.push(geo.cloned());
                 Ok(())
             })
             .unwrap();

@@ -106,7 +106,7 @@ impl SedonaScalarKernel for STSegmentize {
                         return exec_err!("max_segment_length must be finite and >= 0");
                     }
 
-                    segmentize_wkb(&wkb, max_len, &mut coords_scratch, &mut builder)
+                    segmentize_wkb(wkb, max_len, &mut coords_scratch, &mut builder)
                         .map_err(|e| exec_datafusion_err!("Segmentize error: {e}"))?;
                     builder.append_value([]);
                 }

@@ -25,8 +25,8 @@ edition = "2021"
 crate-type = ["staticlib", "lib"]
 
 [dependencies]
-arrow-schema = { workspace = true }
 arrow-array = { workspace = true }
+arrow-schema = { workspace = true }
 datafusion = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-execution = { workspace = true }
@@ -37,6 +37,8 @@ savvy-ffi = "*"
 sedona = { workspace = true }
 sedona-adbc = { workspace = true }
 sedona-expr = { workspace = true }
+sedona-extension = { workspace = true }
+sedona-geometry = { workspace = true }
 sedona-geoparquet = { workspace = true }
 sedona-proj = { workspace = true }
 sedona-schema = { workspace = true }

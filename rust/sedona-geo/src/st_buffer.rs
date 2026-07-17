@@ -80,7 +80,7 @@ impl SedonaScalarKernel for STBuffer {
         executor.execute_wkb_void(|maybe_wkb| {
             match (maybe_wkb, distance_iter.next().unwrap()) {
                 (Some(wkb), Some(distance)) => {
-                    invoke_scalar(&wkb, BufferStyle::new(distance), &mut builder)?;
+                    invoke_scalar(wkb, BufferStyle::new(distance), &mut builder)?;
                     builder.append_value([]);
                 }
                 _ => builder.append_null(),

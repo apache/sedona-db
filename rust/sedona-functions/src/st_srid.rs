@@ -271,8 +271,9 @@ mod test {
     use arrow_array::{create_array, ArrayRef};
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
+    use sedona_geometry::types::Edges;
     use sedona_schema::crs::deserialize_crs;
-    use sedona_schema::datatypes::{Edges, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS};
+    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS};
     use sedona_testing::create::{create_array, create_array_item_crs, create_scalar_item_crs};
     use sedona_testing::testers::ScalarUdfTester;
 

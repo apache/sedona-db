@@ -28,9 +28,10 @@ use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
 use sedona_functions::executor::WkbExecutor;
 use sedona_functions::st_setsrid::{validate_crs_array_for_type, validate_crs_for_type};
 use sedona_geometry::transform::{transform, CrsEngine, CrsTransform};
+use sedona_geometry::types::Edges;
 use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
 use sedona_schema::crs::{deserialize_crs, Crs};
-use sedona_schema::datatypes::{Edges, SedonaType};
+use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;
 use std::io::Write;
 use std::iter::zip;
@@ -176,7 +177,7 @@ impl SedonaScalarKernel for STTransform {
                     executor.execute_wkb_void(|maybe_wkb| {
                         match maybe_wkb {
                             Some(wkb) => {
-                                invoke_scalar(&wkb, crs_transform.as_ref(), &mut builder)?;
+                                invoke_scalar(wkb, crs_transform.as_ref(), &mut builder)?;
                                 builder.append_value([]);
                             }
                             None => builder.append_null(),
@@ -225,7 +226,7 @@ impl SedonaScalarKernel for STTransform {
                         }
 
                         if maybe_from_crs == maybe_to_crs {
-                            invoke_noop(&wkb, &mut builder)?;
+                            invoke_noop(wkb, &mut builder)?;
                             builder.append_value([]);
                             return Ok(());
                         }
@@ -241,7 +242,7 @@ impl SedonaScalarKernel for STTransform {
                             )
                         };
 
-                        invoke_scalar(&wkb, crs_transform.as_ref(), &mut builder)?;
+                        invoke_scalar(wkb, crs_transform.as_ref(), &mut builder)?;
                         builder.append_value([]);
                     }
                     _ => {

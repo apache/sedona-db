@@ -24,8 +24,9 @@ use sedona_expr::{
     item_crs::ItemCrsKernel,
     scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
 };
+use sedona_geometry::types::Edges;
 use sedona_schema::{
-    datatypes::{Edges, SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY},
+    datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY},
     matchers::ArgMatcher,
 };
 
@@ -122,10 +123,11 @@ mod tests {
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_expr::item_crs::parse_item_crs_arg_type;
+    use sedona_geometry::types::Edges;
     use sedona_schema::{
         crs::{deserialize_crs, lnglat},
         datatypes::{
-            Edges, WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS,
+            WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS,
             WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY,
         },
     };

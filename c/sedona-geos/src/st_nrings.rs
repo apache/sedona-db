@@ -56,7 +56,7 @@ impl SedonaScalarKernel for STNRings {
             match maybe_geom {
                 None => builder.append_null(),
                 Some(geom) => {
-                    let val = invoke_scalar(&geom)?;
+                    let val = invoke_scalar(geom)?;
                     builder.append_value(val);
                 }
             }

@@ -226,7 +226,7 @@ impl RasterLoaderRegistry {
 
 /// `ConfigField`-shaped wrapper around the shared registry handle.
 ///
-/// Mirrors `sedona_common::option::CrsProviderOption` so the registry
+/// Mirrors `sedona_common::option::SedonaRuntime` so the registry
 /// can live inside a `ConfigOptions` extension and stay reachable from
 /// `AsyncScalarUDFImpl::invoke_async_with_args` (which only receives
 /// `Arc<ConfigOptions>`). The inner `Arc<RwLock<...>>` is cloned

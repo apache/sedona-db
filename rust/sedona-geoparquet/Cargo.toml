@@ -32,7 +32,12 @@ result_large_err = "allow"
 
 [features]
 default = []
-s2geography = ["dep:sedona-s2geography"]
+# Enable s2geography tests for validating spherical bounding behavior.
+# The runtime code uses Arc<dyn WkbBounder2D> and does not depend on this feature.
+# NOTE: This was renamed from `s2geography` to break downstream crates that relied
+# on it for geography statistics. Bounders must now be registered at runtime via
+# SedonaRuntime::with_bounder.
+s2geography_tests = ["dep:sedona-s2geography"]
 
 [dev-dependencies]
 sedona-testing = { workspace = true }
