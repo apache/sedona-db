@@ -25,6 +25,7 @@
 use std::sync::Arc;
 
 use arrow_array::ArrayRef;
+use arrow_buffer::Buffer;
 use datafusion_common::cast::{as_boolean_array, as_float64_array, as_int32_array};
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::error::Result;
@@ -297,7 +298,7 @@ impl SedonaScalarKernel for RsClip {
                     crop,
                 ) {
                     Ok(Some(clipped_data)) => {
-                        build_clipped_raster(&mut builder, raster, &clipped_data)?
+                        build_clipped_raster(&mut builder, raster, clipped_data)?
                     }
                     Ok(None) => {
                         // The clip mask is empty — no pixel was selected. `lenient`
@@ -532,7 +533,8 @@ fn clip_raster(
         let n_planes: usize = shape[..ndim - 2].iter().map(|&d| d as usize).product();
 
         // `as_contiguous` borrows the band bytes; we only ever read them here
-        // (the mask/crop helpers allocate their own output), so no copy is needed.
+        // (the mask/crop helpers write into the band's output buffer), so no
+        // copy is needed.
         let nd_buffer = band.nd_buffer().map_err(|e| {
             exec_datafusion_err!("RS_Clip: failed to read band {}: {}", band_idx, e)
         })?;
@@ -570,7 +572,10 @@ fn clip_raster(
             );
         }
 
-        // Apply the (shared) mask/crop to each plane, then concatenate.
+        // Apply the (shared) mask/crop to each plane. One output allocation
+        // serves the whole band: every plane appends into it, and the
+        // finished Vec later moves into the Arrow array as a zero-copy view
+        // block rather than being copied through the builder.
         let out_plane_bytes = match crop_window {
             Some(cw) => cw.width * cw.height * byte_size,
             None => in_plane_bytes,
@@ -578,20 +583,27 @@ fn clip_raster(
         let mut clipped_data = Vec::with_capacity(n_planes * out_plane_bytes);
         for plane in 0..n_planes {
             let plane_bytes = &original_data[plane * in_plane_bytes..(plane + 1) * in_plane_bytes];
-            let clipped_plane = if let Some(cw) = crop_window {
-                apply_mask_and_crop(plane_bytes, mask, width, &data_type, &nodata_bytes, &cw)?
+            if let Some(cw) = crop_window {
+                apply_mask_and_crop(
+                    plane_bytes,
+                    mask,
+                    width,
+                    &data_type,
+                    &nodata_bytes,
+                    &cw,
+                    &mut clipped_data,
+                )?;
             } else {
                 apply_mask_to_band(
                     plane_bytes,
                     mask,
                     width,
-                    height,
                     &data_type,
                     &nodata_bytes,
                     &window,
-                )?
-            };
-            clipped_data.extend_from_slice(&clipped_plane);
+                    &mut clipped_data,
+                )?;
+            }
         }
 
         // Output shape: leading dims unchanged; trailing (y, x) becomes the crop
@@ -683,21 +695,26 @@ fn envelope_window(
 
 /// Apply mask to band data (no cropping — preserves original dimensions).
 /// The mask covers only `window`; every pixel outside it is outside the
-/// geometry's envelope and therefore nodata.
+/// geometry's envelope and therefore nodata. The plane's bytes are appended
+/// to `out` — the caller-owned per-band buffer — so one allocation serves
+/// every plane of the band instead of one per plane.
 fn apply_mask_to_band(
     original_data: &[u8],
     mask: &[u8],
     width: usize,
-    height: usize,
     data_type: &BandDataType,
     nodata_bytes: &[u8],
     window: &CropWindow,
-) -> Result<Vec<u8>> {
+    out: &mut Vec<u8>,
+) -> Result<()> {
     let byte_size = data_type.byte_size();
-    let nodata_row: Vec<u8> = nodata_bytes.repeat(width);
-    let mut result = vec![0u8; width * height * byte_size];
-
     let row_bytes = width * byte_size;
+    let height = original_data.len() / row_bytes;
+    let nodata_row: Vec<u8> = nodata_bytes.repeat(width);
+    let base = out.len();
+    out.resize(base + width * height * byte_size, 0);
+    let result = &mut out[base..];
+
     for row in 0..height {
         let dst_row = &mut result[row * row_bytes..(row + 1) * row_bytes];
         if row < window.row_off || row >= window.row_off + window.height {
@@ -723,12 +740,14 @@ fn apply_mask_to_band(
         }
     }
 
-    Ok(result)
+    Ok(())
 }
 
 /// Apply mask AND crop to the given crop window in one pass. The mask is
 /// window-sized (row-major over `cw.width`×`cw.height`); the source data is
-/// the full raster plane.
+/// the full raster plane. The plane's bytes are appended to `out` — the
+/// caller-owned per-band buffer — so one allocation serves every plane of
+/// the band instead of one per plane.
 fn apply_mask_and_crop(
     original_data: &[u8],
     mask: &[u8],
@@ -736,10 +755,13 @@ fn apply_mask_and_crop(
     data_type: &BandDataType,
     nodata_bytes: &[u8],
     cw: &CropWindow,
-) -> Result<Vec<u8>> {
+    out: &mut Vec<u8>,
+) -> Result<()> {
     let byte_size = data_type.byte_size();
     let row_bytes = cw.width * byte_size;
-    let mut result = vec![0u8; cw.height * row_bytes];
+    let base = out.len();
+    out.resize(base + cw.height * row_bytes, 0);
+    let result = &mut out[base..];
 
     // The crop-window columns of a source row are contiguous, so copy each row
     // in one bulk memcpy (which vectorizes) rather than per pixel, then overwrite
@@ -762,7 +784,7 @@ fn apply_mask_and_crop(
         }
     }
 
-    Ok(result)
+    Ok(())
 }
 
 /// Build the clipped raster via the N-D builder. A 2-D raster is just the
@@ -771,7 +793,7 @@ fn apply_mask_and_crop(
 fn build_clipped_raster(
     builder: &mut RasterBuilder,
     original_raster: &RasterRefImpl<'_>,
-    clipped_data: &ClippedRasterData,
+    clipped_data: ClippedRasterData,
 ) -> Result<()> {
     // Geotransform is 2-D and shared across all planes. A crop shifts the
     // upper-left by the pixel offset; scale/skew are unchanged.
@@ -815,7 +837,7 @@ fn build_clipped_raster(
         )
         .map_err(|e| exec_datafusion_err!("Failed to start raster: {}", e))?;
 
-    for band in &clipped_data.bands {
+    for band in clipped_data.bands {
         let dim_names: Vec<&str> = band.dim_names.iter().map(String::as_str).collect();
         builder
             .start_band_nd(
@@ -828,7 +850,18 @@ fn build_clipped_raster(
                 None,
             )
             .map_err(|e| exec_datafusion_err!("Failed to start band: {}", e))?;
-        builder.band_data_writer().append_value(&band.data);
+        // Move the band bytes into an Arrow buffer and append them as a view
+        // (a refcount bump), instead of copying them through the builder.
+        let len = u32::try_from(band.data.len()).map_err(|_| {
+            exec_datafusion_err!(
+                "RS_Clip: band data of {} bytes exceeds the binary-view limit",
+                band.data.len()
+            )
+        })?;
+        let buffer = Buffer::from(band.data);
+        builder
+            .append_band_data_buffer(&buffer, 0, len)
+            .map_err(|e| exec_datafusion_err!("Failed to append band data: {}", e))?;
         builder
             .finish_band()
             .map_err(|e| exec_datafusion_err!("Failed to finish band: {}", e))?;
@@ -844,14 +877,14 @@ fn build_clipped_raster(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::StructArray;
+    use arrow_array::{cast::AsArray, Array, StructArray};
     use sedona_expr::scalar_udf::SedonaScalarKernel;
     use sedona_proj::transform::with_global_proj_engine;
     use sedona_raster::array::RasterStructArray;
     use sedona_schema::crs::deserialize_crs;
     use sedona_schema::datatypes::Edges;
     use sedona_testing::create::make_wkb;
-    use sedona_testing::raster_spec::RasterSpec;
+    use sedona_testing::raster_spec::{raster_array, RasterSpec};
 
     /// A 4×2 EPSG:4326 raster, origin (0, 2), 1×1 north-up pixels — world extent
     /// x ∈ [0, 4], y ∈ [0, 2]. One UInt8 band with values 1..=8 (row-major).
@@ -1432,4 +1465,47 @@ mod tests {
             "all_touched=false should hint at the sub-pixel case: {msg}"
         );
     }
+
+    #[test]
+    fn test_rs_clip_band_data_is_block_backed() {
+        // The clipped band bytes move into the output as a zero-copy view
+        // block; pin that so a refactor can't silently reintroduce the copy.
+        // (Views at or under the inline threshold store their bytes inline,
+        // so the band must be bigger than that.)
+        let values: Vec<u8> = (0..32).collect();
+        let array = raster_array([Some(RasterSpec::d2(8, 4).crs(None).band_values(&values))]);
+
+        let kernel = RsClip { arg_count: 3 };
+        let result = kernel
+            .invoke_batch(
+                &[
+                    RASTER,
+                    SedonaType::Arrow(DataType::Int32),
+                    SedonaType::Wkb(Edges::Planar, None),
+                ],
+                &[
+                    ColumnarValue::Array(Arc::new(array)),
+                    ColumnarValue::Scalar(ScalarValue::Int32(Some(1))),
+                    ColumnarValue::Scalar(ScalarValue::Binary(Some(make_wkb(
+                        "POLYGON((0 0, 8 0, 8 -4, 0 -4, 0 0))",
+                    )))),
+                ],
+            )
+            .unwrap()
+            .into_array(1)
+            .unwrap();
+
+        let rasters = RasterStructArray::try_new(result.as_struct()).unwrap();
+        let band_data = rasters.band_data_array();
+        assert_eq!(
+            band_data.value(rasters.band_data_row(0, 0)),
+            values.as_slice()
+        );
+        assert_eq!(
+            band_data.data_buffers().len(),
+            1,
+            "band bytes should be appended as a view block, not copied"
+        );
+    }
+
 }
