@@ -7,7 +7,7 @@
       
       
       
-        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/reference/sql/rs_rastertoworldcoordy/">
+        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/reference/sql/rs_asgeotiff/">
       
       
       
@@ -20,7 +20,7 @@
     
     
       
-        <title>RS_RasterToWorldCoordY - Apache Sedona</title>
+        <title>RS_AsGeoTiff - Apache Sedona</title>
       
     
     
@@ -84,7 +84,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rs_rastertoworldcoordy" class="md-skip">
+        <a href="#rs_asgeotiff" class="md-skip">
           Skip to content
         </a>
       
@@ -157,7 +157,7 @@
             <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RS_RasterToWorldCoordY
+              RS_AsGeoTiff
             
           </span>
             </div>
@@ -1583,6 +1583,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#description" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Description
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#examples" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1610,7 +1621,7 @@
 
 
   
-    <a href="https://github.com/apache/sedona-db/blob/main/docs/reference/sql/rs_rastertoworldcoordy.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/apache/sedona-db/blob/main/docs/reference/sql/rs_asgeotiff.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"></path></svg>
     </a>
@@ -1618,26 +1629,82 @@
   
 
 
-<h1 id="rs_rastertoworldcoordy">RS_RasterToWorldCoordY<a class="headerlink" href="#rs_rastertoworldcoordy" title="Permanent link">¶</a></h1>
-<p>Converts raster pixel coordinates to world Y coordinate.</p>
+<h1 id="rs_asgeotiff">RS_AsGeoTiff<a class="headerlink" href="#rs_asgeotiff" title="Permanent link">¶</a></h1>
+<p>Encodes a raster as a GeoTIFF and returns the bytes as binary, with
+optional compression and tiling.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">¶</a></h2>
-<div class="highlight"><pre><span></span><code><span class="n">double</span><span class="w"> </span><span class="n">RS_RasterToWorldCoordY</span><span class="p">(</span><span class="n">rast</span><span class="p">:</span><span class="w"> </span><span class="n">raster</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">:</span><span class="w"> </span><span class="nb">integer</span><span class="p">,</span><span class="w"> </span><span class="n">y</span><span class="p">:</span><span class="w"> </span><span class="nb">integer</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><span class="nb">binary</span><span class="w"> </span><span class="n">RS_AsGeoTiff</span><span class="p">(</span><span class="n">rast</span><span class="p">:</span><span class="w"> </span><span class="n">raster</span><span class="p">)</span>
+<span class="nb">binary</span><span class="w"> </span><span class="n">RS_AsGeoTiff</span><span class="p">(</span><span class="n">rast</span><span class="p">:</span><span class="w"> </span><span class="n">raster</span><span class="p">,</span><span class="w"> </span><span class="n">tile_size</span><span class="p">:</span><span class="w"> </span><span class="nb">integer</span><span class="p">)</span>
+<span class="nb">binary</span><span class="w"> </span><span class="n">RS_AsGeoTiff</span><span class="p">(</span><span class="n">rast</span><span class="p">:</span><span class="w"> </span><span class="n">raster</span><span class="p">,</span><span class="w"> </span><span class="n">compression</span><span class="p">:</span><span class="w"> </span><span class="n">string</span><span class="p">,</span><span class="w"> </span><span class="n">quality</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">)</span>
+<span class="nb">binary</span><span class="w"> </span><span class="n">RS_AsGeoTiff</span><span class="p">(</span><span class="n">rast</span><span class="p">:</span><span class="w"> </span><span class="n">raster</span><span class="p">,</span><span class="w"> </span><span class="n">compression</span><span class="p">:</span><span class="w"> </span><span class="n">string</span><span class="p">,</span><span class="w"> </span><span class="n">quality</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">,</span><span class="w"> </span><span class="n">tile_size</span><span class="p">:</span><span class="w"> </span><span class="nb">integer</span><span class="p">)</span>
+<span class="nb">binary</span><span class="w"> </span><span class="n">RS_AsGeoTiff</span><span class="p">(</span><span class="n">rast</span><span class="p">:</span><span class="w"> </span><span class="n">raster</span><span class="p">,</span><span class="w"> </span><span class="n">compression</span><span class="p">:</span><span class="w"> </span><span class="n">string</span><span class="p">,</span><span class="w"> </span><span class="n">quality</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">,</span><span class="w"> </span><span class="n">tile_width</span><span class="p">:</span><span class="w"> </span><span class="nb">integer</span><span class="p">,</span><span class="w"> </span><span class="n">tile_height</span><span class="p">:</span><span class="w"> </span><span class="nb">integer</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="arguments">Arguments<a class="headerlink" href="#arguments" title="Permanent link">¶</a></h2>
 <ul>
 <li><strong>rast</strong> (raster): Input raster</li>
-<li><strong>x</strong> (integer)</li>
-<li><strong>y</strong> (integer)</li>
+<li><strong>compression</strong> (string)</li>
+<li><strong>quality</strong> (double)</li>
+<li><strong>tile_width</strong> (integer): Tile width in pixels. When given together
+  with tile_height, the GeoTIFF is written tiled rather than stripped.
+  TIFF tile dimensions must be multiples of 16.</li>
+<li><strong>tile_height</strong> (integer): Tile height in pixels; must be a multiple
+  of 16.</li>
+<li><strong>tile_size</strong> (integer)</li>
 </ul>
+<blockquote>
+<p>[!WARNING]</p>
+<p><strong>Experimental.</strong> This function is experimental; its behavior may
+change without notice.</p>
+</blockquote>
+<h2 id="description">Description<a class="headerlink" href="#description" title="Permanent link">¶</a></h2>
+<p><code>RS_AsGeoTiff</code> encodes a raster as a GeoTIFF (via GDAL) and returns the
+file bytes as a binary value — the inverse of reading a GeoTIFF into a
+raster. The result is <code>NULL</code> for a <code>NULL</code> raster. A <code>NULL</code> option
+argument means “not specified”: e.g.&nbsp;a <code>NULL</code> compression writes an
+uncompressed GeoTIFF rather than propagating <code>NULL</code> to the result.</p>
+<p>The two-argument form <code>RS_AsGeoTiff(raster, tile_size)</code> writes a tiled
+GeoTIFF with square <code>tile_size</code> blocks. Compression is selected by name;
+a JPEG quality factor and explicit tile dimensions can be supplied via
+the longer overloads.</p>
 <h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">¶</a></h2>
-<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">RS_RasterToWorldCoordY</span><span class="p">(</span><span class="n">RS_Example</span><span class="p">(),</span><span class="w"> </span><span class="mi">10</span><span class="p">,</span><span class="w"> </span><span class="mi">20</span><span class="p">);</span>
+<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">RS_AsGeoTiff</span><span class="p">(</span><span class="n">RS_Example</span><span class="p">())</span><span class="w"> </span><span class="k">IS</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">;</span>
 </code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌──────────────────────────────────────────────────────────┐
-│ rs_rastertoworldcoordy(rs_example(),Int64(10),Int64(20)) │
-│                          float64                         │
-╞══════════════════════════════════════════════════════════╡
-│                                                   129.07 │
-└──────────────────────────────────────────────────────────┘
+<div class="codehilite"><pre><span></span><code>┌────────────────────────────────────────┐
+│ rs_asgeotiff(rs_example()) IS NOT NULL │
+│                 boolean                │
+╞════════════════════════════════════════╡
+│ true                                   │
+└────────────────────────────────────────┘
+</code></pre></div>
+
+<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">RS_AsGeoTiff</span><span class="p">(</span><span class="n">RS_Example</span><span class="p">(),</span><span class="w"> </span><span class="mi">16</span><span class="p">)</span><span class="w"> </span><span class="k">IS</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">;</span>
+</code></pre></div>
+<div class="codehilite"><pre><span></span><code>┌──────────────────────────────────────────────────┐
+│ rs_asgeotiff(rs_example(),Int64(16)) IS NOT NULL │
+│                      boolean                     │
+╞══════════════════════════════════════════════════╡
+│ true                                             │
+└──────────────────────────────────────────────────┘
+</code></pre></div>
+
+<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">RS_AsGeoTiff</span><span class="p">(</span><span class="n">RS_Example</span><span class="p">(),</span><span class="w"> </span><span class="s1">'DEFLATE'</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">.</span><span class="mi">85</span><span class="p">)</span><span class="w"> </span><span class="k">IS</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">;</span>
+</code></pre></div>
+<div class="codehilite"><pre><span></span><code>┌──────────────────────────────────────────────────────────────────────┐
+│ rs_asgeotiff(rs_example(),Utf8("DEFLATE"),Float64(0.85)) IS NOT NULL │
+│                                boolean                               │
+╞══════════════════════════════════════════════════════════════════════╡
+│ true                                                                 │
+└──────────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+
+<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">RS_AsGeoTiff</span><span class="p">(</span><span class="n">RS_Example</span><span class="p">(),</span><span class="w"> </span><span class="s1">'LZW'</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">.</span><span class="mi">85</span><span class="p">,</span><span class="w"> </span><span class="mi">16</span><span class="p">,</span><span class="w"> </span><span class="mi">16</span><span class="p">)</span><span class="w"> </span><span class="k">IS</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">;</span>
+</code></pre></div>
+<div class="codehilite"><pre><span></span><code>┌──────────────────────────────────────────────────────────────────────────────┐
+│ rs_asgeotiff(rs_example(),Utf8("LZW"),Float64(0.85),Int64(16),Int64(16)) IS  │
+│                                   NOT NULL…                                  │
+╞══════════════════════════════════════════════════════════════════════════════╡
+│ true                                                                         │
+└──────────────────────────────────────────────────────────────────────────────┘
 </code></pre></div>
 
 
