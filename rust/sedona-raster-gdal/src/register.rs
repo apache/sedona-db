@@ -21,6 +21,7 @@ use sedona_expr::function_set::FunctionSet;
 pub fn default_function_set() -> FunctionSet {
     let mut function_set = FunctionSet::new();
     function_set.insert_scalar_udf(crate::rs_as_raster::rs_as_raster_udf());
+    function_set.insert_scalar_udf(crate::rs_clip::rs_clip_udf());
     function_set.insert_scalar_udf(crate::rs_frompath::rs_frompath_udf());
     function_set.insert_scalar_udf(crate::rs_metadata::rs_metadata_udf());
     function_set.insert_scalar_udf(crate::rs_polygonize::rs_polygonize_udf());
