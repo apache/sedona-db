@@ -43,6 +43,10 @@ kernels:
         is ambiguous and raises an error.
 ---
 
+::: callout-warning
+**Experimental.** This function is experimental; its behavior may change without notice.
+:::
+
 ## Description
 
 `RS_Value` samples one pixel of a raster. The location is given as a point
