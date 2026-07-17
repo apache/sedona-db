@@ -29,6 +29,8 @@ dropped under the centroid rule where GDAL (SedonaDB, rasterio) burns them
 behavior for overhanging geometry envelopes is not compared here.
 """
 
+import random
+
 import pytest
 
 from sedonadb.raster_testing import (
@@ -41,7 +43,7 @@ from sedonadb.raster_testing import (
 )
 
 pytest.importorskip("rasterio")
-pytest.importorskip("shapely")
+shapely = pytest.importorskip("shapely")
 
 # The band types both dialects can express (Sedona Spark has no int8/64-bit
 # integer band types).
@@ -156,3 +158,76 @@ def test_rs_asraster_without_nodata(subject, comparator, tiff):
     expected = comparator.as_raster(GEOM_RECT, tiff, "uint8", burn_value=7.0)
     assert_decoded_equal(got, expected)
     assert got.nodata == [None]
+
+
+def _fuzz_cases(count=40, seed=31113):
+    """Seeded random polygons over anisotropic north-up and south-up grids.
+
+    The fixed seed makes the corpus deterministic, so a failure reproduces
+    from the case id alone. Pixel width and height are drawn independently
+    to exercise the non-square aspect ratios where rasterizer arithmetic
+    errors hide (square unit grids make pixel-space and world-space slopes
+    coincide, see apache/sedona#3111).
+    """
+    rng = random.Random(seed)
+    cases = []
+    while len(cases) < count:
+        width, height = rng.randint(4, 12), rng.randint(4, 12)
+        scale_x = round(rng.uniform(0.3, 5.0), 3)
+        scale_y = round(rng.uniform(0.3, 5.0), 3) * rng.choice([-1, 1])
+        upper_left_x = round(rng.uniform(-1000, 1000), 2)
+        upper_left_y = round(rng.uniform(-1000, 1000), 2)
+        xs = sorted([upper_left_x, upper_left_x + width * scale_x])
+        ys = sorted([upper_left_y, upper_left_y + height * scale_y])
+        margin_x = (xs[1] - xs[0]) * 0.05
+        margin_y = (ys[1] - ys[0]) * 0.05
+
+        def random_point():
+            return (
+                round(rng.uniform(xs[0] + margin_x, xs[1] - margin_x), 3),
+                round(rng.uniform(ys[0] + margin_y, ys[1] - margin_y), 3),
+            )
+
+        num_points = rng.choice([3, 3, 4, 5])
+        for _ in range(50):
+            candidate = shapely.Polygon(
+                [random_point() for _ in range(num_points)]
+            ).buffer(0)
+            grid_area = (xs[1] - xs[0]) * (ys[1] - ys[0])
+            if candidate.geom_type == "Polygon" and candidate.area > grid_area * 0.02:
+                cases.append(
+                    (
+                        len(cases),
+                        width,
+                        height,
+                        (upper_left_x, scale_x, 0.0, upper_left_y, 0.0, scale_y),
+                        candidate.wkt,
+                    )
+                )
+                break
+    return cases
+
+
+def test_rs_asraster_fuzz_matches_comparators(subject, comparator, tmp_path):
+    """Centroid-rule burns over the seeded random corpus must match on every
+    grid. Only the centroid rule is fuzzed: allTouched boundary selection
+    differs between rasterizers by design and is pinned by the deterministic
+    cases above."""
+    if isinstance(comparator, SedonaSpark):
+        pytest.skip(
+            "Sedona Spark mis-places scanline intercepts on non-square pixels "
+            "(apache/sedona#3111); unskip when the fix ships in a release"
+        )
+    for case_id, width, height, gdal_transform, wkt in _fuzz_cases():
+        path = tmp_path / f"fuzz_{case_id}.tif"
+        write_geotiff(
+            path,
+            random_raster_data("uint8", bands=1, height=height, width=width),
+            gdal_transform=gdal_transform,
+        )
+        kwargs = dict(burn_value=1.0, nodata=0.0, use_geometry_extent=False)
+        got = subject.as_raster(wkt, path, "uint8", **kwargs)
+        expected = comparator.as_raster(wkt, path, "uint8", **kwargs)
+        assert_decoded_equal(
+            got, expected, context=f"case {case_id}: {gdal_transform} {wkt}"
+        )
