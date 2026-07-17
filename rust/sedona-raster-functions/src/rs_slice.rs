@@ -426,7 +426,6 @@ mod tests {
     use arrow_schema::DataType;
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
-    use sedona_raster::array::RasterStructArray;
     use sedona_schema::datatypes::RASTER;
     use sedona_schema::raster::BandDataType;
     use sedona_testing::raster_spec::{assert_rasters_equal, RasterSpec};
@@ -548,8 +547,7 @@ mod tests {
             .invoke_array_scalar_scalar(Arc::new(rasters), "time", 0_i64)
             .unwrap();
 
-        let result_struct = result.as_any().downcast_ref::<StructArray>().unwrap();
-        let raster_array = RasterStructArray::try_new(result_struct).unwrap();
-        assert!(raster_array.is_null(0));
+        // A null input raster passes through as a null output raster.
+        assert_rasters_equal(&result, &[None]);
     }
 }

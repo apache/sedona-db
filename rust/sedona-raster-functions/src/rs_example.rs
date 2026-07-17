@@ -98,10 +98,8 @@ impl SedonaScalarKernel for RsExample {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
-    use sedona_raster::array::RasterStructArray;
-    use sedona_raster::traits::RasterRef;
+    use sedona_testing::raster_spec::{assert_raster_scalar_equals, RasterSpec};
 
     #[test]
     fn udf_size() {
@@ -116,23 +114,19 @@ mod tests {
         let arg_types = vec![];
 
         let result = kernel.invoke_batch(&arg_types, &args).unwrap();
-        if let ColumnarValue::Scalar(ScalarValue::Struct(arc_struct)) = result {
-            let raster_array = RasterStructArray::try_new(arc_struct.as_ref()).unwrap();
-
-            assert_eq!(raster_array.len(), 1);
-            let raster = raster_array.get(0).unwrap();
-            let metadata = raster.metadata();
-            assert_eq!(metadata.width(), 64);
-            assert_eq!(metadata.height(), 32);
-
-            let bands = raster.bands();
-            let band = bands.band(1).unwrap();
-            let band_metadata = band.metadata();
-            assert_eq!(band_metadata.data_type().unwrap(), BandDataType::UInt8);
-            assert_eq!(band_metadata.nodata_value(), Some(&[127u8][..]));
-            assert_eq!(band_metadata.storage_type().unwrap(), StorageType::InDb);
-        } else {
+        let ColumnarValue::Scalar(scalar) = result else {
             panic!("Expected scalar struct result");
+        };
+
+        // RS_Example builds a 64x32, 3-band UInt8 raster with origin
+        // (43.08, 79.07), scale 2, skew 1, nodata 127. Every pixel of band N
+        // is N except the top-left corner, which is set to the nodata value.
+        let mut expected = RasterSpec::d2(64, 32).transform([43.08, 2.0, 1.0, 79.07, 1.0, 2.0]);
+        for band_id in 1u8..=3 {
+            let mut band_data = vec![band_id; 64 * 32];
+            band_data[0] = 127;
+            expected = expected.band_values(&band_data).nodata(127u8);
         }
+        assert_raster_scalar_equals(&scalar, &expected);
     }
 }

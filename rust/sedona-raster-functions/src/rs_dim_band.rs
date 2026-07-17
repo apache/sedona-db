@@ -400,9 +400,8 @@ mod tests {
             .invoke_array_scalar(Arc::new(rasters), "time")
             .unwrap();
 
-        let result_struct = result.as_any().downcast_ref::<StructArray>().unwrap();
-        let raster_array = RasterStructArray::try_new(result_struct).unwrap();
-        assert!(raster_array.is_null(0));
+        // A null input raster passes through as a null output raster.
+        assert_rasters_equal(&result, &[None]);
     }
 
     #[test]
@@ -577,8 +576,7 @@ mod tests {
             .invoke_array_scalar(Arc::new(rasters), "time")
             .unwrap();
 
-        let result_struct = result.as_any().downcast_ref::<StructArray>().unwrap();
-        let raster_array = RasterStructArray::try_new(result_struct).unwrap();
-        assert!(raster_array.is_null(0));
+        // A null input raster passes through as a null output raster.
+        assert_rasters_equal(&result, &[None]);
     }
 }
