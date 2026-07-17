@@ -168,9 +168,17 @@ def test_rs_value_matches_rasterio(con):
     height, width = 7, 5
     data = rng.random((height, width)) * 1000.0
 
-    # GDAL-order geotransform: origin (100, 500), 2-wide pixels, -3 tall
-    # (north-up), no skew. Shared verbatim by both engines.
-    gdal_transform = (100.0, 2.0, 0.0, 500.0, 0.0, -3.0)
+    # Raster spans world bbox x[100, 110], y[479, 500] as 5 cols x 7 rows
+    # (2-wide, 3-tall north-up pixels, no skew). Shared verbatim by both engines.
+    xmin, ymin, xmax, ymax = 100.0, 479.0, 110.0, 500.0
+    gdal_transform = (
+        xmin,
+        (xmax - xmin) / width,
+        0.0,
+        ymax,
+        0.0,
+        -(ymax - ymin) / height,
+    )
     affine = Affine.from_gdal(*gdal_transform)
 
     # Sample points in pixel space (col_frac, row_frac).
@@ -229,7 +237,7 @@ def test_rs_value_matches_rasterio(con):
     finally:
         con.drop_view(view)
 
-    assert got == pytest.approx(expected)
+    assert got == expected
 
 
 def test_rs_setgeoreference_roundtrips_with_getter():
@@ -393,21 +401,25 @@ def test_rs_values_matches_rasterio(con):
     call returns a list that must match rasterio's per-point reads element for
     element, in order.
     """
-    import numpy as np
-
     pytest.importorskip("rasterio")
     from rasterio.io import MemoryFile
     from rasterio.transform import Affine
-
-    from sedonadb.raster import Raster
 
     rng = np.random.default_rng(42)
     height, width = 7, 5
     data = rng.random((height, width)) * 1000.0
 
-    # GDAL-order geotransform: origin (100, 500), 2-wide pixels, -3 tall
-    # (north-up), no skew. Shared verbatim by both engines.
-    gdal_transform = (100.0, 2.0, 0.0, 500.0, 0.0, -3.0)
+    # Raster spans world bbox x[100, 110], y[479, 500] as 5 cols x 7 rows
+    # (2-wide, 3-tall north-up pixels, no skew). Shared verbatim by both engines.
+    xmin, ymin, xmax, ymax = 100.0, 479.0, 110.0, 500.0
+    gdal_transform = (
+        xmin,
+        (xmax - xmin) / width,
+        0.0,
+        ymax,
+        0.0,
+        -(ymax - ymin) / height,
+    )
     affine = Affine.from_gdal(*gdal_transform)
 
     # Sample points in pixel space (col_frac, row_frac): every pixel center plus
@@ -463,7 +475,7 @@ def test_rs_values_matches_rasterio(con):
         .to_pylist()[0]
     )
 
-    assert got == pytest.approx(expected)
+    assert got == expected
 
 
 # RS_AsGeoTiff smoke coverage: the GDAL-backed export is tested in depth in
