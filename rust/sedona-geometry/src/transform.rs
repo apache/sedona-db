@@ -415,14 +415,17 @@ where
     Ok(())
 }
 
-/// Visit each point of a Point/MultiPoint geometry as `Some((x, y))` — or
-/// `None` for an empty (sub-)point — optionally transforming each coordinate
-/// with `trans` before visiting.
+/// Visit each point of a point geometry as `Some((x, y))` — or `None` for an
+/// empty (sub-)point — optionally transforming each coordinate with `trans`
+/// before visiting. Accepts a `Point`, a `MultiPoint`, or a
+/// `GeometryCollection` whose members are themselves point geometries
+/// (recursively); points are visited in geometry order.
 ///
 /// Compared to [`transform`], which writes a transformed WKB copy, this hands
 /// the caller each coordinate directly, so point-sampling consumers can
 /// transform and consume in one pass with no intermediate geometry
-/// materialisation. Any other geometry type is an error.
+/// materialisation. Any non-point geometry (or a collection containing one) is
+/// an error.
 pub fn visit_point_coords<F>(
     geom: impl GeometryTrait<T = f64>,
     trans: Option<&dyn CrsTransform>,
@@ -452,18 +455,36 @@ where
         }
     }
 
-    match geom.as_type() {
-        GeometryType::Point(point) => visit_one(point, trans, &mut visit),
-        GeometryType::MultiPoint(multi_point) => {
-            for point in multi_point.points() {
-                visit_one(&point, trans, &mut visit)?;
+    fn visit_geom<G, F>(
+        geom: &G,
+        trans: Option<&dyn CrsTransform>,
+        visit: &mut F,
+    ) -> Result<(), SedonaGeometryError>
+    where
+        G: GeometryTrait<T = f64>,
+        F: FnMut(Option<(f64, f64)>) -> Result<(), SedonaGeometryError>,
+    {
+        match geom.as_type() {
+            GeometryType::Point(point) => visit_one(point, trans, visit),
+            GeometryType::MultiPoint(multi_point) => {
+                for point in multi_point.points() {
+                    visit_one(&point, trans, visit)?;
+                }
+                Ok(())
             }
-            Ok(())
+            GeometryType::GeometryCollection(collection) => {
+                for member in collection.geometries() {
+                    visit_geom(&member, trans, visit)?;
+                }
+                Ok(())
+            }
+            _ => Err(SedonaGeometryError::Invalid(
+                "expected a Point, MultiPoint, or GeometryCollection of points".to_string(),
+            )),
         }
-        _ => Err(SedonaGeometryError::Invalid(
-            "expected a Point or MultiPoint geometry".to_string(),
-        )),
     }
+
+    visit_geom(&geom, trans, &mut visit)
 }
 
 fn transform_and_write_coords<'a, C, I>(
@@ -629,7 +650,42 @@ mod test {
         let geom = Wkt::<f64>::from_str("LINESTRING (0 0, 1 1)").unwrap();
         let err = visit_point_coords(&geom, None, |_| Ok(())).unwrap_err();
         assert!(
-            err.to_string().contains("Point or MultiPoint"),
+            err.to_string()
+                .contains("Point, MultiPoint, or GeometryCollection"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn visit_point_coords_visits_geometry_collection_of_points() {
+        // Point and multipoint members flatten in geometry order.
+        assert_eq!(
+            visited(
+                "GEOMETRYCOLLECTION (POINT (1 2), MULTIPOINT (3 4, 5 6))",
+                None
+            ),
+            vec![Some((1.0, 2.0)), Some((3.0, 4.0)), Some((5.0, 6.0))]
+        );
+        // Nested collections recurse.
+        assert_eq!(
+            visited(
+                "GEOMETRYCOLLECTION (POINT (1 2), GEOMETRYCOLLECTION (POINT (3 4)))",
+                None
+            ),
+            vec![Some((1.0, 2.0)), Some((3.0, 4.0))]
+        );
+        // An empty collection visits nothing.
+        assert_eq!(visited("GEOMETRYCOLLECTION EMPTY", None), vec![]);
+    }
+
+    #[test]
+    fn visit_point_coords_rejects_non_point_in_collection() {
+        let geom = Wkt::<f64>::from_str("GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1))")
+            .unwrap();
+        let err = visit_point_coords(&geom, None, |_| Ok(())).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Point, MultiPoint, or GeometryCollection"),
             "unexpected error: {err}"
         );
     }
