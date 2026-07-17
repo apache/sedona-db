@@ -30,6 +30,8 @@ RS_Clip's documented behavior.
 import numpy as np
 import pyarrow as pa
 import pytest
+import shapely
+from rasterio.transform import Affine
 
 from sedonadb.expr import lit
 from sedonadb.raster_testing import (
@@ -40,10 +42,6 @@ from sedonadb.raster_testing import (
     random_raster_data,
     write_geotiff,
 )
-
-pytest.importorskip("rasterio")
-shapely = pytest.importorskip("shapely")
-Affine = pytest.importorskip("rasterio.transform").Affine
 
 
 # GDAL-order geotransform: origin (100, 500), 2-wide by 3-tall north-up pixels.

@@ -1464,26 +1464,22 @@ mod tests {
         // (Views at or under the inline threshold store their bytes inline,
         // so the band must be bigger than that.)
         let values: Vec<u8> = (0..32).collect();
-        let array = raster_array([Some(RasterSpec::d2(8, 4).crs(None).band_values(&values))]);
-
-        let kernel = RsClip { arg_count: 3 };
-        let result = kernel
-            .invoke_batch(
-                &[
-                    RASTER,
-                    SedonaType::Arrow(DataType::Int32),
-                    SedonaType::Wkb(Edges::Planar, None),
-                ],
-                &[
-                    ColumnarValue::Array(Arc::new(array)),
-                    ColumnarValue::Scalar(ScalarValue::Int32(Some(1))),
-                    ColumnarValue::Scalar(ScalarValue::Binary(Some(make_wkb(
-                        "POLYGON((0 0, 8 0, 8 -4, 0 -4, 0 0))",
-                    )))),
-                ],
+        let tester = ScalarUdfTester::new(
+            rs_clip_udf().into(),
+            vec![
+                RASTER,
+                SedonaType::Arrow(DataType::Int32),
+                SedonaType::Wkb(Edges::Planar, None),
+            ],
+        );
+        let result = tester
+            .invoke_array_scalar_scalar(
+                Arc::new(raster_array([Some(
+                    RasterSpec::d2(8, 4).crs(None).band_values(&values),
+                )])),
+                1,
+                ScalarValue::Binary(Some(make_wkb("POLYGON((0 0, 8 0, 8 -4, 0 -4, 0 0))"))),
             )
-            .unwrap()
-            .into_array(1)
             .unwrap();
 
         let rasters = RasterStructArray::try_new(result.as_struct()).unwrap();
