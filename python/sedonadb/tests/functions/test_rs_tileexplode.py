@@ -25,10 +25,8 @@ on the 7x6 fixture; 7x6 is the identity single tile."""
 import pytest
 
 from sedonadb.raster_testing import (
-    Rasterio,
-    SedonaSpark,
+    SedonaDB,
     assert_decoded_equal,
-    create_dialect_engine,
     random_raster_data,
     write_geotiff,
 )
@@ -36,8 +34,10 @@ from sedonadb.raster_testing import (
 pytest.importorskip("rasterio")
 pytest.importorskip("shapely")
 
-# SedonaDB does not implement RS_TileExplode.
-DIALECTS = [SedonaSpark]
+pytestmark = pytest.mark.skipif(
+    not SedonaDB.implements("tile_explode"),
+    reason="RS_TileExplode is not implemented in SedonaDB (the parity subject)",
+)
 
 # GDAL-order geotransform: origin (100, 500), 2-wide by 3-tall north-up
 # pixels; with a 7x6 raster the extent is x in [100, 114], y in [482, 500].
@@ -45,23 +45,13 @@ GDAL_TRANSFORM = (100.0, 2.0, 0.0, 500.0, 0.0, -3.0)
 HEIGHT, WIDTH = 6, 7
 
 
-@pytest.fixture(params=DIALECTS, ids=lambda engine: engine.name())
-def dialect(request):
-    return create_dialect_engine(request.param)
-
-
-@pytest.fixture()
-def reference():
-    return Rasterio.create_or_skip()
-
-
 @pytest.mark.parametrize(
     ("tile_width", "tile_height"),
     [(4, 4), (2, 3), (WIDTH, HEIGHT)],
     ids=["ragged-edges", "exact-grid", "single-tile"],
 )
-def test_rs_tileexplode_matches_reference(
-    dialect, reference, tmp_path, tile_width, tile_height
+def test_rs_tileexplode_matches_comparators(
+    subject, comparator, tmp_path, tile_width, tile_height
 ):
     tiff = tmp_path / "tiles.tif"
     write_geotiff(
@@ -71,8 +61,8 @@ def test_rs_tileexplode_matches_reference(
         nodata=200.0,
     )
 
-    got = dialect.tile_explode(tiff, tile_width, tile_height)
-    expected = reference.tile_explode(tiff, tile_width, tile_height)
+    got = subject.tile_explode(tiff, tile_width, tile_height)
+    expected = comparator.tile_explode(tiff, tile_width, tile_height)
     assert [(x, y) for x, y, _ in got] == [(x, y) for x, y, _ in expected]
     for (x, y, got_tile), (_, _, expected_tile) in zip(got, expected):
         assert_decoded_equal(got_tile, expected_tile, context=(x, y))

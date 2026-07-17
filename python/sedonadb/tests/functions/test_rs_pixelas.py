@@ -18,23 +18,24 @@
 """RS_PixelAsPoint / RS_PixelAsCentroid / RS_PixelAsPolygon parity.
 
 Pixel coordinates are 1-based `(col, row)` and the point convention is the
-pixel's upper-left corner; the reference computes the same locations from
-the affine transform directly. A skewed geotransform is always in the
-parameter set because skew is what separates correct affine math from
-scale-only shortcuts. Out-of-bounds pixels are not compared: the dialects
-diverge there (Sedona Spark's RS_PixelAsPoint raises, SedonaDB
-extrapolates).
+pixel's upper-left corner; the rasterio comparator computes the same
+locations from the affine transform directly. A skewed geotransform is
+always in the parameter set because skew is what separates correct affine
+math from scale-only shortcuts. SedonaDB extrapolates out-of-bounds pixel
+coordinates through the same affine math, so the out-of-bounds pixel runs
+against the affine comparator; Sedona Spark's RS_PixelAsPoint raises there
+instead, which the deviation ledger records (its centroid/polygon
+accessors extrapolate like SedonaDB's).
 """
 
 import numpy as np
 import pytest
 
 from sedonadb.raster_testing import (
-    Rasterio,
-    SedonaDB,
+    Deviation,
     SedonaSpark,
     approx_geotransform,
-    create_dialect_engine,
+    expect_deviations,
     random_raster_data,
     write_geotiff,
 )
@@ -42,25 +43,25 @@ from sedonadb.raster_testing import (
 pytest.importorskip("rasterio")
 shapely = pytest.importorskip("shapely")
 
-DIALECTS = [SedonaDB, SedonaSpark]
-
 TRANSFORMS = {
     "north-up": (100.0, 2.0, 0.0, 500.0, 0.0, -3.0),
     "skewed": (100.0, 2.0, 0.5, 500.0, 0.25, -3.0),
 }
 HEIGHT, WIDTH = 6, 7
-# 1-based (col, row): the first pixel, an interior pixel, and the last pixel.
-PIXELS = [(1, 1), (2, 3), (WIDTH, HEIGHT)]
+# 1-based (col, row): the first pixel, an interior pixel, the last pixel,
+# and an out-of-bounds pixel past both edges.
+PIXELS = [(1, 1), (2, 3), (WIDTH, HEIGHT), (WIDTH + 2, HEIGHT + 2)]
 
-
-@pytest.fixture(params=DIALECTS, ids=lambda engine: engine.name())
-def dialect(request, con):
-    return create_dialect_engine(request.param, con)
-
-
-@pytest.fixture()
-def reference():
-    return Rasterio.create_or_skip()
+DEVIATIONS = [
+    Deviation(
+        SedonaSpark,
+        "pixel_as_point",
+        kind="skip",
+        matches=lambda p: p.get("col", 0) > WIDTH or p.get("row", 0) > HEIGHT,
+        reason="RS_PixelAsPoint raises on out-of-bounds pixel coordinates "
+        "where SedonaDB extrapolates",
+    ),
+]
 
 
 @pytest.fixture(params=list(TRANSFORMS), ids=list(TRANSFORMS))
@@ -75,21 +76,24 @@ def tiff(request, tmp_path):
 
 
 @pytest.mark.parametrize(("col", "row"), PIXELS)
-def test_rs_pixelaspoint_matches_reference(dialect, reference, tiff, col, row):
-    got = dialect.pixel_as_point(tiff, col, row)
-    assert got == approx_geotransform(reference.pixel_as_point(tiff, col, row))
+def test_rs_pixelaspoint_matches_comparators(
+    subject, comparator, request, tiff, col, row
+):
+    expect_deviations(request, comparator, "pixel_as_point", DEVIATIONS)
+    got = subject.pixel_as_point(tiff, col, row)
+    assert got == approx_geotransform(comparator.pixel_as_point(tiff, col, row))
 
 
 @pytest.mark.parametrize(("col", "row"), PIXELS)
-def test_rs_pixelascentroid_matches_reference(dialect, reference, tiff, col, row):
-    got = dialect.pixel_as_centroid(tiff, col, row)
-    assert got == approx_geotransform(reference.pixel_as_centroid(tiff, col, row))
+def test_rs_pixelascentroid_matches_comparators(subject, comparator, tiff, col, row):
+    got = subject.pixel_as_centroid(tiff, col, row)
+    assert got == approx_geotransform(comparator.pixel_as_centroid(tiff, col, row))
 
 
 @pytest.mark.parametrize(("col", "row"), PIXELS)
-def test_rs_pixelaspolygon_matches_reference(dialect, reference, tiff, col, row):
-    got = dialect.pixel_as_polygon(tiff, col, row)
-    expected = reference.pixel_as_polygon(tiff, col, row)
+def test_rs_pixelaspolygon_matches_comparators(subject, comparator, tiff, col, row):
+    got = subject.pixel_as_polygon(tiff, col, row)
+    expected = comparator.pixel_as_polygon(tiff, col, row)
     # Coordinate-sequence comparison pins the shared ring convention
     # (UL, UR, LR, LL, closed), not just topological equality.
     np.testing.assert_allclose(

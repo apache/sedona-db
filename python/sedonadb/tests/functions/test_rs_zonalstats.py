@@ -17,21 +17,22 @@
 
 """RS_ZonalStats parity against geometry_mask + numpy reductions.
 
-The reference selects pixels with `rasterio.features.geometry_mask`, drops
-pixels valued at the band nodata, and reduces in float64. stddev/variance
-are the sample (ddof=1) statistics — that is what Sedona computes. A
-diagonal-edged zone only runs with all_touched=True: under the centroid rule
-Sedona Spark's geotools/JAI rasterizer drops some center-inside pixels along
-diagonal edges where GDAL (and rasterio) selects them. Zones that select no
-pixels are not compared here.
+The rasterio comparator selects pixels with
+`rasterio.features.geometry_mask`, drops pixels valued at the band nodata,
+and reduces in float64. stddev/variance are the sample (ddof=1) statistics —
+that is what Sedona computes. The diagonal-edged zone under the centroid
+rule is on the Sedona Spark deviation ledger (its geotools/JAI rasterizer
+drops some center-inside pixels there). Zones that select no pixels are not
+compared here.
 """
 
 import pytest
 
 from sedonadb.raster_testing import (
-    Rasterio,
+    Deviation,
+    SedonaDB,
     SedonaSpark,
-    create_dialect_engine,
+    expect_deviations,
     random_raster_data,
     write_geotiff,
 )
@@ -39,8 +40,10 @@ from sedonadb.raster_testing import (
 pytest.importorskip("rasterio")
 pytest.importorskip("shapely")
 
-# SedonaDB does not implement RS_ZonalStats.
-DIALECTS = [SedonaSpark]
+pytestmark = pytest.mark.skipif(
+    not SedonaDB.implements("zonal_stats"),
+    reason="RS_ZonalStats is not implemented in SedonaDB (the parity subject)",
+)
 
 # GDAL-order geotransform: origin (100, 500), 2-wide by 3-tall north-up
 # pixels; with a 7x6 raster the extent is x in [100, 114], y in [482, 500].
@@ -56,29 +59,35 @@ GEOM_TRIANGLE = "POLYGON ((102.7 497.4, 112.4 496.9, 104.2 483.7, 102.7 497.4))"
 
 STATS = ["count", "sum", "mean", "min", "max", "stddev", "variance", "median"]
 
-
-@pytest.fixture(params=DIALECTS, ids=lambda engine: engine.name())
-def dialect(request):
-    return create_dialect_engine(request.param)
-
-
-@pytest.fixture()
-def reference():
-    return Rasterio.create_or_skip()
+DEVIATIONS = [
+    Deviation(
+        SedonaSpark,
+        "zonal_stats",
+        matches=lambda p: p.get("wkt") == GEOM_TRIANGLE and not p.get("all_touched"),
+        reason="geotools/JAI drops some center-inside pixels along diagonal "
+        "edges under the centroid rule; GDAL selects every center-inside pixel",
+    ),
+]
 
 
 @pytest.mark.parametrize("stat", STATS)
 @pytest.mark.parametrize(
     ("wkt", "all_touched"),
-    [(GEOM_RECT, False), (GEOM_RECT, True), (GEOM_TRIANGLE, True)],
-    ids=["rect-centroid", "rect-touched", "triangle-touched"],
+    [
+        (GEOM_RECT, False),
+        (GEOM_RECT, True),
+        (GEOM_TRIANGLE, False),
+        (GEOM_TRIANGLE, True),
+    ],
+    ids=["rect-centroid", "rect-touched", "triangle-centroid", "triangle-touched"],
 )
-def test_rs_zonalstats_matches_reference(
-    dialect, reference, tmp_path, wkt, all_touched, stat
+def test_rs_zonalstats_matches_comparators(
+    subject, comparator, request, tmp_path, wkt, all_touched, stat
 ):
-    """Every statistic over the float64 fixture, on both selection rules
-    where the engines share them. The zone stays clear of the corners so the
-    planted dtype extremes don't collapse sums to infinity."""
+    """Every statistic over the float64 fixture, on both selection rules.
+    The zone stays clear of the corners so the planted dtype extremes don't
+    collapse sums to infinity."""
+    expect_deviations(request, comparator, "zonal_stats", DEVIATIONS)
     tiff = tmp_path / "zonal.tif"
     write_geotiff(
         tiff,
@@ -86,8 +95,8 @@ def test_rs_zonalstats_matches_reference(
         gdal_transform=GDAL_TRANSFORM,
     )
 
-    got = dialect.zonal_stats(tiff, wkt, band=2, stat=stat, all_touched=all_touched)
-    expected = reference.zonal_stats(
+    got = subject.zonal_stats(tiff, wkt, band=2, stat=stat, all_touched=all_touched)
+    expected = comparator.zonal_stats(
         tiff, wkt, band=2, stat=stat, all_touched=all_touched
     )
     # Engines reduce in different orders, so exact float equality is not
@@ -97,7 +106,7 @@ def test_rs_zonalstats_matches_reference(
 
 
 @pytest.mark.parametrize("stat", ["count", "sum"])
-def test_rs_zonalstats_excludes_nodata(dialect, reference, tmp_path, stat):
+def test_rs_zonalstats_excludes_nodata(subject, comparator, tmp_path, stat):
     """A pixel valued at the band nodata inside the zone is excluded from
     the reduction by every engine."""
     tiff = tmp_path / "zonal_nodata.tif"
@@ -110,6 +119,6 @@ def test_rs_zonalstats_excludes_nodata(dialect, reference, tmp_path, stat):
         nodata=200.0,
     )
 
-    got = dialect.zonal_stats(tiff, GEOM_RECT, stat=stat)
-    expected = reference.zonal_stats(tiff, GEOM_RECT, stat=stat)
+    got = subject.zonal_stats(tiff, GEOM_RECT, stat=stat)
+    expected = comparator.zonal_stats(tiff, GEOM_RECT, stat=stat)
     assert got == pytest.approx(expected, rel=1e-9), stat

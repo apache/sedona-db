@@ -28,10 +28,8 @@ engine-independent expected value there.
 import pytest
 
 from sedonadb.raster_testing import (
-    Rasterio,
-    SedonaSpark,
+    SedonaDB,
     assert_decoded_equal,
-    create_dialect_engine,
     random_raster_data,
     write_geotiff,
 )
@@ -39,8 +37,10 @@ from sedonadb.raster_testing import (
 pytest.importorskip("rasterio")
 pytest.importorskip("shapely")
 
-# SedonaDB does not implement RS_Resample.
-DIALECTS = [SedonaSpark]
+pytestmark = pytest.mark.skipif(
+    not SedonaDB.implements("resample"),
+    reason="RS_Resample is not implemented in SedonaDB (the parity subject)",
+)
 
 # GDAL-order geotransform: origin (100, 500), 2-wide by 3-tall north-up
 # pixels; with a 7x6 raster the extent is x in [100, 114], y in [482, 500].
@@ -48,22 +48,12 @@ GDAL_TRANSFORM = (100.0, 2.0, 0.0, 500.0, 0.0, -3.0)
 HEIGHT, WIDTH = 6, 7
 
 
-@pytest.fixture(params=DIALECTS, ids=lambda engine: engine.name())
-def dialect(request):
-    return create_dialect_engine(request.param)
-
-
-@pytest.fixture()
-def reference():
-    return Rasterio.create_or_skip()
-
-
 @pytest.mark.parametrize("dtype", ["uint8", "float64"])
 @pytest.mark.parametrize(
     ("width", "height"), [(14, 12), (4, 3)], ids=["upsample", "downsample"]
 )
-def test_rs_resample_nearest_matches_reference(
-    dialect, reference, tmp_path, dtype, width, height
+def test_rs_resample_nearest_matches_comparators(
+    subject, comparator, tmp_path, dtype, width, height
 ):
     """Nearest-neighbor picks source pixels verbatim over the unchanged
     extent — the planted dtype extremes must survive when selected, and the
@@ -76,6 +66,6 @@ def test_rs_resample_nearest_matches_reference(
         gdal_transform=GDAL_TRANSFORM,
     )
 
-    got = dialect.resample(tiff, width=width, height=height)
-    expected = reference.resample(tiff, width=width, height=height)
+    got = subject.resample(tiff, width=width, height=height)
+    expected = comparator.resample(tiff, width=width, height=height)
     assert_decoded_equal(got, expected, context=(dtype, width, height))

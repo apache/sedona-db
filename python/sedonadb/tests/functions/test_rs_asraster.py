@@ -15,42 +15,32 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""RS_AsRaster parity across raster engines.
+"""RS_AsRaster parity.
 
-The reference is `rasterio.features.rasterize` on the same grid. Two
-cross-dialect deviations shape what gets compared:
-
-- Fill policy: pixels outside the geometry are initialized with the nodata
-  value by SedonaDB but are always 0 in Sedona Spark (which records nodata
-  as band metadata only). Parity rows use nodata 0 — where the policies
-  coincide — and `test_rs_asraster_nodata_fill_policy` asserts each
-  dialect's own fill.
-- Centroid rule on diagonal edges: GDAL (SedonaDB, rasterio) burns every
-  pixel whose center is inside the geometry, while Sedona Spark's
-  geotools/JAI rasterizer drops some center-inside pixels along diagonal
-  edges. Diagonal geometry therefore only runs with all_touched=True, where
-  the engines agree; the centroid rule is compared on axis-aligned geometry.
-
-Geometries stay inside the reference raster's extent; behavior for
-overhanging geometry envelopes is not compared here.
+The rasterio comparator is `rasterio.features.rasterize` on the same grid,
+filling outside the geometry with the subject's policy (SedonaDB
+initializes the grid with the nodata value, 0 when none is given). Two
+Sedona Spark deviations are on the ledger rather than shrinking the matrix:
+Spark burns outside pixels to 0 regardless of nodata (metadata-only
+nodata), and its geotools/JAI rasterizer drops some center-inside pixels
+along diagonal edges under the centroid rule where GDAL (SedonaDB,
+rasterio) burns them. Geometries stay inside the reference raster's extent;
+behavior for overhanging geometry envelopes is not compared here.
 """
 
 import pytest
 
 from sedonadb.raster_testing import (
-    Rasterio,
-    SedonaDB,
+    Deviation,
     SedonaSpark,
     assert_decoded_equal,
-    create_dialect_engine,
+    expect_deviations,
     random_raster_data,
     write_geotiff,
 )
 
 pytest.importorskip("rasterio")
 pytest.importorskip("shapely")
-
-DIALECTS = [SedonaDB, SedonaSpark]
 
 # The band types both dialects can express (Sedona Spark has no int8/64-bit
 # integer band types).
@@ -66,15 +56,23 @@ GEOM_RECT = (
 # Diagonal edges make all_touched change the selection.
 GEOM_TRIANGLE = "POLYGON ((101.3 498.6, 112.4 496.9, 104.2 483.7, 101.3 498.6))"
 
-
-@pytest.fixture(params=DIALECTS, ids=lambda engine: engine.name())
-def dialect(request, con):
-    return create_dialect_engine(request.param, con)
-
-
-@pytest.fixture()
-def reference():
-    return Rasterio.create_or_skip()
+DEVIATIONS = [
+    Deviation(
+        SedonaSpark,
+        "as_raster",
+        matches=lambda p: p.get("wkt") == GEOM_TRIANGLE and not p.get("all_touched"),
+        reason="geotools/JAI drops some center-inside pixels along diagonal "
+        "edges under the centroid rule; GDAL burns every center-inside pixel",
+    ),
+    Deviation(
+        SedonaSpark,
+        "as_raster",
+        matches=lambda p: p.get("nodata") not in (None, 0.0),
+        reason="Sedona Spark burns outside pixels to 0 and records nodata as "
+        "band metadata only; SedonaDB initializes the grid with the nodata "
+        "value",
+    ),
+]
 
 
 @pytest.fixture()
@@ -89,65 +87,69 @@ def tiff(tmp_path):
 
 
 @pytest.mark.parametrize("dtype", DTYPES)
-def test_rs_asraster_dtypes_match_reference(dialect, reference, tiff, dtype):
+def test_rs_asraster_dtypes_match_comparators(
+    subject, comparator, request, tiff, dtype
+):
     """Burn value 7 into the geometry's grid-snapped envelope for every band
     type both dialects support."""
+    expect_deviations(request, comparator, "as_raster", DEVIATIONS)
     kwargs = dict(burn_value=7.0, nodata=0.0, use_geometry_extent=True)
-    got = dialect.as_raster(GEOM_RECT, tiff, dtype, **kwargs)
-    expected = reference.as_raster(GEOM_RECT, tiff, dtype, fill=0.0, **kwargs)
+    got = subject.as_raster(GEOM_RECT, tiff, dtype, **kwargs)
+    expected = comparator.as_raster(GEOM_RECT, tiff, dtype, **kwargs)
     assert_decoded_equal(got, expected, context=dtype)
 
 
 @pytest.mark.parametrize(
-    ("wkt", "all_touched", "use_geometry_extent"),
+    ("wkt", "all_touched", "use_geometry_extent", "nodata"),
     [
-        (GEOM_RECT, False, True),
-        (GEOM_RECT, False, False),
-        (GEOM_RECT, True, True),
-        (GEOM_TRIANGLE, True, True),
-        (GEOM_TRIANGLE, True, False),
+        (GEOM_RECT, False, True, 0.0),
+        (GEOM_RECT, False, False, 0.0),
+        (GEOM_RECT, True, True, 0.0),
+        # The nodata-9 rows need pixels outside the geometry in the output
+        # (that's where the fill policies diverge): the full reference grid,
+        # and the triangle's cropped envelope, have them; the rect's cropped
+        # envelope is fully covered and does not.
+        (GEOM_RECT, False, False, 9.0),
+        (GEOM_TRIANGLE, True, True, 9.0),
+        (GEOM_TRIANGLE, False, True, 0.0),
+        (GEOM_TRIANGLE, True, True, 0.0),
+        (GEOM_TRIANGLE, True, False, 0.0),
     ],
     ids=[
         "rect-centroid-cropped",
         "rect-centroid-full",
         "rect-touched-cropped",
+        "rect-centroid-full-nodata9",
+        "triangle-touched-cropped-nodata9",
+        "triangle-centroid-cropped",
         "triangle-touched-cropped",
         "triangle-touched-full",
     ],
 )
-def test_rs_asraster_options_match_reference(
-    dialect, reference, tiff, wkt, all_touched, use_geometry_extent
+def test_rs_asraster_options_match_comparators(
+    subject, comparator, request, tiff, wkt, all_touched, use_geometry_extent, nodata
 ):
-    """all_touched toggles the selection rule and use_geometry_extent toggles
-    between the snapped geometry envelope and the full reference grid. The
-    diagonal-edged triangle runs only with all_touched=True (see the module
-    docstring for the centroid-rule deviation)."""
+    """all_touched toggles the selection rule, use_geometry_extent toggles
+    between the snapped geometry envelope and the full reference grid, and a
+    nonzero nodata exercises the subject's nodata-fill policy. The
+    triangle-centroid and nodata-9 rows are on the Sedona Spark deviation
+    ledger."""
+    expect_deviations(request, comparator, "as_raster", DEVIATIONS)
     kwargs = dict(
         all_touched=all_touched,
         burn_value=7.0,
-        nodata=0.0,
+        nodata=nodata,
         use_geometry_extent=use_geometry_extent,
     )
-    got = dialect.as_raster(wkt, tiff, "uint8", **kwargs)
-    expected = reference.as_raster(wkt, tiff, "uint8", fill=0.0, **kwargs)
+    got = subject.as_raster(wkt, tiff, "uint8", **kwargs)
+    expected = comparator.as_raster(wkt, tiff, "uint8", **kwargs)
     assert_decoded_equal(got, expected, context=(wkt, all_touched, use_geometry_extent))
 
 
-def test_rs_asraster_nodata_fill_policy(dialect, reference, tiff):
-    """A nonzero nodata separates the dialects' fill policies: SedonaDB
-    initializes outside pixels with the nodata value, Sedona Spark leaves
-    them 0 and only records the nodata on the band. Both record nodata 9."""
-    fill = 9.0 if isinstance(dialect, SedonaDB) else 0.0
-    kwargs = dict(burn_value=7.0, nodata=9.0, use_geometry_extent=False)
-    got = dialect.as_raster(GEOM_RECT, tiff, "uint8", **kwargs)
-    expected = reference.as_raster(GEOM_RECT, tiff, "uint8", fill=fill, **kwargs)
-    assert_decoded_equal(got, expected)
-
-
-def test_rs_asraster_without_nodata(dialect, reference, tiff):
-    """No nodata argument: both dialects burn into zeros and leave the output
-    band without a nodata value."""
-    got = dialect.as_raster(GEOM_RECT, tiff, "uint8", burn_value=7.0)
-    expected = reference.as_raster(GEOM_RECT, tiff, "uint8", burn_value=7.0, fill=0.0)
+def test_rs_asraster_without_nodata(subject, comparator, tiff):
+    """No nodata argument: every engine burns into zeros and leaves the
+    output band without a nodata value."""
+    got = subject.as_raster(GEOM_RECT, tiff, "uint8", burn_value=7.0)
+    expected = comparator.as_raster(GEOM_RECT, tiff, "uint8", burn_value=7.0)
     assert_decoded_equal(got, expected)
     assert got.nodata == [None]

@@ -17,9 +17,11 @@
 
 """RS_AsGeoTiff / binary-constructor round-trip parity.
 
-The reference for an encode round-trip is the source content itself: after
-load -> encode -> decode, pixels, geotransform, nodata, and band type must be
-byte-identical for every lossless codec. These fixtures carry a real CRS
+The comparator for an encode round-trip is the source content itself: after
+load -> encode -> decode, pixels, geotransform, nodata, and band type must
+be byte-identical for every lossless codec — and the decoded container must
+actually carry the codec that was requested, so an encoder that silently
+ignores its compression argument fails. These fixtures carry a real CRS
 (the same EPSG:3857 on every side, so nothing reprojects): geotools — Sedona
 Spark's GeoTIFF writer — cannot encode a CRS-less raster, and no geometry is
 involved that a CRS could reinterpret."""
@@ -27,10 +29,8 @@ involved that a CRS could reinterpret."""
 import pytest
 
 from sedonadb.raster_testing import (
-    Rasterio,
-    SedonaSpark,
+    SedonaDB,
     assert_decoded_equal,
-    create_dialect_engine,
     random_raster_data,
     write_geotiff,
 )
@@ -38,8 +38,10 @@ from sedonadb.raster_testing import (
 pytest.importorskip("rasterio")
 pytest.importorskip("shapely")
 
-# SedonaDB does not implement RS_AsGeoTiff or a binary raster constructor.
-DIALECTS = [SedonaSpark]
+pytestmark = pytest.mark.skipif(
+    not SedonaDB.implements("as_geotiff"),
+    reason="RS_AsGeoTiff is not implemented in SedonaDB (the parity subject)",
+)
 
 # GDAL-order geotransform: origin (100, 500), 2-wide by 3-tall north-up
 # pixels; with a 7x6 raster the extent is x in [100, 114], y in [482, 500].
@@ -49,16 +51,6 @@ DTYPES = ["uint8", "uint16", "int16", "int32", "float32", "float64"]
 # (compression, quality): lossless codecs only — content must be preserved
 # exactly regardless of the quality fraction.
 COMPRESSIONS = [(None, None), ("Deflate", 0.75), ("LZW", 0.75), ("PackBits", 0.75)]
-
-
-@pytest.fixture(params=DIALECTS, ids=lambda engine: engine.name())
-def dialect(request):
-    return create_dialect_engine(request.param)
-
-
-@pytest.fixture()
-def reference():
-    return Rasterio.create_or_skip()
 
 
 def _fixture(tmp_path, dtype):
@@ -76,17 +68,27 @@ def _fixture(tmp_path, dtype):
 @pytest.mark.parametrize("dtype", DTYPES)
 @pytest.mark.parametrize(("compression", "quality"), COMPRESSIONS, ids=lambda v: str(v))
 def test_rs_asgeotiff_roundtrips_content(
-    dialect, reference, tmp_path, dtype, compression, quality
+    subject, comparator, tmp_path, dtype, compression, quality
 ):
     tiff = _fixture(tmp_path, dtype)
-    got = dialect.as_geotiff(tiff, compression=compression, quality=quality)
-    expected = reference.as_geotiff(tiff)
+    got = subject.as_geotiff(tiff, compression=compression, quality=quality)
+    expected = comparator.as_geotiff(tiff)
     assert_decoded_equal(got, expected, context=(dtype, compression))
+    # The decoded container must carry the requested codec (None = the
+    # engine's default, uncompressed) — content survival alone can't tell a
+    # working codec path from an ignored argument.
+    requested = (compression or "none").lower()
+    assert (got.compression or "none").lower() == requested, got.compression
 
 
-def test_rs_from_binary_roundtrips_content(dialect, reference, tmp_path):
+@pytest.mark.skipif(
+    not SedonaDB.implements("from_binary"),
+    reason="A binary raster constructor is not implemented in SedonaDB "
+    "(the parity subject)",
+)
+def test_rs_from_binary_roundtrips_content(subject, comparator, tmp_path):
     """The binary constructor must decode arbitrary GeoTIFF bytes to the same
     content rasterio reads from them."""
     tiff = _fixture(tmp_path, "uint8")
     data = tiff.read_bytes()
-    assert_decoded_equal(dialect.from_binary(data), reference.from_binary(data))
+    assert_decoded_equal(subject.from_binary(data), comparator.from_binary(data))

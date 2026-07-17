@@ -23,18 +23,20 @@ cannot share SQL — rasterio is not a SQL engine, and raster SQL dialects
 disagree on function names and argument order — so parity here is
 operation-level instead: `RasterEngine` exposes one method per operation
 (`clip()`, `value()`, ...) returning plain decoded values, and each
-engine translates the operation into its own invocation. Engines implement
-the operations they support; the base methods raise `NotImplementedError`,
-and each test module declares which dialect engines it runs against.
+engine translates the operation into its own invocation.
 
-Engines come in two kinds, which changes how tests compare results:
-
-- **Dialect engines** (`SedonaDB`, `SedonaSpark`) execute the function under
-  test and compare strictly — exact pixels, exact nodata, exact NULL/error
-  behavior.
-- **Reference engines** (`Rasterio`) reconstruct the operation from library
-  primitives; engine-specific policy (like nodata precedence) is resolved by
-  the caller before comparing.
+Comparisons are asymmetric: `SedonaDB` is always the **subject** — the
+engine whose behavior the tests exist to pin — and the other engines are
+**comparators** it is checked against. `Rasterio` reconstructs each
+operation from library primitives (where an operation has engine-specific
+policy, like the fill outside a rasterized geometry, the reconstruction
+resolves it to the subject's policy); `SedonaSpark` runs the Sedona Spark
+SQL dialect, the compatibility target. Comparator↔comparator agreement is
+never asserted. Where the subject and a comparator are known to disagree,
+the test module declares a `Deviation`: the case still runs and is marked
+as a strict expected failure, so the ledger entry itself fails the suite
+the day the engines converge. Operations the subject does not implement
+skip their module wholesale (`SedonaDB.implements`) until it does.
 
 Test fixtures follow one pattern: define the raster once as a numpy array +
 GDAL geotransform, write it to a GeoTIFF with `write_geotiff`, and hand the
@@ -43,9 +45,10 @@ nothing reprojects and results stay bit-comparable) except where an engine's
 encoder requires a real one — then every side carries the same CRS.
 """
 
+import math
 import os
 from dataclasses import dataclass
-from typing import Any, List, Mapping, Optional, Tuple
+from typing import Any, Callable, List, Mapping, Optional, Tuple
 
 import numpy as np
 import pyarrow as pa
@@ -65,11 +68,64 @@ class DecodedRaster:
     `pixels` is `(band, rows, cols)`, `gdal_transform` is GDAL-order
     `(origin_x, scale_x, skew_x, origin_y, skew_y, scale_y)`, and `nodata`
     holds one sentinel per band (unpacked in the band's dtype).
+    `compression` is the codec name of the decoded container when one was
+    read (GeoTIFF decodes only); it is carried for encoder tests to assert
+    on and deliberately not part of `assert_decoded_equal`.
     """
 
     pixels: "np.ndarray"
     gdal_transform: Tuple[float, ...]
     nodata: List[Any]
+    compression: Optional[str] = None
+
+
+@dataclass
+class Deviation:
+    """One known behavioral difference between the subject and a comparator.
+
+    Declared next to the cases it covers in a test module and applied with
+    `expect_deviations`. `matches` receives the test's parametrization dict
+    and selects the cases the deviation covers (None covers every case of
+    the operation). `kind` is "xfail" when both engines compute an answer
+    and the answers differ — enforced as a *strict* expected failure, so the
+    entry itself fails the suite when the engines converge and the ledger
+    can't go stale — or "skip" when the comparator cannot run the case at
+    all (it raises where the subject computes).
+    """
+
+    comparator: type
+    operation: str
+    reason: str
+    matches: Optional[Callable[[dict], bool]] = None
+    kind: str = "xfail"
+
+
+def expect_deviations(request, comparator, operation: str, deviations) -> None:
+    """Arm the ledger entries matching this test invocation.
+
+    Call first in a parity test body, before invoking the engines. Matching
+    "skip" entries skip immediately; matching "xfail" entries mark the test
+    as a strict expected failure constrained to `AssertionError`, so a
+    comparator exception or harness bug still fails loudly and convergence
+    surfaces as XPASS(strict).
+    """
+    import pytest
+
+    params = getattr(getattr(request.node, "callspec", None), "params", {})
+    for deviation in deviations:
+        if not isinstance(comparator, deviation.comparator):
+            continue
+        if deviation.operation != operation:
+            continue
+        if deviation.matches is not None and not deviation.matches(params):
+            continue
+        if deviation.kind == "skip":
+            pytest.skip(f"{type(comparator).name()} deviation: {deviation.reason}")
+        request.node.add_marker(
+            pytest.mark.xfail(
+                strict=True, raises=AssertionError, reason=deviation.reason
+            )
+        )
 
 
 class RasterEngine:
@@ -88,6 +144,17 @@ class RasterEngine:
         return cls.__name__.lower()
 
     @classmethod
+    def install_hint(cls) -> str:
+        """A short setup hint appended to skip messages when this engine
+        can't be built."""
+        return ""
+
+    @classmethod
+    def implements(cls, operation: str) -> bool:
+        """Whether this engine overrides `operation` (the base raises)."""
+        return getattr(cls, operation) is not getattr(RasterEngine, operation)
+
+    @classmethod
     def create_or_skip(cls, *args, **kwargs):
         """Create this engine, or skip the calling test if it can't be built.
 
@@ -104,7 +171,19 @@ class RasterEngine:
                 raise
             import pytest
 
-            pytest.skip(f"Can't create {cls.__name__} raster engine: {e}")
+            pytest.skip(
+                f"Can't create {cls.__name__} raster engine: {e}\n{cls.install_hint()}"
+            )
+
+    def close(self):
+        """Release engine resources — base implementation does nothing."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
 
     def _not_implemented(self, operation: str):
         raise NotImplementedError(
@@ -482,13 +561,19 @@ class SedonaSpark(RasterEngine):
         self._session = self._ensure_session()
 
     @classmethod
+    def install_hint(cls) -> str:
+        return (
+            "- Run `pip install pyspark apache-sedona` (needs a JVM; the first "
+            "run downloads the Sedona jars from Maven)\n"
+            "- Set SEDONADB_RUN_SPARK_TESTS=true to opt in"
+        )
+
+    @classmethod
     def create_or_skip(cls, *args, **kwargs):
         import pytest
 
         if os.environ.get("SEDONADB_RUN_SPARK_TESTS", "false") not in ("true", "1"):
-            pytest.skip(
-                "Sedona Spark parity tests are opt-in: set SEDONADB_RUN_SPARK_TESTS=true"
-            )
+            pytest.skip("Sedona Spark parity tests are opt-in:\n" + cls.install_hint())
         return cls(*args, **kwargs)
 
     @classmethod
@@ -514,13 +599,23 @@ class SedonaSpark(RasterEngine):
             return env
         import pyspark
 
-        major, minor = pyspark.__version__.split(".")[:2]
-        # Sedona publishes per-Spark-minor artifacts; fall back to the newest
-        # published line at or below the installed pyspark.
+        major, minor = (int(part) for part in pyspark.__version__.split(".")[:2])
+        # Sedona publishes per-Spark-minor artifacts (Spark 3.5+ for this
+        # Sedona line). A pyspark older than every published artifact is an
+        # error — a newer jar on an older runtime fails at class load. A
+        # pyspark newer than the newest artifact tries the newest one, which
+        # usually loads; override the coordinates if it doesn't.
+        known = ("3.5", "4.0")
         spark_suffix = f"{major}.{minor}"
-        if spark_suffix not in ("3.4", "3.5", "4.0"):
-            spark_suffix = "4.0" if int(major) >= 4 else "3.5"
-        scala_suffix = "2.13" if int(major) >= 4 else "2.12"
+        if spark_suffix not in known:
+            if (major, minor) < (3, 5):
+                raise RuntimeError(
+                    f"No Sedona {SEDONA_SPARK_VERSION} artifact supports pyspark "
+                    f"{pyspark.__version__}; install pyspark >= 3.5 or set "
+                    "SEDONADB_SEDONA_SPARK_PACKAGES to explicit Maven coordinates"
+                )
+            spark_suffix = known[-1]
+        scala_suffix = "2.13" if spark_suffix == "4.0" else "2.12"
         return (
             f"org.apache.sedona:sedona-spark-shaded-{spark_suffix}_{scala_suffix}:"
             f"{SEDONA_SPARK_VERSION},"
@@ -551,18 +646,23 @@ class SedonaSpark(RasterEngine):
     def _decode_expr(self, df, expr) -> Optional[DecodedRaster]:
         """Evaluate a raster-valued SQL expression and decode the result."""
         # Two actions follow (transport + per-band nodata); cache so the
-        # operation under test executes once, not once per action.
+        # operation under test executes once, not once per action, and
+        # unpersist so the suite doesn't accumulate cached blocks in the
+        # long-lived session.
         result = df.selectExpr(f"{expr} AS r").cache()
-        row = result.selectExpr(
-            f"{self._transport('r')} AS t", "RS_NumBands(r) AS n"
-        ).first()
-        if row is None or row.t is None:
-            return None
-        decoded = decode_geotiff_bytes(bytes(row.t))
-        nodata = result.selectExpr(
-            *[f"RS_BandNoDataValue(r, {b}) AS nd{b}" for b in range(1, row.n + 1)]
-        ).first()
-        return DecodedRaster(decoded.pixels, decoded.gdal_transform, list(nodata))
+        try:
+            row = result.selectExpr(
+                f"{self._transport('r')} AS t", "RS_NumBands(r) AS n"
+            ).first()
+            if row is None or row.t is None:
+                return None
+            decoded = decode_geotiff_bytes(bytes(row.t))
+            nodata = result.selectExpr(
+                *[f"RS_BandNoDataValue(r, {b}) AS nd{b}" for b in range(1, row.n + 1)]
+            ).first()
+            return DecodedRaster(decoded.pixels, decoded.gdal_transform, list(nodata))
+        finally:
+            result.unpersist()
 
     def _point_of(self, df, expr) -> Tuple[float, float]:
         import shapely
@@ -757,6 +857,10 @@ class Rasterio(RasterEngine):
         import rasterio  # noqa: F401 — availability probe for create_or_skip
         import shapely  # noqa: F401
 
+    @classmethod
+    def install_hint(cls) -> str:
+        return "- Run `pip install rasterio shapely`"
+
     def clip(
         self, path, geometry_wkt, *, band=0, all_touched=False, nodata=None, crop=True
     ):
@@ -822,7 +926,7 @@ class Rasterio(RasterEngine):
                     out.append(None)
                     continue
                 sampled = data[row, col]
-                out.append(None if sampled == nodata else float(sampled))
+                out.append(None if _is_nodata(sampled, nodata) else float(sampled))
         return out
 
     def band_nodata(self, path, *, band=1):
@@ -872,16 +976,15 @@ class Rasterio(RasterEngine):
         burn_value=1.0,
         nodata=None,
         use_geometry_extent=True,
-        fill=None,
     ):
         """Rasterize with `rasterio.features.rasterize`.
 
-        The dialects disagree on what pixels outside the geometry get —
-        SedonaDB initializes the grid with the nodata value while Sedona
-        Spark burns into zeros and records nodata as metadata only — so as a
-        reference engine this takes the resolved `fill` from the caller
-        (defaulting to 0, the value the dialects agree on when nodata is
-        unset or zero).
+        Pixels outside the geometry are filled with the subject's policy —
+        SedonaDB initializes the output grid with the nodata value (0 when
+        none is given). Comparators with a different fill policy (Sedona
+        Spark burns into zeros and records nodata as metadata only) carry a
+        `Deviation` entry in the test modules instead of bending this
+        reconstruction.
         """
         import rasterio
         import rasterio.features
@@ -897,7 +1000,7 @@ class Rasterio(RasterEngine):
                 transform = src.transform
                 shape = (src.height, src.width)
 
-        fill = 0.0 if fill is None else fill
+        fill = 0.0 if nodata is None else nodata
         for name, value in [("fill", fill), ("burn_value", burn_value)]:
             if np.asarray(value, dtype=pixel_type) != np.asarray(
                 value, dtype="float64"
@@ -969,7 +1072,10 @@ class Rasterio(RasterEngine):
             )
         values = data[inside].astype(np.float64)
         if nodata is not None:
-            values = values[values != nodata]
+            if math.isnan(nodata):
+                values = values[~np.isnan(values)]
+            else:
+                values = values[values != nodata]
         # Sedona's stddev/variance are the sample statistics (ddof=1).
         reducers = {
             "count": np.size,
@@ -1021,20 +1127,20 @@ class Rasterio(RasterEngine):
         return decode_geotiff_bytes(data)
 
 
-def create_dialect_engine(engine_cls, con=None):
-    """Build one dialect engine for a parametrized test.
-
-    The SedonaDB engine reuses the test session's connection; other engines
-    go through their own `create_or_skip` gating.
-    """
-    if engine_cls is SedonaDB:
-        return SedonaDB(con)
-    return engine_cls.create_or_skip()
+def _is_nodata(sampled, nodata) -> bool:
+    """Whether a sampled value equals the band nodata, NaN-aware (a NaN
+    sentinel matches NaN pixels, which bare `==` never would)."""
+    if nodata is None:
+        return False
+    if math.isnan(nodata):
+        return bool(np.isnan(sampled))
+    return bool(sampled == nodata)
 
 
 def assert_decoded_equal(got: DecodedRaster, expected: DecodedRaster, *, context=""):
     """Strict raster comparison: exact pixels and dtype, geotransform to
-    1e-12, nodata by value (None must match None)."""
+    1e-12, nodata by value (None must match None, NaN matches NaN).
+    `compression` is decode metadata, not content, and is not compared."""
     assert got is not None, f"got no raster: {context}"
     assert expected is not None, f"expected no raster: {context}"
     assert got.pixels.dtype == expected.pixels.dtype, context
@@ -1044,6 +1150,8 @@ def assert_decoded_equal(got: DecodedRaster, expected: DecodedRaster, *, context
     for got_nodata, expected_nodata in zip(got.nodata, expected.nodata):
         if expected_nodata is None:
             assert got_nodata is None, context
+        elif isinstance(expected_nodata, float) and math.isnan(expected_nodata):
+            assert got_nodata is not None and math.isnan(got_nodata), context
         else:
             assert got_nodata == expected_nodata, context
 
@@ -1079,7 +1187,10 @@ def decode_geotiff_bytes(data: bytes) -> DecodedRaster:
 
     with MemoryFile(bytes(data)) as mem, mem.open() as src:
         return DecodedRaster(
-            src.read(), tuple(src.transform.to_gdal()), list(src.nodatavals)
+            src.read(),
+            tuple(src.transform.to_gdal()),
+            list(src.nodatavals),
+            compression=src.compression.value if src.compression else None,
         )
 
 
