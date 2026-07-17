@@ -15,8 +15,12 @@
 # specific language governing permissions and limitations
 # under the License.
 
-import pytest
 import numpy as np
+import pytest
+from rasterio.features import rasterize
+from rasterio.io import MemoryFile
+from rasterio.transform import Affine
+from shapely import wkt
 
 from sedonadb.testing import SedonaDB
 from sedonadb.raster import Raster
@@ -151,10 +155,6 @@ def test_rs_value_matches_rasterio(con):
     """
     import numpy as np
     import pandas as pd
-
-    pytest.importorskip("rasterio")
-    from rasterio.io import MemoryFile
-    from rasterio.transform import Affine
 
     from sedonadb.raster import Raster
 
@@ -308,11 +308,6 @@ def _rs_as_raster_sql(
 def test_rs_as_raster_matches_rasterio(
     con, sedona_testing, all_touched, use_geometry_extent
 ):
-    pytest.importorskip("rasterio")
-    from rasterio.features import rasterize
-    from rasterio.transform import Affine
-    from shapely import wkt
-
     path = sedona_testing / "data/raster/test4.tiff"
     transform = (0.0, 1.0, 0.0, 10.0, 0.0, -1.0)
 
@@ -349,11 +344,6 @@ def test_rs_as_raster_matches_rasterio(
 
 def test_rs_as_raster_all_touched_changes_pixels(con, sedona_testing):
     import numpy as np
-
-    pytest.importorskip("rasterio")
-    from rasterio.features import rasterize
-    from rasterio.transform import Affine
-    from shapely import wkt
 
     path = sedona_testing / "data/raster/test4.tiff"
     transform = (0.0, 1.0, 0.0, 10.0, 0.0, -1.0)
