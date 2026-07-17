@@ -33,15 +33,15 @@ kernels:
 ## Description
 
 `RS_FromGDALRaster` parses raster file bytes with GDAL and returns an in-database
-raster with all band data materialised inline — the inverse of `RS_AsGeoTiff`,
-and the binary counterpart of [`RS_FromPath`](rs_frompath.qmd) (which references
-a file on disk as an out-db raster instead). A `NULL` input yields a `NULL`
-raster.
+raster with all band data materialised inline — the inverse of
+[`RS_AsGeoTiff`](rs_asgeotiff.qmd), and the binary counterpart of
+[`RS_FromPath`](rs_frompath.qmd) (which references a file on disk as an out-db
+raster instead). A `NULL` input yields a `NULL` raster.
 
 It is typically applied to a binary column holding encoded rasters — for example
 rasters produced by `RS_AsGeoTiff`, which round-trips back through
 `RS_FromGDALRaster`:
 
-```text
+```sql
 SELECT RS_Width(RS_FromGDALRaster(RS_AsGeoTiff(RS_Example())));
 ```
