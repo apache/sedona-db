@@ -176,9 +176,9 @@ impl SedonaScalarKernel for RsFromGDALRaster {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::{ArrayRef, BinaryArray, BinaryViewArray, ListArray, StructArray};
+    use arrow_array::{ArrayRef, BinaryArray};
     use sedona_gdal::raster::types::Buffer;
-    use sedona_schema::raster::{band_indices, raster_indices};
+    use sedona_raster::array::RasterStructArray;
     use sedona_testing::raster_spec::{
         assert_raster_scalar_equals, assert_rasters_equal, RasterSpec,
     };
@@ -251,23 +251,6 @@ mod tests {
         std::fs::read(&path).unwrap()
     }
 
-    /// The band-data `BinaryViewArray` inside a raster `StructArray`
-    /// (bands list -> band struct -> data column).
-    fn band_data_view(arr: &StructArray) -> &BinaryViewArray {
-        arr.column(raster_indices::BANDS)
-            .as_any()
-            .downcast_ref::<ListArray>()
-            .unwrap()
-            .values()
-            .as_any()
-            .downcast_ref::<StructArray>()
-            .unwrap()
-            .column(band_indices::DATA)
-            .as_any()
-            .downcast_ref::<BinaryViewArray>()
-            .unwrap()
-    }
-
     fn from_gdal_tester() -> ScalarUdfTester {
         ScalarUdfTester::new(
             rs_from_gdal_raster_udf().into(),
@@ -276,11 +259,11 @@ mod tests {
     }
 
     /// The single-band fixture's declarative expectation, derived from the
-    /// fixture's construction: 4x4 UInt8, north-up unit pixels with origin
-    /// (0, 4), sequential values 0..16, no nodata, in-db.
+    /// fixture's construction: 4x4 UInt8 spanning the bbox (0, 0)-(4, 4)
+    /// (north-up unit pixels), sequential values 0..16, no nodata, in-db.
     fn single_band_spec(crs: Option<&str>) -> RasterSpec {
         RasterSpec::d2(4, 4)
-            .transform([0.0, 1.0, 0.0, 4.0, 0.0, -1.0])
+            .bbox(0.0, 0.0, 4.0, 4.0)
             .crs(crs)
             .band_values(&(0..16u8).collect::<Vec<_>>())
     }
@@ -336,7 +319,12 @@ mod tests {
             // own shared data block (a refcount bump), so the band-data view
             // has one buffer per band. A copying `append_value` path would
             // consolidate both bands into a single builder-owned buffer.
-            assert_eq!(band_data_view(&arr).data_buffers().len(), 2);
+            let num_data_buffers = RasterStructArray::try_new(&arr)
+                .unwrap()
+                .band_data_array()
+                .data_buffers()
+                .len();
+            assert_eq!(num_data_buffers, 2);
 
             // ...and the decoded values/structure match the fixture.
             let arr: ArrayRef = Arc::new(arr);
@@ -345,7 +333,7 @@ mod tests {
                 &[Some(
                     RasterSpec::d2(4, 4)
                         .crs(None)
-                        .transform([0.0, 1.0, 0.0, 4.0, 0.0, -1.0])
+                        .bbox(0.0, 0.0, 4.0, 4.0)
                         .band_values(&(0..16u8).collect::<Vec<_>>())
                         .band_values(&(100..116u8).collect::<Vec<_>>()),
                 )],
