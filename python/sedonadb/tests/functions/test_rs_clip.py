@@ -30,6 +30,8 @@ RS_Clip's documented behavior.
 import numpy as np
 import pyarrow as pa
 import pytest
+import shapely
+from rasterio.transform import Affine
 
 from sedonadb.expr import lit
 from sedonadb.raster_testing import (
@@ -40,9 +42,6 @@ from sedonadb.raster_testing import (
     random_raster_data,
     write_geotiff,
 )
-
-pytest.importorskip("rasterio")
-pytest.importorskip("shapely")
 
 
 # GDAL-order geotransform: origin (100, 500), 2-wide by 3-tall north-up pixels.
@@ -205,6 +204,52 @@ def test_rs_clip_matches_rasterio_geometries(
         "crop": True,
     }
     got = sedona.clip(tiff, wkt, all_touched=all_touched)
+    assert got is not None
+    _assert_clip_matches_reference(got, reference, tiff, row, BAND_NODATA["uint8"])
+
+
+# A sheared grid (one skew term) and a fully rotated one (~30 degrees, both
+# skew terms, 2x3 pixels): the cases where envelope-corner mapping through
+# the inverse affine and the full-affine transform shift differ from
+# scale-only shortcuts.
+SKEWED_TRANSFORM = (100.0, 2.0, 0.5, 500.0, 0.25, -3.0)
+ROTATED_TRANSFORM = (100.0, 1.7320508, 1.5, 500.0, 1.0, -2.5980762)
+
+
+@pytest.mark.parametrize("crop", [True, False])
+@pytest.mark.parametrize(
+    "gdal_transform",
+    [SKEWED_TRANSFORM, ROTATED_TRANSFORM],
+    ids=["skewed", "rotated"],
+)
+def test_rs_clip_skewed_rasters_match_rasterio(
+    sedona, reference, tmp_path, gdal_transform, crop
+):
+    """Clipping a skewed or rotated raster: the crop window is the pixel-space
+    bounding box of the geometry envelope mapped through the inverted affine,
+    and the output geotransform shifts the origin by the full affine (both
+    skew terms). The geometry is defined in pixel space and mapped through
+    the transform under test so it overlaps the grid whatever the rotation."""
+    tiff = tmp_path / "clip_skewed.tif"
+    write_geotiff(
+        tiff,
+        _test_data("uint8"),
+        gdal_transform=gdal_transform,
+        nodata=BAND_NODATA["uint8"],
+    )
+    affine = Affine.from_gdal(*gdal_transform)
+    geom = shapely.Polygon(
+        [affine * corner for corner in [(1.2, 0.8), (5.7, 1.3), (2.4, 4.9)]]
+    )
+
+    row = {
+        "wkt": geom.wkt,
+        "band": 0,
+        "all_touched": False,
+        "nodata": None,
+        "crop": crop,
+    }
+    got = sedona.clip(tiff, geom.wkt, crop=crop)
     assert got is not None
     _assert_clip_matches_reference(got, reference, tiff, row, BAND_NODATA["uint8"])
 

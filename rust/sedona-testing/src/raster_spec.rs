@@ -229,10 +229,10 @@ impl RasterSpec {
 
     /// Set a north-up (zero-skew) geotransform from the raster's world-space
     /// bounding box: the pixel grid spans `[xmin, xmax] x [ymin, ymax]`
-    /// exactly, so pixel (0, 0) is the top-left cell under `ymax`.
-    ///
-    /// A bbox is usually much easier to picture in a test than raw
-    /// geotransform coefficients.
+    /// exactly, so pixel (0, 0) is the top-left cell under `ymax`. Easier to
+    /// picture in a test than raw geotransform coefficients. Skewed or rotated
+    /// rasters can't be expressed as a bounding box — use
+    /// [`transform`](Self::transform) for those.
     pub fn bbox(self, xmin: f64, ymin: f64, xmax: f64, ymax: f64) -> Self {
         assert!(
             xmax > xmin && ymax > ymin,
@@ -556,6 +556,24 @@ mod tests {
             band_pixels::<f32>(&raster, 0, 1),
             (0..20).map(|i| i as f32).collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn bbox_sets_axis_aligned_transform() {
+        // A 7x6 raster spanning x[100, 114], y[482, 500] has 2-wide, 3-tall
+        // north-up pixels with its origin at the top-left corner and no skew.
+        let raster = RasterSpec::d2(7, 6)
+            .bbox(100.0, 482.0, 114.0, 500.0)
+            .band(BandDataType::UInt8)
+            .build();
+        let array = RasterStructArray::try_new(&raster).unwrap();
+        let metadata = array.get(0).unwrap().metadata();
+        assert_eq!(metadata.upper_left_x(), 100.0);
+        assert_eq!(metadata.upper_left_y(), 500.0);
+        assert_eq!(metadata.scale_x(), 2.0);
+        assert_eq!(metadata.scale_y(), -3.0);
+        assert_eq!(metadata.skew_x(), 0.0);
+        assert_eq!(metadata.skew_y(), 0.0);
     }
 
     #[test]

@@ -25,6 +25,7 @@
 use std::sync::Arc;
 
 use arrow_array::ArrayRef;
+use arrow_buffer::Buffer;
 use datafusion_common::cast::{as_boolean_array, as_float64_array, as_int32_array};
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::error::Result;
@@ -297,7 +298,7 @@ impl SedonaScalarKernel for RsClip {
                     crop,
                 ) {
                     Ok(Some(clipped_data)) => {
-                        build_clipped_raster(&mut builder, raster, &clipped_data)?
+                        build_clipped_raster(&mut builder, raster, clipped_data)?
                     }
                     Ok(None) => {
                         // The clip mask is empty — no pixel was selected. `lenient`
@@ -532,7 +533,8 @@ fn clip_raster(
         let n_planes: usize = shape[..ndim - 2].iter().map(|&d| d as usize).product();
 
         // `as_contiguous` borrows the band bytes; we only ever read them here
-        // (the mask/crop helpers allocate their own output), so no copy is needed.
+        // (the mask/crop helpers write into the band's output buffer), so no
+        // copy is needed.
         let nd_buffer = band.nd_buffer().map_err(|e| {
             exec_datafusion_err!("RS_Clip: failed to read band {}: {}", band_idx, e)
         })?;
@@ -570,7 +572,10 @@ fn clip_raster(
             );
         }
 
-        // Apply the (shared) mask/crop to each plane, then concatenate.
+        // Apply the (shared) mask/crop to each plane. One output allocation
+        // serves the whole band: every plane appends into it, and the
+        // finished Vec later moves into the Arrow array as a zero-copy view
+        // block rather than being copied through the builder.
         let out_plane_bytes = match crop_window {
             Some(cw) => cw.width * cw.height * byte_size,
             None => in_plane_bytes,
@@ -578,20 +583,27 @@ fn clip_raster(
         let mut clipped_data = Vec::with_capacity(n_planes * out_plane_bytes);
         for plane in 0..n_planes {
             let plane_bytes = &original_data[plane * in_plane_bytes..(plane + 1) * in_plane_bytes];
-            let clipped_plane = if let Some(cw) = crop_window {
-                apply_mask_and_crop(plane_bytes, mask, width, &data_type, &nodata_bytes, &cw)?
+            if let Some(cw) = crop_window {
+                apply_mask_and_crop(
+                    plane_bytes,
+                    mask,
+                    width,
+                    &data_type,
+                    &nodata_bytes,
+                    &cw,
+                    &mut clipped_data,
+                )?;
             } else {
                 apply_mask_to_band(
                     plane_bytes,
                     mask,
                     width,
-                    height,
                     &data_type,
                     &nodata_bytes,
                     &window,
-                )?
-            };
-            clipped_data.extend_from_slice(&clipped_plane);
+                    &mut clipped_data,
+                )?;
+            }
         }
 
         // Output shape: leading dims unchanged; trailing (y, x) becomes the crop
@@ -683,21 +695,26 @@ fn envelope_window(
 
 /// Apply mask to band data (no cropping — preserves original dimensions).
 /// The mask covers only `window`; every pixel outside it is outside the
-/// geometry's envelope and therefore nodata.
+/// geometry's envelope and therefore nodata. The plane's bytes are appended
+/// to `out` — the caller-owned per-band buffer — so one allocation serves
+/// every plane of the band instead of one per plane.
 fn apply_mask_to_band(
     original_data: &[u8],
     mask: &[u8],
     width: usize,
-    height: usize,
     data_type: &BandDataType,
     nodata_bytes: &[u8],
     window: &CropWindow,
-) -> Result<Vec<u8>> {
+    out: &mut Vec<u8>,
+) -> Result<()> {
     let byte_size = data_type.byte_size();
-    let nodata_row: Vec<u8> = nodata_bytes.repeat(width);
-    let mut result = vec![0u8; width * height * byte_size];
-
     let row_bytes = width * byte_size;
+    let height = original_data.len() / row_bytes;
+    let nodata_row: Vec<u8> = nodata_bytes.repeat(width);
+    let base = out.len();
+    out.resize(base + width * height * byte_size, 0);
+    let result = &mut out[base..];
+
     for row in 0..height {
         let dst_row = &mut result[row * row_bytes..(row + 1) * row_bytes];
         if row < window.row_off || row >= window.row_off + window.height {
@@ -723,12 +740,14 @@ fn apply_mask_to_band(
         }
     }
 
-    Ok(result)
+    Ok(())
 }
 
 /// Apply mask AND crop to the given crop window in one pass. The mask is
 /// window-sized (row-major over `cw.width`×`cw.height`); the source data is
-/// the full raster plane.
+/// the full raster plane. The plane's bytes are appended to `out` — the
+/// caller-owned per-band buffer — so one allocation serves every plane of
+/// the band instead of one per plane.
 fn apply_mask_and_crop(
     original_data: &[u8],
     mask: &[u8],
@@ -736,10 +755,13 @@ fn apply_mask_and_crop(
     data_type: &BandDataType,
     nodata_bytes: &[u8],
     cw: &CropWindow,
-) -> Result<Vec<u8>> {
+    out: &mut Vec<u8>,
+) -> Result<()> {
     let byte_size = data_type.byte_size();
     let row_bytes = cw.width * byte_size;
-    let mut result = vec![0u8; cw.height * row_bytes];
+    let base = out.len();
+    out.resize(base + cw.height * row_bytes, 0);
+    let result = &mut out[base..];
 
     // The crop-window columns of a source row are contiguous, so copy each row
     // in one bulk memcpy (which vectorizes) rather than per pixel, then overwrite
@@ -762,7 +784,7 @@ fn apply_mask_and_crop(
         }
     }
 
-    Ok(result)
+    Ok(())
 }
 
 /// Build the clipped raster via the N-D builder. A 2-D raster is just the
@@ -771,7 +793,7 @@ fn apply_mask_and_crop(
 fn build_clipped_raster(
     builder: &mut RasterBuilder,
     original_raster: &RasterRefImpl<'_>,
-    clipped_data: &ClippedRasterData,
+    clipped_data: ClippedRasterData,
 ) -> Result<()> {
     // Geotransform is 2-D and shared across all planes. A crop shifts the
     // upper-left by the pixel offset; scale/skew are unchanged.
@@ -815,7 +837,7 @@ fn build_clipped_raster(
         )
         .map_err(|e| exec_datafusion_err!("Failed to start raster: {}", e))?;
 
-    for band in &clipped_data.bands {
+    for band in clipped_data.bands {
         let dim_names: Vec<&str> = band.dim_names.iter().map(String::as_str).collect();
         builder
             .start_band_nd(
@@ -828,7 +850,18 @@ fn build_clipped_raster(
                 None,
             )
             .map_err(|e| exec_datafusion_err!("Failed to start band: {}", e))?;
-        builder.band_data_writer().append_value(&band.data);
+        // Move the band bytes into an Arrow buffer and append them as a view
+        // (a refcount bump), instead of copying them through the builder.
+        let len = u32::try_from(band.data.len()).map_err(|_| {
+            exec_datafusion_err!(
+                "RS_Clip: band data of {} bytes exceeds the binary-view limit",
+                band.data.len()
+            )
+        })?;
+        let buffer = Buffer::from(band.data);
+        builder
+            .append_band_data_buffer(&buffer, 0, len)
+            .map_err(|e| exec_datafusion_err!("Failed to append band data: {}", e))?;
         builder
             .finish_band()
             .map_err(|e| exec_datafusion_err!("Failed to finish band: {}", e))?;
@@ -844,14 +877,17 @@ fn build_clipped_raster(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::StructArray;
+    use arrow_array::{cast::AsArray, StructArray};
     use sedona_expr::scalar_udf::SedonaScalarKernel;
-    use sedona_proj::transform::with_global_proj_engine;
+    use sedona_proj::transform::{with_global_proj_engine, LazyProjEngine};
     use sedona_raster::array::RasterStructArray;
     use sedona_schema::crs::deserialize_crs;
     use sedona_schema::datatypes::Edges;
     use sedona_testing::create::make_wkb;
-    use sedona_testing::raster_spec::RasterSpec;
+    use sedona_testing::raster_spec::{
+        assert_raster_scalar_equals, assert_rasters_equal, raster_array, RasterSpec,
+    };
+    use sedona_testing::testers::ScalarUdfTester;
 
     /// A 4×2 EPSG:4326 raster, origin (0, 2), 1×1 north-up pixels — world extent
     /// x ∈ [0, 4], y ∈ [0, 2]. One UInt8 band with values 1..=8 (row-major).
@@ -1021,7 +1057,15 @@ mod tests {
         let band_type = SedonaType::Arrow(DataType::Int32);
         let band_val = ColumnarValue::Scalar(ScalarValue::Int32(Some(1)));
 
-        let clip_band1 = |geom_type: SedonaType, geom_wkb: Vec<u8>| -> Vec<u8> {
+        // Both the native-CRS and the reprojected geometry must produce the
+        // same clip: the polygon covers columns 0-1 of both rows, cropped to
+        // that 2x2 window with the UInt8 minimum recorded as nodata.
+        let expected = RasterSpec::d2(2, 2)
+            .crs(Some("EPSG:4326"))
+            .transform([0.0, 1.0, 0.0, 2.0, 0.0, -1.0])
+            .band_values(&[1u8, 2, 5, 6])
+            .nodata(0u8);
+        let clip_band1 = |geom_type: SedonaType, geom_wkb: Vec<u8>| {
             let result = kernel
                 .invoke_batch(
                     &[RASTER, band_type.clone(), geom_type],
@@ -1032,35 +1076,20 @@ mod tests {
                     ],
                 )
                 .unwrap();
-            match result {
-                ColumnarValue::Scalar(ScalarValue::Struct(struct_array)) => {
-                    let array = RasterStructArray::try_new(struct_array.as_ref()).unwrap();
-                    array
-                        .get(0)
-                        .unwrap()
-                        .bands()
-                        .band(1)
-                        .unwrap()
-                        .nd_buffer()
-                        .unwrap()
-                        .as_contiguous()
-                        .unwrap()
-                        .to_vec()
-                }
-                _ => panic!("Expected raster scalar result"),
-            }
+            let ColumnarValue::Scalar(scalar) = result else {
+                panic!("Expected raster scalar result");
+            };
+            assert_raster_scalar_equals(&scalar, &expected);
         };
 
-        let band_data_4326 = clip_band1(
+        clip_band1(
             SedonaType::Wkb(Edges::Planar, Some(crs_4326)),
             geom_wkb_4326,
         );
-        let band_data_3857 = clip_band1(
+        clip_band1(
             SedonaType::Wkb(Edges::Planar, Some(crs_3857)),
             geom_wkb_3857,
         );
-
-        assert_eq!(band_data_4326, band_data_3857);
     }
 
     #[test]
@@ -1101,22 +1130,19 @@ mod tests {
             )
             .unwrap();
 
-        let out = match result {
-            ColumnarValue::Scalar(ScalarValue::Struct(s)) => s,
-            _ => panic!("Expected raster scalar result"),
+        let ColumnarValue::Scalar(scalar) = result else {
+            panic!("Expected raster scalar result");
         };
-        let rasters = RasterStructArray::try_new(out.as_ref()).unwrap();
-        let raster = rasters.get(0).unwrap();
-        let band = raster.bands().band(1).unwrap();
-
-        // The time dim is preserved; (y, x) is cropped to the 1×2 mask window.
-        assert_eq!(band.dim_names(), vec!["time", "y", "x"]);
-        assert_eq!(band.shape(), &[2, 1, 2]);
-
-        // The crop window is cols 0-1 of row 0, applied to both planes:
-        // time 0 -> [1, 2], time 1 -> [9, 10].
-        let bytes = band.nd_buffer().unwrap().as_contiguous().unwrap();
-        assert_eq!(bytes, &[1u8, 2, 9, 10]);
+        // The time dim is preserved; (y, x) is cropped to the 1×2 mask
+        // window, applied to both planes: time 0 -> [1, 2], time 1 -> [9, 10].
+        assert_raster_scalar_equals(
+            &scalar,
+            &RasterSpec::nd(&["time", "y", "x"], &[2, 1, 2])
+                .band_values(&[1u8, 2, 9, 10])
+                .crs(Some("EPSG:4326"))
+                .transform([0.0, 1.0, 0.0, 2.0, 0.0, -1.0])
+                .nodata(0u8),
+        );
     }
 
     #[test]
@@ -1177,30 +1203,22 @@ mod tests {
             .unwrap();
 
         // Must be a 2-row array (not a broadcast scalar), with row 0 clipping
-        // band 1 and row 1 clipping band 2 — distinct outputs.
+        // band 1 and row 1 clipping band 2 — distinct outputs, each cropped
+        // to the single covered pixel.
         let arr = match result {
             ColumnarValue::Array(a) => a,
             ColumnarValue::Scalar(_) => panic!("expected an array; the batch collapsed to row 0"),
         };
-        let rasters =
-            RasterStructArray::try_new(arr.as_any().downcast_ref::<StructArray>().unwrap())
-                .unwrap();
-        assert_eq!(rasters.len(), 2);
-        let band_data = |row: usize| {
-            rasters
-                .get(row)
-                .unwrap()
-                .bands()
-                .band(1)
-                .unwrap()
-                .nd_buffer()
-                .unwrap()
-                .as_contiguous()
-                .unwrap()
-                .to_vec()
+        let row = |values: &[u8]| {
+            Some(
+                RasterSpec::d2(1, 1)
+                    .crs(Some("EPSG:4326"))
+                    .transform([0.0, 1.0, 0.0, 1.0, 0.0, -1.0])
+                    .band_values(values)
+                    .nodata(0u8),
+            )
         };
-        // Row 0 clipped band 1 (values 1,2); row 1 clipped band 2 (values 10,20).
-        assert_ne!(band_data(0), band_data(1));
+        assert_rasters_equal(&arr, &[row(&[1u8]), row(&[10u8])]);
     }
 
     #[test]
@@ -1224,15 +1242,21 @@ mod tests {
                 ],
             )
             .unwrap();
-        let out = match result {
-            ColumnarValue::Scalar(ScalarValue::Struct(s)) => s,
-            _ => panic!("expected raster scalar"),
+        let ColumnarValue::Scalar(scalar) = result else {
+            panic!("expected raster scalar");
         };
-        let raster = RasterStructArray::try_new(out.as_ref())
-            .unwrap()
-            .get(0)
-            .unwrap();
-        assert_eq!(raster.bands().len(), 2, "band 0 should clip all bands");
+        // Band 0 clips every band: both come through, each cropped to the
+        // covered pixel.
+        assert_raster_scalar_equals(
+            &scalar,
+            &RasterSpec::d2(1, 1)
+                .crs(Some("EPSG:4326"))
+                .transform([0.0, 1.0, 0.0, 1.0, 0.0, -1.0])
+                .band_values(&[1u8])
+                .nodata(0u8)
+                .band_values(&[10u8])
+                .nodata(0u8),
+        );
     }
 
     #[test]
@@ -1430,6 +1454,103 @@ mod tests {
         assert!(
             msg.contains("selects no pixels") && msg.contains("all_touched"),
             "all_touched=false should hint at the sub-pixel case: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_rs_clip_band_data_is_block_backed() {
+        // The clipped band bytes move into the output as a zero-copy view
+        // block; pin that so a refactor can't silently reintroduce the copy.
+        // (Views at or under the inline threshold store their bytes inline,
+        // so the band must be bigger than that.)
+        let values: Vec<u8> = (0..32).collect();
+        let tester = ScalarUdfTester::new(
+            rs_clip_udf().into(),
+            vec![
+                RASTER,
+                SedonaType::Arrow(DataType::Int32),
+                SedonaType::Wkb(Edges::Planar, None),
+            ],
+        );
+        let result = tester
+            .invoke_array_scalar_scalar(
+                Arc::new(raster_array([Some(
+                    RasterSpec::d2(8, 4).crs(None).band_values(&values),
+                )])),
+                1,
+                ScalarValue::Binary(Some(make_wkb("POLYGON((0 0, 8 0, 8 -4, 0 -4, 0 0))"))),
+            )
+            .unwrap();
+
+        let rasters = RasterStructArray::try_new(result.as_struct()).unwrap();
+        let band_data = rasters.band_data_array();
+        assert_eq!(
+            band_data.value(rasters.band_data_row(0, 0)),
+            values.as_slice()
+        );
+        assert_eq!(
+            band_data.data_buffers().len(),
+            1,
+            "band bytes should be appended as a view block, not copied"
+        );
+    }
+
+    #[test]
+    fn test_rs_clip_reprojects_with_tester_crs_engine() {
+        // Through the tester, the kernel reads its CRS engine from the
+        // SedonaOptions in the tester's config options: a reprojecting clip
+        // errors under the default engine and succeeds once a real engine is
+        // supplied via `with_crs_engine`. (Config-less direct invocation,
+        // covered by test_rs_clip_crs_mismatch, falls back to the global
+        // engine instead.)
+        let spec = RasterSpec::d2(4, 2)
+            .band_values(&[1u8, 2, 3, 4, 5, 6, 7, 8])
+            .crs(Some("EPSG:4326"))
+            .transform([0.0, 1.0, 0.0, 2.0, 0.0, -1.0]);
+
+        let crs_4326 = deserialize_crs("EPSG:4326").unwrap().unwrap();
+        let crs_3857 = deserialize_crs("EPSG:3857").unwrap().unwrap();
+        let geom_wkb_4326 = make_wkb("POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))");
+        let geom_wkb_3857 = with_global_proj_engine(|engine| {
+            crs_transform_wkb(&geom_wkb_4326, crs_4326.as_ref(), crs_3857.as_ref(), engine)
+        })
+        .unwrap();
+
+        let udf: datafusion_expr::ScalarUDF = rs_clip_udf().into();
+        let arg_types = vec![
+            RASTER,
+            SedonaType::Arrow(DataType::Int32),
+            SedonaType::Wkb(Edges::Planar, Some(crs_3857)),
+        ];
+
+        let tester = ScalarUdfTester::new(udf.clone(), arg_types.clone());
+        let err = tester
+            .invoke_scalar_scalar_scalar(
+                spec.scalar(),
+                1,
+                ScalarValue::Binary(Some(geom_wkb_3857.clone())),
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().to_lowercase().contains("crs"),
+            "the default engine should error, got: {err}"
+        );
+
+        let tester = ScalarUdfTester::new(udf, arg_types).with_crs_engine(Arc::new(LazyProjEngine));
+        let result = tester
+            .invoke_scalar_scalar_scalar(spec.scalar(), 1, ScalarValue::Binary(Some(geom_wkb_3857)))
+            .unwrap();
+
+        // The polygon covers columns 0-1 of both rows; with the default
+        // crop the output is that 2x2 window, with the raster's CRS and
+        // origin carried through and the UInt8 minimum recorded as nodata.
+        assert_raster_scalar_equals(
+            &result,
+            &RasterSpec::d2(2, 2)
+                .crs(Some("EPSG:4326"))
+                .transform([0.0, 1.0, 0.0, 2.0, 0.0, -1.0])
+                .band_values(&[1u8, 2, 5, 6])
+                .nodata(0u8),
         );
     }
 }

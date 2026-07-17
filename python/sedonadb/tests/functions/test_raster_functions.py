@@ -15,8 +15,13 @@
 # specific language governing permissions and limitations
 # under the License.
 
-import pytest
 import numpy as np
+import pandas as pd
+import pytest
+from rasterio.features import rasterize
+from rasterio.io import MemoryFile
+from rasterio.transform import Affine
+from shapely import wkt
 
 from sedonadb.testing import SedonaDB
 from sedonadb.raster import Raster
@@ -158,14 +163,6 @@ def test_rs_value_matches_rasterio(con):
     positions per pixel (toward the corners, kept inside the pixel to avoid floor
     ambiguity at exact boundaries) and a batch of random interior points.
     """
-    import numpy as np
-    import pandas as pd
-
-    pytest.importorskip("rasterio")
-    from rasterio.io import MemoryFile
-    from rasterio.transform import Affine
-
-    from sedonadb.raster import Raster
 
     rng = np.random.default_rng(42)
     height, width = 7, 5
@@ -469,6 +466,61 @@ def test_rs_values_matches_rasterio(con):
     assert got == pytest.approx(expected)
 
 
+# RS_AsGeoTiff smoke coverage: the GDAL-backed export is tested in depth in
+# Rust (rust/sedona-raster-gdal/src/rs_as_geotiff.rs); these only guard that
+# the function is registered in the Python build and returns GeoTIFF bytes.
+@pytest.mark.parametrize(
+    "expr",
+    [
+        "RS_AsGeoTiff(RS_Example())",
+        "RS_AsGeoTiff(RS_Example(), 16)",
+        "RS_AsGeoTiff(RS_Example(), 'DEFLATE', 0.85)",
+        "RS_AsGeoTiff(RS_Example(), 'LZW', 0.85, 16, 16)",
+    ],
+)
+def test_rs_asgeotiff_returns_tiff_bytes(con, expr):
+    result = con.sql(f"SELECT {expr} AS t").to_arrow_table()["t"][0].as_py()
+    assert result[:2] in (b"II", b"MM"), "should start with a TIFF byte-order mark"
+
+
+def test_rs_asgeotiff_out_of_range_quality_errors(con):
+    # Quality is a 0.0-1.0 fraction; a 0-100 style value errors rather than
+    # silently clamping to maximum quality.
+    with pytest.raises(Exception, match="between 0.0 and 1.0"):
+        con.sql("SELECT RS_AsGeoTiff(RS_Example(), 'JPEG', 75)").to_arrow_table()
+
+
+# Cross-check RS_AsGeoTiff against rasterio: export a random raster of each
+# band data type and confirm rasterio decodes the bytes back to the identical
+# array, dtype, and geotransform. The DEFLATE/LZW variants also exercise the
+# per-dtype predictor selection (horizontal differencing for integers,
+# floating-point prediction for float bands).
+@pytest.mark.parametrize("dtype", ["uint8", "uint16", "int32", "float32", "float64"])
+@pytest.mark.parametrize("compression_args", ["", ", 'DEFLATE', 0.85", ", 'LZW', 0.85"])
+def test_rs_asgeotiff_roundtrips_contents(con, dtype, compression_args):
+    pytest.importorskip("rasterio")
+    from rasterio.io import MemoryFile
+
+    rng = np.random.default_rng(7)
+    data = (rng.random((5, 4)) * 100).astype(dtype)
+    gdal_transform = (10.0, 1.0, 0.0, 20.0, 0.0, -1.0)
+    raster = Raster.from_numpy(data, transform=gdal_transform)
+
+    tiff_bytes = (
+        con.sql(
+            f"SELECT RS_AsGeoTiff($1{compression_args}) AS t",
+            params=(raster,),
+        )
+        .to_arrow_table()["t"]
+        .to_pylist()[0]
+    )
+    with MemoryFile(bytes(tiff_bytes)) as mem, mem.open() as src:
+        decoded = src.read(1)
+        assert decoded.dtype == data.dtype
+        np.testing.assert_array_equal(decoded, data)
+        assert src.transform.to_gdal() == gdal_transform
+
+
 def _rs_as_raster_sql(
     pixel_type, all_touched, burn_value, nodata_value, use_geometry_extent
 ):
@@ -494,11 +546,6 @@ def _rs_as_raster_sql(
 def test_rs_as_raster_matches_rasterio(
     con, sedona_testing, all_touched, use_geometry_extent
 ):
-    pytest.importorskip("rasterio")
-    from rasterio.features import rasterize
-    from rasterio.transform import Affine
-    from shapely import wkt
-
     path = sedona_testing / "data/raster/test4.tiff"
     transform = (0.0, 1.0, 0.0, 10.0, 0.0, -1.0)
 
@@ -534,13 +581,6 @@ def test_rs_as_raster_matches_rasterio(
 
 
 def test_rs_as_raster_all_touched_changes_pixels(con, sedona_testing):
-    import numpy as np
-
-    pytest.importorskip("rasterio")
-    from rasterio.features import rasterize
-    from rasterio.transform import Affine
-    from shapely import wkt
-
     path = sedona_testing / "data/raster/test4.tiff"
     transform = (0.0, 1.0, 0.0, 10.0, 0.0, -1.0)
     geom = "POLYGON((1.9 8.9, 1.9 6.1, 3.1 6.1, 3.1 8.9, 1.9 8.9))"
@@ -612,8 +652,6 @@ def test_rs_as_raster_rejects_fractional_integer_nodata(con, sedona_testing):
 
 
 def test_rs_as_raster_sets_output_nodata(con, sedona_testing):
-    import numpy as np
-
     path = sedona_testing / "data/raster/test4.tiff"
     tab = con.sql(
         """
