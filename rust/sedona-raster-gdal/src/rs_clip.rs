@@ -879,12 +879,13 @@ mod tests {
     use super::*;
     use arrow_array::{cast::AsArray, Array, StructArray};
     use sedona_expr::scalar_udf::SedonaScalarKernel;
-    use sedona_proj::transform::with_global_proj_engine;
+    use sedona_proj::transform::{with_global_proj_engine, LazyProjEngine};
     use sedona_raster::array::RasterStructArray;
     use sedona_schema::crs::deserialize_crs;
     use sedona_schema::datatypes::Edges;
     use sedona_testing::create::make_wkb;
-    use sedona_testing::raster_spec::{raster_array, RasterSpec};
+    use sedona_testing::raster_spec::{assert_raster_scalar_equals, raster_array, RasterSpec};
+    use sedona_testing::testers::ScalarUdfTester;
 
     /// A 4×2 EPSG:4326 raster, origin (0, 2), 1×1 north-up pixels — world extent
     /// x ∈ [0, 4], y ∈ [0, 2]. One UInt8 band with values 1..=8 (row-major).
@@ -1508,4 +1509,62 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_rs_clip_reprojects_with_tester_crs_engine() {
+        // Through the tester, the kernel reads its CRS engine from the
+        // SedonaOptions in the tester's config options: a reprojecting clip
+        // errors under the default engine and succeeds once a real engine is
+        // supplied via `with_crs_engine`. (Config-less direct invocation,
+        // covered by test_rs_clip_crs_mismatch, falls back to the global
+        // engine instead.)
+        let spec = RasterSpec::d2(4, 2)
+            .band_values(&[1u8, 2, 3, 4, 5, 6, 7, 8])
+            .crs(Some("EPSG:4326"))
+            .transform([0.0, 1.0, 0.0, 2.0, 0.0, -1.0]);
+
+        let crs_4326 = deserialize_crs("EPSG:4326").unwrap().unwrap();
+        let crs_3857 = deserialize_crs("EPSG:3857").unwrap().unwrap();
+        let geom_wkb_4326 = make_wkb("POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))");
+        let geom_wkb_3857 = with_global_proj_engine(|engine| {
+            crs_transform_wkb(&geom_wkb_4326, crs_4326.as_ref(), crs_3857.as_ref(), engine)
+        })
+        .unwrap();
+
+        let udf: datafusion_expr::ScalarUDF = rs_clip_udf().into();
+        let arg_types = vec![
+            RASTER,
+            SedonaType::Arrow(DataType::Int32),
+            SedonaType::Wkb(Edges::Planar, Some(crs_3857)),
+        ];
+
+        let tester = ScalarUdfTester::new(udf.clone(), arg_types.clone());
+        let err = tester
+            .invoke_scalar_scalar_scalar(
+                spec.scalar(),
+                1,
+                ScalarValue::Binary(Some(geom_wkb_3857.clone())),
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().to_lowercase().contains("crs"),
+            "the default engine should error, got: {err}"
+        );
+
+        let tester = ScalarUdfTester::new(udf, arg_types).with_crs_engine(Arc::new(LazyProjEngine));
+        let result = tester
+            .invoke_scalar_scalar_scalar(spec.scalar(), 1, ScalarValue::Binary(Some(geom_wkb_3857)))
+            .unwrap();
+
+        // The polygon covers columns 0-1 of both rows; with the default
+        // crop the output is that 2x2 window, with the raster's CRS and
+        // origin carried through and the UInt8 minimum recorded as nodata.
+        assert_raster_scalar_equals(
+            &result,
+            &RasterSpec::d2(2, 2)
+                .crs(Some("EPSG:4326"))
+                .transform([0.0, 1.0, 0.0, 2.0, 0.0, -1.0])
+                .band_values(&[1u8, 2, 5, 6])
+                .nodata(0u8),
+        );
+    }
 }
