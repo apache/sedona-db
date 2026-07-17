@@ -877,14 +877,16 @@ fn build_clipped_raster(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::{cast::AsArray, Array, StructArray};
+    use arrow_array::{cast::AsArray, StructArray};
     use sedona_expr::scalar_udf::SedonaScalarKernel;
     use sedona_proj::transform::{with_global_proj_engine, LazyProjEngine};
     use sedona_raster::array::RasterStructArray;
     use sedona_schema::crs::deserialize_crs;
     use sedona_schema::datatypes::Edges;
     use sedona_testing::create::make_wkb;
-    use sedona_testing::raster_spec::{assert_raster_scalar_equals, raster_array, RasterSpec};
+    use sedona_testing::raster_spec::{
+        assert_raster_scalar_equals, assert_rasters_equal, raster_array, RasterSpec,
+    };
     use sedona_testing::testers::ScalarUdfTester;
 
     /// A 4×2 EPSG:4326 raster, origin (0, 2), 1×1 north-up pixels — world extent
@@ -1055,7 +1057,15 @@ mod tests {
         let band_type = SedonaType::Arrow(DataType::Int32);
         let band_val = ColumnarValue::Scalar(ScalarValue::Int32(Some(1)));
 
-        let clip_band1 = |geom_type: SedonaType, geom_wkb: Vec<u8>| -> Vec<u8> {
+        // Both the native-CRS and the reprojected geometry must produce the
+        // same clip: the polygon covers columns 0-1 of both rows, cropped to
+        // that 2x2 window with the UInt8 minimum recorded as nodata.
+        let expected = RasterSpec::d2(2, 2)
+            .crs(Some("EPSG:4326"))
+            .transform([0.0, 1.0, 0.0, 2.0, 0.0, -1.0])
+            .band_values(&[1u8, 2, 5, 6])
+            .nodata(0u8);
+        let clip_band1 = |geom_type: SedonaType, geom_wkb: Vec<u8>| {
             let result = kernel
                 .invoke_batch(
                     &[RASTER, band_type.clone(), geom_type],
@@ -1066,35 +1076,20 @@ mod tests {
                     ],
                 )
                 .unwrap();
-            match result {
-                ColumnarValue::Scalar(ScalarValue::Struct(struct_array)) => {
-                    let array = RasterStructArray::try_new(struct_array.as_ref()).unwrap();
-                    array
-                        .get(0)
-                        .unwrap()
-                        .bands()
-                        .band(1)
-                        .unwrap()
-                        .nd_buffer()
-                        .unwrap()
-                        .as_contiguous()
-                        .unwrap()
-                        .to_vec()
-                }
-                _ => panic!("Expected raster scalar result"),
-            }
+            let ColumnarValue::Scalar(scalar) = result else {
+                panic!("Expected raster scalar result");
+            };
+            assert_raster_scalar_equals(&scalar, &expected);
         };
 
-        let band_data_4326 = clip_band1(
+        clip_band1(
             SedonaType::Wkb(Edges::Planar, Some(crs_4326)),
             geom_wkb_4326,
         );
-        let band_data_3857 = clip_band1(
+        clip_band1(
             SedonaType::Wkb(Edges::Planar, Some(crs_3857)),
             geom_wkb_3857,
         );
-
-        assert_eq!(band_data_4326, band_data_3857);
     }
 
     #[test]
@@ -1135,22 +1130,19 @@ mod tests {
             )
             .unwrap();
 
-        let out = match result {
-            ColumnarValue::Scalar(ScalarValue::Struct(s)) => s,
-            _ => panic!("Expected raster scalar result"),
+        let ColumnarValue::Scalar(scalar) = result else {
+            panic!("Expected raster scalar result");
         };
-        let rasters = RasterStructArray::try_new(out.as_ref()).unwrap();
-        let raster = rasters.get(0).unwrap();
-        let band = raster.bands().band(1).unwrap();
-
-        // The time dim is preserved; (y, x) is cropped to the 1×2 mask window.
-        assert_eq!(band.dim_names(), vec!["time", "y", "x"]);
-        assert_eq!(band.shape(), &[2, 1, 2]);
-
-        // The crop window is cols 0-1 of row 0, applied to both planes:
-        // time 0 -> [1, 2], time 1 -> [9, 10].
-        let bytes = band.nd_buffer().unwrap().as_contiguous().unwrap();
-        assert_eq!(bytes, &[1u8, 2, 9, 10]);
+        // The time dim is preserved; (y, x) is cropped to the 1×2 mask
+        // window, applied to both planes: time 0 -> [1, 2], time 1 -> [9, 10].
+        assert_raster_scalar_equals(
+            &scalar,
+            &RasterSpec::nd(&["time", "y", "x"], &[2, 1, 2])
+                .band_values(&[1u8, 2, 9, 10])
+                .crs(Some("EPSG:4326"))
+                .transform([0.0, 1.0, 0.0, 2.0, 0.0, -1.0])
+                .nodata(0u8),
+        );
     }
 
     #[test]
@@ -1211,30 +1203,22 @@ mod tests {
             .unwrap();
 
         // Must be a 2-row array (not a broadcast scalar), with row 0 clipping
-        // band 1 and row 1 clipping band 2 — distinct outputs.
+        // band 1 and row 1 clipping band 2 — distinct outputs, each cropped
+        // to the single covered pixel.
         let arr = match result {
             ColumnarValue::Array(a) => a,
             ColumnarValue::Scalar(_) => panic!("expected an array; the batch collapsed to row 0"),
         };
-        let rasters =
-            RasterStructArray::try_new(arr.as_any().downcast_ref::<StructArray>().unwrap())
-                .unwrap();
-        assert_eq!(rasters.len(), 2);
-        let band_data = |row: usize| {
-            rasters
-                .get(row)
-                .unwrap()
-                .bands()
-                .band(1)
-                .unwrap()
-                .nd_buffer()
-                .unwrap()
-                .as_contiguous()
-                .unwrap()
-                .to_vec()
+        let row = |values: &[u8]| {
+            Some(
+                RasterSpec::d2(1, 1)
+                    .crs(Some("EPSG:4326"))
+                    .transform([0.0, 1.0, 0.0, 1.0, 0.0, -1.0])
+                    .band_values(values)
+                    .nodata(0u8),
+            )
         };
-        // Row 0 clipped band 1 (values 1,2); row 1 clipped band 2 (values 10,20).
-        assert_ne!(band_data(0), band_data(1));
+        assert_rasters_equal(&arr, &[row(&[1u8]), row(&[10u8])]);
     }
 
     #[test]
@@ -1258,15 +1242,21 @@ mod tests {
                 ],
             )
             .unwrap();
-        let out = match result {
-            ColumnarValue::Scalar(ScalarValue::Struct(s)) => s,
-            _ => panic!("expected raster scalar"),
+        let ColumnarValue::Scalar(scalar) = result else {
+            panic!("expected raster scalar");
         };
-        let raster = RasterStructArray::try_new(out.as_ref())
-            .unwrap()
-            .get(0)
-            .unwrap();
-        assert_eq!(raster.bands().len(), 2, "band 0 should clip all bands");
+        // Band 0 clips every band: both come through, each cropped to the
+        // covered pixel.
+        assert_raster_scalar_equals(
+            &scalar,
+            &RasterSpec::d2(1, 1)
+                .crs(Some("EPSG:4326"))
+                .transform([0.0, 1.0, 0.0, 1.0, 0.0, -1.0])
+                .band_values(&[1u8])
+                .nodata(0u8)
+                .band_values(&[10u8])
+                .nodata(0u8),
+        );
     }
 
     #[test]
