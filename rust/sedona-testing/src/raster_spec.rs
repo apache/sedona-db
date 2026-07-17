@@ -227,6 +227,26 @@ impl RasterSpec {
         self
     }
 
+    /// Set an axis-aligned, north-up geotransform from a bounding box, with
+    /// the pixel size derived from the box and the raster's dimensions (zero
+    /// skew, origin at the top-left corner). Easier to picture than raw
+    /// coefficients when the framing is what matters. Skewed or rotated
+    /// rasters can't be expressed as a bounding box — use
+    /// [`transform`](Self::transform) for those.
+    pub fn bbox(mut self, min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> Self {
+        let width = self.spatial_shape[0] as f64;
+        let height = self.spatial_shape[1] as f64;
+        self.transform = [
+            min_x,
+            (max_x - min_x) / width,
+            0.0,
+            max_y,
+            0.0,
+            -(max_y - min_y) / height,
+        ];
+        self
+    }
+
     /// Add a band with the spec's default layout and sequential pixel values
     /// (0, 1, 2, … in `data_type`).
     pub fn band(self, data_type: BandDataType) -> Self {
@@ -539,6 +559,24 @@ mod tests {
             band_pixels::<f32>(&raster, 0, 1),
             (0..20).map(|i| i as f32).collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn bbox_sets_axis_aligned_transform() {
+        // A 7x6 raster spanning x[100, 114], y[482, 500] has 2-wide, 3-tall
+        // north-up pixels with its origin at the top-left corner and no skew.
+        let raster = RasterSpec::d2(7, 6)
+            .bbox(100.0, 482.0, 114.0, 500.0)
+            .band(BandDataType::UInt8)
+            .build();
+        let array = RasterStructArray::try_new(&raster).unwrap();
+        let metadata = array.get(0).unwrap().metadata();
+        assert_eq!(metadata.upper_left_x(), 100.0);
+        assert_eq!(metadata.upper_left_y(), 500.0);
+        assert_eq!(metadata.scale_x(), 2.0);
+        assert_eq!(metadata.scale_y(), -3.0);
+        assert_eq!(metadata.skew_x(), 0.0);
+        assert_eq!(metadata.skew_y(), 0.0);
     }
 
     #[test]
