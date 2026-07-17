@@ -164,7 +164,11 @@ jobs:
         env:
           SEDONADB_RUN_SPARK_TESTS: "true"
         run: |
-          pip install pyspark apache-sedona
+          # Pin pyspark to the Spark line of the pinned Sedona artifact
+          # (SEDONA_SPARK_VERSION in raster_testing.py): a newer Spark can
+          # resolve the jars but fail at SedonaContext.create when function
+          # registration semantics change between Spark minors.
+          pip install "pyspark==4.0.*" apache-sedona
           cd python/sedonadb
           python -m pytest tests/functions -q -k "sedonaspark" -rX
 
