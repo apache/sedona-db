@@ -31,7 +31,6 @@ import numpy as np
 import pyarrow as pa
 import pytest
 import shapely
-from rasterio.transform import Affine
 
 from sedonadb.expr import lit
 from sedonadb.raster_testing import (
@@ -42,6 +41,8 @@ from sedonadb.raster_testing import (
     random_raster_data,
     write_geotiff,
 )
+
+pytest.importorskip("rasterio")
 
 
 # GDAL-order geotransform: origin (100, 500), 2-wide by 3-tall north-up pixels.
@@ -230,6 +231,8 @@ def test_rs_clip_skewed_rasters_match_rasterio(
     and the output geotransform shifts the origin by the full affine (both
     skew terms). The geometry is defined in pixel space and mapped through
     the transform under test so it overlaps the grid whatever the rotation."""
+    from rasterio.transform import Affine
+
     tiff = tmp_path / "clip_skewed.tif"
     write_geotiff(
         tiff,

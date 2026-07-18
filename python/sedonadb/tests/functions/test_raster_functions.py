@@ -18,9 +18,6 @@
 import numpy as np
 import pandas as pd
 import pytest
-from rasterio.features import rasterize
-from rasterio.io import MemoryFile
-from rasterio.transform import Affine
 from shapely import wkt
 
 from sedonadb.testing import SedonaDB
@@ -154,6 +151,10 @@ def test_rs_value_matches_rasterio(con):
     positions per pixel (toward the corners, kept inside the pixel to avoid floor
     ambiguity at exact boundaries) and a batch of random interior points.
     """
+
+    pytest.importorskip("rasterio")
+    from rasterio.io import MemoryFile
+    from rasterio.transform import Affine
 
     rng = np.random.default_rng(42)
     height, width = 7, 5
@@ -360,6 +361,10 @@ def _rs_as_raster_sql(
 def test_rs_as_raster_matches_rasterio(
     con, sedona_testing, all_touched, use_geometry_extent
 ):
+    pytest.importorskip("rasterio")
+    from rasterio.features import rasterize
+    from rasterio.transform import Affine
+
     path = sedona_testing / "data/raster/test4.tiff"
     transform = (0.0, 1.0, 0.0, 10.0, 0.0, -1.0)
 
@@ -395,6 +400,10 @@ def test_rs_as_raster_matches_rasterio(
 
 
 def test_rs_as_raster_all_touched_changes_pixels(con, sedona_testing):
+    pytest.importorskip("rasterio")
+    from rasterio.features import rasterize
+    from rasterio.transform import Affine
+
     path = sedona_testing / "data/raster/test4.tiff"
     transform = (0.0, 1.0, 0.0, 10.0, 0.0, -1.0)
     geom = "POLYGON((1.9 8.9, 1.9 6.1, 3.1 6.1, 3.1 8.9, 1.9 8.9))"
