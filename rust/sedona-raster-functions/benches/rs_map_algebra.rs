@@ -41,7 +41,7 @@ use sedona_testing::{raster_spec::RasterSpec, testers::ScalarUdfTester};
 const EXPR: &str = "rast0 * 2 + 1";
 
 fn criterion_benchmark(c: &mut Criterion) {
-    let f = sedona_raster_gdal::register::default_function_set();
+    let f = sedona_raster_functions::register::default_function_set();
     let udf: ScalarUDF = f
         .scalar_udf("rs_mapalgebra")
         .expect("rs_mapalgebra is registered")
@@ -73,7 +73,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         let (raster, values) = build(w, h);
 
         c.bench_function(
-            &format!("raster-gdal rs_map_algebra MapAlgebra(Raster({w}x{h}), '{EXPR}')"),
+            &format!("raster-functions rs_map_algebra MapAlgebra(Raster({w}x{h}), '{EXPR}')"),
             |b| {
                 b.iter(|| {
                     tester
@@ -86,7 +86,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         // Ground-truth baseline: the same arithmetic with a plain Rust loop,
         // producing the Float64 output bytes directly.
         c.bench_function(
-            &format!("raster-gdal rs_map_algebra native-baseline({w}x{h})"),
+            &format!("raster-functions rs_map_algebra native-baseline({w}x{h})"),
             |b| {
                 b.iter(|| {
                     let mut out = Vec::with_capacity(values.len() * 8);

@@ -71,15 +71,13 @@ use datafusion_expr::{ColumnarValue, Volatility};
 use evalexpr::{build_operator_tree, ContextWithMutableVariables, HashMapContext, Value};
 use serde::Deserialize;
 
+use crate::rs_ensure_loaded::{NEEDS_PIXELS_METADATA_KEY, RETURNS_BYTES_METADATA_KEY};
+use crate::RasterExecutor;
 use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_raster::array::RasterRefImpl;
 use sedona_raster::builder::RasterBuilder;
 use sedona_raster::traits::{nodata_f64_to_bytes, BandRef, RasterRef};
-use sedona_raster_functions::rs_ensure_loaded::{
-    NEEDS_PIXELS_METADATA_KEY, RETURNS_BYTES_METADATA_KEY,
-};
-use sedona_raster_functions::RasterExecutor;
 use sedona_schema::datatypes::{SedonaType, RASTER};
 use sedona_schema::matchers::ArgMatcher;
 use sedona_schema::raster::BandDataType;

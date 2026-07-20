@@ -37,6 +37,7 @@ arrow-buffer = { workspace = true }
 async-trait = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
+evalexpr = { workspace = true }
 geo-traits = { workspace = true }
 sedona-common = { workspace = true }
 sedona-expr = { workspace = true }
@@ -45,6 +46,7 @@ sedona-raster = { workspace = true }
 sedona-schema = { workspace = true }
 sedona-tg = { workspace = true }
 sedona-proj = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 wkb = { workspace = true }
 
@@ -58,3 +60,7 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 [[bench]]
 harness = false
 name = "native-raster-functions"
+
+[[bench]]
+harness = false
+name = "rs_map_algebra"
