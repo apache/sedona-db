@@ -23,13 +23,13 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use arrow_array::Array;
+use arrow_array::{cast::AsArray, Array};
 use arrow_schema::DataType;
-use datafusion_common::cast::as_binary_array;
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::error::Result;
 use datafusion_common::{exec_datafusion_err, ScalarValue};
 use datafusion_expr::{ColumnarValue, Volatility};
+use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_gdal::gdal::Gdal;
 use sedona_gdal::gdal_dyn_bindgen::{GDAL_OF_RASTER, GDAL_OF_READONLY};
@@ -97,6 +97,25 @@ impl RsFromGDALRaster {
         result
     }
 
+    /// Decode each input row into `builder`: a NULL row appends a NULL raster, a
+    /// non-null row is decoded to an in-db raster. Generic over the binary array
+    /// flavour so `Binary` and `BinaryView` iterate through the same path.
+    fn append_rows<'a>(
+        gdal: &Gdal,
+        rows: impl Iterator<Item = Option<&'a [u8]>>,
+        builder: &mut RasterBuilder,
+    ) -> Result<()> {
+        for row in rows {
+            match row {
+                None => builder
+                    .append_null()
+                    .map_err(|e| exec_datafusion_err!("Failed to append null: {e}"))?,
+                Some(content) => Self::append_gdal_raster(gdal, content, builder)?,
+            }
+        }
+        Ok(())
+    }
+
     /// Parse binary content into a single in-db raster. Test-only convenience
     /// around [`append_gdal_raster`](Self::append_gdal_raster); the kernel
     /// appends directly into a shared builder.
@@ -144,19 +163,23 @@ impl SedonaScalarKernel for RsFromGDALRaster {
                     .map_err(|e| exec_datafusion_err!("Failed to convert scalar to array: {e}"))?,
                 ColumnarValue::Array(array) => array.clone(),
             };
-            let binary_array = as_binary_array(&content_array)?;
-            let len = binary_array.len();
 
-            // Decode every row into one raster array. A NULL input row yields a
-            // NULL raster row; a non-null row is decoded to an in-db raster.
-            let mut builder = RasterBuilder::new(len);
-            for i in 0..len {
-                if binary_array.is_null(i) {
-                    builder
-                        .append_null()
-                        .map_err(|e| exec_datafusion_err!("Failed to append null: {e}"))?;
-                } else {
-                    Self::append_gdal_raster(gdal, binary_array.value(i), &mut builder)?;
+            // Decode every row into one raster array. The binary matcher accepts
+            // both `Binary` and `BinaryView` (`RS_AsGeoTiff` produces the latter),
+            // so read each flavour directly rather than narrowing `BinaryView`
+            // offsets into `Binary`'s i32 range.
+            let mut builder = RasterBuilder::new(content_array.len());
+            match content_array.data_type() {
+                DataType::Binary => {
+                    Self::append_rows(gdal, content_array.as_binary::<i32>().iter(), &mut builder)?
+                }
+                DataType::BinaryView => {
+                    Self::append_rows(gdal, content_array.as_binary_view().iter(), &mut builder)?
+                }
+                other => {
+                    return sedona_internal_err!(
+                        "RS_FromGDALRaster expected Binary or BinaryView content, got {other:?}"
+                    )
                 }
             }
             let result = builder
@@ -176,13 +199,16 @@ impl SedonaScalarKernel for RsFromGDALRaster {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::{ArrayRef, BinaryArray};
+    use arrow_array::{ArrayRef, BinaryArray, BinaryViewArray};
     use sedona_gdal::raster::types::Buffer;
     use sedona_raster::array::RasterStructArray;
+    use sedona_schema::datatypes::RASTER;
     use sedona_testing::raster_spec::{
         assert_raster_scalar_equals, assert_rasters_equal, RasterSpec,
     };
     use sedona_testing::testers::ScalarUdfTester;
+
+    use crate::rs_as_geotiff::rs_as_geotiff_udf;
 
     /// Build a small 4x4 single-band GeoTIFF (EPSG:4326) with GDAL and return its
     /// bytes together with the CRS GDAL reads back from them (PROJJSON) — the
@@ -258,6 +284,13 @@ mod tests {
         )
     }
 
+    fn from_gdal_tester_binary_view() -> ScalarUdfTester {
+        ScalarUdfTester::new(
+            rs_from_gdal_raster_udf().into(),
+            vec![SedonaType::Arrow(DataType::BinaryView)],
+        )
+    }
+
     /// The single-band fixture's declarative expectation, derived from the
     /// fixture's construction: 4x4 UInt8 spanning the bbox (0, 0)-(4, 4)
     /// (north-up unit pixels), sequential values 0..16, no nodata, in-db.
@@ -307,6 +340,44 @@ mod tests {
             .invoke_scalar(ScalarValue::Binary(Some(bytes)))
             .unwrap();
         assert_raster_scalar_equals(&result, &single_band_spec(crs.as_deref()));
+    }
+
+    #[test]
+    fn from_gdal_raster_decodes_binary_view_input() {
+        // The `is_binary` matcher also accepts `BinaryView`, which is what
+        // `RS_AsGeoTiff` produces. The same GeoTIFF bytes wrapped in a
+        // `BinaryView` array must decode to the same raster as the `Binary`
+        // path — not fail casting `BinaryView` to i32-offset `Binary`.
+        let (bytes, crs) = with_gdal(|gdal| Ok(make_geotiff_fixture(gdal))).unwrap();
+        let input: ArrayRef = Arc::new(BinaryViewArray::from(vec![Some(bytes.as_slice())]));
+        let result = from_gdal_tester_binary_view()
+            .invoke_arrays(vec![input])
+            .unwrap();
+        assert_rasters_equal(&result, &[Some(single_band_spec(crs.as_deref()))]);
+    }
+
+    #[test]
+    fn as_geotiff_from_gdal_raster_round_trips() {
+        // The `RS_AsGeoTiff` -> `RS_FromGDALRaster` round trip used in the docs:
+        // encoding yields `BinaryView` bytes that must decode back to the source
+        // raster. A north-up single-band UInt8 raster (no CRS, no nodata) is
+        // preserved exactly through GeoTIFF.
+        let source = RasterSpec::d2(3, 3)
+            .crs(None)
+            .bbox(0.0, 0.0, 3.0, 3.0)
+            .band_values(&[1u8, 2, 3, 4, 5, 6, 7, 8, 9]);
+
+        let encoded = ScalarUdfTester::new(rs_as_geotiff_udf().into(), vec![RASTER])
+            .invoke_scalar(&source)
+            .unwrap();
+        let ScalarValue::BinaryView(Some(bytes)) = encoded else {
+            panic!("expected a BinaryView result, got {encoded:?}");
+        };
+
+        let decoded = from_gdal_tester_binary_view()
+            .invoke_scalar(ScalarValue::BinaryView(Some(bytes)))
+            .unwrap();
+        assert_raster_scalar_equals(&decoded, &source);
     }
 
     #[test]
