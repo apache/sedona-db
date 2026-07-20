@@ -42,8 +42,6 @@ from sedonadb.raster_testing import (
     write_geotiff,
 )
 
-pytest.importorskip("rasterio")
-
 
 # GDAL-order geotransform: origin (100, 500), 2-wide by 3-tall north-up pixels.
 # With a 7x6 raster the extent is x in [100, 114], y in [482, 500]; pixel
@@ -286,6 +284,7 @@ def test_rs_clip_signature_defaults(con, tmp_path):
     """Each shorter signature behaves as the full 7-arg form with the defaults
     filled in: all_touched = false, no_data_value = the band's own, crop = true,
     lenient = true."""
+    pytest.importorskip("sedonadb_expr")
     tiff = tmp_path / "clip_sigs.tif"
     write_geotiff(
         tiff,
@@ -376,6 +375,7 @@ def test_rs_clip_strict_and_argument_errors(con, tmp_path):
     """Error pathways: strict (lenient = false) empty-mask messages depend on
     all_touched; a non-representable nodata and an out-of-range band error
     regardless of leniency."""
+    pytest.importorskip("sedonadb_expr")
     tiff = tmp_path / "clip_errors.tif"
     write_geotiff(
         tiff,
