@@ -37,7 +37,10 @@ arrow-schema = { workspace = true }
 async-trait = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
+evalexpr = { workspace = true }
 lru = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 sedona-common = { workspace = true }
 sedona-expr = { workspace = true }
 sedona-functions = { workspace = true }
@@ -89,3 +92,8 @@ path = "benches/rs_polygonize.rs"
 harness = false
 name = "rs_as_raster"
 path = "benches/rs_as_raster.rs"
+
+[[bench]]
+harness = false
+name = "rs_map_algebra"
+path = "benches/rs_map_algebra.rs"
