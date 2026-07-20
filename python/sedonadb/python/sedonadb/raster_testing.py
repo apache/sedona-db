@@ -586,6 +586,7 @@ class SedonaSpark(RasterEngine):
                 .master("local[2]")
                 .appName("sedonadb-raster-parity")
                 .config("spark.jars.packages", cls._packages())
+                .config("spark.jars.ivy", cls._ivy_dir())
                 .config("spark.ui.enabled", "false")
                 .getOrCreate()
             )
@@ -620,6 +621,19 @@ class SedonaSpark(RasterEngine):
             f"org.apache.sedona:sedona-spark-shaded-{spark_suffix}_{scala_suffix}:"
             f"{SEDONA_SPARK_VERSION},"
             f"org.datasyslab:geotools-wrapper:{GEOTOOLS_WRAPPER_VERSION}"
+        )
+
+    @staticmethod
+    def _ivy_dir() -> str:
+        """Directory Ivy resolves `spark.jars.packages` into.
+
+        Pinned so CI can cache the downloaded jars: newer Ivy releases (bundled
+        with newer Spark) moved the default location, silently breaking a cache
+        keyed on the old path. Override with SEDONADB_SPARK_IVY_DIR.
+        """
+        return os.environ.get(
+            "SEDONADB_SPARK_IVY_DIR",
+            os.path.join(os.path.expanduser("~"), ".ivy2"),
         )
 
     def _raster_df(self, path):
