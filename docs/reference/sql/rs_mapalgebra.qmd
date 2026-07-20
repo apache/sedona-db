@@ -1,0 +1,96 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: RS_MapAlgebra
+description: >
+  Evaluates a per-pixel expression over a raster's bands and returns a
+  single-band raster with the same geometry as the input.
+kernels:
+  - returns: raster
+    args:
+    - raster
+    - {name: expr, type: string}
+  - returns: raster
+    args:
+    - raster
+    - name: expr
+      type: string
+      description: >
+        Expression evaluated once per pixel. Reference band N (0-based) as
+        `rastN` (`rast` is an alias for `rast0`); the pixel column/row are `x`
+        and `y` and the raster dimensions are `width` and `height`. The result
+        must be a number or boolean and is coerced to the output pixel type.
+    - name: options
+      type: string
+      description: >
+        JSON object of options. `pixel_type` sets the output data type (e.g.
+        `"F"`, `"D"`, `"uint8"`), defaulting to the input's first band type.
+        `nodata` records a nodata value on the output band; it must be exactly
+        representable in the output pixel type. A NULL yields the defaults.
+---
+
+::: callout-warning
+**Experimental.** This function is experimental; its behavior may change without notice.
+:::
+
+## Description
+
+`RS_MapAlgebra` evaluates `expr` once per pixel and writes the result to a new
+single-band raster that keeps the input raster's geotransform, CRS, and spatial
+extent.
+
+The expression is a single expression (not a statement script) evaluated by the
+[`evalexpr`](https://docs.rs/evalexpr/) engine. It supports arithmetic
+(`+ - * / % ^`), comparison (`== != < <= > >=`), and boolean (`&& || !`)
+operators, the `min`, `max`, and `if(cond, a, b)` functions, and the `math::*`
+functions such as `math::sqrt` and `math::ln`. The following variables are
+available at each pixel:
+
+- `rast0`, `rast1`, ..., `rastN` — the value of band N (0-based). `rast` is an
+  alias for `rast0`.
+- `x`, `y` — the current pixel's column and row (0-based).
+- `width`, `height` — the raster's pixel dimensions.
+
+All variables are bound as floating point, so `rast0 * 2` yields a
+floating-point result and `/` is always floating-point division. The result is
+coerced to the output pixel type: for an integer output type the value is
+truncated toward zero and saturated at the type bounds.
+
+The output pixel type defaults to the input's first band data type; set
+`pixel_type` in the `options` argument to override it. A `nodata` value in
+`options` is recorded on the output band and must be exactly representable in
+the output pixel type (a lossy value is an error rather than a silent
+truncation).
+
+This expression dialect differs from Sedona Spark's `RS_MapAlgebra`, which runs
+a Jiffle script that references bands as `rast[0]` and assigns to `out[0]`.
+
+Each referenced band is materialized in memory and evaluation is `f64`-only, so
+this copies band data and `Int64`/`UInt64` inputs beyond 2^53 lose precision.
+
+## Examples
+
+```sql
+SELECT RS_Width(RS_MapAlgebra(RS_Example(), 'rast0 * 2'));
+```
+
+```sql
+SELECT RS_Width(
+  RS_MapAlgebra(RS_Example(), '(rast0 - 5) * 2', '{"pixel_type": "F", "nodata": 0}')
+);
+```
