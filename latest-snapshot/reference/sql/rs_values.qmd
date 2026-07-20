@@ -16,24 +16,25 @@
 # specific language governing permissions and limitations
 # under the License.
 
-title: RS_Value
+title: RS_Values
 description: >
-  Returns the value of a single raster pixel as a double, selected by a point
-  geometry. Returns null if the location is outside the raster or the pixel
-  holds the band's nodata value.
+  Returns the pixel values under each point of a MultiPoint geometry as a list
+  of doubles, one element per point. An element is null where the point falls
+  outside the raster or the pixel holds the band's nodata value.
 kernels:
-  - returns: float64
+  - returns: list
     args:
     - raster
-    - name: point
+    - name: points
       type: geometry
       description: >
-        The pixel that contains this point is sampled (no resampling).
-        Reprojected into the raster CRS when both carry one.
-  - returns: float64
+        The pixel that contains each sub-point is sampled (no resampling).
+        Reprojected into the raster CRS when both carry one. A single Point is
+        also accepted and yields a one-element list.
+  - returns: list
     args:
     - raster
-    - name: point
+    - name: points
       type: geometry
     - name: band
       type: int
@@ -49,16 +50,25 @@ kernels:
 
 ## Description
 
-`RS_Value` samples one pixel of a raster. The location is given as a point
-geometry — the value of the pixel that contains the point is returned, with no
-interpolation. The band defaults to 1 when omitted, but only for a single-band
-raster; on a multiband raster the band must be given explicitly.
+`RS_Values` is the plural form of [`RS_Value`](rs_value.qmd): it samples one
+pixel per point of a MultiPoint and returns the values as a list of doubles, in
+the same order as the input points. A single Point is accepted as well and
+produces a one-element list.
 
-The result is `NULL` when the point falls outside the raster, or when the
-sampled pixel equals the band's nodata value. Only 2-D rasters are supported.
+The band defaults to 1 when omitted, but only for a single-band raster; on a
+multiband raster the band is ambiguous and must be given explicitly.
+
+Each list element is `NULL` when its point falls outside the raster or the
+sampled pixel equals the band's nodata value; the whole result is `NULL` when
+the raster, geometry, or band is `NULL`. An empty MultiPoint yields an empty
+list. Only 2-D rasters are supported.
 
 ## Examples
 
 ```sql
-SELECT RS_Value(RS_Example(), ST_Point(74.58, 110.57, 'OGC:CRS84'), 1);
+SELECT RS_Values(
+  RS_Example(),
+  ST_GeomFromText('MULTIPOINT (74.58 110.57, 500 500)', 'OGC:CRS84'),
+  1
+);
 ```

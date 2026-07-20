@@ -7,7 +7,7 @@
       
       
       
-        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/reference/sql/st_reverse/">
+        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/reference/sql/rs_values/">
       
       
       
@@ -20,7 +20,7 @@
     
     
       
-        <title>ST_Reverse - Apache Sedona</title>
+        <title>RS_Values - Apache Sedona</title>
       
     
     
@@ -84,7 +84,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#st_reverse" class="md-skip">
+        <a href="#rs_values" class="md-skip">
           Skip to content
         </a>
       
@@ -157,7 +157,7 @@
             <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              ST_Reverse
+              RS_Values
             
           </span>
             </div>
@@ -1583,6 +1583,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#description" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Description
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#examples" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1610,7 +1621,7 @@
 
 
   
-    <a href="https://github.com/apache/sedona-db/blob/main/docs/reference/sql/st_reverse.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/apache/sedona-db/blob/main/docs/reference/sql/rs_values.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"></path></svg>
     </a>
@@ -1618,36 +1629,56 @@
   
 
 
-<h1 id="st_reverse">ST_Reverse<a class="headerlink" href="#st_reverse" title="Permanent link">¶</a></h1>
-<p>Returns the geometry or geography with vertex order reversed.</p>
+<h1 id="rs_values">RS_Values<a class="headerlink" href="#rs_values" title="Permanent link">¶</a></h1>
+<p>Returns the pixel values under each point of a MultiPoint geometry as a
+list of doubles, one element per point. An element is null where the
+point falls outside the raster or the pixel holds the band’s nodata
+value.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">¶</a></h2>
-<div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_Reverse</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
-<span class="n">geography</span><span class="w"> </span><span class="n">ST_Reverse</span><span class="p">(</span><span class="n">geog</span><span class="p">:</span><span class="w"> </span><span class="n">geography</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><span class="n">list</span><span class="w"> </span><span class="n">RS_Values</span><span class="p">(</span><span class="n">rast</span><span class="p">:</span><span class="w"> </span><span class="n">raster</span><span class="p">,</span><span class="w"> </span><span class="n">points</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
+<span class="n">list</span><span class="w"> </span><span class="n">RS_Values</span><span class="p">(</span><span class="n">rast</span><span class="p">:</span><span class="w"> </span><span class="n">raster</span><span class="p">,</span><span class="w"> </span><span class="n">points</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="n">band</span><span class="p">:</span><span class="w"> </span><span class="nb">int</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="arguments">Arguments<a class="headerlink" href="#arguments" title="Permanent link">¶</a></h2>
 <ul>
-<li><strong>geog</strong> (geography): Input geography</li>
-<li><strong>geom</strong> (geometry): Input geometry</li>
+<li><strong>rast</strong> (raster): Input raster</li>
+<li><strong>points</strong> (geometry): The pixel that contains each sub-point is
+  sampled (no resampling). Reprojected into the raster CRS when both
+  carry one. A single Point is also accepted and yields a one-element
+  list.</li>
+<li><strong>band</strong> (int): Band index (1-based). When omitted, defaults to band
+  1, but only for a single-band raster; sampling an unspecified band of
+  a multiband raster is ambiguous and raises an error.</li>
 </ul>
+<blockquote>
+<p>[!WARNING]</p>
+<p><strong>Experimental.</strong> This function is experimental; its behavior may
+change without notice.</p>
+</blockquote>
+<h2 id="description">Description<a class="headerlink" href="#description" title="Permanent link">¶</a></h2>
+<p><code>RS_Values</code> is the plural form of <a href="../rs_value.qmd"><code>RS_Value</code></a>: it samples
+one pixel per point of a MultiPoint and returns the values as a list of
+doubles, in the same order as the input points. A single Point is
+accepted as well and produces a one-element list.</p>
+<p>The band defaults to 1 when omitted, but only for a single-band raster;
+on a multiband raster the band is ambiguous and must be given
+explicitly.</p>
+<p>Each list element is <code>NULL</code> when its point falls outside the raster or
+the sampled pixel equals the band’s nodata value; the whole result is
+<code>NULL</code> when the raster, geometry, or band is <code>NULL</code>. An empty MultiPoint
+yields an empty list. Only 2-D rasters are supported.</p>
 <h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">¶</a></h2>
-<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">ST_Reverse</span><span class="p">(</span><span class="n">ST_GeomFromText</span><span class="p">(</span><span class="s1">'LINESTRING (0 0, 1 2, 2 4)'</span><span class="p">));</span>
+<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">RS_Values</span><span class="p">(</span>
+<span class="w">  </span><span class="n">RS_Example</span><span class="p">(),</span>
+<span class="w">  </span><span class="n">ST_GeomFromText</span><span class="p">(</span><span class="s1">'MULTIPOINT (74.58 110.57, 500 500)'</span><span class="p">,</span><span class="w"> </span><span class="s1">'OGC:CRS84'</span><span class="p">),</span>
+<span class="w">  </span><span class="mi">1</span>
+<span class="p">);</span>
 </code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌─────────────────────────────────────────────────────────────────┐
-│ st_reverse(st_geomfromtext(Utf8("LINESTRING (0 0, 1 2, 2 4)"))) │
-│                             geometry                            │
-╞═════════════════════════════════════════════════════════════════╡
-│ LINESTRING(2 4,1 2,0 0)                                         │
-└─────────────────────────────────────────────────────────────────┘
-</code></pre></div>
-
-<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">ST_Reverse</span><span class="p">(</span><span class="n">ST_GeogFromWKT</span><span class="p">(</span><span class="s1">'LINESTRING (0 0, 1 2, 2 4)'</span><span class="p">));</span>
-</code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌────────────────────────────────────────────────────────────────┐
-│ st_reverse(st_geogfromwkt(Utf8("LINESTRING (0 0, 1 2, 2 4)"))) │
-│                            geography                           │
-╞════════════════════════════════════════════════════════════════╡
-│ LINESTRING(2 4,1 2,0 0)                                        │
-└────────────────────────────────────────────────────────────────┘
+<div class="codehilite"><pre><span></span><code>┌──────────────────────────────────────────────────────────────────────────────┐
+│ rs_values(rs_example(),st_geomfromtext(Utf8("MULTIPOINT (74.58 110.57, 500 5 │
+│                      00)"),Utf8("OGC:CRS84")),Int64(1))…                     │
+╞══════════════════════════════════════════════════════════════════════════════╡
+│ [1.0, ]                                                                      │
+└──────────────────────────────────────────────────────────────────────────────┘
 </code></pre></div>
 
 
@@ -1669,7 +1700,7 @@
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"></path></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="July 20, 2026 04:11:54 UTC">July 20, 2026 04:11:54</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="July 20, 2026 04:11:53 UTC">July 20, 2026 04:11:53</span>
   </span>
 
     

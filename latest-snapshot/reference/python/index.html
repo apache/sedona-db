@@ -7018,6 +7018,10 @@ around differences in behaviour.</p>
 <p>This option strips away fine-grained type information but is helpful for
 generally asserting a query result or verifying results between engines
 that have (e.g.) differing integer handling.</p>
+<p>Geometry columns are rendered as WKT strings. List columns (e.g. the
+<code>List&lt;Double&gt;</code> returned by <code>RS_Values</code>) can't be cast to string, so they
+pass through as Python lists and are compared by value — assert them with
+an expected cell that is itself a list, e.g. <code>[([1.0, None],)]</code>.</p>
 
 
     </div>

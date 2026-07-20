@@ -1642,21 +1642,30 @@ the pixel holds the band’s nodata value.</p>
 <li><strong>rast</strong> (raster): Input raster</li>
 <li><strong>point</strong> (geometry): The pixel that contains this point is sampled
   (no resampling). Reprojected into the raster CRS when both carry one.</li>
-<li><strong>band</strong> (int): Band index (1-based). Defaults to 1 if not specified.</li>
+<li><strong>band</strong> (int): Band index (1-based). When omitted, defaults to band
+  1, but only for a single-band raster; sampling an unspecified band of
+  a multiband raster is ambiguous and raises an error.</li>
 </ul>
+<blockquote>
+<p>[!WARNING]</p>
+<p><strong>Experimental.</strong> This function is experimental; its behavior may
+change without notice.</p>
+</blockquote>
 <h2 id="description">Description<a class="headerlink" href="#description" title="Permanent link">¶</a></h2>
 <p><code>RS_Value</code> samples one pixel of a raster. The location is given as a
 point geometry — the value of the pixel that contains the point is
-returned, with no interpolation. The band defaults to 1.</p>
+returned, with no interpolation. The band defaults to 1 when omitted,
+but only for a single-band raster; on a multiband raster the band must
+be given explicitly.</p>
 <p>The result is <code>NULL</code> when the point falls outside the raster, or when
 the sampled pixel equals the band’s nodata value. Only 2-D rasters are
 supported.</p>
 <h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">¶</a></h2>
-<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">RS_Value</span><span class="p">(</span><span class="n">RS_Example</span><span class="p">(),</span><span class="w"> </span><span class="n">ST_Point</span><span class="p">(</span><span class="mi">74</span><span class="p">.</span><span class="mi">58</span><span class="p">,</span><span class="w"> </span><span class="mi">110</span><span class="p">.</span><span class="mi">57</span><span class="p">,</span><span class="w"> </span><span class="s1">'OGC:CRS84'</span><span class="p">));</span>
+<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">RS_Value</span><span class="p">(</span><span class="n">RS_Example</span><span class="p">(),</span><span class="w"> </span><span class="n">ST_Point</span><span class="p">(</span><span class="mi">74</span><span class="p">.</span><span class="mi">58</span><span class="p">,</span><span class="w"> </span><span class="mi">110</span><span class="p">.</span><span class="mi">57</span><span class="p">,</span><span class="w"> </span><span class="s1">'OGC:CRS84'</span><span class="p">),</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
 </code></pre></div>
 <div class="codehilite"><pre><span></span><code>┌──────────────────────────────────────────────────────────────────────────────┐
 │ rs_value(rs_example(),st_point(Float64(74.58),Float64(110.57),Utf8("OGC:CRS8 │
-│                                    4")))…                                    │
+│                                4")),Int64(1))…                               │
 ╞══════════════════════════════════════════════════════════════════════════════╡
 │                                                                          1.0 │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -1681,7 +1690,7 @@ supported.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"></path></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="July 18, 2026 02:39:52 UTC">July 18, 2026 02:39:52</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="July 20, 2026 04:11:53 UTC">July 20, 2026 04:11:53</span>
   </span>
 
     
