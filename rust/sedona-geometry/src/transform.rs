@@ -415,6 +415,78 @@ where
     Ok(())
 }
 
+/// Visit each point of a point geometry as `Some((x, y))` — or `None` for an
+/// empty (sub-)point — optionally transforming each coordinate with `trans`
+/// before visiting. Accepts a `Point`, a `MultiPoint`, or a
+/// `GeometryCollection` whose members are themselves point geometries
+/// (recursively); points are visited in geometry order.
+///
+/// Compared to [`transform`], which writes a transformed WKB copy, this hands
+/// the caller each coordinate directly, so point-sampling consumers can
+/// transform and consume in one pass with no intermediate geometry
+/// materialisation. Any non-point geometry (or a collection containing one) is
+/// an error.
+pub fn visit_point_coords<F>(
+    geom: impl GeometryTrait<T = f64>,
+    trans: Option<&dyn CrsTransform>,
+    mut visit: F,
+) -> Result<(), SedonaGeometryError>
+where
+    F: FnMut(Option<(f64, f64)>) -> Result<(), SedonaGeometryError>,
+{
+    fn visit_one<P, F>(
+        point: &P,
+        trans: Option<&dyn CrsTransform>,
+        visit: &mut F,
+    ) -> Result<(), SedonaGeometryError>
+    where
+        P: PointTrait<T = f64>,
+        F: FnMut(Option<(f64, f64)>) -> Result<(), SedonaGeometryError>,
+    {
+        match point.coord() {
+            Some(coord) => {
+                let mut xy = (coord.x(), coord.y());
+                if let Some(trans) = trans {
+                    trans.transform_coord(&mut xy)?;
+                }
+                visit(Some(xy))
+            }
+            None => visit(None),
+        }
+    }
+
+    fn visit_geom<G, F>(
+        geom: &G,
+        trans: Option<&dyn CrsTransform>,
+        visit: &mut F,
+    ) -> Result<(), SedonaGeometryError>
+    where
+        G: GeometryTrait<T = f64>,
+        F: FnMut(Option<(f64, f64)>) -> Result<(), SedonaGeometryError>,
+    {
+        match geom.as_type() {
+            GeometryType::Point(point) => visit_one(point, trans, visit),
+            GeometryType::MultiPoint(multi_point) => {
+                for point in multi_point.points() {
+                    visit_one(&point, trans, visit)?;
+                }
+                Ok(())
+            }
+            GeometryType::GeometryCollection(collection) => {
+                for member in collection.geometries() {
+                    visit_geom(&member, trans, visit)?;
+                }
+                Ok(())
+            }
+            _ => Err(SedonaGeometryError::Invalid(
+                "expected a Point, MultiPoint, or GeometryCollection of points".to_string(),
+            )),
+        }
+    }
+
+    visit_geom(&geom, trans, &mut visit)
+}
+
 fn transform_and_write_coords<'a, C, I>(
     buf: &mut impl Write,
     trans: &dyn CrsTransform,
@@ -514,6 +586,121 @@ mod test {
             coord.1 += 20.0;
             Ok(())
         }
+    }
+
+    /// Collect what `visit_point_coords` hands the callback for `wkt`.
+    fn visited(wkt: &str, trans: Option<&dyn CrsTransform>) -> Vec<Option<(f64, f64)>> {
+        let geom = Wkt::<f64>::from_str(wkt).unwrap();
+        let mut out = Vec::new();
+        visit_point_coords(&geom, trans, |xy| {
+            out.push(xy);
+            Ok(())
+        })
+        .unwrap();
+        out
+    }
+
+    #[test]
+    fn visit_point_coords_visits_each_point_in_order() {
+        assert_eq!(visited("POINT (1 2)", None), vec![Some((1.0, 2.0))]);
+        assert_eq!(
+            visited("MULTIPOINT (1 2, 3 4)", None),
+            vec![Some((1.0, 2.0)), Some((3.0, 4.0))]
+        );
+        assert_eq!(visited("MULTIPOINT EMPTY", None), vec![]);
+        assert_eq!(visited("POINT EMPTY", None), vec![None]);
+    }
+
+    #[test]
+    fn visit_point_coords_transforms_before_visiting() {
+        let trans = MockTransform {};
+        assert_eq!(
+            visited("MULTIPOINT (1 2, 3 4)", Some(&trans)),
+            vec![Some((11.0, 22.0)), Some((13.0, 24.0))]
+        );
+        // An empty point has no coordinate to transform; it is visited as None.
+        assert_eq!(visited("POINT EMPTY", Some(&trans)), vec![None]);
+    }
+
+    #[test]
+    fn visit_point_coords_visits_empty_sub_point_as_none() {
+        // MULTIPOINT (1 2, EMPTY, 3 4): the wkt parser cannot express an EMPTY
+        // sub-point, so splice one (a NaN-NaN point, the WKB encoding) between
+        // two real sub-points by hand.
+        let mut wkb = vec![1u8, 0x04, 0, 0, 0, 3, 0, 0, 0];
+        for xy in [Some((1.0f64, 2.0f64)), None, Some((3.0, 4.0))] {
+            wkb.push(1);
+            wkb.extend(1u32.to_le_bytes());
+            let (x, y) = xy.unwrap_or((f64::NAN, f64::NAN));
+            wkb.extend(x.to_le_bytes());
+            wkb.extend(y.to_le_bytes());
+        }
+        let geom = read_wkb(&wkb).unwrap();
+        let mut out = Vec::new();
+        visit_point_coords(&geom, None, |xy| {
+            out.push(xy);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(out, vec![Some((1.0, 2.0)), None, Some((3.0, 4.0))]);
+    }
+
+    #[test]
+    fn visit_point_coords_rejects_non_point_geometry() {
+        let geom = Wkt::<f64>::from_str("LINESTRING (0 0, 1 1)").unwrap();
+        let err = visit_point_coords(&geom, None, |_| Ok(())).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Point, MultiPoint, or GeometryCollection"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn visit_point_coords_visits_geometry_collection_of_points() {
+        // Point and multipoint members flatten in geometry order.
+        assert_eq!(
+            visited(
+                "GEOMETRYCOLLECTION (POINT (1 2), MULTIPOINT (3 4, 5 6))",
+                None
+            ),
+            vec![Some((1.0, 2.0)), Some((3.0, 4.0)), Some((5.0, 6.0))]
+        );
+        // Nested collections recurse.
+        assert_eq!(
+            visited(
+                "GEOMETRYCOLLECTION (POINT (1 2), GEOMETRYCOLLECTION (POINT (3 4)))",
+                None
+            ),
+            vec![Some((1.0, 2.0)), Some((3.0, 4.0))]
+        );
+        // An empty collection visits nothing.
+        assert_eq!(visited("GEOMETRYCOLLECTION EMPTY", None), vec![]);
+    }
+
+    #[test]
+    fn visit_point_coords_rejects_non_point_in_collection() {
+        let geom = Wkt::<f64>::from_str("GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1))")
+            .unwrap();
+        let err = visit_point_coords(&geom, None, |_| Ok(())).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Point, MultiPoint, or GeometryCollection"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn visit_point_coords_propagates_callback_error() {
+        let geom = Wkt::<f64>::from_str("MULTIPOINT (1 2, 3 4)").unwrap();
+        let mut count = 0;
+        let err = visit_point_coords(&geom, None, |_| {
+            count += 1;
+            Err(SedonaGeometryError::Invalid("stop".to_string()))
+        })
+        .unwrap_err();
+        assert_eq!(count, 1, "the error should halt iteration");
+        assert!(err.to_string().contains("stop"));
     }
 
     #[derive(Debug)]

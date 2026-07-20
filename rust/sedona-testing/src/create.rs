@@ -144,6 +144,27 @@ where
         .collect()
 }
 
+/// Build MultiPoint WKB from `Option<(x, y)>` sub-points, where `None` is an
+/// EMPTY sub-point (encoded as a point with NaN ordinates).
+///
+/// Exists because [`make_wkb`]'s WKT parser cannot express an EMPTY sub-point
+/// inside a MultiPoint (see `fixtures::MULTIPOINT_WITH_EMPTY_CHILD_WKB` for the
+/// single-child constant); this builds the same encoding for arbitrary point
+/// lists.
+pub fn make_multipoint_wkb(points: &[Option<(f64, f64)>]) -> Vec<u8> {
+    let mut out = vec![1u8]; // little-endian
+    out.extend(4u32.to_le_bytes()); // MultiPoint
+    out.extend((points.len() as u32).to_le_bytes());
+    for point in points {
+        out.push(1);
+        out.extend(1u32.to_le_bytes()); // Point
+        let (x, y) = point.unwrap_or((f64::NAN, f64::NAN));
+        out.extend(x.to_le_bytes());
+        out.extend(y.to_le_bytes());
+    }
+    out
+}
+
 /// Create a WKB from a WKT string.
 pub fn make_wkb(wkt_value: &str) -> Vec<u8> {
     let geom = Wkt::<f64>::from_str(wkt_value).unwrap();

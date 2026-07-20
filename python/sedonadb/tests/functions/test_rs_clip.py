@@ -31,7 +31,6 @@ import numpy as np
 import pyarrow as pa
 import pytest
 import shapely
-from rasterio.transform import Affine
 
 from sedonadb.expr import lit
 from sedonadb.raster_testing import (
@@ -230,6 +229,8 @@ def test_rs_clip_skewed_rasters_match_rasterio(
     and the output geotransform shifts the origin by the full affine (both
     skew terms). The geometry is defined in pixel space and mapped through
     the transform under test so it overlaps the grid whatever the rotation."""
+    from rasterio.transform import Affine
+
     tiff = tmp_path / "clip_skewed.tif"
     write_geotiff(
         tiff,
@@ -283,6 +284,7 @@ def test_rs_clip_signature_defaults(con, tmp_path):
     """Each shorter signature behaves as the full 7-arg form with the defaults
     filled in: all_touched = false, no_data_value = the band's own, crop = true,
     lenient = true."""
+    pytest.importorskip("sedonadb_expr")
     tiff = tmp_path / "clip_sigs.tif"
     write_geotiff(
         tiff,
@@ -373,6 +375,7 @@ def test_rs_clip_strict_and_argument_errors(con, tmp_path):
     """Error pathways: strict (lenient = false) empty-mask messages depend on
     all_touched; a non-representable nodata and an out-of-range band error
     regardless of leniency."""
+    pytest.importorskip("sedonadb_expr")
     tiff = tmp_path / "clip_errors.tif"
     write_geotiff(
         tiff,

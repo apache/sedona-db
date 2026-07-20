@@ -20,7 +20,7 @@ use arrow_array::{ArrayRef, Float64Array, Int64Array};
 use arrow_schema::DataType;
 
 use datafusion_common::{exec_datafusion_err, Result, ScalarValue};
-use datafusion_expr::{AggregateUDF, ScalarUDF};
+use datafusion_expr::{AggregateUDF, ColumnarValue, ScalarUDF};
 use geo_types::Rect;
 use rand::{distr::Uniform, rngs::StdRng, Rng, RngExt, SeedableRng};
 
@@ -171,6 +171,8 @@ pub enum BenchmarkArgs {
     ArrayArray(BenchmarkArgSpec, BenchmarkArgSpec),
     /// Invoke a function with an array and two scalar inputs
     ArrayScalarScalar(BenchmarkArgSpec, BenchmarkArgSpec, BenchmarkArgSpec),
+    /// Invoke a ternary function with a scalar, an array, and a scalar input
+    ScalarArrayScalar(BenchmarkArgSpec, BenchmarkArgSpec, BenchmarkArgSpec),
     /// Invoke a ternary function with two arrays and a scalar
     ArrayArrayScalar(BenchmarkArgSpec, BenchmarkArgSpec, BenchmarkArgSpec),
     /// Invoke a ternary function with three arrays
@@ -206,7 +208,8 @@ impl BenchmarkArgs {
             | BenchmarkArgs::ArrayArrayArrayArray(_, _, _, _) => self.specs(),
             BenchmarkArgs::ScalarArray(_, col)
             | BenchmarkArgs::ArrayScalar(col, _)
-            | BenchmarkArgs::ArrayScalarScalar(col, _, _) => {
+            | BenchmarkArgs::ArrayScalarScalar(col, _, _)
+            | BenchmarkArgs::ScalarArrayScalar(_, col, _) => {
                 vec![col.clone()]
             }
         };
@@ -216,7 +219,8 @@ impl BenchmarkArgs {
             | BenchmarkArgs::ArrayArrayScalar(_, _, col) => {
                 vec![col.clone()]
             }
-            BenchmarkArgs::ArrayScalarScalar(_, col0, col1) => {
+            BenchmarkArgs::ArrayScalarScalar(_, col0, col1)
+            | BenchmarkArgs::ScalarArrayScalar(col0, _, col1) => {
                 vec![col0.clone(), col1.clone()]
             }
             _ => vec![],
@@ -251,6 +255,7 @@ impl BenchmarkArgs {
                 vec![col0.clone(), col1.clone()]
             }
             BenchmarkArgs::ArrayScalarScalar(col0, col1, col2)
+            | BenchmarkArgs::ScalarArrayScalar(col0, col1, col2)
             | BenchmarkArgs::ArrayArrayScalar(col0, col1, col2)
             | BenchmarkArgs::ArrayArrayArray(col0, col1, col2) => {
                 vec![col0.clone(), col1.clone(), col2.clone()]
@@ -566,6 +571,17 @@ impl BenchmarkData {
                         scalar0.clone(),
                         scalar1.clone(),
                     )?;
+                }
+            }
+            BenchmarkArgs::ScalarArrayScalar(_, _, _) => {
+                let scalar0 = &self.scalars[0];
+                let scalar1 = &self.scalars[1];
+                for i in 0..self.num_batches {
+                    tester.invoke(vec![
+                        ColumnarValue::Scalar(scalar0.clone()),
+                        ColumnarValue::Array(self.arrays[0][i].clone()),
+                        ColumnarValue::Scalar(scalar1.clone()),
+                    ])?;
                 }
             }
             BenchmarkArgs::ArrayArrayScalar(_, _, _) => {

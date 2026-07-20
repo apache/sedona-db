@@ -18,9 +18,6 @@
 import numpy as np
 import pandas as pd
 import pytest
-from rasterio.features import rasterize
-from rasterio.io import MemoryFile
-from rasterio.transform import Affine
 from shapely import wkt
 
 from sedonadb.testing import SedonaDB
@@ -115,33 +112,42 @@ def test_rs_ensureloaded(con, sedona_testing):
 # the top-left pixel which is set to the nodata value (127). (74.58, 110.57) is
 # the centroid of pixel (10, 10) (0-based) in the raster's OGC:CRS84 space; the
 # point and raster share a CRS so no reprojection happens. A point far outside
-# the footprint yields NULL. (The `needs_pixels` -> RS_EnsureLoaded planner path
-# is covered against a real OutDb raster by `test_rs_ensureloaded`.)
+# the footprint yields NULL. RS_Example is multiband, so the band is given
+# explicitly. (The `needs_pixels` -> RS_EnsureLoaded planner path is covered
+# against a real OutDb raster by `test_rs_ensureloaded`.)
 @pytest.mark.parametrize(
     ("expr", "expected"),
     [
         (
-            "RS_Value(RS_Example(), ST_SetCRS(ST_Point(74.58, 110.57), 'OGC:CRS84'))",
+            "RS_Value(RS_Example(), ST_Point(74.58, 110.57, 'OGC:CRS84'), 1)",
             1.0,
         ),
         (
-            "RS_Value(RS_Example(), ST_SetCRS(ST_Point(74.58, 110.57), 'OGC:CRS84'), 2)",
+            "RS_Value(RS_Example(), ST_Point(74.58, 110.57, 'OGC:CRS84'), 2)",
             2.0,
         ),
         (
-            "RS_Value(RS_Example(), ST_SetCRS(ST_Point(74.58, 110.57), 'OGC:CRS84'), 3)",
+            "RS_Value(RS_Example(), ST_Point(74.58, 110.57, 'OGC:CRS84'), 3)",
             3.0,
         ),
-        ("RS_Value(RS_Example(), ST_SetCRS(ST_Point(0.0, 0.0), 'OGC:CRS84'))", None),
+        ("RS_Value(RS_Example(), ST_Point(0.0, 0.0, 'OGC:CRS84'), 1)", None),
         # POINT EMPTY has no location to sample -> NULL (not an error).
         (
-            "RS_Value(RS_Example(), ST_SetCRS(ST_GeomFromText('POINT EMPTY'), 'OGC:CRS84'))",
+            "RS_Value(RS_Example(), ST_GeomFromText('POINT EMPTY', 'OGC:CRS84'), 1)",
             None,
         ),
     ],
 )
 def test_rs_value_point(expr, expected):
     SedonaDB().assert_query_result(f"SELECT {expr}", expected)
+
+
+def test_rs_value_default_band_requires_single_band(con):
+    # RS_Example has 3 bands, so omitting the band is ambiguous and errors.
+    with pytest.raises(Exception, match="specify which band"):
+        con.sql(
+            "SELECT RS_Value(RS_Example(), ST_Point(74.58, 110.57, 'OGC:CRS84'))"
+        ).to_arrow_table()
 
 
 def test_rs_value_matches_rasterio(con):
@@ -155,13 +161,25 @@ def test_rs_value_matches_rasterio(con):
     ambiguity at exact boundaries) and a batch of random interior points.
     """
 
+    pytest.importorskip("rasterio")
+    from rasterio.io import MemoryFile
+    from rasterio.transform import Affine
+
     rng = np.random.default_rng(42)
     height, width = 7, 5
     data = rng.random((height, width)) * 1000.0
 
-    # GDAL-order geotransform: origin (100, 500), 2-wide pixels, -3 tall
-    # (north-up), no skew. Shared verbatim by both engines.
-    gdal_transform = (100.0, 2.0, 0.0, 500.0, 0.0, -3.0)
+    # Raster spans world bbox x[100, 110], y[479, 500] as 5 cols x 7 rows
+    # (2-wide, 3-tall north-up pixels, no skew). Shared verbatim by both engines.
+    xmin, ymin, xmax, ymax = 100.0, 479.0, 110.0, 500.0
+    gdal_transform = (
+        xmin,
+        (xmax - xmin) / width,
+        0.0,
+        ymax,
+        0.0,
+        -(ymax - ymin) / height,
+    )
     affine = Affine.from_gdal(*gdal_transform)
 
     # Sample points in pixel space (col_frac, row_frac).
@@ -220,7 +238,7 @@ def test_rs_value_matches_rasterio(con):
     finally:
         con.drop_view(view)
 
-    assert got == pytest.approx(expected)
+    assert got == expected
 
 
 def test_rs_setgeoreference_roundtrips_with_getter():
@@ -278,6 +296,187 @@ def test_rs_setbandnodatavalue_two_arg_requires_single_band():
         SedonaDB().assert_query_result(
             "SELECT RS_SetBandNoDataValue(RS_Example(), 0)", None
         )
+
+
+# RS_Values samples one pixel per sub-point and returns a List<Double> in input
+# order. Same raster facts as `test_rs_value_point`: band `b` is filled with `b`,
+# (74.58, 110.57) is the centroid of pixel (10, 10), and (44.58, 80.57) is the
+# centroid of the top-left pixel (0, 0), which is set to nodata. A point far
+# outside the footprint yields a NULL element; the whole result is never NULL
+# here because the geometry is non-null.
+@pytest.mark.parametrize(
+    ("expr", "expected"),
+    [
+        # Two in-bounds points + one outside, on band 1.
+        (
+            "RS_Values(RS_Example(), ST_GeomFromText('MULTIPOINT (74.58 110.57, 74.58 110.57, 0 0)', 'OGC:CRS84'), 1)",
+            [1.0, 1.0, None],
+        ),
+        # Explicit band selects the plane; nodata corner and outside are NULL.
+        (
+            "RS_Values(RS_Example(), ST_GeomFromText('MULTIPOINT (74.58 110.57, 44.58 80.57, 0 0)', 'OGC:CRS84'), 2)",
+            [2.0, None, None],
+        ),
+        (
+            "RS_Values(RS_Example(), ST_GeomFromText('MULTIPOINT (74.58 110.57)', 'OGC:CRS84'), 3)",
+            [3.0],
+        ),
+        # A bare Point is accepted and yields a one-element list.
+        (
+            "RS_Values(RS_Example(), ST_Point(74.58, 110.57, 'OGC:CRS84'), 1)",
+            [1.0],
+        ),
+        # An empty MultiPoint is an empty list (not NULL).
+        (
+            "RS_Values(RS_Example(), ST_GeomFromText('MULTIPOINT EMPTY', 'OGC:CRS84'), 1)",
+            [],
+        ),
+    ],
+)
+def test_rs_values_multipoint(expr, expected):
+    SedonaDB().assert_query_result(f"SELECT {expr}", [(expected,)])
+
+
+def test_rs_values_default_band_requires_single_band(con):
+    # RS_Example has 3 bands, so omitting the band is ambiguous and errors.
+    with pytest.raises(Exception, match="specify which band"):
+        con.sql(
+            "SELECT RS_Values(RS_Example(), ST_GeomFromText('MULTIPOINT (74.58 110.57)', 'OGC:CRS84'))"
+        ).to_arrow_table()
+
+
+def test_rs_values_ensureloaded_outdb(con, sedona_testing):
+    """RS_Values over an OutDb raster exercises the needs_pixels ->
+    RS_EnsureLoaded planner path end to end: the raster from RS_FromPath carries
+    no pixels, so the planner must materialise it before the kernel samples.
+
+    sentinel2.tif's top-left pixel holds 2324 (see test_rs_ensureloaded); its
+    world center is derived from the raster's own georeference so the test does
+    not hard-code the file's geotransform.
+    """
+    path = sedona_testing / "data/raster/sentinel2.tif"
+    t = con.sql("SELECT RS_FromPath($1) AS raster", params=(str(path),))
+    view = "test_rs_values_ensureloaded_outdb_raster"
+    t.to_view(view)
+    try:
+        # `.to_pylist()` converts the whole (one-row) table in one pass;
+        # indexing a column with `[0]` first would force a chunk-combining
+        # copy in pyarrow.
+        meta = (
+            con.sql(
+                f"SELECT RS_GeoReference(raster) AS georef, RS_SRID(raster) AS srid FROM {view}"
+            )
+            .to_arrow_table()
+            .to_pylist()[0]
+        )
+        georef = [float(v) for v in meta["georef"].split()]
+        scale_x, skew_y, skew_x, scale_y, ul_x, ul_y = georef
+        srid = meta["srid"]
+        # World center of pixel (0, 0): upper-left corner + half a pixel step.
+        cx = ul_x + 0.5 * scale_x + 0.5 * skew_x
+        cy = ul_y + 0.5 * skew_y + 0.5 * scale_y
+
+        values = (
+            con.sql(
+                f"""
+            SELECT RS_Values(
+                raster,
+                ST_GeomFromText('MULTIPOINT ({cx} {cy})', 'EPSG:{srid}'),
+                1
+            ) AS v FROM {view}
+            """
+            )
+            .to_arrow_table()["v"]
+            .to_pylist()
+        )
+        assert values == [[2324.0]]
+    finally:
+        con.drop_view(view)
+
+
+def test_rs_values_matches_rasterio(con):
+    """Cross-check RS_Values against rasterio on a random raster.
+
+    The plural counterpart of `test_rs_value_matches_rasterio`: the same dense
+    set of sample points is passed as a single MultiPoint, so one `RS_Values`
+    call returns a list that must match rasterio's per-point reads element for
+    element, in order.
+    """
+    pytest.importorskip("rasterio")
+    from rasterio.io import MemoryFile
+    from rasterio.transform import Affine
+
+    rng = np.random.default_rng(42)
+    height, width = 7, 5
+    data = rng.random((height, width)) * 1000.0
+
+    # Raster spans world bbox x[100, 110], y[479, 500] as 5 cols x 7 rows
+    # (2-wide, 3-tall north-up pixels, no skew). Shared verbatim by both engines.
+    xmin, ymin, xmax, ymax = 100.0, 479.0, 110.0, 500.0
+    gdal_transform = (
+        xmin,
+        (xmax - xmin) / width,
+        0.0,
+        ymax,
+        0.0,
+        -(ymax - ymin) / height,
+    )
+    affine = Affine.from_gdal(*gdal_transform)
+
+    # Sample points in pixel space (col_frac, row_frac): every pixel center plus
+    # four off-center positions (kept inside the pixel to avoid floor ambiguity),
+    # then a batch of random interior points.
+    pixel_points = []
+    for row in range(height):
+        for col in range(width):
+            for du, dv in [
+                (0.5, 0.5),
+                (0.25, 0.25),
+                (0.75, 0.75),
+                (0.25, 0.75),
+                (0.75, 0.25),
+            ]:
+                pixel_points.append((col + du, row + dv))
+    n_random = 150
+    rand_cols = rng.integers(0, width, n_random)
+    rand_rows = rng.integers(0, height, n_random)
+    pixel_points.extend(
+        zip(
+            rand_cols + rng.uniform(0.1, 0.9, n_random),
+            rand_rows + rng.uniform(0.1, 0.9, n_random),
+        )
+    )
+
+    # Map pixel-space positions to world coordinates via the shared affine.
+    xs, ys = zip(*(affine * (u, v) for u, v in pixel_points))
+
+    # rasterio reference: a real GDAL read of the same array (no CRS).
+    with MemoryFile() as mem:
+        with mem.open(
+            driver="GTiff",
+            height=height,
+            width=width,
+            count=1,
+            dtype="float64",
+            transform=affine,
+        ) as dst:
+            dst.write(data, 1)
+        with mem.open() as src:
+            expected = [vals[0] for vals in src.sample(list(zip(xs, ys)))]
+
+    # sedonadb: sample every point in one MultiPoint via a single RS_Values call.
+    raster = Raster.from_numpy(data, transform=gdal_transform)
+    wkt = "MULTIPOINT (" + ", ".join(f"{x} {y}" for x, y in zip(xs, ys)) + ")"
+    got = (
+        con.sql(
+            "SELECT RS_Values($1, ST_GeomFromText($2)) AS v",
+            params=(raster, wkt),
+        )
+        .to_arrow_table()["v"]
+        .to_pylist()[0]
+    )
+
+    assert got == expected
 
 
 # RS_AsGeoTiff smoke coverage: the GDAL-backed export is tested in depth in
@@ -360,6 +559,10 @@ def _rs_as_raster_sql(
 def test_rs_as_raster_matches_rasterio(
     con, sedona_testing, all_touched, use_geometry_extent
 ):
+    pytest.importorskip("rasterio")
+    from rasterio.features import rasterize
+    from rasterio.transform import Affine
+
     path = sedona_testing / "data/raster/test4.tiff"
     transform = (0.0, 1.0, 0.0, 10.0, 0.0, -1.0)
 
@@ -395,6 +598,10 @@ def test_rs_as_raster_matches_rasterio(
 
 
 def test_rs_as_raster_all_touched_changes_pixels(con, sedona_testing):
+    pytest.importorskip("rasterio")
+    from rasterio.features import rasterize
+    from rasterio.transform import Affine
+
     path = sedona_testing / "data/raster/test4.tiff"
     transform = (0.0, 1.0, 0.0, 10.0, 0.0, -1.0)
     geom = "POLYGON((1.9 8.9, 1.9 6.1, 3.1 6.1, 3.1 8.9, 1.9 8.9))"

@@ -227,24 +227,21 @@ impl RasterSpec {
         self
     }
 
-    /// Set an axis-aligned, north-up geotransform from a bounding box, with
-    /// the pixel size derived from the box and the raster's dimensions (zero
-    /// skew, origin at the top-left corner). Easier to picture than raw
-    /// coefficients when the framing is what matters. Skewed or rotated
+    /// Set a north-up (zero-skew) geotransform from the raster's world-space
+    /// bounding box: the pixel grid spans `[xmin, xmax] x [ymin, ymax]`
+    /// exactly, so pixel (0, 0) is the top-left cell under `ymax`. Easier to
+    /// picture in a test than raw geotransform coefficients. Skewed or rotated
     /// rasters can't be expressed as a bounding box — use
     /// [`transform`](Self::transform) for those.
-    pub fn bbox(mut self, min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> Self {
-        let width = self.spatial_shape[0] as f64;
-        let height = self.spatial_shape[1] as f64;
-        self.transform = [
-            min_x,
-            (max_x - min_x) / width,
-            0.0,
-            max_y,
-            0.0,
-            -(max_y - min_y) / height,
-        ];
-        self
+    pub fn bbox(self, xmin: f64, ymin: f64, xmax: f64, ymax: f64) -> Self {
+        assert!(
+            xmax > xmin && ymax > ymin,
+            "bbox requires xmin < xmax and ymin < ymax, got [{xmin}, {ymin}, {xmax}, {ymax}]"
+        );
+        let (width, height) = (self.spatial_shape[0] as f64, self.spatial_shape[1] as f64);
+        let scale_x = (xmax - xmin) / width;
+        let scale_y = -(ymax - ymin) / height;
+        self.transform([xmin, scale_x, 0.0, ymax, 0.0, scale_y])
     }
 
     /// Add a band with the spec's default layout and sequential pixel values

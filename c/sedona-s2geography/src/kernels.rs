@@ -31,6 +31,10 @@ use sedona_schema::{
 
 use crate::{s2geog_check, s2geography_c_bindgen::*};
 
+fn covering_cell_ids_type() -> SedonaType {
+    SedonaType::Arrow(DataType::new_list(DataType::Int64, true))
+}
+
 pub fn s2_scalar_kernels() -> Result<Vec<(String, ScalarKernelRef)>> {
     let mut ffi_scalar_kernels = Vec::<SedonaCScalarKernel>::new();
     ffi_scalar_kernels.resize_with(unsafe { S2GeogNumKernels() }, Default::default);
@@ -235,13 +239,62 @@ pub fn s2_scalar_kernels() -> Result<Vec<(String, ScalarKernelRef)>> {
         "s2_coveringcellids".to_string(),
         Arc::new(NullKernelHelper::new(ArgMatcher::new(
             vec![ArgMatcher::is_null()],
-            SedonaType::Arrow(DataType::List(Arc::new(arrow_schema::Field::new(
-                "item",
-                DataType::Int64,
-                true,
-            )))),
+            covering_cell_ids_type(),
         ))),
     ));
+
+    // s2_coveringcellids(NULL, ...), s2_coveringcellids(geography, NULL, ...)
+    for matchers in [
+        vec![ArgMatcher::is_null(), ArgMatcher::is_integer()],
+        vec![ArgMatcher::is_geography(), ArgMatcher::is_null()],
+        vec![
+            ArgMatcher::is_null(),
+            ArgMatcher::is_integer(),
+            ArgMatcher::is_integer(),
+        ],
+        vec![
+            ArgMatcher::is_geography(),
+            ArgMatcher::is_null(),
+            ArgMatcher::is_integer(),
+        ],
+        vec![
+            ArgMatcher::is_geography(),
+            ArgMatcher::is_integer(),
+            ArgMatcher::is_null(),
+        ],
+        vec![
+            ArgMatcher::is_null(),
+            ArgMatcher::is_integer(),
+            ArgMatcher::is_integer(),
+            ArgMatcher::is_integer(),
+        ],
+        vec![
+            ArgMatcher::is_geography(),
+            ArgMatcher::is_null(),
+            ArgMatcher::is_integer(),
+            ArgMatcher::is_integer(),
+        ],
+        vec![
+            ArgMatcher::is_geography(),
+            ArgMatcher::is_integer(),
+            ArgMatcher::is_null(),
+            ArgMatcher::is_integer(),
+        ],
+        vec![
+            ArgMatcher::is_geography(),
+            ArgMatcher::is_integer(),
+            ArgMatcher::is_integer(),
+            ArgMatcher::is_null(),
+        ],
+    ] {
+        kernels.push((
+            "s2_coveringcellids".to_string(),
+            Arc::new(NullKernelHelper::new(ArgMatcher::new(
+                matchers,
+                covering_cell_ids_type(),
+            ))),
+        ));
+    }
 
     Ok(kernels)
 }
@@ -303,6 +356,28 @@ mod test {
     fn test_s2_scalar_kernels() {
         let kernels = s2_scalar_kernels().unwrap();
         assert!(!kernels.is_empty());
+    }
+
+    #[test]
+    fn covering_cell_ids_return_type() {
+        let udf = s2_udf("s2_coveringcellids");
+        let int64 = SedonaType::Arrow(DataType::Int64);
+        let null = SedonaType::Arrow(DataType::Null);
+
+        for arg_types in [
+            vec![WKB_GEOGRAPHY],
+            vec![WKB_GEOGRAPHY, int64.clone()],
+            vec![WKB_GEOGRAPHY, int64.clone(), int64.clone()],
+            vec![WKB_GEOGRAPHY, int64.clone(), int64.clone(), int64.clone()],
+            vec![null.clone()],
+            vec![null.clone(), int64.clone()],
+            vec![WKB_GEOGRAPHY, null.clone(), int64.clone()],
+            vec![WKB_GEOGRAPHY, int64.clone(), null.clone(), int64.clone()],
+            vec![WKB_GEOGRAPHY, int64.clone(), int64.clone(), null.clone()],
+        ] {
+            let tester = ScalarUdfTester::new(udf.clone().into(), arg_types);
+            assert_eq!(tester.return_type().unwrap(), covering_cell_ids_type());
+        }
     }
 
     fn s2_udf(name: &str) -> SedonaScalarUDF {
