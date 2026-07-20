@@ -502,23 +502,24 @@ fn encode_results(results: &[f64], data_type: BandDataType) -> Vec<u8> {
 }
 
 /// Parse a pixel-type string to a [`BandDataType`], accepting the short GDAL-style
-/// codes and the full type names. Mirrors the pixel-type vocabulary of
-/// `RS_AsRaster`.
+/// codes, the descriptive word forms (`BYTE`, `SHORT`, `USHORT`, `INT`, `UINT`,
+/// `FLOAT`, `DOUBLE`), and the full type names.
 fn parse_pixel_type(value: &str) -> Result<BandDataType> {
     match value.trim().to_ascii_lowercase().as_str() {
-        "d" | "float64" => Ok(BandDataType::Float64),
-        "f" | "float32" => Ok(BandDataType::Float32),
-        "i" | "int32" => Ok(BandDataType::Int32),
-        "ui" | "uint32" => Ok(BandDataType::UInt32),
-        "s" | "int16" => Ok(BandDataType::Int16),
-        "us" | "uint16" => Ok(BandDataType::UInt16),
-        "b" | "uint8" => Ok(BandDataType::UInt8),
+        "d" | "double" | "float64" => Ok(BandDataType::Float64),
+        "f" | "float" | "float32" => Ok(BandDataType::Float32),
+        "i" | "int" | "int32" => Ok(BandDataType::Int32),
+        "ui" | "uint" | "uint32" => Ok(BandDataType::UInt32),
+        "s" | "short" | "int16" => Ok(BandDataType::Int16),
+        "us" | "ushort" | "uint16" => Ok(BandDataType::UInt16),
+        "b" | "byte" | "uint8" => Ok(BandDataType::UInt8),
         "i8" | "int8" => Ok(BandDataType::Int8),
         "u64" | "uint64" => Ok(BandDataType::UInt64),
         "i64" | "int64" => Ok(BandDataType::Int64),
         other => exec_err!(
             "RS_MapAlgebra: unsupported pixel type {other:?} (expected one of \
-             B/I8/S/US/I/UI/I64/U64/F/D or the full type name)"
+             B/I8/S/US/I/UI/I64/U64/F/D, a word form \
+             (BYTE/SHORT/USHORT/INT/UINT/FLOAT/DOUBLE), or the full type name)"
         ),
     }
 }
@@ -576,6 +577,7 @@ mod tests {
 
     #[test]
     fn test_parse_pixel_type() {
+        // Short GDAL-style codes.
         assert_eq!(parse_pixel_type("B").unwrap(), BandDataType::UInt8);
         assert_eq!(parse_pixel_type("i8").unwrap(), BandDataType::Int8);
         assert_eq!(parse_pixel_type("S").unwrap(), BandDataType::Int16);
@@ -585,6 +587,15 @@ mod tests {
         assert_eq!(parse_pixel_type("I64").unwrap(), BandDataType::Int64);
         assert_eq!(parse_pixel_type("u64").unwrap(), BandDataType::UInt64);
         assert_eq!(parse_pixel_type("F").unwrap(), BandDataType::Float32);
+        // Descriptive word forms.
+        assert_eq!(parse_pixel_type("BYTE").unwrap(), BandDataType::UInt8);
+        assert_eq!(parse_pixel_type("short").unwrap(), BandDataType::Int16);
+        assert_eq!(parse_pixel_type("USHORT").unwrap(), BandDataType::UInt16);
+        assert_eq!(parse_pixel_type("Int").unwrap(), BandDataType::Int32);
+        assert_eq!(parse_pixel_type("UINT").unwrap(), BandDataType::UInt32);
+        assert_eq!(parse_pixel_type("FLOAT").unwrap(), BandDataType::Float32);
+        assert_eq!(parse_pixel_type("Double").unwrap(), BandDataType::Float64);
+        // Full type names.
         assert_eq!(parse_pixel_type("float64").unwrap(), BandDataType::Float64);
         assert!(parse_pixel_type("nope").is_err());
     }
