@@ -59,6 +59,7 @@ use sedona_raster::array::RasterRefImpl;
 use sedona_raster::traits::RasterRef;
 use sedona_raster_functions::crs_utils::{crs_transform_wkb, resolve_crs, with_crs_engine};
 use sedona_raster_functions::rs_ensure_loaded::NEEDS_PIXELS_METADATA_KEY;
+use sedona_raster_functions::rs_spatial_predicates::raster_intersects_geom_wkb;
 use sedona_raster_functions::RasterExecutor;
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;
@@ -503,10 +504,13 @@ struct PixelWindow {
 
 /// Compute the statistics of the pixels a zone geometry selects on one band.
 ///
-/// Returns `Ok(None)` when the zone's envelope does not intersect the raster
-/// extent (the caller turns this into NULL when `lenient`, an error otherwise).
-/// A zone that intersects the extent but whose selected pixels are all outside
-/// the geometry or all nodata yields `Ok(Some(..))` with `count = 0`.
+/// Returns `Ok(None)` when the zone geometry does not intersect the raster's
+/// footprint. This is a true geometry intersection (matching Sedona Spark's
+/// `rsIntersects` gate), not a bounding-box overlap: a zone whose envelope
+/// overlaps the raster but whose geometry is disjoint is a no-intersection case.
+/// The caller turns `None` into NULL when `lenient`, an error otherwise. A zone
+/// that intersects the footprint but whose selected pixels are all outside the
+/// geometry or all nodata yields `Ok(Some(..))` with `count = 0`.
 ///
 /// `scratch` is a reused buffer for the selected pixel values so the per-row
 /// collection does not allocate a fresh `Vec` each call.
@@ -539,13 +543,25 @@ fn compute_zonal_stats(
     let height = usize::try_from(metadata.height())
         .map_err(|_| exec_datafusion_err!("RS_ZonalStats: negative raster height"))?;
 
-    // Parse the zone and clamp its envelope to the raster grid. A disjoint
-    // envelope is the no-intersection case.
+    // No-intersection gate: a true geometry intersection between the zone and
+    // the raster footprint (matching Sedona Spark's rsIntersects gate), not a
+    // bounding-box overlap. A zone whose envelope overlaps the raster but whose
+    // geometry is disjoint is a no-intersection case, not a count-0 case. The
+    // zone is already in the raster's CRS here, so no transform is needed.
+    if !raster_intersects_geom_wkb(raster, geom_wkb)? {
+        return Ok(None);
+    }
+
+    // Parse the zone and clamp its envelope to the raster grid for the pixel
+    // window to rasterize. The gate above already established overlap; a
+    // degenerate window (the zone only touches the raster boundary) selects no
+    // pixels, so it is count 0 rather than no-intersection.
     let geometry = gdal
         .geometry_from_wkb(geom_wkb)
         .map_err(|e| exec_datafusion_err!("RS_ZonalStats: failed to parse geometry: {e}"))?;
     let Some(window) = envelope_window(&geometry, &transform, width, height)? else {
-        return Ok(None);
+        scratch.clear();
+        return Ok(Some(compute_statistics(scratch)));
     };
 
     // Rasterize the zone into a window-sized 0/1 mask (moves `geometry`, whose
@@ -623,10 +639,10 @@ fn raster_transform(raster: &RasterRefImpl<'_>) -> Result<GeoTransform> {
 }
 
 /// The zone's envelope intersected with the raster extent, snapped outward to
-/// whole pixels. `None` when the envelope is disjoint from the raster. Mirrors
-/// the window RS_Clip / PostGIS ST_Clip use: all four corners are mapped
-/// through the inverse geotransform so a skewed raster still gets a correct
-/// superset window.
+/// whole pixels. `None` when the clamped window has no area (the envelope only
+/// touches the raster boundary). Mirrors the window RS_Clip / PostGIS ST_Clip
+/// use: all four corners are mapped through the inverse geotransform so a skewed
+/// raster still gets a correct superset window.
 fn envelope_window(
     geometry: &Geometry,
     transform: &GeoTransform,
@@ -1258,6 +1274,45 @@ mod udf_tests {
             "unexpected error: {err}"
         );
         let err = call_all(&small_raster(), far, Some(r#"{"lenient": false}"#))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("does not intersect"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn bbox_overlapping_but_geometry_disjoint_zone_is_no_intersection() {
+        // small_raster covers x ∈ [0, 4], y ∈ [0, 2]. This triangle lives on the
+        // far side of the line x + y = 7, so its geometry is disjoint from the
+        // raster (every raster point has x + y ≤ 6), yet its bounding box
+        // [0, 7] × [0, 7] contains the whole raster. A bounding-box gate would
+        // burn zero pixels and report count 0; the true-geometry gate (matching
+        // Sedona Spark's rsIntersects) treats it as a no-intersection case.
+        let disjoint = "POLYGON((7 0, 0 7, 7 7, 7 0))";
+
+        // Lenient (default): NULL, not count 0.
+        assert_eq!(
+            cv_f64(call_stats(&small_raster(), disjoint, "count", None).unwrap()),
+            None
+        );
+        assert!(cv_struct(call_all(&small_raster(), disjoint, None).unwrap()).is_null(0));
+
+        // Strict: both functions error.
+        let err = call_stats(
+            &small_raster(),
+            disjoint,
+            "count",
+            Some(r#"{"lenient": false}"#),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("does not intersect"),
+            "unexpected error: {err}"
+        );
+        let err = call_all(&small_raster(), disjoint, Some(r#"{"lenient": false}"#))
             .unwrap_err()
             .to_string();
         assert!(

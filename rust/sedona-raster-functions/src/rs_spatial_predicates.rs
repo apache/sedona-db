@@ -375,6 +375,20 @@ fn evaluate_predicate<Op: tg::BinaryPredicate>(wkb_a: &[u8], wkb_b: &[u8]) -> Re
 ///       = 9 + 4 + 80 = 93
 const CONVEXHULL_WKB_SIZE: usize = 93;
 
+/// Test whether a geometry intersects a raster's footprint (its convex-hull
+/// polygon), using the same true geometry intersection as RS_Intersects rather
+/// than a bounding-box overlap. This is the gate Sedona Spark's zonal statistics
+/// use (`RasterPredicates.rsIntersects`): a zone whose bounding box overlaps the
+/// raster but whose geometry is disjoint is treated as not intersecting.
+///
+/// `geom_wkb` must already be in the raster's CRS; this performs no CRS
+/// transformation (the raster footprint is built in the raster's own CRS).
+pub fn raster_intersects_geom_wkb(raster: &dyn RasterRef, geom_wkb: &[u8]) -> Result<bool> {
+    let mut raster_wkb = Vec::with_capacity(CONVEXHULL_WKB_SIZE);
+    write_convexhull_wkb(raster, &mut raster_wkb)?;
+    evaluate_predicate::<tg::Intersects>(&raster_wkb, geom_wkb)
+}
+
 /// Create WKB for a convex hull polygon for the raster
 fn write_convexhull_wkb(raster: &dyn RasterRef, out: &mut impl std::io::Write) -> Result<()> {
     let width = raster.metadata().width();

@@ -50,6 +50,11 @@ GEOM_RECT = (
 )
 # Entirely outside the raster extent.
 GEOM_DISJOINT = "POLYGON ((900 900, 910 900, 910 890, 900 890, 900 900))"
+# Bounding box overlaps the raster, but the geometry itself is disjoint: the
+# triangle sits in the far corner of its bounding box, clear of the raster. A
+# bounding-box gate would burn no pixels and report count 0; a true-geometry gate
+# (matching Sedona Spark's rsIntersects) treats it as a no-intersection case.
+GEOM_DISJOINT_BBOX = "POLYGON ((124 490, 124 510, 108 510, 124 490))"
 # A thin strip crossing the x = 104 pixel boundary but covering no pixel center
 # (centers sit at odd x): selects nothing unless all_touched.
 GEOM_SLIVER = "POLYGON ((103.6 499, 104.4 499, 104.4 483, 103.6 483, 103.6 499))"
@@ -227,6 +232,39 @@ def test_no_intersection_is_null_when_lenient_and_errors_when_strict(con, tmp_pa
     with pytest.raises(Exception, match="does not intersect"):
         zonal_stat(
             con, path, GEOM_DISJOINT, "count", json.dumps({"band": 1, "lenient": False})
+        )
+
+
+def test_bbox_overlapping_but_geometry_disjoint_is_no_intersection(con, tmp_path):
+    import shapely
+    from shapely.geometry import box
+
+    path, _ = fixture_raster(tmp_path)
+
+    # Premise: the zone's bounding box overlaps the raster extent, but the
+    # geometry is disjoint from it (unlike GEOM_DISJOINT, whose bbox misses too).
+    ox, px, _, oy, _, py = GDAL_TRANSFORM
+    raster_extent = box(ox, oy + py * HEIGHT, ox + px * WIDTH, oy)
+    geom = shapely.from_wkt(GEOM_DISJOINT_BBOX)
+    assert box(*geom.bounds).intersects(raster_extent), "bbox must overlap the raster"
+    assert geom.disjoint(raster_extent), "geometry must be disjoint from the raster"
+
+    # Lenient (default): NULL, not count 0 — a true no-intersection case.
+    assert (
+        zonal_stat(con, path, GEOM_DISJOINT_BBOX, "count", json.dumps({"band": 1}))
+        is None
+    )
+    assert (
+        zonal_stats_all(con, path, GEOM_DISJOINT_BBOX, json.dumps({"band": 1})) is None
+    )
+    # Strict: errors, exactly like the fully-disjoint zone.
+    with pytest.raises(Exception, match="does not intersect"):
+        zonal_stat(
+            con,
+            path,
+            GEOM_DISJOINT_BBOX,
+            "count",
+            json.dumps({"band": 1, "lenient": False}),
         )
 
 
