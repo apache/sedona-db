@@ -1,0 +1,85 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: RS_ZonalStatsAll
+description: >
+  Computes every summary statistic of the raster pixels covered by a zone
+  geometry and returns them as a struct.
+kernels:
+  - returns: struct
+    args:
+    - raster
+    - {name: zone, type: geometry}
+  - returns: struct
+    args:
+    - raster
+    - name: zone
+      type: geometry
+      description: >
+        Zone geometry defining the region of interest. Reprojected into the
+        raster's CRS when both carry one; it is an error for exactly one side to
+        have a CRS.
+    - name: options
+      type: string
+      description: >
+        JSON object of options. `band` is the 1-based band index (required for a
+        multiband raster; defaults to 1 for a single-band raster). `all_touched`
+        (default false) keeps every pixel the zone touches rather than only those
+        whose center it covers. `exclude_nodata` (default true) skips pixels equal
+        to the band's nodata value. `lenient` (default true) returns NULL when the
+        zone does not intersect the raster instead of raising an error.
+---
+
+::: callout-warning
+**Experimental.** This function is experimental; its behavior may change without notice.
+:::
+
+## Description
+
+`RS_ZonalStatsAll` returns every summary statistic of the pixels of a single
+band that a zone geometry covers, as a struct with fields `count`, `sum`,
+`mean`, `median`, `mode`, `stddev`, `variance`, `min`, and `max` (the field
+order of Apache Sedona's `RS_ZonalStatsAll`). A pixel is included when its
+center falls inside the zone (or, with `all_touched`, when the zone touches it
+at all), and the band's nodata pixels are excluded by default.
+
+`count` is a whole number; every other field is floating point. Variance and
+standard deviation are the sample (n-1) values, and `mode` breaks ties toward
+the larger value.
+
+When the zone overlaps the raster but selects no pixel, `count` is 0 and every
+other field is NULL. When the zone does not intersect the raster at all, the
+whole struct is NULL under the default `lenient` behavior, or the call raises an
+error when `lenient` is set to false.
+
+The options are supplied as a single JSON object rather than as a positional
+argument list, so the argument surface stays `(raster, zone, options)`. This
+function operates on 2-D `(y, x)` bands; computing statistics per non-spatial
+plane of an N-D band is not supported.
+
+Use [`RS_ZonalStats`](rs_zonalstats.qmd) to compute a single statistic.
+
+## Examples
+
+```sql
+SELECT RS_ZonalStatsAll(
+  RS_Example(),
+  ST_GeomFromText('POLYGON ((60 90, 160 90, 160 190, 60 190, 60 90))', 'OGC:CRS84'),
+  '{"band": 1}'
+);
+```
