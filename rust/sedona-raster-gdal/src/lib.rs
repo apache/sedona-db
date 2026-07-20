@@ -39,6 +39,7 @@ mod rs_clip;
 mod rs_frompath;
 mod rs_metadata;
 mod rs_polygonize;
+mod rs_zonal_stats;
 mod source_uri;
 mod utils;
 

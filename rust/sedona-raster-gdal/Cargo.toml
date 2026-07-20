@@ -46,6 +46,8 @@ sedona-proj = { workspace = true }
 sedona-raster = { workspace = true }
 sedona-raster-functions = { workspace = true }
 sedona-schema = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 tokio = { workspace = true }
 
 [features]
@@ -89,3 +91,8 @@ path = "benches/rs_polygonize.rs"
 harness = false
 name = "rs_as_raster"
 path = "benches/rs_as_raster.rs"
+
+[[bench]]
+harness = false
+name = "rs_zonalstats"
+path = "benches/rs_zonalstats.rs"
