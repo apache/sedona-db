@@ -293,25 +293,6 @@ class RasterEngine:
         """
         self._not_implemented("zonal_stats")
 
-    def map_algebra(
-        self,
-        path,
-        pixel_type: Optional[str],
-        script: str,
-        *,
-        nodata: Optional[float] = None,
-    ) -> DecodedRaster:
-        """Apply a map-algebra script to the raster.
-
-        `script` is a Jiffle script — the Sedona-family map-algebra language —
-        with the input named `rast` (bands referenced 0-based, e.g.
-        `rast[0]`) and the output named `out`. `pixel_type` is a numpy dtype
-        name for the output band, or None to keep the input's; `nodata` sets
-        the output band's nodata. Only dialect engines implement this; tests
-        compute the expected pixels with plain numpy.
-        """
-        self._not_implemented("map_algebra")
-
     def tile_explode(
         self, path, tile_width: int, tile_height: int
     ) -> List[Tuple[int, int, DecodedRaster]]:
@@ -784,17 +765,6 @@ class SedonaSpark(RasterEngine):
             f"RS_ZonalStats(rast, ST_GeomFromText('{geometry_wkt}'), {band}, "
             f"'{stat}', {str(all_touched).lower()})",
         )
-
-    def map_algebra(self, path, pixel_type, script, *, nodata=None):
-        pixel_type_sql = (
-            "CAST(NULL AS STRING)"
-            if pixel_type is None
-            else f"'{self.PIXEL_TYPES[pixel_type]}'"
-        )
-        args = f"rast, {pixel_type_sql}, '{script}'"
-        if nodata is not None:
-            args += f", {float(nodata)!r}"
-        return self._decode_expr(self._raster_df(path), f"RS_MapAlgebra({args})")
 
     def tile_explode(self, path, tile_width, tile_height):
         df = self._raster_df(path)
