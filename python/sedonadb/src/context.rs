@@ -21,7 +21,7 @@ use pyo3::prelude::*;
 use sedona::context::SedonaContext;
 use sedona::context_builder::SedonaContextBuilder;
 use sedona_datasource::format::ExternalFormatFactory;
-use tokio::runtime::Runtime;
+use sedona_extension::runtime::RuntimeHandle;
 
 use crate::{
     dataframe::InternalDataFrame,
@@ -36,7 +36,7 @@ use crate::{
 #[pyclass]
 pub struct InternalContext {
     pub inner: SedonaContext,
-    pub runtime: Arc<Runtime>,
+    pub runtime: Arc<RuntimeHandle>,
 }
 
 /// Convert a Python options dict to a string map for the reader/object-store
@@ -80,7 +80,7 @@ impl InternalContext {
 
         Ok(Self {
             inner,
-            runtime: Arc::new(runtime),
+            runtime: Arc::new(RuntimeHandle::new(runtime)),
         })
     }
 

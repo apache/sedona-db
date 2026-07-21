@@ -28,12 +28,12 @@ use datafusion_expr::{select_expr::SelectExpr, Expr, SortExpr};
 use savvy::{savvy, savvy_err, sexp, IntoExtPtrSexp, Result};
 use sedona::context::{SedonaDataFrame, SedonaWriteOptions};
 use sedona::show::{DisplayMode, DisplayTableOptions};
+use sedona_extension::runtime::RuntimeHandle;
 use sedona_extension::streaming::StreamingRecordBatchReader;
 use sedona_extension::table_provider::ExportedTableProvider;
 use sedona_geoparquet::options::TableGeoParquetOptions;
 use sedona_schema::schema::SedonaSchema;
 use std::{iter::zip, ptr::swap_nonoverlapping, sync::Arc};
-use tokio::runtime::Runtime;
 
 use crate::context::InternalContext;
 use crate::expression::SedonaDBExprFactory;
@@ -43,10 +43,10 @@ use crate::runtime::wait_for_future_captured_r;
 #[savvy]
 pub struct InternalDataFrame {
     pub inner: DataFrame,
-    pub runtime: Arc<Runtime>,
+    pub runtime: Arc<RuntimeHandle>,
 }
 
-pub fn new_data_frame(inner: DataFrame, runtime: Arc<Runtime>) -> InternalDataFrame {
+pub fn new_data_frame(inner: DataFrame, runtime: Arc<RuntimeHandle>) -> InternalDataFrame {
     InternalDataFrame { inner, runtime }
 }
 

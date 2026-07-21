@@ -113,11 +113,11 @@ jobs:
           VCPKG_ROOT: ${{ github.workspace }}/vcpkg
           CIBW_TEST_REQUIRES: pytest adbc_driver_manager geoarrow-pyarrow geopandas duckdb
           CIBW_TEST_COMMAND: pytest {package}/tests -vv -o faulthandler_timeout=600
-          # No free-threaded CPython (cp*t) wheels on macOS: the free-threaded
-          # 3.14 test run deadlocks on macOS/arm64 in the raster suite and
-          # never completes (faulthandler never fires). Linux still builds and
-          # tests the free-threaded wheels.
-          CIBW_SKIP: "cp*t-*"
+          # Free-threaded CPython (cp*t) wheels build and run the full test
+          # suite here: the Tokio runtime shuts down in the background on
+          # teardown instead of blocking-joining its worker threads, so it no
+          # longer stalls the interpreter's stop-the-world on a free-threaded
+          # build.
 
       - uses: actions/upload-artifact@v7
         with:
@@ -154,11 +154,11 @@ jobs:
           VCPKG_ROOT: ${{ github.workspace }}/vcpkg
           CIBW_TEST_REQUIRES: pytest adbc_driver_manager geoarrow-pyarrow geopandas duckdb
           CIBW_TEST_COMMAND: pytest {package}/tests -vv -o faulthandler_timeout=600
-          # No free-threaded CPython (cp*t) wheels on macOS: the free-threaded
-          # 3.14 test run deadlocks on macOS/arm64 in the raster suite and
-          # never completes (faulthandler never fires). Linux still builds and
-          # tests the free-threaded wheels.
-          CIBW_SKIP: "cp*t-*"
+          # Free-threaded CPython (cp*t) wheels build and run the full test
+          # suite here: the Tokio runtime shuts down in the background on
+          # teardown instead of blocking-joining its worker threads, so it no
+          # longer stalls the interpreter's stop-the-world on a free-threaded
+          # build.
           SEDONADB_MACOS_ARCH: x86_64
 
       - uses: actions/upload-artifact@v7

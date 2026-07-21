@@ -27,8 +27,8 @@ use sedona::{
     context::SedonaContext, context_builder::SedonaContextBuilder,
     record_batch_reader_provider::RecordBatchReaderProvider,
 };
+use sedona_extension::runtime::RuntimeHandle;
 use sedona_geoparquet::provider::GeoParquetReadOptions;
-use tokio::runtime::Runtime;
 
 use crate::{
     dataframe::{new_data_frame, InternalDataFrame},
@@ -39,7 +39,7 @@ use crate::{
 #[savvy]
 pub struct InternalContext {
     pub inner: Arc<SedonaContext>,
-    pub runtime: Arc<Runtime>,
+    pub runtime: Arc<RuntimeHandle>,
 }
 
 #[savvy]
@@ -67,7 +67,7 @@ impl InternalContext {
 
         Ok(Self {
             inner: Arc::new(inner),
-            runtime: Arc::new(runtime),
+            runtime: Arc::new(RuntimeHandle::new(runtime)),
         })
     }
 

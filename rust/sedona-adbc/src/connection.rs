@@ -25,8 +25,8 @@ use adbc_core::{
 };
 use arrow_array::RecordBatchReader;
 use sedona::context::SedonaContext;
+use sedona_extension::runtime::RuntimeHandle;
 use std::sync::Arc;
-use tokio::runtime::Runtime;
 
 use adbc_core::{
     error::{Error, Result, Status},
@@ -40,7 +40,7 @@ use crate::{
 };
 
 pub struct SedonaConnection {
-    runtime: Arc<Runtime>,
+    runtime: Arc<RuntimeHandle>,
     ctx: Arc<SedonaContext>,
     autocommit_on: bool,
 }
@@ -66,7 +66,7 @@ impl SedonaConnection {
         })?;
 
         let mut connection = Self {
-            runtime: Arc::new(runtime),
+            runtime: Arc::new(RuntimeHandle::new(runtime)),
             ctx: Arc::new(ctx),
             autocommit_on: true,
         };

@@ -19,8 +19,8 @@ use std::time::Duration;
 
 use datafusion::execution::SendableRecordBatchStream;
 use pyo3::Python;
+use sedona_extension::runtime::RuntimeHandle;
 use sedona_extension::streaming::StreamingRecordBatchReader;
-use tokio::runtime::Runtime;
 
 /// Interval for checking Python signals during batch fetches.
 const INTERVAL_CHECK_SIGNALS: Duration = Duration::from_millis(2_000);
@@ -32,11 +32,11 @@ const INTERVAL_CHECK_SIGNALS: Duration = Duration::from_millis(2_000);
 /// The reader will check Python signals every 2 seconds during batch fetches,
 /// allowing users to interrupt long-running queries.
 ///
-/// Takes an `Arc<Runtime>` to ensure the runtime stays alive for the lifetime
-/// of the reader, preventing "Worker thread terminated" errors.
+/// Takes an `Arc<RuntimeHandle>` to ensure the runtime stays alive for the
+/// lifetime of the reader, preventing "Worker thread terminated" errors.
 pub fn new_py_streaming_reader(
     stream: SendableRecordBatchStream,
-    runtime: Arc<Runtime>,
+    runtime: Arc<RuntimeHandle>,
 ) -> StreamingRecordBatchReader {
     // Create a cancel checker that checks Python signals
     let cancel_checker: Box<dyn Fn() -> bool + Send + Sync> = Box::new(|| {

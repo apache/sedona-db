@@ -33,12 +33,12 @@ use datafusion_expr::{Expr, TableType};
 use datafusion_physical_plan::ExecutionPlan;
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use serde::{Deserialize, Serialize};
-use tokio::runtime::Runtime;
 
 use crate::execution_plan::{ExportedExecutionPlan, ImportedSedonaCExec};
 use crate::extension::{
     SedonaCError, SedonaCExecutionPlan, SedonaCExecutionPlanArgs, SedonaCTableProvider,
 };
+use crate::runtime::RuntimeHandle;
 use crate::set_ffi_error;
 use crate::utils::{cstr_from_ptr_or_empty, get_table_provider_string_property, ERRNO_OK};
 
@@ -49,9 +49,9 @@ use crate::utils::{cstr_from_ptr_or_empty, get_table_provider_string_property, E
 pub struct ExportedTableProvider {
     inner: Arc<dyn TableProvider>,
     session: Arc<dyn Session>,
-    /// We hold Arc<Runtime> instead of just Handle to keep the runtime alive
-    /// as long as this provider exists.
-    runtime: Arc<Runtime>,
+    /// We hold Arc<RuntimeHandle> instead of just Handle to keep the runtime
+    /// alive as long as this provider exists.
+    runtime: Arc<RuntimeHandle>,
 }
 
 impl Debug for ExportedTableProvider {
@@ -68,12 +68,12 @@ impl ExportedTableProvider {
     /// The session is used during scan operations and must support physical planning
     /// if the inner TableProvider requires it (e.g., for Views).
     ///
-    /// Takes an `Arc<Runtime>` to ensure the runtime stays alive for the lifetime
-    /// of the provider, preventing "Worker thread terminated" errors.
+    /// Takes an `Arc<RuntimeHandle>` to ensure the runtime stays alive for the
+    /// lifetime of the provider, preventing "Worker thread terminated" errors.
     pub fn new(
         inner: Arc<dyn TableProvider>,
         session: Arc<dyn Session>,
-        runtime: Arc<Runtime>,
+        runtime: Arc<RuntimeHandle>,
     ) -> Self {
         Self {
             inner,
@@ -699,21 +699,21 @@ mod tests {
         }
     }
 
-    /// Create a test runtime wrapped in Arc.
-    fn test_runtime() -> Arc<Runtime> {
-        Arc::new(
+    /// Create a test runtime wrapped in a background-shutdown handle.
+    fn test_runtime() -> Arc<RuntimeHandle> {
+        Arc::new(RuntimeHandle::new(
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .unwrap(),
-        )
+        ))
     }
 
     /// Helper to set up an imported table provider from a DummyTableProvider through FFI roundtrip.
     /// Returns the runtime to keep it alive for the duration of the test.
     fn setup_imported_provider_with(
         table_type: TableType,
-    ) -> (ImportedTableProvider, Arc<Runtime>) {
+    ) -> (ImportedTableProvider, Arc<RuntimeHandle>) {
         let dummy = Arc::new(DummyTableProvider::with_table_type(table_type));
         let ctx = SessionContext::new();
         let runtime = test_runtime();

@@ -30,7 +30,8 @@ use arrow_schema::{ArrowError, SchemaRef};
 use datafusion_common::{exec_err, Result};
 use datafusion_physical_plan::SendableRecordBatchStream;
 use futures::StreamExt;
-use tokio::runtime::Runtime;
+
+use crate::runtime::RuntimeHandle;
 
 /// A cancellation check callback for FFI operations.
 ///
@@ -92,9 +93,9 @@ struct StreamWorker {
 pub struct StreamingRecordBatchReader {
     schema: SchemaRef,
     /// Stream and runtime, wrapped in Option so they can be moved to the worker.
-    /// We hold Arc<Runtime> instead of just Handle to keep the runtime alive
-    /// as long as this reader exists.
-    stream_and_runtime: Option<(SendableRecordBatchStream, Arc<Runtime>)>,
+    /// We hold Arc<RuntimeHandle> instead of just Handle to keep the runtime
+    /// alive as long as this reader exists.
+    stream_and_runtime: Option<(SendableRecordBatchStream, Arc<RuntimeHandle>)>,
     /// Worker thread state, lazily initialized on first fetch.
     worker: Option<StreamWorker>,
     cancel_checker: Option<CancelChecker>,
@@ -106,10 +107,11 @@ pub struct StreamingRecordBatchReader {
 impl StreamingRecordBatchReader {
     /// Create a new StreamingRecordBatchReader from a SendableRecordBatchStream.
     ///
-    /// Takes an `Arc<Runtime>` to ensure the runtime stays alive for the lifetime
-    /// of the reader. This prevents "Worker thread terminated" errors when the
-    /// runtime would otherwise be dropped while the stream is still being read.
-    pub fn new(stream: SendableRecordBatchStream, runtime: Arc<Runtime>) -> Self {
+    /// Takes an `Arc<RuntimeHandle>` to ensure the runtime stays alive for the
+    /// lifetime of the reader. This prevents "Worker thread terminated" errors
+    /// when the runtime would otherwise be dropped while the stream is still
+    /// being read.
+    pub fn new(stream: SendableRecordBatchStream, runtime: Arc<RuntimeHandle>) -> Self {
         Self {
             schema: stream.schema(),
             stream_and_runtime: Some((stream, runtime)),
@@ -131,11 +133,11 @@ impl StreamingRecordBatchReader {
     /// is useful for Python where we need to periodically check for signals
     /// (Ctrl+C) during long-running operations.
     ///
-    /// Takes an `Arc<Runtime>` to ensure the runtime stays alive for the lifetime
-    /// of the reader.
+    /// Takes an `Arc<RuntimeHandle>` to ensure the runtime stays alive for the
+    /// lifetime of the reader.
     pub fn with_cancel_checker(
         stream: SendableRecordBatchStream,
-        runtime: Arc<Runtime>,
+        runtime: Arc<RuntimeHandle>,
         cancel_checker: CancelChecker,
         check_interval: Duration,
     ) -> Self {
@@ -417,14 +419,14 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    /// Create a test runtime wrapped in Arc.
-    fn test_runtime() -> Arc<Runtime> {
-        Arc::new(
+    /// Create a test runtime wrapped in a background-shutdown handle.
+    fn test_runtime() -> Arc<RuntimeHandle> {
+        Arc::new(RuntimeHandle::new(
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .unwrap(),
-        )
+        ))
     }
 
     /// Create a slow stream that yields batches with a configurable delay.

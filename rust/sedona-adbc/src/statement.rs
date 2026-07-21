@@ -18,9 +18,9 @@ use adbc_core::PartitionedResult;
 use arrow_array::{RecordBatch, RecordBatchReader};
 use arrow_schema::Schema;
 use sedona::context::SedonaContext;
+use sedona_extension::runtime::RuntimeHandle;
 use sedona_extension::streaming::StreamingRecordBatchReader;
 use std::sync::Arc;
-use tokio::runtime::Runtime;
 
 use adbc_core::{
     error::{Error, Result, Status},
@@ -31,13 +31,13 @@ use adbc_core::{
 use crate::{err_not_implemented, err_unrecognized_option, utils::from_datafusion_error};
 
 pub struct SedonaStatement {
-    runtime: Arc<Runtime>,
+    runtime: Arc<RuntimeHandle>,
     ctx: Arc<SedonaContext>,
     sql_query: Option<String>,
 }
 
 impl SedonaStatement {
-    pub(crate) fn new(runtime: Arc<Runtime>, ctx: Arc<SedonaContext>) -> SedonaStatement {
+    pub(crate) fn new(runtime: Arc<RuntimeHandle>, ctx: Arc<SedonaContext>) -> SedonaStatement {
         Self {
             runtime,
             ctx,

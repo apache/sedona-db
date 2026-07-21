@@ -34,9 +34,9 @@ use pyo3::types::{PyCapsule, PyDict, PyList};
 use sedona::context::{SedonaDataFrame, SedonaWriteOptions};
 use sedona::projected_reader::simplify_record_batch_reader;
 use sedona::show::{DisplayMode, DisplayTableOptions};
+use sedona_extension::runtime::RuntimeHandle;
 use sedona_geoparquet::options::TableGeoParquetOptions;
 use sedona_schema::schema::SedonaSchema;
-use tokio::runtime::Runtime;
 
 use crate::context::InternalContext;
 use crate::error::PySedonaError;
@@ -50,11 +50,11 @@ use crate::schema::PySedonaSchema;
 
 pub struct InternalDataFrame {
     pub inner: DataFrame,
-    pub runtime: Arc<Runtime>,
+    pub runtime: Arc<RuntimeHandle>,
 }
 
 impl InternalDataFrame {
-    pub fn new(inner: DataFrame, runtime: Arc<Runtime>) -> Self {
+    pub fn new(inner: DataFrame, runtime: Arc<RuntimeHandle>) -> Self {
         Self { inner, runtime }
     }
 }
