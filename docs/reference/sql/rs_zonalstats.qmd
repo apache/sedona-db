@@ -25,7 +25,28 @@ kernels:
     args:
     - raster
     - {name: zone, type: geometry}
-    - {name: stat, type: string}
+    - {name: stat_type, type: string}
+  - returns: double
+    args:
+    - raster
+    - {name: zone, type: geometry}
+    - {name: band, type: integer}
+    - {name: stat_type, type: string}
+  - returns: double
+    args:
+    - raster
+    - {name: zone, type: geometry}
+    - {name: band, type: integer}
+    - {name: stat_type, type: string}
+    - {name: all_touched, type: boolean}
+  - returns: double
+    args:
+    - raster
+    - {name: zone, type: geometry}
+    - {name: band, type: integer}
+    - {name: stat_type, type: string}
+    - {name: all_touched, type: boolean}
+    - {name: exclude_nodata, type: boolean}
   - returns: double
     args:
     - raster
@@ -35,21 +56,31 @@ kernels:
         Zone geometry defining the region of interest. Reprojected into the
         raster's CRS when both carry one; it is an error for exactly one side to
         have a CRS.
-    - name: stat
+    - name: band
+      type: integer
+      description: >
+        1-based band index to compute over. Required for a multiband raster; a
+        single-band raster may omit it via the band-less overload.
+    - name: stat_type
       type: string
       description: >
         Statistic to return (case-insensitive): count, sum, mean, median, mode,
         stddev, variance, min, or max. `avg`/`average` alias mean and `sd`
         aliases stddev.
-    - name: options
-      type: string
+    - name: all_touched
+      type: boolean
       description: >
-        JSON object of options. `band` is the 1-based band index (required for a
-        multiband raster; defaults to 1 for a single-band raster). `all_touched`
-        (default false) keeps every pixel the zone touches rather than only those
-        whose center it covers. `exclude_nodata` (default true) skips pixels equal
-        to the band's nodata value. `lenient` (default true) returns NULL when the
-        zone does not intersect the raster instead of raising an error.
+        If true, include every pixel the zone touches; otherwise only pixels
+        whose center falls inside it. Defaults to false.
+    - name: exclude_nodata
+      type: boolean
+      description: >
+        If true (the default), skip pixels equal to the band's nodata value.
+    - name: lenient
+      type: boolean
+      description: >
+        If true (the default), return NULL when the zone does not intersect the
+        raster; if false, raise an error.
 ---
 
 ::: callout-warning
@@ -73,10 +104,13 @@ other statistic is NULL. When the zone does not intersect the raster at all, the
 result is NULL under the default `lenient` behavior, or an error when
 `lenient` is set to false.
 
-The options are supplied as a single JSON object rather than as a positional
-argument list, so the argument surface stays `(raster, zone, stat, options)`.
-This function operates on 2-D `(y, x)` bands; computing a statistic per
-non-spatial plane of an N-D band is not supported.
+The positional overloads mirror Apache Sedona Spark's `RS_ZonalStats` verbatim.
+The `band`, `all_touched`, `exclude_nodata`, and `lenient` arguments are added
+one at a time by the wider overloads; `all_touched` defaults to false,
+`exclude_nodata` to true, and `lenient` to true. Unlike Sedona Spark, the
+band-less overload does not default to band 1 on a multiband raster: naming the
+band is required there. This function operates on 2-D `(y, x)` bands; computing a
+statistic per non-spatial plane of an N-D band is not supported.
 
 Use [`RS_ZonalStatsAll`](rs_zonalstatsall.qmd) to compute every statistic at
 once.
@@ -87,8 +121,8 @@ once.
 SELECT RS_ZonalStats(
   RS_Example(),
   ST_GeomFromText('POLYGON ((60 90, 160 90, 160 190, 60 190, 60 90))', 'OGC:CRS84'),
-  'mean',
-  '{"band": 1}'
+  1,
+  'mean'
 );
 ```
 
@@ -96,7 +130,9 @@ SELECT RS_ZonalStats(
 SELECT RS_ZonalStats(
   RS_Example(),
   ST_GeomFromText('POLYGON ((60 90, 160 90, 160 190, 60 190, 60 90))', 'OGC:CRS84'),
+  1,
   'count',
-  '{"band": 1, "exclude_nodata": false}'
+  false,
+  false
 );
 ```

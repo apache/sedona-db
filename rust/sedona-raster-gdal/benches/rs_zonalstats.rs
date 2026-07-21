@@ -23,7 +23,7 @@
 //! Each case builds a raster whose world extent is exactly the zone-polygon
 //! generator's `[-10, 10]²` bounds at the requested resolution, so every
 //! generated polygon lands on the raster and the full mask/collect/reduce path
-//! runs. `all_touched = true` (passed via the JSON options) guarantees a
+//! runs. `all_touched = true` (the trailing boolean argument) guarantees a
 //! polygon smaller than a cell still burns at least one pixel rather than
 //! hitting the empty-zone early return.
 //!
@@ -42,7 +42,7 @@
 
 use std::sync::Arc;
 
-use arrow_array::{ArrayRef, BinaryArray, StringArray};
+use arrow_array::{ArrayRef, BinaryArray, BooleanArray, Int64Array, StringArray};
 use criterion::{criterion_group, criterion_main, Criterion};
 use datafusion_expr::ScalarUDF;
 use sedona_schema::datatypes::{SedonaType, RASTER, WKB_GEOMETRY};
@@ -64,15 +64,16 @@ fn criterion_benchmark(c: &mut Criterion) {
         .clone()
         .into();
 
-    // RS_ZonalStats(raster, zone, stat, options) and
-    // RS_ZonalStatsAll(raster, zone, options).
+    // RS_ZonalStats(raster, zone, band, stat, all_touched) and
+    // RS_ZonalStatsAll(raster, zone, band, all_touched).
     let stats_tester = ScalarUdfTester::new(
         stats_udf,
         vec![
             RASTER,
             WKB_GEOMETRY,
+            SedonaType::Arrow(arrow_schema::DataType::Int64),
             SedonaType::Arrow(arrow_schema::DataType::Utf8),
-            SedonaType::Arrow(arrow_schema::DataType::Utf8),
+            SedonaType::Arrow(arrow_schema::DataType::Boolean),
         ],
     );
     let stats_all_tester = ScalarUdfTester::new(
@@ -80,14 +81,14 @@ fn criterion_benchmark(c: &mut Criterion) {
         vec![
             RASTER,
             WKB_GEOMETRY,
-            SedonaType::Arrow(arrow_schema::DataType::Utf8),
+            SedonaType::Arrow(arrow_schema::DataType::Int64),
+            SedonaType::Arrow(arrow_schema::DataType::Boolean),
         ],
     );
 
+    let band: ArrayRef = Arc::new(Int64Array::from(vec![1]));
     let mean_stat: ArrayRef = Arc::new(StringArray::from(vec!["mean"]));
-    let all_touched_opts: ArrayRef = Arc::new(StringArray::from(vec![
-        r#"{"band": 1, "all_touched": true}"#,
-    ]));
+    let all_touched: ArrayRef = Arc::new(BooleanArray::from(vec![true]));
 
     // A north-up raster covering exactly the polygon generator's [-10, 10]²
     // bounds at the requested resolution, so every generated polygon overlaps.
@@ -117,8 +118,9 @@ fn criterion_benchmark(c: &mut Criterion) {
                     .invoke_arrays(vec![
                         raster.clone(),
                         geom.clone(),
+                        band.clone(),
                         mean_stat.clone(),
-                        all_touched_opts.clone(),
+                        all_touched.clone(),
                     ])
                     .unwrap()
             })
@@ -129,7 +131,12 @@ fn criterion_benchmark(c: &mut Criterion) {
         c.bench_function(label, |b| {
             b.iter(|| {
                 stats_all_tester
-                    .invoke_arrays(vec![raster.clone(), geom.clone(), all_touched_opts.clone()])
+                    .invoke_arrays(vec![
+                        raster.clone(),
+                        geom.clone(),
+                        band.clone(),
+                        all_touched.clone(),
+                    ])
                     .unwrap()
             })
         });

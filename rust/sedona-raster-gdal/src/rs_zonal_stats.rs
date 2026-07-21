@@ -18,19 +18,31 @@
 //! RS_ZonalStats / RS_ZonalStatsAll UDFs — summary statistics of the raster
 //! pixels covered by a zone geometry.
 //!
-//! `RS_ZonalStats(raster, zone, stat[, options])` returns one statistic as a
-//! `Float64`; `RS_ZonalStatsAll(raster, zone[, options])` returns every
-//! statistic as a struct. Both compute over the pixels of a single band whose
-//! centre falls inside the zone (or that the zone merely touches, with
-//! `all_touched`), optionally excluding the band's nodata value.
+//! Both mirror Apache Sedona Spark's positional overloads verbatim so that
+//! Spark SQL tends to run unchanged. `RS_ZonalStats` returns one statistic as a
+//! `Float64`:
 //!
-//! The optional trailing `options` argument is a JSON object rather than the
-//! positional `band, all_touched, exclude_nodata, lenient` overload ladder of
-//! Sedona Spark, so the surface stays a single `(input, options)` shape:
+//! - `RS_ZonalStats(raster, zone, stat)`
+//! - `RS_ZonalStats(raster, zone, band, stat)`
+//! - `RS_ZonalStats(raster, zone, band, stat, all_touched)`
+//! - `RS_ZonalStats(raster, zone, band, stat, all_touched, exclude_nodata)`
+//! - `RS_ZonalStats(raster, zone, band, stat, all_touched, exclude_nodata, lenient)`
 //!
-//! ```json
-//! {"band": 1, "all_touched": false, "exclude_nodata": true, "lenient": true}
-//! ```
+//! `RS_ZonalStatsAll` returns every statistic as a struct, with the same ladder
+//! minus `stat`:
+//!
+//! - `RS_ZonalStatsAll(raster, zone)`
+//! - `RS_ZonalStatsAll(raster, zone, band)`
+//! - `RS_ZonalStatsAll(raster, zone, band, all_touched)`
+//! - `RS_ZonalStatsAll(raster, zone, band, all_touched, exclude_nodata)`
+//! - `RS_ZonalStatsAll(raster, zone, band, all_touched, exclude_nodata, lenient)`
+//!
+//! A pixel is included when its centre falls inside the zone (or that the zone
+//! merely touches, with `all_touched`), optionally excluding the band's nodata
+//! value. `all_touched` defaults to false, `exclude_nodata` to true, and
+//! `lenient` to true. Unlike Sedona Spark, the band-less overloads do not
+//! default to band 1 on a multiband raster: naming the band is required there
+//! (a single-band raster resolves unambiguously).
 //!
 //! These functions operate on 2-D `(y, x)` bands. A band that is not a 2-D
 //! spatial grid is rejected; computing a statistic per non-spatial plane of an
@@ -40,13 +52,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use arrow_array::builder::{Float64Builder, Int64Builder, StructBuilder};
-use arrow_array::{ArrayRef, StringArray};
+use arrow_array::{ArrayRef, BooleanArray, Int64Array, StringArray};
 use arrow_schema::{DataType, Field, Fields};
+use datafusion_common::cast::{as_boolean_array, as_int64_array, as_string_array};
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::error::Result;
-use datafusion_common::{exec_datafusion_err, exec_err};
+use datafusion_common::{exec_datafusion_err, exec_err, ScalarValue};
 use datafusion_expr::{ColumnarValue, Volatility};
-use serde::Deserialize;
 
 use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
@@ -102,14 +114,20 @@ impl StatType {
     }
 }
 
-/// Optional `(input, options)` JSON payload. Missing fields take their default;
-/// unknown fields are rejected so a typo surfaces rather than being ignored.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default, deny_unknown_fields, rename_all = "snake_case")]
-struct ZonalStatsOptions {
-    /// 1-based band to compute over. `None` means "resolve the default": band 1
-    /// for a single-band raster, an error for a multiband raster (naming the
-    /// band is required rather than silently getting band 1).
+/// Defaults for the trailing flags, applied by the narrower overloads that omit
+/// them (matching Sedona Spark).
+const DEFAULT_ALL_TOUCHED: bool = false;
+const DEFAULT_EXCLUDE_NODATA: bool = true;
+const DEFAULT_LENIENT: bool = true;
+
+/// The resolved parameters for one row's zonal-stats computation, assembled from
+/// the positional arguments the matched overload carried.
+#[derive(Debug, Clone)]
+struct ZonalStatsParams {
+    /// 1-based band to compute over. `None` means "resolve the implicit band":
+    /// band 1 for a single-band raster, an error for a multiband raster (naming
+    /// the band is required rather than silently getting band 1). Only the
+    /// band-less overloads leave this `None`.
     band: Option<i64>,
     /// Include every pixel the zone touches, not only those whose centre it
     /// covers.
@@ -120,29 +138,6 @@ struct ZonalStatsOptions {
     /// erroring. Only the no-intersection case is softened; malformed geometry
     /// or an unreadable band always errors.
     lenient: bool,
-}
-
-impl Default for ZonalStatsOptions {
-    fn default() -> Self {
-        Self {
-            band: None,
-            all_touched: false,
-            exclude_nodata: true,
-            lenient: true,
-        }
-    }
-}
-
-impl ZonalStatsOptions {
-    /// Parse the JSON options string, or return the defaults when no options
-    /// argument was supplied (`None`) or it is SQL NULL.
-    fn parse(json: Option<&str>) -> Result<Self> {
-        match json {
-            None => Ok(Self::default()),
-            Some(s) => serde_json::from_str(s)
-                .map_err(|e| exec_datafusion_err!("RS_ZonalStats: invalid options JSON: {e}")),
-        }
-    }
 }
 
 /// Every statistic for a zone. `count` is always present (0 when the zone
@@ -184,17 +179,18 @@ impl ZonalStatistics {
 // RS_ZonalStats
 // =============================================================================
 
-/// `RS_ZonalStats(raster, zone, stat[, options])` — one statistic as a
-/// `Float64`. `stat` is a statistic name (`count`, `sum`, `mean`, `median`,
-/// `mode`, `stddev`, `variance`, `min`, `max`).
+/// `RS_ZonalStats` — one statistic as a `Float64`. `stat` is a statistic name
+/// (`count`, `sum`, `mean`, `median`, `mode`, `stddev`, `variance`, `min`,
+/// `max`). See the module docs for the full positional overload ladder.
 pub fn rs_zonal_stats_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "rs_zonalstats",
         vec![
-            Arc::new(RsZonalStats {
-                with_options: false,
-            }),
-            Arc::new(RsZonalStats { with_options: true }),
+            Arc::new(RsZonalStats { arg_count: 3 }), // (raster, zone, stat)
+            Arc::new(RsZonalStats { arg_count: 4 }), // (raster, zone, band, stat)
+            Arc::new(RsZonalStats { arg_count: 5 }), // + all_touched
+            Arc::new(RsZonalStats { arg_count: 6 }), // + exclude_nodata
+            Arc::new(RsZonalStats { arg_count: 7 }), // + lenient
         ],
         Volatility::Immutable,
     )
@@ -205,20 +201,59 @@ pub fn rs_zonal_stats_udf() -> SedonaScalarUDF {
 
 #[derive(Debug)]
 struct RsZonalStats {
-    /// Whether this kernel matches the trailing JSON `options` argument.
-    with_options: bool,
+    /// Number of arguments in the matched signature (3..=7).
+    arg_count: usize,
 }
 
 impl SedonaScalarKernel for RsZonalStats {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        let mut matchers = vec![
-            ArgMatcher::is_raster(),
-            ArgMatcher::is_geometry_or_geography(),
-            ArgMatcher::is_string(),
-        ];
-        if self.with_options {
-            matchers.push(ArgMatcher::is_string());
-        }
+        // Argument order mirrors Sedona Spark: (raster, zone, [band,] stat,
+        // [all_touched, [exclude_nodata, [lenient]]]). The 3-arg overload omits
+        // band (its stat is at index 2); the 4+-arg overloads carry band at
+        // index 2 and stat at index 3.
+        let matchers = match self.arg_count {
+            3 => vec![
+                ArgMatcher::is_raster(),
+                ArgMatcher::is_geometry_or_geography(),
+                ArgMatcher::is_string(),
+            ],
+            4 => vec![
+                ArgMatcher::is_raster(),
+                ArgMatcher::is_geometry_or_geography(),
+                ArgMatcher::is_integer(),
+                ArgMatcher::is_string(),
+            ],
+            5 => vec![
+                ArgMatcher::is_raster(),
+                ArgMatcher::is_geometry_or_geography(),
+                ArgMatcher::is_integer(),
+                ArgMatcher::is_string(),
+                ArgMatcher::is_boolean(),
+            ],
+            6 => vec![
+                ArgMatcher::is_raster(),
+                ArgMatcher::is_geometry_or_geography(),
+                ArgMatcher::is_integer(),
+                ArgMatcher::is_string(),
+                ArgMatcher::is_boolean(),
+                ArgMatcher::is_boolean(),
+            ],
+            7 => vec![
+                ArgMatcher::is_raster(),
+                ArgMatcher::is_geometry_or_geography(),
+                ArgMatcher::is_integer(),
+                ArgMatcher::is_string(),
+                ArgMatcher::is_boolean(),
+                ArgMatcher::is_boolean(),
+                ArgMatcher::is_boolean(),
+            ],
+            _ => {
+                return sedona_internal_err!(
+                    "RS_ZonalStats: unexpected arg_count {}",
+                    self.arg_count
+                );
+            }
+        };
         let matcher = ArgMatcher::new(matchers, SedonaType::Arrow(DataType::Float64));
         matcher.match_args(args)
     }
@@ -241,20 +276,50 @@ impl SedonaScalarKernel for RsZonalStats {
     ) -> Result<ColumnarValue> {
         let num_iterations = RasterExecutor::num_iterations_over(args);
 
-        // stat is at index 2, options (when present) at index 3.
-        let stat_array = expand_string_arg(&args[2], num_iterations)?;
+        // band (index 2) only exists in the 4+-arg overloads; the 3-arg overload
+        // leaves it implicit. stat is at index 2 (3-arg) or 3 (4+-arg).
+        let has_band = self.arg_count >= 4;
+        let stat_idx = if has_band { 3 } else { 2 };
+        let stat_array = expand_string_arg(&args[stat_idx], num_iterations)?;
         let mut stat_iter = stat_array.iter();
-        let options_array = self
-            .with_options
-            .then(|| expand_string_arg(&args[3], num_iterations))
+
+        let band_array = has_band
+            .then(|| expand_int64_arg(&args[2], num_iterations))
             .transpose()?;
-        let mut options_iter = options_array.as_ref().map(|a| a.iter());
+        let mut band_iter = band_array.as_ref().map(|a| a.iter());
+
+        // all_touched (index 4), exclude_nodata (index 5), lenient (index 6):
+        // read from the column when the overload carries it, else the default.
+        let all_touched_array = expand_flag(
+            args,
+            4,
+            self.arg_count >= 5,
+            DEFAULT_ALL_TOUCHED,
+            num_iterations,
+        )?;
+        let exclude_nodata_array = expand_flag(
+            args,
+            5,
+            self.arg_count >= 6,
+            DEFAULT_EXCLUDE_NODATA,
+            num_iterations,
+        )?;
+        let lenient_array = expand_flag(
+            args,
+            6,
+            self.arg_count >= 7,
+            DEFAULT_LENIENT,
+            num_iterations,
+        )?;
+        let mut all_touched_iter = all_touched_array.iter();
+        let mut exclude_nodata_iter = exclude_nodata_array.iter();
+        let mut lenient_iter = lenient_array.iter();
 
         let mut builder = Float64Builder::with_capacity(num_iterations);
         let mut scratch: Vec<f64> = Vec::new();
 
-        // The executor only sees (raster, zone); the stat/options columns are
-        // advanced in lockstep below.
+        // The executor only sees (raster, zone); the option columns are advanced
+        // in lockstep below.
         let exec_arg_types = [arg_types[0].clone(), arg_types[1].clone()];
         let exec_args = [args[0].clone(), args[1].clone()];
         let executor =
@@ -265,8 +330,15 @@ impl SedonaScalarKernel for RsZonalStats {
             with_crs_engine(config_options, |engine| {
                 executor.execute_raster_wkb_crs_void(|raster_opt, wkb_opt, geom_crs| {
                     let stat_str = stat_iter.next().flatten();
-                    let options_str = options_iter.as_mut().and_then(|i| i.next().flatten());
-                    let options = ZonalStatsOptions::parse(options_str)?;
+                    let Some(params) = next_params(
+                        &mut band_iter,
+                        &mut all_touched_iter,
+                        &mut exclude_nodata_iter,
+                        &mut lenient_iter,
+                    ) else {
+                        builder.append_null();
+                        return Ok(());
+                    };
 
                     // A NULL stat, raster, or zone propagates to a NULL row.
                     let (Some(stat_str), Some(raster), Some(wkb)) = (stat_str, raster_opt, wkb_opt)
@@ -293,14 +365,14 @@ impl SedonaScalarKernel for RsZonalStats {
                             "Cannot operate on geometry and raster: geometry has no CRS but raster does"
                         ),
                     };
-                    match compute_zonal_stats(gdal, raster, &geom_wkb, &options, &mut scratch)? {
+                    match compute_zonal_stats(gdal, raster, &geom_wkb, &params, &mut scratch)? {
                         Some(stats) => match stats.get(stat_type) {
                             Some(value) => builder.append_value(value),
                             None => builder.append_null(),
                         },
                         // The zone does not intersect the raster: NULL when
                         // lenient (the default), an error otherwise.
-                        None if options.lenient => builder.append_null(),
+                        None if params.lenient => builder.append_null(),
                         None => return no_intersection_err(),
                     }
                     Ok(())
@@ -317,16 +389,18 @@ impl SedonaScalarKernel for RsZonalStats {
 // RS_ZonalStatsAll
 // =============================================================================
 
-/// `RS_ZonalStatsAll(raster, zone[, options])` — every statistic as a struct
-/// with fields `count, sum, mean, median, mode, stddev, variance, min, max`.
+/// `RS_ZonalStatsAll` — every statistic as a struct with fields `count, sum,
+/// mean, median, mode, stddev, variance, min, max`. See the module docs for the
+/// full positional overload ladder.
 pub fn rs_zonal_stats_all_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "rs_zonalstatsall",
         vec![
-            Arc::new(RsZonalStatsAll {
-                with_options: false,
-            }),
-            Arc::new(RsZonalStatsAll { with_options: true }),
+            Arc::new(RsZonalStatsAll { arg_count: 2 }), // (raster, zone)
+            Arc::new(RsZonalStatsAll { arg_count: 3 }), // (raster, zone, band)
+            Arc::new(RsZonalStatsAll { arg_count: 4 }), // + all_touched
+            Arc::new(RsZonalStatsAll { arg_count: 5 }), // + exclude_nodata
+            Arc::new(RsZonalStatsAll { arg_count: 6 }), // + lenient
         ],
         Volatility::Immutable,
     )
@@ -335,17 +409,30 @@ pub fn rs_zonal_stats_all_udf() -> SedonaScalarUDF {
 
 #[derive(Debug)]
 struct RsZonalStatsAll {
-    with_options: bool,
+    /// Number of arguments in the matched signature (2..=6).
+    arg_count: usize,
 }
 
 impl SedonaScalarKernel for RsZonalStatsAll {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
+        // Argument order mirrors Sedona Spark: (raster, zone, [band,
+        // [all_touched, [exclude_nodata, [lenient]]]]). The 2-arg overload omits
+        // band; the 3+-arg overloads carry it at index 2.
         let mut matchers = vec![
             ArgMatcher::is_raster(),
             ArgMatcher::is_geometry_or_geography(),
         ];
-        if self.with_options {
-            matchers.push(ArgMatcher::is_string());
+        if self.arg_count >= 3 {
+            matchers.push(ArgMatcher::is_integer()); // band
+        }
+        for _ in 4..=self.arg_count {
+            matchers.push(ArgMatcher::is_boolean()); // all_touched, exclude_nodata, lenient
+        }
+        if self.arg_count < 2 || self.arg_count > 6 {
+            return sedona_internal_err!(
+                "RS_ZonalStatsAll: unexpected arg_count {}",
+                self.arg_count
+            );
         }
         let matcher = ArgMatcher::new(matchers, SedonaType::Arrow(zonal_stats_struct_type()));
         matcher.match_args(args)
@@ -369,12 +456,38 @@ impl SedonaScalarKernel for RsZonalStatsAll {
     ) -> Result<ColumnarValue> {
         let num_iterations = RasterExecutor::num_iterations_over(args);
 
-        // options (when present) is at index 2.
-        let options_array = self
-            .with_options
-            .then(|| expand_string_arg(&args[2], num_iterations))
+        // band (index 2) only exists in the 3+-arg overloads; the 2-arg overload
+        // leaves it implicit. all_touched (index 3), exclude_nodata (index 4),
+        // and lenient (index 5) follow.
+        let band_array = (self.arg_count >= 3)
+            .then(|| expand_int64_arg(&args[2], num_iterations))
             .transpose()?;
-        let mut options_iter = options_array.as_ref().map(|a| a.iter());
+        let mut band_iter = band_array.as_ref().map(|a| a.iter());
+
+        let all_touched_array = expand_flag(
+            args,
+            3,
+            self.arg_count >= 4,
+            DEFAULT_ALL_TOUCHED,
+            num_iterations,
+        )?;
+        let exclude_nodata_array = expand_flag(
+            args,
+            4,
+            self.arg_count >= 5,
+            DEFAULT_EXCLUDE_NODATA,
+            num_iterations,
+        )?;
+        let lenient_array = expand_flag(
+            args,
+            5,
+            self.arg_count >= 6,
+            DEFAULT_LENIENT,
+            num_iterations,
+        )?;
+        let mut all_touched_iter = all_touched_array.iter();
+        let mut exclude_nodata_iter = exclude_nodata_array.iter();
+        let mut lenient_iter = lenient_array.iter();
 
         let mut builder = StructBuilder::from_fields(zonal_stats_struct_fields(), num_iterations);
         let mut scratch: Vec<f64> = Vec::new();
@@ -388,8 +501,15 @@ impl SedonaScalarKernel for RsZonalStatsAll {
             configure_thread_local_options(gdal, config_options)?;
             with_crs_engine(config_options, |engine| {
                 executor.execute_raster_wkb_crs_void(|raster_opt, wkb_opt, geom_crs| {
-                    let options_str = options_iter.as_mut().and_then(|i| i.next().flatten());
-                    let options = ZonalStatsOptions::parse(options_str)?;
+                    let Some(params) = next_params(
+                        &mut band_iter,
+                        &mut all_touched_iter,
+                        &mut exclude_nodata_iter,
+                        &mut lenient_iter,
+                    ) else {
+                        append_struct_null(&mut builder);
+                        return Ok(());
+                    };
 
                     let (Some(raster), Some(wkb)) = (raster_opt, wkb_opt) else {
                         append_struct_null(&mut builder);
@@ -409,9 +529,9 @@ impl SedonaScalarKernel for RsZonalStatsAll {
                             "Cannot operate on geometry and raster: geometry has no CRS but raster does"
                         ),
                     };
-                    match compute_zonal_stats(gdal, raster, &geom_wkb, &options, &mut scratch)? {
+                    match compute_zonal_stats(gdal, raster, &geom_wkb, &params, &mut scratch)? {
                         Some(stats) => append_struct_stats(&mut builder, &stats),
-                        None if options.lenient => append_struct_null(&mut builder),
+                        None if params.lenient => append_struct_null(&mut builder),
                         None => return no_intersection_err(),
                     }
                     Ok(())
@@ -518,11 +638,11 @@ fn compute_zonal_stats(
     gdal: &Gdal,
     raster: &RasterRefImpl<'_>,
     geom_wkb: &[u8],
-    options: &ZonalStatsOptions,
+    params: &ZonalStatsParams,
     scratch: &mut Vec<f64>,
 ) -> Result<Option<ZonalStatistics>> {
     let num_bands = raster.num_bands();
-    let band_num = resolve_band(options.band, num_bands)?;
+    let band_num = resolve_band(params.band, num_bands)?;
 
     let band = raster
         .bands()
@@ -566,7 +686,7 @@ fn compute_zonal_stats(
 
     // Rasterize the zone into a window-sized 0/1 mask (moves `geometry`, whose
     // only remaining use is the burn).
-    let mask = rasterize_zone_mask(gdal, geometry, &transform, &window, options.all_touched)?;
+    let mask = rasterize_zone_mask(gdal, geometry, &transform, &window, params.all_touched)?;
 
     // Read the band once (zero-copy borrow) and collect the selected values.
     let nd_buffer = band
@@ -588,7 +708,7 @@ fn compute_zonal_stats(
 
     // Nodata is compared in the band's own byte representation, never through
     // f64 — an Int64/UInt64 nodata beyond 2^53 must not alias a nearby pixel.
-    let nodata = if options.exclude_nodata {
+    let nodata = if params.exclude_nodata {
         band.nodata()
     } else {
         None
@@ -623,7 +743,7 @@ fn resolve_band(band: Option<i64>, num_bands: usize) -> Result<usize> {
                 Ok(1)
             } else {
                 exec_err!(
-                    "RS_ZonalStats: raster has {num_bands} bands; set the \"band\" option to \
+                    "RS_ZonalStats: raster has {num_bands} bands; pass the band argument to \
                      choose one (only a single-band raster may omit it)"
                 )
             }
@@ -881,8 +1001,76 @@ fn compute_mode(values: &[f64]) -> f64 {
 fn no_intersection_err<T>() -> Result<T> {
     exec_err!(
         "RS_ZonalStats: the zone geometry does not intersect the raster; \
-         set the \"lenient\" option to return NULL instead"
+         pass lenient => true to return NULL instead"
     )
+}
+
+/// Advance the option iterators one row (keeping every column in lockstep) and
+/// assemble the resolved params, or return `None` when an explicit-but-NULL
+/// value makes this a NULL output row.
+///
+/// A `band_iter` of `None` is the band-less overload, whose implicit band stays
+/// `None` (resolved to band 1 for a single-band raster, an error otherwise). A
+/// `Some` band iterator carrying a NULL, or any NULL flag, is a NULL row.
+fn next_params<B, F>(
+    band_iter: &mut Option<B>,
+    all_touched_iter: &mut F,
+    exclude_nodata_iter: &mut F,
+    lenient_iter: &mut F,
+) -> Option<ZonalStatsParams>
+where
+    B: Iterator<Item = Option<i64>>,
+    F: Iterator<Item = Option<bool>>,
+{
+    // Advance every iterator first so a NULL-driven early return does not desync
+    // the columns on the next row.
+    let band_cell = band_iter.as_mut().map(|iter| iter.next().flatten());
+    let all_touched = all_touched_iter.next().flatten();
+    let exclude_nodata = exclude_nodata_iter.next().flatten();
+    let lenient = lenient_iter.next().flatten();
+
+    let band = match band_cell {
+        None => None,              // band-less overload: implicit band
+        Some(Some(b)) => Some(b),  // explicit band
+        Some(None) => return None, // explicit NULL band -> NULL row
+    };
+    Some(ZonalStatsParams {
+        band,
+        all_touched: all_touched?,
+        exclude_nodata: exclude_nodata?,
+        lenient: lenient?,
+    })
+}
+
+/// The boolean flag column at `args[index]` when the overload carries it
+/// (`present`), otherwise a constant array of `default`.
+fn expand_flag(
+    args: &[ColumnarValue],
+    index: usize,
+    present: bool,
+    default: bool,
+    num_iterations: usize,
+) -> Result<BooleanArray> {
+    if present {
+        let array = args[index]
+            .clone()
+            .cast_to(&DataType::Boolean, None)?
+            .into_array(num_iterations)?;
+        Ok(as_boolean_array(&array)?.clone())
+    } else {
+        let array = ScalarValue::Boolean(Some(default)).to_array_of_size(num_iterations)?;
+        Ok(as_boolean_array(&array)?.clone())
+    }
+}
+
+/// Cast a column to `Int64` and materialize it so its values can be iterated in
+/// lockstep with the raster/zone rows.
+fn expand_int64_arg(arg: &ColumnarValue, num_iterations: usize) -> Result<Int64Array> {
+    let array = arg
+        .clone()
+        .cast_to(&DataType::Int64, None)?
+        .into_array(num_iterations)?;
+    Ok(as_int64_array(&array)?.clone())
 }
 
 /// Cast a column to `Utf8` and materialize it to a `StringArray` so its values
@@ -892,7 +1080,7 @@ fn expand_string_arg(arg: &ColumnarValue, num_iterations: usize) -> Result<Strin
         .clone()
         .cast_to(&DataType::Utf8, None)?
         .into_array(num_iterations)?;
-    Ok(datafusion_common::cast::as_string_array(&array)?.clone())
+    Ok(as_string_array(&array)?.clone())
 }
 
 #[cfg(test)]
@@ -912,35 +1100,6 @@ mod tests {
         assert_eq!(StatType::from_str("min"), Some(StatType::Min));
         assert_eq!(StatType::from_str("max"), Some(StatType::Max));
         assert_eq!(StatType::from_str("nonsense"), None);
-    }
-
-    #[test]
-    fn options_parse_defaults_and_overrides() {
-        let d = ZonalStatsOptions::parse(None).unwrap();
-        assert_eq!(d.band, None);
-        assert!(!d.all_touched);
-        assert!(d.exclude_nodata);
-        assert!(d.lenient);
-
-        let o = ZonalStatsOptions::parse(Some(
-            r#"{"band": 2, "all_touched": true, "exclude_nodata": false, "lenient": false}"#,
-        ))
-        .unwrap();
-        assert_eq!(o.band, Some(2));
-        assert!(o.all_touched);
-        assert!(!o.exclude_nodata);
-        assert!(!o.lenient);
-
-        // A partial object keeps the defaults for the omitted fields.
-        let p = ZonalStatsOptions::parse(Some(r#"{"band": 3}"#)).unwrap();
-        assert_eq!(p.band, Some(3));
-        assert!(p.exclude_nodata);
-    }
-
-    #[test]
-    fn options_parse_rejects_unknown_field() {
-        let err = ZonalStatsOptions::parse(Some(r#"{"bnad": 1}"#)).unwrap_err();
-        assert!(err.to_string().contains("invalid options JSON"), "{err}");
     }
 
     #[test]
@@ -1037,7 +1196,6 @@ mod udf_tests {
     use arrow_array::cast::AsArray;
     use arrow_array::types::{Float64Type, Int64Type};
     use arrow_array::{Array, StructArray};
-    use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use sedona_proj::transform::{with_global_proj_engine, LazyProjEngine};
     use sedona_schema::crs::deserialize_crs;
@@ -1071,71 +1229,67 @@ mod udf_tests {
     /// {1, 2, 5, 6}.
     const LEFT_HALF: &str = "POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))";
 
-    fn stats_arg_types(with_options: bool) -> Vec<SedonaType> {
-        let mut t = vec![
-            RASTER,
-            SedonaType::Wkb(Edges::Planar, None),
-            SedonaType::Arrow(DataType::Utf8),
-        ];
-        if with_options {
-            t.push(SedonaType::Arrow(DataType::Utf8));
-        }
-        t
+    // ScalarValue constructors for the positional trailing arguments, so a call
+    // reads close to its Sedona Spark SQL form: `[band(1), stat("sum"),
+    // flag(true), flag(false)]` is `(raster, zone, 1, 'sum', true, false)`.
+    fn band(b: i64) -> ScalarValue {
+        ScalarValue::Int64(Some(b))
+    }
+    fn stat(s: &str) -> ScalarValue {
+        ScalarValue::Utf8(Some(s.to_string()))
+    }
+    fn flag(b: bool) -> ScalarValue {
+        ScalarValue::Boolean(Some(b))
     }
 
-    /// Invoke RS_ZonalStats on a scalar raster + zone, returning the raw result
-    /// so both the value and error paths are testable.
-    fn call_stats(
+    /// Invoke a zonal-stats UDF on a scalar raster + zone with the given
+    /// positional trailing arguments. Routing through the UDF (rather than a
+    /// hand-picked kernel) exercises overload selection by argument count and
+    /// type; the raw `ScalarValue` is returned so both value and error paths are
+    /// testable.
+    fn invoke_udf(
+        udf: SedonaScalarUDF,
         spec: &RasterSpec,
-        wkt: &str,
-        stat: &str,
-        options: Option<&str>,
-    ) -> Result<ColumnarValue> {
-        let kernel = RsZonalStats {
-            with_options: options.is_some(),
-        };
-        let mut args = vec![
-            ColumnarValue::Scalar(spec.scalar()),
-            ColumnarValue::Scalar(ScalarValue::Binary(Some(make_wkb(wkt)))),
-            ColumnarValue::Scalar(ScalarValue::Utf8(Some(stat.to_string()))),
-        ];
-        if let Some(o) = options {
-            args.push(ColumnarValue::Scalar(ScalarValue::Utf8(Some(
-                o.to_string(),
-            ))));
-        }
-        kernel.invoke_batch(&stats_arg_types(options.is_some()), &args)
-    }
-
-    /// Invoke RS_ZonalStatsAll on a scalar raster + zone.
-    fn call_all(spec: &RasterSpec, wkt: &str, options: Option<&str>) -> Result<ColumnarValue> {
-        let kernel = RsZonalStatsAll {
-            with_options: options.is_some(),
-        };
+        geom: ScalarValue,
+        trailing: Vec<ScalarValue>,
+    ) -> Result<ScalarValue> {
         let mut arg_types = vec![RASTER, SedonaType::Wkb(Edges::Planar, None)];
         let mut args = vec![
             ColumnarValue::Scalar(spec.scalar()),
-            ColumnarValue::Scalar(ScalarValue::Binary(Some(make_wkb(wkt)))),
+            ColumnarValue::Scalar(geom),
         ];
-        if let Some(o) = options {
-            arg_types.push(SedonaType::Arrow(DataType::Utf8));
-            args.push(ColumnarValue::Scalar(ScalarValue::Utf8(Some(
-                o.to_string(),
-            ))));
+        for value in trailing {
+            arg_types.push(SedonaType::Arrow(value.data_type()));
+            args.push(ColumnarValue::Scalar(value));
         }
-        kernel.invoke_batch(&arg_types, &args)
+        match ScalarUdfTester::new(udf.into(), arg_types).invoke(args)? {
+            ColumnarValue::Scalar(s) => Ok(s),
+            other => panic!("expected a scalar result, got {other:?}"),
+        }
     }
 
-    fn cv_f64(cv: ColumnarValue) -> Option<f64> {
-        match cv {
-            ColumnarValue::Scalar(ScalarValue::Float64(v)) => v,
+    /// RS_ZonalStats over a scalar raster + zone with the given trailing args.
+    fn call_stats(spec: &RasterSpec, wkt: &str, trailing: Vec<ScalarValue>) -> Result<ScalarValue> {
+        let geom = ScalarValue::Binary(Some(make_wkb(wkt)));
+        invoke_udf(rs_zonal_stats_udf(), spec, geom, trailing)
+    }
+
+    /// RS_ZonalStatsAll over a scalar raster + zone with the given trailing args.
+    fn call_all(spec: &RasterSpec, wkt: &str, trailing: Vec<ScalarValue>) -> Result<ScalarValue> {
+        let geom = ScalarValue::Binary(Some(make_wkb(wkt)));
+        invoke_udf(rs_zonal_stats_all_udf(), spec, geom, trailing)
+    }
+
+    fn cv_f64(s: ScalarValue) -> Option<f64> {
+        match s {
+            ScalarValue::Float64(v) => v,
             other => panic!("expected a Float64 scalar, got {other:?}"),
         }
     }
 
-    fn cv_struct(cv: ColumnarValue) -> Arc<StructArray> {
-        match cv {
-            ColumnarValue::Scalar(ScalarValue::Struct(s)) => s,
+    fn cv_struct(s: ScalarValue) -> Arc<StructArray> {
+        match s {
+            ScalarValue::Struct(s) => s,
             other => panic!("expected a struct scalar, got {other:?}"),
         }
     }
@@ -1154,41 +1308,42 @@ mod udf_tests {
     fn single_stats_match_hand_computed_values() {
         let spec = small_raster();
         // Selected pixels {1, 2, 5, 6}: exact for the integer-selection stats.
+        // The 3-arg overload leaves the band implicit (unambiguous single band).
         assert_eq!(
-            cv_f64(call_stats(&spec, LEFT_HALF, "count", None).unwrap()),
+            cv_f64(call_stats(&spec, LEFT_HALF, vec![stat("count")]).unwrap()),
             Some(4.0)
         );
         assert_eq!(
-            cv_f64(call_stats(&spec, LEFT_HALF, "sum", None).unwrap()),
+            cv_f64(call_stats(&spec, LEFT_HALF, vec![stat("sum")]).unwrap()),
             Some(14.0)
         );
         assert_eq!(
-            cv_f64(call_stats(&spec, LEFT_HALF, "mean", None).unwrap()),
+            cv_f64(call_stats(&spec, LEFT_HALF, vec![stat("mean")]).unwrap()),
             Some(3.5)
         );
         assert_eq!(
-            cv_f64(call_stats(&spec, LEFT_HALF, "min", None).unwrap()),
+            cv_f64(call_stats(&spec, LEFT_HALF, vec![stat("min")]).unwrap()),
             Some(1.0)
         );
         assert_eq!(
-            cv_f64(call_stats(&spec, LEFT_HALF, "max", None).unwrap()),
+            cv_f64(call_stats(&spec, LEFT_HALF, vec![stat("max")]).unwrap()),
             Some(6.0)
         );
         assert_eq!(
-            cv_f64(call_stats(&spec, LEFT_HALF, "median", None).unwrap()),
+            cv_f64(call_stats(&spec, LEFT_HALF, vec![stat("median")]).unwrap()),
             Some(3.5)
         );
         // All four values are unique, so every one is a mode; the tie resolves
         // to the largest (6), matching Sedona Spark.
         assert_eq!(
-            cv_f64(call_stats(&spec, LEFT_HALF, "mode", None).unwrap()),
+            cv_f64(call_stats(&spec, LEFT_HALF, vec![stat("mode")]).unwrap()),
             Some(6.0)
         );
 
         // Sample (n-1) variance / stddev: float accumulation, so approximate.
-        let var = cv_f64(call_stats(&spec, LEFT_HALF, "variance", None).unwrap()).unwrap();
+        let var = cv_f64(call_stats(&spec, LEFT_HALF, vec![stat("variance")]).unwrap()).unwrap();
         assert!((var - 17.0 / 3.0).abs() < 1e-9, "variance was {var}");
-        let sd = cv_f64(call_stats(&spec, LEFT_HALF, "stddev", None).unwrap()).unwrap();
+        let sd = cv_f64(call_stats(&spec, LEFT_HALF, vec![stat("stddev")]).unwrap()).unwrap();
         assert!(
             (sd - (17.0_f64 / 3.0).sqrt()).abs() < 1e-9,
             "stddev was {sd}"
@@ -1197,7 +1352,8 @@ mod udf_tests {
 
     #[test]
     fn all_returns_full_struct() {
-        let s = cv_struct(call_all(&small_raster(), LEFT_HALF, None).unwrap());
+        // The 2-arg overload leaves the band implicit.
+        let s = cv_struct(call_all(&small_raster(), LEFT_HALF, vec![]).unwrap());
         assert!(!s.is_null(0), "the struct itself is valid");
         assert_eq!(i64_field(&s, COUNT), Some(4));
         assert_eq!(f64_field(&s, SUM), Some(14.0));
@@ -1211,25 +1367,57 @@ mod udf_tests {
     }
 
     #[test]
+    fn overloads_dispatch_by_arg_count() {
+        // The 3-arg (raster, zone, stat) and 4-arg (raster, zone, band, stat)
+        // overloads resolve by argument count and by the type at position 2 (a
+        // stat string vs. a band integer). On a single-band raster both compute
+        // the same mean over {1, 2, 5, 6}.
+        let spec = small_raster();
+        assert_eq!(
+            cv_f64(call_stats(&spec, LEFT_HALF, vec![stat("mean")]).unwrap()),
+            Some(3.5)
+        );
+        assert_eq!(
+            cv_f64(call_stats(&spec, LEFT_HALF, vec![band(1), stat("mean")]).unwrap()),
+            Some(3.5)
+        );
+        // RS_ZonalStatsAll: the 2-arg and 3-arg (band) overloads agree too.
+        assert_eq!(
+            i64_field(
+                &cv_struct(call_all(&spec, LEFT_HALF, vec![]).unwrap()),
+                COUNT
+            ),
+            Some(4)
+        );
+        assert_eq!(
+            i64_field(
+                &cv_struct(call_all(&spec, LEFT_HALF, vec![band(1)]).unwrap()),
+                COUNT
+            ),
+            Some(4)
+        );
+    }
+
+    #[test]
     fn zone_that_selects_no_pixel_centre_is_count_zero_not_null() {
         // A tiny zone inside the top-left pixel (centre 0.5, 1.5) but not
         // covering that centre: with all_touched off, no pixel is selected. The
         // zone still overlaps the raster extent, so count is 0 (not NULL).
         let tiny = "POLYGON((0.1 1.6, 0.4 1.6, 0.4 1.9, 0.1 1.9, 0.1 1.6))";
         assert_eq!(
-            cv_f64(call_stats(&small_raster(), tiny, "count", None).unwrap()),
+            cv_f64(call_stats(&small_raster(), tiny, vec![stat("count")]).unwrap()),
             Some(0.0)
         );
         assert_eq!(
-            cv_f64(call_stats(&small_raster(), tiny, "sum", None).unwrap()),
+            cv_f64(call_stats(&small_raster(), tiny, vec![stat("sum")]).unwrap()),
             None
         );
         assert_eq!(
-            cv_f64(call_stats(&small_raster(), tiny, "mean", None).unwrap()),
+            cv_f64(call_stats(&small_raster(), tiny, vec![stat("mean")]).unwrap()),
             None
         );
 
-        let s = cv_struct(call_all(&small_raster(), tiny, None).unwrap());
+        let s = cv_struct(call_all(&small_raster(), tiny, vec![]).unwrap());
         assert!(
             !s.is_null(0),
             "an intersecting-but-empty zone is a valid row"
@@ -1242,15 +1430,30 @@ mod udf_tests {
     #[test]
     fn all_touched_selects_the_touched_pixel() {
         // The same tiny zone, with all_touched, burns the pixel it lies inside
-        // (value 1) even though it misses the centre.
+        // (value 1) even though it misses the centre. all_touched first appears
+        // in the 5-arg overload (raster, zone, band, stat, all_touched), so the
+        // band must be named to reach it.
         let tiny = "POLYGON((0.1 1.6, 0.4 1.6, 0.4 1.9, 0.1 1.9, 0.1 1.6))";
-        let opts = r#"{"all_touched": true}"#;
         assert_eq!(
-            cv_f64(call_stats(&small_raster(), tiny, "count", Some(opts)).unwrap()),
+            cv_f64(
+                call_stats(
+                    &small_raster(),
+                    tiny,
+                    vec![band(1), stat("count"), flag(true)]
+                )
+                .unwrap()
+            ),
             Some(1.0)
         );
         assert_eq!(
-            cv_f64(call_stats(&small_raster(), tiny, "sum", Some(opts)).unwrap()),
+            cv_f64(
+                call_stats(
+                    &small_raster(),
+                    tiny,
+                    vec![band(1), stat("sum"), flag(true)]
+                )
+                .unwrap()
+            ),
             Some(1.0)
         );
     }
@@ -1260,22 +1463,34 @@ mod udf_tests {
         let far = "POLYGON((100 100, 101 100, 101 101, 100 101, 100 100))";
         // Lenient (default): the whole value is NULL, including count.
         assert_eq!(
-            cv_f64(call_stats(&small_raster(), far, "count", None).unwrap()),
+            cv_f64(call_stats(&small_raster(), far, vec![stat("count")]).unwrap()),
             None
         );
-        assert!(cv_struct(call_all(&small_raster(), far, None).unwrap()).is_null(0));
+        assert!(cv_struct(call_all(&small_raster(), far, vec![]).unwrap()).is_null(0));
 
-        // Strict: both functions error.
-        let err = call_stats(&small_raster(), far, "count", Some(r#"{"lenient": false}"#))
-            .unwrap_err()
-            .to_string();
+        // Strict (lenient => false): both functions error. RS_ZonalStats reaches
+        // lenient only in its 7-arg overload, whose trailing flags are
+        // (all_touched, exclude_nodata, lenient).
+        let err = call_stats(
+            &small_raster(),
+            far,
+            vec![band(1), stat("count"), flag(false), flag(true), flag(false)],
+        )
+        .unwrap_err()
+        .to_string();
         assert!(
             err.contains("does not intersect"),
             "unexpected error: {err}"
         );
-        let err = call_all(&small_raster(), far, Some(r#"{"lenient": false}"#))
-            .unwrap_err()
-            .to_string();
+        // RS_ZonalStatsAll's 6-arg overload trails (all_touched, exclude_nodata,
+        // lenient) after the band.
+        let err = call_all(
+            &small_raster(),
+            far,
+            vec![band(1), flag(false), flag(true), flag(false)],
+        )
+        .unwrap_err()
+        .to_string();
         assert!(
             err.contains("does not intersect"),
             "unexpected error: {err}"
@@ -1294,17 +1509,16 @@ mod udf_tests {
 
         // Lenient (default): NULL, not count 0.
         assert_eq!(
-            cv_f64(call_stats(&small_raster(), disjoint, "count", None).unwrap()),
+            cv_f64(call_stats(&small_raster(), disjoint, vec![stat("count")]).unwrap()),
             None
         );
-        assert!(cv_struct(call_all(&small_raster(), disjoint, None).unwrap()).is_null(0));
+        assert!(cv_struct(call_all(&small_raster(), disjoint, vec![]).unwrap()).is_null(0));
 
-        // Strict: both functions error.
+        // Strict (lenient => false): both functions error.
         let err = call_stats(
             &small_raster(),
             disjoint,
-            "count",
-            Some(r#"{"lenient": false}"#),
+            vec![band(1), stat("count"), flag(false), flag(true), flag(false)],
         )
         .unwrap_err()
         .to_string();
@@ -1312,9 +1526,13 @@ mod udf_tests {
             err.contains("does not intersect"),
             "unexpected error: {err}"
         );
-        let err = call_all(&small_raster(), disjoint, Some(r#"{"lenient": false}"#))
-            .unwrap_err()
-            .to_string();
+        let err = call_all(
+            &small_raster(),
+            disjoint,
+            vec![band(1), flag(false), flag(true), flag(false)],
+        )
+        .unwrap_err()
+        .to_string();
         assert!(
             err.contains("does not intersect"),
             "unexpected error: {err}"
@@ -1332,21 +1550,36 @@ mod udf_tests {
             .transform([0.0, 1.0, 0.0, 2.0, 0.0, -1.0]);
         // Default excludes the nodata pixel: {10, 20, 30}.
         assert_eq!(
-            cv_f64(call_stats(&spec, LEFT_HALF_FULL, "count", None).unwrap()),
+            cv_f64(call_stats(&spec, LEFT_HALF_FULL, vec![stat("count")]).unwrap()),
             Some(3.0)
         );
         assert_eq!(
-            cv_f64(call_stats(&spec, LEFT_HALF_FULL, "sum", None).unwrap()),
+            cv_f64(call_stats(&spec, LEFT_HALF_FULL, vec![stat("sum")]).unwrap()),
             Some(60.0)
         );
-        // exclude_nodata=false keeps it: {10, 255, 20, 30}.
-        let keep = r#"{"exclude_nodata": false}"#;
+        // exclude_nodata => false keeps it: {10, 255, 20, 30}. It first appears
+        // in the 6-arg overload, whose trailing flags are (all_touched,
+        // exclude_nodata).
         assert_eq!(
-            cv_f64(call_stats(&spec, LEFT_HALF_FULL, "count", Some(keep)).unwrap()),
+            cv_f64(
+                call_stats(
+                    &spec,
+                    LEFT_HALF_FULL,
+                    vec![band(1), stat("count"), flag(false), flag(false)]
+                )
+                .unwrap()
+            ),
             Some(4.0)
         );
         assert_eq!(
-            cv_f64(call_stats(&spec, LEFT_HALF_FULL, "sum", Some(keep)).unwrap()),
+            cv_f64(
+                call_stats(
+                    &spec,
+                    LEFT_HALF_FULL,
+                    vec![band(1), stat("sum"), flag(false), flag(false)]
+                )
+                .unwrap()
+            ),
             Some(315.0)
         );
     }
@@ -1355,28 +1588,35 @@ mod udf_tests {
     const LEFT_HALF_FULL: &str = "POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))";
 
     #[test]
-    fn multiband_raster_requires_the_band_option() {
+    fn multiband_raster_requires_the_band_argument() {
         let spec = RasterSpec::d2(2, 2)
             .band_values(&[1u8, 2, 3, 4])
             .band_values(&[10u8, 20, 30, 40])
             .crs(None)
             .transform([0.0, 1.0, 0.0, 2.0, 0.0, -1.0]);
-        // Omitting the band on a multiband raster errors rather than defaulting.
-        let err = call_stats(&spec, LEFT_HALF_FULL, "sum", None)
+        // Omitting the band on a multiband raster errors rather than defaulting
+        // to band 1 (this deliberately diverges from Sedona Spark). The 3-arg
+        // RS_ZonalStats overload and the 2-arg RS_ZonalStatsAll overload both
+        // leave the band implicit.
+        let err = call_stats(&spec, LEFT_HALF_FULL, vec![stat("sum")])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("2 bands"), "unexpected error: {err}");
+        let err = call_all(&spec, LEFT_HALF_FULL, vec![])
             .unwrap_err()
             .to_string();
         assert!(err.contains("2 bands"), "unexpected error: {err}");
         // Naming the band selects it (band 1 sums to 10, band 2 to 100).
         assert_eq!(
-            cv_f64(call_stats(&spec, LEFT_HALF_FULL, "sum", Some(r#"{"band": 1}"#)).unwrap()),
+            cv_f64(call_stats(&spec, LEFT_HALF_FULL, vec![band(1), stat("sum")]).unwrap()),
             Some(10.0)
         );
         assert_eq!(
-            cv_f64(call_stats(&spec, LEFT_HALF_FULL, "sum", Some(r#"{"band": 2}"#)).unwrap()),
+            cv_f64(call_stats(&spec, LEFT_HALF_FULL, vec![band(2), stat("sum")]).unwrap()),
             Some(100.0)
         );
         // An out-of-range band errors.
-        let err = call_stats(&spec, LEFT_HALF_FULL, "sum", Some(r#"{"band": 3}"#))
+        let err = call_stats(&spec, LEFT_HALF_FULL, vec![band(3), stat("sum")])
             .unwrap_err()
             .to_string();
         assert!(err.contains("out of range"), "unexpected error: {err}");
@@ -1384,7 +1624,7 @@ mod udf_tests {
 
     #[test]
     fn unknown_statistic_errors() {
-        let err = call_stats(&small_raster(), LEFT_HALF, "bogus", None)
+        let err = call_stats(&small_raster(), LEFT_HALF, vec![stat("bogus")])
             .unwrap_err()
             .to_string();
         assert!(err.contains("unknown statistic"), "unexpected error: {err}");
@@ -1392,34 +1632,20 @@ mod udf_tests {
 
     #[test]
     fn null_raster_or_zone_yields_null() {
-        // A NULL zone geometry propagates to a NULL result.
-        let kernel = RsZonalStats {
-            with_options: false,
-        };
-        let result = kernel
-            .invoke_batch(
-                &stats_arg_types(false),
-                &[
-                    ColumnarValue::Scalar(small_raster().scalar()),
-                    ColumnarValue::Scalar(ScalarValue::Binary(None)),
-                    ColumnarValue::Scalar(ScalarValue::Utf8(Some("count".to_string()))),
-                ],
-            )
-            .unwrap();
-        assert_eq!(cv_f64(result), None);
+        // A NULL zone geometry propagates to a NULL result (3-arg overload).
+        let null_zone = invoke_udf(
+            rs_zonal_stats_udf(),
+            &small_raster(),
+            ScalarValue::Binary(None),
+            vec![stat("count")],
+        )
+        .unwrap();
+        assert_eq!(cv_f64(null_zone), None);
 
         // A NULL statistic name also yields NULL.
-        let result = kernel
-            .invoke_batch(
-                &stats_arg_types(false),
-                &[
-                    ColumnarValue::Scalar(small_raster().scalar()),
-                    ColumnarValue::Scalar(ScalarValue::Binary(Some(make_wkb(LEFT_HALF)))),
-                    ColumnarValue::Scalar(ScalarValue::Utf8(None)),
-                ],
-            )
-            .unwrap();
-        assert_eq!(cv_f64(result), None);
+        let null_stat =
+            call_stats(&small_raster(), LEFT_HALF, vec![ScalarValue::Utf8(None)]).unwrap();
+        assert_eq!(cv_f64(null_stat), None);
     }
 
     #[test]

@@ -6259,8 +6259,6 @@ dependencies = [
  "sedona-raster-functions",
  "sedona-schema",
  "sedona-testing",
- "serde",
- "serde_json",
  "tempfile",
  "tokio",
 ]
