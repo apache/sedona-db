@@ -27,6 +27,7 @@ pixels there, apache/sedona#3111). Zones that select no pixels are not
 compared here.
 """
 
+import pyarrow as pa
 import pytest
 
 from sedonadb.raster_testing import (
@@ -125,3 +126,84 @@ def test_rs_zonalstats_excludes_nodata(subject, comparator, tmp_path, stat):
     got = subject.zonal_stats(tiff, GEOM_RECT, stat=stat)
     expected = comparator.zonal_stats(tiff, GEOM_RECT, stat=stat)
     assert got == pytest.approx(expected, rel=1e-9), stat
+
+
+def _invoke_zonalstats(con, tiff, wkt, *, all_stats, options=None):
+    """Invoke RS_ZonalStats ('sum') or RS_ZonalStatsAll over a one-row table
+    and return the Arrow result.
+
+    Arguments travel as table columns so the kernel runs its real array path
+    (literals constant-fold). The argument surface — `(raster, zone, stat,
+    options)` for RS_ZonalStats and `(raster, zone, options)` for
+    RS_ZonalStatsAll, with `band` inside the JSON `options` — mirrors the
+    RS_ZonalStats function tests. These invoke the subject (SedonaDB) directly
+    because the harness `zonal_stats` op exposes only a single scalar statistic,
+    not the all-stats struct or the band-unspecified path.
+    """
+    columns = {
+        "path": pa.array([str(tiff)], pa.utf8()),
+        "wkt": pa.array([wkt], pa.utf8()),
+    }
+    if not all_stats:
+        columns["stat"] = pa.array(["sum"], pa.utf8())
+    if options is not None:
+        columns["options"] = pa.array([options], pa.utf8())
+    df = con.create_data_frame(pa.table(columns))
+    raster = df.path.funcs.rs_frompath()
+    geom = con.funcs.st_geomfromtext(df.wkt)
+    tail = [df.options] if options is not None else []
+    if all_stats:
+        expr = raster.funcs.rs_zonalstatsall(geom, *tail)
+    else:
+        expr = raster.funcs.rs_zonalstats(geom, df.stat, *tail)
+    return df.select(r=expr).to_arrow_table()
+
+
+@pytest.mark.parametrize(
+    "all_stats", [False, True], ids=["RS_ZonalStats", "RS_ZonalStatsAll"]
+)
+def test_multiband_raster_requires_band_option(con, tmp_path, all_stats):
+    """On a multiband raster with no band chosen, SedonaDB raises rather than
+    reducing an arbitrary band.
+
+    Sedona Spark defaults to band 1 here (the documented divergence); asserting
+    the raise pins SedonaDB's stricter contract — an ambiguous multiband
+    selection is an error, not a silent band-1 pick.
+
+    This is a subject-error case (the parity subject itself raises), so a plain
+    `pytest.raises` on the subject is the right shape; it does not go through the
+    comparator/deviation ledger. A ledger-integrated "subject_error" Deviation
+    kind that also captured the Spark band-1 default declaratively would be a
+    possible future enhancement.
+    """
+    tiff = tmp_path / "multiband.tif"
+    write_geotiff(
+        tiff,
+        random_raster_data("float64", bands=2, height=HEIGHT, width=WIDTH),
+        gdal_transform=GDAL_TRANSFORM,
+    )
+    # GEOM_RECT intersects the raster, so band resolution — not a
+    # no-intersection short-circuit — is what fails.
+    with pytest.raises(Exception, match="option to choose one"):
+        _invoke_zonalstats(con, tiff, GEOM_RECT, all_stats=all_stats)
+
+
+def test_zonalstatsall_count_field_is_int64(con, tmp_path):
+    """RS_ZonalStatsAll returns `count` as an Int64 pixel count.
+
+    Sedona Spark returns a uniform `Double[]` for every statistic, so its count
+    is a floating-point value; SedonaDB keeps count as an integer. Pinning the
+    Arrow struct field type guards that contract (the rest of the struct is
+    Float64).
+    """
+    tiff = tmp_path / "singleband.tif"
+    write_geotiff(
+        tiff,
+        random_raster_data("float64", bands=1, height=HEIGHT, width=WIDTH),
+        gdal_transform=GDAL_TRANSFORM,
+    )
+    table = _invoke_zonalstats(
+        con, tiff, GEOM_RECT, all_stats=True, options='{"band": 1}'
+    )
+    struct_type = table.schema.field("r").type
+    assert struct_type.field("count").type == pa.int64()

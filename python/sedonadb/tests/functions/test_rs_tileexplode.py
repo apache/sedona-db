@@ -22,6 +22,7 @@ transform, keep all bands and the band nodata, and edge tiles keep their
 partial size (no nodata padding). The 4x4 case makes both dimensions ragged
 on the 7x6 fixture; 7x6 is the identity single tile."""
 
+import pyarrow as pa
 import pytest
 
 from sedonadb.raster_testing import (
@@ -66,3 +67,33 @@ def test_rs_tileexplode_matches_comparators(
     assert [(x, y) for x, y, _ in got] == [(x, y) for x, y, _ in expected]
     for (x, y, got_tile), (_, _, expected_tile) in zip(got, expected):
         assert_decoded_equal(got_tile, expected_tile, context=(x, y))
+
+
+def test_nodata_requires_pad_with_nodata(con, tmp_path):
+    """A `nodata` fill given without `pad_with_nodata` raises in SedonaDB.
+
+    Sedona Spark silently ignores `nodata` when padding is off (the documented
+    divergence); asserting the raise pins SedonaDB's stricter contract — an
+    option that would never be applied is an error, not a no-op.
+
+    This is a subject-error case (the parity subject itself raises), so a plain
+    `pytest.raises` on the subject is the right shape; it does not go through the
+    comparator/deviation ledger. A ledger-integrated "subject_error" Deviation
+    kind that also captured the Spark silent-ignore behavior declaratively would
+    be a possible future enhancement.
+
+    The options argument is a JSON object matching the RS_TileExplode function
+    surface (`df.rast.funcs.rs_tileexplode(w, h, options)`); the raster travels
+    as a table column so the kernel runs its real array path.
+    """
+    tiff = tmp_path / "tiles.tif"
+    write_geotiff(
+        tiff,
+        random_raster_data("uint8", bands=3, height=HEIGHT, width=WIDTH),
+        gdal_transform=GDAL_TRANSFORM,
+        nodata=200.0,
+    )
+    df = con.create_data_frame(pa.table({"path": pa.array([str(tiff)], pa.utf8())}))
+    tiles = df.path.funcs.rs_frompath().funcs.rs_tileexplode(4, 4, '{"nodata": 0}')
+    with pytest.raises(Exception, match="only meaningful with pad_with_nodata"):
+        df.select(tiles=tiles).to_arrow_table()
