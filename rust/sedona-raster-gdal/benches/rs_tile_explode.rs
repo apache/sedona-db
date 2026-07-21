@@ -34,7 +34,7 @@
 
 use std::sync::Arc;
 
-use arrow_array::{ArrayRef, Int32Array, StringArray};
+use arrow_array::{ArrayRef, BooleanArray, Float64Array, Int32Array};
 use arrow_schema::DataType;
 use criterion::{criterion_group, criterion_main, Criterion};
 use datafusion_expr::ScalarUDF;
@@ -97,32 +97,34 @@ fn criterion_benchmark(c: &mut Criterion) {
     }
 
     // Padding: 100x100 tiles over 1024x1024 leaves partial edge tiles that each
-    // do the extra nodata-fill work.
-    let tester4 = ScalarUdfTester::new(
+    // do the extra nodata-fill work. Uses the (raster, width, height,
+    // padWithNoData, noDataVal) overload.
+    let tester5 = ScalarUdfTester::new(
         udf(),
         vec![
             RASTER,
             SedonaType::Arrow(DataType::Int32),
             SedonaType::Arrow(DataType::Int32),
-            SedonaType::Arrow(DataType::Utf8),
+            SedonaType::Arrow(DataType::Boolean),
+            SedonaType::Arrow(DataType::Float64),
         ],
     );
     let raster = build_raster(1024, 1024);
     let tw: ArrayRef = Arc::new(Int32Array::from(vec![100]));
     let th: ArrayRef = Arc::new(Int32Array::from(vec![100]));
-    let options: ArrayRef = Arc::new(StringArray::from(vec![
-        r#"{"pad_with_nodata": true, "nodata": 0}"#,
-    ]));
+    let pad: ArrayRef = Arc::new(BooleanArray::from(vec![true]));
+    let nodata: ArrayRef = Arc::new(Float64Array::from(vec![0.0]));
     c.bench_function(
         "raster-gdal rs_tileexplode TileExplode(Raster(1024x1024), 100, 100, pad)",
         |b| {
             b.iter(|| {
-                tester4
+                tester5
                     .invoke_arrays(vec![
                         raster.clone(),
                         tw.clone(),
                         th.clone(),
-                        options.clone(),
+                        pad.clone(),
+                        nodata.clone(),
                     ])
                     .unwrap()
             })

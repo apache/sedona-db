@@ -19,16 +19,17 @@
 
 RS_TileExplode returns one list item per tile, so these tests assert the tile
 count and each tile's (x, y) grid position through the full execution path
-(materialized via `to_arrow_table`). Pixel-level tiling correctness is covered
-exhaustively by the Rust unit tests against a numpy reference; here we only
-verify that the list-of-tiles output flows through SQL and the expression API.
+(materialized via `to_arrow_table`). Pixel-level tiling correctness and band
+selection are covered exhaustively by the Rust unit tests against a numpy
+reference; here we only verify that the positional overloads flow through the
+expression API and SQL.
 
 Results are inspected via Arrow (reading only the integer x/y struct fields)
 rather than `Scalar.as_py()`, which would try to materialize the nested tile
 raster.
 
-RS_Example() is a 64x32 raster, so a 32x16 tile yields a 2x2 grid (4 tiles) at
-grid positions (0,0), (1,0), (0,1), (1,1).
+RS_Example() is a 64x32, 3-band raster, so a 32x16 tile yields a 2x2 grid
+(4 tiles) at grid positions (0,0), (1,0), (0,1), (1,1).
 """
 
 import pyarrow as pa
@@ -53,24 +54,39 @@ def _tile_positions(list_scalar_values) -> list:
     return list(zip(xs, ys))
 
 
+def _tile_column(df, tiles):
+    return df.select(tiles=tiles).to_arrow_table()["tiles"].combine_chunks()
+
+
 def test_rs_tileexplode_count_and_positions(con):
+    # RS_TileExplode(raster, width, height): the no-band overload tiles every
+    # band into the 2x2 grid.
     df = _example_raster_df(con)
     tiles = df.rast.funcs.rs_tileexplode(32, 16)
-    column = df.select(tiles=tiles).to_arrow_table()["tiles"].combine_chunks()
+    column = _tile_column(df, tiles)
 
     # One list per input row; the single row holds the 2x2 = 4-tile grid.
     assert column.value_lengths().to_pylist() == [4]
     assert _tile_positions(column.values) == EXPECTED_POSITIONS
 
 
-def test_rs_tileexplode_options_argument(con):
-    # The JSON options argument is accepted and parsed: selecting a single band
-    # and padding still yields the 2x2 grid.
+def test_rs_tileexplode_band_index_overload(con):
+    # RS_TileExplode(raster, bandIndex, width, height): selecting a single band
+    # still yields the same 2x2 grid.
     df = _example_raster_df(con)
-    tiles = df.rast.funcs.rs_tileexplode(
-        32, 16, '{"bands": [1], "pad_with_nodata": true, "nodata": 0}'
-    )
-    column = df.select(tiles=tiles).to_arrow_table()["tiles"].combine_chunks()
+    tiles = df.rast.funcs.rs_tileexplode(1, 32, 16)
+    column = _tile_column(df, tiles)
+    assert column.value_lengths().to_pylist() == [4]
+    assert _tile_positions(column.values) == EXPECTED_POSITIONS
+
+
+def test_rs_tileexplode_pad_with_nodata_overload(con):
+    # RS_TileExplode(raster, width, height, padWithNoData, noDataVal): padding
+    # 40x20 tiles over the 64x32 raster still yields a 2x2 grid (the edge tiles
+    # are padded rather than shrunk).
+    df = _example_raster_df(con)
+    tiles = df.rast.funcs.rs_tileexplode(40, 20, True, 0.0)
+    column = _tile_column(df, tiles)
     assert column.value_lengths().to_pylist() == [4]
     assert _tile_positions(column.values) == EXPECTED_POSITIONS
 
@@ -80,15 +96,18 @@ def test_rs_tileexplode_over_multiple_rows(con):
     table = con.sql("SELECT RS_Example() AS rast").to_arrow_table()
     df = con.create_data_frame(pa.concat_tables([table, table]))
     tiles = df.rast.funcs.rs_tileexplode(32, 16)
-    column = df.select(tiles=tiles).to_arrow_table()["tiles"].combine_chunks()
+    column = _tile_column(df, tiles)
     assert column.value_lengths().to_pylist() == [4, 4]
 
 
-def test_rs_tileexplode_sql_unnest_row_count(con):
-    # SQL parser-path smoke: UNNEST expands the list so the result has one row
-    # per tile (row count == tile count), and the tile struct carries (x, y).
+def test_rs_tileexplode_band_indices_array_sql_unnest(con):
+    # SQL parser-path smoke for the bandIndices Array[Int] overload: UNNEST
+    # expands the list so the result has one row per tile, and the tile struct
+    # carries (x, y).
     tile_struct = (
-        con.sql("SELECT UNNEST(RS_TileExplode(RS_Example(), 32, 16)) AS tile")
+        con.sql(
+            "SELECT UNNEST(RS_TileExplode(RS_Example(), make_array(1, 3), 32, 16)) AS tile"
+        )
         .to_arrow_table()["tile"]
         .combine_chunks()
     )

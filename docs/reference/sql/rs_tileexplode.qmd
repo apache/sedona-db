@@ -24,27 +24,63 @@ kernels:
   - returns: list
     args:
     - raster
-    - {name: tile_width, type: integer}
-    - {name: tile_height, type: integer}
+    - name: width
+      type: integer
+      description: Tile width in pixels. Must be >= 1.
+    - name: height
+      type: integer
+      description: Tile height in pixels. Must be >= 1.
+    - name: pad_with_no_data
+      type: boolean
+      description: >
+        Optional (default false). When true, pad the last partial row/column of
+        tiles to the full tile size with a nodata fill; when false the smaller
+        edge tile is emitted as-is.
+    - name: no_data_val
+      type: double
+      description: >
+        Optional. The value written to padded pixels (only valid with
+        `pad_with_no_data = true`); defaults to the band's own nodata value, or
+        the band data type's minimum if it has none. It is an error if it does
+        not fit the band's data type.
   - returns: list
     args:
     - raster
-    - name: tile_width
+    - name: band_index
+      type: integer
+      description: 1-based index of the single band to include in each tile.
+    - name: width
       type: integer
       description: Tile width in pixels. Must be >= 1.
-    - name: tile_height
+    - name: height
       type: integer
       description: Tile height in pixels. Must be >= 1.
-    - name: options
-      type: string
+    - name: pad_with_no_data
+      type: boolean
+      description: Optional (default false). See the no-band overload.
+    - name: no_data_val
+      type: double
+      description: Optional. See the no-band overload.
+  - returns: list
+    args:
+    - raster
+    - name: band_indices
+      type: array
       description: >
-        JSON options object. `bands`: a list of 1-based band indices to include
-        in each tile, in order (default: all bands). `pad_with_nodata`: when
-        true, pad the last partial row/column of tiles to the full tile size
-        with a nodata fill (default: false). `nodata`: the value written to
-        padded pixels (only valid with `pad_with_nodata = true`); defaults to
-        the band's own nodata value, or the band data type's minimum if it has
-        none. It is an error if `nodata` does not fit the band's data type.
+        `Array[Int]` of 1-based band indices to include in each tile, in the
+        given order.
+    - name: width
+      type: integer
+      description: Tile width in pixels. Must be >= 1.
+    - name: height
+      type: integer
+      description: Tile height in pixels. Must be >= 1.
+    - name: pad_with_no_data
+      type: boolean
+      description: Optional (default false). See the no-band overload.
+    - name: no_data_val
+      type: double
+      description: Optional. See the no-band overload.
 ---
 
 ::: callout-warning
@@ -53,10 +89,21 @@ kernels:
 
 ## Description
 
-`RS_TileExplode` cuts a raster into a grid of `tile_width` x `tile_height`
-tiles, returning a list with one item per tile. It mirrors Sedona Spark's
+`RS_TileExplode` cuts a raster into a grid of `width` x `height` tiles,
+returning a list with one item per tile. It mirrors Sedona Spark's
 `RS_TileExplode`; because SedonaDB has no per-row generator, the tiles are
 returned as a list that you `UNNEST` to get one row per tile.
+
+It has three overloads, mirroring Sedona Spark verbatim (`padWithNoData` and
+`noDataVal` are trailing optionals):
+
+- `RS_TileExplode(raster, width, height, padWithNoData = false, noDataVal = null)`
+- `RS_TileExplode(raster, bandIndex, width, height, padWithNoData = false, noDataVal = null)`
+- `RS_TileExplode(raster, bandIndices, width, height, padWithNoData = false, noDataVal = null)`
+
+When no band argument is given, every band is included. `bandIndex` selects a
+single 1-based band; `bandIndices` selects an ordered subset (equivalent to
+`bandIndex` with a one-element array). Band indices are 1-based.
 
 Each returned list item is a struct with:
 
@@ -66,23 +113,28 @@ Each returned list item is a struct with:
 
 The grid is `ceil(width / tile_width)` columns by `ceil(height / tile_height)`
 rows. When the raster does not divide evenly, the last column and row of tiles
-are partial: by default the smaller edge tile is emitted as-is, but with
-`pad_with_nodata = true` those tiles are padded to the full tile size with a
-nodata fill.
+are partial: with `padWithNoData = false` the smaller edge tile is emitted
+as-is, and with `padWithNoData = true` those tiles are padded to the full tile
+size with a nodata fill. When the band(s) have no nodata value, `noDataVal`
+supplies one.
 
 ## Examples
+
+Tile every band into a 2x2 grid of 32x16 tiles:
 
 ```sql
 SELECT RS_TileExplode(RS_Example(), 32, 16);
 ```
 
-Selecting only the first band and padding the edge tiles:
+Tile only the first band, padding the edge tiles to the full 40x20 size with a
+nodata fill of 0:
 
 ```sql
-SELECT RS_TileExplode(
-  RS_Example(),
-  40,
-  20,
-  '{"bands": [1], "pad_with_nodata": true, "nodata": 0}'
-);
+SELECT RS_TileExplode(RS_Example(), 1, 40, 20, true, 0.0);
+```
+
+Tile an ordered subset of bands:
+
+```sql
+SELECT RS_TileExplode(RS_Example(), make_array(1, 3), 32, 16);
 ```

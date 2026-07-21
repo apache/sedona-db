@@ -32,15 +32,14 @@
 use std::sync::Arc;
 
 use arrow_array::builder::{Int32Builder, NullBufferBuilder, OffsetBufferBuilder};
-use arrow_array::{Array, ArrayRef, ListArray, StringArray, StructArray};
+use arrow_array::{Array, ArrayRef, ListArray, StructArray};
 use arrow_buffer::Buffer;
 use arrow_schema::{DataType, Field, Fields};
-use datafusion_common::cast::{as_int64_array, as_string_array};
+use datafusion_common::cast::{as_boolean_array, as_float64_array, as_int64_array, as_list_array};
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::error::Result;
 use datafusion_common::{exec_datafusion_err, exec_err, ScalarValue};
 use datafusion_expr::{ColumnarValue, Volatility};
-use serde::Deserialize;
 
 use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
@@ -50,20 +49,44 @@ use sedona_raster::traits::{is_spatial_dim_pair, nodata_f64_to_bytes, Bands, Ras
 use sedona_raster_functions::rs_ensure_loaded::NEEDS_PIXELS_METADATA_KEY;
 use sedona_raster_functions::RasterExecutor;
 use sedona_schema::datatypes::{SedonaType, RASTER};
-use sedona_schema::matchers::ArgMatcher;
+use sedona_schema::matchers::{ArgMatcher, TypeMatcher};
 
 /// RS_TileExplode() scalar UDF implementation.
 ///
-/// Signatures:
-/// - `RS_TileExplode(raster, tile_width, tile_height)` — 3 args
-/// - `RS_TileExplode(raster, tile_width, tile_height, options)` — 4 args, where
-///   `options` is a JSON string (see [`TileExplodeOptions`]).
+/// Mirrors Sedona Spark's positional overloads (Spark expands the trailing
+/// optionals `padWithNoData` / `noDataVal` into sub-overloads):
+/// - `RS_TileExplode(raster, width, height[, padWithNoData[, noDataVal]])`
+/// - `RS_TileExplode(raster, bandIndex, width, height[, padWithNoData[, noDataVal]])`
+/// - `RS_TileExplode(raster, bandIndices, width, height[, padWithNoData[, noDataVal]])`
+///
+/// Each of the three shapes has three sub-overloads (no optional, with
+/// `padWithNoData`, with both), for nine kernels total. The shapes are told
+/// apart by the type of the argument after the raster: an integer (`bandIndex`
+/// or `width`), an integer list (`bandIndices`), and — between the first two —
+/// by whether the third argument is a boolean (`padWithNoData`) or an integer
+/// (`height`).
 pub fn rs_tile_explode_udf() -> SedonaScalarUDF {
+    let kernel = |band_arg: BandArg, arg_count: usize| {
+        Arc::new(RsTileExplode {
+            band_arg,
+            arg_count,
+        })
+    };
     SedonaScalarUDF::new(
         "rs_tileexplode",
         vec![
-            Arc::new(RsTileExplode { arg_count: 3 }),
-            Arc::new(RsTileExplode { arg_count: 4 }),
+            // RS_TileExplode(raster, width, height[, padWithNoData[, noDataVal]])
+            kernel(BandArg::All, 3),
+            kernel(BandArg::All, 4),
+            kernel(BandArg::All, 5),
+            // RS_TileExplode(raster, bandIndex, width, height[, padWithNoData[, noDataVal]])
+            kernel(BandArg::Single, 4),
+            kernel(BandArg::Single, 5),
+            kernel(BandArg::Single, 6),
+            // RS_TileExplode(raster, bandIndices, width, height[, padWithNoData[, noDataVal]])
+            kernel(BandArg::Array, 4),
+            kernel(BandArg::Array, 5),
+            kernel(BandArg::Array, 6),
         ],
         Volatility::Immutable,
     )
@@ -73,58 +96,81 @@ pub fn rs_tile_explode_udf() -> SedonaScalarUDF {
     .with_metadata(NEEDS_PIXELS_METADATA_KEY, "true")
 }
 
-/// Optional arguments, deserialized from the single JSON `options` argument.
-///
-/// A JSON options bag is used instead of Spark's overload ladder so the
-/// argument set can grow without adding kernels; the function is experimental
-/// until the shape settles.
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct TileExplodeOptions {
+/// Which band-selector argument a signature carries after the raster.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BandArg {
+    /// No band argument — every band is tiled: `(raster, width, height, ...)`.
+    All,
+    /// A single 1-based band index: `(raster, bandIndex, width, height, ...)`.
+    Single,
+    /// An array of 1-based band indices: `(raster, bandIndices, width, height, ...)`.
+    Array,
+}
+
+/// The argument position of each parameter for a given signature shape.
+struct ArgLayout {
+    /// The band-selector argument (scalar index or list), when present.
+    band: Option<usize>,
+    width: usize,
+    height: usize,
+    /// `padWithNoData`, when present in this overload.
+    pad: Option<usize>,
+    /// `noDataVal`, when present in this overload.
+    nodata: Option<usize>,
+}
+
+/// The optional arguments for one tiling call, resolved from the positional
+/// arguments for a single row.
+struct TileParams<'a> {
     /// 1-based band indices to include in each tile, in the given order.
-    /// `None` (the default) includes every band.
-    #[serde(default)]
-    bands: Option<Vec<i64>>,
+    /// `None` includes every band.
+    bands: Option<&'a [i64]>,
     /// Pad the last partial row/column of tiles to the full tile size with a
-    /// nodata fill. When false (the default) the smaller edge tile is emitted.
-    #[serde(default)]
+    /// nodata fill. When false the smaller edge tile is emitted.
     pad_with_nodata: bool,
     /// The value written to padded pixels. Only meaningful with
     /// `pad_with_nodata = true`; it is an error to set it otherwise. Defaults to
     /// the band's own nodata value, or the band data type's minimum if it has
     /// none. It is an error if the value does not fit the band's data type.
-    #[serde(default)]
     nodata: Option<f64>,
 }
 
 /// Kernel implementation for RS_TileExplode.
 #[derive(Debug)]
 struct RsTileExplode {
-    /// Number of arguments in the matched signature (3 or 4).
+    /// The band-selector shape this kernel matches.
+    band_arg: BandArg,
+    /// Number of arguments in the matched signature.
     arg_count: usize,
 }
 
 impl SedonaScalarKernel for RsTileExplode {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        let matchers = match self.arg_count {
-            3 => vec![
-                ArgMatcher::is_raster(),
-                ArgMatcher::is_integer(),
-                ArgMatcher::is_integer(),
-            ],
-            4 => vec![
-                ArgMatcher::is_raster(),
-                ArgMatcher::is_integer(),
-                ArgMatcher::is_integer(),
-                ArgMatcher::is_string(),
-            ],
-            _ => {
-                return sedona_internal_err!(
-                    "RS_TileExplode: unexpected arg_count {}",
-                    self.arg_count
-                )
-            }
-        };
+        // Build the matcher ladder from the shape: raster, the band selector (an
+        // integer for `bandIndex` or an integer list for `bandIndices`), then
+        // width/height, then the trailing optionals this overload includes.
+        let mut matchers: Vec<Arc<dyn TypeMatcher + Send + Sync>> = vec![ArgMatcher::is_raster()];
+        match self.band_arg {
+            BandArg::All => {}
+            BandArg::Single => matchers.push(ArgMatcher::is_integer()),
+            BandArg::Array => matchers.push(ArgMatcher::is_integer_list()),
+        }
+        matchers.push(ArgMatcher::is_integer()); // width
+        matchers.push(ArgMatcher::is_integer()); // height
+        let layout = self.layout();
+        if layout.pad.is_some() {
+            matchers.push(ArgMatcher::is_boolean());
+        }
+        if layout.nodata.is_some() {
+            matchers.push(ArgMatcher::is_numeric());
+        }
+        if matchers.len() != self.arg_count {
+            return sedona_internal_err!(
+                "RS_TileExplode: built {} matchers for arg_count {}",
+                matchers.len(),
+                self.arg_count
+            );
+        }
 
         let matcher = ArgMatcher::new(matchers, SedonaType::Arrow(tile_list_type()?));
         matcher.match_args(args)
@@ -147,29 +193,78 @@ impl SedonaScalarKernel for RsTileExplode {
         _config_options: Option<&ConfigOptions>,
     ) -> Result<ColumnarValue> {
         let num_iterations = RasterExecutor::num_iterations_over(args);
+        let layout = self.layout();
 
-        // tile_width / tile_height expanded to arrays and iterated in lockstep
-        // with the raster (a NULL in either yields a NULL list for that row).
-        let tile_w_array = args[1]
+        // width / height expanded to arrays and iterated in lockstep with the
+        // raster (a NULL in either yields a NULL list for that row).
+        let tile_w_array = args[layout.width]
             .clone()
             .cast_to(&DataType::Int64, None)?
             .into_array(num_iterations)?;
         let tile_w_array = as_int64_array(&tile_w_array)?.clone();
-        let tile_h_array = args[2]
+        let tile_h_array = args[layout.height]
             .clone()
             .cast_to(&DataType::Int64, None)?
             .into_array(num_iterations)?;
         let tile_h_array = as_int64_array(&tile_h_array)?.clone();
 
-        // Options is almost always a scalar literal, so parse it once when it is;
-        // fall back to per-row parsing for the rare column case.
-        let (fixed_options, options_array) = self.resolve_options(args, num_iterations)?;
+        // pad_with_nodata: absent defaults to false; when present, a NULL yields
+        // a NULL row (an unresolved flag, like a NULL raster).
+        let pad_array = match layout.pad {
+            Some(pos) => args[pos]
+                .clone()
+                .cast_to(&DataType::Boolean, None)?
+                .into_array(num_iterations)?,
+            None => ScalarValue::Boolean(Some(false)).to_array_of_size(num_iterations)?,
+        };
+        let pad_array = as_boolean_array(&pad_array)?.clone();
+
+        // no_data_val: absent means "not supplied" (None); NULL is the same
+        // meaningful sentinel, so it stays an Option rather than nulling the row.
+        let nodata_array = match layout.nodata {
+            Some(pos) => args[pos]
+                .clone()
+                .cast_to(&DataType::Float64, None)?
+                .into_array(num_iterations)?,
+            None => ScalarValue::Float64(None).to_array_of_size(num_iterations)?,
+        };
+        let nodata_array = as_float64_array(&nodata_array)?.clone();
+
+        // Band selection arrays, materialized once for the shapes that carry one.
+        // Single: an Int64 column of one 1-based index per row. Array: a list
+        // column whose (Int64) values are the 1-based indices per row.
+        let single_band_array = match (self.band_arg, layout.band) {
+            (BandArg::Single, Some(pos)) => {
+                let array = args[pos]
+                    .clone()
+                    .cast_to(&DataType::Int64, None)?
+                    .into_array(num_iterations)?;
+                Some(as_int64_array(&array)?.clone())
+            }
+            _ => None,
+        };
+        let (band_list_array, band_list_values) = match (self.band_arg, layout.band) {
+            (BandArg::Array, Some(pos)) => {
+                let target = DataType::List(Arc::new(Field::new("item", DataType::Int64, true)));
+                let array = args[pos]
+                    .clone()
+                    .cast_to(&target, None)?
+                    .into_array(num_iterations)?;
+                let list = as_list_array(&array)?.clone();
+                let values = as_int64_array(list.values())?.clone();
+                (Some(list), Some(values))
+            }
+            _ => (None, None),
+        };
 
         let mut x_builder = Int32Builder::new();
         let mut y_builder = Int32Builder::new();
         let mut rast_builder = RasterBuilder::new(num_iterations);
         let mut list_offsets = OffsetBufferBuilder::<i32>::new(num_iterations);
         let mut valid_list_items = NullBufferBuilder::new(num_iterations);
+        // Reused per-row scratch for the resolved 1-based band indices, so the
+        // Array shape does not allocate a fresh Vec every row.
+        let mut band_scratch: Vec<i64> = Vec::new();
 
         let exec_arg_types = [arg_types[0].clone()];
         let exec_args = [args[0].clone()];
@@ -179,31 +274,66 @@ impl SedonaScalarKernel for RsTileExplode {
         executor.execute_raster_void(|i, raster_opt| {
             let tile_width = (!tile_w_array.is_null(i)).then(|| tile_w_array.value(i));
             let tile_height = (!tile_h_array.is_null(i)).then(|| tile_h_array.value(i));
+            let pad = (!pad_array.is_null(i)).then(|| pad_array.value(i));
 
-            let (Some(raster), Some(tile_width), Some(tile_height)) =
-                (raster_opt, tile_width, tile_height)
+            // Resolve the row's selected 1-based band indices into `band_scratch`.
+            // `None` selects every band; a NULL band argument (a NULL scalar
+            // index or a NULL list) yields a NULL row.
+            let bands: Option<&[i64]> = match self.band_arg {
+                BandArg::All => None,
+                BandArg::Single => {
+                    let array = single_band_array
+                        .as_ref()
+                        .expect("single band array present");
+                    if array.is_null(i) {
+                        valid_list_items.append_null();
+                        list_offsets.push_length(0);
+                        return Ok(());
+                    }
+                    band_scratch.clear();
+                    band_scratch.push(array.value(i));
+                    Some(band_scratch.as_slice())
+                }
+                BandArg::Array => {
+                    let list = band_list_array.as_ref().expect("band list array present");
+                    let values = band_list_values.as_ref().expect("band list values present");
+                    if list.is_null(i) {
+                        valid_list_items.append_null();
+                        list_offsets.push_length(0);
+                        return Ok(());
+                    }
+                    let offsets = list.value_offsets();
+                    let (start, end) = (offsets[i] as usize, offsets[i + 1] as usize);
+                    band_scratch.clear();
+                    for j in start..end {
+                        if values.is_null(j) {
+                            return exec_err!("RS_TileExplode: band index must not be null");
+                        }
+                        band_scratch.push(values.value(j));
+                    }
+                    Some(band_scratch.as_slice())
+                }
+            };
+
+            let (Some(raster), Some(tile_width), Some(tile_height), Some(pad_with_nodata)) =
+                (raster_opt, tile_width, tile_height, pad)
             else {
                 valid_list_items.append_null();
                 list_offsets.push_length(0);
                 return Ok(());
             };
 
-            let options_owned;
-            let options = match &fixed_options {
-                Some(options) => options,
-                None => {
-                    let array = options_array.as_ref().expect("options array present");
-                    let json = (!array.is_null(i)).then(|| array.value(i));
-                    options_owned = parse_options(json)?;
-                    &options_owned
-                }
+            let params = TileParams {
+                bands,
+                pad_with_nodata,
+                nodata: (!nodata_array.is_null(i)).then(|| nodata_array.value(i)),
             };
 
             let num_tiles = explode_raster_tiles(
                 raster,
                 tile_width,
                 tile_height,
-                options,
+                &params,
                 &mut rast_builder,
                 &mut x_builder,
                 &mut y_builder,
@@ -227,46 +357,24 @@ impl SedonaScalarKernel for RsTileExplode {
 }
 
 impl RsTileExplode {
-    /// Resolve the optional `options` argument once: `(Some(options), None)`
-    /// when it is absent or a scalar (parsed a single time), or `(None,
-    /// Some(array))` when it is a column (parsed per row in the main loop).
-    fn resolve_options(
-        &self,
-        args: &[ColumnarValue],
-        num_iterations: usize,
-    ) -> Result<(Option<TileExplodeOptions>, Option<StringArray>)> {
-        if self.arg_count < 4 {
-            return Ok((Some(TileExplodeOptions::default()), None));
+    /// The argument positions for this kernel's signature shape.
+    fn layout(&self) -> ArgLayout {
+        match self.band_arg {
+            BandArg::All => ArgLayout {
+                band: None,
+                width: 1,
+                height: 2,
+                pad: (self.arg_count >= 4).then_some(3),
+                nodata: (self.arg_count >= 5).then_some(4),
+            },
+            BandArg::Single | BandArg::Array => ArgLayout {
+                band: Some(1),
+                width: 2,
+                height: 3,
+                pad: (self.arg_count >= 5).then_some(4),
+                nodata: (self.arg_count >= 6).then_some(5),
+            },
         }
-        match &args[3] {
-            ColumnarValue::Scalar(scalar) => {
-                let json = match scalar.clone().cast_to(&DataType::Utf8)? {
-                    ScalarValue::Utf8(value) => value,
-                    other => {
-                        return sedona_internal_err!(
-                            "RS_TileExplode: expected Utf8 options, got {other:?}"
-                        )
-                    }
-                };
-                Ok((Some(parse_options(json.as_deref())?), None))
-            }
-            ColumnarValue::Array(_) => {
-                let array = args[3]
-                    .clone()
-                    .cast_to(&DataType::Utf8, None)?
-                    .into_array(num_iterations)?;
-                Ok((None, Some(as_string_array(&array)?.clone())))
-            }
-        }
-    }
-}
-
-/// Parse the JSON options string. A NULL/absent string yields the defaults.
-fn parse_options(json: Option<&str>) -> Result<TileExplodeOptions> {
-    match json {
-        None => Ok(TileExplodeOptions::default()),
-        Some(json) => serde_json::from_str(json)
-            .map_err(|e| exec_datafusion_err!("RS_TileExplode: invalid options JSON: {e}")),
     }
 }
 
@@ -304,7 +412,7 @@ fn explode_raster_tiles(
     raster: &RasterRefImpl<'_>,
     tile_width: i64,
     tile_height: i64,
-    options: &TileExplodeOptions,
+    params: &TileParams<'_>,
     rast_builder: &mut RasterBuilder,
     x_builder: &mut Int32Builder,
     y_builder: &mut Int32Builder,
@@ -314,7 +422,7 @@ fn explode_raster_tiles(
             "RS_TileExplode: tile_width and tile_height must be >= 1, got {tile_width}x{tile_height}"
         );
     }
-    if options.nodata.is_some() && !options.pad_with_nodata {
+    if params.nodata.is_some() && !params.pad_with_nodata {
         return exec_err!("RS_TileExplode: nodata is only meaningful with pad_with_nodata = true");
     }
 
@@ -340,20 +448,13 @@ fn explode_raster_tiles(
         );
     }
 
-    let band_indices = resolve_band_indices(options.bands.as_deref(), raster.num_bands())?;
+    let band_indices = resolve_band_indices(params.bands, raster.num_bands())?;
     let bands = raster.bands();
 
     for tile_y in 0..num_tile_y {
         for tile_x in 0..num_tile_x {
             let window = TileWindow::new(tile_x, tile_y, tile_w, tile_h, width, height);
-            append_tile(
-                raster,
-                &bands,
-                &band_indices,
-                &window,
-                options,
-                rast_builder,
-            )?;
+            append_tile(raster, &bands, &band_indices, &window, params, rast_builder)?;
             x_builder.append_value(tile_x as i32);
             y_builder.append_value(tile_y as i32);
         }
@@ -433,10 +534,10 @@ fn append_tile(
     bands: &Bands<'_>,
     band_indices: &[usize],
     window: &TileWindow,
-    options: &TileExplodeOptions,
+    params: &TileParams<'_>,
     rast_builder: &mut RasterBuilder,
 ) -> Result<()> {
-    let (out_w, out_h) = window.out_extent(options.pad_with_nodata);
+    let (out_w, out_h) = window.out_extent(params.pad_with_nodata);
 
     // The tile's upper-left corner is the source origin translated by the tile's
     // pixel offset; scale/skew are unchanged. Matches the crop-origin shift in
@@ -477,7 +578,7 @@ fn append_tile(
             bands,
             band_idx,
             window,
-            options,
+            params,
             out_w,
             out_h,
             rast_builder,
@@ -497,7 +598,7 @@ fn append_tile_band(
     bands: &Bands<'_>,
     band_idx: usize,
     window: &TileWindow,
-    options: &TileExplodeOptions,
+    params: &TileParams<'_>,
     out_w: usize,
     out_h: usize,
     rast_builder: &mut RasterBuilder,
@@ -560,8 +661,8 @@ fn append_tile_band(
     // silently saturating); the tile band records it as its nodata. When not
     // padding there are no padded pixels, so the source band's own nodata is
     // preserved verbatim.
-    let (pad_fill, tile_nodata): (Option<Vec<u8>>, Option<Vec<u8>>) = if options.pad_with_nodata {
-        let fill = match options.nodata {
+    let (pad_fill, tile_nodata): (Option<Vec<u8>>, Option<Vec<u8>>) = if params.pad_with_nodata {
+        let fill = match params.nodata {
             Some(value) => nodata_f64_to_bytes(value, &data_type).map_err(|e| {
                 exec_datafusion_err!("RS_TileExplode: invalid nodata for band {band_idx}: {e}")
             })?,
@@ -723,9 +824,52 @@ mod tests {
     use super::*;
 
     use datafusion_common::cast::{as_int32_array, as_list_array, as_struct_array};
+    use datafusion_expr::ScalarUDF;
     use sedona_raster::array::RasterStructArray;
     use sedona_schema::datatypes::RASTER;
     use sedona_testing::raster_spec::{assert_rasters_equal, raster_array, RasterSpec};
+    use sedona_testing::testers::ScalarUdfTester;
+
+    /// The optional tiling parameters for the core-tiling helper tests.
+    fn params(bands: Option<&[i64]>, pad_with_nodata: bool, nodata: Option<f64>) -> TileParams<'_> {
+        TileParams {
+            bands,
+            pad_with_nodata,
+            nodata,
+        }
+    }
+
+    /// The registered RS_TileExplode UDF, used to exercise overload dispatch
+    /// end to end (the matcher ladder plus the positional argument reading).
+    fn udf() -> ScalarUDF {
+        crate::register::default_function_set()
+            .scalar_udf("rs_tileexplode")
+            .expect("rs_tileexplode is registered")
+            .clone()
+            .into()
+    }
+
+    /// A scalar `ScalarValue::List` of 1-based band indices, as Spark's
+    /// `array(...)` produces for the `bandIndices` overload.
+    fn band_index_list(indices: &[i32]) -> ColumnarValue {
+        let values: Vec<ScalarValue> = indices
+            .iter()
+            .map(|&i| ScalarValue::Int32(Some(i)))
+            .collect();
+        ColumnarValue::Scalar(ScalarValue::List(ScalarValue::new_list_nullable(
+            &values,
+            &DataType::Int32,
+        )))
+    }
+
+    /// The `tile` column of a single-row (scalar) List result.
+    fn scalar_tiles(result: &ColumnarValue) -> ArrayRef {
+        let ColumnarValue::Scalar(ScalarValue::List(list)) = result else {
+            panic!("expected a scalar List result, got {result:?}");
+        };
+        let element = as_struct_array(list.values()).unwrap();
+        element.column(2).clone()
+    }
 
     /// A 5x3 EPSG-less raster, origin (0, 3), north-up 1x1 pixels, one UInt8
     /// band with values 1..=15 (row-major). The odd extent makes both the last
@@ -754,12 +898,11 @@ mod tests {
         spec: &RasterSpec,
         tile_width: i64,
         tile_height: i64,
-        options_json: Option<&str>,
+        tile_params: TileParams<'_>,
     ) -> (Vec<(i32, i32)>, ArrayRef) {
         let array = spec.build();
         let rasters = RasterStructArray::try_new(&array).unwrap();
         let raster = rasters.get(0).unwrap();
-        let options = parse_options(options_json).unwrap();
 
         let mut x_builder = Int32Builder::new();
         let mut y_builder = Int32Builder::new();
@@ -768,7 +911,7 @@ mod tests {
             &raster,
             tile_width,
             tile_height,
-            &options,
+            &tile_params,
             &mut rast_builder,
             &mut x_builder,
             &mut y_builder,
@@ -784,7 +927,10 @@ mod tests {
 
     #[test]
     fn return_type_is_list_of_tile_structs() {
-        let kernel = RsTileExplode { arg_count: 3 };
+        let kernel = RsTileExplode {
+            band_arg: BandArg::All,
+            arg_count: 3,
+        };
         let return_type = kernel
             .return_type(&[
                 RASTER,
@@ -813,8 +959,9 @@ mod tests {
 
     #[test]
     fn tiles_2x2_without_padding() {
-        // 5x3 tiled 2x2: 3x2 grid, edge tiles keep their (smaller) source size.
-        let (positions, tiles) = explode(&source_5x3(), 2, 2, None);
+        // 5x3 tiled 2x2 with pad_with_nodata = false: 3x2 grid; the right/bottom
+        // edge tiles keep their smaller source dimensions (1x2, 2x1, 1x1).
+        let (positions, tiles) = explode(&source_5x3(), 2, 2, params(None, false, None));
         assert_eq!(
             positions,
             vec![(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1)]
@@ -836,12 +983,7 @@ mod tests {
     fn tiles_2x2_with_padding() {
         // Same grid, but edge tiles are padded to the full 2x2 with nodata 0.
         // Every tile records nodata 0 so the output schema is uniform.
-        let (positions, tiles) = explode(
-            &source_5x3(),
-            2,
-            2,
-            Some(r#"{"pad_with_nodata": true, "nodata": 0}"#),
-        );
+        let (positions, tiles) = explode(&source_5x3(), 2, 2, params(None, true, Some(0.0)));
         assert_eq!(
             positions,
             vec![(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1)]
@@ -866,7 +1008,7 @@ mod tests {
         // A tile as big as (5x3) or bigger (8x8) than the raster produces a
         // single tile that is the whole raster verbatim when not padding.
         for (tw, th) in [(5, 3), (8, 8)] {
-            let (positions, tiles) = explode(&source_5x3(), tw, th, None);
+            let (positions, tiles) = explode(&source_5x3(), tw, th, params(None, false, None));
             assert_eq!(positions, vec![(0, 0)], "tile {tw}x{th}");
             assert_rasters_equal(
                 &tiles,
@@ -884,12 +1026,7 @@ mod tests {
     #[test]
     fn tile_larger_than_raster_with_padding() {
         // One 8x8 tile, the raster in its top-left corner, the rest nodata 0.
-        let (positions, tiles) = explode(
-            &source_5x3(),
-            8,
-            8,
-            Some(r#"{"pad_with_nodata": true, "nodata": 0}"#),
-        );
+        let (positions, tiles) = explode(&source_5x3(), 8, 8, params(None, true, Some(0.0)));
         assert_eq!(positions, vec![(0, 0)]);
         let mut expected = vec![0u8; 64];
         for (row, chunk) in [[1, 2, 3, 4, 5], [6, 7, 8, 9, 10], [11, 12, 13, 14, 15]]
@@ -905,7 +1042,7 @@ mod tests {
     fn tiles_1x1() {
         // 1x1 tiles: one tile per source pixel (15), each carrying that pixel
         // and an origin at the pixel's own upper-left corner.
-        let (positions, tiles) = explode(&source_5x3(), 1, 1, None);
+        let (positions, tiles) = explode(&source_5x3(), 1, 1, params(None, false, None));
         assert_eq!(positions.len(), 15);
         let expected_positions: Vec<(i32, i32)> = (0..15).map(|i| (i % 5, i / 5)).collect();
         assert_eq!(positions, expected_positions);
@@ -929,7 +1066,7 @@ mod tests {
             .band_values(&[10u8, 20, 30, 40]);
 
         // Default: all bands, in order.
-        let (_, tiles) = explode(&source, 2, 2, None);
+        let (_, tiles) = explode(&source, 2, 2, params(None, false, None));
         assert_rasters_equal(
             &tiles,
             &[Some(
@@ -942,7 +1079,7 @@ mod tests {
         );
 
         // Explicit selection keeps only band 2.
-        let (_, tiles) = explode(&source, 2, 2, Some(r#"{"bands": [2]}"#));
+        let (_, tiles) = explode(&source, 2, 2, params(Some(&[2]), false, None));
         assert_rasters_equal(
             &tiles,
             &[Some(
@@ -963,7 +1100,7 @@ mod tests {
             .transform([0.0, 1.0, 0.0, 1.0, 0.0, -1.0])
             .band_values(&[7u8, 8])
             .nodata(9u8);
-        let (_, tiles) = explode(&source, 1, 1, None);
+        let (_, tiles) = explode(&source, 1, 1, params(None, false, None));
         assert_rasters_equal(
             &tiles,
             &[
@@ -981,7 +1118,7 @@ mod tests {
             .crs(None)
             .transform([0.0, 1.0, 0.0, 1.0, 0.0, -1.0])
             .band_values(&[1u8, 2, 3]);
-        let (positions, tiles) = explode(&source, 2, 1, Some(r#"{"pad_with_nodata": true}"#));
+        let (positions, tiles) = explode(&source, 2, 1, params(None, true, None));
         assert_eq!(positions, vec![(0, 0), (1, 0)]);
         assert_rasters_equal(
             &tiles,
@@ -1001,7 +1138,7 @@ mod tests {
             .crs(None)
             .transform([0.0, 1.0, 0.0, 1.0, 0.0, -1.0])
             .band_values(&[100u16, 200, 300]);
-        let (positions, tiles) = explode(&source, 2, 1, None);
+        let (positions, tiles) = explode(&source, 2, 1, params(None, false, None));
         assert_eq!(positions, vec![(0, 0), (1, 0)]);
         assert_rasters_equal(
             &tiles,
@@ -1027,7 +1164,10 @@ mod tests {
         // End-to-end through the kernel: a two-row raster column (one raster,
         // one NULL) with scalar tile sizes. The output is a List row per input:
         // 6 tiles for row 0, a NULL list for row 1.
-        let kernel = RsTileExplode { arg_count: 3 };
+        let kernel = RsTileExplode {
+            band_arg: BandArg::All,
+            arg_count: 3,
+        };
         let raster_col = raster_array(vec![Some(source_5x3()), None]);
         let result = kernel
             .invoke_batch(
@@ -1078,92 +1218,203 @@ mod tests {
         );
     }
 
+    /// A 2x2, three-band UInt8 raster (band 1 = 1..=4, band 2 = 10..=40,
+    /// band 3 = 100..=103), so band selection and ordering are observable.
+    fn three_band_2x2() -> RasterSpec {
+        RasterSpec::d2(2, 2)
+            .crs(None)
+            .transform([0.0, 1.0, 0.0, 2.0, 0.0, -1.0])
+            .band_values(&[1u8, 2, 3, 4])
+            .band_values(&[10u8, 20, 30, 40])
+            .band_values(&[100u8, 101, 102, 103])
+    }
+
     #[test]
-    fn udf_scalar_raster_with_options_argument() {
-        // The 4-arg (raster, tw, th, options) form parses the JSON options and,
-        // over an all-scalar call, returns a single List scalar.
-        let kernel = RsTileExplode { arg_count: 4 };
-        let result = kernel
-            .invoke_batch(
-                &[
-                    RASTER,
-                    SedonaType::Arrow(DataType::Int32),
-                    SedonaType::Arrow(DataType::Int32),
-                    SedonaType::Arrow(DataType::Utf8),
-                ],
-                &[
-                    ColumnarValue::Scalar(source_5x3().scalar()),
-                    ColumnarValue::Scalar(ScalarValue::Int32(Some(5))),
-                    ColumnarValue::Scalar(ScalarValue::Int32(Some(3))),
-                    ColumnarValue::Scalar(ScalarValue::Utf8(Some(r#"{"bands": [1]}"#.to_string()))),
-                ],
-            )
-            .unwrap();
-        let ColumnarValue::Scalar(ScalarValue::List(list)) = result else {
-            panic!("expected a scalar List result");
+    fn overload_ladder_matches_by_argument_type() {
+        // The three shapes are told apart by argument type: the band selector is
+        // an integer (bandIndex) or an integer list (bandIndices), and the
+        // no-band shape is distinguished from bandIndex by whether the third
+        // argument is a boolean (padWithNoData) or an integer (height).
+        let int = SedonaType::Arrow(DataType::Int32);
+        let boolean = SedonaType::Arrow(DataType::Boolean);
+        let double = SedonaType::Arrow(DataType::Float64);
+        let int_list = SedonaType::Arrow(DataType::List(Arc::new(Field::new(
+            "item",
+            DataType::Int32,
+            true,
+        ))));
+        let matches = |band_arg: BandArg, arg_count: usize, args: &[SedonaType]| {
+            RsTileExplode {
+                band_arg,
+                arg_count,
+            }
+            .return_type(args)
+            .unwrap()
+            .is_some()
         };
-        // One 5x3 tile with the single selected band.
-        assert_eq!(list.value_length(0), 1);
-        let element = as_struct_array(list.values()).unwrap();
-        let tiles: ArrayRef = element.column(2).clone();
+
+        // (raster, int, int, bool) is the no-band + padWithNoData overload, not
+        // a bandIndex overload (whose 4th argument would be an integer height).
+        let with_pad = [RASTER, int.clone(), int.clone(), boolean.clone()];
+        assert!(matches(BandArg::All, 4, &with_pad));
+        assert!(!matches(BandArg::Single, 4, &with_pad));
+
+        // (raster, int, int, int) is the bandIndex overload, not the no-band one
+        // (whose 4th argument is a boolean padWithNoData).
+        let band_index = [RASTER, int.clone(), int.clone(), int.clone()];
+        assert!(matches(BandArg::Single, 4, &band_index));
+        assert!(!matches(BandArg::All, 4, &band_index));
+
+        // A list in the band position selects the bandIndices overload only.
+        let band_indices = [RASTER, int_list.clone(), int.clone(), int.clone()];
+        assert!(matches(BandArg::Array, 4, &band_indices));
+        assert!(!matches(BandArg::All, 4, &band_indices));
+        assert!(!matches(BandArg::Single, 4, &band_indices));
+
+        // The fully-expanded bandIndex overload: (raster, int, int, int, bool, double).
+        let band_index_full = [
+            RASTER,
+            int.clone(),
+            int.clone(),
+            int.clone(),
+            boolean.clone(),
+            double.clone(),
+        ];
+        assert!(matches(BandArg::Single, 6, &band_index_full));
+    }
+
+    #[test]
+    fn bandindex_overload_selects_single_band() {
+        // RS_TileExplode(raster, bandIndex, width, height): the single-index
+        // overload keeps only that band, in a single whole-raster tile.
+        let tester = ScalarUdfTester::new(
+            udf(),
+            vec![
+                RASTER,
+                SedonaType::Arrow(DataType::Int32),
+                SedonaType::Arrow(DataType::Int32),
+                SedonaType::Arrow(DataType::Int32),
+            ],
+        );
+        let result = tester
+            .invoke(vec![
+                ColumnarValue::Scalar(three_band_2x2().scalar()),
+                ColumnarValue::Scalar(ScalarValue::Int32(Some(2))), // bandIndex
+                ColumnarValue::Scalar(ScalarValue::Int32(Some(2))), // width
+                ColumnarValue::Scalar(ScalarValue::Int32(Some(2))), // height
+            ])
+            .unwrap();
         assert_rasters_equal(
-            &tiles,
-            &[Some(tile(
-                5,
-                3,
-                0.0,
-                3.0,
-                &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
-            ))],
+            &scalar_tiles(&result),
+            &[Some(
+                RasterSpec::d2(2, 2)
+                    .crs(None)
+                    .transform([0.0, 1.0, 0.0, 2.0, 0.0, -1.0])
+                    .band_values(&[10u8, 20, 30, 40]),
+            )],
+        );
+    }
+
+    #[test]
+    fn bandindices_array_overload_selects_and_orders_bands() {
+        // RS_TileExplode(raster, bandIndices, width, height): the array overload
+        // keeps exactly the listed bands, in the listed order (3 then 1).
+        let tester = ScalarUdfTester::new(
+            udf(),
+            vec![
+                RASTER,
+                SedonaType::Arrow(DataType::List(Arc::new(Field::new(
+                    "item",
+                    DataType::Int32,
+                    true,
+                )))),
+                SedonaType::Arrow(DataType::Int32),
+                SedonaType::Arrow(DataType::Int32),
+            ],
+        );
+        let result = tester
+            .invoke(vec![
+                ColumnarValue::Scalar(three_band_2x2().scalar()),
+                band_index_list(&[3, 1]),
+                ColumnarValue::Scalar(ScalarValue::Int32(Some(2))), // width
+                ColumnarValue::Scalar(ScalarValue::Int32(Some(2))), // height
+            ])
+            .unwrap();
+        assert_rasters_equal(
+            &scalar_tiles(&result),
+            &[Some(
+                RasterSpec::d2(2, 2)
+                    .crs(None)
+                    .transform([0.0, 1.0, 0.0, 2.0, 0.0, -1.0])
+                    .band_values(&[100u8, 101, 102, 103])
+                    .band_values(&[1u8, 2, 3, 4]),
+            )],
+        );
+    }
+
+    #[test]
+    fn nodataval_supplies_nodata_for_padding_when_band_has_none() {
+        // RS_TileExplode(raster, width, height, padWithNoData, noDataVal): the
+        // band has no nodata, so noDataVal (7) supplies the pad fill and becomes
+        // the tile's recorded nodata. A 3x1 raster tiled 2x1 pads the edge tile.
+        let source = RasterSpec::d2(3, 1)
+            .crs(None)
+            .transform([0.0, 1.0, 0.0, 1.0, 0.0, -1.0])
+            .band_values(&[1u8, 2, 3]);
+        let tester = ScalarUdfTester::new(
+            udf(),
+            vec![
+                RASTER,
+                SedonaType::Arrow(DataType::Int32),
+                SedonaType::Arrow(DataType::Int32),
+                SedonaType::Arrow(DataType::Boolean),
+                SedonaType::Arrow(DataType::Float64),
+            ],
+        );
+        let result = tester
+            .invoke(vec![
+                ColumnarValue::Scalar(source.scalar()),
+                ColumnarValue::Scalar(ScalarValue::Int32(Some(2))), // width
+                ColumnarValue::Scalar(ScalarValue::Int32(Some(1))), // height
+                ColumnarValue::Scalar(ScalarValue::Boolean(Some(true))), // padWithNoData
+                ColumnarValue::Scalar(ScalarValue::Float64(Some(7.0))), // noDataVal
+            ])
+            .unwrap();
+        assert_rasters_equal(
+            &scalar_tiles(&result),
+            &[
+                Some(tile(2, 1, 0.0, 1.0, &[1, 2]).nodata(7u8)),
+                // Edge tile padded to width 2 with the supplied nodata 7.
+                Some(tile(2, 1, 2.0, 1.0, &[3, 7]).nodata(7u8)),
+            ],
         );
     }
 
     #[test]
     fn tile_size_below_one_errors() {
-        let err = explode_raster_tiles(
-            &RasterStructArray::try_new(&source_5x3().build())
-                .unwrap()
-                .get(0)
-                .unwrap(),
-            0,
-            2,
-            &TileExplodeOptions::default(),
-            &mut RasterBuilder::new(1),
-            &mut Int32Builder::new(),
-            &mut Int32Builder::new(),
-        )
-        .unwrap_err()
-        .to_string();
+        let err = explode_one_error(&source_5x3(), 0, 2, params(None, false, None));
         assert!(err.contains("must be >= 1"), "unexpected error: {err}");
     }
 
     #[test]
     fn band_out_of_range_errors() {
         // source_5x3 has a single band; band 2 is out of range.
-        let err = explode_one_error(&source_5x3(), 2, 2, r#"{"bands": [2]}"#);
+        let err = explode_one_error(&source_5x3(), 2, 2, params(Some(&[2]), false, None));
         assert!(err.contains("out of range"), "unexpected error: {err}");
     }
 
     #[test]
     fn empty_bands_errors() {
-        let err = explode_one_error(&source_5x3(), 2, 2, r#"{"bands": []}"#);
+        let err = explode_one_error(&source_5x3(), 2, 2, params(Some(&[]), false, None));
         assert!(err.contains("must not be empty"), "unexpected error: {err}");
     }
 
     #[test]
     fn nodata_without_padding_errors() {
-        let err = explode_one_error(&source_5x3(), 2, 2, r#"{"nodata": 5}"#);
+        // noDataVal supplied with padWithNoData = false is a caller mistake.
+        let err = explode_one_error(&source_5x3(), 2, 2, params(None, false, Some(5.0)));
         assert!(
             err.contains("only meaningful with pad_with_nodata"),
-            "unexpected error: {err}"
-        );
-    }
-
-    #[test]
-    fn invalid_options_json_errors() {
-        let err = parse_options(Some("{not json")).unwrap_err().to_string();
-        assert!(
-            err.contains("invalid options JSON"),
             "unexpected error: {err}"
         );
     }
@@ -1174,17 +1425,16 @@ mod tests {
         spec: &RasterSpec,
         tile_width: i64,
         tile_height: i64,
-        options_json: &str,
+        tile_params: TileParams<'_>,
     ) -> String {
         let array = spec.build();
         let rasters = RasterStructArray::try_new(&array).unwrap();
         let raster = rasters.get(0).unwrap();
-        let options = parse_options(Some(options_json)).unwrap();
         explode_raster_tiles(
             &raster,
             tile_width,
             tile_height,
-            &options,
+            &tile_params,
             &mut RasterBuilder::new(1),
             &mut Int32Builder::new(),
             &mut Int32Builder::new(),
