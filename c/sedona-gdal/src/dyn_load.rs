@@ -126,6 +126,7 @@ fn load_all_symbols(lib: &Library, api: &mut SedonaGdalApi) -> Result<(), GdalIn
     load_fn!(lib, api, OSRSetAxisMappingStrategy);
     load_fn!(lib, api, OSRDestroySpatialReference);
     load_fn!(lib, api, OSRExportToPROJJSON);
+    load_fn!(lib, api, OSRExportToWkt);
     load_fn!(lib, api, OSRClone);
     load_fn!(lib, api, OSRRelease);
 
@@ -162,6 +163,13 @@ fn load_all_symbols(lib: &Library, api: &mut SedonaGdalApi) -> Result<(), GdalIn
     // --- VRT ---
     load_fn!(lib, api, VRTCreate);
     load_fn!(lib, api, VRTAddSimpleSource);
+
+    // --- Warp / Reproject ---
+    load_fn!(lib, api, GDALReprojectImage);
+    load_fn!(lib, api, GDALCreateGenImgProjTransformer);
+    load_fn!(lib, api, GDALDestroyGenImgProjTransformer);
+    load_fn!(lib, api, GDALSuggestedWarpOutput);
+    load_fn!(lib, api, GDALGenImgProjTransform);
 
     // --- Rasterize / Polygonize ---
     load_fn!(lib, api, GDALRasterizeGeometries);
