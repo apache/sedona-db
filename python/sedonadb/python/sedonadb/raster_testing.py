@@ -280,18 +280,49 @@ class RasterEngine:
         path,
         geometry_wkt: str,
         *,
-        band: int = 1,
+        band: Optional[int] = None,
         stat: str = "mean",
         all_touched: bool = False,
+        exclude_nodata: bool = True,
+        lenient: bool = True,
     ) -> Optional[float]:
         """One summary statistic over the band's pixels inside a WKT zone.
 
-        `stat` is one of count, sum, mean, min, max, median, or the sample
-        (ddof=1) stddev and variance. Pixels valued at the band's nodata are
-        excluded. Pixel selection follows the same centroid/all_touched rule
-        as `clip`.
+        Which of `RS_ZonalStats`'s positional overloads runs is chosen by which
+        optional parameters are set: `band=None` omits the band argument (the
+        3-argument `(raster, zone, stat_type)` overload, which resolves to band
+        1 on a single-band raster); a set `band` selects the 4-argument overload;
+        `all_touched`, then `exclude_nodata`, then `lenient` extend it to the 5-,
+        6-, and 7-argument overloads.
+
+        `stat` is one of count, sum, mean, median, mode, min, max, or the sample
+        (ddof=1) stddev and variance. With `exclude_nodata` (the default) pixels
+        equal to the band's nodata are skipped. Pixel selection follows the same
+        centroid/all_touched rule as `clip`. With `lenient` (the default) a zone
+        that misses the raster yields None instead of an error.
         """
         self._not_implemented("zonal_stats")
+
+    def zonal_stats_all(
+        self,
+        path,
+        geometry_wkt: str,
+        *,
+        band: Optional[int] = None,
+        all_touched: bool = False,
+        exclude_nodata: bool = True,
+        lenient: bool = True,
+    ) -> Optional[Mapping[str, Any]]:
+        """Every summary statistic over the band's pixels inside a WKT zone.
+
+        The `RS_ZonalStatsAll` overload ladder mirrors `zonal_stats` minus the
+        `stat_type` argument: `(raster, zone)`, `(raster, zone, band)`, then
+        `+all_touched`, `+exclude_nodata`, `+lenient`. Returns a mapping of the
+        struct fields in `ZONAL_ALL_FIELDS` order — `count` (an integer pixel
+        count) then the Float64 statistics — or None when `lenient` and the zone
+        misses the raster.
+        """
+        self._not_implemented("zonal_stats_all")
 
     def tile_explode(
         self, path, tile_width: int, tile_height: int
@@ -330,7 +361,155 @@ class RasterEngine:
         self._not_implemented("from_binary")
 
 
-class SedonaDB(RasterEngine):
+class DialectEngine(RasterEngine):
+    """A `RasterEngine` that runs the RS_* function under test as SQL.
+
+    SedonaDB and Sedona Spark are both dialect engines: an operation is one
+    RS_* call, and the compatibility contract the parity tests exist to protect
+    is that the identical call runs on both ("Spark SQL runs unchanged in
+    SedonaDB"). To make that contract structural rather than a coincidence, the
+    argument string is built in exactly one place — the `*_expr` generators
+    below — and both dialects execute whatever those return. A dialect subclass
+    supplies only its per-engine I/O: how a GeoTIFF path becomes a `rast` column
+    and how a scalar / struct result is decoded (`_run_scalar` / `_run_struct`).
+    The two dialects therefore cannot emit different SQL for the same operation.
+
+    Only RS_ZonalStats / RS_ZonalStatsAll are routed through this shared surface;
+    the other operations keep their existing per-dialect implementations.
+    """
+
+    def _run_scalar(self, path, expr: str) -> Optional[float]:
+        """Execute a scalar-valued RS_* `expr` over a `rast` column from `path`."""
+        self._not_implemented("_run_scalar")
+
+    def _run_struct(self, path, expr: str) -> Optional[Mapping[str, Any]]:
+        """Execute a struct-valued RS_* `expr` over a `rast` column from `path`,
+        returning a mapping in `ZONAL_ALL_FIELDS` order (None for a NULL result)."""
+        self._not_implemented("_run_struct")
+
+    @staticmethod
+    def _zonal_args(
+        geometry_wkt, *, band, stat, all_touched, exclude_nodata, lenient
+    ) -> List[str]:
+        """The RS_ZonalStats / RS_ZonalStatsAll positional argument list, as SQL
+        text, following Apache Sedona Spark's overload ladder verbatim.
+
+        The two required arguments are the `rast` column and an
+        `ST_GeomFromText('...')` zone (a constructor both dialects spell the same
+        way). `band` is appended when set; `stat` (a statistic name, or None for
+        RS_ZonalStatsAll, which has no stat argument) follows it. The optional
+        `all_touched`/`exclude_nodata`/`lenient` flags append the shortest suffix
+        that covers every non-default value — and, since they are the 5th+
+        arguments, require an explicit `band`."""
+        args = ["rast", f"ST_GeomFromText('{geometry_wkt}')"]
+        if band is not None:
+            args.append(str(int(band)))
+        if stat is not None:
+            args.append(f"'{stat}'")
+        flags = [all_touched, exclude_nodata, lenient]
+        defaults = [False, True, True]
+        depth = 0
+        for i, (value, default) in enumerate(zip(flags, defaults)):
+            if value != default:
+                depth = i + 1
+        if depth:
+            if band is None:
+                raise ValueError(
+                    "RS_ZonalStats needs an explicit band to pass the "
+                    "all_touched/exclude_nodata/lenient flags"
+                )
+            args += [str(bool(flags[i])).lower() for i in range(depth)]
+        return args
+
+    @classmethod
+    def zonal_stats_expr(
+        cls,
+        geometry_wkt,
+        *,
+        band=None,
+        stat="mean",
+        all_touched=False,
+        exclude_nodata=True,
+        lenient=True,
+    ) -> str:
+        """The exact `RS_ZonalStats(...)` SQL fragment both dialects run."""
+        args = cls._zonal_args(
+            geometry_wkt,
+            band=band,
+            stat=stat,
+            all_touched=all_touched,
+            exclude_nodata=exclude_nodata,
+            lenient=lenient,
+        )
+        return f"RS_ZonalStats({', '.join(args)})"
+
+    @classmethod
+    def zonal_stats_all_expr(
+        cls,
+        geometry_wkt,
+        *,
+        band=None,
+        all_touched=False,
+        exclude_nodata=True,
+        lenient=True,
+    ) -> str:
+        """The exact `RS_ZonalStatsAll(...)` SQL fragment both dialects run."""
+        args = cls._zonal_args(
+            geometry_wkt,
+            band=band,
+            stat=None,
+            all_touched=all_touched,
+            exclude_nodata=exclude_nodata,
+            lenient=lenient,
+        )
+        return f"RS_ZonalStatsAll({', '.join(args)})"
+
+    def zonal_stats(
+        self,
+        path,
+        geometry_wkt,
+        *,
+        band=None,
+        stat="mean",
+        all_touched=False,
+        exclude_nodata=True,
+        lenient=True,
+    ):
+        return self._run_scalar(
+            path,
+            self.zonal_stats_expr(
+                geometry_wkt,
+                band=band,
+                stat=stat,
+                all_touched=all_touched,
+                exclude_nodata=exclude_nodata,
+                lenient=lenient,
+            ),
+        )
+
+    def zonal_stats_all(
+        self,
+        path,
+        geometry_wkt,
+        *,
+        band=None,
+        all_touched=False,
+        exclude_nodata=True,
+        lenient=True,
+    ):
+        return self._run_struct(
+            path,
+            self.zonal_stats_all_expr(
+                geometry_wkt,
+                band=band,
+                all_touched=all_touched,
+                exclude_nodata=exclude_nodata,
+                lenient=lenient,
+            ),
+        )
+
+
+class SedonaDB(DialectEngine):
     """Runs `RS_*` on a SedonaDB connection — the engine under test."""
 
     def __init__(self, con=None):
@@ -343,6 +522,49 @@ class SedonaDB(RasterEngine):
         # Never skip on the engine under test: a construction failure here is
         # a bug, not a missing optional backend.
         return cls(*args, **kwargs)
+
+    @classmethod
+    def registers_function(cls, probe_sql: str) -> bool:
+        """Whether this SedonaDB build registers the RS_* function `probe_sql`
+        calls — the runtime gate for a parity module.
+
+        The `DialectEngine` harness methods are pure SQL construction and exist
+        whether or not the underlying function is compiled in, so a module can't
+        gate on the method's presence. It runs a trivial call instead: a
+        planning-time "Invalid function" error means the build predates the
+        function (skip the module); any other outcome — success, or an
+        argument/CRS error from the probe call — means it is registered."""
+        try:
+            cls()._con.sql(probe_sql).to_arrow_table()
+        except Exception as e:
+            return "invalid function" not in str(e).lower()
+        return True
+
+    def _rast_view(self, path) -> str:
+        """Register the GeoTIFF at `path` as a one-row view exposing a `rast`
+        column and return a query prefix that reads from it.
+
+        `rast` is derived from a table column (`RS_FromPath(path)`), not a
+        literal, so a kernel over it runs its real array path — literals
+        constant-fold. The view name is fixed and overwritten each call; the
+        session connection is reused across the suite."""
+        name = "_zonal_parity_input"
+        self._con.create_data_frame(
+            pa.table({"path": pa.array([str(path)], type=pa.utf8())})
+        ).to_view(name, overwrite=True)
+        return f"(SELECT RS_FromPath(path) AS rast FROM {name})"
+
+    def _run_scalar(self, path, expr):
+        result = self._con.sql(
+            f"SELECT {expr} AS v FROM {self._rast_view(path)}"
+        ).to_arrow_table()["v"]
+        return result[0].as_py()
+
+    def _run_struct(self, path, expr):
+        result = self._con.sql(
+            f"SELECT {expr} AS r FROM {self._rast_view(path)}"
+        ).to_arrow_table()["r"]
+        return result[0].as_py() if result[0].is_valid else None
 
     def clip(
         self, path, geometry_wkt, *, band=0, all_touched=False, nodata=None, crop=True
@@ -500,7 +722,7 @@ class SedonaDB(RasterEngine):
         return decode_raster(result[0])
 
 
-class SedonaSpark(RasterEngine):
+class SedonaSpark(DialectEngine):
     """Runs Sedona Spark SQL `RS_*` functions — the compatibility-target dialect.
 
     Bootstraps one local SparkSession per process with
@@ -757,14 +979,17 @@ class SedonaSpark(RasterEngine):
             f"false, '{algorithm}')",
         )
 
-    def zonal_stats(
-        self, path, geometry_wkt, *, band=1, stat="mean", all_touched=False
-    ):
-        return self._scalar(
-            self._raster_df(path),
-            f"RS_ZonalStats(rast, ST_GeomFromText('{geometry_wkt}'), {band}, "
-            f"'{stat}', {str(all_touched).lower()})",
-        )
+    def _run_scalar(self, path, expr):
+        return self._scalar(self._raster_df(path), expr)
+
+    def _run_struct(self, path, expr):
+        row = self._scalar(self._raster_df(path), expr)
+        if row is None:
+            return None
+        # Sedona Spark returns a uniform Double[] in field order (so its count is
+        # a float, not the Int64 SedonaDB records); the dict comparison is by
+        # value, so the numeric count still matches.
+        return dict(zip(ZONAL_ALL_FIELDS, row))
 
     def tile_explode(self, path, tile_width, tile_height):
         df = self._raster_df(path)
@@ -1037,16 +1262,56 @@ class Rasterio(RasterEngine):
             )
 
     def zonal_stats(
-        self, path, geometry_wkt, *, band=1, stat="mean", all_touched=False
+        self,
+        path,
+        geometry_wkt,
+        *,
+        band=None,
+        stat="mean",
+        all_touched=False,
+        exclude_nodata=True,
+        lenient=True,
     ):
+        values = self._zone_values(
+            path, geometry_wkt, band, all_touched, exclude_nodata
+        )
+        if values.size == 0:
+            # An empty selection makes count 0 and every other statistic NULL
+            # (Sedona's empty-zone shortcut); comparisons here use zones that
+            # select pixels, so this only guards a degenerate case.
+            return 0.0 if stat == "count" else None
+        return float(_STAT_REDUCERS[stat](values))
+
+    def zonal_stats_all(
+        self,
+        path,
+        geometry_wkt,
+        *,
+        band=None,
+        all_touched=False,
+        exclude_nodata=True,
+        lenient=True,
+    ):
+        values = self._zone_values(
+            path, geometry_wkt, band, all_touched, exclude_nodata
+        )
+        return _reduce_all_stats(values)
+
+    def _zone_values(self, path, geometry_wkt, band, all_touched, exclude_nodata):
+        """The band's pixel values selected by the zone, in float64.
+
+        `band=None` resolves to band 1 (matching the subject's single-band
+        default for the band-less overload). Pixels equal to the band nodata are
+        dropped only when `exclude_nodata`."""
         import rasterio
         import rasterio.features
         import shapely
 
+        b = 1 if band is None else band
         geom = shapely.from_wkt(geometry_wkt)
         with rasterio.open(str(path)) as src:
-            data = src.read(band)
-            nodata = src.nodatavals[band - 1]
+            data = src.read(b)
+            nodata = src.nodatavals[b - 1]
             inside = rasterio.features.geometry_mask(
                 [geom],
                 out_shape=(src.height, src.width),
@@ -1055,23 +1320,12 @@ class Rasterio(RasterEngine):
                 invert=True,
             )
         values = data[inside].astype(np.float64)
-        if nodata is not None:
+        if exclude_nodata and nodata is not None:
             if math.isnan(nodata):
                 values = values[~np.isnan(values)]
             else:
                 values = values[values != nodata]
-        # Sedona's stddev/variance are the sample statistics (ddof=1).
-        reducers = {
-            "count": np.size,
-            "sum": np.sum,
-            "mean": np.mean,
-            "min": np.min,
-            "max": np.max,
-            "stddev": lambda v: v.std(ddof=1),
-            "variance": lambda v: v.var(ddof=1),
-            "median": np.median,
-        }
-        return float(reducers[stat](values))
+        return values
 
     def tile_explode(self, path, tile_width, tile_height):
         import rasterio
@@ -1109,6 +1363,68 @@ class Rasterio(RasterEngine):
 
     def from_binary(self, data):
         return decode_geotiff_bytes(data)
+
+
+# RS_ZonalStatsAll struct fields, in the order the Rust kernel emits them
+# (count first, then the Float64 statistics). Both the Sedona Spark decoder and
+# the parity test read the struct through this list, so it is defined once.
+ZONAL_ALL_FIELDS = [
+    "count",
+    "sum",
+    "mean",
+    "median",
+    "mode",
+    "stddev",
+    "variance",
+    "min",
+    "max",
+]
+
+
+def _mode(values: "np.ndarray") -> float:
+    """The most frequent value, breaking ties toward the larger (matching
+    Sedona's `StatUtils.mode`). `np.unique` returns values ascending, so the
+    max of the tied-most-frequent values is the larger mode."""
+    uniques, counts = np.unique(values, return_counts=True)
+    return float(uniques[counts == counts.max()].max())
+
+
+# RS_ZonalStats statistic name -> reducer over the selected float64 values.
+# stddev/variance are the sample (ddof=1) statistics Sedona computes; a single
+# value yields variance 0. count is an integer pixel count.
+_STAT_REDUCERS = {
+    "count": lambda v: int(v.size),
+    "sum": np.sum,
+    "mean": np.mean,
+    "median": np.median,
+    "mode": _mode,
+    "stddev": lambda v: v.std(ddof=1) if v.size > 1 else 0.0,
+    "variance": lambda v: v.var(ddof=1) if v.size > 1 else 0.0,
+    "min": np.min,
+    "max": np.max,
+}
+
+
+def _reduce_all_stats(values: "np.ndarray") -> Optional[Mapping[str, Any]]:
+    """Every RS_ZonalStatsAll field over the selected values.
+
+    An empty selection is `count = 0` with every other field None (Sedona's
+    empty-zone shortcut). `count` is an integer; the rest are floats."""
+    n = int(values.size)
+    if n == 0:
+        return {field: (0 if field == "count" else None) for field in ZONAL_ALL_FIELDS}
+    variance = float(values.var(ddof=1)) if n > 1 else 0.0
+    return {
+        "count": n,
+        "sum": float(values.sum()),
+        "mean": float(values.mean()),
+        "median": float(np.median(values)),
+        "mode": _mode(values),
+        "stddev": math.sqrt(variance),
+        "variance": variance,
+        "min": float(values.min()),
+        "max": float(values.max()),
+    }
 
 
 def _is_nodata(sampled, nodata) -> bool:
