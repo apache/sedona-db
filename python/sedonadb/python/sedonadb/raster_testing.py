@@ -275,6 +275,23 @@ class RasterEngine:
         """
         self._not_implemented("resample")
 
+    def reproject_match(
+        self,
+        path,
+        reference_path,
+        *,
+        algorithm: str = "NearestNeighbor",
+    ) -> Optional[DecodedRaster]:
+        """Reproject the GeoTIFF at `path` onto the reference GeoTIFF's grid.
+
+        The output takes the reference's CRS, transform, and dimensions exactly;
+        only the input's (warped) pixels and band structure survive. Cells the
+        reprojected input does not cover fill with the input band's nodata (or
+        zero when a band has none). The result is a `DecodedRaster` (pixels,
+        geotransform, nodata).
+        """
+        self._not_implemented("reproject_match")
+
     def zonal_stats(
         self,
         path,
@@ -496,6 +513,24 @@ class SedonaDB(RasterEngine):
                 df.nodata,
                 df.extent,
             )
+        ).to_arrow_table()["r"]
+        return decode_raster(result[0])
+
+    def reproject_match(self, path, reference_path, *, algorithm="NearestNeighbor"):
+        # Both rasters travel as table columns (not literals) so the kernel runs
+        # its real array path.
+        df = self._one_row_df(
+            {
+                "in_path": (str(path), pa.utf8()),
+                "ref_path": (str(reference_path), pa.utf8()),
+                "algorithm": (algorithm, pa.utf8()),
+            }
+        )
+        result = df.select(
+            r=df.in_path.funcs.rs_frompath().funcs.rs_reprojectmatch(
+                df.ref_path.funcs.rs_frompath(),
+                df.algorithm,
+            ),
         ).to_arrow_table()["r"]
         return decode_raster(result[0])
 
@@ -1034,6 +1069,50 @@ class Rasterio(RasterEngine):
             )
             return DecodedRaster(
                 destination, tuple(dst_transform.to_gdal()), list(src.nodatavals)
+            )
+
+    def reproject_match(self, path, reference_path, *, algorithm="NearestNeighbor"):
+        """Reference for `RS_ReprojectMatch`: warp the input onto the reference grid.
+
+        The reference contributes only its CRS/transform/dimensions; the input's
+        pixels are warped onto that grid with the same GDAL `reproject` (nearest
+        is integer selection, so it matches exactly). Cells outside the
+        reprojected input footprint fill with the destination pre-fill (the input
+        band nodata, or zero when it has none). Source nodata is deliberately not
+        masked — RS_ReprojectMatch's warp passes source values through — so this
+        does not pass `src_nodata` either.
+        """
+        import rasterio
+        from rasterio.enums import Resampling
+        from rasterio.warp import reproject
+
+        # Only the algorithms the parity tests exercise are mapped; an unknown
+        # name raises rather than silently falling back to nearest.
+        resampling = {
+            "nearestneighbor": Resampling.nearest,
+            "nearestneighbour": Resampling.nearest,
+            "bilinear": Resampling.bilinear,
+            "cubic": Resampling.cubic,
+            "average": Resampling.average,
+        }.get(algorithm.lower())
+        if resampling is None:
+            raise ValueError(f"unsupported resampling algorithm {algorithm!r}")
+
+        with rasterio.open(str(path)) as src, rasterio.open(str(reference_path)) as ref:
+            src_data = src.read()
+            dst = np.zeros((src.count, ref.height, ref.width), dtype=src_data.dtype)
+            reproject(
+                source=src_data,
+                destination=dst,
+                src_transform=src.transform,
+                src_crs=src.crs,
+                dst_transform=ref.transform,
+                dst_crs=ref.crs,
+                dst_nodata=src.nodata,
+                resampling=resampling,
+            )
+            return DecodedRaster(
+                dst, tuple(ref.transform.to_gdal()), [src.nodata] * src.count
             )
 
     def zonal_stats(
