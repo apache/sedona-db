@@ -266,41 +266,130 @@ class RasterEngine:
         self._not_implemented("as_raster")
 
     def resample(
-        self, path, *, width: int, height: int, algorithm: str = "nearestneighbor"
-    ) -> DecodedRaster:
-        """Resample the raster to `width` x `height` pixels over the same extent.
+        self,
+        path,
+        *,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        scale_x: Optional[float] = None,
+        scale_y: Optional[float] = None,
+        grid_x: Optional[float] = None,
+        grid_y: Optional[float] = None,
+        reference=None,
+        use_scale: bool = False,
+        algorithm: str = "NearestNeighbor",
+    ) -> Optional[DecodedRaster]:
+        """Resample the raster onto a new pixel grid, in the same CRS.
 
-        `algorithm` is one of nearestneighbor, bilinear, bicubic
-        (case-insensitive; each engine maps to its own resampler names).
+        The optional parameters select which of `RS_Resample`'s positional
+        overloads is exercised — arity is expressed by which parameters are set:
+
+        - `reference` (the path of another GeoTIFF) -> the 4-argument
+          `RS_Resample(raster, referenceRaster, useScale, algorithm)`: the
+          target grid and origin come from that raster (its dimensions when
+          `use_scale` is false, its pixel size when true).
+        - `width`/`height` -> the 5-argument dimension form (`useScale=false`),
+          which preserves the world extent.
+        - `scale_x`/`scale_y` -> the 5-argument pixel-size form
+          (`useScale=true`), which keeps the pixel size exact and grows the
+          extent to whole pixels.
+        - adding `grid_x`/`grid_y` -> the 7-argument form, which snaps the
+          output origin outward to that grid.
+
+        `algorithm` is case-insensitive (NearestNeighbor, Bilinear, Cubic,
+        Average, ...). Band count/order and per-band nodata are preserved;
+        `RS_Resample` never reprojects. Returns None for a NULL result.
         """
         self._not_implemented("resample")
+
+    def reproject_match(
+        self, path, reference_path, *, algorithm: str = "NearestNeighbor"
+    ) -> Optional[DecodedRaster]:
+        """Reproject the raster onto `reference_path`'s CRS, grid, and extent.
+
+        Mirrors `RS_ReprojectMatch(raster, reference[, algorithm])` (in the
+        spirit of `rioxarray`'s `reproject_match`): the output takes the
+        reference's CRS, transform, dimensions, and extent, while keeping the
+        input's band count/order, per-band dtype, and nodata. Reference cells
+        the reprojected input does not cover are filled with the input band's
+        nodata (0 when a band has none). `algorithm` is case-insensitive and
+        defaults to NearestNeighbor. Returns None for a NULL result.
+        """
+        self._not_implemented("reproject_match")
 
     def zonal_stats(
         self,
         path,
         geometry_wkt: str,
         *,
-        band: int = 1,
+        band: Optional[int] = None,
         stat: str = "mean",
         all_touched: bool = False,
+        exclude_nodata: bool = True,
+        lenient: bool = True,
     ) -> Optional[float]:
         """One summary statistic over the band's pixels inside a WKT zone.
 
-        `stat` is one of count, sum, mean, min, max, median, or the sample
-        (ddof=1) stddev and variance. Pixels valued at the band's nodata are
-        excluded. Pixel selection follows the same centroid/all_touched rule
-        as `clip`.
+        Which of `RS_ZonalStats`'s positional overloads runs is chosen by which
+        optional parameters are set: `band=None` omits the band argument (the
+        3-argument `(raster, zone, stat_type)` overload, which resolves to band
+        1 on a single-band raster); a set `band` selects the 4-argument overload;
+        `all_touched`, then `exclude_nodata`, then `lenient` extend it to the 5-,
+        6-, and 7-argument overloads. Passing a non-default value for one of
+        those implies the overloads before it.
+
+        `stat` is one of count, sum, mean, median, mode, min, max, or the sample
+        (ddof=1) stddev and variance. With `exclude_nodata` (the default) pixels
+        equal to the band's nodata are skipped. Pixel selection follows the same
+        centroid/all_touched rule as `clip`. With `lenient` (the default) a zone
+        that misses the raster yields None instead of an error.
         """
         self._not_implemented("zonal_stats")
 
+    def zonal_stats_all(
+        self,
+        path,
+        geometry_wkt: str,
+        *,
+        band: Optional[int] = None,
+        all_touched: bool = False,
+        exclude_nodata: bool = True,
+        lenient: bool = True,
+    ) -> Optional[Mapping[str, Any]]:
+        """Every summary statistic over the band's pixels inside a WKT zone.
+
+        The `RS_ZonalStatsAll` overload ladder mirrors `zonal_stats` minus the
+        `stat_type` argument: `(raster, zone)`, `(raster, zone, band)`, then
+        `+all_touched`, `+exclude_nodata`, `+lenient`. Returns a mapping of the
+        struct fields `count` (an integer pixel count), `sum`, `mean`, `median`,
+        `mode`, `stddev`, `variance`, `min`, `max`, or None when `lenient` and
+        the zone misses the raster.
+        """
+        self._not_implemented("zonal_stats_all")
+
     def tile_explode(
-        self, path, tile_width: int, tile_height: int
+        self,
+        path,
+        tile_width: int,
+        tile_height: int,
+        *,
+        band_index: Optional[int] = None,
+        band_indices: Optional[List[int]] = None,
+        pad_with_no_data: bool = False,
+        no_data_val: Optional[float] = None,
     ) -> List[Tuple[int, int, DecodedRaster]]:
         """Split the raster into a grid of tiles.
 
         Returns `(tile_x, tile_y, tile)` triples sorted by `(tile_y, tile_x)`
-        with 0-based tile indices. Edge tiles keep their partial size (no
-        nodata padding); every tile keeps all bands and the band nodata.
+        with 0-based tile indices. The band selection chooses which of
+        `RS_TileExplode`'s positional shapes runs: neither `band_index` nor
+        `band_indices` -> every band; `band_index` (1-based) -> that single
+        band; `band_indices` -> those bands in order. With `pad_with_no_data`
+        the last partial row/column of tiles is padded to the full tile size
+        (edge tiles otherwise keep their smaller size); `no_data_val` (only
+        valid when padding) is the pad fill, defaulting to the band's own nodata
+        or the band dtype minimum. A padded tile records the fill as its nodata;
+        an unpadded tile keeps the source band nodata.
         """
         self._not_implemented("tile_explode")
 
@@ -750,27 +839,157 @@ class SedonaSpark(RasterEngine):
             )
         return self._decode_expr(self._raster_df(path), f"RS_AsRaster({args})")
 
-    def resample(self, path, *, width, height, algorithm="nearestneighbor"):
-        return self._decode_expr(
-            self._raster_df(path),
-            f"RS_Resample(rast, CAST({width} AS DOUBLE), CAST({height} AS DOUBLE), "
-            f"false, '{algorithm}')",
+    def _two_raster_df(self, path, reference_path):
+        """A one-row frame carrying two raster columns, `rast` and `ref`, for the
+        two-raster overloads (RS_Resample's reference form, RS_ReprojectMatch)."""
+        ref = (
+            self._session.read.format("binaryFile")
+            .load(str(reference_path))
+            .selectExpr("RS_FromGeoTiff(content) AS ref")
         )
+        return self._raster_df(path).crossJoin(ref)
+
+    def resample(
+        self,
+        path,
+        *,
+        width=None,
+        height=None,
+        scale_x=None,
+        scale_y=None,
+        grid_x=None,
+        grid_y=None,
+        reference=None,
+        use_scale=False,
+        algorithm="NearestNeighbor",
+    ):
+        # The overload arity is selected by which parameters are set (a SQL NULL
+        # would null the whole expression), matching SedonaDB's positional forms.
+        if reference is not None:
+            return self._decode_expr(
+                self._two_raster_df(path, reference),
+                f"RS_Resample(rast, ref, {str(use_scale).lower()}, '{algorithm}')",
+            )
+        if scale_x is not None:
+            width_or_scale, height_or_scale, use = float(scale_x), float(scale_y), True
+        else:
+            width_or_scale, height_or_scale, use = float(width), float(height), False
+        head = (
+            f"rast, CAST({width_or_scale} AS DOUBLE), CAST({height_or_scale} AS DOUBLE)"
+        )
+        if grid_x is not None:
+            args = (
+                f"{head}, CAST({float(grid_x)} AS DOUBLE), "
+                f"CAST({float(grid_y)} AS DOUBLE), {str(use).lower()}, '{algorithm}'"
+            )
+        else:
+            args = f"{head}, {str(use).lower()}, '{algorithm}'"
+        return self._decode_expr(self._raster_df(path), f"RS_Resample({args})")
+
+    def reproject_match(self, path, reference_path, *, algorithm="NearestNeighbor"):
+        return self._decode_expr(
+            self._two_raster_df(path, reference_path),
+            f"RS_ReprojectMatch(rast, ref, '{algorithm}')",
+        )
+
+    @staticmethod
+    def _zonal_flags_tail(band, all_touched, exclude_nodata, lenient):
+        """The trailing `all_touched`/`exclude_nodata`/`lenient` SQL literals to
+        append, in ladder order. Those positions require an explicit band (they
+        are the 5th+ arguments), and only the shortest suffix covering every
+        non-default flag is emitted."""
+        flags = [all_touched, exclude_nodata, lenient]
+        defaults = [False, True, True]
+        depth = 0
+        for i, (value, default) in enumerate(zip(flags, defaults)):
+            if value != default:
+                depth = i + 1
+        if depth == 0:
+            return []
+        if band is None:
+            raise ValueError(
+                "Sedona's RS_ZonalStats needs an explicit band to pass the "
+                "all_touched/exclude_nodata/lenient flags"
+            )
+        return [str(flags[i]).lower() for i in range(depth)]
 
     def zonal_stats(
-        self, path, geometry_wkt, *, band=1, stat="mean", all_touched=False
+        self,
+        path,
+        geometry_wkt,
+        *,
+        band=None,
+        stat="mean",
+        all_touched=False,
+        exclude_nodata=True,
+        lenient=True,
     ):
-        return self._scalar(
-            self._raster_df(path),
-            f"RS_ZonalStats(rast, ST_GeomFromText('{geometry_wkt}'), {band}, "
-            f"'{stat}', {str(all_touched).lower()})",
-        )
+        args = ["rast", f"ST_GeomFromText('{geometry_wkt}')"]
+        if band is not None:
+            args.append(str(int(band)))
+        args.append(f"'{stat}'")
+        args += self._zonal_flags_tail(band, all_touched, exclude_nodata, lenient)
+        return self._scalar(self._raster_df(path), f"RS_ZonalStats({', '.join(args)})")
 
-    def tile_explode(self, path, tile_width, tile_height):
+    def zonal_stats_all(
+        self,
+        path,
+        geometry_wkt,
+        *,
+        band=None,
+        all_touched=False,
+        exclude_nodata=True,
+        lenient=True,
+    ):
+        args = ["rast", f"ST_GeomFromText('{geometry_wkt}')"]
+        if band is not None:
+            args.append(str(int(band)))
+        args += self._zonal_flags_tail(band, all_touched, exclude_nodata, lenient)
+        row = self._scalar(
+            self._raster_df(path), f"RS_ZonalStatsAll({', '.join(args)})"
+        )
+        if row is None:
+            return None
+        # Sedona Spark returns a uniform Double[] in field order (so its count is
+        # a float, not the Int64 SedonaDB records); the dict comparison is by
+        # value, so the numeric count still matches.
+        fields = (
+            "count",
+            "sum",
+            "mean",
+            "median",
+            "mode",
+            "stddev",
+            "variance",
+            "min",
+            "max",
+        )
+        return {name: value for name, value in zip(fields, row)}
+
+    def tile_explode(
+        self,
+        path,
+        tile_width,
+        tile_height,
+        *,
+        band_index=None,
+        band_indices=None,
+        pad_with_no_data=False,
+        no_data_val=None,
+    ):
         df = self._raster_df(path)
-        num_bands = int(self._scalar(df, "RS_NumBands(rast)"))
+        selector = _spark_tile_band_selector(band_index, band_indices)
+        tile_args = [selector, str(int(tile_width)), str(int(tile_height))]
+        tile_args = [a for a in tile_args if a]
+        if pad_with_no_data:
+            tile_args.append("true")
+            if no_data_val is not None:
+                tile_args.append(f"CAST({float(no_data_val)} AS DOUBLE)")
+        num_bands = _spark_tile_band_count(band_index, band_indices) or int(
+            self._scalar(df, "RS_NumBands(rast)")
+        )
         tiles = df.selectExpr(
-            f"RS_TileExplode(rast, {int(tile_width)}, {int(tile_height)}) AS (x, y, tile)"
+            f"RS_TileExplode(rast, {', '.join(tile_args)}) AS (x, y, tile)"
         ).selectExpr(
             "x",
             "y",
@@ -1002,51 +1221,158 @@ class Rasterio(RasterEngine):
         )
         return DecodedRaster(pixels[np.newaxis], tuple(transform.to_gdal()), [nodata])
 
-    def resample(self, path, *, width, height, algorithm="nearestneighbor"):
+    def resample(
+        self,
+        path,
+        *,
+        width=None,
+        height=None,
+        scale_x=None,
+        scale_y=None,
+        grid_x=None,
+        grid_y=None,
+        reference=None,
+        use_scale=False,
+        algorithm="NearestNeighbor",
+    ):
         import rasterio
-        import rasterio.crs
-        from rasterio.enums import Resampling
+
+        resampling = _rasterio_resampling(algorithm)
+        with rasterio.open(str(path)) as src:
+            # Resolve the target grid (dimensions or pixel size) and an optional
+            # origin snap from whichever overload's parameters the caller set.
+            if reference is not None:
+                with rasterio.open(str(reference)) as ref:
+                    if use_scale:
+                        target = ("scale", ref.transform.a, ref.transform.e)
+                    else:
+                        target = ("dims", ref.width, ref.height)
+                    snap = (ref.transform.c, ref.transform.f)
+            elif scale_x is not None:
+                target = ("scale", scale_x, scale_y)
+                snap = None if grid_x is None else (grid_x, grid_y)
+            else:
+                target = ("dims", width, height)
+                snap = None if grid_x is None else (grid_x, grid_y)
+
+            # Dimension mode with no origin snap keeps the extent-preserving
+            # RasterIO read (`Dataset.read(out_shape=...)`), which also carries a
+            # skewed grid through unchanged by scaling both the scale and skew
+            # terms of the source transform by the pixel-count ratio.
+            if target[0] == "dims" and snap is None:
+                _, out_w, out_h = target
+                pixels = src.read(
+                    out_shape=(src.count, out_h, out_w), resampling=resampling
+                )
+                transform = src.transform * src.transform.scale(
+                    src.width / out_w, src.height / out_h
+                )
+                return DecodedRaster(
+                    pixels, tuple(transform.to_gdal()), list(src.nodatavals)
+                )
+
+            # Otherwise a same-CRS regrid: scale-mode grow and/or origin snap.
+            # Both grids are north-up here — a skewed scale/grid change is
+            # RS_Resample's unsupported case (the subject errors), so it never
+            # reaches a strict comparison and this reconstruction need not model
+            # it. `rasterio.warp.reproject` reproduces the nearest sampling and
+            # the nodata-filled grown/shifted border with the same CRS on both
+            # sides (a pure regrid).
+            dst_transform, out_w, out_h = _resample_output_grid(src, target, snap)
+            return self._warp_into(
+                src, dst_transform, out_w, out_h, src.crs, src.crs, resampling
+            )
+
+    def reproject_match(self, path, reference_path, *, algorithm="NearestNeighbor"):
+        import rasterio
+
+        resampling = _rasterio_resampling(algorithm)
+        with (
+            rasterio.open(str(path)) as src,
+            rasterio.open(str(reference_path)) as ref,
+        ):
+            # The output grid, dimensions, and CRS are the reference's; only the
+            # input's warped pixels and band structure survive. Reference cells
+            # the reprojected input does not cover fall to the band nodata fill.
+            return self._warp_into(
+                src, ref.transform, ref.width, ref.height, src.crs, ref.crs, resampling
+            )
+
+    @staticmethod
+    def _warp_into(src, dst_transform, dst_w, dst_h, src_crs, dst_crs, resampling):
         from rasterio.warp import reproject
 
-        resampling = {
-            "nearestneighbor": Resampling.nearest,
-            "bilinear": Resampling.bilinear,
-            "bicubic": Resampling.cubic,
-        }[algorithm.lower()]
-        with rasterio.open(str(path)) as src:
-            source = src.read()
-            dst_transform = src.transform * src.transform.scale(
-                src.width / width, src.height / height
-            )
-            # reproject() insists on a CRS; with the same one on both sides
-            # nothing reprojects, so an arbitrary CRS keeps a CRS-less
-            # fixture a pure grid resample.
-            crs = src.crs or rasterio.crs.CRS.from_epsg(3857)
-            destination = np.zeros((src.count, height, width), dtype=source.dtype)
-            reproject(
-                source,
-                destination,
-                src_transform=src.transform,
-                src_crs=crs,
-                dst_transform=dst_transform,
-                dst_crs=crs,
-                resampling=resampling,
-            )
-            return DecodedRaster(
-                destination, tuple(dst_transform.to_gdal()), list(src.nodatavals)
-            )
+        src_data = src.read()
+        # `dst_nodata` fills cells outside the source footprint with the band
+        # nodata (0 when the band has none) — the destination pre-fill both
+        # RS_Resample and RS_ReprojectMatch use. Source nodata is deliberately
+        # not passed: source pixels pass through, not masked.
+        destination = np.zeros((src.count, dst_h, dst_w), dtype=src_data.dtype)
+        reproject(
+            source=src_data,
+            destination=destination,
+            src_transform=src.transform,
+            src_crs=src_crs,
+            dst_transform=dst_transform,
+            dst_crs=dst_crs,
+            dst_nodata=src.nodata,
+            resampling=resampling,
+        )
+        return DecodedRaster(
+            destination, tuple(dst_transform.to_gdal()), [src.nodata] * src.count
+        )
 
     def zonal_stats(
-        self, path, geometry_wkt, *, band=1, stat="mean", all_touched=False
+        self,
+        path,
+        geometry_wkt,
+        *,
+        band=None,
+        stat="mean",
+        all_touched=False,
+        exclude_nodata=True,
+        lenient=True,
     ):
+        values = self._zone_values(
+            path, geometry_wkt, band, all_touched, exclude_nodata
+        )
+        if values.size == 0:
+            # An empty selection makes count 0 and every other statistic NULL
+            # (Sedona's empty-zone shortcut); comparisons here use zones that
+            # select pixels, so this only guards a degenerate case.
+            return 0.0 if stat == "count" else None
+        return float(_STAT_REDUCERS[stat](values))
+
+    def zonal_stats_all(
+        self,
+        path,
+        geometry_wkt,
+        *,
+        band=None,
+        all_touched=False,
+        exclude_nodata=True,
+        lenient=True,
+    ):
+        values = self._zone_values(
+            path, geometry_wkt, band, all_touched, exclude_nodata
+        )
+        return _reduce_all_stats(values)
+
+    def _zone_values(self, path, geometry_wkt, band, all_touched, exclude_nodata):
+        """The band's pixel values selected by the zone, in float64.
+
+        `band=None` resolves to band 1 (matching the subject's single-band
+        default for the band-less overload). Pixels equal to the band nodata are
+        dropped only when `exclude_nodata`."""
         import rasterio
         import rasterio.features
         import shapely
 
+        b = 1 if band is None else band
         geom = shapely.from_wkt(geometry_wkt)
         with rasterio.open(str(path)) as src:
-            data = src.read(band)
-            nodata = src.nodatavals[band - 1]
+            data = src.read(b)
+            nodata = src.nodatavals[b - 1]
             inside = rasterio.features.geometry_mask(
                 [geom],
                 out_shape=(src.height, src.width),
@@ -1055,47 +1381,63 @@ class Rasterio(RasterEngine):
                 invert=True,
             )
         values = data[inside].astype(np.float64)
-        if nodata is not None:
+        if exclude_nodata and nodata is not None:
             if math.isnan(nodata):
                 values = values[~np.isnan(values)]
             else:
                 values = values[values != nodata]
-        # Sedona's stddev/variance are the sample statistics (ddof=1).
-        reducers = {
-            "count": np.size,
-            "sum": np.sum,
-            "mean": np.mean,
-            "min": np.min,
-            "max": np.max,
-            "stddev": lambda v: v.std(ddof=1),
-            "variance": lambda v: v.var(ddof=1),
-            "median": np.median,
-        }
-        return float(reducers[stat](values))
+        return values
 
-    def tile_explode(self, path, tile_width, tile_height):
+    def tile_explode(
+        self,
+        path,
+        tile_width,
+        tile_height,
+        *,
+        band_index=None,
+        band_indices=None,
+        pad_with_no_data=False,
+        no_data_val=None,
+    ):
         import rasterio
         from rasterio.windows import Window
 
         out = []
         with rasterio.open(str(path)) as src:
+            indexes = _resolve_tile_bands(band_index, band_indices, src.count)
             for tile_y, row_off in enumerate(range(0, src.height, tile_height)):
                 for tile_x, col_off in enumerate(range(0, src.width, tile_width)):
-                    window = Window(
-                        col_off,
-                        row_off,
-                        min(tile_width, src.width - col_off),
-                        min(tile_height, src.height - row_off),
-                    )
+                    rect_w = min(tile_width, src.width - col_off)
+                    rect_h = min(tile_height, src.height - row_off)
+                    window = Window(col_off, row_off, rect_w, rect_h)
+                    transform = src.window_transform(window)
+                    data = src.read(indexes=indexes, window=window)
+                    band_nodata = [src.nodatavals[i - 1] for i in indexes]
+                    if pad_with_no_data:
+                        # Every tile records the resolved fill as its nodata,
+                        # padded or not; the edge tiles are grown to the full
+                        # tile size and the extra pixels take the fill.
+                        fills = [
+                            _resolve_pad_fill(no_data_val, nd, data.dtype)
+                            for nd in band_nodata
+                        ]
+                        tile = np.stack(
+                            [
+                                np.full(
+                                    (tile_height, tile_width), fill, dtype=data.dtype
+                                )
+                                for fill in fills
+                            ]
+                        )
+                        tile[:, :rect_h, :rect_w] = data
+                        pixels, nodata = tile, fills
+                    else:
+                        pixels, nodata = data, band_nodata
                     out.append(
                         (
                             tile_x,
                             tile_y,
-                            DecodedRaster(
-                                src.read(window=window),
-                                tuple(src.window_transform(window).to_gdal()),
-                                list(src.nodatavals),
-                            ),
+                            DecodedRaster(pixels, tuple(transform.to_gdal()), nodata),
                         )
                     )
         return out
@@ -1109,6 +1451,191 @@ class Rasterio(RasterEngine):
 
     def from_binary(self, data):
         return decode_geotiff_bytes(data)
+
+
+def _rasterio_resampling(algorithm: str):
+    """Map an RS_Resample/RS_ReprojectMatch algorithm name (case-insensitive) to
+    rasterio's `Resampling` enum. Only the algorithms the parity tests exercise
+    are mapped; an unknown name raises so a typo can't silently pass."""
+    from rasterio.enums import Resampling
+
+    mapping = {
+        "nearestneighbor": Resampling.nearest,
+        "nearestneighbour": Resampling.nearest,
+        "nearest": Resampling.nearest,
+        "near": Resampling.nearest,
+        "bilinear": Resampling.bilinear,
+        "cubic": Resampling.cubic,
+        "bicubic": Resampling.cubic,
+        "average": Resampling.average,
+    }
+    resampling = mapping.get(algorithm.lower())
+    if resampling is None:
+        raise ValueError(f"unsupported resampling algorithm {algorithm!r}")
+    return resampling
+
+
+def _resample_output_grid(src, target, snap):
+    """Resolve the north-up output grid RS_Resample produces for a regrid.
+
+    Mirrors Apache Sedona (Spark)'s `RasterEditors.resample`: dimension mode
+    (`target=("dims", width, height)`) preserves the extent by deriving the
+    pixel size, scale mode (`target=("scale", scale_x, scale_y)`) keeps the
+    pixel size exact and grows the dimensions to `ceil(extent / pixel_size)`,
+    and a `snap=(grid_x, grid_y)` moves the origin outward to that grid and
+    regrows the affected axis. Returns `(Affine, width, height)`. North-up only
+    (a skewed scale/grid change is the subject's unsupported case)."""
+    import math
+
+    from rasterio.transform import Affine
+
+    left, bottom, right, top = src.bounds
+    ext_x = abs(right - left)
+    ext_y = abs(top - bottom)
+    origin_x, origin_y = src.transform.c, src.transform.f
+    src_scale_y = src.transform.e
+    # North-up: max_x is the right edge and min_y is the bottom edge.
+    max_x, min_y = right, bottom
+
+    if target[0] == "dims":
+        _, width, height = target
+        scale_x = ext_x / width
+        scale_y = math.copysign(ext_y / height, src_scale_y)
+    else:
+        _, scale_x, scale_y = target
+        width = max(1, math.ceil(ext_x / abs(scale_x)))
+        height = max(1, math.ceil(ext_y / abs(scale_y)))
+
+    if snap is not None:
+        grid_x, grid_y = snap
+        # Grid-cell corner containing the origin (inverse-affine then floor).
+        snap_x = grid_x + math.floor((origin_x - grid_x) / scale_x) * scale_x
+        snap_y = grid_y + math.floor((origin_y - grid_y) / scale_y) * scale_y
+        if abs(snap_x - origin_x) > 1e-6:
+            if target[0] == "dims":
+                scale_x = abs(max_x - snap_x) / width
+            else:
+                width = max(1, math.ceil(abs(max_x - snap_x) / abs(scale_x)))
+            origin_x = snap_x
+        if abs(snap_y - origin_y) > 1e-6:
+            if target[0] == "dims":
+                scale_y = math.copysign(abs(min_y - snap_y) / height, src_scale_y)
+            else:
+                height = max(1, math.ceil(abs(min_y - snap_y) / abs(scale_y)))
+            origin_y = snap_y
+
+    return Affine(scale_x, 0.0, origin_x, 0.0, scale_y, origin_y), width, height
+
+
+def _mode(values: "np.ndarray") -> float:
+    """The most frequent value, breaking ties toward the larger (matching
+    Sedona's `StatUtils.mode`). `np.unique` returns values ascending, so the
+    max of the tied-most-frequent values is the larger mode."""
+    uniques, counts = np.unique(values, return_counts=True)
+    return float(uniques[counts == counts.max()].max())
+
+
+# RS_ZonalStats statistic name -> reducer over the selected float64 values.
+# stddev/variance are the sample (ddof=1) statistics Sedona computes; a single
+# value yields variance 0. count is an integer pixel count.
+_STAT_REDUCERS = {
+    "count": lambda v: int(v.size),
+    "sum": np.sum,
+    "mean": np.mean,
+    "median": np.median,
+    "mode": _mode,
+    "stddev": lambda v: v.std(ddof=1) if v.size > 1 else 0.0,
+    "variance": lambda v: v.var(ddof=1) if v.size > 1 else 0.0,
+    "min": np.min,
+    "max": np.max,
+}
+
+
+def _reduce_all_stats(values: "np.ndarray") -> Optional[Mapping[str, Any]]:
+    """Every RS_ZonalStatsAll field over the selected values.
+
+    An empty selection is `count = 0` with every other field None (Sedona's
+    empty-zone shortcut). `count` is an integer; the rest are floats."""
+    n = int(values.size)
+    if n == 0:
+        return {
+            field: (0 if field == "count" else None)
+            for field in (
+                "count",
+                "sum",
+                "mean",
+                "median",
+                "mode",
+                "stddev",
+                "variance",
+                "min",
+                "max",
+            )
+        }
+    variance = float(values.var(ddof=1)) if n > 1 else 0.0
+    return {
+        "count": n,
+        "sum": float(values.sum()),
+        "mean": float(values.mean()),
+        "median": float(np.median(values)),
+        "mode": _mode(values),
+        "stddev": math.sqrt(variance),
+        "variance": variance,
+        "min": float(values.min()),
+        "max": float(values.max()),
+    }
+
+
+def _resolve_tile_bands(band_index, band_indices, count) -> List[int]:
+    """The 1-based band indexes RS_TileExplode includes, in order. Neither
+    argument -> every band; `band_index` -> that single band; `band_indices` ->
+    those bands in the given order."""
+    if band_index is not None and band_indices is not None:
+        raise ValueError("pass at most one of band_index / band_indices")
+    if band_index is not None:
+        return [int(band_index)]
+    if band_indices is not None:
+        return [int(b) for b in band_indices]
+    return list(range(1, count + 1))
+
+
+def _resolve_pad_fill(no_data_val, band_nodata, dtype):
+    """The value written to RS_TileExplode padded pixels (and recorded as the
+    padded tile's nodata): the explicit `no_data_val`, else the band's own
+    nodata, else the band dtype minimum. As a reference the harness resolves the
+    documented default but errors on a lossy explicit `no_data_val` rather than
+    mirroring a silent truncation."""
+    if no_data_val is not None:
+        fill = np.asarray(no_data_val, dtype=dtype)
+        if float(fill) != float(no_data_val):
+            raise ValueError(
+                f"no_data_val {no_data_val} is not representable as {dtype}"
+            )
+        return fill[()]
+    if band_nodata is not None:
+        return np.asarray(band_nodata, dtype=dtype)[()]
+    return np.asarray(dtype_min(dtype), dtype=dtype)[()]
+
+
+def _spark_tile_band_selector(band_index, band_indices) -> str:
+    """The RS_TileExplode band-selector SQL fragment (empty for every band, a
+    scalar for a single band, an `array(...)` for a list)."""
+    if band_index is not None and band_indices is not None:
+        raise ValueError("pass at most one of band_index / band_indices")
+    if band_index is not None:
+        return str(int(band_index))
+    if band_indices is not None:
+        return f"array({', '.join(str(int(b)) for b in band_indices)})"
+    return ""
+
+
+def _spark_tile_band_count(band_index, band_indices):
+    """How many bands each exploded tile carries, or None for every band."""
+    if band_index is not None:
+        return 1
+    if band_indices is not None:
+        return len(band_indices)
+    return None
 
 
 def _is_nodata(sampled, nodata) -> bool:
