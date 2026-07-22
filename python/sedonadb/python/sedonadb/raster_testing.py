@@ -361,10 +361,10 @@ class RasterEngine:
         self._not_implemented("from_binary")
 
 
-class DialectEngine(RasterEngine):
+class SedonaDialectEngine(RasterEngine):
     """A `RasterEngine` that runs the RS_* function under test as SQL.
 
-    SedonaDB and Sedona Spark are both dialect engines: an operation is one
+    SedonaDB and Sedona Spark both implement the Sedona SQL dialect: an operation is one
     RS_* call, and the compatibility contract the parity tests exist to protect
     is that the identical call runs on both ("Spark SQL runs unchanged in
     SedonaDB"). To make that contract structural rather than a coincidence, the
@@ -509,7 +509,7 @@ class DialectEngine(RasterEngine):
         )
 
 
-class SedonaDB(DialectEngine):
+class SedonaDB(SedonaDialectEngine):
     """Runs `RS_*` on a SedonaDB connection — the engine under test."""
 
     def __init__(self, con=None):
@@ -528,7 +528,7 @@ class SedonaDB(DialectEngine):
         """Whether this SedonaDB build registers the RS_* function `probe_sql`
         calls — the runtime gate for a parity module.
 
-        The `DialectEngine` harness methods are pure SQL construction and exist
+        The `SedonaDialectEngine` harness methods are pure SQL construction and exist
         whether or not the underlying function is compiled in, so a module can't
         gate on the method's presence. It runs a trivial call instead: a
         planning-time "Invalid function" error means the build predates the
@@ -722,7 +722,7 @@ class SedonaDB(DialectEngine):
         return decode_raster(result[0])
 
 
-class SedonaSpark(DialectEngine):
+class SedonaSpark(SedonaDialectEngine):
     """Runs Sedona Spark SQL `RS_*` functions — the compatibility-target dialect.
 
     Bootstraps one local SparkSession per process with

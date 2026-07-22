@@ -30,7 +30,7 @@ Two design choices distinguish this module from the first parity modules:
 - Known divergences are declared **inline**, as an `xfail`/`skip` mark on the
   parametrized case, not in a separate deviations ledger — so reading one case
   shows both what it asserts and where an engine is expected to disagree.
-- SedonaDB and Sedona Spark are both `DialectEngine`s: `zonal_stats` /
+- SedonaDB and Sedona Spark are both `SedonaDialectEngine`s: `zonal_stats` /
   `zonal_stats_all` build one RS_* argument string (via the shared
   `zonal_stats_expr` / `zonal_stats_all_expr` generators) that both dialects
   execute unchanged. `test_zonal_stats_sql_runs_unchanged_on_both_dialects`
@@ -41,9 +41,9 @@ import pyarrow as pa
 import pytest
 
 from sedonadb.raster_testing import (
-    DialectEngine,
     Rasterio,
     SedonaDB,
+    SedonaDialectEngine,
     SedonaSpark,
     ZONAL_ALL_FIELDS,
     random_raster_data,
@@ -81,6 +81,33 @@ GEOM_TRIANGLE = "POLYGON ((102.7 497.4, 112.4 496.9, 104.2 483.7, 102.7 497.4))"
 GEOM_OUTSIDE = "POLYGON ((200 495, 210 495, 210 485, 200 485, 200 495))"
 
 STATS = ["count", "sum", "mean", "min", "max", "stddev", "variance", "median", "mode"]
+
+# count is an integer pixel count and min/max/mode are pass-through pixel values,
+# so once the subject and the comparator select the same pixel set these are
+# bit-identical — asserted with exact equality. approx here would hide a real
+# selection or tie-break divergence. Only the accumulating stats (sum, mean,
+# median, stddev, variance) warrant a tolerance, because engines reduce in
+# different orders.
+EXACT_STATS = frozenset({"count", "min", "max", "mode"})
+
+
+def assert_stat_equal(got, expected, stat):
+    """Assert one RS_ZonalStats result against a comparator: exact equality for
+    the selection/count stats in `EXACT_STATS`, approx (rel=1e-9) for the
+    accumulating ones."""
+    if stat in EXACT_STATS:
+        assert got == expected, stat
+    else:
+        assert got == pytest.approx(expected, rel=1e-9), stat
+
+
+def assert_all_stats_equal(got, expected):
+    """Assert an RS_ZonalStatsAll struct field-by-field against a comparator,
+    keying each field on `EXACT_STATS`: exact for count/min/max/mode, approx
+    (rel=1e-9) for the accumulating stats."""
+    for field in ZONAL_ALL_FIELDS:
+        assert_stat_equal(got[field], expected[field], field)
+
 
 # Sedona Spark's scanline rasterizer mis-places x-intercepts on non-square pixels
 # and drops some center-inside pixels along diagonal edges, where GDAL (which
@@ -138,10 +165,11 @@ def test_rs_zonalstats_matches_comparators(
     expected = comparator.zonal_stats(
         tiff, wkt, band=2, stat=stat, all_touched=all_touched
     )
-    # Engines reduce in different orders, so exact float equality is not
-    # attainable; 1e-9 passes summation noise and still fails any semantic
-    # mismatch (selection, nodata handling, ddof).
-    assert got == pytest.approx(expected, rel=1e-9), (wkt, all_touched, stat)
+    # count/min/max/mode are asserted exactly (same pixel set => bit-identical);
+    # the accumulating stats get approx, since engines reduce in different orders
+    # (1e-9 passes summation noise and still fails any semantic mismatch —
+    # selection, nodata handling, ddof).
+    assert_stat_equal(got, expected, stat)
 
 
 @pytest.mark.parametrize("stat", ["count", "mean", "max"])
@@ -160,7 +188,7 @@ def test_rs_zonalstats_band_default_matches_comparators(
     )
     got = subject.zonal_stats(tiff, GEOM_RECT, stat=stat)
     expected = comparator.zonal_stats(tiff, GEOM_RECT, stat=stat)
-    assert got == pytest.approx(expected, rel=1e-9), stat
+    assert_stat_equal(got, expected, stat)
 
 
 @pytest.mark.parametrize("stat", ["count", "sum"])
@@ -179,7 +207,7 @@ def test_rs_zonalstats_excludes_nodata(subject, comparator, tmp_path, stat):
 
     got = subject.zonal_stats(tiff, GEOM_RECT, stat=stat)
     expected = comparator.zonal_stats(tiff, GEOM_RECT, stat=stat)
-    assert got == pytest.approx(expected, rel=1e-9), stat
+    assert_stat_equal(got, expected, stat)
 
 
 @pytest.mark.parametrize("stat", ["count", "sum"])
@@ -202,7 +230,7 @@ def test_rs_zonalstats_include_nodata_matches_comparators(
     expected = comparator.zonal_stats(
         tiff, GEOM_RECT, band=1, stat=stat, exclude_nodata=False
     )
-    assert got == pytest.approx(expected, rel=1e-9), stat
+    assert_stat_equal(got, expected, stat)
 
 
 def test_rs_zonalstats_lenient_false_computes(subject, comparator, tmp_path):
@@ -216,7 +244,7 @@ def test_rs_zonalstats_lenient_false_computes(subject, comparator, tmp_path):
     )
     got = subject.zonal_stats(tiff, GEOM_RECT, band=1, stat="mean", lenient=False)
     expected = comparator.zonal_stats(tiff, GEOM_RECT, band=1, stat="mean")
-    assert got == pytest.approx(expected, rel=1e-9)
+    assert_stat_equal(got, expected, "mean")
 
 
 def test_rs_zonalstats_lenient_false_errors_on_disjoint_zone(con, tmp_path):
@@ -320,11 +348,11 @@ def test_rs_zonalstatsall_matches_comparators(
     expected = comparator.zonal_stats_all(
         tiff, GEOM_RECT, band=2, all_touched=all_touched
     )
-    assert got["count"] == expected["count"]
-    assert got["mode"] == pytest.approx(expected["mode"]), "mode tie-break"
-    assert got["mode"] == pytest.approx(50.0), "planted repeat is the mode"
-    for field in ZONAL_ALL_FIELDS:
-        assert got[field] == pytest.approx(expected[field], rel=1e-9), field
+    # count/min/max/mode match bit-for-bit (same pixel set); the accumulating
+    # stats get approx. mode is now exact, so the frequency tie-break is pinned
+    # exactly against both the comparator and the planted repeat.
+    assert_all_stats_equal(got, expected)
+    assert got["mode"] == 50.0, "planted repeat is the mode"
 
 
 def test_rs_zonalstatsall_count_field_is_int64(con, tmp_path):
@@ -359,11 +387,18 @@ def test_rs_zonalstatsall_count_field_is_int64(con, tmp_path):
 
 
 # The SQL-surface parity contract: one corpus of RS_* argument strings, produced
-# by the shared DialectEngine generators, that must parse and execute identically
+# by the shared SedonaDialectEngine generators, that must parse and execute identically
 # on both dialects. `kind` picks the scalar or struct generator; `kwargs` walks
 # the overload ladder. Expected literals pin the exact generated surface so drift
 # is caught even on a machine without Spark.
 CONTRACT_CALLS = [
+    # Band-less overloads (no band argument): on this single-band fixture they
+    # resolve to band 1 rather than raising the multiband error.
+    (
+        "scalar",
+        {"stat": "count"},
+        f"RS_ZonalStats(rast, ST_GeomFromText('{GEOM_RECT}'), 'count')",
+    ),
     (
         "scalar",
         {"band": 1, "stat": "count"},
@@ -378,6 +413,11 @@ CONTRACT_CALLS = [
         "scalar",
         {"band": 1, "stat": "sum", "exclude_nodata": False},
         f"RS_ZonalStats(rast, ST_GeomFromText('{GEOM_RECT}'), 1, 'sum', false, false)",
+    ),
+    (
+        "struct",
+        {},
+        f"RS_ZonalStatsAll(rast, ST_GeomFromText('{GEOM_RECT}'))",
     ),
     (
         "struct",
@@ -407,9 +447,9 @@ def test_zonal_stats_sql_runs_unchanged_on_both_dialects(
     parses and executes); the Spark arm skips via `create_or_skip` when the jars
     are absent, so on a jar-less machine this proves only the SedonaDB half."""
     if kind == "scalar":
-        expr = DialectEngine.zonal_stats_expr(GEOM_RECT, **kwargs)
+        expr = SedonaDialectEngine.zonal_stats_expr(GEOM_RECT, **kwargs)
     else:
-        expr = DialectEngine.zonal_stats_all_expr(GEOM_RECT, **kwargs)
+        expr = SedonaDialectEngine.zonal_stats_all_expr(GEOM_RECT, **kwargs)
     assert expr == expected_sql
 
     tiff = tmp_path / "contract.tif"
@@ -428,13 +468,9 @@ def test_zonal_stats_sql_runs_unchanged_on_both_dialects(
 
     spark = SedonaSpark.create_or_skip()
     if kind == "scalar":
-        assert spark._run_scalar(tiff, expr) == pytest.approx(db_result, rel=1e-9)
+        assert_stat_equal(spark._run_scalar(tiff, expr), db_result, kwargs["stat"])
     else:
-        spark_result = spark._run_struct(tiff, expr)
-        for field in ZONAL_ALL_FIELDS:
-            assert spark_result[field] == pytest.approx(db_result[field], rel=1e-9), (
-                field
-            )
+        assert_all_stats_equal(spark._run_struct(tiff, expr), db_result)
 
 
 def test_rs_zonalstats_sql_smoke(con, tmp_path):
