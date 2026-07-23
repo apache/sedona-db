@@ -23,7 +23,7 @@
 //!
 //! CRS transformation rules:
 //! - If neither side has a CRS, the comparison is performed directly without CRS transformation
-//! - If one side has a CRS but the other does not, an error is returned
+//! - If exactly one side has a CRS, the missing side is assumed to be WGS84 (matching Sedona Spark)
 //! - If both sides are in the same CRS, perform the relationship test directly
 //! - For raster/geometry pairs, the geometry is transformed into the raster's CRS
 //! - For raster/raster pairs, the second raster is transformed into the first's CRS
@@ -38,14 +38,13 @@ use crate::footprint::write_convexhull_wkb;
 use arrow_array::builder::BooleanBuilder;
 use arrow_schema::DataType;
 use datafusion_common::exec_datafusion_err;
-use datafusion_common::exec_err;
 use datafusion_common::Result;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::transform::CrsEngine;
 use sedona_proj::transform::with_global_proj_engine;
 use sedona_raster::traits::RasterRef;
-use sedona_schema::crs::{lnglat, CrsRef};
+use sedona_schema::crs::{lnglat, CoordinateReferenceSystem, CrsRef};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use sedona_tg::tg;
 
@@ -304,7 +303,8 @@ impl<Op: tg::BinaryPredicate + Send + Sync> RsSpatialPredicate<Op> {
 ///
 /// Rules:
 /// - If neither side has a CRS, compare directly without transformation
-/// - If one side has a CRS but the other does not, return an error
+/// - If exactly one side has a CRS, assume the missing side is WGS84 and fall
+///   through to the equal-/different-CRS logic below (matching Sedona Spark)
 /// - If both same CRS, compare directly
 /// - Otherwise, try transforming one side to the other's CRS for comparison.
 ///   If that fails, transform both to WGS84 and compare.
@@ -316,24 +316,54 @@ fn evaluate_predicate_with_crs<Op: tg::BinaryPredicate>(
     from_a_to_b: bool,
     engine: &dyn CrsEngine,
 ) -> Result<bool> {
-    // If either side has no CRS, compare directly without transformation.
-    let (crs_a, crs_b) = match (crs_a, crs_b) {
-        (Some(a), Some(b)) => (a, b),
-        (None, None) => return evaluate_predicate::<Op>(wkb_a, wkb_b),
-        (Some(_), None) => {
-            return exec_err!(
-                "Cannot evaluate spatial predicate: \
-                left geometry has CRS but right geometry does not"
+    match (crs_a, crs_b) {
+        (Some(crs_a), Some(crs_b)) => {
+            compare_in_crs::<Op>(wkb_a, crs_a, wkb_b, crs_b, from_a_to_b, engine)
+        }
+        // Neither side has a CRS: both are in the same (unknown) frame, so compare
+        // directly without transformation.
+        (None, None) => evaluate_predicate::<Op>(wkb_a, wkb_b),
+        // Exactly one side has a CRS: assume the missing side is WGS84 (matching
+        // Sedona Spark) and compare in the resulting CRS pair. Only these arms
+        // materialize the lnglat CRS, so the common paths avoid the allocation.
+        (Some(crs_a), None) => {
+            let lnglat_crs = lnglat().expect("lnglat() should always return Some");
+            compare_in_crs::<Op>(
+                wkb_a,
+                crs_a,
+                wkb_b,
+                lnglat_crs.as_ref(),
+                from_a_to_b,
+                engine,
             )
         }
-        (None, Some(_)) => {
-            return exec_err!(
-                "Cannot evaluate spatial predicate: \
-                right geometry has CRS but left geometry does not"
+        (None, Some(crs_b)) => {
+            let lnglat_crs = lnglat().expect("lnglat() should always return Some");
+            compare_in_crs::<Op>(
+                wkb_a,
+                lnglat_crs.as_ref(),
+                wkb_b,
+                crs_b,
+                from_a_to_b,
+                engine,
             )
         }
-    };
+    }
+}
 
+/// Evaluate a spatial predicate between two WKB geometries that both carry a CRS.
+///
+/// Equal CRSes compare directly; otherwise one side is transformed into the
+/// other's CRS per `from_a_to_b`, falling back to transforming both sides to
+/// WGS84 when the preferred transform fails.
+fn compare_in_crs<Op: tg::BinaryPredicate>(
+    wkb_a: &[u8],
+    crs_a: &(dyn CoordinateReferenceSystem + Send + Sync),
+    wkb_b: &[u8],
+    crs_b: &(dyn CoordinateReferenceSystem + Send + Sync),
+    from_a_to_b: bool,
+    engine: &dyn CrsEngine,
+) -> Result<bool> {
     // If both CRSes are equal, compare directly.
     if crs_a.crs_equals(crs_b) {
         return evaluate_predicate::<Op>(wkb_a, wkb_b);
@@ -414,7 +444,13 @@ mod tests {
     ///
     /// If `crs` is `None`, the raster has no CRS.
     fn build_unit_raster(crs: Option<&str>) -> arrow_array::StructArray {
-        let mut builder = RasterBuilder::new(1);
+        build_unit_rasters(crs, 1)
+    }
+
+    /// Build an array of `count` identical 1×1 rasters covering (0,0) to (1,1),
+    /// each with `crs` (or none). Useful for pairing with a multi-row operand.
+    fn build_unit_rasters(crs: Option<&str>, count: usize) -> arrow_array::StructArray {
+        let mut builder = RasterBuilder::new(count);
         let metadata = RasterMetadata {
             width: 1,
             height: 1,
@@ -425,19 +461,21 @@ mod tests {
             skew_x: 0.0,
             skew_y: 0.0,
         };
-        builder.start_raster(&metadata, crs).unwrap();
-        builder
-            .start_band(BandMetadata {
-                datatype: BandDataType::UInt8,
-                nodata_value: None,
-                storage_type: StorageType::InDb,
-                outdb_url: None,
-                outdb_band_id: None,
-            })
-            .unwrap();
-        builder.band_data_writer().append_value([0u8]);
-        builder.finish_band().unwrap();
-        builder.finish_raster().unwrap();
+        for _ in 0..count {
+            builder.start_raster(&metadata, crs).unwrap();
+            builder
+                .start_band(BandMetadata {
+                    datatype: BandDataType::UInt8,
+                    nodata_value: None,
+                    storage_type: StorageType::InDb,
+                    outdb_url: None,
+                    outdb_band_id: None,
+                })
+                .unwrap();
+            builder.band_data_writer().append_value([0u8]);
+            builder.finish_band().unwrap();
+            builder.finish_raster().unwrap();
+        }
         builder.finish().unwrap()
     }
 
@@ -674,52 +712,113 @@ mod tests {
         assert_array_equal(&result, &expected);
     }
 
-    /// When one side has a CRS but the other does not, an error must be returned.
+    /// When exactly one side has a CRS, the missing side is assumed to be WGS84
+    /// (matching Sedona Spark). The result must equal tagging that side
+    /// explicitly as WGS84, so an untagged operand and a 4326-tagged one give
+    /// the same answer.
     ///
-    /// Covers three overloads:
+    /// Covers all three overloads against a WGS84 raster covering (0,0)–(1,1):
     /// - (raster with CRS, geometry without CRS) — raster_geom
-    /// - (geometry with CRS, raster without CRS) — geom_raster
+    /// - (geometry without/with CRS, raster with/without CRS) — geom_raster
     /// - (raster with CRS, raster without CRS) — raster_raster
     #[test]
-    fn rs_intersects_crs_mismatch_one_missing_errors() {
-        let rasters_with_crs = build_unit_raster(Some("OGC:CRS84"));
-        let rasters_no_crs = build_unit_raster(None);
-
-        // raster (has CRS) + geometry (no CRS)
+    fn rs_intersects_one_missing_crs_assumes_wgs84() {
         let udf = rs_intersects_udf();
-        let tester = ScalarUdfTester::new(udf.clone().into(), vec![RASTER, WKB_GEOMETRY]);
-        let geoms = create_geom_array(&[Some("POINT (0.5 0.5)")], &WKB_GEOMETRY);
-        let err = tester
-            .invoke_arrays(vec![Arc::new(rasters_with_crs.clone()), geoms])
-            .unwrap_err();
-        assert!(
-            err.message().contains("has CRS but"),
-            "unexpected error: {err}"
-        );
+        let wgs84_geom = SedonaType::Wkb(Edges::Planar, lnglat());
 
-        // geometry (has CRS) + raster (no CRS)
-        let geom_type = SedonaType::Wkb(Edges::Planar, lnglat());
-        let tester = ScalarUdfTester::new(udf.clone().into(), vec![geom_type.clone(), RASTER]);
-        let geoms = create_geom_array(&[Some("POINT (0.5 0.5)")], &geom_type);
-        let err = tester
-            .invoke_arrays(vec![geoms, Arc::new(rasters_no_crs.clone())])
-            .unwrap_err();
-        assert!(
-            err.message().contains("has CRS but"),
-            "unexpected error: {err}"
-        );
+        // Invoke rs_intersects over the given operand types/arrays.
+        let run = |types: Vec<SedonaType>, arrays: Vec<ArrayRef>| -> ArrayRef {
+            ScalarUdfTester::new(udf.clone().into(), types)
+                .invoke_arrays(arrays)
+                .unwrap()
+        };
+        // Two unit rasters covering (0,0)–(1,1), paired with a point inside and a
+        // point outside.
+        let rasters = |crs: Option<&str>| build_unit_rasters(crs, 2);
+        let points = |ty: &SedonaType| {
+            create_geom_array(&[Some("POINT (0.5 0.5)"), Some("POINT (5 5)")], ty)
+        };
+        let expected: ArrayRef = create_array!(Boolean, [Some(true), Some(false)]);
 
-        // raster (has CRS) + raster (no CRS)
-        let tester = ScalarUdfTester::new(udf.into(), vec![RASTER, RASTER]);
-        let err = tester
-            .invoke_arrays(vec![
-                Arc::new(rasters_with_crs.clone()),
-                Arc::new(rasters_no_crs.clone()),
-            ])
-            .unwrap_err();
-        assert!(
-            err.message().contains("has CRS but"),
-            "unexpected error: {err}"
+        // raster_geom: WGS84 raster vs untagged geometry == vs 4326-tagged geometry.
+        let rg_untagged = run(
+            vec![RASTER, WKB_GEOMETRY],
+            vec![Arc::new(rasters(Some("OGC:CRS84"))), points(&WKB_GEOMETRY)],
         );
+        let rg_tagged = run(
+            vec![RASTER, wgs84_geom.clone()],
+            vec![Arc::new(rasters(Some("OGC:CRS84"))), points(&wgs84_geom)],
+        );
+        assert_array_equal(&rg_untagged, &expected);
+        assert_array_equal(&rg_tagged, &rg_untagged);
+
+        // geom_raster: 4326-tagged geometry vs untagged raster == vs WGS84 raster.
+        let gr_untagged_raster = run(
+            vec![wgs84_geom.clone(), RASTER],
+            vec![points(&wgs84_geom), Arc::new(rasters(None))],
+        );
+        let gr_tagged_raster = run(
+            vec![wgs84_geom.clone(), RASTER],
+            vec![points(&wgs84_geom), Arc::new(rasters(Some("OGC:CRS84")))],
+        );
+        assert_array_equal(&gr_untagged_raster, &expected);
+        assert_array_equal(&gr_tagged_raster, &gr_untagged_raster);
+
+        // raster_raster: WGS84 raster vs untagged raster == vs WGS84 raster (both
+        // cover (0,0)–(1,1), so they intersect).
+        let rr_untagged = run(
+            vec![RASTER, RASTER],
+            vec![
+                Arc::new(rasters(Some("OGC:CRS84"))),
+                Arc::new(rasters(None)),
+            ],
+        );
+        let rr_tagged = run(
+            vec![RASTER, RASTER],
+            vec![
+                Arc::new(rasters(Some("OGC:CRS84"))),
+                Arc::new(rasters(Some("OGC:CRS84"))),
+            ],
+        );
+        let expected_rr: ArrayRef = create_array!(Boolean, [Some(true), Some(true)]);
+        assert_array_equal(&rr_untagged, &expected_rr);
+        assert_array_equal(&rr_tagged, &rr_untagged);
+    }
+
+    /// The assume-WGS84 rule also holds when the present side is not WGS84: an
+    /// untagged raster compared against an EPSG:3857 geometry reprojects as if
+    /// the raster were tagged WGS84. This exercises the transform path rather
+    /// than the equal-CRS fast path.
+    #[test]
+    fn rs_intersects_one_missing_crs_assumes_wgs84_reprojects() {
+        let udf = rs_intersects_udf();
+        let geom_3857 = SedonaType::Wkb(Edges::Planar, deserialize_crs("EPSG:3857").unwrap());
+
+        // build_unit_raster covers WGS84 (0,0)–(1,1). Express a point inside it
+        // (WGS84 0.5,0.5) and one outside it (WGS84 5,5) in EPSG:3857.
+        let point_3857 = |lng: f64, lat: f64| {
+            let (x, y) = with_global_proj_engine(|engine| {
+                crs_transform_coord((lng, lat), "OGC:CRS84", "EPSG:3857", engine)
+            })
+            .unwrap();
+            format!("POINT ({x} {y})")
+        };
+        let inside = point_3857(0.5, 0.5);
+        let outside = point_3857(5.0, 5.0);
+
+        let run = |raster_crs: Option<&str>| -> ArrayRef {
+            ScalarUdfTester::new(udf.clone().into(), vec![geom_3857.clone(), RASTER])
+                .invoke_arrays(vec![
+                    create_geom_array(&[Some(inside.as_str()), Some(outside.as_str())], &geom_3857),
+                    Arc::new(build_unit_rasters(raster_crs, 2)),
+                ])
+                .unwrap()
+        };
+
+        let expected: ArrayRef = create_array!(Boolean, [Some(true), Some(false)]);
+        let untagged = run(None); // raster assumed WGS84
+        let tagged = run(Some("OGC:CRS84")); // raster explicitly WGS84
+        assert_array_equal(&untagged, &expected);
+        assert_array_equal(&tagged, &untagged);
     }
 }
