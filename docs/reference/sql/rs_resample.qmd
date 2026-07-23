@@ -73,15 +73,15 @@ order and per-band nodata. Pixel values are recomputed by GDAL with the chosen
 `algorithm` (nearest neighbour by default). The output stays in the input's
 CRS — `RS_Resample` never reprojects (use `RS_ReprojectMatch` for that).
 
-The argument surface mirrors Apache Sedona (Spark)'s positional overloads:
+`RS_Resample` has three positional overloads:
 
 - **`RS_Resample(raster, widthOrScale, heightOrScale, useScale, algorithm)`** —
   when `useScale` is false, `widthOrScale`/`heightOrScale` are the output pixel
   dimensions (a fractional value is an error) and the world extent is preserved.
   When `useScale` is true they are the target pixel size (`scaleX`, `scaleY`,
   with `scaleY` negative for a north-up raster); the pixel size is kept exact and
-  the extent grows by up to one pixel so it tiles into whole pixels (matching
-  Sedona Spark). Cells outside the source footprint become nodata.
+  the extent grows by up to one pixel so it tiles into whole pixels. Cells
+  outside the source footprint become nodata.
 - **`RS_Resample(raster, widthOrScale, heightOrScale, gridX, gridY, useScale,
   algorithm)`** — additionally snaps the output origin to the grid anchored at
   `(gridX, gridY)`, expanding outward so the original extent stays covered.
