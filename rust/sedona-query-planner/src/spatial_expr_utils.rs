@@ -71,6 +71,9 @@ pub(crate) fn collect_spatial_predicate_names(expr: &Expr) -> HashSet<String> {
                         | "st_equals"
                         | "st_dwithin"
                         | "st_knn"
+                        | "rs_intersects"
+                        | "rs_contains"
+                        | "rs_within"
                 ) {
                     acc.insert(func_name);
                 }
@@ -627,7 +630,7 @@ mod tests {
     use datafusion_physical_expr::{PhysicalExpr, ScalarFunctionExpr};
     use datafusion_physical_plan::joins::utils::ColumnIndex;
     use datafusion_physical_plan::joins::utils::JoinFilter;
-    use sedona_schema::datatypes::WKB_GEOMETRY;
+    use sedona_schema::datatypes::{RASTER, WKB_GEOMETRY};
     use std::sync::Arc;
 
     // Helper function to create a test schema
@@ -2293,6 +2296,30 @@ mod tests {
         });
         let names = collect_spatial_predicate_names(&non_spatial_and);
         assert!(names.is_empty());
+    }
+
+    #[test]
+    fn test_collect_spatial_predicate_names_raster() {
+        // Raster-geometry predicates are recognized as spatial predicates so their joins
+        // route through the spatial-join planner (and fall back to nested-loop join).
+        for name in ["rs_intersects", "rs_contains", "rs_within"] {
+            let udf = Arc::new(ScalarUDF::from(SimpleScalarUDF::new(
+                name,
+                vec![
+                    RASTER.storage_type().clone(),
+                    WKB_GEOMETRY.storage_type().clone(),
+                ],
+                DataType::Boolean,
+                datafusion_expr::Volatility::Immutable,
+                Arc::new(|_| Ok(ColumnarValue::Scalar(ScalarValue::Boolean(Some(true))))),
+            )));
+            let expr = Expr::ScalarFunction(datafusion_expr::expr::ScalarFunction {
+                func: udf,
+                args: vec![col("raster"), col("geom")],
+            });
+            let names = collect_spatial_predicate_names(&expr);
+            assert_eq!(names, HashSet::from([name.to_string()]));
+        }
     }
 
     #[test]

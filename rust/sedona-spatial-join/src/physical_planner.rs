@@ -66,6 +66,18 @@ impl SpatialJoinPhysicalPlanner for DefaultSpatialJoinPhysicalPlanner {
             return Ok(None);
         }
 
+        // Raster operands are recognized as spatial-join operands but cannot yet be
+        // evaluated into the geometry rectangles/WKB the optimized join requires.
+        // Returning `None` here routes such joins to the nested-loop fallback in the
+        // extension planner so they still produce correct results.
+        if predicate_has_raster_operand(
+            args.spatial_predicate,
+            &args.physical_left.schema(),
+            &args.physical_right.schema(),
+        )? {
+            return Ok(None);
+        }
+
         let should_swap = !matches!(
             args.spatial_predicate,
             SpatialPredicate::KNearestNeighbors(_)
@@ -206,20 +218,23 @@ pub fn is_spatial_predicate_supported(
     left_schema: &Schema,
     right_schema: &Schema,
 ) -> Result<bool> {
-    /// Only spatial predicates working with planar geometry are supported for optimization.
-    /// Geography (spherical) types are explicitly excluded and will not trigger optimized spatial joins.
-    fn is_geometry_type_supported(expr: &Arc<dyn PhysicalExpr>, schema: &Schema) -> Result<bool> {
-        let left_return_field = expr.return_field(schema)?;
-        let sedona_type = SedonaType::from_storage_field(&left_return_field)?;
-        let matcher = ArgMatcher::is_geometry();
-        Ok(matcher.match_type(&sedona_type))
+    /// A spatial-join operand is supported when it is a planar geometry or a raster.
+    /// Geography (spherical) types are explicitly excluded and will not trigger optimized
+    /// spatial joins. Raster operands are recognized here as valid spatial-join operands
+    /// so that raster-geometry and raster-raster predicates route through the spatial-join
+    /// planner; whether an operand can currently be evaluated is checked separately (see
+    /// [`predicate_has_raster_operand`]).
+    fn is_operand_type_supported(expr: &Arc<dyn PhysicalExpr>, schema: &Schema) -> Result<bool> {
+        let sedona_type = operand_sedona_type(expr, schema)?;
+        Ok(ArgMatcher::is_geometry().match_type(&sedona_type)
+            || matches!(sedona_type, SedonaType::Raster))
     }
 
     match spatial_predicate {
         SpatialPredicate::Relation(RelationPredicate { left, right, .. })
         | SpatialPredicate::Distance(DistancePredicate { left, right, .. }) => {
-            Ok(is_geometry_type_supported(left, left_schema)?
-                && is_geometry_type_supported(right, right_schema)?)
+            Ok(is_operand_type_supported(left, left_schema)?
+                && is_operand_type_supported(right, right_schema)?)
         }
         SpatialPredicate::KNearestNeighbors(KNNPredicate {
             left,
@@ -237,8 +252,61 @@ pub fn is_spatial_predicate_supported(
                     )
                 }
             };
-            Ok(is_geometry_type_supported(left, left_schema)?
-                && is_geometry_type_supported(right, right_schema)?)
+            Ok(is_operand_type_supported(left, left_schema)?
+                && is_operand_type_supported(right, right_schema)?)
+        }
+    }
+}
+
+/// Resolve the [`SedonaType`] an operand expression evaluates to against `schema`.
+fn operand_sedona_type(expr: &Arc<dyn PhysicalExpr>, schema: &Schema) -> Result<SedonaType> {
+    let return_field = expr.return_field(schema)?;
+    SedonaType::from_storage_field(&return_field)
+}
+
+/// Returns `true` when either operand of the predicate is a raster.
+///
+/// The optimized spatial join evaluates its operands into geometry bounding rectangles
+/// and WKB, which is not yet implemented for raster operands. Joins whose predicate has a
+/// raster operand are therefore routed to the nested-loop fallback until a raster operand
+/// evaluator exists.
+fn predicate_has_raster_operand(
+    spatial_predicate: &SpatialPredicate,
+    left_schema: &Schema,
+    right_schema: &Schema,
+) -> Result<bool> {
+    let is_raster = |expr: &Arc<dyn PhysicalExpr>, schema: &Schema| -> Result<bool> {
+        Ok(matches!(
+            operand_sedona_type(expr, schema)?,
+            SedonaType::Raster
+        ))
+    };
+
+    // Resolve each operand against the schema its columns belong to, mirroring the
+    // operand/schema pairing used by `is_spatial_predicate_supported` (KNN swaps the
+    // pairing according to the probe side).
+    match spatial_predicate {
+        SpatialPredicate::Relation(RelationPredicate { left, right, .. })
+        | SpatialPredicate::Distance(DistancePredicate { left, right, .. }) => {
+            Ok(is_raster(left, left_schema)? || is_raster(right, right_schema)?)
+        }
+        SpatialPredicate::KNearestNeighbors(KNNPredicate {
+            left,
+            right,
+            probe_side,
+            ..
+        }) => {
+            let (left, right) = match probe_side {
+                JoinSide::Left => (left, right),
+                JoinSide::Right => (right, left),
+                _ => {
+                    return sedona_internal_err!(
+                        "Invalid probe side in KNN predicate: {:?}",
+                        probe_side
+                    )
+                }
+            };
+            Ok(is_raster(left, left_schema)? || is_raster(right, right_schema)?)
         }
     }
 }
@@ -248,7 +316,7 @@ mod test {
     use arrow_schema::{DataType, Field};
     use datafusion_physical_expr::expressions::Column;
     use sedona_query_planner::spatial_predicate::SpatialRelationType;
-    use sedona_schema::datatypes::{WKB_GEOGRAPHY, WKB_GEOMETRY};
+    use sedona_schema::datatypes::{RASTER, WKB_GEOGRAPHY, WKB_GEOMETRY};
 
     use super::*;
 
@@ -280,6 +348,52 @@ mod test {
             !is_spatial_predicate_supported(&spatial_pred_geog, &geog_schema, &geog_schema)
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn raster_operand_is_supported_type_but_routed_to_fallback() {
+        let raster_schema = Arc::new(Schema::new(vec![RASTER
+            .to_storage_field("raster", false)
+            .unwrap()]));
+        let geom_schema = Arc::new(Schema::new(vec![WKB_GEOMETRY
+            .to_storage_field("geom", false)
+            .unwrap()]));
+        let raster_expr = Arc::new(Column::new("raster", 0)) as Arc<dyn PhysicalExpr>;
+        let geom_expr = Arc::new(Column::new("geom", 0)) as Arc<dyn PhysicalExpr>;
+
+        // raster + geometry
+        let raster_geom = SpatialPredicate::Relation(RelationPredicate::new(
+            raster_expr.clone(),
+            geom_expr.clone(),
+            SpatialRelationType::Intersects,
+        ));
+        // The gate accepts a raster operand as a valid spatial-join operand type...
+        assert!(
+            is_spatial_predicate_supported(&raster_geom, &raster_schema, &geom_schema).unwrap()
+        );
+        // ...but the raster operand is detected and routed to the nested-loop fallback.
+        assert!(predicate_has_raster_operand(&raster_geom, &raster_schema, &geom_schema).unwrap());
+
+        // raster + raster
+        let raster_raster = SpatialPredicate::Relation(RelationPredicate::new(
+            raster_expr.clone(),
+            raster_expr.clone(),
+            SpatialRelationType::Intersects,
+        ));
+        assert!(
+            is_spatial_predicate_supported(&raster_raster, &raster_schema, &raster_schema).unwrap()
+        );
+        assert!(
+            predicate_has_raster_operand(&raster_raster, &raster_schema, &raster_schema).unwrap()
+        );
+
+        // Pure geometry predicates are not flagged as raster, so they keep the optimized path.
+        let geom_geom = SpatialPredicate::Relation(RelationPredicate::new(
+            geom_expr.clone(),
+            geom_expr.clone(),
+            SpatialRelationType::Intersects,
+        ));
+        assert!(!predicate_has_raster_operand(&geom_geom, &geom_schema, &geom_schema).unwrap());
     }
 
     #[test]
