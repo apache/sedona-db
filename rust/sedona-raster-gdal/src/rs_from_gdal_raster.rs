@@ -35,6 +35,7 @@ use sedona_gdal::gdal::Gdal;
 use sedona_gdal::gdal_dyn_bindgen::{GDAL_OF_RASTER, GDAL_OF_READONLY};
 use sedona_gdal::raster::types::DatasetOptions;
 use sedona_raster::builder::RasterBuilder;
+use sedona_raster_functions::rs_ensure_loaded::RETURNS_BYTES_METADATA_KEY;
 use sedona_schema::datatypes::{SedonaType, RASTER};
 use sedona_schema::matchers::ArgMatcher;
 
@@ -54,6 +55,11 @@ pub fn rs_from_gdal_raster_udf() -> SedonaScalarUDF {
         vec![Arc::new(RsFromGDALRaster)],
         Volatility::Immutable,
     )
+    // Emits a fully-materialized in-db raster, so its output is already loaded
+    // and RS_EnsureLoaded must not wrap it again. It takes no raster argument
+    // (its input is binary), so there is nothing to materialize on the way in
+    // and NEEDS_PIXELS_METADATA_KEY does not apply.
+    .with_metadata(RETURNS_BYTES_METADATA_KEY, "true")
 }
 
 /// Kernel implementation for RS_FromGDALRaster
@@ -315,6 +321,24 @@ mod tests {
     fn udf_from_gdal_raster() {
         let udf: datafusion_expr::ScalarUDF = rs_from_gdal_raster_udf().into();
         assert_eq!(udf.name(), "rs_fromgdalraster");
+    }
+
+    #[test]
+    fn udf_carries_returns_bytes_metadata() {
+        // RS_FromGDALRaster unconditionally returns a fully-materialized in-db
+        // raster, so it sets `returns_bytes`; the RS_EnsureLoaded rule reads
+        // this to skip redundantly wrapping the already-loaded output.
+        use sedona_raster_functions::rs_ensure_loaded::NEEDS_PIXELS_METADATA_KEY;
+        let udf = rs_from_gdal_raster_udf();
+        assert_eq!(
+            udf.metadata()
+                .get(RETURNS_BYTES_METADATA_KEY)
+                .map(String::as_str),
+            Some("true"),
+        );
+        // Its input is binary, not a raster, so there is no raster argument to
+        // materialize and it must NOT claim to need pixels.
+        assert!(udf.metadata().get(NEEDS_PIXELS_METADATA_KEY).is_none());
     }
 
     #[test]
