@@ -19,10 +19,16 @@
 //!
 //! A raster/geometry spatial predicate (`RS_Intersects`, `RS_Contains`,
 //! `RS_Within`) is accelerated by evaluating each raster into its footprint (the
-//! convex hull of its corners) as a WKB polygon plus a bounding rectangle. The
-//! footprint is reprojected into the geometry operand's CRS so the R-tree filter
-//! and the WKB refiner — both unchanged from the default planar spatial join —
-//! compare footprints and geometries in a common CRS.
+//! convex hull of its four corners) as a WKB polygon plus a bounding rectangle.
+//! The footprint is reprojected into the geometry operand's CRS so the R-tree
+//! filter and the WKB refiner — both unchanged from the default planar spatial
+//! join — compare footprints and geometries in a common CRS.
+//!
+//! Cross-CRS raster footprints are indexed and refined as the convex hull of the
+//! raster's four reprojected corners; projection curvature along the edges is not
+//! modeled, so for large-extent rasters reprojected between very different CRSs
+//! the hull can slightly under-cover the true footprint (rare missed matches at
+//! the extreme edges). Same-CRS joins are exact.
 
 mod join_provider;
 pub mod physical_planner;

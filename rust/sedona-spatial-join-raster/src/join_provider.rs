@@ -37,23 +37,6 @@ use sedona_spatial_join::{
     SpatialPredicate,
 };
 
-/// Number of interpolated points added to each footprint edge before
-/// reprojection.
-///
-/// A raster footprint is a 4-corner ring whose edges are straight lines in the
-/// raster's native CRS. Reprojecting only the corners would draw straight lines
-/// between the reprojected corners, missing the curvature a projection change
-/// introduces along an edge. Interpolating `K` intermediate points per edge and
-/// reprojecting each one approximates that curve as a polyline; the maximum
-/// deviation from the true reprojected edge falls off like `1 / (K + 1)^2`.
-///
-/// `K = 16` (a 69-vertex reprojected ring) keeps that deviation well below a
-/// pixel for the projected extents these joins target while bounding the
-/// per-row vertex count. The reprojected footprint is an approximation either
-/// way, so cross-CRS results are verified against a reference implementation
-/// rather than asserted bit-exact against the nested-loop kernel.
-const DENSIFY_POINTS_PER_EDGE: usize = 16;
-
 /// [`SpatialJoinProvider`] for raster/geometry spatial joins.
 ///
 /// The R-tree index builder and the memory estimate delegate to the default
@@ -116,9 +99,16 @@ impl SpatialJoinProvider for RasterJoinProvider {
 /// Evaluates the operands of a raster/geometry spatial predicate.
 ///
 /// The same factory sees both operands of the join. A raster operand is turned
-/// into its reprojected footprint (see [`RasterGeometryArrayFactory::evaluate_raster`]);
-/// a geometry operand is evaluated with the default planar behavior, since the
-/// geometry is already in the target CRS.
+/// into its footprint — the convex hull of the raster's four corners
+/// (see [`RasterGeometryArrayFactory::evaluate_raster`]) — and a geometry operand
+/// is evaluated with the default planar behavior, since the geometry is already
+/// in the target CRS.
+///
+/// Cross-CRS raster footprints are indexed and refined as the convex hull of the
+/// raster's four reprojected corners; projection curvature along the edges is not
+/// modeled, so for large-extent rasters reprojected between very different CRSs
+/// the hull can slightly under-cover the true footprint (rare missed matches at
+/// the extreme edges). Same-CRS joins are exact.
 #[derive(Debug)]
 struct RasterGeometryArrayFactory {
     /// The geometry operand's CRS: the common CRS this join compares in. Raster
@@ -167,7 +157,6 @@ impl RasterGeometryArrayFactory {
         let num_rows = rasters.len();
         let mut builder = BinaryBuilder::with_capacity(num_rows, num_rows * 96);
         let mut rects = Vec::with_capacity(num_rows);
-        let mut ring: Vec<(f64, f64)> = Vec::new();
 
         with_global_proj_engine(|engine| {
             for i in 0..num_rows {
@@ -181,7 +170,7 @@ impl RasterGeometryArrayFactory {
                 let raster = rasters
                     .get(i)
                     .map_err(|e| exec_datafusion_err!("Failed to read raster row {i}: {e}"))?;
-                let rect = self.append_footprint(&raster, engine, &mut builder, &mut ring)?;
+                let rect = self.append_footprint(&raster, engine, &mut builder)?;
                 rects.push(rect);
             }
             Ok(())
@@ -195,14 +184,15 @@ impl RasterGeometryArrayFactory {
     /// rectangle, reconciling the raster's CRS against the target CRS.
     ///
     /// CRS rules mirror the `RS_*` kernel: equal (or both-absent) CRS compares
-    /// directly; a genuine CRS difference reprojects the (densified) footprint;
-    /// a one-sided CRS is an error.
+    /// directly; a genuine CRS difference reprojects the footprint's four corners
+    /// into the target CRS; a one-sided CRS is an error. The footprint is always
+    /// the convex hull of the four corners — projection curvature along the edges
+    /// is not modeled (see the type-level note on [`RasterGeometryArrayFactory`]).
     fn append_footprint(
         &self,
         raster: &dyn RasterRef,
         engine: &dyn CrsEngine,
         builder: &mut BinaryBuilder,
-        ring: &mut Vec<(f64, f64)>,
     ) -> Result<Bounds2D> {
         let raster_crs = resolve_crs(raster.crs())?;
         let corners = raster_footprint_corners(raster);
@@ -220,8 +210,8 @@ impl RasterGeometryArrayFactory {
                 builder.append_value([]);
                 Ok(bounds_from_coords(&corners))
             }
-            // Genuine CRS difference: densify the native footprint edges, then
-            // reproject every ring vertex into the target CRS.
+            // Genuine CRS difference: reproject the four corners into the target
+            // CRS and emit their convex hull.
             (Some(raster_crs), Some(target_crs)) => {
                 let transform = engine
                     .get_transform_crs_to_crs(
@@ -232,17 +222,21 @@ impl RasterGeometryArrayFactory {
                     )
                     .map_err(|e| exec_datafusion_err!("CRS transform error: {e}"))?;
 
-                densify_ring(&corners, ring);
-                for point in ring.iter_mut() {
+                let mut hull = corners;
+                for corner in hull.iter_mut() {
                     transform
-                        .transform_coord(point)
+                        .transform_coord(corner)
                         .map_err(|e| exec_datafusion_err!("Transform error: {e}"))?;
                 }
 
-                write_wkb_polygon(builder, ring.iter().copied())
-                    .map_err(|e| exec_datafusion_err!("Failed to write footprint WKB: {e}"))?;
+                // Closed ring: the four reprojected corners plus the first repeated.
+                write_wkb_polygon(
+                    builder,
+                    [hull[0], hull[1], hull[2], hull[3], hull[0]].into_iter(),
+                )
+                .map_err(|e| exec_datafusion_err!("Failed to write footprint WKB: {e}"))?;
                 builder.append_value([]);
-                Ok(bounds_from_coords(ring))
+                Ok(bounds_from_coords(&hull))
             }
             (Some(_), None) => {
                 exec_err!(
@@ -256,26 +250,6 @@ impl RasterGeometryArrayFactory {
             }
         }
     }
-}
-
-/// Build a densified ring (native coordinates) from four footprint corners.
-///
-/// For each of the four edges the start vertex is emitted followed by
-/// [`DENSIFY_POINTS_PER_EDGE`] evenly spaced interior points; the ring is then
-/// closed by repeating the first corner. The resulting length is
-/// `4 * (1 + DENSIFY_POINTS_PER_EDGE) + 1`.
-fn densify_ring(corners: &[(f64, f64); 4], out: &mut Vec<(f64, f64)>) {
-    out.clear();
-    for i in 0..4 {
-        let (ax, ay) = corners[i];
-        let (bx, by) = corners[(i + 1) % 4];
-        out.push((ax, ay));
-        for k in 1..=DENSIFY_POINTS_PER_EDGE {
-            let t = k as f64 / (DENSIFY_POINTS_PER_EDGE as f64 + 1.0);
-            out.push((ax + t * (bx - ax), ay + t * (by - ay)));
-        }
-    }
-    out.push(corners[0]);
 }
 
 /// Bounding rectangle of a set of coordinates. [`Bounds2D::new`] enlarges the
@@ -298,34 +272,6 @@ fn bounds_from_coords(coords: &[(f64, f64)]) -> Bounds2D {
 #[cfg(test)]
 mod test {
     use super::*;
-
-    #[test]
-    fn densify_ring_vertex_count() {
-        // Unit square corners: upper-left, upper-right, lower-right, lower-left.
-        let corners = [(0.0, 1.0), (1.0, 1.0), (1.0, 0.0), (0.0, 0.0)];
-        let mut ring = Vec::new();
-        densify_ring(&corners, &mut ring);
-
-        // 4 edges * (start vertex + 16 interior points) + 1 closing vertex.
-        assert_eq!(ring.len(), 4 * (1 + DENSIFY_POINTS_PER_EDGE) + 1);
-        assert_eq!(ring.len(), 69);
-
-        // The ring starts and ends at the upper-left corner.
-        assert_eq!(ring[0], (0.0, 1.0));
-        assert_eq!(*ring.last().unwrap(), (0.0, 1.0));
-
-        // Every densified vertex lies on a footprint edge (unit square), so all
-        // coordinates stay within [0, 1].
-        for &(x, y) in &ring {
-            assert!((0.0..=1.0).contains(&x));
-            assert!((0.0..=1.0).contains(&y));
-        }
-
-        // The first interior point on the top edge is 1/17 of the way from the
-        // upper-left to the upper-right corner.
-        let t = 1.0 / (DENSIFY_POINTS_PER_EDGE as f64 + 1.0);
-        assert_eq!(ring[1], (t, 1.0));
-    }
 
     #[test]
     fn bounds_from_coords_covers_corners() {

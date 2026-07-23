@@ -40,6 +40,11 @@ transformation fails, the extent of both sides are transformed to WGS 84 as a fa
 If either argument has no CRS set, the comparison is performed directly without
 CRS transformation.
 
+Across CRSes the convex hull is the straight-chord polygon through the raster's
+four reprojected corners; edge curvature is not modeled, so for large-extent
+rasters between very different CRSes the hull can slightly under-cover the true
+footprint. Same-CRS comparisons are exact.
+
 ## Examples
 
 ```sql

@@ -261,27 +261,28 @@ async fn intersects_produces_expected_rows() -> Result<()> {
 }
 
 /// Cross-CRS: verify the accelerated path against an independent,
-/// construction-based reference. The raster is skewed in EPSG:3857 (so its
-/// footprint edges curve when reprojected to lng/lat, exercising densification);
-/// the geometry operand is lng/lat.
+/// construction-based reference. The raster is skewed in EPSG:3857; the geometry
+/// operand is lng/lat.
 ///
-/// Test points are built by reprojecting native-3857 points of *known*
-/// membership into lng/lat: for the convex footprint quadrilateral, the centroid
-/// and the halfway-to-each-vertex points are strictly inside, while the
-/// reflection of the centroid through each vertex is strictly outside. Because a
-/// CRS transform is a homeomorphism, a point's inside/outside status relative to
-/// the footprint is preserved by reprojection, so the expected result is exact
-/// (no tolerance) and independent of how the accelerated path reprojects. The
-/// reference reprojects points (into the raster's space); the accelerated path
-/// reprojects the footprint (into the geometry's space) — opposite directions, so
-/// this catches a wrong transform direction as well as pipeline errors, checked
-/// against PROJ (the same engine a rasterio/geopandas reference would use).
+/// The accelerated footprint is the convex hull of the raster's four corners
+/// reprojected into lng/lat (straight chords between reprojected corners — edge
+/// curvature is not modeled). The reference reprojects those same four corners
+/// into lng/lat to reconstruct that chord-quad, then builds test points whose
+/// membership is known by construction: the centroid and the halfway-to-each-
+/// vertex points are strictly inside the convex quad, while the reflection of the
+/// centroid through each vertex is strictly outside. These points sit well away
+/// from the edges, so the expected result is exact (no tolerance). The reference
+/// reprojects corners in the same 3857 -> lng/lat direction as the accelerated
+/// path, so a wrong transform direction places the accelerated hull elsewhere and
+/// none of the (correctly placed) inside points match — this validates transform
+/// direction and the footprint/refine pipeline against PROJ (the same engine a
+/// rasterio/geopandas reference would use).
 #[tokio::test]
 async fn cross_crs_matches_constructed_reference() -> Result<()> {
     let raster = build_skewed_raster_3857();
 
     // Footprint corners in the raster's native CRS (EPSG:3857). These are exact.
-    let corners = {
+    let native_corners = {
         let rasters = RasterStructArray::try_new(&raster).unwrap();
         let r = rasters.get(0).unwrap();
         let w = r.metadata().width();
@@ -293,43 +294,42 @@ async fn cross_crs_matches_constructed_reference() -> Result<()> {
             to_world_coordinate(&r, 0, h),
         ]
     };
-    let cx = corners.iter().map(|c| c.0).sum::<f64>() / 4.0;
-    let cy = corners.iter().map(|c| c.1).sum::<f64>() / 4.0;
 
-    // Native-3857 test points with membership known by construction.
-    let mut native_points: Vec<(i32, (f64, f64), bool)> = vec![(0, (cx, cy), true)];
-    for (i, &(x, y)) in corners.iter().enumerate() {
+    // Reproject the four corners into lng/lat. This is exactly the convex-hull
+    // footprint the accelerated path builds (straight chords between corners).
+    let lnglat_crs = lnglat().unwrap().to_crs_string();
+    let hull: [(f64, f64); 4] = with_global_proj_engine(|engine| {
+        let transform = engine
+            .get_transform_crs_to_crs("EPSG:3857", &lnglat_crs, None, "")
+            .map_err(|e| datafusion_common::exec_datafusion_err!("{e}"))?;
+        let mut hull = native_corners;
+        for corner in hull.iter_mut() {
+            transform
+                .transform_coord(corner)
+                .map_err(|e| datafusion_common::exec_datafusion_err!("{e}"))?;
+        }
+        Ok(hull)
+    })?;
+    let cx = hull.iter().map(|c| c.0).sum::<f64>() / 4.0;
+    let cy = hull.iter().map(|c| c.1).sum::<f64>() / 4.0;
+
+    // lng/lat test points with membership known by construction against the
+    // convex chord-quad `hull`.
+    let mut projected: Vec<(i32, (f64, f64), bool)> = vec![(0, (cx, cy), true)];
+    for (i, &(x, y)) in hull.iter().enumerate() {
         // Halfway from centroid to a vertex: strictly inside a convex polygon.
-        native_points.push((
+        projected.push((
             10 + i as i32,
             (cx + 0.5 * (x - cx), cy + 0.5 * (y - cy)),
             true,
         ));
         // Reflection of the centroid through a vertex: strictly outside.
-        native_points.push((
+        projected.push((
             20 + i as i32,
             (cx + 2.0 * (x - cx), cy + 2.0 * (y - cy)),
             false,
         ));
     }
-
-    // Reproject the native-3857 points into lng/lat to get the geometry coords.
-    let lnglat_crs = lnglat().unwrap().to_crs_string();
-    let projected: Vec<(i32, (f64, f64), bool)> = with_global_proj_engine(|engine| {
-        let transform = engine
-            .get_transform_crs_to_crs("EPSG:3857", &lnglat_crs, None, "")
-            .map_err(|e| datafusion_common::exec_datafusion_err!("{e}"))?;
-        native_points
-            .iter()
-            .map(|&(gid, pt, inside)| {
-                let mut c = pt;
-                transform
-                    .transform_coord(&mut c)
-                    .map_err(|e| datafusion_common::exec_datafusion_err!("{e}"))?;
-                Ok((gid, c, inside))
-            })
-            .collect::<Result<Vec<_>>>()
-    })?;
 
     // Expected matches: the gids of the inside points.
     let mut expected_inside: Vec<i32> = projected
