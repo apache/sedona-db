@@ -81,8 +81,8 @@ kernels:
 
 `RS_ZonalStatsAll` returns every summary statistic of the pixels of a single
 band that a zone geometry covers, as a struct with fields `count`, `sum`,
-`mean`, `median`, `mode`, `stddev`, `variance`, `min`, and `max` (the field
-order of Apache Sedona's `RS_ZonalStatsAll`). A pixel is included when its
+`mean`, `median`, `mode`, `stddev`, `variance`, `min`, and `max`. A pixel is
+included when its
 center falls inside the zone (or, with `all_touched`, when the zone touches it
 at all), and the band's nodata pixels are excluded by default.
 
@@ -95,11 +95,10 @@ other field is NULL. When the zone does not intersect the raster at all, the
 whole struct is NULL under the default `lenient` behavior, or the call raises an
 error when `lenient` is set to false.
 
-The positional overloads mirror Apache Sedona Spark's `RS_ZonalStatsAll`
-verbatim (the same ladder as `RS_ZonalStats` without `stat_type`). The `band`,
-`all_touched`, `exclude_nodata`, and `lenient` arguments are added one at a time
-by the wider overloads; `all_touched` defaults to false, `exclude_nodata` to
-true, and `lenient` to true. Unlike Sedona Spark, the band-less overload does
+The overloads are the same ladder as `RS_ZonalStats` without `stat_type`. The
+`band`, `all_touched`, `exclude_nodata`, and `lenient` arguments are added one
+at a time by the wider overloads; `all_touched` defaults to false,
+`exclude_nodata` to true, and `lenient` to true. The band-less overload does
 not default to band 1 on a multiband raster: naming the band is required there.
 This function operates on 2-D `(y, x)` bands; computing statistics per
 non-spatial plane of an N-D band is not supported.
