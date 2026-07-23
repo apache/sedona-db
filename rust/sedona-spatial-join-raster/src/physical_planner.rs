@@ -25,7 +25,11 @@ use sedona_query_planner::{
     spatial_join_physical_planner::{PlanSpatialJoinArgs, SpatialJoinPhysicalPlanner},
     spatial_predicate::{RelationPredicate, SpatialPredicate, SpatialRelationType},
 };
-use sedona_schema::{crs::Crs, datatypes::SedonaType, matchers::ArgMatcher};
+use sedona_schema::{
+    crs::{lnglat, Crs},
+    datatypes::SedonaType,
+    matchers::ArgMatcher,
+};
 use sedona_spatial_join::{
     physical_planner::{repartition_probe_side, should_swap_join_order},
     SpatialJoinExec,
@@ -114,8 +118,9 @@ impl SpatialJoinPhysicalPlanner for RasterSpatialJoinPhysicalPlanner {
 ///
 /// Handled: a `Relation` predicate of `Intersects`/`Contains`/`Within` with
 /// exactly one raster operand and one planar-geometry operand. The returned
-/// [`Crs`] is the geometry operand's schema CRS, which is `None` when the
-/// geometry carries no CRS.
+/// [`Crs`] is the geometry operand's schema CRS, defaulting to WGS84 when the
+/// geometry carries no CRS (a missing CRS is assumed WGS84, matching the `RS_*`
+/// kernel and Sedona Spark).
 fn raster_geometry_target_crs(
     spatial_predicate: &SpatialPredicate,
     left_schema: &Schema,
@@ -148,14 +153,26 @@ fn raster_geometry_target_crs(
         matches!(right_type, SedonaType::Raster),
     ) {
         // Exactly one raster operand; the other must be a planar geometry.
-        (true, false) if is_geometry.match_type(&right_type) => Some(right_type.crs().clone()),
-        (false, true) if is_geometry.match_type(&left_type) => Some(left_type.crs().clone()),
+        (true, false) if is_geometry.match_type(&right_type) => {
+            Some(geometry_operand_target_crs(right_type.crs()))
+        }
+        (false, true) if is_geometry.match_type(&left_type) => {
+            Some(geometry_operand_target_crs(left_type.crs()))
+        }
         // raster/raster (no fixed common CRS), geometry/geometry, geography, or
         // item-crs operands are left to other planners / the nested-loop fallback.
         _ => None,
     };
 
     Ok(target)
+}
+
+/// The CRS the raster join compares in for a geometry operand: the operand's own
+/// CRS, or WGS84 when it carries none. A missing CRS is assumed to be WGS84
+/// (matching the `RS_*` kernel and Sedona Spark); the CRS-less geometry's
+/// coordinates are compared as-is, now in a WGS84 frame.
+fn geometry_operand_target_crs(crs: &Crs) -> Crs {
+    crs.clone().or_else(lnglat)
 }
 
 /// Resolve the [`SedonaType`] an operand expression evaluates to against `schema`.
@@ -225,7 +242,7 @@ mod test {
     }
 
     #[test]
-    fn crs_less_geometry_yields_crs_less_target() {
+    fn crs_less_geometry_yields_wgs84_target() {
         let raster_schema = schema_with("raster", &RASTER);
         let geom_schema = schema_with("geom", &WKB_GEOMETRY);
 
@@ -233,9 +250,14 @@ mod test {
         let target = raster_geometry_target_crs(&pred, &raster_schema, &geom_schema)
             .unwrap()
             .expect("raster/geometry should be handled");
+        // A CRS-less geometry is assumed to be WGS84, so the join compares in a
+        // WGS84 frame rather than declining to a CRS-less target.
         assert!(
-            target.is_none(),
-            "CRS-less geometry means a CRS-less target"
+            target
+                .as_deref()
+                .expect("CRS-less geometry defaults to a WGS84 target")
+                .crs_equals(lnglat().as_deref().unwrap()),
+            "CRS-less geometry means a WGS84 target"
         );
     }
 
