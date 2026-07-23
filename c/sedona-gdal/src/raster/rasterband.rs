@@ -328,6 +328,126 @@ impl<'a> RasterBand<'a> {
         self.api
     }
 
+    /// Resample a **fractional** source window into a sub-rectangle of a larger
+    /// destination byte buffer, using the band's native GDAL data type.
+    ///
+    /// This is the same-CRS regridding primitive: unlike [`Self::read_as_bytes`]
+    /// (whose source window is whole pixels), `src_window` is a floating
+    /// `(x_off, y_off, x_size, y_size)` in source-pixel coordinates, so an output
+    /// grid whose origin/pixel size is offset from the source grid by a fraction
+    /// of a pixel still samples at the correct sub-pixel position (GDAL's
+    /// `bFloatingPointWindowValidity`). The `dst_size` resampled pixels are
+    /// written at `dst_off` within a `full_width`-pixel-wide destination buffer
+    /// (via GDAL's pixel/line spacing), leaving the rest of `dst` untouched — so
+    /// a caller pre-fills `dst` with nodata and only the covered sub-window is
+    /// overwritten.
+    ///
+    /// `src_window` must lie within the band extent; the caller computes the
+    /// covered sub-window (output pixels whose centres fall inside the source)
+    /// so this holds. The integer read window handed to GDAL is the enclosing
+    /// whole-pixel box clamped to the band, and the floating window is clamped
+    /// into it, so a boundary output pixel whose extent pokes half a pixel past
+    /// the source still reads (nearest samples its centre, which is inside).
+    pub fn read_regrid_into(
+        &self,
+        src_window: (f64, f64, f64, f64),
+        dst_off: (usize, usize),
+        dst_size: (usize, usize),
+        full_width: usize,
+        dst: &mut [u8],
+        e_resample_alg: ResampleAlg,
+    ) -> Result<()> {
+        let (src_w, src_h) = self.size();
+        let byte_size = self.band_type().byte_size();
+        if byte_size == 0 {
+            return Err(GdalError::BadArgument(
+                "Cannot regrid a band with unknown GDAL data type".to_string(),
+            ));
+        }
+        if src_w == 0 || src_h == 0 {
+            return Ok(());
+        }
+
+        let (dst_x, dst_y) = dst_off;
+        let (buf_w, buf_h) = dst_size;
+        if buf_w == 0 || buf_h == 0 {
+            return Ok(());
+        }
+        // The written sub-rectangle must fit inside the destination buffer.
+        if dst_x + buf_w > full_width {
+            return Err(GdalError::BadArgument(format!(
+                "regrid destination window x[{dst_x}..{}] exceeds buffer width {full_width}",
+                dst_x + buf_w
+            )));
+        }
+        let line_stride = full_width * byte_size;
+        let required = (dst_y + buf_h) * line_stride;
+        if dst.len() < required {
+            return Err(GdalError::BadArgument(format!(
+                "regrid destination buffer of {} bytes is too small (need {required})",
+                dst.len()
+            )));
+        }
+
+        // Integer read window: the whole-pixel box enclosing the floating window,
+        // clamped to the band extent (GDAL requires an in-bounds integer window).
+        // `ix0`/`iy0` land on a valid pixel (<= size-1) so `ix0 + 1 <= src_w`, and
+        // the clamp bounds stay ordered.
+        let (fx, fy, fw, fh) = src_window;
+        let ix0 = (fx.floor().max(0.0) as usize).min(src_w - 1);
+        let iy0 = (fy.floor().max(0.0) as usize).min(src_h - 1);
+        let ix1 = ((fx + fw).ceil().max(0.0) as usize).clamp(ix0 + 1, src_w);
+        let iy1 = ((fy + fh).ceil().max(0.0) as usize).clamp(iy0 + 1, src_h);
+        let nx = ix1 - ix0;
+        let ny = iy1 - iy0;
+
+        // Clamp the floating window into the integer window so it never claims
+        // pixels the read region does not cover.
+        let win_x0 = fx.max(ix0 as f64);
+        let win_y0 = fy.max(iy0 as f64);
+        let win_x1 = (fx + fw).min(ix1 as f64);
+        let win_y1 = (fy + fh).min(iy1 as f64);
+
+        let mut extra_arg = GDALRasterIOExtraArg {
+            eResampleAlg: e_resample_alg.to_gdal(),
+            bFloatingPointWindowValidity: 1,
+            dfXOff: win_x0,
+            dfYOff: win_y0,
+            dfXSize: (win_x1 - win_x0).max(0.0),
+            dfYSize: (win_y1 - win_y0).max(0.0),
+            ..GDALRasterIOExtraArg::default()
+        };
+
+        // Point at the first byte of the destination sub-rectangle; pixel/line
+        // spacing place the resampled pixels into the wider buffer.
+        let offset = dst_y * line_stride + dst_x * byte_size;
+        let data_ptr = unsafe { dst.as_mut_ptr().add(offset) } as *mut std::ffi::c_void;
+
+        let rv = unsafe {
+            call_gdal_api!(
+                self.api,
+                GDALRasterIOEx,
+                self.c_rasterband,
+                GF_Read,
+                i32::try_from(ix0)?,
+                i32::try_from(iy0)?,
+                i32::try_from(nx)?,
+                i32::try_from(ny)?,
+                data_ptr,
+                i32::try_from(buf_w)?,
+                i32::try_from(buf_h)?,
+                self.c_band_type(),
+                i64::try_from(byte_size)?,
+                i64::try_from(line_stride)?,
+                &mut extra_arg
+            )
+        };
+        if rv != CE_None {
+            return Err(self.api.last_cpl_err(rv as u32));
+        }
+        Ok(())
+    }
+
     fn read_impl(
         &self,
         request: RasterIoRequest,
@@ -462,6 +582,50 @@ mod tests {
             // Average resampling; exact values are GDAL-version-dependent, so just
             // verify that the downsampled result has the expected shape and length.
             assert_eq!(rv.data().len(), 4);
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn read_regrid_into_places_fractional_window() {
+        with_global_gdal_api(|api| {
+            let driver = DriverManager::get_driver_by_name(api, "MEM").unwrap();
+            // 2x1 source, values [10, 20] (source col 0 = 10, col 1 = 20).
+            let dataset = driver.create_with_band_type::<u8>("", 2, 1, 1).unwrap();
+            let band = dataset.rasterband(1).unwrap();
+            let mut src = Buffer::new((2, 1), vec![10u8, 20]);
+            band.write((0, 0), (2, 1), &mut src).unwrap();
+
+            // A 2x1 destination pre-filled with nodata (255). Regrid the
+            // fractional source window [0, 1.5] (covering source col 0 only) into
+            // destination col 0: nearest samples the output pixel centre at
+            // source 0.75 -> col 0 = 10; destination col 1 is never written, so
+            // it keeps the nodata fill.
+            let mut dst = vec![255u8, 255];
+            band.read_regrid_into(
+                (0.0, 0.0, 1.5, 1.0),
+                (0, 0),
+                (1, 1),
+                2,
+                &mut dst,
+                ResampleAlg::NearestNeighbour,
+            )
+            .unwrap();
+            assert_eq!(dst, vec![10u8, 255]);
+
+            // The complementary window [0.5, 2.0] (covering source col 1) placed
+            // at destination col 1 samples source 1.25 -> col 1 = 20.
+            let mut dst = vec![255u8, 255];
+            band.read_regrid_into(
+                (0.5, 0.0, 1.5, 1.0),
+                (1, 0),
+                (1, 1),
+                2,
+                &mut dst,
+                ResampleAlg::NearestNeighbour,
+            )
+            .unwrap();
+            assert_eq!(dst, vec![255u8, 20]);
         })
         .unwrap();
     }

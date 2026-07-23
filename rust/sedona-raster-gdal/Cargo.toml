@@ -89,3 +89,8 @@ path = "benches/rs_polygonize.rs"
 harness = false
 name = "rs_as_raster"
 path = "benches/rs_as_raster.rs"
+
+[[bench]]
+harness = false
+name = "rs_resample"
+path = "benches/rs_resample.rs"

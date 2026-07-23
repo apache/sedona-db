@@ -26,5 +26,6 @@ pub fn default_function_set() -> FunctionSet {
     function_set.insert_scalar_udf(crate::rs_frompath::rs_frompath_udf());
     function_set.insert_scalar_udf(crate::rs_metadata::rs_metadata_udf());
     function_set.insert_scalar_udf(crate::rs_polygonize::rs_polygonize_udf());
+    function_set.insert_scalar_udf(crate::rs_resample::rs_resample_udf());
     function_set
 }
