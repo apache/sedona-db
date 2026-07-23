@@ -15,33 +15,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
-pub mod crs_utils;
-mod executor;
-pub use executor::RasterExecutor;
-pub mod footprint;
-pub mod register;
-pub mod rs_band_accessors;
-pub mod rs_bandpath;
-pub mod rs_convexhull;
-pub mod rs_dim_band;
-pub mod rs_dimensions;
-pub mod rs_ensure_loaded;
-pub mod rs_envelope;
-pub mod rs_example;
-pub mod rs_georeference;
-pub mod rs_geotransform;
-pub mod rs_isempty;
-pub mod rs_numbands;
-pub mod rs_pixel_functions;
-pub mod rs_rastercoordinate;
-pub mod rs_set_band_nodata;
-pub mod rs_set_georeference;
-pub mod rs_setsrid;
-pub mod rs_size;
-pub mod rs_slice;
-pub mod rs_spatial_predicates;
-pub mod rs_srid;
-pub mod rs_value;
-pub mod rs_values;
-pub mod rs_worldcoordinate;
-mod sampling;
+//! Optimized spatial joins with a raster operand.
+//!
+//! A raster/geometry spatial predicate (`RS_Intersects`, `RS_Contains`,
+//! `RS_Within`) is accelerated by evaluating each raster into its footprint (the
+//! convex hull of its corners) as a WKB polygon plus a bounding rectangle. The
+//! footprint is reprojected into the geometry operand's CRS so the R-tree filter
+//! and the WKB refiner — both unchanged from the default planar spatial join —
+//! compare footprints and geometries in a common CRS.
+
+mod join_provider;
+pub mod physical_planner;

@@ -157,6 +157,17 @@ impl SedonaContext {
                 DefaultSpatialJoinPhysicalPlanner::new(),
             ));
 
+            // Register the raster join after the default planner. It accelerates
+            // raster/geometry predicates; unsupported cases fall back to the
+            // default planner (and ultimately the nested-loop join).
+            {
+                use sedona_spatial_join_raster::physical_planner::RasterSpatialJoinPhysicalPlanner;
+
+                planner = planner.with_spatial_join_physical_planner(Arc::new(
+                    RasterSpatialJoinPhysicalPlanner::new(),
+                ));
+            }
+
             // Register the geography join after the default planner
             // If a query is not supported, it falls back to the default planner.
             #[cfg(feature = "s2geography")]

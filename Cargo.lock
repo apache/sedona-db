@@ -5763,6 +5763,7 @@ dependencies = [
  "sedona-spatial-join",
  "sedona-spatial-join-geography",
  "sedona-spatial-join-gpu",
+ "sedona-spatial-join-raster",
  "sedona-testing",
  "sedona-tg",
  "serde",
@@ -6437,6 +6438,32 @@ dependencies = [
  "tokio",
  "wkb",
  "wkt 0.14.0",
+]
+
+[[package]]
+name = "sedona-spatial-join-raster"
+version = "0.4.0"
+dependencies = [
+ "arrow-array",
+ "arrow-schema",
+ "datafusion",
+ "datafusion-common",
+ "datafusion-expr",
+ "datafusion-physical-expr",
+ "datafusion-physical-plan",
+ "rstest",
+ "sedona-common",
+ "sedona-expr",
+ "sedona-functions",
+ "sedona-geometry",
+ "sedona-proj",
+ "sedona-query-planner",
+ "sedona-raster",
+ "sedona-raster-functions",
+ "sedona-schema",
+ "sedona-spatial-join",
+ "sedona-testing",
+ "tokio",
 ]
 
 [[package]]

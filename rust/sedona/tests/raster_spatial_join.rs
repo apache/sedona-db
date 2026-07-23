@@ -15,17 +15,18 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! End-to-end test for raster-geometry spatial-join recognition + fallback.
+//! End-to-end test for raster-geometry optimized spatial joins.
 //!
 //! A join predicated on `RS_Intersects(raster, geom)` is recognized as a spatial
-//! predicate (so it becomes a `SpatialJoin` extension node), but the optimized
-//! spatial join cannot yet evaluate raster operands. The join must therefore fall
-//! back to a `NestedLoopJoinExec` and still produce correct results.
+//! predicate (so it becomes a `SpatialJoin` extension node) and is planned as the
+//! optimized `SpatialJoinExec` by the raster extension planner, which evaluates
+//! each raster into its footprint polygon rather than falling back to a
+//! `NestedLoopJoinExec`.
 //!
-//! The row-correctness case is gated behind the `proj` feature because the
-//! `RS_Intersects` kernel always initializes the global PROJ engine (which needs
-//! `sedona-proj/proj-sys`); the recognition/fallback plan-shape case only plans and
-//! so runs without PROJ.
+//! The row-correctness case is gated behind the `proj` feature because the raster
+//! footprint evaluator (like the `RS_Intersects` kernel) initializes the global
+//! PROJ engine (which needs `sedona-proj/proj-sys`); the plan-shape case only
+//! plans and so runs without PROJ.
 
 // The spatial-join planner/optimizer are only wired in when this feature is enabled.
 #![cfg(feature = "spatial-join")]
@@ -96,11 +97,11 @@ const RASTER_JOIN_SQL: &str = "SELECT r.rid, g.gid \
      ORDER BY r.rid, g.gid";
 
 /// The `RS_Intersects` join is recognized as a spatial predicate (so the optimized
-/// logical plan contains the `SpatialJoin` extension node), and — with no raster
-/// operand evaluator yet — falls back to a `NestedLoopJoinExec` rather than the
-/// optimized `SpatialJoinExec`. Planning only, so no PROJ required.
+/// logical plan contains the `SpatialJoin` extension node) and is planned as the
+/// optimized `SpatialJoinExec` by the raster extension planner, not the
+/// `NestedLoopJoinExec` fallback. Planning only, so no PROJ required.
 #[tokio::test]
-async fn raster_join_recognized_and_falls_back_to_nested_loop() {
+async fn raster_join_uses_optimized_spatial_join() {
     let ctx = SedonaContext::new_local_interactive().await.unwrap();
     register_raster_table(&ctx);
     register_geom_table(&ctx);
@@ -117,12 +118,12 @@ async fn raster_join_recognized_and_falls_back_to_nested_loop() {
     let physical = df.create_physical_plan().await.unwrap();
     let physical_str = displayable(physical.as_ref()).indent(true).to_string();
     assert!(
-        physical_str.contains("NestedLoopJoinExec"),
-        "expected NestedLoopJoinExec fallback, got:\n{physical_str}"
+        physical_str.contains("SpatialJoinExec"),
+        "raster join should use the optimized SpatialJoinExec, got:\n{physical_str}"
     );
     assert!(
-        !physical_str.contains("SpatialJoinExec"),
-        "raster join must not use the optimized SpatialJoinExec, got:\n{physical_str}"
+        !physical_str.contains("NestedLoopJoinExec"),
+        "raster join must not fall back to NestedLoopJoinExec, got:\n{physical_str}"
     );
 }
 

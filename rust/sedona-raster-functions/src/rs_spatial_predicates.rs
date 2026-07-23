@@ -34,18 +34,16 @@ use std::sync::Arc;
 use crate::crs_utils::crs_transform_wkb;
 use crate::crs_utils::resolve_crs;
 use crate::executor::RasterExecutor;
+use crate::footprint::write_convexhull_wkb;
 use arrow_array::builder::BooleanBuilder;
 use arrow_schema::DataType;
 use datafusion_common::exec_datafusion_err;
 use datafusion_common::exec_err;
-use datafusion_common::DataFusionError;
 use datafusion_common::Result;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::transform::CrsEngine;
-use sedona_geometry::wkb_factory::write_wkb_polygon;
 use sedona_proj::transform::with_global_proj_engine;
-use sedona_raster::affine_transformation::to_world_coordinate;
 use sedona_raster::traits::RasterRef;
 use sedona_schema::crs::{lnglat, CrsRef};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
@@ -375,29 +373,11 @@ fn evaluate_predicate<Op: tg::BinaryPredicate>(wkb_a: &[u8], wkb_b: &[u8]) -> Re
 ///       = 9 + 4 + 80 = 93
 const CONVEXHULL_WKB_SIZE: usize = 93;
 
-/// Create WKB for a convex hull polygon for the raster
-fn write_convexhull_wkb(raster: &dyn RasterRef, out: &mut impl std::io::Write) -> Result<()> {
-    let width = raster.metadata().width();
-    let height = raster.metadata().height();
-
-    let (ulx, uly) = to_world_coordinate(raster, 0, 0);
-    let (urx, ury) = to_world_coordinate(raster, width, 0);
-    let (lrx, lry) = to_world_coordinate(raster, width, height);
-    let (llx, lly) = to_world_coordinate(raster, 0, height);
-
-    write_wkb_polygon(
-        out,
-        [(ulx, uly), (urx, ury), (lrx, lry), (llx, lly), (ulx, uly)].into_iter(),
-    )
-    .map_err(|e| DataFusionError::External(e.into()))?;
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use arrow_array::{create_array, ArrayRef};
+    use datafusion_common::DataFusionError;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_geometry::types::Edges;
