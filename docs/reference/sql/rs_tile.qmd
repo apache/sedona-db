@@ -16,10 +16,10 @@
 # specific language governing permissions and limitations
 # under the License.
 
-title: RS_TileExplode
+title: RS_Tile
 description: >
-  Splits a raster into a grid of fixed-size tiles, returning one list item per
-  tile with its grid position.
+  Returns an array of rasters resulting from the split of the input raster into
+  a grid of fixed-size tiles, one list item per tile with its grid position.
 kernels:
   - returns: list
     args:
@@ -43,24 +43,6 @@ kernels:
         `pad_with_no_data = true`); defaults to the band's own nodata value, or
         the band data type's minimum if it has none. It is an error if it does
         not fit the band's data type.
-  - returns: list
-    args:
-    - raster
-    - name: band_index
-      type: integer
-      description: 1-based index of the single band to include in each tile.
-    - name: width
-      type: integer
-      description: Tile width in pixels. Must be >= 1.
-    - name: height
-      type: integer
-      description: Tile height in pixels. Must be >= 1.
-    - name: pad_with_no_data
-      type: boolean
-      description: Optional (default false). See the no-band overload.
-    - name: no_data_val
-      type: double
-      description: Optional. See the no-band overload.
   - returns: list
     args:
     - raster
@@ -89,21 +71,19 @@ kernels:
 
 ## Description
 
-`RS_TileExplode` cuts a raster into a grid of `width` x `height` tiles,
+`RS_Tile` cuts a raster into a grid of `width` x `height` tiles,
 returning a list with one item per tile. Because SedonaDB has no per-row
 generator, the tiles are returned as a list that you `UNNEST` to get one row
 per tile.
 
-It has three overloads (`padWithNoData` and `noDataVal` are trailing
+It has two overloads (`padWithNoData` and `noDataVal` are trailing
 optionals):
 
-- `RS_TileExplode(raster, width, height, padWithNoData = false, noDataVal = null)`
-- `RS_TileExplode(raster, bandIndex, width, height, padWithNoData = false, noDataVal = null)`
-- `RS_TileExplode(raster, bandIndices, width, height, padWithNoData = false, noDataVal = null)`
+- `RS_Tile(raster, width, height, padWithNoData = false, noDataVal = null)`
+- `RS_Tile(raster, bandIndices, width, height, padWithNoData = false, noDataVal = null)`
 
-When no band argument is given, every band is included. `bandIndex` selects a
-single 1-based band; `bandIndices` selects an ordered subset (equivalent to
-`bandIndex` with a one-element array). Band indices are 1-based.
+When no band argument is given, every band is included. `bandIndices` selects
+an ordered subset of bands. Band indices are 1-based.
 
 Each returned list item is a struct with:
 
@@ -123,18 +103,18 @@ supplies one.
 Tile every band into a 2x2 grid of 32x16 tiles:
 
 ```sql
-SELECT RS_TileExplode(RS_Example(), 32, 16);
+SELECT RS_Tile(RS_Example(), 32, 16);
 ```
 
-Tile only the first band, padding the edge tiles to the full 40x20 size with a
+Tile every band, padding the edge tiles to the full 40x20 size with a
 nodata fill of 0:
 
 ```sql
-SELECT RS_TileExplode(RS_Example(), 1, 40, 20, true, 0.0);
+SELECT RS_Tile(RS_Example(), 40, 20, true, 0.0);
 ```
 
 Tile an ordered subset of bands:
 
 ```sql
-SELECT RS_TileExplode(RS_Example(), make_array(1, 3), 32, 16);
+SELECT RS_Tile(RS_Example(), make_array(1, 3), 32, 16);
 ```

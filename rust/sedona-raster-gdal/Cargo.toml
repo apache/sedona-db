@@ -92,5 +92,5 @@ path = "benches/rs_as_raster.rs"
 
 [[bench]]
 harness = false
-name = "rs_tile_explode"
-path = "benches/rs_tile_explode.rs"
+name = "rs_tile"
+path = "benches/rs_tile.rs"

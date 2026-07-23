@@ -15,9 +15,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! Benchmarks for the RS_TileExplode UDF.
+//! Benchmarks for the RS_Tile UDF.
 //!
-//! RS_TileExplode cuts a raster into a grid of `tile_width` x `tile_height`
+//! RS_Tile cuts a raster into a grid of `tile_width` x `tile_height`
 //! tiles, copying each tile's pixel window into its own buffer. The hot path is
 //! the per-tile window copy (`copy_tile_window`), which memcpys each source row
 //! segment into the tile; total work is O(width x height) regardless of tile
@@ -43,8 +43,8 @@ use sedona_testing::{raster_spec::RasterSpec, testers::ScalarUdfTester};
 
 fn udf() -> ScalarUDF {
     sedona_raster_gdal::register::default_function_set()
-        .scalar_udf("rs_tileexplode")
-        .expect("rs_tileexplode is registered")
+        .scalar_udf("rs_tile")
+        .expect("rs_tile is registered")
         .clone()
         .into()
 }
@@ -85,14 +85,13 @@ fn criterion_benchmark(c: &mut Criterion) {
 
     // Resolution sweep at a fixed 256x256 tile.
     for (w, h) in [(256i64, 256i64), (1024, 1024)] {
-        let label = format!("raster-gdal rs_tileexplode TileExplode(Raster({w}x{h}), 256, 256)");
+        let label = format!("raster-gdal rs_tile Tile(Raster({w}x{h}), 256, 256)");
         run(c, &label, build_raster(w, h), 256);
     }
 
     // Tile-size sweep at a fixed 1024x1024 raster.
     for tile in [1024i32, 256, 64] {
-        let label =
-            format!("raster-gdal rs_tileexplode TileExplode(Raster(1024x1024), {tile}, {tile})");
+        let label = format!("raster-gdal rs_tile Tile(Raster(1024x1024), {tile}, {tile})");
         run(c, &label, build_raster(1024, 1024), tile);
     }
 
@@ -115,7 +114,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     let pad: ArrayRef = Arc::new(BooleanArray::from(vec![true]));
     let nodata: ArrayRef = Arc::new(Float64Array::from(vec![0.0]));
     c.bench_function(
-        "raster-gdal rs_tileexplode TileExplode(Raster(1024x1024), 100, 100, pad)",
+        "raster-gdal rs_tile Tile(Raster(1024x1024), 100, 100, pad)",
         |b| {
             b.iter(|| {
                 tester5

@@ -15,9 +15,9 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""Integration tests for RS_TileExplode.
+"""Integration tests for RS_Tile.
 
-RS_TileExplode returns one list item per tile, so these tests assert the tile
+RS_Tile returns one list item per tile, so these tests assert the tile
 count and each tile's (x, y) grid position through the full execution path
 (materialized via `to_arrow_table`). Pixel-level tiling correctness and band
 selection are covered exhaustively by the Rust unit tests against a numpy
@@ -40,7 +40,7 @@ EXPECTED_POSITIONS = [(0, 0), (1, 0), (0, 1), (1, 1)]
 def _example_raster_df(con):
     """A one-row data frame with a real raster column.
 
-    RS_Example() is round-tripped into table data so RS_TileExplode runs over a
+    RS_Example() is round-tripped into table data so RS_Tile runs over a
     column (its array path) rather than constant-folding a literal.
     """
     table = con.sql("SELECT RS_Example() AS rast").to_arrow_table()
@@ -58,11 +58,11 @@ def _tile_column(df, tiles):
     return df.select(tiles=tiles).to_arrow_table()["tiles"].combine_chunks()
 
 
-def test_rs_tileexplode_count_and_positions(con):
-    # RS_TileExplode(raster, width, height): the no-band overload tiles every
+def test_rs_tile_count_and_positions(con):
+    # RS_Tile(raster, width, height): the no-band overload tiles every
     # band into the 2x2 grid.
     df = _example_raster_df(con)
-    tiles = df.rast.funcs.rs_tileexplode(32, 16)
+    tiles = df.rast.funcs.rs_tile(32, 16)
     column = _tile_column(df, tiles)
 
     # One list per input row; the single row holds the 2x2 = 4-tile grid.
@@ -70,43 +70,33 @@ def test_rs_tileexplode_count_and_positions(con):
     assert _tile_positions(column.values) == EXPECTED_POSITIONS
 
 
-def test_rs_tileexplode_band_index_overload(con):
-    # RS_TileExplode(raster, bandIndex, width, height): selecting a single band
-    # still yields the same 2x2 grid.
-    df = _example_raster_df(con)
-    tiles = df.rast.funcs.rs_tileexplode(1, 32, 16)
-    column = _tile_column(df, tiles)
-    assert column.value_lengths().to_pylist() == [4]
-    assert _tile_positions(column.values) == EXPECTED_POSITIONS
-
-
-def test_rs_tileexplode_pad_with_nodata_overload(con):
-    # RS_TileExplode(raster, width, height, padWithNoData, noDataVal): padding
+def test_rs_tile_pad_with_nodata_overload(con):
+    # RS_Tile(raster, width, height, padWithNoData, noDataVal): padding
     # 40x20 tiles over the 64x32 raster still yields a 2x2 grid (the edge tiles
     # are padded rather than shrunk).
     df = _example_raster_df(con)
-    tiles = df.rast.funcs.rs_tileexplode(40, 20, True, 0.0)
+    tiles = df.rast.funcs.rs_tile(40, 20, True, 0.0)
     column = _tile_column(df, tiles)
     assert column.value_lengths().to_pylist() == [4]
     assert _tile_positions(column.values) == EXPECTED_POSITIONS
 
 
-def test_rs_tileexplode_over_multiple_rows(con):
+def test_rs_tile_over_multiple_rows(con):
     # Two raster rows: each explodes independently into its own list of tiles.
     table = con.sql("SELECT RS_Example() AS rast").to_arrow_table()
     df = con.create_data_frame(pa.concat_tables([table, table]))
-    tiles = df.rast.funcs.rs_tileexplode(32, 16)
+    tiles = df.rast.funcs.rs_tile(32, 16)
     column = _tile_column(df, tiles)
     assert column.value_lengths().to_pylist() == [4, 4]
 
 
-def test_rs_tileexplode_band_indices_array_sql_unnest(con):
+def test_rs_tile_band_indices_array_sql_unnest(con):
     # SQL parser-path smoke for the bandIndices Array[Int] overload: UNNEST
     # expands the list so the result has one row per tile, and the tile struct
     # carries (x, y).
     tile_struct = (
         con.sql(
-            "SELECT UNNEST(RS_TileExplode(RS_Example(), make_array(1, 3), 32, 16)) AS tile"
+            "SELECT UNNEST(RS_Tile(RS_Example(), make_array(1, 3), 32, 16)) AS tile"
         )
         .to_arrow_table()["tile"]
         .combine_chunks()
