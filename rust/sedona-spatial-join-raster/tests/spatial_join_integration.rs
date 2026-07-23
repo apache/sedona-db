@@ -188,6 +188,32 @@ fn count_spatial_join_execs(plan: &Arc<dyn ExecutionPlan>) -> Result<usize> {
     Ok(count)
 }
 
+/// Whether `schema` contains a raster-typed field.
+fn schema_has_raster(schema: &Schema) -> bool {
+    schema
+        .fields()
+        .iter()
+        .any(|f| matches!(SedonaType::from_storage_field(f), Ok(SedonaType::Raster)))
+}
+
+/// Report `(build_side_has_raster, probe_side_has_raster)` for the single
+/// `SpatialJoinExec` in `plan`, inspecting each child input's schema. The build
+/// side is the left input and the probe side is the right input.
+fn spatial_join_raster_sides(plan: &Arc<dyn ExecutionPlan>) -> Result<(bool, bool)> {
+    let mut sides = None;
+    plan.apply(|node| {
+        if let Some(sj) = node.as_any().downcast_ref::<SpatialJoinExec>() {
+            sides = Some((
+                schema_has_raster(sj.left.schema().as_ref()),
+                schema_has_raster(sj.right.schema().as_ref()),
+            ));
+            return Ok(TreeNodeRecursion::Stop);
+        }
+        Ok(TreeNodeRecursion::Continue)
+    })?;
+    sides.ok_or_else(|| datafusion_common::exec_datafusion_err!("plan has no SpatialJoinExec"))
+}
+
 async fn run_query(optimized: bool, sql: &str) -> Result<RecordBatch> {
     let ctx = setup_context(optimized)?;
     let df = ctx.sql(sql).await?;
@@ -222,6 +248,12 @@ async fn run_query(optimized: bool, sql: &str) -> Result<RecordBatch> {
 /// Assert the optimized `SpatialJoinExec` returns byte-identical rows to the
 /// nested-loop kernel for a same-CRS raster/geometry join. Covers all three
 /// `RS_*` predicates, both operand orderings, and inner/left/right joins.
+///
+/// Every case joins `FROM r ... g`, so the raster is the build-side (left) input
+/// and is pinned to the probe side by a forced swap. Parity here therefore also
+/// pins the swap: the inverted predicate (Contains<->Within), the swapped join
+/// type (Left<->Right), the reordered output columns, and the raster provider
+/// carried onto the rebuilt exec must all match the nested-loop kernel exactly.
 #[rstest]
 #[tokio::test]
 async fn same_crs_strict_parity(
@@ -239,6 +271,59 @@ async fn same_crs_strict_parity(
     assert_eq!(
         optimized, nested_loop,
         "optimized SpatialJoinExec must match the nested-loop kernel exactly for {sql}"
+    );
+    Ok(())
+}
+
+/// The raster operand is pinned to the probe (right) side of the
+/// `SpatialJoinExec` no matter which logical input it starts on. `FROM r JOIN g`
+/// starts the raster on the build (left) input, so the planner forces a swap onto
+/// the probe side; `FROM g JOIN r` starts it on the probe side already, so no swap
+/// is needed. Either way the raster lands on the probe side and never on the build
+/// side, and both orders return the same intersecting rows.
+///
+/// The `FROM r JOIN g` order additionally proves the raster provider survives the
+/// swap: were it lost, the swapped exec would try to read the raster column as WKB
+/// and fail with "Can't iterate over Raster as Wkb" rather than return rows.
+#[rstest]
+#[case::raster_starts_on_build(
+    "SELECT r.rid, g.gid FROM r JOIN g ON RS_Intersects(r.raster, g.geom) ORDER BY r.rid, g.gid"
+)]
+#[case::raster_starts_on_probe(
+    "SELECT r.rid, g.gid FROM g JOIN r ON RS_Intersects(g.geom, r.raster) ORDER BY r.rid, g.gid"
+)]
+#[tokio::test]
+async fn raster_pinned_to_probe_side(#[case] sql: &str) -> Result<()> {
+    let ctx = setup_context(true)?;
+    let df = ctx.sql(sql).await?;
+    let plan = df.clone().create_physical_plan().await?;
+
+    let (build_has_raster, probe_has_raster) = spatial_join_raster_sides(&plan)?;
+    let physical_str = displayable(plan.as_ref()).indent(true).to_string();
+    assert!(
+        probe_has_raster,
+        "raster must be pinned to the probe (right) side, got:\n{physical_str}"
+    );
+    assert!(
+        !build_has_raster,
+        "raster must not be on the build (left) side, got:\n{physical_str}"
+    );
+
+    let batches = df.collect().await?;
+    datafusion::assert_batches_eq!(
+        [
+            "+-----+-----+",
+            "| rid | gid |",
+            "+-----+-----+",
+            "| 1   | 10  |",
+            "| 1   | 30  |",
+            "| 1   | 50  |",
+            "| 1   | 60  |",
+            "| 2   | 20  |",
+            "| 2   | 50  |",
+            "+-----+-----+",
+        ],
+        &batches
     );
     Ok(())
 }

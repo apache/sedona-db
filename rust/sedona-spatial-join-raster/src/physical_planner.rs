@@ -29,10 +29,7 @@ use sedona_query_planner::{
     spatial_predicate::{RelationPredicate, SpatialPredicate, SpatialRelationType},
 };
 use sedona_schema::{crs::Crs, datatypes::SedonaType, matchers::ArgMatcher};
-use sedona_spatial_join::{
-    physical_planner::{repartition_probe_side, should_swap_join_order},
-    SpatialJoinExec,
-};
+use sedona_spatial_join::{physical_planner::repartition_probe_side, SpatialJoinExec};
 
 use crate::join_provider::RasterJoinProvider;
 
@@ -40,9 +37,12 @@ use crate::join_provider::RasterJoinProvider;
 ///
 /// Handles `RS_Intersects`/`RS_Contains`/`RS_Within` predicates where exactly one
 /// operand is a raster and the other is a planar geometry, producing an optimized
-/// [`SpatialJoinExec`] backed by a [`RasterJoinProvider`]. All other predicates
-/// (including raster/raster, for which there is no fixed common CRS to compare in)
-/// are declined with `None` so they fall back to the nested-loop join.
+/// [`SpatialJoinExec`] backed by a [`RasterJoinProvider`]. The raster operand is
+/// always placed on the probe side (see [`plan_spatial_join`]). All other
+/// predicates (including raster/raster, for which there is no fixed common CRS to
+/// compare in) are declined with `None` so they fall back to the nested-loop join.
+///
+/// [`plan_spatial_join`]: SpatialJoinPhysicalPlanner::plan_spatial_join
 #[derive(Debug)]
 pub struct RasterSpatialJoinPhysicalPlanner;
 
@@ -73,20 +73,33 @@ impl SpatialJoinPhysicalPlanner for RasterSpatialJoinPhysicalPlanner {
             return Ok(None);
         };
 
-        let should_swap = args.join_type.supports_swap()
-            && should_swap_join_order(
-                args.join_options,
-                args.physical_left.as_ref(),
-                args.physical_right.as_ref(),
-            )?;
+        // Pin the raster operand to the probe (right) side, overriding the row-count
+        // reordering heuristic (`should_swap_join_order`, which is deliberately not
+        // consulted here).
+        //
+        // The build side is fully buffered and its ingest compacts view arrays
+        // (`gc_view_arrays`), copying raster `BinaryView` band payloads into fresh
+        // buffers and defeating the zero-copy design. The probe side streams one
+        // batch at a time and does not compact, and output columns are assembled
+        // with `arrow::compute::take`, which shares view-array data buffers. Placing
+        // the raster on the probe side therefore keeps raster band buffers uncopied,
+        // short-lived, and shared across the rows each raster fans out to. The
+        // cardinality heuristic would put a low-cardinality raster input on the build
+        // side, which is the worst case here, so it is bypassed for raster joins.
+        let raster_on_left =
+            raster_operand_on_left(args.spatial_predicate, &args.physical_left.schema())?;
+        let swap_raster_to_probe = raster_on_left && args.join_type.supports_swap();
 
         // Repartition the probe side when enabled, mirroring the default planner.
+        // The raster operand ends up on the probe side, so `swap_raster_to_probe`
+        // doubles as the swap decision `repartition_probe_side` uses to target the
+        // pre-swap input that becomes the probe.
         let (physical_left, physical_right) = if args.join_options.repartition_probe_side {
             repartition_probe_side(
                 args.physical_left.clone(),
                 args.physical_right.clone(),
                 args.spatial_predicate,
-                should_swap,
+                swap_raster_to_probe,
             )?
         } else {
             (args.physical_left.clone(), args.physical_right.clone())
@@ -114,7 +127,12 @@ impl SpatialJoinPhysicalPlanner for RasterSpatialJoinPhysicalPlanner {
         )?
         .with_spatial_join_provider(Arc::new(RasterJoinProvider::new(target_crs, engine)));
 
-        if should_swap {
+        if swap_raster_to_probe {
+            // Move the raster from the build side onto the probe side.
+            // `swap_inputs()` inverts the predicate (Contains<->Within), swaps the
+            // join type (Left<->Right), reorders the output columns, and carries the
+            // raster provider onto the rebuilt exec, so the raster-aware evaluator
+            // survives the swap and lands on the final plan.
             exec.swap_inputs().map(Some)
         } else {
             Ok(Some(Arc::new(exec) as Arc<dyn ExecutionPlan>))
@@ -172,6 +190,25 @@ fn raster_geometry_target_crs(
     Ok(target)
 }
 
+/// Return `true` when the raster operand of `spatial_predicate` is the left
+/// (build) input, resolving the left operand against `left_schema`.
+///
+/// This is only meaningful for a raster/geometry `Relation` predicate that
+/// [`raster_geometry_target_crs`] has already accepted (exactly one operand is a
+/// raster). Any other predicate shape reports `false`.
+fn raster_operand_on_left(
+    spatial_predicate: &SpatialPredicate,
+    left_schema: &Schema,
+) -> Result<bool> {
+    let SpatialPredicate::Relation(RelationPredicate { left, .. }) = spatial_predicate else {
+        return Ok(false);
+    };
+    Ok(matches!(
+        operand_sedona_type(left, left_schema)?,
+        SedonaType::Raster
+    ))
+}
+
 /// Resolve the [`SedonaType`] an operand expression evaluates to against `schema`.
 fn operand_sedona_type(expr: &Arc<dyn PhysicalExpr>, schema: &Schema) -> Result<SedonaType> {
     let return_field = expr.return_field(schema)?;
@@ -191,7 +228,7 @@ mod test {
     use sedona_schema::crs::{deserialize_crs, lnglat};
     use sedona_schema::datatypes::{SedonaType, RASTER, WKB_GEOMETRY};
 
-    use super::raster_geometry_target_crs;
+    use super::{raster_geometry_target_crs, raster_operand_on_left};
 
     fn schema_with(field_name: &str, sedona_type: &SedonaType) -> Arc<Schema> {
         Arc::new(Schema::new(vec![sedona_type
@@ -236,6 +273,22 @@ mod test {
             .as_deref()
             .unwrap()
             .crs_equals(lnglat().as_deref().unwrap()));
+    }
+
+    #[test]
+    fn raster_operand_side_is_detected() {
+        let geom_type = SedonaType::Wkb(Edges::Planar, lnglat());
+        let raster_schema = schema_with("raster", &RASTER);
+        let geom_schema = schema_with("geom", &geom_type);
+
+        // (raster, geometry): the left operand resolves against the left (raster)
+        // schema, so the raster is on the build side.
+        let pred = relation(col("raster"), col("geom"), SpatialRelationType::Intersects);
+        assert!(raster_operand_on_left(&pred, &raster_schema).unwrap());
+
+        // (geometry, raster): the raster is on the probe side already.
+        let pred = relation(col("geom"), col("raster"), SpatialRelationType::Intersects);
+        assert!(!raster_operand_on_left(&pred, &geom_schema).unwrap());
     }
 
     #[test]
