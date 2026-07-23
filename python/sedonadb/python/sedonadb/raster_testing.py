@@ -266,12 +266,22 @@ class RasterEngine:
         self._not_implemented("as_raster")
 
     def resample(
-        self, path, *, width: int, height: int, algorithm: str = "nearestneighbor"
+        self,
+        path,
+        *,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        scale_x: Optional[float] = None,
+        scale_y: Optional[float] = None,
+        algorithm: str = "NearestNeighbor",
     ) -> DecodedRaster:
-        """Resample the raster to `width` x `height` pixels over the same extent.
+        """Resample the GeoTIFF at `path` onto a new grid, in the same CRS.
 
-        `algorithm` is one of nearestneighbor, bilinear, bicubic
-        (case-insensitive; each engine maps to its own resampler names).
+        Selects the output grid two ways: target dimensions (`width`/`height`,
+        extent-preserving) or a target pixel size (`scale_x`/`scale_y`, which
+        keeps the size exact and grows the extent to whole pixels). Band count
+        and nodata are preserved; the result is a decoded raster (pixels,
+        geotransform, nodata). `RS_Resample` never reprojects.
         """
         self._not_implemented("resample")
 
@@ -496,6 +506,81 @@ class SedonaDB(RasterEngine):
                 df.nodata,
                 df.extent,
             )
+        ).to_arrow_table()["r"]
+        return decode_raster(result[0])
+
+    def resample(
+        self,
+        path,
+        *,
+        width=None,
+        height=None,
+        scale_x=None,
+        scale_y=None,
+        algorithm="NearestNeighbor",
+    ):
+        # useScale selects between the dimension and pixel-size forms of the
+        # 5-argument overload
+        # RS_Resample(raster, widthOrScale, heightOrScale, useScale, algorithm).
+        if scale_x is not None:
+            use_scale, width_or_scale, height_or_scale = (
+                True,
+                float(scale_x),
+                float(scale_y),
+            )
+        else:
+            use_scale, width_or_scale, height_or_scale = (
+                False,
+                float(width),
+                float(height),
+            )
+
+        # Arguments travel as table columns (not literals) so the kernel runs
+        # its real array path.
+        table = pa.table(
+            {
+                "path": pa.array([str(path)], type=pa.utf8()),
+                "width_or_scale": pa.array([width_or_scale], type=pa.float64()),
+                "height_or_scale": pa.array([height_or_scale], type=pa.float64()),
+                "use_scale": pa.array([use_scale], type=pa.bool_()),
+                "algorithm": pa.array([algorithm], type=pa.utf8()),
+            }
+        )
+        df = self._con.create_data_frame(table)
+        result = df.select(
+            r=df.path.funcs.rs_frompath().funcs.rs_resample(
+                df.width_or_scale,
+                df.height_or_scale,
+                df.use_scale,
+                df.algorithm,
+            ),
+        ).to_arrow_table()["r"]
+        return decode_raster(result[0])
+
+    def resample_to_reference(
+        self, path, reference_path, *, use_scale=False, algorithm="NearestNeighbor"
+    ) -> Optional[DecodedRaster]:
+        """Run the 4-argument reference overload
+        `RS_Resample(raster, referenceRaster, useScale, algorithm)`.
+
+        The target dimensions (or pixel size, when `use_scale`) and origin come
+        from `referenceRaster`, which must share the input's CRS.
+        """
+        table = pa.table(
+            {
+                "path": pa.array([str(path)], type=pa.utf8()),
+                "ref": pa.array([str(reference_path)], type=pa.utf8()),
+                "use_scale": pa.array([use_scale], type=pa.bool_()),
+                "algorithm": pa.array([algorithm], type=pa.utf8()),
+            }
+        )
+        df = self._con.create_data_frame(table)
+        result = df.select(
+            r=df.path.funcs.rs_frompath().funcs.rs_resample(
+                df.ref.funcs.rs_frompath(),
+                df.use_scale,
+                df.algorithm,
+            ),
         ).to_arrow_table()["r"]
         return decode_raster(result[0])
 
@@ -1002,39 +1087,87 @@ class Rasterio(RasterEngine):
         )
         return DecodedRaster(pixels[np.newaxis], tuple(transform.to_gdal()), [nodata])
 
-    def resample(self, path, *, width, height, algorithm="nearestneighbor"):
+    def resample(
+        self,
+        path,
+        *,
+        width=None,
+        height=None,
+        scale_x=None,
+        scale_y=None,
+        algorithm="NearestNeighbor",
+    ):
         import rasterio
-        import rasterio.crs
-        from rasterio.enums import Resampling
-        from rasterio.warp import reproject
 
-        resampling = {
-            "nearestneighbor": Resampling.nearest,
-            "bilinear": Resampling.bilinear,
-            "bicubic": Resampling.cubic,
-        }[algorithm.lower()]
+        resampling = _RASTERIO_RESAMPLING.get(algorithm.lower())
+        if resampling is None:
+            raise ValueError(f"unsupported resampling algorithm {algorithm!r}")
+
         with rasterio.open(str(path)) as src:
-            source = src.read()
-            dst_transform = src.transform * src.transform.scale(
+            if scale_x is not None:
+                return self._scale_grow(src, scale_x, scale_y, resampling)
+
+            # Dimension mode, same CRS: RS_Resample reads the source into the
+            # target grid (GDAL RasterIO), preserving the extent.
+            pixels = src.read(
+                out_shape=(src.count, height, width), resampling=resampling
+            )
+            # Scale both axes of the source transform by the pixel-count ratio —
+            # the independent affine equivalent of RS_Resample's footprint-
+            # preserving grid (scale and skew terms scale together).
+            transform = src.transform * src.transform.scale(
                 src.width / width, src.height / height
             )
-            # reproject() insists on a CRS; with the same one on both sides
-            # nothing reprojects, so an arbitrary CRS keeps a CRS-less
-            # fixture a pure grid resample.
-            crs = src.crs or rasterio.crs.CRS.from_epsg(3857)
-            destination = np.zeros((src.count, height, width), dtype=source.dtype)
-            reproject(
-                source,
-                destination,
-                src_transform=src.transform,
-                src_crs=crs,
-                dst_transform=dst_transform,
-                dst_crs=crs,
-                resampling=resampling,
-            )
-            return DecodedRaster(
-                destination, tuple(dst_transform.to_gdal()), list(src.nodatavals)
-            )
+            nodata = [src.nodata] * src.count
+            return DecodedRaster(pixels, tuple(transform.to_gdal()), nodata)
+
+    def _scale_grow(self, src, scale_x, scale_y, resampling):
+        """Reference for scale mode: keep the pixel size exact and grow the extent.
+
+        Dimensions are `ceil(extent / pixel_size)` (so the last row/column may
+        extend past the source), the origin and skew are the source's, and the
+        grown border reads back as nodata. Same CRS on both sides — a pure
+        regrid, not a reprojection.
+        """
+        import math
+
+        from rasterio.transform import Affine
+
+        left, bottom, right, top = src.bounds
+        out_w = math.ceil(abs(right - left) / abs(scale_x))
+        out_h = math.ceil(abs(top - bottom) / abs(scale_y))
+        a = src.transform
+        # Affine(scale_x, skew_x, origin_x, skew_y, scale_y, origin_y): exact
+        # pixel size, source origin and skew.
+        dst_transform = Affine(scale_x, a.b, a.c, a.d, scale_y, a.f)
+        return self._warp_into(
+            src, dst_transform, out_w, out_h, src.crs, src.crs, resampling
+        )
+
+    @staticmethod
+    def _warp_into(src, dst_transform, dst_w, dst_h, src_crs, dst_crs, resampling):
+        import numpy as np
+        from rasterio.warp import reproject
+
+        src_data = src.read()
+        dst = np.zeros((src.count, dst_h, dst_w), dtype=src_data.dtype)
+        # `dst_nodata` fills cells outside the source footprint with the band
+        # nodata (0 when the band has none) — the destination pre-fill
+        # RS_Resample uses. Source nodata is deliberately not passed, matching
+        # RS_Resample's warp (source nodata values pass through, not masked).
+        reproject(
+            source=src_data,
+            destination=dst,
+            src_transform=src.transform,
+            src_crs=src_crs,
+            dst_transform=dst_transform,
+            dst_crs=dst_crs,
+            dst_nodata=src.nodata,
+            resampling=resampling,
+        )
+        return DecodedRaster(
+            dst, tuple(dst_transform.to_gdal()), [src.nodata] * src.count
+        )
 
     def zonal_stats(
         self, path, geometry_wkt, *, band=1, stat="mean", all_touched=False
@@ -1109,6 +1242,36 @@ class Rasterio(RasterEngine):
 
     def from_binary(self, data):
         return decode_geotiff_bytes(data)
+
+
+# RS_Resample algorithm names (lower-cased) to rasterio's Resampling enum, for
+# the reference engine. Only the algorithms the parity tests exercise are
+# mapped; unknown names raise in `Rasterio.resample`.
+def _rasterio_resampling_map():
+    from rasterio.enums import Resampling
+
+    return {
+        "nearestneighbor": Resampling.nearest,
+        "nearestneighbour": Resampling.nearest,
+        "bilinear": Resampling.bilinear,
+        "cubic": Resampling.cubic,
+        "average": Resampling.average,
+    }
+
+
+class _LazyResamplingMap:
+    """Builds the resampling map on first use so importing this module does not
+    require rasterio (it is an optional reference dependency)."""
+
+    _map = None
+
+    def get(self, key):
+        if _LazyResamplingMap._map is None:
+            _LazyResamplingMap._map = _rasterio_resampling_map()
+        return _LazyResamplingMap._map.get(key)
+
+
+_RASTERIO_RESAMPLING = _LazyResamplingMap()
 
 
 def _is_nodata(sampled, nodata) -> bool:
