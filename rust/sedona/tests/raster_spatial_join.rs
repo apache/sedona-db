@@ -158,58 +158,6 @@ async fn raster_join_produces_correct_rows() {
     );
 }
 
-/// An untagged (CRS-less) geometry joined against the WGS84 rasters no longer
-/// errors: the missing CRS is assumed to be WGS84 (matching the `RS_*` kernel and
-/// Sedona Spark), so the join returns exactly the rows of the CRS-tagged case
-/// (`raster_join_produces_correct_rows`).
-#[cfg(feature = "proj")]
-#[tokio::test]
-async fn untagged_geometry_join_assumes_wgs84() {
-    use sedona_schema::datatypes::WKB_GEOMETRY;
-
-    let ctx = SedonaContext::new_local_interactive().await.unwrap();
-    register_raster_table(&ctx);
-
-    // Same geometries as register_geom_table, but the column carries no CRS.
-    let gid = Int32Array::from(vec![10, 20, 30]);
-    let geom = create_array(
-        &[
-            Some("POINT (2.15 2.75)"),                       // inside raster 1 only
-            Some("POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))"), // contains rasters 1 and 2
-            Some("POINT (0 0)"),                             // outside all rasters
-        ],
-        &WKB_GEOMETRY,
-    );
-    let geom_field = WKB_GEOMETRY.to_storage_field("geom", true).unwrap();
-    let schema = Arc::new(Schema::new(vec![
-        Field::new("gid", arrow_schema::DataType::Int32, false),
-        geom_field,
-    ]));
-    let batch = RecordBatch::try_new(schema.clone(), vec![Arc::new(gid), geom]).unwrap();
-    let table = MemTable::try_new(schema, vec![vec![batch]]).unwrap();
-    ctx.ctx.register_table("g", Arc::new(table)).unwrap();
-
-    let batches = ctx
-        .sql(RASTER_JOIN_SQL)
-        .await
-        .unwrap()
-        .collect()
-        .await
-        .unwrap();
-    datafusion::assert_batches_eq!(
-        [
-            "+-----+-----+",
-            "| rid | gid |",
-            "+-----+-----+",
-            "| 1   | 10  |",
-            "| 1   | 20  |",
-            "| 2   | 20  |",
-            "+-----+-----+",
-        ],
-        &batches
-    );
-}
-
 /// A geometry-only join is unaffected by the raster changes: it still uses the
 /// optimized `SpatialJoinExec` (no regression to the existing ST_* path).
 #[tokio::test]

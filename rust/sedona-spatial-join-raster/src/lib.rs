@@ -24,12 +24,6 @@
 //! filter and the WKB refiner — both unchanged from the default planar spatial
 //! join — compare footprints and geometries in a common CRS.
 //!
-//! A missing CRS on exactly one side is assumed to be WGS84 (matching the `RS_*`
-//! predicate kernels and Sedona Spark). The cross-CRS comparison frame is
-//! SedonaDB's — the raster footprint is reprojected into the geometry operand's
-//! CRS — which differs from Sedona Spark's WGS84 frame, but the two are
-//! result-equivalent except within a thin band along the raster's reprojected edge.
-//!
 //! Cross-CRS raster footprints are indexed and refined as the convex hull of the
 //! raster's four reprojected corners; projection curvature along the edges is not
 //! modeled, so for large-extent rasters reprojected between very different CRSs
