@@ -27,10 +27,13 @@
 //! The reference raster contributes only its grid — transform, dimensions, and
 //! CRS — never its pixels.
 //!
-//! Int64/UInt64 input rasters are rejected up front: GDAL's warp kernels don't
-//! handle 64-bit integer pixels well, and such a band's nodata can't round-trip
-//! through the `f64` the warp path uses (`bytes_to_f64` rejects it). Rejecting
-//! keeps the behavior identical with or without nodata; cast to a supported
+//! Int64/UInt64 input rasters are supported only where GDAL warps them
+//! exactly. Nearest-neighbor resampling is a pure value copy (no arithmetic),
+//! so it preserves 64-bit integer pixels bit for bit; the other algorithms
+//! resample in a floating working type and lose precision above 2^53. The warp
+//! also carries nodata as a `double`, so a 64-bit nodata must be absent or
+//! round-trip exactly through `f64` (magnitude ≤ 2^53). Non-nearest resampling
+//! or a nodata that isn't f64-exact is rejected up front; cast to a supported
 //! type first.
 
 use std::sync::Arc;
@@ -256,17 +259,28 @@ fn reproject_match(
 
     let band_count = raster.bands().len();
 
-    // GDAL's warp kernels don't handle 64-bit integer pixels well, and an
-    // Int64/UInt64 nodata can't round-trip through the f64 the warp path uses
-    // (`bytes_to_f64` rejects it). Reject these dtypes up front so the behavior
-    // is the same with or without nodata rather than mis-warping silently.
+    // GDAL warps Int64/UInt64 pixels exactly only under nearest-neighbor
+    // resampling — a pure value copy with no arithmetic, so it preserves 64-bit
+    // integers, whereas bilinear/cubic and the rest resample in a floating
+    // working type and lose precision above 2^53. The warp also carries nodata
+    // as a double, so a 64-bit nodata must be absent or round-trip exactly
+    // through f64. Allow the exact cases; reject only the lossy ones.
     for i in 0..band_count {
-        if let Some(BandDataType::Int64 | BandDataType::UInt64) = raster.band_data_type(i) {
+        let Some(dtype) = raster.band_data_type(i) else {
+            continue;
+        };
+        if !matches!(dtype, BandDataType::Int64 | BandDataType::UInt64) {
+            continue;
+        }
+        if alg != ResampleAlg::NearestNeighbour {
             return exec_err!(
-                "RS_ReprojectMatch does not support Int64/UInt64 rasters (their nodata \
-                 cannot be represented exactly in the double the warp requires); cast to \
-                 a supported type first"
+                "RS_ReprojectMatch requires nearest-neighbor resampling for Int64/UInt64 \
+                 rasters (other methods resample in a floating working type and lose \
+                 precision); pass the nearest-neighbor algorithm or cast to a supported type."
             );
+        }
+        if let Some(nodata) = raster.band_nodata(i) {
+            reject_lossy_int64_nodata(nodata, dtype)?;
         }
     }
 
@@ -286,6 +300,47 @@ fn reproject_match(
         warp_memory_limit_bytes,
     };
     append_warped_nd_from_dataset(gdal, &src_dataset, &layout, builder, &warp_grid)
+}
+
+/// Reject an Int64/UInt64 band whose nodata cannot round-trip through `f64`.
+///
+/// The warp carries nodata as a `double` (the destination pre-fill and GDAL's
+/// warp options both), so a 64-bit nodata whose magnitude exceeds 2^53 cannot
+/// be represented exactly. `nodata` is the band's little-endian nodata bytes;
+/// `dtype` must be `Int64` or `UInt64` (other types are validated elsewhere).
+fn reject_lossy_int64_nodata(nodata: &[u8], dtype: BandDataType) -> Result<()> {
+    let bytes: [u8; 8] = match nodata.try_into() {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            return sedona_internal_err!(
+                "RS_ReprojectMatch: {dtype:?} nodata must be 8 bytes, got {}",
+                nodata.len()
+            );
+        }
+    };
+    // Compare the f64 round-trip in a wider integer so the float-to-int cast
+    // can't saturate: `u64::MAX as f64` rounds up to 2^64 and `2^64 as u64`
+    // would clamp back to `u64::MAX` (and `i64::MAX as f64` likewise to 2^63),
+    // faking a round-trip — but 2^64 / 2^63 land exactly in u128 / i128.
+    let (value, exact) = match dtype {
+        BandDataType::Int64 => {
+            let v = i64::from_le_bytes(bytes);
+            (v.to_string(), (v as f64) as i128 == v as i128)
+        }
+        BandDataType::UInt64 => {
+            let v = u64::from_le_bytes(bytes);
+            (v.to_string(), (v as f64) as u128 == v as u128)
+        }
+        _ => return Ok(()),
+    };
+    if !exact {
+        return exec_err!(
+            "RS_ReprojectMatch cannot reproject an Int64/UInt64 raster whose nodata value \
+             {value} is not exactly representable as a 64-bit float (the warp carries nodata \
+             as a double); use a nodata magnitude ≤ 2^53 or a different type."
+        );
+    }
+    Ok(())
 }
 
 /// Map an algorithm name (case-insensitive) to a GDAL [`ResampleAlg`]. An empty
@@ -580,15 +635,129 @@ mod tests {
     }
 
     #[test]
-    fn int64_and_uint64_rasters_are_rejected() {
-        // GDAL's warp path can't represent an Int64/UInt64 nodata exactly, so
-        // these dtypes are rejected up front (regardless of nodata) rather than
-        // silently mis-warped. Both 64-bit integer dtypes error the same way.
+    fn int64_uint64_nearest_no_nodata_is_exact() {
+        // Nearest resampling is a pure value copy, so 64-bit integers survive
+        // exactly — even magnitudes past f64's 2^53 precision (i64::MAX/MIN,
+        // u64::MAX). A 2x nearest upsample replicates each source pixel into a
+        // 2x2 block, so the whole output is bit-exact.
+        let reference = RasterSpec::d2(4, 4)
+            .band_values(&[0u8; 16])
+            .bbox(0.0, 0.0, 4.0, 4.0)
+            .crs(Some("EPSG:4326"));
+
+        let int64_source = RasterSpec::d2(2, 2)
+            .band_values(&[i64::MAX, i64::MIN, 3, 4])
+            .bbox(0.0, 0.0, 4.0, 4.0)
+            .crs(Some("EPSG:4326"));
+        let int64_expected = RasterSpec::d2(4, 4)
+            .band_values(&[
+                i64::MAX,
+                i64::MAX,
+                i64::MIN,
+                i64::MIN, //
+                i64::MAX,
+                i64::MAX,
+                i64::MIN,
+                i64::MIN, //
+                3,
+                3,
+                4,
+                4, //
+                3,
+                3,
+                4,
+                4, //
+            ])
+            .bbox(0.0, 0.0, 4.0, 4.0)
+            .crs(Some("EPSG:4326"));
+        assert_raster_scalar_equals(
+            &reproject(&int64_source, &reference, "NearestNeighbor"),
+            &int64_expected,
+        );
+
+        let uint64_source = RasterSpec::d2(2, 2)
+            .band_values(&[u64::MAX, 2, 3, 4])
+            .bbox(0.0, 0.0, 4.0, 4.0)
+            .crs(Some("EPSG:4326"));
+        let uint64_expected = RasterSpec::d2(4, 4)
+            .band_values(&[
+                u64::MAX,
+                u64::MAX,
+                2,
+                2, //
+                u64::MAX,
+                u64::MAX,
+                2,
+                2, //
+                3,
+                3,
+                4,
+                4, //
+                3,
+                3,
+                4,
+                4, //
+            ])
+            .bbox(0.0, 0.0, 4.0, 4.0)
+            .crs(Some("EPSG:4326"));
+        assert_raster_scalar_equals(
+            &reproject(&uint64_source, &reference, "NearestNeighbor"),
+            &uint64_expected,
+        );
+    }
+
+    #[test]
+    fn int64_uint64_nearest_representable_nodata_fills_uncovered() {
+        // With an f64-exact nodata (0 for int64; 2^53, the largest exact
+        // magnitude, for uint64) the allowed nearest path copies covered cells
+        // exactly and fills the uncovered overhang with the input nodata. The
+        // reference spans x[0,4] at the input's resolution; the input covers
+        // x[0,2], so the right half is uncovered.
+        const P53: u64 = 1 << 53; // 9_007_199_254_740_992, exactly f64-representable
+        let reference = RasterSpec::d2(4, 1)
+            .band_values(&[0u8; 4])
+            .bbox(0.0, 0.0, 4.0, 1.0)
+            .crs(Some("EPSG:4326"));
+
+        let int64_source = RasterSpec::d2(2, 1)
+            .band_values(&[10i64, 20])
+            .nodata(0i64)
+            .bbox(0.0, 0.0, 2.0, 1.0)
+            .crs(Some("EPSG:4326"));
+        let int64_expected = RasterSpec::d2(4, 1)
+            .band_values(&[10i64, 20, 0, 0])
+            .nodata(0i64)
+            .bbox(0.0, 0.0, 4.0, 1.0)
+            .crs(Some("EPSG:4326"));
+        assert_raster_scalar_equals(
+            &reproject(&int64_source, &reference, "NearestNeighbor"),
+            &int64_expected,
+        );
+
+        let uint64_source = RasterSpec::d2(2, 1)
+            .band_values(&[10u64, 20])
+            .nodata(P53)
+            .bbox(0.0, 0.0, 2.0, 1.0)
+            .crs(Some("EPSG:4326"));
+        let uint64_expected = RasterSpec::d2(4, 1)
+            .band_values(&[10u64, 20, P53, P53])
+            .nodata(P53)
+            .bbox(0.0, 0.0, 4.0, 1.0)
+            .crs(Some("EPSG:4326"));
+        assert_raster_scalar_equals(
+            &reproject(&uint64_source, &reference, "NearestNeighbor"),
+            &uint64_expected,
+        );
+    }
+
+    #[test]
+    fn int64_uint64_nonnearest_resampling_errors() {
+        // Bilinear/cubic resample in a floating working type, so they'd lose
+        // precision on 64-bit integers; those combinations error up front.
         let reference = RasterSpec::d2(2, 2)
             .band_values(&[0u8; 4])
             .bbox(0.0, 0.0, 2.0, 2.0)
             .crs(Some("EPSG:4326"));
-
         let int64_source = RasterSpec::d2(2, 2)
             .band_values(&[1i64, 2, 3, 4])
             .bbox(0.0, 0.0, 2.0, 2.0)
@@ -598,12 +767,50 @@ mod tests {
             .bbox(0.0, 0.0, 2.0, 2.0)
             .crs(Some("EPSG:4326"));
 
-        for source in [int64_source, uint64_source] {
+        for source in [&int64_source, &uint64_source] {
+            for alg in ["Bilinear", "Cubic"] {
+                let err = tester()
+                    .invoke_scalar_scalar_scalar(source, &reference, alg)
+                    .unwrap_err()
+                    .to_string();
+                assert!(
+                    err.contains("requires nearest-neighbor resampling"),
+                    "got: {err}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn int64_uint64_nodata_above_f64_precision_errors() {
+        // A 64-bit nodata past f64's exact range (u64::MAX; 2^53 + 1 for int64)
+        // can't be carried through the warp's double, so those rasters error
+        // even under nearest resampling.
+        let reference = RasterSpec::d2(2, 2)
+            .band_values(&[0u8; 4])
+            .bbox(0.0, 0.0, 2.0, 2.0)
+            .crs(Some("EPSG:4326"));
+
+        let uint64_source = RasterSpec::d2(2, 2)
+            .band_values(&[1u64, 2, 3, 4])
+            .nodata(u64::MAX)
+            .bbox(0.0, 0.0, 2.0, 2.0)
+            .crs(Some("EPSG:4326"));
+        let int64_source = RasterSpec::d2(2, 2)
+            .band_values(&[1i64, 2, 3, 4])
+            .nodata((1i64 << 53) + 1)
+            .bbox(0.0, 0.0, 2.0, 2.0)
+            .crs(Some("EPSG:4326"));
+
+        for source in [&uint64_source, &int64_source] {
             let err = tester()
-                .invoke_scalar_scalar_scalar(&source, &reference, "NearestNeighbor")
+                .invoke_scalar_scalar_scalar(source, &reference, "NearestNeighbor")
                 .unwrap_err()
                 .to_string();
-            assert!(err.contains("Int64/UInt64"), "got: {err}");
+            assert!(
+                err.contains("not exactly representable as a 64-bit float"),
+                "got: {err}"
+            );
         }
     }
 }

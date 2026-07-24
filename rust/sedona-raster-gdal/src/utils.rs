@@ -36,7 +36,8 @@ use sedona_schema::raster::StorageType;
 
 use crate::gdal_common::{
     band_data_type_to_gdal, band_nodata_to_bytes, convert_gdal_err, gdal_to_band_data_type,
-    normalize_outdb_source_path, GdalBandLayout, RasterMetadataFromGdalGeoTransform,
+    normalize_outdb_source_path, set_band_nodata_from_bytes, GdalBandLayout,
+    RasterMetadataFromGdalGeoTransform,
 };
 
 /// Append a GDAL dataset as a single in-db raster to the provided [`RasterBuilder`].
@@ -282,6 +283,23 @@ pub fn append_warped_nd_from_dataset(
         .map_err(convert_gdal_err)?;
     if let Some(crs) = grid.crs {
         dst_dataset.set_projection(crs).map_err(convert_gdal_err)?;
+    }
+
+    // Record each band's nodata on the destination in its native type. Walk the
+    // dst bands in the same band-major / plane order as the add loop above.
+    // `set_band_nodata_from_bytes` uses the exact Int64/UInt64 setters rather
+    // than routing through a lossy f64, so a large 64-bit nodata stays exact.
+    let mut dst_band_index = 0usize;
+    for plan in &layout.bands {
+        for _ in 0..plan.plane_count {
+            dst_band_index += 1;
+            if let Some(nodata) = plan.nodata.as_deref() {
+                let band = dst_dataset
+                    .rasterband(dst_band_index)
+                    .map_err(convert_gdal_err)?;
+                set_band_nodata_from_bytes(&band, Some(nodata))?;
+            }
+        }
     }
 
     // Reproject when the CRS differs; a same-CRS warp is a pure regrid that fills

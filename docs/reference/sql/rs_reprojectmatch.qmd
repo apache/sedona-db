@@ -63,8 +63,12 @@ unknown CRS and a real one is undefined, so it is an error for exactly one side
 to have a CRS. When neither has one, the operation is a same-space regrid onto
 the reference grid.
 
-`Int64` and `UInt64` input rasters are not supported (the warp cannot represent
-their nodata exactly) and raise an error; cast to another type first.
+`Int64` and `UInt64` input rasters are supported for **nearest-neighbor**
+resampling (a pure value copy, so 64-bit integers survive exactly) when the
+band's nodata is absent or has magnitude ≤ 2^53. Other resampling algorithms
+work in a floating type, and the warp carries nodata as a double, so a
+non-nearest algorithm or a nodata above 2^53 would lose precision and raises an
+error; cast to another type first.
 
 ::: callout-note
 This reads the entire input raster into memory.

@@ -205,10 +205,86 @@ def test_reproject_match_cross_crs_matches_rasterio(con, tmp_path):
 
 
 @pytest.mark.parametrize("dtype", ["int64", "uint64"])
-def test_reproject_match_int64_uint64_rejected(con, tmp_path, dtype):
-    """Int64/UInt64 rasters are rejected up front: GDAL's warp can't represent
-    their nodata exactly in the double the warp path uses, so RS_ReprojectMatch
-    errors (regardless of nodata) rather than silently mis-warping."""
+def test_reproject_match_int64_uint64_nearest_matches_rasterio(con, tmp_path, dtype):
+    """Int64/UInt64 rasters warp under nearest-neighbour resampling — a pure
+    value copy, so pixels (including the dtype extremes planted past f64's 2^53
+    precision) survive exactly. A 2x nearest upsample onto a finer reference
+    grid is bit-exact against rasterio and preserves the dtype and (absent)
+    nodata."""
+    reference = Rasterio.create_or_skip()
+    sedona = SedonaDB(con)
+
+    in_transform = (100.0, 2.0, 0.0, 500.0, 0.0, -2.0)
+    tiff = tmp_path / "in.tif"
+    write_random_geotiff(
+        tiff,
+        dtype,
+        bands=1,
+        height=3,
+        width=4,
+        gdal_transform=in_transform,
+        crs="EPSG:4326",
+    )
+    ref_transform = (100.0, 1.0, 0.0, 500.0, 0.0, -1.0)
+    ref = tmp_path / "ref.tif"
+    write_grid_geotiff(
+        ref, gdal_transform=ref_transform, width=8, height=6, crs="EPSG:4326"
+    )
+
+    got = sedona.reproject_match(tiff, ref)
+    expected = reference.reproject_match(tiff, ref)
+
+    assert got.pixels.dtype == np.dtype(dtype)
+    np.testing.assert_array_equal(got.pixels, expected.pixels)
+    assert got.pixels.shape == (1, 6, 8)
+    assert_transform_and_nodata(got, expected)
+
+
+def test_reproject_match_int64_representable_nodata_uncovered(con, tmp_path):
+    """A representable (≤ 2^53) Int64 nodata rides the warp's double exactly:
+    covered nearest pixels match rasterio and the uncovered overhang fills with
+    the nodata."""
+    reference = Rasterio.create_or_skip()
+    sedona = SedonaDB(con)
+
+    in_transform = (0.0, 2.0, 0.0, 6.0, 0.0, -2.0)  # 3x3 -> extent x[0,6] y[0,6]
+    tiff = tmp_path / "in.tif"
+    write_geotiff(
+        tiff,
+        np.array([[[10, 20, 30], [40, 50, 60], [70, 80, 90]]], dtype="int64"),
+        gdal_transform=in_transform,
+        nodata=0,
+        crs="EPSG:4326",
+    )
+    # Reference overhangs on the right and bottom (5x5 at the input resolution).
+    ref_transform = (0.0, 2.0, 0.0, 6.0, 0.0, -2.0)
+    ref = tmp_path / "ref.tif"
+    write_grid_geotiff(
+        ref, gdal_transform=ref_transform, width=5, height=5, crs="EPSG:4326"
+    )
+
+    got = sedona.reproject_match(tiff, ref)
+    expected = reference.reproject_match(tiff, ref)
+
+    assert got.pixels.dtype == np.dtype("int64")
+    assert got.pixels.shape == (1, 5, 5)
+    np.testing.assert_array_equal(got.pixels, expected.pixels)
+    assert_transform_and_nodata(got, expected)
+    # The overhang (cols/rows 3..4) fills with the input nodata (0) in both.
+    assert (got.pixels[0, :, 3:] == 0).all()
+    assert (got.pixels[0, 3:, :] == 0).all()
+
+
+@pytest.mark.parametrize("dtype", ["int64", "uint64"])
+def test_reproject_match_int64_uint64_nonnearest_rejected(con, tmp_path, dtype):
+    """Non-nearest resampling of an Int64/UInt64 raster would resample in a
+    floating working type and lose precision, so it errors up front.
+
+    The other lossy case — a 64-bit nodata past f64's 2^53 precision — cannot be
+    exercised here: rasterio stores nodata as a double at write time, so a
+    fixture GeoTIFF can never carry a non-f64-exact 64-bit nodata. That
+    rejection is covered by the Rust unit tests, which control the raw nodata
+    bytes directly."""
     pytest.importorskip("rasterio")  # write_geotiff needs rasterio
     sedona = SedonaDB(con)
 
@@ -228,8 +304,8 @@ def test_reproject_match_int64_uint64_rejected(con, tmp_path, dtype):
         crs="EPSG:4326",
     )
 
-    with pytest.raises(Exception, match="Int64/UInt64"):
-        sedona.reproject_match(tiff, ref)
+    with pytest.raises(Exception, match="requires nearest-neighbor resampling"):
+        sedona.reproject_match(tiff, ref, algorithm="Bilinear")
 
 
 def test_reproject_match_null_raster_is_null(con, tmp_path):
