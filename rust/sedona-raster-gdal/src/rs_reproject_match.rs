@@ -26,18 +26,24 @@
 //!
 //! The reference raster contributes only its grid — transform, dimensions, and
 //! CRS — never its pixels.
+//!
+//! Int64/UInt64 input rasters are rejected up front: GDAL's warp kernels don't
+//! handle 64-bit integer pixels well, and such a band's nodata can't round-trip
+//! through the `f64` the warp path uses (`bytes_to_f64` rejects it). Rejecting
+//! keeps the behavior identical with or without nodata; cast to a supported
+//! type first.
 
 use std::sync::Arc;
 
 use arrow_array::ArrayRef;
 use arrow_schema::DataType;
-use datafusion_common::cast::as_string_array;
+use datafusion_common::cast::as_string_view_array;
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::error::Result;
 use datafusion_common::{exec_err, ScalarValue};
 use datafusion_expr::{ColumnarValue, Volatility};
 
-use sedona_common::sedona_internal_err;
+use sedona_common::{sedona_internal_err, SedonaOptions};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_gdal::geo_transform::GeoTransform;
 use sedona_gdal::raster::types::ResampleAlg;
@@ -50,6 +56,7 @@ use sedona_raster_functions::rs_ensure_loaded::{
 use sedona_raster_functions::RasterExecutor;
 use sedona_schema::datatypes::{SedonaType, RASTER};
 use sedona_schema::matchers::ArgMatcher;
+use sedona_schema::raster::BandDataType;
 
 use crate::gdal_common::{raster_ref_to_gdal_mem, with_gdal, GdalBandLayout};
 use crate::gdal_dataset_provider::configure_thread_local_options;
@@ -124,18 +131,20 @@ impl SedonaScalarKernel for RsReprojectMatch {
         let num_iterations = RasterExecutor::num_iterations_over(args);
 
         // Algorithm string at index 2 (when arg_count == 3); otherwise the
-        // Spark default `NearestNeighbor`. Expand to an array so a per-row
-        // column and a scalar are handled identically.
+        // Spark default `NearestNeighbor`. Expand to a `Utf8View` array so a
+        // per-row column and a scalar are handled identically (the view avoids
+        // re-buffering the string in the scalar-to-array case).
+        let warp_memory_limit_bytes = warp_memory_limit_bytes_from_config(config_options);
         let algorithm_array = if self.arg_count >= 3 {
             args[2]
                 .clone()
-                .cast_to(&DataType::Utf8, None)?
+                .cast_to(&DataType::Utf8View, None)?
                 .into_array(num_iterations)?
         } else {
-            ScalarValue::Utf8(Some("NearestNeighbor".to_string()))
+            ScalarValue::Utf8View(Some("NearestNeighbor".to_string()))
                 .to_array_of_size(num_iterations)?
         };
-        let algorithm_array = as_string_array(&algorithm_array)?.clone();
+        let algorithm_array = as_string_view_array(&algorithm_array)?.clone();
         let mut algorithm_iter = algorithm_array.iter();
 
         let mut builder = RasterBuilder::new(num_iterations);
@@ -161,7 +170,14 @@ impl SedonaScalarKernel for RsReprojectMatch {
                 };
 
                 let alg = parse_algorithm(algorithm)?;
-                reproject_match(gdal, raster, reference, alg, &mut builder)?;
+                reproject_match(
+                    gdal,
+                    raster,
+                    reference,
+                    alg,
+                    warp_memory_limit_bytes,
+                    &mut builder,
+                )?;
                 Ok(())
             })?;
 
@@ -169,6 +185,16 @@ impl SedonaScalarKernel for RsReprojectMatch {
             RasterExecutor::finish_over(args, out)
         })
     }
+}
+
+/// The GDAL warp memory limit in bytes from `sedona.gdal.warp_memory_limit_mb`,
+/// or `0.0` (GDAL's own default) when unset. Megabytes match `gdalwarp -wm`.
+fn warp_memory_limit_bytes_from_config(config_options: Option<&ConfigOptions>) -> f64 {
+    config_options
+        .and_then(|c| c.extensions.get::<SedonaOptions>())
+        .and_then(|opts| opts.gdal.warp_memory_limit_mb)
+        .map(|mb| mb as f64 * 1_000_000.0)
+        .unwrap_or(0.0)
 }
 
 /// Reproject `raster` onto `reference`'s grid, appending the result to `builder`.
@@ -180,6 +206,7 @@ fn reproject_match(
     raster: &RasterRefImpl<'_>,
     reference: &RasterRefImpl<'_>,
     alg: ResampleAlg,
+    warp_memory_limit_bytes: f64,
     builder: &mut RasterBuilder,
 ) -> Result<()> {
     let src_width = raster.width()?;
@@ -228,6 +255,21 @@ fn reproject_match(
     transform.copy_from_slice(ref_transform);
 
     let band_count = raster.bands().len();
+
+    // GDAL's warp kernels don't handle 64-bit integer pixels well, and an
+    // Int64/UInt64 nodata can't round-trip through the f64 the warp path uses
+    // (`bytes_to_f64` rejects it). Reject these dtypes up front so the behavior
+    // is the same with or without nodata rather than mis-warping silently.
+    for i in 0..band_count {
+        if let Some(BandDataType::Int64 | BandDataType::UInt64) = raster.band_data_type(i) {
+            return exec_err!(
+                "RS_ReprojectMatch does not support Int64/UInt64 rasters (their nodata \
+                 cannot be represented exactly in the double the warp requires); cast to \
+                 a supported type first"
+            );
+        }
+    }
+
     let band_indices: Vec<usize> = (1..=band_count).collect();
     let layout = GdalBandLayout::from_raster(raster, &band_indices)?;
     // SAFETY: the returned dataset references `raster`'s band bytes zero-copy;
@@ -241,6 +283,7 @@ fn reproject_match(
         height: ref_height as usize,
         crs: reference.crs(),
         alg,
+        warp_memory_limit_bytes,
     };
     append_warped_nd_from_dataset(gdal, &src_dataset, &layout, builder, &warp_grid)
 }
@@ -534,5 +577,33 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("unknown algorithm"), "got: {err}");
+    }
+
+    #[test]
+    fn int64_and_uint64_rasters_are_rejected() {
+        // GDAL's warp path can't represent an Int64/UInt64 nodata exactly, so
+        // these dtypes are rejected up front (regardless of nodata) rather than
+        // silently mis-warped. Both 64-bit integer dtypes error the same way.
+        let reference = RasterSpec::d2(2, 2)
+            .band_values(&[0u8; 4])
+            .bbox(0.0, 0.0, 2.0, 2.0)
+            .crs(Some("EPSG:4326"));
+
+        let int64_source = RasterSpec::d2(2, 2)
+            .band_values(&[1i64, 2, 3, 4])
+            .bbox(0.0, 0.0, 2.0, 2.0)
+            .crs(Some("EPSG:4326"));
+        let uint64_source = RasterSpec::d2(2, 2)
+            .band_values(&[1u64, 2, 3, 4])
+            .bbox(0.0, 0.0, 2.0, 2.0)
+            .crs(Some("EPSG:4326"));
+
+        for source in [int64_source, uint64_source] {
+            let err = tester()
+                .invoke_scalar_scalar_scalar(&source, &reference, "NearestNeighbor")
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("Int64/UInt64"), "got: {err}");
+        }
     }
 }

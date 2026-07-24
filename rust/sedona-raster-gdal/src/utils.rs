@@ -222,6 +222,9 @@ pub struct WarpGrid<'a> {
     pub height: usize,
     pub crs: Option<&'a str>,
     pub alg: ResampleAlg,
+    /// GDAL's working-memory cache size (bytes) for the warp; `0.0` uses
+    /// GDAL's own default.
+    pub warp_memory_limit_bytes: f64,
 }
 
 /// Warp every band of `src_dataset` into `grid`, appending the result as a
@@ -283,8 +286,13 @@ pub fn append_warped_nd_from_dataset(
 
     // Reproject when the CRS differs; a same-CRS warp is a pure regrid that fills
     // grown/shifted areas with the pre-filled nodata.
-    gdal.reproject_image(src_dataset, &dst_dataset, grid.alg)
-        .map_err(convert_gdal_err)?;
+    gdal.reproject_image(
+        src_dataset,
+        &dst_dataset,
+        grid.alg,
+        grid.warp_memory_limit_bytes,
+    )
+    .map_err(convert_gdal_err)?;
 
     let metadata = grid.transform.to_raster_metadata(out_width, out_height);
     // Read the warped buffers back out (native read, no further resampling),

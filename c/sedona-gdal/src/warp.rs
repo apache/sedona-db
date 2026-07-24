@@ -45,11 +45,15 @@ use crate::spatial_ref::SpatialRef;
 /// left **untouched**: `GDALReprojectImage` with no warp options writes only
 /// covered pixels. Callers that grow the extent must therefore pre-fill `dst`'s
 /// band buffers with the desired background/nodata value before warping.
+///
+/// `warp_memory_limit_bytes` is GDAL's working-memory cache size for the warp
+/// (its `dfWarpMemoryLimit`); pass `0.0` to use GDAL's own default.
 pub fn reproject_image(
     api: &'static GdalApi,
     src: &Dataset,
     dst: &Dataset,
     alg: ResampleAlg,
+    warp_memory_limit_bytes: f64,
 ) -> Result<()> {
     let gra = alg.to_gdal_warp().ok_or_else(|| {
         GdalError::BadArgument(format!(
@@ -66,7 +70,7 @@ pub fn reproject_image(
             dst.c_dataset(),
             null(), // dst WKT: NULL means "use the destination dataset's own SRS"
             gra,
-            0.0,        // warp memory limit (0 = GDAL default)
+            warp_memory_limit_bytes, // warp memory limit (0.0 = GDAL default)
             0.0,        // max error in pixels (0 = exact transformer, no approximation)
             None,       // progress callback
             null_mut(), // progress arg
@@ -194,7 +198,7 @@ mod tests {
                 .unwrap();
             dst.set_projection("EPSG:4326").unwrap();
 
-            gdal.reproject_image(&src, &dst, ResampleAlg::NearestNeighbour)
+            gdal.reproject_image(&src, &dst, ResampleAlg::NearestNeighbour, 0.0)
                 .unwrap();
 
             let out = dst

@@ -133,9 +133,17 @@ impl Gdal {
     // -- Warp / Reproject ----------------------------------------------------
 
     /// Reproject/warp `src` into the pre-created `dst` dataset.
-    /// See also [`warp::reproject_image`].
-    pub fn reproject_image(&self, src: &Dataset, dst: &Dataset, alg: ResampleAlg) -> Result<()> {
-        warp::reproject_image(self.api, src, dst, alg)
+    ///
+    /// `warp_memory_limit_bytes` is GDAL's working-memory cache size for the
+    /// warp; pass `0.0` for GDAL's default. See also [`warp::reproject_image`].
+    pub fn reproject_image(
+        &self,
+        src: &Dataset,
+        dst: &Dataset,
+        alg: ResampleAlg,
+        warp_memory_limit_bytes: f64,
+    ) -> Result<()> {
+        warp::reproject_image(self.api, src, dst, alg, warp_memory_limit_bytes)
     }
 
     /// Compute the output geotransform and pixel dimensions a reprojection of
