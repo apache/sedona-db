@@ -31,7 +31,9 @@ both raster engines from `sedonadb.raster_testing`:
 - Cells the reprojected input does not cover fill with the input band nodata.
 
 Both rasters travel as table columns (not literals) so the kernel runs its real
-array path.
+array path. The engines (`SedonaDB` under test, `Rasterio` reference) and the
+raster writers are constructed inline in each test rather than through pytest
+fixtures, so each test reads self-contained.
 """
 
 import numpy as np
@@ -41,85 +43,41 @@ import pytest
 from sedonadb.raster_testing import (
     Rasterio,
     SedonaDB,
+    assert_transform_and_nodata,
     decode_raster,
-    random_raster_data,
     write_geotiff,
+    write_grid_geotiff,
+    write_random_geotiff,
 )
 
 DTYPES = ["uint8", "uint16", "int16", "int32", "float32", "float64"]
 
 
-@pytest.fixture()
-def sedona(con):
-    return SedonaDB(con)
-
-
-@pytest.fixture()
-def reference():
-    return Rasterio.create_or_skip()
-
-
-def _write(
-    tmp_path,
-    dtype,
-    *,
-    bands,
-    height,
-    width,
-    nodata=None,
-    transform,
-    crs,
-    name,
-):
-    path = tmp_path / f"reprojectmatch_{name}_{dtype}_{width}x{height}.tif"
-    data = random_raster_data(dtype, bands=bands, height=height, width=width)
-    write_geotiff(path, data, gdal_transform=transform, nodata=nodata, crs=crs)
-    return path
-
-
-def _write_grid(tmp_path, *, transform, width, height, crs, name):
-    """Write a zeroed reference raster whose only role is to define a grid."""
-    data = np.zeros((1, height, width), dtype="uint8")
-    path = tmp_path / f"reprojectmatch_{name}_{width}x{height}.tif"
-    write_geotiff(path, data, gdal_transform=transform, crs=crs)
-    return path
-
-
-def _assert_transform_and_nodata(got, expected):
-    assert got.gdal_transform == pytest.approx(
-        expected.gdal_transform, rel=1e-12, abs=1e-12
-    )
-    assert got.nodata == expected.nodata
-
-
 @pytest.mark.parametrize("dtype", DTYPES)
-def test_reproject_match_same_crs_upsample_matches_rasterio(
-    sedona, reference, tmp_path, dtype
-):
+def test_reproject_match_same_crs_upsample_matches_rasterio(con, tmp_path, dtype):
     """A 2x integer nearest upsample onto a finer reference grid replicates each
     source pixel into a 2x2 block — unambiguous, so bit-exact against rasterio.
     The output takes the reference's transform and dimensions."""
+    reference = Rasterio.create_or_skip()
+    sedona = SedonaDB(con)
+
     # Input: 4x3 pixels of 2x2, extent x[100,108] y[494,500], EPSG:4326.
     in_transform = (100.0, 2.0, 0.0, 500.0, 0.0, -2.0)
-    tiff = _write(
-        tmp_path,
+    tiff = tmp_path / "in.tif"
+    write_random_geotiff(
+        tiff,
         dtype,
         bands=2,
         height=3,
         width=4,
-        transform=in_transform,
+        gdal_transform=in_transform,
         crs="EPSG:4326",
-        name="in",
     )
     # Reference: same extent at 1x1 pixels (8x6), same CRS.
     ref_transform = (100.0, 1.0, 0.0, 500.0, 0.0, -1.0)
-    ref = _write_grid(
-        tmp_path,
-        transform=ref_transform,
-        width=8,
-        height=6,
-        crs="EPSG:4326",
-        name="ref",
+    ref = tmp_path / "ref.tif"
+    write_grid_geotiff(
+        ref, gdal_transform=ref_transform, width=8, height=6, crs="EPSG:4326"
     )
 
     got = sedona.reproject_match(tiff, ref)
@@ -127,35 +85,34 @@ def test_reproject_match_same_crs_upsample_matches_rasterio(
 
     np.testing.assert_array_equal(got.pixels, expected.pixels)
     assert got.pixels.shape == (2, 6, 8)
-    _assert_transform_and_nodata(got, expected)
+    assert_transform_and_nodata(got, expected)
 
 
-def test_reproject_match_uncovered_cells_are_nodata(sedona, reference, tmp_path):
+def test_reproject_match_uncovered_cells_are_nodata(con, tmp_path):
     """The reference grid extends past the input footprint; the uncovered border
     fills with the input band nodata. Both engines warp with GDAL, so the
     nearest pixels and the nodata fill match exactly."""
+    reference = Rasterio.create_or_skip()
+    sedona = SedonaDB(con)
+
     in_transform = (0.0, 2.0, 0.0, 6.0, 0.0, -2.0)  # 3x3 -> extent x[0,6] y[0,6]
-    tiff = _write(
-        tmp_path,
+    tiff = tmp_path / "in.tif"
+    write_random_geotiff(
+        tiff,
         "uint8",
         bands=1,
         height=3,
         width=3,
         nodata=200.0,
-        transform=in_transform,
+        gdal_transform=in_transform,
         crs="EPSG:4326",
-        name="in",
     )
     # Reference spans x[0,10] y[-4,6] at 2x2 -> a 5x5 grid overhanging on the
     # right and bottom.
     ref_transform = (0.0, 2.0, 0.0, 6.0, 0.0, -2.0)
-    ref = _write_grid(
-        tmp_path,
-        transform=ref_transform,
-        width=5,
-        height=5,
-        crs="EPSG:4326",
-        name="ref",
+    ref = tmp_path / "ref.tif"
+    write_grid_geotiff(
+        ref, gdal_transform=ref_transform, width=5, height=5, crs="EPSG:4326"
     )
 
     got = sedona.reproject_match(tiff, ref)
@@ -163,34 +120,33 @@ def test_reproject_match_uncovered_cells_are_nodata(sedona, reference, tmp_path)
 
     assert got.pixels.shape == (1, 5, 5)
     np.testing.assert_array_equal(got.pixels, expected.pixels)
-    _assert_transform_and_nodata(got, expected)
+    assert_transform_and_nodata(got, expected)
     # The overhang (cols/rows 3..4) is nodata in both engines.
     assert (got.pixels[0, :, 3:] == 200).all()
     assert (got.pixels[0, 3:, :] == 200).all()
 
 
-def test_reproject_match_bilinear_matches_rasterio(sedona, reference, tmp_path):
+def test_reproject_match_bilinear_matches_rasterio(con, tmp_path):
     """Bilinear blends neighbours, so it is compared to rasterio with a small
     tolerance. A float band avoids integer truncation of the interpolation."""
+    reference = Rasterio.create_or_skip()
+    sedona = SedonaDB(con)
+
     in_transform = (100.0, 1.0, 0.0, 508.0, 0.0, -1.0)
-    tiff = _write(
-        tmp_path,
+    tiff = tmp_path / "in.tif"
+    write_random_geotiff(
+        tiff,
         "float64",
         bands=1,
         height=8,
         width=8,
-        transform=in_transform,
+        gdal_transform=in_transform,
         crs="EPSG:4326",
-        name="in",
     )
     ref_transform = (100.0, 2.0, 0.0, 508.0, 0.0, -2.0)
-    ref = _write_grid(
-        tmp_path,
-        transform=ref_transform,
-        width=4,
-        height=4,
-        crs="EPSG:4326",
-        name="ref",
+    ref = tmp_path / "ref.tif"
+    write_grid_geotiff(
+        ref, gdal_transform=ref_transform, width=4, height=4, crs="EPSG:4326"
     )
 
     got = sedona.reproject_match(tiff, ref, algorithm="Bilinear")
@@ -198,30 +154,33 @@ def test_reproject_match_bilinear_matches_rasterio(sedona, reference, tmp_path):
 
     np.testing.assert_allclose(got.pixels, expected.pixels, rtol=1e-6, atol=1e-6)
     assert got.pixels.shape == (1, 4, 4)
-    _assert_transform_and_nodata(got, expected)
+    assert_transform_and_nodata(got, expected)
 
 
-def test_reproject_match_cross_crs_matches_rasterio(sedona, reference, tmp_path):
+def test_reproject_match_cross_crs_matches_rasterio(con, tmp_path):
     """Reproject a mid-latitude EPSG:4326 raster onto an EPSG:3857 reference
     grid. The reference grid is GDAL's suggested output (via rasterio's
     `calculate_default_transform`); both engines wrap the same GDAL warp, so the
     nearest-neighbour pixels match exactly."""
+    reference = Rasterio.create_or_skip()
+    sedona = SedonaDB(con)
+
     import rasterio
     from rasterio.crs import CRS
     from rasterio.warp import calculate_default_transform
 
     # 4x4 at 0.5 deg pixels near (10 E, 44 N).
     in_transform = (10.0, 0.5, 0.0, 44.0, 0.0, -0.5)
-    tiff = _write(
-        tmp_path,
+    tiff = tmp_path / "in.tif"
+    write_random_geotiff(
+        tiff,
         "uint8",
         bands=1,
         height=4,
         width=4,
         nodata=200.0,
-        transform=in_transform,
+        gdal_transform=in_transform,
         crs="EPSG:4326",
-        name="in",
     )
 
     with rasterio.open(str(tiff)) as src:
@@ -229,31 +188,59 @@ def test_reproject_match_cross_crs_matches_rasterio(sedona, reference, tmp_path)
         dst_transform, dst_w, dst_h = calculate_default_transform(
             src.crs, dst_crs, src.width, src.height, *src.bounds
         )
-    ref = _write_grid(
-        tmp_path,
-        transform=dst_transform.to_gdal(),
+    ref = tmp_path / "ref3857.tif"
+    write_grid_geotiff(
+        ref,
+        gdal_transform=dst_transform.to_gdal(),
         width=dst_w,
         height=dst_h,
         crs="EPSG:3857",
-        name="ref3857",
     )
 
     got = sedona.reproject_match(tiff, ref)
     expected = reference.reproject_match(tiff, ref)
 
     np.testing.assert_array_equal(got.pixels, expected.pixels)
-    _assert_transform_and_nodata(got, expected)
+    assert_transform_and_nodata(got, expected)
+
+
+@pytest.mark.parametrize("dtype", ["int64", "uint64"])
+def test_reproject_match_int64_uint64_rejected(con, tmp_path, dtype):
+    """Int64/UInt64 rasters are rejected up front: GDAL's warp can't represent
+    their nodata exactly in the double the warp path uses, so RS_ReprojectMatch
+    errors (regardless of nodata) rather than silently mis-warping."""
+    pytest.importorskip("rasterio")  # write_geotiff needs rasterio
+    sedona = SedonaDB(con)
+
+    tiff = tmp_path / "in.tif"
+    write_geotiff(
+        tiff,
+        np.array([[[1, 2], [3, 4]]], dtype=dtype),
+        gdal_transform=(0.0, 2.0, 0.0, 4.0, 0.0, -2.0),
+        crs="EPSG:4326",
+    )
+    ref = tmp_path / "ref.tif"
+    write_grid_geotiff(
+        ref,
+        gdal_transform=(0.0, 1.0, 0.0, 4.0, 0.0, -1.0),
+        width=4,
+        height=4,
+        crs="EPSG:4326",
+    )
+
+    with pytest.raises(Exception, match="Int64/UInt64"):
+        sedona.reproject_match(tiff, ref)
 
 
 def test_reproject_match_null_raster_is_null(con, tmp_path):
     """A NULL input raster yields a NULL result rather than erroring."""
-    ref = _write_grid(
-        tmp_path,
-        transform=(0.0, 1.0, 0.0, 4.0, 0.0, -1.0),
+    ref = tmp_path / "refnull.tif"
+    write_grid_geotiff(
+        ref,
+        gdal_transform=(0.0, 1.0, 0.0, 4.0, 0.0, -1.0),
         width=4,
         height=4,
         crs="EPSG:4326",
-        name="refnull",
     )
     table = pa.table(
         {
@@ -273,24 +260,24 @@ def test_reproject_match_null_raster_is_null(con, tmp_path):
 def test_reproject_match_sql_smoke(con, tmp_path):
     """One SQL-text invocation keeps the parser path covered (everything else
     routes through the expression API)."""
-    pytest.importorskip("rasterio")  # write_geotiff needs rasterio
-    tiff = _write(
-        tmp_path,
+    pytest.importorskip("rasterio")  # write_random_geotiff needs rasterio
+    tiff = tmp_path / "smoke_in.tif"
+    write_random_geotiff(
+        tiff,
         "uint8",
         bands=1,
         height=2,
         width=2,
-        transform=(0.0, 2.0, 0.0, 4.0, 0.0, -2.0),
+        gdal_transform=(0.0, 2.0, 0.0, 4.0, 0.0, -2.0),
         crs="EPSG:4326",
-        name="smoke_in",
     )
-    ref = _write_grid(
-        tmp_path,
-        transform=(0.0, 1.0, 0.0, 4.0, 0.0, -1.0),
+    ref = tmp_path / "smoke_ref.tif"
+    write_grid_geotiff(
+        ref,
+        gdal_transform=(0.0, 1.0, 0.0, 4.0, 0.0, -1.0),
         width=4,
         height=4,
         crs="EPSG:4326",
-        name="smoke_ref",
     )
     tab = con.sql(
         "SELECT RS_Width(RS_ReprojectMatch(RS_FromPath($1), RS_FromPath($2))) AS w",

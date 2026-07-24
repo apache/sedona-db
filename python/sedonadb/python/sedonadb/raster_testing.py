@@ -1287,6 +1287,37 @@ def write_geotiff(
         dst.write(data)
 
 
+def write_random_geotiff(
+    path, dtype, *, bands, height, width, gdal_transform, crs=None, nodata=None
+) -> None:
+    """Write a GeoTIFF of random `dtype` pixels on the given grid.
+
+    Combines `random_raster_data` (dtype extremes planted in opposite corners)
+    with `write_geotiff` — the input-raster fixture shape shared by raster warp
+    parity tests. `gdal_transform`, `crs`, and `nodata` are as `write_geotiff`.
+    """
+    data = random_raster_data(dtype, bands=bands, height=height, width=width)
+    write_geotiff(path, data, gdal_transform=gdal_transform, nodata=nodata, crs=crs)
+
+
+def write_grid_geotiff(path, *, gdal_transform, width, height, crs=None) -> None:
+    """Write a zeroed single-band GeoTIFF whose only role is to define a grid.
+
+    Its pixels are never read — only its extent, resolution, and CRS matter,
+    e.g. as the reference grid for `RS_ReprojectMatch`.
+    """
+    data = np.zeros((1, height, width), dtype="uint8")
+    write_geotiff(path, data, gdal_transform=gdal_transform, crs=crs)
+
+
+def assert_transform_and_nodata(got: DecodedRaster, expected: DecodedRaster) -> None:
+    """Assert two decoded rasters share a geotransform (to 1e-12) and per-band
+    nodata. A lighter check than `assert_decoded_equal` for tests that compare
+    pixels separately — e.g. with a resampling tolerance."""
+    assert got.gdal_transform == approx_geotransform(expected.gdal_transform)
+    assert got.nodata == expected.nodata
+
+
 def dtype_min(dtype):
     """The minimum representable value of a numpy dtype — SedonaDB's default
     nodata sentinel when neither an explicit value nor a band nodata exists."""
