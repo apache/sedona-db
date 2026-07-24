@@ -31,7 +31,9 @@ use sedona_geometry::{
 use sedona_raster::array::RasterStructArray;
 use sedona_raster::traits::RasterRef;
 use sedona_raster_functions::crs_utils::resolve_crs;
-use sedona_raster_functions::footprint::{raster_footprint_corners, write_footprint_wkb};
+use sedona_raster_functions::footprint::{
+    densify_footprint_ring, raster_footprint_corners, write_footprint_ring_wkb, write_footprint_wkb,
+};
 use sedona_schema::{
     crs::{CoordinateReferenceSystem, Crs},
     datatypes::SedonaType,
@@ -124,16 +126,17 @@ impl SpatialJoinProvider for RasterJoinProvider {
 /// Evaluates the operands of a raster/geometry spatial predicate.
 ///
 /// The same factory sees both operands of the join. A raster operand is turned
-/// into its footprint — the convex hull of the raster's four corners
+/// into its footprint — the polygon through the raster's four corners
 /// (see [`RasterGeometryArrayFactory::evaluate_raster`]) — and a geometry operand
 /// is evaluated with the default planar behavior, since the geometry is already
 /// in the target CRS.
 ///
-/// Cross-CRS raster footprints are indexed and refined as the convex hull of the
-/// raster's four reprojected corners; projection curvature along the edges is not
-/// modeled, so for large-extent rasters reprojected between very different CRSs
-/// the hull can slightly under-cover the true footprint (rare missed matches at
-/// the extreme edges). Same-CRS joins are exact.
+/// A cross-CRS raster footprint densifies each of its four edges
+/// ([`FOOTPRINT_POINTS_PER_EDGE`] interior points) in the raster's own CRS, where
+/// the edges are exact straight lines, then reprojects every densified point into
+/// the target CRS. The indexed and refined footprint therefore follows the
+/// curved image of each edge rather than chording straight across it. Same-CRS
+/// joins keep the exact four-corner footprint (no reprojection, no densification).
 #[derive(Debug)]
 struct RasterGeometryArrayFactory {
     /// The geometry operand's CRS: the common CRS this join compares in. Raster
@@ -186,6 +189,10 @@ impl RasterGeometryArrayFactory {
         let mut builder = BinaryBuilder::with_capacity(num_rows, num_rows * 96);
         let mut rects = Vec::with_capacity(num_rows);
 
+        // Reused across rows so densifying each cross-CRS footprint (below)
+        // allocates its point ring once, not per raster.
+        let mut ring = Vec::new();
+
         let engine: &dyn CrsEngine = self.engine.as_ref();
         for i in 0..num_rows {
             // A null raster produces a null footprint that never matches.
@@ -198,7 +205,7 @@ impl RasterGeometryArrayFactory {
             let raster = rasters
                 .get(i)
                 .map_err(|e| exec_datafusion_err!("Failed to read raster row {i}: {e}"))?;
-            let rect = self.append_footprint(&raster, engine, &mut builder)?;
+            let rect = self.append_footprint(&raster, engine, &mut ring, &mut builder)?;
             rects.push(rect);
         }
 
@@ -210,14 +217,17 @@ impl RasterGeometryArrayFactory {
     /// rectangle, reconciling the raster's CRS against the target CRS.
     ///
     /// CRS rules mirror the `RS_*` kernel: equal (or both-absent) CRS compares
-    /// directly; a genuine CRS difference reprojects the footprint's four corners
-    /// into the target CRS; a one-sided CRS is an error. The footprint is always
-    /// the convex hull of the four corners — projection curvature along the edges
-    /// is not modeled (see the type-level note on [`RasterGeometryArrayFactory`]).
+    /// directly; a genuine CRS difference densifies and reprojects the footprint
+    /// into the target CRS; a one-sided CRS is an error. Same-CRS footprints are
+    /// the exact four-corner polygon; cross-CRS footprints densify each edge
+    /// before reprojection so they follow its curve (see the type-level note on
+    /// [`RasterGeometryArrayFactory`]). `ring` is scratch space reused across rows
+    /// for the densified reprojected ring.
     fn append_footprint(
         &self,
         raster: &dyn RasterRef,
         engine: &dyn CrsEngine,
+        ring: &mut Vec<(f64, f64)>,
         builder: &mut BinaryBuilder,
     ) -> Result<Bounds2D> {
         let raster_crs = resolve_crs(raster.crs())?;
@@ -236,10 +246,10 @@ impl RasterGeometryArrayFactory {
                 builder.append_value([]);
                 Ok(bounds_from_coords(&corners))
             }
-            // Genuine CRS difference: reproject the four corners into the target
-            // CRS and emit their convex hull.
+            // Genuine CRS difference: densify each edge in the raster's own CRS
+            // and reproject every point into the target CRS.
             (Some(raster_crs), Some(target_crs)) => {
-                append_reprojected_footprint(corners, raster_crs, target_crs, engine, builder)
+                append_reprojected_footprint(corners, raster_crs, target_crs, engine, ring, builder)
             }
             (Some(_), None) => {
                 exec_err!(
@@ -255,22 +265,29 @@ impl RasterGeometryArrayFactory {
     }
 }
 
-/// Reproject a raster's four `corners` from `from_crs` to `to_crs`, append the
-/// convex hull of the reprojected corners to `builder`, and return its bounding
-/// rectangle.
+/// Densify a raster's four `corners` in `from_crs`, reproject every densified
+/// point to `to_crs`, append the resulting footprint polygon to `builder`, and
+/// return its bounding rectangle.
 ///
-/// A transform that cannot be built, a transform that fails on a corner, or a
-/// reprojected corner that is non-finite yields a *null* footprint for this row
-/// (`append_null()` + [`Bounds2D::empty`], mirroring the null-raster path) so the
-/// row contributes no matches — rather than writing a garbage footprint/MBR or
-/// aborting the whole join. Recovering a failed reprojection via a WGS84 fallback
-/// (as the `RS_*` kernel does for the comparison as a whole) is a separate open
-/// question and is not attempted here.
+/// The footprint is densified while it is still in the raster's own CRS, where
+/// each edge is an exact straight line, and every densified point is then
+/// reprojected — so the reprojected ring follows the curved image of each edge
+/// instead of chording straight across it. `ring` is caller-managed scratch
+/// space for the densified ring.
+///
+/// A transform that cannot be built, a transform that fails on any densified
+/// point, or a reprojected point that is non-finite yields a *null* footprint for
+/// this row (`append_null()` + [`Bounds2D::empty`], mirroring the null-raster
+/// path) so the row contributes no matches — rather than writing a garbage
+/// footprint/MBR or aborting the whole join. Recovering a failed reprojection via
+/// a WGS84 fallback (as the `RS_*` kernel does for the comparison as a whole) is a
+/// separate open question and is not attempted here.
 fn append_reprojected_footprint(
     corners: [(f64, f64); 4],
     from_crs: &(dyn CoordinateReferenceSystem + Send + Sync),
     to_crs: &(dyn CoordinateReferenceSystem + Send + Sync),
     engine: &dyn CrsEngine,
+    ring: &mut Vec<(f64, f64)>,
     builder: &mut BinaryBuilder,
 ) -> Result<Bounds2D> {
     let Ok(transform) = engine.get_transform_crs_to_crs(
@@ -283,25 +300,27 @@ fn append_reprojected_footprint(
         return Ok(Bounds2D::empty());
     };
 
-    let mut hull = corners;
-    for corner in hull.iter_mut() {
-        if transform.transform_coord(corner).is_err() {
+    // Densify the four-corner ring in the native CRS (exact straight edges),
+    // then reproject every point so the footprint follows the reprojected curve.
+    densify_footprint_ring(corners, ring);
+    for point in ring.iter_mut() {
+        if transform.transform_coord(point).is_err() {
             builder.append_null();
             return Ok(Bounds2D::empty());
         }
     }
 
-    // A non-finite reprojected corner (e.g. a corner outside the target
+    // A single non-finite reprojected point (e.g. a point outside the target
     // projection's valid domain) would poison the footprint WKB and its MBR, so
     // emit a null footprint for this row instead of writing garbage.
-    if hull.iter().any(|(x, y)| !x.is_finite() || !y.is_finite()) {
+    if ring.iter().any(|(x, y)| !x.is_finite() || !y.is_finite()) {
         builder.append_null();
         return Ok(Bounds2D::empty());
     }
 
-    write_footprint_wkb(hull, builder)?;
+    write_footprint_ring_wkb(ring, builder)?;
     builder.append_value([]);
-    Ok(bounds_from_coords(&hull))
+    Ok(bounds_from_coords(ring))
 }
 
 /// Bounding rectangle of a set of coordinates, accumulated as f64 [`Interval`]s
@@ -545,11 +564,11 @@ mod test {
     }
 
     /// A footprint reprojection that fails — the transform can't be built, a
-    /// corner transform errors, or a reprojected corner is non-finite — yields a
-    /// null footprint with an empty MBR for that row (mirroring the null-raster
-    /// path) rather than writing a garbage footprint/MBR or aborting the whole
-    /// join. A transform that succeeds with finite corners still produces a real,
-    /// non-null footprint.
+    /// densified point's transform errors, or a reprojected point is non-finite —
+    /// yields a null footprint with an empty MBR for that row (mirroring the
+    /// null-raster path) rather than writing a garbage footprint/MBR or aborting
+    /// the whole join. A transform that succeeds with finite points still produces
+    /// a real, non-null footprint.
     #[test]
     fn failed_reprojection_yields_null_footprint() {
         let crs = lnglat();
@@ -558,9 +577,11 @@ mod test {
 
         for fate in [None, Some(CornerFate::Error), Some(CornerFate::NonFinite)] {
             let engine = MockEngine { fate };
+            let mut ring = Vec::new();
             let mut builder = BinaryBuilder::new();
             let bounds =
-                append_reprojected_footprint(corners, crs, crs, &engine, &mut builder).unwrap();
+                append_reprojected_footprint(corners, crs, crs, &engine, &mut ring, &mut builder)
+                    .unwrap();
             let footprints = builder.finish();
             assert!(
                 footprints.is_null(0),
@@ -576,9 +597,11 @@ mod test {
         let engine = MockEngine {
             fate: Some(CornerFate::Identity),
         };
+        let mut ring = Vec::new();
         let mut builder = BinaryBuilder::new();
         let bounds =
-            append_reprojected_footprint(corners, crs, crs, &engine, &mut builder).unwrap();
+            append_reprojected_footprint(corners, crs, crs, &engine, &mut ring, &mut builder)
+                .unwrap();
         let footprints = builder.finish();
         assert!(
             !footprints.is_null(0),

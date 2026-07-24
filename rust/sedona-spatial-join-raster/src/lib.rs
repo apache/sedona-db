@@ -19,16 +19,18 @@
 //!
 //! A raster/geometry spatial predicate (`RS_Intersects`, `RS_Contains`,
 //! `RS_Within`) is accelerated by evaluating each raster into its footprint (the
-//! convex hull of its four corners) as a WKB polygon plus a bounding rectangle.
-//! The footprint is reprojected into the geometry operand's CRS so the R-tree
-//! filter and the WKB refiner — both unchanged from the default planar spatial
-//! join — compare footprints and geometries in a common CRS.
+//! polygon through the raster's four corners) as a WKB polygon plus a bounding
+//! rectangle. The footprint is reprojected into the geometry operand's CRS so the
+//! R-tree filter and the WKB refiner — both unchanged from the default planar
+//! spatial join — compare footprints and geometries in a common CRS.
 //!
-//! Cross-CRS raster footprints are indexed and refined as the convex hull of the
-//! raster's four reprojected corners; projection curvature along the edges is not
-//! modeled, so for large-extent rasters reprojected between very different CRSs
-//! the hull can slightly under-cover the true footprint (rare missed matches at
-//! the extreme edges). Same-CRS joins are exact.
+//! A cross-CRS raster footprint densifies each of its four edges (~10 interior
+//! points) in the raster's own CRS, where the edges are exact straight lines,
+//! then reprojects every densified point into the target CRS. The indexed and
+//! refined footprint therefore follows the curved image of each edge rather than
+//! chording straight across it. Same-CRS joins keep the exact four-corner
+//! footprint (no reprojection, no densification). Antimeridian crossings and
+//! geodesic edges are not modeled.
 
 mod join_provider;
 pub mod physical_planner;

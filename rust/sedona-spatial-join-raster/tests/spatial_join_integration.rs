@@ -58,6 +58,7 @@ use sedona_query_planner::{
 use sedona_raster::affine_transformation::to_world_coordinate;
 use sedona_raster::array::RasterStructArray;
 use sedona_raster::traits::RasterRef;
+use sedona_raster_functions::footprint::{densify_footprint_ring, FOOTPRINT_POINTS_PER_EDGE};
 use sedona_schema::crs::lnglat;
 use sedona_schema::datatypes::{SedonaType, RASTER};
 use sedona_schema::raster::BandDataType;
@@ -276,17 +277,18 @@ async fn intersects_produces_expected_rows() -> Result<()> {
 /// construction-based reference. The raster is skewed in EPSG:3857; the geometry
 /// operand is lng/lat.
 ///
-/// The accelerated footprint is the convex hull of the raster's four corners
-/// reprojected into lng/lat (straight chords between reprojected corners — edge
-/// curvature is not modeled). The reference reprojects those same four corners
-/// into lng/lat to reconstruct that chord-quad, then builds test points whose
-/// membership is known by construction: the centroid and the halfway-to-each-
-/// vertex points are strictly inside the convex quad, while the reflection of the
-/// centroid through each vertex is strictly outside. These points sit well away
-/// from the edges, so the expected result is exact (no tolerance). The reference
-/// reprojects corners in the same 3857 -> lng/lat direction as the accelerated
-/// path, so a wrong transform direction places the accelerated hull elsewhere and
-/// none of the (correctly placed) inside points match — this validates transform
+/// The accelerated footprint densifies each edge of the raster's four-corner quad
+/// in the native CRS and reprojects every point into lng/lat, so the footprint
+/// follows the curve of each reprojected edge rather than chording across it. The
+/// reference builds that same densified, reprojected ring, then places test
+/// points whose membership is known by construction: the centroid and the
+/// halfway-to-each-corner points are strictly inside the footprint, while the
+/// reflection of the centroid through each corner is strictly outside. These
+/// points sit well away from the edges, so the expected result is exact (no
+/// tolerance) no matter how finely the edges are modeled. The reference
+/// reprojects in the same 3857 -> lng/lat direction as the accelerated path, so a
+/// wrong transform direction places the accelerated footprint elsewhere and none
+/// of the (correctly placed) inside points match — this validates transform
 /// direction and the footprint/refine pipeline against PROJ (the same engine a
 /// rasterio/geopandas reference would use).
 #[tokio::test]
@@ -294,34 +296,37 @@ async fn cross_crs_matches_constructed_reference() -> Result<()> {
     let raster = build_skewed_raster_3857();
 
     // Footprint corners in the raster's native CRS (EPSG:3857). These are exact.
-    let native_corners = {
-        let rasters = RasterStructArray::try_new(&raster).unwrap();
-        let r = rasters.get(0).unwrap();
-        let w = r.metadata().width();
-        let h = r.metadata().height();
-        [
-            to_world_coordinate(&r, 0, 0),
-            to_world_coordinate(&r, w, 0),
-            to_world_coordinate(&r, w, h),
-            to_world_coordinate(&r, 0, h),
-        ]
-    };
+    let native_corners = skewed_raster_native_corners(&raster);
 
-    // Reproject the four corners into lng/lat. This is exactly the convex-hull
-    // footprint the accelerated path builds (straight chords between corners).
+    // Densify the four-corner footprint in the native CRS and reproject every
+    // point into lng/lat: this is exactly the footprint the accelerated path
+    // builds (each edge follows its reprojected curve, not a straight chord).
     let lnglat_crs = lnglat().unwrap().to_crs_string();
-    let hull: [(f64, f64); 4] = with_global_proj_engine(|engine| {
+    let ref_ring: Vec<(f64, f64)> = with_global_proj_engine(|engine| {
         let transform = engine
             .get_transform_crs_to_crs("EPSG:3857", &lnglat_crs, None, "")
             .map_err(|e| datafusion_common::exec_datafusion_err!("{e}"))?;
-        let mut hull = native_corners;
-        for corner in hull.iter_mut() {
+        let mut ring = Vec::new();
+        densify_footprint_ring(native_corners, &mut ring);
+        for point in ring.iter_mut() {
             transform
-                .transform_coord(corner)
+                .transform_coord(point)
                 .map_err(|e| datafusion_common::exec_datafusion_err!("{e}"))?;
         }
-        Ok(hull)
+        Ok(ring)
     })?;
+
+    // The four reprojected corners are the densified ring's vertices at the start
+    // of each edge. Test points are placed relative to these corners and the
+    // centroid — deep inside or far outside — so their membership is exact
+    // regardless of how finely the edges are modeled.
+    let corner_stride = FOOTPRINT_POINTS_PER_EDGE + 1;
+    let hull: [(f64, f64); 4] = [
+        ref_ring[0],
+        ref_ring[corner_stride],
+        ref_ring[2 * corner_stride],
+        ref_ring[3 * corner_stride],
+    ];
     let cx = hull.iter().map(|c| c.0).sum::<f64>() / 4.0;
     let cy = hull.iter().map(|c| c.1).sum::<f64>() / 4.0;
 
@@ -422,4 +427,173 @@ fn build_skewed_raster_3857() -> StructArray {
         .transform([0.0, 100_000.0, 30_000.0, 2_000_000.0, 20_000.0, -100_000.0])
         .band(BandDataType::UInt8)
         .build()
+}
+
+/// The four footprint corners of the single-row `raster` in its native CRS, in
+/// ring order (upper-left, upper-right, lower-right, lower-left).
+fn skewed_raster_native_corners(raster: &StructArray) -> [(f64, f64); 4] {
+    let rasters = RasterStructArray::try_new(raster).unwrap();
+    let r = rasters.get(0).unwrap();
+    let w = r.metadata().width();
+    let h = r.metadata().height();
+    [
+        to_world_coordinate(&r, 0, 0),
+        to_world_coordinate(&r, w, 0),
+        to_world_coordinate(&r, w, h),
+        to_world_coordinate(&r, 0, h),
+    ]
+}
+
+/// True if `p` lies inside (or on the boundary of) the convex quadrilateral
+/// `quad`, tested by requiring the cross product of each directed edge with the
+/// vector to `p` to keep a consistent sign.
+fn point_in_convex_quad(quad: &[(f64, f64); 4], p: (f64, f64)) -> bool {
+    let mut sign = 0.0f64;
+    for i in 0..4 {
+        let a = quad[i];
+        let b = quad[(i + 1) % 4];
+        let cross = (b.0 - a.0) * (p.1 - a.1) - (b.1 - a.1) * (p.0 - a.0);
+        if cross != 0.0 {
+            if sign == 0.0 {
+                sign = cross.signum();
+            } else if cross.signum() != sign {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Densification catches a point in the sliver between a footprint edge's true
+/// reprojected curve and the straight chord through its two reprojected corners.
+///
+/// Reprojecting the skewed EPSG:3857 raster into lng/lat bows at least one edge
+/// outward: its true (curved) boundary bulges past the straight chord between the
+/// two reprojected corners. A point placed just inside that curve is inside the
+/// true footprint but outside the four-corner chord hull, so a join that only
+/// reprojected the corners would miss it. Because the accelerated join densifies
+/// each edge before reprojection, the footprint follows the curve and the point
+/// matches — the accuracy gain densification buys.
+#[tokio::test]
+async fn densification_catches_curved_edge_sliver() -> Result<()> {
+    let raster = build_skewed_raster_3857();
+    let native_corners = skewed_raster_native_corners(&raster);
+
+    // Reproject the four corners (the chord hull) and each edge's native midpoint
+    // (a point on the true reprojected curve) into lng/lat.
+    let lnglat_crs = lnglat().unwrap().to_crs_string();
+    let mut hull = native_corners;
+    let mut curve_mids = [(0.0, 0.0); 4];
+    with_global_proj_engine(|engine| {
+        let transform = engine
+            .get_transform_crs_to_crs("EPSG:3857", &lnglat_crs, None, "")
+            .map_err(|e| datafusion_common::exec_datafusion_err!("{e}"))?;
+        for corner in hull.iter_mut() {
+            transform
+                .transform_coord(corner)
+                .map_err(|e| datafusion_common::exec_datafusion_err!("{e}"))?;
+        }
+        for (e, mid) in curve_mids.iter_mut().enumerate() {
+            let a = native_corners[e];
+            let b = native_corners[(e + 1) % 4];
+            let mut m = ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
+            transform
+                .transform_coord(&mut m)
+                .map_err(|e| datafusion_common::exec_datafusion_err!("{e}"))?;
+            *mid = m;
+        }
+        Ok(())
+    })?;
+
+    let cx = hull.iter().map(|c| c.0).sum::<f64>() / 4.0;
+    let cy = hull.iter().map(|c| c.1).sum::<f64>() / 4.0;
+
+    // Find the edge whose true curve bows farthest outward (its midpoint lies
+    // outside the chord hull) and build a point just inside that curve.
+    let mut best: Option<(f64, (f64, f64))> = None; // (outward depth, test point)
+    for e in 0..4 {
+        let a = hull[e];
+        let b = hull[(e + 1) % 4];
+        let curve_mid = curve_mids[e];
+        let dx = b.0 - a.0;
+        let dy = b.1 - a.1;
+        let len = (dx * dx + dy * dy).sqrt();
+        // Unit left normal of the chord a -> b.
+        let nx = -dy / len;
+        let ny = dx / len;
+        // Signed perpendicular offset of the curve midpoint and the centroid from
+        // the chord line. Opposite signs => the curve bows away from the centroid,
+        // i.e. outward past the chord hull.
+        let perp_curve = (curve_mid.0 - a.0) * nx + (curve_mid.1 - a.1) * ny;
+        let perp_centroid = (cx - a.0) * nx + (cy - a.1) * ny;
+        if perp_curve == 0.0 || perp_curve.signum() == perp_centroid.signum() {
+            continue; // straight or bows inward: no outward sliver on this edge
+        }
+        let depth = perp_curve.abs();
+        // Step from the true curve halfway back toward the interior: still outside
+        // the chord hull (< depth away), but inside the densified footprint (the
+        // densified edge hugs the true curve to within ~depth/100).
+        let inward = perp_centroid.signum();
+        let test_pt = (
+            curve_mid.0 + 0.5 * depth * nx * inward,
+            curve_mid.1 + 0.5 * depth * ny * inward,
+        );
+        let better = match best {
+            Some((d, _)) => depth > d,
+            None => true,
+        };
+        if better {
+            best = Some((depth, test_pt));
+        }
+    }
+
+    let (_, test_pt) = best.expect("reprojecting the skewed raster must bow an edge outward");
+
+    // The point is outside the four-corner chord hull: a join that reprojected
+    // only the corners would miss it.
+    assert!(
+        !point_in_convex_quad(&hull, test_pt),
+        "test point {test_pt:?} must lie outside the four-corner chord hull"
+    );
+
+    // Register the raster + the single sliver point in an optimized context.
+    let ctx = build_context(true)?;
+    let raster_schema = Arc::new(Schema::new(vec![RASTER.to_storage_field("raster", true)?]));
+    let raster_batch = RecordBatch::try_new(raster_schema.clone(), vec![Arc::new(raster)])?;
+    ctx.register_table(
+        "r",
+        Arc::new(MemTable::try_new(raster_schema, vec![vec![raster_batch]])?),
+    )?;
+
+    let geom_type = geom_type();
+    let wkt = format!("POINT ({} {})", test_pt.0, test_pt.1);
+    let geom = create_array(&[Some(wkt.as_str())], &geom_type);
+    let geom_schema = Arc::new(Schema::new(vec![
+        Field::new("gid", arrow_schema::DataType::Int32, false),
+        geom_type.to_storage_field("geom", true)?,
+    ]));
+    let geom_batch = RecordBatch::try_new(
+        geom_schema.clone(),
+        vec![Arc::new(Int32Array::from(vec![1])), geom],
+    )?;
+    ctx.register_table(
+        "g",
+        Arc::new(MemTable::try_new(geom_schema, vec![vec![geom_batch]])?),
+    )?;
+
+    let sql = "SELECT g.gid FROM r JOIN g ON RS_Intersects(r.raster, g.geom)";
+    let df = ctx.sql(sql).await?;
+    let plan = df.clone().create_physical_plan().await?;
+    assert_eq!(
+        count_spatial_join_execs(&plan)?,
+        1,
+        "cross-CRS raster join should use the optimized SpatialJoinExec"
+    );
+    let batches = df.collect().await?;
+    let matched: usize = batches.iter().map(|b| b.num_rows()).sum();
+    assert_eq!(
+        matched, 1,
+        "the densified footprint must match the sliver point that the four-corner chord hull misses"
+    );
+    Ok(())
 }
