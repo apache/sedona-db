@@ -157,17 +157,6 @@ impl SedonaContext {
                 DefaultSpatialJoinPhysicalPlanner::new(),
             ));
 
-            // Register the raster join after the default planner. It accelerates
-            // raster/geometry predicates; unsupported cases fall back to the
-            // default planner (and ultimately the nested-loop join).
-            {
-                use sedona_spatial_join_raster::physical_planner::RasterSpatialJoinPhysicalPlanner;
-
-                planner = planner.with_spatial_join_physical_planner(Arc::new(
-                    RasterSpatialJoinPhysicalPlanner::new(),
-                ));
-            }
-
             // Register the geography join after the default planner
             // If a query is not supported, it falls back to the default planner.
             #[cfg(feature = "s2geography")]
@@ -187,6 +176,21 @@ impl SedonaContext {
 
                 planner = planner.with_spatial_join_physical_planner(Arc::new(
                     GpuSpatialJoinPhysicalPlanner::new(),
+                ));
+            }
+
+            // Register the raster join last so it is consulted before the GPU
+            // planner (planners are tried in reverse registration order). It
+            // recognizes raster/geometry predicates and declines everything else
+            // with `None`, so a raster predicate is handled here rather than
+            // reaching the GPU planner — which would otherwise hard-error on a
+            // raster operand when `GpuOptions.fallback_to_cpu` is false. Anything
+            // it declines falls through to the GPU/geography/default planners.
+            {
+                use sedona_spatial_join_raster::physical_planner::RasterSpatialJoinPhysicalPlanner;
+
+                planner = planner.with_spatial_join_physical_planner(Arc::new(
+                    RasterSpatialJoinPhysicalPlanner::new(),
                 ));
             }
         }
