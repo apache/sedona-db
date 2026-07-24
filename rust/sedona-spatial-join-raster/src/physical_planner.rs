@@ -86,6 +86,16 @@ impl SpatialJoinPhysicalPlanner for RasterSpatialJoinPhysicalPlanner {
         // short-lived, and shared across the rows each raster fans out to. The
         // cardinality heuristic would put a low-cardinality raster input on the build
         // side, which is the worst case here, so it is bypassed for raster joins.
+        //
+        // The raster operand is pinned to the probe (streamed) side so its band
+        // buffers are not fully buffered on the build side (where ingest gc-compacts
+        // and copies view buffers) while passing through the join. Whether to pin
+        // unconditionally, or only when the vector side is not the vastly larger
+        // input (forcing a huge vector table onto the buffered build side can cost
+        // more than copying a few raster payloads) — and whether to instead make
+        // build-side ingest share view buffers so the statistics-based side
+        // heuristic can stay intact — is an open question. See
+        // https://github.com/apache/sedona-db/issues/1078.
         let raster_on_left =
             raster_operand_on_left(args.spatial_predicate, &args.physical_left.schema())?;
         let swap_raster_to_probe = raster_on_left && args.join_type.supports_swap();
