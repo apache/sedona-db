@@ -57,14 +57,14 @@ use sedona_query_planner::{
 };
 use sedona_raster::affine_transformation::to_world_coordinate;
 use sedona_raster::array::RasterStructArray;
-use sedona_raster::builder::RasterBuilder;
-use sedona_raster::traits::{BandMetadata, RasterMetadata, RasterRef};
+use sedona_raster::traits::RasterRef;
 use sedona_schema::crs::lnglat;
 use sedona_schema::datatypes::{SedonaType, RASTER};
-use sedona_schema::raster::{BandDataType, StorageType};
+use sedona_schema::raster::BandDataType;
 use sedona_spatial_join::SpatialJoinExec;
 use sedona_spatial_join_raster::physical_planner::RasterSpatialJoinPhysicalPlanner;
 use sedona_testing::create::create_array;
+use sedona_testing::raster_spec::RasterSpec;
 use sedona_testing::rasters::generate_test_rasters;
 
 /// Geometry type sharing the CRS that `generate_test_rasters` stamps on its
@@ -404,29 +404,10 @@ async fn cross_crs_matches_constructed_reference() -> Result<()> {
 /// A 4x4 raster in EPSG:3857 with skew, so its footprint is a non-axis-aligned
 /// quadrilateral whose edges curve when reprojected to lng/lat.
 fn build_skewed_raster_3857() -> StructArray {
-    let mut builder = RasterBuilder::new(1);
-    let metadata = RasterMetadata {
-        width: 4,
-        height: 4,
-        upperleft_x: 0.0,
-        upperleft_y: 2_000_000.0,
-        scale_x: 100_000.0,
-        scale_y: -100_000.0,
-        skew_x: 30_000.0,
-        skew_y: 20_000.0,
-    };
-    builder.start_raster(&metadata, Some("EPSG:3857")).unwrap();
-    builder
-        .start_band(BandMetadata {
-            datatype: BandDataType::UInt8,
-            nodata_value: None,
-            storage_type: StorageType::InDb,
-            outdb_url: None,
-            outdb_band_id: None,
-        })
-        .unwrap();
-    builder.band_data_writer().append_value([0u8; 16]);
-    builder.finish_band().unwrap();
-    builder.finish_raster().unwrap();
-    builder.finish().unwrap()
+    RasterSpec::d2(4, 4)
+        .crs(Some("EPSG:3857"))
+        // GDAL geotransform [origin_x, scale_x, skew_x, origin_y, skew_y, scale_y].
+        .transform([0.0, 100_000.0, 30_000.0, 2_000_000.0, 20_000.0, -100_000.0])
+        .band(BandDataType::UInt8)
+        .build()
 }
