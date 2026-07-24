@@ -51,7 +51,7 @@ use sedona_common::option::SpatialJoinOptions;
 use sedona_common::SedonaOptions;
 use sedona_geometry::transform::CrsEngine;
 use sedona_geometry::types::Edges;
-use sedona_proj::transform::with_global_proj_engine;
+use sedona_proj::transform::{with_global_proj_engine, LazyProjEngine};
 use sedona_query_planner::{
     optimizer::register_spatial_join_logical_optimizer, query_planner::SedonaQueryPlanner,
 };
@@ -127,6 +127,18 @@ fn register_geom_table(ctx: &SessionContext) -> Result<()> {
 fn build_context(optimized: bool) -> Result<SessionContext> {
     let mut session_config = SessionConfig::from_env()?.with_batch_size(16);
     session_config = session_config.with_option_extension(SedonaOptions::default());
+
+    // Install a real CRS engine, mirroring the engine a normal session
+    // registers. Both the accelerated join and the RS_* kernel read the engine
+    // from the session options to reproject cross-CRS footprints/geometries.
+    {
+        let opts = session_config
+            .options_mut()
+            .extensions
+            .get_mut::<SedonaOptions>()
+            .unwrap();
+        opts.runtime = opts.runtime.with_crs_engine(Arc::new(LazyProjEngine));
+    }
 
     let mut state_builder = SessionStateBuilder::new();
     if optimized {

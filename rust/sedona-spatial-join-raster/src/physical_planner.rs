@@ -21,6 +21,9 @@ use arrow_schema::Schema;
 use datafusion_common::Result;
 use datafusion_physical_expr::PhysicalExpr;
 use datafusion_physical_plan::ExecutionPlan;
+use sedona_common::SedonaOptions;
+use sedona_geometry::transform::CrsEngine;
+use sedona_proj::transform::LazyProjEngine;
 use sedona_query_planner::{
     spatial_join_physical_planner::{PlanSpatialJoinArgs, SpatialJoinPhysicalPlanner},
     spatial_predicate::{RelationPredicate, SpatialPredicate, SpatialRelationType},
@@ -89,6 +92,17 @@ impl SpatialJoinPhysicalPlanner for RasterSpatialJoinPhysicalPlanner {
             (args.physical_left.clone(), args.physical_right.clone())
         };
 
+        // Capture the session's CRS engine at plan time so raster footprint
+        // reprojection honors a user-injected engine. Absent a SedonaOptions
+        // extension, fall back to the process-global PROJ engine via
+        // LazyProjEngine (the same default the session registers).
+        let engine: Arc<dyn CrsEngine + Send + Sync> = args
+            .options
+            .extensions
+            .get::<SedonaOptions>()
+            .map(|opts| opts.runtime.crs_engine().clone())
+            .unwrap_or_else(|| Arc::new(LazyProjEngine));
+
         let exec = SpatialJoinExec::try_new(
             physical_left,
             physical_right,
@@ -98,7 +112,7 @@ impl SpatialJoinPhysicalPlanner for RasterSpatialJoinPhysicalPlanner {
             None,
             args.join_options,
         )?
-        .with_spatial_join_provider(Arc::new(RasterJoinProvider::new(target_crs)));
+        .with_spatial_join_provider(Arc::new(RasterJoinProvider::new(target_crs, engine)));
 
         if should_swap {
             exec.swap_inputs().map(Some)

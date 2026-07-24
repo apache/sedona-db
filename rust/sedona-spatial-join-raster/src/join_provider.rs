@@ -28,7 +28,6 @@ use sedona_geometry::{
     interval::{Interval, IntervalTrait},
     transform::CrsEngine,
 };
-use sedona_proj::transform::with_global_proj_engine;
 use sedona_raster::array::RasterStructArray;
 use sedona_raster::traits::RasterRef;
 use sedona_raster_functions::crs_utils::resolve_crs;
@@ -50,18 +49,21 @@ use sedona_spatial_join::{
 ///
 /// The R-tree index builder and the memory estimate delegate to the default
 /// provider; only the operand evaluator is raster-aware. The factory it produces
-/// reprojects raster footprints into `target_crs` (the geometry operand's CRS).
+/// reprojects raster footprints into `target_crs` (the geometry operand's CRS)
+/// using the session's [`CrsEngine`], captured at plan time.
 #[derive(Debug)]
 pub(crate) struct RasterJoinProvider {
     default: DefaultSpatialJoinProvider,
     target_crs: Crs,
+    engine: Arc<dyn CrsEngine + Send + Sync>,
 }
 
 impl RasterJoinProvider {
-    pub(crate) fn new(target_crs: Crs) -> Self {
+    pub(crate) fn new(target_crs: Crs, engine: Arc<dyn CrsEngine + Send + Sync>) -> Self {
         Self {
             default: DefaultSpatialJoinProvider,
             target_crs,
+            engine,
         }
     }
 }
@@ -114,6 +116,7 @@ impl SpatialJoinProvider for RasterJoinProvider {
     fn evaluated_array_factory(&self) -> Arc<dyn EvaluatedGeometryArrayFactory> {
         Arc::new(RasterGeometryArrayFactory {
             target_crs: self.target_crs.clone(),
+            engine: self.engine.clone(),
         })
     }
 }
@@ -137,6 +140,9 @@ struct RasterGeometryArrayFactory {
     /// footprints are reprojected into it. `None` when the geometry operand
     /// carries no CRS (the raster operand must then also be CRS-less).
     target_crs: Crs,
+    /// The session's CRS engine, used to reproject raster footprints into
+    /// `target_crs`.
+    engine: Arc<dyn CrsEngine + Send + Sync>,
 }
 
 impl EvaluatedGeometryArrayFactory for RasterGeometryArrayFactory {
@@ -180,23 +186,21 @@ impl RasterGeometryArrayFactory {
         let mut builder = BinaryBuilder::with_capacity(num_rows, num_rows * 96);
         let mut rects = Vec::with_capacity(num_rows);
 
-        with_global_proj_engine(|engine| {
-            for i in 0..num_rows {
-                // A null raster produces a null footprint that never matches.
-                if rasters.is_null(i) {
-                    builder.append_null();
-                    rects.push(Bounds2D::empty());
-                    continue;
-                }
-
-                let raster = rasters
-                    .get(i)
-                    .map_err(|e| exec_datafusion_err!("Failed to read raster row {i}: {e}"))?;
-                let rect = self.append_footprint(&raster, engine, &mut builder)?;
-                rects.push(rect);
+        let engine: &dyn CrsEngine = self.engine.as_ref();
+        for i in 0..num_rows {
+            // A null raster produces a null footprint that never matches.
+            if rasters.is_null(i) {
+                builder.append_null();
+                rects.push(Bounds2D::empty());
+                continue;
             }
-            Ok(())
-        })?;
+
+            let raster = rasters
+                .get(i)
+                .map_err(|e| exec_datafusion_err!("Failed to read raster row {i}: {e}"))?;
+            let rect = self.append_footprint(&raster, engine, &mut builder)?;
+            rects.push(rect);
+        }
 
         let footprint_array: ArrayRef = Arc::new(builder.finish());
         EvaluatedGeometryArray::try_new_with_rects(footprint_array, rects, &WKB_GEOMETRY)
@@ -317,6 +321,14 @@ fn bounds_from_coords(coords: &[(f64, f64)]) -> Bounds2D {
 #[cfg(test)]
 mod test {
     use super::*;
+    use sedona_proj::transform::LazyProjEngine;
+
+    /// The session's default CRS engine. The same-CRS / no-CRS / one-sided-CRS
+    /// paths exercised by these tests never invoke it (reprojection is tested
+    /// separately with a mock engine below), so any engine works here.
+    fn test_engine() -> Arc<dyn CrsEngine + Send + Sync> {
+        Arc::new(LazyProjEngine)
+    }
 
     #[test]
     fn bounds_from_coords_covers_corners() {
@@ -393,6 +405,7 @@ mod test {
 
         let factory = RasterGeometryArrayFactory {
             target_crs: lnglat(),
+            engine: test_engine(),
         };
         let evaluated = factory.evaluate_raster(Arc::new(rasters)).unwrap();
         let footprints = evaluated
@@ -422,7 +435,10 @@ mod test {
     #[test]
     fn raster_with_crs_but_crsless_target_errors() {
         let rasters = build_unit_raster(Some("OGC:CRS84"));
-        let factory = RasterGeometryArrayFactory { target_crs: None };
+        let factory = RasterGeometryArrayFactory {
+            target_crs: None,
+            engine: test_engine(),
+        };
         let err = factory.evaluate_raster(Arc::new(rasters)).err().unwrap();
         assert!(err.message().contains("has a CRS but"), "unexpected: {err}");
     }
@@ -434,6 +450,7 @@ mod test {
         let rasters = build_unit_raster(None);
         let factory = RasterGeometryArrayFactory {
             target_crs: lnglat(),
+            engine: test_engine(),
         };
         let err = factory.evaluate_raster(Arc::new(rasters)).err().unwrap();
         assert!(err.message().contains("has a CRS but"), "unexpected: {err}");
@@ -451,7 +468,10 @@ mod test {
             write_convexhull_wkb(&raster0, &mut expected_wkb).unwrap();
         }
 
-        let factory = RasterGeometryArrayFactory { target_crs: None };
+        let factory = RasterGeometryArrayFactory {
+            target_crs: None,
+            engine: test_engine(),
+        };
         let evaluated = factory
             .try_new_evaluated_array(Arc::new(rasters), &RASTER, None)
             .unwrap();
