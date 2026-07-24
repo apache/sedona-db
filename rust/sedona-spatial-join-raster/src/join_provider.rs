@@ -20,15 +20,24 @@ use std::sync::Arc;
 use arrow_array::{builder::BinaryBuilder, Array, ArrayRef, StructArray};
 use datafusion_common::{exec_datafusion_err, exec_err, JoinType, Result};
 use datafusion_expr::ColumnarValue;
-use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err, SpatialJoinOptions};
+use sedona_common::{
+    sedona_internal_datafusion_err, sedona_internal_err, SpatialJoinOptions, SpatialLibrary,
+};
 use sedona_expr::statistics::GeoStatistics;
-use sedona_geometry::{transform::CrsEngine, wkb_factory::write_wkb_polygon};
+use sedona_geometry::{
+    interval::{Interval, IntervalTrait},
+    transform::CrsEngine,
+};
 use sedona_proj::transform::with_global_proj_engine;
 use sedona_raster::array::RasterStructArray;
 use sedona_raster::traits::RasterRef;
 use sedona_raster_functions::crs_utils::resolve_crs;
-use sedona_raster_functions::footprint::{raster_footprint_corners, write_convexhull_wkb};
-use sedona_schema::{crs::Crs, datatypes::SedonaType, datatypes::WKB_GEOMETRY};
+use sedona_raster_functions::footprint::{raster_footprint_corners, write_footprint_wkb};
+use sedona_schema::{
+    crs::{CoordinateReferenceSystem, Crs},
+    datatypes::SedonaType,
+    datatypes::WKB_GEOMETRY,
+};
 use sedona_spatial_join::{
     index::{spatial_index_builder::SpatialJoinBuildMetrics, SpatialIndexBuilder},
     join_provider::{DefaultSpatialJoinProvider, SpatialJoinProvider},
@@ -57,6 +66,14 @@ impl RasterJoinProvider {
     }
 }
 
+/// Pin the join's refiner to `tg`, the engine the `RS_*` predicate kernel uses,
+/// so the accelerated join and the kernel resolve boundary/touching cases
+/// identically regardless of the session's `spatial_join.spatial_library`.
+fn pin_refiner_to_tg(mut options: SpatialJoinOptions) -> SpatialJoinOptions {
+    options.spatial_library = SpatialLibrary::Tg;
+    options
+}
+
 impl SpatialJoinProvider for RasterJoinProvider {
     fn try_new_spatial_index_builder(
         &self,
@@ -72,7 +89,7 @@ impl SpatialJoinProvider for RasterJoinProvider {
         self.default.try_new_spatial_index_builder(
             schema,
             spatial_predicate,
-            options,
+            pin_refiner_to_tg(options),
             join_type,
             probe_threads_count,
             metrics,
@@ -85,8 +102,13 @@ impl SpatialJoinProvider for RasterJoinProvider {
         spatial_predicate: &SpatialPredicate,
         options: &SpatialJoinOptions,
     ) -> usize {
-        self.default
-            .estimate_extra_memory_usage(geo_stats, spatial_predicate, options)
+        // Match the refiner the join actually uses (pinned to `tg`) so the memory
+        // estimate reflects it.
+        self.default.estimate_extra_memory_usage(
+            geo_stats,
+            spatial_predicate,
+            &pin_refiner_to_tg(options.clone()),
+        )
     }
 
     fn evaluated_array_factory(&self) -> Arc<dyn EvaluatedGeometryArrayFactory> {
@@ -201,42 +223,19 @@ impl RasterGeometryArrayFactory {
             // No CRS on either side, or identical CRS: compare directly. The
             // footprint is byte-identical to the one the `RS_*` kernel builds.
             (None, None) => {
-                write_convexhull_wkb(raster, builder)?;
+                write_footprint_wkb(corners, builder)?;
                 builder.append_value([]);
                 Ok(bounds_from_coords(&corners))
             }
             (Some(raster_crs), Some(target_crs)) if raster_crs.crs_equals(target_crs) => {
-                write_convexhull_wkb(raster, builder)?;
+                write_footprint_wkb(corners, builder)?;
                 builder.append_value([]);
                 Ok(bounds_from_coords(&corners))
             }
             // Genuine CRS difference: reproject the four corners into the target
             // CRS and emit their convex hull.
             (Some(raster_crs), Some(target_crs)) => {
-                let transform = engine
-                    .get_transform_crs_to_crs(
-                        &raster_crs.to_crs_string(),
-                        &target_crs.to_crs_string(),
-                        None,
-                        "",
-                    )
-                    .map_err(|e| exec_datafusion_err!("CRS transform error: {e}"))?;
-
-                let mut hull = corners;
-                for corner in hull.iter_mut() {
-                    transform
-                        .transform_coord(corner)
-                        .map_err(|e| exec_datafusion_err!("Transform error: {e}"))?;
-                }
-
-                // Closed ring: the four reprojected corners plus the first repeated.
-                write_wkb_polygon(
-                    builder,
-                    [hull[0], hull[1], hull[2], hull[3], hull[0]].into_iter(),
-                )
-                .map_err(|e| exec_datafusion_err!("Failed to write footprint WKB: {e}"))?;
-                builder.append_value([]);
-                Ok(bounds_from_coords(&hull))
+                append_reprojected_footprint(corners, raster_crs, target_crs, engine, builder)
             }
             (Some(_), None) => {
                 exec_err!(
@@ -252,21 +251,67 @@ impl RasterGeometryArrayFactory {
     }
 }
 
-/// Bounding rectangle of a set of coordinates. [`Bounds2D::new`] enlarges the
-/// f32 bounds outward so the rectangle conservatively contains every input
-/// coordinate.
-fn bounds_from_coords(coords: &[(f64, f64)]) -> Bounds2D {
-    let mut min_x = f64::INFINITY;
-    let mut max_x = f64::NEG_INFINITY;
-    let mut min_y = f64::INFINITY;
-    let mut max_y = f64::NEG_INFINITY;
-    for &(x, y) in coords {
-        min_x = min_x.min(x);
-        max_x = max_x.max(x);
-        min_y = min_y.min(y);
-        max_y = max_y.max(y);
+/// Reproject a raster's four `corners` from `from_crs` to `to_crs`, append the
+/// convex hull of the reprojected corners to `builder`, and return its bounding
+/// rectangle.
+///
+/// A transform that cannot be built, a transform that fails on a corner, or a
+/// reprojected corner that is non-finite yields a *null* footprint for this row
+/// (`append_null()` + [`Bounds2D::empty`], mirroring the null-raster path) so the
+/// row contributes no matches — rather than writing a garbage footprint/MBR or
+/// aborting the whole join. Recovering a failed reprojection via a WGS84 fallback
+/// (as the `RS_*` kernel does for the comparison as a whole) is a separate open
+/// question and is not attempted here.
+fn append_reprojected_footprint(
+    corners: [(f64, f64); 4],
+    from_crs: &(dyn CoordinateReferenceSystem + Send + Sync),
+    to_crs: &(dyn CoordinateReferenceSystem + Send + Sync),
+    engine: &dyn CrsEngine,
+    builder: &mut BinaryBuilder,
+) -> Result<Bounds2D> {
+    let Ok(transform) = engine.get_transform_crs_to_crs(
+        &from_crs.to_crs_string(),
+        &to_crs.to_crs_string(),
+        None,
+        "",
+    ) else {
+        builder.append_null();
+        return Ok(Bounds2D::empty());
+    };
+
+    let mut hull = corners;
+    for corner in hull.iter_mut() {
+        if transform.transform_coord(corner).is_err() {
+            builder.append_null();
+            return Ok(Bounds2D::empty());
+        }
     }
-    Bounds2D::new((min_x, max_x), (min_y, max_y))
+
+    // A non-finite reprojected corner (e.g. a corner outside the target
+    // projection's valid domain) would poison the footprint WKB and its MBR, so
+    // emit a null footprint for this row instead of writing garbage.
+    if hull.iter().any(|(x, y)| !x.is_finite() || !y.is_finite()) {
+        builder.append_null();
+        return Ok(Bounds2D::empty());
+    }
+
+    write_footprint_wkb(hull, builder)?;
+    builder.append_value([]);
+    Ok(bounds_from_coords(&hull))
+}
+
+/// Bounding rectangle of a set of coordinates, accumulated as f64 [`Interval`]s
+/// (the same primitive the geometry operand's bounds use). [`Bounds2D::new`]
+/// enlarges the f32 bounds outward so the rectangle conservatively contains
+/// every input coordinate.
+fn bounds_from_coords(coords: &[(f64, f64)]) -> Bounds2D {
+    let mut x = Interval::empty();
+    let mut y = Interval::empty();
+    for &(cx, cy) in coords {
+        x.update_value(cx);
+        y.update_value(cy);
+    }
+    Bounds2D::new(x, y)
 }
 
 #[cfg(test)]
@@ -288,9 +333,15 @@ mod test {
 
     // --- Evaluator tests over real rasters -------------------------------
 
+    use std::rc::Rc;
+
     use arrow_array::BinaryArray;
+    use sedona_geometry::bounding_box::BoundingBox;
+    use sedona_geometry::error::SedonaGeometryError;
+    use sedona_geometry::transform::CrsTransform;
     use sedona_raster::builder::RasterBuilder;
     use sedona_raster::traits::{BandMetadata, RasterMetadata};
+    use sedona_raster_functions::footprint::write_convexhull_wkb;
     use sedona_schema::crs::lnglat;
     use sedona_schema::datatypes::RASTER;
     use sedona_schema::raster::{BandDataType, StorageType};
@@ -410,5 +461,109 @@ mod test {
             .downcast_ref::<BinaryArray>()
             .unwrap();
         assert_eq!(footprints.value(0), expected_wkb.as_slice());
+    }
+
+    /// How a [`MockTransform`] treats each corner it is asked to reproject.
+    #[derive(Debug, Clone, Copy)]
+    enum CornerFate {
+        /// Leave the coordinate unchanged (a well-behaved transform).
+        Identity,
+        /// Reproject the corner to a non-finite coordinate.
+        NonFinite,
+        /// Fail while transforming the corner.
+        Error,
+    }
+
+    #[derive(Debug)]
+    struct MockTransform(CornerFate);
+
+    impl CrsTransform for MockTransform {
+        fn transform_coord(&self, coord: &mut (f64, f64)) -> Result<(), SedonaGeometryError> {
+            match self.0 {
+                CornerFate::Identity => Ok(()),
+                CornerFate::NonFinite => {
+                    coord.1 = f64::INFINITY;
+                    Ok(())
+                }
+                CornerFate::Error => Err(SedonaGeometryError::Invalid("boom".to_string())),
+            }
+        }
+    }
+
+    /// A [`CrsEngine`] that hands back a [`MockTransform`], or fails to build a
+    /// transform at all when `fate` is `None`.
+    #[derive(Debug)]
+    struct MockEngine {
+        fate: Option<CornerFate>,
+    }
+
+    impl CrsEngine for MockEngine {
+        fn get_transform_crs_to_crs(
+            &self,
+            _from: &str,
+            _to: &str,
+            _area_of_interest: Option<BoundingBox>,
+            _options: &str,
+        ) -> Result<Rc<dyn CrsTransform>, SedonaGeometryError> {
+            match self.fate {
+                Some(fate) => Ok(Rc::new(MockTransform(fate))),
+                None => Err(SedonaGeometryError::Invalid("no transform".to_string())),
+            }
+        }
+
+        fn get_transform_pipeline(
+            &self,
+            _pipeline: &str,
+            _options: &str,
+        ) -> Result<Rc<dyn CrsTransform>, SedonaGeometryError> {
+            Err(SedonaGeometryError::Unknown)
+        }
+
+        fn to_projjson(&self, _crs_string: &str) -> Result<String, SedonaGeometryError> {
+            Err(SedonaGeometryError::Unknown)
+        }
+    }
+
+    /// A footprint reprojection that fails — the transform can't be built, a
+    /// corner transform errors, or a reprojected corner is non-finite — yields a
+    /// null footprint with an empty MBR for that row (mirroring the null-raster
+    /// path) rather than writing a garbage footprint/MBR or aborting the whole
+    /// join. A transform that succeeds with finite corners still produces a real,
+    /// non-null footprint.
+    #[test]
+    fn failed_reprojection_yields_null_footprint() {
+        let crs = lnglat();
+        let crs = crs.as_deref().unwrap();
+        let corners = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)];
+
+        for fate in [None, Some(CornerFate::Error), Some(CornerFate::NonFinite)] {
+            let engine = MockEngine { fate };
+            let mut builder = BinaryBuilder::new();
+            let bounds =
+                append_reprojected_footprint(corners, crs, crs, &engine, &mut builder).unwrap();
+            let footprints = builder.finish();
+            assert!(
+                footprints.is_null(0),
+                "a failed reprojection ({fate:?}) must produce a null footprint"
+            );
+            assert!(
+                bounds.is_empty(),
+                "a null footprint ({fate:?}) must have an empty MBR so it never matches"
+            );
+        }
+
+        // A finite transform still produces a real footprint with a non-empty MBR.
+        let engine = MockEngine {
+            fate: Some(CornerFate::Identity),
+        };
+        let mut builder = BinaryBuilder::new();
+        let bounds =
+            append_reprojected_footprint(corners, crs, crs, &engine, &mut builder).unwrap();
+        let footprints = builder.finish();
+        assert!(
+            !footprints.is_null(0),
+            "a finite reprojection must produce a real footprint"
+        );
+        assert!(!bounds.is_empty());
     }
 }

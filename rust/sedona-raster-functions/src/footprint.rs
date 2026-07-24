@@ -43,16 +43,28 @@ pub fn raster_footprint_corners(raster: &dyn RasterRef) -> [(f64, f64); 4] {
     ]
 }
 
-/// Write WKB for the convex-hull polygon of the raster footprint.
+/// Write WKB for the convex-hull polygon through four footprint `corners`.
 ///
-/// The ring is the four [`raster_footprint_corners`] closed back to the
-/// upper-left corner. This can be used to build Binary arrays, as the arrow-rs
-/// `BinaryBuilder` implements [`std::io::Write`].
-pub fn write_convexhull_wkb(raster: &dyn RasterRef, out: &mut impl std::io::Write) -> Result<()> {
-    let [ul, ur, lr, ll] = raster_footprint_corners(raster);
+/// `corners` are in ring order (upper-left, upper-right, lower-right,
+/// lower-left, as produced by [`raster_footprint_corners`]); the ring is closed
+/// back to the first corner. Shared by the native footprint (corners in the
+/// raster's own CRS) and the reprojected footprint (corners transformed into
+/// another CRS), so both paths emit byte-identical polygon WKB. This can be used
+/// to build Binary arrays, as the arrow-rs `BinaryBuilder` implements
+/// [`std::io::Write`].
+pub fn write_footprint_wkb(corners: [(f64, f64); 4], out: &mut impl std::io::Write) -> Result<()> {
+    let [ul, ur, lr, ll] = corners;
 
     write_wkb_polygon(out, [ul, ur, lr, ll, ul].into_iter())
         .map_err(|e| DataFusionError::External(e.into()))?;
 
     Ok(())
+}
+
+/// Write WKB for the convex-hull polygon of the raster footprint.
+///
+/// The ring is the four [`raster_footprint_corners`] closed back to the
+/// upper-left corner.
+pub fn write_convexhull_wkb(raster: &dyn RasterRef, out: &mut impl std::io::Write) -> Result<()> {
+    write_footprint_wkb(raster_footprint_corners(raster), out)
 }
