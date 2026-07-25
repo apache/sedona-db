@@ -63,12 +63,11 @@ unknown CRS and a real one is undefined, so it is an error for exactly one side
 to have a CRS. When neither has one, the operation is a same-space regrid onto
 the reference grid.
 
-`Int64` and `UInt64` input rasters are supported for **nearest-neighbor**
-resampling (a pure value copy, so 64-bit integers survive exactly) when the
-band's nodata is absent or has magnitude ≤ 2^53. Other resampling algorithms
-work in a floating type, and the warp carries nodata as a double, so a
-non-nearest algorithm or a nodata above 2^53 would lose precision and raises an
-error; cast to another type first.
+`Int64` and `UInt64` input rasters are **not supported**: GDAL's warp routes
+64-bit integer pixels through a floating working type (a double for
+nearest/interpolation, a 32-bit float for mode on GDAL < 3.13), so no resampling
+method can represent them exactly. Cast to a supported type (for example `Int32`
+or `Float64`) first.
 
 ::: callout-note
 This reads the entire input raster into memory.
