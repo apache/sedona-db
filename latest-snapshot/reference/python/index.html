@@ -1339,6 +1339,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#sedonadb.raster_testing.assert_transform_and_nodata" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;assert_transform_and_nodata
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#sedonadb.raster_testing.decode_geotiff" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1409,6 +1420,28 @@
     <span class="md-ellipsis">
       
         <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;write_geotiff
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sedonadb.raster_testing.write_grid_geotiff" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;write_grid_geotiff
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sedonadb.raster_testing.write_random_geotiff" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;write_random_geotiff
       
     </span>
   </a>
@@ -2642,6 +2675,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#sedonadb.raster_testing.assert_transform_and_nodata" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;assert_transform_and_nodata
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#sedonadb.raster_testing.decode_geotiff" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2712,6 +2756,28 @@
     <span class="md-ellipsis">
       
         <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;write_geotiff
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sedonadb.raster_testing.write_grid_geotiff" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;write_grid_geotiff
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sedonadb.raster_testing.write_random_geotiff" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;write_random_geotiff
       
     </span>
   </a>
@@ -8187,6 +8253,38 @@ can't be built.</p>
 <div class="doc doc-object doc-function">
 
 
+<h4 id="sedonadb.raster_testing.RasterEngine.reproject_match" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">reproject_match</span>
+
+
+<a href="#sedonadb.raster_testing.RasterEngine.reproject_match" class="headerlink" title="Permanent link">¶</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">reproject_match</span><span class="p">(</span>
+    <span class="n">path</span><span class="p">,</span> <span class="n">reference_path</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">algorithm</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span> <span class="o">=</span> <span class="s2">"NearestNeighbor"</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Optional" href="https://docs.python.org/3/library/typing.html#typing.Optional">Optional</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-internal" title="DecodedRaster
+
+
+  
+      dataclass
+   (sedonadb.raster_testing.DecodedRaster)" href="#sedonadb.raster_testing.DecodedRaster">DecodedRaster</a></span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Reproject the GeoTIFF at <code>path</code> onto the reference GeoTIFF's grid.</p>
+<p>The output takes the reference's CRS, transform, and dimensions exactly;
+only the input's (warped) pixels and band structure survive. Cells the
+reprojected input does not cover fill with the input band's nodata (or
+zero when a band has none). The result is a <code>DecodedRaster</code> (pixels,
+geotransform, nodata).</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
 <h4 id="sedonadb.raster_testing.RasterEngine.resample" class="doc doc-heading">
             <span class="doc doc-object-name doc-function-name">resample</span>
 
@@ -8421,6 +8519,33 @@ reconstruction.</p>
 
 </div>
 
+<div class="doc doc-object doc-function">
+
+
+<h4 id="sedonadb.raster_testing.Rasterio.reproject_match" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">reproject_match</span>
+
+
+<a href="#sedonadb.raster_testing.Rasterio.reproject_match" class="headerlink" title="Permanent link">¶</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">reproject_match</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">reference_path</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">algorithm</span><span class="o">=</span><span class="s1">'NearestNeighbor'</span><span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Reference for <code>RS_ReprojectMatch</code>: warp the input onto the reference grid.</p>
+<p>The reference contributes only its CRS/transform/dimensions; the input's
+pixels are warped onto that grid with the same GDAL <code>reproject</code> (nearest
+is integer selection, so it matches exactly). Cells outside the
+reprojected input footprint fill with the destination pre-fill (the input
+band nodata, or zero when it has none). Source nodata is deliberately not
+masked — RS_ReprojectMatch's warp passes source values through — so this
+does not pass <code>src_nodata</code> either.</p>
+
+
+    </div>
+
+</div>
+
 
 
   </div>
@@ -8628,6 +8753,40 @@ nothing reprojects anywhere).</p>
 <div class="doc doc-object doc-function">
 
 
+<h3 id="sedonadb.raster_testing.assert_transform_and_nodata" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">assert_transform_and_nodata</span>
+
+
+<a href="#sedonadb.raster_testing.assert_transform_and_nodata" class="headerlink" title="Permanent link">¶</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">assert_transform_and_nodata</span><span class="p">(</span>
+    <span class="n">got</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="DecodedRaster
+
+
+  
+      dataclass
+   (sedonadb.raster_testing.DecodedRaster)" href="#sedonadb.raster_testing.DecodedRaster">DecodedRaster</a></span><span class="p">,</span> <span class="n">expected</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="DecodedRaster
+
+
+  
+      dataclass
+   (sedonadb.raster_testing.DecodedRaster)" href="#sedonadb.raster_testing.DecodedRaster">DecodedRaster</a></span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Assert two decoded rasters share a geotransform (to 1e-12) and per-band
+nodata. A lighter check than <code>assert_decoded_equal</code> for tests that compare
+pixels separately — e.g. with a resampling tolerance.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
 <h3 id="sedonadb.raster_testing.decode_geotiff" class="doc doc-heading">
             <span class="doc doc-object-name doc-function-name">decode_geotiff</span>
 
@@ -8800,6 +8959,53 @@ skew_y, scale_y)</code>; <code>nodata</code> (optional) becomes the per-band nod
 every band. <code>crs</code> (optional) is any CRS rasterio accepts; parity fixtures
 stay CRS-less unless an engine requires one, and then use the same CRS
 everywhere so nothing reprojects.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="sedonadb.raster_testing.write_grid_geotiff" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">write_grid_geotiff</span>
+
+
+<a href="#sedonadb.raster_testing.write_grid_geotiff" class="headerlink" title="Permanent link">¶</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">write_grid_geotiff</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">gdal_transform</span><span class="p">,</span> <span class="n">width</span><span class="p">,</span> <span class="n">height</span><span class="p">,</span> <span class="n">crs</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Write a zeroed single-band GeoTIFF whose only role is to define a grid.</p>
+<p>Its pixels are never read — only its extent, resolution, and CRS matter,
+e.g. as the reference grid for <code>RS_ReprojectMatch</code>.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="sedonadb.raster_testing.write_random_geotiff" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">write_random_geotiff</span>
+
+
+<a href="#sedonadb.raster_testing.write_random_geotiff" class="headerlink" title="Permanent link">¶</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">write_random_geotiff</span><span class="p">(</span>
+    <span class="n">path</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">bands</span><span class="p">,</span> <span class="n">height</span><span class="p">,</span> <span class="n">width</span><span class="p">,</span> <span class="n">gdal_transform</span><span class="p">,</span> <span class="n">crs</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">nodata</span><span class="o">=</span><span class="kc">None</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Write a GeoTIFF of random <code>dtype</code> pixels on the given grid.</p>
+<p>Combines <code>random_raster_data</code> (dtype extremes planted in opposite corners)
+with <code>write_geotiff</code> — the input-raster fixture shape shared by raster warp
+parity tests. <code>gdal_transform</code>, <code>crs</code>, and <code>nodata</code> are as <code>write_geotiff</code>.</p>
 
 
     </div>
