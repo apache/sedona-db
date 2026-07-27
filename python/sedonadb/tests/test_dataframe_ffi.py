@@ -121,3 +121,45 @@ def test_ffi_roundtrip(geoarrow_data, producer_sql, consumer_sql):
     result_over_ffi = sd_consumer.sql(consumer_sql).to_pandas()
 
     pd.testing.assert_frame_equal(result_no_ffi, result_over_ffi)
+
+
+def test_filter_pushdown_into_ffi_producer(geoarrow_data):
+    path = geoarrow_data / "ns-water" / "files" / "ns-water_water-point_geo.parquet"
+    skip_if_not_exists(path)
+
+    sd_producer = sedonadb.connect()
+    sd_consumer = sedonadb.connect()
+
+    # Producer exposes all columns without filtering
+    sd_producer.read_parquet(path).to_view("water_point")
+    df_producer = sd_producer.sql('SELECT "OBJECTID", "FEAT_CODE" FROM water_point')
+
+    # Consumer applies a filter
+    sd_consumer.create_data_frame(df_producer).to_view("df_producer")
+    df_filtered = sd_consumer.sql('SELECT * FROM df_producer WHERE "OBJECTID" < 50')
+
+    # Get the physical plan
+    plan_df = df_filtered.explain().to_pandas()
+    plan_text = "\n".join(plan_df["plan"].astype(str).tolist())
+
+    # The filter should appear inside ImportedSedonaCExec, indicating it was pushed down
+    # Look for the filter predicate appearing after ImportedSedonaCExec in the plan
+    assert "ImportedSedonaCExec" in plan_text, (
+        f"Expected ImportedSedonaCExec in plan:\n{plan_text}"
+    )
+
+    # The filter "OBJECTID < 50" should be pushed into the producer, not applied as a
+    # separate FilterExec on top of the ImportedSedonaCExec
+    # If pushdown works, the filter should appear within the ImportedSedonaCExec display
+    imported_idx = plan_text.find("ImportedSedonaCExec")
+    filter_idx = plan_text.find("FilterExec")
+
+    # If there's a FilterExec, it should NOT be wrapping the ImportedSedonaCExec
+    # (i.e., filter should come after imported in the plan text, meaning it's inside)
+    if filter_idx != -1:
+        # FilterExec appearing before ImportedSedonaCExec means filter is NOT pushed down
+        assert filter_idx > imported_idx, (
+            f"Filter was not pushed down into FFI producer. "
+            f"FilterExec at {filter_idx}, ImportedSedonaCExec at {imported_idx}.\n"
+            f"Plan:\n{plan_text}"
+        )

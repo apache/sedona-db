@@ -25,7 +25,7 @@ use std::{
 };
 
 use arrow_array::ffi::FFI_ArrowArray;
-use arrow_schema::{DataType, Schema, SchemaRef, ffi::FFI_ArrowSchema};
+use arrow_schema::{ffi::FFI_ArrowSchema, DataType, Schema, SchemaRef};
 use async_trait::async_trait;
 use datafusion_catalog::{Session, TableProvider};
 use datafusion_common::{exec_err, Result, Statistics};
@@ -34,7 +34,6 @@ use datafusion_physical_plan::ExecutionPlan;
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use serde::{Deserialize, Serialize};
 
-use crate::{execution_plan::{ExportedExecutionPlan, ImportedSedonaCExec}, utils::parse_ffi_array_to_bytes};
 use crate::expr::{ExportedExprView, ImportedExprView};
 use crate::extension::{
     SedonaCError, SedonaCExecutionPlan, SedonaCExecutionPlanArgs, SedonaCExprView,
@@ -43,6 +42,11 @@ use crate::extension::{
 use crate::runtime::RuntimeHandle;
 use crate::set_ffi_error;
 use crate::utils::{cstr_from_ptr_or_empty, get_table_provider_string_property, ERRNO_OK};
+use crate::{
+    execution_plan::{ExportedExecutionPlan, ImportedSedonaCExec},
+    expr::SessionRefRegistry,
+    utils::parse_ffi_array_to_bytes,
+};
 
 /// A TableProvider wrapper that can be exported across FFI.
 ///
@@ -237,7 +241,9 @@ unsafe extern "C" fn c_table_provider_get_property(
                             return libc::EINVAL;
                         }
                     };
-                    match expr_view.to_expr() {
+
+                    // Here we don't have a Session to use to import the functions from protobuf
+                    match expr_view.to_expr(None) {
                         Ok(expr) => filters.push(expr),
                         Err(e) => {
                             set_ffi_error!(err, "Failed to deserialize filter expression: {}", e);
@@ -324,7 +330,9 @@ unsafe extern "C" fn c_table_provider_scan(
                     return libc::EINVAL;
                 }
             };
-            match expr_view.to_expr() {
+
+            let registry = SessionRefRegistry::new(provider.session.as_ref());
+            match expr_view.to_expr(Some(&registry)) {
                 Ok(expr) => filters.push(expr),
                 Err(e) => {
                     set_ffi_error!(err, "Failed to deserialize filter expression: {}", e);

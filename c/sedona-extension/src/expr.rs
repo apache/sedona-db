@@ -30,7 +30,8 @@ use arrow_array::{
     Array,
 };
 use arrow_schema::{DataType, Field};
-use datafusion_common::Result;
+use datafusion_catalog::Session;
+use datafusion_common::{plan_err, Result};
 use datafusion_execution::FunctionRegistry;
 use datafusion_expr::{Expr, ScalarUDF, ScalarUDFImpl, Signature, Volatility};
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
@@ -244,13 +245,17 @@ impl<'a> ImportedExprView<'a> {
         Ok(Self { inner })
     }
 
-    pub fn to_expr(&self) -> Result<Expr> {
+    pub fn to_expr(&self, _registry: Option<&dyn FunctionRegistry>) -> Result<Expr> {
         #[cfg(feature = "protobuf")]
         {
             use datafusion_proto::bytes::Serializeable;
 
             let bytes = self.get_bytes_property("datafusion_expr_protobuf")?;
-            Expr::from_bytes_with_registry(&bytes, &PlaceholderRegistry)
+            if let Some(registry) = _registry {
+                Expr::from_bytes_with_registry(&bytes, registry)
+            } else {
+                Expr::from_bytes_with_registry(&bytes, &PlaceholderRegistry)
+            }
         }
 
         #[cfg(not(feature = "protobuf"))]
@@ -343,6 +348,58 @@ fn get_expr_view_property_data_type(expr: &SedonaCExprView, property: &str) -> R
     call_get_property_schema_impl(property, |prop, schema, err| unsafe {
         get_property_schema(expr, prop, schema, err)
     })
+}
+
+pub(crate) struct SessionRefRegistry<'a> {
+    session: &'a dyn Session,
+}
+
+impl<'a> SessionRefRegistry<'a> {
+    pub fn new(session: &'a dyn Session) -> Self {
+        SessionRefRegistry { session }
+    }
+}
+
+impl<'a> FunctionRegistry for SessionRefRegistry<'a> {
+    fn udfs(&self) -> HashSet<String> {
+        self.session.scalar_functions().keys().cloned().collect()
+    }
+
+    fn udafs(&self) -> HashSet<String> {
+        self.session.aggregate_functions().keys().cloned().collect()
+    }
+
+    fn udwfs(&self) -> HashSet<String> {
+        self.session.window_functions().keys().cloned().collect()
+    }
+
+    fn udf(&self, name: &str) -> Result<Arc<ScalarUDF>> {
+        if let Some(func) = self.session.scalar_functions().get(name) {
+            Ok(Arc::clone(func))
+        } else {
+            plan_err!("Can't find scalar function '{name}' in session")
+        }
+    }
+
+    fn udaf(&self, name: &str) -> Result<Arc<datafusion_expr::AggregateUDF>> {
+        if let Some(func) = self.session.aggregate_functions().get(name) {
+            Ok(Arc::clone(func))
+        } else {
+            plan_err!("Can't find scalar function '{name}' in session")
+        }
+    }
+
+    fn udwf(&self, name: &str) -> Result<Arc<datafusion_expr::WindowUDF>> {
+        if let Some(func) = self.session.window_functions().get(name) {
+            Ok(Arc::clone(func))
+        } else {
+            plan_err!("Can't find scalar function '{name}' in session")
+        }
+    }
+
+    fn expr_planners(&self) -> Vec<Arc<dyn datafusion_expr::planner::ExprPlanner>> {
+        vec![]
+    }
 }
 
 struct PlaceholderRegistry;
@@ -515,7 +572,7 @@ mod tests {
         let imported = ImportedExprView::try_new(&view).unwrap();
 
         // Verify we can deserialize it back to an equivalent expression
-        let decoded = imported.to_expr().unwrap();
+        let decoded = imported.to_expr(None).unwrap();
         assert_eq!(format!("{}", expr), format!("{}", decoded));
     }
 
@@ -533,7 +590,7 @@ mod tests {
         let imported = ImportedExprView::try_new(&view).unwrap();
 
         // Deserialize - the function should come back as a PlaceholderUDF
-        let decoded = imported.to_expr().unwrap();
+        let decoded = imported.to_expr(None).unwrap();
 
         // Verify it's a scalar function with the right name
         match &decoded {

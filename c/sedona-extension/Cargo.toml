@@ -28,7 +28,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [features]
-default = []
+default = ["protobuf"]
 protobuf = ["datafusion-proto"]
 
 [dependencies]
