@@ -19,20 +19,25 @@
 
 RS_Tile returns one list item per tile, so these tests assert the tile
 count and each tile's (x, y) grid position through the full execution path
-(materialized via `to_arrow_table`). Pixel-level tiling correctness and band
-selection are covered exhaustively by the Rust unit tests against a numpy
-reference; here we only verify that the positional overloads flow through the
-expression API and SQL.
+(materialized via `to_arrow_table`), and — against a rasterio window
+reference — the tile pixels, transform, and band nodata.
 
-Results are inspected via Arrow (reading only the integer x/y struct fields)
-rather than `Scalar.as_py()`, which would try to materialize the nested tile
-raster.
+The count/position tests inspect Arrow (reading only the integer x/y struct
+fields) rather than `Scalar.as_py()`, which would try to materialize the nested
+tile raster; the parity tests decode each tile through the raster engines.
 
 RS_Example() is a 64x32, 3-band raster, so a 32x16 tile yields a 2x2 grid
 (4 tiles) at grid positions (0,0), (1,0), (0,1), (1,1).
 """
 
 import pyarrow as pa
+import pytest
+
+from sedonadb.raster_testing import (
+    assert_decoded_equal,
+    random_raster_data,
+    write_geotiff,
+)
 
 EXPECTED_POSITIONS = [(0, 0), (1, 0), (0, 1), (1, 1)]
 
@@ -107,3 +112,61 @@ def test_rs_tile_band_indices_array_sql_unnest(con):
         zip(tile_struct.field("x").to_pylist(), tile_struct.field("y").to_pylist())
     )
     assert sorted(positions) == sorted(EXPECTED_POSITIONS)
+
+
+# --- Cross-engine pixel parity against a rasterio window reference ---
+#
+# GDAL-order geotransform: origin (100, 500), 2-wide by 3-tall north-up pixels;
+# with a 7x6 raster the extent is x in [100, 114], y in [482, 500].
+_PARITY_TRANSFORM = (100.0, 2.0, 0.0, 500.0, 0.0, -3.0)
+_PARITY_HEIGHT, _PARITY_WIDTH = 6, 7
+
+
+@pytest.mark.parametrize(
+    ("tile_width", "tile_height"),
+    [(4, 4), (2, 3), (_PARITY_WIDTH, _PARITY_HEIGHT)],
+    ids=["ragged-edges", "exact-grid", "single-tile"],
+)
+def test_rs_tile_matches_rasterio(
+    subject, comparator, tmp_path, tile_width, tile_height
+):
+    # With pad_with_nodata off, every tile must reproduce the source pixels
+    # verbatim with a window-shifted transform, keep all bands and the band
+    # nodata, and edge tiles keep their partial size. The 4x4 case makes both
+    # dimensions ragged on the 7x6 fixture; 7x6 is the identity single tile.
+    pytest.importorskip("rasterio")
+    tiff = tmp_path / "tiles.tif"
+    write_geotiff(
+        tiff,
+        random_raster_data(
+            "uint8", bands=3, height=_PARITY_HEIGHT, width=_PARITY_WIDTH
+        ),
+        gdal_transform=_PARITY_TRANSFORM,
+        nodata=200.0,
+    )
+    got = subject.tile_explode(tiff, tile_width, tile_height)
+    expected = comparator.tile_explode(tiff, tile_width, tile_height)
+    assert [(x, y) for x, y, _ in got] == [(x, y) for x, y, _ in expected]
+    for (x, y, got_tile), (_, _, expected_tile) in zip(got, expected):
+        assert_decoded_equal(got_tile, expected_tile, context=(x, y))
+
+
+def test_rs_tile_nodata_without_pad_errors(con, tmp_path):
+    # A noDataVal supplied with pad_with_nodata = false raises in SedonaDB
+    # (Sedona Spark silently ignores it — the documented divergence). Asserting
+    # the raise pins SedonaDB's stricter "error on ambiguous" contract; the
+    # raster travels as a table column so the kernel runs its real array path.
+    pytest.importorskip("rasterio")
+    tiff = tmp_path / "tiles.tif"
+    write_geotiff(
+        tiff,
+        random_raster_data(
+            "uint8", bands=3, height=_PARITY_HEIGHT, width=_PARITY_WIDTH
+        ),
+        gdal_transform=_PARITY_TRANSFORM,
+        nodata=200.0,
+    )
+    df = con.create_data_frame(pa.table({"path": pa.array([str(tiff)], pa.utf8())}))
+    tiles = df.path.funcs.rs_frompath().funcs.rs_tile(4, 4, False, 0.0)
+    with pytest.raises(Exception, match="only meaningful with pad_with_nodata"):
+        df.select(tiles=tiles).to_arrow_table()
