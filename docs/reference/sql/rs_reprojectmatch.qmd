@@ -1,0 +1,89 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: RS_ReprojectMatch
+description: >
+  Reprojects a raster onto a reference raster's CRS, grid, and extent.
+kernels:
+  - returns: raster
+    args:
+    - name: raster
+      type: raster
+    - name: reference
+      type: raster
+  - returns: raster
+    args:
+    - name: raster
+      type: raster
+    - name: reference
+      type: raster
+    - name: algorithm
+      type: string
+      description: >
+        Resampling algorithm (case-insensitive): `NearestNeighbor` (the
+        default), `Bilinear`, `Cubic` (alias `Bicubic`), `CubicSpline`,
+        `Lanczos`, `Average`, or `Mode`.
+---
+
+::: callout-warning
+**Experimental.** This function is experimental; its behavior may change without
+notice.
+:::
+
+## Description
+
+`RS_ReprojectMatch` reprojects `raster` onto the grid of `reference`: the output
+always has the **same** CRS, extent, resolution, and dimensions as `reference`,
+in the spirit of `rioxarray`'s `reproject_match`. The reference contributes only
+its grid — its pixel values are never read.
+
+The input's band count and order, per-band data type, and nodata are preserved.
+Pixel values are recomputed by GDAL's warp using the chosen `algorithm` (nearest
+neighbour by default). Cells of the reference grid that the reprojected input
+does not cover are filled with the input band's nodata value (or zero when a
+band has none).
+
+Both rasters must agree on whether they carry a CRS: reprojecting between an
+unknown CRS and a real one is undefined, so it is an error for exactly one side
+to have a CRS. When neither has one, the operation is a same-space regrid onto
+the reference grid.
+
+`Int64` and `UInt64` input rasters are **not supported**: GDAL's warp routes
+64-bit integer pixels through a floating working type (a double for
+nearest/interpolation, a 32-bit float for mode on GDAL < 3.13), so no resampling
+method can represent them exactly. Cast to a supported type (for example `Int32`
+or `Float64`) first.
+
+::: callout-note
+This reads the entire input raster into memory.
+:::
+
+## Examples
+
+Reprojecting the example raster onto its own grid is an identity, so the output
+keeps the example's width (64):
+
+```sql
+SELECT RS_Width(RS_ReprojectMatch(RS_Example(), RS_Example()));
+```
+
+The same, choosing bilinear resampling explicitly:
+
+```sql
+SELECT RS_Height(RS_ReprojectMatch(RS_Example(), RS_Example(), 'Bilinear'));
+```

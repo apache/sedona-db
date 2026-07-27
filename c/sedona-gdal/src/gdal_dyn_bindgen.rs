@@ -31,6 +31,10 @@ pub type GDALRWFlag = c_int;
 pub type OGRwkbByteOrder = c_int;
 pub type GDALOpenFlags = c_uint;
 pub type GDALRIOResampleAlg = c_int;
+/// Warp resampling algorithm (`GDALResampleAlg`), distinct from the RasterIO
+/// `GDALRIOResampleAlg` above: it is an unsigned enum and its `GRA_*` values
+/// diverge from `GRIORA_*` beyond the shared 0..=6 range (warp has no Gauss).
+pub type GDALResampleAlg = c_uint;
 
 // --- Opaque handle types ---
 
@@ -202,6 +206,17 @@ pub const GRIORA_Lanczos: GDALRIOResampleAlg = 4;
 pub const GRIORA_Average: GDALRIOResampleAlg = 5;
 pub const GRIORA_Mode: GDALRIOResampleAlg = 6;
 pub const GRIORA_Gauss: GDALRIOResampleAlg = 7;
+
+// --- GDALResampleAlg (warp) constants ---
+// Warp's algorithm enum. Values 0..=6 coincide with the RasterIO GRIORA_*
+// above, but this is a separate unsigned enum used by the warp API.
+pub const GRA_NearestNeighbour: GDALResampleAlg = 0;
+pub const GRA_Bilinear: GDALResampleAlg = 1;
+pub const GRA_Cubic: GDALResampleAlg = 2;
+pub const GRA_CubicSpline: GDALResampleAlg = 3;
+pub const GRA_Lanczos: GDALResampleAlg = 4;
+pub const GRA_Average: GDALResampleAlg = 5;
+pub const GRA_Mode: GDALResampleAlg = 6;
 
 // --- GDAL open flags constants ---
 
@@ -391,6 +406,9 @@ pub(crate) struct SedonaGdalApi {
             papszOptions: *const *const c_char,
         ) -> OGRErr,
     >,
+    pub OSRExportToWkt: Option<
+        unsafe extern "C" fn(hSRS: OGRSpatialReferenceH, ppszWkt: *mut *mut c_char) -> OGRErr,
+    >,
     pub OSRClone: Option<unsafe extern "C" fn(hSRS: OGRSpatialReferenceH) -> OGRSpatialReferenceH>,
     pub OSRRelease: Option<unsafe extern "C" fn(hSRS: OGRSpatialReferenceH)>,
 
@@ -487,6 +505,48 @@ pub(crate) struct SedonaGdalApi {
             dfNoDataValue: c_double,
         ) -> CPLErr,
     >,
+
+    // --- Warp / Reproject ---
+    // `psOptions` is a `GDALWarpOptions*`; we only ever pass NULL (the datasets
+    // carry their own SRS/nodata), so it is typed as an opaque pointer rather
+    // than binding the large `GDALWarpOptions` struct.
+    pub GDALReprojectImage: Option<
+        unsafe extern "C" fn(
+            hSrcDS: GDALDatasetH,
+            pszSrcWKT: *const c_char,
+            hDstDS: GDALDatasetH,
+            pszDstWKT: *const c_char,
+            eResampleAlg: GDALResampleAlg,
+            dfWarpMemoryLimit: c_double,
+            dfMaxError: c_double,
+            pfnProgress: GDALProgressFunc,
+            pProgressArg: *mut c_void,
+            psWarpOptions: *mut c_void,
+        ) -> CPLErr,
+    >,
+    pub GDALCreateGenImgProjTransformer: Option<
+        unsafe extern "C" fn(
+            hSrcDS: GDALDatasetH,
+            pszSrcWKT: *const c_char,
+            hDstDS: GDALDatasetH,
+            pszDstWKT: *const c_char,
+            bGCPUseOK: c_int,
+            dfGCPErrorThreshold: c_double,
+            nOrder: c_int,
+        ) -> *mut c_void,
+    >,
+    pub GDALDestroyGenImgProjTransformer: Option<unsafe extern "C" fn(pTransformArg: *mut c_void)>,
+    pub GDALSuggestedWarpOutput: Option<
+        unsafe extern "C" fn(
+            hSrcDS: GDALDatasetH,
+            pfnTransformer: GDALTransformerFunc,
+            pTransformArg: *mut c_void,
+            padfGeoTransformOut: *mut c_double,
+            pnPixels: *mut c_int,
+            pnLines: *mut c_int,
+        ) -> CPLErr,
+    >,
+    pub GDALGenImgProjTransform: Option<GDALTransformerFunc>,
 
     // --- Rasterize / Polygonize ---
     pub GDALRasterizeGeometries: Option<

@@ -154,6 +154,33 @@ impl SpatialRef {
         unsafe { call_gdal_api!(self.api, OSRSetAxisMappingStrategy, self.c_srs, strategy) };
     }
 
+    /// Export to WKT string.
+    ///
+    /// Used to hand GDAL's warp transformer a concrete target CRS definition
+    /// (`GDALCreateGenImgProjTransformer` takes WKT), independent of whatever
+    /// user-input form (`EPSG:xxxx`, PROJJSON, WKT) the CRS came in as.
+    pub fn to_wkt(&self) -> Result<String> {
+        unsafe {
+            let mut ptr: *mut std::os::raw::c_char = ptr::null_mut();
+            let rv = call_gdal_api!(self.api, OSRExportToWkt, self.c_srs, &mut ptr);
+            if rv != OGRERR_NONE {
+                if !ptr.is_null() {
+                    call_gdal_api!(self.api, VSIFree, ptr as *mut std::ffi::c_void);
+                }
+                return Err(GdalError::OgrError {
+                    err: rv,
+                    method_name: "OSRExportToWkt",
+                });
+            }
+            if ptr.is_null() {
+                return Err(self.api.last_null_pointer_err("OSRExportToWkt"));
+            }
+            let result = CStr::from_ptr(ptr).to_string_lossy().into_owned();
+            call_gdal_api!(self.api, VSIFree, ptr as *mut std::ffi::c_void);
+            Ok(result)
+        }
+    }
+
     /// Export to PROJJSON string.
     pub fn to_projjson(&self) -> Result<String> {
         unsafe {
