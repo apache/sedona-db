@@ -260,6 +260,17 @@ pub struct SedonaCExpr {
         ) -> c_int,
     >,
 
+    pub with_property: Option<
+        unsafe extern "C" fn(
+            self_: *const SedonaCExpr,
+            property: *const c_char,
+            args: *const u8,
+            args_len: usize,
+            out: *mut SedonaCExpr,
+            err: *mut SedonaCError,
+        ) -> c_int,
+    >,
+
     pub reserved: *mut c_void,
 
     pub release: Option<unsafe extern "C" fn(self_: *mut SedonaCExpr)>,

@@ -243,6 +243,13 @@ struct SedonaCExpr {
                       const uint8_t* args, size_t args_len, struct ArrowArray* out,
                       struct SedonaCError* err);
 
+  /// \brief Clone this expression based on information about a property
+  ///
+  /// This can used to implement operations that require modifying an expression.
+  int (*with_property)(const struct SedonaCExpr* self, const char* property,
+                       const uint8_t* args, size_t args_len,
+                       struct SedonaCExpr* out, struct SedonaCError* err);
+
   /// \brief Reserved for future use. Must be NULL.
   void* reserved;
 
