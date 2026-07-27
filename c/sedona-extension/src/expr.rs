@@ -16,20 +16,23 @@
 // under the License.
 
 use std::{
+    collections::HashSet,
     ffi::{c_int, CString},
     fmt::{Debug, Display},
     os::raw::{c_char, c_void},
     ptr::null_mut,
+    sync::{Arc, OnceLock},
 };
 
 use arrow_array::{
-    builder::StringBuilder,
+    builder::{BinaryBuilder, StringBuilder},
     ffi::{FFI_ArrowArray, FFI_ArrowSchema},
     Array,
 };
 use arrow_schema::{DataType, Field};
 use datafusion_common::Result;
-use datafusion_expr::Expr;
+use datafusion_execution::FunctionRegistry;
+use datafusion_expr::{Expr, ScalarUDF, ScalarUDFImpl, Signature, Volatility};
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 
 use crate::extension::{SedonaCError, SedonaCExprView};
@@ -37,6 +40,25 @@ use crate::set_ffi_error;
 use crate::utils::{
     call_get_property_schema_impl, cstr_from_ptr_or_empty, parse_ffi_array_to_bytes, ERRNO_OK,
 };
+
+/// The value returned by a property getter.
+#[derive(Debug, Clone)]
+pub enum PropertyValue {
+    /// A UTF-8 string value.
+    String(String),
+    /// A binary (bytes) value.
+    Binary(Vec<u8>),
+}
+
+impl PropertyValue {
+    /// Returns the data type for this property value.
+    pub fn data_type(&self) -> DataType {
+        match self {
+            PropertyValue::String(_) => DataType::Utf8,
+            PropertyValue::Binary(_) => DataType::Binary,
+        }
+    }
+}
 
 /// Wrapper around a [datafusion_expr::Expr] that can be exported across FFI.
 pub struct ExportedExprView<'a> {
@@ -78,11 +100,28 @@ impl<'a> ExportedExprView<'a> {
         }
     }
 
-    fn get_property(&self, property: &str) -> Result<String, String> {
+    fn get_property(&self, property: &str) -> Result<PropertyValue, String> {
         match property {
-            "debug_string" => Ok(format!("{:?}", self.expr)),
-            "display_string" => Ok(format!("{}", self.expr)),
+            "debug_string" => Ok(PropertyValue::String(format!("{:?}", self.expr))),
+            "display_string" => Ok(PropertyValue::String(format!("{}", self.expr))),
+            #[cfg(feature = "protobuf")]
+            "datafusion_expr_protobuf" => {
+                use datafusion_proto::bytes::Serializeable;
+                self.expr
+                    .to_bytes()
+                    .map(|bytes| PropertyValue::Binary(bytes.to_vec()))
+                    .map_err(|e| format!("Failed to serialize expression to protobuf: {}", e))
+            }
             _ => Err(format!("Unknown property: {}", property)),
+        }
+    }
+
+    /// Returns the data type for a given property name.
+    fn get_property_data_type(property: &str) -> DataType {
+        match property {
+            "debug_string" | "display_string" => DataType::Utf8,
+            "datafusion_expr_protobuf" => DataType::Binary,
+            _ => DataType::Utf8, // Default to Utf8 for unknown properties
         }
     }
 }
@@ -95,13 +134,14 @@ impl<'a> From<&'a Expr> for ExportedExprView<'a> {
 
 unsafe extern "C" fn c_expr_get_property_schema(
     _self_: *const SedonaCExprView,
-    _property: *const c_char,
+    property: *const c_char,
     out: *mut FFI_ArrowSchema,
     err: *mut SedonaCError,
 ) -> c_int {
     debug_assert!(!out.is_null(), "out pointer is null");
-    // All properties are currently returned as Utf8 strings
-    let field = Field::new("value", DataType::Utf8, false);
+    let property_str = cstr_from_ptr_or_empty(property);
+    let data_type = ExportedExprView::get_property_data_type(&property_str);
+    let field = Field::new("value", data_type, false);
     match FFI_ArrowSchema::try_from(&field) {
         Ok(ffi_schema) => {
             std::ptr::write(out, ffi_schema);
@@ -136,8 +176,16 @@ unsafe extern "C" fn c_expr_get_property(
     let property_str = cstr_from_ptr_or_empty(property);
 
     match exported.get_property(&property_str) {
-        Ok(value) => {
+        Ok(PropertyValue::String(value)) => {
             let mut builder = StringBuilder::new();
+            builder.append_value(&value);
+            let array = builder.finish();
+            let ffi_array = FFI_ArrowArray::new(&array.to_data());
+            std::ptr::write(out, ffi_array);
+            ERRNO_OK
+        }
+        Ok(PropertyValue::Binary(value)) => {
+            let mut builder = BinaryBuilder::new();
             builder.append_value(&value);
             let array = builder.finish();
             let ffi_array = FFI_ArrowArray::new(&array.to_data());
@@ -196,9 +244,29 @@ impl<'a> ImportedExprView<'a> {
         Ok(Self { inner })
     }
 
+    pub fn to_expr(&self) -> Result<Expr> {
+        #[cfg(feature = "protobuf")]
+        {
+            use datafusion_proto::bytes::Serializeable;
+
+            let bytes = self.get_bytes_property("datafusion_expr_protobuf")?;
+            Expr::from_bytes_with_registry(&bytes, &PlaceholderRegistry)
+        }
+
+        #[cfg(not(feature = "protobuf"))]
+        {
+            sedona_internal_err!("sedona-expression not built with protobuf enabled")
+        }
+    }
+
     /// Get a string property from this expression view.
     pub fn get_string_property(&self, property: &str) -> Result<String> {
         get_expr_view_string_property(self.inner, property)
+    }
+
+    /// Get a binary property from this expression view.
+    pub fn get_bytes_property(&self, property: &str) -> Result<Vec<u8>> {
+        get_expr_view_bytes_property(self.inner, property)
     }
 }
 
@@ -235,6 +303,37 @@ pub fn get_expr_view_string_property(expr: &SedonaCExprView, property: &str) -> 
         .map_err(|e| sedona_internal_datafusion_err!("Invalid UTF-8 in '{}': {}", property, e))
 }
 
+/// Get a binary property from a [SedonaCExprView].
+pub fn get_expr_view_bytes_property(expr: &SedonaCExprView, property: &str) -> Result<Vec<u8>> {
+    let Some(get_property) = expr.get_property else {
+        return sedona_internal_err!("SedonaCExprView does not have get_property");
+    };
+
+    let property_cstr = CString::new(property)
+        .map_err(|e| sedona_internal_datafusion_err!("Invalid property name: {}", e))?;
+
+    let mut ffi_array = FFI_ArrowArray::empty();
+    let mut err = SedonaCError::default();
+
+    let code = unsafe {
+        get_property(
+            expr,
+            property_cstr.as_ptr(),
+            std::ptr::null(),
+            0,
+            &mut ffi_array,
+            &mut err,
+        )
+    };
+
+    if code != ERRNO_OK {
+        return sedona_internal_err!("SedonaCExprView failed to get '{}': {}", property, err);
+    }
+
+    let data_type = get_expr_view_property_data_type(expr, property)?;
+    parse_ffi_array_to_bytes(ffi_array, &data_type)
+}
+
 /// Get the data type for a property from a [SedonaCExprView].
 fn get_expr_view_property_data_type(expr: &SedonaCExprView, property: &str) -> Result<DataType> {
     let Some(get_property_schema) = expr.get_property_schema else {
@@ -245,6 +344,90 @@ fn get_expr_view_property_data_type(expr: &SedonaCExprView, property: &str) -> R
         get_property_schema(expr, prop, schema, err)
     })
 }
+
+struct PlaceholderRegistry;
+
+impl FunctionRegistry for PlaceholderRegistry {
+    fn udfs(&self) -> std::collections::HashSet<String> {
+        HashSet::new()
+    }
+
+    fn udafs(&self) -> std::collections::HashSet<String> {
+        HashSet::new()
+    }
+
+    fn udwfs(&self) -> std::collections::HashSet<String> {
+        HashSet::new()
+    }
+
+    fn udf(&self, name: &str) -> Result<std::sync::Arc<datafusion_expr::ScalarUDF>> {
+        Ok(Arc::new(ScalarUDF::new_from_impl(PlaceholderUDF::new(
+            name,
+        ))))
+    }
+
+    fn udaf(&self, name: &str) -> Result<std::sync::Arc<datafusion_expr::AggregateUDF>> {
+        sedona_internal_err!("Aggregate function '{name}' not supported")
+    }
+
+    fn udwf(&self, name: &str) -> Result<std::sync::Arc<datafusion_expr::WindowUDF>> {
+        sedona_internal_err!("Window function '{name}' not supported")
+    }
+
+    fn expr_planners(&self) -> Vec<std::sync::Arc<dyn datafusion_expr::planner::ExprPlanner>> {
+        vec![]
+    }
+}
+
+#[derive(Debug, Hash, PartialEq, Eq)]
+struct PlaceholderUDF {
+    name: String,
+}
+
+impl PlaceholderUDF {
+    pub fn new(name: &str) -> Self {
+        PlaceholderUDF {
+            name: name.to_string(),
+        }
+    }
+}
+
+impl ScalarUDFImpl for PlaceholderUDF {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn signature(&self) -> &datafusion_expr::Signature {
+        signature_any()
+    }
+
+    fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
+        sedona_internal_err!(
+            "Imported placeholder UDF '{}' must be replaced before planning",
+            self.name
+        )
+    }
+
+    fn invoke_with_args(
+        &self,
+        _args: datafusion_expr::ScalarFunctionArgs,
+    ) -> Result<datafusion_expr::ColumnarValue> {
+        sedona_internal_err!(
+            "Imported placeholder UDF '{}' must be replaced before execution",
+            self.name
+        )
+    }
+}
+
+fn signature_any() -> &'static Signature {
+    SIGNATURE_ANY.get_or_init(|| Signature::variadic_any(Volatility::Volatile))
+}
+
+static SIGNATURE_ANY: OnceLock<Signature> = OnceLock::new();
 
 #[cfg(test)]
 mod tests {
@@ -318,5 +501,53 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("null private_data"));
+    }
+
+    #[cfg(feature = "protobuf")]
+    #[test]
+    fn test_expr_view_protobuf_roundtrip() {
+        use datafusion_expr::lit;
+
+        // Create a simple expression: col("x") > 5
+        let expr = col("x").gt(lit(5i32));
+        let exported = ExportedExprView::new(&expr);
+        let view = exported.as_ffi_view();
+        let imported = ImportedExprView::try_new(&view).unwrap();
+
+        // Verify we can deserialize it back to an equivalent expression
+        let decoded = imported.to_expr().unwrap();
+        assert_eq!(format!("{}", expr), format!("{}", decoded));
+    }
+
+    #[cfg(feature = "protobuf")]
+    #[test]
+    fn test_expr_view_function_becomes_placeholder_udf() {
+        use datafusion_expr::{lit, ScalarUDF};
+
+        // Create a function that won't exist in PlaceholderRegistry
+        let test_udf = ScalarUDF::new_from_impl(PlaceholderUDF::new("my_custom_func"));
+        let expr = test_udf.call(vec![col("x"), lit(42i32)]);
+
+        let exported = ExportedExprView::new(&expr);
+        let view = exported.as_ffi_view();
+        let imported = ImportedExprView::try_new(&view).unwrap();
+
+        // Deserialize - the function should come back as a PlaceholderUDF
+        let decoded = imported.to_expr().unwrap();
+
+        // Verify it's a scalar function with the right name
+        match &decoded {
+            Expr::ScalarFunction(func) => {
+                assert_eq!(func.name(), "my_custom_func");
+                // Verify it's actually a PlaceholderUDF
+                let udf_impl = func.func.inner();
+                assert!(
+                    udf_impl.as_any().downcast_ref::<PlaceholderUDF>().is_some(),
+                    "Expected PlaceholderUDF, got {:?}",
+                    udf_impl
+                );
+            }
+            other => panic!("Expected ScalarFunction, got {:?}", other),
+        }
     }
 }

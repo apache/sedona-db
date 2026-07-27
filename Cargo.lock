@@ -5894,6 +5894,7 @@ dependencies = [
  "datafusion-expr",
  "datafusion-physical-expr",
  "datafusion-physical-plan",
+ "datafusion-proto",
  "futures",
  "libc",
  "sedona-common",

@@ -90,6 +90,7 @@ datafusion = { version = "52.5.0", default-features = false }
 datafusion-catalog = { version = "52.5.0" }
 datafusion-common = { version = "52.5.0", default-features = false }
 datafusion-common-runtime = { version = "52.5.0", default-features = false }
+datafusion-proto = { version = "52.5.0", default-features = false }
 datafusion-datasource = { version = "52.5.0", default-features = false }
 datafusion-datasource-parquet = { version = "52.5.0" }
 datafusion-execution = { version = "52.5.0", default-features = false }

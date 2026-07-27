@@ -27,6 +27,10 @@ readme.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
+[features]
+default = []
+protobuf = ["datafusion-proto"]
+
 [dependencies]
 arrow-array = { workspace = true, features = ["ffi"]}
 arrow-schema = { workspace = true, features = ["ffi"]}
@@ -37,6 +41,7 @@ datafusion-execution = { workspace = true }
 datafusion-expr = { workspace = true }
 datafusion-physical-expr = { workspace = true }
 datafusion-physical-plan = { workspace = true }
+datafusion-proto = { workspace = true, optional = true }
 futures = { workspace = true }
 libc = "0.2.178"
 sedona-common = { workspace = true }
