@@ -25,6 +25,7 @@ use sedona_gdal::dataset::Dataset;
 use sedona_gdal::gdal::Gdal;
 use sedona_gdal::gdal_dyn_bindgen::{GDAL_OF_RASTER, GDAL_OF_READONLY};
 use sedona_gdal::geo_transform::GeoTransform;
+use sedona_gdal::mem::MemDatasetBuilder;
 use sedona_gdal::raster::types::DatasetOptions;
 use sedona_gdal::raster::types::ResampleAlg;
 use sedona_gdal::spatial_ref::SpatialRef;
@@ -34,7 +35,8 @@ use sedona_raster::traits::{BandMetadata, RasterMetadata};
 use sedona_schema::raster::StorageType;
 
 use crate::gdal_common::{
-    band_nodata_to_bytes, gdal_to_band_data_type, normalize_outdb_source_path, GdalBandLayout,
+    band_data_type_to_gdal, band_nodata_to_bytes, convert_gdal_err, gdal_to_band_data_type,
+    normalize_outdb_source_path, set_band_nodata_from_bytes, GdalBandLayout,
     RasterMetadataFromGdalGeoTransform,
 };
 
@@ -86,12 +88,11 @@ pub fn append_as_indb_raster(dataset: &Dataset, builder: &mut RasterBuilder) -> 
             .map_err(|e| exec_datafusion_err!("Failed to read band {} data: {}", band_idx, e))?;
         let band_data_len = u32::try_from(band_data.len())
             .map_err(|_| exec_datafusion_err!("Band {} data too large for Arrow view", band_idx))?;
-        let block = builder
-            .band_data_writer()
-            .append_block(Buffer::from_vec(band_data));
+        // Hand the freshly-read allocation to Arrow as a shared data block (a
+        // refcount bump, never a copy). `append_band_data_buffer` also stores
+        // sub-inline-threshold bands inline, keeping the view canonical.
         builder
-            .band_data_writer()
-            .try_append_view(block, 0, band_data_len)
+            .append_band_data_buffer(&Buffer::from_vec(band_data), 0, band_data_len)
             .map_err(|e| exec_datafusion_err!("Failed to append band {} data: {}", band_idx, e))?;
 
         builder
@@ -450,6 +451,115 @@ fn covered_axis(
     let win_off = a - 0.5 * b + b * first;
     let win_size = count as f64 * b;
     Some((i0, count, win_off, win_size))
+}
+
+/// The output grid a warp writes into: geotransform, pixel dimensions, target
+/// CRS, and the resampling algorithm.
+///
+/// The warp path can move the output origin off the source grid, grow the
+/// extent past the source footprint, and change the CRS — so `crs` here is the
+/// *destination* CRS (equal to the source CRS for a same-CRS regrid, or the
+/// reprojection target). `crs` is carried through rather than read back from
+/// GDAL so a caller can preserve the exact CRS string it was given.
+pub struct WarpGrid<'a> {
+    pub transform: GeoTransform,
+    pub width: usize,
+    pub height: usize,
+    pub crs: Option<&'a str>,
+    pub alg: ResampleAlg,
+    /// GDAL's working-memory cache size (bytes) for the warp; `0.0` uses
+    /// GDAL's own default.
+    pub warp_memory_limit_bytes: f64,
+}
+
+/// Warp every band of `src_dataset` into `grid`, appending the result as a
+/// single **N-D** in-db raster regrouped per `layout`.
+///
+/// The destination is a MEM dataset whose band buffers are pre-filled with each
+/// band's nodata value (zero when a band has none), so output cells the
+/// (reprojected) source footprint does not cover — the extent can grow past the
+/// source, or shift under a reprojection — read back as nodata rather than as an
+/// accidental zero (`GDALReprojectImage` writes only covered pixels). GDAL warps
+/// into those buffers; the warped bytes are then regrouped into N-D bands via
+/// [`append_nd_from_dataset_inner`], carrying `grid.crs` through verbatim rather
+/// than round-tripping it back out of GDAL.
+pub fn append_warped_nd_from_dataset(
+    gdal: &Gdal,
+    src_dataset: &Dataset,
+    layout: &GdalBandLayout,
+    builder: &mut RasterBuilder,
+    grid: &WarpGrid<'_>,
+) -> Result<()> {
+    let out_width = grid.width;
+    let out_height = grid.height;
+
+    // One owned, nodata-pre-filled buffer per source band, its planes
+    // concatenated plane-major; the destination's DATAPOINTER bands point into
+    // sub-ranges of these. `band_buffers` must outlive `dst_dataset`, so it is
+    // declared first (locals drop in reverse order).
+    let mut band_buffers: Vec<Vec<u8>> = Vec::with_capacity(layout.bands.len());
+    for plan in &layout.bands {
+        let plane_bytes = out_width * out_height * plan.data_type.byte_size();
+        let total = plane_bytes.checked_mul(plan.plane_count).ok_or_else(|| {
+            exec_datafusion_err!("warped band size overflow ({out_width}x{out_height})")
+        })?;
+        band_buffers.push(filled_with_nodata(total, plan.nodata.as_deref()));
+    }
+
+    let mut dst_builder = MemDatasetBuilder::new(out_width, out_height);
+    for (plan, buffer) in layout.bands.iter().zip(band_buffers.iter_mut()) {
+        let gdal_type = band_data_type_to_gdal(&plan.data_type);
+        let plane_bytes = out_width * out_height * plan.data_type.byte_size();
+        for plane in 0..plan.plane_count {
+            let ptr = buffer[plane * plane_bytes..].as_mut_ptr();
+            // SAFETY: each plane sub-range holds exactly `plane_bytes` valid,
+            // writable bytes aligned for the band type, and `band_buffers`
+            // outlives `dst_dataset`.
+            unsafe {
+                dst_builder = dst_builder.add_band(gdal_type, ptr);
+            }
+        }
+    }
+    // SAFETY: the DATAPOINTER buffers in `band_buffers` outlive `dst_dataset`.
+    let dst_dataset = unsafe { dst_builder.build(gdal).map_err(convert_gdal_err)? };
+    dst_dataset
+        .set_geo_transform(&grid.transform)
+        .map_err(convert_gdal_err)?;
+    if let Some(crs) = grid.crs {
+        dst_dataset.set_projection(crs).map_err(convert_gdal_err)?;
+    }
+
+    // Record each band's nodata on the destination in its native type. Walk the
+    // dst bands in the same band-major / plane order as the add loop above.
+    // `set_band_nodata_from_bytes` uses the exact Int64/UInt64 setters rather
+    // than routing through a lossy f64, so a large 64-bit nodata stays exact.
+    let mut dst_band_index = 0usize;
+    for plan in &layout.bands {
+        for _ in 0..plan.plane_count {
+            dst_band_index += 1;
+            if let Some(nodata) = plan.nodata.as_deref() {
+                let band = dst_dataset
+                    .rasterband(dst_band_index)
+                    .map_err(convert_gdal_err)?;
+                set_band_nodata_from_bytes(&band, Some(nodata))?;
+            }
+        }
+    }
+
+    // Reproject when the CRS differs; a same-CRS warp is a pure regrid that fills
+    // grown/shifted areas with the pre-filled nodata.
+    gdal.reproject_image(
+        src_dataset,
+        &dst_dataset,
+        grid.alg,
+        grid.warp_memory_limit_bytes,
+    )
+    .map_err(convert_gdal_err)?;
+
+    let metadata = grid.transform.to_raster_metadata(out_width, out_height);
+    // Read the warped buffers back out (native read, no further resampling),
+    // regrouping the flat GDAL bands into N-D raster bands.
+    append_nd_from_dataset_inner(&dst_dataset, layout, builder, &metadata, grid.crs, None)
 }
 
 /// Allocate a `total`-byte buffer pre-filled with the little-endian `nodata`

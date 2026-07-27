@@ -33,19 +33,18 @@ use std::sync::Arc;
 
 use crate::crs_utils::crs_transform_wkb;
 use crate::crs_utils::resolve_crs;
+use crate::crs_utils::with_crs_engine;
 use crate::executor::RasterExecutor;
+use crate::footprint::write_convexhull_wkb;
 use arrow_array::builder::BooleanBuilder;
 use arrow_schema::DataType;
+use datafusion_common::config::ConfigOptions;
 use datafusion_common::exec_datafusion_err;
 use datafusion_common::exec_err;
-use datafusion_common::DataFusionError;
 use datafusion_common::Result;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::transform::CrsEngine;
-use sedona_geometry::wkb_factory::write_wkb_polygon;
-use sedona_proj::transform::with_global_proj_engine;
-use sedona_raster::affine_transformation::to_world_coordinate;
 use sedona_raster::traits::RasterRef;
 use sedona_schema::crs::{lnglat, CrsRef};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
@@ -167,10 +166,27 @@ impl<Op: tg::BinaryPredicate + Send + Sync> SedonaScalarKernel for RsSpatialPred
         arg_types: &[SedonaType],
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
+        self.invoke_batch_from_args(
+            arg_types,
+            args,
+            &SedonaType::Arrow(DataType::Boolean),
+            0,
+            None,
+        )
+    }
+
+    fn invoke_batch_from_args(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+        _return_type: &SedonaType,
+        _num_rows: usize,
+        config_options: Option<&ConfigOptions>,
+    ) -> Result<ColumnarValue> {
         match self.arg_order {
-            ArgOrder::RasterGeom => self.invoke_raster_geom(arg_types, args),
-            ArgOrder::GeomRaster => self.invoke_geom_raster(arg_types, args),
-            ArgOrder::RasterRaster => self.invoke_raster_raster(arg_types, args),
+            ArgOrder::RasterGeom => self.invoke_raster_geom(arg_types, args, config_options),
+            ArgOrder::GeomRaster => self.invoke_geom_raster(arg_types, args, config_options),
+            ArgOrder::RasterRaster => self.invoke_raster_raster(arg_types, args, config_options),
         }
     }
 }
@@ -181,6 +197,7 @@ impl<Op: tg::BinaryPredicate + Send + Sync> RsSpatialPredicate<Op> {
         &self,
         arg_types: &[SedonaType],
         args: &[ColumnarValue],
+        config_options: Option<&ConfigOptions>,
     ) -> Result<ColumnarValue> {
         // Ensure executor always sees (raster, geom)
         let exec_arg_types = vec![arg_types[0].clone(), arg_types[1].clone()];
@@ -189,7 +206,7 @@ impl<Op: tg::BinaryPredicate + Send + Sync> RsSpatialPredicate<Op> {
         let mut builder = BooleanBuilder::with_capacity(executor.num_iterations());
         let mut raster_wkb = Vec::with_capacity(CONVEXHULL_WKB_SIZE);
 
-        with_global_proj_engine(|engine| {
+        with_crs_engine(config_options, |engine| {
             executor.execute_raster_wkb_crs_void(|raster_opt, maybe_wkb, geom_crs| {
                 match (raster_opt, maybe_wkb) {
                     (Some(raster), Some(geom_wkb)) => {
@@ -221,6 +238,7 @@ impl<Op: tg::BinaryPredicate + Send + Sync> RsSpatialPredicate<Op> {
         &self,
         arg_types: &[SedonaType],
         args: &[ColumnarValue],
+        config_options: Option<&ConfigOptions>,
     ) -> Result<ColumnarValue> {
         // Reorder so executor always sees (raster, geom)
         let exec_arg_types = vec![arg_types[1].clone(), arg_types[0].clone()];
@@ -229,7 +247,7 @@ impl<Op: tg::BinaryPredicate + Send + Sync> RsSpatialPredicate<Op> {
         let mut builder = BooleanBuilder::with_capacity(executor.num_iterations());
         let mut raster_wkb = Vec::with_capacity(CONVEXHULL_WKB_SIZE);
 
-        with_global_proj_engine(|engine| {
+        with_crs_engine(config_options, |engine| {
             executor.execute_raster_wkb_crs_void(|raster_opt, maybe_wkb, geom_crs| {
                 match (raster_opt, maybe_wkb) {
                     (Some(raster), Some(geom_wkb)) => {
@@ -262,6 +280,7 @@ impl<Op: tg::BinaryPredicate + Send + Sync> RsSpatialPredicate<Op> {
         &self,
         arg_types: &[SedonaType],
         args: &[ColumnarValue],
+        config_options: Option<&ConfigOptions>,
     ) -> Result<ColumnarValue> {
         // Ensure executor always sees (raster, raster)
         let exec_arg_types = vec![arg_types[0].clone(), arg_types[1].clone()];
@@ -271,7 +290,7 @@ impl<Op: tg::BinaryPredicate + Send + Sync> RsSpatialPredicate<Op> {
         let mut wkb0 = Vec::with_capacity(CONVEXHULL_WKB_SIZE);
         let mut wkb1 = Vec::with_capacity(CONVEXHULL_WKB_SIZE);
 
-        with_global_proj_engine(|engine| {
+        with_crs_engine(config_options, |engine| {
             executor.execute_raster_raster_void(|_i, r0_opt, r1_opt| {
                 match (r0_opt, r1_opt) {
                     (Some(r0), Some(r1)) => {
@@ -375,32 +394,15 @@ fn evaluate_predicate<Op: tg::BinaryPredicate>(wkb_a: &[u8], wkb_b: &[u8]) -> Re
 ///       = 9 + 4 + 80 = 93
 const CONVEXHULL_WKB_SIZE: usize = 93;
 
-/// Create WKB for a convex hull polygon for the raster
-fn write_convexhull_wkb(raster: &dyn RasterRef, out: &mut impl std::io::Write) -> Result<()> {
-    let width = raster.metadata().width();
-    let height = raster.metadata().height();
-
-    let (ulx, uly) = to_world_coordinate(raster, 0, 0);
-    let (urx, ury) = to_world_coordinate(raster, width, 0);
-    let (lrx, lry) = to_world_coordinate(raster, width, height);
-    let (llx, lly) = to_world_coordinate(raster, 0, height);
-
-    write_wkb_polygon(
-        out,
-        [(ulx, uly), (urx, ury), (lrx, lry), (llx, lly), (ulx, uly)].into_iter(),
-    )
-    .map_err(|e| DataFusionError::External(e.into()))?;
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use arrow_array::{create_array, ArrayRef};
+    use datafusion_common::DataFusionError;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_geometry::types::Edges;
+    use sedona_proj::transform::{with_global_proj_engine, LazyProjEngine};
     use sedona_raster::builder::RasterBuilder;
     use sedona_raster::traits::{BandMetadata, RasterMetadata};
     use sedona_schema::crs::deserialize_crs;
@@ -515,7 +517,10 @@ mod tests {
     fn rs_intersects_raster_geom_crs_mismatch() {
         let udf = rs_intersects_udf();
         let geom_type = SedonaType::Wkb(Edges::Planar, deserialize_crs("EPSG:3857").unwrap());
-        let tester = ScalarUdfTester::new(udf.into(), vec![RASTER, geom_type.clone()]);
+        // This overload reprojects (EPSG:3857 geometry vs the raster's OGC:CRS84),
+        // so the session must carry a real CRS engine.
+        let tester = ScalarUdfTester::new(udf.into(), vec![RASTER, geom_type.clone()])
+            .with_crs_engine(Arc::new(LazyProjEngine));
 
         let rasters = generate_test_rasters(3, Some(0)).unwrap();
         let (x, y) = with_global_proj_engine(|engine| {

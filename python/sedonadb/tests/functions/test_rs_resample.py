@@ -48,9 +48,10 @@ import pytest
 from sedonadb.raster_testing import (
     Rasterio,
     SedonaDB,
+    assert_transform_and_nodata,
     decode_raster,
-    random_raster_data,
-    write_geotiff,
+    write_grid_geotiff,
+    write_random_geotiff,
 )
 
 # North-up GDAL-order geotransform: origin (100, 500), 2x2 pixels.
@@ -82,24 +83,26 @@ def _write(
     name="in",
 ):
     path = tmp_path / f"resample_{name}_{dtype}_{width}x{height}.tif"
-    data = random_raster_data(dtype, bands=bands, height=height, width=width)
-    write_geotiff(path, data, gdal_transform=transform, nodata=nodata, crs=crs)
+    write_random_geotiff(
+        path,
+        dtype,
+        bands=bands,
+        height=height,
+        width=width,
+        gdal_transform=transform,
+        crs=crs,
+        nodata=nodata,
+    )
     return path
 
 
 def _write_grid(tmp_path, *, transform, width, height, crs=None, name="ref"):
     """Write a zeroed raster whose only role is to define a reference grid."""
-    data = np.zeros((1, height, width), dtype="uint8")
     path = tmp_path / f"resample_{name}_{width}x{height}.tif"
-    write_geotiff(path, data, gdal_transform=transform, crs=crs)
-    return path
-
-
-def _assert_transform_and_nodata(got, expected):
-    assert got.gdal_transform == pytest.approx(
-        expected.gdal_transform, rel=1e-12, abs=1e-12
+    write_grid_geotiff(
+        path, gdal_transform=transform, width=width, height=height, crs=crs
     )
-    assert got.nodata == expected.nodata
+    return path
 
 
 @pytest.mark.parametrize("dtype", DTYPES)
@@ -117,7 +120,7 @@ def test_rs_resample_nearest_upsample_matches_rasterio(
 
     np.testing.assert_array_equal(got.pixels, expected.pixels)
     assert got.pixels.shape == (2, 6, 8)
-    _assert_transform_and_nodata(got, expected)
+    assert_transform_and_nodata(got, expected)
 
 
 @pytest.mark.parametrize("dtype", ["uint8", "float64"])
@@ -136,7 +139,7 @@ def test_rs_resample_nearest_downsample_matches_rasterio(
 
     np.testing.assert_array_equal(got.pixels, expected.pixels)
     assert got.pixels.shape == (2, 3, 4)
-    _assert_transform_and_nodata(got, expected)
+    assert_transform_and_nodata(got, expected)
 
 
 def test_rs_resample_nodata_preserved(sedona, reference, tmp_path):
@@ -148,7 +151,7 @@ def test_rs_resample_nodata_preserved(sedona, reference, tmp_path):
     expected = reference.resample(tiff, width=8, height=6)
 
     np.testing.assert_array_equal(got.pixels, expected.pixels)
-    _assert_transform_and_nodata(got, expected)
+    assert_transform_and_nodata(got, expected)
     assert got.nodata == [200]
 
 
@@ -163,7 +166,7 @@ def test_rs_resample_bilinear_matches_rasterio(sedona, reference, tmp_path):
 
     np.testing.assert_allclose(got.pixels, expected.pixels, rtol=1e-6, atol=1e-6)
     assert got.pixels.shape == (1, 4, 4)
-    _assert_transform_and_nodata(got, expected)
+    assert_transform_and_nodata(got, expected)
 
 
 def test_rs_resample_scale_mode_matches_dimension_mode(sedona, reference, tmp_path):
@@ -178,7 +181,7 @@ def test_rs_resample_scale_mode_matches_dimension_mode(sedona, reference, tmp_pa
 
     assert by_scale.pixels.shape == (1, 6, 8)
     np.testing.assert_array_equal(by_scale.pixels, expected.pixels)
-    _assert_transform_and_nodata(by_scale, expected)
+    assert_transform_and_nodata(by_scale, expected)
 
 
 def test_rs_resample_scale_mode_grows_extent_matches_rasterio(
@@ -205,7 +208,7 @@ def test_rs_resample_scale_mode_grows_extent_matches_rasterio(
 
     assert got.pixels.shape == (2, 2, 2)
     np.testing.assert_array_equal(got.pixels, expected.pixels)
-    _assert_transform_and_nodata(got, expected)
+    assert_transform_and_nodata(got, expected)
 
 
 def test_rs_resample_reference_raster_matches_dimension_mode(
@@ -232,7 +235,7 @@ def test_rs_resample_reference_raster_matches_dimension_mode(
 
     assert got.pixels.shape == (2, 6, 8)
     np.testing.assert_array_equal(got.pixels, expected.pixels)
-    _assert_transform_and_nodata(got, expected)
+    assert_transform_and_nodata(got, expected)
 
 
 def test_rs_resample_reference_raster_crs_mismatch_errors(con, tmp_path):
@@ -317,5 +320,5 @@ def test_rs_resample_sql_smoke(con, tmp_path):
 
 
 def _write_uint8(tmp_path):
-    pytest.importorskip("rasterio")  # write_geotiff needs rasterio
+    pytest.importorskip("rasterio")  # write_random_geotiff needs rasterio
     return _write(tmp_path, "uint8", bands=1, height=3, width=4, nodata=None)

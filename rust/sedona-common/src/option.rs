@@ -58,6 +58,13 @@ config_namespace! {
         /// This can be helpful for diagnosing issues with GDAL dataset handling,
         /// but may produce verbose output. Set to true to enable CPL_DEBUG output from GDAL.
         pub cpl_debug: bool, default = false
+
+        /// Memory limit, in megabytes, for GDAL warp operations (used by
+        /// RS_ReprojectMatch). GDAL caches working data up to this size while
+        /// warping; a larger limit can reduce the number of passes over a large
+        /// raster at the cost of memory. Megabytes match `gdalwarp -wm`. Leave
+        /// unset to use GDAL's own default.
+        pub warp_memory_limit_mb: Option<usize>, default = None
     }
 }
 

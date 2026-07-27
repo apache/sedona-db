@@ -19,6 +19,7 @@ pub mod bounding_box;
 pub mod bounds;
 pub mod error;
 pub mod ewkb_factory;
+pub mod interpolate;
 pub mod interval;
 pub mod is_empty;
 pub mod point_count;

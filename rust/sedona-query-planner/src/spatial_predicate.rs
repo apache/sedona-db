@@ -190,16 +190,19 @@ impl SpatialRelationType {
     /// Converts a function name string to a SpatialRelationType.
     ///
     /// # Arguments
-    /// * `name` - The spatial function name (e.g., "st_intersects", "st_contains")
+    /// * `name` - The spatial function name (e.g., "st_intersects", "st_contains").
+    ///   Raster-geometry predicates (`rs_intersects`, `rs_contains`, `rs_within`)
+    ///   map to the same relation variants; `invert()` handles the Contains/Within
+    ///   swap when the join arguments are on opposite sides.
     ///
     /// # Returns
     /// * `Some(SpatialRelationType)` if the name is recognized
     /// * `None` if the name is not a valid spatial relation function
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
-            "st_intersects" => Some(SpatialRelationType::Intersects),
-            "st_contains" => Some(SpatialRelationType::Contains),
-            "st_within" => Some(SpatialRelationType::Within),
+            "st_intersects" | "rs_intersects" => Some(SpatialRelationType::Intersects),
+            "st_contains" | "rs_contains" => Some(SpatialRelationType::Contains),
+            "st_within" | "rs_within" => Some(SpatialRelationType::Within),
             "st_covers" => Some(SpatialRelationType::Covers),
             "st_coveredby" | "st_covered_by" => Some(SpatialRelationType::CoveredBy),
             "st_touches" => Some(SpatialRelationType::Touches),
@@ -529,6 +532,38 @@ mod tests {
             .expect("expected Column");
         assert_eq!(col.name(), name);
         assert_eq!(col.index(), index);
+    }
+
+    #[test]
+    fn from_name_recognizes_raster_predicates() {
+        // Raster-geometry predicates reuse the geometry relation variants; `invert()`
+        // handles the Contains/Within swap when the join arguments are on opposite sides.
+        assert_eq!(
+            SpatialRelationType::from_name("rs_intersects"),
+            Some(SpatialRelationType::Intersects)
+        );
+        assert_eq!(
+            SpatialRelationType::from_name("rs_contains"),
+            Some(SpatialRelationType::Contains)
+        );
+        assert_eq!(
+            SpatialRelationType::from_name("rs_within"),
+            Some(SpatialRelationType::Within)
+        );
+
+        // Matches the ST_ variants they mirror.
+        assert_eq!(
+            SpatialRelationType::from_name("rs_intersects"),
+            SpatialRelationType::from_name("st_intersects")
+        );
+        assert_eq!(
+            SpatialRelationType::from_name("rs_contains"),
+            SpatialRelationType::from_name("st_contains")
+        );
+        assert_eq!(
+            SpatialRelationType::from_name("rs_within"),
+            SpatialRelationType::from_name("st_within")
+        );
     }
 
     #[test]
