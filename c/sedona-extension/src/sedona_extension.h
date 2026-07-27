@@ -240,8 +240,10 @@ struct SedonaCExpr {
   /// easily retrieved and serialized. The data type associated with the out
   /// array may be retrieved with the get_property_schema callback.
   int (*get_property)(const struct SedonaCExpr* self, const char* property,
-                      const char* args, struct ArrowArray* out, struct SedonaCError* err);
+                      const uint8_t* args, size_t args_len, struct ArrowArray* out,
+                      struct SedonaCError* err);
 
+  /// \brief Reserved for future use. Must be NULL.
   void* reserved;
 
   /// \brief Release this instance

@@ -253,7 +253,8 @@ pub struct SedonaCExpr {
         unsafe extern "C" fn(
             self_: *const SedonaCExpr,
             property: *const c_char,
-            args: *const c_char,
+            args: *const u8,
+            args_len: usize,
             out: *mut FFI_ArrowArray,
             err: *mut SedonaCError,
         ) -> c_int,
