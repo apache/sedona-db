@@ -66,7 +66,7 @@ use sedona_gdal::gdal::Gdal;
 use sedona_gdal::geo_transform::GeoTransform;
 use sedona_raster::array::RasterRefImpl;
 use sedona_raster::traits::RasterRef;
-use sedona_raster_functions::crs_utils::{crs_transform_wkb, resolve_crs, with_crs_engine};
+use sedona_raster_functions::crs_utils::{align_wkb_to_crs, resolve_crs, with_crs_engine};
 use sedona_raster_functions::rs_ensure_loaded::NEEDS_PIXELS_METADATA_KEY;
 use sedona_raster_functions::rs_spatial_predicates::raster_intersects_geom_wkb;
 use sedona_raster_functions::RasterExecutor;
@@ -348,21 +348,18 @@ impl SedonaScalarKernel for RsZonalStats {
                         exec_datafusion_err!("RS_ZonalStats: unknown statistic {stat_str:?}")
                     })?;
 
-                    // Reproject the zone into the raster's CRS; a known/unknown
-                    // CRS mismatch on either side would mislocate it.
+                    // Reproject the zone into the raster's CRS, borrowing it
+                    // unchanged when the CRSes already match; a CRS on exactly
+                    // one side is an error, since it would mislocate the zone.
                     let raster_crs = resolve_crs(raster.crs())?;
-                    let geom_wkb = match (geom_crs, raster_crs.as_deref()) {
-                        (Some(geom_crs), Some(raster_crs)) => {
-                            crs_transform_wkb(wkb, geom_crs, raster_crs, engine)?
-                        }
-                        (None, None) => wkb.to_vec(),
-                        (Some(_), None) => return exec_err!(
-                            "Cannot operate on geometry and raster: raster has no CRS but geometry does"
-                        ),
-                        (None, Some(_)) => return exec_err!(
-                            "Cannot operate on geometry and raster: geometry has no CRS but raster does"
-                        ),
-                    };
+                    let geom_wkb = align_wkb_to_crs(
+                        wkb,
+                        geom_crs,
+                        raster_crs.as_deref(),
+                        "geometry",
+                        "raster",
+                        engine,
+                    )?;
                     match compute_zonal_stats(gdal, raster, &geom_wkb, &params, &mut scratch)? {
                         Some(stats) => match stats.get(stat_type) {
                             Some(value) => builder.append_value(value),
@@ -505,31 +502,27 @@ impl SedonaScalarKernel for RsZonalStatsAll {
                         &mut exclude_nodata_iter,
                         &mut lenient_iter,
                     ) else {
-                        append_struct_null(&mut builder);
+                        append_struct_null(&mut builder)?;
                         return Ok(());
                     };
 
                     let (Some(raster), Some(wkb)) = (raster_opt, wkb_opt) else {
-                        append_struct_null(&mut builder);
+                        append_struct_null(&mut builder)?;
                         return Ok(());
                     };
 
                     let raster_crs = resolve_crs(raster.crs())?;
-                    let geom_wkb = match (geom_crs, raster_crs.as_deref()) {
-                        (Some(geom_crs), Some(raster_crs)) => {
-                            crs_transform_wkb(wkb, geom_crs, raster_crs, engine)?
-                        }
-                        (None, None) => wkb.to_vec(),
-                        (Some(_), None) => return exec_err!(
-                            "Cannot operate on geometry and raster: raster has no CRS but geometry does"
-                        ),
-                        (None, Some(_)) => return exec_err!(
-                            "Cannot operate on geometry and raster: geometry has no CRS but raster does"
-                        ),
-                    };
+                    let geom_wkb = align_wkb_to_crs(
+                        wkb,
+                        geom_crs,
+                        raster_crs.as_deref(),
+                        "geometry",
+                        "raster",
+                        engine,
+                    )?;
                     match compute_zonal_stats(gdal, raster, &geom_wkb, &params, &mut scratch)? {
-                        Some(stats) => append_struct_stats(&mut builder, &stats),
-                        None if params.lenient => append_struct_null(&mut builder),
+                        Some(stats) => append_struct_stats(&mut builder, &stats)?,
+                        None if params.lenient => append_struct_null(&mut builder)?,
                         None => return no_intersection_err(),
                     }
                     Ok(())
@@ -565,27 +558,28 @@ fn zonal_stats_struct_fields() -> Fields {
 
 /// Append a fully-NULL struct row (the zone does not intersect the raster and
 /// `lenient` is set).
-fn append_struct_null(builder: &mut StructBuilder) {
-    builder
-        .field_builder::<Int64Builder>(0)
-        .unwrap()
-        .append_null();
+fn append_struct_null(builder: &mut StructBuilder) -> Result<()> {
+    let Some(count) = builder.field_builder::<Int64Builder>(0) else {
+        return sedona_internal_err!("RS_ZonalStats: count field is not an Int64 builder");
+    };
+    count.append_null();
     for i in 1..=8 {
-        builder
-            .field_builder::<Float64Builder>(i)
-            .unwrap()
-            .append_null();
+        let Some(field) = builder.field_builder::<Float64Builder>(i) else {
+            return sedona_internal_err!("RS_ZonalStats: stat field {i} is not a Float64 builder");
+        };
+        field.append_null();
     }
     builder.append(false);
+    Ok(())
 }
 
 /// Append one computed-stats row. The float fields carry through the `Option`
 /// so an empty zone records `count = 0` with the rest NULL.
-fn append_struct_stats(builder: &mut StructBuilder, stats: &ZonalStatistics) {
-    builder
-        .field_builder::<Int64Builder>(0)
-        .unwrap()
-        .append_value(stats.count);
+fn append_struct_stats(builder: &mut StructBuilder, stats: &ZonalStatistics) -> Result<()> {
+    let Some(count) = builder.field_builder::<Int64Builder>(0) else {
+        return sedona_internal_err!("RS_ZonalStats: count field is not an Int64 builder");
+    };
+    count.append_value(stats.count);
     for (i, value) in [
         stats.sum,
         stats.mean,
@@ -599,12 +593,16 @@ fn append_struct_stats(builder: &mut StructBuilder, stats: &ZonalStatistics) {
     .into_iter()
     .enumerate()
     {
-        builder
-            .field_builder::<Float64Builder>(i + 1)
-            .unwrap()
-            .append_option(value);
+        let Some(field) = builder.field_builder::<Float64Builder>(i + 1) else {
+            return sedona_internal_err!(
+                "RS_ZonalStats: stat field {} is not a Float64 builder",
+                i + 1
+            );
+        };
+        field.append_option(value);
     }
     builder.append(true);
+    Ok(())
 }
 
 // =============================================================================
@@ -702,6 +700,14 @@ fn compute_zonal_stats(
     } else {
         None
     };
+    if let Some(nd) = nodata {
+        if nd.len() != byte_size {
+            return sedona_internal_err!(
+                "RS_ZonalStats: band {band_num} nodata is {} bytes, expected {byte_size} for {data_type:?}",
+                nd.len()
+            );
+        }
+    }
 
     scratch.clear();
     collect_masked_values(
@@ -1087,6 +1093,7 @@ mod udf_tests {
     use arrow_array::{Array, StructArray};
     use datafusion_expr::ScalarUDF;
     use sedona_proj::transform::{with_global_proj_engine, LazyProjEngine};
+    use sedona_raster_functions::crs_utils::crs_transform_wkb;
     use sedona_schema::crs::deserialize_crs;
     use sedona_schema::datatypes::{Edges, RASTER};
     use sedona_testing::create::make_wkb;
