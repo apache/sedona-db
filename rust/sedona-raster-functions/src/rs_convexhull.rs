@@ -17,16 +17,14 @@
 use std::sync::Arc;
 
 use crate::executor::RasterExecutor;
+use crate::footprint::write_convexhull_wkb;
 use arrow_array::builder::{BinaryBuilder, StringViewBuilder};
-use datafusion_common::DataFusionError;
 use datafusion_common::Result;
 use datafusion_common::ScalarValue;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::item_crs::make_item_crs;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::types::Edges;
-use sedona_geometry::wkb_factory::write_wkb_polygon;
-use sedona_raster::affine_transformation::to_world_coordinate;
 use sedona_raster::traits::RasterRef;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
@@ -99,31 +97,6 @@ impl SedonaScalarKernel for RsConvexHull {
             None,
         )
     }
-}
-
-/// Write WKB for a convex hull polygon for the raster
-///
-/// For a raster, the convex hull is the polygon formed by the four corners
-/// of the raster in world coordinates. Due to skew/rotation in the affine
-/// transformation, each corner must be computed individually.
-fn write_convexhull_wkb(raster: &dyn RasterRef, out: &mut impl std::io::Write) -> Result<()> {
-    let width = raster.metadata().width();
-    let height = raster.metadata().height();
-
-    // Compute the four corners in pixel coordinates:
-    // Upper-left (0, 0), Upper-right (width, 0), Lower-right (width, height), Lower-left (0, height)
-    let (ulx, uly) = to_world_coordinate(raster, 0, 0);
-    let (urx, ury) = to_world_coordinate(raster, width, 0);
-    let (lrx, lry) = to_world_coordinate(raster, width, height);
-    let (llx, lly) = to_world_coordinate(raster, 0, height);
-
-    write_wkb_polygon(
-        out,
-        [(ulx, uly), (urx, ury), (lrx, lry), (llx, lly), (ulx, uly)].into_iter(),
-    )
-    .map_err(|e| DataFusionError::External(e.into()))?;
-
-    Ok(())
 }
 
 #[cfg(test)]

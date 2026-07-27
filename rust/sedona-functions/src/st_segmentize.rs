@@ -31,6 +31,7 @@ use sedona_expr::{
 };
 use sedona_geometry::{
     error::SedonaGeometryError,
+    interpolate::lerp,
     wkb_factory::{
         write_wkb_coord_trait, write_wkb_geometrycollection_header, write_wkb_linestring_header,
         write_wkb_multilinestring_header, write_wkb_multipolygon_header, write_wkb_polygon_header,
@@ -312,8 +313,8 @@ fn write_interpolated_2d<C: CoordTrait<T = f64>>(
 
     for i in 1..=num_segments {
         let t = i as f64 / num_segments as f64;
-        writer.write_all(&(x1 + t * (x2 - x1)).to_le_bytes())?;
-        writer.write_all(&(y1 + t * (y2 - y1)).to_le_bytes())?;
+        writer.write_all(&lerp(x1, x2, t).to_le_bytes())?;
+        writer.write_all(&lerp(y1, y2, t).to_le_bytes())?;
     }
     Ok(())
 }
@@ -334,9 +335,9 @@ fn write_interpolated_3d<C: CoordTrait<T = f64>>(
 
     for i in 1..=num_segments {
         let t = i as f64 / num_segments as f64;
-        writer.write_all(&(x1 + t * (x2 - x1)).to_le_bytes())?;
-        writer.write_all(&(y1 + t * (y2 - y1)).to_le_bytes())?;
-        writer.write_all(&(d1 + t * (d2 - d1)).to_le_bytes())?;
+        writer.write_all(&lerp(x1, x2, t).to_le_bytes())?;
+        writer.write_all(&lerp(y1, y2, t).to_le_bytes())?;
+        writer.write_all(&lerp(d1, d2, t).to_le_bytes())?;
     }
     Ok(())
 }
@@ -359,10 +360,10 @@ fn write_interpolated_4d<C: CoordTrait<T = f64>>(
 
     for i in 1..=num_segments {
         let t = i as f64 / num_segments as f64;
-        writer.write_all(&(x1 + t * (x2 - x1)).to_le_bytes())?;
-        writer.write_all(&(y1 + t * (y2 - y1)).to_le_bytes())?;
-        writer.write_all(&(z1 + t * (z2 - z1)).to_le_bytes())?;
-        writer.write_all(&(m1 + t * (m2 - m1)).to_le_bytes())?;
+        writer.write_all(&lerp(x1, x2, t).to_le_bytes())?;
+        writer.write_all(&lerp(y1, y2, t).to_le_bytes())?;
+        writer.write_all(&lerp(z1, z2, t).to_le_bytes())?;
+        writer.write_all(&lerp(m1, m2, t).to_le_bytes())?;
     }
     Ok(())
 }

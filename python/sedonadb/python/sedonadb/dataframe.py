@@ -1625,6 +1625,66 @@ class DataFrame:
             single_file_output,
         )
 
+    def to_csv(
+        self,
+        path: Union[str, Path],
+        *,
+        has_header: bool = True,
+        delimiter: str = ",",
+    ):
+        """Write this DataFrame to CSV
+
+        This is a plain tabular writer. CSV has no geometry representation, so a
+        geometry column (or one nested inside a struct/list) raises an error
+        rather than being written in some opaque encoding; convert it to text
+        first, e.g. `select(ST_AsText(col("geometry")).alias("geometry"))`. To
+        write geometry to a spatial format such as GeoJSON, FlatGeobuf, or
+        GeoPackage, use `to_pyogrio()` instead.
+
+        A path ending in `.csv` is written as a single file; any other path is
+        treated as a directory and written as one CSV file per partition.
+
+        Args:
+            path: A filename or directory to which CSV output should be written.
+            has_header: Whether to write the column names as the first row.
+            delimiter: The single-byte field delimiter to use between values.
+
+        Examples:
+
+            >>> import tempfile
+            >>> sd = sedona.db.connect()
+            >>> td = tempfile.TemporaryDirectory()
+            >>> sd.sql("SELECT 1 AS a, 'x' AS b").to_csv(f"{td.name}/tmp.csv")
+
+        """
+        self._impl.to_csv(str(path), has_header, delimiter)
+
+    def to_json(self, path: Union[str, Path]):
+        """Write this DataFrame to newline-delimited JSON
+
+        This is a plain tabular writer that emits one JSON object per row
+        (NDJSON); it does not produce GeoJSON. Like `to_csv()`, a geometry
+        column (or one nested inside a struct/list) raises an error rather than
+        being written in some opaque encoding; convert it to text first, e.g.
+        `select(ST_AsText(col("geometry")).alias("geometry"))`. To write
+        GeoJSON, use `to_pyogrio()` with a `.geojson` path instead.
+
+        A path ending in `.json` is written as a single file; any other path is
+        treated as a directory and written as one JSON file per partition.
+
+        Args:
+            path: A filename or directory to which JSON output should be written.
+
+        Examples:
+
+            >>> import tempfile
+            >>> sd = sedona.db.connect()
+            >>> td = tempfile.TemporaryDirectory()
+            >>> sd.sql("SELECT 1 AS a, 'x' AS b").to_json(f"{td.name}/tmp.json")
+
+        """
+        self._impl.to_json(str(path))
+
     def to_pyogrio(
         self,
         path: Union[str, Path, io.BytesIO],

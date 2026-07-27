@@ -15,87 +15,41 @@
 # specific language governing permissions and limitations
 # under the License.
 [package]
-name = "sedona-raster-gdal"
+name = "sedona-spatial-join-raster"
 version.workspace = true
 license.workspace = true
 keywords.workspace = true
 categories.workspace = true
 homepage.workspace = true
 repository.workspace = true
-description = "GDAL integration for Apache SedonaDB raster types"
+description.workspace = true
 readme.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
-[lints.clippy]
-result_large_err = "allow"
-
 [dependencies]
 arrow-array = { workspace = true }
-arrow-buffer = { workspace = true }
 arrow-schema = { workspace = true }
-async-trait = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
-lru = { workspace = true }
+datafusion-physical-expr = { workspace = true }
+datafusion-physical-plan = { workspace = true }
 sedona-common = { workspace = true }
 sedona-expr = { workspace = true }
-sedona-functions = { workspace = true }
-sedona-gdal = { workspace = true }
+sedona-geometry = { workspace = true }
 sedona-proj = { workspace = true }
+sedona-query-planner = { workspace = true }
 sedona-raster = { workspace = true }
 sedona-raster-functions = { workspace = true }
 sedona-schema = { workspace = true }
-tokio = { workspace = true }
-
-[features]
-# Enable bindgen for GDAL versions without pre-built bindings (e.g., GDAL 3.13+).
-bindgen = ["sedona-gdal/bindgen"]
+sedona-spatial-join = { workspace = true }
 
 [dev-dependencies]
-criterion = { workspace = true }
-sedona-gdal = { workspace = true, features = ["gdal-sys"] }
+arrow-array = { workspace = true }
+datafusion = { workspace = true, features = ["sql"] }
+datafusion-common = { workspace = true }
+datafusion-expr = { workspace = true }
+rstest = { workspace = true }
 sedona-proj = { workspace = true, features = ["proj-sys"] }
-sedona-testing = { workspace = true, features = ["criterion"] }
-tempfile = { workspace = true }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
-
-[[bench]]
-harness = false
-name = "rs_as_geotiff"
-path = "benches/rs_as_geotiff.rs"
-
-[[bench]]
-harness = false
-name = "rs_clip"
-path = "benches/rs_clip.rs"
-
-[[bench]]
-harness = false
-name = "rs_from_gdal_raster"
-path = "benches/rs_from_gdal_raster.rs"
-
-[[bench]]
-harness = false
-name = "rs_frompath"
-path = "benches/rs_frompath.rs"
-
-[[bench]]
-harness = false
-name = "rs_metadata"
-path = "benches/rs_metadata.rs"
-
-[[bench]]
-harness = false
-name = "rs_polygonize"
-path = "benches/rs_polygonize.rs"
-
-[[bench]]
-harness = false
-name = "rs_as_raster"
-path = "benches/rs_as_raster.rs"
-
-[[bench]]
-harness = false
-name = "rs_zonalstats"
-path = "benches/rs_zonalstats.rs"
+sedona-testing = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

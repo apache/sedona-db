@@ -22,7 +22,7 @@ use libloading::Library;
 
 use crate::dyn_load;
 use crate::errors::{GdalError, GdalInitLibraryError};
-use crate::gdal_dyn_bindgen::SedonaGdalApi;
+use crate::gdal_dyn_bindgen::{GDALTransformerFunc, SedonaGdalApi};
 
 /// Invoke a function pointer from the `SedonaGdalApi` struct.
 ///
@@ -94,6 +94,14 @@ impl GdalApi {
                 .to_string_lossy()
                 .into_owned()
         }
+    }
+
+    /// Return the `GDALGenImgProjTransform` callback, passed as the transformer
+    /// to `GDALSuggestedWarpOutput`. Errors if the symbol did not resolve.
+    pub(crate) fn gen_img_proj_transform_fn(&self) -> Result<GDALTransformerFunc, GdalError> {
+        self.inner.GDALGenImgProjTransform.ok_or_else(|| {
+            GdalError::BadArgument("GDALGenImgProjTransform symbol is not available".to_string())
+        })
     }
 
     /// Check the last CPL error and return a `GdalError::CplError`, it always returns an error struct

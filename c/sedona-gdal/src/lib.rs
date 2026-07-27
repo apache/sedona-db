@@ -39,3 +39,4 @@ pub mod spatial_ref;
 pub mod vector;
 pub mod vrt;
 pub mod vsi;
+pub mod warp;
