@@ -41,7 +41,9 @@ use crate::extension::{
 };
 use crate::runtime::RuntimeHandle;
 use crate::set_ffi_error;
-use crate::utils::{cstr_from_ptr_or_empty, get_table_provider_string_property, PropertyValue, ERRNO_OK};
+use crate::utils::{
+    cstr_from_ptr_or_empty, get_table_provider_string_property, PropertyValue, ERRNO_OK,
+};
 use crate::{
     execution_plan::{ExportedExecutionPlan, ImportedSedonaCExec},
     expr::SessionRefRegistry,
