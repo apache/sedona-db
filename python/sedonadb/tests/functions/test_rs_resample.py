@@ -119,6 +119,7 @@ def test_rs_resample_nearest_upsample_matches_rasterio(
     expected = reference.resample(tiff, width=8, height=6)
 
     np.testing.assert_array_equal(got.pixels, expected.pixels)
+    assert got.pixels.dtype == expected.pixels.dtype
     assert got.pixels.shape == (2, 6, 8)
     assert_transform_and_nodata(got, expected)
 
@@ -138,6 +139,7 @@ def test_rs_resample_nearest_downsample_matches_rasterio(
     expected = reference.resample(tiff, width=4, height=3)
 
     np.testing.assert_array_equal(got.pixels, expected.pixels)
+    assert got.pixels.dtype == expected.pixels.dtype
     assert got.pixels.shape == (2, 3, 4)
     assert_transform_and_nodata(got, expected)
 
@@ -151,6 +153,7 @@ def test_rs_resample_nodata_preserved(sedona, reference, tmp_path):
     expected = reference.resample(tiff, width=8, height=6)
 
     np.testing.assert_array_equal(got.pixels, expected.pixels)
+    assert got.pixels.dtype == expected.pixels.dtype
     assert_transform_and_nodata(got, expected)
     assert got.nodata == [200]
 
@@ -181,6 +184,7 @@ def test_rs_resample_scale_mode_matches_dimension_mode(sedona, reference, tmp_pa
 
     assert by_scale.pixels.shape == (1, 6, 8)
     np.testing.assert_array_equal(by_scale.pixels, expected.pixels)
+    assert by_scale.pixels.dtype == expected.pixels.dtype
     assert_transform_and_nodata(by_scale, expected)
 
 
@@ -208,6 +212,7 @@ def test_rs_resample_scale_mode_grows_extent_matches_rasterio(
 
     assert got.pixels.shape == (2, 2, 2)
     np.testing.assert_array_equal(got.pixels, expected.pixels)
+    assert got.pixels.dtype == expected.pixels.dtype
     assert_transform_and_nodata(got, expected)
 
 
@@ -235,12 +240,14 @@ def test_rs_resample_reference_raster_matches_dimension_mode(
 
     assert got.pixels.shape == (2, 6, 8)
     np.testing.assert_array_equal(got.pixels, expected.pixels)
+    assert got.pixels.dtype == expected.pixels.dtype
     assert_transform_and_nodata(got, expected)
 
 
 def test_rs_resample_reference_raster_crs_mismatch_errors(con, tmp_path):
     """A reference raster in a different CRS errors — RS_Resample never
     reprojects."""
+    pytest.importorskip("rasterio")  # _write / _write_grid need rasterio
     tiff = _write(
         tmp_path, "uint8", bands=1, height=3, width=4, crs="EPSG:4326", name="in"
     )
