@@ -414,8 +414,14 @@ impl FunctionRegistry for PlaceholderRegistry {
     }
 }
 
+/// Placeholder [ScalarUDF] that preserves a function name
+///
+/// This struct is a stub for deserializing expressions where the actual execution of the expression
+/// is not necessarily important (e.g., for an implementation of TableProvider that independently
+/// parses expressions for pruning, or an implementation that does not use the filters expression
+/// at all).
 #[derive(Debug, Hash, PartialEq, Eq)]
-struct PlaceholderUDF {
+pub struct PlaceholderUDF {
     name: String,
 }
 
