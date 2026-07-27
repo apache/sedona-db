@@ -69,6 +69,13 @@ impl ExportedExpr {
             _ => Err(format!("Unknown property: {}", property)),
         }
     }
+
+    fn with_property(&self, property: &str) -> Result<ExportedExpr, String> {
+        match property {
+            "cloned" => Ok(ExportedExpr::new(self.expr.clone())),
+            _ => Err(format!("Unknown with_property: {}", property)),
+        }
+    }
 }
 
 impl From<Expr> for ExportedExpr {
@@ -83,7 +90,7 @@ impl From<ExportedExpr> for SedonaCExpr {
         Self {
             get_property_schema: Some(c_expr_get_property_schema),
             get_property: Some(c_expr_get_property),
-            with_property: None,
+            with_property: Some(c_expr_with_property),
             reserved: null_mut(),
             release: Some(c_expr_release),
             private_data: Box::into_raw(boxed) as *mut c_void,
@@ -116,12 +123,18 @@ unsafe extern "C" fn c_expr_get_property(
     self_: *const SedonaCExpr,
     property: *const c_char,
     _args: *const u8,
-    _args_len: usize,
+    args_len: usize,
     out: *mut FFI_ArrowArray,
     err: *mut SedonaCError,
 ) -> c_int {
     debug_assert!(!self_.is_null(), "self pointer is null");
     debug_assert!(!out.is_null(), "out pointer is null");
+
+    if args_len > 0 {
+        set_ffi_error!(err, "get_property does not accept arguments");
+        return libc::EINVAL;
+    }
+
     let self_ref = &*self_;
     debug_assert!(!self_ref.private_data.is_null(), "private_data is null");
     let exported = &*(self_ref.private_data as *const ExportedExpr);
@@ -134,6 +147,40 @@ unsafe extern "C" fn c_expr_get_property(
             let array = builder.finish();
             let ffi_array = FFI_ArrowArray::new(&array.to_data());
             std::ptr::write(out, ffi_array);
+            ERRNO_OK
+        }
+        Err(e) => {
+            set_ffi_error!(err, "{}", e);
+            libc::EINVAL
+        }
+    }
+}
+
+unsafe extern "C" fn c_expr_with_property(
+    self_: *const SedonaCExpr,
+    property: *const c_char,
+    _args: *const u8,
+    args_len: usize,
+    out: *mut SedonaCExpr,
+    err: *mut SedonaCError,
+) -> c_int {
+    debug_assert!(!self_.is_null(), "self pointer is null");
+    debug_assert!(!out.is_null(), "out pointer is null");
+
+    if args_len > 0 {
+        set_ffi_error!(err, "with_property does not accept arguments");
+        return libc::EINVAL;
+    }
+
+    let self_ref = &*self_;
+    debug_assert!(!self_ref.private_data.is_null(), "private_data is null");
+    let exported = &*(self_ref.private_data as *const ExportedExpr);
+    let property_str = cstr_from_ptr_or_empty(property);
+
+    match exported.with_property(&property_str) {
+        Ok(new_expr) => {
+            let ffi_expr: SedonaCExpr = new_expr.into();
+            std::ptr::write(out, ffi_expr);
             ERRNO_OK
         }
         Err(e) => {
@@ -198,6 +245,42 @@ impl ImportedExpr {
     pub fn get_string_property(&self, property: &str) -> Result<String> {
         get_expr_string_property(&self.inner, property)
     }
+
+    /// Clone this expression, returning a new ImportedExpr.
+    pub fn clone_expr(&self) -> Result<ImportedExpr> {
+        let new_ffi = call_with_property(&self.inner, "cloned")?;
+        ImportedExpr::try_new(new_ffi)
+    }
+}
+
+/// Call with_property on a [SedonaCExpr] and return a new SedonaCExpr.
+fn call_with_property(expr: &SedonaCExpr, property: &str) -> Result<SedonaCExpr> {
+    let Some(with_property) = expr.with_property else {
+        return sedona_internal_err!("SedonaCExpr does not have with_property");
+    };
+
+    let property_cstr = CString::new(property)
+        .map_err(|e| sedona_internal_datafusion_err!("Invalid property name: {}", e))?;
+
+    let mut out = SedonaCExpr::default();
+    let mut err = SedonaCError::default();
+
+    let code = unsafe {
+        with_property(
+            expr,
+            property_cstr.as_ptr(),
+            std::ptr::null(),
+            0,
+            &mut out,
+            &mut err,
+        )
+    };
+
+    if code != ERRNO_OK {
+        return sedona_internal_err!("SedonaCExpr with_property '{}' failed: {}", property, err);
+    }
+
+    Ok(out)
 }
 
 /// Get a string property from a [SedonaCExpr].
@@ -312,5 +395,34 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("does not have a release callback"));
+    }
+
+    #[test]
+    fn test_clone_expr() {
+        let expr = col("original");
+        let imported = roundtrip_expr(expr.clone());
+
+        // Clone via FFI
+        let cloned = imported.clone_expr().unwrap();
+
+        // Verify the clone has the same display string
+        let original_display = imported.get_string_property("display_string").unwrap();
+        let cloned_display = cloned.get_string_property("display_string").unwrap();
+        assert_eq!(original_display, cloned_display);
+        assert_eq!(cloned_display, "original");
+    }
+
+    #[test]
+    fn test_unknown_with_property_error() {
+        let expr = col("test");
+        let exported = ExportedExpr::new(expr);
+        let ffi_expr: SedonaCExpr = exported.into();
+        let imported = ImportedExpr::try_new(ffi_expr).unwrap();
+
+        // Try to call an unknown with_property
+        let result = call_with_property(&imported.inner, "unknown_property");
+        assert!(result.is_err());
+        let err_msg = result.err().unwrap().to_string();
+        assert!(err_msg.contains("Unknown with_property"));
     }
 }
