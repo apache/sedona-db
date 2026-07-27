@@ -71,10 +71,8 @@ kernels:
 
 ## Description
 
-`RS_Tile` cuts a raster into a grid of `width` x `height` tiles,
-returning a list with one item per tile. Because SedonaDB has no per-row
-generator, the tiles are returned as a list that you `UNNEST` to get one row
-per tile.
+`RS_Tile` cuts a raster into a grid of `width` x `height` tiles, returning a
+list with one item per tile that you `UNNEST` to get one row per tile.
 
 It has two overloads (`padWithNoData` and `noDataVal` are trailing
 optionals):
