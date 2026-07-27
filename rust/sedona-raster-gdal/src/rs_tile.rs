@@ -42,6 +42,7 @@ use datafusion_expr::{ColumnarValue, Volatility};
 
 use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_gdal::geo_transform::{GeoTransform, GeoTransformEx};
 use sedona_raster::array::RasterRefImpl;
 use sedona_raster::builder::RasterBuilder;
 use sedona_raster::traits::{is_spatial_dim_pair, nodata_f64_to_bytes, Bands, RasterRef};
@@ -262,8 +263,13 @@ impl SedonaScalarKernel for RsTile {
             let bands: Option<&[i64]> = match self.band_arg {
                 BandArg::All => None,
                 BandArg::Array => {
-                    let list = band_list_array.as_ref().expect("band list array present");
-                    let values = band_list_values.as_ref().expect("band list values present");
+                    let (Some(list), Some(values)) =
+                        (band_list_array.as_ref(), band_list_values.as_ref())
+                    else {
+                        return sedona_internal_err!(
+                            "RS_Tile: band list arrays missing for the Array overload"
+                        );
+                    };
                     if list.is_null(i) {
                         valid_list_items.append_null();
                         list_offsets.push_length(0);
@@ -406,31 +412,44 @@ fn explode_raster_tiles(
 
     let num_tile_x = width.div_ceil(tile_w);
     let num_tile_y = height.div_ceil(tile_h);
-    // x/y grid positions are Int32 (Spark parity). An i32-overflowing grid would
-    // silently wrap when appended, so reject it up front rather than emit a
-    // corrupt position.
-    if num_tile_x > i32::MAX as usize || num_tile_y > i32::MAX as usize {
+    // x/y grid positions are Int32 (Spark parity) and the tiles accumulate into
+    // an Int32-offset list, so the total tile count (and hence each grid
+    // dimension, since both are >= 1) must fit i32. Reject an overflowing grid up
+    // front rather than wrap a position or panic building the list offsets.
+    let Some(num_tiles) = num_tile_x
+        .checked_mul(num_tile_y)
+        .filter(|&n| n <= i32::MAX as usize)
+    else {
         return exec_err!(
-            "RS_Tile: tile grid {num_tile_x}x{num_tile_y} exceeds the Int32 position limit"
+            "RS_Tile: tile grid {num_tile_x}x{num_tile_y} exceeds the Int32 tile-count limit"
         );
-    }
+    };
 
     let band_indices = resolve_band_indices(params.bands, raster.num_bands())?;
     let bands = raster.bands();
 
     for tile_y in 0..num_tile_y {
         for tile_x in 0..num_tile_x {
-            let window = TileWindow::new(tile_x, tile_y, tile_w, tile_h, width, height);
+            let window = TileWindow::new(
+                tile_x,
+                tile_y,
+                tile_w,
+                tile_h,
+                width,
+                height,
+                params.pad_with_nodata,
+            );
             append_tile(raster, &bands, &band_indices, &window, params, rast_builder)?;
             x_builder.append_value(tile_x as i32);
             y_builder.append_value(tile_y as i32);
         }
     }
 
-    Ok(num_tile_x * num_tile_y)
+    Ok(num_tiles)
 }
 
-/// The pixel window one tile copies from the source, plus the tile's own extent.
+/// The pixel window one tile copies from the source, plus the tile's output
+/// extent.
 struct TileWindow {
     /// Source pixel offset of the tile's upper-left corner.
     x0: usize,
@@ -438,9 +457,10 @@ struct TileWindow {
     /// Source pixels actually available for this tile (<= tile size at the edge).
     rect_w: usize,
     rect_h: usize,
-    /// The tile's own extent, before padding is considered.
-    tile_w: usize,
-    tile_h: usize,
+    /// The tile's output extent: the full tile size when padding, otherwise the
+    /// (possibly smaller) source rectangle at the edge.
+    out_w: usize,
+    out_h: usize,
 }
 
 impl TileWindow {
@@ -451,36 +471,41 @@ impl TileWindow {
         tile_h: usize,
         width: usize,
         height: usize,
+        pad: bool,
     ) -> Self {
         let x0 = tile_x * tile_w;
         let y0 = tile_y * tile_h;
+        let rect_w = tile_w.min(width - x0);
+        let rect_h = tile_h.min(height - y0);
+        let (out_w, out_h) = if pad {
+            (tile_w, tile_h)
+        } else {
+            (rect_w, rect_h)
+        };
         Self {
             x0,
             y0,
-            rect_w: tile_w.min(width - x0),
-            rect_h: tile_h.min(height - y0),
-            tile_w,
-            tile_h,
+            rect_w,
+            rect_h,
+            out_w,
+            out_h,
         }
     }
 
-    /// The tile's output `(width, height)`: the full tile size when padding,
-    /// otherwise the (possibly smaller) source rectangle at the edge.
-    fn out_extent(&self, pad: bool) -> (usize, usize) {
-        if pad {
-            (self.tile_w, self.tile_h)
-        } else {
-            (self.rect_w, self.rect_h)
-        }
+    /// Whether this tile was actually padded: a short edge tile whose output
+    /// extent exceeds the source pixels available. Interior tiles are fully
+    /// covered by the source and return false.
+    fn needs_padding(&self) -> bool {
+        self.out_w > self.rect_w || self.out_h > self.rect_h
     }
 }
 
 /// Resolve which 1-based band indices to include, validating each against the
-/// raster's band count. `None` selects every band in order.
+/// raster's band count. `None` (band-less overload) and an empty list both
+/// select every band in order, matching Sedona Spark.
 fn resolve_band_indices(bands: Option<&[i64]>, num_bands: usize) -> Result<Vec<usize>> {
     match bands {
-        None => Ok((1..=num_bands).collect()),
-        Some([]) => exec_err!("RS_Tile: bands must not be empty"),
+        None | Some([]) => Ok((1..=num_bands).collect()),
         Some(bands) => bands
             .iter()
             .map(|&band| {
@@ -502,14 +527,14 @@ fn append_tile(
     params: &TileParams<'_>,
     rast_builder: &mut RasterBuilder,
 ) -> Result<()> {
-    let (out_w, out_h) = window.out_extent(params.pad_with_nodata);
-
     // The tile's upper-left corner is the source origin translated by the tile's
-    // pixel offset; scale/skew are unchanged. Matches the crop-origin shift in
-    // RS_Clip and PostGIS ST_Clip.
-    let src = raster.transform();
-    let new_ulx = src[0] + (window.x0 as f64) * src[1] + (window.y0 as f64) * src[2];
-    let new_uly = src[3] + (window.y0 as f64) * src[5] + (window.x0 as f64) * src[4];
+    // pixel offset (scale/skew unchanged), via the shared geotransform apply.
+    // Matches the crop-origin shift in RS_Clip and PostGIS ST_Clip.
+    let src: GeoTransform = raster
+        .transform()
+        .try_into()
+        .map_err(|_| exec_datafusion_err!("RS_Tile: expected a 6-element geotransform"))?;
+    let (new_ulx, new_uly) = src.apply(window.x0 as f64, window.y0 as f64);
     let tile_transform = [new_ulx, src[1], src[2], new_uly, src[4], src[5]];
 
     // Spatial extent after tiling. `spatial_dims`/`spatial_shape` are kept in the
@@ -521,9 +546,9 @@ fn append_tile(
         .iter()
         .map(|&d| {
             if d == x_dim {
-                out_w as i64
+                window.out_w as i64
             } else {
-                out_h as i64
+                window.out_h as i64
             }
         })
         .collect();
@@ -538,16 +563,7 @@ fn append_tile(
         .map_err(|e| exec_datafusion_err!("RS_Tile: failed to start raster: {e}"))?;
 
     for &band_idx in band_indices {
-        append_tile_band(
-            raster,
-            bands,
-            band_idx,
-            window,
-            params,
-            out_w,
-            out_h,
-            rast_builder,
-        )?;
+        append_tile_band(raster, bands, band_idx, window, params, rast_builder)?;
     }
 
     rast_builder
@@ -557,15 +573,12 @@ fn append_tile(
 }
 
 /// Copy one band's tile window and append it to `rast_builder`.
-#[allow(clippy::too_many_arguments)]
 fn append_tile_band(
     raster: &RasterRefImpl<'_>,
     bands: &Bands<'_>,
     band_idx: usize,
     window: &TileWindow,
     params: &TileParams<'_>,
-    out_w: usize,
-    out_h: usize,
     rast_builder: &mut RasterBuilder,
 ) -> Result<()> {
     let band = bands
@@ -620,13 +633,13 @@ fn append_tile_band(
         );
     }
 
-    // nodata: when padding, the fill written to padded pixels (explicit option,
-    // else the band's own nodata, else the data type minimum — matching RS_Clip,
-    // and guarded so a value that doesn't fit the band dtype errors rather than
-    // silently saturating); the tile band records it as its nodata. When not
-    // padding there are no padded pixels, so the source band's own nodata is
-    // preserved verbatim.
-    let (pad_fill, tile_nodata): (Option<Vec<u8>>, Option<Vec<u8>>) = if params.pad_with_nodata {
+    // Only tiles that were actually padded carry the nodata fill: interior tiles
+    // are fully covered by the source, so they keep the source band's own nodata
+    // (matching Sedona Spark, which stamps the pad nodata only on short edge
+    // tiles). The fill is the explicit noDataVal, else the band's own nodata,
+    // else the data type minimum (matching RS_Clip), guarded so a value that
+    // doesn't fit the band dtype errors rather than silently saturating.
+    let (pad_fill, tile_nodata): (Option<Vec<u8>>, Option<Vec<u8>>) = if window.needs_padding() {
         let fill = match params.nodata {
             Some(value) => nodata_f64_to_bytes(value, &data_type).map_err(|e| {
                 exec_datafusion_err!("RS_Tile: invalid nodata for band {band_idx}: {e}")
@@ -636,6 +649,12 @@ fn append_tile_band(
                 None => data_type.min_value_le_bytes(),
             },
         };
+        if fill.len() != byte_size {
+            return sedona_internal_err!(
+                "RS_Tile: band {band_idx} nodata fill is {} bytes, expected {byte_size} for {data_type:?}",
+                fill.len()
+            );
+        }
         (Some(fill.clone()), Some(fill))
     } else {
         (
@@ -646,17 +665,34 @@ fn append_tile_band(
 
     // One output allocation serves the whole band: every plane appends into it,
     // and the finished Vec moves into the Arrow array as a zero-copy view block
-    // rather than being copied through the builder.
-    let out_plane_bytes = out_w * out_h * byte_size;
-    let mut tile_data = Vec::with_capacity(n_planes * out_plane_bytes);
+    // rather than being copied through the builder. The band data is appended as
+    // one binary view (u32-limited), so size the buffer with checked arithmetic
+    // and reject an oversize (e.g. huge padded) tile before allocating rather
+    // than after filling the whole thing.
+    let total_bytes = window
+        .out_w
+        .checked_mul(window.out_h)
+        .and_then(|plane| plane.checked_mul(byte_size))
+        .and_then(|plane_bytes| plane_bytes.checked_mul(n_planes))
+        .ok_or_else(|| {
+            exec_datafusion_err!(
+                "RS_Tile: tile band extent {}x{} of {n_planes} planes overflows",
+                window.out_w,
+                window.out_h
+            )
+        })?;
+    let band_data_len = u32::try_from(total_bytes).map_err(|_| {
+        exec_datafusion_err!(
+            "RS_Tile: tile band data of {total_bytes} bytes exceeds the binary-view limit"
+        )
+    })?;
+    let mut tile_data = Vec::with_capacity(total_bytes);
     for plane in 0..n_planes {
         let plane_bytes = &source[plane * in_plane_bytes..(plane + 1) * in_plane_bytes];
         copy_tile_window(
             plane_bytes,
             width,
             window,
-            out_w,
-            out_h,
             byte_size,
             pad_fill.as_deref(),
             &mut tile_data,
@@ -664,8 +700,8 @@ fn append_tile_band(
     }
 
     let mut out_shape = shape[..ndim - 2].to_vec();
-    out_shape.push(out_h as i64);
-    out_shape.push(out_w as i64);
+    out_shape.push(window.out_h as i64);
+    out_shape.push(window.out_w as i64);
 
     let dim_names_ref: Vec<&str> = dim_names.iter().map(String::as_str).collect();
     rast_builder
@@ -682,15 +718,9 @@ fn append_tile_band(
 
     // Move the band bytes into an Arrow buffer and append them as a view (a
     // refcount bump) instead of copying them through the builder.
-    let len = u32::try_from(tile_data.len()).map_err(|_| {
-        exec_datafusion_err!(
-            "RS_Tile: tile band data of {} bytes exceeds the binary-view limit",
-            tile_data.len()
-        )
-    })?;
     let buffer = Buffer::from(tile_data);
     rast_builder
-        .append_band_data_buffer(&buffer, 0, len)
+        .append_band_data_buffer(&buffer, 0, band_data_len)
         .map_err(|e| exec_datafusion_err!("RS_Tile: failed to append band data: {e}"))?;
     rast_builder
         .finish_band()
@@ -704,47 +734,48 @@ fn append_tile_band(
 ///
 /// When not padding, `out_w == rect_w` and `out_h == rect_h`, so the padding
 /// branches never run and `pad_fill` is unused.
-#[allow(clippy::too_many_arguments)]
 fn copy_tile_window(
     src_plane: &[u8],
     full_width: usize,
     window: &TileWindow,
-    out_w: usize,
-    out_h: usize,
     byte_size: usize,
     pad_fill: Option<&[u8]>,
     out: &mut Vec<u8>,
 ) -> Result<()> {
-    let out_row_bytes = out_w * byte_size;
+    let out_row_bytes = window.out_w * byte_size;
     let base = out.len();
-    out.resize(base + out_h * out_row_bytes, 0);
+    out.resize(base + window.out_h * out_row_bytes, 0);
     let dst = &mut out[base..];
 
-    let need_col_pad = out_w > window.rect_w;
-    let need_row_pad = out_h > window.rect_h;
+    let need_col_pad = window.out_w > window.rect_w;
+    let need_row_pad = window.out_h > window.rect_h;
     // A single nodata row is reused for both the padded columns and the padded
     // rows. Only built when padding is actually needed for this tile.
     let nodata_row = if need_col_pad || need_row_pad {
         let fill = pad_fill.ok_or_else(|| {
             exec_datafusion_err!("RS_Tile: padding required but no nodata fill resolved")
         })?;
-        Some(fill.repeat(out_w))
+        Some(fill.repeat(window.out_w))
     } else {
         None
     };
 
     let copy_bytes = window.rect_w * byte_size;
-    for row in 0..out_h {
+    for row in 0..window.out_h {
         let dst_row = &mut dst[row * out_row_bytes..(row + 1) * out_row_bytes];
         if row < window.rect_h {
             let src_start = ((window.y0 + row) * full_width + window.x0) * byte_size;
             dst_row[..copy_bytes].copy_from_slice(&src_plane[src_start..src_start + copy_bytes]);
             if need_col_pad {
-                let nodata_row = nodata_row.as_ref().expect("nodata row built when padding");
+                let Some(nodata_row) = nodata_row.as_ref() else {
+                    return sedona_internal_err!("RS_Tile: padded column without a nodata row");
+                };
                 dst_row[copy_bytes..].copy_from_slice(&nodata_row[copy_bytes..]);
             }
         } else {
-            let nodata_row = nodata_row.as_ref().expect("nodata row built when padding");
+            let Some(nodata_row) = nodata_row.as_ref() else {
+                return sedona_internal_err!("RS_Tile: padded row without a nodata row");
+            };
             dst_row.copy_from_slice(nodata_row);
         }
     }
@@ -945,20 +976,24 @@ mod tests {
 
     #[test]
     fn tiles_2x2_with_padding() {
-        // Same grid, but edge tiles are padded to the full 2x2 with nodata 0.
-        // Every tile records nodata 0 so the output schema is uniform.
+        // Same grid, but the short edge tiles (right column / bottom row) are
+        // padded to the full 2x2 with nodata 0 and record nodata 0. The two
+        // fully-interior tiles need no padding, so they keep the source band's
+        // nodata (here none) -- matching Sedona Spark, which stamps the pad
+        // nodata only on the tiles it actually padded.
         let (positions, tiles) = explode(&source_5x3(), 2, 2, params(None, true, Some(0.0)));
         assert_eq!(
             positions,
             vec![(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1)]
         );
+        let interior = |ulx: f64, uly: f64, values: &[u8]| Some(tile(2, 2, ulx, uly, values));
         let padded =
             |ulx: f64, uly: f64, values: &[u8]| Some(tile(2, 2, ulx, uly, values).nodata(0u8));
         assert_rasters_equal(
             &tiles,
             &[
-                padded(0.0, 3.0, &[1, 2, 6, 7]),
-                padded(2.0, 3.0, &[3, 4, 8, 9]),
+                interior(0.0, 3.0, &[1, 2, 6, 7]),
+                interior(2.0, 3.0, &[3, 4, 8, 9]),
                 padded(4.0, 3.0, &[5, 0, 10, 0]),
                 padded(0.0, 1.0, &[11, 12, 0, 0]),
                 padded(2.0, 1.0, &[13, 14, 0, 0]),
@@ -1087,8 +1122,10 @@ mod tests {
         assert_rasters_equal(
             &tiles,
             &[
-                Some(tile(2, 1, 0.0, 1.0, &[1, 2]).nodata(0u8)),
-                // Edge tile padded to width 2 with the UInt8 minimum.
+                // Interior tile: no padding, so it keeps the source nodata (none).
+                Some(tile(2, 1, 0.0, 1.0, &[1, 2])),
+                // Edge tile padded to width 2 with the UInt8 minimum, recorded as
+                // the tile nodata.
                 Some(tile(2, 1, 2.0, 1.0, &[3, 0]).nodata(0u8)),
             ],
         );
@@ -1321,9 +1358,35 @@ mod tests {
         assert_rasters_equal(
             &scalar_tiles(&result),
             &[
-                Some(tile(2, 1, 0.0, 1.0, &[1, 2]).nodata(7u8)),
+                // Interior tile: no padding, so noDataVal is not applied and it
+                // keeps the source nodata (none).
+                Some(tile(2, 1, 0.0, 1.0, &[1, 2])),
                 // Edge tile padded to width 2 with the supplied nodata 7.
                 Some(tile(2, 1, 2.0, 1.0, &[3, 7]).nodata(7u8)),
+            ],
+        );
+    }
+
+    #[test]
+    fn padded_interior_tile_keeps_source_nodata() {
+        // With pad_with_nodata and an explicit noDataVal that differs from the
+        // source band's own nodata, only the padded edge tile gets the pad
+        // nodata; the interior tile keeps the SOURCE nodata (99, not the pad fill
+        // 0), matching Sedona Spark's "stamp only the padded tiles" behavior.
+        let source = RasterSpec::d2(3, 1)
+            .crs(None)
+            .transform([0.0, 1.0, 0.0, 1.0, 0.0, -1.0])
+            .band_values(&[1u8, 2, 3])
+            .nodata(99u8);
+        let (positions, tiles) = explode(&source, 2, 1, params(None, true, Some(0.0)));
+        assert_eq!(positions, vec![(0, 0), (1, 0)]);
+        assert_rasters_equal(
+            &tiles,
+            &[
+                // Interior tile: keeps the source band's nodata (99), not the fill.
+                Some(tile(2, 1, 0.0, 1.0, &[1, 2]).nodata(99u8)),
+                // Edge tile padded to width 2 with the supplied fill 0.
+                Some(tile(2, 1, 2.0, 1.0, &[3, 0]).nodata(0u8)),
             ],
         );
     }
@@ -1342,9 +1405,53 @@ mod tests {
     }
 
     #[test]
-    fn empty_bands_errors() {
-        let err = explode_one_error(&source_5x3(), 2, 2, params(Some(&[]), false, None));
-        assert!(err.contains("must not be empty"), "unexpected error: {err}");
+    fn empty_bands_selects_all_bands() {
+        // An empty bandIndices array selects every band, matching Sedona Spark
+        // (which treats empty and NULL alike as "all bands"). On the single-band
+        // source_5x3 this tiles the whole raster like the band-less overload.
+        let (positions, tiles) = explode(&source_5x3(), 5, 3, params(Some(&[]), false, None));
+        assert_eq!(positions, vec![(0, 0)]);
+        assert_rasters_equal(
+            &tiles,
+            &[Some(tile(
+                5,
+                3,
+                0.0,
+                3.0,
+                &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+            ))],
+        );
+    }
+
+    #[test]
+    fn null_band_indices_yields_null_row() {
+        // A NULL bandIndices argument (Array overload) casts to a null list and
+        // propagates to a NULL list row rather than erroring on the cast or the
+        // offset lookup.
+        let kernel = RsTile {
+            band_arg: BandArg::Array,
+            arg_count: 4,
+        };
+        let result = kernel
+            .invoke_batch(
+                &[
+                    RASTER,
+                    SedonaType::Arrow(DataType::Null),
+                    SedonaType::Arrow(DataType::Int32),
+                    SedonaType::Arrow(DataType::Int32),
+                ],
+                &[
+                    ColumnarValue::Scalar(source_5x3().scalar()),
+                    ColumnarValue::Scalar(ScalarValue::Null),
+                    ColumnarValue::Scalar(ScalarValue::Int32(Some(2))),
+                    ColumnarValue::Scalar(ScalarValue::Int32(Some(2))),
+                ],
+            )
+            .unwrap();
+        let ColumnarValue::Scalar(ScalarValue::List(list)) = result else {
+            panic!("expected a scalar list result, got {result:?}");
+        };
+        assert!(list.is_null(0), "a NULL bandIndices yields a NULL list row");
     }
 
     #[test]
