@@ -98,23 +98,35 @@ as-is, and with `padWithNoData = true` those tiles are padded to the full tile
 size with a nodata fill. When the band(s) have no nodata value, `noDataVal`
 supplies one.
 
+::: callout-note
+`RS_Tile` **copies the raster**: every tile carries its own pixels, so the
+returned list materializes a full copy of the raster spread across the tiles and
+held in memory as one list value. A small tile size produces many tiles (a
+`1 x 1` tile size yields one tile per pixel).
+:::
+
 ## Examples
 
-Tile every band into a 2x2 grid of 32x16 tiles:
+Tile every band into a 2x2 grid of 32x16 tiles, then `UNNEST` the list to get
+one row per tile (counted here so the example output stays small rather than
+printing every tile raster):
 
 ```sql
-SELECT RS_Tile(RS_Example(), 32, 16);
+SELECT COUNT(*) AS num_tiles
+FROM (SELECT UNNEST(RS_Tile(RS_Example(), 32, 16)) AS tile);
 ```
 
-Tile every band, padding the edge tiles to the full 40x20 size with a
-nodata fill of 0:
+Tile every band, padding the edge tiles to the full 40x20 size with a nodata
+fill of 0:
 
 ```sql
-SELECT RS_Tile(RS_Example(), 40, 20, true, 0.0);
+SELECT COUNT(*) AS num_tiles
+FROM (SELECT UNNEST(RS_Tile(RS_Example(), 40, 20, true, 0.0)) AS tile);
 ```
 
 Tile an ordered subset of bands:
 
 ```sql
-SELECT RS_Tile(RS_Example(), make_array(1, 3), 32, 16);
+SELECT COUNT(*) AS num_tiles
+FROM (SELECT UNNEST(RS_Tile(RS_Example(), make_array(1, 3), 32, 16)) AS tile);
 ```
