@@ -18,12 +18,12 @@
 """RS_ZonalStats / RS_ZonalStatsAll cross-checked against a numpy reference.
 
 Both functions mirror Apache Sedona Spark's positional overloads, so the tests
-call them positionally: `(raster, zone, stat_type)` /
-`(raster, zone, band, stat_type[, all_touched[, exclude_nodata[, lenient]]])`
+call them positionally: `(raster, roi, stat_type)` /
+`(raster, roi, band, stat_type[, all_touched[, exclude_no_data[, lenient]]])`
 for RS_ZonalStats and the same ladder without `stat_type` for RS_ZonalStatsAll.
 
 The fixture raster is CRS-less (so nothing reprojects and pixel selection is
-bit-comparable). The reference rasterizes the zone with `rasterio.features`
+bit-comparable). The reference rasterizes the roi with `rasterio.features`
 (the same GDAL rasterizer the kernel uses) and reduces the selected pixels with
 numpy; exact-selection statistics (count, sum, min, max, median, mode) are
 compared exactly and the float-accumulation ones (mean, variance, stddev) with
@@ -89,8 +89,8 @@ def fixture_raster(tmp_path):
     return path, data[0]
 
 
-def numpy_reference(band, wkt, *, all_touched, exclude_nodata):
-    """Reference statistics over the pixels the zone selects, via rasterio+numpy.
+def numpy_reference(band, wkt, *, all_touched, exclude_no_data):
+    """Reference statistics over the pixels the roi selects, via rasterio+numpy.
 
     Returns a dict of every statistic, or the sentinel string ``"empty"`` when
     the selection is empty (the caller maps that to count 0 / NULLs).
@@ -109,7 +109,7 @@ def numpy_reference(band, wkt, *, all_touched, exclude_nodata):
         dtype="uint8",
     )
     sel = band[mask == 1].astype(np.float64)
-    if exclude_nodata:
+    if exclude_no_data:
         sel = sel[sel != NODATA]
     if sel.size == 0:
         return "empty"
@@ -131,7 +131,7 @@ def numpy_reference(band, wkt, *, all_touched, exclude_nodata):
 
 
 def _one_row(con, path, wkt):
-    """A one-row frame with the raster and zone as columns, so the kernel runs
+    """A one-row frame with the raster and roi as columns, so the kernel runs
     its real per-row array path rather than constant-folding a scalar."""
     df = con.create_data_frame(
         pa.table(
@@ -147,9 +147,9 @@ def _one_row(con, path, wkt):
 def zonal_stat(con, path, wkt, trailing):
     """RS_ZonalStats over a one-row table.
 
-    `trailing` is the positional argument list after `(raster, zone)` — e.g.
-    `["mean"]` (band-less overload) or `[1, "mean", all_touched, exclude_nodata,
-    lenient]`. Raster and zone travel as columns; the trailing scalars are
+    `trailing` is the positional argument list after `(raster, roi)` — e.g.
+    `["mean"]` (band-less overload) or `[1, "mean", all_touched, exclude_no_data,
+    lenient]`. Raster and roi travel as columns; the trailing scalars are
     literals, matching how the SQL reads.
     """
     df, raster, geom = _one_row(con, path, wkt)
@@ -160,8 +160,8 @@ def zonal_stat(con, path, wkt, trailing):
 def zonal_stats_all(con, path, wkt, trailing):
     """RS_ZonalStatsAll over a one-row table; returns the struct as a dict.
 
-    `trailing` is the positional argument list after `(raster, zone)` — e.g.
-    `[]` (band-less overload) or `[1, all_touched, exclude_nodata, lenient]`.
+    `trailing` is the positional argument list after `(raster, roi)` — e.g.
+    `[]` (band-less overload) or `[1, all_touched, exclude_no_data, lenient]`.
     """
     df, raster, geom = _one_row(con, path, wkt)
     table = df.select(r=raster.funcs.rs_zonalstatsall(geom, *trailing)).to_arrow_table()
@@ -173,11 +173,11 @@ def zonal_stats_all(con, path, wkt, trailing):
 def test_single_stat_matches_numpy(con, tmp_path, stat, all_touched):
     path, band = fixture_raster(tmp_path)
     expected = numpy_reference(
-        band, GEOM_RECT, all_touched=all_touched, exclude_nodata=True
+        band, GEOM_RECT, all_touched=all_touched, exclude_no_data=True
     )
     assert expected != "empty", "GEOM_RECT should select pixels"
 
-    # (raster, zone, band, stat_type, all_touched) — the 5-arg overload.
+    # (raster, roi, band, stat_type, all_touched) — the 5-arg overload.
     got = zonal_stat(con, path, GEOM_RECT, [1, stat, all_touched])
     if stat in EXACT_STATS:
         assert got == expected[stat]
@@ -187,8 +187,8 @@ def test_single_stat_matches_numpy(con, tmp_path, stat, all_touched):
 
 def test_all_struct_matches_numpy(con, tmp_path):
     path, band = fixture_raster(tmp_path)
-    expected = numpy_reference(band, GEOM_RECT, all_touched=False, exclude_nodata=True)
-    # (raster, zone, band) — all_touched defaults to false.
+    expected = numpy_reference(band, GEOM_RECT, all_touched=False, exclude_no_data=True)
+    # (raster, roi, band) — all_touched defaults to false.
     got = zonal_stats_all(con, path, GEOM_RECT, [1])
 
     # count is an integer field (Int64); every other field is floating point.
@@ -201,17 +201,19 @@ def test_all_struct_matches_numpy(con, tmp_path):
         assert got[stat] == pytest.approx(expected[stat])
 
 
-def test_exclude_nodata_default_and_disabled(con, tmp_path):
+def test_exclude_no_data_default_and_disabled(con, tmp_path):
     path, band = fixture_raster(tmp_path)
     # Default excludes nodata; disabling it keeps those pixels, raising count.
-    excluded = numpy_reference(band, GEOM_RECT, all_touched=False, exclude_nodata=True)
-    included = numpy_reference(band, GEOM_RECT, all_touched=False, exclude_nodata=False)
+    excluded = numpy_reference(band, GEOM_RECT, all_touched=False, exclude_no_data=True)
+    included = numpy_reference(
+        band, GEOM_RECT, all_touched=False, exclude_no_data=False
+    )
     assert included["count"] > excluded["count"]
 
-    # Default (4-arg (raster, zone, band, stat_type)) excludes nodata.
+    # Default (4-arg (raster, roi, band, stat_type)) excludes nodata.
     assert zonal_stat(con, path, GEOM_RECT, [1, "count"]) == excluded["count"]
-    # exclude_nodata => false keeps it: the 6-arg overload trails (all_touched,
-    # exclude_nodata).
+    # exclude_no_data => false keeps it: the 6-arg overload trails (all_touched,
+    # exclude_no_data).
     assert (
         zonal_stat(con, path, GEOM_RECT, [1, "count", False, False])
         == included["count"]
@@ -220,7 +222,7 @@ def test_exclude_nodata_default_and_disabled(con, tmp_path):
 
 def test_sliver_selects_nothing_unless_all_touched(con, tmp_path):
     path, _ = fixture_raster(tmp_path)
-    # The zone overlaps the raster but covers no pixel center: count 0, rest NULL.
+    # The roi overlaps the raster but covers no pixel center: count 0, rest NULL.
     assert zonal_stat(con, path, GEOM_SLIVER, [1, "count"]) == 0.0
     assert zonal_stat(con, path, GEOM_SLIVER, [1, "sum"]) is None
     # all_touched (5-arg overload) picks up the pixels it crosses.
@@ -234,7 +236,7 @@ def test_no_intersection_is_null_when_lenient_and_errors_when_strict(con, tmp_pa
     assert zonal_stat(con, path, GEOM_DISJOINT, [1, "count"]) is None
     assert zonal_stats_all(con, path, GEOM_DISJOINT, [1]) is None
     # Strict (lenient => false): the 7-arg overload trails (all_touched,
-    # exclude_nodata, lenient).
+    # exclude_no_data, lenient).
     with pytest.raises(Exception, match="does not intersect"):
         zonal_stat(con, path, GEOM_DISJOINT, [1, "count", False, True, False])
 
@@ -245,7 +247,7 @@ def test_bbox_overlapping_but_geometry_disjoint_is_no_intersection(con, tmp_path
 
     path, _ = fixture_raster(tmp_path)
 
-    # Premise: the zone's bounding box overlaps the raster extent, but the
+    # Premise: the roi's bounding box overlaps the raster extent, but the
     # geometry is disjoint from it (unlike GEOM_DISJOINT, whose bbox misses too).
     ox, px, _, oy, _, py = GDAL_TRANSFORM
     raster_extent = box(ox, oy + py * HEIGHT, ox + px * WIDTH, oy)
@@ -256,7 +258,7 @@ def test_bbox_overlapping_but_geometry_disjoint_is_no_intersection(con, tmp_path
     # Lenient (default): NULL, not count 0 — a true no-intersection case.
     assert zonal_stat(con, path, GEOM_DISJOINT_BBOX, [1, "count"]) is None
     assert zonal_stats_all(con, path, GEOM_DISJOINT_BBOX, [1]) is None
-    # Strict: errors, exactly like the fully-disjoint zone.
+    # Strict: errors, exactly like the fully-disjoint roi.
     with pytest.raises(Exception, match="does not intersect"):
         zonal_stat(con, path, GEOM_DISJOINT_BBOX, [1, "count", False, True, False])
 
@@ -274,10 +276,10 @@ def test_implicit_band_on_multiband_raster_errors(con, tmp_path):
     path = tmp_path / "multiband.tif"
     write_geotiff(path, data, gdal_transform=GDAL_TRANSFORM)
 
-    # RS_ZonalStats 3-arg (raster, zone, stat_type): band implicit.
+    # RS_ZonalStats 3-arg (raster, roi, stat_type): band implicit.
     with pytest.raises(Exception, match="2 bands"):
         zonal_stat(con, path, GEOM_RECT, ["count"])
-    # RS_ZonalStatsAll 2-arg (raster, zone): band implicit.
+    # RS_ZonalStatsAll 2-arg (raster, roi): band implicit.
     with pytest.raises(Exception, match="2 bands"):
         zonal_stats_all(con, path, GEOM_RECT, [])
     # Naming the band resolves the ambiguity.
@@ -287,7 +289,7 @@ def test_implicit_band_on_multiband_raster_errors(con, tmp_path):
 def test_sql_text_smoke(con, tmp_path):
     """One raw-SQL invocation per function keeps the parser path covered."""
     path, band = fixture_raster(tmp_path)
-    expected = numpy_reference(band, GEOM_RECT, all_touched=False, exclude_nodata=True)
+    expected = numpy_reference(band, GEOM_RECT, all_touched=False, exclude_no_data=True)
 
     single = con.sql(
         "SELECT RS_ZonalStats(RS_FromPath($1), ST_GeomFromText($2), 1, 'sum') AS r",

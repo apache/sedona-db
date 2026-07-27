@@ -16,30 +16,30 @@
 // under the License.
 
 //! RS_ZonalStats / RS_ZonalStatsAll UDFs — summary statistics of the raster
-//! pixels covered by a zone geometry.
+//! pixels covered by a roi geometry.
 //!
 //! Both mirror Apache Sedona Spark's positional overloads verbatim so that
 //! Spark SQL tends to run unchanged. `RS_ZonalStats` returns one statistic as a
 //! `Float64`:
 //!
-//! - `RS_ZonalStats(raster, zone, stat)`
-//! - `RS_ZonalStats(raster, zone, band, stat)`
-//! - `RS_ZonalStats(raster, zone, band, stat, all_touched)`
-//! - `RS_ZonalStats(raster, zone, band, stat, all_touched, exclude_nodata)`
-//! - `RS_ZonalStats(raster, zone, band, stat, all_touched, exclude_nodata, lenient)`
+//! - `RS_ZonalStats(raster, roi, stat)`
+//! - `RS_ZonalStats(raster, roi, band, stat)`
+//! - `RS_ZonalStats(raster, roi, band, stat, all_touched)`
+//! - `RS_ZonalStats(raster, roi, band, stat, all_touched, exclude_no_data)`
+//! - `RS_ZonalStats(raster, roi, band, stat, all_touched, exclude_no_data, lenient)`
 //!
 //! `RS_ZonalStatsAll` returns every statistic as a struct, with the same ladder
 //! minus `stat`:
 //!
-//! - `RS_ZonalStatsAll(raster, zone)`
-//! - `RS_ZonalStatsAll(raster, zone, band)`
-//! - `RS_ZonalStatsAll(raster, zone, band, all_touched)`
-//! - `RS_ZonalStatsAll(raster, zone, band, all_touched, exclude_nodata)`
-//! - `RS_ZonalStatsAll(raster, zone, band, all_touched, exclude_nodata, lenient)`
+//! - `RS_ZonalStatsAll(raster, roi)`
+//! - `RS_ZonalStatsAll(raster, roi, band)`
+//! - `RS_ZonalStatsAll(raster, roi, band, all_touched)`
+//! - `RS_ZonalStatsAll(raster, roi, band, all_touched, exclude_no_data)`
+//! - `RS_ZonalStatsAll(raster, roi, band, all_touched, exclude_no_data, lenient)`
 //!
-//! A pixel is included when its centre falls inside the zone (or that the zone
+//! A pixel is included when its centre falls inside the roi (or that the roi
 //! merely touches, with `all_touched`), optionally excluding the band's nodata
-//! value. `all_touched` defaults to false, `exclude_nodata` to true, and
+//! value. `all_touched` defaults to false, `exclude_no_data` to true, and
 //! `lenient` to true. Unlike Sedona Spark, the band-less overloads do not
 //! default to band 1 on a multiband raster: naming the band is required there
 //! (a single-band raster resolves unambiguously).
@@ -127,18 +127,18 @@ struct ZonalStatsParams {
     /// the band is required rather than silently getting band 1). Only the
     /// band-less overloads leave this `None`.
     band: Option<i64>,
-    /// Include every pixel the zone touches, not only those whose centre it
+    /// Include every pixel the roi touches, not only those whose centre it
     /// covers.
     all_touched: bool,
     /// Skip pixels equal to the band's nodata value.
-    exclude_nodata: bool,
-    /// Return NULL when the zone does not intersect the raster, rather than
+    exclude_no_data: bool,
+    /// Return NULL when the roi does not intersect the raster, rather than
     /// erroring. Only the no-intersection case is softened; malformed geometry
     /// or an unreadable band always errors.
     lenient: bool,
 }
 
-/// Every statistic for a zone. `count` is always present (0 when the zone
+/// Every statistic for a roi. `count` is always present (0 when the roi
 /// selects no pixels); the remaining fields are `None` in exactly that
 /// no-pixel case and `Some` otherwise, mirroring Sedona Spark (which returns
 /// `count = 0` and NULL for the rest).
@@ -157,7 +157,7 @@ struct ZonalStatistics {
 
 impl ZonalStatistics {
     /// The value RS_ZonalStats returns for a single statistic. `count` is never
-    /// NULL (it is 0 for an empty zone); the others are NULL for an empty zone.
+    /// NULL (it is 0 for an empty roi); the others are NULL for an empty roi.
     fn get(&self, stat_type: StatType) -> Option<f64> {
         match stat_type {
             StatType::Count => Some(self.count as f64),
@@ -184,10 +184,10 @@ pub fn rs_zonal_stats_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "rs_zonalstats",
         vec![
-            Arc::new(RsZonalStats { arg_count: 3 }), // (raster, zone, stat)
-            Arc::new(RsZonalStats { arg_count: 4 }), // (raster, zone, band, stat)
+            Arc::new(RsZonalStats { arg_count: 3 }), // (raster, roi, stat)
+            Arc::new(RsZonalStats { arg_count: 4 }), // (raster, roi, band, stat)
             Arc::new(RsZonalStats { arg_count: 5 }), // + all_touched
-            Arc::new(RsZonalStats { arg_count: 6 }), // + exclude_nodata
+            Arc::new(RsZonalStats { arg_count: 6 }), // + exclude_no_data
             Arc::new(RsZonalStats { arg_count: 7 }), // + lenient
         ],
         Volatility::Immutable,
@@ -205,8 +205,8 @@ struct RsZonalStats {
 
 impl SedonaScalarKernel for RsZonalStats {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        // Argument order mirrors Sedona Spark: (raster, zone, [band,] stat,
-        // [all_touched, [exclude_nodata, [lenient]]]). The 3-arg overload omits
+        // Argument order mirrors Sedona Spark: (raster, roi, [band,] stat,
+        // [all_touched, [exclude_no_data, [lenient]]]). The 3-arg overload omits
         // band (its stat is at index 2); the 4+-arg overloads carry band at
         // index 2 and stat at index 3.
         let matchers = match self.arg_count {
@@ -286,7 +286,7 @@ impl SedonaScalarKernel for RsZonalStats {
             .transpose()?;
         let mut band_iter = band_array.as_ref().map(|a| a.iter());
 
-        // all_touched (index 4), exclude_nodata (index 5), lenient (index 6):
+        // all_touched (index 4), exclude_no_data (index 5), lenient (index 6):
         // read from the column when the overload carries it, else the default.
         let all_touched_array = expand_flag(
             args,
@@ -295,7 +295,7 @@ impl SedonaScalarKernel for RsZonalStats {
             DEFAULT_ALL_TOUCHED,
             num_iterations,
         )?;
-        let exclude_nodata_array = expand_flag(
+        let exclude_no_data_array = expand_flag(
             args,
             5,
             self.arg_count >= 6,
@@ -310,13 +310,13 @@ impl SedonaScalarKernel for RsZonalStats {
             num_iterations,
         )?;
         let mut all_touched_iter = all_touched_array.iter();
-        let mut exclude_nodata_iter = exclude_nodata_array.iter();
+        let mut exclude_no_data_iter = exclude_no_data_array.iter();
         let mut lenient_iter = lenient_array.iter();
 
         let mut builder = Float64Builder::with_capacity(num_iterations);
         let mut scratch: Vec<f64> = Vec::new();
 
-        // The executor only sees (raster, zone); the option columns are advanced
+        // The executor only sees (raster, roi); the option columns are advanced
         // in lockstep below.
         let exec_arg_types = [arg_types[0].clone(), arg_types[1].clone()];
         let exec_args = [args[0].clone(), args[1].clone()];
@@ -331,14 +331,14 @@ impl SedonaScalarKernel for RsZonalStats {
                     let Some(params) = next_params(
                         &mut band_iter,
                         &mut all_touched_iter,
-                        &mut exclude_nodata_iter,
+                        &mut exclude_no_data_iter,
                         &mut lenient_iter,
                     ) else {
                         builder.append_null();
                         return Ok(());
                     };
 
-                    // A NULL stat, raster, or zone propagates to a NULL row.
+                    // A NULL stat, raster, or roi propagates to a NULL row.
                     let (Some(stat_str), Some(raster), Some(wkb)) = (stat_str, raster_opt, wkb_opt)
                     else {
                         builder.append_null();
@@ -348,9 +348,9 @@ impl SedonaScalarKernel for RsZonalStats {
                         exec_datafusion_err!("RS_ZonalStats: unknown statistic {stat_str:?}")
                     })?;
 
-                    // Reproject the zone into the raster's CRS, borrowing it
+                    // Reproject the roi into the raster's CRS, borrowing it
                     // unchanged when the CRSes already match; a CRS on exactly
-                    // one side is an error, since it would mislocate the zone.
+                    // one side is an error, since it would mislocate the roi.
                     let raster_crs = resolve_crs(raster.crs())?;
                     let geom_wkb = align_wkb_to_crs(
                         wkb,
@@ -365,7 +365,7 @@ impl SedonaScalarKernel for RsZonalStats {
                             Some(value) => builder.append_value(value),
                             None => builder.append_null(),
                         },
-                        // The zone does not intersect the raster: NULL when
+                        // The roi does not intersect the raster: NULL when
                         // lenient (the default), an error otherwise.
                         None if params.lenient => builder.append_null(),
                         None => return no_intersection_err(),
@@ -391,10 +391,10 @@ pub fn rs_zonal_stats_all_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "rs_zonalstatsall",
         vec![
-            Arc::new(RsZonalStatsAll { arg_count: 2 }), // (raster, zone)
-            Arc::new(RsZonalStatsAll { arg_count: 3 }), // (raster, zone, band)
+            Arc::new(RsZonalStatsAll { arg_count: 2 }), // (raster, roi)
+            Arc::new(RsZonalStatsAll { arg_count: 3 }), // (raster, roi, band)
             Arc::new(RsZonalStatsAll { arg_count: 4 }), // + all_touched
-            Arc::new(RsZonalStatsAll { arg_count: 5 }), // + exclude_nodata
+            Arc::new(RsZonalStatsAll { arg_count: 5 }), // + exclude_no_data
             Arc::new(RsZonalStatsAll { arg_count: 6 }), // + lenient
         ],
         Volatility::Immutable,
@@ -410,8 +410,8 @@ struct RsZonalStatsAll {
 
 impl SedonaScalarKernel for RsZonalStatsAll {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        // Argument order mirrors Sedona Spark: (raster, zone, [band,
-        // [all_touched, [exclude_nodata, [lenient]]]]). The 2-arg overload omits
+        // Argument order mirrors Sedona Spark: (raster, roi, [band,
+        // [all_touched, [exclude_no_data, [lenient]]]]). The 2-arg overload omits
         // band; the 3+-arg overloads carry it at index 2.
         let mut matchers = vec![
             ArgMatcher::is_raster(),
@@ -421,7 +421,7 @@ impl SedonaScalarKernel for RsZonalStatsAll {
             matchers.push(ArgMatcher::is_integer()); // band
         }
         for _ in 4..=self.arg_count {
-            matchers.push(ArgMatcher::is_boolean()); // all_touched, exclude_nodata, lenient
+            matchers.push(ArgMatcher::is_boolean()); // all_touched, exclude_no_data, lenient
         }
         if self.arg_count < 2 || self.arg_count > 6 {
             return sedona_internal_err!(
@@ -452,7 +452,7 @@ impl SedonaScalarKernel for RsZonalStatsAll {
         let num_iterations = RasterExecutor::num_iterations_over(args);
 
         // band (index 2) only exists in the 3+-arg overloads; the 2-arg overload
-        // leaves it implicit. all_touched (index 3), exclude_nodata (index 4),
+        // leaves it implicit. all_touched (index 3), exclude_no_data (index 4),
         // and lenient (index 5) follow.
         let band_array = (self.arg_count >= 3)
             .then(|| expand_int64_arg(&args[2], num_iterations))
@@ -466,7 +466,7 @@ impl SedonaScalarKernel for RsZonalStatsAll {
             DEFAULT_ALL_TOUCHED,
             num_iterations,
         )?;
-        let exclude_nodata_array = expand_flag(
+        let exclude_no_data_array = expand_flag(
             args,
             4,
             self.arg_count >= 5,
@@ -481,7 +481,7 @@ impl SedonaScalarKernel for RsZonalStatsAll {
             num_iterations,
         )?;
         let mut all_touched_iter = all_touched_array.iter();
-        let mut exclude_nodata_iter = exclude_nodata_array.iter();
+        let mut exclude_no_data_iter = exclude_no_data_array.iter();
         let mut lenient_iter = lenient_array.iter();
 
         let mut builder = StructBuilder::from_fields(zonal_stats_struct_fields(), num_iterations);
@@ -499,7 +499,7 @@ impl SedonaScalarKernel for RsZonalStatsAll {
                     let Some(params) = next_params(
                         &mut band_iter,
                         &mut all_touched_iter,
-                        &mut exclude_nodata_iter,
+                        &mut exclude_no_data_iter,
                         &mut lenient_iter,
                     ) else {
                         append_struct_null(&mut builder)?;
@@ -556,7 +556,7 @@ fn zonal_stats_struct_fields() -> Fields {
     ])
 }
 
-/// Append a fully-NULL struct row (the zone does not intersect the raster and
+/// Append a fully-NULL struct row (the roi does not intersect the raster and
 /// `lenient` is set).
 fn append_struct_null(builder: &mut StructBuilder) -> Result<()> {
     let Some(count) = builder.field_builder::<Int64Builder>(0) else {
@@ -574,7 +574,7 @@ fn append_struct_null(builder: &mut StructBuilder) -> Result<()> {
 }
 
 /// Append one computed-stats row. The float fields carry through the `Option`
-/// so an empty zone records `count = 0` with the rest NULL.
+/// so an empty roi records `count = 0` with the rest NULL.
 fn append_struct_stats(builder: &mut StructBuilder, stats: &ZonalStatistics) -> Result<()> {
     let Some(count) = builder.field_builder::<Int64Builder>(0) else {
         return sedona_internal_err!("RS_ZonalStats: count field is not an Int64 builder");
@@ -609,13 +609,13 @@ fn append_struct_stats(builder: &mut StructBuilder, stats: &ZonalStatistics) -> 
 // Core computation
 // =============================================================================
 
-/// Compute the statistics of the pixels a zone geometry selects on one band.
+/// Compute the statistics of the pixels a roi geometry selects on one band.
 ///
-/// Returns `Ok(None)` when the zone geometry does not intersect the raster's
+/// Returns `Ok(None)` when the roi geometry does not intersect the raster's
 /// footprint. This is a true geometry intersection (matching Sedona Spark's
-/// `rsIntersects` gate), not a bounding-box overlap: a zone whose envelope
+/// `rsIntersects` gate), not a bounding-box overlap: a roi whose envelope
 /// overlaps the raster but whose geometry is disjoint is a no-intersection case.
-/// The caller turns `None` into NULL when `lenient`, an error otherwise. A zone
+/// The caller turns `None` into NULL when `lenient`, an error otherwise. A roi
 /// that intersects the footprint but whose selected pixels are all outside the
 /// geometry or all nodata yields `Ok(Some(..))` with `count = 0`.
 ///
@@ -650,18 +650,18 @@ fn compute_zonal_stats(
     let height = usize::try_from(metadata.height())
         .map_err(|_| exec_datafusion_err!("RS_ZonalStats: negative raster height"))?;
 
-    // No-intersection gate: a true geometry intersection between the zone and
+    // No-intersection gate: a true geometry intersection between the roi and
     // the raster footprint (matching Sedona Spark's rsIntersects gate), not a
-    // bounding-box overlap. A zone whose envelope overlaps the raster but whose
+    // bounding-box overlap. A roi whose envelope overlaps the raster but whose
     // geometry is disjoint is a no-intersection case, not a count-0 case. The
-    // zone is already in the raster's CRS here, so no transform is needed.
+    // roi is already in the raster's CRS here, so no transform is needed.
     if !raster_intersects_geom_wkb(raster, geom_wkb)? {
         return Ok(None);
     }
 
-    // Parse the zone and clamp its envelope to the raster grid for the pixel
+    // Parse the roi and clamp its envelope to the raster grid for the pixel
     // window to rasterize. The gate above already established overlap; a
-    // degenerate window (the zone only touches the raster boundary) selects no
+    // degenerate window (the roi only touches the raster boundary) selects no
     // pixels, so it is count 0 rather than no-intersection.
     let geometry = gdal
         .geometry_from_wkb(geom_wkb)
@@ -671,7 +671,7 @@ fn compute_zonal_stats(
         return Ok(Some(compute_statistics(scratch)));
     };
 
-    // Rasterize the zone into a window-sized 0/1 mask (moves `geometry`, whose
+    // Rasterize the roi into a window-sized 0/1 mask (moves `geometry`, whose
     // only remaining use is the burn).
     let mask = rasterize_geometry_mask(gdal, geometry, &transform, &window, params.all_touched)?;
 
@@ -695,7 +695,7 @@ fn compute_zonal_stats(
 
     // Nodata is compared in the band's own byte representation, never through
     // f64 — an Int64/UInt64 nodata beyond 2^53 must not alias a nearby pixel.
-    let nodata = if params.exclude_nodata {
+    let nodata = if params.exclude_no_data {
         band.nodata()
     } else {
         None
@@ -809,7 +809,7 @@ fn collect_masked_values(
 /// Compute every statistic from the selected pixel values.
 ///
 /// An empty slice yields `count = 0` and NULL for the rest (Sedona Spark's
-/// empty-zone shortcut). Variance is the sample (n-1) variance, matching Spark;
+/// empty-roi shortcut). Variance is the sample (n-1) variance, matching Spark;
 /// for a single pixel it is 0. Median is the linear-interpolated 50th
 /// percentile, which for the median reduces to the middle element (odd n) or
 /// the mean of the two central elements (even n). Mode is the most frequent
@@ -830,6 +830,24 @@ fn compute_statistics(values: &mut [f64]) -> ZonalStatistics {
             variance: None,
             min: None,
             max: None,
+        };
+    }
+
+    // A NaN pixel (e.g. a float band whose NaN nodata was not excluded) poisons
+    // every statistic under numpy semantics. Return NaN for all of them rather
+    // than letting f64::min / f64::max silently skip NaN while sum and mean
+    // propagate it — an internally inconsistent, reference-diverging result.
+    if values.iter().any(|v| v.is_nan()) {
+        return ZonalStatistics {
+            count,
+            sum: Some(f64::NAN),
+            mean: Some(f64::NAN),
+            median: Some(f64::NAN),
+            mode: Some(f64::NAN),
+            stddev: Some(f64::NAN),
+            variance: Some(f64::NAN),
+            min: Some(f64::NAN),
+            max: Some(f64::NAN),
         };
     }
 
@@ -892,10 +910,10 @@ fn compute_mode(values: &[f64]) -> f64 {
 // Argument helpers
 // =============================================================================
 
-/// The error returned for a non-intersecting zone when `lenient` is off.
+/// The error returned for a non-intersecting roi when `lenient` is off.
 fn no_intersection_err<T>() -> Result<T> {
     exec_err!(
-        "RS_ZonalStats: the zone geometry does not intersect the raster; \
+        "RS_ZonalStats: the roi geometry does not intersect the raster; \
          pass lenient => true to return NULL instead"
     )
 }
@@ -910,7 +928,7 @@ fn no_intersection_err<T>() -> Result<T> {
 fn next_params<B, F>(
     band_iter: &mut Option<B>,
     all_touched_iter: &mut F,
-    exclude_nodata_iter: &mut F,
+    exclude_no_data_iter: &mut F,
     lenient_iter: &mut F,
 ) -> Option<ZonalStatsParams>
 where
@@ -921,7 +939,7 @@ where
     // the columns on the next row.
     let band_cell = band_iter.as_mut().map(|iter| iter.next().flatten());
     let all_touched = all_touched_iter.next().flatten();
-    let exclude_nodata = exclude_nodata_iter.next().flatten();
+    let exclude_no_data = exclude_no_data_iter.next().flatten();
     let lenient = lenient_iter.next().flatten();
 
     let band = match band_cell {
@@ -932,7 +950,7 @@ where
     Some(ZonalStatsParams {
         band,
         all_touched: all_touched?,
-        exclude_nodata: exclude_nodata?,
+        exclude_no_data: exclude_no_data?,
         lenient: lenient?,
     })
 }
@@ -959,7 +977,7 @@ fn expand_flag(
 }
 
 /// Cast a column to `Int64` and materialize it so its values can be iterated in
-/// lockstep with the raster/zone rows.
+/// lockstep with the raster/roi rows.
 fn expand_int64_arg(arg: &ColumnarValue, num_iterations: usize) -> Result<Int64Array> {
     let array = arg
         .clone()
@@ -969,7 +987,7 @@ fn expand_int64_arg(arg: &ColumnarValue, num_iterations: usize) -> Result<Int64A
 }
 
 /// Cast a column to `Utf8` and materialize it to a `StringArray` so its values
-/// can be iterated in lockstep with the raster/zone rows.
+/// can be iterated in lockstep with the raster/roi rows.
 fn expand_string_arg(arg: &ColumnarValue, num_iterations: usize) -> Result<StringArray> {
     let array = arg
         .clone()
@@ -1077,6 +1095,24 @@ mod tests {
         let mut values = vec![7.0, 7.0, 7.0, 1.0, 2.0];
         assert_eq!(compute_statistics(&mut values).mode, Some(7.0));
     }
+
+    #[test]
+    fn statistics_with_nan_are_all_nan_except_count() {
+        // A NaN pixel poisons every statistic (numpy semantics); count still
+        // reflects the number of selected values. Guards against min/max
+        // silently skipping NaN while sum/mean propagate it.
+        let mut values = vec![1.0, f64::NAN, 3.0];
+        let s = compute_statistics(&mut values);
+        assert_eq!(s.count, 3);
+        assert!(s.sum.unwrap().is_nan());
+        assert!(s.mean.unwrap().is_nan());
+        assert!(s.median.unwrap().is_nan());
+        assert!(s.mode.unwrap().is_nan());
+        assert!(s.min.unwrap().is_nan());
+        assert!(s.max.unwrap().is_nan());
+        assert!(s.variance.unwrap().is_nan());
+        assert!(s.stddev.unwrap().is_nan());
+    }
 }
 
 /// UDF-level tests: exercise the kernels end to end and pin the numbers against
@@ -1127,7 +1163,7 @@ mod udf_tests {
 
     // ScalarValue constructors for the positional trailing arguments, so a call
     // reads close to its Sedona Spark SQL form: `[band(1), stat("sum"),
-    // flag(true), flag(false)]` is `(raster, zone, 1, 'sum', true, false)`.
+    // flag(true), flag(false)]` is `(raster, roi, 1, 'sum', true, false)`.
     fn band(b: i64) -> ScalarValue {
         ScalarValue::Int64(Some(b))
     }
@@ -1138,7 +1174,7 @@ mod udf_tests {
         ScalarValue::Boolean(Some(b))
     }
 
-    /// Invoke a zonal-stats UDF on a scalar raster + zone with the given
+    /// Invoke a zonal-stats UDF on a scalar raster + roi with the given
     /// positional trailing arguments. Routing through the UDF (rather than a
     /// hand-picked kernel) exercises overload selection by argument count and
     /// type; the raw `ScalarValue` is returned so both value and error paths are
@@ -1164,13 +1200,13 @@ mod udf_tests {
         }
     }
 
-    /// RS_ZonalStats over a scalar raster + zone with the given trailing args.
+    /// RS_ZonalStats over a scalar raster + roi with the given trailing args.
     fn call_stats(spec: &RasterSpec, wkt: &str, trailing: Vec<ScalarValue>) -> Result<ScalarValue> {
         let geom = ScalarValue::Binary(Some(make_wkb(wkt)));
         invoke_udf(rs_zonal_stats_udf(), spec, geom, trailing)
     }
 
-    /// RS_ZonalStatsAll over a scalar raster + zone with the given trailing args.
+    /// RS_ZonalStatsAll over a scalar raster + roi with the given trailing args.
     fn call_all(spec: &RasterSpec, wkt: &str, trailing: Vec<ScalarValue>) -> Result<ScalarValue> {
         let geom = ScalarValue::Binary(Some(make_wkb(wkt)));
         invoke_udf(rs_zonal_stats_all_udf(), spec, geom, trailing)
@@ -1264,7 +1300,7 @@ mod udf_tests {
 
     #[test]
     fn overloads_dispatch_by_arg_count() {
-        // The 3-arg (raster, zone, stat) and 4-arg (raster, zone, band, stat)
+        // The 3-arg (raster, roi, stat) and 4-arg (raster, roi, band, stat)
         // overloads resolve by argument count and by the type at position 2 (a
         // stat string vs. a band integer). On a single-band raster both compute
         // the same mean over {1, 2, 5, 6}.
@@ -1295,10 +1331,10 @@ mod udf_tests {
     }
 
     #[test]
-    fn zone_that_selects_no_pixel_centre_is_count_zero_not_null() {
-        // A tiny zone inside the top-left pixel (centre 0.5, 1.5) but not
+    fn roi_that_selects_no_pixel_centre_is_count_zero_not_null() {
+        // A tiny roi inside the top-left pixel (centre 0.5, 1.5) but not
         // covering that centre: with all_touched off, no pixel is selected. The
-        // zone still overlaps the raster extent, so count is 0 (not NULL).
+        // roi still overlaps the raster extent, so count is 0 (not NULL).
         let tiny = "POLYGON((0.1 1.6, 0.4 1.6, 0.4 1.9, 0.1 1.9, 0.1 1.6))";
         assert_eq!(
             cv_f64(call_stats(&small_raster(), tiny, vec![stat("count")]).unwrap()),
@@ -1316,7 +1352,7 @@ mod udf_tests {
         let s = cv_struct(call_all(&small_raster(), tiny, vec![]).unwrap());
         assert!(
             !s.is_null(0),
-            "an intersecting-but-empty zone is a valid row"
+            "an intersecting-but-empty roi is a valid row"
         );
         assert_eq!(i64_field(&s, COUNT), Some(0));
         assert_eq!(f64_field(&s, SUM), None);
@@ -1325,9 +1361,9 @@ mod udf_tests {
 
     #[test]
     fn all_touched_selects_the_touched_pixel() {
-        // The same tiny zone, with all_touched, burns the pixel it lies inside
+        // The same tiny roi, with all_touched, burns the pixel it lies inside
         // (value 1) even though it misses the centre. all_touched first appears
-        // in the 5-arg overload (raster, zone, band, stat, all_touched), so the
+        // in the 5-arg overload (raster, roi, band, stat, all_touched), so the
         // band must be named to reach it.
         let tiny = "POLYGON((0.1 1.6, 0.4 1.6, 0.4 1.9, 0.1 1.9, 0.1 1.6))";
         assert_eq!(
@@ -1366,7 +1402,7 @@ mod udf_tests {
 
         // Strict (lenient => false): both functions error. RS_ZonalStats reaches
         // lenient only in its 7-arg overload, whose trailing flags are
-        // (all_touched, exclude_nodata, lenient).
+        // (all_touched, exclude_no_data, lenient).
         let err = call_stats(
             &small_raster(),
             far,
@@ -1378,7 +1414,7 @@ mod udf_tests {
             err.contains("does not intersect"),
             "unexpected error: {err}"
         );
-        // RS_ZonalStatsAll's 6-arg overload trails (all_touched, exclude_nodata,
+        // RS_ZonalStatsAll's 6-arg overload trails (all_touched, exclude_no_data,
         // lenient) after the band.
         let err = call_all(
             &small_raster(),
@@ -1394,7 +1430,7 @@ mod udf_tests {
     }
 
     #[test]
-    fn bbox_overlapping_but_geometry_disjoint_zone_is_no_intersection() {
+    fn bbox_overlapping_but_geometry_disjoint_roi_is_no_intersection() {
         // small_raster covers x ∈ [0, 4], y ∈ [0, 2]. This triangle lives on the
         // far side of the line x + y = 7, so its geometry is disjoint from the
         // raster (every raster point has x + y ≤ 6), yet its bounding box
@@ -1438,7 +1474,7 @@ mod udf_tests {
     #[test]
     fn nodata_pixels_are_excluded_by_default_and_kept_when_asked() {
         // A 2×2 UInt8 raster [10, 255, 20, 30] with nodata 255, world extent
-        // x ∈ [0, 2], y ∈ [0, 2]; the zone covers all four pixels.
+        // x ∈ [0, 2], y ∈ [0, 2]; the roi covers all four pixels.
         let spec = RasterSpec::d2(2, 2)
             .band_values(&[10u8, 255, 20, 30])
             .nodata(255u8)
@@ -1453,9 +1489,9 @@ mod udf_tests {
             cv_f64(call_stats(&spec, LEFT_HALF_FULL, vec![stat("sum")]).unwrap()),
             Some(60.0)
         );
-        // exclude_nodata => false keeps it: {10, 255, 20, 30}. It first appears
+        // exclude_no_data => false keeps it: {10, 255, 20, 30}. It first appears
         // in the 6-arg overload, whose trailing flags are (all_touched,
-        // exclude_nodata).
+        // exclude_no_data).
         assert_eq!(
             cv_f64(
                 call_stats(
@@ -1480,7 +1516,7 @@ mod udf_tests {
         );
     }
 
-    /// A zone covering the whole 2×2 nodata raster above.
+    /// A roi covering the whole 2×2 nodata raster above.
     const LEFT_HALF_FULL: &str = "POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))";
 
     #[test]
@@ -1527,16 +1563,16 @@ mod udf_tests {
     }
 
     #[test]
-    fn null_raster_or_zone_yields_null() {
-        // A NULL zone geometry propagates to a NULL result (3-arg overload).
-        let null_zone = invoke_udf(
+    fn null_raster_or_roi_yields_null() {
+        // A NULL roi geometry propagates to a NULL result (3-arg overload).
+        let null_roi = invoke_udf(
             rs_zonal_stats_udf(),
             &small_raster(),
             ScalarValue::Binary(None),
             vec![stat("count")],
         )
         .unwrap();
-        assert_eq!(cv_f64(null_zone), None);
+        assert_eq!(cv_f64(null_roi), None);
 
         // A NULL statistic name also yields NULL.
         let null_stat =
@@ -1545,8 +1581,8 @@ mod udf_tests {
     }
 
     #[test]
-    fn reprojects_the_zone_into_the_raster_crs() {
-        // The raster is EPSG:4326; the zone is supplied in EPSG:3857 (the
+    fn reprojects_the_roi_into_the_raster_crs() {
+        // The raster is EPSG:4326; the roi is supplied in EPSG:3857 (the
         // reprojected LEFT_HALF polygon). Reprojecting it back to the raster CRS
         // must recover the same four-pixel selection.
         let spec = small_raster().crs(Some("EPSG:4326"));
