@@ -41,7 +41,9 @@ use crate::extension::{SedonaCError, SedonaCExecutionPlan, SedonaCExecutionPlanA
 use crate::runtime::RuntimeHandle;
 use crate::set_ffi_error;
 use crate::streaming::{ffi_stream_to_sendable, CancelChecker, StreamingRecordBatchReader};
-use crate::utils::{cstr_from_ptr_or_empty, get_plan_property, get_plan_string_property, ERRNO_OK};
+use crate::utils::{
+    cstr_from_ptr_or_empty, get_plan_property, get_plan_string_property, PropertyValue, ERRNO_OK,
+};
 
 /// Wrapper around an [ExecutionPlan] that can be exported across FFI.
 ///
@@ -241,12 +243,7 @@ unsafe extern "C" fn c_exec_plan_get_property(
 
     match plan.get_property(&property_str) {
         Ok(value) => {
-            // Return the string as a single-element string array
-            use arrow_array::{builder::StringBuilder, Array};
-            let mut builder = StringBuilder::new();
-            builder.append_value(&value);
-            let array = builder.finish();
-            let ffi_array = arrow_array::ffi::FFI_ArrowArray::new(&array.to_data());
+            let ffi_array = PropertyValue::String(value).into_ffi_array();
             std::ptr::write(out, ffi_array);
             ERRNO_OK
         }

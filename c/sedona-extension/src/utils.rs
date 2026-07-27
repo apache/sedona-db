@@ -21,6 +21,9 @@ use std::borrow::Cow;
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::ptr::null_mut;
 
+use arrow_array::builder::{BinaryBuilder, StringBuilder};
+use arrow_array::ffi::FFI_ArrowArray;
+use arrow_array::Array;
 use arrow_schema::ffi::FFI_ArrowSchema;
 use arrow_schema::{DataType, Field};
 use datafusion_common::Result;
@@ -34,6 +37,50 @@ use crate::extension::{
 
 /// Success return code for FFI functions.
 pub const ERRNO_OK: c_int = 0;
+
+/// The value returned by a property getter.
+///
+/// This enum represents the two primary data types returned by FFI property accessors:
+/// UTF-8 strings and binary data. It provides a type-safe way to handle property values
+/// and can be converted to Arrow arrays for FFI transport.
+#[derive(Debug, Clone)]
+pub enum PropertyValue {
+    /// A UTF-8 string value.
+    String(String),
+    /// A binary (bytes) value.
+    Binary(Vec<u8>),
+}
+
+impl PropertyValue {
+    /// Returns the Arrow [DataType] for this property value.
+    pub fn data_type(&self) -> DataType {
+        match self {
+            PropertyValue::String(_) => DataType::Utf8,
+            PropertyValue::Binary(_) => DataType::Binary,
+        }
+    }
+
+    /// Converts this property value into an FFI-compatible Arrow array.
+    ///
+    /// This is useful for FFI callbacks that need to return property values
+    /// as Arrow arrays across the FFI boundary.
+    pub fn into_ffi_array(self) -> FFI_ArrowArray {
+        match self {
+            PropertyValue::String(value) => {
+                let mut builder = StringBuilder::new();
+                builder.append_value(&value);
+                let array = builder.finish();
+                FFI_ArrowArray::new(&array.to_data())
+            }
+            PropertyValue::Binary(value) => {
+                let mut builder = BinaryBuilder::new();
+                builder.append_value(&value);
+                let array = builder.finish();
+                FFI_ArrowArray::new(&array.to_data())
+            }
+        }
+    }
+}
 
 /// Safely convert a C string pointer to a Rust string, treating null as empty.
 ///

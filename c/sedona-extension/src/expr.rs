@@ -24,11 +24,7 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-use arrow_array::{
-    builder::{BinaryBuilder, StringBuilder},
-    ffi::{FFI_ArrowArray, FFI_ArrowSchema},
-    Array,
-};
+use arrow_array::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use arrow_schema::{DataType, Field};
 use datafusion_catalog::Session;
 use datafusion_common::{plan_err, Result};
@@ -39,27 +35,9 @@ use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use crate::extension::{SedonaCError, SedonaCExprView};
 use crate::set_ffi_error;
 use crate::utils::{
-    call_get_property_schema_impl, cstr_from_ptr_or_empty, parse_ffi_array_to_bytes, ERRNO_OK,
+    call_get_property_schema_impl, cstr_from_ptr_or_empty, parse_ffi_array_to_bytes, PropertyValue,
+    ERRNO_OK,
 };
-
-/// The value returned by a property getter.
-#[derive(Debug, Clone)]
-pub enum PropertyValue {
-    /// A UTF-8 string value.
-    String(String),
-    /// A binary (bytes) value.
-    Binary(Vec<u8>),
-}
-
-impl PropertyValue {
-    /// Returns the data type for this property value.
-    pub fn data_type(&self) -> DataType {
-        match self {
-            PropertyValue::String(_) => DataType::Utf8,
-            PropertyValue::Binary(_) => DataType::Binary,
-        }
-    }
-}
 
 /// Wrapper around a [datafusion_expr::Expr] that can be exported across FFI.
 pub struct ExportedExprView<'a> {
@@ -177,19 +155,8 @@ unsafe extern "C" fn c_expr_get_property(
     let property_str = cstr_from_ptr_or_empty(property);
 
     match exported.get_property(&property_str) {
-        Ok(PropertyValue::String(value)) => {
-            let mut builder = StringBuilder::new();
-            builder.append_value(&value);
-            let array = builder.finish();
-            let ffi_array = FFI_ArrowArray::new(&array.to_data());
-            std::ptr::write(out, ffi_array);
-            ERRNO_OK
-        }
-        Ok(PropertyValue::Binary(value)) => {
-            let mut builder = BinaryBuilder::new();
-            builder.append_value(&value);
-            let array = builder.finish();
-            let ffi_array = FFI_ArrowArray::new(&array.to_data());
+        Ok(value) => {
+            let ffi_array = value.into_ffi_array();
             std::ptr::write(out, ffi_array);
             ERRNO_OK
         }

@@ -41,7 +41,7 @@ use crate::extension::{
 };
 use crate::runtime::RuntimeHandle;
 use crate::set_ffi_error;
-use crate::utils::{cstr_from_ptr_or_empty, get_table_provider_string_property, ERRNO_OK};
+use crate::utils::{cstr_from_ptr_or_empty, get_table_provider_string_property, PropertyValue, ERRNO_OK};
 use crate::{
     execution_plan::{ExportedExecutionPlan, ImportedSedonaCExec},
     expr::SessionRefRegistry,
@@ -295,12 +295,7 @@ unsafe extern "C" fn c_table_provider_get_property(
 
     match result {
         Ok(value) => {
-            // Return the string as a single-element string array
-            use arrow_array::{builder::StringBuilder, Array};
-            let mut builder = StringBuilder::new();
-            builder.append_value(&value);
-            let array = builder.finish();
-            let ffi_array = FFI_ArrowArray::new(&array.to_data());
+            let ffi_array = PropertyValue::String(value).into_ffi_array();
             std::ptr::write(out, ffi_array);
             ERRNO_OK
         }
