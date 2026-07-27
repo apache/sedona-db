@@ -220,12 +220,6 @@ pub unsafe fn write_ffi_error(err: *mut SedonaCError, message: &str) {
 ///
 /// This is a convenience wrapper around `write_ffi_error` that supports
 /// format strings like `format!()`.
-///
-/// # Example
-///
-/// ```ignore
-/// set_ffi_error!(err, "Failed to parse: {}", e);
-/// ```
 #[macro_export]
 macro_rules! set_ffi_error {
     ($err:expr, $msg:expr) => {

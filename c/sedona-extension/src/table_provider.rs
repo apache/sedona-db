@@ -25,18 +25,20 @@ use std::{
 };
 
 use arrow_array::ffi::FFI_ArrowArray;
-use arrow_schema::{ffi::FFI_ArrowSchema, Schema, SchemaRef};
+use arrow_schema::{DataType, Schema, SchemaRef, ffi::FFI_ArrowSchema};
 use async_trait::async_trait;
 use datafusion_catalog::{Session, TableProvider};
 use datafusion_common::{exec_err, Result, Statistics};
-use datafusion_expr::{Expr, TableType};
+use datafusion_expr::{Expr, TableProviderFilterPushDown, TableType};
 use datafusion_physical_plan::ExecutionPlan;
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use serde::{Deserialize, Serialize};
 
-use crate::execution_plan::{ExportedExecutionPlan, ImportedSedonaCExec};
+use crate::{execution_plan::{ExportedExecutionPlan, ImportedSedonaCExec}, utils::parse_ffi_array_to_bytes};
+use crate::expr::{ExportedExprView, ImportedExprView};
 use crate::extension::{
-    SedonaCError, SedonaCExecutionPlan, SedonaCExecutionPlanArgs, SedonaCTableProvider,
+    SedonaCError, SedonaCExecutionPlan, SedonaCExecutionPlanArgs, SedonaCExprView,
+    SedonaCTableProvider,
 };
 use crate::runtime::RuntimeHandle;
 use crate::set_ffi_error;
@@ -85,6 +87,7 @@ impl ExportedTableProvider {
     fn scan(
         &self,
         projection: Option<Vec<usize>>,
+        filters: Vec<Expr>,
         limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         let inner = self.inner.clone();
@@ -95,7 +98,7 @@ impl ExportedTableProvider {
             let projection_ref = projection.as_ref();
             runtime
                 .handle()
-                .block_on(inner.scan(session.as_ref(), projection_ref, &[], limit))
+                .block_on(inner.scan(session.as_ref(), projection_ref, &filters, limit))
         })
         .join()
         .map_err(|e| sedona_internal_datafusion_err!("Scan thread panicked {e:?}"))?
@@ -114,6 +117,22 @@ impl ExportedTableProvider {
             }
             _ => exec_err!("Unknown property: {}", property),
         }
+    }
+
+    fn supports_filters_pushdown(&self, filters: &[Expr]) -> Result<String> {
+        let filter_refs: Vec<&Expr> = filters.iter().collect();
+        let pushdown_results = self.inner.supports_filters_pushdown(&filter_refs)?;
+        let result_strs: Vec<&str> = pushdown_results
+            .iter()
+            .map(|p| match p {
+                TableProviderFilterPushDown::Unsupported => "Unsupported",
+                TableProviderFilterPushDown::Inexact => "Inexact",
+                TableProviderFilterPushDown::Exact => "Exact",
+            })
+            .collect();
+        serde_json::to_string(&result_strs).map_err(|e| {
+            sedona_internal_datafusion_err!("Failed to serialize pushdown results: {}", e)
+        })
     }
 }
 
@@ -184,7 +203,7 @@ unsafe extern "C" fn c_table_provider_get_property_schema(
 unsafe extern "C" fn c_table_provider_get_property(
     self_: *const SedonaCTableProvider,
     property: *const std::ffi::c_char,
-    _args: *mut SedonaCExecutionPlanArgs,
+    args: *mut SedonaCExecutionPlanArgs,
     out: *mut FFI_ArrowArray,
     err: *mut SedonaCError,
 ) -> c_int {
@@ -195,7 +214,46 @@ unsafe extern "C" fn c_table_provider_get_property(
     let provider = &*(self_ref.private_data as *const ExportedTableProvider);
     let property_str = cstr_from_ptr_or_empty(property);
 
-    match provider.get_property(&property_str) {
+    // Handle property requests that require expression arguments
+    let result = if property_str == "supports_filters_pushdown" {
+        // Extract filters from expression views
+        let filters: Vec<Expr> = if args.is_null() {
+            Vec::new()
+        } else {
+            let args_ref = &*args;
+            if args_ref.exprs.is_null() || args_ref.num_exprs == 0 {
+                Vec::new()
+            } else {
+                let expr_ptrs = std::slice::from_raw_parts(args_ref.exprs, args_ref.num_exprs);
+                let mut filters = Vec::with_capacity(args_ref.num_exprs);
+                for &expr_ptr in expr_ptrs {
+                    if expr_ptr.is_null() {
+                        continue;
+                    }
+                    let expr_view = match ImportedExprView::try_new(&*expr_ptr) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            set_ffi_error!(err, "Failed to import expression view: {}", e);
+                            return libc::EINVAL;
+                        }
+                    };
+                    match expr_view.to_expr() {
+                        Ok(expr) => filters.push(expr),
+                        Err(e) => {
+                            set_ffi_error!(err, "Failed to deserialize filter expression: {}", e);
+                            return libc::EINVAL;
+                        }
+                    }
+                }
+                filters
+            }
+        };
+        provider.supports_filters_pushdown(&filters)
+    } else {
+        provider.get_property(&property_str)
+    };
+
+    match result {
         Ok(value) => {
             // Return the string as a single-element string array
             use arrow_array::{builder::StringBuilder, Array};
@@ -249,7 +307,35 @@ unsafe extern "C" fn c_table_provider_scan(
         }
     };
 
-    match provider.scan(scan_args.projection, scan_args.limit) {
+    // Extract filters from expression views
+    let filters: Vec<Expr> = if args_ref.exprs.is_null() || args_ref.num_exprs == 0 {
+        Vec::new()
+    } else {
+        let expr_ptrs = std::slice::from_raw_parts(args_ref.exprs, args_ref.num_exprs);
+        let mut filters = Vec::with_capacity(args_ref.num_exprs);
+        for &expr_ptr in expr_ptrs {
+            if expr_ptr.is_null() {
+                continue;
+            }
+            let expr_view = match ImportedExprView::try_new(&*expr_ptr) {
+                Ok(v) => v,
+                Err(e) => {
+                    set_ffi_error!(err, "Failed to import expression view: {}", e);
+                    return libc::EINVAL;
+                }
+            };
+            match expr_view.to_expr() {
+                Ok(expr) => filters.push(expr),
+                Err(e) => {
+                    set_ffi_error!(err, "Failed to deserialize filter expression: {}", e);
+                    return libc::EINVAL;
+                }
+            }
+        }
+        filters
+    };
+
+    match provider.scan(scan_args.projection, filters, scan_args.limit) {
         Ok(plan) => {
             let task_ctx = provider.session.task_ctx();
             let exported = ExportedExecutionPlan::new(plan, task_ctx, provider.runtime.clone());
@@ -383,11 +469,90 @@ impl TableProvider for ImportedTableProvider {
         None
     }
 
+    fn supports_filters_pushdown(
+        &self,
+        filters: &[&Expr],
+    ) -> Result<Vec<TableProviderFilterPushDown>> {
+        let Some(get_property) = self.inner.get_property else {
+            // Default to Unsupported if get_property is not available
+            return Ok(vec![
+                TableProviderFilterPushDown::Unsupported;
+                filters.len()
+            ]);
+        };
+
+        // Create FFI expression views for filters
+        let filter_views: Vec<ExportedExprView> =
+            filters.iter().map(|&e| ExportedExprView::new(e)).collect();
+        let ffi_filter_views: Vec<SedonaCExprView> =
+            filter_views.iter().map(|v| v.as_ffi_view()).collect();
+        let ffi_filter_ptrs: Vec<*const SedonaCExprView> =
+            ffi_filter_views.iter().map(|v| v as *const _).collect();
+
+        let mut ffi_args = SedonaCExecutionPlanArgs {
+            args: std::ptr::null(),
+            args_len: 0,
+            exec_plans: std::ptr::null(),
+            num_exec_plans: 0,
+            exprs: if ffi_filter_ptrs.is_empty() {
+                std::ptr::null()
+            } else {
+                ffi_filter_ptrs.as_ptr()
+            },
+            num_exprs: ffi_filter_ptrs.len(),
+            reserved: null_mut(),
+        };
+
+        let property_cstr = std::ffi::CString::new("supports_filters_pushdown")
+            .map_err(|e| sedona_internal_datafusion_err!("Invalid property name: {}", e))?;
+
+        let mut ffi_array = FFI_ArrowArray::empty();
+        let mut err = SedonaCError::default();
+
+        let code = unsafe {
+            get_property(
+                &self.inner,
+                property_cstr.as_ptr(),
+                &mut ffi_args,
+                &mut ffi_array,
+                &mut err,
+            )
+        };
+
+        if code != ERRNO_OK {
+            // If get_property fails, default to Unsupported
+            return Ok(vec![
+                TableProviderFilterPushDown::Unsupported;
+                filters.len()
+            ]);
+        }
+
+        // Parse the result as a JSON array of strings
+        let bytes = parse_ffi_array_to_bytes(ffi_array, &DataType::Utf8)?;
+        let value = String::from_utf8(bytes).map_err(|e| {
+            sedona_internal_datafusion_err!("Invalid UTF-8 in property value: {}", e)
+        })?;
+        let pushdown_strs: Vec<String> = serde_json::from_str(&value).map_err(|e| {
+            sedona_internal_datafusion_err!("Failed to parse pushdown results: {}", e)
+        })?;
+
+        let results = pushdown_strs
+            .iter()
+            .map(|s| match s.as_str() {
+                "Exact" => TableProviderFilterPushDown::Exact,
+                "Inexact" => TableProviderFilterPushDown::Inexact,
+                _ => TableProviderFilterPushDown::Unsupported,
+            })
+            .collect();
+
+        Ok(results)
+    }
+
     async fn scan(
         &self,
         _state: &dyn Session,
         projection: Option<&Vec<usize>>,
-        _filters: &[Expr],
+        filters: &[Expr],
         limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         let Some(scan) = self.inner.scan else {
@@ -401,13 +566,25 @@ impl TableProvider for ImportedTableProvider {
         let args_bytes = serde_json::to_vec(&args)
             .map_err(|e| sedona_internal_datafusion_err!("Failed to serialize scan args: {}", e))?;
 
+        // Create FFI expression views for filters
+        let filter_views: Vec<ExportedExprView> =
+            filters.iter().map(ExportedExprView::new).collect();
+        let ffi_filter_views: Vec<SedonaCExprView> =
+            filter_views.iter().map(|v| v.as_ffi_view()).collect();
+        let ffi_filter_ptrs: Vec<*const SedonaCExprView> =
+            ffi_filter_views.iter().map(|v| v as *const _).collect();
+
         let mut ffi_args = SedonaCExecutionPlanArgs {
             args: args_bytes.as_ptr(),
             args_len: args_bytes.len(),
             exec_plans: std::ptr::null(),
             num_exec_plans: 0,
-            exprs: std::ptr::null(),
-            num_exprs: 0,
+            exprs: if ffi_filter_ptrs.is_empty() {
+                std::ptr::null()
+            } else {
+                ffi_filter_ptrs.as_ptr()
+            },
+            num_exprs: ffi_filter_ptrs.len(),
             reserved: null_mut(),
         };
 
