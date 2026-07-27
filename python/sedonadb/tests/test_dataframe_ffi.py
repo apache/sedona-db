@@ -196,7 +196,9 @@ def test_udf_filter_not_pushed_down_into_ffi_producer(geoarrow_data):
 
     # Consumer applies a filter using the UDF (which only exists on consumer)
     sd_consumer.create_data_frame(df_producer).to_view("df_producer")
-    df_filtered = sd_consumer.sql('SELECT * FROM df_producer WHERE is_small_id("OBJECTID")')
+    df_filtered = sd_consumer.sql(
+        'SELECT * FROM df_producer WHERE is_small_id("OBJECTID")'
+    )
 
     # Get the physical plan
     plan_df = df_filtered.explain().to_pandas()
