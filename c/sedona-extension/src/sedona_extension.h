@@ -233,7 +233,12 @@ struct SedonaCError {
 ///
 /// This structure provides a read-only view into an expression without taking
 /// ownership. The lifetime of this view is tied to the underlying expression
-/// it references.
+/// it references. The SedonaCExprView may be logical or physical...it is not
+/// typically executed but inspected for the purposes of pruning. The primary
+/// mechanism of recreating an expression is DataFusion Protobuf via the
+/// "datafusion_expr_proto" property; however, other types of queries may be
+/// supported by other properties in the future (e.g., rendering SQL or
+/// Substrait or extracting a query bounding box directly).
 ///
 /// Lifetime semantics:
 /// - Exporter: The exporter must ensure the underlying expression remains valid

@@ -212,6 +212,13 @@ impl<'a> ImportedExprView<'a> {
         Ok(Self { inner })
     }
 
+    /// Import this expression as a logical [Expr]
+    ///
+    /// This recreates a [Expr] object, using a registry to recreate function implementations.
+    /// If a registry is not provided, functions are replaced with [PlaceholderUDF] that may be
+    /// replaced (e.g., using an optimizer rule or locally implemented replacement), inspected
+    /// by parsing functions (e.g., to calculate pruning), or ignored (e.g., for table providers
+    /// that do not support any filters).
     pub fn to_expr(&self, _registry: Option<&dyn FunctionRegistry>) -> Result<Expr> {
         #[cfg(feature = "protobuf")]
         {
