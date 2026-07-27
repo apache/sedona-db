@@ -32,6 +32,7 @@ mod gdal_common;
 #[allow(dead_code)]
 mod gdal_dataset_provider;
 
+mod mask;
 mod raster_loader;
 mod rs_as_geotiff;
 mod rs_as_raster;

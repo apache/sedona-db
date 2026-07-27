@@ -63,10 +63,7 @@ use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_gdal::gdal::Gdal;
-use sedona_gdal::geo_transform::{GeoTransform, GeoTransformEx};
-use sedona_gdal::mem::MemDatasetBuilder;
-use sedona_gdal::raster::types::GdalDataType;
-use sedona_gdal::vector::geometry::Geometry;
+use sedona_gdal::geo_transform::GeoTransform;
 use sedona_raster::array::RasterRefImpl;
 use sedona_raster::traits::RasterRef;
 use sedona_raster_functions::crs_utils::{crs_transform_wkb, resolve_crs, with_crs_engine};
@@ -79,6 +76,7 @@ use sedona_schema::raster::BandDataType;
 
 use crate::gdal_common::with_gdal;
 use crate::gdal_dataset_provider::configure_thread_local_options;
+use crate::mask::{envelope_window, rasterize_geometry_mask, PixelWindow};
 
 /// The statistics RS_ZonalStatsAll returns, in the order Sedona Spark reports
 /// them. RS_ZonalStats selects one of these by name.
@@ -613,15 +611,6 @@ fn append_struct_stats(builder: &mut StructBuilder, stats: &ZonalStatistics) {
 // Core computation
 // =============================================================================
 
-/// A rectangular pixel window (offset + size) into the raster grid.
-#[derive(Clone, Copy, Debug)]
-struct PixelWindow {
-    col_off: usize,
-    row_off: usize,
-    width: usize,
-    height: usize,
-}
-
 /// Compute the statistics of the pixels a zone geometry selects on one band.
 ///
 /// Returns `Ok(None)` when the zone geometry does not intersect the raster's
@@ -686,7 +675,7 @@ fn compute_zonal_stats(
 
     // Rasterize the zone into a window-sized 0/1 mask (moves `geometry`, whose
     // only remaining use is the burn).
-    let mask = rasterize_zone_mask(gdal, geometry, &transform, &window, params.all_touched)?;
+    let mask = rasterize_geometry_mask(gdal, geometry, &transform, &window, params.all_touched)?;
 
     // Read the band once (zero-copy borrow) and collect the selected values.
     let nd_buffer = band
@@ -756,106 +745,6 @@ fn raster_transform(raster: &RasterRefImpl<'_>) -> Result<GeoTransform> {
     let t = raster.transform();
     <[f64; 6]>::try_from(t)
         .map_err(|_| exec_datafusion_err!("RS_ZonalStats: expected a 6-element geotransform"))
-}
-
-/// The zone's envelope intersected with the raster extent, snapped outward to
-/// whole pixels. `None` when the clamped window has no area (the envelope only
-/// touches the raster boundary). Mirrors the window RS_Clip / PostGIS ST_Clip
-/// use: all four corners are mapped through the inverse geotransform so a skewed
-/// raster still gets a correct superset window.
-fn envelope_window(
-    geometry: &Geometry,
-    transform: &GeoTransform,
-    width: usize,
-    height: usize,
-) -> Result<Option<PixelWindow>> {
-    let env = geometry.envelope();
-    let inverse = transform
-        .invert()
-        .map_err(|e| exec_datafusion_err!("RS_ZonalStats: geotransform is not invertible: {e}"))?;
-
-    let corners = [
-        (env.MinX, env.MinY),
-        (env.MinX, env.MaxY),
-        (env.MaxX, env.MinY),
-        (env.MaxX, env.MaxY),
-    ];
-    let mut min_col = f64::INFINITY;
-    let mut max_col = f64::NEG_INFINITY;
-    let mut min_row = f64::INFINITY;
-    let mut max_row = f64::NEG_INFINITY;
-    for (x, y) in corners {
-        let (col, row) = inverse.apply(x, y);
-        min_col = min_col.min(col);
-        max_col = max_col.max(col);
-        min_row = min_row.min(row);
-        max_row = max_row.max(row);
-    }
-
-    let col0 = min_col.floor();
-    let row0 = min_row.floor();
-    let col1 = max_col.ceil().max(col0 + 1.0);
-    let row1 = max_row.ceil().max(row0 + 1.0);
-
-    // Intersect with the raster extent. `>=` also rejects the NaN envelope of
-    // an empty geometry.
-    let col0 = col0.max(0.0);
-    let row0 = row0.max(0.0);
-    let col1 = col1.min(width as f64);
-    let row1 = row1.min(height as f64);
-    if !(col0 < col1 && row0 < row1) {
-        return Ok(None);
-    }
-
-    Ok(Some(PixelWindow {
-        col_off: col0 as usize,
-        row_off: row0 as usize,
-        width: (col1 - col0) as usize,
-        height: (row1 - row0) as usize,
-    }))
-}
-
-/// Rasterize the zone into a window-sized `u8` mask: 1 where the zone covers a
-/// pixel, 0 elsewhere. The MEM band is zero-filled on creation, so only the
-/// burn (value 1, inside the geometry) has to be written.
-fn rasterize_zone_mask(
-    gdal: &Gdal,
-    geometry: Geometry,
-    transform: &GeoTransform,
-    window: &PixelWindow,
-    all_touched: bool,
-) -> Result<Vec<u8>> {
-    let mask_dataset =
-        MemDatasetBuilder::create(gdal, window.width, window.height, 1, GdalDataType::UInt8)
-            .map_err(|e| exec_datafusion_err!("RS_ZonalStats: failed to create mask: {e}"))?;
-    let (window_ulx, window_uly) = transform.apply(window.col_off as f64, window.row_off as f64);
-    let mask_transform = [
-        window_ulx,
-        transform[1],
-        transform[2],
-        window_uly,
-        transform[4],
-        transform[5],
-    ];
-    mask_dataset
-        .set_geo_transform(&mask_transform)
-        .map_err(|e| exec_datafusion_err!("RS_ZonalStats: failed to set mask geotransform: {e}"))?;
-
-    gdal.rasterize_affine(&mask_dataset, &[1], &[geometry], &[1.0], all_touched)
-        .map_err(|e| exec_datafusion_err!("RS_ZonalStats: failed to rasterize zone: {e}"))?;
-
-    let mask_band = mask_dataset
-        .rasterband(1)
-        .map_err(|e| exec_datafusion_err!("RS_ZonalStats: failed to read mask band: {e}"))?;
-    let mask_buffer = mask_band
-        .read_as::<u8>(
-            (0, 0),
-            (window.width, window.height),
-            (window.width, window.height),
-            None,
-        )
-        .map_err(|e| exec_datafusion_err!("RS_ZonalStats: failed to read mask: {e}"))?;
-    Ok(mask_buffer.data().to_vec())
 }
 
 /// Append every selected pixel value (masked in, and — when `nodata` is set —

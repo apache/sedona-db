@@ -34,10 +34,7 @@ use datafusion_common::{exec_datafusion_err, ScalarValue};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::sedona_internal_err;
 use sedona_gdal::gdal::Gdal;
-use sedona_gdal::geo_transform::{GeoTransform, GeoTransformEx};
-use sedona_gdal::mem::MemDatasetBuilder;
-use sedona_gdal::raster::types::GdalDataType;
-use sedona_gdal::vector::geometry::Geometry;
+use sedona_gdal::geo_transform::GeoTransform;
 
 use arrow_schema::DataType;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
@@ -55,6 +52,7 @@ use sedona_schema::raster::BandDataType;
 
 use crate::gdal_common::with_gdal;
 use crate::gdal_dataset_provider::configure_thread_local_options;
+use crate::mask::{envelope_window, rasterize_geometry_mask, PixelWindow};
 use sedona_raster::traits::nodata_f64_to_bytes;
 
 /// RS_Clip() scalar UDF implementation
@@ -364,16 +362,7 @@ struct ClippedRasterData {
     /// the geometry's envelope intersected with the raster extent, snapped
     /// outward to the pixel grid. `None` means the full original raster
     /// extent was kept (crop=false).
-    crop_window: Option<CropWindow>,
-}
-
-/// A rectangular crop window in pixel coordinates.
-#[derive(Debug, Clone, Copy)]
-struct CropWindow {
-    col_off: usize,
-    row_off: usize,
-    width: usize,
-    height: usize,
+    crop_window: Option<PixelWindow>,
 }
 
 /// Clip a raster to a geometry.
@@ -399,14 +388,9 @@ fn clip_raster(
         .geometry_from_wkb(geom_wkb)
         .map_err(|e| exec_datafusion_err!("Failed to parse geometry from WKB: {}", e))?;
 
-    let geotransform = [
-        metadata.upper_left_x(),
-        metadata.scale_x(),
-        metadata.skew_x(),
-        metadata.upper_left_y(),
-        metadata.skew_y(),
-        metadata.scale_y(),
-    ];
+    // GDAL geotransform: [upper_left_x, scale_x, skew_x, upper_left_y, skew_y, scale_y].
+    let geotransform: GeoTransform = <[f64; 6]>::try_from(raster.transform())
+        .map_err(|_| exec_datafusion_err!("RS_Clip: expected a 6-element geotransform"))?;
 
     // The clip window is the geometry's envelope intersected with the raster
     // extent, snapped outward to the pixel grid — the window PostGIS ST_Clip,
@@ -417,49 +401,9 @@ fn clip_raster(
         return Ok(None);
     };
 
-    // Create a mask raster covering only the clip window, with the geotransform
-    // shifted to the window's upper-left corner.
-    let mask_dataset =
-        MemDatasetBuilder::create(gdal, window.width, window.height, 1, GdalDataType::UInt8)
-            .map_err(|e| exec_datafusion_err!("Failed to create mask dataset: {}", e))?;
-    let (window_ulx, window_uly) = geotransform.apply(window.col_off as f64, window.row_off as f64);
-    let mask_geotransform = [
-        window_ulx,
-        geotransform[1],
-        geotransform[2],
-        window_uly,
-        geotransform[4],
-        geotransform[5],
-    ];
-    mask_dataset
-        .set_geo_transform(&mask_geotransform)
-        .map_err(|e| exec_datafusion_err!("Failed to set geotransform: {}", e))?;
-
-    // GDAL's MEM driver zero-fills owned band buffers at creation, so the mask
-    // already reads 0 (outside) everywhere; rasterize_affine burns 1 inside the
-    // geometry. No explicit zero-init write needed.
-    gdal.rasterize_affine(
-        &mask_dataset,
-        &[1], // band 1
-        &[geometry],
-        &[1.0], // burn value = 1 (inside)
-        all_touched,
-    )
-    .map_err(|e| exec_datafusion_err!("Failed to rasterize geometry: {}", e))?;
-
-    // Read the (window-sized) mask
-    let mask_band = mask_dataset
-        .rasterband(1)
-        .map_err(|e| exec_datafusion_err!("Failed to get mask band: {}", e))?;
-    let mask_buffer = mask_band
-        .read_as::<u8>(
-            (0, 0),
-            (window.width, window.height),
-            (window.width, window.height),
-            None,
-        )
-        .map_err(|e| exec_datafusion_err!("Failed to read mask: {}", e))?;
-    let mask = mask_buffer.data();
+    // Rasterize the geometry into a window-sized 0/1 mask: 1 inside, 0 outside
+    // (moves `geometry`, whose only remaining use is the burn).
+    let mask = rasterize_geometry_mask(gdal, geometry, &geotransform, &window, all_touched)?;
 
     // The envelope may overlap the raster while the geometry itself selects no
     // pixel (e.g. it falls between pixel centers); that is still the
@@ -586,7 +530,7 @@ fn clip_raster(
             if let Some(cw) = crop_window {
                 apply_mask_and_crop(
                     plane_bytes,
-                    mask,
+                    &mask,
                     width,
                     &data_type,
                     &nodata_bytes,
@@ -596,7 +540,7 @@ fn clip_raster(
             } else {
                 apply_mask_to_band(
                     plane_bytes,
-                    mask,
+                    &mask,
                     width,
                     &data_type,
                     &nodata_bytes,
@@ -632,67 +576,6 @@ fn clip_raster(
     }))
 }
 
-/// Compute the clip window: the geometry's envelope intersected with the
-/// raster extent, snapped outward to the pixel grid. Returns `None` when the
-/// envelope is disjoint from the raster extent (no clipping possible).
-///
-/// The envelope corners are mapped through the inverse geotransform (all four,
-/// so a skewed/rotated raster still gets a correct superset window) and the
-/// resulting pixel-space bbox is floored/ceiled to whole pixels. A degenerate
-/// envelope (point/line) landing exactly on a grid line is widened to one
-/// pixel so the rasterizer — not the snapping — decides whether it burns.
-fn envelope_window(
-    geometry: &Geometry,
-    geotransform: &GeoTransform,
-    width: usize,
-    height: usize,
-) -> Result<Option<CropWindow>> {
-    let env = geometry.envelope();
-    let inverse = geotransform
-        .invert()
-        .map_err(|e| exec_datafusion_err!("RS_Clip: geotransform is not invertible: {}", e))?;
-
-    let corners = [
-        (env.MinX, env.MinY),
-        (env.MinX, env.MaxY),
-        (env.MaxX, env.MinY),
-        (env.MaxX, env.MaxY),
-    ];
-    let mut min_col = f64::INFINITY;
-    let mut max_col = f64::NEG_INFINITY;
-    let mut min_row = f64::INFINITY;
-    let mut max_row = f64::NEG_INFINITY;
-    for (x, y) in corners {
-        let (col, row) = inverse.apply(x, y);
-        min_col = min_col.min(col);
-        max_col = max_col.max(col);
-        min_row = min_row.min(row);
-        max_row = max_row.max(row);
-    }
-
-    let col0 = min_col.floor();
-    let row0 = min_row.floor();
-    let col1 = max_col.ceil().max(col0 + 1.0);
-    let row1 = max_row.ceil().max(row0 + 1.0);
-
-    // Intersect with the raster extent. `>=` also rejects the NaN envelope of
-    // an empty geometry.
-    let col0 = col0.max(0.0);
-    let row0 = row0.max(0.0);
-    let col1 = col1.min(width as f64);
-    let row1 = row1.min(height as f64);
-    if !(col0 < col1 && row0 < row1) {
-        return Ok(None);
-    }
-
-    Ok(Some(CropWindow {
-        col_off: col0 as usize,
-        row_off: row0 as usize,
-        width: (col1 - col0) as usize,
-        height: (row1 - row0) as usize,
-    }))
-}
-
 /// Apply mask to band data (no cropping — preserves original dimensions).
 /// The mask covers only `window`; every pixel outside it is outside the
 /// geometry's envelope and therefore nodata. The plane's bytes are appended
@@ -704,7 +587,7 @@ fn apply_mask_to_band(
     width: usize,
     data_type: &BandDataType,
     nodata_bytes: &[u8],
-    window: &CropWindow,
+    window: &PixelWindow,
     out: &mut Vec<u8>,
 ) -> Result<()> {
     let byte_size = data_type.byte_size();
@@ -754,7 +637,7 @@ fn apply_mask_and_crop(
     full_width: usize,
     data_type: &BandDataType,
     nodata_bytes: &[u8],
-    cw: &CropWindow,
+    cw: &PixelWindow,
     out: &mut Vec<u8>,
 ) -> Result<()> {
     let byte_size = data_type.byte_size();
