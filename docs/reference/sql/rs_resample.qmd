@@ -25,9 +25,9 @@ kernels:
     args:
     - name: raster
       type: raster
-    - name: referenceRaster
+    - name: reference_raster
       type: raster
-    - name: useScale
+    - name: use_scale
       type: boolean
     - name: algorithm
       type: string
@@ -35,11 +35,11 @@ kernels:
     args:
     - name: raster
       type: raster
-    - name: widthOrScale
+    - name: width_or_scale
       type: double
-    - name: heightOrScale
+    - name: height_or_scale
       type: double
-    - name: useScale
+    - name: use_scale
       type: boolean
     - name: algorithm
       type: string
@@ -47,15 +47,15 @@ kernels:
     args:
     - name: raster
       type: raster
-    - name: widthOrScale
+    - name: width_or_scale
       type: double
-    - name: heightOrScale
+    - name: height_or_scale
       type: double
-    - name: gridX
+    - name: grid_x
       type: double
-    - name: gridY
+    - name: grid_y
       type: double
-    - name: useScale
+    - name: use_scale
       type: boolean
     - name: algorithm
       type: string
@@ -75,26 +75,26 @@ CRS — `RS_Resample` never reprojects (use `RS_ReprojectMatch` for that).
 
 `RS_Resample` has three positional overloads:
 
-- **`RS_Resample(raster, widthOrScale, heightOrScale, useScale, algorithm)`** —
-  when `useScale` is false, `widthOrScale`/`heightOrScale` are the output pixel
+- **`RS_Resample(raster, width_or_scale, height_or_scale, use_scale, algorithm)`** —
+  when `use_scale` is false, `width_or_scale`/`height_or_scale` are the output pixel
   dimensions (a fractional value is an error) and the world extent is preserved.
-  When `useScale` is true they are the target pixel size (`scaleX`, `scaleY`,
+  When `use_scale` is true they are the target pixel size (`scaleX`, `scaleY`,
   with `scaleY` negative for a north-up raster); the pixel size is kept exact and
   the extent grows by up to one pixel so it tiles into whole pixels. Cells
   outside the source footprint become nodata.
-- **`RS_Resample(raster, widthOrScale, heightOrScale, gridX, gridY, useScale,
+- **`RS_Resample(raster, width_or_scale, height_or_scale, grid_x, grid_y, use_scale,
   algorithm)`** — additionally snaps the output origin to the grid anchored at
-  `(gridX, gridY)`, expanding outward so the original extent stays covered.
-- **`RS_Resample(raster, referenceRaster, useScale, algorithm)`** — takes the
-  target dimensions (or pixel size, when `useScale`) and the origin grid from
-  `referenceRaster`, which must share the input's CRS (it is an error otherwise).
+  `(grid_x, grid_y)`, expanding outward so the original extent stays covered.
+- **`RS_Resample(raster, reference_raster, use_scale, algorithm)`** — takes the
+  target dimensions (or pixel size, when `use_scale`) and the origin grid from
+  `reference_raster`, which must share the input's CRS (it is an error otherwise).
 
 `algorithm` (case-insensitive) is one of `NearestNeighbor` (the default),
 `Bilinear`, `Cubic` (alias `Bicubic`), `CubicSpline`, `Lanczos`, `Average`, or
 `Mode`.
 
 Dimensions and pixel size use the rows-then-columns intuition of the raster
-(`heightOrScale`/`scaleY` for rows, `widthOrScale`/`scaleX` for columns). In the
+(`height_or_scale`/`scaleY` for rows, `width_or_scale`/`scaleX` for columns). In the
 extent-preserving dimension form, a skewed or rotated raster is re-gridded with
 its footprint preserved (both the scale and skew terms of each axis scale by the
 same factor). A scale change or origin snap on a skewed raster is not supported
