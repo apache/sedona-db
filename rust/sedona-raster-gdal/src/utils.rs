@@ -355,7 +355,12 @@ pub fn append_regridded_nd_from_dataset(
             )
             .map_err(|e| exec_datafusion_err!("Failed to start band: {}", e))?;
 
-        let plane_bytes = out_width * out_height * plan.data_type.byte_size();
+        let plane_bytes = out_width
+            .checked_mul(out_height)
+            .and_then(|a| a.checked_mul(plan.data_type.byte_size()))
+            .ok_or_else(|| {
+                exec_datafusion_err!("regridded band size overflow ({out_width}x{out_height})")
+            })?;
         let total = plane_bytes.checked_mul(plan.plane_count).ok_or_else(|| {
             exec_datafusion_err!("regridded band size overflow ({out_width}x{out_height})")
         })?;
@@ -628,9 +633,14 @@ fn append_nd_from_dataset_inner(
             )
             .map_err(|e| exec_datafusion_err!("Failed to start band: {}", e))?;
 
-        let mut band_data: Vec<u8> = Vec::with_capacity(
-            plan.plane_count * out_width * out_height * plan.data_type.byte_size(),
-        );
+        let capacity = out_width
+            .checked_mul(out_height)
+            .and_then(|a| a.checked_mul(plan.data_type.byte_size()))
+            .and_then(|a| a.checked_mul(plan.plane_count))
+            .ok_or_else(|| {
+                exec_datafusion_err!("resampled band size overflow ({out_width}x{out_height})")
+            })?;
+        let mut band_data: Vec<u8> = Vec::with_capacity(capacity);
         for _ in 0..plan.plane_count {
             let band = dataset
                 .rasterband(gdal_band)

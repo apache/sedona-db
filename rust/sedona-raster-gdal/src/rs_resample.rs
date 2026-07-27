@@ -57,12 +57,14 @@ use sedona_gdal::raster::types::ResampleAlg;
 use sedona_raster::array::RasterRefImpl;
 use sedona_raster::builder::RasterBuilder;
 use sedona_raster::traits::RasterRef;
+use sedona_raster_functions::crs_utils::{crs_transform_required, resolve_crs};
 use sedona_raster_functions::rs_ensure_loaded::{
     NEEDS_PIXELS_METADATA_KEY, RETURNS_BYTES_METADATA_KEY,
 };
 use sedona_raster_functions::RasterExecutor;
 use sedona_schema::datatypes::{SedonaType, RASTER};
 use sedona_schema::matchers::ArgMatcher;
+use sedona_schema::raster::BandDataType;
 
 use crate::gdal_common::{raster_ref_to_gdal_mem, with_gdal, GdalBandLayout};
 use crate::gdal_dataset_provider::configure_thread_local_options;
@@ -202,13 +204,21 @@ impl RsResample {
                 };
 
                 // Same-CRS only: RS_Resample never reprojects (matching Spark,
-                // which throws when the reference SRID differs).
-                if raster.crs() != reference.crs() {
+                // which throws when the reference SRID differs). Compare CRSes
+                // semantically rather than by raw string, so two equivalent
+                // encodings of the same CRS are not spuriously rejected; a CRS on
+                // exactly one side is likewise an error (via crs_transform_required).
+                let raster_crs = resolve_crs(raster.crs())?;
+                let reference_crs = resolve_crs(reference.crs())?;
+                if crs_transform_required(
+                    raster_crs.as_deref(),
+                    reference_crs.as_deref(),
+                    "input raster",
+                    "referenceRaster",
+                )? {
                     return exec_err!(
-                        "RS_Resample: referenceRaster CRS {:?} differs from the input raster CRS \
-                         {:?}; RS_Resample does not reproject",
-                        reference.crs(),
-                        raster.crs()
+                        "RS_Resample: referenceRaster CRS differs from the input raster CRS; \
+                         RS_Resample does not reproject"
                     );
                 }
 
@@ -458,6 +468,9 @@ fn whole_dimension(value: f64, name: &str) -> Result<i64> {
     if dim <= 0 {
         return exec_err!("RS_Resample: {name} must be positive (got {dim})");
     }
+    if dim > i32::MAX as i64 {
+        return exec_err!("RS_Resample: {name} {dim} exceeds the maximum raster dimension");
+    }
     Ok(dim)
 }
 
@@ -591,6 +604,25 @@ fn resample_raster(
     }
 
     let band_count = raster.bands().len();
+
+    // GDAL RasterIO resampling routes pixels through a floating working type for
+    // every non-nearest algorithm (a double for interpolation, a 32-bit float
+    // for Mode on GDAL < 3.13), so it cannot preserve Int64/UInt64 exactly.
+    // Nearest is a pure sample and is bit-exact, so only the others are rejected
+    // (RS_ReprojectMatch blanket-rejects these dtypes for the same reason).
+    if plan.algorithm != ResampleAlg::NearestNeighbour {
+        for i in 0..band_count {
+            if let Some(BandDataType::Int64 | BandDataType::UInt64) = raster.band_data_type(i) {
+                return exec_err!(
+                    "RS_Resample does not support {:?} resampling of Int64/UInt64 rasters: GDAL \
+                     routes 64-bit integer pixels through a floating working type, which cannot \
+                     represent them exactly. Use NearestNeighbor, or cast to Int32/Float64 first.",
+                    plan.algorithm
+                );
+            }
+        }
+    }
+
     let band_indices: Vec<usize> = (1..=band_count).collect();
     let layout = GdalBandLayout::from_raster(raster, &band_indices)?;
     // SAFETY: the returned dataset references `raster`'s band bytes zero-copy;
@@ -602,8 +634,14 @@ fn resample_raster(
     // preserving RasterIO read (also preserving the skew-scaling footprint
     // semantics of a skewed raster).
     if let (TargetGrid::Dims { width, height }, None) = (plan.target, plan.grid_snap) {
+        // Skew-constant output geotransform matching Sedona Spark (the skew is
+        // carried through unchanged and the pixel size is the axis-aligned
+        // envelope divided across the new dimensions — compute_output_grid's
+        // dimension branch); the extent-preserving RasterIO decimation supplies
+        // the pixels.
+        let out = compute_output_grid(&src, raster.crs(), plan);
         let grid = ResampledGrid {
-            transform: footprint_preserving_transform(&src, width, height),
+            transform: out.transform,
             width: width as usize,
             height: height as usize,
             crs: raster.crs(),
@@ -622,27 +660,6 @@ fn resample_raster(
         alg: plan.algorithm,
     };
     append_regridded_nd_from_dataset(&src_dataset, &layout, builder, &regrid)
-}
-
-/// The extent-preserving output geotransform used by the RasterIO dimension
-/// path: the origin is unchanged and each pixel-axis vector (scale *and* skew) is
-/// divided across the new pixel count, so the parallelogram footprint — hence the
-/// world extent — matches the source exactly.
-fn footprint_preserving_transform(
-    src: &AffineGrid,
-    out_width: i64,
-    out_height: i64,
-) -> GeoTransform {
-    let col_factor = src.width as f64 / out_width as f64;
-    let row_factor = src.height as f64 / out_height as f64;
-    [
-        src.upper_left_x,
-        src.scale_x * col_factor,
-        src.skew_x * row_factor,
-        src.upper_left_y,
-        src.skew_y * col_factor,
-        src.scale_y * row_factor,
-    ]
 }
 
 /// Resolve the output grid, mirroring Apache Sedona (Spark)'s
@@ -716,7 +733,16 @@ fn compute_output_grid(src: &AffineGrid, src_crs: Option<&str>, plan: &ResampleP
 fn snap_origin(grid_x: f64, grid_y: f64, transform: &GeoTransform) -> (f64, f64) {
     let [ul_x, scale_x, skew_x, ul_y, skew_y, scale_y] = *transform;
     let det = scale_x * scale_y - skew_x * skew_y;
-    if det.abs() < f64::EPSILON {
+    // Relative degeneracy test: a fine-resolution transform has a tiny but valid
+    // determinant, so compare against the coefficient magnitudes rather than an
+    // absolute f64::EPSILON (which would misclassify sub-1e-8 pixel sizes as
+    // degenerate and silently skip the snap).
+    let mag = scale_x
+        .abs()
+        .max(skew_x.abs())
+        .max(scale_y.abs())
+        .max(skew_y.abs());
+    if det.abs() <= mag * mag * f64::EPSILON {
         return (ul_x, ul_y);
     }
     let dx = ul_x - grid_x;
@@ -1125,14 +1151,16 @@ mod tests {
     }
 
     #[test]
-    fn skewed_raster_scales_skew_terms() {
-        // A skewed (non-north-up) raster resamples by re-gridding the pixels and
-        // scaling BOTH the scale and skew terms of each axis by the same factor,
-        // so the parallelogram footprint is preserved. Source transform
-        // [ulx=0, scale_x=2, skew_x=0.5, uly=2, skew_y=0.5, scale_y=-2];
-        // upsampling 2x1 -> 4x2 halves the col axis (factor 0.5) and the row
-        // axis (factor 0.5), so every coefficient halves. This is the extent-
-        // preserving dimension path, which handles skew.
+    fn skewed_raster_keeps_skew_and_derives_scale_from_envelope() {
+        // A skewed (non-north-up) raster resamples with the shear carried through
+        // UNCHANGED and the new pixel size derived from the axis-aligned envelope
+        // divided across the new dimensions, matching Sedona Spark (which keeps
+        // the original skew and derives the scale from the envelope, ignoring the
+        // skew for the scale). Source transform [ulx=0, scale_x=2, skew_x=0.5,
+        // uly=2, skew_y=0.5, scale_y=-2] over 2x1 has envelope x in [0, 4.5],
+        // y in [0, 3], so upsampling to 4x2 gives scale_x = 4.5/4 = 1.125,
+        // scale_y = -3/2 = -1.5, with skew unchanged at 0.5. The pixels are the
+        // extent-preserving RasterIO decimation.
         let source = RasterSpec::d2(2, 1)
             .band_values(&[10u8, 20])
             .transform([0.0, 2.0, 0.5, 2.0, 0.5, -2.0])
@@ -1142,7 +1170,7 @@ mod tests {
 
         let expected = RasterSpec::d2(4, 2)
             .band_values(&[10u8, 10, 20, 20, 10, 10, 20, 20])
-            .transform([0.0, 1.0, 0.25, 2.0, 0.25, -1.0])
+            .transform([0.0, 1.125, 0.5, 2.0, 0.5, -1.5])
             .crs(Some("EPSG:4326"));
         assert_raster_scalar_equals(&result, &expected);
     }
@@ -1168,6 +1196,38 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("skewed"), "got: {err}");
+    }
+
+    #[test]
+    fn int64_non_nearest_errors_but_nearest_is_allowed() {
+        // GDAL RasterIO routes 64-bit ints through a float working type for any
+        // non-nearest algorithm, so RS_Resample rejects Int64/UInt64 there
+        // (matching RS_ReprojectMatch); nearest is a bit-exact sample and runs.
+        let source = RasterSpec::d2(2, 1)
+            .band_values(&[10i64, 20])
+            .bbox(0.0, 0.0, 4.0, 2.0)
+            .crs(Some("EPSG:4326"));
+        let err = tester5()
+            .invoke(vec![
+                raster_scalar(&source),
+                f64_scalar(4.0),
+                f64_scalar(2.0),
+                bool_scalar(false),
+                str_scalar("Bilinear"),
+            ])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Int64/UInt64"), "got: {err}");
+        // Nearest neighbour is exact and succeeds.
+        tester5()
+            .invoke(vec![
+                raster_scalar(&source),
+                f64_scalar(4.0),
+                f64_scalar(2.0),
+                bool_scalar(false),
+                str_scalar("NearestNeighbor"),
+            ])
+            .unwrap();
     }
 
     #[test]
