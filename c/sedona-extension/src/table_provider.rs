@@ -220,41 +220,75 @@ unsafe extern "C" fn c_table_provider_get_property(
 
     // Handle property requests that require expression arguments
     let result = if property_str == "supports_filters_pushdown" {
-        // Extract filters from expression views
-        let filters: Vec<Expr> = if args.is_null() {
-            Vec::new()
+        // Extract filters from expression views, tracking which ones can be deserialized
+        if args.is_null() {
+            provider.supports_filters_pushdown(&[])
         } else {
             let args_ref = &*args;
             if args_ref.exprs.is_null() || args_ref.num_exprs == 0 {
-                Vec::new()
+                provider.supports_filters_pushdown(&[])
             } else {
                 let expr_ptrs = std::slice::from_raw_parts(args_ref.exprs, args_ref.num_exprs);
-                let mut filters = Vec::with_capacity(args_ref.num_exprs);
+                let registry = SessionRefRegistry::new(provider.session.as_ref());
+
+                // Try to deserialize each filter; track successes and failures
+                let mut deserialized: Vec<Option<Expr>> = Vec::with_capacity(args_ref.num_exprs);
                 for &expr_ptr in expr_ptrs {
                     if expr_ptr.is_null() {
+                        deserialized.push(None);
                         continue;
                     }
                     let expr_view = match ImportedExprView::try_new(&*expr_ptr) {
                         Ok(v) => v,
-                        Err(e) => {
-                            set_ffi_error!(err, "Failed to import expression view: {}", e);
-                            return libc::EINVAL;
+                        Err(_) => {
+                            // Can't even create the view - mark as unsupported
+                            deserialized.push(None);
+                            continue;
                         }
                     };
 
-                    // Here we don't have a Session to use to import the functions from protobuf
-                    match expr_view.to_expr(None) {
-                        Ok(expr) => filters.push(expr),
-                        Err(e) => {
-                            set_ffi_error!(err, "Failed to deserialize filter expression: {}", e);
-                            return libc::EINVAL;
-                        }
+                    // If deserialization fails (e.g., UDF not available on this side),
+                    // mark as None (will become Unsupported)
+                    match expr_view.to_expr(Some(&registry)) {
+                        Ok(expr) => deserialized.push(Some(expr)),
+                        Err(_) => deserialized.push(None),
                     }
                 }
-                filters
+
+                // Collect only the successfully deserialized filters
+                let valid_filters: Vec<&Expr> =
+                    deserialized.iter().filter_map(|opt| opt.as_ref()).collect();
+
+                // Get pushdown results for valid filters from the inner provider
+                let inner_results = provider
+                    .inner
+                    .supports_filters_pushdown(&valid_filters)
+                    .unwrap_or_else(|_| {
+                        vec![TableProviderFilterPushDown::Unsupported; valid_filters.len()]
+                    });
+
+                // Merge results: use inner results for valid filters, Unsupported for failed ones
+                let mut inner_iter = inner_results.into_iter();
+                let final_results: Vec<&str> = deserialized
+                    .iter()
+                    .map(|opt| {
+                        if opt.is_some() {
+                            match inner_iter.next() {
+                                Some(TableProviderFilterPushDown::Exact) => "Exact",
+                                Some(TableProviderFilterPushDown::Inexact) => "Inexact",
+                                _ => "Unsupported",
+                            }
+                        } else {
+                            "Unsupported"
+                        }
+                    })
+                    .collect();
+
+                serde_json::to_string(&final_results).map_err(|e| {
+                    sedona_internal_datafusion_err!("Failed to serialize pushdown results: {}", e)
+                })
             }
-        };
-        provider.supports_filters_pushdown(&filters)
+        }
     } else {
         provider.get_property(&property_str)
     };

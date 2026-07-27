@@ -350,6 +350,10 @@ fn get_expr_view_property_data_type(expr: &SedonaCExprView, property: &str) -> R
     })
 }
 
+/// [FunctionRegistry] implemented on a dyn [Session]
+///
+/// Many functions pass a reference to the dyn [Session]. This implementation allows
+/// those functions to deserialize a protobuf expression across the FFI boundary.
 pub(crate) struct SessionRefRegistry<'a> {
     session: &'a dyn Session,
 }
