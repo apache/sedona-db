@@ -152,7 +152,7 @@ where
 ///
 /// The caller provides a closure that performs the actual FFI call with
 /// the correct self pointer type.
-fn call_get_property_schema_impl<F>(property: &str, call_ffi: F) -> Result<DataType>
+pub fn call_get_property_schema_impl<F>(property: &str, call_ffi: F) -> Result<DataType>
 where
     F: FnOnce(*const c_char, *mut FFI_ArrowSchema, *mut SedonaCError) -> c_int,
 {
@@ -251,7 +251,7 @@ fn parse_ffi_array<T: DeserializeOwned>(
 }
 
 /// Parse an FFI array and return the raw bytes.
-fn parse_ffi_array_to_bytes(
+pub fn parse_ffi_array_to_bytes(
     ffi_array: arrow_array::ffi::FFI_ArrowArray,
     data_type: &DataType,
 ) -> Result<Vec<u8>> {

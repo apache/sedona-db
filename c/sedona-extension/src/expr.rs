@@ -16,8 +16,8 @@
 // under the License.
 
 use std::{
-    ffi::c_int,
-    fmt::Debug,
+    ffi::{c_int, CString},
+    fmt::{Debug, Display},
     os::raw::{c_char, c_void},
     ptr::null_mut,
 };
@@ -28,11 +28,15 @@ use arrow_array::{
     Array,
 };
 use arrow_schema::{DataType, Field};
+use datafusion_common::Result;
 use datafusion_expr::Expr;
+use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 
 use crate::extension::{SedonaCError, SedonaCExpr};
 use crate::set_ffi_error;
-use crate::utils::{cstr_from_ptr_or_empty, ERRNO_OK};
+use crate::utils::{
+    call_get_property_schema_impl, cstr_from_ptr_or_empty, parse_ffi_array_to_bytes, ERRNO_OK,
+};
 
 /// Wrapper around a [datafusion_expr::Expr] that can be exported across FFI.
 pub struct ExportedExpr {
@@ -62,7 +66,6 @@ impl ExportedExpr {
         match property {
             "debug_string" => Ok(format!("{:?}", self.expr)),
             "display_string" => Ok(format!("{}", self.expr)),
-            "variant" => Ok(self.expr.variant_name().to_string()),
             _ => Err(format!("Unknown property: {}", property)),
         }
     }
@@ -148,4 +151,166 @@ unsafe extern "C" fn c_expr_release(self_: *mut SedonaCExpr) {
         self_ref.private_data = null_mut();
     }
     self_ref.release = None;
+}
+
+/// An expression wrapper that can be imported from across an FFI boundary.
+///
+/// This wraps a [SedonaCExpr] and provides `Debug` and `Display` implementations
+/// by querying properties from the FFI interface.
+pub struct ImportedExpr {
+    inner: SedonaCExpr,
+}
+
+impl Debug for ImportedExpr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Ok(debug_str) = get_expr_string_property(&self.inner, "debug_string") {
+            f.debug_struct("ImportedExpr")
+                .field("inner", &debug_str)
+                .finish()
+        } else {
+            f.debug_struct("ImportedExpr").finish()
+        }
+    }
+}
+
+impl Display for ImportedExpr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Ok(display_str) = get_expr_string_property(&self.inner, "display_string") {
+            write!(f, "{}", display_str)
+        } else {
+            write!(f, "ImportedExpr")
+        }
+    }
+}
+
+impl ImportedExpr {
+    /// Create a new ImportedExpr from a SedonaCExpr.
+    ///
+    /// Returns an error if the SedonaCExpr does not have a valid release callback.
+    pub fn try_new(inner: SedonaCExpr) -> Result<Self> {
+        if inner.release.is_none() {
+            return sedona_internal_err!("SedonaCExpr does not have a release callback");
+        }
+        Ok(Self { inner })
+    }
+
+    /// Get a string property from this expression.
+    pub fn get_string_property(&self, property: &str) -> Result<String> {
+        get_expr_string_property(&self.inner, property)
+    }
+}
+
+/// Get a string property from a [SedonaCExpr].
+pub fn get_expr_string_property(expr: &SedonaCExpr, property: &str) -> Result<String> {
+    let Some(get_property) = expr.get_property else {
+        return sedona_internal_err!("SedonaCExpr does not have get_property");
+    };
+
+    let property_cstr = CString::new(property)
+        .map_err(|e| sedona_internal_datafusion_err!("Invalid property name: {}", e))?;
+
+    let mut ffi_array = FFI_ArrowArray::empty();
+    let mut err = SedonaCError::default();
+
+    let code = unsafe {
+        get_property(
+            expr,
+            property_cstr.as_ptr(),
+            std::ptr::null(),
+            0,
+            &mut ffi_array,
+            &mut err,
+        )
+    };
+
+    if code != ERRNO_OK {
+        return sedona_internal_err!("SedonaCExpr failed to get '{}': {}", property, err);
+    }
+
+    let data_type = get_expr_property_data_type(expr, property)?;
+    let bytes = parse_ffi_array_to_bytes(ffi_array, &data_type)?;
+    String::from_utf8(bytes)
+        .map_err(|e| sedona_internal_datafusion_err!("Invalid UTF-8 in '{}': {}", property, e))
+}
+
+/// Get the data type for a property from a [SedonaCExpr].
+fn get_expr_property_data_type(expr: &SedonaCExpr, property: &str) -> Result<DataType> {
+    let Some(get_property_schema) = expr.get_property_schema else {
+        return Ok(DataType::Utf8);
+    };
+
+    call_get_property_schema_impl(property, |prop, schema, err| unsafe {
+        get_property_schema(expr, prop, schema, err)
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use datafusion_expr::col;
+
+    fn roundtrip_expr(expr: Expr) -> ImportedExpr {
+        let exported = ExportedExpr::new(expr);
+        let ffi_expr: SedonaCExpr = exported.into();
+        ImportedExpr::try_new(ffi_expr).unwrap()
+    }
+
+    #[test]
+    fn test_roundtrip_debug_string() {
+        let expr = col("test_column");
+        let imported = roundtrip_expr(expr.clone());
+
+        let debug_str = imported.get_string_property("debug_string").unwrap();
+        assert_eq!(debug_str, format!("{:?}", expr));
+    }
+
+    #[test]
+    fn test_roundtrip_display_string() {
+        let expr = col("test_column");
+        let imported = roundtrip_expr(expr.clone());
+
+        let display_str = imported.get_string_property("display_string").unwrap();
+        assert_eq!(display_str, format!("{}", expr));
+    }
+
+    #[test]
+    fn test_debug_impl() {
+        let expr = col("my_col");
+        let imported = roundtrip_expr(expr);
+
+        let debug_output = format!("{:?}", imported);
+        assert!(debug_output.contains("ImportedExpr"));
+        assert!(debug_output.contains("my_col"));
+    }
+
+    #[test]
+    fn test_display_impl() {
+        let expr = col("my_col");
+        let imported = roundtrip_expr(expr);
+
+        let display_output = format!("{}", imported);
+        assert_eq!(display_output, "my_col");
+    }
+
+    #[test]
+    fn test_unknown_property_error() {
+        let expr = col("test");
+        let imported = roundtrip_expr(expr);
+
+        let result = imported.get_string_property("nonexistent_property");
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Unknown property"));
+    }
+
+    #[test]
+    fn test_imported_expr_without_release_fails() {
+        let invalid_expr = SedonaCExpr::default();
+        let result = ImportedExpr::try_new(invalid_expr);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("does not have a release callback"));
+    }
 }
