@@ -229,9 +229,25 @@ struct SedonaCError {
   void (*release)(struct SedonaCError* self);
 };
 
-struct SedonaCExpr {
+/// \brief Non-owning view of an expression
+///
+/// This structure provides a read-only view into an expression without taking
+/// ownership. The lifetime of this view is tied to the underlying expression
+/// it references.
+///
+/// Lifetime semantics:
+/// - Exporter: The exporter must ensure the underlying expression remains valid
+///   for the entire lifetime of this view. The exporter is responsible for
+///   managing the lifetime of the underlying expression.
+/// - Importer: The importer must not use this view after the underlying
+///   expression has been released. The importer should not store this view
+///   beyond the scope in which it was provided.
+///
+/// Before using this structure, private_data MUST be checked.
+/// Instances with a NULL private_data are not valid and must not be used.
+struct SedonaCExprView {
   /// \brief Get the data type of a property
-  int (*get_property_schema)(const struct SedonaCExpr* self, const char* property,
+  int (*get_property_schema)(const struct SedonaCExprView* self, const char* property,
                              struct ArrowSchema* out, struct SedonaCError* err);
 
   /// \brief Extract a serializable property from this expression
@@ -239,26 +255,16 @@ struct SedonaCExpr {
   /// This is used to implement PlanProperties and other values that can be
   /// easily retrieved and serialized. The data type associated with the out
   /// array may be retrieved with the get_property_schema callback.
-  int (*get_property)(const struct SedonaCExpr* self, const char* property,
+  int (*get_property)(const struct SedonaCExprView* self, const char* property,
                       const uint8_t* args, size_t args_len, struct ArrowArray* out,
                       struct SedonaCError* err);
-
-  /// \brief Clone this expression based on information about a property
-  ///
-  /// This can used to implement operations that require modifying an expression.
-  int (*with_property)(const struct SedonaCExpr* self, const char* property,
-                       const uint8_t* args, size_t args_len,
-                       struct SedonaCExpr* out, struct SedonaCError* err);
 
   /// \brief Reserved for future use. Must be NULL.
   void* reserved;
 
-  /// \brief Release this instance
-  ///
-  /// Implementations of this callback must set self->release to NULL.
-  void (*release)(struct SedonaCExpr* self);
-
   /// \brief Opaque implementation-specific data
+  ///
+  /// A NULL value indicates this view is invalid and must not be used.
   void* private_data;
 };
 
@@ -278,8 +284,10 @@ struct SedonaCExecutionPlanArgs {
   const struct SedonaCExecutionPlan** exec_plans;
   size_t num_exec_plans;
 
-  /// \brief Optional array of expressions
-  const struct SedonaCExpr** exprs;
+  /// \brief Optional array of expression views
+  ///
+  /// These views are valid only for the duration of the callback invocation.
+  const struct SedonaCExprView** exprs;
   size_t num_exprs;
 
   /// \brief Reserved for future use. Must be NULL.

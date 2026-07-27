@@ -236,13 +236,28 @@ macro_rules! set_ffi_error {
     };
 }
 
-/// Raw FFI representation of the SedonaCExpr
+/// Raw FFI representation of a non-owning expression view
+///
+/// This structure provides a read-only view into an expression without taking
+/// ownership. The lifetime of this view is tied to the underlying expression
+/// it references.
+///
+/// Lifetime semantics:
+/// - Exporter: The exporter must ensure the underlying expression remains valid
+///   for the entire lifetime of this view. The exporter is responsible for
+///   managing the lifetime of the underlying expression.
+/// - Importer: The importer must not use this view after the underlying
+///   expression has been released. The importer should not store this view
+///   beyond the scope in which it was provided.
+///
+/// Before using this structure, private_data MUST be checked.
+/// Instances with a NULL private_data are not valid and must not be used.
 #[derive(Default)]
 #[repr(C)]
-pub struct SedonaCExpr {
+pub struct SedonaCExprView {
     pub get_property_schema: Option<
         unsafe extern "C" fn(
-            self_: *const SedonaCExpr,
+            self_: *const SedonaCExprView,
             property: *const c_char,
             out: *mut FFI_ArrowSchema,
             err: *mut SedonaCError,
@@ -251,7 +266,7 @@ pub struct SedonaCExpr {
 
     pub get_property: Option<
         unsafe extern "C" fn(
-            self_: *const SedonaCExpr,
+            self_: *const SedonaCExprView,
             property: *const c_char,
             args: *const u8,
             args_len: usize,
@@ -260,36 +275,13 @@ pub struct SedonaCExpr {
         ) -> c_int,
     >,
 
-    pub with_property: Option<
-        unsafe extern "C" fn(
-            self_: *const SedonaCExpr,
-            property: *const c_char,
-            args: *const u8,
-            args_len: usize,
-            out: *mut SedonaCExpr,
-            err: *mut SedonaCError,
-        ) -> c_int,
-    >,
-
     pub reserved: *mut c_void,
 
-    pub release: Option<unsafe extern "C" fn(self_: *mut SedonaCExpr)>,
-
-    pub private_data: *mut c_void,
+    pub private_data: *const c_void,
 }
 
-unsafe impl Send for SedonaCExpr {}
-unsafe impl Sync for SedonaCExpr {}
-
-impl Drop for SedonaCExpr {
-    fn drop(&mut self) {
-        if let Some(releaser) = self.release {
-            unsafe { releaser(self) }
-            self.release = None;
-            self.private_data = null_mut();
-        }
-    }
-}
+unsafe impl Send for SedonaCExprView {}
+unsafe impl Sync for SedonaCExprView {}
 
 /// Raw FFI representation of the SedonaCExecutionPlanArgs
 ///
@@ -304,8 +296,10 @@ pub struct SedonaCExecutionPlanArgs {
     /// Optional array of execution plans
     pub exec_plans: *const *const SedonaCExecutionPlan,
     pub num_exec_plans: usize,
-    /// Optional array of expressions
-    pub exprs: *const *const SedonaCExpr,
+    /// Optional array of expression views
+    ///
+    /// These views are valid only for the duration of the callback invocation.
+    pub exprs: *const *const SedonaCExprView,
     pub num_exprs: usize,
     pub reserved: *mut c_void,
 }
