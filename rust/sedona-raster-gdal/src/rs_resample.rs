@@ -69,7 +69,7 @@ use sedona_schema::raster::BandDataType;
 use crate::gdal_common::{raster_ref_to_gdal_mem, with_gdal, GdalBandLayout};
 use crate::gdal_dataset_provider::configure_thread_local_options;
 use crate::utils::{
-    append_regridded_nd_from_dataset, append_resampled_nd_from_dataset, RegridGrid, ResampledGrid,
+    append_resampled_nd_from_dataset, append_warped_nd_from_dataset, ResampledGrid, WarpGrid,
 };
 
 /// RS_Resample() scalar UDF implementation.
@@ -605,61 +605,84 @@ fn resample_raster(
 
     let band_count = raster.bands().len();
 
-    // GDAL RasterIO resampling routes pixels through a floating working type for
-    // every non-nearest algorithm (a double for interpolation, a 32-bit float
-    // for Mode on GDAL < 3.13), so it cannot preserve Int64/UInt64 exactly.
-    // Nearest is a pure sample and is bit-exact, so only the others are rejected
-    // (RS_ReprojectMatch blanket-rejects these dtypes for the same reason).
-    if plan.algorithm != ResampleAlg::NearestNeighbour {
+    // The regrid path — a scale change, origin snap, or reference grid — moves
+    // the output off the source grid and/or grows the extent past the source
+    // footprint, which a single axis-aligned RasterIO read cannot express, so it
+    // goes through GDAL's warp (which maps every output pixel centre exactly).
+    // A plain dimension change stays on the extent-preserving RasterIO
+    // decimation.
+    let is_regrid = matches!(plan.target, TargetGrid::Scale { .. }) || plan.grid_snap.is_some();
+
+    // Int64/UInt64 survive only nearest-neighbour RasterIO decimation, which is a
+    // bit-exact sample. Every other case routes pixels through a floating working
+    // type — the warp path always (a double, or a 32-bit float for Mode on GDAL
+    // < 3.13), and RasterIO for any interpolating algorithm — so 64-bit ints
+    // cannot be represented exactly and are rejected (RS_ReprojectMatch
+    // blanket-rejects them for the same reason).
+    if is_regrid || plan.algorithm != ResampleAlg::NearestNeighbour {
         for i in 0..band_count {
             if let Some(BandDataType::Int64 | BandDataType::UInt64) = raster.band_data_type(i) {
                 return exec_err!(
-                    "RS_Resample does not support {:?} resampling of Int64/UInt64 rasters: GDAL \
-                     routes 64-bit integer pixels through a floating working type, which cannot \
-                     represent them exactly. Use NearestNeighbor, or cast to Int32/Float64 first.",
+                    "RS_Resample does not support {:?} resampling of Int64/UInt64 rasters here: \
+                     GDAL routes 64-bit integer pixels through a floating working type, which \
+                     cannot represent them exactly. Use a nearest-neighbour width/height change, \
+                     or cast to Int32/Float64 first.",
                     plan.algorithm
                 );
             }
         }
     }
 
+    // A scale change or origin snap on a skewed (non-north-up) raster is an
+    // explicit unsupported case: the extent-preserving dimension path carries the
+    // shear through unchanged, but growing the extent or snapping the origin
+    // against a sheared grid is not supported.
+    if is_regrid && (src.skew_x != 0.0 || src.skew_y != 0.0) {
+        return exec_err!(
+            "RS_Resample: a scale change or grid snap on a skewed (non-north-up) raster is not \
+             supported (only an extent-preserving width/height change is)"
+        );
+    }
+
     let band_indices: Vec<usize> = (1..=band_count).collect();
     let layout = GdalBandLayout::from_raster(raster, &band_indices)?;
     // SAFETY: the returned dataset references `raster`'s band bytes zero-copy;
-    // it is only read below (via RasterIO) and dropped before `resample_raster`
-    // returns, so `raster` outlives it.
+    // it is only read below and dropped before `resample_raster` returns, so
+    // `raster` outlives it.
     let src_dataset = unsafe { raster_ref_to_gdal_mem(gdal, raster, &band_indices)? };
 
-    // Fast path: a dimension change with no origin snap keeps the extent-
-    // preserving RasterIO read (also preserving the skew-scaling footprint
-    // semantics of a skewed raster).
-    if let (TargetGrid::Dims { width, height }, None) = (plan.target, plan.grid_snap) {
-        // Skew-constant output geotransform matching Sedona Spark (the skew is
-        // carried through unchanged and the pixel size is the axis-aligned
-        // envelope divided across the new dimensions — compute_output_grid's
-        // dimension branch); the extent-preserving RasterIO decimation supplies
-        // the pixels.
-        let out = compute_output_grid(&src, raster.crs(), plan);
+    // Output geotransform matching Sedona Spark: the skew is carried through
+    // unchanged and the dimensions / pixel size follow the requested mode.
+    let out = compute_output_grid(&src, raster.crs(), plan);
+
+    if !is_regrid {
+        // Extent-preserving RasterIO decimation supplies the pixels (bit-exact
+        // for nearest; interpolating algorithms blend as GDAL RasterIO does).
         let grid = ResampledGrid {
             transform: out.transform,
-            width: width as usize,
-            height: height as usize,
+            width: out.width as usize,
+            height: out.height as usize,
             crs: raster.crs(),
             alg: plan.algorithm,
         };
         return append_resampled_nd_from_dataset(&src_dataset, &layout, builder, &grid);
     }
 
-    // Otherwise regrid: scale-mode grow-extent and/or origin snap.
-    let out = compute_output_grid(&src, raster.crs(), plan);
-    let regrid = RegridGrid {
+    // Warp path: scale-mode grow-extent, origin snap, and reference-grid
+    // resampling. Same CRS on both sides (RS_Resample never reprojects), so this
+    // is a pure regrid onto `out` — GDAL maps each output pixel centre exactly
+    // (no covered-window clamp) and fills the grown/shifted border, uncovered by
+    // the source, with each band's nodata.
+    let warp_grid = WarpGrid {
         transform: out.transform,
         width: out.width as usize,
         height: out.height as usize,
         crs: out.crs.as_deref(),
         alg: plan.algorithm,
+        // GDAL's own default working-memory cache size.
+        warp_memory_limit_bytes: 0.0,
     };
-    append_regridded_nd_from_dataset(&src_dataset, &layout, builder, &regrid)
+    append_warped_nd_from_dataset(gdal, &src_dataset, &layout, builder, &warp_grid)
 }
 
 /// Resolve the output grid, mirroring Apache Sedona (Spark)'s
@@ -1199,14 +1222,19 @@ mod tests {
     }
 
     #[test]
-    fn int64_non_nearest_errors_but_nearest_is_allowed() {
-        // GDAL RasterIO routes 64-bit ints through a float working type for any
-        // non-nearest algorithm, so RS_Resample rejects Int64/UInt64 there
-        // (matching RS_ReprojectMatch); nearest is a bit-exact sample and runs.
+    fn int64_allowed_only_on_the_nearest_fast_path() {
+        // 64-bit ints are exact only on the nearest RasterIO fast path (a plain
+        // dimension change). Any warp-bound case — an interpolating algorithm, or
+        // a scale change / origin snap / reference grid even with nearest —
+        // routes pixels through a floating working type that cannot represent
+        // Int64/UInt64 exactly, so RS_Resample rejects it (matching
+        // RS_ReprojectMatch).
         let source = RasterSpec::d2(2, 1)
             .band_values(&[10i64, 20])
             .bbox(0.0, 0.0, 4.0, 2.0)
             .crs(Some("EPSG:4326"));
+
+        // Non-nearest dimension change: warp-bound, rejected.
         let err = tester5()
             .invoke(vec![
                 raster_scalar(&source),
@@ -1218,7 +1246,22 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("Int64/UInt64"), "got: {err}");
-        // Nearest neighbour is exact and succeeds.
+
+        // Nearest *scale* change also warps (grow-extent / origin snap), so it is
+        // rejected too despite the nearest algorithm.
+        let err = tester5()
+            .invoke(vec![
+                raster_scalar(&source),
+                f64_scalar(3.0),
+                f64_scalar(-3.0),
+                bool_scalar(true),
+                str_scalar("NearestNeighbor"),
+            ])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Int64/UInt64"), "got: {err}");
+
+        // Nearest dimension change is the bit-exact fast path and succeeds.
         tester5()
             .invoke(vec![
                 raster_scalar(&source),
@@ -1228,6 +1271,35 @@ mod tests {
                 str_scalar("NearestNeighbor"),
             ])
             .unwrap();
+    }
+
+    #[test]
+    fn bilinear_scale_change_of_constant_is_constant_via_warp() {
+        // A non-nearest algorithm on the regrid (warp) path — here a scale change.
+        // Interpolating a constant band yields that constant everywhere — exact
+        // and GDAL-version-independent — which pins the warp path end-to-end (the
+        // blended values near edges are pinned against rasterio in the Python
+        // parity tests). Pixel size 1 over the 4x4 extent divides evenly (no grown
+        // border), so the whole 4x4 output is the constant.
+        let source = RasterSpec::d2(2, 2)
+            .band_values(&[7.0f64, 7.0, 7.0, 7.0])
+            .bbox(0.0, 0.0, 4.0, 4.0)
+            .crs(Some("EPSG:4326"));
+
+        // 5-arg overload: (raster, scaleX=1, scaleY=-1, useScale=true, algorithm).
+        let result = unwrap_scalar(tester5().invoke(vec![
+            raster_scalar(&source),
+            f64_scalar(1.0),
+            f64_scalar(-1.0),
+            bool_scalar(true),
+            str_scalar("Bilinear"),
+        ]));
+
+        let expected = RasterSpec::d2(4, 4)
+            .band_values(&[7.0f64; 16])
+            .bbox(0.0, 0.0, 4.0, 4.0)
+            .crs(Some("EPSG:4326"));
+        assert_raster_scalar_equals(&result, &expected);
     }
 
     #[test]
