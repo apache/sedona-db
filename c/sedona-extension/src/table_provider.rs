@@ -885,6 +885,58 @@ mod tests {
     }
 
     #[test]
+    #[rustfmt::skip]
+    fn test_filter_pushdown_in_explain() {
+        let runtime = test_runtime();
+        runtime
+            .block_on(async {
+                let ctx = create_test_context().await?;
+
+                // Get the table provider from the context
+                let table = ctx.table_provider("test_data").await?;
+
+                // Export the table provider
+                let session = Arc::new(ctx.state());
+                let exported = ExportedTableProvider::new(table, session, runtime.clone());
+                let ffi_provider: SedonaCTableProvider = exported.into();
+
+                // Import the table provider
+                let imported = ImportedTableProvider::try_new(ffi_provider)?;
+
+                // Create a new context and register the imported table
+                let ctx2 = SessionContext::new();
+                ctx2.register_table("imported_data", Arc::new(imported))?;
+
+                // Get the explain plan
+                let explain_result = ctx2
+                    .sql("EXPLAIN SELECT id FROM imported_data WHERE id > 20")
+                    .await?
+                    .collect()
+                    .await?;
+
+                assert_batches_eq!(
+                    &[
+                        "+---------------+------------------------------------------------------------------------------+",
+                        "| plan_type     | plan                                                                         |",
+                        "+---------------+------------------------------------------------------------------------------+",
+                        "| logical_plan  | Filter: imported_data.id > Int32(20)                                         |",
+                        "|               |   TableScan: imported_data projection=[id]                                   |",
+                        "| physical_plan | FilterExec: id@0 > 20                                                        |",
+                        "|               |   RepartitionExec: partitioning=RoundRobinBatch(12), input_partitions=1      |",
+                        "|               |     CooperativeExec                                                          |",
+                        "|               |       ImportedSedonaCExec: DataSourceExec: partitions=1, partition_sizes=[5] |",
+                        "|               |                                                                              |",
+                        "+---------------+------------------------------------------------------------------------------+",
+                    ],
+                    &explain_result
+                );
+
+                Ok::<(), datafusion_common::DataFusionError>(())
+            })
+            .unwrap();
+    }
+
+    #[test]
     fn test_roundtrip_sort() {
         test_roundtrip_query(
             "SELECT id, value_c FROM imported_data ORDER BY id DESC LIMIT 5",
