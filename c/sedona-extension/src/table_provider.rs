@@ -17,6 +17,7 @@
 
 use std::{
     any::Any,
+    collections::HashSet,
     ffi::{c_int, c_void},
     fmt::Debug,
     ptr::null_mut,
@@ -28,8 +29,9 @@ use arrow_array::ffi::FFI_ArrowArray;
 use arrow_schema::{ffi::FFI_ArrowSchema, DataType, Schema, SchemaRef};
 use async_trait::async_trait;
 use datafusion_catalog::{Session, TableProvider};
-use datafusion_common::{exec_err, Result, Statistics};
-use datafusion_expr::{Expr, TableProviderFilterPushDown, TableType};
+use datafusion_common::{exec_err, plan_err, Result, Statistics};
+use datafusion_execution::FunctionRegistry;
+use datafusion_expr::{Expr, ScalarUDF, TableProviderFilterPushDown, TableType};
 use datafusion_physical_plan::ExecutionPlan;
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use serde::{Deserialize, Serialize};
@@ -46,7 +48,6 @@ use crate::utils::{
 };
 use crate::{
     execution_plan::{ExportedExecutionPlan, ImportedSedonaCExec},
-    expr::SessionRefRegistry,
     utils::parse_ffi_array_to_bytes,
 };
 
@@ -660,6 +661,62 @@ struct ScanArgs {
     pub limit: Option<usize>,
 }
 
+/// [FunctionRegistry] implemented on a dyn [Session]
+///
+/// Many functions pass a reference to the dyn [Session]. This implementation allows
+/// those functions to deserialize a protobuf expression across the FFI boundary.
+struct SessionRefRegistry<'a> {
+    session: &'a dyn Session,
+}
+
+impl<'a> SessionRefRegistry<'a> {
+    pub fn new(session: &'a dyn Session) -> Self {
+        SessionRefRegistry { session }
+    }
+}
+
+impl<'a> FunctionRegistry for SessionRefRegistry<'a> {
+    fn udfs(&self) -> HashSet<String> {
+        self.session.scalar_functions().keys().cloned().collect()
+    }
+
+    fn udafs(&self) -> HashSet<String> {
+        self.session.aggregate_functions().keys().cloned().collect()
+    }
+
+    fn udwfs(&self) -> HashSet<String> {
+        self.session.window_functions().keys().cloned().collect()
+    }
+
+    fn udf(&self, name: &str) -> Result<Arc<ScalarUDF>> {
+        if let Some(func) = self.session.scalar_functions().get(name) {
+            Ok(Arc::clone(func))
+        } else {
+            plan_err!("Can't find scalar function '{name}' in session")
+        }
+    }
+
+    fn udaf(&self, name: &str) -> Result<Arc<datafusion_expr::AggregateUDF>> {
+        if let Some(func) = self.session.aggregate_functions().get(name) {
+            Ok(Arc::clone(func))
+        } else {
+            plan_err!("Can't find scalar function '{name}' in session")
+        }
+    }
+
+    fn udwf(&self, name: &str) -> Result<Arc<datafusion_expr::WindowUDF>> {
+        if let Some(func) = self.session.window_functions().get(name) {
+            Ok(Arc::clone(func))
+        } else {
+            plan_err!("Can't find scalar function '{name}' in session")
+        }
+    }
+
+    fn expr_planners(&self) -> Vec<Arc<dyn datafusion_expr::planner::ExprPlanner>> {
+        vec![]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -847,11 +904,18 @@ mod tests {
     }
 
     #[test]
+    #[rustfmt::skip]
     fn test_roundtrip_limit() {
         test_roundtrip_query(
             "SELECT id FROM imported_data ORDER BY id LIMIT 3",
             &[
-                "+----+", "| id |", "+----+", "| 1  |", "| 2  |", "| 3  |", "+----+",
+                "+----+",
+                "| id |",
+                "+----+",
+                "| 1  |",
+                "| 2  |",
+                "| 3  |",
+                "+----+",
             ],
         )
         .unwrap();

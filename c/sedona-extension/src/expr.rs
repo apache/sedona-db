@@ -16,21 +16,20 @@
 // under the License.
 
 use std::{
-    collections::HashSet,
     ffi::{c_int, CString},
     fmt::{Debug, Display},
     os::raw::{c_char, c_void},
     ptr::null_mut,
-    sync::{Arc, OnceLock},
 };
 
 use arrow_array::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use arrow_schema::{DataType, Field};
-use datafusion_catalog::Session;
-use datafusion_common::{plan_err, Result};
+use datafusion_common::Result;
 use datafusion_execution::FunctionRegistry;
-use datafusion_expr::{Expr, ScalarUDF, ScalarUDFImpl, Signature, Volatility};
+use datafusion_expr::Expr;
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
+
+pub use sedona_expr::placeholder_udf::{PlaceholderRegistry, PlaceholderUDAF, PlaceholderUDF, PlaceholderUDWF};
 
 use crate::extension::{SedonaCError, SedonaCExprView};
 use crate::set_ffi_error;
@@ -323,152 +322,6 @@ fn get_expr_view_property_data_type(expr: &SedonaCExprView, property: &str) -> R
         get_property_schema(expr, prop, schema, err)
     })
 }
-
-/// [FunctionRegistry] implemented on a dyn [Session]
-///
-/// Many functions pass a reference to the dyn [Session]. This implementation allows
-/// those functions to deserialize a protobuf expression across the FFI boundary.
-pub(crate) struct SessionRefRegistry<'a> {
-    session: &'a dyn Session,
-}
-
-impl<'a> SessionRefRegistry<'a> {
-    pub fn new(session: &'a dyn Session) -> Self {
-        SessionRefRegistry { session }
-    }
-}
-
-impl<'a> FunctionRegistry for SessionRefRegistry<'a> {
-    fn udfs(&self) -> HashSet<String> {
-        self.session.scalar_functions().keys().cloned().collect()
-    }
-
-    fn udafs(&self) -> HashSet<String> {
-        self.session.aggregate_functions().keys().cloned().collect()
-    }
-
-    fn udwfs(&self) -> HashSet<String> {
-        self.session.window_functions().keys().cloned().collect()
-    }
-
-    fn udf(&self, name: &str) -> Result<Arc<ScalarUDF>> {
-        if let Some(func) = self.session.scalar_functions().get(name) {
-            Ok(Arc::clone(func))
-        } else {
-            plan_err!("Can't find scalar function '{name}' in session")
-        }
-    }
-
-    fn udaf(&self, name: &str) -> Result<Arc<datafusion_expr::AggregateUDF>> {
-        if let Some(func) = self.session.aggregate_functions().get(name) {
-            Ok(Arc::clone(func))
-        } else {
-            plan_err!("Can't find scalar function '{name}' in session")
-        }
-    }
-
-    fn udwf(&self, name: &str) -> Result<Arc<datafusion_expr::WindowUDF>> {
-        if let Some(func) = self.session.window_functions().get(name) {
-            Ok(Arc::clone(func))
-        } else {
-            plan_err!("Can't find scalar function '{name}' in session")
-        }
-    }
-
-    fn expr_planners(&self) -> Vec<Arc<dyn datafusion_expr::planner::ExprPlanner>> {
-        vec![]
-    }
-}
-
-struct PlaceholderRegistry;
-
-impl FunctionRegistry for PlaceholderRegistry {
-    fn udfs(&self) -> std::collections::HashSet<String> {
-        HashSet::new()
-    }
-
-    fn udafs(&self) -> std::collections::HashSet<String> {
-        HashSet::new()
-    }
-
-    fn udwfs(&self) -> std::collections::HashSet<String> {
-        HashSet::new()
-    }
-
-    fn udf(&self, name: &str) -> Result<std::sync::Arc<datafusion_expr::ScalarUDF>> {
-        Ok(Arc::new(ScalarUDF::new_from_impl(PlaceholderUDF::new(
-            name,
-        ))))
-    }
-
-    fn udaf(&self, name: &str) -> Result<std::sync::Arc<datafusion_expr::AggregateUDF>> {
-        sedona_internal_err!("Aggregate function '{name}' not supported")
-    }
-
-    fn udwf(&self, name: &str) -> Result<std::sync::Arc<datafusion_expr::WindowUDF>> {
-        sedona_internal_err!("Window function '{name}' not supported")
-    }
-
-    fn expr_planners(&self) -> Vec<std::sync::Arc<dyn datafusion_expr::planner::ExprPlanner>> {
-        vec![]
-    }
-}
-
-/// Placeholder [ScalarUDF] that preserves a function name
-///
-/// This struct is a stub for deserializing expressions where the actual execution of the expression
-/// is not necessarily important (e.g., for an implementation of TableProvider that independently
-/// parses expressions for pruning, or an implementation that does not use the filters expression
-/// at all).
-#[derive(Debug, Hash, PartialEq, Eq)]
-pub struct PlaceholderUDF {
-    name: String,
-}
-
-impl PlaceholderUDF {
-    pub fn new(name: &str) -> Self {
-        PlaceholderUDF {
-            name: name.to_string(),
-        }
-    }
-}
-
-impl ScalarUDFImpl for PlaceholderUDF {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn signature(&self) -> &datafusion_expr::Signature {
-        signature_any()
-    }
-
-    fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
-        sedona_internal_err!(
-            "Imported placeholder UDF '{}' must be replaced before planning",
-            self.name
-        )
-    }
-
-    fn invoke_with_args(
-        &self,
-        _args: datafusion_expr::ScalarFunctionArgs,
-    ) -> Result<datafusion_expr::ColumnarValue> {
-        sedona_internal_err!(
-            "Imported placeholder UDF '{}' must be replaced before execution",
-            self.name
-        )
-    }
-}
-
-fn signature_any() -> &'static Signature {
-    SIGNATURE_ANY.get_or_init(|| Signature::variadic_any(Volatility::Volatile))
-}
-
-static SIGNATURE_ANY: OnceLock<Signature> = OnceLock::new();
 
 #[cfg(test)]
 mod tests {
