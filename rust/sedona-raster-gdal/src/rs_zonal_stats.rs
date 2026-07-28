@@ -48,11 +48,11 @@
 //! spatial grid is rejected; computing a statistic per non-spatial plane of an
 //! N-D band is not supported.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
-use arrow_array::builder::{Float64Builder, Int64Builder, StructBuilder};
-use arrow_array::{ArrayRef, BooleanArray, Int64Array, StringArray};
+use arrow_array::builder::{Float64Builder, Int64Builder};
+use arrow_array::{ArrayRef, BooleanArray, Int64Array, StringArray, StructArray};
+use arrow_buffer::{BooleanBufferBuilder, NullBuffer};
 use arrow_schema::{DataType, Field, Fields};
 use datafusion_common::cast::{as_boolean_array, as_int64_array, as_string_array};
 use datafusion_common::config::ConfigOptions;
@@ -154,22 +154,14 @@ struct ZonalStatistics {
     max: Option<f64>,
 }
 
-impl ZonalStatistics {
-    /// The value RS_ZonalStats returns for a single statistic. `count` is never
-    /// NULL (it is 0 for an empty roi); the others are NULL for an empty roi.
-    fn get(&self, stat_type: StatType) -> Option<f64> {
-        match stat_type {
-            StatType::Count => Some(self.count as f64),
-            StatType::Sum => self.sum,
-            StatType::Mean => self.mean,
-            StatType::Median => self.median,
-            StatType::Mode => self.mode,
-            StatType::StdDev => self.stddev,
-            StatType::Variance => self.variance,
-            StatType::Min => self.min,
-            StatType::Max => self.max,
-        }
-    }
+/// Whether a roi geometry intersects the raster. `NoIntersection` mirrors Sedona
+/// Spark's `rsIntersects` gate (the caller turns it into NULL when `lenient`, an
+/// error otherwise); `Collected` means the selected pixel values are in the
+/// caller's scratch buffer, possibly empty for a roi that intersects the
+/// footprint but selects no pixel centre (a `count = 0` result).
+enum RoiCoverage {
+    NoIntersection,
+    Collected,
 }
 
 // =============================================================================
@@ -360,7 +352,7 @@ impl SedonaScalarKernel for RsZonalStats {
                         "raster",
                         engine,
                     )?;
-                    match compute_zonal_stats(
+                    match collect_zonal_values(
                         gdal,
                         raster,
                         &geom_wkb,
@@ -368,14 +360,17 @@ impl SedonaScalarKernel for RsZonalStats {
                         &mut scratch,
                         &mut mask_scratch,
                     )? {
-                        Some(stats) => match stats.get(stat_type) {
-                            Some(value) => builder.append_value(value),
-                            None => builder.append_null(),
-                        },
+                        // Compute only the requested statistic, not all of them.
+                        RoiCoverage::Collected => {
+                            match compute_single_statistic(&mut scratch, stat_type) {
+                                Some(value) => builder.append_value(value),
+                                None => builder.append_null(),
+                            }
+                        }
                         // The roi does not intersect the raster: NULL when
                         // lenient (the default), an error otherwise.
-                        None if params.lenient => builder.append_null(),
-                        None => return no_intersection_err(),
+                        RoiCoverage::NoIntersection if params.lenient => builder.append_null(),
+                        RoiCoverage::NoIntersection => return no_intersection_err(),
                     }
                     Ok(())
                 })
@@ -491,7 +486,7 @@ impl SedonaScalarKernel for RsZonalStatsAll {
         let mut exclude_no_data_iter = exclude_no_data_array.iter();
         let mut lenient_iter = lenient_array.iter();
 
-        let mut builder = StructBuilder::from_fields(zonal_stats_struct_fields(), num_iterations);
+        let mut builders = ZonalStatsBuilders::with_capacity(num_iterations);
         let mut scratch: Vec<f64> = Vec::new();
         let mut mask_scratch: Vec<u8> = Vec::new();
 
@@ -510,12 +505,12 @@ impl SedonaScalarKernel for RsZonalStatsAll {
                         &mut exclude_no_data_iter,
                         &mut lenient_iter,
                     ) else {
-                        append_struct_null(&mut builder)?;
+                        builders.push_null();
                         return Ok(());
                     };
 
                     let (Some(raster), Some(wkb)) = (raster_opt, wkb_opt) else {
-                        append_struct_null(&mut builder)?;
+                        builders.push_null();
                         return Ok(());
                     };
 
@@ -528,7 +523,7 @@ impl SedonaScalarKernel for RsZonalStatsAll {
                         "raster",
                         engine,
                     )?;
-                    match compute_zonal_stats(
+                    match collect_zonal_values(
                         gdal,
                         raster,
                         &geom_wkb,
@@ -536,15 +531,17 @@ impl SedonaScalarKernel for RsZonalStatsAll {
                         &mut scratch,
                         &mut mask_scratch,
                     )? {
-                        Some(stats) => append_struct_stats(&mut builder, &stats)?,
-                        None if params.lenient => append_struct_null(&mut builder)?,
-                        None => return no_intersection_err(),
+                        RoiCoverage::Collected => {
+                            builders.push_stats(&compute_statistics(&mut scratch))
+                        }
+                        RoiCoverage::NoIntersection if params.lenient => builders.push_null(),
+                        RoiCoverage::NoIntersection => return no_intersection_err(),
                     }
                     Ok(())
                 })
             })?;
 
-            let out: ArrayRef = Arc::new(builder.finish());
+            let out: ArrayRef = Arc::new(builders.finish());
             RasterExecutor::finish_over(args, out)
         })
     }
@@ -571,80 +568,103 @@ fn zonal_stats_struct_fields() -> Fields {
     ])
 }
 
-/// Append a fully-NULL struct row (the roi does not intersect the raster and
-/// `lenient` is set).
-fn append_struct_null(builder: &mut StructBuilder) -> Result<()> {
-    let Some(count) = builder.field_builder::<Int64Builder>(0) else {
-        return sedona_internal_err!("RS_ZonalStats: count field is not an Int64 builder");
-    };
-    count.append_null();
-    for i in 1..=8 {
-        let Some(field) = builder.field_builder::<Float64Builder>(i) else {
-            return sedona_internal_err!("RS_ZonalStats: stat field {i} is not a Float64 builder");
-        };
-        field.append_null();
-    }
-    builder.append(false);
-    Ok(())
+/// Column builders for the RS_ZonalStatsAll struct output: one typed builder per
+/// field plus an outer struct-level validity buffer.
+///
+/// Building the columns directly and assembling the [`StructArray`] once at the
+/// end avoids downcasting a `StructBuilder`'s boxed field builders on every row.
+struct ZonalStatsBuilders {
+    count: Int64Builder,
+    /// `sum, mean, median, mode, stddev, variance, min, max` — Sedona Spark field
+    /// order, matching [`zonal_stats_struct_fields`] after `count`.
+    floats: [Float64Builder; 8],
+    /// Struct-level null bitmap: `false` for a fully-NULL row (a NULL input or a
+    /// non-intersecting roi under `lenient`).
+    validity: BooleanBufferBuilder,
 }
 
-/// Append one computed-stats row. The float fields carry through the `Option`
-/// so an empty roi records `count = 0` with the rest NULL.
-fn append_struct_stats(builder: &mut StructBuilder, stats: &ZonalStatistics) -> Result<()> {
-    let Some(count) = builder.field_builder::<Int64Builder>(0) else {
-        return sedona_internal_err!("RS_ZonalStats: count field is not an Int64 builder");
-    };
-    count.append_value(stats.count);
-    for (i, value) in [
-        stats.sum,
-        stats.mean,
-        stats.median,
-        stats.mode,
-        stats.stddev,
-        stats.variance,
-        stats.min,
-        stats.max,
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let Some(field) = builder.field_builder::<Float64Builder>(i + 1) else {
-            return sedona_internal_err!(
-                "RS_ZonalStats: stat field {} is not a Float64 builder",
-                i + 1
-            );
-        };
-        field.append_option(value);
+impl ZonalStatsBuilders {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            count: Int64Builder::with_capacity(capacity),
+            floats: std::array::from_fn(|_| Float64Builder::with_capacity(capacity)),
+            validity: BooleanBufferBuilder::new(capacity),
+        }
     }
-    builder.append(true);
-    Ok(())
+
+    /// Append one computed-stats row (the struct itself is valid). The float
+    /// fields carry through the `Option`, so an empty roi records `count = 0`
+    /// with the rest NULL.
+    fn push_stats(&mut self, stats: &ZonalStatistics) {
+        self.count.append_value(stats.count);
+        let values = [
+            stats.sum,
+            stats.mean,
+            stats.median,
+            stats.mode,
+            stats.stddev,
+            stats.variance,
+            stats.min,
+            stats.max,
+        ];
+        for (builder, value) in self.floats.iter_mut().zip(values) {
+            builder.append_option(value);
+        }
+        self.validity.append(true);
+    }
+
+    /// Append a fully-NULL struct row (a NULL input, or a non-intersecting roi
+    /// when `lenient`). Every field is null and the struct itself is null.
+    fn push_null(&mut self) {
+        self.count.append_null();
+        for builder in &mut self.floats {
+            builder.append_null();
+        }
+        self.validity.append(false);
+    }
+
+    /// Assemble the accumulated columns into the struct array.
+    fn finish(mut self) -> StructArray {
+        let mut arrays: Vec<ArrayRef> = Vec::with_capacity(9);
+        arrays.push(Arc::new(self.count.finish()));
+        for builder in &mut self.floats {
+            arrays.push(Arc::new(builder.finish()));
+        }
+        let nulls = NullBuffer::new(self.validity.finish());
+        StructArray::new(zonal_stats_struct_fields(), arrays, Some(nulls))
+    }
 }
 
 // =============================================================================
 // Core computation
 // =============================================================================
 
-/// Compute the statistics of the pixels a roi geometry selects on one band.
+/// Collect the pixel values a roi geometry selects on one band into `scratch`.
 ///
-/// Returns `Ok(None)` when the roi geometry does not intersect the raster's
-/// footprint. This is a true geometry intersection (matching Sedona Spark's
-/// `rsIntersects` gate), not a bounding-box overlap: a roi whose envelope
-/// overlaps the raster but whose geometry is disjoint is a no-intersection case.
-/// The caller turns `None` into NULL when `lenient`, an error otherwise. A roi
-/// that intersects the footprint but whose selected pixels are all outside the
-/// geometry or all nodata yields `Ok(Some(..))` with `count = 0`.
+/// Returns [`RoiCoverage::NoIntersection`] when the roi geometry does not
+/// intersect the raster's footprint — a true geometry intersection (matching
+/// Sedona Spark's `rsIntersects` gate), not a bounding-box overlap: a roi whose
+/// envelope overlaps the raster but whose geometry is disjoint is a
+/// no-intersection case. The caller turns that into NULL when `lenient`, an
+/// error otherwise. A roi that intersects the footprint but whose selected
+/// pixels are all outside the geometry or all nodata returns
+/// [`RoiCoverage::Collected`] with `scratch` left empty (a `count = 0` result).
+///
+/// The caller computes the statistic(s) it needs from `scratch` — every one for
+/// RS_ZonalStatsAll, only the requested one for RS_ZonalStats — so this shared
+/// collection never computes statistics the caller would discard.
 ///
 /// `scratch` is a reused buffer for the selected pixel values and `mask_scratch`
 /// for the rasterized roi mask, both reused so the per-row computation does not
 /// allocate a fresh `Vec` each call.
-fn compute_zonal_stats(
+fn collect_zonal_values(
     gdal: &Gdal,
     raster: &RasterRefImpl<'_>,
     geom_wkb: &[u8],
     params: &ZonalStatsParams,
     scratch: &mut Vec<f64>,
     mask_scratch: &mut Vec<u8>,
-) -> Result<Option<ZonalStatistics>> {
+) -> Result<RoiCoverage> {
     let num_bands = raster.num_bands();
     let band_num = resolve_band(params.band, num_bands)?;
 
@@ -673,7 +693,7 @@ fn compute_zonal_stats(
     // geometry is disjoint is a no-intersection case, not a count-0 case. The
     // roi is already in the raster's CRS here, so no transform is needed.
     if !raster_intersects_geom_wkb(raster, geom_wkb)? {
-        return Ok(None);
+        return Ok(RoiCoverage::NoIntersection);
     }
 
     // Parse the roi and clamp its envelope to the raster grid for the pixel
@@ -685,7 +705,7 @@ fn compute_zonal_stats(
         .map_err(|e| exec_datafusion_err!("RS_ZonalStats: failed to parse geometry: {e}"))?;
     let Some(window) = envelope_window(&geometry, &transform, width, height)? else {
         scratch.clear();
-        return Ok(Some(compute_statistics(scratch)));
+        return Ok(RoiCoverage::Collected);
     };
 
     // Rasterize the roi into a window-sized 0/1 mask (moves `geometry`, whose
@@ -745,7 +765,7 @@ fn compute_zonal_stats(
         scratch,
     );
 
-    Ok(Some(compute_statistics(scratch)))
+    Ok(RoiCoverage::Collected)
 }
 
 /// Resolve the 1-based band to use. `Some(b)` must be a valid 1-based index;
@@ -830,17 +850,18 @@ fn collect_masked_values(
     }
 }
 
-/// Compute every statistic from the selected pixel values.
+/// Compute every statistic from the selected pixel values (for
+/// RS_ZonalStatsAll, which returns all of them).
 ///
 /// An empty slice yields `count = 0` and NULL for the rest (Sedona Spark's
 /// empty-roi shortcut). Variance is the sample (n-1) variance, matching Spark;
 /// for a single pixel it is 0. Median is the linear-interpolated 50th
-/// percentile, which for the median reduces to the middle element (odd n) or
-/// the mean of the two central elements (even n). Mode is the most frequent
-/// value, breaking ties toward the larger value.
+/// percentile, which reduces to the middle element (odd n) or the mean of the
+/// two central elements (even n). Mode is the most frequent value, breaking ties
+/// toward the larger value.
 ///
-/// `values` is sorted in place (for the median); the caller owns it as reusable
-/// scratch.
+/// `values` is sorted in place (for the median and mode); the caller owns it as
+/// reusable scratch.
 fn compute_statistics(values: &mut [f64]) -> ZonalStatistics {
     let count = values.len() as i64;
     if values.is_empty() {
@@ -875,30 +896,17 @@ fn compute_statistics(values: &mut [f64]) -> ZonalStatistics {
         };
     }
 
-    let n = values.len();
     let sum: f64 = values.iter().sum();
-    let mean = sum / n as f64;
+    let mean = sum / count as f64;
     let min = values.iter().copied().fold(f64::INFINITY, f64::min);
     let max = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-
-    let variance = if n > 1 {
-        let sum_sq: f64 = values.iter().map(|&v| (v - mean).powi(2)).sum();
-        sum_sq / (n as f64 - 1.0)
-    } else {
-        0.0
-    };
+    let variance = sample_variance(values);
     let stddev = variance.sqrt();
 
-    let mode = compute_mode(values);
-
-    // Median needs the values sorted; do it in place on the scratch buffer.
-    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let mid = n / 2;
-    let median = if n.is_multiple_of(2) {
-        (values[mid - 1] + values[mid]) / 2.0
-    } else {
-        values[mid]
-    };
+    // Median and mode both read the values in sorted order; sort once in place.
+    sort_values(values);
+    let median = median_of_sorted(values);
+    let mode = mode_of_sorted(values);
 
     ZonalStatistics {
         count,
@@ -913,21 +921,97 @@ fn compute_statistics(values: &mut [f64]) -> ZonalStatistics {
     }
 }
 
-/// The most frequent value, breaking ties toward the larger value (matching
-/// Sedona Spark's `StatUtils.mode`, which returns the largest of the tied
-/// modes). Values are keyed by their exact bit pattern, so integer-valued
-/// pixels compare exactly.
-fn compute_mode(values: &[f64]) -> f64 {
-    let mut counts: HashMap<u64, usize> = HashMap::new();
-    for &v in values {
-        *counts.entry(v.to_bits()).or_insert(0) += 1;
+/// Compute only `stat` from the selected pixel values (for RS_ZonalStats, which
+/// returns a single statistic). `values` is sorted in place only when the
+/// requested statistic — median or mode — needs ordered data, so the simple
+/// statistics do not pay for a sort.
+///
+/// Mirrors [`compute_statistics`]' empty/NaN semantics: `count` is always
+/// defined (0 for an empty roi); every other statistic is NULL (`None`) for an
+/// empty roi, and NaN when a NaN pixel is present.
+fn compute_single_statistic(values: &mut [f64], stat: StatType) -> Option<f64> {
+    if stat == StatType::Count {
+        return Some(values.len() as f64);
     }
-    let best_count = counts.values().copied().max().unwrap_or(0);
-    counts
-        .into_iter()
-        .filter(|&(_, c)| c == best_count)
-        .map(|(bits, _)| f64::from_bits(bits))
-        .fold(f64::NEG_INFINITY, f64::max)
+    if values.is_empty() {
+        return None;
+    }
+    if values.iter().any(|v| v.is_nan()) {
+        return Some(f64::NAN);
+    }
+    Some(match stat {
+        // Count is handled before the value checks above.
+        StatType::Count => unreachable!("count returns early"),
+        StatType::Sum => values.iter().sum(),
+        StatType::Mean => values.iter().sum::<f64>() / values.len() as f64,
+        StatType::Min => values.iter().copied().fold(f64::INFINITY, f64::min),
+        StatType::Max => values.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+        StatType::Variance => sample_variance(values),
+        StatType::StdDev => sample_variance(values).sqrt(),
+        StatType::Median => {
+            sort_values(values);
+            median_of_sorted(values)
+        }
+        StatType::Mode => {
+            sort_values(values);
+            mode_of_sorted(values)
+        }
+    })
+}
+
+/// The sample (n-1) variance of `values`, matching Sedona Spark; 0 for a single
+/// value. The two-pass form (mean first, then squared deviations) avoids the
+/// catastrophic cancellation of the naive sum-of-squares formula. `values` must
+/// be non-empty and NaN-free.
+fn sample_variance(values: &[f64]) -> f64 {
+    let n = values.len();
+    if n <= 1 {
+        return 0.0;
+    }
+    let mean = values.iter().sum::<f64>() / n as f64;
+    let sum_sq: f64 = values.iter().map(|&v| (v - mean).powi(2)).sum();
+    sum_sq / (n as f64 - 1.0)
+}
+
+/// Sort `values` ascending in place. Callers exclude NaN beforehand, so the
+/// `partial_cmp` fallback is never exercised.
+fn sort_values(values: &mut [f64]) {
+    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+}
+
+/// The linear-interpolated 50th percentile of `sorted` (ascending): the middle
+/// element for an odd count, the mean of the two central elements for an even
+/// count. `sorted` must be non-empty.
+fn median_of_sorted(sorted: &[f64]) -> f64 {
+    let mid = sorted.len() / 2;
+    if sorted.len().is_multiple_of(2) {
+        (sorted[mid - 1] + sorted[mid]) / 2.0
+    } else {
+        sorted[mid]
+    }
+}
+
+/// The most frequent value in `sorted` (ascending), breaking ties toward the
+/// larger value (matching Sedona Spark's `StatUtils.mode`). Equal values are
+/// adjacent once sorted, so a single pass over the runs finds the mode without a
+/// map. `sorted` must be non-empty.
+fn mode_of_sorted(sorted: &[f64]) -> f64 {
+    let mut best_val = sorted[0];
+    let mut best_len = 1usize;
+    let mut run_len = 1usize;
+    for i in 1..sorted.len() {
+        run_len = if sorted[i] == sorted[i - 1] {
+            run_len + 1
+        } else {
+            1
+        };
+        // `>=` keeps the later — and, since ascending, larger — value on a tie.
+        if run_len >= best_len {
+            best_len = run_len;
+            best_val = sorted[i];
+        }
+    }
+    best_val
 }
 
 // =============================================================================
@@ -1075,6 +1159,35 @@ mod tests {
     }
 
     #[test]
+    fn single_statistic_matches_full_computation() {
+        // RS_ZonalStats' single-stat path must return exactly what the full
+        // RS_ZonalStatsAll path computes, only without the others. A tie (two
+        // 4s) and an even count exercise mode and median.
+        let sample = [4.0, 1.0, 4.0, 2.0, 5.0, 3.0];
+        let mut all = sample;
+        let full = compute_statistics(&mut all);
+        let cases = [
+            (StatType::Count, Some(full.count as f64)),
+            (StatType::Sum, full.sum),
+            (StatType::Mean, full.mean),
+            (StatType::Median, full.median),
+            (StatType::Mode, full.mode),
+            (StatType::StdDev, full.stddev),
+            (StatType::Variance, full.variance),
+            (StatType::Min, full.min),
+            (StatType::Max, full.max),
+        ];
+        for (stat, expected) in cases {
+            let mut work = sample;
+            assert_eq!(
+                compute_single_statistic(&mut work, stat),
+                expected,
+                "single statistic {stat:?} diverged from the full computation"
+            );
+        }
+    }
+
+    #[test]
     fn statistics_empty_is_zero_count_and_nulls() {
         let mut values: Vec<f64> = vec![];
         let s = compute_statistics(&mut values);
@@ -1085,10 +1198,13 @@ mod tests {
         assert_eq!(s.min, None);
         assert_eq!(s.max, None);
         assert_eq!(s.variance, None);
-        // A single-stat lookup returns 0 for count, NULL for the rest.
-        assert_eq!(s.get(StatType::Count), Some(0.0));
-        assert_eq!(s.get(StatType::Sum), None);
-        assert_eq!(s.get(StatType::Mean), None);
+        // The single-stat path returns 0 for count, NULL for the rest.
+        assert_eq!(
+            compute_single_statistic(&mut values, StatType::Count),
+            Some(0.0)
+        );
+        assert_eq!(compute_single_statistic(&mut values, StatType::Sum), None);
+        assert_eq!(compute_single_statistic(&mut values, StatType::Mean), None);
     }
 
     #[test]
