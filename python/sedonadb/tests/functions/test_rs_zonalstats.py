@@ -39,7 +39,7 @@ import pytest
 
 pytest.importorskip("rasterio")
 
-from sedonadb.raster_testing import (  # noqa: E402
+from sedonadb.raster_testing import (
     random_raster_data,
     write_geotiff,
 )

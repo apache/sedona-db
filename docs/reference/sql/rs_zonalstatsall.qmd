@@ -18,7 +18,7 @@
 
 title: RS_ZonalStatsAll
 description: >
-  Computes every summary statistic of the raster pixels covered by a roi
+  Computes every summary statistic of the raster pixels covered by a region of interest
   geometry and returns them as a struct.
 kernels:
   - returns: struct

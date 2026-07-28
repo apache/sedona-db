@@ -18,7 +18,7 @@
 
 title: RS_ZonalStats
 description: >
-  Computes a single summary statistic of the raster pixels covered by a roi
+  Computes a single summary statistic of the raster pixels covered by a region of interest
   geometry.
 kernels:
   - returns: double
@@ -90,7 +90,7 @@ kernels:
 ## Description
 
 `RS_ZonalStats` returns one summary statistic of the pixels of a single band
-that a roi geometry covers. A pixel
+that a region of interest (ROI) geometry covers. A pixel
 is included when its center falls inside the roi (or, with `all_touched`, when
 the roi touches it at all). By default the band's nodata pixels are excluded.
 
@@ -99,8 +99,8 @@ The statistic is one of `count`, `sum`, `mean`, `median`, `mode`, `stddev`,
 statistics are floating point. Variance and standard deviation are the sample
 (n-1) values, and `mode` breaks ties toward the larger value.
 
-When the roi overlaps the raster but selects no pixel, `count` is 0 and every
-other statistic is NULL. When the roi does not intersect the raster at all, the
+When the ROI overlaps the raster but selects no pixel, `count` is 0 and every
+other statistic is NULL. When the ROI does not intersect the raster at all, the
 result is NULL under the default `lenient` behavior, or an error when
 `lenient` is set to false.
 
