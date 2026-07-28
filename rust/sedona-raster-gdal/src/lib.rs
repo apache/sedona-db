@@ -42,6 +42,7 @@ mod rs_frompath;
 mod rs_metadata;
 mod rs_polygonize;
 mod rs_reproject_match;
+mod rs_tile;
 mod rs_zonal_stats;
 mod source_uri;
 mod utils;
@@ -60,6 +61,7 @@ pub use rs_frompath::rs_frompath_udf;
 pub use rs_metadata::rs_metadata_udf;
 pub use rs_polygonize::rs_polygonize_udf;
 pub use rs_reproject_match::rs_reproject_match_udf;
+pub use rs_tile::rs_tile_udf;
 pub use utils::{
     append_as_indb_raster, append_as_outdb_raster, append_nd_from_dataset, dataset_to_indb_raster,
     gdal_dataset_to_nd_raster,
