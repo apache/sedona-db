@@ -72,6 +72,15 @@ impl Gdal {
         self.api.version_info(request)
     }
 
+    /// The linked GDAL library version as an integer, from
+    /// `GDALVersionInfo("VERSION_NUM")`: `major*1_000_000 + minor*10_000 +
+    /// rev*100 + build` (for example `3_080_400` for GDAL 3.8.4, `3_130_000` for
+    /// 3.13.0). Falls back to `0` when the value cannot be parsed, which callers
+    /// treat as "oldest" — the most conservative choice for version gates.
+    pub fn version_num(&self) -> i32 {
+        self.version_info("VERSION_NUM").trim().parse().unwrap_or(0)
+    }
+
     // -- Config --------------------------------------------------------------
 
     /// Set a thread-local GDAL configuration option.

@@ -622,16 +622,37 @@ fn resample_raster(
     // interpolating algorithm — which cannot represent 64-bit ints exactly, so
     // they are rejected (RS_ReprojectMatch blanket-rejects them for the same
     // reason).
+    //
+    // Mode is the exception on the width of that float: it uses a 32-bit float
+    // working type on GDAL < 3.13 (a double from 3.13 on), and a 32-bit float
+    // cannot represent Int32/UInt32 above 2^24 exactly. Mode is a selection (it
+    // returns the most-common source value), so silently rounding a category code
+    // is especially wrong — reject Int32/UInt32 + Mode on older GDAL too.
+    const GDAL_3_13_0: i32 = 3_130_000;
+    let mode_uses_float32 = plan.algorithm == ResampleAlg::Mode && gdal.version_num() < GDAL_3_13_0;
     if is_regrid || plan.algorithm != ResampleAlg::NearestNeighbour {
         for i in 0..band_count {
-            if let Some(BandDataType::Int64 | BandDataType::UInt64) = raster.band_data_type(i) {
-                return exec_err!(
-                    "RS_Resample does not support {:?} resampling of Int64/UInt64 rasters here: \
-                     GDAL routes 64-bit integer pixels through a floating working type, which \
-                     cannot represent them exactly. Use a nearest-neighbour width/height change, \
-                     or cast to Int32/Float64 first.",
-                    plan.algorithm
-                );
+            match raster.band_data_type(i) {
+                Some(BandDataType::Int64 | BandDataType::UInt64) => {
+                    return exec_err!(
+                        "RS_Resample does not support {:?} resampling of Int64/UInt64 rasters \
+                         here: GDAL routes 64-bit integer pixels through a floating working type, \
+                         which cannot represent them exactly. Use a nearest-neighbour width/height \
+                         change, or cast to Int32/Float64 first.",
+                        plan.algorithm
+                    );
+                }
+                Some(BandDataType::Int32 | BandDataType::UInt32) if mode_uses_float32 => {
+                    return exec_err!(
+                        "RS_Resample does not support Mode resampling of Int32/UInt32 rasters on \
+                         GDAL {} (before 3.13): Mode routes pixels through a 32-bit float working \
+                         type that cannot represent 32-bit integers above 2^24 exactly. Upgrade to \
+                         GDAL >= 3.13, which resamples Mode through a double, or cast to Float64 \
+                         first.",
+                        gdal.version_info("RELEASE_NAME")
+                    );
+                }
+                _ => {}
             }
         }
     }
@@ -1325,6 +1346,45 @@ mod tests {
             .bbox(0.0, 0.0, 4.0, 2.0)
             .crs(Some("EPSG:4326"));
         assert_raster_scalar_equals(&resample_dims(&source, 4.0, 2.0), &expected);
+    }
+
+    #[test]
+    fn int32_mode_gated_on_gdal_version() {
+        // Mode selects the most-common source value, so it should return an exact
+        // source value — but GDAL routes Mode through a 32-bit float working type
+        // on GDAL < 3.13 (a double from 3.13 on), and a 32-bit float cannot
+        // represent Int32 above 2^24 (2^24+1 -> 2^24, 2^24+3 -> 2^24+4). So on older
+        // GDAL RS_Resample rejects Int32/UInt32 + Mode rather than silently
+        // corrupting a category code; on GDAL >= 3.13 the value survives exactly.
+        let a: i32 = (1i32 << 24) + 1;
+        let b: i32 = (1i32 << 24) + 3;
+        // 4x1 -> 2x1 block-constant windows so Mode's selection is unambiguous.
+        let source = RasterSpec::d2(4, 1)
+            .band_values(&[a, a, b, b])
+            .bbox(0.0, 0.0, 4.0, 1.0)
+            .crs(Some("EPSG:4326"));
+        let invoke = || {
+            tester5().invoke(vec![
+                raster_scalar(&source),
+                f64_scalar(2.0),
+                f64_scalar(1.0),
+                bool_scalar(false),
+                str_scalar("Mode"),
+            ])
+        };
+
+        let gdal_version = with_gdal(|gdal| Ok(gdal.version_num())).unwrap();
+        if gdal_version >= 3_130_000 {
+            let expected = RasterSpec::d2(2, 1)
+                .band_values(&[a, b])
+                .bbox(0.0, 0.0, 4.0, 1.0)
+                .crs(Some("EPSG:4326"));
+            assert_raster_scalar_equals(&unwrap_scalar(invoke()), &expected);
+        } else {
+            let err = invoke().unwrap_err().to_string();
+            assert!(err.contains("Int32/UInt32"), "got: {err}");
+            assert!(err.contains("Mode"), "got: {err}");
+        }
     }
 
     #[test]
