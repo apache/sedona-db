@@ -99,3 +99,8 @@ path = "benches/rs_as_raster.rs"
 harness = false
 name = "rs_resample"
 path = "benches/rs_resample.rs"
+
+[[bench]]
+harness = false
+name = "rs_tile"
+path = "benches/rs_tile.rs"

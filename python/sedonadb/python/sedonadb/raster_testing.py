@@ -619,6 +619,35 @@ class SedonaDB(RasterEngine):
         ).to_arrow_table()["r"]
         return decode_raster(result[0])
 
+    def tile_explode(self, path, tile_width, tile_height):
+        """Tile via `RS_Tile` (all bands, `pad_with_nodata` off) and `unnest` the
+        `List<Struct<x, y, tile>>` result to one tile per row, decoding each tile
+        raster. Partial edge tiles keep their smaller size and the source band
+        nodata, mirroring the rasterio window reference. Returned sorted by
+        `(y, x)` like the other engines."""
+        df = self._one_row_df(
+            {
+                "path": (str(path), pa.utf8()),
+                "w": (int(tile_width), pa.int32()),
+                "h": (int(tile_height), pa.int32()),
+            }
+        )
+        raster = df.path.funcs.rs_frompath()
+        struct = (
+            df.select(tile=raster.funcs.rs_tile(df.w, df.h))
+            .unnest("tile")
+            .to_arrow_table()["tile"]
+            .combine_chunks()
+        )
+        xs = struct.field("x")
+        ys = struct.field("y")
+        tiles = struct.field("tile")
+        out = [
+            (xs[i].as_py(), ys[i].as_py(), decode_raster(tiles[i]))
+            for i in range(len(struct))
+        ]
+        return sorted(out, key=lambda t: (t[1], t[0]))
+
 
 class SedonaSpark(RasterEngine):
     """Runs Sedona Spark SQL `RS_*` functions — the compatibility-target dialect.
