@@ -257,16 +257,37 @@ fn reproject_match(
 
     // GDAL's warp routes 64-bit integer pixels through a floating working type
     // (a double for nearest/interpolation, a 32-bit float for mode on GDAL <
-    // 3.13), so no resampling method preserves Int64/UInt64 exactly. Reject
-    // these dtypes up front rather than mis-warping silently.
+    // 3.13), so no resampling method preserves Int64/UInt64 exactly. Reject these
+    // dtypes up front rather than mis-warping silently.
+    //
+    // Mode is the exception on the width of that float: its 32-bit float working
+    // type on GDAL < 3.13 also cannot represent Int32/UInt32 above 2^24 (the other
+    // algorithms use a double, which is exact for 32-bit ints). Mode is a
+    // selection — it returns the most-common source value — so silently rounding a
+    // category code is especially wrong; reject Int32/UInt32 + Mode on older GDAL
+    // too.
+    const GDAL_3_13_0: i32 = 3_130_000;
+    let mode_uses_float32 = alg == ResampleAlg::Mode && gdal.version_num() < GDAL_3_13_0;
     for i in 0..band_count {
-        if let Some(BandDataType::Int64 | BandDataType::UInt64) = raster.band_data_type(i) {
-            return exec_err!(
-                "RS_ReprojectMatch does not support Int64/UInt64 rasters: GDAL's warp routes \
-                 64-bit integer pixels through a floating working type (a double for \
-                 nearest/interpolation, a 32-bit float for mode on GDAL < 3.13), which cannot \
-                 represent them exactly. Cast to a supported type (e.g. Int32/Float64) first."
-            );
+        match raster.band_data_type(i) {
+            Some(BandDataType::Int64 | BandDataType::UInt64) => {
+                return exec_err!(
+                    "RS_ReprojectMatch does not support Int64/UInt64 rasters: GDAL's warp routes \
+                     64-bit integer pixels through a floating working type (a double for \
+                     nearest/interpolation, a 32-bit float for mode on GDAL < 3.13), which cannot \
+                     represent them exactly. Cast to a supported type (e.g. Int32/Float64) first."
+                );
+            }
+            Some(BandDataType::Int32 | BandDataType::UInt32) if mode_uses_float32 => {
+                return exec_err!(
+                    "RS_ReprojectMatch does not support Mode resampling of Int32/UInt32 rasters on \
+                     GDAL {} (before 3.13): Mode routes pixels through a 32-bit float working type \
+                     that cannot represent 32-bit integers above 2^24 exactly. Upgrade to GDAL \
+                     >= 3.13, which resamples Mode through a double, or cast to Float64 first.",
+                    gdal.version_info("RELEASE_NAME")
+                );
+            }
+            _ => {}
         }
     }
 
@@ -608,6 +629,42 @@ mod tests {
                     "got: {err}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn int32_mode_gated_on_gdal_version() {
+        // Mode uses a 32-bit float working type on GDAL < 3.13 (a double from 3.13
+        // on), which cannot represent Int32/UInt32 above 2^24. Mode is a selection,
+        // so silently rounding a category code is wrong: reject Int32 + Mode on
+        // older GDAL, accept it (double working type) on GDAL >= 3.13. Other
+        // algorithms are unaffected — a double is exact for 32-bit ints.
+        let reference = RasterSpec::d2(2, 2)
+            .band_values(&[0u8; 4])
+            .bbox(0.0, 0.0, 2.0, 2.0)
+            .crs(Some("EPSG:4326"));
+        let big: i32 = (1i32 << 24) + 1;
+        let int32_source = RasterSpec::d2(2, 2)
+            .band_values(&[big, big, big, big])
+            .bbox(0.0, 0.0, 2.0, 2.0)
+            .crs(Some("EPSG:4326"));
+
+        // Bilinear routes through a double (exact for 32-bit ints), so Int32 is
+        // accepted on every GDAL version — the gate is Mode-specific.
+        tester()
+            .invoke_scalar_scalar_scalar(&int32_source, &reference, "Bilinear")
+            .unwrap();
+
+        let gdal_version = with_gdal(|gdal| Ok(gdal.version_num())).unwrap();
+        let mode = tester().invoke_scalar_scalar_scalar(&int32_source, &reference, "Mode");
+        if gdal_version >= 3_130_000 {
+            mode.unwrap();
+        } else {
+            let err = mode.unwrap_err().to_string();
+            assert!(
+                err.contains("Mode resampling of Int32/UInt32"),
+                "got: {err}"
+            );
         }
     }
 }
