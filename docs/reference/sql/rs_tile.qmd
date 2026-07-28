@@ -36,7 +36,7 @@ kernels:
         Optional (default false). When true, pad the last partial row/column of
         tiles to the full tile size with a nodata fill; when false the smaller
         edge tile is emitted as-is.
-    - name: no_data_val
+    - name: no_data_value
       type: double
       description: >
         Optional. The value written to padded pixels (only valid with
@@ -53,16 +53,12 @@ kernels:
         given order.
     - name: width
       type: integer
-      description: Tile width in pixels. Must be >= 1.
     - name: height
       type: integer
-      description: Tile height in pixels. Must be >= 1.
     - name: pad_with_no_data
       type: boolean
-      description: Optional (default false). See the no-band overload.
-    - name: no_data_val
+    - name: no_data_value
       type: double
-      description: Optional. See the no-band overload.
 ---
 
 ::: callout-warning
@@ -74,13 +70,7 @@ kernels:
 `RS_Tile` cuts a raster into a grid of `width` x `height` tiles, returning a
 list with one item per tile that you `UNNEST` to get one row per tile.
 
-It has two overloads (`padWithNoData` and `noDataVal` are trailing
-optionals):
-
-- `RS_Tile(raster, width, height, padWithNoData = false, noDataVal = null)`
-- `RS_Tile(raster, bandIndices, width, height, padWithNoData = false, noDataVal = null)`
-
-When no band argument is given, every band is included. `bandIndices` selects
+When no band argument is given, every band is included. `band_indices` selects
 an ordered subset of bands. Band indices are 1-based.
 
 Each returned list item is a struct with:
@@ -91,10 +81,10 @@ Each returned list item is a struct with:
 
 The grid is `ceil(width / tile_width)` columns by `ceil(height / tile_height)`
 rows. When the raster does not divide evenly, the last column and row of tiles
-are partial: with `padWithNoData = false` the smaller edge tile is emitted
-as-is, and with `padWithNoData = true` those tiles are padded to the full tile
-size with a nodata fill. When the band(s) have no nodata value, `noDataVal`
-supplies one.
+are partial: with `pad_with_no_data = false` the smaller edge tile is emitted
+as-is, and with `pad_with_no_data = true` those tiles are padded to the full
+tile size with a nodata fill. When the band(s) have no nodata value,
+`no_data_value` supplies one.
 
 ::: callout-note
 `RS_Tile` **copies the raster**: every tile carries its own pixels, so the
