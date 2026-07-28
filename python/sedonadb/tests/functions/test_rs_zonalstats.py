@@ -36,6 +36,8 @@ when it is unavailable rather than importing it at module scope.
 import numpy as np
 import pyarrow as pa
 import pytest
+import shapely
+from shapely.geometry import box
 
 pytest.importorskip("rasterio")
 
@@ -96,7 +98,6 @@ def numpy_reference(band, wkt, *, all_touched, exclude_no_data):
     the selection is empty (the caller maps that to count 0 / NULLs).
     """
     import rasterio.features
-    import shapely
     from rasterio.transform import Affine
 
     geom = shapely.from_wkt(wkt)
@@ -242,9 +243,6 @@ def test_no_intersection_is_null_when_lenient_and_errors_when_strict(con, tmp_pa
 
 
 def test_bbox_overlapping_but_geometry_disjoint_is_no_intersection(con, tmp_path):
-    import shapely
-    from shapely.geometry import box
-
     path, _ = fixture_raster(tmp_path)
 
     # Premise: the roi's bounding box overlaps the raster extent, but the
