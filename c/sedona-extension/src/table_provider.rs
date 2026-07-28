@@ -885,15 +885,17 @@ mod tests {
     }
 
     #[test]
-    #[rustfmt::skip]
     fn test_filter_pushdown_in_explain() {
         let runtime = test_runtime();
         runtime
             .block_on(async {
                 let ctx = create_test_context().await?;
 
-                // Get the table provider from the context
-                let table = ctx.table_provider("test_data").await?;
+                // Get the table provider from the context. Use into_view()
+                // to use the DataFrame implementation of a table, which does
+                // support filter pushdown
+                let table = ctx.table("test_data").await?.into_view();
+
 
                 // Export the table provider
                 let session = Arc::new(ctx.state());
@@ -916,15 +918,16 @@ mod tests {
 
                 assert_batches_eq!(
                     &[
-                        "+---------------+---------------------------------------------------------------------------------+",
-                        "| plan_type     | plan                                                                            |",
-                        "+---------------+---------------------------------------------------------------------------------+",
-                        "| logical_plan  | TableScan: imported_data projection=[id], full_filters=[imported_data.id > 20] |",
-                        "| physical_plan | RepartitionExec: partitioning=RoundRobinBatch(12), input_partitions=1           |",
-                        "|               |   CooperativeExec                                                               |",
-                        "|               |     ImportedSedonaCExec: FilterExec: id@0 > 20, projection=[id]                 |",
-                        "|               |                                                                                 |",
-                        "+---------------+---------------------------------------------------------------------------------+",
+                        "+---------------+---------------------------------------------------------------------------------------+",
+                        "| plan_type     | plan                                                                                  |",
+                        "+---------------+---------------------------------------------------------------------------------------+",
+                        "| logical_plan  | TableScan: imported_data projection=[id], full_filters=[imported_data.id > Int32(20)] |",
+                        "| physical_plan | CooperativeExec                                                                       |",
+                        "|               |   ImportedSedonaCExec: FilterExec: id@0 > 20                                          |",
+                        "|               |   DataSourceExec: partitions=1, partition_sizes=[5]                                   |",
+                        "|               |                                                                                       |",
+                        "|               |                                                                                       |",
+                        "+---------------+---------------------------------------------------------------------------------------+",
                     ],
                     &explain_result
                 );

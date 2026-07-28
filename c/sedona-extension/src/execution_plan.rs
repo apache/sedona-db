@@ -29,6 +29,7 @@ use arrow_schema::{ffi::FFI_ArrowSchema, Schema, SchemaRef};
 use datafusion_common::{exec_err, Result, Statistics};
 use datafusion_execution::TaskContext;
 use datafusion_physical_plan::{
+    displayable,
     execution_plan::{Boundedness, CardinalityEffect, EmissionType},
     metrics::{CustomMetricValue, Metric, MetricValue, MetricsSet},
     DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, PlanProperties,
@@ -93,36 +94,15 @@ impl ExportedExecutionPlan {
                 })
             }
             "debug_string" => Ok(format!("{:?}", self.plan)),
-            "display_default" => {
-                use std::fmt::Write;
-                let mut s = String::new();
-                let _ = write!(
-                    s,
-                    "{}",
-                    DisplayAsWrapper(&self.plan, DisplayFormatType::Default)
-                );
-                Ok(s)
-            }
-            "display_verbose" => {
-                use std::fmt::Write;
-                let mut s = String::new();
-                let _ = write!(
-                    s,
-                    "{}",
-                    DisplayAsWrapper(&self.plan, DisplayFormatType::Verbose)
-                );
-                Ok(s)
-            }
-            "display_tree_render" => {
-                use std::fmt::Write;
-                let mut s = String::new();
-                let _ = write!(
-                    s,
-                    "{}",
-                    DisplayAsWrapper(&self.plan, DisplayFormatType::TreeRender)
-                );
-                Ok(s)
-            }
+            "display_default" => Ok(displayable(self.plan.as_ref())
+                .indent(false)
+                .to_string()),
+            "display_verbose" => Ok(displayable(self.plan.as_ref())
+                .indent(true)
+                .to_string()),
+            "display_tree_render" => Ok(displayable(self.plan.as_ref())
+                .tree_render()
+                .to_string()),
             "name" => Ok(self.plan.name().to_string()),
             "cardinality_effect" => {
                 let effect = match self.plan.cardinality_effect() {
@@ -672,15 +652,6 @@ impl PlanPropertiesArgs {
             emission_type,
             boundedness,
         )
-    }
-}
-
-/// Helper wrapper to format an ExecutionPlan with a specific DisplayFormatType.
-struct DisplayAsWrapper<'a>(&'a Arc<dyn ExecutionPlan>, DisplayFormatType);
-
-impl std::fmt::Display for DisplayAsWrapper<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt_as(self.1, f)
     }
 }
 
