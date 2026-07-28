@@ -25,20 +25,39 @@ kernels:
     args:
     - name: raster
       type: raster
+      description: The input raster to resample.
     - name: reference_raster
       type: raster
+      description: >
+        A raster whose grid — dimensions (or pixel size, when `use_scale` is
+        true) and origin — defines the output grid. Must share the input's CRS.
     - name: use_scale
       type: boolean
+      description: >
+        When false, `width_or_scale`/`height_or_scale` are output pixel
+        dimensions and the world extent is preserved; when true, they are the
+        target pixel size.
     - name: algorithm
       type: string
+      description: >
+        Resampling algorithm (case-insensitive): `NearestNeighbor` (the
+        default), `Bilinear`, `Cubic` (alias `Bicubic`), `CubicSpline`,
+        `Lanczos`, `Average`, or `Mode`.
   - returns: raster
     args:
     - name: raster
       type: raster
     - name: width_or_scale
       type: double
+      description: >
+        Output width in pixels when `use_scale` is false (a fractional value is
+        an error), or the target x pixel size (`scaleX`) when `use_scale` is true.
     - name: height_or_scale
       type: double
+      description: >
+        Output height in pixels when `use_scale` is false (a fractional value is
+        an error), or the target y pixel size (`scaleY`, negative for a north-up
+        raster) when `use_scale` is true.
     - name: use_scale
       type: boolean
     - name: algorithm
@@ -53,8 +72,10 @@ kernels:
       type: double
     - name: grid_x
       type: double
+      description: X coordinate of the grid the output origin snaps to.
     - name: grid_y
       type: double
+      description: Y coordinate of the grid the output origin snaps to.
     - name: use_scale
       type: boolean
     - name: algorithm
@@ -71,7 +92,8 @@ notice.
 `RS_Resample` changes a raster's pixel grid while keeping its band count and
 order and per-band nodata. Pixel values are recomputed by GDAL with the chosen
 `algorithm` (nearest neighbour by default). The output stays in the input's
-CRS — `RS_Resample` never reprojects (use `RS_ReprojectMatch` for that).
+CRS — `RS_Resample` never reprojects (use
+[`RS_ReprojectMatch`](rs_reprojectmatch.qmd) for that).
 
 `RS_Resample` has three positional overloads:
 
