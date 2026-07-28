@@ -613,12 +613,15 @@ fn resample_raster(
     // decimation.
     let is_regrid = matches!(plan.target, TargetGrid::Scale { .. }) || plan.grid_snap.is_some();
 
-    // Int64/UInt64 survive only nearest-neighbour RasterIO decimation, which is a
-    // bit-exact sample. Every other case routes pixels through a floating working
-    // type — the warp path always (a double, or a 32-bit float for Mode on GDAL
-    // < 3.13), and RasterIO for any interpolating algorithm — so 64-bit ints
-    // cannot be represented exactly and are rejected (RS_ReprojectMatch
-    // blanket-rejects them for the same reason).
+    // Int64/UInt64 are preserved only on the nearest-neighbour RasterIO fast path
+    // (a plain dimension change), where each output pixel is a copied source
+    // sample — a value selection, not a computation — so it is bit-exact for any
+    // dtype whether up- or down-sampling (pinned by the
+    // nearest_fast_path_preserves_* tests). Every other case routes pixels through
+    // a floating working type — the warp path always, and RasterIO for any
+    // interpolating algorithm — which cannot represent 64-bit ints exactly, so
+    // they are rejected (RS_ReprojectMatch blanket-rejects them for the same
+    // reason).
     if is_regrid || plan.algorithm != ResampleAlg::NearestNeighbour {
         for i in 0..band_count {
             if let Some(BandDataType::Int64 | BandDataType::UInt64) = raster.band_data_type(i) {
@@ -1271,6 +1274,57 @@ mod tests {
                 str_scalar("NearestNeighbor"),
             ])
             .unwrap();
+    }
+
+    #[test]
+    fn nearest_fast_path_preserves_int64_exactly() {
+        // The premise for allowing Int64/UInt64 only on the nearest fast path is
+        // that RasterIO nearest copies a source sample rather than computing it, so
+        // it survives values that f64 cannot represent (2^53+1 rounds to 2^53, and
+        // 2^53+3 to 2^53+4, if routed through a floating working type). Verified for
+        // both up- and down-sampling.
+        let a: i64 = (1i64 << 53) + 1;
+        let b: i64 = (1i64 << 53) + 3;
+
+        // 2x1 -> 4x2 nearest upsample replicates each pixel.
+        let up_src = RasterSpec::d2(2, 1)
+            .band_values(&[a, b])
+            .bbox(0.0, 0.0, 4.0, 2.0)
+            .crs(Some("EPSG:4326"));
+        let up_expected = RasterSpec::d2(4, 2)
+            .band_values(&[a, a, b, b, a, a, b, b])
+            .bbox(0.0, 0.0, 4.0, 2.0)
+            .crs(Some("EPSG:4326"));
+        assert_raster_scalar_equals(&resample_dims(&up_src, 4.0, 2.0), &up_expected);
+
+        // 4x1 -> 2x1 nearest decimation (block-constant so the selected column is
+        // unambiguous, as in nearest_downsample_block_constant_is_stable).
+        let down_src = RasterSpec::d2(4, 1)
+            .band_values(&[a, a, b, b])
+            .bbox(0.0, 0.0, 4.0, 1.0)
+            .crs(Some("EPSG:4326"));
+        let down_expected = RasterSpec::d2(2, 1)
+            .band_values(&[a, b])
+            .bbox(0.0, 0.0, 4.0, 1.0)
+            .crs(Some("EPSG:4326"));
+        assert_raster_scalar_equals(&resample_dims(&down_src, 2.0, 1.0), &down_expected);
+    }
+
+    #[test]
+    fn nearest_fast_path_preserves_uint64_exactly() {
+        // UInt64 above i64::MAX and above 2^63 (neither representable in f64) also
+        // survives the nearest fast path unchanged.
+        let a: u64 = u64::MAX - 1;
+        let b: u64 = (1u64 << 63) + 5;
+        let source = RasterSpec::d2(2, 1)
+            .band_values(&[a, b])
+            .bbox(0.0, 0.0, 4.0, 2.0)
+            .crs(Some("EPSG:4326"));
+        let expected = RasterSpec::d2(4, 2)
+            .band_values(&[a, a, b, b, a, a, b, b])
+            .bbox(0.0, 0.0, 4.0, 2.0)
+            .crs(Some("EPSG:4326"));
+        assert_raster_scalar_equals(&resample_dims(&source, 4.0, 2.0), &expected);
     }
 
     #[test]
