@@ -916,17 +916,15 @@ mod tests {
 
                 assert_batches_eq!(
                     &[
-                        "+---------------+------------------------------------------------------------------------------+",
-                        "| plan_type     | plan                                                                         |",
-                        "+---------------+------------------------------------------------------------------------------+",
-                        "| logical_plan  | Filter: imported_data.id > Int32(20)                                         |",
-                        "|               |   TableScan: imported_data projection=[id]                                   |",
-                        "| physical_plan | FilterExec: id@0 > 20                                                        |",
-                        "|               |   RepartitionExec: partitioning=RoundRobinBatch(12), input_partitions=1      |",
-                        "|               |     CooperativeExec                                                          |",
-                        "|               |       ImportedSedonaCExec: DataSourceExec: partitions=1, partition_sizes=[5] |",
-                        "|               |                                                                              |",
-                        "+---------------+------------------------------------------------------------------------------+",
+                        "+---------------+---------------------------------------------------------------------------------+",
+                        "| plan_type     | plan                                                                            |",
+                        "+---------------+---------------------------------------------------------------------------------+",
+                        "| logical_plan  | TableScan: imported_data projection=[id], full_filters=[imported_data.id > 20] |",
+                        "| physical_plan | RepartitionExec: partitioning=RoundRobinBatch(12), input_partitions=1           |",
+                        "|               |   CooperativeExec                                                               |",
+                        "|               |     ImportedSedonaCExec: FilterExec: id@0 > 20, projection=[id]                 |",
+                        "|               |                                                                                 |",
+                        "+---------------+---------------------------------------------------------------------------------+",
                     ],
                     &explain_result
                 );
