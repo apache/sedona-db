@@ -401,7 +401,15 @@ fn clip_raster(
 
     // Rasterize the geometry into a window-sized 0/1 mask: 1 inside, 0 outside
     // (moves `geometry`, whose only remaining use is the burn).
-    let mask = rasterize_geometry_mask(gdal, geometry, &geotransform, &window, all_touched)?;
+    let mut mask = Vec::new();
+    rasterize_geometry_mask(
+        gdal,
+        geometry,
+        &geotransform,
+        &window,
+        all_touched,
+        &mut mask,
+    )?;
 
     // The envelope may overlap the raster while the geometry itself selects no
     // pixel (e.g. it falls between pixel centers); that is still the

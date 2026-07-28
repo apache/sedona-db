@@ -314,6 +314,7 @@ impl SedonaScalarKernel for RsZonalStats {
 
         let mut builder = Float64Builder::with_capacity(num_iterations);
         let mut scratch: Vec<f64> = Vec::new();
+        let mut mask_scratch: Vec<u8> = Vec::new();
 
         // The executor only sees (raster, roi); the option columns are advanced
         // in lockstep below.
@@ -359,7 +360,14 @@ impl SedonaScalarKernel for RsZonalStats {
                         "raster",
                         engine,
                     )?;
-                    match compute_zonal_stats(gdal, raster, &geom_wkb, &params, &mut scratch)? {
+                    match compute_zonal_stats(
+                        gdal,
+                        raster,
+                        &geom_wkb,
+                        &params,
+                        &mut scratch,
+                        &mut mask_scratch,
+                    )? {
                         Some(stats) => match stats.get(stat_type) {
                             Some(value) => builder.append_value(value),
                             None => builder.append_null(),
@@ -485,6 +493,7 @@ impl SedonaScalarKernel for RsZonalStatsAll {
 
         let mut builder = StructBuilder::from_fields(zonal_stats_struct_fields(), num_iterations);
         let mut scratch: Vec<f64> = Vec::new();
+        let mut mask_scratch: Vec<u8> = Vec::new();
 
         let exec_arg_types = [arg_types[0].clone(), arg_types[1].clone()];
         let exec_args = [args[0].clone(), args[1].clone()];
@@ -519,7 +528,14 @@ impl SedonaScalarKernel for RsZonalStatsAll {
                         "raster",
                         engine,
                     )?;
-                    match compute_zonal_stats(gdal, raster, &geom_wkb, &params, &mut scratch)? {
+                    match compute_zonal_stats(
+                        gdal,
+                        raster,
+                        &geom_wkb,
+                        &params,
+                        &mut scratch,
+                        &mut mask_scratch,
+                    )? {
                         Some(stats) => append_struct_stats(&mut builder, &stats)?,
                         None if params.lenient => append_struct_null(&mut builder)?,
                         None => return no_intersection_err(),
@@ -618,14 +634,16 @@ fn append_struct_stats(builder: &mut StructBuilder, stats: &ZonalStatistics) -> 
 /// that intersects the footprint but whose selected pixels are all outside the
 /// geometry or all nodata yields `Ok(Some(..))` with `count = 0`.
 ///
-/// `scratch` is a reused buffer for the selected pixel values so the per-row
-/// collection does not allocate a fresh `Vec` each call.
+/// `scratch` is a reused buffer for the selected pixel values and `mask_scratch`
+/// for the rasterized roi mask, both reused so the per-row computation does not
+/// allocate a fresh `Vec` each call.
 fn compute_zonal_stats(
     gdal: &Gdal,
     raster: &RasterRefImpl<'_>,
     geom_wkb: &[u8],
     params: &ZonalStatsParams,
     scratch: &mut Vec<f64>,
+    mask_scratch: &mut Vec<u8>,
 ) -> Result<Option<ZonalStatistics>> {
     let num_bands = raster.num_bands();
     let band_num = resolve_band(params.band, num_bands)?;
@@ -671,8 +689,16 @@ fn compute_zonal_stats(
     };
 
     // Rasterize the roi into a window-sized 0/1 mask (moves `geometry`, whose
-    // only remaining use is the burn).
-    let mask = rasterize_geometry_mask(gdal, geometry, &transform, &window, params.all_touched)?;
+    // only remaining use is the burn). The mask reuses `mask_scratch` across
+    // rows rather than allocating a fresh buffer each call.
+    rasterize_geometry_mask(
+        gdal,
+        geometry,
+        &transform,
+        &window,
+        params.all_touched,
+        mask_scratch,
+    )?;
 
     // Read the band once (zero-copy borrow) and collect the selected values.
     let nd_buffer = band
@@ -710,7 +736,13 @@ fn compute_zonal_stats(
 
     scratch.clear();
     collect_masked_values(
-        band_bytes, data_type, width, &window, &mask, nodata, scratch,
+        band_bytes,
+        data_type,
+        width,
+        &window,
+        mask_scratch,
+        nodata,
+        scratch,
     );
 
     Ok(Some(compute_statistics(scratch)))

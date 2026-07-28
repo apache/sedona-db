@@ -108,6 +108,10 @@ pub fn envelope_window(
 /// Rasterize `geometry` into a window-sized `u8` mask: 1 where the geometry
 /// covers a pixel, 0 elsewhere.
 ///
+/// The mask is written into the caller-owned `out` buffer (cleared first), whose
+/// allocation is reused across calls so a per-row rasterization does not allocate
+/// a fresh `Vec` each time. It ends up `window.width * window.height` bytes long.
+///
 /// The mask is a MEM UInt8 dataset covering only `window`, with the raster
 /// geotransform shifted to the window's upper-left corner so pixel indices in
 /// the mask line up with the same-offset pixels of the source raster. GDAL's
@@ -120,7 +124,8 @@ pub fn rasterize_geometry_mask(
     transform: &GeoTransform,
     window: &PixelWindow,
     all_touched: bool,
-) -> Result<Vec<u8>> {
+    out: &mut Vec<u8>,
+) -> Result<()> {
     let mask_dataset =
         MemDatasetBuilder::create(gdal, window.width, window.height, 1, GdalDataType::UInt8)
             .map_err(|e| exec_datafusion_err!("raster mask: failed to create mask dataset: {e}"))?;
@@ -151,5 +156,7 @@ pub fn rasterize_geometry_mask(
             None,
         )
         .map_err(|e| exec_datafusion_err!("raster mask: failed to read mask: {e}"))?;
-    Ok(mask_buffer.data().to_vec())
+    out.clear();
+    out.extend_from_slice(mask_buffer.data());
+    Ok(())
 }
