@@ -34,7 +34,6 @@ use datafusion_common::{exec_datafusion_err, ScalarValue};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::sedona_internal_err;
 use sedona_gdal::gdal::Gdal;
-use sedona_gdal::geo_transform::GeoTransform;
 
 use arrow_schema::DataType;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
@@ -50,7 +49,7 @@ use sedona_schema::datatypes::{SedonaType, RASTER};
 use sedona_schema::matchers::ArgMatcher;
 use sedona_schema::raster::BandDataType;
 
-use crate::gdal_common::with_gdal;
+use crate::gdal_common::{raster_geo_transform, with_gdal};
 use crate::gdal_dataset_provider::configure_thread_local_options;
 use crate::mask::{envelope_window, rasterize_geometry_mask, PixelWindow};
 use sedona_raster::traits::nodata_f64_to_bytes;
@@ -389,8 +388,7 @@ fn clip_raster(
         .map_err(|e| exec_datafusion_err!("Failed to parse geometry from WKB: {}", e))?;
 
     // GDAL geotransform: [upper_left_x, scale_x, skew_x, upper_left_y, skew_y, scale_y].
-    let geotransform: GeoTransform = <[f64; 6]>::try_from(raster.transform())
-        .map_err(|_| exec_datafusion_err!("RS_Clip: expected a 6-element geotransform"))?;
+    let geotransform = raster_geo_transform(raster)?;
 
     // The clip window is the geometry's envelope intersected with the raster
     // extent, snapped outward to the pixel grid — the window PostGIS ST_Clip,

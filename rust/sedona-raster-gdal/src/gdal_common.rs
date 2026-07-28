@@ -65,6 +65,16 @@ impl<T: MetadataRef + ?Sized> ToGdalGeoTransform for T {
     }
 }
 
+/// A raster's stored six-coefficient GDAL geo-transform as a fixed array,
+/// erroring when the transform is not exactly six elements.
+///
+/// GDAL geo-transforms are
+/// `[origin_x, pixel_width, rotation_x, origin_y, rotation_y, pixel_height]`.
+pub fn raster_geo_transform<R: RasterRef + ?Sized>(raster: &R) -> Result<GeoTransform> {
+    <[f64; 6]>::try_from(raster.transform())
+        .map_err(|_| exec_datafusion_err!("expected a 6-element geotransform"))
+}
+
 /// Reconstruct raster metadata from a GDAL six-element geo-transform and raster dimensions.
 pub(crate) trait RasterMetadataFromGdalGeoTransform {
     fn to_raster_metadata(&self, width: usize, height: usize) -> RasterMetadata;

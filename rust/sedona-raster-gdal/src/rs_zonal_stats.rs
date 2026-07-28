@@ -63,7 +63,6 @@ use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_gdal::gdal::Gdal;
-use sedona_gdal::geo_transform::GeoTransform;
 use sedona_raster::array::RasterRefImpl;
 use sedona_raster::traits::RasterRef;
 use sedona_raster_functions::crs_utils::{align_wkb_to_crs, resolve_crs, with_crs_engine};
@@ -74,7 +73,7 @@ use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;
 use sedona_schema::raster::BandDataType;
 
-use crate::gdal_common::with_gdal;
+use crate::gdal_common::{raster_geo_transform, with_gdal};
 use crate::gdal_dataset_provider::configure_thread_local_options;
 use crate::mask::{envelope_window, rasterize_geometry_mask, PixelWindow};
 
@@ -644,7 +643,7 @@ fn compute_zonal_stats(
     let byte_size = data_type.byte_size();
 
     let metadata = raster.metadata();
-    let transform = raster_transform(raster)?;
+    let transform = raster_geo_transform(raster)?;
     let width = usize::try_from(metadata.width())
         .map_err(|_| exec_datafusion_err!("RS_ZonalStats: negative raster width"))?;
     let height = usize::try_from(metadata.height())
@@ -744,13 +743,6 @@ fn resolve_band(band: Option<i64>, num_bands: usize) -> Result<usize> {
             }
         }
     }
-}
-
-/// The raster's 6-coefficient GDAL geotransform as a fixed array.
-fn raster_transform(raster: &RasterRefImpl<'_>) -> Result<GeoTransform> {
-    let t = raster.transform();
-    <[f64; 6]>::try_from(t)
-        .map_err(|_| exec_datafusion_err!("RS_ZonalStats: expected a 6-element geotransform"))
 }
 
 /// Append every selected pixel value (masked in, and — when `nodata` is set —
