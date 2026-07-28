@@ -7,7 +7,7 @@
       
       
       
-        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/reference/sql/st_minimumclearanceline/">
+        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/reference/sql/rs_tile/">
       
       
       
@@ -20,7 +20,7 @@
     
     
       
-        <title>ST_MinimumClearanceLine - Apache Sedona</title>
+        <title>RS_Tile - Apache Sedona</title>
       
     
     
@@ -84,7 +84,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#st_minimumclearanceline" class="md-skip">
+        <a href="#rs_tile" class="md-skip">
           Skip to content
         </a>
       
@@ -157,7 +157,7 @@
             <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              ST_MinimumClearanceLine
+              RS_Tile
             
           </span>
             </div>
@@ -1621,7 +1621,7 @@
 
 
   
-    <a href="https://github.com/apache/sedona-db/blob/main/docs/reference/sql/st_minimumclearanceline.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/apache/sedona-db/blob/main/docs/reference/sql/rs_tile.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"></path></svg>
     </a>
@@ -1629,33 +1629,99 @@
   
 
 
-<h1 id="st_minimumclearanceline">ST_MinimumClearanceLine<a class="headerlink" href="#st_minimumclearanceline" title="Permanent link">¶</a></h1>
-<p>Returns a LineString representing the minimum clearance distance of the
-input geometry.</p>
+<h1 id="rs_tile">RS_Tile<a class="headerlink" href="#rs_tile" title="Permanent link">¶</a></h1>
+<p>Returns an array of rasters resulting from the split of the input raster
+into a grid of fixed-size tiles, one list item per tile with its grid
+position.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">¶</a></h2>
-<div class="highlight"><pre><span></span><code><span class="n">geometry</span><span class="w"> </span><span class="n">ST_MinimumClearanceLine</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><span class="n">list</span><span class="w"> </span><span class="n">RS_Tile</span><span class="p">(</span><span class="n">rast</span><span class="p">:</span><span class="w"> </span><span class="n">raster</span><span class="p">,</span><span class="w"> </span><span class="n">width</span><span class="p">:</span><span class="w"> </span><span class="nb">integer</span><span class="p">,</span><span class="w"> </span><span class="n">height</span><span class="p">:</span><span class="w"> </span><span class="nb">integer</span><span class="p">,</span><span class="w"> </span><span class="n">pad_with_no_data</span><span class="p">:</span><span class="w"> </span><span class="nb">boolean</span><span class="p">,</span><span class="w"> </span><span class="n">no_data_value</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">)</span>
+<span class="n">list</span><span class="w"> </span><span class="n">RS_Tile</span><span class="p">(</span><span class="n">rast</span><span class="p">:</span><span class="w"> </span><span class="n">raster</span><span class="p">,</span><span class="w"> </span><span class="n">band_indices</span><span class="p">:</span><span class="w"> </span><span class="nb">array</span><span class="p">,</span><span class="w"> </span><span class="n">width</span><span class="p">:</span><span class="w"> </span><span class="nb">integer</span><span class="p">,</span><span class="w"> </span><span class="n">height</span><span class="p">:</span><span class="w"> </span><span class="nb">integer</span><span class="p">,</span><span class="w"> </span><span class="n">pad_with_no_data</span><span class="p">:</span><span class="w"> </span><span class="nb">boolean</span><span class="p">,</span><span class="w"> </span><span class="n">no_data_value</span><span class="p">:</span><span class="w"> </span><span class="n">double</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="arguments">Arguments<a class="headerlink" href="#arguments" title="Permanent link">¶</a></h2>
 <ul>
-<li><strong>geom</strong> (geometry): Input geometry</li>
+<li><strong>rast</strong> (raster): Input raster</li>
+<li><strong>band_indices</strong> (array): <code>Array[Int]</code> of 1-based band indices to
+  include in each tile, in the given order.</li>
+<li><strong>width</strong> (integer): Tile width in pixels. Must be &gt;= 1.</li>
+<li><strong>height</strong> (integer): Tile height in pixels. Must be &gt;= 1.</li>
+<li><strong>pad_with_no_data</strong> (boolean): Optional (default false). When true,
+  pad the last partial row/column of tiles to the full tile size with a
+  nodata fill; when false the smaller edge tile is emitted as-is.</li>
+<li><strong>no_data_value</strong> (double): Optional. The value written to padded
+  pixels (only valid with <code>pad_with_no_data = true</code>); defaults to the
+  band’s own nodata value, or the band data type’s minimum if it has
+  none. It is an error if it does not fit the band’s data type.</li>
 </ul>
+<blockquote>
+<p>[!WARNING]</p>
+<p><strong>Experimental.</strong> This function is experimental; its behavior may
+change without notice.</p>
+</blockquote>
 <h2 id="description">Description<a class="headerlink" href="#description" title="Permanent link">¶</a></h2>
-<p>This function returns a two-point LineString geometry representing the
-minimum clearance distance of the input geometry. If the input geometry
-does not have a defined minimum clearance, such as for single Points or
-coincident MultiPoints, an empty LineString geometry is returned
-instead.</p>
+<p><code>RS_Tile</code> cuts a raster into a grid of <code>width</code> x <code>height</code> tiles,
+returning a list with one item per tile that you <code>UNNEST</code> to get one row
+per tile.</p>
+<p>When no band argument is given, every band is included. <code>band_indices</code>
+selects an ordered subset of bands. Band indices are 1-based.</p>
+<p>Each returned list item is a struct with:</p>
+<ul>
+<li><code>x</code>: the tile’s grid column (0-based), counting from the left</li>
+<li><code>y</code>: the tile’s grid row (0-based), counting from the top</li>
+<li><code>tile</code>: the tile raster, with a geotransform shifted to the tile’s own
+  origin</li>
+</ul>
+<p>The grid is <code>ceil(width / tile_width)</code> columns by
+<code>ceil(height / tile_height)</code> rows. When the raster does not divide
+evenly, the last column and row of tiles are partial: with
+<code>pad_with_no_data = false</code> the smaller edge tile is emitted as-is, and
+with <code>pad_with_no_data = true</code> those tiles are padded to the full tile
+size with a nodata fill. When the band(s) have no nodata value,
+<code>no_data_value</code> supplies one.</p>
+<blockquote>
+<p>[!NOTE]</p>
+<p><code>RS_Tile</code> <strong>copies the raster</strong>: every tile carries its own pixels, so
+the returned list materializes a full copy of the raster spread across
+the tiles and held in memory as one list value. A small tile size
+produces many tiles (a <code>1 x 1</code> tile size yields one tile per pixel).</p>
+</blockquote>
 <h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">¶</a></h2>
-<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">ST_MinimumClearanceLine</span><span class="p">(</span>
-<span class="w">  </span><span class="n">ST_GeomFromWKT</span><span class="p">(</span><span class="s1">'POLYGON ((65 18, 62 16, 64.5 16, 62 14, 65 14, 65 18))'</span><span class="p">)</span>
-<span class="p">);</span>
+<p>Tile every band into a 2x2 grid of 32x16 tiles, then <code>UNNEST</code> the list
+to get one row per tile (counted here so the example output stays small
+rather than printing every tile raster):</p>
+<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="k">COUNT</span><span class="p">(</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">num_tiles</span>
+<span class="k">FROM</span><span class="w"> </span><span class="p">(</span><span class="k">SELECT</span><span class="w"> </span><span class="k">UNNEST</span><span class="p">(</span><span class="n">RS_Tile</span><span class="p">(</span><span class="n">RS_Example</span><span class="p">(),</span><span class="w"> </span><span class="mi">32</span><span class="p">,</span><span class="w"> </span><span class="mi">16</span><span class="p">))</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">tile</span><span class="p">);</span>
 </code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌──────────────────────────────────────────────────────────────────────────────┐
-│ st_minimumclearanceline(st_geomfromwkt(Utf8("POLYGON ((65 18, 62 16, 64.5 16 │
-│                         , 62 14, 65 14, 65 18))")))…                         │
-╞══════════════════════════════════════════════════════════════════════════════╡
-│ LINESTRING(64.5 16,65 16)                                                    │
-└──────────────────────────────────────────────────────────────────────────────┘
+<div class="codehilite"><pre><span></span><code>┌───────────┐
+│ num_tiles │
+│   int64   │
+╞═══════════╡
+│         4 │
+└───────────┘
+</code></pre></div>
+
+<p>Tile every band, padding the edge tiles to the full 40x20 size with a
+nodata fill of 0:</p>
+<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="k">COUNT</span><span class="p">(</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">num_tiles</span>
+<span class="k">FROM</span><span class="w"> </span><span class="p">(</span><span class="k">SELECT</span><span class="w"> </span><span class="k">UNNEST</span><span class="p">(</span><span class="n">RS_Tile</span><span class="p">(</span><span class="n">RS_Example</span><span class="p">(),</span><span class="w"> </span><span class="mi">40</span><span class="p">,</span><span class="w"> </span><span class="mi">20</span><span class="p">,</span><span class="w"> </span><span class="k">true</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">.</span><span class="mi">0</span><span class="p">))</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">tile</span><span class="p">);</span>
+</code></pre></div>
+<div class="codehilite"><pre><span></span><code>┌───────────┐
+│ num_tiles │
+│   int64   │
+╞═══════════╡
+│         4 │
+└───────────┘
+</code></pre></div>
+
+<p>Tile an ordered subset of bands:</p>
+<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="k">COUNT</span><span class="p">(</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">num_tiles</span>
+<span class="k">FROM</span><span class="w"> </span><span class="p">(</span><span class="k">SELECT</span><span class="w"> </span><span class="k">UNNEST</span><span class="p">(</span><span class="n">RS_Tile</span><span class="p">(</span><span class="n">RS_Example</span><span class="p">(),</span><span class="w"> </span><span class="n">make_array</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">),</span><span class="w"> </span><span class="mi">32</span><span class="p">,</span><span class="w"> </span><span class="mi">16</span><span class="p">))</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">tile</span><span class="p">);</span>
+</code></pre></div>
+<div class="codehilite"><pre><span></span><code>┌───────────┐
+│ num_tiles │
+│   int64   │
+╞═══════════╡
+│         4 │
+└───────────┘
 </code></pre></div>
 
 
@@ -1677,7 +1743,7 @@ instead.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"></path></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="July 28, 2026 21:23:46 UTC">July 28, 2026 21:23:46</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="July 28, 2026 21:23:45 UTC">July 28, 2026 21:23:45</span>
   </span>
 
     

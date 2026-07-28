@@ -8740,6 +8740,30 @@ rows) per input row, in input order.</p>
 
 </div>
 
+<div class="doc doc-object doc-function">
+
+
+<h4 id="sedonadb.raster_testing.SedonaDB.tile_explode" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">tile_explode</span>
+
+
+<a href="#sedonadb.raster_testing.SedonaDB.tile_explode" class="headerlink" title="Permanent link">¶</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">tile_explode</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">tile_width</span><span class="p">,</span> <span class="n">tile_height</span><span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Tile via <code>RS_Tile</code> (all bands, <code>pad_with_nodata</code> off) and <code>unnest</code> the
+<code>List&lt;Struct&lt;x, y, tile&gt;&gt;</code> result to one tile per row, decoding each tile
+raster. Partial edge tiles keep their smaller size and the source band
+nodata, mirroring the rasterio window reference. Returned sorted by
+<code>(y, x)</code> like the other engines.</p>
+
+
+    </div>
+
+</div>
+
 
 
   </div>
