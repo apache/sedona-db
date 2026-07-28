@@ -96,15 +96,6 @@ def _write(
     return path
 
 
-def _write_grid(tmp_path, *, transform, width, height, crs=None, name="ref"):
-    """Write a zeroed raster whose only role is to define a reference grid."""
-    path = tmp_path / f"resample_{name}_{width}x{height}.tif"
-    write_grid_geotiff(
-        path, gdal_transform=transform, width=width, height=height, crs=crs
-    )
-    return path
-
-
 @pytest.mark.parametrize("dtype", DTYPES)
 def test_rs_resample_nearest_upsample_matches_rasterio(
     sedona, reference, tmp_path, dtype
@@ -142,6 +133,48 @@ def test_rs_resample_nearest_downsample_matches_rasterio(
     assert got.pixels.dtype == expected.pixels.dtype
     assert got.pixels.shape == (2, 3, 4)
     assert_transform_and_nodata(got, expected)
+
+
+@pytest.mark.parametrize("dtype", ["int64", "uint64"])
+def test_rs_resample_nearest_preserves_64bit_ints_exactly(sedona, tmp_path, dtype):
+    """A plain nearest width/height change preserves 64-bit integers bit-exactly:
+    the RasterIO decimation copies source samples in their native type, so values
+    above 2**53 (which GDAL's floating working type would round) survive. A 2x
+    upsample replicates each source pixel into a 2x2 block, compared against the
+    source read back at native resolution — all through SedonaDB, since rasterio
+    need not support 64-bit dtypes."""
+    pytest.importorskip("rasterio")  # _write needs rasterio to author the input
+    tiff = _write(tmp_path, dtype, bands=1, height=3, width=4, nodata=None)
+
+    # An identity resample (same grid, nearest) reads the source pixels back.
+    src = sedona.resample(tiff, width=4, height=3).pixels
+    # random_raster_data plants the dtype extremes in opposite corners, so the
+    # source really does carry a value a double cannot represent exactly.
+    assert int(src.max()) > 2**53 or int(src.min()) < -(2**53)
+
+    got = sedona.resample(tiff, width=8, height=6)
+    expected = np.repeat(np.repeat(src, 2, axis=1), 2, axis=2)
+    np.testing.assert_array_equal(got.pixels, expected)
+    assert got.pixels.dtype == np.dtype(dtype)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"width": 4, "height": 4, "algorithm": "Bilinear"},  # interpolating
+        {"scale_x": 4.0, "scale_y": -4.0},  # scale mode regrids through warp
+    ],
+)
+def test_rs_resample_rejects_64bit_ints_off_the_nearest_fast_path(
+    sedona, tmp_path, kwargs
+):
+    """Only a plain nearest width/height change preserves 64-bit integers. Any
+    interpolation or regrid routes pixels through GDAL's floating working type, so
+    RS_Resample rejects Int64/UInt64 there rather than silently corrupting them."""
+    pytest.importorskip("rasterio")  # _write needs rasterio to author the input
+    tiff = _write(tmp_path, "int64", bands=1, height=8, width=8, nodata=None)
+    with pytest.raises(Exception, match="Int64/UInt64"):
+        sedona.resample(tiff, **kwargs)
 
 
 def test_rs_resample_nodata_preserved(sedona, reference, tmp_path):
@@ -227,9 +260,10 @@ def test_rs_resample_reference_raster_matches_dimension_mode(
         tmp_path, "uint8", bands=2, height=3, width=4, nodata=None, crs="EPSG:4326"
     )
     # Reference: 8x6 grid over the same extent/origin as the 4x3 source.
-    ref = _write_grid(
-        tmp_path,
-        transform=(100.0, 1.0, 0.0, 500.0, 0.0, -1.0),
+    ref = tmp_path / "ref.tif"
+    write_grid_geotiff(
+        ref,
+        gdal_transform=(100.0, 1.0, 0.0, 500.0, 0.0, -1.0),
         width=8,
         height=6,
         crs="EPSG:4326",
@@ -247,13 +281,14 @@ def test_rs_resample_reference_raster_matches_dimension_mode(
 def test_rs_resample_reference_raster_crs_mismatch_errors(con, tmp_path):
     """A reference raster in a different CRS errors — RS_Resample never
     reprojects."""
-    pytest.importorskip("rasterio")  # _write / _write_grid need rasterio
+    pytest.importorskip("rasterio")  # _write / write_grid_geotiff need rasterio
     tiff = _write(
         tmp_path, "uint8", bands=1, height=3, width=4, crs="EPSG:4326", name="in"
     )
-    ref = _write_grid(
-        tmp_path,
-        transform=(0.0, 1.0, 0.0, 6.0, 0.0, -1.0),
+    ref = tmp_path / "ref.tif"
+    write_grid_geotiff(
+        ref,
+        gdal_transform=(0.0, 1.0, 0.0, 6.0, 0.0, -1.0),
         width=8,
         height=6,
         crs="EPSG:3857",
