@@ -20,19 +20,20 @@
 use arrow_array::StructArray;
 use arrow_buffer::Buffer;
 use datafusion_common::error::Result;
-use datafusion_common::exec_datafusion_err;
+use datafusion_common::{exec_datafusion_err, exec_err};
 use sedona_gdal::dataset::Dataset;
 use sedona_gdal::gdal::Gdal;
 use sedona_gdal::gdal_dyn_bindgen::{GDAL_OF_RASTER, GDAL_OF_READONLY};
-use sedona_gdal::geo_transform::GeoTransform;
+use sedona_gdal::geo_transform::{GeoTransform, GeoTransformEx};
 use sedona_gdal::mem::MemDatasetBuilder;
 use sedona_gdal::raster::types::DatasetOptions;
 use sedona_gdal::raster::types::ResampleAlg;
 use sedona_gdal::spatial_ref::SpatialRef;
 
+use sedona_raster::array::RasterRefImpl;
 use sedona_raster::builder::RasterBuilder;
-use sedona_raster::traits::{BandMetadata, RasterMetadata};
-use sedona_schema::raster::StorageType;
+use sedona_raster::traits::{BandMetadata, RasterMetadata, RasterRef};
+use sedona_schema::raster::{BandDataType, StorageType};
 
 use crate::gdal_common::{
     band_data_type_to_gdal, band_nodata_to_bytes, convert_gdal_err, gdal_to_band_data_type,
@@ -208,61 +209,195 @@ pub fn append_nd_from_dataset(
     append_nd_from_dataset_inner(dataset, layout, builder, &metadata, crs.as_deref(), None)
 }
 
-/// The output grid a resample writes into: geotransform, pixel dimensions, CRS,
-/// and the resampling algorithm.
+/// A raster's affine grid: its geotransform and pixel dimensions.
 ///
-/// `crs` is carried through rather than read back from the source dataset so a
-/// caller can preserve the exact source CRS string instead of round-tripping it
-/// through GDAL.
-pub struct ResampledGrid<'a> {
+/// This is the geometric core shared by a source raster's grid (via
+/// [`Grid::from_metadata`]) and every resample/warp output target, replacing the
+/// several near-identical transform-plus-dimensions structs that had accumulated
+/// here.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Grid {
     pub transform: GeoTransform,
-    pub width: usize,
-    pub height: usize,
+    pub width: i64,
+    pub height: i64,
+}
+
+/// Axis-aligned world bounding box of a [`Grid`]'s four corners.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Envelope {
+    pub min_x: f64,
+    pub max_x: f64,
+    pub min_y: f64,
+    pub max_y: f64,
+}
+
+impl Grid {
+    /// The grid of an existing raster, read from its [`RasterMetadata`].
+    pub fn from_metadata(m: &RasterMetadata) -> Self {
+        Self {
+            transform: [
+                m.upper_left_x(),
+                m.scale_x(),
+                m.skew_x(),
+                m.upper_left_y(),
+                m.skew_y(),
+                m.scale_y(),
+            ],
+            width: m.width(),
+            height: m.height(),
+        }
+    }
+
+    /// Bounding box of the four grid corners (handles skew; reduces to
+    /// `width * |scale_x|` etc. for a north-up grid). Corners are mapped with the
+    /// shared [`GeoTransformEx::apply`] — the same affine used everywhere else.
+    pub fn envelope(&self) -> Envelope {
+        let w = self.width as f64;
+        let h = self.height as f64;
+        let mut min_x = f64::INFINITY;
+        let mut max_x = f64::NEG_INFINITY;
+        let mut min_y = f64::INFINITY;
+        let mut max_y = f64::NEG_INFINITY;
+        for (col, row) in [(0.0, 0.0), (w, 0.0), (0.0, h), (w, h)] {
+            let (x, y) = self.transform.apply(col, row);
+            min_x = min_x.min(x);
+            max_x = max_x.max(x);
+            min_y = min_y.min(y);
+            max_y = max_y.max(y);
+        }
+        Envelope {
+            min_x,
+            max_x,
+            min_y,
+            max_y,
+        }
+    }
+}
+
+/// The output grid a resample or warp writes into: a [`Grid`] plus the CRS to
+/// record on the output and the resampling algorithm.
+///
+/// `crs` is the CRS stamped on the output — the source CRS for a same-CRS
+/// resample or regrid, the reprojection target for a warp that changes CRS. It
+/// is carried through verbatim rather than read back from GDAL so a caller can
+/// preserve the exact CRS string it was given.
+pub struct OutputGrid<'a> {
+    pub grid: Grid,
     pub crs: Option<&'a str>,
     pub alg: ResampleAlg,
 }
 
+/// GDAL 3.13 is the first release that resamples Mode through a double working
+/// type instead of a 32-bit float.
+const GDAL_3_13_0: i32 = 3_130_000;
+
+/// Map an algorithm name (case-insensitive) to a GDAL [`ResampleAlg`]. An empty
+/// string defaults to nearest neighbour (matching Sedona Spark). `func_name`
+/// names the calling SQL function for the error message.
+///
+/// Accepts the GDAL names plus the Spark spellings (American `NearestNeighbor`
+/// and `Bicubic`, which GDAL calls `Cubic`). Shared by the RasterIO-resampling
+/// and warping UDFs so they accept an identical algorithm surface.
+pub fn parse_resample_algorithm(name: &str, func_name: &str) -> Result<ResampleAlg> {
+    if name.is_empty() {
+        return Ok(ResampleAlg::NearestNeighbour);
+    }
+    let alg = match name.to_ascii_lowercase().as_str() {
+        "nearestneighbor" | "nearestneighbour" | "nearest" | "near" => {
+            ResampleAlg::NearestNeighbour
+        }
+        "bilinear" => ResampleAlg::Bilinear,
+        "cubic" | "bicubic" => ResampleAlg::Cubic,
+        "cubicspline" => ResampleAlg::CubicSpline,
+        "lanczos" => ResampleAlg::Lanczos,
+        "average" => ResampleAlg::Average,
+        "mode" => ResampleAlg::Mode,
+        _ => {
+            return exec_err!(
+                "{func_name}: unknown algorithm {name:?}; expected one of \
+                 NearestNeighbor, Bilinear, Cubic, CubicSpline, Lanczos, Average, Mode"
+            );
+        }
+    };
+    Ok(alg)
+}
+
+/// Reject the integer dtypes GDAL's floating resample/warp working type cannot
+/// represent exactly.
+///
+/// `routes_through_float` is true when the pixels will pass through a floating
+/// working type: always for a warp/reproject, and for RasterIO resampling only
+/// on a regrid or an interpolating algorithm — a plain nearest-neighbour
+/// decimation is an exact native-type copy, so it passes `false` and every dtype
+/// is allowed. `func_name` names the calling SQL function for the error message.
+///
+/// `Int64`/`UInt64` are never representable in a floating working type (a double
+/// is exact only to 2^53). `Mode` additionally uses a 32-bit float working type
+/// on GDAL < 3.13, which cannot represent `Int32`/`UInt32` above 2^24; since Mode
+/// is a value selection (the most-common source value), silently rounding a
+/// category code is especially wrong, so those are rejected on older GDAL too.
+pub fn reject_lossy_resample_dtypes(
+    gdal: &Gdal,
+    raster: &RasterRefImpl<'_>,
+    band_count: usize,
+    alg: ResampleAlg,
+    routes_through_float: bool,
+    func_name: &str,
+) -> Result<()> {
+    if !routes_through_float {
+        return Ok(());
+    }
+    let mode_uses_float32 = alg == ResampleAlg::Mode && gdal.version_num() < GDAL_3_13_0;
+    for i in 0..band_count {
+        match raster.band_data_type(i) {
+            Some(BandDataType::Int64 | BandDataType::UInt64) => {
+                return exec_err!(
+                    "{func_name} does not support Int64/UInt64 rasters: GDAL routes 64-bit \
+                     integer pixels through a floating working type that cannot represent them \
+                     exactly; cast to Int32/Float64 first."
+                );
+            }
+            Some(BandDataType::Int32 | BandDataType::UInt32) if mode_uses_float32 => {
+                return exec_err!(
+                    "{func_name} does not support Mode resampling of Int32/UInt32 rasters on GDAL \
+                     {} (before 3.13): Mode routes pixels through a 32-bit float working type that \
+                     cannot represent 32-bit integers above 2^24 exactly. Upgrade to GDAL >= 3.13, \
+                     which resamples Mode through a double, or cast to Float64 first.",
+                    gdal.version_info("RELEASE_NAME")
+                );
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 /// Append a GDAL dataset as a single **N-D** in-db raster, resampling every band
-/// to `grid`'s dimensions with `grid.alg`.
+/// to `output`'s dimensions with `output.alg`.
 ///
 /// The spatial analog of [`append_nd_from_dataset`]: the full source window of
-/// each GDAL band is read into a `grid.width` x `grid.height` buffer using
-/// GDAL's RasterIO resampling, so band count/order and the non-spatial structure
-/// in `layout` are preserved and only the trailing `(y, x)` extent changes.
+/// each GDAL band is read into an `output.grid.width` x `output.grid.height`
+/// buffer using GDAL's RasterIO resampling, so band count/order and the
+/// non-spatial structure in `layout` are preserved and only the trailing
+/// `(y, x)` extent changes.
 pub fn append_resampled_nd_from_dataset(
     dataset: &Dataset,
     layout: &GdalBandLayout,
     builder: &mut RasterBuilder,
-    grid: &ResampledGrid<'_>,
+    output: &OutputGrid<'_>,
 ) -> Result<()> {
-    let metadata = grid.transform.to_raster_metadata(grid.width, grid.height);
+    let metadata = output
+        .grid
+        .transform
+        .to_raster_metadata(output.grid.width as usize, output.grid.height as usize);
     append_nd_from_dataset_inner(
         dataset,
         layout,
         builder,
         &metadata,
-        grid.crs,
-        Some(grid.alg),
+        output.crs,
+        Some(output.alg),
     )
-}
-
-/// The output grid a warp writes into: geotransform, pixel dimensions, target
-/// CRS, and the resampling algorithm.
-///
-/// The warp path can move the output origin off the source grid, grow the
-/// extent past the source footprint, and change the CRS — so `crs` here is the
-/// *destination* CRS (equal to the source CRS for a same-CRS regrid, or the
-/// reprojection target). `crs` is carried through rather than read back from
-/// GDAL so a caller can preserve the exact CRS string it was given.
-pub struct WarpGrid<'a> {
-    pub transform: GeoTransform,
-    pub width: usize,
-    pub height: usize,
-    pub crs: Option<&'a str>,
-    pub alg: ResampleAlg,
-    /// GDAL's working-memory cache size (bytes) for the warp; `0.0` uses
-    /// GDAL's own default.
-    pub warp_memory_limit_bytes: f64,
 }
 
 /// Warp every band of `src_dataset` into `grid`, appending the result as a
@@ -274,17 +409,21 @@ pub struct WarpGrid<'a> {
 /// source, or shift under a reprojection — read back as nodata rather than as an
 /// accidental zero (`GDALReprojectImage` writes only covered pixels). GDAL warps
 /// into those buffers; the warped bytes are then regrouped into N-D bands via
-/// [`append_nd_from_dataset_inner`], carrying `grid.crs` through verbatim rather
-/// than round-tripping it back out of GDAL.
+/// [`append_nd_from_dataset_inner`], carrying `output.crs` through verbatim
+/// rather than round-tripping it back out of GDAL.
+///
+/// `warp_memory_limit_bytes` is GDAL's working-memory cache size for the warp;
+/// pass `0.0` for GDAL's own default.
 pub fn append_warped_nd_from_dataset(
     gdal: &Gdal,
     src_dataset: &Dataset,
     layout: &GdalBandLayout,
     builder: &mut RasterBuilder,
-    grid: &WarpGrid<'_>,
+    output: &OutputGrid<'_>,
+    warp_memory_limit_bytes: f64,
 ) -> Result<()> {
-    let out_width = grid.width;
-    let out_height = grid.height;
+    let out_width = output.grid.width as usize;
+    let out_height = output.grid.height as usize;
 
     // One owned, nodata-pre-filled buffer per source band, its planes
     // concatenated plane-major; the destination's DATAPOINTER bands point into
@@ -316,9 +455,9 @@ pub fn append_warped_nd_from_dataset(
     // SAFETY: the DATAPOINTER buffers in `band_buffers` outlive `dst_dataset`.
     let dst_dataset = unsafe { dst_builder.build(gdal).map_err(convert_gdal_err)? };
     dst_dataset
-        .set_geo_transform(&grid.transform)
+        .set_geo_transform(&output.grid.transform)
         .map_err(convert_gdal_err)?;
-    if let Some(crs) = grid.crs {
+    if let Some(crs) = output.crs {
         dst_dataset.set_projection(crs).map_err(convert_gdal_err)?;
     }
 
@@ -344,15 +483,18 @@ pub fn append_warped_nd_from_dataset(
     gdal.reproject_image(
         src_dataset,
         &dst_dataset,
-        grid.alg,
-        grid.warp_memory_limit_bytes,
+        output.alg,
+        warp_memory_limit_bytes,
     )
     .map_err(convert_gdal_err)?;
 
-    let metadata = grid.transform.to_raster_metadata(out_width, out_height);
+    let metadata = output
+        .grid
+        .transform
+        .to_raster_metadata(out_width, out_height);
     // Read the warped buffers back out (native read, no further resampling),
     // regrouping the flat GDAL bands into N-D raster bands.
-    append_nd_from_dataset_inner(&dst_dataset, layout, builder, &metadata, grid.crs, None)
+    append_nd_from_dataset_inner(&dst_dataset, layout, builder, &metadata, output.crs, None)
 }
 
 /// Allocate a `total`-byte buffer pre-filled with the little-endian `nodata`

@@ -22,8 +22,8 @@
 //! count/order and per-band nodata are preserved. Pixel values are recomputed by
 //! GDAL: a plain resolution change reads the source into the new grid with
 //! RasterIO resampling, while a scale change that grows the extent or an origin
-//! snap read the covered sub-window with a fractional-window RasterIO and leave
-//! the grown/shifted border at nodata.
+//! snap go through GDAL's warp (which maps every output pixel centre exactly),
+//! leaving the grown/shifted border at nodata.
 //!
 //! `RS_Resample` is a **same-CRS** operation — it never reprojects. The
 //! reference-raster overload requires the reference to share the input's CRS and
@@ -52,7 +52,7 @@ use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_gdal::gdal::Gdal;
-use sedona_gdal::geo_transform::GeoTransform;
+use sedona_gdal::geo_transform::{GeoTransform, GeoTransformEx};
 use sedona_gdal::raster::types::ResampleAlg;
 use sedona_raster::array::RasterRefImpl;
 use sedona_raster::builder::RasterBuilder;
@@ -64,12 +64,12 @@ use sedona_raster_functions::rs_ensure_loaded::{
 use sedona_raster_functions::RasterExecutor;
 use sedona_schema::datatypes::{SedonaType, RASTER};
 use sedona_schema::matchers::ArgMatcher;
-use sedona_schema::raster::BandDataType;
 
 use crate::gdal_common::{raster_ref_to_gdal_mem, with_gdal, GdalBandLayout};
 use crate::gdal_dataset_provider::configure_thread_local_options;
 use crate::utils::{
-    append_resampled_nd_from_dataset, append_warped_nd_from_dataset, ResampledGrid, WarpGrid,
+    append_resampled_nd_from_dataset, append_warped_nd_from_dataset, parse_resample_algorithm,
+    reject_lossy_resample_dtypes, Grid, OutputGrid,
 };
 
 /// RS_Resample() scalar UDF implementation.
@@ -97,6 +97,12 @@ pub fn rs_resample_udf() -> SedonaScalarUDF {
 }
 
 /// Kernel implementation for RS_Resample.
+///
+/// The `useScale` boolean and the 4/5/7-argument overload ladder below are
+/// Sedona Spark's `RS_Resample` signature reproduced verbatim, so Spark SQL
+/// runs unchanged. That parity is why the modes are one function switching on
+/// `arg_count` / `useScale` rather than separately-named functions: the shared
+/// SQL surface is deliberate, not an accident of implementation.
 #[derive(Debug)]
 struct RsResample {
     /// Number of arguments in the matched signature (4, 5, or 7).
@@ -394,7 +400,7 @@ fn plan_from_dims_or_scale(
     use_scale: bool,
     algorithm: &str,
 ) -> Result<ResamplePlan> {
-    let algorithm = parse_algorithm(algorithm)?;
+    let algorithm = parse_resample_algorithm(algorithm, "RS_Resample")?;
 
     let target = if use_scale {
         if !width_or_scale.is_finite()
@@ -474,118 +480,21 @@ fn whole_dimension(value: f64, name: &str) -> Result<i64> {
     Ok(dim)
 }
 
-/// Map an algorithm name (case-insensitive) to a GDAL [`ResampleAlg`]. An empty
-/// string defaults to nearest neighbour (matching Sedona Spark).
-///
-/// Accepts the GDAL names plus the Spark spellings (American `NearestNeighbor`
-/// and `Bicubic`, which GDAL calls `Cubic`).
-fn parse_algorithm(name: &str) -> Result<ResampleAlg> {
-    if name.is_empty() {
-        return Ok(ResampleAlg::NearestNeighbour);
-    }
-    let alg = match name.to_ascii_lowercase().as_str() {
-        "nearestneighbor" | "nearestneighbour" | "nearest" | "near" => {
-            ResampleAlg::NearestNeighbour
-        }
-        "bilinear" => ResampleAlg::Bilinear,
-        "cubic" | "bicubic" => ResampleAlg::Cubic,
-        "cubicspline" => ResampleAlg::CubicSpline,
-        "lanczos" => ResampleAlg::Lanczos,
-        "average" => ResampleAlg::Average,
-        "mode" => ResampleAlg::Mode,
-        _ => {
-            return exec_err!(
-                "RS_Resample: unknown algorithm {name:?}; expected one of \
-                 NearestNeighbor, Bilinear, Cubic, CubicSpline, Lanczos, Average, Mode"
-            )
-        }
-    };
-    Ok(alg)
-}
-
 /// Spark's `approximateEquals` tolerance for deciding whether the grid snap
-/// actually moved the origin.
+/// actually moved the origin. This is a world-coordinate distance, so on a
+/// lon/lat raster `1e-6` degrees is ~10 cm at the equator — below the accuracy
+/// anyone resampling in lon/lat is likely to care about; for projected rasters
+/// it is well below one pixel.
 const SNAP_EPS: f64 = 1e-6;
-
-/// The source raster's affine grid, extracted once for the extent and snap math.
-#[derive(Debug, Clone, Copy)]
-struct AffineGrid {
-    upper_left_x: f64,
-    scale_x: f64,
-    skew_x: f64,
-    upper_left_y: f64,
-    skew_y: f64,
-    scale_y: f64,
-    width: i64,
-    height: i64,
-}
-
-/// Axis-aligned world bounding box (GeoTools `envelope2D`) of an [`AffineGrid`].
-#[derive(Debug, Clone, Copy)]
-struct Envelope {
-    min_x: f64,
-    max_x: f64,
-    min_y: f64,
-    max_y: f64,
-}
-
-impl AffineGrid {
-    fn from_metadata(metadata: &sedona_raster::traits::RasterMetadata) -> Self {
-        Self {
-            upper_left_x: metadata.upper_left_x(),
-            scale_x: metadata.scale_x(),
-            skew_x: metadata.skew_x(),
-            upper_left_y: metadata.upper_left_y(),
-            skew_y: metadata.skew_y(),
-            scale_y: metadata.scale_y(),
-            width: metadata.width(),
-            height: metadata.height(),
-        }
-    }
-
-    /// Bounding box of the four grid corners (handles skew; reduces to
-    /// `width * |scale_x|` etc. for a north-up grid).
-    fn envelope(&self) -> Envelope {
-        let w = self.width as f64;
-        let h = self.height as f64;
-        let corners = [(0.0, 0.0), (w, 0.0), (0.0, h), (w, h)];
-        let mut min_x = f64::INFINITY;
-        let mut max_x = f64::NEG_INFINITY;
-        let mut min_y = f64::INFINITY;
-        let mut max_y = f64::NEG_INFINITY;
-        for (col, row) in corners {
-            let x = self.upper_left_x + col * self.scale_x + row * self.skew_x;
-            let y = self.upper_left_y + col * self.skew_y + row * self.scale_y;
-            min_x = min_x.min(x);
-            max_x = max_x.max(x);
-            min_y = min_y.min(y);
-            max_y = max_y.max(y);
-        }
-        Envelope {
-            min_x,
-            max_x,
-            min_y,
-            max_y,
-        }
-    }
-}
-
-/// A fully-resolved output grid: geotransform, pixel dimensions, and the CRS the
-/// output is recorded in (always the source CRS — RS_Resample never reprojects).
-struct OutputGrid {
-    transform: GeoTransform,
-    width: i64,
-    height: i64,
-    crs: Option<String>,
-}
 
 /// Resample one raster into `builder` according to `plan`.
 ///
 /// Band count/order and per-band nodata are preserved. A plain dimension change
 /// takes the extent-preserving RasterIO path; a scale change (which grows the
-/// extent) or an origin snap go through the same-CRS fractional-window RasterIO
-/// regrid, which fills any output cells outside the source footprint with nodata.
-/// The resample is a 2-D `(y, x)` operation broadcast across every non-spatial
+/// extent) or an origin snap go through GDAL's warp, which maps every output
+/// pixel centre exactly and fills any output cells outside the source footprint
+/// with nodata. The resample is a 2-D `(y, x)` operation broadcast across every
+/// non-spatial
 /// plane of an N-D band via [`GdalBandLayout`].
 fn resample_raster(
     gdal: &Gdal,
@@ -594,7 +503,7 @@ fn resample_raster(
     builder: &mut RasterBuilder,
 ) -> Result<()> {
     let metadata = raster.metadata();
-    let src = AffineGrid::from_metadata(&metadata);
+    let src = Grid::from_metadata(&metadata);
     if src.width <= 0 || src.height <= 0 {
         return exec_err!(
             "RS_Resample: source raster has non-positive dimensions {}x{}",
@@ -619,49 +528,23 @@ fn resample_raster(
     // dtype whether up- or down-sampling (pinned by the
     // nearest_fast_path_preserves_* tests). Every other case routes pixels through
     // a floating working type — the warp path always, and RasterIO for any
-    // interpolating algorithm — which cannot represent 64-bit ints exactly, so
-    // they are rejected (RS_ReprojectMatch blanket-rejects them for the same
-    // reason).
-    //
-    // Mode is the exception on the width of that float: it uses a 32-bit float
-    // working type on GDAL < 3.13 (a double from 3.13 on), and a 32-bit float
-    // cannot represent Int32/UInt32 above 2^24 exactly. Mode is a selection (it
-    // returns the most-common source value), so silently rounding a category code
-    // is especially wrong — reject Int32/UInt32 + Mode on older GDAL too.
-    const GDAL_3_13_0: i32 = 3_130_000;
-    let mode_uses_float32 = plan.algorithm == ResampleAlg::Mode && gdal.version_num() < GDAL_3_13_0;
-    if is_regrid || plan.algorithm != ResampleAlg::NearestNeighbour {
-        for i in 0..band_count {
-            match raster.band_data_type(i) {
-                Some(BandDataType::Int64 | BandDataType::UInt64) => {
-                    return exec_err!(
-                        "RS_Resample does not support {:?} resampling of Int64/UInt64 rasters \
-                         here: GDAL routes 64-bit integer pixels through a floating working type, \
-                         which cannot represent them exactly. Use a nearest-neighbour width/height \
-                         change, or cast to Int32/Float64 first.",
-                        plan.algorithm
-                    );
-                }
-                Some(BandDataType::Int32 | BandDataType::UInt32) if mode_uses_float32 => {
-                    return exec_err!(
-                        "RS_Resample does not support Mode resampling of Int32/UInt32 rasters on \
-                         GDAL {} (before 3.13): Mode routes pixels through a 32-bit float working \
-                         type that cannot represent 32-bit integers above 2^24 exactly. Upgrade to \
-                         GDAL >= 3.13, which resamples Mode through a double, or cast to Float64 \
-                         first.",
-                        gdal.version_info("RELEASE_NAME")
-                    );
-                }
-                _ => {}
-            }
-        }
-    }
+    // interpolating algorithm — so those dtypes are rejected (Int32/UInt32 + Mode
+    // only on GDAL < 3.13). RS_ReprojectMatch shares this check.
+    let routes_through_float = is_regrid || plan.algorithm != ResampleAlg::NearestNeighbour;
+    reject_lossy_resample_dtypes(
+        gdal,
+        raster,
+        band_count,
+        plan.algorithm,
+        routes_through_float,
+        "RS_Resample",
+    )?;
 
     // A scale change or origin snap on a skewed (non-north-up) raster is an
     // explicit unsupported case: the extent-preserving dimension path carries the
     // shear through unchanged, but growing the extent or snapping the origin
     // against a sheared grid is not supported.
-    if is_regrid && (src.skew_x != 0.0 || src.skew_y != 0.0) {
+    if is_regrid && (src.transform[2] != 0.0 || src.transform[4] != 0.0) {
         return exec_err!(
             "RS_Resample: a scale change or grid snap on a skewed (non-north-up) raster is not \
              supported (only an extent-preserving width/height change is)"
@@ -676,52 +559,43 @@ fn resample_raster(
     let src_dataset = unsafe { raster_ref_to_gdal_mem(gdal, raster, &band_indices)? };
 
     // Output geotransform matching Sedona Spark: the skew is carried through
-    // unchanged and the dimensions / pixel size follow the requested mode.
-    let out = compute_output_grid(&src, raster.crs(), plan);
+    // unchanged and the dimensions / pixel size follow the requested mode. The
+    // output stays in the source CRS — RS_Resample never reprojects.
+    let output = OutputGrid {
+        grid: compute_output_grid(&src, plan),
+        crs: raster.crs(),
+        alg: plan.algorithm,
+    };
 
     if !is_regrid {
         // Extent-preserving RasterIO decimation supplies the pixels (bit-exact
         // for nearest; interpolating algorithms blend as GDAL RasterIO does).
-        let grid = ResampledGrid {
-            transform: out.transform,
-            width: out.width as usize,
-            height: out.height as usize,
-            crs: raster.crs(),
-            alg: plan.algorithm,
-        };
-        return append_resampled_nd_from_dataset(&src_dataset, &layout, builder, &grid);
+        return append_resampled_nd_from_dataset(&src_dataset, &layout, builder, &output);
     }
 
     // Warp path: scale-mode grow-extent, origin snap, and reference-grid
     // resampling. Same CRS on both sides (RS_Resample never reprojects), so this
-    // is a pure regrid onto `out` — GDAL maps each output pixel centre exactly
+    // is a pure regrid onto `output` — GDAL maps each output pixel centre exactly
     // (no covered-window clamp) and fills the grown/shifted border, uncovered by
-    // the source, with each band's nodata.
-    let warp_grid = WarpGrid {
-        transform: out.transform,
-        width: out.width as usize,
-        height: out.height as usize,
-        crs: out.crs.as_deref(),
-        alg: plan.algorithm,
-        // GDAL's own default working-memory cache size.
-        warp_memory_limit_bytes: 0.0,
-    };
-    append_warped_nd_from_dataset(gdal, &src_dataset, &layout, builder, &warp_grid)
+    // the source, with each band's nodata. `0.0` uses GDAL's own default
+    // working-memory cache size.
+    append_warped_nd_from_dataset(gdal, &src_dataset, &layout, builder, &output, 0.0)
 }
 
 /// Resolve the output grid, mirroring Apache Sedona (Spark)'s
 /// `RasterEditors.resample`: dimension mode preserves the extent, scale mode
 /// keeps the pixel size exact and grows the extent, and `gridX`/`gridY` snap the
 /// origin outward to the grid. The CRS is unchanged from the source.
-fn compute_output_grid(src: &AffineGrid, src_crs: Option<&str>, plan: &ResamplePlan) -> OutputGrid {
+fn compute_output_grid(src: &Grid, plan: &ResamplePlan) -> Grid {
     let env = src.envelope();
+    let [src_ul_x, _, src_skew_x, src_ul_y, src_skew_y, src_scale_y] = src.transform;
 
     // Dimensions and pixel size per the requested mode. Skew is carried through
     // unchanged (Spark keeps the original shear in both modes).
     let (mut width, mut height, mut scale_x, mut scale_y) = match plan.target {
         TargetGrid::Dims { width, height } => {
             let sx = (env.max_x - env.min_x) / width as f64;
-            let sy = src.scale_y.signum() * (env.max_y - env.min_y) / height as f64;
+            let sy = src_scale_y.signum() * (env.max_y - env.min_y) / height as f64;
             (width, height, sx, sy)
         }
         TargetGrid::Scale { scale_x, scale_y } => {
@@ -730,10 +604,10 @@ fn compute_output_grid(src: &AffineGrid, src_crs: Option<&str>, plan: &ResampleP
             (width, height, scale_x, scale_y)
         }
     };
-    let skew_x = src.skew_x;
-    let skew_y = src.skew_y;
-    let mut upper_left_x = src.upper_left_x;
-    let mut upper_left_y = src.upper_left_y;
+    let skew_x = src_skew_x;
+    let skew_y = src_skew_y;
+    let mut upper_left_x = src_ul_x;
+    let mut upper_left_y = src_ul_y;
 
     // Origin snap: move the origin to the grid-cell corner containing it
     // (expanding outward so the original extent stays covered), then regrow the
@@ -763,11 +637,10 @@ fn compute_output_grid(src: &AffineGrid, src_crs: Option<&str>, plan: &ResampleP
         }
     }
 
-    OutputGrid {
+    Grid {
         transform: [upper_left_x, scale_x, skew_x, upper_left_y, skew_y, scale_y],
         width,
         height,
-        crs: src_crs.map(str::to_string),
     }
 }
 
@@ -775,33 +648,21 @@ fn compute_output_grid(src: &AffineGrid, src_crs: Option<&str>, plan: &ResampleP
 /// anchored at `(grid_x, grid_y)` with `transform`'s pixel size and skew: the
 /// returned point is the grid-cell corner that contains the origin
 /// (inverse-affine then floor, matching Spark's `getGridCoordinatesFromWorld` +
-/// `getWorldCornerCoordinates`). A degenerate (zero-determinant) transform leaves
-/// the origin unmoved.
+/// `getWorldCornerCoordinates`).
+///
+/// The math is the shared affine machinery: build the grid's own geotransform
+/// (the source pixel size/skew anchored at `(grid_x, grid_y)`), invert it to
+/// find the origin's fractional cell, floor to the containing corner, and map
+/// that corner back. A degenerate (uninvertible) transform leaves the origin
+/// unmoved.
 fn snap_origin(grid_x: f64, grid_y: f64, transform: &GeoTransform) -> (f64, f64) {
     let [ul_x, scale_x, skew_x, ul_y, skew_y, scale_y] = *transform;
-    let det = scale_x * scale_y - skew_x * skew_y;
-    // Relative degeneracy test: a fine-resolution transform has a tiny but valid
-    // determinant, so compare against the coefficient magnitudes rather than an
-    // absolute f64::EPSILON (which would misclassify sub-1e-8 pixel sizes as
-    // degenerate and silently skip the snap).
-    let mag = scale_x
-        .abs()
-        .max(skew_x.abs())
-        .max(scale_y.abs())
-        .max(skew_y.abs());
-    if det.abs() <= mag * mag * f64::EPSILON {
+    let anchored: GeoTransform = [grid_x, scale_x, skew_x, grid_y, skew_y, scale_y];
+    let Ok(inverse) = anchored.invert() else {
         return (ul_x, ul_y);
-    }
-    let dx = ul_x - grid_x;
-    let dy = ul_y - grid_y;
-    let col = (dx * scale_y - skew_x * dy) / det;
-    let row = (scale_x * dy - skew_y * dx) / det;
-    let c0 = col.floor();
-    let r0 = row.floor();
-    (
-        grid_x + c0 * scale_x + r0 * skew_x,
-        grid_y + c0 * skew_y + r0 * scale_y,
-    )
+    };
+    let (col, row) = inverse.apply(ul_x, ul_y);
+    anchored.apply(col.floor(), row.floor())
 }
 
 #[cfg(test)]
