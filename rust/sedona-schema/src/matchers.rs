@@ -17,7 +17,7 @@
 
 use std::{fmt::Debug, iter::zip, sync::Arc};
 
-use arrow_schema::{DataType, Field};
+use arrow_schema::DataType;
 use datafusion_common::{plan_err, Result};
 use sedona_common::sedona_internal_err;
 use sedona_geometry::types::Edges;
@@ -196,11 +196,13 @@ impl ArgMatcher {
         Arc::new(IsInteger {})
     }
 
-    /// Matches a list of integers (e.g. Spark's `Array[Int]`), covering
-    /// `List`/`LargeList`/`ListView`/`LargeListView`/`FixedSizeList` whose
-    /// element type is an integer.
-    pub fn is_integer_list() -> Arc<dyn TypeMatcher + Send + Sync> {
-        Arc::new(IsIntegerList {})
+    /// Matches a list whose element type satisfies `item_matcher`, covering
+    /// `List`/`LargeList`/`ListView`/`LargeListView`/`FixedSizeList`. For
+    /// example, `is_list_of(is_integer())` matches Spark's `Array[Int]`.
+    pub fn is_list_of(
+        item_matcher: Arc<dyn TypeMatcher + Send + Sync>,
+    ) -> Arc<dyn TypeMatcher + Send + Sync> {
+        Arc::new(IsListOf { item_matcher })
     }
 
     /// Matches any string argument
@@ -402,9 +404,11 @@ impl TypeMatcher for IsInteger {
 }
 
 #[derive(Debug)]
-struct IsIntegerList {}
+struct IsListOf {
+    item_matcher: Arc<dyn TypeMatcher + Send + Sync>,
+}
 
-impl TypeMatcher for IsIntegerList {
+impl TypeMatcher for IsListOf {
     fn match_type(&self, arg: &SedonaType) -> bool {
         let SedonaType::Arrow(data_type) = arg else {
             return false;
@@ -417,15 +421,17 @@ impl TypeMatcher for IsIntegerList {
             | DataType::FixedSizeList(field, _) => field,
             _ => return false,
         };
-        item_field.data_type().is_integer()
+        self.item_matcher
+            .match_type(&SedonaType::Arrow(item_field.data_type().clone()))
     }
 
     fn type_if_null(&self) -> Option<SedonaType> {
-        Some(SedonaType::Arrow(DataType::List(Arc::new(Field::new(
-            "item",
-            DataType::Int64,
-            true,
-        )))))
+        let item_field = self
+            .item_matcher
+            .type_if_null()?
+            .to_storage_field("item", true)
+            .ok()?;
+        Some(SedonaType::Arrow(DataType::List(Arc::new(item_field))))
     }
 }
 
@@ -496,6 +502,8 @@ impl TypeMatcher for IsNull {
 
 #[cfg(test)]
 mod tests {
+    use arrow_schema::Field;
+
     use crate::datatypes::{WKB_GEOGRAPHY, WKB_GEOMETRY};
 
     use super::*;
@@ -532,25 +540,36 @@ mod tests {
         assert!(ArgMatcher::is_integer().match_type(&SedonaType::Arrow(DataType::Int32)));
         assert!(!ArgMatcher::is_integer().match_type(&SedonaType::Arrow(DataType::Float64)));
 
-        let int_list = |item: DataType| {
+        let list_of = |item: DataType| {
             SedonaType::Arrow(DataType::List(Arc::new(Field::new("item", item, true))))
         };
-        assert!(ArgMatcher::is_integer_list().match_type(&int_list(DataType::Int32)));
-        assert!(ArgMatcher::is_integer_list().match_type(&int_list(DataType::Int64)));
+        let is_integer_list = || ArgMatcher::is_list_of(ArgMatcher::is_integer());
+        assert!(is_integer_list().match_type(&list_of(DataType::Int32)));
+        assert!(is_integer_list().match_type(&list_of(DataType::Int64)));
         assert!(
-            ArgMatcher::is_integer_list().match_type(&SedonaType::Arrow(DataType::LargeList(
-                Arc::new(Field::new("item", DataType::Int32, true))
+            is_integer_list().match_type(&SedonaType::Arrow(DataType::LargeList(Arc::new(
+                Field::new("item", DataType::Int32, true)
+            ))))
+        );
+        assert!(
+            is_integer_list().match_type(&SedonaType::Arrow(DataType::FixedSizeList(
+                Arc::new(Field::new("item", DataType::Int32, true)),
+                2
             )))
         );
-        assert!(ArgMatcher::is_integer_list().match_type(&SedonaType::Arrow(
-            DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Int32, true)), 2)
-        )));
         // A list of a non-integer element, and a bare integer, must not match.
-        assert!(!ArgMatcher::is_integer_list().match_type(&int_list(DataType::Float64)));
-        assert!(!ArgMatcher::is_integer_list().match_type(&SedonaType::Arrow(DataType::Int32)));
+        assert!(!is_integer_list().match_type(&list_of(DataType::Float64)));
+        assert!(!is_integer_list().match_type(&SedonaType::Arrow(DataType::Int32)));
         assert_eq!(
-            ArgMatcher::is_integer_list().type_if_null(),
-            Some(int_list(DataType::Int64))
+            is_integer_list().type_if_null(),
+            Some(list_of(DataType::Int64))
+        );
+        // The item matcher is honored: a list of strings matches is_list_of(is_string).
+        assert!(
+            ArgMatcher::is_list_of(ArgMatcher::is_string()).match_type(&list_of(DataType::Utf8))
+        );
+        assert!(
+            !ArgMatcher::is_list_of(ArgMatcher::is_string()).match_type(&list_of(DataType::Int32))
         );
 
         assert!(ArgMatcher::is_string().match_type(&SedonaType::Arrow(DataType::Utf8)));

@@ -144,7 +144,7 @@ impl SedonaScalarKernel for RsTile {
         let mut matchers: Vec<Arc<dyn TypeMatcher + Send + Sync>> = vec![ArgMatcher::is_raster()];
         match self.band_arg {
             BandArg::All => {}
-            BandArg::Array => matchers.push(ArgMatcher::is_integer_list()),
+            BandArg::Array => matchers.push(ArgMatcher::is_list_of(ArgMatcher::is_integer())),
         }
         matchers.push(ArgMatcher::is_integer()); // width
         matchers.push(ArgMatcher::is_integer()); // height
