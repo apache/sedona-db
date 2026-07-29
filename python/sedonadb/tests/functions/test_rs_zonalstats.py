@@ -33,6 +33,8 @@ rasterio is required to write the fixture GeoTIFF, so the whole module skips
 when it is unavailable rather than importing it at module scope.
 """
 
+import math
+
 import numpy as np
 import pyarrow as pa
 import pytest
@@ -91,6 +93,24 @@ def fixture_raster(tmp_path):
     return path, data[0]
 
 
+def float_fixture_raster(tmp_path, *, planted_value, name):
+    """A single-band float64 raster with `planted_value` (NaN or inf) at an
+    interior pixel that GEOM_RECT selects, so the roi statistics must reckon with
+    it. The planted value is not the nodata sentinel, so nodata exclusion (on by
+    default) does not drop it.
+
+    Returns `(path, band)` where `band` is the `(HEIGHT, WIDTH)` numpy array.
+    """
+    data = random_raster_data(
+        "float64", bands=BANDS, height=HEIGHT, width=WIDTH, seed=7
+    )
+    # Pixel centre (105, 492.5) sits inside GEOM_RECT.
+    data[0][2, 2] = planted_value
+    path = tmp_path / name
+    write_geotiff(path, data, gdal_transform=GDAL_TRANSFORM, nodata=NODATA)
+    return path, data[0]
+
+
 def numpy_reference(band, wkt, *, all_touched, exclude_no_data):
     """Reference statistics over the pixels the roi selects, via rasterio+numpy.
 
@@ -129,6 +149,21 @@ def numpy_reference(band, wkt, *, all_touched, exclude_no_data):
         "min": float(sel.min()),
         "max": float(sel.max()),
     }
+
+
+def _assert_stat_equal(stat, got, expected):
+    """Compare one statistic against the numpy reference with NaN/inf-aware
+    equality: NaN never equals itself, so match it explicitly; inf compares
+    exactly; otherwise use exact equality for the integer-exact statistics and a
+    tolerance for the float-accumulating ones."""
+    if math.isnan(expected):
+        assert got is not None and math.isnan(got), f"{stat}: expected NaN, got {got!r}"
+    elif math.isinf(expected):
+        assert got == expected, f"{stat}: expected {expected}, got {got!r}"
+    elif stat in EXACT_STATS:
+        assert got == expected, f"{stat}: {got!r} != {expected!r}"
+    else:
+        assert got == pytest.approx(expected), f"{stat}: {got!r} !~ {expected!r}"
 
 
 def _one_row(con, path, wkt):
@@ -200,6 +235,42 @@ def test_all_struct_matches_numpy(con, tmp_path):
         assert got[stat] == expected[stat]
     for stat in ("mean", "variance", "stddev"):
         assert got[stat] == pytest.approx(expected[stat])
+
+
+def test_nan_pixel_poisons_every_statistic_like_numpy(con, tmp_path):
+    """A NaN pixel that is not the nodata sentinel poisons every statistic (numpy
+    semantics): count stays a real tally, everything else is NaN. Pinned against
+    rasterio+numpy over the same masked selection, so the NaN handling is
+    validated against a trusted reference rather than asserted on faith."""
+    path, band = float_fixture_raster(
+        tmp_path, planted_value=float("nan"), name="zonal_nan.tif"
+    )
+    with np.errstate(all="ignore"):
+        expected = numpy_reference(
+            band, GEOM_RECT, all_touched=False, exclude_no_data=True
+        )
+    assert expected != "empty", "GEOM_RECT should select the planted pixel"
+    got = zonal_stats_all(con, path, GEOM_RECT, [1])
+    for stat in STATS:
+        _assert_stat_equal(stat, got[stat], expected[stat])
+
+
+def test_infinity_pixel_matches_numpy(con, tmp_path):
+    """A +inf pixel flows through (not the nodata sentinel, not NaN): sum, mean,
+    max and mode go to +inf, min and median stay finite, and variance/stddev
+    become NaN (inf - inf). Pinned against rasterio+numpy over the same
+    selection."""
+    path, band = float_fixture_raster(
+        tmp_path, planted_value=float("inf"), name="zonal_inf.tif"
+    )
+    with np.errstate(all="ignore"):
+        expected = numpy_reference(
+            band, GEOM_RECT, all_touched=False, exclude_no_data=True
+        )
+    assert expected != "empty", "GEOM_RECT should select the planted pixel"
+    got = zonal_stats_all(con, path, GEOM_RECT, [1])
+    for stat in STATS:
+        _assert_stat_equal(stat, got[stat], expected[stat])
 
 
 def test_exclude_no_data_default_and_disabled(con, tmp_path):
