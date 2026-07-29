@@ -265,11 +265,13 @@ test_python() {
   pip install "sedonadb-expr/[test]" -v
   pip install "sedonadb/[test]" -v
   pip install "sedonadb-zarr/[test]" -v
+  pip install "sedonadb-geopandas/[test]" -v
 
   show_info "Testing Python packages"
   python -m pytest -vv sedonadb-expr
   python -m pytest -vv sedonadb
   python -m pytest -vv sedonadb-zarr
+  python -m pytest -vv sedonadb-geopandas
 
   popd
 }

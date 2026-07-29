@@ -1,0 +1,124 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+name: wheels-geopandas
+
+# Reusable workflow that builds, tests, and publishes the sedonadb-geopandas
+# wheels. Invoked by python-wheels.yml after the sedonadb and sedonadb-expr jobs
+# so this runs in the same run and can download their wheels for testing.
+#
+# Kept separate from the core wheel jobs so an extension build failure can't
+# block the core package from publishing.
+#
+# sedonadb-geopandas is a pure Python package (no native code), so it only needs
+# a single build job that produces a universal wheel.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  geopandas-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: 'true'
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Set SedonaDB dev version
+        shell: bash
+        run: |
+          # Set the unique development version anywhere except a release branch
+          if [[ "${GITHUB_REF##*/}" =~ ^branch-[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "On release branch - using version from Cargo.toml"
+          else
+            python ci/scripts/set_dev_version.py
+          fi
+
+      - name: Install build tools
+        run: pip install build
+
+      - name: Build wheel and sdist
+        run: |
+          cd python/sedonadb-geopandas
+          python -m build
+
+      # Both are needed: sedonadb provides the engine, and the `.geo` accessor
+      # this package delegates to is provided by sedonadb-expr.
+      - name: Download sedonadb wheel for the test environment
+        uses: actions/download-artifact@v8
+        with:
+          name: release-wheels-linux-x86_64
+          path: python/sedonadb-geopandas/prebuilt
+
+      - name: Download sedonadb-expr wheel for the test environment
+        uses: actions/download-artifact@v8
+        with:
+          name: release-expr-wheels
+          path: python/sedonadb-geopandas/prebuilt
+
+      - name: Install and test
+        run: |
+          # geopandas is an optional extra of this package but is required to
+          # exercise the from_geopandas/to_geopandas interop in the tests.
+          pip install pytest geopandas
+
+          cd python/sedonadb-geopandas
+          pip install --no-deps --pre --find-links prebuilt sedonadb sedonadb-expr
+          pip install --pre --find-links prebuilt sedonadb sedonadb-expr
+          pip install dist/*.whl
+          pytest tests -vv
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-geopandas-wheels
+          path: python/sedonadb-geopandas/dist/*
+
+  upload_nightly:
+    needs: ["geopandas-build"]
+    name: Upload nightly packages (sedonadb-geopandas)
+    runs-on: "macos-latest"
+    # Only the nightly publish needs this job; skip it entirely (rather than
+    # just the push step) on PRs so it doesn't burn a runner.
+    if: github.repository == 'apache/sedona-db' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-geopandas-wheels
+          path: dist
+
+      - name: Install gemfury client
+        run: |
+          brew tap gemfury/tap
+          brew trust gemfury/tap
+          brew install fury-cli
+          fury --version
+
+      - name: Upload packages to Gemfury
+        shell: bash
+        run: |
+          fury push \
+            --api-token=${GEMFURY_PUSH_TOKEN} \
+            --as="sedona-nightlies" \
+            dist/*
+        env:
+          GEMFURY_PUSH_TOKEN: ${{ secrets.GEMFURY_PUSH_TOKEN }}

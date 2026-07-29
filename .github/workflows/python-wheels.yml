@@ -24,6 +24,7 @@ on:
       - 'ci/scripts/wheels-*'
       - '.github/workflows/python-wheels.yml'
       - '.github/workflows/wheels-expr.yml'
+      - '.github/workflows/wheels-geopandas.yml'
       - '.github/workflows/wheels-zarr.yml'
       - '.github/actions/setup-wheel-build/**'
   push:
@@ -230,6 +231,20 @@ jobs:
     needs: ["windows-x86_64", "macOS-arm64", "macOS-amd64", "wheels-linux"]
     if: ${{ !cancelled() }}
     uses: ./.github/workflows/wheels-zarr.yml
+    secrets: inherit
+
+  # Follows the expr job rather than the core wheel jobs directly: this package
+  # needs the sedonadb-expr wheel (for the `.geo` accessor) in addition to the
+  # core wheels, and expr already waits on those.
+  #
+  # !cancelled() for the same reason as expr/zarr: without it, a cancelled
+  # platform job upstream skips this one even when expr itself succeeded. The
+  # extra result check keeps the requirement this job actually has — it
+  # downloads expr's wheel artifact, which only exists if expr succeeded.
+  geopandas:
+    needs: ["expr"]
+    if: ${{ !cancelled() && needs.expr.result == 'success' }}
+    uses: ./.github/workflows/wheels-geopandas.yml
     secrets: inherit
 
   upload_nightly:

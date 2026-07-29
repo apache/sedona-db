@@ -21,13 +21,18 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sedonadb-geopandas"
-version = "0.4.0"
 description = "GeoPandas-compatible API on top of SedonaDB"
 readme = "README.md"
 requires-python = ">=3.9"
+dynamic = ["version"]
 dependencies = [
-    "sedonadb",
-    "sedonadb-expr",
+    # The `.geo` accessor and `DataFrame.unnest` this package builds on landed in
+    # 0.4.0. Keep this floor at a *released* version rather than raising it to
+    # the current development version: nightlies are versioned `X.Y.ZaN`, which
+    # PEP 440 orders *below* `X.Y.Z`, so a floor equal to the version being
+    # developed would reject the matching nightly wheels.
+    "sedonadb>=0.4.0",
+    "sedonadb-expr>=0.4.0",
     "pyarrow",
 ]
 classifiers = [
@@ -50,6 +55,11 @@ test = [
     "pandas",
     "geopandas",
 ]
+
+[tool.hatch.version]
+source = "code"
+path = "_version.py"
+expression = "get_version()"
 
 [tool.hatch.build.targets.wheel]
 packages = ["python/sedonadb_geopandas"]
