@@ -383,17 +383,17 @@ impl ImportedSedonaCExec {
 
 impl DisplayAs for ImportedSedonaCExec {
     fn fmt_as(&self, t: DisplayFormatType, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        let property = match t {
-            DisplayFormatType::Default => "display_default",
-            DisplayFormatType::Verbose => "display_verbose",
-            DisplayFormatType::TreeRender => "display_tree_render",
+        let (property, sep) = match t {
+            DisplayFormatType::Default => ("display_default", ": "),
+            DisplayFormatType::Verbose => ("display_verbose", ": "),
+            DisplayFormatType::TreeRender => ("display_tree_render", "\n"),
         };
 
         // Always show the wrapper name, with the inner plan's display info
         if let Ok(display_str) = get_plan_string_property(&self.inner, property) {
-            write!(f, "ImportedSedonaCExec: {}", display_str)
+            write!(f, "ImportedSedonaCExec{sep}{display_str}")
         } else {
-            write!(f, "ImportedSedonaCExec")
+            write!(f, "ImportedSedonaCExec (error computing display)")
         }
     }
 }
@@ -897,18 +897,26 @@ mod tests {
         // ImportedSedonaCExec shows itself with the inner plan's display
         assert_eq!(
             format!("{}", DisplayAsFormat(&imported, DisplayFormatType::Default)),
-            "ImportedSedonaCExec: DummyExec: default format"
+            "ImportedSedonaCExec: DummyExec: default format\n"
         );
         assert_eq!(
             format!("{}", DisplayAsFormat(&imported, DisplayFormatType::Verbose)),
-            "ImportedSedonaCExec: DummyExec: verbose format with schema"
+            "ImportedSedonaCExec: DummyExec: verbose format with schema\n"
         );
         assert_eq!(
             format!(
                 "{}",
                 DisplayAsFormat(&imported, DisplayFormatType::TreeRender)
             ),
-            "ImportedSedonaCExec: DummyExec: tree render format"
+            "\
+ImportedSedonaCExec
+┌───────────────────────────┐
+│         DummyExec         │
+│    --------------------   │
+│   DummyExec: tree render  │
+│           format          │
+└───────────────────────────┘
+"
         );
     }
 
