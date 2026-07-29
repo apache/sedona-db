@@ -128,6 +128,12 @@ jobs:
         run: |
           pip install -e "python/sedonadb-zarr/[test]" -vv
 
+      # Depends on sedonadb and sedonadb-expr, so this must come after both are
+      # installed from source (otherwise pip would resolve them from PyPI).
+      - name: Install sedonadb-geopandas
+        run: |
+          pip install -e "python/sedonadb-geopandas/[test]" -vv
+
       - name: Download minimal geoarrow-data assets
         run: |
           python submodules/download-assets.py "*water-junc*" "*water-point*"
@@ -188,6 +194,11 @@ jobs:
       - name: Run tests (sedonadb-expr)
         run: |
           cd python/sedonadb-expr
+          python -m pytest -vv
+
+      - name: Run tests (sedonadb-geopandas)
+        run: |
+          cd python/sedonadb-geopandas
           python -m pytest -vv
 
       - name: Shutdown docker compose services
