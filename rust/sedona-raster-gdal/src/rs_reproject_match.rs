@@ -55,11 +55,13 @@ use sedona_raster_functions::rs_ensure_loaded::{
 use sedona_raster_functions::RasterExecutor;
 use sedona_schema::datatypes::{SedonaType, RASTER};
 use sedona_schema::matchers::ArgMatcher;
-use sedona_schema::raster::BandDataType;
 
 use crate::gdal_common::{raster_ref_to_gdal_mem, with_gdal, GdalBandLayout};
 use crate::gdal_dataset_provider::configure_thread_local_options;
-use crate::utils::{append_warped_nd_from_dataset, WarpGrid};
+use crate::utils::{
+    append_warped_nd_from_dataset, parse_resample_algorithm, reject_lossy_resample_dtypes, Grid,
+    OutputGrid,
+};
 
 /// RS_ReprojectMatch() scalar UDF implementation.
 ///
@@ -168,7 +170,7 @@ impl SedonaScalarKernel for RsReprojectMatch {
                     return Ok(());
                 };
 
-                let alg = parse_algorithm(algorithm)?;
+                let alg = parse_resample_algorithm(algorithm, "RS_ReprojectMatch")?;
                 reproject_match(
                     gdal,
                     raster,
@@ -255,20 +257,11 @@ fn reproject_match(
 
     let band_count = raster.bands().len();
 
-    // GDAL's warp routes 64-bit integer pixels through a floating working type
-    // (a double for nearest/interpolation, a 32-bit float for mode on GDAL <
-    // 3.13), so no resampling method preserves Int64/UInt64 exactly. Reject
-    // these dtypes up front rather than mis-warping silently.
-    for i in 0..band_count {
-        if let Some(BandDataType::Int64 | BandDataType::UInt64) = raster.band_data_type(i) {
-            return exec_err!(
-                "RS_ReprojectMatch does not support Int64/UInt64 rasters: GDAL's warp routes \
-                 64-bit integer pixels through a floating working type (a double for \
-                 nearest/interpolation, a 32-bit float for mode on GDAL < 3.13), which cannot \
-                 represent them exactly. Cast to a supported type (e.g. Int32/Float64) first."
-            );
-        }
-    }
+    // A warp always routes pixels through a floating working type, so no
+    // resampling method preserves Int64/UInt64 exactly (nor Int32/UInt32 + Mode on
+    // GDAL < 3.13). Reject those up front rather than mis-warping silently.
+    // RS_Resample shares this check.
+    reject_lossy_resample_dtypes(gdal, raster, band_count, alg, true, "RS_ReprojectMatch")?;
 
     let band_indices: Vec<usize> = (1..=band_count).collect();
     let layout = GdalBandLayout::from_raster(raster, &band_indices)?;
@@ -277,45 +270,23 @@ fn reproject_match(
     // returns, so `raster` outlives it.
     let src_dataset = unsafe { raster_ref_to_gdal_mem(gdal, raster, &band_indices)? };
 
-    let warp_grid = WarpGrid {
-        transform,
-        width: ref_width as usize,
-        height: ref_height as usize,
+    let output = OutputGrid {
+        grid: Grid {
+            transform,
+            width: ref_width,
+            height: ref_height,
+        },
         crs: reference.crs(),
         alg,
+    };
+    append_warped_nd_from_dataset(
+        gdal,
+        &src_dataset,
+        &layout,
+        builder,
+        &output,
         warp_memory_limit_bytes,
-    };
-    append_warped_nd_from_dataset(gdal, &src_dataset, &layout, builder, &warp_grid)
-}
-
-/// Map an algorithm name (case-insensitive) to a GDAL [`ResampleAlg`]. An empty
-/// string defaults to nearest neighbour (matching Sedona Spark).
-///
-/// Accepts the GDAL names plus the Spark spellings (American `NearestNeighbor`
-/// and `Bicubic`, which GDAL calls `Cubic`). The algorithms without a warp
-/// equivalent (Gauss) are not accepted.
-fn parse_algorithm(name: &str) -> Result<ResampleAlg> {
-    if name.is_empty() {
-        return Ok(ResampleAlg::NearestNeighbour);
-    }
-    let alg = match name.to_ascii_lowercase().as_str() {
-        "nearestneighbor" | "nearestneighbour" | "nearest" | "near" => {
-            ResampleAlg::NearestNeighbour
-        }
-        "bilinear" => ResampleAlg::Bilinear,
-        "cubic" | "bicubic" => ResampleAlg::Cubic,
-        "cubicspline" => ResampleAlg::CubicSpline,
-        "lanczos" => ResampleAlg::Lanczos,
-        "average" => ResampleAlg::Average,
-        "mode" => ResampleAlg::Mode,
-        _ => {
-            return exec_err!(
-                "RS_ReprojectMatch: unknown algorithm {name:?}; expected one of \
-                 NearestNeighbor, Bilinear, Cubic, CubicSpline, Lanczos, Average, Mode"
-            );
-        }
-    };
-    Ok(alg)
+    )
 }
 
 #[cfg(test)]
@@ -608,6 +579,42 @@ mod tests {
                     "got: {err}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn int32_mode_gated_on_gdal_version() {
+        // Mode uses a 32-bit float working type on GDAL < 3.13 (a double from 3.13
+        // on), which cannot represent Int32/UInt32 above 2^24. Mode is a selection,
+        // so silently rounding a category code is wrong: reject Int32 + Mode on
+        // older GDAL, accept it (double working type) on GDAL >= 3.13. Other
+        // algorithms are unaffected — a double is exact for 32-bit ints.
+        let reference = RasterSpec::d2(2, 2)
+            .band_values(&[0u8; 4])
+            .bbox(0.0, 0.0, 2.0, 2.0)
+            .crs(Some("EPSG:4326"));
+        let big: i32 = (1i32 << 24) + 1;
+        let int32_source = RasterSpec::d2(2, 2)
+            .band_values(&[big, big, big, big])
+            .bbox(0.0, 0.0, 2.0, 2.0)
+            .crs(Some("EPSG:4326"));
+
+        // Bilinear routes through a double (exact for 32-bit ints), so Int32 is
+        // accepted on every GDAL version — the gate is Mode-specific.
+        tester()
+            .invoke_scalar_scalar_scalar(&int32_source, &reference, "Bilinear")
+            .unwrap();
+
+        let gdal_version = with_gdal(|gdal| Ok(gdal.version_num())).unwrap();
+        let mode = tester().invoke_scalar_scalar_scalar(&int32_source, &reference, "Mode");
+        if gdal_version >= 3_130_000 {
+            mode.unwrap();
+        } else {
+            let err = mode.unwrap_err().to_string();
+            assert!(
+                err.contains("Mode resampling of Int32/UInt32"),
+                "got: {err}"
+            );
         }
     }
 }

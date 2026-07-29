@@ -235,6 +235,7 @@ def test_reproject_match_int64_uint64_rejected(con, tmp_path, dtype):
 
 def test_reproject_match_null_raster_is_null(con, tmp_path):
     """A NULL input raster yields a NULL result rather than erroring."""
+    pytest.importorskip("rasterio")  # write_grid_geotiff needs rasterio
     ref = tmp_path / "refnull.tif"
     write_grid_geotiff(
         ref,
