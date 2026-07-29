@@ -73,7 +73,7 @@ impl PlaceholderRegistry {
     }
 
     /// Check if an expression contains any placeholder functions (scalar, aggregate, or window).
-    pub fn expr_contains_any_placeholder(expr: &Expr) -> bool {
+    pub fn expr_contains_any_placeholder(expr: &Expr) -> Result<bool> {
         let mut found = false;
         expr.apply(|e| {
             match e {
@@ -117,9 +117,9 @@ impl PlaceholderRegistry {
                 _ => {}
             }
             Ok(TreeNodeRecursion::Continue)
-        })
-        .expect("expr_contains_any_placeholder traversal should not fail");
-        found
+        })?;
+
+        Ok(found)
     }
 
     /// Replace all placeholder functions (scalar, aggregate, window) with implementations from the registry.
@@ -592,7 +592,7 @@ mod tests {
         let udf = ScalarUDF::new_from_impl(PlaceholderUDF::new("test_func"));
         let expr = udf.call(vec![col("x")]);
 
-        assert!(PlaceholderRegistry::expr_contains_any_placeholder(&expr));
+        assert!(PlaceholderRegistry::expr_contains_any_placeholder(&expr).unwrap());
     }
 
     #[test]
@@ -600,13 +600,13 @@ mod tests {
         let udaf = AggregateUDF::new_from_impl(PlaceholderUDAF::new("test_agg"));
         let expr = udaf.call(vec![col("x")]);
 
-        assert!(PlaceholderRegistry::expr_contains_any_placeholder(&expr));
+        assert!(PlaceholderRegistry::expr_contains_any_placeholder(&expr).unwrap());
     }
 
     #[test]
     fn test_expr_contains_any_placeholder_false_for_column() {
         let expr = col("x");
-        assert!(!PlaceholderRegistry::expr_contains_any_placeholder(&expr));
+        assert!(!PlaceholderRegistry::expr_contains_any_placeholder(&expr).unwrap());
     }
 
     #[test]
@@ -680,9 +680,7 @@ mod tests {
         // Test aggregate replacement is attempted (errors prove the registry was called)
         let udaf = AggregateUDF::new_from_impl(PlaceholderUDAF::new("my_aggregate"));
         let agg_expr = udaf.call(vec![col("x")]);
-        assert!(PlaceholderRegistry::expr_contains_any_placeholder(
-            &agg_expr
-        ));
+        assert!(PlaceholderRegistry::expr_contains_any_placeholder(&agg_expr).unwrap());
 
         let agg_result = PlaceholderRegistry::expr_replace_placeholders(agg_expr, &registry);
         assert!(agg_result.is_err());
@@ -700,9 +698,7 @@ mod tests {
             vec![col("x")],
         );
         let win_expr = Expr::WindowFunction(Box::new(window_func));
-        assert!(PlaceholderRegistry::expr_contains_any_placeholder(
-            &win_expr
-        ));
+        assert!(PlaceholderRegistry::expr_contains_any_placeholder(&win_expr).unwrap());
 
         let win_result = PlaceholderRegistry::expr_replace_placeholders(win_expr, &registry);
         assert!(win_result.is_err());

@@ -94,15 +94,9 @@ impl ExportedExecutionPlan {
                 })
             }
             "debug_string" => Ok(format!("{:?}", self.plan)),
-            "display_default" => Ok(displayable(self.plan.as_ref())
-                .indent(false)
-                .to_string()),
-            "display_verbose" => Ok(displayable(self.plan.as_ref())
-                .indent(true)
-                .to_string()),
-            "display_tree_render" => Ok(displayable(self.plan.as_ref())
-                .tree_render()
-                .to_string()),
+            "display_default" => Ok(displayable(self.plan.as_ref()).indent(false).to_string()),
+            "display_verbose" => Ok(displayable(self.plan.as_ref()).indent(true).to_string()),
+            "display_tree_render" => Ok(displayable(self.plan.as_ref()).tree_render().to_string()),
             "name" => Ok(self.plan.name().to_string()),
             "cardinality_effect" => {
                 let effect = match self.plan.cardinality_effect() {

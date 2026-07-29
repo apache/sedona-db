@@ -346,6 +346,7 @@ unsafe extern "C" fn c_table_provider_scan(
     };
 
     // Extract filters from expression views
+    let registry = SessionRefRegistry::new(provider.session.as_ref());
     let filters: Vec<Expr> = if args_ref.exprs.is_null() || args_ref.num_exprs == 0 {
         Vec::new()
     } else {
@@ -363,7 +364,6 @@ unsafe extern "C" fn c_table_provider_scan(
                 }
             };
 
-            let registry = SessionRefRegistry::new(provider.session.as_ref());
             match expr_view.to_expr(Some(&registry)) {
                 Ok(expr) => filters.push(expr),
                 Err(e) => {
@@ -576,6 +576,15 @@ impl TableProvider for ImportedTableProvider {
             sedona_internal_datafusion_err!("Failed to parse pushdown results: {}", e)
         })?;
 
+        // Check the number of results
+        if pushdown_strs.len() != filters.len() {
+            return sedona_internal_err!(
+                "Expected {} results for supports_filters_pushdown property but got {}",
+                filters.len(),
+                pushdown_strs.len()
+            );
+        }
+
         let results = pushdown_strs
             .iter()
             .map(|s| match s.as_str() {
@@ -700,7 +709,7 @@ impl<'a> FunctionRegistry for SessionRefRegistry<'a> {
         if let Some(func) = self.session.aggregate_functions().get(name) {
             Ok(Arc::clone(func))
         } else {
-            plan_err!("Can't find scalar function '{name}' in session")
+            plan_err!("Can't find aggregate function '{name}' in session")
         }
     }
 
@@ -708,7 +717,7 @@ impl<'a> FunctionRegistry for SessionRefRegistry<'a> {
         if let Some(func) = self.session.window_functions().get(name) {
             Ok(Arc::clone(func))
         } else {
-            plan_err!("Can't find scalar function '{name}' in session")
+            plan_err!("Can't find window function '{name}' in session")
         }
     }
 
