@@ -8407,7 +8407,13 @@ geotransform, nodata).</p>
 
 <a href="#sedonadb.raster_testing.RasterEngine.resample" class="headerlink" title="Permanent link">¶</a></h4>
 <div class="doc-signature highlight"><pre><span></span><code><span class="nf">resample</span><span class="p">(</span>
-    <span class="n">path</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">width</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/functions.html#int">int</a></span><span class="p">,</span> <span class="n">height</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/functions.html#int">int</a></span><span class="p">,</span> <span class="n">algorithm</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span> <span class="o">=</span> <span class="s2">"nearestneighbor"</span>
+    <span class="n">path</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">width</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Optional" href="https://docs.python.org/3/library/typing.html#typing.Optional">Optional</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/functions.html#int">int</a></span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">height</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Optional" href="https://docs.python.org/3/library/typing.html#typing.Optional">Optional</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/functions.html#int">int</a></span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">scale_x</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Optional" href="https://docs.python.org/3/library/typing.html#typing.Optional">Optional</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/functions.html#float">float</a></span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">scale_y</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Optional" href="https://docs.python.org/3/library/typing.html#typing.Optional">Optional</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/functions.html#float">float</a></span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">algorithm</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span> <span class="o">=</span> <span class="s2">"NearestNeighbor"</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="DecodedRaster
 
 
@@ -8418,9 +8424,12 @@ geotransform, nodata).</p>
 
     <div class="doc doc-contents ">
 
-        <p>Resample the raster to <code>width</code> x <code>height</code> pixels over the same extent.</p>
-<p><code>algorithm</code> is one of nearestneighbor, bilinear, bicubic
-(case-insensitive; each engine maps to its own resampler names).</p>
+        <p>Resample the GeoTIFF at <code>path</code> onto a new grid, in the same CRS.</p>
+<p>Selects the output grid two ways: target dimensions (<code>width</code>/<code>height</code>,
+extent-preserving) or a target pixel size (<code>scale_x</code>/<code>scale_y</code>, which
+keeps the size exact and grows the extent to whole pixels). Band count
+and nodata are preserved; the result is a decoded raster (pixels,
+geotransform, nodata). <code>RS_Resample</code> never reprojects.</p>
 
 
     </div>
@@ -8734,6 +8743,36 @@ executes its real array path (literals constant-fold). Each row is a
 dict with keys <code>wkt</code>, <code>band</code>, <code>all_touched</code>, <code>nodata</code> (None = use the
 band's own), and <code>crop</code>. Returns one <code>DecodedRaster</code> (or None for NULL
 rows) per input row, in input order.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="sedonadb.raster_testing.SedonaDB.resample_to_reference" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">resample_to_reference</span>
+
+
+<a href="#sedonadb.raster_testing.SedonaDB.resample_to_reference" class="headerlink" title="Permanent link">¶</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">resample_to_reference</span><span class="p">(</span>
+    <span class="n">path</span><span class="p">,</span> <span class="n">reference_path</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">use_scale</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">algorithm</span><span class="o">=</span><span class="s2">"NearestNeighbor"</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Optional" href="https://docs.python.org/3/library/typing.html#typing.Optional">Optional</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-internal" title="DecodedRaster
+
+
+  
+      dataclass
+   (sedonadb.raster_testing.DecodedRaster)" href="#sedonadb.raster_testing.DecodedRaster">DecodedRaster</a></span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Run the 4-argument reference overload
+<code>RS_Resample(raster, referenceRaster, useScale, algorithm)</code>.</p>
+<p>The target dimensions (or pixel size, when <code>use_scale</code>) and origin come
+from <code>referenceRaster</code>, which must share the input's CRS.</p>
 
 
     </div>
