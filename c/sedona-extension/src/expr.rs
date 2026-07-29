@@ -29,13 +29,17 @@ use datafusion_execution::FunctionRegistry;
 use datafusion_expr::Expr;
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 
-pub use sedona_expr::placeholder_udf::{PlaceholderRegistry, PlaceholderUDAF, PlaceholderUDF, PlaceholderUDWF};
+pub use sedona_expr::placeholder_udf::{
+    PlaceholderRegistry, PlaceholderUDAF, PlaceholderUDF, PlaceholderUDWF,
+};
 
-use crate::extension::{SedonaCError, SedonaCExprView};
-use crate::set_ffi_error;
-use crate::utils::{
-    call_get_property_schema_impl, cstr_from_ptr_or_empty, parse_ffi_array_to_bytes, PropertyValue,
-    ERRNO_OK,
+use crate::{
+    extension::{SedonaCError, SedonaCExprView},
+    set_ffi_error,
+    utils::{
+        call_get_property_schema_impl, cstr_from_ptr_or_empty, parse_ffi_array_to_bytes,
+        PropertyValue, ERRNO_OK,
+    },
 };
 
 /// Wrapper around a [datafusion_expr::Expr] that can be exported across FFI.
