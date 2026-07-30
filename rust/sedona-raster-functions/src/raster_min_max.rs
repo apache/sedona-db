@@ -55,6 +55,34 @@ impl MinMaxOp {
     }
 }
 
+/// Whether a pixel value is NaN. Always `false` for integer types — only
+/// `f32`/`f64` override it. Lets [combine_bytes]'s macro treat NaN the same
+/// way regardless of the concrete pixel type.
+trait MaybeNan: Copy {
+    fn is_nan_value(self) -> bool {
+        false
+    }
+}
+
+impl MaybeNan for u8 {}
+impl MaybeNan for i8 {}
+impl MaybeNan for u16 {}
+impl MaybeNan for i16 {}
+impl MaybeNan for u32 {}
+impl MaybeNan for i32 {}
+impl MaybeNan for u64 {}
+impl MaybeNan for i64 {}
+impl MaybeNan for f32 {
+    fn is_nan_value(self) -> bool {
+        self.is_nan()
+    }
+}
+impl MaybeNan for f64 {
+    fn is_nan_value(self) -> bool {
+        self.is_nan()
+    }
+}
+
 /// Resolved 1-based band index per row: either a fixed constant (the
 /// `band_index` argument was omitted, or every row of a state array is
 /// already single-band) or a per-row array (an explicit `band_index`
@@ -293,7 +321,21 @@ fn combine_bytes(
                 } else {
                     let a_val = <$t>::from_le_bytes(a_bytes.try_into().unwrap());
                     let b_val = <$t>::from_le_bytes(b_bytes.try_into().unwrap());
-                    if op.a_wins(a_val, b_val) {
+                    // NaN (that isn't the nodata sentinel) is treated like a
+                    // missing value too, matching np.fmin/np.fmax and
+                    // xarray's default skipna=True reductions: the valid
+                    // side wins outright regardless of which operand is
+                    // NaN, and only both-NaN stays NaN. Without this,
+                    // PartialOrd comparisons against NaN are always false,
+                    // which would make `b` win unconditionally whenever it
+                    // was NaN — silently discarding a valid `a` value.
+                    if a_val.is_nan_value() && b_val.is_nan_value() {
+                        a_bytes
+                    } else if a_val.is_nan_value() {
+                        b_bytes
+                    } else if b_val.is_nan_value() {
+                        a_bytes
+                    } else if op.a_wins(a_val, b_val) {
                         a_bytes
                     } else {
                         b_bytes

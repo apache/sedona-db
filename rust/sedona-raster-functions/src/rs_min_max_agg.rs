@@ -18,7 +18,9 @@ use std::{mem::size_of_val, sync::Arc};
 
 use arrow_array::{Array, ArrayRef, StructArray};
 use arrow_schema::FieldRef;
-use datafusion_common::{cast::as_struct_array, error::Result, exec_datafusion_err, ScalarValue};
+use datafusion_common::{
+    cast::as_struct_array, error::Result, exec_datafusion_err, exec_err, ScalarValue,
+};
 use datafusion_expr::{Accumulator, ColumnarValue, Volatility};
 use sedona_common::sedona_internal_err;
 use sedona_expr::aggregate_udf::{SedonaAccumulator, SedonaAccumulatorRef, SedonaAggregateUDF};
@@ -150,22 +152,39 @@ impl SedonaAccumulator for RasterMinMaxAggWithBand {
 /// Plain [Accumulator] backing both overloads of `RS_Min_Agg`/`RS_Max_Agg`.
 ///
 /// `current` holds the running combined single-band raster, or `None`
-/// before any non-null raster has been seen. `band_index` may vary row to
-/// row: each row's raster contributes whichever of its own bands that row
-/// specifies (an out-of-range index for a given row is skipped, like a
-/// null input).
+/// before any non-null raster has been seen. `band_index` must be constant
+/// across every raw input row this accumulator sees directly (tracked via
+/// `resolved_band_index`) — combining pixels selected from genuinely
+/// different bands would be silently meaningless, so a row that disagrees
+/// with the first one seen is a clean error rather than a silent mix.
+///
+/// This check only covers rows an accumulator sees via `update_batch`
+/// (i.e. within one partition). `merge_batch` combines already-single-band
+/// partial states, which carry no record of which original band index
+/// produced them, so it cannot detect two partitions of the same group
+/// having used different band indices. Treated as an accepted gap for now.
 #[derive(Debug)]
 struct MinMaxAccumulator {
     op: MinMaxOp,
     current: Option<StructArray>,
+    resolved_band_index: Option<i32>,
 }
 
 impl MinMaxAccumulator {
     fn new(op: MinMaxOp) -> Self {
-        Self { op, current: None }
+        Self {
+            op,
+            current: None,
+            resolved_band_index: None,
+        }
     }
 
-    fn combine_array(&mut self, array: &ArrayRef, band_indices: &BandIndices) -> Result<()> {
+    fn combine_array(
+        &mut self,
+        array: &ArrayRef,
+        band_indices: &BandIndices,
+        track_band_index: bool,
+    ) -> Result<()> {
         let struct_array = as_struct_array(array)?;
         let rasters = RasterStructArray::try_new(struct_array)
             .map_err(|e| exec_datafusion_err!("invalid raster array: {e}"))?;
@@ -173,8 +192,21 @@ impl MinMaxAccumulator {
             if struct_array.is_null(i) {
                 continue;
             }
+            let band_index = band_indices.get(i);
+            if track_band_index {
+                match self.resolved_band_index {
+                    None => self.resolved_band_index = Some(band_index),
+                    Some(existing) if existing != band_index => {
+                        return exec_err!(
+                            "RS_Min_Agg/RS_Max_Agg requires a constant band index within a \
+                             group (saw {existing} and {band_index})"
+                        );
+                    }
+                    _ => {}
+                }
+            }
             let incoming = rasters.get(i).map_err(|e| exec_datafusion_err!("{e}"))?;
-            self.combine_one(&incoming, band_indices.get(i))?;
+            self.combine_one(&incoming, band_index)?;
         }
         Ok(())
     }
@@ -224,7 +256,7 @@ impl Accumulator for MinMaxAccumulator {
         }
         let band_arg = values.get(1).map(|a| ColumnarValue::Array(a.clone()));
         let band_indices = BandIndices::resolve(band_arg.as_ref(), values[0].len())?;
-        self.combine_array(&values[0], &band_indices)
+        self.combine_array(&values[0], &band_indices, true)
     }
 
     fn evaluate(&mut self) -> Result<ScalarValue> {
@@ -262,8 +294,11 @@ impl Accumulator for MinMaxAccumulator {
             );
         }
         // State rows are already single-band (produced by evaluate()/state()
-        // above), so band 1 is always the right (and only) band.
-        self.combine_array(&states[0], &BandIndices::Fixed(1))
+        // above), so band 1 is always the right (and only) band. Don't feed
+        // this through the band-index consistency check: `Fixed(1)` here
+        // means "band 1 of the extracted state", not the original
+        // user-supplied band_index, and shouldn't be compared against it.
+        self.combine_array(&states[0], &BandIndices::Fixed(1), false)
     }
 }
 
@@ -406,6 +441,48 @@ mod tests {
         let result = accumulator.evaluate().unwrap();
 
         let expected = RasterSpec::d2(1, 1).band_values(&[50u8]);
+        assert_raster_scalar_equals(&result, &expected);
+    }
+
+    #[test]
+    fn min_agg_varying_band_index_within_group_errors() {
+        use arrow_array::Int32Array;
+        use sedona_testing::raster_spec::raster_array;
+
+        let a = RasterSpec::d2(1, 1)
+            .band_values(&[5u8])
+            .band_values(&[50u8]);
+        let b = RasterSpec::d2(1, 1)
+            .band_values(&[3u8])
+            .band_values(&[90u8]);
+
+        let raster_array: ArrayRef = Arc::new(raster_array([Some(a), Some(b)]));
+        // Row 0 asks for band 1, row 1 asks for band 2 -- combining them
+        // would silently mix pixels from two different bands.
+        let band_index_array: ArrayRef = Arc::new(Int32Array::from(vec![1, 2]));
+
+        let mut accumulator = MinMaxAccumulator::new(MinMaxOp::Min);
+        let err = accumulator
+            .update_batch(&[raster_array, band_index_array])
+            .unwrap_err();
+        assert!(err.to_string().contains("constant band index"));
+    }
+
+    #[test]
+    fn min_agg_nan_does_not_discard_a_valid_value() {
+        let tester = min_tester();
+        // b's NaN is not the nodata sentinel, so it must not silently beat
+        // a's valid 3.0 (regression test for a NaN comparison bug: PartialOrd
+        // comparisons against NaN are always false, which previously made
+        // `b` win unconditionally whenever it held NaN).
+        let a = RasterSpec::d2(1, 1).band_values(&[3.0f64]);
+        let b = RasterSpec::d2(1, 1).band_values(&[f64::NAN]);
+
+        let result = tester
+            .aggregate_rasters(vec![vec![Some(a), Some(b)]])
+            .unwrap();
+
+        let expected = RasterSpec::d2(1, 1).band_values(&[3.0f64]);
         assert_raster_scalar_equals(&result, &expected);
     }
 }

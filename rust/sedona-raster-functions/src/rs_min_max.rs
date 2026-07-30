@@ -221,6 +221,53 @@ mod tests {
     }
 
     #[test]
+    fn nan_does_not_discard_a_valid_value_regardless_of_side() {
+        // Neither a's NaN nor b's NaN should unconditionally "win" --
+        // PartialOrd comparisons against NaN are always false, which
+        // previously made the second operand win outright whenever it held
+        // NaN (silently discarding a valid first-operand value for both Min
+        // and Max).
+        let min_kernel = RsMinMax::new(MinMaxOp::Min);
+        let max_kernel = RsMinMax::new(MinMaxOp::Max);
+
+        // NaN in b.
+        let a = RasterSpec::d2(1, 1).band_values(&[3.0f64]);
+        let b = RasterSpec::d2(1, 1).band_values(&[f64::NAN]);
+        let ColumnarValue::Array(result) = invoke(&min_kernel, a.clone(), b.clone()) else {
+            panic!("expected array result");
+        };
+        assert_rasters_equal(
+            &result,
+            &[Some(RasterSpec::d2(1, 1).band_values(&[3.0f64]))],
+        );
+        let ColumnarValue::Array(result) = invoke(&max_kernel, a, b) else {
+            panic!("expected array result");
+        };
+        assert_rasters_equal(
+            &result,
+            &[Some(RasterSpec::d2(1, 1).band_values(&[3.0f64]))],
+        );
+
+        // NaN in a.
+        let a = RasterSpec::d2(1, 1).band_values(&[f64::NAN]);
+        let b = RasterSpec::d2(1, 1).band_values(&[3.0f64]);
+        let ColumnarValue::Array(result) = invoke(&min_kernel, a.clone(), b.clone()) else {
+            panic!("expected array result");
+        };
+        assert_rasters_equal(
+            &result,
+            &[Some(RasterSpec::d2(1, 1).band_values(&[3.0f64]))],
+        );
+        let ColumnarValue::Array(result) = invoke(&max_kernel, a, b) else {
+            panic!("expected array result");
+        };
+        assert_rasters_equal(
+            &result,
+            &[Some(RasterSpec::d2(1, 1).band_values(&[3.0f64]))],
+        );
+    }
+
+    #[test]
     fn mismatched_shape_errors() {
         let kernel = RsMinMax::new(MinMaxOp::Min);
         let a = RasterSpec::d2(2, 1).band_values(&[5u8, 2u8]);
