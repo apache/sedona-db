@@ -16,17 +16,18 @@
 # specific language governing permissions and limitations
 # under the License.
 
-title: RS_Min_Agg
-description: An aggregate function that computes the pixel-wise minimum of one band across a group of rasters.
+title: RS_Min
+description: Returns the pixel-wise minimum of one band of two rasters.
 kernels:
   - returns: raster
-    args: [raster]
+    args: [raster, raster]
   - returns: raster
     args:
     - raster
+    - raster
     - name: band
       type: int
-      description: Band index (1-based, default 1). A row whose raster lacks this band is skipped.
+      description: Band index (1-based, default 1). A null or out-of-range index returns null.
 ---
 
 ::: callout-warning
@@ -35,27 +36,17 @@ kernels:
 
 ## Description
 
-An aggregate function that computes the pixel-wise minimum of one band across all rasters in a group. Every
-raster in a group must share the same dimension names, shape, data type, and nodata value for the selected
-band.
+Computes the pixel-wise minimum of one band of two rasters, analogous to `LEAST` for scalar values. Both
+rasters must share the same dimension names, shape, data type, and nodata value for the selected band.
 
 A pixel equal to the band's nodata value is treated as absent rather than as a comparable number: the other
-raster's value wins outright, and a pixel that is nodata in every raster in the group stays nodata.
+raster's value wins outright, and a pixel that is nodata in both rasters stays nodata.
 
-See [RS_Min](rs_min.qmd) for the equivalent pairwise (non-aggregate) function.
+See [RS_Min_Agg](rs_min_agg.qmd) for the equivalent aggregate across rows.
 
 ## Examples
 
 ```sql
-SELECT RS_Min_Agg(raster) FROM (
-    VALUES
-        (RS_Example()),
-        (RS_Example())
-) AS t(raster);
-
-SELECT RS_Min_Agg(raster, 2) FROM (
-    VALUES
-        (RS_Example()),
-        (RS_Example())
-) AS t(raster);
+SELECT RS_Min(RS_Example(), RS_Example());
+SELECT RS_Min(RS_Example(), RS_Example(), 2);
 ```

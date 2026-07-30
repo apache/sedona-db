@@ -18,29 +18,33 @@ use std::{mem::size_of_val, sync::Arc};
 
 use arrow_array::{Array, ArrayRef, StructArray};
 use arrow_schema::FieldRef;
-use datafusion_common::{cast::as_struct_array, error::Result, exec_err, ScalarValue};
-use datafusion_expr::{Accumulator, Volatility};
+use datafusion_common::{cast::as_struct_array, error::Result, exec_datafusion_err, ScalarValue};
+use datafusion_expr::{Accumulator, ColumnarValue, Volatility};
 use sedona_common::sedona_internal_err;
 use sedona_expr::aggregate_udf::{SedonaAccumulator, SedonaAccumulatorRef, SedonaAggregateUDF};
 use sedona_raster::array::RasterStructArray;
-use sedona_raster::builder::{RasterBuilder, RasterOverrides};
-use sedona_raster::traits::{BandRef, RasterRef};
-use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher, raster::BandDataType};
+use sedona_raster::builder::RasterBuilder;
+use sedona_raster::traits::RasterRef;
+use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
+
+use crate::raster_min_max::{
+    append_combined_single_band, extract_single_band, BandIndices, MinMaxOp,
+};
 
 /// RS_Min_Agg() aggregate UDF implementation
 ///
-/// Computes the pixel-wise minimum raster across a group, treating a band's
-/// nodata sentinel (when present) as "no value at this pixel" rather than as
-/// a comparable number.
+/// **Experimental.** Computes the pixel-wise minimum of one band across a
+/// group, treating a band's nodata sentinel (when present) as "no value at
+/// this pixel" rather than as a comparable number.
 pub fn rs_min_agg_udf() -> SedonaAggregateUDF {
     build_min_max_agg_udf("rs_min_agg", MinMaxOp::Min)
 }
 
 /// RS_Max_Agg() aggregate UDF implementation
 ///
-/// Computes the pixel-wise maximum raster across a group, treating a band's
-/// nodata sentinel (when present) as "no value at this pixel" rather than as
-/// a comparable number.
+/// **Experimental.** Computes the pixel-wise maximum of one band across a
+/// group, treating a band's nodata sentinel (when present) as "no value at
+/// this pixel" rather than as a comparable number.
 pub fn rs_max_agg_udf() -> SedonaAggregateUDF {
     build_min_max_agg_udf("rs_max_agg", MinMaxOp::Max)
 }
@@ -48,38 +52,30 @@ pub fn rs_max_agg_udf() -> SedonaAggregateUDF {
 fn build_min_max_agg_udf(name: &str, op: MinMaxOp) -> SedonaAggregateUDF {
     SedonaAggregateUDF::new(
         name,
-        Arc::new(RasterMinMaxAgg::new(op)) as SedonaAccumulatorRef,
+        vec![
+            Arc::new(RasterMinMaxAgg::new(op)) as SedonaAccumulatorRef,
+            Arc::new(RasterMinMaxAggWithBand::new(op)) as SedonaAccumulatorRef,
+        ],
         Volatility::Immutable,
     )
 }
 
-/// Which pixel wins a pairwise comparison.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MinMaxOp {
-    Min,
-    Max,
+fn state_fields_for_raster_arg(args: &[SedonaType]) -> Result<Vec<FieldRef>> {
+    let Some(raster_type) = args.first() else {
+        return sedona_internal_err!(
+            "RS_Min_Agg/RS_Max_Agg state_fields: expected a raster argument"
+        );
+    };
+    // The running combined raster (always single-band) is itself a valid
+    // partial state (min/max combine is associative and idempotent), so
+    // state is just the raster type again — this lets update_batch and
+    // merge_batch share one implementation.
+    Ok(vec![Arc::new(
+        raster_type.to_storage_field("raster_state", true)?,
+    )])
 }
 
-impl MinMaxOp {
-    /// True if `a` should be kept over `b`.
-    fn a_wins<T: PartialOrd>(&self, a: T, b: T) -> bool {
-        match self {
-            MinMaxOp::Min => a <= b,
-            MinMaxOp::Max => a >= b,
-        }
-    }
-}
-
-/// Shared [SedonaAccumulator] for `RS_Min_Agg`/`RS_Max_Agg`.
-///
-/// Scope (v1): single raster argument, plain [Accumulator] only (no
-/// [datafusion_expr::GroupsAccumulator] — DataFusion falls back to one
-/// accumulator per group, which is correct but not the fastest path for
-/// many small groups; see the Linear "Raster Stats Agg" project for a
-/// possible follow-up). Every raster combined within one group must share
-/// band count, dimension names, shape, data type, and nodata value —
-/// mismatches are reported as a clean execution error rather than silently
-/// producing a wrong or partial result.
+/// `RS_Min_Agg(raster)`/`RS_Max_Agg(raster)` — operates on band 1.
 #[derive(Debug)]
 struct RasterMinMaxAgg {
     op: MinMaxOp,
@@ -109,26 +105,55 @@ impl SedonaAccumulator for RasterMinMaxAgg {
     }
 
     fn state_fields(&self, args: &[SedonaType]) -> Result<Vec<FieldRef>> {
-        if args.len() != 1 {
-            return sedona_internal_err!(
-                "RS_Min_Agg/RS_Max_Agg state_fields: expected 1 argument, got {}",
-                args.len()
-            );
-        }
-        // The running combined raster is itself a valid partial state (min/max
-        // combine is associative and idempotent), so state is just the output
-        // type again — this lets update_batch and merge_batch share one
-        // implementation (both consume a raster-typed array).
-        Ok(vec![Arc::new(
-            args[0].to_storage_field("raster_state", true)?,
-        )])
+        state_fields_for_raster_arg(args)
     }
 }
 
-/// Plain [Accumulator] backing both `RS_Min_Agg` and `RS_Max_Agg`.
+/// `RS_Min_Agg(raster, band_index)`/`RS_Max_Agg(raster, band_index)` — 1-based,
+/// same convention as `RS_BandPixelType`.
+#[derive(Debug)]
+struct RasterMinMaxAggWithBand {
+    op: MinMaxOp,
+    matcher: ArgMatcher,
+}
+
+impl RasterMinMaxAggWithBand {
+    fn new(op: MinMaxOp) -> Self {
+        Self {
+            op,
+            matcher: ArgMatcher::new(
+                vec![ArgMatcher::is_raster(), ArgMatcher::is_integer()],
+                SedonaType::Raster,
+            ),
+        }
+    }
+}
+
+impl SedonaAccumulator for RasterMinMaxAggWithBand {
+    fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
+        self.matcher.match_args(args)
+    }
+
+    fn accumulator(
+        &self,
+        _args: &[SedonaType],
+        _output_type: &SedonaType,
+    ) -> Result<Box<dyn Accumulator>> {
+        Ok(Box::new(MinMaxAccumulator::new(self.op)))
+    }
+
+    fn state_fields(&self, args: &[SedonaType]) -> Result<Vec<FieldRef>> {
+        state_fields_for_raster_arg(args)
+    }
+}
+
+/// Plain [Accumulator] backing both overloads of `RS_Min_Agg`/`RS_Max_Agg`.
 ///
-/// `current` holds the running combined result as a single-row raster
-/// `StructArray`, or `None` before any non-null raster has been seen.
+/// `current` holds the running combined single-band raster, or `None`
+/// before any non-null raster has been seen. `band_index` may vary row to
+/// row: each row's raster contributes whichever of its own bands that row
+/// specifies (an out-of-range index for a given row is skipped, like a
+/// null input).
 #[derive(Debug)]
 struct MinMaxAccumulator {
     op: MinMaxOp,
@@ -140,216 +165,66 @@ impl MinMaxAccumulator {
         Self { op, current: None }
     }
 
-    /// Fold every non-null raster row of `array` into `self.current`. Used by
-    /// both `update_batch` (raw input rows) and `merge_batch` (partial-state
-    /// rows from other accumulators) since both are raster-typed arrays.
-    fn combine_array(&mut self, array: &ArrayRef) -> Result<()> {
+    fn combine_array(&mut self, array: &ArrayRef, band_indices: &BandIndices) -> Result<()> {
         let struct_array = as_struct_array(array)?;
         let rasters = RasterStructArray::try_new(struct_array)
-            .map_err(|e| datafusion_common::exec_datafusion_err!("invalid raster array: {e}"))?;
+            .map_err(|e| exec_datafusion_err!("invalid raster array: {e}"))?;
         for i in 0..rasters.len() {
             if struct_array.is_null(i) {
                 continue;
             }
-            let incoming = rasters
-                .get(i)
-                .map_err(|e| datafusion_common::exec_datafusion_err!("{e}"))?;
-            self.combine_one(&incoming)?;
+            let incoming = rasters.get(i).map_err(|e| exec_datafusion_err!("{e}"))?;
+            self.combine_one(&incoming, band_indices.get(i))?;
         }
         Ok(())
     }
 
-    fn combine_one(&mut self, incoming: &dyn RasterRef) -> Result<()> {
-        let merged = match self.current.take() {
-            None => {
-                let mut builder = RasterBuilder::new(1);
-                builder
-                    .copy_raster_from(incoming, RasterOverrides::default())
-                    .map_err(|e| datafusion_common::exec_datafusion_err!("{e}"))?;
-                builder
-                    .finish()
-                    .map_err(|e| datafusion_common::exec_datafusion_err!("{e}"))?
-            }
+    fn combine_one(&mut self, incoming: &dyn RasterRef, band_index: i32) -> Result<()> {
+        let Some(extracted) = extract_single_band(incoming, band_index)? else {
+            // band_index doesn't exist on this row's raster: skip it, same
+            // as a null input row.
+            return Ok(());
+        };
+
+        self.current = Some(match self.current.take() {
+            None => extracted,
             Some(current_struct) => {
                 let current_rasters = RasterStructArray::try_new(&current_struct)
-                    .map_err(|e| datafusion_common::exec_datafusion_err!("{e}"))?;
+                    .map_err(|e| exec_datafusion_err!("{e}"))?;
                 let current_raster = current_rasters
                     .get(0)
-                    .map_err(|e| datafusion_common::exec_datafusion_err!("{e}"))?;
-                self.merge_rasters(&current_raster, incoming)?
+                    .map_err(|e| exec_datafusion_err!("{e}"))?;
+                let extracted_rasters = RasterStructArray::try_new(&extracted)
+                    .map_err(|e| exec_datafusion_err!("{e}"))?;
+                let extracted_raster = extracted_rasters
+                    .get(0)
+                    .map_err(|e| exec_datafusion_err!("{e}"))?;
+
+                let mut builder = RasterBuilder::new(1);
+                append_combined_single_band(
+                    self.op,
+                    &mut builder,
+                    &current_raster,
+                    &extracted_raster,
+                )?;
+                builder.finish().map_err(|e| exec_datafusion_err!("{e}"))?
             }
-        };
-        self.current = Some(merged);
+        });
         Ok(())
     }
-
-    fn merge_rasters(&self, a: &dyn RasterRef, b: &dyn RasterRef) -> Result<StructArray> {
-        if a.num_bands() != b.num_bands() {
-            return exec_err!(
-                "cannot combine rasters with different band counts ({} vs {}) in the same group",
-                a.num_bands(),
-                b.num_bands()
-            );
-        }
-
-        let mut builder = RasterBuilder::new(1);
-        builder
-            .start_raster_from(a, RasterOverrides::default())
-            .map_err(|e| datafusion_common::exec_datafusion_err!("{e}"))?;
-        for band_idx in 0..a.num_bands() {
-            let band_a = a.band(band_idx)?;
-            let band_b = b.band(band_idx)?;
-            self.merge_band(
-                &mut builder,
-                a.band_name(band_idx),
-                band_a.as_ref(),
-                band_b.as_ref(),
-            )?;
-            builder
-                .finish_band()
-                .map_err(|e| datafusion_common::exec_datafusion_err!("{e}"))?;
-        }
-        builder
-            .finish_raster()
-            .map_err(|e| datafusion_common::exec_datafusion_err!("{e}"))?;
-        builder
-            .finish()
-            .map_err(|e| datafusion_common::exec_datafusion_err!("{e}"))
-    }
-
-    fn merge_band(
-        &self,
-        builder: &mut RasterBuilder,
-        band_name: Option<&str>,
-        a: &dyn BandRef,
-        b: &dyn BandRef,
-    ) -> Result<()> {
-        if a.data_type() != b.data_type() {
-            return exec_err!(
-                "cannot combine bands with different data types ({:?} vs {:?}) in the same group",
-                a.data_type(),
-                b.data_type()
-            );
-        }
-        if a.shape() != b.shape() || a.dim_names() != b.dim_names() {
-            return exec_err!(
-                "cannot combine bands with different shapes ({:?} {:?} vs {:?} {:?}) in the same group",
-                a.dim_names(),
-                a.shape(),
-                b.dim_names(),
-                b.shape()
-            );
-        }
-        if a.nodata() != b.nodata() {
-            return exec_err!(
-                "cannot combine bands with different nodata values in the same group"
-            );
-        }
-
-        let nd_a = a.nd_buffer()?;
-        let nd_b = b.nd_buffer()?;
-        let bytes_a = nd_a.as_contiguous()?;
-        let bytes_b = nd_b.as_contiguous()?;
-        let combined = combine_bytes(self.op, a.data_type(), bytes_a, bytes_b, a.nodata())?;
-
-        builder
-            .start_band_nd(
-                band_name,
-                &a.dim_names(),
-                a.shape(),
-                a.data_type(),
-                a.nodata(),
-                None,
-                None,
-            )
-            .map_err(|e| datafusion_common::exec_datafusion_err!("{e}"))?;
-        builder.band_data_writer().append_value(&combined);
-        Ok(())
-    }
-}
-
-/// Combine two same-shape, same-dtype contiguous band buffers pixel-wise.
-///
-/// A pixel equal to `nodata` (exact byte match — nodata is a sentinel value
-/// stored inline, not a separate mask) is treated as absent: the other side
-/// wins outright, and a pixel where both sides are nodata stays nodata.
-fn combine_bytes(
-    op: MinMaxOp,
-    data_type: BandDataType,
-    a: &[u8],
-    b: &[u8],
-    nodata: Option<&[u8]>,
-) -> Result<Vec<u8>> {
-    if a.len() != b.len() {
-        return sedona_internal_err!(
-            "mismatched band byte length combining rasters: {} vs {}",
-            a.len(),
-            b.len()
-        );
-    }
-
-    macro_rules! combine_as {
-        ($t:ty) => {{
-            let elem = std::mem::size_of::<$t>();
-            if a.len() % elem != 0 {
-                return sedona_internal_err!(
-                    "band byte length {} is not a multiple of element size {} for {:?}",
-                    a.len(),
-                    elem,
-                    data_type
-                );
-            }
-            let mut out = Vec::with_capacity(a.len());
-            for start in (0..a.len()).step_by(elem) {
-                let end = start + elem;
-                let a_bytes = &a[start..end];
-                let b_bytes = &b[start..end];
-                let a_is_nodata = nodata.is_some_and(|nd| nd == a_bytes);
-                let b_is_nodata = nodata.is_some_and(|nd| nd == b_bytes);
-                let winner: &[u8] = if a_is_nodata && b_is_nodata {
-                    a_bytes
-                } else if a_is_nodata {
-                    b_bytes
-                } else if b_is_nodata {
-                    a_bytes
-                } else {
-                    let a_val = <$t>::from_le_bytes(a_bytes.try_into().unwrap());
-                    let b_val = <$t>::from_le_bytes(b_bytes.try_into().unwrap());
-                    if op.a_wins(a_val, b_val) {
-                        a_bytes
-                    } else {
-                        b_bytes
-                    }
-                };
-                out.extend_from_slice(winner);
-            }
-            out
-        }};
-    }
-
-    Ok(match data_type {
-        BandDataType::UInt8 => combine_as!(u8),
-        BandDataType::Int8 => combine_as!(i8),
-        BandDataType::UInt16 => combine_as!(u16),
-        BandDataType::Int16 => combine_as!(i16),
-        BandDataType::UInt32 => combine_as!(u32),
-        BandDataType::Int32 => combine_as!(i32),
-        BandDataType::UInt64 => combine_as!(u64),
-        BandDataType::Int64 => combine_as!(i64),
-        BandDataType::Float32 => combine_as!(f32),
-        BandDataType::Float64 => combine_as!(f64),
-    })
 }
 
 impl Accumulator for MinMaxAccumulator {
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
-        if values.len() != 1 {
+        if values.is_empty() || values.len() > 2 {
             return sedona_internal_err!(
-                "RS_Min_Agg/RS_Max_Agg update_batch: expected 1 argument, got {}",
+                "RS_Min_Agg/RS_Max_Agg update_batch: expected 1 or 2 arguments, got {}",
                 values.len()
             );
         }
-        self.combine_array(&values[0])
+        let band_arg = values.get(1).map(|a| ColumnarValue::Array(a.clone()));
+        let band_indices = BandIndices::resolve(band_arg.as_ref(), values[0].len())?;
+        self.combine_array(&values[0], &band_indices)
     }
 
     fn evaluate(&mut self) -> Result<ScalarValue> {
@@ -359,10 +234,8 @@ impl Accumulator for MinMaxAccumulator {
                 let mut builder = RasterBuilder::new(1);
                 builder
                     .append_null()
-                    .map_err(|e| datafusion_common::exec_datafusion_err!("{e}"))?;
-                builder
-                    .finish()
-                    .map_err(|e| datafusion_common::exec_datafusion_err!("{e}"))?
+                    .map_err(|e| exec_datafusion_err!("{e}"))?;
+                builder.finish().map_err(|e| exec_datafusion_err!("{e}"))?
             }
         };
         Ok(ScalarValue::Struct(Arc::new(struct_array)))
@@ -388,7 +261,9 @@ impl Accumulator for MinMaxAccumulator {
                 states.len()
             );
         }
-        self.combine_array(&states[0])
+        // State rows are already single-band (produced by evaluate()/state()
+        // above), so band 1 is always the right (and only) band.
+        self.combine_array(&states[0], &BandIndices::Fixed(1))
     }
 }
 
@@ -504,5 +379,33 @@ mod tests {
             .aggregate_rasters(vec![vec![Some(a), Some(b)]])
             .unwrap_err();
         assert!(err.to_string().contains("different shapes"));
+    }
+
+    #[test]
+    fn min_agg_with_explicit_band_selects_second_band() {
+        // The (raster, band_index) overload isn't a shape the single-arg
+        // AggregateUdfTester helpers support, so drive the Accumulator
+        // directly instead.
+        use arrow_array::Int32Array;
+        use sedona_testing::raster_spec::raster_array;
+
+        let a = RasterSpec::d2(1, 1)
+            .band_values(&[5u8])
+            .band_values(&[50u8]);
+        let b = RasterSpec::d2(1, 1)
+            .band_values(&[3u8])
+            .band_values(&[90u8]);
+
+        let raster_array: ArrayRef = Arc::new(raster_array([Some(a), Some(b)]));
+        let band_index_array: ArrayRef = Arc::new(Int32Array::from(vec![2, 2]));
+
+        let mut accumulator = MinMaxAccumulator::new(MinMaxOp::Min);
+        accumulator
+            .update_batch(&[raster_array, band_index_array])
+            .unwrap();
+        let result = accumulator.evaluate().unwrap();
+
+        let expected = RasterSpec::d2(1, 1).band_values(&[50u8]);
+        assert_raster_scalar_equals(&result, &expected);
     }
 }
