@@ -37,6 +37,8 @@ kernels:
 
 For rasters with no bands, `tileWidth` and `tileHeight` are `0`.
 
+Returns `NULL` for a raster with no spatial (y, x) pair.
+
 ## Examples
 
 ```sql

@@ -112,7 +112,11 @@ impl SedonaScalarKernel for RsMetaData {
                 .map_err(|e| exec_datafusion_err!("Failed to init GDAL provider: {e}"))?;
 
             executor.execute_raster_void(|_i, raster_opt| {
-                match raster_opt {
+                // A NULL raster — or a raster with no spatial (y, x) pair, which
+                // has no geotransform — produces an all-NULL metadata row.
+                let raster_md =
+                    raster_opt.and_then(|raster| Some((raster, raster.metadata().ok()?)));
+                match raster_md {
                     None => {
                         struct_validity.append(false);
                         upper_left_x_builder.append_null();
@@ -128,9 +132,8 @@ impl SedonaScalarKernel for RsMetaData {
                         tile_width_builder.append_null();
                         tile_height_builder.append_null();
                     }
-                    Some(raster) => {
+                    Some((raster, metadata)) => {
                         struct_validity.append(true);
-                        let metadata = raster.metadata();
                         let num_bands = raster.bands().len() as u32;
 
                         upper_left_x_builder.append_value(metadata.upper_left_x());

@@ -614,16 +614,12 @@ mod tests {
             let modified = result_array.get(i).unwrap();
 
             // Metadata preserved
-            assert_eq!(original.metadata().width(), modified.metadata().width());
-            assert_eq!(original.metadata().height(), modified.metadata().height());
-            assert_eq!(
-                original.metadata().upper_left_x(),
-                modified.metadata().upper_left_x()
-            );
-            assert_eq!(
-                original.metadata().upper_left_y(),
-                modified.metadata().upper_left_y()
-            );
+            let original_meta = original.metadata().unwrap();
+            let modified_meta = modified.metadata().unwrap();
+            assert_eq!(original_meta.width(), modified_meta.width());
+            assert_eq!(original_meta.height(), modified_meta.height());
+            assert_eq!(original_meta.upper_left_x(), modified_meta.upper_left_x());
+            assert_eq!(original_meta.upper_left_y(), modified_meta.upper_left_y());
 
             // Band data preserved
             let orig_bands = original.bands();

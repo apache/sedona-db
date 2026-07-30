@@ -209,6 +209,13 @@ impl RsResample {
                     return Ok(());
                 };
 
+                // A raster with no spatial (y, x) pair has no geotransform and
+                // cannot be resampled or matched against — emit NULL for this row.
+                if raster.metadata().is_err() || reference.metadata().is_err() {
+                    builder.append_null()?;
+                    return Ok(());
+                }
+
                 // Same-CRS only: RS_Resample never reprojects (matching Spark,
                 // which throws when the reference SRID differs). Compare CRSes
                 // semantically rather than by raw string, so two equivalent
@@ -310,6 +317,13 @@ impl RsResample {
                     builder.append_null()?;
                     return Ok(());
                 };
+
+                // A raster with no spatial (y, x) pair has no geotransform and
+                // cannot be resampled — emit NULL for this row.
+                if raster.metadata().is_err() {
+                    builder.append_null()?;
+                    return Ok(());
+                }
 
                 let grid = match (has_grid, grid_x, grid_y) {
                     (false, _, _) => None,
@@ -448,7 +462,7 @@ fn plan_from_reference(
     use_scale: bool,
     algorithm: &str,
 ) -> Result<ResamplePlan> {
-    let m = reference.metadata();
+    let m = reference.metadata()?;
     let (width_or_scale, height_or_scale) = if use_scale {
         (m.scale_x(), m.scale_y())
     } else {
@@ -502,7 +516,7 @@ fn resample_raster(
     plan: &ResamplePlan,
     builder: &mut RasterBuilder,
 ) -> Result<()> {
-    let metadata = raster.metadata();
+    let metadata = raster.metadata()?;
     let src = Grid::from_metadata(&metadata);
     if src.width <= 0 || src.height <= 0 {
         return exec_err!(
@@ -1337,7 +1351,7 @@ mod tests {
         let rasters = RasterStructArray::try_new(struct_array).unwrap();
         let raster = rasters.get(0).unwrap();
         assert_eq!(raster.crs(), Some("EPSG:4326"));
-        let m = raster.metadata();
+        let m = raster.metadata().unwrap();
         assert_eq!(m.upper_left_x(), 10.0);
         assert_eq!(m.upper_left_y(), 44.0);
     }

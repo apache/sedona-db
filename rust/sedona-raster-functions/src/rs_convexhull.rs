@@ -69,6 +69,13 @@ impl SedonaScalarKernel for RsConvexHull {
         executor.execute_raster_void(|_i, raster_opt| {
             match raster_opt {
                 Some(raster) => {
+                    // A raster with no spatial (y, x) pair has no geotransform, so
+                    // there is no footprint to compute — emit NULL for this row.
+                    if raster.metadata().is_err() {
+                        builder.append_null();
+                        crs_builder.append_null();
+                        return Ok(());
+                    }
                     write_convexhull_wkb(raster, &mut builder)?;
                     builder.append_value([]);
                     crs_builder.append_value(raster.crs().unwrap_or("0"));

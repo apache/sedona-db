@@ -125,8 +125,8 @@ mod tests {
 
             for idx in 0..expected_len {
                 let raster = raster_array.get(idx).unwrap();
-                assert_eq!(raster.metadata().width(), width);
-                assert_eq!(raster.metadata().height(), height);
+                assert_eq!(raster.metadata().unwrap().width(), width);
+                assert_eq!(raster.metadata().unwrap().height(), height);
             }
         }
 
@@ -222,8 +222,8 @@ mod tests {
 
                 let raster_array = RasterStructArray::try_new(struct_arr).unwrap();
                 let raster = raster_array.get(0).unwrap();
-                assert_eq!(raster.metadata().width(), 10);
-                assert_eq!(raster.metadata().height(), 10);
+                assert_eq!(raster.metadata().unwrap().width(), 10);
+                assert_eq!(raster.metadata().unwrap().height(), 10);
             }
             other => panic!("Expected array result, got {other:?}"),
         }

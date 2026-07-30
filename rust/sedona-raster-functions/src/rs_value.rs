@@ -154,6 +154,12 @@ impl RsValuePoint {
                         return Ok(());
                     }
                 };
+                // A raster with no spatial (y, x) pair has no geotransform to
+                // locate the point against — emit NULL for this row.
+                let Ok(metadata) = raster.metadata() else {
+                    builder.append_null();
+                    return Ok(());
+                };
                 // An explicit band column drives the band (a NULL element yields a
                 // NULL row); with no band argument it defaults to band 1, but only
                 // for a single-band raster.
@@ -179,7 +185,7 @@ impl RsValuePoint {
                     return Ok(());
                 };
 
-                let affine = AffineMatrix::from_metadata(&raster.metadata());
+                let affine = AffineMatrix::from_metadata(&metadata);
                 match xy_to_pixel("RS_Value", &affine, x, y)? {
                     Some((col, row)) => match sample_pixel(raster, col, row, band_num)? {
                         Some(value) => builder.append_value(value),
@@ -227,6 +233,12 @@ impl RsValuePoint {
         }
         let raster = rasters.get(0)?;
 
+        // A raster with no spatial (y, x) pair has no geotransform, so no point
+        // can be located against it — every output is NULL.
+        let Ok(metadata) = raster.metadata() else {
+            return executor.finish(Arc::new(Float64Array::from(vec![None; n])));
+        };
+
         // Band selection: a missing band argument (default band 1, single-band
         // rasters only) or a scalar band is constant for the batch and lets us
         // hoist the band buffer; a band column is resolved per row. A NULL scalar
@@ -260,7 +272,7 @@ impl RsValuePoint {
             .transpose()?;
 
         // Affine transform and raster CRS, resolved once for all points.
-        let affine = AffineMatrix::from_metadata(&raster.metadata());
+        let affine = AffineMatrix::from_metadata(&metadata);
         let raster_crs = resolve_crs(raster.crs())?;
 
         let mut geom = executor.make_geom_wkb_crs_accessor(1)?;
@@ -825,7 +837,7 @@ mod tests {
             .bbox(0.0, 8.0, 2.0, 10.0)
             .build();
         let rasters = RasterStructArray::try_new(&raster).unwrap();
-        let affine = AffineMatrix::from_metadata(&rasters.get(0).unwrap().metadata());
+        let affine = AffineMatrix::from_metadata(&rasters.get(0).unwrap().metadata().unwrap());
 
         assert_eq!(
             xy_to_pixel("RS_Value", &affine, f64::NAN, 5.0).unwrap(),

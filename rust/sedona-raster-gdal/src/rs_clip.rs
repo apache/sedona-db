@@ -261,6 +261,13 @@ impl SedonaScalarKernel for RsClip {
                     }
                 };
 
+                // A raster with no spatial (y, x) pair has no geotransform and
+                // cannot be clipped — emit NULL for this row.
+                if raster.metadata().is_err() {
+                    builder.append_null()?;
+                    return Ok(());
+                }
+
                 let raster_crs = resolve_crs(raster.crs())?;
                 let geom_wkb = match (geom_crs, raster_crs.as_deref()) {
                     (Some(geom_crs), Some(raster_crs)) => {
@@ -389,7 +396,7 @@ fn clip_raster(
     all_touched: bool,
     crop: bool,
 ) -> Result<Option<ClippedRasterData>> {
-    let metadata = raster.metadata();
+    let metadata = raster.metadata()?;
     let bands = raster.bands();
     let width = metadata.width() as usize;
     let height = metadata.height() as usize;
@@ -948,7 +955,7 @@ mod tests {
         with_gdal(|gdal| {
             let rasters = RasterStructArray::try_new(&array).unwrap();
             let raster = rasters.get(0).unwrap();
-            let metadata = raster.metadata();
+            let metadata = raster.metadata()?;
 
             // Top-left quadrant: x ∈ [0, 2], y ∈ [1, 2] — covers pixel centers
             // (0.5, 1.5) and (1.5, 1.5), i.e. a 2×1 window.

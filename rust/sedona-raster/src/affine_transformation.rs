@@ -190,10 +190,12 @@ impl AffineMatrix {
 }
 
 /// Computes the rotation angle (in radians) of the raster based on its geotransform metadata.
+///
+/// Errors for a raster with no spatial (y, x) pair (no geotransform).
 #[inline]
-pub fn rotation(raster: &dyn RasterRef) -> f64 {
-    let metadata = raster.metadata();
-    (-metadata.skew_x()).atan2(metadata.scale_x())
+pub fn rotation(raster: &dyn RasterRef) -> Result<f64, ArrowError> {
+    let metadata = raster.metadata()?;
+    Ok((-metadata.skew_x()).atan2(metadata.scale_x()))
 }
 
 /// Performs an affine transformation on the provided x and y coordinates based on the geotransform
@@ -203,9 +205,15 @@ pub fn rotation(raster: &dyn RasterRef) -> f64 {
 /// * `raster` - Reference to the raster containing metadata
 /// * `x` - X coordinate in pixel space (column)
 /// * `y` - Y coordinate in pixel space (row)
+///
+/// Errors for a raster with no spatial (y, x) pair (no geotransform).
 #[inline]
-pub fn to_world_coordinate(raster: &dyn RasterRef, x: i64, y: i64) -> (f64, f64) {
-    AffineMatrix::from_metadata(&raster.metadata()).transform(x as f64, y as f64)
+pub fn to_world_coordinate(
+    raster: &dyn RasterRef,
+    x: i64,
+    y: i64,
+) -> Result<(f64, f64), ArrowError> {
+    Ok(AffineMatrix::from_metadata(&raster.metadata()?).transform(x as f64, y as f64))
 }
 
 /// Performs the inverse affine transformation to convert world coordinates back to raster pixel coordinates.
@@ -221,7 +229,7 @@ pub fn to_raster_coordinate(
     world_y: f64,
 ) -> Result<(i64, i64), ArrowError> {
     let (rx, ry) =
-        AffineMatrix::from_metadata(&raster.metadata()).inv_transform(world_x, world_y)?;
+        AffineMatrix::from_metadata(&raster.metadata()?).inv_transform(world_x, world_y)?;
     Ok((rx as i64, ry as i64))
 }
 
@@ -264,8 +272,8 @@ mod tests {
         fn spatial_shape(&self) -> &[i64] {
             &[]
         }
-        fn metadata(&self) -> RasterMetadata {
-            self.metadata.clone()
+        fn metadata(&self) -> Result<RasterMetadata, ArrowError> {
+            Ok(self.metadata.clone())
         }
     }
 
@@ -273,27 +281,27 @@ mod tests {
     fn test_rotation() {
         // 0 degree rotation -> gt[1.0, 0.0, 0.0, -1.0]
         let raster = rotation_raster(1.0, -1.0, 0.0, 0.0);
-        let rot = rotation(&raster);
+        let rot = rotation(&raster).unwrap();
         assert_eq!(rot, 0.0);
 
         // pi/2 -> gt[0.0, -1.0, 1.0, 0.0]
         let raster = rotation_raster(0.0, 0.0, -1.0, 1.0);
-        let rot = rotation(&raster);
+        let rot = rotation(&raster).unwrap();
         assert_relative_eq!(rot, PI / 2.0, epsilon = 1e-6); // 90 degrees in radians
 
         // pi/4 -> gt[0.70710678, -0.70710678, 0.70710678, 0.70710678]
         let raster = rotation_raster(FRAC_1_SQRT_2, FRAC_1_SQRT_2, -FRAC_1_SQRT_2, FRAC_1_SQRT_2);
-        let rot = rotation(&raster);
+        let rot = rotation(&raster).unwrap();
         assert_relative_eq!(rot, PI / 4.0, epsilon = 1e-6); // 45 degrees in radians
 
         // pi/3 -> gt[0.5, -0.866025, 0.866025, 0.5]
         let raster = rotation_raster(0.5, 0.5, -0.866025, 0.866025);
-        let rot = rotation(&raster);
+        let rot = rotation(&raster).unwrap();
         assert_relative_eq!(rot, PI / 3.0, epsilon = 1e-6); // 60 degrees in radians
 
         // pi -> gt[-1.0, 0.0, 0.0, -1.0]
         let raster = rotation_raster(-1.0, -1.0, 0.0, 0.0);
-        let rot = rotation(&raster);
+        let rot = rotation(&raster).unwrap();
         assert_relative_eq!(rot, -PI, epsilon = 1e-6); // 180 degrees in radians
     }
 
@@ -313,19 +321,19 @@ mod tests {
             },
         };
 
-        let (wx, wy) = to_world_coordinate(&raster, 0, 0);
+        let (wx, wy) = to_world_coordinate(&raster, 0, 0).unwrap();
         assert_eq!((wx, wy), (100.0, 200.0));
 
-        let (wx, wy) = to_world_coordinate(&raster, 5, 10);
+        let (wx, wy) = to_world_coordinate(&raster, 5, 10).unwrap();
         assert_eq!((wx, wy), (107.5, 182.5));
 
-        let (wx, wy) = to_world_coordinate(&raster, 9, 19);
+        let (wx, wy) = to_world_coordinate(&raster, 9, 19).unwrap();
         assert_eq!((wx, wy), (113.75, 166.5));
 
-        let (wx, wy) = to_world_coordinate(&raster, 1, 0);
+        let (wx, wy) = to_world_coordinate(&raster, 1, 0).unwrap();
         assert_eq!((wx, wy), (101.0, 200.5));
 
-        let (wx, wy) = to_world_coordinate(&raster, 0, 1);
+        let (wx, wy) = to_world_coordinate(&raster, 0, 1).unwrap();
         assert_eq!((wx, wy), (100.25, 198.0));
     }
 

@@ -204,7 +204,7 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
     raster: &R,
     band_indices: &[usize],
 ) -> Result<Dataset> {
-    let metadata = raster.metadata();
+    let metadata = raster.metadata()?;
     let bands = raster.bands();
 
     let width = metadata.width() as usize;

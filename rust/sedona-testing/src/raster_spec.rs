@@ -539,7 +539,7 @@ mod tests {
         let array = RasterStructArray::try_new(&raster).unwrap();
         assert_eq!(array.len(), 1);
         let raster_ref = array.get(0).unwrap();
-        let metadata = raster_ref.metadata();
+        let metadata = raster_ref.metadata().unwrap();
         assert_eq!(metadata.width(), 4);
         assert_eq!(metadata.height(), 5);
         assert_eq!(metadata.scale_x(), 1.0);
@@ -567,7 +567,7 @@ mod tests {
             .band(BandDataType::UInt8)
             .build();
         let array = RasterStructArray::try_new(&raster).unwrap();
-        let metadata = array.get(0).unwrap().metadata();
+        let metadata = array.get(0).unwrap().metadata().unwrap();
         assert_eq!(metadata.upper_left_x(), 100.0);
         assert_eq!(metadata.upper_left_y(), 500.0);
         assert_eq!(metadata.scale_x(), 2.0);
@@ -585,8 +585,8 @@ mod tests {
         let raster_ref = array.get(0).unwrap();
 
         // Raster-level spatial metadata is X-first, like the readers emit.
-        assert_eq!(raster_ref.metadata().width(), 5);
-        assert_eq!(raster_ref.metadata().height(), 4);
+        assert_eq!(raster_ref.metadata().unwrap().width(), 5);
+        assert_eq!(raster_ref.metadata().unwrap().height(), 4);
 
         let bands = raster_ref.bands();
         let band = bands.band(1).unwrap();

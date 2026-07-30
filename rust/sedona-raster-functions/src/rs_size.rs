@@ -83,16 +83,18 @@ impl SedonaScalarKernel for RsSize {
         executor.execute_raster_void(|_i, raster_opt| {
             match raster_opt {
                 None => builder.append_null(),
-                Some(raster) => match self.size_type {
-                    SizeType::Width => {
-                        let width = raster.metadata().width();
-                        builder.append_value(width);
+                Some(raster) => {
+                    // A raster with no spatial (y, x) pair has no width/height,
+                    // so there is no size to report — emit NULL for this row.
+                    let Ok(metadata) = raster.metadata() else {
+                        builder.append_null();
+                        return Ok(());
+                    };
+                    match self.size_type {
+                        SizeType::Width => builder.append_value(metadata.width()),
+                        SizeType::Height => builder.append_value(metadata.height()),
                     }
-                    SizeType::Height => {
-                        let height = raster.metadata().height();
-                        builder.append_value(height);
-                    }
-                },
+                }
             }
             Ok(())
         })?;
@@ -104,10 +106,12 @@ impl SedonaScalarKernel for RsSize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::Int64Array;
+    use arrow_array::{Array, Int64Array};
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
+    use sedona_raster::builder::RasterBuilder;
     use sedona_schema::datatypes::RASTER;
+    use sedona_schema::raster::BandDataType;
     use sedona_testing::compare::assert_array_equal;
     use sedona_testing::rasters::generate_test_rasters;
     use sedona_testing::testers::ScalarUdfTester;
@@ -139,5 +143,40 @@ mod tests {
         // Check scalars
         let result = tester.invoke_array(Arc::new(rasters)).unwrap();
         assert_array_equal(&result, &expected);
+    }
+
+    #[test]
+    fn width_is_null_for_raster_without_spatial_pair() {
+        // A 1-D raster (one band with dim_names ["x"] and an empty spatial_shape,
+        // as produced by e.g. `Raster.from_numpy(arr, dim_names=["x"])`) has no
+        // width/height. RS_Width must return NULL for that row rather than panic.
+        let mut builder = RasterBuilder::new(1);
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        builder.start_raster_nd(&transform, &[], &[], None).unwrap();
+        builder
+            .start_band_nd(
+                Some("v"),
+                &["x"],
+                &[3],
+                BandDataType::UInt8,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        builder.band_data_writer().append_value([1u8, 2, 3]);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+        let array = builder.finish().unwrap();
+
+        let tester = ScalarUdfTester::new(rs_width_udf().into(), vec![RASTER]);
+        let result = tester.invoke_array(Arc::new(array)).unwrap();
+
+        let widths = result.as_any().downcast_ref::<Int64Array>().unwrap();
+        assert_eq!(widths.len(), 1);
+        assert!(
+            widths.is_null(0),
+            "RS_Width must be NULL for a raster with no spatial (y, x) pair"
+        );
     }
 }

@@ -25,6 +25,7 @@ use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::types::Edges;
 use sedona_raster::affine_transformation::to_world_coordinate;
+use sedona_raster::traits::RasterRef;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 /// RS_RasterToWorldCoordY() scalar UDF implementation
@@ -109,7 +110,13 @@ impl SedonaScalarKernel for RsCoordinateMapper {
 
             match (raster_opt, x_opt, y_opt) {
                 (Some(raster), Some(x), Some(y)) => {
-                    let (world_x, world_y) = to_world_coordinate(raster, x, y);
+                    // A raster with no spatial (y, x) pair has no geotransform, so
+                    // there is no world coordinate — emit NULL for this row.
+                    if raster.metadata().is_err() {
+                        builder.append_null();
+                        return Ok(());
+                    }
+                    let (world_x, world_y) = to_world_coordinate(raster, x, y)?;
                     match self.coord {
                         Coord::X => builder.append_value(world_x),
                         Coord::Y => builder.append_value(world_y),
@@ -170,7 +177,13 @@ impl SedonaScalarKernel for RsCoordinatePoint {
 
             match (raster_opt, x_opt, y_opt) {
                 (Some(raster), Some(x), Some(y)) => {
-                    let (world_x, world_y) = to_world_coordinate(raster, x, y);
+                    // A raster with no spatial (y, x) pair has no geotransform, so
+                    // there is no world coordinate — emit NULL for this row.
+                    if raster.metadata().is_err() {
+                        builder.append_null();
+                        return Ok(());
+                    }
+                    let (world_x, world_y) = to_world_coordinate(raster, x, y)?;
                     item[5..13].copy_from_slice(&world_x.to_le_bytes());
                     item[13..21].copy_from_slice(&world_y.to_le_bytes());
                     builder.append_value(item);

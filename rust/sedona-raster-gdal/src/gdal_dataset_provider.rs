@@ -212,7 +212,7 @@ impl GDALDatasetCache {
         raster: &R,
         gdal_mem_source: Option<&Rc<Dataset>>,
     ) -> Result<(Rc<Dataset>, Vec<Rc<Dataset>>)> {
-        let metadata = raster.metadata();
+        let metadata = raster.metadata()?;
         let bands = raster.bands();
         let num_bands = bands.len();
 
@@ -481,7 +481,7 @@ struct VrtKey {
 
 impl VrtKey {
     fn from_raster<R: RasterRef + ?Sized>(raster: &R) -> Result<Self> {
-        let metadata = raster.metadata();
+        let metadata = raster.metadata()?;
         let bands = raster.bands();
         let num_bands = bands.len();
 

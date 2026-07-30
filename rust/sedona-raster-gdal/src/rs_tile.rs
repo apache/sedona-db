@@ -296,6 +296,14 @@ impl SedonaScalarKernel for RsTile {
                 return Ok(());
             };
 
+            // A raster with no spatial (y, x) pair has no geotransform and cannot
+            // be tiled — emit a NULL row.
+            if raster.metadata().is_err() {
+                valid_list_items.append_null();
+                list_offsets.push_length(0);
+                return Ok(());
+            }
+
             let params = TileParams {
                 bands,
                 pad_with_nodata,
@@ -399,7 +407,7 @@ fn explode_raster_tiles(
         return exec_err!("RS_Tile: nodata is only meaningful with pad_with_nodata = true");
     }
 
-    let metadata = raster.metadata();
+    let metadata = raster.metadata()?;
     let width = metadata.width();
     let height = metadata.height();
     if width < 0 || height < 0 {
@@ -608,8 +616,9 @@ fn append_tile_band(
         );
     }
     let (plane_h, plane_w) = (shape[ndim - 2] as usize, shape[ndim - 1] as usize);
-    let width = raster.metadata().width() as usize;
-    let height = raster.metadata().height() as usize;
+    let metadata = raster.metadata()?;
+    let width = metadata.width() as usize;
+    let height = metadata.height() as usize;
     if plane_w != width || plane_h != height {
         return exec_err!(
             "RS_Tile: band {band_idx} spatial extent {plane_w}x{plane_h} does not match the raster {width}x{height}"

@@ -210,6 +210,12 @@ impl<Op: tg::BinaryPredicate + Send + Sync> RsSpatialPredicate<Op> {
             executor.execute_raster_wkb_crs_void(|raster_opt, maybe_wkb, geom_crs| {
                 match (raster_opt, maybe_wkb) {
                     (Some(raster), Some(geom_wkb)) => {
+                        // A raster with no spatial (y, x) pair has no footprint to
+                        // compare against — emit NULL for this row.
+                        if raster.metadata().is_err() {
+                            builder.append_null();
+                            return Ok(());
+                        }
                         raster_wkb.clear();
                         write_convexhull_wkb(raster, &mut raster_wkb)?;
 
@@ -251,6 +257,12 @@ impl<Op: tg::BinaryPredicate + Send + Sync> RsSpatialPredicate<Op> {
             executor.execute_raster_wkb_crs_void(|raster_opt, maybe_wkb, geom_crs| {
                 match (raster_opt, maybe_wkb) {
                     (Some(raster), Some(geom_wkb)) => {
+                        // A raster with no spatial (y, x) pair has no footprint to
+                        // compare against — emit NULL for this row.
+                        if raster.metadata().is_err() {
+                            builder.append_null();
+                            return Ok(());
+                        }
                         raster_wkb.clear();
                         write_convexhull_wkb(raster, &mut raster_wkb)?;
 
@@ -294,6 +306,12 @@ impl<Op: tg::BinaryPredicate + Send + Sync> RsSpatialPredicate<Op> {
             executor.execute_raster_raster_void(|_i, r0_opt, r1_opt| {
                 match (r0_opt, r1_opt) {
                     (Some(r0), Some(r1)) => {
+                        // A raster with no spatial (y, x) pair has no footprint to
+                        // compare against — emit NULL for this row.
+                        if r0.metadata().is_err() || r1.metadata().is_err() {
+                            builder.append_null();
+                            return Ok(());
+                        }
                         wkb0.clear();
                         wkb1.clear();
                         write_convexhull_wkb(r0, &mut wkb0)?;

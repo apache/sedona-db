@@ -23,6 +23,8 @@ kernels:
     args: [raster]
 ---
 
+Returns `NULL` for a raster with no spatial (y, x) pair.
+
 ## Examples
 
 ```sql

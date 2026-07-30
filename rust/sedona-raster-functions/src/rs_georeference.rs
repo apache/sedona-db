@@ -171,7 +171,12 @@ fn format_georeference(
     match raster_opt {
         None => builder.append_null(),
         Some(raster) => {
-            let metadata = raster.metadata();
+            // A raster with no spatial (y, x) pair has no geotransform, so there
+            // is no georeference to format — emit NULL for this row.
+            let Ok(metadata) = raster.metadata() else {
+                builder.append_null();
+                return Ok(());
+            };
             let scale_x = metadata.scale_x();
             let scale_y = metadata.scale_y();
             let skew_x = metadata.skew_x();

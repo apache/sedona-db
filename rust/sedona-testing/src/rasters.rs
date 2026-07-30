@@ -436,8 +436,8 @@ pub fn assert_raster_arrays_equal(
 /// Compare two rasters for equality
 pub fn assert_raster_equal(raster1: &impl RasterRef, raster2: &impl RasterRef) {
     // Compare metadata
-    let meta1 = raster1.metadata();
-    let meta2 = raster2.metadata();
+    let meta1 = raster1.metadata().unwrap();
+    let meta2 = raster2.metadata().unwrap();
     assert_eq!(meta1.width(), meta2.width(), "Raster widths do not match");
     assert_eq!(
         meta1.height(),
@@ -586,7 +586,7 @@ mod tests {
 
         for i in 0..count {
             let raster = raster_array.get(i).unwrap();
-            let metadata = raster.metadata();
+            let metadata = raster.metadata().unwrap();
             assert_eq!(metadata.width(), i as i64 + 1);
             assert_eq!(metadata.height(), i as i64 + 2);
             assert_eq!(metadata.upper_left_x(), i as f64 + 1.0);
@@ -630,7 +630,7 @@ mod tests {
         assert_eq!(raster_array.len(), 16); // 4x4 tiles
         for i in 0..16 {
             let raster = raster_array.get(i).unwrap();
-            let metadata = raster.metadata();
+            let metadata = raster.metadata().unwrap();
             assert_eq!(metadata.width(), 64);
             assert_eq!(metadata.height(), 64);
             assert_eq!(metadata.upper_left_x(), ((i % 4) * 64) as f64);
@@ -723,7 +723,7 @@ mod tests {
         assert_eq!(raster_array.len(), 1);
 
         let raster = raster_array.get(0).unwrap();
-        let metadata = raster.metadata();
+        let metadata = raster.metadata().unwrap();
         assert_eq!(metadata.width(), 2);
         assert_eq!(metadata.height(), 2);
         assert_eq!(metadata.upper_left_x(), 10.0);

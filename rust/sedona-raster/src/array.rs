@@ -729,7 +729,7 @@ mod tests {
         assert!(!rasters.is_empty());
 
         let raster = rasters.get(0).unwrap();
-        let metadata = raster.metadata();
+        let metadata = raster.metadata().unwrap();
 
         assert_eq!(metadata.width(), 10);
         assert_eq!(metadata.height(), 10);
@@ -1041,7 +1041,7 @@ mod tests {
         assert_eq!(dyn_r.bands().len(), 2);
 
         // metadata() shim: concrete RasterMetadata/BandMetadata values.
-        let m = r.metadata();
+        let m = r.metadata().unwrap();
         assert_eq!(m.width(), 3);
         assert_eq!(m.height(), 2);
         assert_eq!(m.upper_left_x(), 0.0);

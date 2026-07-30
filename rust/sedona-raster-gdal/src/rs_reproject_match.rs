@@ -170,6 +170,13 @@ impl SedonaScalarKernel for RsReprojectMatch {
                     return Ok(());
                 };
 
+                // A raster with no spatial (y, x) pair has no geotransform and
+                // cannot be reprojected or matched against — emit NULL for this row.
+                if raster.metadata().is_err() || reference.metadata().is_err() {
+                    builder.append_null()?;
+                    return Ok(());
+                }
+
                 let alg = parse_resample_algorithm(algorithm, "RS_ReprojectMatch")?;
                 reproject_match(
                     gdal,
@@ -387,7 +394,7 @@ mod tests {
         };
         let rasters = sedona_raster::array::RasterStructArray::try_new(struct_array).unwrap();
         let out = rasters.get(0).unwrap();
-        let m = out.metadata();
+        let m = out.metadata().unwrap();
 
         assert_eq!(out.crs(), Some("EPSG:3857"));
         assert_eq!(m.width(), 4);

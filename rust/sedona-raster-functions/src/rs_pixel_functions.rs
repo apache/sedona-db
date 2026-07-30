@@ -92,9 +92,16 @@ impl SedonaScalarKernel for RsPixelAsPoint {
             let row_y = row_iter.next().unwrap();
             match (raster_opt, col_x, row_y) {
                 (Some(raster), Some(col_x), Some(row_y)) => {
+                    // A raster with no spatial (y, x) pair has no geotransform, so
+                    // there is no pixel geometry — emit NULL for this row.
+                    if raster.metadata().is_err() {
+                        builder.append_null();
+                        crs_builder.append_null();
+                        return Ok(());
+                    }
                     // Convert to 0-based for the affine transform
                     let (wx, wy) =
-                        to_world_coordinate(raster, (col_x - 1) as i64, (row_y - 1) as i64);
+                        to_world_coordinate(raster, (col_x - 1) as i64, (row_y - 1) as i64)?;
 
                     write_wkb_point(&mut builder, (wx, wy))
                         .map_err(|e| DataFusionError::External(e.into()))?;
@@ -187,11 +194,18 @@ impl SedonaScalarKernel for RsPixelAsCentroid {
             let row_y = row_iter.next().unwrap();
             match (raster_opt, col_x, row_y) {
                 (Some(raster), Some(col_x), Some(row_y)) => {
+                    // A raster with no spatial (y, x) pair has no geotransform, so
+                    // there is no pixel geometry — emit NULL for this row.
+                    let Ok(metadata) = raster.metadata() else {
+                        builder.append_null();
+                        crs_builder.append_null();
+                        return Ok(());
+                    };
                     // Centroid: use 0.5 offset within the pixel
                     let grid_x = (col_x - 1) as f64 + 0.5;
                     let grid_y = (row_y - 1) as f64 + 0.5;
 
-                    let affine = AffineMatrix::from_metadata(&raster.metadata());
+                    let affine = AffineMatrix::from_metadata(&metadata);
                     let (wx, wy) = affine.transform(grid_x, grid_y);
 
                     write_wkb_point(&mut builder, (wx, wy))
@@ -286,16 +300,23 @@ impl SedonaScalarKernel for RsPixelAsPolygon {
             let row_y = row_iter.next().unwrap();
             match (raster_opt, col_x, row_y) {
                 (Some(raster), Some(col_x), Some(row_y)) => {
+                    // A raster with no spatial (y, x) pair has no geotransform, so
+                    // there is no pixel geometry — emit NULL for this row.
+                    if raster.metadata().is_err() {
+                        builder.append_null();
+                        crs_builder.append_null();
+                        return Ok(());
+                    }
                     let col_x = col_x as i64;
                     let row_y = row_y as i64;
 
                     // 4 corners in 0-based grid coords, then transformed to world coords
                     // Upper-left: (colX-1, rowY-1), Upper-right: (colX, rowY-1)
                     // Lower-right: (colX, rowY), Lower-left: (colX-1, rowY)
-                    let ul = to_world_coordinate(raster, col_x - 1, row_y - 1);
-                    let ur = to_world_coordinate(raster, col_x, row_y - 1);
-                    let lr = to_world_coordinate(raster, col_x, row_y);
-                    let ll = to_world_coordinate(raster, col_x - 1, row_y);
+                    let ul = to_world_coordinate(raster, col_x - 1, row_y - 1)?;
+                    let ur = to_world_coordinate(raster, col_x, row_y - 1)?;
+                    let lr = to_world_coordinate(raster, col_x, row_y)?;
+                    let ll = to_world_coordinate(raster, col_x - 1, row_y)?;
 
                     write_wkb_polygon(&mut builder, [ul, ur, lr, ll, ul].into_iter())
                         .map_err(|e| DataFusionError::External(e.into()))?;

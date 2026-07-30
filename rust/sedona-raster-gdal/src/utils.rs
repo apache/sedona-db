@@ -774,10 +774,10 @@ mod tests {
         let raster = raster_struct.get(0).unwrap();
         let band = raster.bands().band(1).unwrap();
 
-        assert_eq!(raster.metadata().width(), 3);
-        assert_eq!(raster.metadata().height(), 2);
-        assert_eq!(raster.metadata().upper_left_x(), 1.5);
-        assert_eq!(raster.metadata().upper_left_y(), 4.5);
+        assert_eq!(raster.metadata().unwrap().width(), 3);
+        assert_eq!(raster.metadata().unwrap().height(), 2);
+        assert_eq!(raster.metadata().unwrap().upper_left_x(), 1.5);
+        assert_eq!(raster.metadata().unwrap().upper_left_y(), 4.5);
         assert!(raster.crs().is_some());
         assert_eq!(band.metadata().storage_type().unwrap(), StorageType::InDb);
         assert_eq!(band.metadata().data_type().unwrap(), BandDataType::UInt8);
@@ -797,8 +797,8 @@ mod tests {
         assert_eq!(raster_struct.len(), 1);
 
         let raster = raster_struct.get(0).unwrap();
-        assert_eq!(raster.metadata().width(), 10);
-        assert_eq!(raster.metadata().height(), 10);
+        assert_eq!(raster.metadata().unwrap().width(), 10);
+        assert_eq!(raster.metadata().unwrap().height(), 10);
         assert!(raster.crs().is_some());
 
         let band = raster.bands().band(1).unwrap();
@@ -875,10 +875,10 @@ mod tests {
         let raster = raster_struct.get(0).unwrap();
         let band = raster.bands().band(1).unwrap();
 
-        assert_eq!(raster.metadata().width(), 2);
-        assert_eq!(raster.metadata().height(), 2);
-        assert_eq!(raster.metadata().upper_left_x(), 100.0);
-        assert_eq!(raster.metadata().upper_left_y(), 200.0);
+        assert_eq!(raster.metadata().unwrap().width(), 2);
+        assert_eq!(raster.metadata().unwrap().height(), 2);
+        assert_eq!(raster.metadata().unwrap().upper_left_x(), 100.0);
+        assert_eq!(raster.metadata().unwrap().upper_left_y(), 200.0);
         assert_eq!(band.metadata().data_type().unwrap(), BandDataType::UInt64);
         assert_eq!(
             band.metadata().nodata_value().unwrap(),
@@ -1067,13 +1067,13 @@ mod tests {
         assert_eq!(raster_struct.len(), 2);
 
         let first = raster_struct.get(0).unwrap();
-        assert_eq!(first.metadata().width(), 3);
-        assert_eq!(first.metadata().height(), 2);
+        assert_eq!(first.metadata().unwrap().width(), 3);
+        assert_eq!(first.metadata().unwrap().height(), 2);
         assert_eq!(first.bands().len(), 1);
 
         let second = raster_struct.get(1).unwrap();
-        assert_eq!(second.metadata().width(), 2);
-        assert_eq!(second.metadata().height(), 2);
+        assert_eq!(second.metadata().unwrap().width(), 2);
+        assert_eq!(second.metadata().unwrap().height(), 2);
         assert_eq!(second.bands().len(), 2);
     }
 }

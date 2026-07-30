@@ -468,6 +468,12 @@ impl SedonaScalarKernel for RsAsGeoTiff {
                         return Ok(());
                     }
                 };
+                // A raster with no spatial (y, x) pair has no geotransform and
+                // cannot be written as a GeoTIFF — emit NULL for this row.
+                if raster.metadata().is_err() {
+                    builder.append_null();
+                    return Ok(());
+                }
 
                 let compression = match compression_opt {
                     Some(comp_str) => Some(CompressionType::parse(comp_str).ok_or_else(|| {
@@ -632,8 +638,14 @@ mod tests {
             let rt = RasterStructArray::try_new(&roundtrip).unwrap();
             let rt_raster = rt.get(0).unwrap();
 
-            assert_eq!(rt_raster.metadata().width(), raster.metadata().width());
-            assert_eq!(rt_raster.metadata().height(), raster.metadata().height());
+            assert_eq!(
+                rt_raster.metadata().unwrap().width(),
+                raster.metadata().unwrap().width()
+            );
+            assert_eq!(
+                rt_raster.metadata().unwrap().height(),
+                raster.metadata().unwrap().height()
+            );
             assert_eq!(rt_raster.bands().len(), raster.bands().len());
             // Pixel values must survive too — this would catch predictor or
             // compression corruption that dimension checks cannot.

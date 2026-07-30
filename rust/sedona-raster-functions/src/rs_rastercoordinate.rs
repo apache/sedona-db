@@ -25,6 +25,7 @@ use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::types::Edges;
 use sedona_raster::affine_transformation::to_raster_coordinate;
+use sedona_raster::traits::RasterRef;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 /// RS_WorldToRasterCoordY() scalar UDF documentation
@@ -109,6 +110,12 @@ impl SedonaScalarKernel for RsCoordinateMapper {
 
             match (raster_opt, x_opt, y_opt) {
                 (Some(raster), Some(x), Some(y)) => {
+                    // A raster with no spatial (y, x) pair has no geotransform, so
+                    // there is no pixel coordinate — emit NULL for this row.
+                    if raster.metadata().is_err() {
+                        builder.append_null();
+                        return Ok(());
+                    }
                     let (raster_x, raster_y) = to_raster_coordinate(raster, x, y)?;
                     match self.coord {
                         Coord::X => builder.append_value(raster_x),
@@ -170,6 +177,12 @@ impl SedonaScalarKernel for RsCoordinatePoint {
 
             match (raster_opt, x_opt, y_opt) {
                 (Some(raster), Some(world_x), Some(world_y)) => {
+                    // A raster with no spatial (y, x) pair has no geotransform, so
+                    // there is no pixel coordinate — emit NULL for this row.
+                    if raster.metadata().is_err() {
+                        builder.append_null();
+                        return Ok(());
+                    }
                     let (raster_x, raster_y) = to_raster_coordinate(raster, world_x, world_y)?;
                     item[5..13].copy_from_slice(&(raster_x as f64).to_le_bytes());
                     item[13..21].copy_from_slice(&(raster_y as f64).to_le_bytes());

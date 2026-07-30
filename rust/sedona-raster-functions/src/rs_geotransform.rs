@@ -162,10 +162,15 @@ impl SedonaScalarKernel for RsGeoTransform {
             match raster_opt {
                 None => builder.append_null(),
                 Some(raster) => {
-                    let metadata = raster.metadata();
+                    // A raster with no spatial (y, x) pair has no geotransform,
+                    // so there is nothing to report — emit NULL for this row.
+                    let Ok(metadata) = raster.metadata() else {
+                        builder.append_null();
+                        return Ok(());
+                    };
                     match self.param {
                         GeoTransformParam::Rotation => {
-                            let rotation = rotation(raster);
+                            let rotation = rotation(raster)?;
                             builder.append_value(rotation);
                         }
                         GeoTransformParam::ScaleX => builder.append_value(metadata.scale_x()),

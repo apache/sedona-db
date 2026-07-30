@@ -410,25 +410,24 @@ pub trait RasterRef {
     fn transform(&self) -> &[f64];
 
     /// Eagerly-computed concrete metadata view (width, height, geotransform
-    /// scalars). Mirrors the pre-N-D `RasterRef::metadata()` accessor.
+    /// scalars).
     ///
-    /// Panics if `spatial_shape` lacks width/height or `transform` is the
-    /// wrong length — those are corrupt-schema cases that error cleanly
-    /// through the `width()`/`height()` trait methods, but the metadata
-    /// accessor predates that contract and is kept infallible for caller
-    /// ergonomics.
-    fn metadata(&self) -> RasterMetadata {
-        let width = self
-            .width()
-            .expect("raster has no width (spatial_shape missing); use width()? for error handling");
-        let height = self
-            .height()
-            .expect("raster has no height; use height()? for error handling");
+    /// Returns an error for a raster with no spatial (y, x) pair: a raster
+    /// whose `spatial_shape` lacks width/height (e.g. a 1-D raster) has no
+    /// geotransform, and a raster whose `transform` is not 6 elements is a
+    /// corrupt-schema case. These route through the same `width()`/`height()`
+    /// contract rather than panicking.
+    fn metadata(&self) -> Result<RasterMetadata, ArrowError> {
+        let width = self.width()?;
+        let height = self.height()?;
         let t = self.transform();
         if t.len() != 6 {
-            panic!("transform must be 6 elements, got {}", t.len());
+            return Err(ArrowError::InvalidArgumentError(format!(
+                "transform must be 6 elements, got {}",
+                t.len()
+            )));
         }
-        RasterMetadata {
+        Ok(RasterMetadata {
             width,
             height,
             upperleft_x: t[0],
@@ -437,7 +436,7 @@ pub trait RasterRef {
             upperleft_y: t[3],
             skew_y: t[4],
             scale_y: t[5],
-        }
+        })
     }
 
     /// Spatial dimension names, in order (today `["x","y"]`; a future Z phase

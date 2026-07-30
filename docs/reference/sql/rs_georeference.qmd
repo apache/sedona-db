@@ -39,6 +39,8 @@ kernels:
         rasters too.
 ---
 
+Returns `NULL` for a raster with no spatial (y, x) pair.
+
 ## Examples
 
 ```sql

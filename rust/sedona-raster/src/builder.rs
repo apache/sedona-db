@@ -955,7 +955,7 @@ mod tests {
         assert!(!rasters.is_empty());
 
         let raster = rasters.get(0).unwrap();
-        let metadata = raster.metadata();
+        let metadata = raster.metadata().unwrap();
 
         assert_eq!(metadata.width(), 10);
         assert_eq!(metadata.height(), 10);
@@ -1104,7 +1104,7 @@ mod tests {
         let source_raster = iterator.get(0).unwrap();
 
         target_builder
-            .start_raster(&source_raster.metadata(), source_raster.crs())
+            .start_raster(&source_raster.metadata().unwrap(), source_raster.crs())
             .unwrap();
 
         // Add new band data while preserving original metadata
@@ -1131,7 +1131,7 @@ mod tests {
         // Verify the metadata was copied correctly
         let target_iterator = RasterStructArray::try_new(&target_array).unwrap();
         let target_raster = target_iterator.get(0).unwrap();
-        let target_metadata = target_raster.metadata();
+        let target_metadata = target_raster.metadata().unwrap();
 
         // All metadata should match the original
         assert_eq!(target_metadata.width(), 42);

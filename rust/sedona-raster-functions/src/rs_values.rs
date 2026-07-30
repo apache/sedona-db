@@ -164,6 +164,12 @@ impl RsValues {
                         return Ok(());
                     }
                 };
+                // A raster with no spatial (y, x) pair has no geotransform to
+                // locate the points against — emit NULL for this row.
+                let Ok(metadata) = raster.metadata() else {
+                    list_builder.append_null();
+                    return Ok(());
+                };
 
                 // Resolve the band to sample. An explicit band column drives it
                 // (a NULL element yields a NULL row); with no band argument it
@@ -192,7 +198,7 @@ impl RsValues {
                 let nodata = band
                     .nodata_as_f64()
                     .map_err(|e| exec_datafusion_err!("RS_Values: {e}"))?;
-                let affine = AffineMatrix::from_metadata(&raster.metadata());
+                let affine = AffineMatrix::from_metadata(&metadata);
 
                 // Sample each sub-point in one pass: the visitor transforms
                 // each coordinate into the raster CRS in place, so there is no
@@ -247,6 +253,12 @@ impl RsValues {
         }
         let raster = rasters.get(0)?;
 
+        // A raster with no spatial (y, x) pair has no geotransform, so no point
+        // can be located against it — every output is NULL.
+        let Ok(metadata) = raster.metadata() else {
+            return all_null(&executor);
+        };
+
         // Band selection: a missing band argument (default band 1, single-band
         // rasters only) or a scalar band is constant for the batch and lets us
         // hoist the band buffer; a band column is resolved per row. A NULL scalar
@@ -280,7 +292,7 @@ impl RsValues {
             .transpose()?;
 
         // Affine transform and raster CRS, resolved once for all rows.
-        let affine = AffineMatrix::from_metadata(&raster.metadata());
+        let affine = AffineMatrix::from_metadata(&metadata);
         let raster_crs = resolve_crs(raster.crs())?;
 
         let mut geom = executor.make_geom_wkb_crs_accessor(1)?;

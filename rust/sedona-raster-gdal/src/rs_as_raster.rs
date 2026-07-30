@@ -205,6 +205,12 @@ impl SedonaScalarKernel for RsAsRaster {
                         return Ok(());
                     }
                 };
+                // A reference raster with no spatial (y, x) pair has no
+                // geotransform to rasterize onto — emit NULL for this row.
+                if raster.metadata().is_err() {
+                    builder.append_null()?;
+                    return Ok(());
+                }
                 let geom_wkb = match geom_opt {
                     Some(geom_wkb) => geom_wkb,
                     None => {
@@ -413,7 +419,7 @@ fn as_raster(
     nodata_value: Option<f64>,
     use_geometry_extent: bool,
 ) -> Result<(RasterMetadata, BandMetadata, Vec<u8>)> {
-    let ref_md = reference_raster.metadata();
+    let ref_md = reference_raster.metadata()?;
 
     if ref_md.skew_x() != 0.0 || ref_md.skew_y() != 0.0 {
         return exec_err!(
@@ -656,7 +662,7 @@ mod tests {
     fn load_reference_raster() -> RasterMetadata {
         let raster_array = reference_raster_spec().build();
         let raster_struct = RasterStructArray::try_new(&raster_array).unwrap();
-        raster_struct.get(0).unwrap().metadata()
+        raster_struct.get(0).unwrap().metadata().unwrap()
     }
 
     #[test]
@@ -707,7 +713,7 @@ mod tests {
         with_gdal(|gdal| {
             let raster_struct = RasterStructArray::try_new(&raster_array).unwrap();
             let raster = raster_struct.get(0).unwrap();
-            let md = raster.metadata();
+            let md = raster.metadata().unwrap();
 
             let wkt = format!(
                 "POLYGON(({x0} {y1}, {x0} {y0}, {x1} {y0}, {x1} {y1}, {x0} {y1}))",
@@ -748,7 +754,7 @@ mod tests {
         with_gdal(|gdal| {
             let raster_struct = RasterStructArray::try_new(&raster_array).unwrap();
             let raster = raster_struct.get(0).unwrap();
-            let md = raster.metadata();
+            let md = raster.metadata().unwrap();
 
             let wkt = format!(
                 "POLYGON(({x0} {y1}, {x0} {y0}, {x1} {y0}, {x1} {y1}, {x0} {y1}))",

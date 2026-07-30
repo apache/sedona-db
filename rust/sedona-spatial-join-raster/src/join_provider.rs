@@ -231,7 +231,12 @@ impl RasterGeometryArrayFactory {
         builder: &mut BinaryBuilder,
     ) -> Result<Bounds2D> {
         let raster_crs = resolve_crs(raster.crs())?;
-        let corners = raster_footprint_corners(raster);
+        // A raster with no spatial (y, x) pair has no footprint — treat it as a
+        // null footprint (no matches), mirroring the un-reprojectable-footprint path.
+        let Ok(corners) = raster_footprint_corners(raster) else {
+            builder.append_null();
+            return Ok(Bounds2D::empty());
+        };
 
         match (raster_crs.as_deref(), self.target_crs.as_deref()) {
             // No CRS on either side, or identical CRS: compare directly. The
