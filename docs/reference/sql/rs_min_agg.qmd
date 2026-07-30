@@ -1,0 +1,42 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: RS_Min_Agg
+description: An aggregate function that computes the pixel-wise minimum across a group of rasters.
+kernels:
+  - returns: raster
+    args: [raster]
+---
+
+## Description
+
+An aggregate function that computes the pixel-wise minimum raster across all rasters in a group. Every raster
+in a group must share the same band count, dimension names, shape, data type, and nodata value.
+
+A pixel equal to a band's nodata value is treated as absent rather than as a comparable number: the other
+raster's value wins outright, and a pixel that is nodata in every raster in the group stays nodata.
+
+## Examples
+
+```sql
+SELECT RS_Min_Agg(raster) FROM (
+    VALUES
+        (RS_Example()),
+        (RS_Example())
+) AS t(raster);
+```
