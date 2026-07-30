@@ -58,10 +58,13 @@ class Raster:
             crs: The coordinate reference system. Can be any value accepted by
                 geoarrow.types.type_spec (e.g., string, pyproj.CRS).
             dim_names: Names of the dimensions. Defaults to `["y", "x"]` for a 2-D
-                shape; required when the shape has more than two dimensions.
+                shape; required when the shape has more than two dimensions, or
+                is 1-D (no default dimension name is assumed).
 
         Returns:
             A new Raster instance with a single band referencing the external data.
+            A shape with fewer than two dimensions has no spatial `(y, x)` pair;
+            `width`/`height` are `None` for such a raster.
 
         Examples:
             >>> raster = Raster.lazy("s3://bucket/image.tif", (1024, 2048), "uint8")
@@ -69,10 +72,13 @@ class Raster:
             ...     "s3://bucket/cube.zarr", (12, 1024, 2048), "float32",
             ...     dim_names=["time", "y", "x"],
             ... )
+            >>> series = Raster.lazy(
+            ...     "s3://bucket/series.zarr", (365,), "float32", dim_names=["time"],
+            ... )
         """
         shape = list(shape)
-        if len(shape) < 2:
-            raise ValueError("lazy() requires at least two (y, x) dimensions")
+        if len(shape) < 1:
+            raise ValueError("lazy() requires at least one dimension")
         dim_names = _resolve_dim_names(len(shape), dim_names)
 
         dtype = dtype.lower()
@@ -107,19 +113,24 @@ class Raster:
 
         Args:
             array: The pixel data. The trailing two axes are the spatial `(y, x)`
-                pair; any leading axes are extra (e.g. time) dimensions. The dtype
-                must be a supported raster type (uint8, int16, float32, ...).
+                pair; any leading axes are extra (e.g. time) dimensions. A 1-D
+                array has no spatial pair at all. The dtype must be a supported
+                raster type (uint8, int16, float32, ...).
             dim_names: Names of the dimensions. Defaults to `["y", "x"]` for a 2-D
-                array; required when the array has more than two dimensions.
+                array; required when the array has more than two dimensions, or
+                is 1-D (no default dimension name is assumed).
             crs: The coordinate reference system (any value accepted by
-                geoarrow.types.type_spec).
+                geoarrow.types.type_spec). Not meaningful for a 1-D array (no
+                spatial dims to reference); pass `None` in that case.
             nodata: Optional nodata sentinel, packed in the array's dtype.
             transform: Optional GDAL-order geotransform
                 `[origin_x, scale_x, skew_x, origin_y, skew_y, scale_y]`;
-                defaults to a north-up identity.
+                defaults to a north-up identity. Not meaningful for a 1-D array.
 
         Returns:
-            A new Raster instance with a single in-database band.
+            A new Raster instance with a single in-database band. A 1-D array
+            has no spatial `(y, x)` pair; `width`/`height` are `None` for such
+            a raster.
 
         Examples:
             >>> import numpy as np
@@ -127,11 +138,14 @@ class Raster:
             ...     np.arange(2 * 3 * 4, dtype="uint8").reshape(2, 3, 4),
             ...     dim_names=["time", "y", "x"],
             ... )
+            >>> series = Raster.from_numpy(
+            ...     np.arange(365, dtype="float32"), dim_names=["time"],
+            ... )
         """
         shape = list(array.shape)
-        if len(shape) < 2:
+        if len(shape) < 1:
             raise ValueError(
-                "from_numpy() requires an array with at least two (y, x) dimensions"
+                "from_numpy() requires an array with at least one dimension"
             )
         dim_names = _resolve_dim_names(len(shape), dim_names)
 
@@ -180,14 +194,18 @@ class Raster:
         return gat.type_spec(crs=self._py_field("crs")).crs
 
     @property
-    def width(self) -> int:
-        """The width of this raster in pixels."""
-        return self._py_field("spatial_shape")[0]
+    def width(self) -> Optional[int]:
+        """The width of this raster in pixels, or `None` if it has no spatial
+        `(y, x)` pair (a raster built from a 1-D array)."""
+        spatial_shape = self._py_field("spatial_shape")
+        return spatial_shape[0] if len(spatial_shape) >= 2 else None
 
     @property
-    def height(self) -> int:
-        """The height of this raster in pixels."""
-        return self._py_field("spatial_shape")[1]
+    def height(self) -> Optional[int]:
+        """The height of this raster in pixels, or `None` if it has no spatial
+        `(y, x)` pair (a raster built from a 1-D array)."""
+        spatial_shape = self._py_field("spatial_shape")
+        return spatial_shape[1] if len(spatial_shape) >= 2 else None
 
     @property
     def transform(self) -> List[float]:
@@ -226,7 +244,11 @@ class Raster:
 
     def __repr__(self) -> str:
         """Return a string representation of this raster."""
-        return f"<Raster {self.width}x{self.height}, {len(self.bands)} band(s)>"
+        bands = self.bands
+        if self.width is None or self.height is None:
+            shape = bands[0].source_shape if bands else ()
+            return f"<Raster shape={shape}, {len(bands)} band(s)>"
+        return f"<Raster {self.width}x{self.height}, {len(bands)} band(s)>"
 
     def __arrow_c_array__(self, requested_schema=None):
         """Implement the array protocol so this works with lit()"""
@@ -657,7 +679,23 @@ def _build_raster(
 ):
     """Assemble a single-band raster from its components, shared by the
     `Raster.lazy` (OutDb) and `Raster.from_numpy` (InDb) constructors. The
-    trailing two `dim_names`/`shape` entries are the spatial `(y, x)` axes."""
+    trailing two `dim_names`/`shape` entries are the spatial `(y, x)` axes,
+    when there are at least two -- a 1-D raster has no spatial pair at all."""
+    if len(dim_names) >= 2:
+        # spatial_dims / spatial_shape reference the trailing (y, x) axes, in x,y order.
+        y_name, x_name = dim_names[-2], dim_names[-1]
+        height, width = shape[-2], shape[-1]
+        spatial_dims = [x_name, y_name]
+        spatial_shape = [width, height]
+    else:
+        if crs is not None or transform is not None:
+            raise ValueError(
+                "crs/transform require a spatial (y, x) pair; pass a 2-D (or "
+                "higher) shape, or omit crs/transform"
+            )
+        spatial_dims = []
+        spatial_shape = []
+
     if crs is not None:
         crs = gat.type_spec(crs=crs).crs.to_json()
     nodata_bytes = None
@@ -665,10 +703,6 @@ def _build_raster(
         nodata_bytes = struct.pack(
             "<" + BAND_DATA_TYPE_STRUCT_CHARS[data_type_id], nodata
         )
-
-    # spatial_dims / spatial_shape reference the trailing (y, x) axes, in x,y order.
-    y_name, x_name = dim_names[-2], dim_names[-1]
-    height, width = shape[-2], shape[-1]
 
     # Build band struct array with zero-copy data field
     band_data_array = _wrap_data_zero_copy(data)
@@ -725,10 +759,8 @@ def _build_raster(
         [
             pa.array([crs], type=pa.string_view()),  # crs
             pa.array([transform_values], type=pa.list_(pa.float64())),  # transform
-            pa.array(
-                [[x_name, y_name]], type=pa.list_(pa.string_view())
-            ),  # spatial_dims
-            pa.array([[width, height]], type=pa.list_(pa.int64())),  # spatial_shape
+            pa.array([spatial_dims], type=pa.list_(pa.string_view())),  # spatial_dims
+            pa.array([spatial_shape], type=pa.list_(pa.int64())),  # spatial_shape
             bands_list,  # bands
         ],
         names=["crs", "transform", "spatial_dims", "spatial_shape", "bands"],

@@ -228,9 +228,23 @@ def test_raster_lazy_with_crs():
 
 
 def test_raster_lazy_invalid_shape():
-    # Fewer than two dimensions has no spatial (y, x) pair.
-    with pytest.raises(ValueError, match="at least two"):
+    # Zero dimensions is rejected outright.
+    with pytest.raises(ValueError, match="at least one"):
+        Raster.lazy(uri="s3://bucket/data.zarr", shape=(), dtype="UInt8")
+
+    # A 1-D shape has no spatial (y, x) pair, so every axis must still be named.
+    with pytest.raises(ValueError, match="dim_names is required"):
         Raster.lazy(uri="s3://bucket/data.zarr", shape=(10,), dtype="UInt8")
+
+    # crs/transform are meaningless without a spatial (y, x) pair.
+    with pytest.raises(ValueError, match="require a spatial"):
+        Raster.lazy(
+            uri="s3://bucket/data.zarr",
+            shape=(10,),
+            dtype="UInt8",
+            dim_names=["time"],
+            crs="EPSG:4326",
+        )
 
     # More than two dimensions is allowed, but every axis must be named.
     with pytest.raises(ValueError, match="dim_names is required"):
@@ -244,6 +258,25 @@ def test_raster_lazy_invalid_shape():
             dtype="UInt8",
             dim_names=["y", "x"],
         )
+
+
+def test_raster_lazy_1d():
+    # A 1-D raster has no spatial (y, x) pair -- width/height are None.
+    r = Raster.lazy(
+        uri="s3://bucket/series.zarr",
+        shape=(365,),
+        dtype="float32",
+        format="zarr",
+        dim_names=["time"],
+    )
+
+    b = r.bands[0]
+    assert b.source_shape == (365,)
+    assert b.data_type == "float32"
+    assert b.outdb_uri == "s3://bucket/series.zarr"
+    assert len(b.source_data) == 0
+    assert r.width is None
+    assert r.height is None
 
 
 def test_raster_lazy_nd():
@@ -293,9 +326,40 @@ def test_raster_from_numpy_nd_with_crs():
     np.testing.assert_array_equal(b.to_numpy(), arr)
 
 
+def test_raster_from_numpy_1d():
+    # A 1-D array has no spatial (y, x) pair -- width/height are None.
+    arr = np.arange(24, dtype="uint8")
+    r = Raster.from_numpy(arr, dim_names=["time"])
+
+    assert r.width is None
+    assert r.height is None
+    b = r.bands[0]
+    assert b.source_shape == (24,)
+    assert b.data_type == "uint8"
+    np.testing.assert_array_equal(b.to_numpy(), arr)
+    assert np.shares_memory(b.to_numpy(), arr)
+
+
 def test_raster_from_numpy_invalid_shape():
-    with pytest.raises(ValueError, match="at least two"):
+    # Zero dimensions is rejected outright.
+    with pytest.raises(ValueError, match="at least one"):
+        Raster.from_numpy(np.array(4, dtype="uint8"))
+
+    # A 1-D array has no spatial (y, x) pair, so dim_names must be explicit.
+    with pytest.raises(ValueError, match="dim_names is required"):
         Raster.from_numpy(np.arange(4, dtype="uint8"))
+
+    # crs/transform are meaningless without a spatial (y, x) pair.
+    with pytest.raises(ValueError, match="require a spatial"):
+        Raster.from_numpy(
+            np.arange(4, dtype="uint8"), dim_names=["time"], crs="EPSG:4326"
+        )
+    with pytest.raises(ValueError, match="require a spatial"):
+        Raster.from_numpy(
+            np.arange(4, dtype="float32"),
+            dim_names=["time"],
+            transform=[0.0, 1.0, 0.0, 0.0, 0.0, -1.0],
+        )
 
     with pytest.raises(ValueError, match="dim_names is required"):
         Raster.from_numpy(np.zeros((2, 2, 3), dtype="uint8"))
