@@ -15,29 +15,25 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""RS_AsRaster parity.
+"""RS_AsRaster parity against a rasterio reference.
 
-The rasterio comparator is `rasterio.features.rasterize` on the same grid,
-filling outside the geometry with the subject's policy (SedonaDB
-initializes the grid with the nodata value, 0 when none is given). Two
-Sedona Spark deviations are on the ledger rather than shrinking the matrix:
-Spark burns outside pixels to 0 regardless of nodata (metadata-only nodata,
-apache/sedona#3112), and its scanline rasterizer mis-places x-intercepts on
-non-square pixels so some center-inside pixels along diagonal edges are
-dropped under the centroid rule where GDAL (SedonaDB, rasterio) burns them
-(apache/sedona#3111). Geometries stay inside the reference raster's extent;
-behavior for overhanging geometry envelopes is not compared here.
+The rasterio reference is `rasterio.features.rasterize` on the same grid,
+filling outside the geometry with SedonaDB's policy (the output grid is
+initialized with the nodata value, 0 when none is given). Geometries stay
+inside the reference raster's extent; behavior for overhanging geometry
+envelopes is not compared here.
 """
 
 import random
 
+import numpy as np
+import pyarrow as pa
 import pytest
 
 from sedonadb.raster_testing import (
-    Deviation,
-    SedonaSpark,
+    DecodedRaster,
     assert_decoded_equal,
-    expect_deviations,
+    decode_raster,
     random_raster_data,
     write_geotiff,
 )
@@ -59,25 +55,92 @@ GEOM_RECT = (
 # Diagonal edges make all_touched change the selection.
 GEOM_TRIANGLE = "POLYGON ((101.3 498.6, 112.4 496.9, 104.2 483.7, 101.3 498.6))"
 
-DEVIATIONS = [
-    Deviation(
-        SedonaSpark,
-        "as_raster",
-        matches=lambda p: p.get("wkt") == GEOM_TRIANGLE and not p.get("all_touched"),
-        reason="Sedona's scanline rasterizer mis-places x-intercepts on "
-        "non-square pixels and drops some center-inside pixels along "
-        "diagonal edges; GDAL burns every center-inside pixel "
-        "(https://github.com/apache/sedona/issues/3111)",
-    ),
-    Deviation(
-        SedonaSpark,
-        "as_raster",
-        matches=lambda p: p.get("nodata") not in (None, 0.0),
-        reason="Sedona Spark burns outside pixels to 0 and records nodata as "
-        "band metadata only; SedonaDB initializes the grid with the nodata "
-        "value (https://github.com/apache/sedona/issues/3112)",
-    ),
-]
+
+def _sedonadb_as_raster(
+    con,
+    geometry_wkt,
+    path,
+    pixel_type,
+    *,
+    all_touched=False,
+    burn_value=1.0,
+    nodata=None,
+    use_geometry_extent=True,
+):
+    """RS_AsRaster over table columns (arguments travel as columns so the
+    kernel runs its real array path rather than constant-folding a literal)."""
+    df = con.create_data_frame(
+        pa.table(
+            {
+                "path": pa.array([str(path)], type=pa.utf8()),
+                "wkt": pa.array([geometry_wkt], type=pa.utf8()),
+                "pixel_type": pa.array([pixel_type], type=pa.utf8()),
+                "all_touched": pa.array([all_touched], type=pa.bool_()),
+                "burn": pa.array([float(burn_value)], type=pa.float64()),
+                "nodata": pa.array(
+                    [None if nodata is None else float(nodata)], type=pa.float64()
+                ),
+                "extent": pa.array([use_geometry_extent], type=pa.bool_()),
+            }
+        )
+    )
+    result = df.select(
+        r=con.funcs.rs_asraster(
+            con.funcs.st_geomfromtext(df.wkt),
+            df.path.funcs.rs_frompath(),
+            df.pixel_type,
+            df.all_touched,
+            df.burn,
+            df.nodata,
+            df.extent,
+        )
+    ).to_arrow_table()["r"]
+    return decode_raster(result[0])
+
+
+def _rasterio_as_raster(
+    geometry_wkt,
+    path,
+    pixel_type,
+    *,
+    all_touched=False,
+    burn_value=1.0,
+    nodata=None,
+    use_geometry_extent=True,
+):
+    """Rasterize with `rasterio.features.rasterize`.
+
+    Pixels outside the geometry are filled with SedonaDB's policy: the output
+    grid is initialized with the nodata value (0 when none is given).
+    """
+    import rasterio
+    import rasterio.features
+
+    geom = shapely.from_wkt(geometry_wkt)
+    with rasterio.open(str(path)) as src:
+        if use_geometry_extent:
+            window = rasterio.features.geometry_window(src, [geom])
+            transform = src.window_transform(window)
+            shape = (int(window.height), int(window.width))
+        else:
+            transform = src.transform
+            shape = (src.height, src.width)
+
+    fill = 0.0 if nodata is None else nodata
+    for name, value in [("fill", fill), ("burn_value", burn_value)]:
+        if np.asarray(value, dtype=pixel_type) != np.asarray(value, dtype="float64"):
+            raise ValueError(
+                f"{name} {value} is not exactly representable as {pixel_type}"
+            )
+    pixels = rasterio.features.rasterize(
+        [(geom, burn_value)],
+        out_shape=shape,
+        transform=transform,
+        fill=fill,
+        all_touched=all_touched,
+        dtype=pixel_type,
+    )
+    return DecodedRaster(pixels[np.newaxis], tuple(transform.to_gdal()), [nodata])
 
 
 @pytest.fixture()
@@ -92,15 +155,12 @@ def tiff(tmp_path):
 
 
 @pytest.mark.parametrize("dtype", DTYPES)
-def test_rs_asraster_dtypes_match_comparators(
-    subject, comparator, request, tiff, dtype
-):
+def test_rs_asraster_dtypes_match_comparators(con, tiff, dtype):
     """Burn value 7 into the geometry's grid-snapped envelope for every band
     type both dialects support."""
-    expect_deviations(request, comparator, "as_raster", DEVIATIONS)
     kwargs = dict(burn_value=7.0, nodata=0.0, use_geometry_extent=True)
-    got = subject.as_raster(GEOM_RECT, tiff, dtype, **kwargs)
-    expected = comparator.as_raster(GEOM_RECT, tiff, dtype, **kwargs)
+    got = _sedonadb_as_raster(con, GEOM_RECT, tiff, dtype, **kwargs)
+    expected = _rasterio_as_raster(GEOM_RECT, tiff, dtype, **kwargs)
     assert_decoded_equal(got, expected, context=dtype)
 
 
@@ -132,30 +192,27 @@ def test_rs_asraster_dtypes_match_comparators(
     ],
 )
 def test_rs_asraster_options_match_comparators(
-    subject, comparator, request, tiff, wkt, all_touched, use_geometry_extent, nodata
+    con, tiff, wkt, all_touched, use_geometry_extent, nodata
 ):
     """all_touched toggles the selection rule, use_geometry_extent toggles
     between the snapped geometry envelope and the full reference grid, and a
-    nonzero nodata exercises the subject's nodata-fill policy. The
-    triangle-centroid and nodata-9 rows are on the Sedona Spark deviation
-    ledger."""
-    expect_deviations(request, comparator, "as_raster", DEVIATIONS)
+    nonzero nodata exercises the nodata-fill policy."""
     kwargs = dict(
         all_touched=all_touched,
         burn_value=7.0,
         nodata=nodata,
         use_geometry_extent=use_geometry_extent,
     )
-    got = subject.as_raster(wkt, tiff, "uint8", **kwargs)
-    expected = comparator.as_raster(wkt, tiff, "uint8", **kwargs)
+    got = _sedonadb_as_raster(con, wkt, tiff, "uint8", **kwargs)
+    expected = _rasterio_as_raster(wkt, tiff, "uint8", **kwargs)
     assert_decoded_equal(got, expected, context=(wkt, all_touched, use_geometry_extent))
 
 
-def test_rs_asraster_without_nodata(subject, comparator, tiff):
-    """No nodata argument: every engine burns into zeros and leaves the
-    output band without a nodata value."""
-    got = subject.as_raster(GEOM_RECT, tiff, "uint8", burn_value=7.0)
-    expected = comparator.as_raster(GEOM_RECT, tiff, "uint8", burn_value=7.0)
+def test_rs_asraster_without_nodata(con, tiff):
+    """No nodata argument: burn into zeros and leave the output band without a
+    nodata value."""
+    got = _sedonadb_as_raster(con, GEOM_RECT, tiff, "uint8", burn_value=7.0)
+    expected = _rasterio_as_raster(GEOM_RECT, tiff, "uint8", burn_value=7.0)
     assert_decoded_equal(got, expected)
     assert got.nodata == [None]
 
@@ -208,16 +265,11 @@ def _fuzz_cases(count=40, seed=31113):
     return cases
 
 
-def test_rs_asraster_fuzz_matches_comparators(subject, comparator, tmp_path):
+def test_rs_asraster_fuzz_matches_comparators(con, tmp_path):
     """Centroid-rule burns over the seeded random corpus must match on every
     grid. Only the centroid rule is fuzzed: allTouched boundary selection
     differs between rasterizers by design and is pinned by the deterministic
     cases above."""
-    if isinstance(comparator, SedonaSpark):
-        pytest.skip(
-            "Sedona Spark mis-places scanline intercepts on non-square pixels "
-            "(apache/sedona#3111); unskip when the fix ships in a release"
-        )
     for case_id, width, height, gdal_transform, wkt in _fuzz_cases():
         path = tmp_path / f"fuzz_{case_id}.tif"
         write_geotiff(
@@ -226,8 +278,8 @@ def test_rs_asraster_fuzz_matches_comparators(subject, comparator, tmp_path):
             gdal_transform=gdal_transform,
         )
         kwargs = dict(burn_value=1.0, nodata=0.0, use_geometry_extent=False)
-        got = subject.as_raster(wkt, path, "uint8", **kwargs)
-        expected = comparator.as_raster(wkt, path, "uint8", **kwargs)
+        got = _sedonadb_as_raster(con, wkt, path, "uint8", **kwargs)
+        expected = _rasterio_as_raster(wkt, path, "uint8", **kwargs)
         assert_decoded_equal(
             got, expected, context=f"case {case_id}: {gdal_transform} {wkt}"
         )
