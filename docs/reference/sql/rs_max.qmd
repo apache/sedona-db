@@ -48,5 +48,7 @@ See [RS_Max_Agg](rs_max_agg.qmd) for the equivalent aggregate across rows.
 
 ```sql
 SELECT RS_Max(RS_Example(), RS_Example());
+```
+```sql
 SELECT RS_Max(RS_Example(), RS_Example(), 2);
 ```

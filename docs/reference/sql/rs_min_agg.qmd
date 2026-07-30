@@ -52,7 +52,8 @@ SELECT RS_Min_Agg(raster) FROM (
         (RS_Example()),
         (RS_Example())
 ) AS t(raster);
-
+```
+```sql
 SELECT RS_Min_Agg(raster, 2) FROM (
     VALUES
         (RS_Example()),

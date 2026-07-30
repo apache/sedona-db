@@ -48,5 +48,7 @@ See [RS_Min_Agg](rs_min_agg.qmd) for the equivalent aggregate across rows.
 
 ```sql
 SELECT RS_Min(RS_Example(), RS_Example());
+```
+```sql
 SELECT RS_Min(RS_Example(), RS_Example(), 2);
 ```
