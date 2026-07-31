@@ -29,7 +29,7 @@ use std::sync::Arc;
 
 use sedona_schema::raster::{BandDataType, RasterSchema};
 
-use crate::traits::{BandMetadata, BandOverrides, MetadataRef, RasterRef};
+use crate::traits::{BandOverrides, RasterRef};
 use crate::view_entries::{ViewEntries, ViewEntry};
 
 /// Raster-level metadata overrides for [`RasterBuilder::start_raster_from`] and
@@ -336,27 +336,6 @@ impl RasterBuilder {
         Ok(())
     }
 
-    /// Start a 2-D raster from a `&dyn MetadataRef`. Matches the pre-N-D
-    /// signature so callers from before the refactor keep compiling without
-    /// changing argument lists.
-    pub fn start_raster(
-        &mut self,
-        metadata: &dyn MetadataRef,
-        crs: Option<&str>,
-    ) -> Result<(), ArrowError> {
-        self.start_raster_2d(
-            metadata.width(),
-            metadata.height(),
-            metadata.upper_left_x(),
-            metadata.upper_left_y(),
-            metadata.scale_x(),
-            metadata.scale_y(),
-            metadata.skew_x(),
-            metadata.skew_y(),
-            crs,
-        )
-    }
-
     /// Start a new band with explicit N-D parameters.
     ///
     /// `outdb_uri` is the *location* of the external resource (scheme is
@@ -530,33 +509,6 @@ impl RasterBuilder {
             data_type,
             nodata,
             None,
-            None,
-        )
-    }
-
-    /// Start a 2-D band from a concrete [`BandMetadata`] struct. Matches
-    /// the pre-N-D signature so callers from before the refactor keep
-    /// compiling. For OutDb bands the `outdb_url` + `outdb_band_id` are
-    /// recombined into the SedonaDB `<url>#band=N` URI convention.
-    pub fn start_band(&mut self, metadata: BandMetadata) -> Result<(), ArrowError> {
-        if self.current_width == 0 && self.current_height == 0 {
-            return Err(ArrowError::InvalidArgumentError(
-                "start_band requires prior start_raster / start_raster_2d (width and height are 0)"
-                    .into(),
-            ));
-        }
-        let outdb_uri = match (metadata.outdb_url.as_deref(), metadata.outdb_band_id) {
-            (Some(url), Some(band_id)) => Some(format!("{url}#band={band_id}")),
-            (Some(url), None) => Some(url.to_string()),
-            _ => None,
-        };
-        self.start_band_nd(
-            None,
-            &["y", "x"],
-            &[self.current_height, self.current_width],
-            metadata.datatype,
-            metadata.nodata_value.as_deref(),
-            outdb_uri.as_deref(),
             None,
         )
     }

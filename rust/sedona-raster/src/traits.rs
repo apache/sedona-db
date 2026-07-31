@@ -121,156 +121,6 @@ impl<'a> NdBuffer<'a> {
     }
 }
 
-/// Concrete raster metadata returned by `RasterRef::metadata()`.
-///
-/// Restored from the pre-N-D schema to keep callers that pattern-match on
-/// `metadata.width`, `metadata.upperleft_x`, etc. compiling. Computed
-/// eagerly from `RasterRef::transform()` and `RasterRef::spatial_shape()`.
-///
-/// Panics on construction (`metadata()`) if the raster lacks width or
-/// height — corrupt schemas error through the `width()`/`height()` trait
-/// methods directly; the metadata accessor is the convenience surface.
-#[derive(Debug, Clone)]
-pub struct RasterMetadata {
-    pub width: i64,
-    pub height: i64,
-    pub upperleft_x: f64,
-    pub upperleft_y: f64,
-    pub scale_x: f64,
-    pub scale_y: f64,
-    pub skew_x: f64,
-    pub skew_y: f64,
-}
-
-/// Pre-N-D metadata-accessor trait. Restored so callers from before the
-/// N-D refactor that write `fn foo(metadata: &dyn MetadataRef)` keep
-/// compiling. `RasterMetadata` is the canonical implementer; new code
-/// should reach for `RasterRef::width()? / height()?` instead.
-pub trait MetadataRef {
-    /// Width of the raster in pixels
-    fn width(&self) -> i64;
-    /// Height of the raster in pixels
-    fn height(&self) -> i64;
-    /// X coordinate of the upper-left corner
-    fn upper_left_x(&self) -> f64;
-    /// Y coordinate of the upper-left corner
-    fn upper_left_y(&self) -> f64;
-    /// X-direction pixel size (scale)
-    fn scale_x(&self) -> f64;
-    /// Y-direction pixel size (scale)
-    fn scale_y(&self) -> f64;
-    /// X-direction skew/rotation
-    fn skew_x(&self) -> f64;
-    /// Y-direction skew/rotation
-    fn skew_y(&self) -> f64;
-}
-
-impl MetadataRef for RasterMetadata {
-    fn width(&self) -> i64 {
-        self.width
-    }
-    fn height(&self) -> i64 {
-        self.height
-    }
-    fn upper_left_x(&self) -> f64 {
-        self.upperleft_x
-    }
-    fn upper_left_y(&self) -> f64 {
-        self.upperleft_y
-    }
-    fn scale_x(&self) -> f64 {
-        self.scale_x
-    }
-    fn scale_y(&self) -> f64 {
-        self.scale_y
-    }
-    fn skew_x(&self) -> f64 {
-        self.skew_x
-    }
-    fn skew_y(&self) -> f64 {
-        self.skew_y
-    }
-}
-
-impl RasterMetadata {
-    pub fn width(&self) -> i64 {
-        self.width
-    }
-    pub fn height(&self) -> i64 {
-        self.height
-    }
-    pub fn upper_left_x(&self) -> f64 {
-        self.upperleft_x
-    }
-    pub fn upper_left_y(&self) -> f64 {
-        self.upperleft_y
-    }
-    pub fn scale_x(&self) -> f64 {
-        self.scale_x
-    }
-    pub fn scale_y(&self) -> f64 {
-        self.scale_y
-    }
-    pub fn skew_x(&self) -> f64 {
-        self.skew_x
-    }
-    pub fn skew_y(&self) -> f64 {
-        self.skew_y
-    }
-}
-
-/// Concrete band metadata returned by `BandRef::metadata()`.
-///
-/// Restored from the pre-N-D schema. The `outdb_url` and `outdb_band_id`
-/// fields are eagerly parsed from the N-D `outdb_uri` (which carries a
-/// `#band=N` fragment in the SedonaDB convention) so callers from the
-/// pre-N-D era keep compiling against the same field names.
-#[derive(Debug, Clone)]
-pub struct BandMetadata {
-    pub nodata_value: Option<Vec<u8>>,
-    pub storage_type: sedona_schema::raster::StorageType,
-    pub datatype: BandDataType,
-    pub outdb_url: Option<String>,
-    pub outdb_band_id: Option<u32>,
-}
-
-impl BandMetadata {
-    pub fn nodata_value(&self) -> Option<&[u8]> {
-        self.nodata_value.as_deref()
-    }
-    /// Returns the storage type. Wrapped in `Result` to match main's
-    /// `BandMetadataRef::storage_type()` signature — our shim
-    /// implementation never errors, but the signature is preserved so
-    /// existing `matches!(band.metadata().storage_type(), Ok(...))`
-    /// patterns from before the N-D refactor keep compiling.
-    pub fn storage_type(&self) -> Result<sedona_schema::raster::StorageType, ArrowError> {
-        Ok(self.storage_type)
-    }
-    /// Returns the band data type. Wrapped in `Result` to match main's
-    /// `BandMetadataRef::data_type()` signature — see `storage_type()`.
-    pub fn data_type(&self) -> Result<BandDataType, ArrowError> {
-        Ok(self.datatype)
-    }
-    pub fn outdb_url(&self) -> Option<&str> {
-        self.outdb_url.as_deref()
-    }
-    pub fn outdb_band_id(&self) -> Option<u32> {
-        self.outdb_band_id
-    }
-    /// Nodata value interpreted as f64. Mirrors the pre-N-D
-    /// `BandMetadataRef::nodata_value_as_f64()`. Uses the lossless
-    /// conversion (errors on i64/u64 magnitudes > 2^53) so the shim
-    /// surface picks up the same correctness fix as
-    /// `BandRef::nodata_as_f64()`.
-    pub fn nodata_value_as_f64(&self) -> Result<Option<f64>, ArrowError> {
-        let bytes = match self.nodata_value.as_deref() {
-            Some(b) => b,
-            None => return Ok(None),
-        };
-        nodata_bytes_to_f64_lossless(bytes, &self.datatype).map(Some)
-    }
-}
-
 /// Parse the SedonaDB `#band=N` fragment out of an out-DB URI.
 /// Returns `(base_url, band_id)`; band_id defaults to 1 if the fragment is
 /// absent or malformed (e.g. a non-positive-integer band value), in which
@@ -341,8 +191,9 @@ impl<'a> Bands<'a> {
 
 /// Trait for accessing an N-dimensional raster (top level).
 ///
-/// Replaces the legacy `RasterRef` + `MetadataRef` + `BandsRef` hierarchy with
-/// a single flat interface. Bands are 0-indexed.
+/// A single flat interface: raster-level geometry (`width`/`height`/
+/// `transform`) and band access live directly on this trait. Bands are
+/// 0-indexed.
 pub trait RasterRef {
     /// Number of bands/variables
     fn num_bands(&self) -> usize;
@@ -409,37 +260,6 @@ pub trait RasterRef {
     /// 6-element affine transform in GDAL GeoTransform order:
     /// `[origin_x, scale_x, skew_x, origin_y, skew_y, scale_y]`
     fn transform(&self) -> &[f64];
-
-    /// Eagerly-computed concrete metadata view (width, height, geotransform
-    /// scalars). Mirrors the pre-N-D `RasterRef::metadata()` accessor.
-    ///
-    /// Panics if `spatial_shape` lacks width/height or `transform` is the
-    /// wrong length — those are corrupt-schema cases that error cleanly
-    /// through the `width()`/`height()` trait methods, but the metadata
-    /// accessor predates that contract and is kept infallible for caller
-    /// ergonomics.
-    fn metadata(&self) -> RasterMetadata {
-        let width = self
-            .width()
-            .expect("raster has no width (spatial_shape missing); use width()? for error handling");
-        let height = self
-            .height()
-            .expect("raster has no height; use height()? for error handling");
-        let t = self.transform();
-        if t.len() != 6 {
-            panic!("transform must be 6 elements, got {}", t.len());
-        }
-        RasterMetadata {
-            width,
-            height,
-            upperleft_x: t[0],
-            scale_x: t[1],
-            skew_x: t[2],
-            upperleft_y: t[3],
-            skew_y: t[4],
-            scale_y: t[5],
-        }
-    }
 
     /// Spatial dimension names, in order (today `["x","y"]`; a future Z phase
     /// would extend to `["x","y","z"]`). Every band must contain each of these
@@ -627,41 +447,6 @@ pub trait BandRef {
     /// impl answers directly. `nd_buffer()` depends on `is_indb()`, so any
     /// `nd_buffer`-based default would recurse.
     fn is_indb(&self) -> bool;
-
-    /// Eagerly-computed concrete band metadata. Mirrors the pre-N-D
-    /// `BandRef::metadata()` accessor.
-    ///
-    /// `outdb_url` and `outdb_band_id` are parsed from `outdb_uri()`'s
-    /// SedonaDB `#band=N` fragment convention so callers that pattern-match
-    /// on those fields keep compiling.
-    fn metadata(&self) -> BandMetadata {
-        let is_indb = self.is_indb();
-        // Match the pre-N-D contract: outdb_url / outdb_band_id are only
-        // populated when storage_type is OutDbRef. The current schema lets
-        // the URI hint coexist with InDb data; this surface hides that.
-        let (outdb_url, outdb_band_id) = if !is_indb {
-            match self.outdb_uri() {
-                Some(uri) => {
-                    let (base, band) = split_outdb_band_fragment(uri);
-                    (Some(base), Some(band))
-                }
-                None => (None, None),
-            }
-        } else {
-            (None, None)
-        };
-        BandMetadata {
-            nodata_value: self.nodata().map(|b| b.to_vec()),
-            storage_type: if is_indb {
-                sedona_schema::raster::StorageType::InDb
-            } else {
-                sedona_schema::raster::StorageType::OutDbRef
-            },
-            datatype: self.data_type(),
-            outdb_url,
-            outdb_band_id,
-        }
-    }
 
     // -- Data access --
 
