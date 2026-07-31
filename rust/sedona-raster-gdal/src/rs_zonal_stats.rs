@@ -860,8 +860,8 @@ fn collect_masked_values(
 /// two central elements (even n). Mode is the most frequent value, breaking ties
 /// toward the larger value.
 ///
-/// `values` is sorted in place (for the median and mode); the caller owns it as
-/// reusable scratch.
+/// `values` is sorted in place (for min, max, median, and mode); the caller owns
+/// it as reusable scratch.
 fn compute_statistics(values: &mut [f64]) -> ZonalStatistics {
     let count = values.len() as i64;
     if values.is_empty() {
@@ -898,13 +898,14 @@ fn compute_statistics(values: &mut [f64]) -> ZonalStatistics {
 
     let sum: f64 = values.iter().sum();
     let mean = sum / count as f64;
-    let min = values.iter().copied().fold(f64::INFINITY, f64::min);
-    let max = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-    let variance = sample_variance(values);
+    let variance = sample_variance(values, mean);
     let stddev = variance.sqrt();
 
-    // Median and mode both read the values in sorted order; sort once in place.
+    // min, max, median, and mode all read the values in sorted order: sort once
+    // in place, then take the extremes from the ends instead of folding again.
     sort_values(values);
+    let min = values[0];
+    let max = values[values.len() - 1];
     let median = median_of_sorted(values);
     let mode = mode_of_sorted(values);
 
@@ -943,11 +944,11 @@ fn compute_single_statistic(values: &mut [f64], stat: StatType) -> Option<f64> {
         // Count is handled before the value checks above.
         StatType::Count => unreachable!("count returns early"),
         StatType::Sum => values.iter().sum(),
-        StatType::Mean => values.iter().sum::<f64>() / values.len() as f64,
+        StatType::Mean => mean_of(values),
         StatType::Min => values.iter().copied().fold(f64::INFINITY, f64::min),
         StatType::Max => values.iter().copied().fold(f64::NEG_INFINITY, f64::max),
-        StatType::Variance => sample_variance(values),
-        StatType::StdDev => sample_variance(values).sqrt(),
+        StatType::Variance => sample_variance(values, mean_of(values)),
+        StatType::StdDev => sample_variance(values, mean_of(values)).sqrt(),
         StatType::Median => {
             sort_values(values);
             median_of_sorted(values)
@@ -959,16 +960,22 @@ fn compute_single_statistic(values: &mut [f64], stat: StatType) -> Option<f64> {
     })
 }
 
-/// The sample (n-1) variance of `values`, matching Sedona Spark; 0 for a single
-/// value. The two-pass form (mean first, then squared deviations) avoids the
-/// catastrophic cancellation of the naive sum-of-squares formula. `values` must
-/// be non-empty and NaN-free.
-fn sample_variance(values: &[f64]) -> f64 {
+/// The arithmetic mean of `values`, which must be non-empty.
+fn mean_of(values: &[f64]) -> f64 {
+    values.iter().sum::<f64>() / values.len() as f64
+}
+
+/// The sample (n-1) variance of `values` about their precomputed `mean`,
+/// matching Sedona Spark; 0 for a single value. Taking the mean as an argument
+/// lets the all-statistics path reuse the mean it already computed rather than
+/// summing again; the squared-deviation form (rather than the naive
+/// sum-of-squares) avoids catastrophic cancellation. `values` must be non-empty
+/// and NaN-free.
+fn sample_variance(values: &[f64], mean: f64) -> f64 {
     let n = values.len();
     if n <= 1 {
         return 0.0;
     }
-    let mean = values.iter().sum::<f64>() / n as f64;
     let sum_sq: f64 = values.iter().map(|&v| (v - mean).powi(2)).sum();
     sum_sq / (n as f64 - 1.0)
 }
