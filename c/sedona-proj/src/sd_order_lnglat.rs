@@ -19,14 +19,15 @@ use std::{fmt::Debug, sync::Arc};
 
 use arrow_array::builder::UInt64Builder;
 use arrow_schema::DataType;
+use datafusion_common::config::ConfigOptions;
 use datafusion_common::{DataFusionError, Result};
 use datafusion_expr::ColumnarValue;
 use sedona_expr::scalar_udf::SedonaScalarKernel;
 use sedona_functions::executor::WkbBytesExecutor;
-use sedona_geometry::{transform::CrsEngine, wkb_header::WkbHeader};
+use sedona_geometry::wkb_header::WkbHeader;
 use sedona_schema::{crs::lnglat, datatypes::SedonaType, matchers::ArgMatcher};
 
-use crate::transform::with_global_proj_engine;
+use crate::transform::with_crs_engine;
 
 /// Generic scalar kernel for sd_order based on the first coordinate
 /// of a geometry projected to lon/lat
@@ -66,6 +67,17 @@ impl<F: Fn((f64, f64)) -> u64 + Send + Sync> SedonaScalarKernel for OrderLngLat<
         arg_types: &[SedonaType],
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
+        self.invoke_batch_from_args(arg_types, args, &SedonaType::Arrow(DataType::Null), 0, None)
+    }
+
+    fn invoke_batch_from_args(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+        _return_type: &SedonaType,
+        _num_rows: usize,
+        config_options: Option<&ConfigOptions>,
+    ) -> Result<ColumnarValue> {
         // Extract the source CRS, checking for lon/lat to see if we can avoid
         // a transformation. If the CRS is missing we also skip any particular
         // transform (although the resulting sort may not be effective).
@@ -87,7 +99,7 @@ impl<F: Fn((f64, f64)) -> u64 + Send + Sync> SedonaScalarKernel for OrderLngLat<
         // this to be used even if PROJ isn't available (as long as the data were lon/lat
         // already).
         if let Some(src_crs) = maybe_src_crs {
-            with_global_proj_engine(|engine| {
+            with_crs_engine(config_options, |engine| {
                 let to_lnglat = engine
                     .get_transform_crs_to_crs(&src_crs, "OGC:CRS84", None, "")
                     .map_err(|e| DataFusionError::Execution(format!("{e}")))?;
@@ -143,6 +155,7 @@ mod test {
     use sedona_testing::{create::create_array, testers::ScalarUdfTester};
 
     use super::*;
+    use crate::transform::LazyProjEngine;
 
     #[test]
     fn order_geometry() {
@@ -189,12 +202,14 @@ mod test {
             create_array!(UInt64, [Some(111320), Some(u64::MAX), None, Some(0)]) as ArrayRef;
         assert_eq!(&result, &expected);
 
-        // Check the "not already lnglat" case
+        // Check the "not already lnglat" case, which reprojects to lon/lat via
+        // the injected CRS engine (LazyProjEngine delegates to global PROJ).
         let crs = sedona_schema::crs::deserialize_crs("EPSG:3857").unwrap();
         let tester = ScalarUdfTester::new(
             udf.clone().into(),
             vec![SedonaType::Wkb(Edges::Planar, crs)],
-        );
+        )
+        .with_crs_engine(Arc::new(LazyProjEngine));
         tester.assert_return_type(DataType::UInt64);
 
         let result = tester.invoke_array(array.clone()).unwrap();
