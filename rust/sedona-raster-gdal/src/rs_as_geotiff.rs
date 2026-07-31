@@ -301,10 +301,7 @@ fn predictor_for(raster: &RasterRefImpl) -> Result<i32> {
     let band = bands
         .band(1)
         .map_err(|e| exec_datafusion_err!("RS_AsGeoTiff: {e}"))?;
-    let data_type = band
-        .metadata()
-        .data_type()
-        .map_err(|e| exec_datafusion_err!("RS_AsGeoTiff: {e}"))?;
+    let data_type = band.data_type();
     Ok(match data_type {
         BandDataType::Float32 | BandDataType::Float64 => 3,
         _ => 2,
@@ -632,8 +629,8 @@ mod tests {
             let rt = RasterStructArray::try_new(&roundtrip).unwrap();
             let rt_raster = rt.get(0).unwrap();
 
-            assert_eq!(rt_raster.metadata().width(), raster.metadata().width());
-            assert_eq!(rt_raster.metadata().height(), raster.metadata().height());
+            assert_eq!(rt_raster.width()?, raster.width()?);
+            assert_eq!(rt_raster.height()?, raster.height()?);
             assert_eq!(rt_raster.bands().len(), raster.bands().len());
             // Pixel values must survive too — this would catch predictor or
             // compression corruption that dimension checks cannot.

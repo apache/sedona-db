@@ -192,7 +192,7 @@ impl RsValues {
                 let nodata = band
                     .nodata_as_f64()
                     .map_err(|e| exec_datafusion_err!("RS_Values: {e}"))?;
-                let affine = AffineMatrix::from_metadata(&raster.metadata());
+                let affine = AffineMatrix::from_raster(raster);
 
                 // Sample each sub-point in one pass: the visitor transforms
                 // each coordinate into the raster CRS in place, so there is no
@@ -280,7 +280,7 @@ impl RsValues {
             .transpose()?;
 
         // Affine transform and raster CRS, resolved once for all rows.
-        let affine = AffineMatrix::from_metadata(&raster.metadata());
+        let affine = AffineMatrix::from_raster(&raster);
         let raster_crs = resolve_crs(raster.crs())?;
 
         let mut geom = executor.make_geom_wkb_crs_accessor(1)?;

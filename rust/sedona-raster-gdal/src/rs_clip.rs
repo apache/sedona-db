@@ -377,10 +377,9 @@ fn clip_raster(
     all_touched: bool,
     crop: bool,
 ) -> Result<Option<ClippedRasterData>> {
-    let metadata = raster.metadata();
     let bands = raster.bands();
-    let width = metadata.width() as usize;
-    let height = metadata.height() as usize;
+    let width = raster.width()? as usize;
+    let height = raster.height()? as usize;
 
     // Parse geometry from WKB
     let geometry = gdal
@@ -443,8 +442,7 @@ fn clip_raster(
         // `band_idx` is 1-based; the `band_name` accessor is 0-based.
         let band_name = raster.band_name(band_idx - 1).map(|s| s.to_string());
 
-        let band_metadata = band.metadata();
-        let data_type = band_metadata.data_type()?;
+        let data_type = band.data_type();
 
         // The trailing two axes are the spatial (y, x) plane; anything before
         // them is a stack of planes the 2-D clip is broadcast over.
@@ -503,7 +501,7 @@ fn clip_raster(
             Some(cn) => nodata_f64_to_bytes(cn, &data_type).map_err(|e| {
                 exec_datafusion_err!("RS_Clip: invalid no_data_value for band {band_idx}: {e}")
             })?,
-            None => match band_metadata.nodata_value() {
+            None => match band.nodata() {
                 Some(bytes) => bytes.to_vec(),
                 None => data_type.min_value_le_bytes(),
             },
@@ -837,7 +835,6 @@ mod tests {
         with_gdal(|gdal| {
             let rasters = RasterStructArray::try_new(&array).unwrap();
             let raster = rasters.get(0).unwrap();
-            let metadata = raster.metadata();
 
             // Top-left quadrant: x ∈ [0, 2], y ∈ [1, 2] — covers pixel centers
             // (0.5, 1.5) and (1.5, 1.5), i.e. a 2×1 window.
@@ -863,11 +860,11 @@ mod tests {
                 "cropped band should keep the source pixel values in the window"
             );
             assert!(
-                (cw.width as i64) < metadata.width(),
+                (cw.width as i64) < raster.width()?,
                 "Cropped width should be smaller"
             );
             assert!(
-                (cw.height as i64) < metadata.height(),
+                (cw.height as i64) < raster.height()?,
                 "Cropped height should be smaller"
             );
             Ok::<_, datafusion_common::DataFusionError>(())

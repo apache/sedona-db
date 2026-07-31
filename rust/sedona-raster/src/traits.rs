@@ -272,11 +272,12 @@ impl BandMetadata {
 }
 
 /// Parse the SedonaDB `#band=N` fragment out of an out-DB URI.
-/// Returns `(base_url, band_id)`; band_id defaults to 1 if absent.
-/// Duplicated (intentionally — and minimally) from
-/// `sedona-raster-gdal::source_uri` because the shim lives in
-/// `sedona-raster` and can't reach across the crate boundary.
-fn split_outdb_band_fragment(uri: &str) -> (String, u32) {
+/// Returns `(base_url, band_id)`; band_id defaults to 1 if the fragment is
+/// absent or malformed (e.g. a non-positive-integer band value), in which
+/// case the whole string is treated as the base URL. This lenient parsing
+/// is the shared convention consumers use to recover the source path and
+/// band from a band's `outdb_uri()`.
+pub fn split_outdb_band_fragment(uri: &str) -> (String, u32) {
     if let Some(hash_pos) = uri.rfind('#') {
         let (base, fragment) = uri.split_at(hash_pos);
         let fragment = &fragment[1..]; // skip the '#'

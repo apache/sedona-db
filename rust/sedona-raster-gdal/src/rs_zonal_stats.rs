@@ -680,11 +680,10 @@ fn collect_zonal_values(
     let data_type = band.data_type();
     let byte_size = data_type.byte_size();
 
-    let metadata = raster.metadata();
     let transform = raster_geo_transform(raster)?;
-    let width = usize::try_from(metadata.width())
+    let width = usize::try_from(raster.width()?)
         .map_err(|_| exec_datafusion_err!("RS_ZonalStats: negative raster width"))?;
-    let height = usize::try_from(metadata.height())
+    let height = usize::try_from(raster.height()?)
         .map_err(|_| exec_datafusion_err!("RS_ZonalStats: negative raster height"))?;
 
     // No-intersection gate: a true geometry intersection between the roi and

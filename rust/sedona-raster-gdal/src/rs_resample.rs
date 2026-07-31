@@ -448,14 +448,14 @@ fn plan_from_reference(
     use_scale: bool,
     algorithm: &str,
 ) -> Result<ResamplePlan> {
-    let m = reference.metadata();
+    let t = reference.transform();
     let (width_or_scale, height_or_scale) = if use_scale {
-        (m.scale_x(), m.scale_y())
+        (t[1], t[5])
     } else {
-        (m.width() as f64, m.height() as f64)
+        (reference.width()? as f64, reference.height()? as f64)
     };
     // The reference's upper-left corner is the grid the output origin snaps to.
-    let grid = Some((m.upper_left_x(), m.upper_left_y()));
+    let grid = Some((t[0], t[3]));
     plan_from_dims_or_scale(width_or_scale, height_or_scale, grid, use_scale, algorithm)
 }
 
@@ -502,8 +502,7 @@ fn resample_raster(
     plan: &ResamplePlan,
     builder: &mut RasterBuilder,
 ) -> Result<()> {
-    let metadata = raster.metadata();
-    let src = Grid::from_metadata(&metadata);
+    let src = Grid::from_raster(raster)?;
     if src.width <= 0 || src.height <= 0 {
         return exec_err!(
             "RS_Resample: source raster has non-positive dimensions {}x{}",
@@ -1337,8 +1336,7 @@ mod tests {
         let rasters = RasterStructArray::try_new(struct_array).unwrap();
         let raster = rasters.get(0).unwrap();
         assert_eq!(raster.crs(), Some("EPSG:4326"));
-        let m = raster.metadata();
-        assert_eq!(m.upper_left_x(), 10.0);
-        assert_eq!(m.upper_left_y(), 44.0);
+        assert_eq!(raster.transform()[0], 10.0);
+        assert_eq!(raster.transform()[3], 44.0);
     }
 }

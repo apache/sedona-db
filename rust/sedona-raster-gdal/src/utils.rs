@@ -30,15 +30,15 @@ use sedona_gdal::raster::types::DatasetOptions;
 use sedona_gdal::raster::types::ResampleAlg;
 use sedona_gdal::spatial_ref::SpatialRef;
 
+use arrow_schema::ArrowError;
 use sedona_raster::array::RasterRefImpl;
 use sedona_raster::builder::RasterBuilder;
-use sedona_raster::traits::{BandMetadata, RasterMetadata, RasterRef};
-use sedona_schema::raster::{BandDataType, StorageType};
+use sedona_raster::traits::RasterRef;
+use sedona_schema::raster::BandDataType;
 
 use crate::gdal_common::{
     band_data_type_to_gdal, band_nodata_to_bytes, convert_gdal_err, gdal_to_band_data_type,
     normalize_outdb_source_path, set_band_nodata_from_bytes, GdalBandLayout,
-    RasterMetadataFromGdalGeoTransform,
 };
 
 /// Append a GDAL dataset as a single in-db raster to the provided [`RasterBuilder`].
@@ -49,15 +49,14 @@ pub fn append_as_indb_raster(dataset: &Dataset, builder: &mut RasterBuilder) -> 
         .geo_transform()
         .map_err(|e| exec_datafusion_err!("Failed to get geotransform: {}", e))?;
 
-    let metadata = geotransform.to_raster_metadata(width, height);
+    let grid = Grid::from_gdal(geotransform, width, height);
 
     let crs = dataset
         .spatial_ref()
         .ok()
         .and_then(|sr: SpatialRef| sr.to_projjson().ok());
 
-    builder
-        .start_raster(&metadata, crs.as_deref())
+    grid.start_raster_into(builder, crs.as_deref())
         .map_err(|e| exec_datafusion_err!("Failed to start raster: {}", e))?;
 
     let band_count = dataset.raster_count();
@@ -72,16 +71,8 @@ pub fn append_as_indb_raster(dataset: &Dataset, builder: &mut RasterBuilder) -> 
 
         let nodata_bytes = band_nodata_to_bytes(&band)?;
 
-        let band_metadata = BandMetadata {
-            nodata_value: nodata_bytes,
-            storage_type: StorageType::InDb,
-            datatype: band_data_type,
-            outdb_url: None,
-            outdb_band_id: None,
-        };
-
         builder
-            .start_band(band_metadata)
+            .start_band_2d(band_data_type, nodata_bytes.as_deref())
             .map_err(|e| exec_datafusion_err!("Failed to start band: {}", e))?;
 
         let band_data = band
@@ -132,14 +123,14 @@ pub fn append_as_outdb_raster(gdal: &Gdal, path: &str, builder: &mut RasterBuild
     let geotransform = dataset
         .geo_transform()
         .map_err(|e| exec_datafusion_err!("Failed to get geotransform: {}", e))?;
-    let metadata = geotransform.to_raster_metadata(width, height);
+    let grid = Grid::from_gdal(geotransform, width, height);
 
     let crs = dataset
         .spatial_ref()
         .ok()
         .and_then(|sr: SpatialRef| sr.to_projjson().ok());
 
-    builder.start_raster(&metadata, crs.as_deref())?;
+    grid.start_raster_into(builder, crs.as_deref())?;
 
     let band_count = dataset.raster_count();
     for band_idx in 1..=band_count {
@@ -153,15 +144,17 @@ pub fn append_as_outdb_raster(gdal: &Gdal, path: &str, builder: &mut RasterBuild
 
         let nodata_bytes = band_nodata_to_bytes(&band)?;
 
-        let band_metadata = BandMetadata {
-            nodata_value: nodata_bytes,
-            storage_type: StorageType::OutDbRef,
-            datatype: band_data_type,
-            outdb_url: Some(path.to_string()),
-            outdb_band_id: Some(band_idx as u32),
-        };
-
-        builder.start_band(band_metadata)?;
+        // Out-db band: location + band selector in the `#band=N` URI; empty data.
+        let outdb_uri = format!("{path}#band={band_idx}");
+        builder.start_band_nd(
+            None,
+            &["y", "x"],
+            &[height as i64, width as i64],
+            band_data_type,
+            nodata_bytes.as_deref(),
+            Some(&outdb_uri),
+            None,
+        )?;
         builder.band_data_writer().append_value([]);
         builder.finish_band()?;
     }
@@ -199,20 +192,20 @@ pub fn append_nd_from_dataset(
     let geotransform = dataset
         .geo_transform()
         .map_err(|e| exec_datafusion_err!("Failed to get geotransform: {}", e))?;
-    let metadata = geotransform.to_raster_metadata(width, height);
+    let grid = Grid::from_gdal(geotransform, width, height);
 
     let crs = dataset
         .spatial_ref()
         .ok()
         .and_then(|sr: SpatialRef| sr.to_projjson().ok());
 
-    append_nd_from_dataset_inner(dataset, layout, builder, &metadata, crs.as_deref(), None)
+    append_nd_from_dataset_inner(dataset, layout, builder, &grid, crs.as_deref(), None)
 }
 
 /// A raster's affine grid: its geotransform and pixel dimensions.
 ///
 /// This is the geometric core shared by a source raster's grid (via
-/// [`Grid::from_metadata`]) and every resample/warp output target, replacing the
+/// [`Grid::from_raster`]) and every resample/warp output target, replacing the
 /// several near-identical transform-plus-dimensions structs that had accumulated
 /// here.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -232,20 +225,47 @@ pub struct Envelope {
 }
 
 impl Grid {
-    /// The grid of an existing raster, read from its [`RasterMetadata`].
-    pub fn from_metadata(m: &RasterMetadata) -> Self {
+    /// Build a grid from a GDAL geotransform and pixel dimensions.
+    pub fn from_gdal(transform: GeoTransform, width: usize, height: usize) -> Self {
         Self {
-            transform: [
-                m.upper_left_x(),
-                m.scale_x(),
-                m.skew_x(),
-                m.upper_left_y(),
-                m.skew_y(),
-                m.scale_y(),
-            ],
-            width: m.width(),
-            height: m.height(),
+            transform,
+            width: width as i64,
+            height: height as i64,
         }
+    }
+
+    /// The grid of an existing raster, read from its transform and spatial
+    /// shape. Errors if the transform is not 6 elements or width/height are
+    /// missing (an invariant violation).
+    pub fn from_raster(raster: &dyn RasterRef) -> Result<Self, ArrowError> {
+        let transform = <[f64; 6]>::try_from(raster.transform()).map_err(|_| {
+            ArrowError::InvalidArgumentError("expected a 6-element geotransform".to_string())
+        })?;
+        Ok(Self {
+            transform,
+            width: raster.width()?,
+            height: raster.height()?,
+        })
+    }
+
+    /// Start `builder` on a 2-D raster covering this grid, stamping `crs`.
+    pub fn start_raster_into(
+        &self,
+        builder: &mut RasterBuilder,
+        crs: Option<&str>,
+    ) -> Result<(), ArrowError> {
+        let t = self.transform;
+        builder.start_raster_2d(
+            self.width,
+            self.height,
+            t[0],
+            t[3],
+            t[1],
+            t[5],
+            t[2],
+            t[4],
+            crs,
+        )
     }
 
     /// Bounding box of the four grid corners (handles skew; reduces to
@@ -386,15 +406,11 @@ pub fn append_resampled_nd_from_dataset(
     builder: &mut RasterBuilder,
     output: &OutputGrid<'_>,
 ) -> Result<()> {
-    let metadata = output
-        .grid
-        .transform
-        .to_raster_metadata(output.grid.width as usize, output.grid.height as usize);
     append_nd_from_dataset_inner(
         dataset,
         layout,
         builder,
-        &metadata,
+        &output.grid,
         output.crs,
         Some(output.alg),
     )
@@ -488,13 +504,16 @@ pub fn append_warped_nd_from_dataset(
     )
     .map_err(convert_gdal_err)?;
 
-    let metadata = output
-        .grid
-        .transform
-        .to_raster_metadata(out_width, out_height);
     // Read the warped buffers back out (native read, no further resampling),
     // regrouping the flat GDAL bands into N-D raster bands.
-    append_nd_from_dataset_inner(&dst_dataset, layout, builder, &metadata, output.crs, None)
+    append_nd_from_dataset_inner(
+        &dst_dataset,
+        layout,
+        builder,
+        &output.grid,
+        output.crs,
+        None,
+    )
 }
 
 /// Allocate a `total`-byte buffer pre-filled with the little-endian `nodata`
@@ -523,16 +542,15 @@ fn append_nd_from_dataset_inner(
     dataset: &Dataset,
     layout: &GdalBandLayout,
     builder: &mut RasterBuilder,
-    metadata: &RasterMetadata,
+    grid: &Grid,
     crs: Option<&str>,
     alg: Option<ResampleAlg>,
 ) -> Result<()> {
     let (src_width, src_height) = dataset.raster_size();
-    let out_width = metadata.width as usize;
-    let out_height = metadata.height as usize;
+    let out_width = grid.width as usize;
+    let out_height = grid.height as usize;
 
-    builder
-        .start_raster(metadata, crs)
+    grid.start_raster_into(builder, crs)
         .map_err(|e| exec_datafusion_err!("Failed to start raster: {}", e))?;
 
     let total_planes: usize = layout.bands.iter().map(|b| b.plane_count).sum();
@@ -638,7 +656,7 @@ mod tests {
     use sedona_raster::array::RasterStructArray;
     use sedona_raster::builder::RasterBuilder;
     use sedona_raster::traits::RasterRef;
-    use sedona_schema::raster::{BandDataType, StorageType};
+    use sedona_schema::raster::BandDataType;
     use sedona_testing::data::test_raster;
     use tempfile::TempDir;
 
@@ -774,14 +792,14 @@ mod tests {
         let raster = raster_struct.get(0).unwrap();
         let band = raster.bands().band(1).unwrap();
 
-        assert_eq!(raster.metadata().width(), 3);
-        assert_eq!(raster.metadata().height(), 2);
-        assert_eq!(raster.metadata().upper_left_x(), 1.5);
-        assert_eq!(raster.metadata().upper_left_y(), 4.5);
+        assert_eq!(raster.width().unwrap(), 3);
+        assert_eq!(raster.height().unwrap(), 2);
+        assert_eq!(raster.transform()[0], 1.5);
+        assert_eq!(raster.transform()[3], 4.5);
         assert!(raster.crs().is_some());
-        assert_eq!(band.metadata().storage_type().unwrap(), StorageType::InDb);
-        assert_eq!(band.metadata().data_type().unwrap(), BandDataType::UInt8);
-        assert_eq!(band.metadata().nodata_value().unwrap(), [255u8]);
+        assert!(band.is_indb());
+        assert_eq!(band.data_type(), BandDataType::UInt8);
+        assert_eq!(band.nodata().unwrap(), [255u8]);
         assert_eq!(
             band.nd_buffer().unwrap().as_contiguous().unwrap(),
             [1u8, 2, 3, 4, 5, 6]
@@ -797,16 +815,13 @@ mod tests {
         assert_eq!(raster_struct.len(), 1);
 
         let raster = raster_struct.get(0).unwrap();
-        assert_eq!(raster.metadata().width(), 10);
-        assert_eq!(raster.metadata().height(), 10);
+        assert_eq!(raster.width().unwrap(), 10);
+        assert_eq!(raster.height().unwrap(), 10);
         assert!(raster.crs().is_some());
 
         let band = raster.bands().band(1).unwrap();
-        assert_eq!(
-            band.metadata().storage_type().unwrap(),
-            StorageType::OutDbRef
-        );
-        assert!(band.metadata().outdb_url().unwrap().contains("test4.tiff"));
+        assert!(!band.is_indb());
+        assert!(band.outdb_uri().unwrap().contains("test4.tiff"));
     }
 
     #[test]
@@ -827,10 +842,7 @@ mod tests {
         let raster = raster_struct.get(0).unwrap();
         let band = raster.bands().band(1).unwrap();
 
-        assert_eq!(
-            band.metadata().nodata_value().unwrap(),
-            nodata.to_le_bytes()
-        );
+        assert_eq!(band.nodata().unwrap(), nodata.to_le_bytes());
     }
 
     #[test]
@@ -851,10 +863,7 @@ mod tests {
         let raster = raster_struct.get(0).unwrap();
         let band = raster.bands().band(1).unwrap();
 
-        assert_eq!(
-            band.metadata().nodata_value().unwrap(),
-            nodata.to_le_bytes()
-        );
+        assert_eq!(band.nodata().unwrap(), nodata.to_le_bytes());
     }
 
     #[test]
@@ -875,15 +884,12 @@ mod tests {
         let raster = raster_struct.get(0).unwrap();
         let band = raster.bands().band(1).unwrap();
 
-        assert_eq!(raster.metadata().width(), 2);
-        assert_eq!(raster.metadata().height(), 2);
-        assert_eq!(raster.metadata().upper_left_x(), 100.0);
-        assert_eq!(raster.metadata().upper_left_y(), 200.0);
-        assert_eq!(band.metadata().data_type().unwrap(), BandDataType::UInt64);
-        assert_eq!(
-            band.metadata().nodata_value().unwrap(),
-            &nodata.to_le_bytes()
-        );
+        assert_eq!(raster.width().unwrap(), 2);
+        assert_eq!(raster.height().unwrap(), 2);
+        assert_eq!(raster.transform()[0], 100.0);
+        assert_eq!(raster.transform()[3], 200.0);
+        assert_eq!(band.data_type(), BandDataType::UInt64);
+        assert_eq!(band.nodata().unwrap(), &nodata.to_le_bytes());
 
         let pixels: Vec<u64> = band
             .nd_buffer()
@@ -914,11 +920,8 @@ mod tests {
         let raster = raster_struct.get(0).unwrap();
         let band = raster.bands().band(1).unwrap();
 
-        assert_eq!(band.metadata().data_type().unwrap(), BandDataType::Int64);
-        assert_eq!(
-            band.metadata().nodata_value().unwrap(),
-            &nodata.to_le_bytes()
-        );
+        assert_eq!(band.data_type(), BandDataType::Int64);
+        assert_eq!(band.nodata().unwrap(), &nodata.to_le_bytes());
 
         let pixels: Vec<i64> = band
             .nd_buffer()
@@ -949,11 +952,8 @@ mod tests {
         let raster = raster_struct.get(0).unwrap();
         let band = raster.bands().band(1).unwrap();
 
-        assert_eq!(band.metadata().data_type().unwrap(), BandDataType::UInt16);
-        assert_eq!(
-            band.metadata().nodata_value().unwrap(),
-            &nodata.to_le_bytes()
-        );
+        assert_eq!(band.data_type(), BandDataType::UInt16);
+        assert_eq!(band.nodata().unwrap(), &nodata.to_le_bytes());
 
         let pixels: Vec<u16> = band
             .nd_buffer()
@@ -985,17 +985,17 @@ mod tests {
         let band2 = raster.bands().band(2).unwrap();
 
         assert_eq!(raster.bands().len(), 2);
-        assert_eq!(band1.metadata().storage_type().unwrap(), StorageType::InDb);
-        assert_eq!(band1.metadata().data_type().unwrap(), BandDataType::UInt8);
-        assert_eq!(band1.metadata().nodata_value().unwrap(), [255u8]);
+        assert!(band1.is_indb());
+        assert_eq!(band1.data_type(), BandDataType::UInt8);
+        assert_eq!(band1.nodata().unwrap(), [255u8]);
         assert_eq!(
             band1.nd_buffer().unwrap().as_contiguous().unwrap(),
             [10u8, 11, 12, 13]
         );
 
-        assert_eq!(band2.metadata().storage_type().unwrap(), StorageType::InDb);
-        assert_eq!(band2.metadata().data_type().unwrap(), BandDataType::UInt8);
-        assert_eq!(band2.metadata().nodata_value().unwrap(), [255u8]);
+        assert!(band2.is_indb());
+        assert_eq!(band2.data_type(), BandDataType::UInt8);
+        assert_eq!(band2.nodata().unwrap(), [255u8]);
         assert_eq!(
             band2.nd_buffer().unwrap().as_contiguous().unwrap(),
             [100u8, 0, 200, 0]
@@ -1016,17 +1016,17 @@ mod tests {
         let band2 = raster.bands().band(2).unwrap();
 
         assert_eq!(raster.bands().len(), 2);
-        assert_eq!(band1.metadata().storage_type().unwrap(), StorageType::InDb);
-        assert_eq!(band1.metadata().data_type().unwrap(), BandDataType::UInt8);
-        assert_eq!(band1.metadata().nodata_value().unwrap(), [0u8]);
+        assert!(band1.is_indb());
+        assert_eq!(band1.data_type(), BandDataType::UInt8);
+        assert_eq!(band1.nodata().unwrap(), [0u8]);
         assert_eq!(
             band1.nd_buffer().unwrap().as_contiguous().unwrap(),
             [10u8, 11, 12, 13]
         );
 
-        assert_eq!(band2.metadata().storage_type().unwrap(), StorageType::InDb);
-        assert_eq!(band2.metadata().data_type().unwrap(), BandDataType::UInt8);
-        assert_eq!(band2.metadata().nodata_value().unwrap(), [255u8]);
+        assert!(band2.is_indb());
+        assert_eq!(band2.data_type(), BandDataType::UInt8);
+        assert_eq!(band2.nodata().unwrap(), [255u8]);
         assert_eq!(
             band2.nd_buffer().unwrap().as_contiguous().unwrap(),
             [100u8, 0, 200, 0]
@@ -1067,13 +1067,13 @@ mod tests {
         assert_eq!(raster_struct.len(), 2);
 
         let first = raster_struct.get(0).unwrap();
-        assert_eq!(first.metadata().width(), 3);
-        assert_eq!(first.metadata().height(), 2);
+        assert_eq!(first.width().unwrap(), 3);
+        assert_eq!(first.height().unwrap(), 2);
         assert_eq!(first.bands().len(), 1);
 
         let second = raster_struct.get(1).unwrap();
-        assert_eq!(second.metadata().width(), 2);
-        assert_eq!(second.metadata().height(), 2);
+        assert_eq!(second.width().unwrap(), 2);
+        assert_eq!(second.height().unwrap(), 2);
         assert_eq!(second.bands().len(), 2);
     }
 }

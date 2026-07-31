@@ -434,8 +434,8 @@ fn build_skewed_raster_3857() -> StructArray {
 fn skewed_raster_native_corners(raster: &StructArray) -> [(f64, f64); 4] {
     let rasters = RasterStructArray::try_new(raster).unwrap();
     let r = rasters.get(0).unwrap();
-    let w = r.metadata().width();
-    let h = r.metadata().height();
+    let w = r.width().unwrap();
+    let h = r.height().unwrap();
     [
         to_world_coordinate(&r, 0, 0),
         to_world_coordinate(&r, w, 0),

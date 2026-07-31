@@ -179,7 +179,7 @@ impl RsValuePoint {
                     return Ok(());
                 };
 
-                let affine = AffineMatrix::from_metadata(&raster.metadata());
+                let affine = AffineMatrix::from_raster(raster);
                 match xy_to_pixel("RS_Value", &affine, x, y)? {
                     Some((col, row)) => match sample_pixel(raster, col, row, band_num)? {
                         Some(value) => builder.append_value(value),
@@ -260,7 +260,7 @@ impl RsValuePoint {
             .transpose()?;
 
         // Affine transform and raster CRS, resolved once for all points.
-        let affine = AffineMatrix::from_metadata(&raster.metadata());
+        let affine = AffineMatrix::from_raster(&raster);
         let raster_crs = resolve_crs(raster.crs())?;
 
         let mut geom = executor.make_geom_wkb_crs_accessor(1)?;
@@ -825,7 +825,7 @@ mod tests {
             .bbox(0.0, 8.0, 2.0, 10.0)
             .build();
         let rasters = RasterStructArray::try_new(&raster).unwrap();
-        let affine = AffineMatrix::from_metadata(&rasters.get(0).unwrap().metadata());
+        let affine = AffineMatrix::from_raster(&rasters.get(0).unwrap());
 
         assert_eq!(
             xy_to_pixel("RS_Value", &affine, f64::NAN, 5.0).unwrap(),

@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::traits::{MetadataRef, RasterRef};
+use crate::traits::RasterRef;
 use arrow_schema::ArrowError;
 
 /// Pre-computed affine transformation coefficients extracted from raster metadata.
@@ -34,16 +34,18 @@ pub struct AffineMatrix {
 }
 
 impl AffineMatrix {
-    /// Build an `AffineMatrix` from any `MetadataRef` implementer.
+    /// Build an `AffineMatrix` from a raster's 6-element GDAL geotransform
+    /// (`[origin_x, scale_x, skew_x, origin_y, skew_y, scale_y]`).
     #[inline]
-    pub fn from_metadata(m: &dyn MetadataRef) -> Self {
+    pub fn from_raster(raster: &dyn RasterRef) -> Self {
+        let t = raster.transform();
         Self {
-            offset_x: m.upper_left_x(),
-            offset_y: m.upper_left_y(),
-            scale_x: m.scale_x(),
-            scale_y: m.scale_y(),
-            skew_x: m.skew_x(),
-            skew_y: m.skew_y(),
+            offset_x: t[0],
+            scale_x: t[1],
+            skew_x: t[2],
+            offset_y: t[3],
+            skew_y: t[4],
+            scale_y: t[5],
         }
     }
 
@@ -192,8 +194,8 @@ impl AffineMatrix {
 /// Computes the rotation angle (in radians) of the raster based on its geotransform metadata.
 #[inline]
 pub fn rotation(raster: &dyn RasterRef) -> f64 {
-    let metadata = raster.metadata();
-    (-metadata.skew_x()).atan2(metadata.scale_x())
+    let t = raster.transform();
+    (-t[2]).atan2(t[1])
 }
 
 /// Performs an affine transformation on the provided x and y coordinates based on the geotransform
@@ -205,7 +207,7 @@ pub fn rotation(raster: &dyn RasterRef) -> f64 {
 /// * `y` - Y coordinate in pixel space (row)
 #[inline]
 pub fn to_world_coordinate(raster: &dyn RasterRef, x: i64, y: i64) -> (f64, f64) {
-    AffineMatrix::from_metadata(&raster.metadata()).transform(x as f64, y as f64)
+    AffineMatrix::from_raster(raster).transform(x as f64, y as f64)
 }
 
 /// Performs the inverse affine transformation to convert world coordinates back to raster pixel coordinates.
@@ -220,21 +222,24 @@ pub fn to_raster_coordinate(
     world_x: f64,
     world_y: f64,
 ) -> Result<(i64, i64), ArrowError> {
-    let (rx, ry) =
-        AffineMatrix::from_metadata(&raster.metadata()).inv_transform(world_x, world_y)?;
+    let (rx, ry) = AffineMatrix::from_raster(raster).inv_transform(world_x, world_y)?;
     Ok((rx as i64, ry as i64))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::traits::{BandRef, Bands, RasterMetadata};
+    use crate::traits::{BandRef, Bands};
     use approx::assert_relative_eq;
     use std::f64::consts::FRAC_1_SQRT_2;
     use std::f64::consts::PI;
 
+    /// Minimal `RasterRef` stub carrying only a geotransform and a spatial
+    /// shape — enough for the affine helpers, which read `transform()` and
+    /// (via `width()`/`height()`) `spatial_shape()`.
     struct TestRaster {
-        metadata: RasterMetadata,
+        transform: [f64; 6],
+        spatial_shape: [i64; 2],
     }
 
     impl RasterRef for TestRaster {
@@ -256,16 +261,13 @@ mod tests {
             None
         }
         fn transform(&self) -> &[f64] {
-            &[]
+            &self.transform
         }
         fn spatial_dims(&self) -> Vec<&str> {
-            vec![]
+            vec!["x", "y"]
         }
         fn spatial_shape(&self) -> &[i64] {
-            &[]
-        }
-        fn metadata(&self) -> RasterMetadata {
-            self.metadata.clone()
+            &self.spatial_shape
         }
     }
 
@@ -301,16 +303,8 @@ mod tests {
     fn test_to_world_coordinate() {
         // Test case with rotation/skew
         let raster = TestRaster {
-            metadata: RasterMetadata {
-                width: 10,
-                height: 20,
-                upperleft_x: 100.0,
-                upperleft_y: 200.0,
-                scale_x: 1.0,
-                scale_y: -2.0,
-                skew_x: 0.25,
-                skew_y: 0.5,
-            },
+            transform: [100.0, 1.0, 0.25, 200.0, 0.5, -2.0],
+            spatial_shape: [10, 20],
         };
 
         let (wx, wy) = to_world_coordinate(&raster, 0, 0);
@@ -333,16 +327,8 @@ mod tests {
     fn test_to_raster_coordinate() {
         // Test case with rotation/skew
         let raster = TestRaster {
-            metadata: RasterMetadata {
-                width: 10,
-                height: 20,
-                upperleft_x: 100.0,
-                upperleft_y: 200.0,
-                scale_x: 1.0,
-                scale_y: -2.0,
-                skew_x: 0.25,
-                skew_y: 0.5,
-            },
+            transform: [100.0, 1.0, 0.25, 200.0, 0.5, -2.0],
+            spatial_shape: [10, 20],
         };
 
         // Reverse of the to_world_coordinate tests
@@ -363,16 +349,8 @@ mod tests {
 
         // Check error handling for zero determinant
         let bad_raster = TestRaster {
-            metadata: RasterMetadata {
-                width: 10,
-                height: 20,
-                upperleft_x: 100.0,
-                upperleft_y: 200.0,
-                scale_x: 1.0,
-                scale_y: 0.0,
-                skew_x: 0.0,
-                skew_y: 0.0,
-            },
+            transform: [100.0, 1.0, 0.0, 200.0, 0.0, 0.0],
+            spatial_shape: [10, 20],
         };
         let result = to_raster_coordinate(&bad_raster, 100.0, 200.0);
         assert!(result.is_err());
@@ -385,16 +363,8 @@ mod tests {
 
     fn rotation_raster(scale_x: f64, scale_y: f64, skew_x: f64, skew_y: f64) -> TestRaster {
         TestRaster {
-            metadata: RasterMetadata {
-                width: 10,
-                height: 20,
-                upperleft_x: 0.0,
-                upperleft_y: 0.0,
-                scale_x,
-                scale_y,
-                skew_x,
-                skew_y,
-            },
+            transform: [0.0, scale_x, skew_x, 0.0, skew_y, scale_y],
+            spatial_shape: [10, 20],
         }
     }
 
@@ -462,18 +432,12 @@ mod tests {
     }
 
     #[test]
-    fn test_affine_from_metadata() {
-        let m = RasterMetadata {
-            width: 10,
-            height: 20,
-            upperleft_x: 100.0,
-            upperleft_y: 200.0,
-            scale_x: 1.0,
-            scale_y: -2.0,
-            skew_x: 0.25,
-            skew_y: 0.5,
+    fn test_affine_from_raster() {
+        let raster = TestRaster {
+            transform: [100.0, 1.0, 0.25, 200.0, 0.5, -2.0],
+            spatial_shape: [10, 20],
         };
-        let a = AffineMatrix::from_metadata(&m);
+        let a = AffineMatrix::from_raster(&raster);
         assert_eq!(a.offset_x, 100.0);
         assert_eq!(a.offset_y, 200.0);
         assert_eq!(a.scale_x, 1.0);

@@ -44,8 +44,8 @@ pub const FOOTPRINT_POINTS_PER_EDGE: usize = 10;
 /// Returned in ring order: upper-left `(0, 0)`, upper-right `(width, 0)`,
 /// lower-right `(width, height)`, lower-left `(0, height)`.
 pub fn raster_footprint_corners(raster: &dyn RasterRef) -> [(f64, f64); 4] {
-    let width = raster.metadata().width();
-    let height = raster.metadata().height();
+    let width = raster.width().unwrap();
+    let height = raster.height().unwrap();
 
     [
         to_world_coordinate(raster, 0, 0),

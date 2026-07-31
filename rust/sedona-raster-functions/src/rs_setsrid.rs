@@ -614,16 +614,10 @@ mod tests {
             let modified = result_array.get(i).unwrap();
 
             // Metadata preserved
-            assert_eq!(original.metadata().width(), modified.metadata().width());
-            assert_eq!(original.metadata().height(), modified.metadata().height());
-            assert_eq!(
-                original.metadata().upper_left_x(),
-                modified.metadata().upper_left_x()
-            );
-            assert_eq!(
-                original.metadata().upper_left_y(),
-                modified.metadata().upper_left_y()
-            );
+            assert_eq!(original.width().unwrap(), modified.width().unwrap());
+            assert_eq!(original.height().unwrap(), modified.height().unwrap());
+            assert_eq!(original.transform()[0], modified.transform()[0]);
+            assert_eq!(original.transform()[3], modified.transform()[3]);
 
             // Band data preserved
             let orig_bands = original.bands();
@@ -636,10 +630,7 @@ mod tests {
                     orig_band.nd_buffer().unwrap().as_contiguous().unwrap(),
                     mod_band.nd_buffer().unwrap().as_contiguous().unwrap()
                 );
-                assert_eq!(
-                    orig_band.metadata().data_type().unwrap(),
-                    mod_band.metadata().data_type().unwrap()
-                );
+                assert_eq!(orig_band.data_type(), mod_band.data_type());
             }
 
             // CRS changed

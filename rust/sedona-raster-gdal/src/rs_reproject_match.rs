@@ -387,16 +387,16 @@ mod tests {
         };
         let rasters = sedona_raster::array::RasterStructArray::try_new(struct_array).unwrap();
         let out = rasters.get(0).unwrap();
-        let m = out.metadata();
 
         assert_eq!(out.crs(), Some("EPSG:3857"));
-        assert_eq!(m.width(), 4);
-        assert_eq!(m.height(), 4);
+        assert_eq!(out.width().unwrap(), 4);
+        assert_eq!(out.height().unwrap(), 4);
         // The output grid is the reference's grid, verbatim.
-        assert_eq!(m.upper_left_x(), 1_113_194.9);
-        assert_eq!(m.upper_left_y(), 5_465_442.2);
-        assert_eq!(m.scale_x(), 111_319.5);
-        assert_eq!(m.scale_y(), -111_319.5);
+        let transform = out.transform();
+        assert_eq!(transform[0], 1_113_194.9);
+        assert_eq!(transform[3], 5_465_442.2);
+        assert_eq!(transform[1], 111_319.5);
+        assert_eq!(transform[5], -111_319.5);
     }
 
     #[test]
