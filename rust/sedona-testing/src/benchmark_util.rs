@@ -25,6 +25,7 @@ use geo_types::Rect;
 use rand::{distr::Uniform, rngs::StdRng, Rng, RngExt, SeedableRng};
 
 use sedona_common::sedona_internal_err;
+use sedona_geometry::transform::CrsEngine;
 use sedona_geometry::types::GeometryTypeId;
 use sedona_schema::datatypes::{SedonaType, RASTER, WKB_GEOMETRY};
 use sedona_schema::raster::BandDataType;
@@ -72,6 +73,20 @@ pub mod benchmark {
         name: &str,
         config: impl Into<BenchmarkArgs>,
     ) {
+        scalar_with_crs_engine(c, functions, lib, name, config, None)
+    }
+
+    /// Benchmark a reprojecting [ScalarUDF], injecting a [CrsEngine] into the
+    /// tester so functions that resolve a CRS (e.g. `ST_Transform`) use a real
+    /// engine instead of the erroring default. Otherwise identical to [scalar].
+    pub fn scalar_with_crs_engine(
+        c: &mut Criterion,
+        functions: &FunctionSet,
+        lib: &str,
+        name: &str,
+        config: impl Into<BenchmarkArgs>,
+        crs_engine: Option<Arc<dyn CrsEngine + Send + Sync>>,
+    ) {
         let not_found_err = format!("{name} was not found in function set");
         let udf: ScalarUDF = functions
             .scalar_udf(name)
@@ -86,7 +101,10 @@ pub mod benchmark {
             )
             .unwrap();
         c.bench_function(&data.make_label(lib, name), |b| {
-            b.iter(|| data.invoke_scalar(&udf).unwrap())
+            b.iter(|| {
+                data.invoke_scalar_with_crs_engine(&udf, crs_engine.clone())
+                    .unwrap()
+            })
         });
     }
 
@@ -536,7 +554,21 @@ impl BenchmarkData {
 
     /// Invoke a scalar function on this data
     pub fn invoke_scalar(&self, udf: &ScalarUDF) -> Result<()> {
-        let tester = ScalarUdfTester::new(udf.clone(), self.config.sedona_types().clone());
+        self.invoke_scalar_with_crs_engine(udf, None)
+    }
+
+    /// Invoke a scalar function on this data, injecting a [CrsEngine] into the
+    /// tester so reprojecting functions (e.g. `ST_Transform`) resolve a real
+    /// engine instead of the erroring default.
+    pub fn invoke_scalar_with_crs_engine(
+        &self,
+        udf: &ScalarUDF,
+        crs_engine: Option<Arc<dyn CrsEngine + Send + Sync>>,
+    ) -> Result<()> {
+        let mut tester = ScalarUdfTester::new(udf.clone(), self.config.sedona_types().clone());
+        if let Some(crs_engine) = crs_engine {
+            tester = tester.with_crs_engine(crs_engine);
+        }
 
         match self.config {
             BenchmarkArgs::Array(_) => {

@@ -14,8 +14,11 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+use std::sync::Arc;
+
 use criterion::{criterion_group, criterion_main, Criterion};
 use sedona_expr::function_set::FunctionSet;
+use sedona_proj::transform::LazyProjEngine;
 use sedona_testing::benchmark_util::{benchmark, BenchmarkArgSpec::*, BenchmarkArgs};
 
 fn criterion_benchmark(c: &mut Criterion) {
@@ -30,7 +33,14 @@ fn criterion_benchmark(c: &mut Criterion) {
         String("EPSG:3857".to_string()),
     );
 
-    benchmark::scalar(c, &f, "sedona-proj", "st_transform", args);
+    benchmark::scalar_with_crs_engine(
+        c,
+        &f,
+        "sedona-proj",
+        "st_transform",
+        args,
+        Some(Arc::new(LazyProjEngine)),
+    );
 }
 
 criterion_group!(benches, criterion_benchmark);
