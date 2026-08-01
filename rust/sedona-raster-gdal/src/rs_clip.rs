@@ -926,8 +926,12 @@ mod tests {
     fn test_rs_clip_crs_mismatch() {
         // A geometry given in EPSG:3857 must be reprojected to the raster's
         // EPSG:4326 before clipping, yielding the same result as the equivalent
-        // EPSG:4326 geometry.
-        let array = test_raster_array();
+        // EPSG:4326 geometry. Reprojection needs a real CRS engine, injected
+        // through the tester's config options via `with_crs_engine`.
+        let spec = RasterSpec::d2(4, 2)
+            .band_values(&[1u8, 2, 3, 4, 5, 6, 7, 8])
+            .crs(Some("EPSG:4326"))
+            .transform([0.0, 1.0, 0.0, 2.0, 0.0, -1.0]);
 
         // Build the EPSG:3857 geometry with the same PROJ engine the UDF uses,
         // so the test is robust to axis-order / normalization across builds.
@@ -940,12 +944,6 @@ mod tests {
         })
         .unwrap();
 
-        // 3-arg variant: RS_Clip(raster, band, geom).
-        let kernel = RsClip { arg_count: 3 };
-        let raster_scalar = ColumnarValue::Scalar(ScalarValue::Struct(Arc::new(array)));
-        let band_type = SedonaType::Arrow(DataType::Int32);
-        let band_val = ColumnarValue::Scalar(ScalarValue::Int32(Some(1)));
-
         // Both the native-CRS and the reprojected geometry must produce the
         // same clip: the polygon covers columns 0-1 of both rows, cropped to
         // that 2x2 window with the UInt8 minimum recorded as nodata.
@@ -954,21 +952,18 @@ mod tests {
             .transform([0.0, 1.0, 0.0, 2.0, 0.0, -1.0])
             .band_values(&[1u8, 2, 5, 6])
             .nodata(0u8);
+
+        // 3-arg variant: RS_Clip(raster, band, geom), invoked through the tester
+        // with a real CRS engine so the reprojecting branch can run.
         let clip_band1 = |geom_type: SedonaType, geom_wkb: Vec<u8>| {
-            let result = kernel
-                .invoke_batch(
-                    &[RASTER, band_type.clone(), geom_type],
-                    &[
-                        raster_scalar.clone(),
-                        band_val.clone(),
-                        ColumnarValue::Scalar(ScalarValue::Binary(Some(geom_wkb))),
-                    ],
-                )
+            let udf: datafusion_expr::ScalarUDF = rs_clip_udf().into();
+            let arg_types = vec![RASTER, SedonaType::Arrow(DataType::Int32), geom_type];
+            let tester =
+                ScalarUdfTester::new(udf, arg_types).with_crs_engine(Arc::new(LazyProjEngine));
+            let result = tester
+                .invoke_scalar_scalar_scalar(spec.scalar(), 1, ScalarValue::Binary(Some(geom_wkb)))
                 .unwrap();
-            let ColumnarValue::Scalar(scalar) = result else {
-                panic!("Expected raster scalar result");
-            };
-            assert_raster_scalar_equals(&scalar, &expected);
+            assert_raster_scalar_equals(&result, &expected);
         };
 
         clip_band1(
@@ -987,13 +982,14 @@ mod tests {
         // (y, x) plane and broadcasts the same mask across both time planes,
         // preserving the time dimension. Values 1..=16 (C order): time 0 is
         // rows [1,2,3,4] / [5,6,7,8], time 1 is [9..12] / [13..16].
+        // CRS-less raster and geom: this exercises N-D plane broadcasting, not
+        // reprojection, so the CRS engine is never reached.
         let array = RasterSpec::nd(&["time", "y", "x"], &[2, 2, 4])
             .band_values(&[1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
-            .crs(Some("EPSG:4326"))
+            .crs(None)
             .transform([0.0, 1.0, 0.0, 2.0, 0.0, -1.0])
             .build();
 
-        let crs_4326 = deserialize_crs("EPSG:4326").unwrap().unwrap();
         let geom_wkb = make_wkb("POLYGON((0 1, 2 1, 2 2, 0 2, 0 1))");
 
         // RS_Clip(raster, band, geom, allTouched, noData, crop=true).
@@ -1003,7 +999,7 @@ mod tests {
                 &[
                     RASTER,
                     SedonaType::Arrow(DataType::Int32),
-                    SedonaType::Wkb(Edges::Planar, Some(crs_4326)),
+                    SedonaType::Wkb(Edges::Planar, None),
                     SedonaType::Arrow(DataType::Boolean),
                     SedonaType::Arrow(DataType::Float64),
                     SedonaType::Arrow(DataType::Boolean),
@@ -1028,7 +1024,7 @@ mod tests {
             &scalar,
             &RasterSpec::nd(&["time", "y", "x"], &[2, 1, 2])
                 .band_values(&[1u8, 2, 9, 10])
-                .crs(Some("EPSG:4326"))
+                .crs(None)
                 .transform([0.0, 1.0, 0.0, 2.0, 0.0, -1.0])
                 .nodata(0u8),
         );
@@ -1056,13 +1052,15 @@ mod tests {
         );
     }
 
-    /// A 2×1, two-band EPSG:4326 raster (band 1 = [1,2], band 2 = [10,20]) — the
-    /// two bands differ so a per-band clip is observably distinct.
+    /// A 2×1, two-band, CRS-less raster (band 1 = [1,2], band 2 = [10,20]) — the
+    /// two bands differ so a per-band clip is observably distinct. CRS-less so
+    /// the band-handling tests reach rasterization rather than the reprojection
+    /// branch (which would need an injected CRS engine).
     fn two_band_raster() -> StructArray {
         RasterSpec::d2(2, 1)
             .band_values(&[1u8, 2])
             .band_values(&[10u8, 20])
-            .crs(Some("EPSG:4326"))
+            .crs(None)
             .transform([0.0, 1.0, 0.0, 1.0, 0.0, -1.0])
             .build()
     }
@@ -1072,7 +1070,6 @@ mod tests {
         // Regression: a constant raster+geom with a per-row band column must
         // produce an N-row array, not collapse to row 0. (The executor only sees
         // [raster, geom], so output packaging must consider all args.)
-        let crs_4326 = deserialize_crs("EPSG:4326").unwrap().unwrap();
         let geom_wkb = make_wkb("POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))");
 
         let kernel = RsClip { arg_count: 3 };
@@ -1081,7 +1078,7 @@ mod tests {
                 &[
                     RASTER,
                     SedonaType::Arrow(DataType::Int32),
-                    SedonaType::Wkb(Edges::Planar, Some(crs_4326)),
+                    SedonaType::Wkb(Edges::Planar, None),
                 ],
                 &[
                     ColumnarValue::Scalar(ScalarValue::Struct(Arc::new(two_band_raster()))),
@@ -1101,7 +1098,7 @@ mod tests {
         let row = |values: &[u8]| {
             Some(
                 RasterSpec::d2(1, 1)
-                    .crs(Some("EPSG:4326"))
+                    .crs(None)
                     .transform([0.0, 1.0, 0.0, 1.0, 0.0, -1.0])
                     .band_values(values)
                     .nodata(0u8),
@@ -1114,7 +1111,6 @@ mod tests {
     fn band_zero_clips_all_bands() {
         // Band 0 means "all bands" — it must reach clip_raster as 0, not be
         // clamped to 1.
-        let crs_4326 = deserialize_crs("EPSG:4326").unwrap().unwrap();
         let geom_wkb = make_wkb("POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))");
         let kernel = RsClip { arg_count: 3 };
         let result = kernel
@@ -1122,7 +1118,7 @@ mod tests {
                 &[
                     RASTER,
                     SedonaType::Arrow(DataType::Int32),
-                    SedonaType::Wkb(Edges::Planar, Some(crs_4326)),
+                    SedonaType::Wkb(Edges::Planar, None),
                 ],
                 &[
                     ColumnarValue::Scalar(ScalarValue::Struct(Arc::new(two_band_raster()))),
@@ -1139,7 +1135,7 @@ mod tests {
         assert_raster_scalar_equals(
             &scalar,
             &RasterSpec::d2(1, 1)
-                .crs(Some("EPSG:4326"))
+                .crs(None)
                 .transform([0.0, 1.0, 0.0, 1.0, 0.0, -1.0])
                 .band_values(&[1u8])
                 .nodata(0u8)
@@ -1150,7 +1146,6 @@ mod tests {
 
     #[test]
     fn negative_band_errors() {
-        let crs_4326 = deserialize_crs("EPSG:4326").unwrap().unwrap();
         let geom_wkb = make_wkb("POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))");
         let kernel = RsClip { arg_count: 3 };
         let err = kernel
@@ -1158,7 +1153,7 @@ mod tests {
                 &[
                     RASTER,
                     SedonaType::Arrow(DataType::Int32),
-                    SedonaType::Wkb(Edges::Planar, Some(crs_4326)),
+                    SedonaType::Wkb(Edges::Planar, None),
                 ],
                 &[
                     ColumnarValue::Scalar(ScalarValue::Struct(Arc::new(two_band_raster()))),
@@ -1205,7 +1200,6 @@ mod tests {
     #[test]
     fn null_band_yields_null() {
         // A NULL band must propagate to NULL, not silently clip every band.
-        let crs_4326 = deserialize_crs("EPSG:4326").unwrap().unwrap();
         let geom_wkb = make_wkb("POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))");
         let kernel = RsClip { arg_count: 3 };
         let result = kernel
@@ -1213,7 +1207,7 @@ mod tests {
                 &[
                     RASTER,
                     SedonaType::Arrow(DataType::Int32),
-                    SedonaType::Wkb(Edges::Planar, Some(crs_4326)),
+                    SedonaType::Wkb(Edges::Planar, None),
                 ],
                 &[
                     ColumnarValue::Scalar(ScalarValue::Struct(Arc::new(two_band_raster()))),
