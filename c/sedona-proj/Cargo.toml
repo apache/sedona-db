@@ -31,10 +31,7 @@ rust-version.workspace = true
 [dev-dependencies]
 approx = { workspace = true }
 geo-types = { workspace = true }
-rstest = { workspace = true }
 wkb = { workspace = true }
-sedona-testing = { workspace = true, features = ["criterion"] }
-criterion = { workspace = true}
 
 [features]
 default = [ "proj-sys" ]
@@ -43,20 +40,10 @@ proj-sys = [ "dep:proj-sys" ]
 [dependencies]
 libloading = { workspace = true }
 serde_json = { workspace = true }
-arrow-schema = { workspace = true }
-arrow-array = { workspace = true }
 datafusion-common = { workspace = true }
-datafusion-expr = { workspace = true }
 geo-traits = { workspace = true }
 proj-sys = { version = "0.26.0", optional = true }
 sedona-common = { workspace = true }
-sedona-expr = { workspace = true }
-sedona-functions = { workspace = true }
 sedona-geometry = { workspace = true }
 sedona-schema = { workspace = true }
 thiserror = { workspace = true }
-wkb = { workspace = true }
-
-[[bench]]
-name = "proj-functions"
-harness = false

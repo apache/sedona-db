@@ -17,15 +17,12 @@
 use std::sync::Arc;
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use sedona_expr::function_set::FunctionSet;
+use sedona_functions::register::default_function_set;
 use sedona_proj::transform::LazyProjEngine;
 use sedona_testing::benchmark_util::{benchmark, BenchmarkArgSpec::*, BenchmarkArgs};
 
 fn criterion_benchmark(c: &mut Criterion) {
-    let mut f = FunctionSet::new();
-    for (name, kernel) in sedona_proj::register::scalar_kernels() {
-        f.add_scalar_udf_impl(name, kernel).unwrap();
-    }
+    let f = default_function_set();
 
     let args = BenchmarkArgs::ArrayScalarScalar(
         Point,
@@ -36,7 +33,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     benchmark::scalar_with_crs_engine(
         c,
         &f,
-        "sedona-proj",
+        "sedona-functions",
         "st_transform",
         args,
         Some(Arc::new(LazyProjEngine)),

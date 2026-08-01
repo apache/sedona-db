@@ -17,10 +17,8 @@
 
 use crate::error::SedonaProjError;
 use crate::proj::{Proj, ProjContext};
-use datafusion_common::config::ConfigOptions;
 use datafusion_common::{DataFusionError, Result};
 use geo_traits::Dimensions;
-use sedona_common::option::SedonaOptions;
 use sedona_common::sedona_internal_datafusion_err;
 use sedona_geometry::bounding_box::BoundingBox;
 use sedona_geometry::error::SedonaGeometryError;
@@ -231,28 +229,6 @@ pub fn with_global_proj_engine<R, F: FnMut(&CachingCrsEngine<ProjCrsEngine>) -> 
             .map_err(|_| sedona_internal_datafusion_err!("Failed to set cached PROJ transform"))?;
         func(engine_cell.get().unwrap())
     })
-}
-
-/// Run `f` with the session's CRS engine.
-///
-/// When `config_options` carries a [`SedonaOptions`] extension (the query
-/// path), the engine configured in its runtime is used. Otherwise (e.g. a
-/// direct `invoke_batch` call, or a context without a configured runtime) this
-/// falls back to [`LazyProjEngine`], which resolves the process-global PROJ
-/// engine on demand.
-///
-/// This keeps the `SedonaOptions` -> runtime engine extraction below
-/// `sedona-proj` in the crate graph so that geometry CRS functions in this
-/// crate can honor an injected engine without depending on higher-level crates.
-pub fn with_crs_engine<T>(
-    config_options: Option<&ConfigOptions>,
-    f: impl FnOnce(&dyn CrsEngine) -> Result<T>,
-) -> Result<T> {
-    if let Some(options) = config_options.and_then(|o| o.extensions.get::<SedonaOptions>()) {
-        f(options.runtime.crs_engine().as_ref())
-    } else {
-        f(&LazyProjEngine)
-    }
 }
 
 /// Global builder as a thread-safe RwLock. Normally set once on application start

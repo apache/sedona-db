@@ -44,7 +44,6 @@ sedona-geometry = { workspace = true }
 sedona-raster = { workspace = true }
 sedona-schema = { workspace = true }
 sedona-tg = { workspace = true }
-sedona-proj = { workspace = true }
 serde_json = { workspace = true }
 wkb = { workspace = true }
 

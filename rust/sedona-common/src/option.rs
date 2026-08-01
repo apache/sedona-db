@@ -19,7 +19,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use datafusion_common::config::{
-    ConfigEntry, ConfigExtension, ConfigField, ExtensionOptions, Visit,
+    ConfigEntry, ConfigExtension, ConfigField, ConfigOptions, ExtensionOptions, Visit,
 };
 use datafusion_common::Result;
 use datafusion_common::{config_err, config_namespace};
@@ -542,6 +542,28 @@ impl CrsEngine for DefaultCrsEngine {
         Err(SedonaGeometryError::Invalid(format!(
             "Can't convert pipeline {pipeline} (no CrsEngine registered)"
         )))
+    }
+}
+
+/// Run `f` with the session's CRS engine.
+///
+/// When `config_options` carries a [`SedonaOptions`] extension (the query
+/// path), the engine configured in its runtime is used. Otherwise (e.g. a
+/// direct `invoke_batch` call, or a context without a configured runtime) this
+/// falls back to [`DefaultCrsEngine`], which errors when no engine has been
+/// registered.
+///
+/// Keeping this `SedonaOptions` -> runtime engine extraction in `sedona-common`
+/// lets geometry and raster CRS functions honor an injected engine without
+/// depending on a concrete engine implementation such as `sedona-proj`.
+pub fn with_crs_engine<T>(
+    config_options: Option<&ConfigOptions>,
+    f: impl FnOnce(&dyn CrsEngine) -> Result<T>,
+) -> Result<T> {
+    if let Some(options) = config_options.and_then(|o| o.extensions.get::<SedonaOptions>()) {
+        f(options.runtime.crs_engine().as_ref())
+    } else {
+        f(&DefaultCrsEngine {})
     }
 }
 

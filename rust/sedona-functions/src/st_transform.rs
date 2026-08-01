@@ -22,11 +22,10 @@ use datafusion_common::cast::{as_string_view_array, as_struct_array};
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::{exec_err, DataFusionError, Result, ScalarValue};
 use datafusion_expr::ColumnarValue;
+use sedona_common::option::with_crs_engine;
 use sedona_common::sedona_internal_err;
 use sedona_expr::item_crs::{make_item_crs, parse_item_crs_arg_type};
-use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
-use sedona_functions::executor::WkbExecutor;
-use sedona_functions::st_setsrid::{validate_crs_array_for_type, validate_crs_for_type};
+use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::transform::{transform, CrsTransform};
 use sedona_geometry::types::Edges;
 use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
@@ -38,9 +37,16 @@ use std::iter::zip;
 use std::sync::Arc;
 use wkb::reader::Wkb;
 
-use crate::transform::with_crs_engine;
+use crate::executor::WkbExecutor;
+use crate::st_setsrid::{validate_crs_array_for_type, validate_crs_for_type};
 
-/// ST_Transform() implementation using the proj crate
+/// ST_Transform() scalar UDF (reprojects geometries/geographies via the
+/// session's [`CrsEngine`](sedona_geometry::transform::CrsEngine))
+pub fn st_transform_udf() -> SedonaScalarUDF {
+    SedonaScalarUDF::from_impl("st_transform", st_transform_impl())
+}
+
+/// ST_Transform() kernel implementation
 pub fn st_transform_impl() -> ScalarKernelRef {
     Arc::new(STTransform {})
 }
@@ -455,7 +461,7 @@ mod tests {
     use sedona_testing::testers::ScalarUdfTester;
     use std::sync::Arc;
 
-    use crate::transform::LazyProjEngine;
+    use sedona_proj::transform::LazyProjEngine;
 
     const NAD83ZONE6PROJ: &str = "EPSG:2230";
     const NAD83_GEOGRAPHIC: &str = "EPSG:4269";

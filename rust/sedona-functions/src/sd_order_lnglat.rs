@@ -22,12 +22,12 @@ use arrow_schema::DataType;
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::{DataFusionError, Result};
 use datafusion_expr::ColumnarValue;
+use sedona_common::option::with_crs_engine;
 use sedona_expr::scalar_udf::SedonaScalarKernel;
-use sedona_functions::executor::WkbBytesExecutor;
 use sedona_geometry::wkb_header::WkbHeader;
 use sedona_schema::{crs::lnglat, datatypes::SedonaType, matchers::ArgMatcher};
 
-use crate::transform::with_crs_engine;
+use crate::executor::WkbBytesExecutor;
 
 /// Generic scalar kernel for sd_order based on the first coordinate
 /// of a geometry projected to lon/lat
@@ -155,7 +155,7 @@ mod test {
     use sedona_testing::{create::create_array, testers::ScalarUdfTester};
 
     use super::*;
-    use crate::transform::LazyProjEngine;
+    use sedona_proj::transform::LazyProjEngine;
 
     #[test]
     fn order_geometry() {

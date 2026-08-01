@@ -25,15 +25,16 @@ use wkb::reader::read_wkb;
 
 /// Run `f` with the session's CRS engine: the `SedonaOptions` runtime engine
 /// when config options are available (the query path), falling back to the
-/// process-global PROJ engine otherwise (e.g. direct `invoke_batch` calls).
+/// default engine (which errors when no engine is registered) otherwise (e.g.
+/// direct `invoke_batch` calls).
 ///
-/// The engine resolution lives in `sedona-proj` so that geometry CRS functions
-/// in that crate can share it; this is a thin re-export for raster call sites.
+/// The engine resolution lives in `sedona-common` so that geometry and raster
+/// CRS functions can share it; this is a thin re-export for raster call sites.
 pub fn with_crs_engine<T>(
     config_options: Option<&ConfigOptions>,
     f: impl FnOnce(&dyn CrsEngine) -> Result<T>,
 ) -> Result<T> {
-    sedona_proj::transform::with_crs_engine(config_options, f)
+    sedona_common::option::with_crs_engine(config_options, f)
 }
 
 /// Resolve an optional CRS string to a concrete CRS object.

@@ -101,6 +101,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_start_point::st_start_point_udf,
         crate::st_togeomgeog::st_togeography_udf,
         crate::st_togeomgeog::st_togeometry_udf,
+        crate::st_transform::st_transform_udf,
         crate::st_translate::st_translate_udf,
         crate::st_xyzm_minmax::st_mmax_udf,
         crate::st_xyzm_minmax::st_mmin_udf,
