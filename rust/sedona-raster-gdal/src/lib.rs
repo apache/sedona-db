@@ -45,7 +45,6 @@ mod rs_reproject_match;
 mod rs_resample;
 mod rs_tile;
 mod rs_zonal_stats;
-mod source_uri;
 mod utils;
 
 // Re-export main dataset conversion functions

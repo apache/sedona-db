@@ -305,7 +305,8 @@ impl GDALDatasetCache {
                 let uri = band.outdb_uri().ok_or_else(|| {
                     exec_datafusion_err!("Band {} is out-db but missing outdb_uri", i)
                 })?;
-                let (url, source_band_num_u32) = split_outdb_band_fragment(uri);
+                let (url, source_band_num_u32) =
+                    split_outdb_band_fragment(uri).map_err(|e| arrow_datafusion_err!(e))?;
                 let source_band_num: usize = source_band_num_u32
                     .try_into()
                     .map_err(|_| exec_datafusion_err!("Band {} out-db band_id is too large", i))?;
@@ -502,7 +503,8 @@ impl VrtKey {
             // URI; in-db bands have no URI hint here.
             let (outdb_url, outdb_band_id) = match band.outdb_uri() {
                 Some(uri) => {
-                    let (url, band_num) = split_outdb_band_fragment(uri);
+                    let (url, band_num) =
+                        split_outdb_band_fragment(uri).map_err(|e| arrow_datafusion_err!(e))?;
                     (Some(normalize_outdb_source_path(&url)), Some(band_num))
                 }
                 None => (None, None),

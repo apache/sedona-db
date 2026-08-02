@@ -67,12 +67,11 @@ use async_trait::async_trait;
 use datafusion_common::{DataFusionError, Result as DFResult};
 use sedona_gdal::raster::rasterband::RasterBand;
 use sedona_raster::raster_loader::{AsyncRasterLoader, RasterLoadRequest, RasterLoadResult};
-use sedona_raster::traits::is_spatial_dim_pair;
+use sedona_raster::traits::{is_spatial_dim_pair, split_outdb_band_fragment};
 use sedona_schema::raster::BandDataType;
 
 use crate::gdal_common::{convert_gdal_err, gdal_to_band_data_type, with_gdal};
 use crate::gdal_dataset_provider::thread_local_cache;
-use crate::source_uri::parse_outdb_source;
 
 /// Diagnostic name for the GDAL raster loader (reported via
 /// [`AsyncRasterLoader::name`]). GDAL is a catch-all loader — it doesn't key
@@ -250,7 +249,7 @@ impl GdalLoader {
                     let mut buffers = Vec::new();
                     for req in reqs {
                         // `#band=N` fragment, with N defaulting to 1 if absent.
-                        let (path, band_num) = parse_outdb_source(&req.uri)?;
+                        let (path, band_num) = split_outdb_band_fragment(&req.uri)?;
                         let cache = thread_local_cache()?;
                         let dataset = cache.get_or_create_outdb_source(gdal, &path, None)?;
                         let band = dataset

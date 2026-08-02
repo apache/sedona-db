@@ -121,23 +121,36 @@ impl<'a> NdBuffer<'a> {
     }
 }
 
-/// Parse the SedonaDB `#band=N` fragment out of an out-DB URI.
-/// Returns `(base_url, band_id)`; band_id defaults to 1 if the fragment is
-/// absent or malformed (e.g. a non-positive-integer band value), in which
-/// case the whole string is treated as the base URL. This lenient parsing
-/// is the shared convention consumers use to recover the source path and
+/// Parse the SedonaDB `#band=N` fragment out of an out-DB URI into the base
+/// URL and 1-based source band index.
+///
+/// Behaviour:
+///
+/// - `<uri>#band=N` where `N` parses as a `u32` in `1..=u32::MAX`: strips the
+///   fragment and returns `(<uri>, N)`. `rsplit_once` lets a trailing
+///   `#band=N` win over any earlier `#anchor` already in the URI.
+/// - `<uri>#band=...` with a value that is not a positive `u32` (zero,
+///   negative, non-numeric, empty, or overflowing `u32`): returns an error.
+///   The user explicitly asked for a band; we refuse to silently substitute a
+///   default.
+/// - Any URI whose fragment is not `band=...` (including GDAL-native
+///   subdataset URIs like `HDF5:"x.h5":/var`) and plain URIs without a
+///   fragment: pass through verbatim with default band index 1.
+///
+/// This is the shared convention consumers use to recover the source path and
 /// band from a band's `outdb_uri()`.
-pub fn split_outdb_band_fragment(uri: &str) -> (String, u32) {
-    if let Some(hash_pos) = uri.rfind('#') {
-        let (base, fragment) = uri.split_at(hash_pos);
-        let fragment = &fragment[1..]; // skip the '#'
-        if let Some(rest) = fragment.strip_prefix("band=") {
-            if let Ok(n) = rest.parse::<u32>() {
-                return (base.to_string(), n);
-            }
+pub fn split_outdb_band_fragment(uri: &str) -> Result<(String, u32), ArrowError> {
+    if let Some((prefix, fragment)) = uri.rsplit_once('#') {
+        if let Some(band_str) = fragment.strip_prefix("band=") {
+            return match band_str.parse::<u32>() {
+                Ok(band) if band >= 1 => Ok((prefix.to_string(), band)),
+                _ => Err(ArrowError::InvalidArgumentError(format!(
+                    "Invalid band index in outdb URI fragment '#band={band_str}': expected a positive integer in 1..=u32::MAX"
+                ))),
+            };
         }
     }
-    (uri.to_string(), 1)
+    Ok((uri.to_string(), 1))
 }
 
 /// Iteration view over a raster's bands. Returned by `RasterRef::bands()`.
@@ -826,24 +839,26 @@ mod tests {
 
     #[test]
     fn test_split_outdb_band_fragment_with_band() {
-        let (base, n) = split_outdb_band_fragment("s3://bucket/file.tif#band=42");
+        let (base, n) = split_outdb_band_fragment("s3://bucket/file.tif#band=42").unwrap();
         assert_eq!(base, "s3://bucket/file.tif");
         assert_eq!(n, 42);
     }
 
     #[test]
     fn test_split_outdb_band_fragment_without_band_defaults_to_1() {
-        let (base, n) = split_outdb_band_fragment("s3://bucket/file.tif");
+        let (base, n) = split_outdb_band_fragment("s3://bucket/file.tif").unwrap();
         assert_eq!(base, "s3://bucket/file.tif");
         assert_eq!(n, 1);
     }
 
     #[test]
-    fn test_split_outdb_band_fragment_malformed_fragment_defaults_to_1() {
-        // `#band=abc` is malformed; treat the whole string as the base URL.
-        let (base, n) = split_outdb_band_fragment("s3://bucket/file.tif#band=abc");
-        assert_eq!(base, "s3://bucket/file.tif#band=abc");
-        assert_eq!(n, 1);
+    fn test_split_outdb_band_fragment_malformed_fragment_errors() {
+        // `#band=abc` explicitly requests a band but is not a positive integer;
+        // reject it rather than silently substituting the default band 1.
+        let msg = split_outdb_band_fragment("s3://bucket/file.tif#band=abc")
+            .unwrap_err()
+            .to_string();
+        assert!(msg.contains("band=abc"), "msg was: {msg}");
     }
 
     fn ve(source_axis: i64, start: i64, step: i64, steps: i64) -> ViewEntry {
@@ -1029,5 +1044,156 @@ mod tests {
     fn is_contiguous_broadcast_is_false() {
         // Zero stride (broadcast) is not packed.
         assert!(!ndbuf(&[2, 3], &[0, 1], 0).is_contiguous());
+    }
+
+    #[test]
+    fn split_outdb_band_one_fragment_round_trips() {
+        assert_eq!(
+            split_outdb_band_fragment("s3://bucket/file.tif#band=1").unwrap(),
+            ("s3://bucket/file.tif".to_string(), 1),
+        );
+    }
+
+    #[test]
+    fn split_outdb_band_max_u32_accepted() {
+        let max = u32::MAX;
+        let uri = format!("s3://bucket/file.tif#band={max}");
+        assert_eq!(
+            split_outdb_band_fragment(&uri).unwrap(),
+            ("s3://bucket/file.tif".to_string(), max),
+        );
+    }
+
+    #[test]
+    fn split_outdb_band_zero_errors() {
+        let msg = split_outdb_band_fragment("s3://bucket/file.tif#band=0")
+            .unwrap_err()
+            .to_string();
+        assert!(msg.contains("band=0"), "msg was: {msg}");
+        assert!(msg.contains("positive integer"), "msg was: {msg}");
+    }
+
+    #[test]
+    fn split_outdb_negative_band_errors() {
+        let msg = split_outdb_band_fragment("s3://bucket/file.tif#band=-2")
+            .unwrap_err()
+            .to_string();
+        assert!(msg.contains("band=-2"), "msg was: {msg}");
+    }
+
+    #[test]
+    fn split_outdb_band_overflow_errors() {
+        // 4294967296 = u32::MAX + 1
+        let msg = split_outdb_band_fragment("s3://bucket/file.tif#band=4294967296")
+            .unwrap_err()
+            .to_string();
+        assert!(msg.contains("band=4294967296"), "msg was: {msg}");
+    }
+
+    #[test]
+    fn split_outdb_empty_band_value_errors() {
+        let msg = split_outdb_band_fragment("s3://bucket/file.tif#band=")
+            .unwrap_err()
+            .to_string();
+        assert!(msg.contains("band="), "msg was: {msg}");
+    }
+
+    #[test]
+    fn split_outdb_non_band_fragment_passes_through() {
+        let uri = "s3://bucket/file.tif#section";
+        assert_eq!(
+            split_outdb_band_fragment(uri).unwrap(),
+            (uri.to_string(), 1)
+        );
+    }
+
+    #[test]
+    fn split_outdb_empty_fragment_passes_through() {
+        let uri = "s3://bucket/file.tif#";
+        assert_eq!(
+            split_outdb_band_fragment(uri).unwrap(),
+            (uri.to_string(), 1)
+        );
+    }
+
+    #[test]
+    fn split_outdb_url_query_string_preserved_with_band_fragment() {
+        assert_eq!(
+            split_outdb_band_fragment("https://example.com/r.tif?token=abc#band=3").unwrap(),
+            ("https://example.com/r.tif?token=abc".to_string(), 3),
+        );
+    }
+
+    #[test]
+    fn split_outdb_url_query_string_with_non_band_fragment_passes_through() {
+        let uri = "https://example.com/r.tif?token=abc#anchor";
+        assert_eq!(
+            split_outdb_band_fragment(uri).unwrap(),
+            (uri.to_string(), 1)
+        );
+    }
+
+    #[test]
+    fn split_outdb_local_path_with_band_fragment() {
+        assert_eq!(
+            split_outdb_band_fragment("/tmp/file.tif#band=5").unwrap(),
+            ("/tmp/file.tif".to_string(), 5),
+        );
+    }
+
+    #[test]
+    fn split_outdb_local_path_without_fragment() {
+        assert_eq!(
+            split_outdb_band_fragment("/tmp/file.tif").unwrap(),
+            ("/tmp/file.tif".to_string(), 1),
+        );
+    }
+
+    #[test]
+    fn split_outdb_gdal_subdataset_hdf5_passthrough() {
+        let uri = r#"HDF5:"/path/x.h5"://temperature"#;
+        assert_eq!(
+            split_outdb_band_fragment(uri).unwrap(),
+            (uri.to_string(), 1)
+        );
+    }
+
+    #[test]
+    fn split_outdb_gdal_subdataset_netcdf_passthrough() {
+        let uri = r#"NETCDF:"/path/file.nc":variable"#;
+        assert_eq!(
+            split_outdb_band_fragment(uri).unwrap(),
+            (uri.to_string(), 1)
+        );
+    }
+
+    #[test]
+    fn split_outdb_gdal_subdataset_gtiff_dir_passthrough() {
+        let uri = "GTIFF_DIR:1:/path/multi.tif";
+        assert_eq!(
+            split_outdb_band_fragment(uri).unwrap(),
+            (uri.to_string(), 1)
+        );
+    }
+
+    #[test]
+    fn split_outdb_gdal_subdataset_with_band_fragment_extracts_band() {
+        let uri = r#"HDF5:"/path/x.h5":/var#band=3"#;
+        let (gdal_uri, band) = split_outdb_band_fragment(uri).unwrap();
+        assert_eq!(gdal_uri, r#"HDF5:"/path/x.h5":/var"#);
+        assert_eq!(band, 3);
+    }
+
+    #[test]
+    fn split_outdb_trailing_band_wins_over_earlier_anchor() {
+        assert_eq!(
+            split_outdb_band_fragment("https://example.com/r.tif#anchor#band=7").unwrap(),
+            ("https://example.com/r.tif#anchor".to_string(), 7),
+        );
+    }
+
+    #[test]
+    fn split_outdb_empty_uri() {
+        assert_eq!(split_outdb_band_fragment("").unwrap(), (String::new(), 1));
     }
 }

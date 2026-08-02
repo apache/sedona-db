@@ -134,7 +134,7 @@ fn get_band_path(
                     match band.outdb_uri() {
                         Some(uri) => {
                             let (base_url, _band_id) =
-                                sedona_raster::traits::split_outdb_band_fragment(uri);
+                                sedona_raster::traits::split_outdb_band_fragment(uri)?;
                             builder.append_value(base_url)
                         }
                         None => builder.append_null(),
