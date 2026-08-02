@@ -37,17 +37,18 @@ use sedona_gdal::mem::MemDatasetBuilder;
 use sedona_gdal::raster::{rasterband::RasterBand, types::Buffer};
 use sedona_raster::array::RasterRefImpl;
 use sedona_raster::builder::RasterBuilder;
-use sedona_raster::traits::{BandMetadata, RasterMetadata, RasterRef};
+use sedona_raster::traits::RasterRef;
 use sedona_raster_functions::{
     crs_utils::{align_wkb_to_crs, resolve_crs},
     RasterExecutor,
 };
 use sedona_schema::datatypes::{SedonaType, RASTER};
 use sedona_schema::matchers::ArgMatcher;
-use sedona_schema::raster::{BandDataType, StorageType};
+use sedona_schema::raster::BandDataType;
 
 use crate::gdal_common::{band_data_type_to_gdal, with_gdal};
 use crate::gdal_dataset_provider::{configure_thread_local_options, thread_local_provider};
+use crate::utils::Grid;
 
 pub fn rs_as_raster_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
@@ -207,7 +208,7 @@ impl SedonaScalarKernel for RsAsRaster {
                 };
                 // A reference raster with no spatial (y, x) pair has no
                 // geotransform to rasterize onto — emit NULL for this row.
-                if raster.metadata().is_err() {
+                if raster.height().is_err() {
                     builder.append_null()?;
                     return Ok(());
                 }
@@ -237,7 +238,7 @@ impl SedonaScalarKernel for RsAsRaster {
                     engine.as_ref(),
                 )?;
 
-                let (out_metadata, out_band_metadata, out_band_bytes) = as_raster(
+                let rasterized = as_raster(
                     gdal,
                     &geom_wkb,
                     raster,
@@ -249,13 +250,16 @@ impl SedonaScalarKernel for RsAsRaster {
                 )
                 .map_err(|e| exec_datafusion_err!("RS_AsRaster failed: {}", e))?;
 
-                builder
-                    .start_raster(&out_metadata, raster.crs())
+                rasterized
+                    .grid
+                    .start_raster_into(&mut builder, raster.crs())
                     .map_err(|e| exec_datafusion_err!("Failed to start output raster: {}", e))?;
-                builder.start_band(out_band_metadata).map_err(|e| {
-                    exec_datafusion_err!("Failed to start output raster band: {}", e)
-                })?;
-                builder.band_data_writer().append_value(out_band_bytes);
+                builder
+                    .start_band_2d(rasterized.data_type, rasterized.nodata.as_deref())
+                    .map_err(|e| {
+                        exec_datafusion_err!("Failed to start output raster band: {}", e)
+                    })?;
+                builder.band_data_writer().append_value(rasterized.data);
                 builder.finish_band().map_err(|e| {
                     exec_datafusion_err!("Failed to finish output raster band: {}", e)
                 })?;
@@ -408,6 +412,15 @@ where
     })
 }
 
+/// The single in-db band produced by rasterizing a geometry: the output grid,
+/// the band's data type and optional nodata bytes, and the packed pixel bytes.
+struct RasterizedBand {
+    grid: Grid,
+    data_type: BandDataType,
+    nodata: Option<Vec<u8>>,
+    data: Vec<u8>,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn as_raster(
     gdal: &Gdal,
@@ -418,10 +431,10 @@ fn as_raster(
     burn_value: f64,
     nodata_value: Option<f64>,
     use_geometry_extent: bool,
-) -> Result<(RasterMetadata, BandMetadata, Vec<u8>)> {
-    let ref_md = reference_raster.metadata()?;
+) -> Result<RasterizedBand> {
+    let ref_transform = reference_raster.transform();
 
-    if ref_md.skew_x() != 0.0 || ref_md.skew_y() != 0.0 {
+    if ref_transform[2] != 0.0 || ref_transform[4] != 0.0 {
         return exec_err!(
             "RS_AsRaster currently requires skew_x=0 and skew_y=0 in the reference raster"
         );
@@ -433,10 +446,10 @@ fn as_raster(
 
     let (out_width, out_height, out_ulx, out_uly) = if use_geometry_extent {
         let env = geometry.envelope();
-        let ulx = ref_md.upper_left_x();
-        let uly = ref_md.upper_left_y();
-        let scale_x = ref_md.scale_x();
-        let scale_y = ref_md.scale_y();
+        let ulx = ref_transform[0];
+        let uly = ref_transform[3];
+        let scale_x = ref_transform[1];
+        let scale_y = ref_transform[5];
 
         if scale_x == 0.0 || scale_y == 0.0 {
             return exec_err!("Reference raster has zero scale");
@@ -470,10 +483,10 @@ fn as_raster(
         )
     } else {
         (
-            ref_md.width() as usize,
-            ref_md.height() as usize,
-            ref_md.upper_left_x(),
-            ref_md.upper_left_y(),
+            reference_raster.width()? as usize,
+            reference_raster.height()? as usize,
+            ref_transform[0],
+            ref_transform[3],
         )
     };
 
@@ -486,15 +499,16 @@ fn as_raster(
     )
     .map_err(|e| exec_datafusion_err!("Failed to create dataset: {}", e))?;
 
+    let out_transform = [
+        out_ulx,
+        ref_transform[1],
+        ref_transform[2],
+        out_uly,
+        ref_transform[4],
+        ref_transform[5],
+    ];
     out_dataset
-        .set_geo_transform(&[
-            out_ulx,
-            ref_md.scale_x(),
-            ref_md.skew_x(),
-            out_uly,
-            ref_md.skew_y(),
-            ref_md.scale_y(),
-        ])
+        .set_geo_transform(&out_transform)
         .map_err(|e| exec_datafusion_err!("Failed to set geotransform: {}", e))?;
 
     let provider = thread_local_provider(gdal)
@@ -535,29 +549,21 @@ fn as_raster(
         )
         .map_err(|e| exec_datafusion_err!("Failed to read band data: {}", e))?;
 
-    Ok((
-        RasterMetadata {
-            width: out_width as i64,
-            height: out_height as i64,
-            upperleft_x: out_ulx,
-            upperleft_y: out_uly,
-            scale_x: ref_md.scale_x(),
-            scale_y: ref_md.scale_y(),
-            skew_x: ref_md.skew_x(),
-            skew_y: ref_md.skew_y(),
-        },
-        BandMetadata {
-            nodata_value: nodata_value
-                .map(|value| cast_f64_to_band_value(value, band_type, "nodata value"))
-                .transpose()?
-                .map(TypedBandValue::metadata_bytes),
-            storage_type: StorageType::InDb,
-            datatype: band_type,
-            outdb_url: None,
-            outdb_band_id: None,
-        },
-        band_bytes,
-    ))
+    let out_grid = Grid {
+        transform: out_transform,
+        width: out_width as i64,
+        height: out_height as i64,
+    };
+    let out_nodata = nodata_value
+        .map(|value| cast_f64_to_band_value(value, band_type, "nodata value"))
+        .transpose()?
+        .map(TypedBandValue::metadata_bytes);
+    Ok(RasterizedBand {
+        grid: out_grid,
+        data_type: band_type,
+        nodata: out_nodata,
+        data: band_bytes,
+    })
 }
 
 fn initialize_band(
@@ -659,10 +665,10 @@ mod tests {
             .nodata(0u8)
     }
 
-    fn load_reference_raster() -> RasterMetadata {
+    fn load_reference_raster() -> Grid {
         let raster_array = reference_raster_spec().build();
         let raster_struct = RasterStructArray::try_new(&raster_array).unwrap();
-        raster_struct.get(0).unwrap().metadata().unwrap()
+        Grid::from_raster(&raster_struct.get(0).unwrap()).unwrap()
     }
 
     #[test]
@@ -713,18 +719,18 @@ mod tests {
         with_gdal(|gdal| {
             let raster_struct = RasterStructArray::try_new(&raster_array).unwrap();
             let raster = raster_struct.get(0).unwrap();
-            let md = raster.metadata().unwrap();
+            let transform = raster.transform().to_vec();
 
             let wkt = format!(
                 "POLYGON(({x0} {y1}, {x0} {y0}, {x1} {y0}, {x1} {y1}, {x0} {y1}))",
-                x0 = md.upper_left_x(),
-                x1 = md.upper_left_x() + md.scale_x(),
-                y0 = md.upper_left_y(),
-                y1 = md.upper_left_y() + md.scale_y(),
+                x0 = transform[0],
+                x1 = transform[0] + transform[1],
+                y0 = transform[3],
+                y1 = transform[3] + transform[5],
             );
             let geom_wkb = make_wkb(&wkt);
 
-            let (out_md, _band_md, out_bytes) = as_raster(
+            let rasterized = as_raster(
                 gdal,
                 &geom_wkb,
                 &raster,
@@ -735,12 +741,12 @@ mod tests {
                 false,
             )?;
 
-            assert_eq!(out_md.width, md.width());
-            assert_eq!(out_md.height, md.height());
-            assert_eq!(out_md.upperleft_x, md.upper_left_x());
-            assert_eq!(out_md.upperleft_y, md.upper_left_y());
+            assert_eq!(rasterized.grid.width, raster.width()?);
+            assert_eq!(rasterized.grid.height, raster.height()?);
+            assert_eq!(rasterized.grid.transform[0], transform[0]);
+            assert_eq!(rasterized.grid.transform[3], transform[3]);
             assert_eq!(
-                bytes_to_f64(&out_bytes[..8], &BandDataType::Float64).unwrap(),
+                bytes_to_f64(&rasterized.data[..8], &BandDataType::Float64).unwrap(),
                 255.0
             );
             Ok::<_, datafusion_common::DataFusionError>(())
@@ -754,18 +760,18 @@ mod tests {
         with_gdal(|gdal| {
             let raster_struct = RasterStructArray::try_new(&raster_array).unwrap();
             let raster = raster_struct.get(0).unwrap();
-            let md = raster.metadata().unwrap();
+            let transform = raster.transform().to_vec();
 
             let wkt = format!(
                 "POLYGON(({x0} {y1}, {x0} {y0}, {x1} {y0}, {x1} {y1}, {x0} {y1}))",
-                x0 = md.upper_left_x(),
-                x1 = md.upper_left_x() + md.scale_x(),
-                y0 = md.upper_left_y(),
-                y1 = md.upper_left_y() + md.scale_y(),
+                x0 = transform[0],
+                x1 = transform[0] + transform[1],
+                y0 = transform[3],
+                y1 = transform[3] + transform[5],
             );
             let geom_wkb = make_wkb(&wkt);
 
-            let (out_md, _band_md, out_bytes) = as_raster(
+            let rasterized = as_raster(
                 gdal,
                 &geom_wkb,
                 &raster,
@@ -776,12 +782,12 @@ mod tests {
                 true,
             )?;
 
-            assert_eq!(out_md.width, 1);
-            assert_eq!(out_md.height, 1);
-            assert_eq!(out_md.upperleft_x, md.upper_left_x());
-            assert_eq!(out_md.upperleft_y, md.upper_left_y());
+            assert_eq!(rasterized.grid.width, 1);
+            assert_eq!(rasterized.grid.height, 1);
+            assert_eq!(rasterized.grid.transform[0], transform[0]);
+            assert_eq!(rasterized.grid.transform[3], transform[3]);
             assert_eq!(
-                bytes_to_f64(&out_bytes, &BandDataType::Float64).unwrap(),
+                bytes_to_f64(&rasterized.data, &BandDataType::Float64).unwrap(),
                 255.0
             );
             Ok::<_, datafusion_common::DataFusionError>(())
@@ -800,10 +806,10 @@ mod tests {
         let geometry_type = SedonaType::Wkb(Edges::Planar, deserialize_crs("EPSG:4326").unwrap());
         let geom = format!(
             "POLYGON(({x0} {y1}, {x0} {y0}, {x1} {y0}, {x1} {y1}, {x0} {y1}))",
-            x0 = metadata.upper_left_x(),
-            x1 = metadata.upper_left_x() + metadata.scale_x(),
-            y0 = metadata.upper_left_y(),
-            y1 = metadata.upper_left_y() + metadata.scale_y(),
+            x0 = metadata.transform[0],
+            x1 = metadata.transform[0] + metadata.transform[1],
+            y0 = metadata.transform[3],
+            y1 = metadata.transform[3] + metadata.transform[5],
         );
 
         let udf: ScalarUDF = rs_as_raster_udf().into();
@@ -994,10 +1000,10 @@ mod tests {
         let metadata = load_reference_raster();
         let geom = format!(
             "POLYGON(({x0} {y1}, {x0} {y0}, {x1} {y0}, {x1} {y1}, {x0} {y1}))",
-            x0 = metadata.upper_left_x(),
-            x1 = metadata.upper_left_x() + metadata.scale_x(),
-            y0 = metadata.upper_left_y(),
-            y1 = metadata.upper_left_y() + metadata.scale_y(),
+            x0 = metadata.transform[0],
+            x1 = metadata.transform[0] + metadata.transform[1],
+            y0 = metadata.transform[3],
+            y1 = metadata.transform[3] + metadata.transform[5],
         );
 
         let udf: ScalarUDF = rs_as_raster_udf().into();

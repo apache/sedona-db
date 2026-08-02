@@ -204,6 +204,12 @@ jobs:
 
   upload_nightly:
     needs: ["wheels-linux", "macOS-arm64", "macOS-amd64", "windows-x86_64"]
+    # Publish whatever wheels built, even when some platform jobs fail. A job
+    # that fails to build or test never reaches its upload-artifact step, so the
+    # release-wheels-* artifacts hold only wheels that built and passed their
+    # tests -- one platform's failure no longer blocks the nightly for the rest.
+    # !cancelled() still skips a run superseded by a newer push to the branch.
+    if: ${{ !cancelled() }}
     name: Upload nightly packages
     runs-on: "macos-latest"
     steps:
@@ -224,6 +230,12 @@ jobs:
         if: github.repository == 'apache/sedona-db' && github.ref == 'refs/heads/main'
         shell: bash
         run: |
+          if [ -z "$(ls -A dist 2>/dev/null)" ]; then
+            echo "No wheels built successfully this run; nothing to upload."
+            exit 0
+          fi
+          echo "Uploading nightly wheels:"
+          ls -1 dist
           fury push \
             --api-token=${GEMFURY_PUSH_TOKEN} \
             --as="sedona-nightlies" \

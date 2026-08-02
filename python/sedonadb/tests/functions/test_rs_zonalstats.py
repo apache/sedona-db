@@ -15,195 +15,359 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""RS_ZonalStats parity against geometry_mask + numpy reductions.
+"""RS_ZonalStats / RS_ZonalStatsAll cross-checked against a numpy reference.
 
-The rasterio comparator selects pixels with
-`rasterio.features.geometry_mask`, drops pixels valued at the band nodata,
-and reduces in float64. stddev/variance are the sample (ddof=1) statistics —
-that is what Sedona computes. The diagonal-edged zone under the centroid
-rule is on the Sedona Spark deviation ledger (its scanline rasterizer
-mis-places x-intercepts on non-square pixels and drops some center-inside
-pixels there, apache/sedona#3111). Zones that select no pixels are not
-compared here.
+Both functions mirror Apache Sedona Spark's positional overloads, so the tests
+call them positionally: `(raster, roi, stat_type)` /
+`(raster, roi, band, stat_type[, all_touched[, exclude_no_data[, lenient]]])`
+for RS_ZonalStats and the same ladder without `stat_type` for RS_ZonalStatsAll.
+
+The fixture raster is CRS-less (so nothing reprojects and pixel selection is
+bit-comparable). The reference rasterizes the roi with `rasterio.features`
+(the same GDAL rasterizer the kernel uses) and reduces the selected pixels with
+numpy; exact-selection statistics (count, sum, min, max, median, mode) are
+compared exactly and the float-accumulation ones (mean, variance, stddev) with
+a tolerance.
+
+rasterio is required to write the fixture GeoTIFF, so the whole module skips
+when it is unavailable rather than importing it at module scope.
 """
 
+import math
+
+import numpy as np
 import pyarrow as pa
 import pytest
+import shapely
+from shapely.geometry import box
+
+pytest.importorskip("rasterio")
 
 from sedonadb.raster_testing import (
-    Deviation,
-    SedonaDB,
-    SedonaSpark,
-    expect_deviations,
     random_raster_data,
     write_geotiff,
 )
 
-pytest.importorskip("rasterio")
-pytest.importorskip("shapely")
-
-pytestmark = pytest.mark.skipif(
-    not SedonaDB.implements("zonal_stats"),
-    reason="RS_ZonalStats is not implemented in SedonaDB (the parity subject)",
-)
-
-# GDAL-order geotransform: origin (100, 500), 2-wide by 3-tall north-up
-# pixels; with a 7x6 raster the extent is x in [100, 114], y in [482, 500].
+# GDAL-order geotransform: origin (100, 500), 2-wide by 3-tall north-up pixels;
+# a 6x7 raster then spans x in [100, 114], y in [482, 500].
 GDAL_TRANSFORM = (100.0, 2.0, 0.0, 500.0, 0.0, -3.0)
-HEIGHT, WIDTH = 6, 7
+BANDS, HEIGHT, WIDTH = 1, 6, 7
+NODATA = -9999
+
+# A rectangle well inside the raster that selects a block of pixels.
 GEOM_RECT = (
     "POLYGON ((102.6 495.8, 109.3 495.8, 109.3 485.9, 102.6 485.9, 102.6 495.8))"
 )
-# Diagonal edges make all_touched matter, while staying clear of the corner
-# pixels where the fixture plants the dtype extremes (a float64 extreme in
-# the zone would push the squared-deviation statistics to infinity).
-GEOM_TRIANGLE = "POLYGON ((102.7 497.4, 112.4 496.9, 104.2 483.7, 102.7 497.4))"
+# Entirely outside the raster extent.
+GEOM_DISJOINT = "POLYGON ((900 900, 910 900, 910 890, 900 890, 900 900))"
+# Bounding box overlaps the raster, but the geometry itself is disjoint: the
+# triangle sits in the far corner of its bounding box, clear of the raster. A
+# bounding-box gate would burn no pixels and report count 0; a true-geometry gate
+# (matching Sedona Spark's rsIntersects) treats it as a no-intersection case.
+GEOM_DISJOINT_BBOX = "POLYGON ((124 490, 124 510, 108 510, 124 490))"
+# A thin strip crossing the x = 104 pixel boundary but covering no pixel center
+# (centers sit at odd x): selects nothing unless all_touched.
+GEOM_SLIVER = "POLYGON ((103.6 499, 104.4 499, 104.4 483, 103.6 483, 103.6 499))"
 
-STATS = ["count", "sum", "mean", "min", "max", "stddev", "variance", "median"]
+STATS = ["count", "sum", "mean", "median", "mode", "stddev", "variance", "min", "max"]
+EXACT_STATS = {"count", "sum", "min", "max", "median", "mode"}
 
-DEVIATIONS = [
-    Deviation(
-        SedonaSpark,
-        "zonal_stats",
-        matches=lambda p: p.get("wkt") == GEOM_TRIANGLE and not p.get("all_touched"),
-        reason="Sedona's scanline rasterizer mis-places x-intercepts on "
-        "non-square pixels and drops some center-inside pixels along "
-        "diagonal edges; GDAL selects every center-inside pixel "
-        "(https://github.com/apache/sedona/issues/3111)",
-    ),
-]
+
+def fixture_raster(tmp_path):
+    """A single-band int32 raster with planted nodata and a repeated value.
+
+    Returns `(path, band)` where `band` is the `(HEIGHT, WIDTH)` numpy array.
+    Two interior pixels hold the nodata value and three hold a repeated value
+    (66) so the mode is unambiguous and nodata exclusion is observable.
+    """
+    data = random_raster_data(
+        "int32",
+        bands=BANDS,
+        height=HEIGHT,
+        width=WIDTH,
+        seed=7,
+        plants={(1, 1): NODATA, (2, 2): NODATA, (1, 2): 66, (2, 3): 66, (3, 1): 66},
+    )
+    path = tmp_path / "zonal.tif"
+    write_geotiff(path, data, gdal_transform=GDAL_TRANSFORM, nodata=NODATA)
+    return path, data[0]
+
+
+def float_fixture_raster(tmp_path, *, planted_value, name):
+    """A single-band float64 raster with `planted_value` (NaN or inf) at an
+    interior pixel that GEOM_RECT selects, so the roi statistics must reckon with
+    it. The planted value is not the nodata sentinel, so nodata exclusion (on by
+    default) does not drop it.
+
+    Returns `(path, band)` where `band` is the `(HEIGHT, WIDTH)` numpy array.
+    """
+    data = random_raster_data(
+        "float64", bands=BANDS, height=HEIGHT, width=WIDTH, seed=7
+    )
+    # Pixel centre (105, 492.5) sits inside GEOM_RECT.
+    data[0][2, 2] = planted_value
+    path = tmp_path / name
+    write_geotiff(path, data, gdal_transform=GDAL_TRANSFORM, nodata=NODATA)
+    return path, data[0]
+
+
+def numpy_reference(band, wkt, *, all_touched, exclude_no_data):
+    """Reference statistics over the pixels the roi selects, via rasterio+numpy.
+
+    Returns a dict of every statistic, or the sentinel string ``"empty"`` when
+    the selection is empty (the caller maps that to count 0 / NULLs).
+    """
+    import rasterio.features
+    from rasterio.transform import Affine
+
+    geom = shapely.from_wkt(wkt)
+    mask = rasterio.features.rasterize(
+        [(geom, 1)],
+        out_shape=band.shape,
+        transform=Affine.from_gdal(*GDAL_TRANSFORM),
+        all_touched=all_touched,
+        fill=0,
+        dtype="uint8",
+    )
+    sel = band[mask == 1].astype(np.float64)
+    if exclude_no_data:
+        sel = sel[sel != NODATA]
+    if sel.size == 0:
+        return "empty"
+
+    values, counts = np.unique(sel, return_counts=True)
+    mode = float(values[counts == counts.max()].max())  # ties -> largest
+    n = sel.size
+    return {
+        "count": float(n),
+        "sum": float(sel.sum()),
+        "mean": float(sel.mean()),
+        "median": float(np.median(sel)),
+        "mode": mode,
+        "stddev": float(sel.std(ddof=1)) if n > 1 else 0.0,
+        "variance": float(sel.var(ddof=1)) if n > 1 else 0.0,
+        "min": float(sel.min()),
+        "max": float(sel.max()),
+    }
+
+
+def _assert_stat_equal(stat, got, expected):
+    """Compare one statistic against the numpy reference with NaN/inf-aware
+    equality: NaN never equals itself, so match it explicitly; inf compares
+    exactly; otherwise use exact equality for the integer-exact statistics and a
+    tolerance for the float-accumulating ones."""
+    if math.isnan(expected):
+        assert got is not None and math.isnan(got), f"{stat}: expected NaN, got {got!r}"
+    elif math.isinf(expected):
+        assert got == expected, f"{stat}: expected {expected}, got {got!r}"
+    elif stat in EXACT_STATS:
+        assert got == expected, f"{stat}: {got!r} != {expected!r}"
+    else:
+        assert got == pytest.approx(expected), f"{stat}: {got!r} !~ {expected!r}"
+
+
+def _one_row(con, path, wkt):
+    """A one-row frame with the raster and roi as columns, so the kernel runs
+    its real per-row array path rather than constant-folding a scalar."""
+    df = con.create_data_frame(
+        pa.table(
+            {
+                "path": pa.array([str(path)], pa.utf8()),
+                "wkt": pa.array([wkt], pa.utf8()),
+            }
+        )
+    )
+    return df, df.path.funcs.rs_frompath(), con.funcs.st_geomfromtext(df.wkt)
+
+
+def zonal_stat(con, path, wkt, trailing):
+    """RS_ZonalStats over a one-row table.
+
+    `trailing` is the positional argument list after `(raster, roi)` — e.g.
+    `["mean"]` (band-less overload) or `[1, "mean", all_touched, exclude_no_data,
+    lenient]`. Raster and roi travel as columns; the trailing scalars are
+    literals, matching how the SQL reads.
+    """
+    df, raster, geom = _one_row(con, path, wkt)
+    table = df.select(r=raster.funcs.rs_zonalstats(geom, *trailing)).to_arrow_table()
+    return table["r"][0].as_py()
+
+
+def zonal_stats_all(con, path, wkt, trailing):
+    """RS_ZonalStatsAll over a one-row table; returns the struct as a dict.
+
+    `trailing` is the positional argument list after `(raster, roi)` — e.g.
+    `[]` (band-less overload) or `[1, all_touched, exclude_no_data, lenient]`.
+    """
+    df, raster, geom = _one_row(con, path, wkt)
+    table = df.select(r=raster.funcs.rs_zonalstatsall(geom, *trailing)).to_arrow_table()
+    return table["r"][0].as_py()
 
 
 @pytest.mark.parametrize("stat", STATS)
-@pytest.mark.parametrize(
-    ("wkt", "all_touched"),
-    [
-        (GEOM_RECT, False),
-        (GEOM_RECT, True),
-        (GEOM_TRIANGLE, False),
-        (GEOM_TRIANGLE, True),
-    ],
-    ids=["rect-centroid", "rect-touched", "triangle-centroid", "triangle-touched"],
-)
-def test_rs_zonalstats_matches_comparators(
-    subject, comparator, request, tmp_path, wkt, all_touched, stat
-):
-    """Every statistic over the float64 fixture, on both selection rules.
-    The zone stays clear of the corners so the planted dtype extremes don't
-    collapse sums to infinity."""
-    expect_deviations(request, comparator, "zonal_stats", DEVIATIONS)
-    tiff = tmp_path / "zonal.tif"
-    write_geotiff(
-        tiff,
-        random_raster_data("float64", bands=2, height=HEIGHT, width=WIDTH),
-        gdal_transform=GDAL_TRANSFORM,
+@pytest.mark.parametrize("all_touched", [False, True])
+def test_single_stat_matches_numpy(con, tmp_path, stat, all_touched):
+    path, band = fixture_raster(tmp_path)
+    expected = numpy_reference(
+        band, GEOM_RECT, all_touched=all_touched, exclude_no_data=True
     )
+    assert expected != "empty", "GEOM_RECT should select pixels"
 
-    got = subject.zonal_stats(tiff, wkt, band=2, stat=stat, all_touched=all_touched)
-    expected = comparator.zonal_stats(
-        tiff, wkt, band=2, stat=stat, all_touched=all_touched
-    )
-    # Engines reduce in different orders, so exact float equality is not
-    # attainable; 1e-9 passes summation noise and still fails any semantic
-    # mismatch (selection, nodata handling, ddof).
-    assert got == pytest.approx(expected, rel=1e-9), (wkt, all_touched, stat)
-
-
-@pytest.mark.parametrize("stat", ["count", "sum"])
-def test_rs_zonalstats_excludes_nodata(subject, comparator, tmp_path, stat):
-    """A pixel valued at the band nodata inside the zone is excluded from
-    the reduction by every engine."""
-    tiff = tmp_path / "zonal_nodata.tif"
-    write_geotiff(
-        tiff,
-        random_raster_data(
-            "uint8", bands=1, height=HEIGHT, width=WIDTH, plants={(2, 3): 200}
-        ),
-        gdal_transform=GDAL_TRANSFORM,
-        nodata=200.0,
-    )
-
-    got = subject.zonal_stats(tiff, GEOM_RECT, stat=stat)
-    expected = comparator.zonal_stats(tiff, GEOM_RECT, stat=stat)
-    assert got == pytest.approx(expected, rel=1e-9), stat
-
-
-def _invoke_zonalstats(con, tiff, wkt, *, all_stats, options=None):
-    """Invoke RS_ZonalStats ('sum') or RS_ZonalStatsAll over a one-row table
-    and return the Arrow result.
-
-    Arguments travel as table columns so the kernel runs its real array path
-    (literals constant-fold). The argument surface — `(raster, zone, stat,
-    options)` for RS_ZonalStats and `(raster, zone, options)` for
-    RS_ZonalStatsAll, with `band` inside the JSON `options` — mirrors the
-    RS_ZonalStats function tests. These invoke the subject (SedonaDB) directly
-    because the harness `zonal_stats` op exposes only a single scalar statistic,
-    not the all-stats struct or the band-unspecified path.
-    """
-    columns = {
-        "path": pa.array([str(tiff)], pa.utf8()),
-        "wkt": pa.array([wkt], pa.utf8()),
-    }
-    if not all_stats:
-        columns["stat"] = pa.array(["sum"], pa.utf8())
-    if options is not None:
-        columns["options"] = pa.array([options], pa.utf8())
-    df = con.create_data_frame(pa.table(columns))
-    raster = df.path.funcs.rs_frompath()
-    geom = con.funcs.st_geomfromtext(df.wkt)
-    tail = [df.options] if options is not None else []
-    if all_stats:
-        expr = raster.funcs.rs_zonalstatsall(geom, *tail)
+    # (raster, roi, band, stat_type, all_touched) — the 5-arg overload.
+    got = zonal_stat(con, path, GEOM_RECT, [1, stat, all_touched])
+    if stat in EXACT_STATS:
+        assert got == expected[stat]
     else:
-        expr = raster.funcs.rs_zonalstats(geom, df.stat, *tail)
-    return df.select(r=expr).to_arrow_table()
+        assert got == pytest.approx(expected[stat])
 
 
-@pytest.mark.parametrize(
-    "all_stats", [False, True], ids=["RS_ZonalStats", "RS_ZonalStatsAll"]
-)
-def test_multiband_raster_requires_band_option(con, tmp_path, all_stats):
-    """On a multiband raster with no band chosen, SedonaDB raises rather than
-    reducing an arbitrary band.
+def test_all_struct_matches_numpy(con, tmp_path):
+    path, band = fixture_raster(tmp_path)
+    expected = numpy_reference(band, GEOM_RECT, all_touched=False, exclude_no_data=True)
+    # (raster, roi, band) — all_touched defaults to false.
+    got = zonal_stats_all(con, path, GEOM_RECT, [1])
 
-    Sedona Spark defaults to band 1 here (the documented divergence); asserting
-    the raise pins SedonaDB's stricter contract — an ambiguous multiband
-    selection is an error, not a silent band-1 pick.
+    # count is an integer field (Int64); every other field is floating point.
+    assert isinstance(got["count"], int)
+    assert isinstance(got["sum"], float)
+    assert got["count"] == expected["count"]
+    for stat in EXACT_STATS - {"count"}:
+        assert got[stat] == expected[stat]
+    for stat in ("mean", "variance", "stddev"):
+        assert got[stat] == pytest.approx(expected[stat])
 
-    This is a subject-error case (the parity subject itself raises), so a plain
-    `pytest.raises` on the subject is the right shape; it does not go through the
-    comparator/deviation ledger. A ledger-integrated "subject_error" Deviation
-    kind that also captured the Spark band-1 default declaratively would be a
-    possible future enhancement.
-    """
-    tiff = tmp_path / "multiband.tif"
-    write_geotiff(
-        tiff,
-        random_raster_data("float64", bands=2, height=HEIGHT, width=WIDTH),
-        gdal_transform=GDAL_TRANSFORM,
+
+def test_nan_pixel_poisons_every_statistic_like_numpy(con, tmp_path):
+    """A NaN pixel that is not the nodata sentinel poisons every statistic (numpy
+    semantics): count stays a real tally, everything else is NaN. Pinned against
+    rasterio+numpy over the same masked selection, so the NaN handling is
+    validated against a trusted reference rather than asserted on faith."""
+    path, band = float_fixture_raster(
+        tmp_path, planted_value=float("nan"), name="zonal_nan.tif"
     )
-    # GEOM_RECT intersects the raster, so band resolution — not a
-    # no-intersection short-circuit — is what fails.
-    with pytest.raises(Exception, match="option to choose one"):
-        _invoke_zonalstats(con, tiff, GEOM_RECT, all_stats=all_stats)
+    with np.errstate(all="ignore"):
+        expected = numpy_reference(
+            band, GEOM_RECT, all_touched=False, exclude_no_data=True
+        )
+    assert expected != "empty", "GEOM_RECT should select the planted pixel"
+    got = zonal_stats_all(con, path, GEOM_RECT, [1])
+    for stat in STATS:
+        _assert_stat_equal(stat, got[stat], expected[stat])
 
 
-def test_zonalstatsall_count_field_is_int64(con, tmp_path):
-    """RS_ZonalStatsAll returns `count` as an Int64 pixel count.
-
-    Sedona Spark returns a uniform `Double[]` for every statistic, so its count
-    is a floating-point value; SedonaDB keeps count as an integer. Pinning the
-    Arrow struct field type guards that contract (the rest of the struct is
-    Float64).
-    """
-    tiff = tmp_path / "singleband.tif"
-    write_geotiff(
-        tiff,
-        random_raster_data("float64", bands=1, height=HEIGHT, width=WIDTH),
-        gdal_transform=GDAL_TRANSFORM,
+def test_infinity_pixel_matches_numpy(con, tmp_path):
+    """A +inf pixel flows through (not the nodata sentinel, not NaN): sum, mean,
+    max and mode go to +inf, min and median stay finite, and variance/stddev
+    become NaN (inf - inf). Pinned against rasterio+numpy over the same
+    selection."""
+    path, band = float_fixture_raster(
+        tmp_path, planted_value=float("inf"), name="zonal_inf.tif"
     )
-    table = _invoke_zonalstats(
-        con, tiff, GEOM_RECT, all_stats=True, options='{"band": 1}'
+    with np.errstate(all="ignore"):
+        expected = numpy_reference(
+            band, GEOM_RECT, all_touched=False, exclude_no_data=True
+        )
+    assert expected != "empty", "GEOM_RECT should select the planted pixel"
+    got = zonal_stats_all(con, path, GEOM_RECT, [1])
+    for stat in STATS:
+        _assert_stat_equal(stat, got[stat], expected[stat])
+
+
+def test_exclude_no_data_default_and_disabled(con, tmp_path):
+    path, band = fixture_raster(tmp_path)
+    # Default excludes nodata; disabling it keeps those pixels, raising count.
+    excluded = numpy_reference(band, GEOM_RECT, all_touched=False, exclude_no_data=True)
+    included = numpy_reference(
+        band, GEOM_RECT, all_touched=False, exclude_no_data=False
     )
-    struct_type = table.schema.field("r").type
-    assert struct_type.field("count").type == pa.int64()
+    assert included["count"] > excluded["count"]
+
+    # Default (4-arg (raster, roi, band, stat_type)) excludes nodata.
+    assert zonal_stat(con, path, GEOM_RECT, [1, "count"]) == excluded["count"]
+    # exclude_no_data => false keeps it: the 6-arg overload trails (all_touched,
+    # exclude_no_data).
+    assert (
+        zonal_stat(con, path, GEOM_RECT, [1, "count", False, False])
+        == included["count"]
+    )
+
+
+def test_sliver_selects_nothing_unless_all_touched(con, tmp_path):
+    path, _ = fixture_raster(tmp_path)
+    # The roi overlaps the raster but covers no pixel center: count 0, rest NULL.
+    assert zonal_stat(con, path, GEOM_SLIVER, [1, "count"]) == 0.0
+    assert zonal_stat(con, path, GEOM_SLIVER, [1, "sum"]) is None
+    # all_touched (5-arg overload) picks up the pixels it crosses.
+    touched = zonal_stat(con, path, GEOM_SLIVER, [1, "count", True])
+    assert touched > 0.0
+
+
+def test_no_intersection_is_null_when_lenient_and_errors_when_strict(con, tmp_path):
+    path, _ = fixture_raster(tmp_path)
+    # Lenient (default): NULL, including count.
+    assert zonal_stat(con, path, GEOM_DISJOINT, [1, "count"]) is None
+    assert zonal_stats_all(con, path, GEOM_DISJOINT, [1]) is None
+    # Strict (lenient => false): the 7-arg overload trails (all_touched,
+    # exclude_no_data, lenient).
+    with pytest.raises(Exception, match="does not intersect"):
+        zonal_stat(con, path, GEOM_DISJOINT, [1, "count", False, True, False])
+
+
+def test_bbox_overlapping_but_geometry_disjoint_is_no_intersection(con, tmp_path):
+    path, _ = fixture_raster(tmp_path)
+
+    # Premise: the roi's bounding box overlaps the raster extent, but the
+    # geometry is disjoint from it (unlike GEOM_DISJOINT, whose bbox misses too).
+    ox, px, _, oy, _, py = GDAL_TRANSFORM
+    raster_extent = box(ox, oy + py * HEIGHT, ox + px * WIDTH, oy)
+    geom = shapely.from_wkt(GEOM_DISJOINT_BBOX)
+    assert box(*geom.bounds).intersects(raster_extent), "bbox must overlap the raster"
+    assert geom.disjoint(raster_extent), "geometry must be disjoint from the raster"
+
+    # Lenient (default): NULL, not count 0 — a true no-intersection case.
+    assert zonal_stat(con, path, GEOM_DISJOINT_BBOX, [1, "count"]) is None
+    assert zonal_stats_all(con, path, GEOM_DISJOINT_BBOX, [1]) is None
+    # Strict: errors, exactly like the fully-disjoint roi.
+    with pytest.raises(Exception, match="does not intersect"):
+        zonal_stat(con, path, GEOM_DISJOINT_BBOX, [1, "count", False, True, False])
+
+
+def test_unknown_statistic_errors(con, tmp_path):
+    path, _ = fixture_raster(tmp_path)
+    with pytest.raises(Exception, match="unknown statistic"):
+        zonal_stat(con, path, GEOM_RECT, [1, "nonsense"])
+
+
+def test_implicit_band_on_multiband_raster_errors(con, tmp_path):
+    # A 2-band raster: the band-less overloads must error rather than default to
+    # band 1 (this deliberately diverges from Sedona Spark).
+    data = random_raster_data("int32", bands=2, height=HEIGHT, width=WIDTH, seed=3)
+    path = tmp_path / "multiband.tif"
+    write_geotiff(path, data, gdal_transform=GDAL_TRANSFORM)
+
+    # RS_ZonalStats 3-arg (raster, roi, stat_type): band implicit.
+    with pytest.raises(Exception, match="2 bands"):
+        zonal_stat(con, path, GEOM_RECT, ["count"])
+    # RS_ZonalStatsAll 2-arg (raster, roi): band implicit.
+    with pytest.raises(Exception, match="2 bands"):
+        zonal_stats_all(con, path, GEOM_RECT, [])
+    # Naming the band resolves the ambiguity.
+    assert zonal_stat(con, path, GEOM_RECT, [1, "count"]) > 0.0
+
+
+def test_sql_text_smoke(con, tmp_path):
+    """One raw-SQL invocation per function keeps the parser path covered."""
+    path, band = fixture_raster(tmp_path)
+    expected = numpy_reference(band, GEOM_RECT, all_touched=False, exclude_no_data=True)
+
+    single = con.sql(
+        "SELECT RS_ZonalStats(RS_FromPath($1), ST_GeomFromText($2), 1, 'sum') AS r",
+        params=(str(path), GEOM_RECT),
+    ).to_arrow_table()
+    assert single["r"][0].as_py() == expected["sum"]
+
+    everything = con.sql(
+        "SELECT RS_ZonalStatsAll(RS_FromPath($1), ST_GeomFromText($2), 1) AS r",
+        params=(str(path), GEOM_RECT),
+    ).to_arrow_table()
+    assert everything["r"][0].as_py()["count"] == expected["count"]

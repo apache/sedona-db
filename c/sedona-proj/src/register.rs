@@ -14,18 +14,5 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use sedona_expr::aggregate_udf::SedonaAccumulatorRef;
-use sedona_expr::scalar_udf::ScalarKernelRef;
-
-use crate::st_transform::st_transform_impl;
-
 pub use crate::transform::configure_global_proj_engine;
 pub use crate::transform::ProjCrsEngineBuilder;
-
-pub fn scalar_kernels() -> Vec<(&'static str, ScalarKernelRef)> {
-    vec![("st_transform", st_transform_impl())]
-}
-
-pub fn aggregate_kernels() -> Vec<(&'static str, SedonaAccumulatorRef)> {
-    vec![]
-}

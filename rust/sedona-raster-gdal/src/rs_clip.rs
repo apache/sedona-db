@@ -34,10 +34,6 @@ use datafusion_common::{exec_datafusion_err, ScalarValue};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::sedona_internal_err;
 use sedona_gdal::gdal::Gdal;
-use sedona_gdal::geo_transform::{GeoTransform, GeoTransformEx};
-use sedona_gdal::mem::MemDatasetBuilder;
-use sedona_gdal::raster::types::GdalDataType;
-use sedona_gdal::vector::geometry::Geometry;
 
 use arrow_schema::DataType;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
@@ -53,8 +49,9 @@ use sedona_schema::datatypes::{SedonaType, RASTER};
 use sedona_schema::matchers::ArgMatcher;
 use sedona_schema::raster::BandDataType;
 
-use crate::gdal_common::with_gdal;
+use crate::gdal_common::{raster_geo_transform, with_gdal};
 use crate::gdal_dataset_provider::configure_thread_local_options;
+use crate::mask::{envelope_window, rasterize_geometry_mask, PixelWindow};
 use sedona_raster::traits::nodata_f64_to_bytes;
 
 /// RS_Clip() scalar UDF implementation
@@ -263,7 +260,7 @@ impl SedonaScalarKernel for RsClip {
 
                 // A raster with no spatial (y, x) pair has no geotransform and
                 // cannot be clipped — emit NULL for this row.
-                if raster.metadata().is_err() {
+                if raster.height().is_err() {
                     builder.append_null()?;
                     return Ok(());
                 }
@@ -371,16 +368,7 @@ struct ClippedRasterData {
     /// the geometry's envelope intersected with the raster extent, snapped
     /// outward to the pixel grid. `None` means the full original raster
     /// extent was kept (crop=false).
-    crop_window: Option<CropWindow>,
-}
-
-/// A rectangular crop window in pixel coordinates.
-#[derive(Debug, Clone, Copy)]
-struct CropWindow {
-    col_off: usize,
-    row_off: usize,
-    width: usize,
-    height: usize,
+    crop_window: Option<PixelWindow>,
 }
 
 /// Clip a raster to a geometry.
@@ -396,24 +384,17 @@ fn clip_raster(
     all_touched: bool,
     crop: bool,
 ) -> Result<Option<ClippedRasterData>> {
-    let metadata = raster.metadata()?;
     let bands = raster.bands();
-    let width = metadata.width() as usize;
-    let height = metadata.height() as usize;
+    let width = raster.width()? as usize;
+    let height = raster.height()? as usize;
 
     // Parse geometry from WKB
     let geometry = gdal
         .geometry_from_wkb(geom_wkb)
         .map_err(|e| exec_datafusion_err!("Failed to parse geometry from WKB: {}", e))?;
 
-    let geotransform = [
-        metadata.upper_left_x(),
-        metadata.scale_x(),
-        metadata.skew_x(),
-        metadata.upper_left_y(),
-        metadata.skew_y(),
-        metadata.scale_y(),
-    ];
+    // GDAL geotransform: [upper_left_x, scale_x, skew_x, upper_left_y, skew_y, scale_y].
+    let geotransform = raster_geo_transform(raster)?;
 
     // The clip window is the geometry's envelope intersected with the raster
     // extent, snapped outward to the pixel grid — the window PostGIS ST_Clip,
@@ -424,49 +405,17 @@ fn clip_raster(
         return Ok(None);
     };
 
-    // Create a mask raster covering only the clip window, with the geotransform
-    // shifted to the window's upper-left corner.
-    let mask_dataset =
-        MemDatasetBuilder::create(gdal, window.width, window.height, 1, GdalDataType::UInt8)
-            .map_err(|e| exec_datafusion_err!("Failed to create mask dataset: {}", e))?;
-    let (window_ulx, window_uly) = geotransform.apply(window.col_off as f64, window.row_off as f64);
-    let mask_geotransform = [
-        window_ulx,
-        geotransform[1],
-        geotransform[2],
-        window_uly,
-        geotransform[4],
-        geotransform[5],
-    ];
-    mask_dataset
-        .set_geo_transform(&mask_geotransform)
-        .map_err(|e| exec_datafusion_err!("Failed to set geotransform: {}", e))?;
-
-    // GDAL's MEM driver zero-fills owned band buffers at creation, so the mask
-    // already reads 0 (outside) everywhere; rasterize_affine burns 1 inside the
-    // geometry. No explicit zero-init write needed.
-    gdal.rasterize_affine(
-        &mask_dataset,
-        &[1], // band 1
-        &[geometry],
-        &[1.0], // burn value = 1 (inside)
+    // Rasterize the geometry into a window-sized 0/1 mask: 1 inside, 0 outside
+    // (moves `geometry`, whose only remaining use is the burn).
+    let mut mask = Vec::new();
+    rasterize_geometry_mask(
+        gdal,
+        geometry,
+        &geotransform,
+        &window,
         all_touched,
-    )
-    .map_err(|e| exec_datafusion_err!("Failed to rasterize geometry: {}", e))?;
-
-    // Read the (window-sized) mask
-    let mask_band = mask_dataset
-        .rasterband(1)
-        .map_err(|e| exec_datafusion_err!("Failed to get mask band: {}", e))?;
-    let mask_buffer = mask_band
-        .read_as::<u8>(
-            (0, 0),
-            (window.width, window.height),
-            (window.width, window.height),
-            None,
-        )
-        .map_err(|e| exec_datafusion_err!("Failed to read mask: {}", e))?;
-    let mask = mask_buffer.data();
+        &mut mask,
+    )?;
 
     // The envelope may overlap the raster while the geometry itself selects no
     // pixel (e.g. it falls between pixel centers); that is still the
@@ -500,8 +449,7 @@ fn clip_raster(
         // `band_idx` is 1-based; the `band_name` accessor is 0-based.
         let band_name = raster.band_name(band_idx - 1).map(|s| s.to_string());
 
-        let band_metadata = band.metadata();
-        let data_type = band_metadata.data_type()?;
+        let data_type = band.data_type();
 
         // The trailing two axes are the spatial (y, x) plane; anything before
         // them is a stack of planes the 2-D clip is broadcast over.
@@ -560,7 +508,7 @@ fn clip_raster(
             Some(cn) => nodata_f64_to_bytes(cn, &data_type).map_err(|e| {
                 exec_datafusion_err!("RS_Clip: invalid no_data_value for band {band_idx}: {e}")
             })?,
-            None => match band_metadata.nodata_value() {
+            None => match band.nodata() {
                 Some(bytes) => bytes.to_vec(),
                 None => data_type.min_value_le_bytes(),
             },
@@ -593,7 +541,7 @@ fn clip_raster(
             if let Some(cw) = crop_window {
                 apply_mask_and_crop(
                     plane_bytes,
-                    mask,
+                    &mask,
                     width,
                     &data_type,
                     &nodata_bytes,
@@ -603,7 +551,7 @@ fn clip_raster(
             } else {
                 apply_mask_to_band(
                     plane_bytes,
-                    mask,
+                    &mask,
                     width,
                     &data_type,
                     &nodata_bytes,
@@ -639,67 +587,6 @@ fn clip_raster(
     }))
 }
 
-/// Compute the clip window: the geometry's envelope intersected with the
-/// raster extent, snapped outward to the pixel grid. Returns `None` when the
-/// envelope is disjoint from the raster extent (no clipping possible).
-///
-/// The envelope corners are mapped through the inverse geotransform (all four,
-/// so a skewed/rotated raster still gets a correct superset window) and the
-/// resulting pixel-space bbox is floored/ceiled to whole pixels. A degenerate
-/// envelope (point/line) landing exactly on a grid line is widened to one
-/// pixel so the rasterizer — not the snapping — decides whether it burns.
-fn envelope_window(
-    geometry: &Geometry,
-    geotransform: &GeoTransform,
-    width: usize,
-    height: usize,
-) -> Result<Option<CropWindow>> {
-    let env = geometry.envelope();
-    let inverse = geotransform
-        .invert()
-        .map_err(|e| exec_datafusion_err!("RS_Clip: geotransform is not invertible: {}", e))?;
-
-    let corners = [
-        (env.MinX, env.MinY),
-        (env.MinX, env.MaxY),
-        (env.MaxX, env.MinY),
-        (env.MaxX, env.MaxY),
-    ];
-    let mut min_col = f64::INFINITY;
-    let mut max_col = f64::NEG_INFINITY;
-    let mut min_row = f64::INFINITY;
-    let mut max_row = f64::NEG_INFINITY;
-    for (x, y) in corners {
-        let (col, row) = inverse.apply(x, y);
-        min_col = min_col.min(col);
-        max_col = max_col.max(col);
-        min_row = min_row.min(row);
-        max_row = max_row.max(row);
-    }
-
-    let col0 = min_col.floor();
-    let row0 = min_row.floor();
-    let col1 = max_col.ceil().max(col0 + 1.0);
-    let row1 = max_row.ceil().max(row0 + 1.0);
-
-    // Intersect with the raster extent. `>=` also rejects the NaN envelope of
-    // an empty geometry.
-    let col0 = col0.max(0.0);
-    let row0 = row0.max(0.0);
-    let col1 = col1.min(width as f64);
-    let row1 = row1.min(height as f64);
-    if !(col0 < col1 && row0 < row1) {
-        return Ok(None);
-    }
-
-    Ok(Some(CropWindow {
-        col_off: col0 as usize,
-        row_off: row0 as usize,
-        width: (col1 - col0) as usize,
-        height: (row1 - row0) as usize,
-    }))
-}
-
 /// Apply mask to band data (no cropping — preserves original dimensions).
 /// The mask covers only `window`; every pixel outside it is outside the
 /// geometry's envelope and therefore nodata. The plane's bytes are appended
@@ -711,7 +598,7 @@ fn apply_mask_to_band(
     width: usize,
     data_type: &BandDataType,
     nodata_bytes: &[u8],
-    window: &CropWindow,
+    window: &PixelWindow,
     out: &mut Vec<u8>,
 ) -> Result<()> {
     let byte_size = data_type.byte_size();
@@ -761,7 +648,7 @@ fn apply_mask_and_crop(
     full_width: usize,
     data_type: &BandDataType,
     nodata_bytes: &[u8],
-    cw: &CropWindow,
+    cw: &PixelWindow,
     out: &mut Vec<u8>,
 ) -> Result<()> {
     let byte_size = data_type.byte_size();
@@ -886,6 +773,7 @@ mod tests {
     use super::*;
     use arrow_array::{cast::AsArray, StructArray};
     use sedona_expr::scalar_udf::SedonaScalarKernel;
+    use sedona_proj::error::SedonaProjError;
     use sedona_proj::transform::{with_global_proj_engine, LazyProjEngine};
     use sedona_raster::array::RasterStructArray;
     use sedona_schema::crs::deserialize_crs;
@@ -955,7 +843,6 @@ mod tests {
         with_gdal(|gdal| {
             let rasters = RasterStructArray::try_new(&array).unwrap();
             let raster = rasters.get(0).unwrap();
-            let metadata = raster.metadata()?;
 
             // Top-left quadrant: x ∈ [0, 2], y ∈ [1, 2] — covers pixel centers
             // (0.5, 1.5) and (1.5, 1.5), i.e. a 2×1 window.
@@ -981,11 +868,11 @@ mod tests {
                 "cropped band should keep the source pixel values in the window"
             );
             assert!(
-                (cw.width as i64) < metadata.width(),
+                (cw.width as i64) < raster.width()?,
                 "Cropped width should be smaller"
             );
             assert!(
-                (cw.height as i64) < metadata.height(),
+                (cw.height as i64) < raster.height()?,
                 "Cropped height should be smaller"
             );
             Ok::<_, datafusion_common::DataFusionError>(())
@@ -1044,8 +931,12 @@ mod tests {
     fn test_rs_clip_crs_mismatch() {
         // A geometry given in EPSG:3857 must be reprojected to the raster's
         // EPSG:4326 before clipping, yielding the same result as the equivalent
-        // EPSG:4326 geometry.
-        let array = test_raster_array();
+        // EPSG:4326 geometry. Reprojection needs a real CRS engine, injected
+        // through the tester's config options via `with_crs_engine`.
+        let spec = RasterSpec::d2(4, 2)
+            .band_values(&[1u8, 2, 3, 4, 5, 6, 7, 8])
+            .crs(Some("EPSG:4326"))
+            .transform([0.0, 1.0, 0.0, 2.0, 0.0, -1.0]);
 
         // Build the EPSG:3857 geometry with the same PROJ engine the UDF uses,
         // so the test is robust to axis-order / normalization across builds.
@@ -1055,14 +946,9 @@ mod tests {
         let geom_wkb_4326 = make_wkb("POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))");
         let geom_wkb_3857 = with_global_proj_engine(|engine| {
             crs_transform_wkb(&geom_wkb_4326, crs_4326.as_ref(), crs_3857.as_ref(), engine)
+                .map_err(|e| SedonaProjError::Invalid(e.to_string()))
         })
         .unwrap();
-
-        // 3-arg variant: RS_Clip(raster, band, geom).
-        let kernel = RsClip { arg_count: 3 };
-        let raster_scalar = ColumnarValue::Scalar(ScalarValue::Struct(Arc::new(array)));
-        let band_type = SedonaType::Arrow(DataType::Int32);
-        let band_val = ColumnarValue::Scalar(ScalarValue::Int32(Some(1)));
 
         // Both the native-CRS and the reprojected geometry must produce the
         // same clip: the polygon covers columns 0-1 of both rows, cropped to
@@ -1072,21 +958,18 @@ mod tests {
             .transform([0.0, 1.0, 0.0, 2.0, 0.0, -1.0])
             .band_values(&[1u8, 2, 5, 6])
             .nodata(0u8);
+
+        // 3-arg variant: RS_Clip(raster, band, geom), invoked through the tester
+        // with a real CRS engine so the reprojecting branch can run.
         let clip_band1 = |geom_type: SedonaType, geom_wkb: Vec<u8>| {
-            let result = kernel
-                .invoke_batch(
-                    &[RASTER, band_type.clone(), geom_type],
-                    &[
-                        raster_scalar.clone(),
-                        band_val.clone(),
-                        ColumnarValue::Scalar(ScalarValue::Binary(Some(geom_wkb))),
-                    ],
-                )
+            let udf: datafusion_expr::ScalarUDF = rs_clip_udf().into();
+            let arg_types = vec![RASTER, SedonaType::Arrow(DataType::Int32), geom_type];
+            let tester =
+                ScalarUdfTester::new(udf, arg_types).with_crs_engine(Arc::new(LazyProjEngine));
+            let result = tester
+                .invoke_scalar_scalar_scalar(spec.scalar(), 1, ScalarValue::Binary(Some(geom_wkb)))
                 .unwrap();
-            let ColumnarValue::Scalar(scalar) = result else {
-                panic!("Expected raster scalar result");
-            };
-            assert_raster_scalar_equals(&scalar, &expected);
+            assert_raster_scalar_equals(&result, &expected);
         };
 
         clip_band1(
@@ -1105,13 +988,14 @@ mod tests {
         // (y, x) plane and broadcasts the same mask across both time planes,
         // preserving the time dimension. Values 1..=16 (C order): time 0 is
         // rows [1,2,3,4] / [5,6,7,8], time 1 is [9..12] / [13..16].
+        // CRS-less raster and geom: this exercises N-D plane broadcasting, not
+        // reprojection, so the CRS engine is never reached.
         let array = RasterSpec::nd(&["time", "y", "x"], &[2, 2, 4])
             .band_values(&[1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
-            .crs(Some("EPSG:4326"))
+            .crs(None)
             .transform([0.0, 1.0, 0.0, 2.0, 0.0, -1.0])
             .build();
 
-        let crs_4326 = deserialize_crs("EPSG:4326").unwrap().unwrap();
         let geom_wkb = make_wkb("POLYGON((0 1, 2 1, 2 2, 0 2, 0 1))");
 
         // RS_Clip(raster, band, geom, allTouched, noData, crop=true).
@@ -1121,7 +1005,7 @@ mod tests {
                 &[
                     RASTER,
                     SedonaType::Arrow(DataType::Int32),
-                    SedonaType::Wkb(Edges::Planar, Some(crs_4326)),
+                    SedonaType::Wkb(Edges::Planar, None),
                     SedonaType::Arrow(DataType::Boolean),
                     SedonaType::Arrow(DataType::Float64),
                     SedonaType::Arrow(DataType::Boolean),
@@ -1146,7 +1030,7 @@ mod tests {
             &scalar,
             &RasterSpec::nd(&["time", "y", "x"], &[2, 1, 2])
                 .band_values(&[1u8, 2, 9, 10])
-                .crs(Some("EPSG:4326"))
+                .crs(None)
                 .transform([0.0, 1.0, 0.0, 2.0, 0.0, -1.0])
                 .nodata(0u8),
         );
@@ -1174,13 +1058,15 @@ mod tests {
         );
     }
 
-    /// A 2×1, two-band EPSG:4326 raster (band 1 = [1,2], band 2 = [10,20]) — the
-    /// two bands differ so a per-band clip is observably distinct.
+    /// A 2×1, two-band, CRS-less raster (band 1 = [1,2], band 2 = [10,20]) — the
+    /// two bands differ so a per-band clip is observably distinct. CRS-less so
+    /// the band-handling tests reach rasterization rather than the reprojection
+    /// branch (which would need an injected CRS engine).
     fn two_band_raster() -> StructArray {
         RasterSpec::d2(2, 1)
             .band_values(&[1u8, 2])
             .band_values(&[10u8, 20])
-            .crs(Some("EPSG:4326"))
+            .crs(None)
             .transform([0.0, 1.0, 0.0, 1.0, 0.0, -1.0])
             .build()
     }
@@ -1190,7 +1076,6 @@ mod tests {
         // Regression: a constant raster+geom with a per-row band column must
         // produce an N-row array, not collapse to row 0. (The executor only sees
         // [raster, geom], so output packaging must consider all args.)
-        let crs_4326 = deserialize_crs("EPSG:4326").unwrap().unwrap();
         let geom_wkb = make_wkb("POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))");
 
         let kernel = RsClip { arg_count: 3 };
@@ -1199,7 +1084,7 @@ mod tests {
                 &[
                     RASTER,
                     SedonaType::Arrow(DataType::Int32),
-                    SedonaType::Wkb(Edges::Planar, Some(crs_4326)),
+                    SedonaType::Wkb(Edges::Planar, None),
                 ],
                 &[
                     ColumnarValue::Scalar(ScalarValue::Struct(Arc::new(two_band_raster()))),
@@ -1219,7 +1104,7 @@ mod tests {
         let row = |values: &[u8]| {
             Some(
                 RasterSpec::d2(1, 1)
-                    .crs(Some("EPSG:4326"))
+                    .crs(None)
                     .transform([0.0, 1.0, 0.0, 1.0, 0.0, -1.0])
                     .band_values(values)
                     .nodata(0u8),
@@ -1232,7 +1117,6 @@ mod tests {
     fn band_zero_clips_all_bands() {
         // Band 0 means "all bands" — it must reach clip_raster as 0, not be
         // clamped to 1.
-        let crs_4326 = deserialize_crs("EPSG:4326").unwrap().unwrap();
         let geom_wkb = make_wkb("POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))");
         let kernel = RsClip { arg_count: 3 };
         let result = kernel
@@ -1240,7 +1124,7 @@ mod tests {
                 &[
                     RASTER,
                     SedonaType::Arrow(DataType::Int32),
-                    SedonaType::Wkb(Edges::Planar, Some(crs_4326)),
+                    SedonaType::Wkb(Edges::Planar, None),
                 ],
                 &[
                     ColumnarValue::Scalar(ScalarValue::Struct(Arc::new(two_band_raster()))),
@@ -1257,7 +1141,7 @@ mod tests {
         assert_raster_scalar_equals(
             &scalar,
             &RasterSpec::d2(1, 1)
-                .crs(Some("EPSG:4326"))
+                .crs(None)
                 .transform([0.0, 1.0, 0.0, 1.0, 0.0, -1.0])
                 .band_values(&[1u8])
                 .nodata(0u8)
@@ -1268,7 +1152,6 @@ mod tests {
 
     #[test]
     fn negative_band_errors() {
-        let crs_4326 = deserialize_crs("EPSG:4326").unwrap().unwrap();
         let geom_wkb = make_wkb("POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))");
         let kernel = RsClip { arg_count: 3 };
         let err = kernel
@@ -1276,7 +1159,7 @@ mod tests {
                 &[
                     RASTER,
                     SedonaType::Arrow(DataType::Int32),
-                    SedonaType::Wkb(Edges::Planar, Some(crs_4326)),
+                    SedonaType::Wkb(Edges::Planar, None),
                 ],
                 &[
                     ColumnarValue::Scalar(ScalarValue::Struct(Arc::new(two_band_raster()))),
@@ -1323,7 +1206,6 @@ mod tests {
     #[test]
     fn null_band_yields_null() {
         // A NULL band must propagate to NULL, not silently clip every band.
-        let crs_4326 = deserialize_crs("EPSG:4326").unwrap().unwrap();
         let geom_wkb = make_wkb("POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))");
         let kernel = RsClip { arg_count: 3 };
         let result = kernel
@@ -1331,7 +1213,7 @@ mod tests {
                 &[
                     RASTER,
                     SedonaType::Arrow(DataType::Int32),
-                    SedonaType::Wkb(Edges::Planar, Some(crs_4326)),
+                    SedonaType::Wkb(Edges::Planar, None),
                 ],
                 &[
                     ColumnarValue::Scalar(ScalarValue::Struct(Arc::new(two_band_raster()))),
@@ -1520,6 +1402,7 @@ mod tests {
         let geom_wkb_4326 = make_wkb("POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))");
         let geom_wkb_3857 = with_global_proj_engine(|engine| {
             crs_transform_wkb(&geom_wkb_4326, crs_4326.as_ref(), crs_3857.as_ref(), engine)
+                .map_err(|e| SedonaProjError::Invalid(e.to_string()))
         })
         .unwrap();
 

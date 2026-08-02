@@ -1,0 +1,136 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: RS_ZonalStats
+description: >
+  Computes a single summary statistic of the raster pixels covered by a region of interest
+  geometry.
+kernels:
+  - returns: double
+    args:
+    - raster
+    - {name: roi, type: geometry}
+    - {name: stat_type, type: string}
+  - returns: double
+    args:
+    - raster
+    - {name: roi, type: geometry}
+    - {name: band, type: integer}
+    - {name: stat_type, type: string}
+  - returns: double
+    args:
+    - raster
+    - {name: roi, type: geometry}
+    - {name: band, type: integer}
+    - {name: stat_type, type: string}
+    - {name: all_touched, type: boolean}
+  - returns: double
+    args:
+    - raster
+    - {name: roi, type: geometry}
+    - {name: band, type: integer}
+    - {name: stat_type, type: string}
+    - {name: all_touched, type: boolean}
+    - {name: exclude_no_data, type: boolean}
+  - returns: double
+    args:
+    - raster
+    - name: roi
+      type: geometry
+      description: >
+        Region-of-interest geometry. Reprojected into the
+        raster's CRS when both carry one; it is an error for exactly one side to
+        have a CRS.
+    - name: band
+      type: integer
+      description: >
+        1-based band index to compute over. Required for a multiband raster; a
+        single-band raster may omit it via the band-less overload.
+    - name: stat_type
+      type: string
+      description: >
+        Statistic to return (case-insensitive): count, sum, mean, median, mode,
+        stddev, variance, min, or max. `avg`/`average` alias mean and `sd`
+        aliases stddev.
+    - name: all_touched
+      type: boolean
+      description: >
+        If true, include every pixel the roi touches; otherwise only pixels
+        whose center falls inside it. Defaults to false.
+    - name: exclude_no_data
+      type: boolean
+      description: >
+        If true (the default), skip pixels equal to the band's nodata value.
+    - name: lenient
+      type: boolean
+      description: >
+        If true (the default), return NULL when the roi does not intersect the
+        raster; if false, raise an error.
+---
+
+::: callout-warning
+**Experimental.** This function is experimental; its behavior may change without notice.
+:::
+
+## Description
+
+`RS_ZonalStats` returns one summary statistic of the pixels of a single band
+that a region of interest (ROI) geometry covers. A pixel
+is included when its center falls inside the roi (or, with `all_touched`, when
+the roi touches it at all). By default the band's nodata pixels are excluded.
+
+The statistic is one of `count`, `sum`, `mean`, `median`, `mode`, `stddev`,
+`variance`, `min`, or `max`. `count` is returned as a whole number; all other
+statistics are floating point. Variance and standard deviation are the sample
+(n-1) values, and `mode` breaks ties toward the larger value.
+
+When the ROI overlaps the raster but selects no pixel, `count` is 0 and every
+other statistic is NULL. When the ROI does not intersect the raster at all, the
+result is NULL under the default `lenient` behavior, or an error when
+`lenient` is set to false.
+
+The `band`, `all_touched`, `exclude_no_data`, and `lenient` arguments are added
+one at a time by the wider overloads; `all_touched` defaults to false,
+`exclude_no_data` to true, and `lenient` to true. The band-less overload does
+not default to band 1 on a multiband raster: naming the band is required there. This function operates on 2-D `(y, x)` bands; computing a
+statistic per non-spatial plane of an N-D band is not supported.
+
+Use [`RS_ZonalStatsAll`](rs_zonalstatsall.qmd) to compute every statistic at
+once.
+
+## Examples
+
+```sql
+SELECT RS_ZonalStats(
+  RS_Example(),
+  ST_GeomFromText('POLYGON ((60 90, 160 90, 160 190, 60 190, 60 90))', 'OGC:CRS84'),
+  1,
+  'mean'
+);
+```
+
+```sql
+SELECT RS_ZonalStats(
+  RS_Example(),
+  ST_GeomFromText('POLYGON ((60 90, 160 90, 160 190, 60 190, 60 90))', 'OGC:CRS84'),
+  1,
+  'count',
+  false,
+  false
+);
+```

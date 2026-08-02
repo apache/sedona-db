@@ -24,7 +24,6 @@ use datafusion_common::error::Result;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_raster::traits::RasterRef;
-use sedona_schema::raster::StorageType;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 /// RS_BandPath() scalar UDF implementation
@@ -130,11 +129,14 @@ fn get_band_path(
                 builder.append_null();
             } else {
                 let band = bands.band(band_index as usize)?;
-                let band_metadata = band.metadata();
 
-                if band_metadata.storage_type()? == StorageType::OutDbRef {
-                    match band_metadata.outdb_url() {
-                        Some(url) => builder.append_value(url),
+                if !band.is_indb() {
+                    match band.outdb_uri() {
+                        Some(uri) => {
+                            let (base_url, _band_id) =
+                                sedona_raster::traits::split_outdb_band_fragment(uri);
+                            builder.append_value(base_url)
+                        }
                         None => builder.append_null(),
                     }
                 } else {

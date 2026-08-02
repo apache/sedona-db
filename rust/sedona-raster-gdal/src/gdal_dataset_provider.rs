@@ -29,13 +29,13 @@ use sedona_gdal::geo_transform::{GeoTransform, GeoTransformEx};
 use sedona_gdal::raster::types::GdalDataType;
 
 use sedona_common::SedonaOptions;
-use sedona_raster::traits::RasterRef;
-use sedona_schema::raster::{BandDataType, StorageType};
+use sedona_raster::traits::{split_outdb_band_fragment, RasterRef};
+use sedona_schema::raster::BandDataType;
 
 use crate::gdal_common::{
     band_data_type_to_gdal, bytes_to_f64, convert_gdal_err, normalize_outdb_source_path,
-    open_gdal_dataset, raster_ref_to_gdal_empty, raster_ref_to_gdal_mem,
-    set_band_nodata_from_bytes, ToGdalGeoTransform,
+    open_gdal_dataset, raster_geo_transform, raster_ref_to_gdal_empty, raster_ref_to_gdal_mem,
+    set_band_nodata_from_bytes,
 };
 
 /// A GDAL dataset constructed from a `RasterRef`.
@@ -212,12 +212,11 @@ impl GDALDatasetCache {
         raster: &R,
         gdal_mem_source: Option<&Rc<Dataset>>,
     ) -> Result<(Rc<Dataset>, Vec<Rc<Dataset>>)> {
-        let metadata = raster.metadata()?;
         let bands = raster.bands();
         let num_bands = bands.len();
 
-        let metadata_width = metadata.width();
-        let metadata_height = metadata.height();
+        let metadata_width = raster.width().map_err(|e| arrow_datafusion_err!(e))?;
+        let metadata_height = raster.height().map_err(|e| arrow_datafusion_err!(e))?;
         let width: i32 = metadata_width.try_into().map_err(|_| {
             exec_datafusion_err!(
                 "Raster width {} exceeds supported GDAL/i32 limit {}",
@@ -248,7 +247,7 @@ impl GDALDatasetCache {
             .create_vrt(vrt_width, vrt_height)
             .map_err(convert_gdal_err)?;
 
-        let geotransform = metadata.to_gdal_geotransform();
+        let geotransform = raster_geo_transform(raster)?;
         vrt.set_geo_transform(&geotransform)
             .map_err(convert_gdal_err)?;
         if let Some(crs) = raster.crs() {
@@ -268,8 +267,7 @@ impl GDALDatasetCache {
                 );
             }
 
-            let band_metadata = band.metadata();
-            let band_type = band_metadata.data_type()?;
+            let band_type = band.data_type();
             let gdal_type = band_data_type_to_gdal(&band_type);
             if matches!(gdal_type, GdalDataType::Unknown) {
                 return Err(DataFusionError::NotImplemented(format!(
@@ -281,80 +279,72 @@ impl GDALDatasetCache {
             vrt.add_band(gdal_type, None).map_err(convert_gdal_err)?;
             let vrt_band = vrt.rasterband(i).map_err(convert_gdal_err)?;
 
-            if let Some(nodata_bytes) = band_metadata.nodata_value() {
+            if let Some(nodata_bytes) = band.nodata() {
                 set_band_nodata_from_bytes(&vrt_band, Some(nodata_bytes))?;
             }
 
-            match band_metadata.storage_type()? {
-                StorageType::OutDbRef => {
-                    let url = band_metadata.outdb_url().ok_or_else(|| {
-                        exec_datafusion_err!("Band {} is out-db but missing outdb_url", i)
-                    })?;
-                    let source_band_num: usize = band_metadata
-                        .outdb_band_id()
-                        .ok_or_else(|| {
-                            exec_datafusion_err!("Band {} is out-db but missing band_id", i)
-                        })?
-                        .try_into()
-                        .map_err(|_| {
-                            exec_datafusion_err!("Band {} out-db band_id is too large", i)
-                        })?;
+            if band.is_indb() {
+                let mem_dataset = gdal_mem_source
+                    .as_ref()
+                    .expect("in-db dataset should exist");
+                let source_band = mem_dataset
+                    .rasterband(mem_band_index)
+                    .map_err(convert_gdal_err)?;
+                mem_band_index += 1;
 
-                    let source_dataset = self.get_or_create_outdb_source(gdal, url, None)?;
+                vrt_band
+                    .add_simple_source(
+                        &source_band,
+                        (0, 0, width, height),
+                        (0, 0, width, height),
+                        None,
+                        None,
+                    )
+                    .map_err(convert_gdal_err)?;
+            } else {
+                let uri = band.outdb_uri().ok_or_else(|| {
+                    exec_datafusion_err!("Band {} is out-db but missing outdb_uri", i)
+                })?;
+                let (url, source_band_num_u32) = split_outdb_band_fragment(uri);
+                let source_band_num: usize = source_band_num_u32
+                    .try_into()
+                    .map_err(|_| exec_datafusion_err!("Band {} out-db band_id is too large", i))?;
 
-                    // If GDALGetGeoTransform(hdsSrc, ogt) fails, we fall back to (0, 1, 0, 0, 0, -1),
-                    // which is the identity transform.
-                    let src_geo_transform = source_dataset
-                        .geo_transform()
-                        .unwrap_or([0.0, 1.0, 0.0, 0.0, 0.0, -1.0]);
-                    let (src_w, src_h) = source_dataset.raster_size();
+                let source_dataset = self.get_or_create_outdb_source(gdal, &url, None)?;
 
-                    // Compute source and destination windows for the VRT simple source. The VRT usually only
-                    // clip a small portion of the source dataset.
-                    let Some((src_window, dst_window)) = compute_vrt_simple_source_windows(
-                        &geotransform,
-                        (width, height),
-                        &src_geo_transform,
-                        (src_w as i32, src_h as i32),
-                    )?
-                    else {
-                        // No spatial overlap between the target raster and the source dataset.
-                        // Leave the VRT band as nodata.
-                        continue;
-                    };
+                // If GDALGetGeoTransform(hdsSrc, ogt) fails, we fall back to (0, 1, 0, 0, 0, -1),
+                // which is the identity transform.
+                let src_geo_transform = source_dataset
+                    .geo_transform()
+                    .unwrap_or([0.0, 1.0, 0.0, 0.0, 0.0, -1.0]);
+                let (src_w, src_h) = source_dataset.raster_size();
 
-                    let source_band = source_dataset
-                        .rasterband(source_band_num)
-                        .map_err(convert_gdal_err)?;
+                // Compute source and destination windows for the VRT simple source. The VRT usually only
+                // clip a small portion of the source dataset.
+                let Some((src_window, dst_window)) = compute_vrt_simple_source_windows(
+                    &geotransform,
+                    (width, height),
+                    &src_geo_transform,
+                    (src_w as i32, src_h as i32),
+                )?
+                else {
+                    // No spatial overlap between the target raster and the source dataset.
+                    // Leave the VRT band as nodata.
+                    continue;
+                };
 
-                    vrt_band
-                        // Avoid passing per-source NODATA to VRT simple sources; some GDAL builds
-                        // warn that NODATA isn't supported for neighbour-sampled simple sources
-                        // on virtual datasources. We set band-level NODATA via set_no_data_value.
-                        .add_simple_source(&source_band, src_window, dst_window, None, None)
-                        .map_err(convert_gdal_err)?;
+                let source_band = source_dataset
+                    .rasterband(source_band_num)
+                    .map_err(convert_gdal_err)?;
 
-                    outdb_sources.push(source_dataset);
-                }
-                StorageType::InDb => {
-                    let mem_dataset = gdal_mem_source
-                        .as_ref()
-                        .expect("in-db dataset should exist");
-                    let source_band = mem_dataset
-                        .rasterband(mem_band_index)
-                        .map_err(convert_gdal_err)?;
-                    mem_band_index += 1;
+                vrt_band
+                    // Avoid passing per-source NODATA to VRT simple sources; some GDAL builds
+                    // warn that NODATA isn't supported for neighbour-sampled simple sources
+                    // on virtual datasources. We set band-level NODATA via set_no_data_value.
+                    .add_simple_source(&source_band, src_window, dst_window, None, None)
+                    .map_err(convert_gdal_err)?;
 
-                    vrt_band
-                        .add_simple_source(
-                            &source_band,
-                            (0, 0, width, height),
-                            (0, 0, width, height),
-                            None,
-                            None,
-                        )
-                        .map_err(convert_gdal_err)?;
-                }
+                outdb_sources.push(source_dataset);
             }
         }
 
@@ -394,9 +384,10 @@ impl<'a> GDALDatasetProvider<'a> {
         let mut has_outdb = false;
         for i in 1..=num_bands {
             let band = bands.band(i).map_err(|e| arrow_datafusion_err!(e))?;
-            match band.metadata().storage_type()? {
-                StorageType::InDb => indb_band_indices.push(i),
-                StorageType::OutDbRef => has_outdb = true,
+            if band.is_indb() {
+                indb_band_indices.push(i);
+            } else {
+                has_outdb = true;
             }
         }
 
@@ -463,7 +454,7 @@ impl<'a> GDALDatasetProvider<'a> {
 
 #[derive(Hash, Eq, PartialEq)]
 struct VrtBandKey {
-    storage_type: StorageType,
+    is_indb: bool,
     data_type: BandDataType,
     nodata_bits: Option<u64>,
     outdb_url: Option<String>,
@@ -481,19 +472,17 @@ struct VrtKey {
 
 impl VrtKey {
     fn from_raster<R: RasterRef + ?Sized>(raster: &R) -> Result<Self> {
-        let metadata = raster.metadata()?;
         let bands = raster.bands();
         let num_bands = bands.len();
 
-        let geotransform = metadata.to_gdal_geotransform();
+        let geotransform = raster_geo_transform(raster)?;
         let geotransform_bits = geotransform.map(f64::to_bits);
 
         let mut band_keys = Vec::with_capacity(num_bands);
         for i in 1..=num_bands {
             let band = bands.band(i).map_err(|e| arrow_datafusion_err!(e))?;
-            let band_metadata = band.metadata();
-            let band_type = band_metadata.data_type()?;
-            let nodata_bits = match (band_metadata.nodata_value(), band_type) {
+            let band_type = band.data_type();
+            let nodata_bits = match (band.nodata(), band_type) {
                 (Some(bytes), BandDataType::UInt64) => {
                     let bytes: [u8; 8] = bytes.try_into().map_err(|_| {
                         exec_datafusion_err!("Invalid nodata byte length for UInt64")
@@ -509,18 +498,27 @@ impl VrtKey {
                 (Some(bytes), _) => Some(bytes_to_f64(bytes, &band_type)?.to_bits()),
                 (None, _) => None,
             };
+            // Out-db bands recover their source path + band from the `#band=N`
+            // URI; in-db bands have no URI hint here.
+            let (outdb_url, outdb_band_id) = match band.outdb_uri() {
+                Some(uri) => {
+                    let (url, band_num) = split_outdb_band_fragment(uri);
+                    (Some(normalize_outdb_source_path(&url)), Some(band_num))
+                }
+                None => (None, None),
+            };
             band_keys.push(VrtBandKey {
-                storage_type: band_metadata.storage_type()?,
+                is_indb: band.is_indb(),
                 data_type: band_type,
                 nodata_bits,
-                outdb_url: band_metadata.outdb_url().map(normalize_outdb_source_path),
-                outdb_band_id: band_metadata.outdb_band_id(),
+                outdb_url,
+                outdb_band_id,
             });
         }
 
         Ok(Self {
-            width: metadata.width(),
-            height: metadata.height(),
+            width: raster.width()?,
+            height: raster.height()?,
             geotransform_bits,
             crs: raster.crs().map(|s| s.to_string()),
             bands: band_keys,
@@ -614,8 +612,7 @@ mod tests {
     use sedona_gdal::raster::types::Buffer;
     use sedona_raster::array::RasterStructArray;
     use sedona_raster::builder::RasterBuilder;
-    use sedona_raster::traits::{BandMetadata, RasterMetadata};
-    use sedona_schema::raster::{BandDataType, StorageType};
+    use sedona_schema::raster::BandDataType;
     use sedona_testing::rasters::{build_in_db_raster, InDbTestBand};
     use tempfile::TempDir;
 
@@ -672,26 +669,21 @@ mod tests {
 
     fn build_outdb_raster(path: &str) -> arrow_array::StructArray {
         let mut builder = RasterBuilder::new(1);
-        let metadata = RasterMetadata {
-            width: 8,
-            height: 8,
-            upperleft_x: 0.0,
-            upperleft_y: 8.0,
-            scale_x: 1.0,
-            scale_y: -1.0,
-            skew_x: 0.0,
-            skew_y: 0.0,
-        };
-        builder.start_raster(&metadata, None).unwrap();
+        builder
+            .start_raster_2d(8, 8, 0.0, 8.0, 1.0, -1.0, 0.0, 0.0, None)
+            .unwrap();
 
-        let band_metadata = BandMetadata {
-            nodata_value: Some(vec![0u8]),
-            storage_type: StorageType::OutDbRef,
-            datatype: BandDataType::UInt8,
-            outdb_url: Some(path.to_string()),
-            outdb_band_id: Some(1),
-        };
-        builder.start_band(band_metadata).unwrap();
+        builder
+            .start_band_nd(
+                None,
+                &["y", "x"],
+                &[8, 8],
+                BandDataType::UInt8,
+                Some(&[0u8]),
+                Some(&format!("{path}#band=1")),
+                None,
+            )
+            .unwrap();
         builder.band_data_writer().append_value([]);
         builder.finish_band().unwrap();
         builder.finish_raster().unwrap();
@@ -700,39 +692,27 @@ mod tests {
     }
 
     fn build_mixed_raster(path: &str) -> StructArray {
-        let metadata = RasterMetadata {
-            width: 8,
-            height: 8,
-            upperleft_x: 0.0,
-            upperleft_y: 8.0,
-            scale_x: 1.0,
-            scale_y: -1.0,
-            skew_x: 0.0,
-            skew_y: 0.0,
-        };
         let mut builder = RasterBuilder::new(1);
-        builder.start_raster(&metadata, Some("EPSG:4326")).unwrap();
+        builder
+            .start_raster_2d(8, 8, 0.0, 8.0, 1.0, -1.0, 0.0, 0.0, Some("EPSG:4326"))
+            .unwrap();
 
         builder
-            .start_band(BandMetadata {
-                datatype: BandDataType::UInt8,
-                nodata_value: Some(vec![255u8]),
-                storage_type: StorageType::InDb,
-                outdb_url: None,
-                outdb_band_id: None,
-            })
+            .start_band_2d(BandDataType::UInt8, Some(&[255u8]))
             .unwrap();
         builder.band_data_writer().append_value(vec![7u8; 8 * 8]);
         builder.finish_band().unwrap();
 
         builder
-            .start_band(BandMetadata {
-                datatype: BandDataType::UInt8,
-                nodata_value: Some(vec![0u8]),
-                storage_type: StorageType::OutDbRef,
-                outdb_url: Some(path.to_string()),
-                outdb_band_id: Some(1),
-            })
+            .start_band_nd(
+                None,
+                &["y", "x"],
+                &[8, 8],
+                BandDataType::UInt8,
+                Some(&[0u8]),
+                Some(&format!("{path}#band=1")),
+                None,
+            )
             .unwrap();
         builder.band_data_writer().append_value([]);
         builder.finish_band().unwrap();
@@ -841,17 +821,13 @@ mod tests {
 
     #[test]
     fn test_provider_returns_empty_dataset_for_zero_band_raster() {
-        let metadata = RasterMetadata {
-            width: 3,
-            height: 2,
-            upperleft_x: 1.0,
-            upperleft_y: 4.0,
-            scale_x: 1.0,
-            scale_y: -1.0,
-            skew_x: 0.0,
-            skew_y: 0.0,
-        };
-        let raster_struct = build_in_db_raster(metadata, Some("EPSG:4326"), &[]);
+        let raster_struct = build_in_db_raster(
+            3,
+            2,
+            [1.0, 1.0, 0.0, 4.0, 0.0, -1.0],
+            Some("EPSG:4326"),
+            &[],
+        );
         let raster_array = RasterStructArray::try_new(&raster_struct).unwrap();
         let raster = raster_array.get(0).unwrap();
         let cache = Rc::new(GDALDatasetCache::try_new(4, 4).unwrap());
@@ -869,20 +845,12 @@ mod tests {
 
     #[test]
     fn test_provider_returns_mem_dataset_for_indb_raster() {
-        let metadata = RasterMetadata {
-            width: 2,
-            height: 2,
-            upperleft_x: 0.0,
-            upperleft_y: 2.0,
-            scale_x: 1.0,
-            scale_y: -1.0,
-            skew_x: 0.0,
-            skew_y: 0.0,
-        };
         let band1 = vec![11u8, 12u8, 13u8, 14u8];
         let band2 = vec![21u8, 22u8, 23u8, 24u8];
         let raster_struct = build_in_db_raster(
-            metadata,
+            2,
+            2,
+            [0.0, 1.0, 0.0, 2.0, 0.0, -1.0],
             Some("EPSG:4326"),
             &[
                 InDbTestBand {
@@ -950,18 +918,11 @@ mod tests {
 
     #[test]
     fn test_vrt_key_distinguishes_lossless_uint64_nodata() {
-        let metadata = RasterMetadata {
-            width: 1,
-            height: 1,
-            upperleft_x: 0.0,
-            upperleft_y: 1.0,
-            scale_x: 1.0,
-            scale_y: -1.0,
-            skew_x: 0.0,
-            skew_y: 0.0,
-        };
+        let transform = [0.0, 1.0, 0.0, 1.0, 0.0, -1.0];
         let raster_a = build_in_db_raster(
-            metadata.clone(),
+            1,
+            1,
+            transform,
             None,
             &[InDbTestBand {
                 datatype: BandDataType::UInt64,
@@ -970,7 +931,9 @@ mod tests {
             }],
         );
         let raster_b = build_in_db_raster(
-            metadata,
+            1,
+            1,
+            transform,
             None,
             &[InDbTestBand {
                 datatype: BandDataType::UInt64,
@@ -1058,26 +1021,20 @@ mod tests {
         let path = create_two_band_source_tiff(&temp_dir, 7u8, 99u8);
 
         // Build a 1-band raster whose single band points at source band 2.
-        let metadata = RasterMetadata {
-            width: 8,
-            height: 8,
-            upperleft_x: 0.0,
-            upperleft_y: 8.0,
-            scale_x: 1.0,
-            scale_y: -1.0,
-            skew_x: 0.0,
-            skew_y: 0.0,
-        };
         let mut builder = RasterBuilder::new(1);
-        builder.start_raster(&metadata, None).unwrap();
         builder
-            .start_band(BandMetadata {
-                nodata_value: Some(vec![0u8]),
-                storage_type: StorageType::OutDbRef,
-                datatype: BandDataType::UInt8,
-                outdb_url: Some(path.clone()),
-                outdb_band_id: Some(2),
-            })
+            .start_raster_2d(8, 8, 0.0, 8.0, 1.0, -1.0, 0.0, 0.0, None)
+            .unwrap();
+        builder
+            .start_band_nd(
+                None,
+                &["y", "x"],
+                &[8, 8],
+                BandDataType::UInt8,
+                Some(&[0u8]),
+                Some(&format!("{path}#band=2")),
+                None,
+            )
             .unwrap();
         builder.band_data_writer().append_value([]);
         builder.finish_band().unwrap();

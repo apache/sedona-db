@@ -51,6 +51,7 @@ use sedona_common::option::SpatialJoinOptions;
 use sedona_common::SedonaOptions;
 use sedona_geometry::transform::CrsEngine;
 use sedona_geometry::types::Edges;
+use sedona_proj::error::SedonaProjError;
 use sedona_proj::transform::{with_global_proj_engine, LazyProjEngine};
 use sedona_query_planner::{
     optimizer::register_spatial_join_logical_optimizer, query_planner::SedonaQueryPlanner,
@@ -305,16 +306,17 @@ async fn cross_crs_matches_constructed_reference() -> Result<()> {
     let ref_ring: Vec<(f64, f64)> = with_global_proj_engine(|engine| {
         let transform = engine
             .get_transform_crs_to_crs("EPSG:3857", &lnglat_crs, None, "")
-            .map_err(|e| datafusion_common::exec_datafusion_err!("{e}"))?;
+            .map_err(|e| SedonaProjError::Invalid(format!("{e}")))?;
         let mut ring = Vec::new();
         densify_footprint_ring(native_corners, &mut ring);
         for point in ring.iter_mut() {
             transform
                 .transform_coord(point)
-                .map_err(|e| datafusion_common::exec_datafusion_err!("{e}"))?;
+                .map_err(|e| SedonaProjError::Invalid(format!("{e}")))?;
         }
         Ok(ring)
-    })?;
+    })
+    .map_err(|e| datafusion_common::exec_datafusion_err!("{e}"))?;
 
     // The four reprojected corners are the densified ring's vertices at the start
     // of each edge. Test points are placed relative to these corners and the
@@ -434,14 +436,13 @@ fn build_skewed_raster_3857() -> StructArray {
 fn skewed_raster_native_corners(raster: &StructArray) -> [(f64, f64); 4] {
     let rasters = RasterStructArray::try_new(raster).unwrap();
     let r = rasters.get(0).unwrap();
-    let metadata = r.metadata().unwrap();
-    let w = metadata.width();
-    let h = metadata.height();
+    let w = r.width().unwrap();
+    let h = r.height().unwrap();
     [
-        to_world_coordinate(&r, 0, 0).unwrap(),
-        to_world_coordinate(&r, w, 0).unwrap(),
-        to_world_coordinate(&r, w, h).unwrap(),
-        to_world_coordinate(&r, 0, h).unwrap(),
+        to_world_coordinate(&r, 0, 0),
+        to_world_coordinate(&r, w, 0),
+        to_world_coordinate(&r, w, h),
+        to_world_coordinate(&r, 0, h),
     ]
 }
 
@@ -488,11 +489,11 @@ async fn densification_catches_curved_edge_sliver() -> Result<()> {
     with_global_proj_engine(|engine| {
         let transform = engine
             .get_transform_crs_to_crs("EPSG:3857", &lnglat_crs, None, "")
-            .map_err(|e| datafusion_common::exec_datafusion_err!("{e}"))?;
+            .map_err(|e| SedonaProjError::Invalid(format!("{e}")))?;
         for corner in hull.iter_mut() {
             transform
                 .transform_coord(corner)
-                .map_err(|e| datafusion_common::exec_datafusion_err!("{e}"))?;
+                .map_err(|e| SedonaProjError::Invalid(format!("{e}")))?;
         }
         for (e, mid) in curve_mids.iter_mut().enumerate() {
             let a = native_corners[e];
@@ -500,11 +501,12 @@ async fn densification_catches_curved_edge_sliver() -> Result<()> {
             let mut m = ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
             transform
                 .transform_coord(&mut m)
-                .map_err(|e| datafusion_common::exec_datafusion_err!("{e}"))?;
+                .map_err(|e| SedonaProjError::Invalid(format!("{e}")))?;
             *mid = m;
         }
         Ok(())
-    })?;
+    })
+    .map_err(|e| datafusion_common::exec_datafusion_err!("{e}"))?;
 
     let cx = hull.iter().map(|c| c.0).sum::<f64>() / 4.0;
     let cy = hull.iter().map(|c| c.1).sum::<f64>() / 4.0;

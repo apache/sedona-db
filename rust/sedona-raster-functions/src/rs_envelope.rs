@@ -71,7 +71,7 @@ impl SedonaScalarKernel for RsEnvelope {
                 Some(raster) => {
                     // A raster with no spatial (y, x) pair has no geotransform, so
                     // there is no envelope to compute — emit NULL for this row.
-                    if raster.metadata().is_err() {
+                    if raster.height().is_err() {
                         builder.append_null();
                         crs_builder.append_null();
                         return Ok(());
@@ -112,15 +112,14 @@ impl SedonaScalarKernel for RsEnvelope {
 /// derives the min/max X and Y to produce an axis-aligned bounding box.
 /// For skewed/rotated rasters, this differs from the convex hull.
 fn write_envelope_wkb(raster: &dyn RasterRef, out: &mut impl std::io::Write) -> Result<()> {
-    let metadata = raster.metadata()?;
-    let width = metadata.width();
-    let height = metadata.height();
+    let width = raster.width()?;
+    let height = raster.height()?;
 
     // Compute the four corners in world coordinates
-    let (ulx, uly) = to_world_coordinate(raster, 0, 0)?;
-    let (urx, ury) = to_world_coordinate(raster, width, 0)?;
-    let (lrx, lry) = to_world_coordinate(raster, width, height)?;
-    let (llx, lly) = to_world_coordinate(raster, 0, height)?;
+    let (ulx, uly) = to_world_coordinate(raster, 0, 0);
+    let (urx, ury) = to_world_coordinate(raster, width, 0);
+    let (lrx, lry) = to_world_coordinate(raster, width, height);
+    let (llx, lly) = to_world_coordinate(raster, 0, height);
 
     // Compute the axis-aligned bounding box
     let min_x = ulx.min(urx).min(lrx).min(llx);

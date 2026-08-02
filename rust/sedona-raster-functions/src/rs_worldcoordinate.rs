@@ -112,11 +112,11 @@ impl SedonaScalarKernel for RsCoordinateMapper {
                 (Some(raster), Some(x), Some(y)) => {
                     // A raster with no spatial (y, x) pair has no geotransform, so
                     // there is no world coordinate — emit NULL for this row.
-                    if raster.metadata().is_err() {
+                    if raster.height().is_err() {
                         builder.append_null();
                         return Ok(());
                     }
-                    let (world_x, world_y) = to_world_coordinate(raster, x, y)?;
+                    let (world_x, world_y) = to_world_coordinate(raster, x, y);
                     match self.coord {
                         Coord::X => builder.append_value(world_x),
                         Coord::Y => builder.append_value(world_y),
@@ -179,11 +179,11 @@ impl SedonaScalarKernel for RsCoordinatePoint {
                 (Some(raster), Some(x), Some(y)) => {
                     // A raster with no spatial (y, x) pair has no geotransform, so
                     // there is no world coordinate — emit NULL for this row.
-                    if raster.metadata().is_err() {
+                    if raster.height().is_err() {
                         builder.append_null();
                         return Ok(());
                     }
-                    let (world_x, world_y) = to_world_coordinate(raster, x, y)?;
+                    let (world_x, world_y) = to_world_coordinate(raster, x, y);
                     item[5..13].copy_from_slice(&world_x.to_le_bytes());
                     item[13..21].copy_from_slice(&world_y.to_le_bytes());
                     builder.append_value(item);

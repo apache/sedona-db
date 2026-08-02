@@ -348,11 +348,6 @@ impl SedonaContext {
         #[cfg(feature = "s2geography")]
         out.register_s2geography()?;
 
-        // Always register proj scalar kernels (although actually calling them will error
-        // without this feature unless sedona_proj::register::configure_global_proj_engine()
-        // is called).
-        out.register_scalar_kernels(sedona_proj::register::scalar_kernels().into_iter())?;
-
         // Always register raster functions
         out.register_function_set(sedona_raster_functions::register::default_function_set());
 
@@ -361,7 +356,7 @@ impl SedonaContext {
 
     #[cfg(feature = "s2geography")]
     fn register_s2geography(&mut self) -> Result<()> {
-        use sedona_proj::sd_order_lnglat;
+        use sedona_functions::sd_order_lnglat;
 
         self.register_scalar_kernels(sedona_s2geography::register::scalar_kernels()?.into_iter())?;
 

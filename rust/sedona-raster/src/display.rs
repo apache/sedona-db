@@ -17,9 +17,8 @@
 
 use std::fmt;
 
-use crate::affine_transformation::AffineMatrix;
+use crate::affine_transformation::to_world_coordinate;
 use crate::traits::RasterRef;
-use sedona_schema::raster::StorageType;
 
 /// Wrapper for formatting a raster reference as a human-readable string.
 ///
@@ -58,53 +57,44 @@ impl fmt::Display for RasterDisplay<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let raster = self.0;
         let bands = raster.bands();
+
+        let width = raster.width().unwrap();
+        let height = raster.height().unwrap();
         let nbands = bands.len();
+
+        // Compute axis-aligned bounding box from 4 corners in world coordinates.
+        // This handles both skewed and non-skewed rasters correctly.
+        let w = width;
+        let h = height;
+        let (ulx, uly) = to_world_coordinate(raster, 0, 0);
+        let (urx, ury) = to_world_coordinate(raster, w, 0);
+        let (lrx, lry) = to_world_coordinate(raster, w, h);
+        let (llx, lly) = to_world_coordinate(raster, 0, h);
+
+        let xmin = ulx.min(urx).min(lrx).min(llx);
+        let xmax = ulx.max(urx).max(lrx).max(llx);
+        let ymin = uly.min(ury).min(lry).min(lly);
+        let ymax = uly.max(ury).max(lry).max(lly);
+
+        let transform = raster.transform();
+        let skew_x = transform[2];
+        let skew_y = transform[4];
+        let has_skew = skew_x != 0.0 || skew_y != 0.0;
 
         let has_outdb = bands
             .iter()
             .filter_map(Result::ok)
-            .any(|band| matches!(band.metadata().storage_type(), Ok(StorageType::OutDbRef)));
+            .any(|band| !band.is_indb());
 
-        // A raster with no spatial (y, x) pair has no width/height/geotransform,
-        // so omit the extent portion and print the available dimension info.
-        match raster.metadata() {
-            Ok(metadata) => {
-                let width = metadata.width();
-                let height = metadata.height();
+        // Write: [WxH/nbands] @ [xmin ymin xmax ymax]
+        write!(
+            f,
+            "[{width}x{height}/{nbands}] @ [{xmin} {ymin} {xmax} {ymax}]"
+        )?;
 
-                // Compute axis-aligned bounding box from 4 corners in world
-                // coordinates. This handles both skewed and non-skewed rasters.
-                let affine = AffineMatrix::from_metadata(&metadata);
-                let (w, h) = (width as f64, height as f64);
-                let (ulx, uly) = affine.transform(0.0, 0.0);
-                let (urx, ury) = affine.transform(w, 0.0);
-                let (lrx, lry) = affine.transform(w, h);
-                let (llx, lly) = affine.transform(0.0, h);
-
-                let xmin = ulx.min(urx).min(lrx).min(llx);
-                let xmax = ulx.max(urx).max(lrx).max(llx);
-                let ymin = uly.min(ury).min(lry).min(lly);
-                let ymax = uly.max(ury).max(lry).max(lly);
-
-                let skew_x = metadata.skew_x();
-                let skew_y = metadata.skew_y();
-                let has_skew = skew_x != 0.0 || skew_y != 0.0;
-
-                // Write: [WxH/nbands] @ [xmin ymin xmax ymax]
-                write!(
-                    f,
-                    "[{width}x{height}/{nbands}] @ [{xmin} {ymin} {xmax} {ymax}]"
-                )?;
-
-                // Conditionally append skew info when the raster is rotated/skewed
-                if has_skew {
-                    write!(f, " skew=({skew_x}, {skew_y})")?;
-                }
-            }
-            Err(_) => {
-                let dims = raster.spatial_dims();
-                write!(f, "[dims={dims:?}/{nbands}]")?;
-            }
+        // Conditionally append skew info when the raster is rotated/skewed
+        if has_skew {
+            write!(f, " skew=({skew_x}, {skew_y})")?;
         }
 
         // Append CRS if present. For PROJJSON (starts with '{'), show compact placeholder.

@@ -112,7 +112,7 @@ impl SedonaScalarKernel for RsCoordinateMapper {
                 (Some(raster), Some(x), Some(y)) => {
                     // A raster with no spatial (y, x) pair has no geotransform, so
                     // there is no pixel coordinate — emit NULL for this row.
-                    if raster.metadata().is_err() {
+                    if raster.height().is_err() {
                         builder.append_null();
                         return Ok(());
                     }
@@ -179,7 +179,7 @@ impl SedonaScalarKernel for RsCoordinatePoint {
                 (Some(raster), Some(world_x), Some(world_y)) => {
                     // A raster with no spatial (y, x) pair has no geotransform, so
                     // there is no pixel coordinate — emit NULL for this row.
-                    if raster.metadata().is_err() {
+                    if raster.height().is_err() {
                         builder.append_null();
                         return Ok(());
                     }

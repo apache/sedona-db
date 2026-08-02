@@ -212,7 +212,7 @@ impl<Op: tg::BinaryPredicate + Send + Sync> RsSpatialPredicate<Op> {
                     (Some(raster), Some(geom_wkb)) => {
                         // A raster with no spatial (y, x) pair has no footprint to
                         // compare against — emit NULL for this row.
-                        if raster.metadata().is_err() {
+                        if raster.height().is_err() {
                             builder.append_null();
                             return Ok(());
                         }
@@ -259,7 +259,7 @@ impl<Op: tg::BinaryPredicate + Send + Sync> RsSpatialPredicate<Op> {
                     (Some(raster), Some(geom_wkb)) => {
                         // A raster with no spatial (y, x) pair has no footprint to
                         // compare against — emit NULL for this row.
-                        if raster.metadata().is_err() {
+                        if raster.height().is_err() {
                             builder.append_null();
                             return Ok(());
                         }
@@ -308,7 +308,7 @@ impl<Op: tg::BinaryPredicate + Send + Sync> RsSpatialPredicate<Op> {
                     (Some(r0), Some(r1)) => {
                         // A raster with no spatial (y, x) pair has no footprint to
                         // compare against — emit NULL for this row.
-                        if r0.metadata().is_err() || r1.metadata().is_err() {
+                        if r0.height().is_err() || r1.height().is_err() {
                             builder.append_null();
                             return Ok(());
                         }
@@ -412,6 +412,20 @@ fn evaluate_predicate<Op: tg::BinaryPredicate>(wkb_a: &[u8], wkb_b: &[u8]) -> Re
 ///       = 9 + 4 + 80 = 93
 const CONVEXHULL_WKB_SIZE: usize = 93;
 
+/// Test whether a geometry intersects a raster's footprint (its convex-hull
+/// polygon), using the same true geometry intersection as RS_Intersects rather
+/// than a bounding-box overlap. This is the gate Sedona Spark's zonal statistics
+/// use (`RasterPredicates.rsIntersects`): a zone whose bounding box overlaps the
+/// raster but whose geometry is disjoint is treated as not intersecting.
+///
+/// `geom_wkb` must already be in the raster's CRS; this performs no CRS
+/// transformation (the raster footprint is built in the raster's own CRS).
+pub fn raster_intersects_geom_wkb(raster: &dyn RasterRef, geom_wkb: &[u8]) -> Result<bool> {
+    let mut raster_wkb = Vec::with_capacity(CONVEXHULL_WKB_SIZE);
+    write_convexhull_wkb(raster, &mut raster_wkb)?;
+    evaluate_predicate::<tg::Intersects>(&raster_wkb, geom_wkb)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -420,14 +434,14 @@ mod tests {
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_geometry::types::Edges;
+    use sedona_proj::error::SedonaProjError;
     use sedona_proj::transform::{with_global_proj_engine, LazyProjEngine};
     use sedona_raster::builder::RasterBuilder;
-    use sedona_raster::traits::{BandMetadata, RasterMetadata};
     use sedona_schema::crs::deserialize_crs;
     use sedona_schema::crs::OGC_CRS84_PROJJSON;
     use sedona_schema::datatypes::RASTER;
     use sedona_schema::datatypes::WKB_GEOMETRY;
-    use sedona_schema::raster::{BandDataType, StorageType};
+    use sedona_schema::raster::BandDataType;
     use sedona_testing::compare::assert_array_equal;
     use sedona_testing::create::create_array as create_geom_array;
     use sedona_testing::rasters::generate_test_rasters;
@@ -455,26 +469,10 @@ mod tests {
     /// If `crs` is `None`, the raster has no CRS.
     fn build_unit_raster(crs: Option<&str>) -> arrow_array::StructArray {
         let mut builder = RasterBuilder::new(1);
-        let metadata = RasterMetadata {
-            width: 1,
-            height: 1,
-            upperleft_x: 0.0,
-            upperleft_y: 1.0,
-            scale_x: 1.0,
-            scale_y: -1.0,
-            skew_x: 0.0,
-            skew_y: 0.0,
-        };
-        builder.start_raster(&metadata, crs).unwrap();
         builder
-            .start_band(BandMetadata {
-                datatype: BandDataType::UInt8,
-                nodata_value: None,
-                storage_type: StorageType::InDb,
-                outdb_url: None,
-                outdb_band_id: None,
-            })
+            .start_raster_2d(1, 1, 0.0, 1.0, 1.0, -1.0, 0.0, 0.0, crs)
             .unwrap();
+        builder.start_band_2d(BandDataType::UInt8, None).unwrap();
         builder.band_data_writer().append_value([0u8]);
         builder.finish_band().unwrap();
         builder.finish_raster().unwrap();
@@ -543,6 +541,7 @@ mod tests {
         let rasters = generate_test_rasters(3, Some(0)).unwrap();
         let (x, y) = with_global_proj_engine(|engine| {
             crs_transform_coord((2.15, 2.75), "OGC:CRS84", "EPSG:3857", engine)
+                .map_err(|e| SedonaProjError::Invalid(e.to_string()))
         })
         .unwrap();
         let point_3857 = format!("POINT ({} {})", x, y);

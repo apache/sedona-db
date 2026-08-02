@@ -741,7 +741,7 @@ mod tests {
                 match raster_opt {
                     None => builder.append_null(),
                     Some(raster) => {
-                        let width = raster.metadata()?.width();
+                        let width = raster.width()?;
                         builder.append_value(width);
                     }
                 }
@@ -783,7 +783,7 @@ mod tests {
                 match raster_opt {
                     None => builder.append_null(),
                     Some(raster) => {
-                        let width = raster.metadata()?.width();
+                        let width = raster.width()?;
                         builder.append_value(width);
                     }
                 }
@@ -820,7 +820,7 @@ mod tests {
                 match raster_opt {
                     None => builder.append_null(),
                     Some(raster) => {
-                        let width = raster.metadata()?.width();
+                        let width = raster.width()?;
                         builder.append_value(width);
                     }
                 }

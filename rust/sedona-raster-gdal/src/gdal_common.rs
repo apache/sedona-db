@@ -25,8 +25,8 @@ use sedona_gdal::raster::rasterband::RasterBand;
 use sedona_gdal::raster::types::DatasetOptions;
 use sedona_gdal::raster::types::GdalDataType;
 
-use sedona_raster::traits::{is_spatial_dim_pair, MetadataRef, RasterMetadata, RasterRef};
-use sedona_schema::raster::{BandDataType, StorageType};
+use sedona_raster::traits::{is_spatial_dim_pair, RasterRef};
+use sedona_schema::raster::BandDataType;
 
 use datafusion_common::{
     arrow_datafusion_err, exec_datafusion_err, exec_err, DataFusionError, Result,
@@ -44,45 +44,14 @@ where
     }
 }
 
-/// Convert raster metadata into GDAL's six-element geo-transform.
+/// A raster's stored six-coefficient GDAL geo-transform as a fixed array,
+/// erroring when the transform is not exactly six elements.
 ///
-/// GDAL stores geo-transforms as
+/// GDAL geo-transforms are
 /// `[origin_x, pixel_width, rotation_x, origin_y, rotation_y, pixel_height]`.
-pub(crate) trait ToGdalGeoTransform {
-    fn to_gdal_geotransform(&self) -> GeoTransform;
-}
-
-impl<T: MetadataRef + ?Sized> ToGdalGeoTransform for T {
-    fn to_gdal_geotransform(&self) -> GeoTransform {
-        [
-            self.upper_left_x(),
-            self.scale_x(),
-            self.skew_x(),
-            self.upper_left_y(),
-            self.skew_y(),
-            self.scale_y(),
-        ]
-    }
-}
-
-/// Reconstruct raster metadata from a GDAL six-element geo-transform and raster dimensions.
-pub(crate) trait RasterMetadataFromGdalGeoTransform {
-    fn to_raster_metadata(&self, width: usize, height: usize) -> RasterMetadata;
-}
-
-impl RasterMetadataFromGdalGeoTransform for GeoTransform {
-    fn to_raster_metadata(&self, width: usize, height: usize) -> RasterMetadata {
-        RasterMetadata {
-            width: width as i64,
-            height: height as i64,
-            upperleft_x: self[0],
-            upperleft_y: self[3],
-            scale_x: self[1],
-            scale_y: self[5],
-            skew_x: self[2],
-            skew_y: self[4],
-        }
-    }
+pub fn raster_geo_transform<R: RasterRef + ?Sized>(raster: &R) -> Result<GeoTransform> {
+    <[f64; 6]>::try_from(raster.transform())
+        .map_err(|_| exec_datafusion_err!("expected a 6-element geotransform"))
 }
 
 /// Converts a BandDataType to the corresponding GDAL data type.
@@ -204,11 +173,10 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
     raster: &R,
     band_indices: &[usize],
 ) -> Result<Dataset> {
-    let metadata = raster.metadata()?;
     let bands = raster.bands();
 
-    let width = metadata.width() as usize;
-    let height = metadata.height() as usize;
+    let width = raster.width().map_err(|e| arrow_datafusion_err!(e))? as usize;
+    let height = raster.height().map_err(|e| arrow_datafusion_err!(e))? as usize;
 
     // Create internal MEM dataset via sedona-gdal shim to avoid open dataset list contention.
     let mut mem_ds_builder = MemDatasetBuilder::new(width, height);
@@ -250,14 +218,13 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
             );
         }
 
-        if band.metadata().storage_type()? != StorageType::InDb {
+        if !band.is_indb() {
             return Err(DataFusionError::NotImplemented(
                 "OutDb bands are not supported by raster_ref_to_gdal_mem".to_string(),
             ));
         }
 
-        let band_metadata = band.metadata();
-        let band_type = band_metadata.data_type()?;
+        let band_type = band.data_type();
         let gdal_type = band_data_type_to_gdal(&band_type);
         // `as_contiguous()` borrows the bytes zero-copy (erroring on a strided
         // view); GDAL holds the pointer, so `raster` must outlive the dataset.
@@ -288,7 +255,7 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
             .map_err(|e| DataFusionError::External(Box::new(e)))?
     };
 
-    let geotransform = metadata.to_gdal_geotransform();
+    let geotransform = raster_geo_transform(raster)?;
 
     dataset
         .set_geo_transform(&geotransform)
@@ -306,12 +273,11 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
         let band = bands
             .band(src_band_index)
             .map_err(|e| arrow_datafusion_err!(e))?;
-        let band_metadata = band.metadata();
-        let band_type = band_metadata.data_type()?;
+        let band_type = band.data_type();
         let plane_bytes = width * height * band_type.byte_size();
         let band_bytes = band.nd_buffer().and_then(|ndb| ndb.as_contiguous())?;
         let plane_count = band_bytes.len() / plane_bytes;
-        let nodata = band_metadata.nodata_value();
+        let nodata = band.nodata();
         for _ in 0..plane_count {
             dst_band_index += 1;
             if let Some(nodata_bytes) = nodata {
@@ -571,10 +537,9 @@ fn strip_scheme_prefix<'a>(value: &'a str, scheme_prefix: &str) -> Option<&'a st
 mod tests {
     use super::*;
 
+    use crate::utils::Grid;
     use sedona_raster::array::RasterStructArray;
     use sedona_raster::builder::RasterBuilder;
-    use sedona_raster::traits::{BandMetadata, RasterMetadata};
-    use sedona_schema::raster::StorageType;
     use sedona_testing::rasters::{build_in_db_raster, InDbTestBand};
 
     fn single_raster<'a>(
@@ -605,37 +570,24 @@ mod tests {
     }
 
     #[test]
-    fn test_to_gdal_geotransform() {
-        let metadata = RasterMetadata {
-            width: 3,
-            height: 2,
-            upperleft_x: 10.0,
-            upperleft_y: 20.0,
-            scale_x: 0.5,
-            scale_y: -0.5,
-            skew_x: 0.1,
-            skew_y: -0.2,
-        };
-
+    fn test_raster_geo_transform() {
+        // A built raster's stored transform round-trips through the accessor.
+        let raster_array = build_in_db_raster(3, 2, [10.0, 0.5, 0.1, 20.0, -0.2, -0.5], None, &[]);
+        let raster = single_raster(&raster_array);
         assert_eq!(
-            metadata.to_gdal_geotransform(),
+            raster_geo_transform(&raster).unwrap(),
             [10.0, 0.5, 0.1, 20.0, -0.2, -0.5]
         );
     }
 
     #[test]
-    fn test_to_raster_metadata() {
+    fn test_grid_from_gdal() {
         let geotransform: GeoTransform = [12.5, 0.25, 0.75, -8.0, -0.5, -2.0];
-        let metadata = geotransform.to_raster_metadata(4, 3);
+        let grid = Grid::from_gdal(geotransform, 4, 3);
 
-        assert_eq!(metadata.width, 4);
-        assert_eq!(metadata.height, 3);
-        assert_eq!(metadata.upperleft_x, 12.5);
-        assert_eq!(metadata.upperleft_y, -8.0);
-        assert_eq!(metadata.scale_x, 0.25);
-        assert_eq!(metadata.scale_y, -2.0);
-        assert_eq!(metadata.skew_x, 0.75);
-        assert_eq!(metadata.skew_y, -0.5);
+        assert_eq!(grid.width, 4);
+        assert_eq!(grid.height, 3);
+        assert_eq!(grid.transform, [12.5, 0.25, 0.75, -8.0, -0.5, -2.0]);
     }
 
     #[test]
@@ -842,17 +794,13 @@ mod tests {
 
     #[test]
     fn test_raster_ref_to_gdal_empty_preserves_metadata_and_crs() {
-        let metadata = RasterMetadata {
-            width: 3,
-            height: 2,
-            upperleft_x: 10.0,
-            upperleft_y: 20.0,
-            scale_x: 0.5,
-            scale_y: -0.5,
-            skew_x: 0.1,
-            skew_y: -0.2,
-        };
-        let raster_array = build_in_db_raster(metadata, Some("EPSG:4326"), &[]);
+        let raster_array = build_in_db_raster(
+            3,
+            2,
+            [10.0, 0.5, 0.1, 20.0, -0.2, -0.5],
+            Some("EPSG:4326"),
+            &[],
+        );
         let raster = single_raster(&raster_array);
 
         with_gdal(|gdal| {
@@ -871,16 +819,6 @@ mod tests {
 
     #[test]
     fn test_raster_ref_to_gdal_mem_preserves_band_order_data_and_nodata() {
-        let metadata = RasterMetadata {
-            width: 2,
-            height: 2,
-            upperleft_x: 5.0,
-            upperleft_y: 8.0,
-            scale_x: 2.0,
-            scale_y: -2.0,
-            skew_x: 0.0,
-            skew_y: 0.0,
-        };
         let uint64_pixels = [1u64, 2, 3, 4]
             .into_iter()
             .flat_map(u64::to_le_bytes)
@@ -893,7 +831,9 @@ mod tests {
         let uint64_nodata = 9_007_199_254_740_992u64;
         let int64_nodata = -9_007_199_254_740_992i64;
         let raster_array = build_in_db_raster(
-            metadata,
+            2,
+            2,
+            [5.0, 2.0, 0.0, 8.0, 0.0, -2.0],
             Some("EPSG:4326"),
             &[
                 InDbTestBand {
@@ -940,25 +880,19 @@ mod tests {
     #[test]
     fn test_raster_ref_to_gdal_mem_rejects_outdb_bands() {
         let mut builder = RasterBuilder::new(1);
-        let metadata = RasterMetadata {
-            width: 1,
-            height: 1,
-            upperleft_x: 0.0,
-            upperleft_y: 1.0,
-            scale_x: 1.0,
-            scale_y: -1.0,
-            skew_x: 0.0,
-            skew_y: 0.0,
-        };
-        builder.start_raster(&metadata, None).unwrap();
         builder
-            .start_band(BandMetadata {
-                datatype: BandDataType::UInt8,
-                nodata_value: Some(vec![0u8]),
-                storage_type: StorageType::OutDbRef,
-                outdb_url: Some("/tmp/test.tif".to_string()),
-                outdb_band_id: Some(1),
-            })
+            .start_raster_2d(1, 1, 0.0, 1.0, 1.0, -1.0, 0.0, 0.0, None)
+            .unwrap();
+        builder
+            .start_band_nd(
+                None,
+                &["y", "x"],
+                &[1, 1],
+                BandDataType::UInt8,
+                Some(&[0u8]),
+                Some("/tmp/test.tif#band=1"),
+                None,
+            )
             .unwrap();
         builder.band_data_writer().append_value([]);
         builder.finish_band().unwrap();

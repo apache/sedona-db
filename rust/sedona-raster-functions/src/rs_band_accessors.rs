@@ -126,7 +126,7 @@ fn get_pixel_type(
                 return Ok(());
             }
             let band = raster.bands().band(band_index as usize)?;
-            let dt = band.metadata().data_type()?;
+            let dt = band.data_type();
             builder.append_value(dt.pixel_type_name());
             Ok(())
         }
@@ -230,8 +230,7 @@ fn get_nodata_value(
                 return Ok(());
             }
             let band = raster.bands().band(band_index as usize)?;
-            let band_meta = band.metadata();
-            match band_meta.nodata_value_as_f64()? {
+            match band.nodata_as_f64()? {
                 None => builder.append_null(),
                 Some(val) => builder.append_value(val),
             }

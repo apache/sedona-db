@@ -43,19 +43,16 @@ pub const FOOTPRINT_POINTS_PER_EDGE: usize = 10;
 ///
 /// Returned in ring order: upper-left `(0, 0)`, upper-right `(width, 0)`,
 /// lower-right `(width, height)`, lower-left `(0, height)`.
-///
-/// Errors for a raster with no spatial (y, x) pair (no geotransform).
-pub fn raster_footprint_corners(raster: &dyn RasterRef) -> Result<[(f64, f64); 4]> {
-    let metadata = raster.metadata()?;
-    let width = metadata.width();
-    let height = metadata.height();
+pub fn raster_footprint_corners(raster: &dyn RasterRef) -> [(f64, f64); 4] {
+    let width = raster.width().unwrap();
+    let height = raster.height().unwrap();
 
-    Ok([
-        to_world_coordinate(raster, 0, 0)?,
-        to_world_coordinate(raster, width, 0)?,
-        to_world_coordinate(raster, width, height)?,
-        to_world_coordinate(raster, 0, height)?,
-    ])
+    [
+        to_world_coordinate(raster, 0, 0),
+        to_world_coordinate(raster, width, 0),
+        to_world_coordinate(raster, width, height),
+        to_world_coordinate(raster, 0, height),
+    ]
 }
 
 /// Write WKB for the convex-hull polygon through four footprint `corners`.
@@ -81,7 +78,7 @@ pub fn write_footprint_wkb(corners: [(f64, f64); 4], out: &mut impl std::io::Wri
 /// The ring is the four [`raster_footprint_corners`] closed back to the
 /// upper-left corner.
 pub fn write_convexhull_wkb(raster: &dyn RasterRef, out: &mut impl std::io::Write) -> Result<()> {
-    write_footprint_wkb(raster_footprint_corners(raster)?, out)
+    write_footprint_wkb(raster_footprint_corners(raster), out)
 }
 
 /// Fill `ring` with a closed, densified footprint ring through four `corners`.

@@ -86,13 +86,13 @@ impl SedonaScalarKernel for RsSize {
                 Some(raster) => {
                     // A raster with no spatial (y, x) pair has no width/height,
                     // so there is no size to report — emit NULL for this row.
-                    let Ok(metadata) = raster.metadata() else {
+                    let (Ok(width), Ok(height)) = (raster.width(), raster.height()) else {
                         builder.append_null();
                         return Ok(());
                     };
                     match self.size_type {
-                        SizeType::Width => builder.append_value(metadata.width()),
-                        SizeType::Height => builder.append_value(metadata.height()),
+                        SizeType::Width => builder.append_value(width),
+                        SizeType::Height => builder.append_value(height),
                     }
                 }
             }

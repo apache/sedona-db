@@ -164,24 +164,24 @@ impl SedonaScalarKernel for RsGeoTransform {
                 Some(raster) => {
                     // A raster with no spatial (y, x) pair has no geotransform,
                     // so there is nothing to report — emit NULL for this row.
-                    let Ok(metadata) = raster.metadata() else {
+                    if raster.height().is_err() {
                         builder.append_null();
                         return Ok(());
-                    };
+                    }
                     match self.param {
                         GeoTransformParam::Rotation => {
-                            let rotation = rotation(raster)?;
+                            let rotation = rotation(raster);
                             builder.append_value(rotation);
                         }
-                        GeoTransformParam::ScaleX => builder.append_value(metadata.scale_x()),
-                        GeoTransformParam::ScaleY => builder.append_value(metadata.scale_y()),
-                        GeoTransformParam::SkewX => builder.append_value(metadata.skew_x()),
-                        GeoTransformParam::SkewY => builder.append_value(metadata.skew_y()),
+                        GeoTransformParam::ScaleX => builder.append_value(raster.transform()[1]),
+                        GeoTransformParam::ScaleY => builder.append_value(raster.transform()[5]),
+                        GeoTransformParam::SkewX => builder.append_value(raster.transform()[2]),
+                        GeoTransformParam::SkewY => builder.append_value(raster.transform()[4]),
                         GeoTransformParam::UpperLeftX => {
-                            builder.append_value(metadata.upper_left_x())
+                            builder.append_value(raster.transform()[0])
                         }
                         GeoTransformParam::UpperLeftY => {
-                            builder.append_value(metadata.upper_left_y())
+                            builder.append_value(raster.transform()[3])
                         }
                     }
                 }

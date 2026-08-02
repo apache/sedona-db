@@ -173,16 +173,16 @@ fn format_georeference(
         Some(raster) => {
             // A raster with no spatial (y, x) pair has no geotransform, so there
             // is no georeference to format — emit NULL for this row.
-            let Ok(metadata) = raster.metadata() else {
+            if raster.height().is_err() {
                 builder.append_null();
                 return Ok(());
-            };
-            let scale_x = metadata.scale_x();
-            let scale_y = metadata.scale_y();
-            let skew_x = metadata.skew_x();
-            let skew_y = metadata.skew_y();
-            let upper_left_x = metadata.upper_left_x();
-            let upper_left_y = metadata.upper_left_y();
+            }
+            let scale_x = raster.transform()[1];
+            let scale_y = raster.transform()[5];
+            let skew_x = raster.transform()[2];
+            let skew_y = raster.transform()[4];
+            let upper_left_x = raster.transform()[0];
+            let upper_left_y = raster.transform()[3];
 
             let georeference = match format {
                 GeoReferenceFormat::Gdal => {
@@ -194,7 +194,7 @@ fn format_georeference(
                 GeoReferenceFormat::Esri => {
                     // World coordinates of pixel-space (0.5, 0.5) — the full
                     // affine keeps the center shift exact under skew.
-                    let affine = AffineMatrix::from_metadata(&metadata);
+                    let affine = AffineMatrix::from_raster(raster);
                     let (esri_upper_left_x, esri_upper_left_y) = affine.transform(0.5, 0.5);
                     format!(
                         "{:.10}\n{:.10}\n{:.10}\n{:.10}\n{:.10}\n{:.10}",

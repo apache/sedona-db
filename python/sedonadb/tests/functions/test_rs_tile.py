@@ -34,7 +34,9 @@ import pyarrow as pa
 import pytest
 
 from sedonadb.raster_testing import (
+    DecodedRaster,
     assert_decoded_equal,
+    decode_raster,
     random_raster_data,
     write_geotiff,
 )
@@ -122,14 +124,69 @@ _PARITY_TRANSFORM = (100.0, 2.0, 0.0, 500.0, 0.0, -3.0)
 _PARITY_HEIGHT, _PARITY_WIDTH = 6, 7
 
 
+def _sedonadb_tile_explode(con, path, tile_width, tile_height):
+    """RS_Tile (all bands, pad_with_nodata off) unnested to one
+    `(x, y, DecodedRaster)` tuple per tile, sorted by `(y, x)`. Arguments travel
+    as table columns so the kernel runs its real array path."""
+    table = pa.table(
+        {
+            "path": pa.array([str(path)], pa.utf8()),
+            "w": pa.array([int(tile_width)], pa.int32()),
+            "h": pa.array([int(tile_height)], pa.int32()),
+        }
+    )
+    df = con.create_data_frame(table)
+    raster = df.path.funcs.rs_frompath()
+    struct = (
+        df.select(tile=raster.funcs.rs_tile(df.w, df.h))
+        .unnest("tile")
+        .to_arrow_table()["tile"]
+        .combine_chunks()
+    )
+    xs, ys, tiles = struct.field("x"), struct.field("y"), struct.field("tile")
+    out = [
+        (xs[i].as_py(), ys[i].as_py(), decode_raster(tiles[i]))
+        for i in range(len(struct))
+    ]
+    return sorted(out, key=lambda t: (t[1], t[0]))
+
+
+def _rasterio_tile_explode(path, tile_width, tile_height):
+    """Rasterio window reference: one `(x, y, DecodedRaster)` per tile, iterated
+    row-major (the same `(y, x)` order the SedonaDB helper sorts into)."""
+    import rasterio
+    from rasterio.windows import Window
+
+    out = []
+    with rasterio.open(str(path)) as src:
+        for tile_y, row_off in enumerate(range(0, src.height, tile_height)):
+            for tile_x, col_off in enumerate(range(0, src.width, tile_width)):
+                window = Window(
+                    col_off,
+                    row_off,
+                    min(tile_width, src.width - col_off),
+                    min(tile_height, src.height - row_off),
+                )
+                out.append(
+                    (
+                        tile_x,
+                        tile_y,
+                        DecodedRaster(
+                            src.read(window=window),
+                            tuple(src.window_transform(window).to_gdal()),
+                            list(src.nodatavals),
+                        ),
+                    )
+                )
+    return out
+
+
 @pytest.mark.parametrize(
     ("tile_width", "tile_height"),
     [(4, 4), (2, 3), (_PARITY_WIDTH, _PARITY_HEIGHT)],
     ids=["ragged-edges", "exact-grid", "single-tile"],
 )
-def test_rs_tile_matches_rasterio(
-    subject, comparator, tmp_path, tile_width, tile_height
-):
+def test_rs_tile_matches_rasterio(con, tmp_path, tile_width, tile_height):
     # With pad_with_nodata off, every tile must reproduce the source pixels
     # verbatim with a window-shifted transform, keep all bands and the band
     # nodata, and edge tiles keep their partial size. The 4x4 case makes both
@@ -144,8 +201,8 @@ def test_rs_tile_matches_rasterio(
         gdal_transform=_PARITY_TRANSFORM,
         nodata=200.0,
     )
-    got = subject.tile_explode(tiff, tile_width, tile_height)
-    expected = comparator.tile_explode(tiff, tile_width, tile_height)
+    got = _sedonadb_tile_explode(con, tiff, tile_width, tile_height)
+    expected = _rasterio_tile_explode(tiff, tile_width, tile_height)
     assert [(x, y) for x, y, _ in got] == [(x, y) for x, y, _ in expected]
     for (x, y, got_tile), (_, _, expected_tile) in zip(got, expected):
         assert_decoded_equal(got_tile, expected_tile, context=(x, y))

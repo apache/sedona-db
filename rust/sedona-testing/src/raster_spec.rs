@@ -539,11 +539,10 @@ mod tests {
         let array = RasterStructArray::try_new(&raster).unwrap();
         assert_eq!(array.len(), 1);
         let raster_ref = array.get(0).unwrap();
-        let metadata = raster_ref.metadata().unwrap();
-        assert_eq!(metadata.width(), 4);
-        assert_eq!(metadata.height(), 5);
-        assert_eq!(metadata.scale_x(), 1.0);
-        assert_eq!(metadata.scale_y(), -1.0);
+        assert_eq!(raster_ref.width().unwrap(), 4);
+        assert_eq!(raster_ref.height().unwrap(), 5);
+        assert_eq!(raster_ref.transform()[1], 1.0);
+        assert_eq!(raster_ref.transform()[5], -1.0);
 
         let bands = raster_ref.bands();
         assert_eq!(bands.len(), 1);
@@ -567,13 +566,14 @@ mod tests {
             .band(BandDataType::UInt8)
             .build();
         let array = RasterStructArray::try_new(&raster).unwrap();
-        let metadata = array.get(0).unwrap().metadata().unwrap();
-        assert_eq!(metadata.upper_left_x(), 100.0);
-        assert_eq!(metadata.upper_left_y(), 500.0);
-        assert_eq!(metadata.scale_x(), 2.0);
-        assert_eq!(metadata.scale_y(), -3.0);
-        assert_eq!(metadata.skew_x(), 0.0);
-        assert_eq!(metadata.skew_y(), 0.0);
+        let raster_ref = array.get(0).unwrap();
+        let transform = raster_ref.transform();
+        assert_eq!(transform[0], 100.0);
+        assert_eq!(transform[3], 500.0);
+        assert_eq!(transform[1], 2.0);
+        assert_eq!(transform[5], -3.0);
+        assert_eq!(transform[2], 0.0);
+        assert_eq!(transform[4], 0.0);
     }
 
     #[test]
@@ -585,8 +585,8 @@ mod tests {
         let raster_ref = array.get(0).unwrap();
 
         // Raster-level spatial metadata is X-first, like the readers emit.
-        assert_eq!(raster_ref.metadata().unwrap().width(), 5);
-        assert_eq!(raster_ref.metadata().unwrap().height(), 4);
+        assert_eq!(raster_ref.width().unwrap(), 5);
+        assert_eq!(raster_ref.height().unwrap(), 4);
 
         let bands = raster_ref.bands();
         let band = bands.band(1).unwrap();
@@ -656,9 +656,7 @@ mod tests {
         let bands = raster_ref.bands();
         let band = bands.band(1).unwrap();
         assert!(!band.is_indb());
-        let metadata = band.metadata();
-        assert_eq!(metadata.outdb_url(), Some("s3://bucket/raster.tif"));
-        assert_eq!(metadata.outdb_band_id(), Some(2));
+        assert_eq!(band.outdb_uri(), Some("s3://bucket/raster.tif#band=2"));
     }
 
     #[test]

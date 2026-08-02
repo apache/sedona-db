@@ -301,10 +301,7 @@ fn predictor_for(raster: &RasterRefImpl) -> Result<i32> {
     let band = bands
         .band(1)
         .map_err(|e| exec_datafusion_err!("RS_AsGeoTiff: {e}"))?;
-    let data_type = band
-        .metadata()
-        .data_type()
-        .map_err(|e| exec_datafusion_err!("RS_AsGeoTiff: {e}"))?;
+    let data_type = band.data_type();
     Ok(match data_type {
         BandDataType::Float32 | BandDataType::Float64 => 3,
         _ => 2,
@@ -470,7 +467,7 @@ impl SedonaScalarKernel for RsAsGeoTiff {
                 };
                 // A raster with no spatial (y, x) pair has no geotransform and
                 // cannot be written as a GeoTIFF — emit NULL for this row.
-                if raster.metadata().is_err() {
+                if raster.height().is_err() {
                     builder.append_null();
                     return Ok(());
                 }
@@ -638,14 +635,8 @@ mod tests {
             let rt = RasterStructArray::try_new(&roundtrip).unwrap();
             let rt_raster = rt.get(0).unwrap();
 
-            assert_eq!(
-                rt_raster.metadata().unwrap().width(),
-                raster.metadata().unwrap().width()
-            );
-            assert_eq!(
-                rt_raster.metadata().unwrap().height(),
-                raster.metadata().unwrap().height()
-            );
+            assert_eq!(rt_raster.width()?, raster.width()?);
+            assert_eq!(rt_raster.height()?, raster.height()?);
             assert_eq!(rt_raster.bands().len(), raster.bands().len());
             // Pixel values must survive too — this would catch predictor or
             // compression corruption that dimension checks cannot.

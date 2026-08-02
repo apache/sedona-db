@@ -18,24 +18,20 @@
 """RS_PixelAsPoint / RS_PixelAsCentroid / RS_PixelAsPolygon parity.
 
 Pixel coordinates are 1-based `(col, row)` and the point convention is the
-pixel's upper-left corner; the rasterio comparator computes the same
+pixel's upper-left corner; the rasterio reference computes the same
 locations from the affine transform directly. A skewed geotransform is
 always in the parameter set because skew is what separates correct affine
 math from scale-only shortcuts. SedonaDB extrapolates out-of-bounds pixel
 coordinates through the same affine math, so the out-of-bounds pixel runs
-against the affine comparator; Sedona Spark's RS_PixelAsPoint raises there
-instead, which the deviation ledger records (its centroid/polygon
-accessors extrapolate like SedonaDB's).
+against the affine reference.
 """
 
 import numpy as np
+import pyarrow as pa
 import pytest
 
 from sedonadb.raster_testing import (
-    Deviation,
-    SedonaSpark,
     approx_geotransform,
-    expect_deviations,
     random_raster_data,
     write_geotiff,
 )
@@ -52,17 +48,6 @@ HEIGHT, WIDTH = 6, 7
 # and an out-of-bounds pixel past both edges.
 PIXELS = [(1, 1), (2, 3), (WIDTH, HEIGHT), (WIDTH + 2, HEIGHT + 2)]
 
-DEVIATIONS = [
-    Deviation(
-        SedonaSpark,
-        "pixel_as_point",
-        kind="skip",
-        matches=lambda p: p.get("col", 0) > WIDTH or p.get("row", 0) > HEIGHT,
-        reason="RS_PixelAsPoint raises on out-of-bounds pixel coordinates "
-        "where SedonaDB extrapolates",
-    ),
-]
-
 
 @pytest.fixture(params=list(TRANSFORMS), ids=list(TRANSFORMS))
 def tiff(request, tmp_path):
@@ -75,25 +60,85 @@ def tiff(request, tmp_path):
     return path
 
 
-@pytest.mark.parametrize(("col", "row"), PIXELS)
-def test_rs_pixelaspoint_matches_comparators(
-    subject, comparator, request, tiff, col, row
-):
-    expect_deviations(request, comparator, "pixel_as_point", DEVIATIONS)
-    got = subject.pixel_as_point(tiff, col, row)
-    assert got == approx_geotransform(comparator.pixel_as_point(tiff, col, row))
+def _sedonadb_pixel_geometry(con, function, path, col, row):
+    """Run one `RS_PixelAs*` accessor and return the shapely geometry. Arguments
+    travel as table columns so the kernel runs its real array path (literals
+    constant-fold)."""
+    df = con.create_data_frame(
+        pa.table(
+            {
+                "path": pa.array([str(path)], pa.utf8()),
+                "col": pa.array([int(col)], pa.int32()),
+                "row": pa.array([int(row)], pa.int32()),
+            }
+        )
+    )
+    raster = df.path.funcs.rs_frompath()
+    expr = getattr(raster.funcs, function)(df.col, df.row)
+    wkt = df.select(g=expr.funcs.st_astext()).to_arrow_table()["g"][0].as_py()
+    return shapely.from_wkt(wkt)
+
+
+def _sedonadb_pixel_as_point(con, path, col, row):
+    point = _sedonadb_pixel_geometry(con, "rs_pixelaspoint", path, col, row)
+    return (point.x, point.y)
+
+
+def _sedonadb_pixel_as_centroid(con, path, col, row):
+    point = _sedonadb_pixel_geometry(con, "rs_pixelascentroid", path, col, row)
+    return (point.x, point.y)
+
+
+def _sedonadb_pixel_as_polygon(con, path, col, row):
+    return _sedonadb_pixel_geometry(con, "rs_pixelaspolygon", path, col, row)
+
+
+def _rasterio_pixel_as_point(path, col, row):
+    import rasterio
+
+    with rasterio.open(str(path)) as src:
+        x, y = src.transform * (col - 1, row - 1)
+        return (x, y)
+
+
+def _rasterio_pixel_as_centroid(path, col, row):
+    import rasterio
+
+    with rasterio.open(str(path)) as src:
+        x, y = src.transform * (col - 0.5, row - 0.5)
+        return (x, y)
+
+
+def _rasterio_pixel_as_polygon(path, col, row):
+    import rasterio
+
+    with rasterio.open(str(path)) as src:
+        # Ring order matches both dialects: UL, UR, LR, LL (closed).
+        corners = [
+            (col - 1, row - 1),
+            (col, row - 1),
+            (col, row),
+            (col - 1, row),
+        ]
+        return shapely.Polygon([src.transform * corner for corner in corners])
 
 
 @pytest.mark.parametrize(("col", "row"), PIXELS)
-def test_rs_pixelascentroid_matches_comparators(subject, comparator, tiff, col, row):
-    got = subject.pixel_as_centroid(tiff, col, row)
-    assert got == approx_geotransform(comparator.pixel_as_centroid(tiff, col, row))
+def test_rs_pixelaspoint_matches_comparators(con, tiff, col, row):
+    got = _sedonadb_pixel_as_point(con, tiff, col, row)
+    assert got == approx_geotransform(_rasterio_pixel_as_point(tiff, col, row))
 
 
 @pytest.mark.parametrize(("col", "row"), PIXELS)
-def test_rs_pixelaspolygon_matches_comparators(subject, comparator, tiff, col, row):
-    got = subject.pixel_as_polygon(tiff, col, row)
-    expected = comparator.pixel_as_polygon(tiff, col, row)
+def test_rs_pixelascentroid_matches_comparators(con, tiff, col, row):
+    got = _sedonadb_pixel_as_centroid(con, tiff, col, row)
+    assert got == approx_geotransform(_rasterio_pixel_as_centroid(tiff, col, row))
+
+
+@pytest.mark.parametrize(("col", "row"), PIXELS)
+def test_rs_pixelaspolygon_matches_comparators(con, tiff, col, row):
+    got = _sedonadb_pixel_as_polygon(con, tiff, col, row)
+    expected = _rasterio_pixel_as_polygon(tiff, col, row)
     # Coordinate-sequence comparison pins the shared ring convention
     # (UL, UR, LR, LL, closed), not just topological equality.
     np.testing.assert_allclose(
@@ -106,7 +151,7 @@ def test_rs_pixelaspolygon_matches_comparators(subject, comparator, tiff, col, r
 
 def test_rs_pixelas_sql_text_smoke(con, tmp_path):
     """One SQL-text invocation per pixel function so the parser path stays
-    covered (everything else in this module routes through the engine seam).
+    covered (everything else in this module routes through the helpers).
     Pixel (2, 3) of the north-up grid: upper-left corner (102, 494), pixel
     extent x [102, 104], y [491, 494]."""
     path = tmp_path / "smoke.tif"

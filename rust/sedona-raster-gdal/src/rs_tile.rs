@@ -298,7 +298,7 @@ impl SedonaScalarKernel for RsTile {
 
             // A raster with no spatial (y, x) pair has no geotransform and cannot
             // be tiled — emit a NULL row.
-            if raster.metadata().is_err() {
+            if raster.height().is_err() {
                 valid_list_items.append_null();
                 list_offsets.push_length(0);
                 return Ok(());
@@ -407,9 +407,8 @@ fn explode_raster_tiles(
         return exec_err!("RS_Tile: nodata is only meaningful with pad_with_nodata = true");
     }
 
-    let metadata = raster.metadata()?;
-    let width = metadata.width();
-    let height = metadata.height();
+    let width = raster.width()?;
+    let height = raster.height()?;
     if width < 0 || height < 0 {
         return sedona_internal_err!("RS_Tile: negative raster extent {width}x{height}");
     }
@@ -595,8 +594,7 @@ fn append_tile_band(
     // `band_idx` is 1-based; the `band_name` accessor is 0-based.
     let band_name = raster.band_name(band_idx - 1).map(|s| s.to_string());
 
-    let band_metadata = band.metadata();
-    let data_type = band_metadata.data_type()?;
+    let data_type = band.data_type();
     let byte_size = data_type.byte_size();
 
     // The trailing two axes are the spatial (y, x) plane; anything before them is
@@ -616,9 +614,8 @@ fn append_tile_band(
         );
     }
     let (plane_h, plane_w) = (shape[ndim - 2] as usize, shape[ndim - 1] as usize);
-    let metadata = raster.metadata()?;
-    let width = metadata.width() as usize;
-    let height = metadata.height() as usize;
+    let width = raster.width()? as usize;
+    let height = raster.height()? as usize;
     if plane_w != width || plane_h != height {
         return exec_err!(
             "RS_Tile: band {band_idx} spatial extent {plane_w}x{plane_h} does not match the raster {width}x{height}"
@@ -653,7 +650,7 @@ fn append_tile_band(
             Some(value) => nodata_f64_to_bytes(value, &data_type).map_err(|e| {
                 exec_datafusion_err!("RS_Tile: invalid nodata for band {band_idx}: {e}")
             })?,
-            None => match band_metadata.nodata_value() {
+            None => match band.nodata() {
                 Some(bytes) => bytes.to_vec(),
                 None => data_type.min_value_le_bytes(),
             },
@@ -666,10 +663,7 @@ fn append_tile_band(
         }
         (Some(fill.clone()), Some(fill))
     } else {
-        (
-            None,
-            band_metadata.nodata_value().map(|bytes| bytes.to_vec()),
-        )
+        (None, band.nodata().map(|bytes| bytes.to_vec()))
     };
 
     // One output allocation serves the whole band: every plane appends into it,

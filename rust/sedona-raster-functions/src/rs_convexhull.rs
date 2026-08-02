@@ -71,7 +71,7 @@ impl SedonaScalarKernel for RsConvexHull {
                 Some(raster) => {
                     // A raster with no spatial (y, x) pair has no geotransform, so
                     // there is no footprint to compute — emit NULL for this row.
-                    if raster.metadata().is_err() {
+                    if raster.height().is_err() {
                         builder.append_null();
                         crs_builder.append_null();
                         return Ok(());
