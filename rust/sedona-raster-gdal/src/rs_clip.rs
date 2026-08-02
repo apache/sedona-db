@@ -768,6 +768,7 @@ mod tests {
     use super::*;
     use arrow_array::{cast::AsArray, StructArray};
     use sedona_expr::scalar_udf::SedonaScalarKernel;
+    use sedona_proj::error::SedonaProjError;
     use sedona_proj::transform::{with_global_proj_engine, LazyProjEngine};
     use sedona_raster::array::RasterStructArray;
     use sedona_schema::crs::deserialize_crs;
@@ -941,6 +942,7 @@ mod tests {
         let geom_wkb_4326 = make_wkb("POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))");
         let geom_wkb_3857 = with_global_proj_engine(|engine| {
             crs_transform_wkb(&geom_wkb_4326, crs_4326.as_ref(), crs_3857.as_ref(), engine)
+                .map_err(|e| SedonaProjError::Invalid(e.to_string()))
         })
         .unwrap();
 
@@ -1396,6 +1398,7 @@ mod tests {
         let geom_wkb_4326 = make_wkb("POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))");
         let geom_wkb_3857 = with_global_proj_engine(|engine| {
             crs_transform_wkb(&geom_wkb_4326, crs_4326.as_ref(), crs_3857.as_ref(), engine)
+                .map_err(|e| SedonaProjError::Invalid(e.to_string()))
         })
         .unwrap();
 

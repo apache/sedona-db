@@ -1275,6 +1275,7 @@ mod udf_tests {
     use arrow_array::types::{Float64Type, Int64Type};
     use arrow_array::{Array, StructArray};
     use datafusion_expr::ScalarUDF;
+    use sedona_proj::error::SedonaProjError;
     use sedona_proj::transform::{with_global_proj_engine, LazyProjEngine};
     use sedona_raster_functions::crs_utils::crs_transform_wkb;
     use sedona_schema::crs::deserialize_crs;
@@ -1738,6 +1739,7 @@ mod udf_tests {
         let wkb_4326 = make_wkb(LEFT_HALF);
         let wkb_3857 = with_global_proj_engine(|engine| {
             crs_transform_wkb(&wkb_4326, crs_4326.as_ref(), crs_3857.as_ref(), engine)
+                .map_err(|e| SedonaProjError::Invalid(e.to_string()))
         })
         .unwrap();
 

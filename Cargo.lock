@@ -6172,14 +6172,11 @@ name = "sedona-proj"
 version = "0.4.0"
 dependencies = [
  "approx",
- "datafusion-common",
  "geo-traits",
  "geo-types",
  "libloading 0.9.0",
  "proj-sys",
- "sedona-common",
  "sedona-geometry",
- "sedona-schema",
  "serde_json",
  "thiserror 2.0.17",
  "wkb",

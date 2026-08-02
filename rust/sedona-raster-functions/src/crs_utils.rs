@@ -152,11 +152,11 @@ mod tests {
     fn align_wkb_borrows_when_crses_are_missing_or_equal() {
         let wkb = sample_wkb();
         with_global_proj_engine(|engine| {
-            let source = resolve_crs(Some("EPSG:4326"))?;
-            let target = resolve_crs(Some("EPSG:4326"))?;
+            let source = resolve_crs(Some("EPSG:4326")).unwrap();
+            let target = resolve_crs(Some("EPSG:4326")).unwrap();
 
             assert!(matches!(
-                align_wkb_to_crs(&wkb, None, None, "source", "target", engine)?,
+                align_wkb_to_crs(&wkb, None, None, "source", "target", engine).unwrap(),
                 Cow::Borrowed(_)
             ));
             assert!(matches!(
@@ -167,7 +167,8 @@ mod tests {
                     "source",
                     "target",
                     engine,
-                )?,
+                )
+                .unwrap(),
                 Cow::Borrowed(_)
             ));
             Ok(())
@@ -179,8 +180,8 @@ mod tests {
     fn align_wkb_owns_transformed_coordinates() {
         let wkb = sample_wkb();
         with_global_proj_engine(|engine| {
-            let source = resolve_crs(Some("EPSG:4326"))?;
-            let target = resolve_crs(Some("EPSG:3857"))?;
+            let source = resolve_crs(Some("EPSG:4326")).unwrap();
+            let target = resolve_crs(Some("EPSG:3857")).unwrap();
             let aligned = align_wkb_to_crs(
                 &wkb,
                 source.as_deref(),
@@ -188,7 +189,8 @@ mod tests {
                 "source",
                 "target",
                 engine,
-            )?;
+            )
+            .unwrap();
             assert!(matches!(aligned, Cow::Owned(_)));
             assert_ne!(aligned.as_ref(), wkb);
             Ok(())
@@ -200,7 +202,7 @@ mod tests {
     fn align_wkb_errors_when_only_one_crs_is_present() {
         let wkb = sample_wkb();
         with_global_proj_engine(|engine| {
-            let crs = resolve_crs(Some("EPSG:4326"))?;
+            let crs = resolve_crs(Some("EPSG:4326")).unwrap();
             assert!(align_wkb_to_crs(
                 &wkb,
                 crs.as_deref(),

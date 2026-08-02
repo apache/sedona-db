@@ -416,6 +416,7 @@ mod tests {
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_geometry::types::Edges;
+    use sedona_proj::error::SedonaProjError;
     use sedona_proj::transform::{with_global_proj_engine, LazyProjEngine};
     use sedona_raster::builder::RasterBuilder;
     use sedona_raster::traits::{BandMetadata, RasterMetadata};
@@ -539,6 +540,7 @@ mod tests {
         let rasters = generate_test_rasters(3, Some(0)).unwrap();
         let (x, y) = with_global_proj_engine(|engine| {
             crs_transform_coord((2.15, 2.75), "OGC:CRS84", "EPSG:3857", engine)
+                .map_err(|e| SedonaProjError::Invalid(e.to_string()))
         })
         .unwrap();
         let point_3857 = format!("POINT ({} {})", x, y);
