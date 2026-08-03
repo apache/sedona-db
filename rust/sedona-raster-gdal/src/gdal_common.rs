@@ -218,8 +218,20 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
         }
 
         let band_bytes = band.nd_buffer().and_then(|ndb| ndb.as_contiguous())?;
-        let plane_bytes = width * height * plan.data_type.byte_size();
-        if plane_bytes == 0 || band_bytes.len() != plan.plane_count * plane_bytes {
+        let plane_bytes = width
+            .checked_mul(height)
+            .and_then(|px| px.checked_mul(plan.data_type.byte_size()))
+            .ok_or_else(|| exec_datafusion_err!("band plane extent {width}x{height} overflows"))?;
+        // The per-plane DATAPOINTER math in `add_layout_datapointer_bands` walks
+        // `plane_count` planes of `plane_bytes`; keep the product checked so the
+        // guard protecting that pointer arithmetic can't itself wrap.
+        let expected_len = plane_bytes.checked_mul(plan.plane_count).ok_or_else(|| {
+            exec_datafusion_err!(
+                "band size of {} planes at {width}x{height} overflows",
+                plan.plane_count
+            )
+        })?;
+        if plane_bytes == 0 || band_bytes.len() != expected_len {
             return exec_err!(
                 "band byte length {} does not match {} planes of the \
                  {width}x{height} plane size (dim_names={dims:?})",
@@ -227,15 +239,23 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
                 plan.plane_count
             );
         }
+        // SAFETY precondition for `add_layout_datapointer_bands`: band i's buffer
+        // holds exactly `plan.plane_count` planes of `plane_bytes`, so its
+        // per-plane `base + plane * plane_byte_size` pointer math stays in bounds.
+        debug_assert_eq!(
+            band_bytes.len(),
+            expected_len,
+            "band buffer length must equal plane_count * plane_bytes for the DATAPOINTER plane math"
+        );
         base_ptrs.push(band_bytes.as_ptr() as *mut u8);
     }
 
     // Create internal MEM dataset via sedona-gdal shim to avoid open dataset list
     // contention, then attach the band×plane DATAPOINTER bands (zero-copy).
     //
-    // SAFETY: each base pointer starts `plan.plane_count` contiguous planes of
-    // `width*height*byte_size` bytes inside `raster`'s buffers, which outlive the
-    // returned dataset; the helper only adds bands.
+    // SAFETY: satisfies `add_layout_datapointer_bands`' # Safety contract — the
+    // loop above validated each band's buffer length and left `base_ptrs` 1:1
+    // with `layout.bands`, and `raster`'s buffers outlive the returned dataset.
     let mut mem_ds_builder = MemDatasetBuilder::new(width, height);
     mem_ds_builder = unsafe {
         add_layout_datapointer_bands(mem_ds_builder, &layout, &base_ptrs, width * height)
@@ -375,13 +395,18 @@ pub(crate) unsafe fn add_layout_datapointer_bands(
     base_ptrs: &[*mut u8],
     plane_pixel_count: usize,
 ) -> MemDatasetBuilder {
+    // The # Safety contract requires one base pointer per source band; `zip`
+    // would silently truncate on drift, so pin the 1:1 pairing here.
+    debug_assert_eq!(
+        base_ptrs.len(),
+        layout.bands.len(),
+        "base_ptrs must be 1:1 with layout.bands (# Safety contract)"
+    );
     for (plan, &base) in layout.bands.iter().zip(base_ptrs) {
         let gdal_type = band_data_type_to_gdal(&plan.data_type);
         let plane_byte_size = plane_pixel_count * plan.data_type.byte_size();
         for plane in 0..plan.plane_count {
-            // SAFETY: by the contract above, `base + plane * plane_byte_size`
-            // begins a full `plane_byte_size`-byte plane inside band `i`'s
-            // buffer, aligned for the band type, that outlives the dataset.
+            // SAFETY: per the # Safety contract, base + plane*plane_byte_size stays within band i's buffer.
             let plane_ptr = unsafe { base.add(plane * plane_byte_size) };
             builder = unsafe { builder.add_band(gdal_type, plane_ptr) };
         }

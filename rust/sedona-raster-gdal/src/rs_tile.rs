@@ -663,10 +663,7 @@ fn append_tile_band(
 
     // Copy each source plane's tile window and stack the planes into the N-D tile
     // band. `in_plane_bytes` is the full source plane; the tile window may be
-    // smaller (a crop) or larger (padded past the source edge). The shared helper
-    // sizes the output buffer with checked arithmetic, rejects an oversize (e.g.
-    // huge padded) tile before allocating, and appends the finished bytes as a
-    // zero-copy view block.
+    // smaller (a crop) or larger (padded past the source edge).
     append_stacked_band(
         rast_builder,
         &BandHeader {
@@ -676,8 +673,6 @@ fn append_tile_band(
             data_type,
             nodata: tile_nodata.as_deref(),
         },
-        window.out_w * window.out_h * byte_size,
-        n_planes,
         |plane, out| {
             let src_plane = &source[plane * in_plane_bytes..(plane + 1) * in_plane_bytes];
             copy_tile_window(

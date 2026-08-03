@@ -467,7 +467,6 @@ pub fn append_warped_nd_from_dataset(
     dst_builder = unsafe {
         add_layout_datapointer_bands(dst_builder, layout, &base_ptrs, out_width * out_height)
     };
-    // SAFETY: the DATAPOINTER buffers in `band_buffers` outlive `dst_dataset`.
     let dst_dataset = unsafe { dst_builder.build(gdal).map_err(convert_gdal_err)? };
     dst_dataset
         .set_geo_transform(&output.grid.transform)
@@ -543,10 +542,14 @@ pub(crate) struct BandHeader<'a> {
     pub nodata: Option<&'a [u8]>,
 }
 
-/// Assemble one N-D raster band from `n_planes` per-plane outputs and append it
-/// to `builder`. For each plane in `0..n_planes`, `fill_plane(plane, &mut buf)`
-/// appends exactly that plane's `plane_bytes` (= out_w × out_h ×
-/// `header.data_type.byte_size()`) to `buf`, band-major planes concatenated
+/// Assemble one N-D raster band and append it to `builder`. The per-plane byte
+/// size and plane count are derived from `header.shape`
+/// (`[non-spatial..., height, width]`) with a fully checked multiply chain, so a
+/// pathological extent overflows into a descriptive error rather than wrapping,
+/// and an oversize (> u32 view limit) band is rejected before allocating rather
+/// than after filling. For each plane in `0..n_planes`, `fill_plane(plane, &mut
+/// buf)` appends exactly that plane's `height × width ×
+/// header.data_type.byte_size()` bytes to `buf`, band-major planes concatenated
 /// plane-major; the accumulated buffer is then moved into the Arrow array as a
 /// zero-copy view block (a refcount bump) rather than copied through the builder.
 ///
@@ -554,21 +557,45 @@ pub(crate) struct BandHeader<'a> {
 /// ([`add_layout_datapointer_bands`]): the per-plane op — a GDAL band read, a
 /// mask/crop, a tile-window copy — is the caller's `fill_plane` closure; the
 /// plane iteration, checked buffer sizing, and band packaging are shared here.
-/// An oversize (> u32 view limit) band is rejected before allocating rather than
-/// after filling.
 pub(crate) fn append_stacked_band<F>(
     builder: &mut RasterBuilder,
     header: &BandHeader<'_>,
-    plane_bytes: usize,
-    n_planes: usize,
     mut fill_plane: F,
 ) -> Result<()>
 where
     F: FnMut(usize, &mut Vec<u8>) -> Result<()>,
 {
-    let capacity = plane_bytes
-        .checked_mul(n_planes)
-        .ok_or_else(|| exec_datafusion_err!("band size overflow ({plane_bytes} x {n_planes})"))?;
+    // Derive the plane byte size and plane count from the output band shape with
+    // a fully checked multiply chain: the total is the capacity of the buffer the
+    // DATAPOINTER-free read-back path fills, and every factor comes from
+    // untrusted band dimensions, so an overflow must error rather than wrap.
+    let shape = header.shape;
+    let ndim = shape.len();
+    if ndim < 2 {
+        return sedona_internal_err!(
+            "append_stacked_band requires a trailing (height, width) pair, got shape {shape:?}"
+        );
+    }
+    let byte_size = header.data_type.byte_size();
+    let out_h = usize::try_from(shape[ndim - 2])
+        .map_err(|_| exec_datafusion_err!("negative band height in shape {shape:?}"))?;
+    let out_w = usize::try_from(shape[ndim - 1])
+        .map_err(|_| exec_datafusion_err!("negative band width in shape {shape:?}"))?;
+    let plane_bytes = out_w
+        .checked_mul(out_h)
+        .and_then(|px| px.checked_mul(byte_size))
+        .ok_or_else(|| exec_datafusion_err!("band plane extent {out_w}x{out_h} overflows"))?;
+    let mut n_planes: usize = 1;
+    for &dim in &shape[..ndim - 2] {
+        let dim = usize::try_from(dim)
+            .map_err(|_| exec_datafusion_err!("negative band dimension in shape {shape:?}"))?;
+        n_planes = n_planes.checked_mul(dim).ok_or_else(|| {
+            exec_datafusion_err!("band plane count overflows for shape {shape:?}")
+        })?;
+    }
+    let capacity = plane_bytes.checked_mul(n_planes).ok_or_else(|| {
+        exec_datafusion_err!("band extent {out_w}x{out_h} of {n_planes} planes overflows")
+    })?;
     let band_data_len = u32::try_from(capacity).map_err(|_| {
         exec_datafusion_err!("band data of {capacity} bytes exceeds the binary-view limit")
     })?;
@@ -595,8 +622,6 @@ where
             None,
         )
         .map_err(|e| exec_datafusion_err!("Failed to start band: {e}"))?;
-    // Move the finished band bytes into an Arrow buffer and append them as a view
-    // (a refcount bump) instead of copying them through the builder.
     builder
         .append_band_data_buffer(&Buffer::from(band_data), 0, band_data_len)
         .map_err(|e| exec_datafusion_err!("Failed to append band data: {e}"))?;
@@ -656,8 +681,6 @@ fn append_nd_from_dataset_inner(
                 data_type: plan.data_type,
                 nodata: plan.nodata.as_deref(),
             },
-            out_width * out_height * plan.data_type.byte_size(),
-            plan.plane_count,
             |plane, out| {
                 let gdal_band = gdal_band_base + plane;
                 let band = dataset
@@ -702,7 +725,10 @@ pub fn gdal_dataset_to_nd_raster(
 
 #[cfg(test)]
 mod tests {
-    use super::{append_as_indb_raster, append_as_outdb_raster, dataset_to_indb_raster};
+    use super::{
+        append_as_indb_raster, append_as_outdb_raster, append_stacked_band, dataset_to_indb_raster,
+        BandHeader,
+    };
 
     use arrow_array::StructArray;
     use datafusion_common::exec_datafusion_err;
@@ -739,6 +765,33 @@ mod tests {
         let mut builder = RasterBuilder::new(1);
         append_as_outdb_raster(gdal, path, &mut builder)?;
         builder.finish().map_err(Into::into)
+    }
+
+    #[test]
+    fn test_append_stacked_band_rejects_oversize_extent() {
+        // A pathological plane extent whose byte product overflows `usize` must
+        // return the descriptive overflow error rather than panic (debug) or wrap
+        // (release). This guards the shared band-stacking path that both RS_Tile
+        // and the warp/resample read-back funnel through. `fill_plane` never runs
+        // because the size check fails before the buffer is allocated.
+        let huge = 1i64 << 40; // (1<<40)^2 = 2^80, overflows usize
+        let mut builder = RasterBuilder::new(1);
+        let err = append_stacked_band(
+            &mut builder,
+            &BandHeader {
+                name: None,
+                dim_names: &["y", "x"],
+                shape: &[huge, huge],
+                data_type: BandDataType::UInt8,
+                nodata: None,
+            },
+            |_plane, _out| panic!("fill_plane must not run when the extent overflows"),
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("overflows"),
+            "expected an overflow error, got: {err}"
+        );
     }
 
     fn write_uint64_tiff(gdal: &Gdal, path: &str, nodata: u64, data: Vec<u64>) {
