@@ -24,11 +24,11 @@ use datafusion_common::{exec_datafusion_err, exec_err};
 use sedona_gdal::dataset::Dataset;
 use sedona_gdal::gdal::Gdal;
 use sedona_gdal::gdal_dyn_bindgen::{GDAL_OF_RASTER, GDAL_OF_READONLY};
-use sedona_gdal::geo_transform::{GeoTransform, GeoTransformEx};
 use sedona_gdal::mem::MemDatasetBuilder;
 use sedona_gdal::raster::types::DatasetOptions;
 use sedona_gdal::raster::types::ResampleAlg;
 use sedona_gdal::spatial_ref::SpatialRef;
+use sedona_raster::geo_transform::{GeoTransform, GeoTransformEx};
 
 use arrow_schema::ArrowError;
 use sedona_raster::array::RasterRefImpl;

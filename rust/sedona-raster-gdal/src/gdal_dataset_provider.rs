@@ -25,8 +25,8 @@ use datafusion_common::{
 
 use sedona_gdal::dataset::Dataset;
 use sedona_gdal::gdal::Gdal;
-use sedona_gdal::geo_transform::{GeoTransform, GeoTransformEx};
 use sedona_gdal::raster::types::GdalDataType;
+use sedona_raster::geo_transform::{GeoTransform, GeoTransformEx};
 
 use sedona_common::SedonaOptions;
 use sedona_raster::traits::{split_outdb_band_fragment, RasterRef};

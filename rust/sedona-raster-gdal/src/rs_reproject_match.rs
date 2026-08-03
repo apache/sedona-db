@@ -44,10 +44,10 @@ use datafusion_expr::{ColumnarValue, Volatility};
 
 use sedona_common::{sedona_internal_err, SedonaOptions};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
-use sedona_gdal::geo_transform::GeoTransform;
 use sedona_gdal::raster::types::ResampleAlg;
 use sedona_raster::array::RasterRefImpl;
 use sedona_raster::builder::RasterBuilder;
+use sedona_raster::geo_transform::GeoTransform;
 use sedona_raster::traits::RasterRef;
 use sedona_raster_functions::rs_ensure_loaded::{
     NEEDS_PIXELS_METADATA_KEY, RETURNS_BYTES_METADATA_KEY,

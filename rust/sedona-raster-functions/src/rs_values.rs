@@ -47,7 +47,6 @@ use datafusion_common::config::ConfigOptions;
 use datafusion_common::{exec_datafusion_err, exec_err, Result, ScalarValue};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
-use sedona_raster::affine_transformation::AffineMatrix;
 use sedona_raster::array::RasterStructArray;
 use sedona_raster::traits::{BandRef, NdBuffer, RasterRef};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
@@ -192,7 +191,7 @@ impl RsValues {
                 let nodata = band
                     .nodata_as_f64()
                     .map_err(|e| exec_datafusion_err!("RS_Values: {e}"))?;
-                let affine = AffineMatrix::from_raster(raster);
+                let transform = raster.transform();
 
                 // Sample each sub-point in one pass: the visitor transforms
                 // each coordinate into the raster CRS in place, so there is no
@@ -200,7 +199,7 @@ impl RsValues {
                 let trans =
                     point_crs_transform("RS_Values", geom_crs, raster_crs.as_deref(), engine)?;
                 visit_points("RS_Values", geom_wkb, trans.as_deref(), |xy| {
-                    append_sample(xy, &affine, &buffer, nodata, &mut list_builder)
+                    append_sample(xy, transform, &buffer, nodata, &mut list_builder)
                 })?;
                 list_builder.append(true);
                 Ok(())
@@ -280,7 +279,7 @@ impl RsValues {
             .transpose()?;
 
         // Affine transform and raster CRS, resolved once for all rows.
-        let affine = AffineMatrix::from_raster(&raster);
+        let transform = raster.transform();
         let raster_crs = resolve_crs(raster.crs())?;
 
         let mut geom = executor.make_geom_wkb_crs_accessor(1)?;
@@ -366,7 +365,7 @@ impl RsValues {
                         continue;
                     };
                     for xy in &coords[*start..*start + *len] {
-                        append_sample(*xy, &affine, &buffer, nodata, &mut list_builder)?;
+                        append_sample(*xy, transform, &buffer, nodata, &mut list_builder)?;
                     }
                     list_builder.append(true);
                 }
@@ -385,7 +384,7 @@ impl RsValues {
                         .nodata_as_f64()
                         .map_err(|e| exec_datafusion_err!("RS_Values: {e}"))?;
                     for xy in &coords[*start..*start + *len] {
-                        append_sample(*xy, &affine, &buffer, nodata, &mut list_builder)?;
+                        append_sample(*xy, transform, &buffer, nodata, &mut list_builder)?;
                     }
                     list_builder.append(true);
                 }
@@ -414,13 +413,13 @@ fn resolve_band_2d<'a>(
 /// out-of-bounds/nodata pixels both append a NULL element.
 fn append_sample(
     xy: Option<(f64, f64)>,
-    affine: &AffineMatrix,
+    transform: &[f64],
     buffer: &NdBuffer,
     nodata: Option<f64>,
     list_builder: &mut ListBuilder<Float64Builder>,
 ) -> Result<()> {
     let sample = match xy {
-        Some((x, y)) => match xy_to_pixel("RS_Values", affine, x, y)? {
+        Some((x, y)) => match xy_to_pixel("RS_Values", transform, x, y)? {
             Some((col, row)) => read_pixel("RS_Values", buffer, nodata, col, row)?,
             None => None,
         },

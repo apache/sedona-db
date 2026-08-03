@@ -52,10 +52,10 @@ use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_gdal::gdal::Gdal;
-use sedona_gdal::geo_transform::{GeoTransform, GeoTransformEx};
 use sedona_gdal::raster::types::ResampleAlg;
 use sedona_raster::array::RasterRefImpl;
 use sedona_raster::builder::RasterBuilder;
+use sedona_raster::geo_transform::{GeoTransform, GeoTransformEx};
 use sedona_raster::traits::RasterRef;
 use sedona_raster_functions::crs_utils::{crs_transform_required, resolve_crs};
 use sedona_raster_functions::rs_ensure_loaded::{

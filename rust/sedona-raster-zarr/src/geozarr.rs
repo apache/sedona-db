@@ -54,7 +54,7 @@ pub struct GroupGeoMetadata {
     /// to derive a transform when no explicit `spatial:transform` is present.
     /// The grid shape is read from the array itself (not a separate
     /// `spatial:shape` attribute, which could drift from the real shape), so the
-    /// loader supplies it to `AffineMatrix::from_bbox_and_spatial_shape`.
+    /// loader supplies it to `geotransform_from_bbox_and_spatial_shape`.
     pub bbox: Option<[f64; 4]>,
     /// `spatial:registration` — `"pixel"` or `"node"`; `None` defaults to
     /// `"pixel"`. Governs how `bbox` maps to the grid (outer edge vs. cell
@@ -231,7 +231,7 @@ fn parse_transform(
 
 /// Parse the optional `spatial:bbox` attribute into `[xmin, ymin, xmax, ymax]`.
 /// `None` when absent. The grid shape is *not* read from `spatial:shape`; the
-/// loader supplies the array's own shape to `AffineMatrix::from_bbox_and_spatial_shape`.
+/// loader supplies the array's own shape to `geotransform_from_bbox_and_spatial_shape`.
 ///
 /// A malformed `spatial:bbox` (not a 4-element numeric array) is treated as
 /// absent — it warns and returns `None` rather than failing the load, so the
@@ -255,7 +255,7 @@ fn parse_bbox(attrs: &serde_json::Map<String, serde_json::Value>) -> Option<[f64
 }
 
 /// Parse the optional `spatial:registration` attribute (a string). `Ok(None)`
-/// when absent; `AffineMatrix::from_bbox_and_spatial_shape` then defaults to `"pixel"`.
+/// when absent; `geotransform_from_bbox_and_spatial_shape` then defaults to `"pixel"`.
 fn parse_registration(
     attrs: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<Option<String>, ArrowError> {

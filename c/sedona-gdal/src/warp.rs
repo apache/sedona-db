@@ -30,9 +30,9 @@ use crate::dataset::Dataset;
 use crate::errors::{GdalError, Result};
 use crate::gdal_api::{call_gdal_api, GdalApi};
 use crate::gdal_dyn_bindgen::{CE_Failure, CE_None};
-use crate::geo_transform::GeoTransform;
 use crate::raster::types::ResampleAlg;
 use crate::spatial_ref::SpatialRef;
+use sedona_raster::geo_transform::GeoTransform;
 
 /// Reproject/warp `src` into the already-created `dst` dataset.
 ///

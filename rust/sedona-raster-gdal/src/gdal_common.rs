@@ -19,11 +19,11 @@ use sedona_gdal::dataset::Dataset;
 use sedona_gdal::errors::GdalError;
 use sedona_gdal::gdal::Gdal;
 use sedona_gdal::gdal_dyn_bindgen::{GDAL_OF_RASTER, GDAL_OF_READONLY, GDAL_OF_VERBOSE_ERROR};
-use sedona_gdal::geo_transform::GeoTransform;
 use sedona_gdal::mem::MemDatasetBuilder;
 use sedona_gdal::raster::rasterband::RasterBand;
 use sedona_gdal::raster::types::DatasetOptions;
 use sedona_gdal::raster::types::GdalDataType;
+use sedona_raster::geo_transform::GeoTransform;
 
 use sedona_raster::traits::{is_spatial_dim_pair, RasterRef};
 use sedona_schema::raster::BandDataType;

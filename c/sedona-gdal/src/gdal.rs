@@ -28,7 +28,6 @@ use crate::driver::{Driver, DriverManager};
 use crate::errors::Result;
 use crate::gdal_api::GdalApi;
 use crate::gdal_dyn_bindgen::{GDALOpenFlags, OGRFieldType};
-use crate::geo_transform::GeoTransform;
 use crate::mem::create_mem_dataset;
 use crate::raster::polygonize::{fpolygonize, polygonize, PolygonizeOptions};
 use crate::raster::rasterband::RasterBand;
@@ -44,6 +43,7 @@ use crate::vector::layer::Layer;
 use crate::vrt::VrtDataset;
 use crate::vsi;
 use crate::warp;
+use sedona_raster::geo_transform::GeoTransform;
 
 /// High-level convenience wrapper around [`GdalApi`].
 ///

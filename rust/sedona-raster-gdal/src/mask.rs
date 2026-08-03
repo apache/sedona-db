@@ -28,10 +28,10 @@
 
 use datafusion_common::{exec_datafusion_err, Result};
 use sedona_gdal::gdal::Gdal;
-use sedona_gdal::geo_transform::{GeoTransform, GeoTransformEx};
 use sedona_gdal::mem::MemDatasetBuilder;
 use sedona_gdal::raster::types::GdalDataType;
 use sedona_gdal::vector::geometry::Geometry;
+use sedona_raster::geo_transform::{GeoTransform, GeoTransformEx};
 
 /// A rectangular pixel window (offset + size) into a raster grid.
 #[derive(Debug, Clone, Copy)]

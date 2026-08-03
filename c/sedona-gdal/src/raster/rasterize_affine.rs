@@ -31,8 +31,8 @@ use crate::dataset::Dataset;
 use crate::errors::{GdalError, Result};
 use crate::gdal_api::{call_gdal_api, GdalApi};
 use crate::gdal_dyn_bindgen::CE_None;
-use crate::geo_transform::{GeoTransform, GeoTransformEx};
 use crate::vector::geometry::Geometry;
+use sedona_raster::geo_transform::{GeoTransform, GeoTransformEx};
 
 #[repr(C)]
 struct AffineTransformArg {
