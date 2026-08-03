@@ -38,18 +38,18 @@ use crate::utils::{append_stacked_band, BandHeader};
 
 /// The optional tiling parameters for one tiling call, resolved from the
 /// positional arguments for a single row.
-pub(crate) struct TileParams<'a> {
+pub struct TileParams<'a> {
     /// 1-based band indices to include in each tile, in the given order.
     /// `None` includes every band.
-    pub(crate) bands: Option<&'a [i64]>,
+    pub bands: Option<&'a [i64]>,
     /// Pad the last partial row/column of tiles to the full tile size with a
     /// nodata fill. When false the smaller edge tile is emitted.
-    pub(crate) pad_with_nodata: bool,
+    pub pad_with_nodata: bool,
     /// The value written to padded pixels. Only meaningful with
     /// `pad_with_nodata = true`; it is an error to set it otherwise. Defaults to
     /// the band's own nodata value, or the band data type's minimum if it has
     /// none. It is an error if the value does not fit the band's data type.
-    pub(crate) nodata: Option<f64>,
+    pub nodata: Option<f64>,
 }
 
 /// Validate a tiling request and compute the tile grid dimensions for a raster
@@ -60,7 +60,7 @@ pub(crate) struct TileParams<'a> {
 /// each grid dimension, since both are >= 1) must fit `i32` because the grid
 /// positions are Int32 (Spark parity) and the tiles accumulate into an
 /// Int32-offset list.
-pub(crate) fn tile_grid_dims(
+pub fn tile_grid_dims(
     width: i64,
     height: i64,
     tile_width: i64,
@@ -100,7 +100,7 @@ pub(crate) fn tile_grid_dims(
 
 /// The pixel window one tile copies from the source, plus the tile's output
 /// extent.
-pub(crate) struct TileWindow {
+pub struct TileWindow {
     /// Source pixel offset of the tile's upper-left corner.
     x0: usize,
     y0: usize,
@@ -114,7 +114,7 @@ pub(crate) struct TileWindow {
 }
 
 impl TileWindow {
-    pub(crate) fn new(
+    pub fn new(
         tile_x: usize,
         tile_y: usize,
         tile_w: usize,
@@ -145,7 +145,7 @@ impl TileWindow {
     /// Whether this tile was actually padded: a short edge tile whose output
     /// extent exceeds the source pixels available. Interior tiles are fully
     /// covered by the source and return false.
-    pub(crate) fn needs_padding(&self) -> bool {
+    pub fn needs_padding(&self) -> bool {
         self.out_w > self.rect_w || self.out_h > self.rect_h
     }
 }
@@ -153,7 +153,7 @@ impl TileWindow {
 /// Resolve which 1-based band indices to include, validating each against the
 /// raster's band count. `None` (band-less overload) and an empty list both
 /// select every band in order, matching Sedona Spark.
-pub(crate) fn resolve_band_indices(bands: Option<&[i64]>, num_bands: usize) -> Result<Vec<usize>> {
+pub fn resolve_band_indices(bands: Option<&[i64]>, num_bands: usize) -> Result<Vec<usize>> {
     match bands {
         None | Some([]) => Ok((1..=num_bands).collect()),
         Some(bands) => bands
@@ -169,7 +169,7 @@ pub(crate) fn resolve_band_indices(bands: Option<&[i64]>, num_bands: usize) -> R
 }
 
 /// Build one tile raster and append it to `rast_builder`.
-pub(crate) fn append_tile(
+pub fn append_tile(
     raster: &RasterRefImpl<'_>,
     band_indices: &[usize],
     window: &TileWindow,

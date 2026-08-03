@@ -336,7 +336,7 @@ impl RsTile {
 
 /// The `List<Struct<x, y, tile>>` element struct fields, mirroring Spark's
 /// `(x int, y int, tile raster)` generator output.
-fn tile_struct_fields() -> Result<Fields> {
+pub(crate) fn tile_struct_fields() -> Result<Fields> {
     let tile_field = RASTER
         .to_storage_field("tile", false)
         .map_err(|e| exec_datafusion_err!("RS_Tile: {e}"))?;
