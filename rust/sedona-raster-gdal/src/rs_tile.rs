@@ -42,9 +42,9 @@ use datafusion_expr::{ColumnarValue, Volatility};
 
 use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
-use sedona_gdal::geo_transform::{GeoTransform, GeoTransformEx};
 use sedona_raster::array::RasterRefImpl;
 use sedona_raster::builder::RasterBuilder;
+use sedona_raster::geo_transform::{GeoTransform, GeoTransformEx};
 use sedona_raster::traits::{is_spatial_dim_pair, nodata_f64_to_bytes, Bands, RasterRef};
 use sedona_raster_functions::rs_ensure_loaded::NEEDS_PIXELS_METADATA_KEY;
 use sedona_raster_functions::RasterExecutor;

@@ -25,9 +25,13 @@
 //! methods are pure-Rust reimplementations of GDAL's `GDALApplyGeoTransform`
 //! and `GDALInvGeoTransform` (from `alg/gdaltransformer.cpp`). No FFI call or
 //! thread-local state is needed.
+//!
+//! This is the single home for the six-coefficient affine geo-transform used
+//! across the raster stack (GDAL, Zarr, and the `RS_` functions). The richer
+//! [`AffineMatrix`](crate::affine_transformation::AffineMatrix) is built on top
+//! of this trait so there is exactly one `apply`/`invert` implementation.
 
-use crate::errors;
-use crate::errors::GdalError;
+use arrow_schema::ArrowError;
 
 /// An affine geo-transform: six coefficients mapping pixel/line to projection coordinates.
 ///
@@ -46,11 +50,12 @@ pub trait GeoTransformEx {
 
     /// Invert this geo-transform, returning the inverse coefficients for
     /// computing (geo_x, geo_y) -> (x, y) transformations.
-    fn invert(&self) -> errors::Result<GeoTransform>;
+    fn invert(&self) -> Result<GeoTransform, ArrowError>;
 }
 
 impl GeoTransformEx for GeoTransform {
     /// Pure-Rust equivalent of GDAL's `GDALApplyGeoTransform`.
+    #[inline]
     fn apply(&self, x: f64, y: f64) -> (f64, f64) {
         let geo_x = self[0] + x * self[1] + y * self[2];
         let geo_y = self[3] + x * self[4] + y * self[5];
@@ -58,7 +63,7 @@ impl GeoTransformEx for GeoTransform {
     }
 
     /// Pure-Rust equivalent of GDAL's `GDALInvGeoTransform`.
-    fn invert(&self) -> errors::Result<GeoTransform> {
+    fn invert(&self) -> Result<GeoTransform, ArrowError> {
         let gt = self;
 
         // Fast path: no rotation/skew — avoid determinant and precision issues.
@@ -81,7 +86,7 @@ impl GeoTransformEx for GeoTransform {
             .max(gt[4].abs().max(gt[5].abs()));
 
         if det.abs() <= 1e-10 * magnitude * magnitude {
-            return Err(GdalError::BadArgument(
+            return Err(ArrowError::InvalidArgumentError(
                 "Geo transform is uninvertible".to_string(),
             ));
         }

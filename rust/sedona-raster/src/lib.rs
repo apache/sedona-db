@@ -19,6 +19,7 @@ pub mod affine_transformation;
 pub mod array;
 pub mod builder;
 pub mod display;
+pub mod geo_transform;
 pub mod raster_loader;
 pub mod traits;
 pub mod view_entries;

@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use crate::geo_transform::{GeoTransform, GeoTransformEx};
 use crate::traits::RasterRef;
 use arrow_schema::ArrowError;
 
@@ -132,10 +133,10 @@ impl AffineMatrix {
         })
     }
 
-    /// The coefficients in GDAL `GeoTransform` order:
+    /// The coefficients in GDAL [`GeoTransform`] order:
     /// `[origin_x, scale_x, skew_x, origin_y, skew_y, scale_y]`.
     #[inline]
-    pub fn to_gdal_geotransform(&self) -> [f64; 6] {
+    pub fn to_gdal_geotransform(&self) -> GeoTransform {
         [
             self.offset_x,
             self.scale_x,
@@ -149,39 +150,26 @@ impl AffineMatrix {
     /// Forward affine transform: pixel (x, y) → world (wx, wy).
     ///
     /// Accepts `f64` coordinates so callers can pass fractional offsets
-    /// (e.g. +0.5 for pixel centroids) without duplicating the math.
+    /// (e.g. +0.5 for pixel centroids) without duplicating the math. Delegates
+    /// to the single [`GeoTransformEx::apply`] implementation.
     #[inline]
     pub fn transform(&self, x: f64, y: f64) -> (f64, f64) {
-        let wx = self.offset_x + x * self.scale_x + y * self.skew_x;
-        let wy = self.offset_y + x * self.skew_y + y * self.scale_y;
-        (wx, wy)
+        self.to_gdal_geotransform().apply(x, y)
     }
 
     /// Inverse affine transform: world (wx, wy) → pixel (x, y).
     ///
-    /// Returns an error if the determinant is zero (singular matrix).
+    /// Inverts the geo-transform via the single [`GeoTransformEx::invert`]
+    /// implementation, then applies the inverse. Returns an error if the
+    /// determinant is zero (singular matrix).
     #[inline]
     pub fn inv_transform(&self, world_x: f64, world_y: f64) -> Result<(f64, f64), ArrowError> {
-        let det = self.scale_x * self.scale_y - self.skew_x * self.skew_y;
-
-        if det.abs() < f64::EPSILON {
-            return Err(ArrowError::InvalidArgumentError(
+        let inverse = self.to_gdal_geotransform().invert().map_err(|_| {
+            ArrowError::InvalidArgumentError(
                 "Cannot compute coordinate: determinant is zero.".to_string(),
-            ));
-        }
-
-        let inv_scale_x = self.scale_y / det;
-        let inv_scale_y = self.scale_x / det;
-        let inv_skew_x = -self.skew_x / det;
-        let inv_skew_y = -self.skew_y / det;
-
-        let dx = world_x - self.offset_x;
-        let dy = world_y - self.offset_y;
-
-        let rx = inv_scale_x * dx + inv_skew_x * dy;
-        let ry = inv_skew_y * dx + inv_scale_y * dy;
-
-        Ok((rx, ry))
+            )
+        })?;
+        Ok(inverse.apply(world_x, world_y))
     }
 
     /// Rotation angle (radians) implied by the affine coefficients.
@@ -194,8 +182,7 @@ impl AffineMatrix {
 /// Computes the rotation angle (in radians) of the raster based on its geotransform metadata.
 #[inline]
 pub fn rotation(raster: &dyn RasterRef) -> f64 {
-    let t = raster.transform();
-    (-t[2]).atan2(t[1])
+    AffineMatrix::from_raster(raster).rotation()
 }
 
 /// Performs an affine transformation on the provided x and y coordinates based on the geotransform
