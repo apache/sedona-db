@@ -23,7 +23,7 @@ use arrow_array::{
 use arrow_schema::DataType;
 use datafusion_common::{
     cast::{as_string_view_array, as_struct_array},
-    DataFusionError, Result, ScalarValue,
+    Result, ScalarValue,
 };
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::sedona_internal_err;
@@ -75,13 +75,11 @@ impl SedonaScalarKernel for StSrid {
     ) -> Result<ColumnarValue> {
         let executor = WkbExecutor::new(arg_types, args);
         let mut builder = UInt32Builder::with_capacity(executor.num_iterations());
+        // A CRS with an authority code yields its integer SRID; a valid CRS with
+        // no authority code (e.g. a custom WKT) yields None, surfaced as NULL. A
+        // missing CRS is SRID 0, the "unknown SRID" sentinel.
         let srid_opt = match &arg_types[0] {
-            SedonaType::Wkb(_, Some(crs)) | SedonaType::WkbView(_, Some(crs)) => {
-                match crs.srid()? {
-                    Some(srid) => Some(srid),
-                    None => return Err(DataFusionError::Execution("CRS has no SRID".to_string())),
-                }
-            }
+            SedonaType::Wkb(_, Some(crs)) | SedonaType::WkbView(_, Some(crs)) => crs.srid()?,
             _ => Some(0),
         };
 
@@ -141,13 +139,14 @@ impl SedonaScalarKernel for StSridItemCrs {
                     continue;
                 }
 
+                // None (a valid CRS with no authority SRID) is appended as NULL.
                 let srid = crs_to_srid_mapping.get_srid(maybe_crs)?;
-                builder.append_value(srid);
+                builder.append_option(srid);
             }
         } else {
             for maybe_crs in crs_string_array {
                 let srid = crs_to_srid_mapping.get_srid(maybe_crs)?;
-                builder.append_value(srid);
+                builder.append_option(srid);
             }
         }
 
@@ -327,13 +326,19 @@ mod test {
             &expected.as_ref()
         );
 
-        // Call with a CRS with no SRID (should error)
-        let crs = deserialize_crs("{}").unwrap();
+        // Call with a valid CRS that carries no authority code (a custom LCC
+        // WKT with no top-level AUTHORITY): the CRS is usable but has no SRID to
+        // extract, so ST_SRID returns NULL rather than erroring.
+        let wkt_no_authority = r#"PROJCS["Custom LCC",GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]]],PROJECTION["Lambert_Conformal_Conic_2SP"],PARAMETER["standard_parallel_1",33],PARAMETER["standard_parallel_2",45],UNIT["metre",1]]"#;
+        let crs = deserialize_crs(wkt_no_authority).unwrap();
+        assert!(
+            crs.is_some(),
+            "custom WKT should deserialize to a valid CRS"
+        );
         let sedona_type = SedonaType::Wkb(Edges::Planar, crs.clone());
         let tester = ScalarUdfTester::new(udf.clone(), vec![sedona_type]);
-        let result = tester.invoke_scalar("POINT (0 1)");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("CRS has no SRID"));
+        let result = tester.invoke_scalar("POINT (0 1)").unwrap();
+        tester.assert_scalar_result_equals(result, ScalarValue::UInt32(None));
     }
 
     #[test]
@@ -360,25 +365,33 @@ mod test {
             .unwrap();
         tester.assert_scalar_result_equals(result, 3857);
 
+        // A valid CRS with no top-level authority code (a custom LCC WKT) has no
+        // SRID to extract, so its row is NULL — distinct from the no-CRS row,
+        // which is SRID 0.
+        const WKT_NO_AUTHORITY: &str = r#"PROJCS["Custom LCC",GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]]],PROJECTION["Lambert_Conformal_Conic_2SP"],PARAMETER["standard_parallel_1",33],PARAMETER["standard_parallel_2",45],UNIT["metre",1]]"#;
         let item_crs_array = create_array_item_crs(
             &[
                 Some("POINT (0 1)"),
                 Some("POINT (2 3)"),
                 Some("POINT (4 5)"),
                 Some("POINT (6 7)"),
+                Some("POINT (8 9)"),
                 None,
             ],
             [
                 Some("OGC:CRS84"),
                 Some("EPSG:3857"),
                 Some("EPSG:3857"),
+                Some(WKT_NO_AUTHORITY),
                 None,
                 None,
             ],
             &WKB_GEOMETRY,
         );
-        let expected_srid =
-            create_array!(UInt32, [Some(4326), Some(3857), Some(3857), Some(0), None]) as ArrayRef;
+        let expected_srid = create_array!(
+            UInt32,
+            [Some(4326), Some(3857), Some(3857), None, Some(0), None]
+        ) as ArrayRef;
 
         let result = tester.invoke_array(item_crs_array).unwrap();
         assert_eq!(&result, &expected_srid);
