@@ -28,7 +28,8 @@ use sedona_expr::item_crs::make_item_crs;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::types::Edges;
 use sedona_geometry::wkb_factory::{write_wkb_point, write_wkb_polygon, WKB_MIN_PROBABLE_BYTES};
-use sedona_raster::affine_transformation::{to_world_coordinate, AffineMatrix};
+use sedona_raster::affine_transformation::to_world_coordinate;
+use sedona_raster::geo_transform::GeoTransformEx;
 use sedona_raster::traits::RasterRef;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
@@ -191,8 +192,7 @@ impl SedonaScalarKernel for RsPixelAsCentroid {
                     let grid_x = (col_x - 1) as f64 + 0.5;
                     let grid_y = (row_y - 1) as f64 + 0.5;
 
-                    let affine = AffineMatrix::from_raster(raster);
-                    let (wx, wy) = affine.transform(grid_x, grid_y);
+                    let (wx, wy) = raster.transform().apply(grid_x, grid_y);
 
                     write_wkb_point(&mut builder, (wx, wy))
                         .map_err(|e| DataFusionError::External(e.into()))?;

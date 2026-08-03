@@ -15,174 +15,23 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::geo_transform::{GeoTransform, GeoTransformEx};
+//! Raster ↔ world coordinate helpers built on [`GeoTransformEx`].
+//!
+//! These convenience wrappers read a raster's [`GeoTransform`] once (via
+//! [`RasterRef::transform`]) and apply/invert it. The affine math itself lives
+//! in [`crate::geo_transform`]; there is exactly one `apply`/`invert`
+//! implementation.
+//!
+//! [`GeoTransform`]: crate::geo_transform::GeoTransform
+
+use crate::geo_transform::GeoTransformEx;
 use crate::traits::RasterRef;
 use arrow_schema::ArrowError;
-
-/// Pre-computed affine transformation coefficients extracted from raster metadata.
-///
-/// Constructing this struct pays the cost of reading metadata once (which may involve
-/// vtable dispatch for Arrow-backed rasters). Subsequent `transform` / `inv_transform`
-/// calls are pure arithmetic with no virtual calls.
-#[derive(Debug, Clone)]
-pub struct AffineMatrix {
-    pub offset_x: f64,
-    pub offset_y: f64,
-    pub scale_x: f64,
-    pub scale_y: f64,
-    pub skew_x: f64,
-    pub skew_y: f64,
-}
-
-impl AffineMatrix {
-    /// Build an `AffineMatrix` from a raster's 6-element GDAL geotransform
-    /// (`[origin_x, scale_x, skew_x, origin_y, skew_y, scale_y]`).
-    #[inline]
-    pub fn from_raster(raster: &dyn RasterRef) -> Self {
-        let t = raster.transform();
-        Self {
-            offset_x: t[0],
-            scale_x: t[1],
-            skew_x: t[2],
-            offset_y: t[3],
-            skew_y: t[4],
-            scale_y: t[5],
-        }
-    }
-
-    /// Derive a north-up `AffineMatrix` from a spatial bounding box and the
-    /// grid's spatial shape.
-    ///
-    /// `bbox` is `[xmin, ymin, xmax, ymax]`; `height` and `width` are the number
-    /// of cells along the y and x axes. `registration` controls how the bbox
-    /// maps to the grid and defaults to `"pixel"` when `None`:
-    /// - `"pixel"` (cell-area): the bbox is the grid's outer edge, spanning all
-    ///   N cells, so the top-left corner is the bbox edge. Matches
-    ///   `rasterio.transform.from_bounds`.
-    /// - `"node"` (cell-center): the bbox endpoints are the centers of the
-    ///   border cells, so N centers span N-1 intervals and the footprint extends
-    ///   half a cell beyond the bbox.
-    ///
-    /// The result is axis-aligned (zero skews) with a negative `scale_y` (rows
-    /// increase downward). Errors on a degenerate/inverted bbox, a zero
-    /// dimension, a node-registered grid smaller than 2 cells, or an unknown
-    /// registration.
-    pub fn from_bbox_and_spatial_shape(
-        bbox: [f64; 4],
-        height: u64,
-        width: u64,
-        registration: Option<&str>,
-    ) -> Result<Self, ArrowError> {
-        let [xmin, ymin, xmax, ymax] = bbox;
-        // Reject a degenerate or inverted bbox: a zero span gives a
-        // non-invertible (zero-scale) transform and a negative span isn't
-        // north-up.
-        if !(xmax > xmin && ymax > ymin) {
-            return Err(ArrowError::InvalidArgumentError(format!(
-                "bbox must have xmin < xmax and ymin < ymax; got [{xmin}, {ymin}, {xmax}, {ymax}]"
-            )));
-        }
-        // A real raster axis is at least 1 cell.
-        if height == 0 || width == 0 {
-            return Err(ArrowError::InvalidArgumentError(
-                "raster spatial dimensions must be non-zero to derive a transform from a bbox"
-                    .into(),
-            ));
-        }
-        let (height, width) = (height as f64, width as f64);
-
-        // cell-area registration is the conventional default.
-        let registration = registration.unwrap_or("pixel");
-        // scale_y is negative throughout: rows increase downward.
-        let (scale_x, scale_y, offset_x, offset_y) = match registration {
-            // Pixel-registered: the bbox is the grid's outer edge, spanning all
-            // N cells, so the top-left corner is the bbox edge.
-            "pixel" => {
-                let scale_x = (xmax - xmin) / width;
-                let scale_y = (ymin - ymax) / height;
-                (scale_x, scale_y, xmin, ymax)
-            }
-            // Node-registered: the bbox endpoints are the *centers* of the border
-            // cells, so N centers span N-1 intervals and the footprint extends
-            // half a cell beyond — the corner sits half a cell outside the bbox.
-            "node" => {
-                if width < 2.0 || height < 2.0 {
-                    return Err(ArrowError::InvalidArgumentError(
-                        "node-registered grid must be at least 2 cells in each spatial dimension"
-                            .into(),
-                    ));
-                }
-                let scale_x = (xmax - xmin) / (width - 1.0);
-                let scale_y = (ymin - ymax) / (height - 1.0);
-                (scale_x, scale_y, xmin - scale_x / 2.0, ymax - scale_y / 2.0)
-            }
-            other => {
-                return Err(ArrowError::InvalidArgumentError(format!(
-                    "registration must be \"pixel\" or \"node\"; got {other:?}"
-                )))
-            }
-        };
-
-        Ok(Self {
-            offset_x,
-            offset_y,
-            scale_x,
-            scale_y,
-            skew_x: 0.0,
-            skew_y: 0.0,
-        })
-    }
-
-    /// The coefficients in GDAL [`GeoTransform`] order:
-    /// `[origin_x, scale_x, skew_x, origin_y, skew_y, scale_y]`.
-    #[inline]
-    pub fn to_gdal_geotransform(&self) -> GeoTransform {
-        [
-            self.offset_x,
-            self.scale_x,
-            self.skew_x,
-            self.offset_y,
-            self.skew_y,
-            self.scale_y,
-        ]
-    }
-
-    /// Forward affine transform: pixel (x, y) → world (wx, wy).
-    ///
-    /// Accepts `f64` coordinates so callers can pass fractional offsets
-    /// (e.g. +0.5 for pixel centroids) without duplicating the math. Delegates
-    /// to the single [`GeoTransformEx::apply`] implementation.
-    #[inline]
-    pub fn transform(&self, x: f64, y: f64) -> (f64, f64) {
-        self.to_gdal_geotransform().apply(x, y)
-    }
-
-    /// Inverse affine transform: world (wx, wy) → pixel (x, y).
-    ///
-    /// Inverts the geo-transform via the single [`GeoTransformEx::invert`]
-    /// implementation, then applies the inverse. Returns an error if the
-    /// determinant is zero (singular matrix).
-    #[inline]
-    pub fn inv_transform(&self, world_x: f64, world_y: f64) -> Result<(f64, f64), ArrowError> {
-        let inverse = self.to_gdal_geotransform().invert().map_err(|_| {
-            ArrowError::InvalidArgumentError(
-                "Cannot compute coordinate: determinant is zero.".to_string(),
-            )
-        })?;
-        Ok(inverse.apply(world_x, world_y))
-    }
-
-    /// Rotation angle (radians) implied by the affine coefficients.
-    #[inline]
-    pub fn rotation(&self) -> f64 {
-        (-self.skew_x).atan2(self.scale_x)
-    }
-}
 
 /// Computes the rotation angle (in radians) of the raster based on its geotransform metadata.
 #[inline]
 pub fn rotation(raster: &dyn RasterRef) -> f64 {
-    AffineMatrix::from_raster(raster).rotation()
+    raster.transform().rotation()
 }
 
 /// Performs an affine transformation on the provided x and y coordinates based on the geotransform
@@ -194,7 +43,7 @@ pub fn rotation(raster: &dyn RasterRef) -> f64 {
 /// * `y` - Y coordinate in pixel space (row)
 #[inline]
 pub fn to_world_coordinate(raster: &dyn RasterRef, x: i64, y: i64) -> (f64, f64) {
-    AffineMatrix::from_raster(raster).transform(x as f64, y as f64)
+    raster.transform().apply(x as f64, y as f64)
 }
 
 /// Performs the inverse affine transformation to convert world coordinates back to raster pixel coordinates.
@@ -209,7 +58,12 @@ pub fn to_raster_coordinate(
     world_x: f64,
     world_y: f64,
 ) -> Result<(i64, i64), ArrowError> {
-    let (rx, ry) = AffineMatrix::from_raster(raster).inv_transform(world_x, world_y)?;
+    let inverse = raster.transform().invert().map_err(|_| {
+        ArrowError::InvalidArgumentError(
+            "Cannot compute coordinate: determinant is zero.".to_string(),
+        )
+    })?;
+    let (rx, ry) = inverse.apply(world_x, world_y);
     Ok((rx as i64, ry as i64))
 }
 
@@ -353,191 +207,5 @@ mod tests {
             transform: [0.0, scale_x, skew_x, 0.0, skew_y, scale_y],
             spatial_shape: [10, 20],
         }
-    }
-
-    fn test_affine() -> AffineMatrix {
-        AffineMatrix {
-            offset_x: 100.0,
-            offset_y: 200.0,
-            scale_x: 1.0,
-            scale_y: -2.0,
-            skew_x: 0.25,
-            skew_y: 0.5,
-        }
-    }
-
-    #[test]
-    fn test_affine_transform() {
-        let a = test_affine();
-        let (wx, wy) = a.transform(0.5, 0.5);
-        assert_relative_eq!(wx, 100.625, epsilon = 1e-10);
-        assert_relative_eq!(wy, 199.25, epsilon = 1e-10);
-    }
-
-    #[test]
-    fn test_affine_round_trip() {
-        let a = test_affine();
-        let coords = [(0.0, 0.0), (5.0, 10.0), (9.0, 19.0), (0.5, 0.5)];
-        for (x, y) in coords {
-            let (wx, wy) = a.transform(x, y);
-            let (rx, ry) = a.inv_transform(wx, wy).unwrap();
-            assert_relative_eq!(rx, x, epsilon = 1e-10);
-            assert_relative_eq!(ry, y, epsilon = 1e-10);
-        }
-    }
-
-    #[test]
-    fn test_affine_inv_transform_singular() {
-        let a = AffineMatrix {
-            offset_x: 0.0,
-            offset_y: 0.0,
-            scale_x: 1.0,
-            scale_y: 0.0,
-            skew_x: 0.0,
-            skew_y: 0.0,
-        };
-        let result = a.inv_transform(0.0, 0.0);
-        assert!(result.is_err());
-        assert!(result
-            .err()
-            .unwrap()
-            .to_string()
-            .contains("determinant is zero."));
-    }
-
-    #[test]
-    fn test_affine_rotation() {
-        let a = AffineMatrix {
-            offset_x: 0.0,
-            offset_y: 0.0,
-            scale_x: FRAC_1_SQRT_2,
-            scale_y: FRAC_1_SQRT_2,
-            skew_x: -FRAC_1_SQRT_2,
-            skew_y: FRAC_1_SQRT_2,
-        };
-        assert_relative_eq!(a.rotation(), PI / 4.0, epsilon = 1e-6);
-    }
-
-    #[test]
-    fn test_affine_from_raster() {
-        let raster = TestRaster {
-            transform: [100.0, 1.0, 0.25, 200.0, 0.5, -2.0],
-            spatial_shape: [10, 20],
-        };
-        let a = AffineMatrix::from_raster(&raster);
-        assert_eq!(a.offset_x, 100.0);
-        assert_eq!(a.offset_y, 200.0);
-        assert_eq!(a.scale_x, 1.0);
-        assert_eq!(a.scale_y, -2.0);
-        assert_eq!(a.skew_x, 0.25);
-        assert_eq!(a.skew_y, 0.5);
-    }
-
-    #[test]
-    fn bbox_pixel_registration_derives_transform() {
-        // A bbox over a 1000x1000 grid with "pixel" registration. Height/width
-        // are the array's own dims.
-        let gt = AffineMatrix::from_bbox_and_spatial_shape(
-            [600000.0, 5690000.0, 610000.0, 5700000.0],
-            1000,
-            1000,
-            Some("pixel"),
-        )
-        .unwrap()
-        .to_gdal_geotransform();
-        assert_eq!(gt, [600000.0, 10.0, 0.0, 5700000.0, 0.0, -10.0]);
-    }
-
-    #[test]
-    fn bbox_pixel_registration_matches_rasterio_from_bounds() {
-        // Cross-check against rasterio: for the same bounds and raster size,
-        // `rasterio.transform.from_bounds(west, south, east, north, width, height)`
-        // returns Affine(a, b, c, d, e, f) with a = (east-west)/width = 0.25,
-        // e = (south-north)/height = -0.5, c = west = -100, f = north = 40, and
-        // b = d = 0. In GDAL order that is [c, a, b, f, d, e].
-        let gt =
-            AffineMatrix::from_bbox_and_spatial_shape([-100.0, -10.0, 0.0, 40.0], 100, 400, None)
-                .unwrap()
-                .to_gdal_geotransform();
-        assert_eq!(gt, [-100.0, 0.25, 0.0, 40.0, 0.0, -0.5]);
-    }
-
-    #[test]
-    fn bbox_registration_defaults_to_pixel() {
-        // `None` registration behaves as cell-area ("pixel").
-        let gt = AffineMatrix::from_bbox_and_spatial_shape(
-            [600000.0, 5690000.0, 610000.0, 5700000.0],
-            1000,
-            1000,
-            None,
-        )
-        .unwrap()
-        .to_gdal_geotransform();
-        assert_eq!(gt, [600000.0, 10.0, 0.0, 5700000.0, 0.0, -10.0]);
-    }
-
-    #[test]
-    fn bbox_node_registration_uses_n_minus_1_intervals() {
-        // "node": the bbox endpoints are cell centers, so 11 centers span 10
-        // intervals -> scale = 100 / 10 = 10, and the corner sits half a cell
-        // (5) outside the bbox: origin (-5, 105).
-        let gt = AffineMatrix::from_bbox_and_spatial_shape(
-            [0.0, 0.0, 100.0, 100.0],
-            11,
-            11,
-            Some("node"),
-        )
-        .unwrap()
-        .to_gdal_geotransform();
-        assert_eq!(gt, [-5.0, 10.0, 0.0, 105.0, 0.0, -10.0]);
-    }
-
-    #[test]
-    fn bbox_node_registration_requires_at_least_two_cells() {
-        // A single-cell node grid can't define a spacing from its bbox alone.
-        let err =
-            AffineMatrix::from_bbox_and_spatial_shape([0.0, 0.0, 100.0, 100.0], 1, 1, Some("node"))
-                .unwrap_err()
-                .to_string();
-        assert!(err.contains("at least 2"), "{err}");
-    }
-
-    #[test]
-    fn bbox_unknown_registration_errors() {
-        let err = AffineMatrix::from_bbox_and_spatial_shape(
-            [0.0, 0.0, 100.0, 100.0],
-            10,
-            10,
-            Some("corner"),
-        )
-        .unwrap_err()
-        .to_string();
-        assert!(err.contains("pixel") && err.contains("node"), "{err}");
-    }
-
-    #[test]
-    fn degenerate_or_inverted_bbox_errors() {
-        // Zero x-span (non-invertible) and inverted y (not north-up) are both
-        // rejected.
-        for bbox in [
-            [10.0, 0.0, 10.0, 5.0], // xmin == xmax
-            [0.0, 5.0, 5.0, 0.0],   // ymax < ymin
-        ] {
-            let err = AffineMatrix::from_bbox_and_spatial_shape(bbox, 10, 10, None)
-                .unwrap_err()
-                .to_string();
-            assert!(
-                err.contains("xmin < xmax") || err.contains("ymin < ymax"),
-                "{err}"
-            );
-        }
-    }
-
-    #[test]
-    fn zero_dimension_bbox_errors() {
-        let err = AffineMatrix::from_bbox_and_spatial_shape([0.0, 0.0, 10.0, 10.0], 0, 10, None)
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("non-zero"), "{err}");
     }
 }

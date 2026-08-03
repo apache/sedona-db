@@ -25,7 +25,8 @@ use datafusion_common::error::Result;
 use datafusion_common::DataFusionError;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
-use sedona_raster::affine_transformation::AffineMatrix;
+use sedona_raster::geo_transform::GeoTransformEx;
+use sedona_raster::traits::RasterRef;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 /// RS_GeoReference() scalar UDF implementation
@@ -170,15 +171,15 @@ fn format_georeference(
     match raster_opt {
         None => builder.append_null(),
         Some(raster) => {
-            let affine = AffineMatrix::from_raster(raster);
-            let AffineMatrix {
-                offset_x: upper_left_x,
-                offset_y: upper_left_y,
-                scale_x,
-                scale_y,
-                skew_x,
-                skew_y,
-            } = affine;
+            let gt = raster.transform();
+            let (scale_x, scale_y, skew_x, skew_y, upper_left_x, upper_left_y) = (
+                gt.scale_x(),
+                gt.scale_y(),
+                gt.skew_x(),
+                gt.skew_y(),
+                gt.origin_x(),
+                gt.origin_y(),
+            );
 
             let georeference = match format {
                 GeoReferenceFormat::Gdal => {
@@ -190,7 +191,7 @@ fn format_georeference(
                 GeoReferenceFormat::Esri => {
                     // World coordinates of pixel-space (0.5, 0.5) — the full
                     // affine keeps the center shift exact under skew.
-                    let (esri_upper_left_x, esri_upper_left_y) = affine.transform(0.5, 0.5);
+                    let (esri_upper_left_x, esri_upper_left_y) = gt.apply(0.5, 0.5);
                     format!(
                         "{:.10}\n{:.10}\n{:.10}\n{:.10}\n{:.10}\n{:.10}",
                         scale_x, skew_y, skew_x, scale_y, esri_upper_left_x, esri_upper_left_y
