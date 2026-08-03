@@ -25,7 +25,6 @@
 use std::sync::Arc;
 
 use arrow_array::ArrayRef;
-use arrow_buffer::Buffer;
 use datafusion_common::cast::{as_boolean_array, as_float64_array, as_int32_array};
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::error::Result;
@@ -52,6 +51,7 @@ use sedona_schema::raster::BandDataType;
 use crate::gdal_common::{raster_geo_transform, with_gdal};
 use crate::gdal_dataset_provider::configure_thread_local_options;
 use crate::mask::{envelope_window, rasterize_geometry_mask, PixelWindow};
+use crate::utils::{append_band_from_buffer, BandHeader};
 use sedona_raster::traits::nodata_f64_to_bytes;
 
 /// RS_Clip() scalar UDF implementation
@@ -726,32 +726,17 @@ fn build_clipped_raster(
 
     for band in clipped_data.bands {
         let dim_names: Vec<&str> = band.dim_names.iter().map(String::as_str).collect();
-        builder
-            .start_band_nd(
-                band.name.as_deref(),
-                &dim_names,
-                &band.shape,
-                band.data_type,
-                Some(&band.nodata),
-                None,
-                None,
-            )
-            .map_err(|e| exec_datafusion_err!("Failed to start band: {}", e))?;
-        // Move the band bytes into an Arrow buffer and append them as a view
-        // (a refcount bump), instead of copying them through the builder.
-        let len = u32::try_from(band.data.len()).map_err(|_| {
-            exec_datafusion_err!(
-                "RS_Clip: band data of {} bytes exceeds the binary-view limit",
-                band.data.len()
-            )
-        })?;
-        let buffer = Buffer::from(band.data);
-        builder
-            .append_band_data_buffer(&buffer, 0, len)
-            .map_err(|e| exec_datafusion_err!("Failed to append band data: {}", e))?;
-        builder
-            .finish_band()
-            .map_err(|e| exec_datafusion_err!("Failed to finish band: {}", e))?;
+        append_band_from_buffer(
+            builder,
+            &BandHeader {
+                name: band.name.as_deref(),
+                dim_names: &dim_names,
+                shape: &band.shape,
+                data_type: band.data_type,
+                nodata: Some(&band.nodata),
+            },
+            band.data,
+        )?;
     }
 
     builder

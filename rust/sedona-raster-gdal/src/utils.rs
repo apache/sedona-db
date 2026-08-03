@@ -72,25 +72,22 @@ pub fn append_as_indb_raster(dataset: &Dataset, builder: &mut RasterBuilder) -> 
 
         let nodata_bytes = band_nodata_to_bytes(&band)?;
 
-        builder
-            .start_band_2d(band_data_type, nodata_bytes.as_deref())
-            .map_err(|e| exec_datafusion_err!("Failed to start band: {}", e))?;
-
         let band_data = band
             .read_as_bytes((0, 0), (width, height), (width, height), None)
             .map_err(|e| exec_datafusion_err!("Failed to read band {} data: {}", band_idx, e))?;
-        let band_data_len = u32::try_from(band_data.len())
-            .map_err(|_| exec_datafusion_err!("Band {} data too large for Arrow view", band_idx))?;
-        // Hand the freshly-read allocation to Arrow as a shared data block (a
-        // refcount bump, never a copy). `append_band_data_buffer` also stores
-        // sub-inline-threshold bands inline, keeping the view canonical.
-        builder
-            .append_band_data_buffer(&Buffer::from_vec(band_data), 0, band_data_len)
-            .map_err(|e| exec_datafusion_err!("Failed to append band {} data: {}", band_idx, e))?;
-
-        builder
-            .finish_band()
-            .map_err(|e| exec_datafusion_err!("Failed to finish band: {}", e))?;
+        // Single-band native read: the 2-D `["y", "x"]` band `start_band_2d`
+        // would build, shape `[height, width]`.
+        append_band_from_buffer(
+            builder,
+            &BandHeader {
+                name: None,
+                dim_names: &["y", "x"],
+                shape: &[height as i64, width as i64],
+                data_type: band_data_type,
+                nodata: nodata_bytes.as_deref(),
+            },
+            band_data,
+        )?;
     }
 
     builder
@@ -542,6 +539,52 @@ pub(crate) struct BandHeader<'a> {
     pub nodata: Option<&'a [u8]>,
 }
 
+/// Move an already-assembled per-band `Vec<u8>` of in-db pixel bytes into
+/// `builder` as one band: start the band from `header`, hand the owned buffer to
+/// Arrow as a shared data block (a refcount bump, never a copy), and finish the
+/// band. This is the shared packaging tail of every path that builds one band's
+/// bytes in an owned buffer — the read-back stacker ([`append_stacked_band`]),
+/// the single-band GDAL reader ([`append_as_indb_raster`]), and RS_Clip's
+/// masked-crop output.
+///
+/// The band is in-db (its `data` buffer is authoritative), so `outdb_uri` /
+/// `outdb_format` are `None`; out-db bands carry no pixel buffer and do not use
+/// this path. An oversize (> u32 view limit) band is rejected with a descriptive
+/// error rather than a panic.
+pub(crate) fn append_band_from_buffer(
+    builder: &mut RasterBuilder,
+    header: &BandHeader<'_>,
+    band_data: Vec<u8>,
+) -> Result<()> {
+    let band_data_len = u32::try_from(band_data.len()).map_err(|_| {
+        exec_datafusion_err!(
+            "band data of {} bytes exceeds the binary-view limit",
+            band_data.len()
+        )
+    })?;
+    builder
+        .start_band_nd(
+            header.name,
+            header.dim_names,
+            header.shape,
+            header.data_type,
+            header.nodata,
+            None,
+            None,
+        )
+        .map_err(|e| exec_datafusion_err!("Failed to start band: {e}"))?;
+    // Hand the owned buffer to Arrow as a shared data block (a refcount bump,
+    // never a copy). `append_band_data_buffer` also stores sub-inline-threshold
+    // bands inline, keeping the view canonical.
+    builder
+        .append_band_data_buffer(&Buffer::from(band_data), 0, band_data_len)
+        .map_err(|e| exec_datafusion_err!("Failed to append band data: {e}"))?;
+    builder
+        .finish_band()
+        .map_err(|e| exec_datafusion_err!("Failed to finish band: {e}"))?;
+    Ok(())
+}
+
 /// Assemble one N-D raster band and append it to `builder`. The per-plane byte
 /// size and plane count are derived from `header.shape`
 /// (`[non-spatial..., height, width]`) with a fully checked multiply chain, so a
@@ -596,7 +639,10 @@ where
     let capacity = plane_bytes.checked_mul(n_planes).ok_or_else(|| {
         exec_datafusion_err!("band extent {out_w}x{out_h} of {n_planes} planes overflows")
     })?;
-    let band_data_len = u32::try_from(capacity).map_err(|_| {
+    // Reject an oversize (> u32 view limit) band before allocating and filling
+    // the buffer rather than after. `append_band_from_buffer` re-checks the
+    // realized length below; this is the pre-allocation guard.
+    u32::try_from(capacity).map_err(|_| {
         exec_datafusion_err!("band data of {capacity} bytes exceeds the binary-view limit")
     })?;
 
@@ -611,24 +657,7 @@ where
         );
     }
 
-    builder
-        .start_band_nd(
-            header.name,
-            header.dim_names,
-            header.shape,
-            header.data_type,
-            header.nodata,
-            None,
-            None,
-        )
-        .map_err(|e| exec_datafusion_err!("Failed to start band: {e}"))?;
-    builder
-        .append_band_data_buffer(&Buffer::from(band_data), 0, band_data_len)
-        .map_err(|e| exec_datafusion_err!("Failed to append band data: {e}"))?;
-    builder
-        .finish_band()
-        .map_err(|e| exec_datafusion_err!("Failed to finish band: {e}"))?;
-    Ok(())
+    append_band_from_buffer(builder, header, band_data)
 }
 
 /// Regroup a GDAL dataset's flat band list into N-D raster bands per `layout`,
