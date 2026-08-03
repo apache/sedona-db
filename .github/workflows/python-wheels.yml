@@ -216,13 +216,16 @@ jobs:
   # sedonadb jobs (so they run in the same run and can download those wheels
   # to test against) but isolated so an extension failure can't block the
   # core package's nightly. Future extensions follow the same shape.
+  # !cancelled() ensures extensions build even if sedonadb tests failed.
   expr:
     needs: ["windows-x86_64", "macOS-arm64", "macOS-amd64", "wheels-linux"]
+    if: ${{ !cancelled() }}
     uses: ./.github/workflows/wheels-expr.yml
     secrets: inherit
 
   zarr:
     needs: ["windows-x86_64", "macOS-arm64", "macOS-amd64", "wheels-linux"]
+    if: ${{ !cancelled() }}
     uses: ./.github/workflows/wheels-zarr.yml
     secrets: inherit
 
