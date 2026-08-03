@@ -229,7 +229,7 @@ pub fn to_raster_coordinate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::traits::{BandRef, Bands};
+    use crate::traits::BandRef;
     use approx::assert_relative_eq;
     use std::f64::consts::FRAC_1_SQRT_2;
     use std::f64::consts::PI;
@@ -245,9 +245,6 @@ mod tests {
     impl RasterRef for TestRaster {
         fn num_bands(&self) -> usize {
             0
-        }
-        fn bands(&self) -> Bands<'_> {
-            Bands::new(self)
         }
         fn band(&self, index: usize) -> Result<Box<dyn BandRef + '_>, ArrowError> {
             Err(ArrowError::InvalidArgumentError(format!(

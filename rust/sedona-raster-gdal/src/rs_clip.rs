@@ -377,7 +377,6 @@ fn clip_raster(
     all_touched: bool,
     crop: bool,
 ) -> Result<Option<ClippedRasterData>> {
-    let bands = raster.bands();
     let width = raster.width()? as usize;
     let height = raster.height()? as usize;
 
@@ -420,12 +419,13 @@ fn clip_raster(
 
     let crop_window = if crop { Some(window) } else { None };
 
-    // Determine which bands to process
+    // Determine which bands to process (1-based, matching PostGIS/Spark RS_Clip)
+    let num_bands = raster.num_bands();
     let band_indices: Vec<usize> = if band_num == 0 {
-        (1..=bands.len()).collect()
+        (1..=num_bands).collect()
     } else {
-        if band_num > bands.len() {
-            return exec_err!("Band {} is out of range (1-{})", band_num, bands.len());
+        if band_num > num_bands {
+            return exec_err!("Band {} is out of range (1-{})", band_num, num_bands);
         }
         vec![band_num]
     };
@@ -436,10 +436,10 @@ fn clip_raster(
     let mut clipped_bands = Vec::with_capacity(band_indices.len());
 
     for &band_idx in &band_indices {
-        let band = bands
-            .band(band_idx)
+        // `band_idx` is 1-based; the `band`/`band_name` accessors are 0-based.
+        let band = raster
+            .band(band_idx - 1)
             .map_err(|e| exec_datafusion_err!("Failed to get band {}: {}", band_idx, e))?;
-        // `band_idx` is 1-based; the `band_name` accessor is 0-based.
         let band_name = raster.band_name(band_idx - 1).map(|s| s.to_string());
 
         let data_type = band.data_type();
@@ -802,8 +802,7 @@ mod tests {
                 .expect("Should have intersection");
 
             let original_len = raster
-                .bands()
-                .band(1)
+                .band(0)
                 .unwrap()
                 .nd_buffer()
                 .unwrap()

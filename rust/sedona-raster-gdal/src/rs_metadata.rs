@@ -131,7 +131,7 @@ impl SedonaScalarKernel for RsMetaData {
                     Some(raster) => {
                         struct_validity.append(true);
                         let transform = raster.transform();
-                        let num_bands = raster.bands().len() as u32;
+                        let num_bands = raster.num_bands() as u32;
 
                         upper_left_x_builder.append_value(transform[0]);
                         upper_left_y_builder.append_value(transform[3]);

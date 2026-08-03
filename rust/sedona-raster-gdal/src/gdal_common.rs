@@ -173,8 +173,6 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
     raster: &R,
     band_indices: &[usize],
 ) -> Result<Dataset> {
-    let bands = raster.bands();
-
     let width = raster.width().map_err(|e| arrow_datafusion_err!(e))? as usize;
     let height = raster.height().map_err(|e| arrow_datafusion_err!(e))? as usize;
 
@@ -187,8 +185,9 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
     // is sequential (1..=band_indices.len()), even if the source band indices are
     // sparse (e.g. [1, 3]).
     for &src_band_index in band_indices.iter() {
-        let band = bands
-            .band(src_band_index)
+        // `band_indices` are 1-based; the `band` accessor is 0-based.
+        let band = raster
+            .band(src_band_index - 1)
             .map_err(|e| arrow_datafusion_err!(e))?;
 
         // An N-D band's trailing two axes must be the spatial (y, x) pair; the
@@ -270,8 +269,9 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
     // bands in the same band-major / plane order as the add loop above.
     let mut dst_band_index = 0usize;
     for &src_band_index in band_indices.iter() {
-        let band = bands
-            .band(src_band_index)
+        // `band_indices` are 1-based; the `band` accessor is 0-based.
+        let band = raster
+            .band(src_band_index - 1)
             .map_err(|e| arrow_datafusion_err!(e))?;
         let band_type = band.data_type();
         let plane_bytes = width * height * band_type.byte_size();
@@ -338,10 +338,10 @@ impl GdalBandLayout {
     /// match exactly what [`raster_ref_to_gdal_mem`] emits for the same
     /// `band_indices`.
     pub fn from_raster<R: RasterRef + ?Sized>(raster: &R, band_indices: &[usize]) -> Result<Self> {
-        let bands = raster.bands();
         let mut plans = Vec::with_capacity(band_indices.len());
         for &i in band_indices {
-            let band = bands.band(i).map_err(|e| arrow_datafusion_err!(e))?;
+            // `band_indices` are 1-based; the `band` accessor is 0-based.
+            let band = raster.band(i - 1).map_err(|e| arrow_datafusion_err!(e))?;
             let dim_names: Vec<String> = band.dim_names().iter().map(|s| s.to_string()).collect();
             let ndim = dim_names.len();
             if ndim < 2 || !is_spatial_dim_pair(&dim_names[ndim - 2], &dim_names[ndim - 1]) {
@@ -353,8 +353,8 @@ impl GdalBandLayout {
             let nonspatial_shape: Vec<i64> = band.shape()[..ndim - 2].to_vec();
             let plane_count = nonspatial_shape.iter().product::<i64>() as usize;
             plans.push(GdalBandPlan {
-                // `band_indices` are 1-based (the `Bands` wrapper convention used
-                // by `raster_ref_to_gdal_mem`), but `band_name` is 0-based.
+                // `band_indices` are 1-based (matching `raster_ref_to_gdal_mem`),
+                // but `band_name` is 0-based.
                 name: raster.band_name(i - 1).map(|s| s.to_string()),
                 dim_names,
                 nonspatial_shape,

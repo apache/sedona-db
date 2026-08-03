@@ -511,7 +511,7 @@ fn resample_raster(
         );
     }
 
-    let band_count = raster.bands().len();
+    let band_count = raster.num_bands();
 
     // The regrid path — a scale change, origin snap, or reference grid — moves
     // the output off the source grid and/or grows the extent past the source

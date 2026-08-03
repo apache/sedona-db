@@ -668,9 +668,9 @@ fn collect_zonal_values(
     let num_bands = raster.num_bands();
     let band_num = resolve_band(params.band, num_bands)?;
 
+    // `band_num` is 1-based (>= 1, guaranteed by `resolve_band`); `band` is 0-based.
     let band = raster
-        .bands()
-        .band(band_num)
+        .band(band_num - 1)
         .map_err(|e| exec_datafusion_err!("RS_ZonalStats: failed to read band {band_num}: {e}"))?;
     if !band.is_spatial_2d() {
         return exec_err!(

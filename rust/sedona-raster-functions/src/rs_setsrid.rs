@@ -620,12 +620,10 @@ mod tests {
             assert_eq!(original.transform()[3], modified.transform()[3]);
 
             // Band data preserved
-            let orig_bands = original.bands();
-            let mod_bands = modified.bands();
-            assert_eq!(orig_bands.len(), mod_bands.len());
-            for band_idx in 0..orig_bands.len() {
-                let orig_band = orig_bands.band(band_idx + 1).unwrap();
-                let mod_band = mod_bands.band(band_idx + 1).unwrap();
+            assert_eq!(original.num_bands(), modified.num_bands());
+            for band_idx in 0..original.num_bands() {
+                let orig_band = original.band(band_idx).unwrap();
+                let mod_band = modified.band(band_idx).unwrap();
                 assert_eq!(
                     orig_band.nd_buffer().unwrap().as_contiguous().unwrap(),
                     mod_band.nd_buffer().unwrap().as_contiguous().unwrap()

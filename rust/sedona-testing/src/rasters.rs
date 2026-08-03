@@ -430,13 +430,15 @@ pub fn assert_raster_equal(raster1: &impl RasterRef, raster2: &impl RasterRef) {
     );
 
     // Compare bands
-    let bands1 = raster1.bands();
-    let bands2 = raster2.bands();
-    assert_eq!(bands1.len(), bands2.len(), "Number of bands do not match");
+    assert_eq!(
+        raster1.num_bands(),
+        raster2.num_bands(),
+        "Number of bands do not match"
+    );
 
-    for band_index in 0..bands1.len() {
-        let band1 = bands1.band(band_index + 1).unwrap();
-        let band2 = bands2.band(band_index + 1).unwrap();
+    for band_index in 0..raster1.num_bands() {
+        let band1 = raster1.band(band_index).unwrap();
+        let band2 = raster2.band(band_index).unwrap();
 
         assert_eq!(
             band1.dim_names(),
@@ -523,8 +525,7 @@ mod tests {
             assert_eq!(transform[2], (i as f64) * 0.03);
             assert_eq!(transform[4], (i as f64) * 0.04);
 
-            let bands = raster.bands();
-            let band = bands.band(1).unwrap();
+            let band = raster.band(0).unwrap();
             assert_eq!(band.data_type(), BandDataType::UInt16);
             assert_eq!(band.nodata(), Some(&[0u8, 0u8][..]));
             assert!(band.is_indb());
@@ -560,10 +561,9 @@ mod tests {
             let transform = raster.transform();
             assert_eq!(transform[0], ((i % 4) * 64) as f64);
             assert_eq!(transform[3], ((i / 4) * 64) as f64);
-            let bands = raster.bands();
-            assert_eq!(bands.len(), 3);
+            assert_eq!(raster.num_bands(), 3);
             for band_index in 0..3 {
-                let band = bands.band(band_index + 1).unwrap();
+                let band = raster.band(band_index).unwrap();
                 assert_eq!(band.data_type(), BandDataType::UInt8);
                 assert!(band.is_indb());
                 let band_data = band.nd_buffer().unwrap().as_contiguous().unwrap();
@@ -652,11 +652,10 @@ mod tests {
         assert_eq!(raster.transform()[0], 10.0);
         assert_eq!(raster.transform()[3], 20.0);
 
-        let bands = raster.bands();
-        assert_eq!(bands.len(), 3);
+        assert_eq!(raster.num_bands(), 3);
 
-        // Band 1: UInt8, nodata=255
-        let b1 = bands.band(1).unwrap();
+        // Band 1: UInt8, nodata=255 (0-based index 0)
+        let b1 = raster.band(0).unwrap();
         assert_eq!(b1.data_type(), BandDataType::UInt8);
         assert_eq!(b1.nodata(), Some(&[255u8][..]));
         assert_eq!(
@@ -664,13 +663,13 @@ mod tests {
             &[1u8, 2, 3, 4]
         );
 
-        // Band 2: UInt16, nodata=0
-        let b2 = bands.band(2).unwrap();
+        // Band 2: UInt16, nodata=0 (0-based index 1)
+        let b2 = raster.band(1).unwrap();
         assert_eq!(b2.data_type(), BandDataType::UInt16);
         assert_eq!(b2.nodata(), Some(&[0u8, 0][..]));
 
-        // Band 3: Float32, no nodata
-        let b3 = bands.band(3).unwrap();
+        // Band 3: Float32, no nodata (0-based index 2)
+        let b3 = raster.band(2).unwrap();
         assert_eq!(b3.data_type(), BandDataType::Float32);
         assert_eq!(b3.nodata(), None);
     }

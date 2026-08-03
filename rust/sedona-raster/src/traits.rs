@@ -153,55 +153,6 @@ pub fn split_outdb_band_fragment(uri: &str) -> Result<(String, u32), ArrowError>
     Ok((uri.to_string(), 1))
 }
 
-/// Iteration view over a raster's bands. Returned by `RasterRef::bands()`.
-///
-/// Wraps a borrowed `&dyn RasterRef` and offers the `len()` / `band(1-based)`
-/// / `iter()` shape that callers used before the N-D refactor. New code can
-/// equivalently use `RasterRef::num_bands()` and `RasterRef::band(0-based)`
-/// directly; both call patterns coexist.
-pub struct Bands<'a> {
-    raster: &'a dyn RasterRef,
-}
-
-impl<'a> Bands<'a> {
-    /// Wrap a `&dyn RasterRef` for the legacy 1-based band-access surface.
-    pub fn new(raster: &'a dyn RasterRef) -> Self {
-        Self { raster }
-    }
-}
-
-impl<'a> Bands<'a> {
-    /// Number of bands in the raster.
-    pub fn len(&self) -> usize {
-        self.raster.num_bands()
-    }
-
-    /// True iff the raster has zero bands.
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    /// Look up a band by **1-based** number. Returns an error rather than
-    /// `None` so callers can use `?`. For 0-based access, use
-    /// `RasterRef::band` directly.
-    pub fn band(&self, number: usize) -> Result<Box<dyn BandRef + 'a>, ArrowError> {
-        if number == 0 {
-            return Err(ArrowError::InvalidArgumentError(format!(
-                "Invalid band number {number}: band numbers must be 1-based"
-            )));
-        }
-        self.raster.band(number - 1)
-    }
-
-    /// Iterate over every band in 0-based order. Yields `Result` so that
-    /// a corrupt band surfaces as an error rather than being silently
-    /// dropped from the iteration.
-    pub fn iter(&self) -> impl Iterator<Item = Result<Box<dyn BandRef + 'a>, ArrowError>> + 'a {
-        let raster = self.raster;
-        (0..raster.num_bands()).map(move |i| raster.band(i))
-    }
-}
-
 /// Trait for accessing an N-dimensional raster (top level).
 ///
 /// A single flat interface: raster-level geometry (`width`/`height`/
@@ -217,10 +168,6 @@ pub trait RasterRef {
     /// cases route through `sedona_common::sedona_internal_datafusion_err!`
     /// so they carry the standardised "SedonaDB internal error" framing.
     fn band(&self, index: usize) -> Result<Box<dyn BandRef + '_>, ArrowError>;
-
-    /// 1-based band-access view used by callers from before the N-D
-    /// refactor. Implementers typically write `Bands::new(self)`.
-    fn bands(&self) -> Bands<'_>;
 
     /// Band name (e.g., Zarr variable name). None for unnamed bands.
     fn band_name(&self, index: usize) -> Option<&str>;

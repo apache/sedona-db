@@ -885,12 +885,11 @@ mod tests {
         assert_eq!(raster.transform()[1], 1.0);
         assert_eq!(raster.transform()[5], -1.0);
 
-        let bands = raster.bands();
-        assert_eq!(bands.len(), 1);
-        assert!(!bands.is_empty());
+        assert_eq!(raster.num_bands(), 1);
+        assert_ne!(raster.num_bands(), 0);
 
-        // Access band with 1-based band_number
-        let band = bands.band(1).unwrap();
+        // Bands are 0-based.
+        let band = raster.band(0).unwrap();
         assert_eq!(
             band.nd_buffer().unwrap().as_contiguous().unwrap().len(),
             100
@@ -904,7 +903,7 @@ mod tests {
         assert_eq!(crs, epsg4326);
 
         // Test iterator over bands
-        let band_iter: Vec<_> = bands.iter().collect();
+        let band_iter: Vec<_> = (0..raster.num_bands()).map(|i| raster.band(i)).collect();
         assert_eq!(band_iter.len(), 1);
     }
 
@@ -933,15 +932,12 @@ mod tests {
 
         let rasters = RasterStructArray::try_new(&raster_array).unwrap();
         let raster = rasters.get(0).unwrap();
-        let bands = raster.bands();
 
-        assert_eq!(bands.len(), 3);
+        assert_eq!(raster.num_bands(), 3);
 
-        // Test each band has different data
-        // Use 1-based band numbers
+        // Test each band has different data (bands are 0-based).
         for i in 0..3 {
-            // Access band with 1-based band_number
-            let band = bands.band(i + 1).unwrap();
+            let band = raster.band(i).unwrap();
             let expected_value = i as u8;
             assert!(band
                 .nd_buffer()
@@ -953,8 +949,8 @@ mod tests {
         }
 
         // Test iterator
-        let band_values: Vec<u8> = bands
-            .iter()
+        let band_values: Vec<u8> = (0..raster.num_bands())
+            .map(|i| raster.band(i))
             .enumerate()
             .map(|(i, band)| {
                 let band = band.unwrap();
@@ -1038,7 +1034,7 @@ mod tests {
         assert_eq!(target_raster.transform()[5], -0.1);
 
         // But band data and metadata should be different
-        let target_band = target_raster.bands().band(1).unwrap();
+        let target_band = target_raster.band(0).unwrap();
         assert_eq!(target_band.data_type(), BandDataType::UInt16);
         assert!(target_band.nodata().is_none());
         assert_eq!(
@@ -1051,11 +1047,8 @@ mod tests {
             2016
         ); // 1008 * 2 bytes per u16
 
-        let result = target_raster.bands().band(0);
-        assert!(result.is_err(), "Band number 0 should be invalid");
-
-        let result = target_raster.bands().band(2);
-        assert!(result.is_err(), "Band number 2 should be out of range");
+        let result = target_raster.band(1);
+        assert!(result.is_err(), "Band index 1 should be out of range");
     }
 
     #[test]
@@ -1168,9 +1161,12 @@ mod tests {
         // Test the data type conversion for each band
         let iterator = RasterStructArray::try_new(&raster_array).unwrap();
         let raster = iterator.get(0).unwrap();
-        let bands = raster.bands();
 
-        assert_eq!(bands.len(), 10, "Expected 10 bands for all data types");
+        assert_eq!(
+            raster.num_bands(),
+            10,
+            "Expected 10 bands for all data types"
+        );
 
         // Verify each band returns the correct data type
         let expected_types = [
@@ -1188,8 +1184,7 @@ mod tests {
 
         // i is zero-based index
         for (i, expected_type) in expected_types.iter().enumerate() {
-            // Bands are 1-based band_number
-            let band = bands.band(i + 1).unwrap();
+            let band = raster.band(i).unwrap();
             let actual_type = band.data_type();
 
             assert_eq!(
@@ -1239,18 +1234,17 @@ mod tests {
         // Verify the band metadata
         let iterator = RasterStructArray::try_new(&raster_array).unwrap();
         let raster = iterator.get(0).unwrap();
-        let bands = raster.bands();
 
-        assert_eq!(bands.len(), 2);
+        assert_eq!(raster.num_bands(), 2);
 
         // Test InDb band
-        let indb_band = bands.band(1).unwrap();
+        let indb_band = raster.band(0).unwrap();
         assert!(indb_band.is_indb());
         assert_eq!(indb_band.data_type(), BandDataType::UInt8);
         assert!(indb_band.outdb_uri().is_none());
 
         // Test OutDbRef band
-        let outdb_band = bands.band(2).unwrap();
+        let outdb_band = raster.band(1).unwrap();
         assert!(!outdb_band.is_indb());
         assert_eq!(outdb_band.data_type(), BandDataType::Float32);
         assert_eq!(
@@ -1276,22 +1270,16 @@ mod tests {
         let raster_array = builder.finish().unwrap();
         let iterator = RasterStructArray::try_new(&raster_array).unwrap();
         let raster = iterator.get(0).unwrap();
-        let bands = raster.bands();
 
-        // Test invalid band number (0-based)
-        let result = bands.band(0);
-        assert!(result.is_err());
-        let err = result.err().unwrap().to_string();
-        assert!(err.contains("band numbers must be 1-based"));
-
-        // Test out of range band number
-        let result = bands.band(2);
+        // Test out of range band number (bands are 0-based, so index 1 is out
+        // of range for this single-band raster)
+        let result = raster.band(1);
         assert!(result.is_err());
         let err = result.err().unwrap().to_string();
         assert!(err.contains("is out of range"));
 
         // Test valid band number should still work
-        let result = bands.band(1);
+        let result = raster.band(0);
         assert!(result.is_ok());
         let band = result.unwrap();
         assert_eq!(

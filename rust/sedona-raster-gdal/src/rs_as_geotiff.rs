@@ -294,12 +294,11 @@ fn jpeg_quality_option(quality: f64) -> Result<i32> {
 /// bands, 2 (horizontal differencing) for integer bands. Decided by the first
 /// band's sample type; GTiff creation requires uniform band types anyway.
 fn predictor_for(raster: &RasterRefImpl) -> Result<i32> {
-    let bands = raster.bands();
-    if bands.is_empty() {
+    if raster.num_bands() == 0 {
         return Ok(2);
     }
-    let band = bands
-        .band(1)
+    let band = raster
+        .band(0)
         .map_err(|e| exec_datafusion_err!("RS_AsGeoTiff: {e}"))?;
     let data_type = band.data_type();
     Ok(match data_type {
@@ -631,21 +630,19 @@ mod tests {
 
             assert_eq!(rt_raster.width()?, raster.width()?);
             assert_eq!(rt_raster.height()?, raster.height()?);
-            assert_eq!(rt_raster.bands().len(), raster.bands().len());
+            assert_eq!(rt_raster.num_bands(), raster.num_bands());
             // Pixel values must survive too — this would catch predictor or
             // compression corruption that dimension checks cannot.
             assert_eq!(
                 rt_raster
-                    .bands()
-                    .band(1)
+                    .band(0)
                     .unwrap()
                     .nd_buffer()
                     .unwrap()
                     .as_contiguous()
                     .unwrap(),
                 raster
-                    .bands()
-                    .band(1)
+                    .band(0)
                     .unwrap()
                     .nd_buffer()
                     .unwrap()
@@ -799,16 +796,14 @@ mod tests {
             let rt_raster = rt.get(0).unwrap();
             assert_eq!(
                 rt_raster
-                    .bands()
-                    .band(1)
+                    .band(0)
                     .unwrap()
                     .nd_buffer()
                     .unwrap()
                     .as_contiguous()
                     .unwrap(),
                 raster
-                    .bands()
-                    .band(1)
+                    .band(0)
                     .unwrap()
                     .nd_buffer()
                     .unwrap()

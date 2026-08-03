@@ -123,12 +123,12 @@ fn get_band_path(
     match raster_opt {
         None => builder.append_null(),
         Some(raster) => {
-            let bands = raster.bands();
-            let num_bands = bands.len() as i32;
+            let num_bands = raster.num_bands() as i32;
             if band_index < 1 || band_index > num_bands {
                 builder.append_null();
             } else {
-                let band = bands.band(band_index as usize)?;
+                // `band_index` is 1-based (validated >= 1 above); `band` is 0-based.
+                let band = raster.band(band_index as usize - 1)?;
 
                 if !band.is_indb() {
                     match band.outdb_uri() {

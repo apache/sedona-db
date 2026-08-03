@@ -255,7 +255,7 @@ fn reproject_match(
     let mut transform: GeoTransform = [0.0; 6];
     transform.copy_from_slice(ref_transform);
 
-    let band_count = raster.bands().len();
+    let band_count = raster.num_bands();
 
     // A warp always routes pixels through a floating working type, so no
     // resampling method preserves Int64/UInt64 exactly (nor Int32/UInt32 + Mode on

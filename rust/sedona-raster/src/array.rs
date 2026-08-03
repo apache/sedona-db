@@ -26,7 +26,7 @@ use datafusion_common::cast::{
 };
 
 use crate::builder::RasterBuilder;
-use crate::traits::{BandRef, Bands, NdBuffer, RasterRef};
+use crate::traits::{BandRef, NdBuffer, RasterRef};
 use crate::view_entries::ViewEntry;
 use sedona_schema::raster::{band_indices, raster_indices, BandDataType};
 
@@ -197,10 +197,6 @@ impl<'a> RasterRefImpl<'a> {
 impl<'a> RasterRef for RasterRefImpl<'a> {
     fn num_bands(&self) -> usize {
         self.bands_list.value_length(self.raster_index) as usize
-    }
-
-    fn bands(&self) -> Bands<'_> {
-        Bands::new(self)
     }
 
     fn band(&self, index: usize) -> Result<Box<dyn BandRef + '_>, ArrowError> {
@@ -718,12 +714,11 @@ mod tests {
         assert_eq!(raster.transform()[1], 1.0);
         assert_eq!(raster.transform()[5], -1.0);
 
-        let bands = raster.bands();
-        assert_eq!(bands.len(), 1);
-        assert!(!bands.is_empty());
+        assert_eq!(raster.num_bands(), 1);
+        assert_ne!(raster.num_bands(), 0);
 
-        // Access band with 1-based band_number
-        let band = bands.band(1).unwrap();
+        // Bands are 0-based.
+        let band = raster.band(0).unwrap();
         assert_eq!(
             band.nd_buffer().unwrap().as_contiguous().unwrap().len(),
             100
@@ -737,7 +732,7 @@ mod tests {
         assert_eq!(crs, epsg4326);
 
         // Test array over bands
-        let band_iter: Vec<_> = bands.iter().collect();
+        let band_iter: Vec<_> = (0..raster.num_bands()).map(|i| raster.band(i)).collect();
         assert_eq!(band_iter.len(), 1);
     }
 
@@ -766,15 +761,12 @@ mod tests {
 
         let rasters = RasterStructArray::try_new(&raster_array).unwrap();
         let raster = rasters.get(0).unwrap();
-        let bands = raster.bands();
 
-        assert_eq!(bands.len(), 3);
+        assert_eq!(raster.num_bands(), 3);
 
-        // Test each band has different data
-        // Use 1-based band numbers
+        // Test each band has different data (bands are 0-based).
         for i in 0..3 {
-            // Access band with 1-based band_number
-            let band = bands.band(i + 1).unwrap();
+            let band = raster.band(i).unwrap();
             let expected_value = i as u8;
             assert!(band
                 .nd_buffer()
@@ -786,8 +778,8 @@ mod tests {
         }
 
         // Test array
-        let band_values: Vec<u8> = bands
-            .iter()
+        let band_values: Vec<u8> = (0..raster.num_bands())
+            .map(|i| raster.band(i))
             .enumerate()
             .map(|(i, band)| {
                 let band = band.unwrap();
@@ -992,19 +984,16 @@ mod tests {
         assert_eq!(band0.outdb_format(), Some("GTiff"));
         assert_eq!(band0.nodata(), Some(&[0xFFu8, 0xFE][..]));
 
-        // bands() view: 1-based band(N), len, is_empty, iter — same shape as
-        // pre-N-D callers expect. Exercise via the concrete type and via a
-        // `&dyn RasterRef` to confirm both dispatch paths work.
-        let bands = r.bands();
-        assert_eq!(bands.len(), 2);
-        assert!(!bands.is_empty());
-        assert_eq!(bands.band(1).unwrap().data_type(), BandDataType::UInt16);
-        assert_eq!(bands.band(2).unwrap().data_type(), BandDataType::Float32);
-        assert!(bands.band(0).is_err()); // 0 is invalid (1-based)
-        assert!(bands.band(3).is_err()); // out of range
-        assert_eq!(bands.iter().count(), 2);
+        // num_bands / band(0-based) / iteration. Exercise via the concrete type
+        // and via a `&dyn RasterRef` to confirm both dispatch paths work.
+        assert_eq!(r.num_bands(), 2);
+        assert_ne!(r.num_bands(), 0);
+        assert_eq!(r.band(0).unwrap().data_type(), BandDataType::UInt16);
+        assert_eq!(r.band(1).unwrap().data_type(), BandDataType::Float32);
+        assert!(r.band(2).is_err()); // out of range
+        assert_eq!((0..r.num_bands()).filter_map(|i| r.band(i).ok()).count(), 2);
         let dyn_r: &dyn RasterRef = &r;
-        assert_eq!(dyn_r.bands().len(), 2);
+        assert_eq!(dyn_r.num_bands(), 2);
 
         // Raster-level geometry via the direct accessors.
         assert_eq!(r.width().unwrap(), 3);

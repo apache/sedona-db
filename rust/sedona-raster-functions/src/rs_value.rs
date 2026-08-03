@@ -53,7 +53,7 @@ use crate::executor::RasterExecutor;
 use crate::rs_ensure_loaded::NEEDS_PIXELS_METADATA_KEY;
 use crate::sampling::{
     column_point_crs_transform, default_band, int32_array_arg, next_band, point_crs_transform,
-    read_pixel, xy_to_pixel,
+    read_pixel, resolve_band, xy_to_pixel,
 };
 
 /// `RS_Value()` scalar UDF — sample a pixel value at a point.
@@ -248,7 +248,7 @@ impl RsValuePoint {
                         return executor.finish(Arc::new(Float64Array::from(vec![None; n])));
                     }
                     // Match `next_band`: clamp to 0 so band 0/negative surface as a
-                    // not-1-based error from `Bands::band` rather than being coerced.
+                    // not-1-based error from `resolve_band` rather than being coerced.
                     const_band = Some(arr.value(0).max(0) as usize);
                 }
                 other => band_values = Some(int32_array_arg(other, n)?),
@@ -327,10 +327,7 @@ impl RsValuePoint {
         // that we know a point needs sampling); a band column resolves per row.
         match const_band {
             Some(band_num) => {
-                let band = raster
-                    .bands()
-                    .band(band_num)
-                    .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
+                let band = resolve_band("RS_Value", &raster, band_num)?;
                 if !band.is_spatial_2d() {
                     return exec_err!(
                         "RS_Value supports 2-D rasters only; band is not a 2-D (y, x) grid"
@@ -398,10 +395,7 @@ fn sample_pixel(
     row: i64,
     band_num: usize,
 ) -> Result<Option<f64>> {
-    let band = raster
-        .bands()
-        .band(band_num)
-        .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
+    let band = resolve_band("RS_Value", raster, band_num)?;
 
     // 2-D only: the band must be a recognized spatial (y, x) grid, not just any
     // two-axis band (e.g. (time, band) would have len 2 but no spatial meaning).

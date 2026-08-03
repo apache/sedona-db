@@ -34,7 +34,7 @@ use datafusion_expr::ColumnarValue;
 use sedona_geometry::error::SedonaGeometryError;
 use sedona_geometry::transform::{visit_point_coords, CrsEngine, CrsTransform};
 use sedona_raster::affine_transformation::AffineMatrix;
-use sedona_raster::traits::{nodata_bytes_to_f64_lossless, NdBuffer};
+use sedona_raster::traits::{nodata_bytes_to_f64_lossless, BandRef, NdBuffer, RasterRef};
 use sedona_schema::crs::CrsRef;
 use sedona_schema::datatypes::SedonaType;
 use wkb::reader::read_wkb;
@@ -49,11 +49,29 @@ pub(crate) fn int32_array_arg(arg: &ColumnarValue, num_iterations: usize) -> Res
         .into_array(num_iterations)
 }
 
+/// Resolve the **1-based** `band_num` to a [`BandRef`], mapping it onto the
+/// raster's 0-based [`RasterRef::band`] accessor. Band 0 is rejected as not
+/// 1-based (callers clamp negative inputs to 0 for exactly this signal); an
+/// out-of-range band surfaces the accessor's own error. `func` names the
+/// calling UDF for the error message.
+pub(crate) fn resolve_band<'a>(
+    func: &str,
+    raster: &'a dyn RasterRef,
+    band_num: usize,
+) -> Result<Box<dyn BandRef + 'a>> {
+    let index = band_num.checked_sub(1).ok_or_else(|| {
+        exec_datafusion_err!("{func}: Invalid band number {band_num}: band numbers must be 1-based")
+    })?;
+    raster
+        .band(index)
+        .map_err(|e| exec_datafusion_err!("{func}: {e}"))
+}
+
 /// Advance the optional band-number iterator one row, yielding the 1-based band
 /// to sample. A missing band argument defaults to band 1; a NULL band element
 /// returns `None`, which the caller propagates to a NULL result. Band 0 and
-/// negative values map to 0 so [`Bands::band`](sedona_raster::traits::Bands::band)
-/// rejects them as not 1-based rather than being silently coerced.
+/// negative values map to 0 so [`resolve_band`] rejects them as not 1-based
+/// rather than being silently coerced.
 pub(crate) fn next_band(
     band_iter: &mut Option<arrow_array::iterator::ArrayIter<&arrow_array::Int32Array>>,
 ) -> Option<usize> {

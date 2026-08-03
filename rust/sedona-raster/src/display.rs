@@ -56,11 +56,10 @@ pub struct RasterDisplay<'a>(pub &'a dyn RasterRef);
 impl fmt::Display for RasterDisplay<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let raster = self.0;
-        let bands = raster.bands();
 
         let width = raster.width().unwrap();
         let height = raster.height().unwrap();
-        let nbands = bands.len();
+        let nbands = raster.num_bands();
 
         // Compute axis-aligned bounding box from 4 corners in world coordinates.
         // This handles both skewed and non-skewed rasters correctly.
@@ -81,9 +80,8 @@ impl fmt::Display for RasterDisplay<'_> {
         let skew_y = transform[4];
         let has_skew = skew_x != 0.0 || skew_y != 0.0;
 
-        let has_outdb = bands
-            .iter()
-            .filter_map(Result::ok)
+        let has_outdb = (0..raster.num_bands())
+            .filter_map(|i| raster.band(i).ok())
             .any(|band| !band.is_indb());
 
         // Write: [WxH/nbands] @ [xmin ymin xmax ymax]

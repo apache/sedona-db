@@ -57,7 +57,7 @@ use crate::executor::RasterExecutor;
 use crate::rs_ensure_loaded::NEEDS_PIXELS_METADATA_KEY;
 use crate::sampling::{
     column_point_crs_transform, default_band, int32_array_arg, next_band, point_crs_transform,
-    read_pixel, visit_points, xy_to_pixel,
+    read_pixel, resolve_band, visit_points, xy_to_pixel,
 };
 
 /// The `List<Float64>` output type, matching what a default
@@ -268,7 +268,7 @@ impl RsValues {
                         return all_null(&executor);
                     }
                     // Match `next_band`: clamp to 0 so band 0/negative surface as a
-                    // not-1-based error from `Bands::band` rather than being coerced.
+                    // not-1-based error from `resolve_band` rather than being coerced.
                     const_band = Some(arr.value(0).max(0) as usize);
                 }
                 other => band_values = Some(int32_array_arg(other, n)?),
@@ -402,10 +402,7 @@ fn resolve_band_2d<'a>(
     raster: &'a dyn RasterRef,
     band_num: usize,
 ) -> Result<Box<dyn BandRef + 'a>> {
-    let band = raster
-        .bands()
-        .band(band_num)
-        .map_err(|e| exec_datafusion_err!("RS_Values: {e}"))?;
+    let band = resolve_band("RS_Values", raster, band_num)?;
     if !band.is_spatial_2d() {
         return exec_err!("RS_Values supports 2-D rasters only; band is not a 2-D (y, x) grid");
     }

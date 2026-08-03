@@ -790,7 +790,7 @@ mod tests {
         let raster_array = with_gdal(|gdal| load_as_indb_raster(gdal, &path_str)).unwrap();
         let raster_struct = RasterStructArray::try_new(&raster_array).unwrap();
         let raster = raster_struct.get(0).unwrap();
-        let band = raster.bands().band(1).unwrap();
+        let band = raster.band(0).unwrap();
 
         assert_eq!(raster.width().unwrap(), 3);
         assert_eq!(raster.height().unwrap(), 2);
@@ -819,7 +819,7 @@ mod tests {
         assert_eq!(raster.height().unwrap(), 10);
         assert!(raster.crs().is_some());
 
-        let band = raster.bands().band(1).unwrap();
+        let band = raster.band(0).unwrap();
         assert!(!band.is_indb());
         assert!(band.outdb_uri().unwrap().contains("test4.tiff"));
     }
@@ -840,7 +840,7 @@ mod tests {
         let raster = with_gdal(|gdal| load_as_outdb_raster(gdal, &path_str)).unwrap();
         let raster_struct = RasterStructArray::try_new(&raster).unwrap();
         let raster = raster_struct.get(0).unwrap();
-        let band = raster.bands().band(1).unwrap();
+        let band = raster.band(0).unwrap();
 
         assert_eq!(band.nodata().unwrap(), nodata.to_le_bytes());
     }
@@ -861,7 +861,7 @@ mod tests {
         let raster = with_gdal(|gdal| load_as_outdb_raster(gdal, &path_str)).unwrap();
         let raster_struct = RasterStructArray::try_new(&raster).unwrap();
         let raster = raster_struct.get(0).unwrap();
-        let band = raster.bands().band(1).unwrap();
+        let band = raster.band(0).unwrap();
 
         assert_eq!(band.nodata().unwrap(), nodata.to_le_bytes());
     }
@@ -882,7 +882,7 @@ mod tests {
         let raster_array = with_gdal(|gdal| load_as_indb_raster(gdal, &path_str)).unwrap();
         let raster_struct = RasterStructArray::try_new(&raster_array).unwrap();
         let raster = raster_struct.get(0).unwrap();
-        let band = raster.bands().band(1).unwrap();
+        let band = raster.band(0).unwrap();
 
         assert_eq!(raster.width().unwrap(), 2);
         assert_eq!(raster.height().unwrap(), 2);
@@ -918,7 +918,7 @@ mod tests {
         let raster_array = with_gdal(|gdal| load_as_indb_raster(gdal, &path_str)).unwrap();
         let raster_struct = RasterStructArray::try_new(&raster_array).unwrap();
         let raster = raster_struct.get(0).unwrap();
-        let band = raster.bands().band(1).unwrap();
+        let band = raster.band(0).unwrap();
 
         assert_eq!(band.data_type(), BandDataType::Int64);
         assert_eq!(band.nodata().unwrap(), &nodata.to_le_bytes());
@@ -950,7 +950,7 @@ mod tests {
         let raster_array = with_gdal(|gdal| load_as_indb_raster(gdal, &path_str)).unwrap();
         let raster_struct = RasterStructArray::try_new(&raster_array).unwrap();
         let raster = raster_struct.get(0).unwrap();
-        let band = raster.bands().band(1).unwrap();
+        let band = raster.band(0).unwrap();
 
         assert_eq!(band.data_type(), BandDataType::UInt16);
         assert_eq!(band.nodata().unwrap(), &nodata.to_le_bytes());
@@ -981,10 +981,10 @@ mod tests {
         let raster_array = with_gdal(|gdal| load_as_indb_raster(gdal, &path_str)).unwrap();
         let raster_struct = RasterStructArray::try_new(&raster_array).unwrap();
         let raster = raster_struct.get(0).unwrap();
-        let band1 = raster.bands().band(1).unwrap();
-        let band2 = raster.bands().band(2).unwrap();
+        let band1 = raster.band(0).unwrap();
+        let band2 = raster.band(1).unwrap();
 
-        assert_eq!(raster.bands().len(), 2);
+        assert_eq!(raster.num_bands(), 2);
         assert!(band1.is_indb());
         assert_eq!(band1.data_type(), BandDataType::UInt8);
         assert_eq!(band1.nodata().unwrap(), [255u8]);
@@ -1012,10 +1012,10 @@ mod tests {
 
         let raster_struct = RasterStructArray::try_new(&raster_array).unwrap();
         let raster = raster_struct.get(0).unwrap();
-        let band1 = raster.bands().band(1).unwrap();
-        let band2 = raster.bands().band(2).unwrap();
+        let band1 = raster.band(0).unwrap();
+        let band2 = raster.band(1).unwrap();
 
-        assert_eq!(raster.bands().len(), 2);
+        assert_eq!(raster.num_bands(), 2);
         assert!(band1.is_indb());
         assert_eq!(band1.data_type(), BandDataType::UInt8);
         assert_eq!(band1.nodata().unwrap(), [0u8]);
@@ -1069,11 +1069,11 @@ mod tests {
         let first = raster_struct.get(0).unwrap();
         assert_eq!(first.width().unwrap(), 3);
         assert_eq!(first.height().unwrap(), 2);
-        assert_eq!(first.bands().len(), 1);
+        assert_eq!(first.num_bands(), 1);
 
         let second = raster_struct.get(1).unwrap();
         assert_eq!(second.width().unwrap(), 2);
         assert_eq!(second.height().unwrap(), 2);
-        assert_eq!(second.bands().len(), 2);
+        assert_eq!(second.num_bands(), 2);
     }
 }

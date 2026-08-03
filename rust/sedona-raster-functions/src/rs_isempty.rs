@@ -80,13 +80,11 @@ impl SedonaScalarKernel for RsIsEmpty {
 /// (`Π shape() == 0`). Bands must agree on the spatial dims but may
 /// differ on non-spatial ones, so every band is checked.
 fn raster_is_empty(raster: &impl RasterRef) -> Result<bool> {
-    let bands = raster.bands();
-    if bands.is_empty() {
+    if raster.num_bands() == 0 {
         return Ok(true);
     }
-    // Band numbers are 1-based.
-    for i in 1..=bands.len() {
-        let band = bands.band(i)?;
+    for i in 0..raster.num_bands() {
+        let band = raster.band(i)?;
         if band.shape().iter().product::<i64>() == 0 {
             return Ok(true);
         }

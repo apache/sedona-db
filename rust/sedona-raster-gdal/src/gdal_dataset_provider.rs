@@ -212,8 +212,7 @@ impl GDALDatasetCache {
         raster: &R,
         gdal_mem_source: Option<&Rc<Dataset>>,
     ) -> Result<(Rc<Dataset>, Vec<Rc<Dataset>>)> {
-        let bands = raster.bands();
-        let num_bands = bands.len();
+        let num_bands = raster.num_bands();
 
         let metadata_width = raster.width().map_err(|e| arrow_datafusion_err!(e))?;
         let metadata_height = raster.height().map_err(|e| arrow_datafusion_err!(e))?;
@@ -257,8 +256,10 @@ impl GDALDatasetCache {
         let mut outdb_sources: Vec<Rc<Dataset>> = Vec::new();
         let mut mem_band_index: usize = 1;
 
+        // `i` is 1-based here because it also indexes GDAL's own 1-based
+        // `rasterband(i)` below; the raster's `band` accessor is 0-based.
         for i in 1..=num_bands {
-            let band = bands.band(i).map_err(|e| arrow_datafusion_err!(e))?;
+            let band = raster.band(i - 1).map_err(|e| arrow_datafusion_err!(e))?;
 
             if !band.is_spatial_2d() {
                 return exec_err!(
@@ -368,8 +369,7 @@ impl<'a> GDALDatasetProvider<'a> {
         &self,
         raster: &'b R,
     ) -> Result<RasterDataset<'b>> {
-        let bands = raster.bands();
-        let num_bands = bands.len();
+        let num_bands = raster.num_bands();
 
         if num_bands == 0 {
             let dataset = raster_ref_to_gdal_empty(self.gdal, raster)?;
@@ -381,10 +381,12 @@ impl<'a> GDALDatasetProvider<'a> {
             });
         }
 
+        // `indb_band_indices` are 1-based (that is what `raster_ref_to_gdal_mem`
+        // expects); the raster's `band` accessor is 0-based.
         let mut indb_band_indices = Vec::with_capacity(num_bands);
         let mut has_outdb = false;
         for i in 1..=num_bands {
-            let band = bands.band(i).map_err(|e| arrow_datafusion_err!(e))?;
+            let band = raster.band(i - 1).map_err(|e| arrow_datafusion_err!(e))?;
             if band.is_indb() {
                 indb_band_indices.push(i);
             } else {
@@ -473,15 +475,14 @@ struct VrtKey {
 
 impl VrtKey {
     fn from_raster<R: RasterRef + ?Sized>(raster: &R) -> Result<Self> {
-        let bands = raster.bands();
-        let num_bands = bands.len();
+        let num_bands = raster.num_bands();
 
         let geotransform = raster_geo_transform(raster)?;
         let geotransform_bits = geotransform.map(f64::to_bits);
 
         let mut band_keys = Vec::with_capacity(num_bands);
-        for i in 1..=num_bands {
-            let band = bands.band(i).map_err(|e| arrow_datafusion_err!(e))?;
+        for i in 0..num_bands {
+            let band = raster.band(i).map_err(|e| arrow_datafusion_err!(e))?;
             let band_type = band.data_type();
             let nodata_bits = match (band.nodata(), band_type) {
                 (Some(bytes), BandDataType::UInt64) => {

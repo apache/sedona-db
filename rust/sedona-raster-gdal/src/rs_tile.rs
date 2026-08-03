@@ -45,7 +45,7 @@ use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_gdal::geo_transform::{GeoTransform, GeoTransformEx};
 use sedona_raster::array::RasterRefImpl;
 use sedona_raster::builder::RasterBuilder;
-use sedona_raster::traits::{is_spatial_dim_pair, nodata_f64_to_bytes, Bands, RasterRef};
+use sedona_raster::traits::{is_spatial_dim_pair, nodata_f64_to_bytes, RasterRef};
 use sedona_raster_functions::rs_ensure_loaded::NEEDS_PIXELS_METADATA_KEY;
 use sedona_raster_functions::RasterExecutor;
 use sedona_schema::datatypes::{SedonaType, RASTER};
@@ -425,7 +425,6 @@ fn explode_raster_tiles(
     };
 
     let band_indices = resolve_band_indices(params.bands, raster.num_bands())?;
-    let bands = raster.bands();
 
     for tile_y in 0..num_tile_y {
         for tile_x in 0..num_tile_x {
@@ -438,7 +437,7 @@ fn explode_raster_tiles(
                 height,
                 params.pad_with_nodata,
             );
-            append_tile(raster, &bands, &band_indices, &window, params, rast_builder)?;
+            append_tile(raster, &band_indices, &window, params, rast_builder)?;
             x_builder.append_value(tile_x as i32);
             y_builder.append_value(tile_y as i32);
         }
@@ -520,7 +519,6 @@ fn resolve_band_indices(bands: Option<&[i64]>, num_bands: usize) -> Result<Vec<u
 /// Build one tile raster and append it to `rast_builder`.
 fn append_tile(
     raster: &RasterRefImpl<'_>,
-    bands: &Bands<'_>,
     band_indices: &[usize],
     window: &TileWindow,
     params: &TileParams<'_>,
@@ -562,7 +560,7 @@ fn append_tile(
         .map_err(|e| exec_datafusion_err!("RS_Tile: failed to start raster: {e}"))?;
 
     for &band_idx in band_indices {
-        append_tile_band(raster, bands, band_idx, window, params, rast_builder)?;
+        append_tile_band(raster, band_idx, window, params, rast_builder)?;
     }
 
     rast_builder
@@ -574,16 +572,15 @@ fn append_tile(
 /// Copy one band's tile window and append it to `rast_builder`.
 fn append_tile_band(
     raster: &RasterRefImpl<'_>,
-    bands: &Bands<'_>,
     band_idx: usize,
     window: &TileWindow,
     params: &TileParams<'_>,
     rast_builder: &mut RasterBuilder,
 ) -> Result<()> {
-    let band = bands
-        .band(band_idx)
+    // `band_idx` is 1-based; the `band`/`band_name` accessors are 0-based.
+    let band = raster
+        .band(band_idx - 1)
         .map_err(|e| exec_datafusion_err!("RS_Tile: failed to get band {band_idx}: {e}"))?;
-    // `band_idx` is 1-based; the `band_name` accessor is 0-based.
     let band_name = raster.band_name(band_idx - 1).map(|s| s.to_string());
 
     let data_type = band.data_type();
