@@ -15,17 +15,17 @@
 // specific language governing permissions and limitations
 // under the License.
 
-pub mod ensure_loaded;
-// DF-22662 workaround (remove when async UDF return-field metadata is
-// preserved upstream): see wrap_async_udf.rs.
-mod logical_plan_node;
-pub mod optimizer;
-pub mod probe_shuffle_exec;
-pub mod query_planner;
-mod restore_metadata;
-mod spatial_expr_utils;
-pub mod spatial_join_physical_planner;
-pub mod spatial_predicate;
-pub mod tile_explode_node;
-pub mod tile_explode_physical_planner;
-pub mod wrap_async_udf;
+//! Streaming physical operator and planner for `RS_TileExplode`.
+//!
+//! [`TileExplodeExec`] cuts each input raster into a grid of tiles — reusing the
+//! shared tiling core so its tiles are byte-identical to `RS_Tile`'s — and emits
+//! one output row per tile, streaming a batch at a time.
+//! [`DefaultTileExplodePhysicalPlanner`] resolves a
+//! [`sedona_query_planner::tile_explode_node::TileExplodePlanNode`]'s argument
+//! expressions into the operator's plan-time constants.
+
+pub mod exec;
+pub mod physical_planner;
+
+pub use exec::{TileExplodeExec, TileExplodeExecArgs};
+pub use physical_planner::DefaultTileExplodePhysicalPlanner;

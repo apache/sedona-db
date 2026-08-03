@@ -76,6 +76,7 @@ use sedona_query_planner::{
     query_planner::SedonaQueryPlanner,
 };
 use sedona_raster::raster_loader::{AsyncRasterLoader, RasterLoaderConfig, RasterLoaderRegistry};
+use sedona_tile_explode::DefaultTileExplodePhysicalPlanner;
 
 /// Sedona SessionContext wrapper
 ///
@@ -151,6 +152,12 @@ impl SedonaContext {
         // Register the spatial join planner extension
         #[allow(unused_mut)]
         let mut planner = SedonaQueryPlanner::new();
+
+        // Register the tile-explode planner, which plans an RS_TileExplode
+        // TileExplodePlanNode into a streaming TileExplodeExec.
+        planner = planner
+            .with_tile_explode_physical_planner(Arc::new(DefaultTileExplodePhysicalPlanner::new()));
+
         #[cfg(feature = "spatial-join")]
         {
             use sedona_spatial_join::physical_planner::DefaultSpatialJoinPhysicalPlanner;

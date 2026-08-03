@@ -34,11 +34,16 @@ use datafusion_expr::LogicalPlan;
 use crate::spatial_join_physical_planner::{
     SpatialJoinExtensionPlanner, SpatialJoinPhysicalPlanner,
 };
+use crate::tile_explode_physical_planner::{
+    TileExplodeExtensionPlanner, TileExplodePhysicalPlanner,
+};
 
 /// Query planner that wraps DataFusion's [`DefaultPhysicalPlanner`] with a set
-/// of extension planners that handle custom logical nodes (e.g. spatial joins).
+/// of extension planners that handle custom logical nodes (e.g. spatial joins,
+/// tile explode).
 pub struct SedonaQueryPlanner {
     spatial_join_planner: SpatialJoinExtensionPlanner,
+    tile_explode_planner: TileExplodeExtensionPlanner,
 }
 
 impl SedonaQueryPlanner {
@@ -46,6 +51,7 @@ impl SedonaQueryPlanner {
     pub fn new() -> Self {
         Self {
             spatial_join_planner: SpatialJoinExtensionPlanner::new(vec![]),
+            tile_explode_planner: TileExplodeExtensionPlanner::new(vec![]),
         }
     }
 
@@ -62,8 +68,23 @@ impl SedonaQueryPlanner {
         self
     }
 
+    /// Append a [`TileExplodePhysicalPlanner`] to the planner, which plans a
+    /// `RS_TileExplode` [`crate::tile_explode_node::TileExplodePlanNode`] into a
+    /// streaming physical operator.
+    pub fn with_tile_explode_physical_planner(
+        mut self,
+        factory: Arc<dyn TileExplodePhysicalPlanner>,
+    ) -> Self {
+        self.tile_explode_planner
+            .append_tile_explode_physical_planner(factory);
+        self
+    }
+
     fn extension_planners(&self) -> Vec<Arc<dyn ExtensionPlanner + Send + Sync>> {
-        vec![Arc::new(self.spatial_join_planner.clone())]
+        vec![
+            Arc::new(self.spatial_join_planner.clone()),
+            Arc::new(self.tile_explode_planner.clone()),
+        ]
     }
 }
 
