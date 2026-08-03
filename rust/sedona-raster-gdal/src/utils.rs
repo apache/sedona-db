@@ -31,13 +31,14 @@ use sedona_gdal::spatial_ref::SpatialRef;
 use sedona_raster::geo_transform::{GeoTransform, GeoTransformEx};
 
 use arrow_schema::ArrowError;
+use sedona_common::sedona_internal_err;
 use sedona_raster::array::RasterRefImpl;
 use sedona_raster::builder::RasterBuilder;
 use sedona_raster::traits::RasterRef;
 use sedona_schema::raster::BandDataType;
 
 use crate::gdal_common::{
-    band_data_type_to_gdal, band_nodata_to_bytes, convert_gdal_err, gdal_to_band_data_type,
+    add_layout_datapointer_bands, band_nodata_to_bytes, convert_gdal_err, gdal_to_band_data_type,
     normalize_outdb_source_path, set_band_nodata_from_bytes, GdalBandLayout,
 };
 
@@ -454,20 +455,18 @@ pub fn append_warped_nd_from_dataset(
         band_buffers.push(filled_with_nodata(total, plan.nodata.as_deref()));
     }
 
+    // Base pointer per band: the start of its nodata-pre-filled buffer. The
+    // destination DATAPOINTER bands point into plane-major sub-ranges of these,
+    // which GDAL warps into.
+    //
+    // SAFETY: each buffer holds exactly `plan.plane_count` writable planes of
+    // `out_width*out_height*byte_size` bytes and, declared before `dst_dataset`,
+    // outlives it; the helper only adds bands.
+    let base_ptrs: Vec<*mut u8> = band_buffers.iter_mut().map(|b| b.as_mut_ptr()).collect();
     let mut dst_builder = MemDatasetBuilder::new(out_width, out_height);
-    for (plan, buffer) in layout.bands.iter().zip(band_buffers.iter_mut()) {
-        let gdal_type = band_data_type_to_gdal(&plan.data_type);
-        let plane_bytes = out_width * out_height * plan.data_type.byte_size();
-        for plane in 0..plan.plane_count {
-            let ptr = buffer[plane * plane_bytes..].as_mut_ptr();
-            // SAFETY: each plane sub-range holds exactly `plane_bytes` valid,
-            // writable bytes aligned for the band type, and `band_buffers`
-            // outlives `dst_dataset`.
-            unsafe {
-                dst_builder = dst_builder.add_band(gdal_type, ptr);
-            }
-        }
-    }
+    dst_builder = unsafe {
+        add_layout_datapointer_bands(dst_builder, layout, &base_ptrs, out_width * out_height)
+    };
     // SAFETY: the DATAPOINTER buffers in `band_buffers` outlive `dst_dataset`.
     let dst_dataset = unsafe { dst_builder.build(gdal).map_err(convert_gdal_err)? };
     dst_dataset
@@ -532,6 +531,81 @@ fn filled_with_nodata(total: usize, nodata: Option<&[u8]>) -> Vec<u8> {
     }
 }
 
+/// The descriptive header for one output raster band — everything
+/// [`RasterBuilder::start_band_nd`] needs except the pixel bytes. Bundled so
+/// [`append_stacked_band`] takes named fields rather than a long positional list.
+pub(crate) struct BandHeader<'a> {
+    pub name: Option<&'a str>,
+    pub dim_names: &'a [&'a str],
+    /// Full band shape `[non-spatial..., height, width]`.
+    pub shape: &'a [i64],
+    pub data_type: BandDataType,
+    pub nodata: Option<&'a [u8]>,
+}
+
+/// Assemble one N-D raster band from `n_planes` per-plane outputs and append it
+/// to `builder`. For each plane in `0..n_planes`, `fill_plane(plane, &mut buf)`
+/// appends exactly that plane's `plane_bytes` (= out_w × out_h ×
+/// `header.data_type.byte_size()`) to `buf`, band-major planes concatenated
+/// plane-major; the accumulated buffer is then moved into the Arrow array as a
+/// zero-copy view block (a refcount bump) rather than copied through the builder.
+///
+/// This is the read-back / output-assembly inverse of the plane *input* bridge
+/// ([`add_layout_datapointer_bands`]): the per-plane op — a GDAL band read, a
+/// mask/crop, a tile-window copy — is the caller's `fill_plane` closure; the
+/// plane iteration, checked buffer sizing, and band packaging are shared here.
+/// An oversize (> u32 view limit) band is rejected before allocating rather than
+/// after filling.
+pub(crate) fn append_stacked_band<F>(
+    builder: &mut RasterBuilder,
+    header: &BandHeader<'_>,
+    plane_bytes: usize,
+    n_planes: usize,
+    mut fill_plane: F,
+) -> Result<()>
+where
+    F: FnMut(usize, &mut Vec<u8>) -> Result<()>,
+{
+    let capacity = plane_bytes
+        .checked_mul(n_planes)
+        .ok_or_else(|| exec_datafusion_err!("band size overflow ({plane_bytes} x {n_planes})"))?;
+    let band_data_len = u32::try_from(capacity).map_err(|_| {
+        exec_datafusion_err!("band data of {capacity} bytes exceeds the binary-view limit")
+    })?;
+
+    let mut band_data: Vec<u8> = Vec::with_capacity(capacity);
+    for plane in 0..n_planes {
+        fill_plane(plane, &mut band_data)?;
+    }
+    if band_data.len() != capacity {
+        return sedona_internal_err!(
+            "stacked band produced {} bytes, expected {capacity}",
+            band_data.len()
+        );
+    }
+
+    builder
+        .start_band_nd(
+            header.name,
+            header.dim_names,
+            header.shape,
+            header.data_type,
+            header.nodata,
+            None,
+            None,
+        )
+        .map_err(|e| exec_datafusion_err!("Failed to start band: {e}"))?;
+    // Move the finished band bytes into an Arrow buffer and append them as a view
+    // (a refcount bump) instead of copying them through the builder.
+    builder
+        .append_band_data_buffer(&Buffer::from(band_data), 0, band_data_len)
+        .map_err(|e| exec_datafusion_err!("Failed to append band data: {e}"))?;
+    builder
+        .finish_band()
+        .map_err(|e| exec_datafusion_err!("Failed to finish band: {e}"))?;
+    Ok(())
+}
+
 /// Regroup a GDAL dataset's flat band list into N-D raster bands per `layout`,
 /// reading each plane at the `metadata` grid size. With `alg = None` the read is
 /// native (`out` == source size, an identity materialization); with `alg =
@@ -569,57 +643,41 @@ fn append_nd_from_dataset_inner(
         shape.push(out_height as i64);
         shape.push(out_width as i64);
 
-        builder
-            .start_band_nd(
-                plan.name.as_deref(),
-                &dim_names,
-                &shape,
-                plan.data_type,
-                plan.nodata.as_deref(),
-                None,
-                None,
-            )
-            .map_err(|e| exec_datafusion_err!("Failed to start band: {}", e))?;
-
-        let capacity = out_width
-            .checked_mul(out_height)
-            .and_then(|a| a.checked_mul(plan.data_type.byte_size()))
-            .and_then(|a| a.checked_mul(plan.plane_count))
-            .ok_or_else(|| {
-                exec_datafusion_err!("resampled band size overflow ({out_width}x{out_height})")
-            })?;
-        let mut band_data: Vec<u8> = Vec::with_capacity(capacity);
-        for _ in 0..plan.plane_count {
-            let band = dataset
-                .rasterband(gdal_band)
-                .map_err(|e| exec_datafusion_err!("Failed to get band {}: {}", gdal_band, e))?;
-            let plane = band
-                .read_as_bytes(
-                    (0, 0),
-                    (src_width, src_height),
-                    (out_width, out_height),
-                    alg,
-                )
-                .map_err(|e| {
-                    exec_datafusion_err!("Failed to read band {} data: {}", gdal_band, e)
-                })?;
-            band_data.extend_from_slice(&plane);
-            gdal_band += 1;
-        }
-
-        let band_data_len = u32::try_from(band_data.len())
-            .map_err(|_| exec_datafusion_err!("Band data too large for Arrow view"))?;
-        let block = builder
-            .band_data_writer()
-            .append_block(Buffer::from_vec(band_data));
-        builder
-            .band_data_writer()
-            .try_append_view(block, 0, band_data_len)
-            .map_err(|e| exec_datafusion_err!("Failed to append band data: {}", e))?;
-
-        builder
-            .finish_band()
-            .map_err(|e| exec_datafusion_err!("Failed to finish band: {}", e))?;
+        // This band's planes are `plan.plane_count` consecutive GDAL bands
+        // starting at `gdal_band`; read each at the output grid size (native when
+        // `alg` is `None`, resampled otherwise) and stack them into the N-D band.
+        let gdal_band_base = gdal_band;
+        append_stacked_band(
+            builder,
+            &BandHeader {
+                name: plan.name.as_deref(),
+                dim_names: &dim_names,
+                shape: &shape,
+                data_type: plan.data_type,
+                nodata: plan.nodata.as_deref(),
+            },
+            out_width * out_height * plan.data_type.byte_size(),
+            plan.plane_count,
+            |plane, out| {
+                let gdal_band = gdal_band_base + plane;
+                let band = dataset
+                    .rasterband(gdal_band)
+                    .map_err(|e| exec_datafusion_err!("Failed to get band {gdal_band}: {e}"))?;
+                let plane = band
+                    .read_as_bytes(
+                        (0, 0),
+                        (src_width, src_height),
+                        (out_width, out_height),
+                        alg,
+                    )
+                    .map_err(|e| {
+                        exec_datafusion_err!("Failed to read band {gdal_band} data: {e}")
+                    })?;
+                out.extend_from_slice(&plane);
+                Ok(())
+            },
+        )?;
+        gdal_band += plan.plane_count;
     }
 
     builder

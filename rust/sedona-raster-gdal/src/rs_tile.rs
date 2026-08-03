@@ -32,7 +32,6 @@ use std::sync::Arc;
 
 use arrow_array::builder::{Int32Builder, NullBufferBuilder, OffsetBufferBuilder};
 use arrow_array::{Array, ArrayRef, ListArray, StructArray};
-use arrow_buffer::Buffer;
 use arrow_schema::{DataType, Field, Fields};
 use datafusion_common::cast::{as_boolean_array, as_float64_array, as_int64_array, as_list_array};
 use datafusion_common::config::ConfigOptions;
@@ -48,6 +47,8 @@ use sedona_raster::geo_transform::{GeoTransform, GeoTransformEx};
 use sedona_raster::traits::{is_spatial_dim_pair, nodata_f64_to_bytes, RasterRef};
 use sedona_raster_functions::rs_ensure_loaded::NEEDS_PIXELS_METADATA_KEY;
 use sedona_raster_functions::RasterExecutor;
+
+use crate::utils::{append_stacked_band, BandHeader};
 use sedona_schema::datatypes::{SedonaType, RASTER};
 use sedona_schema::matchers::{ArgMatcher, TypeMatcher};
 
@@ -655,69 +656,40 @@ fn append_tile_band(
         (None, band.nodata().map(|bytes| bytes.to_vec()))
     };
 
-    // One output allocation serves the whole band: every plane appends into it,
-    // and the finished Vec moves into the Arrow array as a zero-copy view block
-    // rather than being copied through the builder. The band data is appended as
-    // one binary view (u32-limited), so size the buffer with checked arithmetic
-    // and reject an oversize (e.g. huge padded) tile before allocating rather
-    // than after filling the whole thing.
-    let total_bytes = window
-        .out_w
-        .checked_mul(window.out_h)
-        .and_then(|plane| plane.checked_mul(byte_size))
-        .and_then(|plane_bytes| plane_bytes.checked_mul(n_planes))
-        .ok_or_else(|| {
-            exec_datafusion_err!(
-                "RS_Tile: tile band extent {}x{} of {n_planes} planes overflows",
-                window.out_w,
-                window.out_h
-            )
-        })?;
-    let band_data_len = u32::try_from(total_bytes).map_err(|_| {
-        exec_datafusion_err!(
-            "RS_Tile: tile band data of {total_bytes} bytes exceeds the binary-view limit"
-        )
-    })?;
-    let mut tile_data = Vec::with_capacity(total_bytes);
-    for plane in 0..n_planes {
-        let plane_bytes = &source[plane * in_plane_bytes..(plane + 1) * in_plane_bytes];
-        copy_tile_window(
-            plane_bytes,
-            width,
-            window,
-            byte_size,
-            pad_fill.as_deref(),
-            &mut tile_data,
-        )?;
-    }
-
     let mut out_shape = shape[..ndim - 2].to_vec();
     out_shape.push(window.out_h as i64);
     out_shape.push(window.out_w as i64);
-
     let dim_names_ref: Vec<&str> = dim_names.iter().map(String::as_str).collect();
-    rast_builder
-        .start_band_nd(
-            band_name.as_deref(),
-            &dim_names_ref,
-            &out_shape,
-            data_type,
-            tile_nodata.as_deref(),
-            None,
-            None,
-        )
-        .map_err(|e| exec_datafusion_err!("RS_Tile: failed to start band: {e}"))?;
 
-    // Move the band bytes into an Arrow buffer and append them as a view (a
-    // refcount bump) instead of copying them through the builder.
-    let buffer = Buffer::from(tile_data);
-    rast_builder
-        .append_band_data_buffer(&buffer, 0, band_data_len)
-        .map_err(|e| exec_datafusion_err!("RS_Tile: failed to append band data: {e}"))?;
-    rast_builder
-        .finish_band()
-        .map_err(|e| exec_datafusion_err!("RS_Tile: failed to finish band: {e}"))?;
-    Ok(())
+    // Copy each source plane's tile window and stack the planes into the N-D tile
+    // band. `in_plane_bytes` is the full source plane; the tile window may be
+    // smaller (a crop) or larger (padded past the source edge). The shared helper
+    // sizes the output buffer with checked arithmetic, rejects an oversize (e.g.
+    // huge padded) tile before allocating, and appends the finished bytes as a
+    // zero-copy view block.
+    append_stacked_band(
+        rast_builder,
+        &BandHeader {
+            name: band_name.as_deref(),
+            dim_names: &dim_names_ref,
+            shape: &out_shape,
+            data_type,
+            nodata: tile_nodata.as_deref(),
+        },
+        window.out_w * window.out_h * byte_size,
+        n_planes,
+        |plane, out| {
+            let src_plane = &source[plane * in_plane_bytes..(plane + 1) * in_plane_bytes];
+            copy_tile_window(
+                src_plane,
+                width,
+                window,
+                byte_size,
+                pad_fill.as_deref(),
+                out,
+            )
+        },
+    )
 }
 
 /// Copy one source plane's tile window into `out`, padding out-of-bounds pixels

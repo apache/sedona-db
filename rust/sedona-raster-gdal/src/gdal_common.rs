@@ -176,37 +176,31 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
     let width = raster.width().map_err(|e| arrow_datafusion_err!(e))? as usize;
     let height = raster.height().map_err(|e| arrow_datafusion_err!(e))? as usize;
 
-    // Create internal MEM dataset via sedona-gdal shim to avoid open dataset list contention.
-    let mut mem_ds_builder = MemDatasetBuilder::new(width, height);
+    // The N-D → flat-GDAL plane layout (band-major, plane-major). Deriving it
+    // performs the trailing-(y, x)-pair check and records each band's plane
+    // count / dtype / nodata, so the add and nodata loops below share one source
+    // of truth for band order and plane counts.
+    let layout = GdalBandLayout::from_raster(raster, band_indices)?;
 
-    // Add bands with DATAPOINTER option (zero-copy)
-    //
-    // Note: GDALAddBand always appends a new band, so the destination band index
-    // is sequential (1..=band_indices.len()), even if the source band indices are
-    // sparse (e.g. [1, 3]).
-    for &src_band_index in band_indices.iter() {
+    // One base pointer per source band: the start of its zero-copy contiguous
+    // bytes. `as_contiguous()` borrows the bytes (erroring on a strided view);
+    // GDAL holds the pointer, so `raster` must outlive the dataset. Because
+    // (y, x) are innermost, each plane is a contiguous sub-range, so the
+    // per-plane DATAPOINTER math holds.
+    let mut base_ptrs: Vec<*mut u8> = Vec::with_capacity(layout.bands.len());
+    for (&src_band_index, plan) in band_indices.iter().zip(&layout.bands) {
         // `band_indices` are 1-based; the `band` accessor is 0-based.
         let band = raster
             .band(src_band_index - 1)
             .map_err(|e| arrow_datafusion_err!(e))?;
 
-        // An N-D band's trailing two axes must be the spatial (y, x) pair; the
-        // non-spatial axes become a stack of 2-D planes, one GDAL band each. A
-        // plain 2-D band is just the single-plane case.
-        let dims = band.dim_names();
-        let ndim = dims.len();
-        if ndim < 2 || !is_spatial_dim_pair(dims[ndim - 2], dims[ndim - 1]) {
-            return exec_err!(
-                "GDAL backend requires a band whose trailing two dims are a \
-                 spatial (y, x) pair; got dim_names={dims:?}"
-            );
-        }
-
         // The plane's 2-D extent must equal the MEM dataset's (and the raster's
-        // spatial grid); otherwise the per-plane byte slicing below would
-        // disagree with the GDAL band size and silently mis-stack the planes.
+        // spatial grid); otherwise the per-plane byte slicing would disagree
+        // with the GDAL band size and silently mis-stack the planes.
         // `finish_raster` already enforces this for builder-made rasters, but
         // re-check so the public bridge stays sound for any `RasterRef`.
+        let dims = band.dim_names();
+        let ndim = dims.len();
         let shape = band.shape();
         if shape[ndim - 2] as usize != height || shape[ndim - 1] as usize != width {
             return exec_err!(
@@ -223,30 +217,29 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
             ));
         }
 
-        let band_type = band.data_type();
-        let gdal_type = band_data_type_to_gdal(&band_type);
-        // `as_contiguous()` borrows the bytes zero-copy (erroring on a strided
-        // view); GDAL holds the pointer, so `raster` must outlive the dataset.
-        // Because (y, x) are innermost, each plane is a contiguous sub-range, so
-        // the zero-copy DATAPOINTER holds per plane.
         let band_bytes = band.nd_buffer().and_then(|ndb| ndb.as_contiguous())?;
-        let plane_bytes = width * height * band_type.byte_size();
-        if plane_bytes == 0 || band_bytes.len() % plane_bytes != 0 {
+        let plane_bytes = width * height * plan.data_type.byte_size();
+        if plane_bytes == 0 || band_bytes.len() != plan.plane_count * plane_bytes {
             return exec_err!(
-                "band byte length {} is not a multiple of the {width}x{height} \
-                 plane size (dim_names={dims:?})",
-                band_bytes.len()
+                "band byte length {} does not match {} planes of the \
+                 {width}x{height} plane size (dim_names={dims:?})",
+                band_bytes.len(),
+                plan.plane_count
             );
         }
-        let plane_count = band_bytes.len() / plane_bytes;
-        for plane in 0..plane_count {
-            let off = plane * plane_bytes;
-            let data_ptr: *const u8 = band_bytes[off..off + plane_bytes].as_ptr();
-            unsafe {
-                mem_ds_builder = mem_ds_builder.add_band(gdal_type, data_ptr as *mut u8);
-            }
-        }
+        base_ptrs.push(band_bytes.as_ptr() as *mut u8);
     }
+
+    // Create internal MEM dataset via sedona-gdal shim to avoid open dataset list
+    // contention, then attach the band×plane DATAPOINTER bands (zero-copy).
+    //
+    // SAFETY: each base pointer starts `plan.plane_count` contiguous planes of
+    // `width*height*byte_size` bytes inside `raster`'s buffers, which outlive the
+    // returned dataset; the helper only adds bands.
+    let mut mem_ds_builder = MemDatasetBuilder::new(width, height);
+    mem_ds_builder = unsafe {
+        add_layout_datapointer_bands(mem_ds_builder, &layout, &base_ptrs, width * height)
+    };
 
     let dataset = unsafe {
         mem_ds_builder
@@ -268,19 +261,10 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
     // Nodata is per source band, shared across all its planes. Walk the dst
     // bands in the same band-major / plane order as the add loop above.
     let mut dst_band_index = 0usize;
-    for &src_band_index in band_indices.iter() {
-        // `band_indices` are 1-based; the `band` accessor is 0-based.
-        let band = raster
-            .band(src_band_index - 1)
-            .map_err(|e| arrow_datafusion_err!(e))?;
-        let band_type = band.data_type();
-        let plane_bytes = width * height * band_type.byte_size();
-        let band_bytes = band.nd_buffer().and_then(|ndb| ndb.as_contiguous())?;
-        let plane_count = band_bytes.len() / plane_bytes;
-        let nodata = band.nodata();
-        for _ in 0..plane_count {
+    for plan in &layout.bands {
+        for _ in 0..plan.plane_count {
             dst_band_index += 1;
-            if let Some(nodata_bytes) = nodata {
+            if let Some(nodata_bytes) = plan.nodata.as_deref() {
                 let raster_band = dataset
                     .rasterband(dst_band_index)
                     .map_err(convert_gdal_err)?;
@@ -365,6 +349,44 @@ impl GdalBandLayout {
         }
         Ok(Self { bands: plans })
     }
+}
+
+/// Attach the DATAPOINTER bands for an N-D raster's flattened plane list to
+/// `builder`: one GDAL band per 2-D plane, band-major then plane-major (the
+/// order [`GdalBandLayout`] records and `append_nd_from_dataset` regroups).
+/// `GDALAddBand` appends, so the destination band indices run
+/// `1..=Σ plane_count` even when the source band indices are sparse.
+///
+/// `base_ptrs[i]` is the start of band `i`'s contiguous bytes — its
+/// `plane_count` planes laid out plane-major — so plane `p` of that band lives
+/// at `base_ptrs[i] + p * plane_pixel_count * data_type.byte_size()`. The helper
+/// only adds bands; the caller owns the pointed-to buffers and their lifetime.
+///
+/// # Safety
+/// `base_ptrs.len()` must equal `layout.bands.len()`, and for each band `i`
+/// `base_ptrs[i]` must point to at least
+/// `plan.plane_count * plane_pixel_count * plan.data_type.byte_size()` bytes that
+/// are valid, aligned for the band's data type, and outlive the built
+/// [`Dataset`] — GDAL reads them, and for a writable destination writes them,
+/// through the DATAPOINTER.
+pub(crate) unsafe fn add_layout_datapointer_bands(
+    mut builder: MemDatasetBuilder,
+    layout: &GdalBandLayout,
+    base_ptrs: &[*mut u8],
+    plane_pixel_count: usize,
+) -> MemDatasetBuilder {
+    for (plan, &base) in layout.bands.iter().zip(base_ptrs) {
+        let gdal_type = band_data_type_to_gdal(&plan.data_type);
+        let plane_byte_size = plane_pixel_count * plan.data_type.byte_size();
+        for plane in 0..plan.plane_count {
+            // SAFETY: by the contract above, `base + plane * plane_byte_size`
+            // begins a full `plane_byte_size`-byte plane inside band `i`'s
+            // buffer, aligned for the band type, that outlives the dataset.
+            let plane_ptr = unsafe { base.add(plane * plane_byte_size) };
+            builder = unsafe { builder.add_band(gdal_type, plane_ptr) };
+        }
+    }
+    builder
 }
 
 /// Interpret optional nodata bytes according to the band data type and return an Option<f64>.
