@@ -77,6 +77,14 @@ impl SpatialJoinPhysicalPlanner for RasterSpatialJoinPhysicalPlanner {
         // reordering heuristic (`should_swap_join_order`, which is deliberately not
         // consulted here).
         //
+        // This pin is load-bearing, not merely an optimization: the build (index)
+        // side must operate in a single common CRS — the geometry operand,
+        // reprojected to `target_crs` — to build and probe the spatial index in.
+        // Pinning the raster to the probe side is what keeps a raster (which carries
+        // its own, possibly differing CRS) off the index side, where it would break
+        // that single-common-CRS assumption. The buffer-copy win below is the
+        // second reason.
+        //
         // The build side is fully buffered and its ingest compacts view arrays
         // (`gc_view_arrays`), copying raster `BinaryView` band payloads into fresh
         // buffers and defeating the zero-copy design. The probe side streams one
