@@ -27,14 +27,16 @@ use datafusion_common::cast::{
 
 use crate::builder::RasterBuilder;
 use crate::traits::{BandRef, NdBuffer, RasterRef};
-use crate::view_entries::ViewEntry;
-use sedona_schema::raster::{band_indices, raster_indices, BandDataType};
+use crate::view_entries::{ViewEntries, ViewEntry};
+use sedona_schema::raster::{band_indices, band_view_indices, raster_indices, BandDataType};
 
 /// Arrow-backed implementation of BandRef for a single band within a raster.
 ///
-/// Today this handles only the canonical identity view: `view_entries` is
-/// synthesised from `source_shape`, `visible_shape == source_shape`,
-/// and `byte_strides` are plain C-order strides with `byte_offset = 0`.
+/// View-derived layout (`visible_shape`, `byte_strides`, `byte_offset`) is
+/// composed once at construction from the band's stored view (identity when
+/// the view row is null, otherwise the persisted `ViewEntry` list) and reused
+/// by every accessor. Source-shape and dim-name slices are borrowed directly
+/// from the underlying Arrow buffers.
 struct BandRefImpl<'a> {
     dim_names_list: &'a ListArray,
     dim_names_values: &'a StringArray,
@@ -48,13 +50,17 @@ struct BandRefImpl<'a> {
     band_row: usize,
     /// Resolved at construction so accessors don't re-decode the discriminant.
     data_type: BandDataType,
-    /// Per-visible-axis view, length = ndim. Always identity today.
-    view_entries: Vec<ViewEntry>,
-    /// Visible shape, length = ndim. Equals `source_shape` today.
+    /// Per-visible-axis view, length = ndim.
+    view_entries: ViewEntries,
+    /// Visible shape (`[v.steps for v in view_entries]`), length = ndim.
     visible_shape: Vec<i64>,
-    /// Byte strides per visible axis. C-order over `source_shape` today.
+    /// Byte strides per visible axis. May be 0 (broadcast) or negative
+    /// (reverse iteration) for a non-identity view.
     byte_strides: Vec<i64>,
     /// Byte offset into `data` of the visible region's `[0,...,0]` element.
+    /// Non-negative by construction — `RasterRefImpl::band` composes it from
+    /// non-negative `start × source_stride` terms and rejects a negative or
+    /// overflowing result before the band is built.
     byte_offset: u64,
 }
 
@@ -82,7 +88,7 @@ impl<'a> BandRef for BandRefImpl<'a> {
     }
 
     fn view(&self) -> &[ViewEntry] {
-        &self.view_entries
+        self.view_entries.as_slice()
     }
 
     fn data_type(&self) -> BandDataType {
@@ -177,6 +183,10 @@ pub struct RasterRefImpl<'a> {
     band_datatype_array: &'a UInt32Array,
     band_nodata_array: &'a BinaryArray,
     band_view_list: &'a ListArray,
+    band_view_source_axis: &'a Int64Array,
+    band_view_start: &'a Int64Array,
+    band_view_step: &'a Int64Array,
+    band_view_steps: &'a Int64Array,
     band_outdb_uri_array: &'a StringArray,
     band_outdb_format_array: &'a StringViewArray,
     band_data_array: &'a BinaryViewArray,
@@ -192,6 +202,159 @@ impl<'a> RasterRefImpl<'a> {
             Some(self.crs_array.value(self.raster_index))
         }
     }
+
+    /// Read the band's stored view-entry list. Identity is encoded exclusively
+    /// as a NULL row and is synthesised as the canonical identity over
+    /// `source_shape`; a non-null row is decoded from the four parallel view
+    /// columns. An empty (non-null, zero-length) row is malformed and is
+    /// rejected downstream by [`ViewEntries::validate`].
+    fn read_band_view_entries(&self, band_row: usize, source_shape: &[i64]) -> ViewEntries {
+        if self.band_view_list.is_null(band_row) {
+            return ViewEntries::identity_for_shape(source_shape);
+        }
+        let v_start = self.band_view_list.value_offsets()[band_row] as usize;
+        let v_end = self.band_view_list.value_offsets()[band_row + 1] as usize;
+        ViewEntries::new(
+            (v_start..v_end)
+                .map(|i| ViewEntry {
+                    source_axis: self.band_view_source_axis.value(i),
+                    start: self.band_view_start.value(i),
+                    step: self.band_view_step.value(i),
+                    steps: self.band_view_steps.value(i),
+                })
+                .collect(),
+        )
+    }
+}
+
+/// Compose a validated view against a source shape into C-order byte strides
+/// and a byte offset.
+///
+/// C-order source strides are dtype-scaled cumulative products of
+/// `source_shape`; each visible axis's byte stride is `view.step ×
+/// src_stride` and its offset contribution is `view.start × src_stride`. All
+/// arithmetic is checked: even after [`ViewEntries::validate`], the cumulative
+/// byte product can overflow `i64` for cosmically large shapes, and a corrupt
+/// `source_shape` whose product wraps would otherwise silently pass the
+/// downstream bound check. The returned `byte_offset` is non-negative by
+/// construction (`start >= 0`, `src_stride > 0`); the defensive sign check
+/// guards a future refactor before we cross the `i64` → `u64` boundary in
+/// `band()`.
+fn compose_byte_strides(
+    band_row: usize,
+    source_shape: &[i64],
+    view_entries: &ViewEntries,
+    dtype_byte_size: usize,
+) -> Result<(Vec<i64>, i64), ArrowError> {
+    let overflow_err = |msg: &str| {
+        ArrowError::ExternalError(Box::new(sedona_common::sedona_internal_datafusion_err!(
+            "band {band_row}: {msg}"
+        )))
+    };
+
+    let dtype_size = dtype_byte_size as i64;
+
+    let mut source_strides_bytes = vec![0i64; source_shape.len()];
+    source_strides_bytes[source_shape.len() - 1] = dtype_size;
+    for k in (0..source_shape.len() - 1).rev() {
+        source_strides_bytes[k] = source_strides_bytes[k + 1]
+            .checked_mul(source_shape[k + 1])
+            .ok_or_else(|| overflow_err("source-stride product overflows i64"))?;
+    }
+
+    let mut byte_strides = vec![0i64; view_entries.len()];
+    let mut byte_offset: i64 = 0;
+    for (k, v) in view_entries.iter().enumerate() {
+        let src_stride = source_strides_bytes[v.source_axis as usize];
+        byte_strides[k] = v
+            .step
+            .checked_mul(src_stride)
+            .ok_or_else(|| overflow_err("view step × source-stride overflows i64"))?;
+        let start_off = v
+            .start
+            .checked_mul(src_stride)
+            .ok_or_else(|| overflow_err("view start × source-stride overflows i64"))?;
+        byte_offset = byte_offset
+            .checked_add(start_off)
+            .ok_or_else(|| overflow_err("view offset accumulation overflows i64"))?;
+    }
+
+    if byte_offset < 0 {
+        return Err(overflow_err("composed byte_offset is negative"));
+    }
+
+    Ok((byte_strides, byte_offset))
+}
+
+/// Verify that every byte the view can address lies within `buffer_len` and
+/// that every stride × index product (and their accumulations) fits in i64.
+///
+/// **Load-bearing**: this is the *only* bound check between the view's
+/// byte-stride description and the data buffer. Stride-aware consumers walk
+/// the buffer with plain-arithmetic indexing and rely on this precheck having
+/// proven every addressed byte is in range. Two corruption modes it catches:
+///
+///   1. A writer that lies about `source_shape` (Arrow column shorter than the
+///      view promises).
+///   2. A composed view whose stride × index product or accumulated offset
+///      overflows i64 even though `validate` accepted the per-entry bounds.
+///
+/// Empty visible regions (any axis with `steps == 0`) address no bytes and
+/// skip the check.
+fn check_view_buffer_bounds(
+    buffer_len: usize,
+    visible_shape: &[i64],
+    byte_strides: &[i64],
+    byte_offset: i64,
+    dtype_size: usize,
+) -> Result<(), ArrowError> {
+    if visible_shape.contains(&0) {
+        return Ok(());
+    }
+    let mut min_offset = byte_offset;
+    let mut max_offset = byte_offset;
+    for (k, &stride) in byte_strides.iter().enumerate() {
+        // `validate` guarantees `steps >= 0`, so `visible_shape[k] - 1` is
+        // in-range for any non-empty axis.
+        let last_idx = visible_shape[k] - 1;
+        let contribution = last_idx.checked_mul(stride).ok_or_else(|| {
+            ArrowError::InvalidArgumentError(format!(
+                "max addressable offset on axis {k} overflows i64"
+            ))
+        })?;
+        if contribution > 0 {
+            max_offset = max_offset.checked_add(contribution).ok_or_else(|| {
+                ArrowError::InvalidArgumentError(
+                    "max addressable offset accumulation overflows i64".to_string(),
+                )
+            })?;
+        } else if contribution < 0 {
+            min_offset = min_offset.checked_add(contribution).ok_or_else(|| {
+                ArrowError::InvalidArgumentError(
+                    "min addressable offset accumulation overflows i64".to_string(),
+                )
+            })?;
+        }
+    }
+    let last_byte = max_offset
+        .checked_add(dtype_size as i64 - 1)
+        .ok_or_else(|| {
+            ArrowError::InvalidArgumentError("max addressable byte overflows i64".to_string())
+        })?;
+    if min_offset < 0 {
+        return Err(ArrowError::InvalidArgumentError(format!(
+            "view addresses out-of-bounds negative byte offset {min_offset}"
+        )));
+    }
+    let buffer_len_i64 = i64::try_from(buffer_len).map_err(|_| {
+        ArrowError::InvalidArgumentError(format!("buffer length {buffer_len} exceeds i64::MAX"))
+    })?;
+    if last_byte >= buffer_len_i64 {
+        return Err(ArrowError::InvalidArgumentError(format!(
+            "view addresses byte {last_byte} but buffer is only {buffer_len} bytes"
+        )));
+    }
+    Ok(())
 }
 
 impl<'a> RasterRef for RasterRefImpl<'a> {
@@ -234,43 +397,54 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
             )))
         })?;
 
-        // Only the canonical identity view (null view row) is written today.
-        // A non-null view row would require the view → byte-stride composition
-        // path, which is not yet implemented. Surface it loudly here rather
-        // than silently rejecting the band, so callers see the standardised
-        // SedonaDB-internal-error framing.
-        //
-        // This rejection is also the guardrail keeping `RS_EnsureLoaded`
-        // correct: it drops `view()` on rebuild, so it would corrupt a
-        // viewed band. When this comes off (view composition), the loader
-        // request/response must round-trip the view — tracked in
-        // <https://github.com/apache/sedona-db/issues/897>.
-        if !self.band_view_list.is_null(band_row) {
-            return Err(ArrowError::ExternalError(Box::new(
-                sedona_common::sedona_internal_datafusion_err!(
-                    "non-null view row at band {band_row}: view composition is not yet implemented"
-                ),
-            )));
-        }
-        let view_entries: Vec<ViewEntry> = source_shape
-            .iter()
-            .enumerate()
-            .map(|(i, &s)| ViewEntry {
-                source_axis: i as i64,
-                start: 0,
-                step: 1,
-                steps: s,
-            })
-            .collect();
+        // Read the band's view (identity when the row is null, otherwise the
+        // persisted ViewEntry list) and validate it against the source shape —
+        // a malformed or corrupt view surfaces loudly rather than mislocating
+        // bytes.
+        let view_entries = self.read_band_view_entries(band_row, source_shape);
+        view_entries.validate(source_shape).map_err(|e| {
+            ArrowError::ExternalError(Box::new(sedona_common::sedona_internal_datafusion_err!(
+                "band {band_row} has malformed view: {e}"
+            )))
+        })?;
 
-        let visible_shape: Vec<i64> = source_shape.to_vec();
+        // Compose the view onto the source's natural C-order byte strides to
+        // get the visible shape, per-axis byte strides (0 for broadcast,
+        // negative for reverse), and the byte offset of element [0,...,0].
+        let visible_shape = view_entries.visible_shape();
+        let (byte_strides, byte_offset_i64) =
+            compose_byte_strides(band_row, source_shape, &view_entries, data_type.byte_size())?;
 
-        let dtype_size = data_type.byte_size() as i64;
-        let mut byte_strides = vec![0i64; source_shape.len()];
-        byte_strides[source_shape.len() - 1] = dtype_size;
-        for k in (0..source_shape.len() - 1).rev() {
-            byte_strides[k] = byte_strides[k + 1] * source_shape[k + 1];
+        // For InDb bands, verify the data column is long enough to cover every
+        // byte the view can address. The view-machinery validation above
+        // doesn't know the actual `data` BinaryView length — a writer that
+        // lies about source_shape vs the bytes written would otherwise slip
+        // through and panic later when a consumer walks the strided buffer.
+        // OutDb bands skip this check: their data column is empty by design.
+        let data_bytes = self.band_data_array.value(band_row);
+        if !data_bytes.is_empty() {
+            check_view_buffer_bounds(
+                data_bytes.len(),
+                &visible_shape,
+                &byte_strides,
+                byte_offset_i64,
+                data_type.byte_size(),
+            )
+            .map_err(|e| {
+                ArrowError::ExternalError(Box::new(sedona_common::sedona_internal_datafusion_err!(
+                    "band {band_row}: view-buffer bounds check failed: {e}"
+                )))
+            })?;
         }
+
+        // `compose_byte_strides` guarantees a non-negative offset; cross into
+        // `u64` for storage with a checked conversion that upholds that at the
+        // boundary.
+        let byte_offset = u64::try_from(byte_offset_i64).map_err(|_| {
+            ArrowError::ExternalError(Box::new(sedona_common::sedona_internal_datafusion_err!(
+                "band {band_row}: composed byte_offset {byte_offset_i64} is negative"
+            )))
+        })?;
 
         Ok(Box::new(BandRefImpl {
             dim_names_list: self.band_dim_names_list,
@@ -286,7 +460,7 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
             view_entries,
             visible_shape,
             byte_strides,
-            byte_offset: 0,
+            byte_offset,
         }))
     }
 
@@ -408,6 +582,10 @@ pub struct RasterStructArray<'a> {
     band_datatype_array: &'a UInt32Array,
     band_nodata_array: &'a BinaryArray,
     band_view_list: &'a ListArray,
+    band_view_source_axis: &'a Int64Array,
+    band_view_start: &'a Int64Array,
+    band_view_step: &'a Int64Array,
+    band_view_steps: &'a Int64Array,
     band_outdb_uri_array: &'a StringArray,
     band_outdb_format_array: &'a StringViewArray,
     band_data_array: &'a BinaryViewArray,
@@ -454,6 +632,12 @@ impl<'a> RasterStructArray<'a> {
         let band_datatype_array = as_uint32_array(bands_struct.column(band_indices::DATA_TYPE))?;
         let band_nodata_array = as_binary_array(bands_struct.column(band_indices::NODATA))?;
         let band_view_list = as_list_array(bands_struct.column(band_indices::VIEW))?;
+        let band_view_struct = as_struct_array(band_view_list.values())?;
+        let band_view_source_axis =
+            as_int64_array(band_view_struct.column(band_view_indices::SOURCE_AXIS))?;
+        let band_view_start = as_int64_array(band_view_struct.column(band_view_indices::START))?;
+        let band_view_step = as_int64_array(band_view_struct.column(band_view_indices::STEP))?;
+        let band_view_steps = as_int64_array(band_view_struct.column(band_view_indices::STEPS))?;
         let band_outdb_uri_array = as_string_array(bands_struct.column(band_indices::OUTDB_URI))?;
         let band_outdb_format_array =
             as_string_view_array(bands_struct.column(band_indices::OUTDB_FORMAT))?;
@@ -477,6 +661,10 @@ impl<'a> RasterStructArray<'a> {
             band_datatype_array,
             band_nodata_array,
             band_view_list,
+            band_view_source_axis,
+            band_view_start,
+            band_view_step,
+            band_view_steps,
             band_outdb_uri_array,
             band_outdb_format_array,
             band_data_array,
@@ -520,6 +708,10 @@ impl<'a> RasterStructArray<'a> {
             band_datatype_array: self.band_datatype_array,
             band_nodata_array: self.band_nodata_array,
             band_view_list: self.band_view_list,
+            band_view_source_axis: self.band_view_source_axis,
+            band_view_start: self.band_view_start,
+            band_view_step: self.band_view_step,
+            band_view_steps: self.band_view_steps,
             band_outdb_uri_array: self.band_outdb_uri_array,
             band_outdb_format_array: self.band_outdb_format_array,
             band_data_array: self.band_data_array,
@@ -556,8 +748,8 @@ mod tests {
     use crate::builder::{RasterBuilder, StartBandArgs};
     use crate::traits::BandOverrides;
     use arrow_array::{ArrayRef, ListArray, StructArray, UInt32Array};
-    use arrow_buffer::{OffsetBuffer, ScalarBuffer};
-    use arrow_schema::{DataType, Fields};
+    use arrow_buffer::{NullBuffer, OffsetBuffer, ScalarBuffer};
+    use arrow_schema::{DataType, Field, Fields};
     use sedona_schema::raster::{band_indices, raster_indices, BandDataType, RasterSchema};
     use sedona_testing::rasters::generate_test_rasters;
     use std::sync::Arc;
@@ -905,6 +1097,218 @@ mod tests {
         let err = rasters.get(0).unwrap().band(0).err().unwrap();
         assert!(err.to_string().contains("SedonaDB internal error"));
         assert!(err.to_string().contains("empty source_shape"));
+    }
+
+    // ---- Read path: non-identity view decoding + corruption rejection ----
+
+    /// Build a single-raster, single-band StructArray carrying an explicit,
+    /// non-identity view (`start=1, step=2, steps=3` over an 8-byte source).
+    /// The corruption tests replace one band-level column of this baseline.
+    fn build_explicit_view_raster() -> StructArray {
+        let mut builder = RasterBuilder::new(1);
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        builder
+            .start_raster_nd(&transform, &["x"], &[3], None)
+            .unwrap();
+        builder
+            .start_band(StartBandArgs {
+                view: Some(&[ViewEntry {
+                    source_axis: 0,
+                    start: 1,
+                    step: 2,
+                    steps: 3,
+                }]),
+                ..StartBandArgs::new(&["x"], &[8], BandDataType::UInt8)
+            })
+            .unwrap();
+        builder
+            .band_data_writer()
+            .append_value(vec![0u8, 1, 2, 3, 4, 5, 6, 7]);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+        builder.finish().unwrap()
+    }
+
+    /// Rebuild the band view list from hand-rolled entries. `entries[i]`
+    /// supplies all four `(source_axis, start, step, steps)` values for band
+    /// row `i`; `nulls` controls per-row validity (`None` → every row non-null).
+    fn make_band_view_list(
+        entries: Vec<Vec<(i64, i64, i64, i64)>>,
+        nulls: Option<Vec<bool>>,
+    ) -> ArrayRef {
+        let mut offsets: Vec<i32> = vec![0];
+        let (mut sa, mut start, mut step, mut steps) = (vec![], vec![], vec![], vec![]);
+        for row in &entries {
+            for &(a, s, k, n) in row {
+                sa.push(a);
+                start.push(s);
+                step.push(k);
+                steps.push(n);
+            }
+            offsets.push(sa.len() as i32);
+        }
+        let view_struct_fields = Fields::from(vec![
+            Field::new("source_axis", DataType::Int64, false),
+            Field::new("start", DataType::Int64, false),
+            Field::new("step", DataType::Int64, false),
+            Field::new("steps", DataType::Int64, false),
+        ]);
+        let view_struct = StructArray::new(
+            view_struct_fields,
+            vec![
+                Arc::new(Int64Array::from(sa)) as ArrayRef,
+                Arc::new(Int64Array::from(start)) as ArrayRef,
+                Arc::new(Int64Array::from(step)) as ArrayRef,
+                Arc::new(Int64Array::from(steps)) as ArrayRef,
+            ],
+            None,
+        );
+        let DataType::List(view_field) = RasterSchema::view_type() else {
+            unreachable!()
+        };
+        Arc::new(ListArray::new(
+            view_field,
+            OffsetBuffer::new(ScalarBuffer::from(offsets)),
+            Arc::new(view_struct),
+            nulls.map(NullBuffer::from),
+        ))
+    }
+
+    /// Build a band source_shape list with hand-rolled i64 entries so tests can
+    /// inject values the builder's writer-side checks would refuse.
+    fn make_band_source_shape_list(rows: Vec<Vec<i64>>) -> ArrayRef {
+        let mut offsets: Vec<i32> = vec![0];
+        let mut values: Vec<i64> = vec![];
+        for row in &rows {
+            values.extend_from_slice(row);
+            offsets.push(values.len() as i32);
+        }
+        let DataType::List(field) = RasterSchema::source_shape_type() else {
+            unreachable!()
+        };
+        Arc::new(ListArray::new(
+            field,
+            OffsetBuffer::new(ScalarBuffer::from(offsets)),
+            Arc::new(Int64Array::from(values)),
+            None,
+        ))
+    }
+
+    #[test]
+    fn band_decodes_explicit_view_end_to_end() {
+        // The baseline non-identity fixture must decode to the right visible
+        // shape, strides, and offset — the read path's happy case for a
+        // persisted view read out of the Arrow columns.
+        let array = build_explicit_view_raster();
+        let rasters = RasterStructArray::try_new(&array).unwrap();
+        let r = rasters.get(0).unwrap();
+        let band = r.band(0).unwrap();
+        assert_eq!(band.shape(), &[3]);
+        assert_eq!(band.raw_source_shape(), &[8]);
+        let buf = band.nd_buffer().unwrap();
+        assert_eq!(buf.strides, &[2]);
+        assert_eq!(buf.offset, 1);
+        assert!(!buf.is_contiguous());
+    }
+
+    #[test]
+    fn band_errors_when_view_length_mismatches_source_shape() {
+        // source_shape has 1 dim but the view encodes 2 entries.
+        let array = build_explicit_view_raster();
+        let bad_view = make_band_view_list(vec![vec![(0, 0, 1, 3), (0, 0, 1, 3)]], None);
+        let mutated = replace_band_column(&array, band_indices::VIEW, bad_view);
+        let rasters = RasterStructArray::try_new(&mutated).unwrap();
+        let err = rasters.get(0).unwrap().band(0).err().unwrap();
+        assert!(err.to_string().contains("malformed view"), "got: {err}");
+    }
+
+    #[test]
+    fn band_rejects_empty_non_null_view_row() {
+        // Identity is encoded exclusively as a NULL row; a non-null zero-length
+        // list is malformed and must error rather than fall back to identity.
+        let array = build_explicit_view_raster();
+        let empty_non_null_view = make_band_view_list(vec![vec![]], Some(vec![true]));
+        let mutated = replace_band_column(&array, band_indices::VIEW, empty_non_null_view);
+        let rasters = RasterStructArray::try_new(&mutated).unwrap();
+        let err = rasters.get(0).unwrap().band(0).err().unwrap();
+        assert!(err.to_string().contains("view length"), "got: {err}");
+    }
+
+    #[test]
+    fn band_errors_when_data_column_shorter_than_view() {
+        // Inflate source_shape to [16] and the view to steps=10 along it: the
+        // addressed byte range (0..10) jumps past the actual 8-byte data
+        // column, so the InDb bounds precheck must fire.
+        let array = build_explicit_view_raster();
+        let new_source_shape = make_band_source_shape_list(vec![vec![16i64]]);
+        let mutated_ss = replace_band_column(&array, band_indices::SOURCE_SHAPE, new_source_shape);
+        let new_view = make_band_view_list(vec![vec![(0, 0, 1, 10)]], None);
+        let mutated = replace_band_column(&mutated_ss, band_indices::VIEW, new_view);
+        let rasters = RasterStructArray::try_new(&mutated).unwrap();
+        let err = rasters.get(0).unwrap().band(0).err().unwrap();
+        assert!(err.to_string().contains("SedonaDB internal error"));
+        assert!(err.to_string().contains("view-buffer bounds check failed"));
+    }
+
+    #[test]
+    fn band_errors_when_source_stride_product_overflows() {
+        // dtype_size × Π source_shape[j>k] must not silently wrap. A 3-D source
+        // shape of [1, 1<<32, 1<<32] makes (1<<32) × (1<<32) = 1<<64 overflow
+        // i64 during the source-stride build.
+        let array = build_explicit_view_raster();
+        let new_source_shape =
+            make_band_source_shape_list(vec![vec![1i64, 1i64 << 32, 1i64 << 32]]);
+        let mutated_ss = replace_band_column(&array, band_indices::SOURCE_SHAPE, new_source_shape);
+        // steps=0 on the giant axes keeps validate's start/last checks trivial.
+        let new_view =
+            make_band_view_list(vec![vec![(0, 0, 1, 1), (1, 0, 1, 0), (2, 0, 1, 0)]], None);
+        let mutated = replace_band_column(&mutated_ss, band_indices::VIEW, new_view);
+        let rasters = RasterStructArray::try_new(&mutated).unwrap();
+        assert!(rasters.get(0).unwrap().band(0).is_err());
+    }
+
+    #[test]
+    fn fast_paths_return_columnar_values_when_band_view_is_corrupt() {
+        // band(i) validates the view and errors on a malformed one; the
+        // columnar fast paths read their fields directly without consulting the
+        // view. Pin the contract so a future reader doesn't accidentally couple
+        // them.
+        let mut builder = RasterBuilder::new(1);
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        builder
+            .start_raster_nd(&transform, &["x"], &[3], None)
+            .unwrap();
+        builder
+            .start_band(StartBandArgs {
+                name: Some("a"),
+                view: Some(&[ViewEntry {
+                    source_axis: 0,
+                    start: 1,
+                    step: 2,
+                    steps: 3,
+                }]),
+                nodata: Some(&[0u8, 0, 0, 0]),
+                outdb_uri: Some("s3://bucket/a.tif"),
+                outdb_format: Some("GTiff"),
+                ..StartBandArgs::new(&["x"], &[8], BandDataType::UInt32)
+            })
+            .unwrap();
+        builder.band_data_writer().append_value(vec![0u8; 32]);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+        let array = builder.finish().unwrap();
+
+        // Corrupt the view with a negative steps value.
+        let bad_view = make_band_view_list(vec![vec![(0, 0, 1, -1)]], None);
+        let mutated = replace_band_column(&array, band_indices::VIEW, bad_view);
+        let rasters = RasterStructArray::try_new(&mutated).unwrap();
+        let r = rasters.get(0).unwrap();
+
+        assert!(r.band(0).is_err());
+        assert_eq!(r.band_data_type(0), Some(BandDataType::UInt32));
+        assert_eq!(r.band_outdb_uri(0), Some("s3://bucket/a.tif"));
+        assert_eq!(r.band_outdb_format(0), Some("GTiff"));
+        assert_eq!(r.band_nodata(0), Some(&[0u8, 0, 0, 0][..]));
     }
 
     // direct fast-path tests

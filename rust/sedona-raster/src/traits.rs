@@ -297,8 +297,9 @@ pub struct BandOverrides<'a> {
     /// coordinates**. [`BandRef::copy_into`] composes it onto the source's own
     /// view for you — you don't manage that composition and don't need to know
     /// whether the source already carries a view. `None` inherits the source's
-    /// view unchanged. (A non-identity result isn't persistable yet and
-    /// `copy_into` rejects it; see <https://github.com/apache/sedona-db/issues/897>.)
+    /// view unchanged. A non-identity result is persisted on the derived band
+    /// (as a slice, broadcast, permutation, or reverse) and decoded back by the
+    /// reader; the underlying bytes are carried over unchanged.
     pub view: Option<&'a [ViewEntry]>,
 }
 
@@ -455,12 +456,11 @@ pub trait BandRef {
     /// inherits the source's view unchanged.
     ///
     /// The composition + persistence is delegated to
-    /// [`RasterBuilder::start_band`]. Today that stores views only as
-    /// the canonical identity null sentinel, so a non-identity effective view
-    /// is rejected rather than copying mislocated bytes; in practice the source
-    /// is identity-viewed and any override must compose back to the identity.
-    /// View persistence is tracked in
-    /// <https://github.com/apache/sedona-db/issues/897>.
+    /// [`RasterBuilder::start_band`]: an identity effective view is
+    /// stored as the canonical null sentinel, and a non-identity one (a slice,
+    /// broadcast, permutation, or reverse) is persisted explicitly and decoded
+    /// back by the reader. The source bytes are carried over unchanged — the
+    /// view relocates the visible window over them, it does not repack them.
     fn copy_into(
         &self,
         builder: &mut RasterBuilder,
@@ -872,27 +872,82 @@ mod tests {
     }
 
     #[test]
-    fn copy_into_rejects_non_identity_source_view() {
-        // A sliced source view (step 2 on the outer axis) composes to a
-        // non-identity effective view; copy_into can't persist it yet, so it
-        // must error rather than copy mislocated bytes.
-        let src = band(&["y", "x"], &[4, 5], &[ve(0, 0, 2, 2), ve(1, 0, 1, 5)]);
+    fn copy_into_persists_non_identity_source_view() {
+        // A source band that already carries a non-identity view (an every-
+        // other slice over an 8-element axis) is copied with default overrides:
+        // the effective view is the source's own slice, and copy_into persists
+        // it and carries the source bytes over. Read back, the derived band
+        // exposes the same slice — visible values [1, 3, 5].
+        use crate::array::RasterStructArray;
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+
+        // Source: source_shape [8], data [0..8], view (start=1, step=2, steps=3).
+        let mut ib = RasterBuilder::new(1);
+        ib.start_raster_nd(&transform, &["x"], &[3], None).unwrap();
+        ib.start_band(StartBandArgs {
+            view: Some(&[ve(0, 1, 2, 3)]),
+            ..StartBandArgs::new(&["x"], &[8], BandDataType::UInt8)
+        })
+        .unwrap();
+        ib.band_data_writer()
+            .append_value((0u8..8).collect::<Vec<u8>>());
+        ib.finish_band().unwrap();
+        ib.finish_raster().unwrap();
+        let in_array = ib.finish().unwrap();
+        let in_rasters = RasterStructArray::try_new(&in_array).unwrap();
+        let in_raster = in_rasters.get(0).unwrap();
+        let in_band = in_raster.band(0).unwrap();
+
         let mut ob = RasterBuilder::new(1);
-        let err = src
+        ob.start_raster_nd(&transform, &["x"], &[3], None).unwrap();
+        in_band
             .copy_into(&mut ob, BandOverrides::default())
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("non-identity"), "unexpected error: {err}");
+            .unwrap();
+        ob.finish_band().unwrap();
+        ob.finish_raster().unwrap();
+        let out_array = ob.finish().unwrap();
+        let out_rasters = RasterStructArray::try_new(&out_array).unwrap();
+        let out_raster = out_rasters.get(0).unwrap();
+        let out_band = out_raster.band(0).unwrap();
+
+        assert_eq!(out_band.view(), &[ve(0, 1, 2, 3)]);
+        assert_eq!(out_band.shape(), &[3]);
+        assert_eq!(out_band.raw_source_shape(), &[8]);
+        let buf = out_band.nd_buffer().unwrap();
+        assert_eq!(buf.strides, &[2]);
+        assert_eq!(buf.offset, 1);
+        // Strided → not contiguous; the visible bytes must be [1, 3, 5].
+        assert!(!buf.is_contiguous());
+        let visited: Vec<u8> = (0..buf.shape[0])
+            .map(|i| buf.buffer[(buf.offset as i64 + i * buf.strides[0]) as usize])
+            .collect();
+        assert_eq!(visited, vec![1, 3, 5]);
     }
 
     #[test]
-    fn copy_into_rejects_non_identity_override_view() {
-        // Identity source, but the caller's override slices it (step 2); the
-        // composed effective view is non-identity and can't be persisted yet.
-        let src = band(&["y", "x"], &[4, 5], &[ve(0, 0, 1, 4), ve(1, 0, 1, 5)]);
-        let override_view = [ve(0, 0, 2, 2), ve(1, 0, 1, 5)];
+    fn copy_into_persists_non_identity_override_view() {
+        // Identity source; the caller's override slices every other element
+        // (step 2). copy_into composes the override onto the identity source
+        // view and persists the resulting slice — visible values [1, 3].
+        use crate::array::RasterStructArray;
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+
+        let mut ib = RasterBuilder::new(1);
+        ib.start_raster_nd(&transform, &["x"], &[4], None).unwrap();
+        ib.start_band(StartBandArgs::new(&["x"], &[4], BandDataType::UInt8))
+            .unwrap();
+        ib.band_data_writer().append_value(vec![1u8, 2, 3, 4]);
+        ib.finish_band().unwrap();
+        ib.finish_raster().unwrap();
+        let in_array = ib.finish().unwrap();
+        let in_rasters = RasterStructArray::try_new(&in_array).unwrap();
+        let in_raster = in_rasters.get(0).unwrap();
+        let in_band = in_raster.band(0).unwrap();
+
+        let override_view = [ve(0, 0, 2, 2)];
         let mut ob = RasterBuilder::new(1);
-        let err = src
+        ob.start_raster_nd(&transform, &["x"], &[2], None).unwrap();
+        in_band
             .copy_into(
                 &mut ob,
                 BandOverrides {
@@ -900,9 +955,25 @@ mod tests {
                     ..Default::default()
                 },
             )
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("non-identity"), "unexpected error: {err}");
+            .unwrap();
+        ob.finish_band().unwrap();
+        ob.finish_raster().unwrap();
+        let out_array = ob.finish().unwrap();
+        let out_rasters = RasterStructArray::try_new(&out_array).unwrap();
+        let out_raster = out_rasters.get(0).unwrap();
+        let out_band = out_raster.band(0).unwrap();
+
+        assert_eq!(out_band.view(), &[ve(0, 0, 2, 2)]);
+        assert_eq!(out_band.shape(), &[2]);
+        assert_eq!(out_band.raw_source_shape(), &[4]);
+        let buf = out_band.nd_buffer().unwrap();
+        assert_eq!(buf.strides, &[2]);
+        assert_eq!(buf.offset, 0);
+        assert!(!buf.is_contiguous());
+        let visited: Vec<u8> = (0..buf.shape[0])
+            .map(|i| buf.buffer[(buf.offset as i64 + i * buf.strides[0]) as usize])
+            .collect();
+        assert_eq!(visited, vec![1, 3]);
     }
 
     #[test]
