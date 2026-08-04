@@ -46,7 +46,7 @@ use datafusion_physical_plan::{
 use futures::{Stream, StreamExt};
 
 use sedona_query_planner::tile_explode_node::tile_explode_appended_fields;
-use sedona_raster::array::RasterStructArray;
+use sedona_raster::array::{RasterRefImpl, RasterStructArray};
 use sedona_raster::builder::RasterBuilder;
 use sedona_raster::traits::RasterRef;
 use sedona_raster_gdal::tiling::{
@@ -355,6 +355,7 @@ impl TileExplodeStream {
                     let (num_tile_x, num_tile_y) =
                         tile_grid_dims(width, height, tile_width, tile_height)?;
                     let band_indices = resolve_band_indices(params.bands, raster.num_bands())?;
+                    ensure_bands_loaded(&raster, &band_indices)?;
                     current.cursor = Some(RasterCursor {
                         num_tile_x,
                         total_tiles: num_tile_x * num_tile_y,
@@ -439,6 +440,31 @@ impl TileExplodeStream {
         let out = RecordBatch::try_new(self.output_schema.clone(), columns)?;
         Ok(Some(out))
     }
+}
+
+/// Reject an OutDb raster whose selected bands are not materialized in-database.
+///
+/// The tile-explode analyzer rule removes the `RS_TileExplode` marker before the
+/// `EnsureLoaded` optimizer rule runs, so an OutDb raster carried into this
+/// operator is never auto-wrapped in `RS_EnsureLoaded` — its bands hold the empty
+/// OutDb sentinel rather than pixels. Tiling reads pixels, so rather than tile
+/// empty/garbage bytes this returns a clear error asking the caller to load the
+/// raster first. Wiring the async loader through this streaming operator (the
+/// real fix) is tracked as follow-up work.
+fn ensure_bands_loaded(raster: &RasterRefImpl<'_>, band_indices: &[usize]) -> Result<()> {
+    for &band_idx in band_indices {
+        // `band_idx` is 1-based; the `band` accessor is 0-based.
+        let band = raster.band(band_idx - 1).map_err(|e| {
+            exec_datafusion_err!("TileExplodeExec: failed to get band {band_idx}: {e}")
+        })?;
+        if !band.is_indb() {
+            return Err(exec_datafusion_err!(
+                "RS_TileExplode does not yet support OutDb rasters; load the raster with \
+                 RS_EnsureLoaded before tiling"
+            ));
+        }
+    }
+    Ok(())
 }
 
 impl Stream for TileExplodeStream {
@@ -742,6 +768,32 @@ mod tests {
             0,
             "all-null input yields zero output rows"
         );
+    }
+
+    #[tokio::test]
+    async fn outdb_raster_errors_clearly() {
+        // A raster whose band holds the empty OutDb sentinel (not loaded) cannot
+        // be tiled: the analyzer removed the marker before EnsureLoaded could wrap
+        // it, so the exec rejects it with a clear "load with RS_EnsureLoaded" error
+        // rather than tiling empty bytes.
+        let outdb = RasterSpec::d2(2, 2)
+            .crs(None)
+            .transform([0.0, 1.0, 0.0, 2.0, 0.0, -1.0])
+            .band_values(&[1u8, 2, 3, 4])
+            .outdb("s3://bucket/file.tif", Some("geotiff"));
+        let exec = Arc::new(
+            TileExplodeExec::try_new(
+                raster_input(vec![Some(outdb)]),
+                all_bands_args(2, 2, false, None),
+            )
+            .unwrap(),
+        );
+        let ctx = SessionContext::new();
+        let err = collect(exec, ctx.task_ctx())
+            .await
+            .expect_err("tiling an unloaded OutDb raster should error")
+            .to_string();
+        assert!(err.contains("RS_EnsureLoaded"), "unexpected error: {err}");
     }
 
     #[tokio::test]

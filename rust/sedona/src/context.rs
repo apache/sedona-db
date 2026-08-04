@@ -74,6 +74,7 @@ use sedona_spatial_join_gpu::options::GpuOptions;
 use sedona_query_planner::{
     optimizer::{register_ensure_loaded_optimizer, register_spatial_join_logical_optimizer},
     query_planner::SedonaQueryPlanner,
+    tile_explode_analyzer::TileExplodeAnalyzerRule,
 };
 use sedona_raster::raster_loader::{AsyncRasterLoader, RasterLoaderConfig, RasterLoaderRegistry};
 use sedona_tile_explode::DefaultTileExplodePhysicalPlanner;
@@ -243,6 +244,12 @@ impl SedonaContext {
 
         state_builder = register_spatial_join_logical_optimizer(state_builder)?;
         state_builder = register_ensure_loaded_optimizer(state_builder)?;
+        // Append the tile-explode analyzer rule (singular `with_analyzer_rule`, so
+        // it runs after the default `TypeCoercion` rule rather than replacing the
+        // defaults). It lifts a top-level `RS_TileExplode(...)` projection column
+        // into a `TileExplodePlanNode`, which the query planner above plans as a
+        // streaming `TileExplodeExec`.
+        state_builder = state_builder.with_analyzer_rule(Arc::new(TileExplodeAnalyzerRule::new()));
         state_builder = state_builder.with_query_planner(Arc::new(planner));
 
         let mut state = state_builder.build();

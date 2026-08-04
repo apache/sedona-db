@@ -52,6 +52,13 @@ impl TileExplodePhysicalPlanner for DefaultTileExplodePhysicalPlanner {
         physical_input: Arc<dyn ExecutionPlan>,
         _session_state: &SessionState,
     ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
+        // OutDb pixel loading is not wired through here yet: the tile-explode
+        // analyzer rule removes the `RS_TileExplode` marker before the
+        // `EnsureLoaded` optimizer rule can wrap the raster, so an OutDb input
+        // reaches `TileExplodeExec` unloaded. Rather than reading empty/garbage
+        // bytes, the exec rejects an unloaded OutDb raster with a clear runtime
+        // error (see `exec::ensure_bands_loaded`). Materializing the bands here
+        // via the async loader `session_state` exposes is tracked follow-up work.
         let args = resolve_exec_args(&node.args, &node.layout, &physical_input)?;
         let exec = TileExplodeExec::try_new(physical_input, args)?;
         Ok(Some(Arc::new(exec)))
