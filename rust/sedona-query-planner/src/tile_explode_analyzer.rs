@@ -188,7 +188,11 @@ fn contains_tile_explode(expr: &Expr) -> Result<bool> {
 ///
 /// A 3-argument call is always no-band; a 6-argument non-list call is always
 /// scalar-band (no-band tops out at 5 arguments).
-fn infer_tile_arg_layout(args: &[Expr], input_schema: &DFSchema) -> Result<TileArgLayout> {
+///
+/// Exposed so a caller building a [`TileExplodePlanNode`] directly (the Python
+/// `DataFrame.tile_explode` surface) resolves the layout through this one shared
+/// mapping rather than re-encoding the argument positions.
+pub fn infer_tile_arg_layout(args: &[Expr], input_schema: &DFSchema) -> Result<TileArgLayout> {
     let count = args.len();
     if !(3..=6).contains(&count) {
         return plan_err!("RS_TileExplode expects between 3 and 6 arguments, got {count}");

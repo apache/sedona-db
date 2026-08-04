@@ -6572,6 +6572,7 @@ dependencies = [
  "sedona-geometry",
  "sedona-geoparquet",
  "sedona-proj",
+ "sedona-query-planner",
  "sedona-raster",
  "sedona-schema",
  "sedona-tg",

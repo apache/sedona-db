@@ -1,0 +1,165 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: RS_TileExplode
+description: >
+  Splits the input raster into a grid of fixed-size tiles and emits one row per
+  tile with top-level `x`, `y`, and `tile` columns.
+kernels:
+  - returns: raster
+    args:
+    - raster
+    - name: width
+      type: integer
+      description: Tile width in pixels. Must be >= 1.
+    - name: height
+      type: integer
+      description: Tile height in pixels. Must be >= 1.
+    - name: pad_with_no_data
+      type: boolean
+      description: >
+        Optional (default false). When true, pad the last partial row/column of
+        tiles to the full tile size with a nodata fill; when false the smaller
+        edge tile is emitted as-is.
+    - name: no_data_value
+      type: double
+      description: >
+        Optional. The value written to padded pixels (only valid with
+        `pad_with_no_data = true`); defaults to the band's own nodata value, or
+        the band data type's minimum if it has none. It is an error if it does
+        not fit the band's data type.
+  - returns: raster
+    args:
+    - raster
+    - name: band_index
+      type: integer
+      description: A single 1-based band index to include in each tile.
+    - name: width
+      type: integer
+    - name: height
+      type: integer
+    - name: pad_with_no_data
+      type: boolean
+    - name: no_data_value
+      type: double
+  - returns: raster
+    args:
+    - raster
+    - name: band_indices
+      type: array
+      description: >
+        `Array[Int]` of 1-based band indices to include in each tile, in the
+        given order.
+    - name: width
+      type: integer
+    - name: height
+      type: integer
+    - name: pad_with_no_data
+      type: boolean
+    - name: no_data_value
+      type: double
+---
+
+::: callout-warning
+**Experimental.** This function is experimental; its behavior may change without notice.
+:::
+
+## Description
+
+`RS_TileExplode` cuts a raster into a grid of `width` x `height` tiles and emits
+**one row per tile**, mirroring Sedona Spark's `RS_TileExplode` generator. It is
+the row-multiplying form of `RS_Tile`, which returns every tile of a raster in a
+single `List` cell that you would otherwise `UNNEST`. `RS_TileExplode(rast, w, h)`
+and `UNNEST(RS_Tile(rast, w, h))` produce byte-identical tiles in the same order.
+
+The generator appends three **top-level** columns to the query's other selected
+columns:
+
+- `x`: the tile's grid column (0-based), counting from the left.
+- `y`: the tile's grid row (0-based), counting from the top.
+- `tile`: the tile raster, with a geotransform shifted to the tile's own origin.
+
+The grid is `ceil(width / tile_width)` columns by `ceil(height / tile_height)`
+rows, iterated row-major (`y` then `x`). When the raster does not divide evenly,
+the last column and row of tiles are partial: with `pad_with_no_data = false` the
+smaller edge tile is emitted as-is, and with `pad_with_no_data = true` those tiles
+are padded to the full tile size with a nodata fill. When the band(s) have no
+nodata value, `no_data_value` supplies one.
+
+When no band argument is given, every band is included. A scalar `band_index`
+selects a single band; `band_indices` selects an ordered subset of bands. Band
+indices are 1-based. A null or untileable raster contributes zero rows.
+
+`RS_TileExplode` is a generator, so it may appear only as a single top-level
+column of a `SELECT` (alongside pass-through columns). Nesting it inside another
+expression, placing it in `WHERE`/`HAVING`/`GROUP BY`, or using two generators in
+one `SELECT` is a plan-time error. Its raster argument must be a **column**
+reference — tile the rasters of a table (or a derived table such as
+`(SELECT RS_Example() AS rast)`), not a constant raster expression.
+
+::: callout-note
+`RS_TileExplode` **copies the raster**: every tile carries its own pixels, so
+tiling copies the full raster spread across the tiles. A small tile size produces
+many tiles (a `1 x 1` tile size yields one tile per pixel).
+:::
+
+## Examples
+
+Explode every band of a raster column into a 2x2 grid of 32x16 tiles, counting
+the rows so the example output stays small rather than printing every tile
+raster:
+
+```sql
+SELECT COUNT(*) AS num_tiles
+FROM (SELECT RS_TileExplode(rast, 32, 16) FROM (SELECT RS_Example() AS rast));
+```
+
+Explode every band, padding the edge tiles to the full 40x20 size with a nodata
+fill of 0:
+
+```sql
+SELECT COUNT(*) AS num_tiles
+FROM (SELECT RS_TileExplode(rast, 40, 20, true, 0.0) FROM (SELECT RS_Example() AS rast));
+```
+
+Explode a single band (band 1) into 32x16 tiles:
+
+```sql
+SELECT COUNT(*) AS num_tiles
+FROM (SELECT RS_TileExplode(rast, 1, 32, 16) FROM (SELECT RS_Example() AS rast));
+```
+
+Explode an ordered subset of bands:
+
+```sql
+SELECT COUNT(*) AS num_tiles
+FROM (SELECT RS_TileExplode(rast, make_array(1, 3), 32, 16) FROM (SELECT RS_Example() AS rast));
+```
+
+Pass-through columns are replicated across every tile row. Here `id` rides along
+with each of the exploded tiles, so grouping the exploded rows by `id` counts one
+raster's tiles:
+
+```sql
+SELECT id, COUNT(*) AS num_tiles
+FROM (
+  SELECT id, RS_TileExplode(rast, 32, 16)
+  FROM (SELECT 7 AS id, RS_Example() AS rast)
+)
+GROUP BY id;
+```

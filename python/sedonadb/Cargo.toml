@@ -54,6 +54,7 @@ sedona-extension = { workspace = true }
 sedona-geometry = { workspace = true }
 sedona-expr = { workspace = true }
 sedona-geoparquet = { workspace = true }
+sedona-query-planner = { workspace = true }
 sedona-raster = { workspace = true }
 sedona-schema = { workspace = true }
 sedona-gdal = { workspace = true }
