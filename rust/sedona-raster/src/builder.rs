@@ -158,6 +158,25 @@ pub struct StartBandArgs<'a> {
     pub outdb_format: Option<&'a str>,
 }
 
+impl<'a> StartBandArgs<'a> {
+    /// The required band descriptors; the optional fields (`name`, `view`,
+    /// `nodata`, `outdb_uri`, `outdb_format`) default to `None`. Override any of
+    /// them with struct-update syntax, e.g.
+    /// `StartBandArgs { nodata: Some(&nd), ..StartBandArgs::new(dims, shape, dtype) }`.
+    pub fn new(dim_names: &'a [&'a str], source_shape: &'a [i64], data_type: BandDataType) -> Self {
+        Self {
+            name: None,
+            dim_names,
+            source_shape,
+            view: None,
+            data_type,
+            nodata: None,
+            outdb_uri: None,
+            outdb_format: None,
+        }
+    }
+}
+
 impl RasterBuilder {
     /// Create a new raster builder with the specified capacity.
     pub fn new(capacity: usize) -> Self {
@@ -483,14 +502,12 @@ impl RasterBuilder {
             ));
         }
         self.start_band(StartBandArgs {
-            name: None,
-            dim_names: &["y", "x"],
-            source_shape: &[self.current_height, self.current_width],
-            view: None,
-            data_type,
             nodata,
-            outdb_uri: None,
-            outdb_format: None,
+            ..StartBandArgs::new(
+                &["y", "x"],
+                &[self.current_height, self.current_width],
+                data_type,
+            )
         })
     }
 
@@ -978,19 +995,14 @@ mod tests {
         // copies the N-D spatial grid, so add the band with an explicit shape
         // matching the source's [height, width].
         target_builder
-            .start_band(StartBandArgs {
-                name: None,
-                dim_names: &["y", "x"],
-                source_shape: &[
+            .start_band(StartBandArgs::new(
+                &["y", "x"],
+                &[
                     source_raster.height().unwrap(),
                     source_raster.width().unwrap(),
                 ],
-                view: None,
-                data_type: BandDataType::UInt16,
-                nodata: None,
-                outdb_uri: None,
-                outdb_format: None,
-            })
+                BandDataType::UInt16,
+            ))
             .unwrap();
         let new_data = vec![100u16; 1008]; // Different data, same dimensions
         let new_data_bytes: Vec<u8> = new_data.iter().flat_map(|&x| x.to_le_bytes()).collect();
@@ -1197,14 +1209,8 @@ mod tests {
         // with the SedonaDB `#band=N` fragment; the band's own `data` is empty.
         builder
             .start_band(StartBandArgs {
-                name: None,
-                dim_names: &["y", "x"],
-                source_shape: &[1024, 1024],
-                view: None,
-                data_type: BandDataType::Float32,
-                nodata: None,
                 outdb_uri: Some("s3://mybucket/satellite_image.tif#band=2"),
-                outdb_format: None,
+                ..StartBandArgs::new(&["y", "x"], &[1024, 1024], BandDataType::Float32)
             })
             .unwrap();
         // For OutDbRef, data field could be empty or contain metadata/thumbnail
@@ -1390,13 +1396,7 @@ mod tests {
         builder
             .start_band(StartBandArgs {
                 name: Some("temperature"),
-                dim_names: &["time", "y", "x"],
-                source_shape: &[3, 4, 5],
-                view: None,
-                data_type: BandDataType::Float32,
-                nodata: None,
-                outdb_uri: None,
-                outdb_format: None,
+                ..StartBandArgs::new(&["time", "y", "x"], &[3, 4, 5], BandDataType::Float32)
             })
             .unwrap();
         let data = vec![0u8; 3 * 4 * 5 * 4]; // 3*4*5 Float32 elements
@@ -1440,13 +1440,11 @@ mod tests {
         builder
             .start_band(StartBandArgs {
                 name: Some("sst"),
-                dim_names: &["latitude", "longitude"],
-                source_shape: &[180, 360],
-                view: None,
-                data_type: BandDataType::Float32,
-                nodata: None,
-                outdb_uri: None,
-                outdb_format: None,
+                ..StartBandArgs::new(
+                    &["latitude", "longitude"],
+                    &[180, 360],
+                    BandDataType::Float32,
+                )
             })
             .unwrap();
         let data = vec![0u8; 180 * 360 * 4];
@@ -1478,13 +1476,7 @@ mod tests {
         builder
             .start_band(StartBandArgs {
                 name: Some("temperature"),
-                dim_names: &["time", "y", "x"],
-                source_shape: &[12, 64, 64],
-                view: None,
-                data_type: BandDataType::Float32,
-                nodata: None,
-                outdb_uri: None,
-                outdb_format: None,
+                ..StartBandArgs::new(&["time", "y", "x"], &[12, 64, 64], BandDataType::Float32)
             })
             .unwrap();
         let data_3d = vec![0u8; 12 * 64 * 64 * 4];
@@ -1495,13 +1487,7 @@ mod tests {
         builder
             .start_band(StartBandArgs {
                 name: Some("elevation"),
-                dim_names: &["y", "x"],
-                source_shape: &[64, 64],
-                view: None,
-                data_type: BandDataType::Float64,
-                nodata: None,
-                outdb_uri: None,
-                outdb_format: None,
+                ..StartBandArgs::new(&["y", "x"], &[64, 64], BandDataType::Float64)
             })
             .unwrap();
         let data_2d = vec![0u8; 64 * 64 * 8];
@@ -1539,16 +1525,11 @@ mod tests {
             .start_raster_nd(&transform, &["x", "y"], &[32, 32], None)
             .unwrap();
         builder
-            .start_band(StartBandArgs {
-                name: None,
-                dim_names: &["time", "pressure", "y", "x"],
-                source_shape: &[6, 10, 32, 32],
-                view: None,
-                data_type: BandDataType::Float32,
-                nodata: None,
-                outdb_uri: None,
-                outdb_format: None,
-            })
+            .start_band(StartBandArgs::new(
+                &["time", "pressure", "y", "x"],
+                &[6, 10, 32, 32],
+                BandDataType::Float32,
+            ))
             .unwrap();
         let data = vec![0u8; 6 * 10 * 32 * 32 * 4];
         builder.band_data_writer().append_value(&data);
@@ -1608,16 +1589,11 @@ mod tests {
             .start_raster_nd(&transform, &["x", "y"], &[4, 3], None)
             .unwrap();
         builder
-            .start_band(StartBandArgs {
-                name: None,
-                dim_names: &["y", "x"],
-                source_shape: &[3, 4],
-                view: None,
-                data_type: BandDataType::UInt8,
-                nodata: None,
-                outdb_uri: None,
-                outdb_format: None,
-            })
+            .start_band(StartBandArgs::new(
+                &["y", "x"],
+                &[3, 4],
+                BandDataType::UInt8,
+            ))
             .unwrap();
         builder.band_data_writer().append_value(vec![0u8; 12]);
         builder.finish_band().unwrap();
@@ -1628,16 +1604,11 @@ mod tests {
             .start_raster_nd(&transform, &["x", "y"], &[5, 3], None)
             .unwrap();
         builder
-            .start_band(StartBandArgs {
-                name: None,
-                dim_names: &["z", "y", "x"],
-                source_shape: &[2, 3, 5],
-                view: None,
-                data_type: BandDataType::Float64,
-                nodata: None,
-                outdb_uri: None,
-                outdb_format: None,
-            })
+            .start_band(StartBandArgs::new(
+                &["z", "y", "x"],
+                &[2, 3, 5],
+                BandDataType::Float64,
+            ))
             .unwrap();
         builder
             .band_data_writer()
@@ -1651,16 +1622,7 @@ mod tests {
             .start_raster_nd(&transform, &["x"], &[10], None)
             .unwrap();
         builder
-            .start_band(StartBandArgs {
-                name: None,
-                dim_names: &["x"],
-                source_shape: &[10],
-                view: None,
-                data_type: BandDataType::UInt16,
-                nodata: None,
-                outdb_uri: None,
-                outdb_format: None,
-            })
+            .start_band(StartBandArgs::new(&["x"], &[10], BandDataType::UInt16))
             .unwrap();
         builder.band_data_writer().append_value(vec![0u8; 20]);
         builder.finish_band().unwrap();
@@ -1715,13 +1677,7 @@ mod tests {
         builder
             .start_band(StartBandArgs {
                 name: Some("temperature"),
-                dim_names: &["y", "x"],
-                source_shape: &[4, 4],
-                view: None,
-                data_type: BandDataType::Float32,
-                nodata: None,
-                outdb_uri: None,
-                outdb_format: None,
+                ..StartBandArgs::new(&["y", "x"], &[4, 4], BandDataType::Float32)
             })
             .unwrap();
         builder.band_data_writer().append_value(vec![0u8; 64]);
@@ -1752,16 +1708,11 @@ mod tests {
             .start_raster_nd(&transform, &["longitude", "latitude"], &[360, 180], None)
             .unwrap();
         builder
-            .start_band(StartBandArgs {
-                name: None,
-                dim_names: &["latitude", "longitude"],
-                source_shape: &[180, 360],
-                view: None,
-                data_type: BandDataType::UInt8,
-                nodata: None,
-                outdb_uri: None,
-                outdb_format: None,
-            })
+            .start_band(StartBandArgs::new(
+                &["latitude", "longitude"],
+                &[180, 360],
+                BandDataType::UInt8,
+            ))
             .unwrap();
         builder
             .band_data_writer()
@@ -1813,16 +1764,7 @@ mod tests {
             .unwrap();
         // Band is missing "y" entirely.
         builder
-            .start_band(StartBandArgs {
-                name: None,
-                dim_names: &["x"],
-                source_shape: &[4],
-                view: None,
-                data_type: BandDataType::UInt8,
-                nodata: None,
-                outdb_uri: None,
-                outdb_format: None,
-            })
+            .start_band(StartBandArgs::new(&["x"], &[4], BandDataType::UInt8))
             .unwrap();
         builder.band_data_writer().append_value(vec![0u8; 4]);
         builder.finish_band().unwrap();
@@ -1843,16 +1785,7 @@ mod tests {
         let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
         builder.start_raster_nd(&transform, &[], &[], None).unwrap();
         let err = builder
-            .start_band(StartBandArgs {
-                name: None,
-                dim_names: &[],
-                source_shape: &[],
-                view: None,
-                data_type: BandDataType::UInt8,
-                nodata: None,
-                outdb_uri: None,
-                outdb_format: None,
-            })
+            .start_band(StartBandArgs::new(&[], &[], BandDataType::UInt8))
             .unwrap_err();
         assert!(
             err.to_string().contains("0-dimensional"),
@@ -1871,16 +1804,11 @@ mod tests {
             .start_raster_nd(&transform, &["x", "y"], &[3, 2], None)
             .unwrap();
         builder
-            .start_band(StartBandArgs {
-                name: None,
-                dim_names: &["y", "x"],
-                source_shape: &[2, 3],
-                view: None,
-                data_type: BandDataType::UInt8,
-                nodata: None,
-                outdb_uri: None,
-                outdb_format: None,
-            })
+            .start_band(StartBandArgs::new(
+                &["y", "x"],
+                &[2, 3],
+                BandDataType::UInt8,
+            ))
             .unwrap();
         let pixels: Vec<u8> = (0..6).collect();
         builder.band_data_writer().append_value(pixels.clone());
@@ -1916,16 +1844,11 @@ mod tests {
             .start_raster_nd(&transform, &["x", "y"], &[2, 2], None)
             .unwrap();
         builder
-            .start_band(StartBandArgs {
-                name: None,
-                dim_names: &["y", "x"],
-                source_shape: &[2, 2],
-                view: None,
-                data_type: BandDataType::UInt8,
-                nodata: None,
-                outdb_uri: None,
-                outdb_format: None,
-            })
+            .start_band(StartBandArgs::new(
+                &["y", "x"],
+                &[2, 2],
+                BandDataType::UInt8,
+            ))
             .unwrap();
         builder.band_data_writer().append_value(vec![0u8; 4]);
         builder.finish_band().unwrap();
@@ -1963,16 +1886,11 @@ mod tests {
             .unwrap();
         // Band has "x" and "y" but x-size disagrees with top-level shape.
         builder
-            .start_band(StartBandArgs {
-                name: None,
-                dim_names: &["y", "x"],
-                source_shape: &[4, 8],
-                view: None,
-                data_type: BandDataType::UInt8,
-                nodata: None,
-                outdb_uri: None,
-                outdb_format: None,
-            })
+            .start_band(StartBandArgs::new(
+                &["y", "x"],
+                &[4, 8],
+                BandDataType::UInt8,
+            ))
             .unwrap();
         builder.band_data_writer().append_value(vec![0u8; 32]);
         builder.finish_band().unwrap();
@@ -1999,16 +1917,11 @@ mod tests {
             .start_raster_nd(&transform, &["x", "y"], &[3, 2], None)
             .unwrap();
         builder
-            .start_band(StartBandArgs {
-                name: None,
-                dim_names: &["y", "x"],
-                source_shape: &[2, 3],
-                view: None,
-                data_type: BandDataType::UInt8,
-                nodata: None,
-                outdb_uri: None,
-                outdb_format: None,
-            })
+            .start_band(StartBandArgs::new(
+                &["y", "x"],
+                &[2, 3],
+                BandDataType::UInt8,
+            ))
             .unwrap();
         builder.band_data_writer().append_value(vec![0u8; 6]);
         builder.finish_band().unwrap();

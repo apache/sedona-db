@@ -381,13 +381,10 @@ where
             builder
                 .start_band(StartBandArgs {
                     name: band_name.as_deref(),
-                    dim_names: &dim_names,
-                    source_shape: &source_shape,
-                    view: None,
-                    data_type,
                     nodata: nodata.as_deref(),
                     outdb_uri: outdb_uri.as_deref(),
                     outdb_format: outdb_format.as_deref(),
+                    ..StartBandArgs::new(&dim_names, &source_shape, data_type)
                 })
                 .map_err(|e| {
                     sedona_internal_datafusion_err!(
@@ -573,13 +570,9 @@ mod tests {
         .unwrap();
         b.start_band(StartBandArgs {
             name: Some("band0"),
-            dim_names: &["y", "x"],
-            source_shape,
-            view: None,
-            data_type: BandDataType::UInt8,
-            nodata: None,
             outdb_uri: Some(uri),
             outdb_format: Some(format),
+            ..StartBandArgs::new(&["y", "x"], source_shape, BandDataType::UInt8)
         })
         .unwrap();
         // OutDb bands write empty data.
@@ -602,13 +595,7 @@ mod tests {
         .unwrap();
         b.start_band(StartBandArgs {
             name: Some("band0"),
-            dim_names: &["y", "x"],
-            source_shape,
-            view: None,
-            data_type: BandDataType::UInt8,
-            nodata: None,
-            outdb_uri: None,
-            outdb_format: None,
+            ..StartBandArgs::new(&["y", "x"], source_shape, BandDataType::UInt8)
         })
         .unwrap();
         b.band_data_writer().append_value(data);
@@ -955,13 +942,9 @@ mod tests {
             .unwrap();
         b.start_band(StartBandArgs {
             name: Some("band0"),
-            dim_names: &["y", "x"],
-            source_shape: &[2, 3],
-            view: None,
-            data_type: BandDataType::UInt8,
-            nodata: None,
             outdb_uri: Some("file:///tmp/foo.tif"),
             outdb_format: Some("mock"),
+            ..StartBandArgs::new(&["y", "x"], &[2, 3], BandDataType::UInt8)
         })
         .unwrap();
         b.band_data_writer().append_value([0u8; 0]);

@@ -178,13 +178,10 @@ impl ZarrChunkReader {
             let source_shape: Vec<i64> = info.chunk_shape.iter().map(|&n| n as i64).collect();
             builder.start_band(StartBandArgs {
                 name: Some(info.path.as_str()),
-                dim_names: &dim_names_ref,
-                source_shape: &source_shape,
-                view: None,
-                data_type: info.data_type,
                 nodata: nodata_ref,
                 outdb_uri: Some(anchor.as_str()),
                 outdb_format: Some("zarr"),
+                ..StartBandArgs::new(&dim_names_ref, &source_shape, info.data_type)
             })?;
             builder.band_data_writer().append_value([0u8; 0]);
             builder.finish_band()?;

@@ -145,14 +145,9 @@ pub fn append_as_outdb_raster(gdal: &Gdal, path: &str, builder: &mut RasterBuild
         // Out-db band: location + band selector in the `#band=N` URI; empty data.
         let outdb_uri = format!("{path}#band={band_idx}");
         builder.start_band(StartBandArgs {
-            name: None,
-            dim_names: &["y", "x"],
-            source_shape: &[height as i64, width as i64],
-            view: None,
-            data_type: band_data_type,
             nodata: nodata_bytes.as_deref(),
             outdb_uri: Some(&outdb_uri),
-            outdb_format: None,
+            ..StartBandArgs::new(&["y", "x"], &[height as i64, width as i64], band_data_type)
         })?;
         builder.band_data_writer().append_value([]);
         builder.finish_band()?;
@@ -566,13 +561,8 @@ pub(crate) fn append_band_from_buffer(
     builder
         .start_band(StartBandArgs {
             name: header.name,
-            dim_names: header.dim_names,
-            source_shape: header.shape,
-            view: None,
-            data_type: header.data_type,
             nodata: header.nodata,
-            outdb_uri: None,
-            outdb_format: None,
+            ..StartBandArgs::new(header.dim_names, header.shape, header.data_type)
         })
         .map_err(|e| exec_datafusion_err!("Failed to start band: {e}"))?;
     // Hand the owned buffer to Arrow as a shared data block (a refcount bump,

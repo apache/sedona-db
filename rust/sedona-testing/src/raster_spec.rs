@@ -381,13 +381,10 @@ impl RasterSpec {
             builder
                 .start_band(StartBandArgs {
                     name: band.name.as_deref(),
-                    dim_names: &dims,
-                    source_shape: &band.shape,
-                    view: None,
-                    data_type: band.data_type,
                     nodata: band.nodata.as_deref(),
                     outdb_uri: band.outdb_uri.as_deref(),
                     outdb_format: band.outdb_format.as_deref(),
+                    ..StartBandArgs::new(&dims, &band.shape, band.data_type)
                 })
                 .expect("start band");
             let bytes = match &band.data {

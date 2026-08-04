@@ -482,13 +482,11 @@ pub trait BandRef {
         };
         builder.start_band(StartBandArgs {
             name: overrides.name,
-            dim_names: &dim_names,
-            source_shape: &source_shape,
             view: Some(effective_view.as_slice()),
-            data_type: self.data_type(),
             nodata: overrides.nodata.or_else(|| self.nodata()),
             outdb_uri: overrides.outdb_uri.or_else(|| self.outdb_uri()),
             outdb_format: overrides.outdb_format.or_else(|| self.outdb_format()),
+            ..StartBandArgs::new(&dim_names, &source_shape, self.data_type())
         })?;
         self.append_data_into(builder)
     }

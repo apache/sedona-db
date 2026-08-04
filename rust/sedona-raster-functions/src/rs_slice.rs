@@ -119,15 +119,10 @@ impl SedonaScalarKernel for RsSlice {
                             let dim_names = band.dim_names();
                             let band_name = raster.band_name(band_idx);
                             new_builder.start_band(StartBandArgs {
-name: band_name,
-dim_names: &dim_names,
-source_shape: band.shape(),
-view: None,
-data_type: band.data_type(),
-nodata: band.nodata(),
-outdb_uri: None,
-outdb_format: None,
-})?;
+                                name: band_name,
+                                nodata: band.nodata(),
+                                ..StartBandArgs::new(&dim_names, band.shape(), band.data_type())
+                            })?;
                             let ndb = band.nd_buffer()?;
                             let data = ndb.as_contiguous()?;
                             new_builder.band_data_writer().append_value(data);
@@ -162,15 +157,10 @@ outdb_format: None,
 
                         let band_name = raster.band_name(band_idx);
                         new_builder.start_band(StartBandArgs {
-name: band_name,
-dim_names: &new_dim_names,
-source_shape: &new_shape,
-view: None,
-data_type: band.data_type(),
-nodata: band.nodata(),
-outdb_uri: None,
-outdb_format: None,
-})?;
+                            name: band_name,
+                            nodata: band.nodata(),
+                            ..StartBandArgs::new(&new_dim_names, &new_shape, band.data_type())
+                        })?;
                         new_builder.band_data_writer().append_value(&sliced_data);
                         new_builder.finish_band()?;
                     }
@@ -289,15 +279,10 @@ impl SedonaScalarKernel for RsSliceRange {
                             let dim_names = band.dim_names();
                             let band_name = raster.band_name(band_idx);
                             new_builder.start_band(StartBandArgs {
-name: band_name,
-dim_names: &dim_names,
-source_shape: band.shape(),
-view: None,
-data_type: band.data_type(),
-nodata: band.nodata(),
-outdb_uri: None,
-outdb_format: None,
-})?;
+                                name: band_name,
+                                nodata: band.nodata(),
+                                ..StartBandArgs::new(&dim_names, band.shape(), band.data_type())
+                            })?;
                             let ndb = band.nd_buffer()?;
                             let data = ndb.as_contiguous()?;
                             new_builder.band_data_writer().append_value(data);
@@ -323,15 +308,10 @@ outdb_format: None,
 
                         let band_name = raster.band_name(band_idx);
                         new_builder.start_band(StartBandArgs {
-name: band_name,
-dim_names: &dim_names,
-source_shape: &new_shape,
-view: None,
-data_type: band.data_type(),
-nodata: band.nodata(),
-outdb_uri: None,
-outdb_format: None,
-})?;
+                            name: band_name,
+                            nodata: band.nodata(),
+                            ..StartBandArgs::new(&dim_names, &new_shape, band.data_type())
+                        })?;
                         new_builder.band_data_writer().append_value(&sliced_data);
                         new_builder.finish_band()?;
                     }
