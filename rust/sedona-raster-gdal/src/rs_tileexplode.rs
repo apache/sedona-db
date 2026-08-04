@@ -21,8 +21,9 @@
 //! Mirrors Sedona Spark's `RS_TileExplode` generator: it emits one row per tile
 //! with top-level columns `(x, y, tile)`, where `RS_Tile` returns a
 //! `List<Struct<x, y, tile>>` cell that the caller `UNNEST`s. Its argument
-//! surface matches `RS_Tile`'s six positional overloads verbatim (Spark
-//! parity).
+//! surface matches Sedona Spark's `RS_TileExplode` positional overloads verbatim
+//! (Spark parity): `RS_Tile`'s all-bands and `bandIndices`-list shapes plus the
+//! scalar `bandIndex` shape that Spark's generator adds and `RS_Tile` omits.
 //!
 //! This UDF is a **planning marker only**. Registering it lets the SQL binder
 //! accept `RS_TileExplode(rast, w, h, …)` and resolve its argument types before
@@ -46,12 +47,17 @@ use sedona_schema::matchers::{ArgMatcher, TypeMatcher};
 
 /// RS_TileExplode() marker scalar UDF.
 ///
-/// Mirrors [`crate::rs_tile::rs_tile_udf`]'s six positional overloads (Spark
-/// parity): the all-bands shape `RS_TileExplode(raster, width,
-/// height[, padWithNoData[, noDataVal]])` and the band-subset shape
+/// Mirrors Sedona Spark's `RS_TileExplode` positional overloads (Spark parity):
+/// the all-bands shape `RS_TileExplode(raster, width, height[, padWithNoData[,
+/// noDataVal]])`, the scalar-band shape `RS_TileExplode(raster, bandIndex, width,
+/// height[, padWithNoData[, noDataVal]])`, and the band-subset shape
 /// `RS_TileExplode(raster, bandIndices, width, height[, padWithNoData[,
-/// noDataVal]])`, told apart by the type of the argument after the raster (an
-/// integer `width` versus an integer list `bandIndices`).
+/// noDataVal]])`. The three are told apart by the argument after the raster: an
+/// integer list is `bandIndices`; otherwise a leading integer is a `bandIndex`
+/// when a fourth integer (`height`) follows, and `width` when a boolean
+/// `padWithNoData` (or nothing) follows. Unlike `RS_Tile`, Spark's generator
+/// carries the scalar-`bandIndex` overload, so it is present here but not on
+/// `RS_Tile`.
 ///
 /// Its return type is the single-tile `Struct<x, y, tile>` a lifted tile carries
 /// (not `RS_Tile`'s `List<...>` wrapper) so the binder accepts the call before
@@ -70,6 +76,10 @@ pub fn rs_tileexplode_udf() -> SedonaScalarUDF {
             kernel(BandArg::All, 3),
             kernel(BandArg::All, 4),
             kernel(BandArg::All, 5),
+            // RS_TileExplode(raster, bandIndex, width, height[, padWithNoData[, noDataVal]])
+            kernel(BandArg::Scalar, 4),
+            kernel(BandArg::Scalar, 5),
+            kernel(BandArg::Scalar, 6),
             // RS_TileExplode(raster, bandIndices, width, height[, padWithNoData[, noDataVal]])
             kernel(BandArg::Array, 4),
             kernel(BandArg::Array, 5),
@@ -87,6 +97,8 @@ pub fn rs_tileexplode_udf() -> SedonaScalarUDF {
 enum BandArg {
     /// No band argument — every band is tiled: `(raster, width, height, ...)`.
     All,
+    /// A single 1-based band index: `(raster, bandIndex, width, height, ...)`.
+    Scalar,
     /// An array of 1-based band indices: `(raster, bandIndices, width, height, ...)`.
     Array,
 }
@@ -103,20 +115,20 @@ struct RsTileExplode {
 
 impl RsTileExplode {
     /// Whether this overload carries a trailing `padWithNoData` / `noDataVal`,
-    /// which determines how many matchers the ladder has. The band-subset shape
-    /// has one extra leading `bandIndices` argument, so its counts are shifted by
-    /// one relative to the all-bands shape.
+    /// which determines how many matchers the ladder has. The scalar- and
+    /// array-band shapes both carry one extra leading band argument, so their
+    /// counts are shifted by one relative to the all-bands shape.
     fn has_pad(&self) -> bool {
         match self.band_arg {
             BandArg::All => self.arg_count >= 4,
-            BandArg::Array => self.arg_count >= 5,
+            BandArg::Scalar | BandArg::Array => self.arg_count >= 5,
         }
     }
 
     fn has_nodata(&self) -> bool {
         match self.band_arg {
             BandArg::All => self.arg_count >= 5,
-            BandArg::Array => self.arg_count >= 6,
+            BandArg::Scalar | BandArg::Array => self.arg_count >= 6,
         }
     }
 }
@@ -129,6 +141,7 @@ impl SedonaScalarKernel for RsTileExplode {
         let mut matchers: Vec<Arc<dyn TypeMatcher + Send + Sync>> = vec![ArgMatcher::is_raster()];
         match self.band_arg {
             BandArg::All => {}
+            BandArg::Scalar => matchers.push(ArgMatcher::is_integer()), // bandIndex
             BandArg::Array => matchers.push(ArgMatcher::is_list_of(ArgMatcher::is_integer())),
         }
         matchers.push(ArgMatcher::is_integer()); // width
@@ -174,8 +187,11 @@ mod tests {
     use arrow_schema::Field;
     use sedona_schema::datatypes::RASTER;
 
-    /// Assert the overload ladder is told apart by argument type exactly like
-    /// RS_Tile's, mirroring `rs_tile.rs::overload_ladder_matches_by_argument_type`.
+    /// Assert the overload ladder tells the no-band, scalar-band, and array-band
+    /// shapes apart by argument type. The scalar `bandIndex` shape is the one
+    /// `RS_TileExplode` adds over `RS_Tile`, so its disambiguation (a leading
+    /// integer followed by a fourth integer `height`, versus the boolean
+    /// `padWithNoData` that follows `width`) is pinned here.
     #[test]
     fn overload_ladder_matches_by_argument_type() {
         let int = SedonaType::Arrow(DataType::Int32);
@@ -203,19 +219,37 @@ mod tests {
             &[RASTER, int.clone(), int.clone()]
         ));
 
-        // (raster, int, int, bool) is the all-bands + padWithNoData overload.
+        // (raster, int, int, bool) is the all-bands + padWithNoData overload, told
+        // apart from scalar-band by the boolean in the pad slot.
         let with_pad = [RASTER, int.clone(), int.clone(), boolean.clone()];
         assert!(matches(BandArg::All, 4, &with_pad));
+        assert!(!matches(BandArg::Scalar, 4, &with_pad));
+
+        // (raster, int, int, int) is the scalar-band shape (bandIndex, width,
+        // height): a fourth integer in the pad slot is `height`, not `pad`, so it
+        // matches scalar-band only.
+        let scalar_band = [RASTER, int.clone(), int.clone(), int.clone()];
+        assert!(matches(BandArg::Scalar, 4, &scalar_band));
+        assert!(!matches(BandArg::All, 4, &scalar_band));
+        assert!(!matches(BandArg::Array, 4, &scalar_band));
+
+        // The fully-expanded scalar-band overload:
+        // (raster, int, int, int, bool, double).
+        let scalar_band_full = [
+            RASTER,
+            int.clone(),
+            int.clone(),
+            int.clone(),
+            boolean.clone(),
+            double.clone(),
+        ];
+        assert!(matches(BandArg::Scalar, 6, &scalar_band_full));
 
         // A list in the band position selects the bandIndices overload only.
         let band_indices = [RASTER, int_list.clone(), int.clone(), int.clone()];
         assert!(matches(BandArg::Array, 4, &band_indices));
         assert!(!matches(BandArg::All, 4, &band_indices));
-
-        // There is no scalar-band shape: (raster, int, int, int) matches nothing.
-        let scalar_band = [RASTER, int.clone(), int.clone(), int.clone()];
-        assert!(!matches(BandArg::All, 4, &scalar_band));
-        assert!(!matches(BandArg::Array, 4, &scalar_band));
+        assert!(!matches(BandArg::Scalar, 4, &band_indices));
 
         // The fully-expanded bandIndices overload:
         // (raster, list, int, int, bool, double).

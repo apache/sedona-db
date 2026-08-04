@@ -36,7 +36,7 @@ use datafusion::logical_expr::{ColumnarValue, ScalarUDF};
 use sedona::context::SedonaContext;
 use sedona_raster::array::RasterStructArray;
 use sedona_schema::datatypes::{SedonaType, RASTER};
-use sedona_testing::raster_spec::{raster_array, RasterSpec};
+use sedona_testing::raster_spec::{assert_rasters_equal, raster_array, RasterSpec};
 use sedona_testing::rasters::assert_raster_arrays_equal;
 use sedona_testing::testers::ScalarUdfTester;
 
@@ -49,6 +49,18 @@ fn source_5x3() -> RasterSpec {
         .crs(None)
         .transform([0.0, 1.0, 0.0, 3.0, 0.0, -1.0])
         .band_values(&[1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15])
+}
+
+/// A 2x2, three-band UInt8 raster (band 1 = 1..=4, band 2 = 10..=40,
+/// band 3 = 100..=103), so a scalar/array `bandIndex` selecting band 1 is
+/// observably different from tiling every band.
+fn three_band_2x2() -> RasterSpec {
+    RasterSpec::d2(2, 2)
+        .crs(None)
+        .transform([0.0, 1.0, 0.0, 2.0, 0.0, -1.0])
+        .band_values(&[1u8, 2, 3, 4])
+        .band_values(&[10u8, 20, 30, 40])
+        .band_values(&[100u8, 101, 102, 103])
 }
 
 /// Register a table `t(id INT, rast RASTER)` holding the given rasters, one per
@@ -69,10 +81,10 @@ fn register_raster_table(ctx: &SedonaContext, rasters: Vec<Option<RasterSpec>>) 
     ctx.ctx.register_table("t", Arc::new(table)).unwrap();
 }
 
-/// The error string from planning-and-running `sql`. The tile-explode analyzer
-/// rule runs during optimization (triggered by execution), not when the
-/// unoptimized `DataFrame` is built, so a placement error surfaces at `collect`
-/// time rather than at `sql` time.
+/// The error string from planning-and-running `sql`. The tile-explode lift is
+/// applied eagerly when the `DataFrame` is built, so an illegal generator
+/// placement surfaces at `sql` (plan-build) time; other errors may only surface
+/// at `collect` time, so this tolerates both.
 async fn tile_explode_error(ctx: &SedonaContext, sql: &str) -> String {
     match ctx.sql(sql).await {
         Err(e) => e.to_string(),
@@ -85,16 +97,13 @@ async fn tile_explode_error(ctx: &SedonaContext, sql: &str) -> String {
 }
 
 /// Collect a query's result batches.
-///
-/// The tile-explode lift is a schema-changing analyzer rule, so it runs during
-/// execution, not when the (unoptimized) `DataFrame` is built — the executed
-/// batch schema, not `df.schema()`, is authoritative for the output columns.
 async fn collect_rows(ctx: &SedonaContext, sql: &str) -> Vec<RecordBatch> {
     ctx.sql(sql).await.unwrap().collect().await.unwrap()
 }
 
 /// Run `sql` and concatenate its (non-empty) result into one batch, using the
-/// executed schema.
+/// executed schema (which equals the plan-time `df.schema()` — see
+/// `tile_explode_schema_is_honest_before_execution`).
 async fn run_to_batch(ctx: &SedonaContext, sql: &str) -> RecordBatch {
     let batches = collect_rows(ctx, sql).await;
     let schema = batches.first().expect("query produced no batches").schema();
@@ -187,6 +196,102 @@ async fn tile_explode_lifts_to_top_level_columns() {
     assert_raster_arrays_equal(
         &RasterStructArray::try_new(subject_tiles).unwrap(),
         &RasterStructArray::try_new(&reference_tiles).unwrap(),
+    );
+}
+
+#[tokio::test]
+async fn tile_explode_schema_is_honest_before_execution() {
+    let ctx = SedonaContext::new_local_interactive().await.unwrap();
+    register_raster_table(&ctx, vec![Some(source_5x3())]);
+
+    // Part A: the plan-time lift makes the DataFrame's schema honest — df.schema()
+    // reports the generator's top-level (x, y, tile) columns *before* any
+    // execution (no collect), matching Sedona Spark, rather than the marker's
+    // un-lifted single Struct<x, y, tile> column.
+    let df = ctx
+        .sql("SELECT RS_TileExplode(rast, 2, 2) FROM t")
+        .await
+        .unwrap();
+    let schema = df.schema();
+    assert_eq!(
+        schema
+            .fields()
+            .iter()
+            .map(|f| f.name().clone())
+            .collect::<Vec<_>>(),
+        vec!["x".to_string(), "y".to_string(), "tile".to_string()],
+        "df.schema() must show top-level (x, y, tile) before execution"
+    );
+    let field = |name: &str| schema.field_with_unqualified_name(name).unwrap();
+    assert_eq!(field("x").data_type(), &DataType::Int32);
+    assert_eq!(field("y").data_type(), &DataType::Int32);
+    assert_eq!(
+        SedonaType::from_storage_field(field("tile")).unwrap(),
+        RASTER,
+        "the appended tile column must be a raster"
+    );
+
+    // Siblings are honest too: `id` precedes the appended (x, y, tile).
+    let df = ctx
+        .sql("SELECT id, RS_TileExplode(rast, 2, 2) FROM t")
+        .await
+        .unwrap();
+    assert_eq!(
+        df.schema()
+            .fields()
+            .iter()
+            .map(|f| f.name().clone())
+            .collect::<Vec<_>>(),
+        vec![
+            "id".to_string(),
+            "x".to_string(),
+            "y".to_string(),
+            "tile".to_string()
+        ]
+    );
+}
+
+#[tokio::test]
+async fn tile_explode_scalar_band_matches_array_band() {
+    let ctx = SedonaContext::new_local_interactive().await.unwrap();
+    register_raster_table(&ctx, vec![Some(three_band_2x2())]);
+
+    // Part B: the scalar `bandIndex` overload `RS_TileExplode(rast, 1, w, h)` picks
+    // band 1, identical to the single-element list `RS_TileExplode(rast, ARRAY[1],
+    // w, h)`. A 2x2 raster tiled 2x2 yields one tile that is exactly band 1 of the
+    // source (values 1..=4), not all three bands.
+    let scalar = run_to_batch(&ctx, "SELECT RS_TileExplode(rast, 1, 2, 2) FROM t").await;
+    let array = run_to_batch(&ctx, "SELECT RS_TileExplode(rast, ARRAY[1], 2, 2) FROM t").await;
+
+    // Both overloads lift to the same top-level (x, y, tile) schema.
+    for batch in [&scalar, &array] {
+        assert_eq!(
+            batch
+                .schema()
+                .fields()
+                .iter()
+                .map(|f| f.name().clone())
+                .collect::<Vec<_>>(),
+            vec!["x".to_string(), "y".to_string(), "tile".to_string()]
+        );
+    }
+
+    // The single emitted tile is band 1 of the source, in both forms. The
+    // declarative spec pins the band selection (one band, values 1..=4); the
+    // shared tiling core (exercised against RS_Tile in the exec-level
+    // `parity_band_subset` test) guarantees this also matches
+    // `RS_Tile(rast, ARRAY[1], 2, 2)` unnested.
+    let band1_tile = RasterSpec::d2(2, 2)
+        .crs(None)
+        .transform([0.0, 1.0, 0.0, 2.0, 0.0, -1.0])
+        .band_values(&[1u8, 2, 3, 4]);
+    assert_rasters_equal(column(&scalar, "tile"), &[Some(band1_tile.clone())]);
+    assert_rasters_equal(column(&array, "tile"), &[Some(band1_tile)]);
+
+    // Scalar-band and array-band produce byte-identical tiles.
+    assert_raster_arrays_equal(
+        &RasterStructArray::try_new(as_struct_array(column(&scalar, "tile")).unwrap()).unwrap(),
+        &RasterStructArray::try_new(as_struct_array(column(&array, "tile")).unwrap()).unwrap(),
     );
 }
 

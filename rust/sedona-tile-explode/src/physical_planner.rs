@@ -126,6 +126,9 @@ fn resolve_raster_column(expr: &Expr, physical_input: &Arc<dyn ExecutionPlan>) -
 fn literal(expr: &Expr, name: &str) -> Result<ScalarValue> {
     match expr {
         Expr::Literal(scalar, _) => Ok(scalar.clone()),
+        // Constant folding an argument like `ARRAY[1]` leaves a literal wrapped in
+        // a name-preserving alias (`List([1]) AS make_array(1)`); peel it.
+        Expr::Alias(alias) => literal(&alias.expr, name),
         other => plan_err!("TileExplode: {name} must be a constant, got {other}"),
     }
 }
@@ -151,13 +154,29 @@ fn literal_opt_f64(expr: &Expr, name: &str) -> Result<Option<f64>> {
     }
 }
 
-/// Resolve a constant `bandIndices` list into 1-based band indices. A NULL or
-/// non-list literal is rejected; an empty list is kept (the tiling core maps it
-/// to "all bands", matching RS_Tile).
+/// Resolve a constant band selector into 1-based band indices. The selector is
+/// either a `bandIndices` list (the array-band overload) or a scalar `bandIndex`
+/// integer (the scalar-band overload); a scalar maps to a single-element list so
+/// the tiling core sees the same shape. A NULL literal selects all bands (kept as
+/// `None`); an empty list is kept (the tiling core maps it to "all bands",
+/// matching RS_Tile).
 fn literal_band_indices(expr: &Expr) -> Result<Option<Vec<i64>>> {
     let scalar = literal(expr, "bandIndices")?;
     if scalar.is_null() {
         return Ok(None);
+    }
+    // The scalar-band overload passes a bare integer `bandIndex`; wrap it in a
+    // single-element band list, which produces the same tiles as `[bandIndex]`.
+    if !matches!(
+        scalar.data_type(),
+        DataType::List(_) | DataType::LargeList(_) | DataType::FixedSizeList(_, _)
+    ) {
+        return match scalar.cast_to(&DataType::Int64)? {
+            ScalarValue::Int64(Some(band)) => Ok(Some(vec![band])),
+            other => {
+                plan_err!("TileExplode: bandIndex must be a non-null integer, got {other:?}")
+            }
+        };
     }
     let array = scalar.to_array()?;
     let list = as_list_array(&array)?;

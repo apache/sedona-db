@@ -31,8 +31,19 @@
 //! `OptimizerRule` from doing — every optimizer rule is checked against
 //! `logically_equivalent_names_and_types`. The `Analyzer` has no per-rule schema
 //! check (it is where `TypeCoercion` changes column types), so the schema-changing
-//! lift belongs here. Registered with `SessionStateBuilder::with_analyzer_rule`
-//! so it appends *after* `TypeCoercion` and sees type-coerced arguments.
+//! lift belongs here.
+//!
+//! The rule is applied in two places, and is **idempotent** — once the marker is
+//! lifted there is nothing left to match, so a second pass is a no-op:
+//! - **Eagerly** on the unoptimized plan the SQL front-end builds (see
+//!   `sedona::exec::create_plan_from_sql`), so the returned `DataFrame`'s
+//!   `schema()` already reports the top-level `(x, y, tile)` columns before any
+//!   execution — matching Sedona Spark's plan-time-honest generator schema. It
+//!   matches by function name and builds a fixed `(x, y, tile)` schema, so it
+//!   works on the pre-`TypeCoercion` arguments the binder produced.
+//! - As a registered `SessionStateBuilder::with_analyzer_rule` (appended *after*
+//!   `TypeCoercion`), a safety net for plans built through other paths and so the
+//!   optimize/execute path is unchanged.
 
 use std::sync::Arc;
 
@@ -162,38 +173,45 @@ fn contains_tile_explode(expr: &Expr) -> Result<bool> {
 }
 
 /// Map the `RS_TileExplode` argument expressions to their [`TileArgLayout`],
-/// mirroring `RS_Tile`'s six positional overloads. The band-subset overloads
-/// carry an extra leading `bandIndices` list after the raster; the argument
-/// after the raster is a list for those shapes and an integer `width` otherwise,
-/// which is how the two are told apart at the ambiguous 4- and 5-argument counts.
+/// mirroring Sedona Spark's `RS_TileExplode` positional overloads: the no-band
+/// shape `(raster, width, height, …)`, the scalar-band shape `(raster, bandIndex,
+/// width, height, …)`, and the array-band shape `(raster, bandIndices, width,
+/// height, …)`.
+///
+/// The band-carrying shapes shift `width`/`height` and the trailing optionals
+/// one position to the right. The three are told apart by the argument after the
+/// raster and its neighbors:
+/// - a list in the second position is `bandIndices` (array-band);
+/// - otherwise a leading integer is a scalar `bandIndex` when the pad slot
+///   (position 3) holds an integer (`height`) rather than the boolean
+///   `padWithNoData`, and is `width` when it holds a boolean or nothing.
+///
+/// A 3-argument call is always no-band; a 6-argument non-list call is always
+/// scalar-band (no-band tops out at 5 arguments).
 fn infer_tile_arg_layout(args: &[Expr], input_schema: &DFSchema) -> Result<TileArgLayout> {
     let count = args.len();
     if !(3..=6).contains(&count) {
         return plan_err!("RS_TileExplode expects between 3 and 6 arguments, got {count}");
     }
 
-    let has_band = match count {
-        3 => false,
-        6 => true,
-        // 4 or 5 arguments: a list in the second position is `bandIndices`.
-        _ => matches!(
-            args[1].get_type(input_schema)?,
-            DataType::List(_) | DataType::LargeList(_) | DataType::FixedSizeList(_, _)
-        ),
-    };
+    // The scalar-band and array-band shapes both carry a band argument at
+    // position 1 with the same downstream layout (the physical planner tells a
+    // scalar `bandIndex` from a `bandIndices` list when it resolves the value).
+    let has_band = second_is_band_list(args, input_schema)?
+        || second_is_scalar_band(args, count, input_schema)?;
 
-    // Required positions: raster, [bandIndices], width, height.
-    let base = if has_band { 4 } else { 3 };
+    // Required positions: raster, [band], width, height. `base` is the index of
+    // the first optional (padWithNoData), which the band shapes shift by one.
+    let (band, width, height, base) = if has_band {
+        (Some(1), 2, 3, 4)
+    } else {
+        (None, 1, 2, 3)
+    };
     if count < base {
         return plan_err!(
-            "RS_TileExplode band-list overload needs at least {base} arguments, got {count}"
+            "RS_TileExplode band overload needs at least {base} arguments, got {count}"
         );
     }
-    let (band, width, height) = if has_band {
-        (Some(1), 2, 3)
-    } else {
-        (None, 1, 2)
-    };
     // Optional trailing positions: padWithNoData, then noDataVal.
     let pad = (count > base).then_some(base);
     let nodata = (count > base + 1).then_some(base + 1);
@@ -205,6 +223,30 @@ fn infer_tile_arg_layout(args: &[Expr], input_schema: &DFSchema) -> Result<TileA
         height,
         pad,
         nodata,
+    })
+}
+
+/// Whether the argument after the raster is a `bandIndices` list (the array-band
+/// shape).
+fn second_is_band_list(args: &[Expr], input_schema: &DFSchema) -> Result<bool> {
+    Ok(matches!(
+        args[1].get_type(input_schema)?,
+        DataType::List(_) | DataType::LargeList(_) | DataType::FixedSizeList(_, _)
+    ))
+}
+
+/// Whether a non-list `(raster, Int, Int, …)` argument list carries a leading
+/// scalar `bandIndex` (the scalar-band shape) rather than starting with
+/// `width`/`height` (the no-band shape). A 3-argument call is always no-band; a
+/// 6-argument call is always scalar-band (no-band tops out at 5); at 4 or 5
+/// arguments an integer in the pad slot (position 3) is `height`, so the leading
+/// integer is a `bandIndex`, whereas a boolean there is the no-band shape's
+/// `padWithNoData` flag.
+fn second_is_scalar_band(args: &[Expr], count: usize, input_schema: &DFSchema) -> Result<bool> {
+    Ok(match count {
+        3 => false,
+        6 => true,
+        _ => args[3].get_type(input_schema)?.is_integer(),
     })
 }
 
@@ -295,6 +337,50 @@ mod tests {
                 height: 2,
                 pad: Some(3),
                 nodata: Some(4),
+            }
+        );
+    }
+
+    #[test]
+    fn scalar_band_overloads_shift_positions_by_the_band_index() {
+        // A scalar bandIndex (a leading integer followed by width/height) shifts
+        // width/height and the trailing optionals by one, exactly like the
+        // band-list shape. The scalar-band shape is distinguished from no-band by
+        // an integer (height) rather than a boolean (pad) in position 3.
+        // (raster, bandIndex, width, height)
+        assert_eq!(
+            layout(&[col("r"), lit(1), lit(2), lit(2)]),
+            TileArgLayout {
+                raster: 0,
+                band: Some(1),
+                width: 2,
+                height: 3,
+                pad: None,
+                nodata: None,
+            }
+        );
+        // (raster, bandIndex, width, height, padWithNoData)
+        assert_eq!(
+            layout(&[col("r"), lit(1), lit(2), lit(2), lit(true)]),
+            TileArgLayout {
+                raster: 0,
+                band: Some(1),
+                width: 2,
+                height: 3,
+                pad: Some(4),
+                nodata: None,
+            }
+        );
+        // (raster, bandIndex, width, height, padWithNoData, noDataVal)
+        assert_eq!(
+            layout(&[col("r"), lit(1), lit(2), lit(2), lit(true), lit(0.0)]),
+            TileArgLayout {
+                raster: 0,
+                band: Some(1),
+                width: 2,
+                height: 3,
+                pad: Some(4),
+                nodata: Some(5),
             }
         );
     }

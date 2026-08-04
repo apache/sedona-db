@@ -21,8 +21,10 @@ use crate::{context::SedonaContext, object_storage::register_object_store_and_co
 use datafusion::{
     config::ConfigFileType,
     error::{DataFusionError, Result},
+    optimizer::analyzer::AnalyzerRule,
     sql::parser::Statement,
 };
+use sedona_query_planner::tile_explode_analyzer::TileExplodeAnalyzerRule;
 
 /// A Sedona-specific hook for creating a logical plan from a SQL Statement
 ///
@@ -54,6 +56,17 @@ pub(crate) async fn create_plan_from_sql(
         )
         .await?;
     }
+
+    // Lift a top-level `RS_TileExplode(...)` projection eagerly on the unoptimized
+    // plan so the `DataFrame` this plan is wrapped in already reports the
+    // generator's top-level `(x, y, tile)` output schema — matching Sedona Spark's
+    // plan-time-honest generator, rather than the marker's un-lifted single struct
+    // column. The rule is idempotent (a no-op once the marker is lifted), so the
+    // analyzer pass that also runs it during optimization sees nothing to do, and
+    // it matches by function name over the pre-`TypeCoercion` arguments. An illegal
+    // generator placement is rejected here, at plan-build time.
+    let state = ctx.ctx.state();
+    let plan = TileExplodeAnalyzerRule::new().analyze(plan, state.config_options())?;
 
     Ok(plan)
 }
