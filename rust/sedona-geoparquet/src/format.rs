@@ -690,8 +690,14 @@ fn wrap_expr_columns(
 ) -> Result<Arc<dyn PhysicalExpr>> {
     expr.transform_down(|node| {
         if let Some(column) = node.as_any().downcast_ref::<Column>() {
-            let index = column.index();
-            let field = file_schema.field(index);
+            // Look up by column name instead of index, since the Column's index
+            // may refer to a different schema (e.g., a projected intermediate schema)
+            // rather than the file schema. If the column doesn't exist in the file
+            // schema, it's a derived column and doesn't need wrapping.
+            let Some((_, field)) = file_schema.column_with_name(column.name()) else {
+                return Ok(Transformed::no(node));
+            };
+
             // Only wrap columns that have extension metadata to preserve
             if field.metadata().contains_key("ARROW:extension:name") {
                 let field: FieldRef = Arc::new(field.clone());
@@ -1080,5 +1086,111 @@ mod test {
                 .unwrap();
         let geo_source_with_predicate = geo_source.with_predicate(predicate);
         assert!(geo_source_with_predicate.inner.filter().is_some());
+    }
+
+    /// Regression test for https://github.com/apache/sedona-db/issues/1115
+    ///
+    /// When projections contain Column expressions that reference columns not in the
+    /// file schema (e.g., derived literal columns like `'a' AS c1`), the Column indices
+    /// refer to the projection's output schema, not the file schema. Looking up by index
+    /// would cause an "index out of bounds" panic when the index exceeds the file schema's
+    /// field count.
+    #[test]
+    fn test_wrap_expr_columns_with_derived_columns() {
+        // File schema has only one geometry column with extension metadata
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "ARROW:extension:name".to_string(),
+            "geoarrow.wkb".to_string(),
+        );
+        let file_schema = Schema::new(vec![
+            Field::new("geometry", DataType::Binary, true).with_metadata(metadata)
+        ]);
+
+        // Create a Column expression that references a column NOT in the file schema
+        // This simulates a derived column like `'a' AS c1` which would have index 0
+        // in the projection output but doesn't exist in the file schema
+        let derived_column: Arc<dyn PhysicalExpr> = Arc::new(Column::new("c1", 0));
+
+        // This should NOT panic - the column should be passed through unchanged
+        // because it doesn't exist in the file schema
+        let result = wrap_expr_columns(derived_column.clone(), &file_schema).unwrap();
+
+        // The result should be the same expression (not wrapped)
+        assert!(result.as_any().downcast_ref::<Column>().is_some());
+        let col = result.as_any().downcast_ref::<Column>().unwrap();
+        assert_eq!(col.name(), "c1");
+        assert_eq!(col.index(), 0);
+    }
+
+    /// Test that columns with extension metadata are correctly wrapped
+    #[test]
+    fn test_wrap_expr_columns_wraps_geometry_column() {
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "ARROW:extension:name".to_string(),
+            "geoarrow.wkb".to_string(),
+        );
+        let file_schema = Schema::new(vec![
+            Field::new("geometry", DataType::Binary, true).with_metadata(metadata)
+        ]);
+
+        // Column expression for the geometry column (index 0 in file schema)
+        let geometry_column: Arc<dyn PhysicalExpr> = Arc::new(Column::new("geometry", 0));
+
+        let result = wrap_expr_columns(geometry_column, &file_schema).unwrap();
+
+        // The result should be wrapped in MetadataPreservingColumn
+        assert!(result
+            .as_any()
+            .downcast_ref::<MetadataPreservingColumn>()
+            .is_some());
+    }
+
+    /// Test that columns without extension metadata are not wrapped
+    #[test]
+    fn test_wrap_expr_columns_skips_non_geometry_column() {
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "ARROW:extension:name".to_string(),
+            "geoarrow.wkb".to_string(),
+        );
+        let file_schema = Schema::new(vec![
+            Field::new("name", DataType::Utf8, true),
+            Field::new("geometry", DataType::Binary, true).with_metadata(metadata),
+        ]);
+
+        // Column expression for a non-geometry column (no extension metadata)
+        let name_column: Arc<dyn PhysicalExpr> = Arc::new(Column::new("name", 0));
+
+        let result = wrap_expr_columns(name_column, &file_schema).unwrap();
+
+        // The result should NOT be wrapped (still a Column)
+        assert!(result.as_any().downcast_ref::<Column>().is_some());
+    }
+
+    /// Integration test for projection with multiple derived columns plus geometry accessor
+    /// Regression test for https://github.com/apache/sedona-db/issues/1115
+    #[tokio::test]
+    async fn projection_with_derived_columns_and_geometry_accessor() {
+        let ctx = setup_context();
+        let example = test_geoparquet("example", "geometry").unwrap();
+
+        // Query that adds multiple literal columns alongside the scanned geometry
+        // This mimics: SELECT 'a' AS c1, 'b' AS c2, geometry FROM ...
+        let df = ctx
+            .sql(&format!(
+                "SELECT 'a' AS c1, 'b' AS c2, geometry FROM '{}' LIMIT 1",
+                example
+            ))
+            .await
+            .unwrap();
+
+        // This should not panic - the issue was "index out of bounds" when
+        // projection pushdown tried to wrap columns with indices beyond the
+        // file schema's bounds
+        let batches = df.collect().await.unwrap();
+        assert!(!batches.is_empty());
+        assert_eq!(batches[0].num_columns(), 3);
     }
 }

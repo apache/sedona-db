@@ -809,3 +809,52 @@ def test_read_partitioned_parquet(con):
             result_disabled.sort("id").to_pandas(),
             t.sort("id").to_pandas()[["id", "geom"]],
         )
+
+
+def test_st_accessor_with_multiple_non_geometry_columns_from_scan(con, tmp_path):
+    """Regression test for https://github.com/apache/sedona-db/issues/1115
+
+    Tests that queries combining 2+ non-geometry columns with an ST_* accessor
+    function on a geometry column from a file scan work correctly when
+    materializing to Arrow.
+
+    The issue was a panic ("index out of bounds") in schema.rs during Arrow
+    export when projection pushdown created Column expressions with indices
+    beyond the original file schema's bounds.
+    """
+    # Create a simple parquet file with just a geometry column
+    geom = pa.array(
+        [
+            shapely.to_wkb(shapely.geometry.Point(1, 2)),
+            shapely.to_wkb(shapely.geometry.Point(3, 4)),
+        ],
+        type=pa.binary(),
+    )
+    path = tmp_path / "repro.parquet"
+    pq.write_table(pa.table({"geometry": geom}), path)
+
+    # Register the raw parquet file as a view
+    con.read_parquet(path).to_view("raw", overwrite=True)
+
+    # Create a view with 2 extra non-geometry columns plus the scanned geometry
+    # (transformed via ST_SetSRID/ST_GeomFromWKB)
+    con.sql("""
+        CREATE OR REPLACE VIEW g1 AS
+        SELECT 'a' AS c1, 'b' AS c2, ST_SetSRID(ST_GeomFromWKB(geometry), 4326) AS geometry
+        FROM raw
+    """)
+
+    # Add an ST_* accessor function - this combination triggers the bug
+    con.sql("CREATE OR REPLACE VIEW t AS SELECT *, ST_IsEmpty(geometry) AS _e FROM g1")
+
+    # This should not panic - the issue was "index out of bounds: the len is 2 but the index is 2"
+    # when iterating through the Arrow reader
+    result = con.sql("SELECT * FROM t").to_arrow_table()
+
+    assert len(result) == 2
+    assert result.column_names == ["c1", "c2", "geometry", "_e"]
+
+    # Verify values are correct
+    assert result["c1"].to_pylist() == ["a", "a"]
+    assert result["c2"].to_pylist() == ["b", "b"]
+    assert result["_e"].to_pylist() == [False, False]  # Points are not empty
