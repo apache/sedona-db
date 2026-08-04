@@ -23,8 +23,10 @@
 //! ```
 //!
 //! The setter companion to the `RS_BandNoDataValue` getter. `nodata` is a double
-//! packed into the band's native data type. A null raster, band, or nodata value
-//! yields a null raster (matching `RS_SetCRS`/`RS_SetSRID`).
+//! packed into the band's native data type. A null raster or band yields a null
+//! raster (matching `RS_SetCRS`/`RS_SetSRID`); a null `nodata` value instead
+//! **clears** the addressed band's nodata — the raster is rebuilt with that band
+//! carrying no nodata sentinel, rather than nulling the whole row.
 //!
 //! An out-of-range band index is an error — unlike the getter, which returns
 //! NULL for a missing band. The asymmetry is deliberate: this op rewrites the
@@ -49,7 +51,7 @@ use datafusion_common::{arrow_datafusion_err, exec_err};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_raster::builder::{RasterBuilder, RasterOverrides};
-use sedona_raster::traits::{nodata_f64_to_bytes, BandOverrides, RasterRef};
+use sedona_raster::traits::{nodata_f64_to_bytes, BandOverrides, Override, RasterRef};
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;
 
@@ -133,10 +135,14 @@ impl SedonaScalarKernel for RsSetBandNoDataValue {
                 Some(bands) => Some(bands.value(i)),
                 None => None,
             };
-            if value_values.is_null(i) {
-                return null_out(&mut builder);
-            }
-            set_band_nodata(&mut builder, raster, band, value_values.value(i))
+            // A null `nodata` value is not a null output: it flows through as
+            // `None` and clears the addressed band's nodata.
+            let value = if value_values.is_null(i) {
+                None
+            } else {
+                Some(value_values.value(i))
+            };
+            set_band_nodata(&mut builder, raster, band, value)
         })?;
 
         executor.finish(Arc::new(builder.finish()?))
@@ -144,8 +150,9 @@ impl SedonaScalarKernel for RsSetBandNoDataValue {
 }
 
 /// Copy `raster` into `builder`, overriding the addressed (1-based) band's
-/// nodata with `value` packed into that band's data type. Every other band is
-/// copied with its data shared and metadata inherited.
+/// nodata: `Some(value)` packs `value` into that band's data type, `None`
+/// clears the band's nodata. Every other band is copied with its data shared
+/// and metadata (including its own nodata) inherited.
 ///
 /// `band` is `None` for the 2-argument form (no band given): it defaults to band
 /// 1 only when the raster is single-band, and errors on a multiband raster so a
@@ -154,7 +161,7 @@ fn set_band_nodata(
     builder: &mut RasterBuilder,
     raster: &dyn RasterRef,
     band: Option<i64>,
-    value: f64,
+    value: Option<f64>,
 ) -> Result<()> {
     let num_bands = raster.num_bands();
     let band = match band {
@@ -179,16 +186,28 @@ fn set_band_nodata(
 
     for band_idx in 0..num_bands {
         let band_ref = raster.band(band_idx)?;
-        // Override the nodata only on the addressed band; others inherit.
-        let nodata_bytes = if band_idx + 1 == band as usize {
-            Some(nodata_f64_to_bytes(value, &band_ref.data_type())?)
+        let addressed = band_idx + 1 == band as usize;
+        // Pack the addressed band's new nodata bytes into a scratch binding the
+        // override borrows from. A null value leaves this `None` so the override
+        // clears the band's nodata rather than setting it.
+        let new_nodata: Option<Vec<u8>> = match value {
+            Some(v) if addressed => Some(nodata_f64_to_bytes(v, &band_ref.data_type())?),
+            _ => None,
+        };
+        // Only the addressed band's nodata is touched (`Set` or `Clear`); every
+        // other band keeps its own.
+        let nodata = if addressed {
+            match new_nodata.as_deref() {
+                Some(bytes) => Override::Set(bytes),
+                None => Override::Clear,
+            }
         } else {
-            None
+            Override::Keep
         };
         band_ref.copy_into(
             builder,
             BandOverrides {
-                nodata: nodata_bytes.as_deref(),
+                nodata,
                 ..Default::default()
             },
         )?;
@@ -283,11 +302,35 @@ mod tests {
     }
 
     #[test]
-    fn null_value_nulls_raster() {
+    fn null_value_clears_band_nodata() {
+        // A null nodata value clears the addressed band's nodata rather than
+        // nulling the whole raster: the single band starts with nodata 5 and
+        // ends with none, every other field preserved.
+        let one_band = RasterSpec::d2(2, 1).band_values(&[1u8, 2]).nodata(5u8);
         let result = tester_2arg()
-            .invoke_array_scalar(Arc::new(two_band().build()), ScalarValue::Float64(None))
+            .invoke_array_scalar(Arc::new(one_band.build()), ScalarValue::Float64(None))
             .unwrap();
-        assert_rasters_equal(&result, &[None]);
+        let expected = RasterSpec::d2(2, 1).band_values(&[1u8, 2]);
+        assert_rasters_equal(&result, &[Some(expected)]);
+    }
+
+    #[test]
+    fn null_value_clears_only_the_addressed_band_nodata() {
+        // 3-arg form on a multiband raster: clearing band 2's nodata leaves
+        // band 1's nodata untouched.
+        let input = RasterSpec::d2(2, 1)
+            .band_values(&[1u8, 2])
+            .nodata(7u8)
+            .band_values(&[3u8, 4])
+            .nodata(8u8);
+        let result = tester_3arg()
+            .invoke_array_scalar_scalar(Arc::new(input.build()), 2_i32, ScalarValue::Float64(None))
+            .unwrap();
+        let expected = RasterSpec::d2(2, 1)
+            .band_values(&[1u8, 2])
+            .nodata(7u8)
+            .band_values(&[3u8, 4]);
+        assert_rasters_equal(&result, &[Some(expected)]);
     }
 
     #[test]
