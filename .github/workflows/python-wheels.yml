@@ -68,6 +68,7 @@ jobs:
 
       - name: Build and test wheels (sedonadb)
         run: |
+          Remove-Item -Force .test_failed -ErrorAction SilentlyContinue
           cd ci/scripts
           .\wheels-build-windows.ps1
         env:
@@ -79,7 +80,7 @@ jobs:
           # Test command exits 0 even on failure so CIBW continues building all wheels;
           # failures are recorded in .test_failed and checked after upload.
           CIBW_TEST_COMMAND: >-
-            cmd /c "pytest {package}/tests -vv -o faulthandler_timeout=600 || (echo.> {project}\.test_failed & exit /b 0)"
+            powershell -Command "pytest {package}/tests -vv -o faulthandler_timeout=600; if ($LASTEXITCODE -ne 0) { New-Item -Path '{project}/.test_failed' -ItemType File -Force | Out-Null }"
 
       - uses: actions/upload-artifact@v7
         with:
