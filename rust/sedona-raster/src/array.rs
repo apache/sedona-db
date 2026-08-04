@@ -26,7 +26,7 @@ use datafusion_common::cast::{
 };
 
 use crate::builder::RasterBuilder;
-use crate::traits::{BandRef, Bands, NdBuffer, RasterRef};
+use crate::traits::{BandRef, NdBuffer, RasterRef};
 use crate::view_entries::ViewEntry;
 use sedona_schema::raster::{band_indices, raster_indices, BandDataType};
 
@@ -197,10 +197,6 @@ impl<'a> RasterRefImpl<'a> {
 impl<'a> RasterRef for RasterRefImpl<'a> {
     fn num_bands(&self) -> usize {
         self.bands_list.value_length(self.raster_index) as usize
-    }
-
-    fn bands(&self) -> Bands<'_> {
-        Bands::new(self)
     }
 
     fn band(&self, index: usize) -> Result<Box<dyn BandRef + '_>, ArrowError> {
@@ -558,13 +554,11 @@ impl<'a> RasterStructArray<'a> {
 mod tests {
     use super::*;
     use crate::builder::RasterBuilder;
-    use crate::traits::{BandMetadata, BandOverrides, RasterMetadata};
+    use crate::traits::BandOverrides;
     use arrow_array::{ArrayRef, ListArray, StructArray, UInt32Array};
     use arrow_buffer::{OffsetBuffer, ScalarBuffer};
     use arrow_schema::{DataType, Fields};
-    use sedona_schema::raster::{
-        band_indices, raster_indices, BandDataType, RasterSchema, StorageType,
-    };
+    use sedona_schema::raster::{band_indices, raster_indices, BandDataType, RasterSchema};
     use sedona_testing::rasters::generate_test_rasters;
     use std::sync::Arc;
 
@@ -689,31 +683,16 @@ mod tests {
         // Create a simple raster for testing using the correct API
         let mut builder = RasterBuilder::new(10); // capacity
 
-        let metadata = RasterMetadata {
-            width: 10,
-            height: 10,
-            upperleft_x: 0.0,
-            upperleft_y: 0.0,
-            scale_x: 1.0,
-            scale_y: -1.0,
-            skew_x: 0.0,
-            skew_y: 0.0,
-        };
-
         let epsg4326 = "EPSG:4326";
 
-        builder.start_raster(&metadata, Some(epsg4326)).unwrap();
-
-        let band_metadata = BandMetadata {
-            nodata_value: Some(vec![255u8]),
-            storage_type: StorageType::InDb,
-            datatype: BandDataType::UInt8,
-            outdb_url: None,
-            outdb_band_id: None,
-        };
+        builder
+            .start_raster_2d(10, 10, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, Some(epsg4326))
+            .unwrap();
 
         // Add a single band with some test data using the correct API
-        builder.start_band(band_metadata.clone()).unwrap();
+        builder
+            .start_band_2d(BandDataType::UInt8, Some(&[255u8]))
+            .unwrap();
         let test_data = vec![1u8; 100]; // 10x10 raster with value 1
         builder.band_data_writer().append_value(&test_data);
         builder.finish_band().unwrap();
@@ -729,34 +708,31 @@ mod tests {
         assert!(!rasters.is_empty());
 
         let raster = rasters.get(0).unwrap();
-        let metadata = raster.metadata();
 
-        assert_eq!(metadata.width(), 10);
-        assert_eq!(metadata.height(), 10);
-        assert_eq!(metadata.scale_x(), 1.0);
-        assert_eq!(metadata.scale_y(), -1.0);
+        assert_eq!(raster.width().unwrap(), 10);
+        assert_eq!(raster.height().unwrap(), 10);
+        assert_eq!(raster.transform()[1], 1.0);
+        assert_eq!(raster.transform()[5], -1.0);
 
-        let bands = raster.bands();
-        assert_eq!(bands.len(), 1);
-        assert!(!bands.is_empty());
+        assert_eq!(raster.num_bands(), 1);
+        assert_ne!(raster.num_bands(), 0);
 
-        // Access band with 1-based band_number
-        let band = bands.band(1).unwrap();
+        // Bands are 0-based.
+        let band = raster.band(0).unwrap();
         assert_eq!(
             band.nd_buffer().unwrap().as_contiguous().unwrap().len(),
             100
         );
         assert_eq!(band.nd_buffer().unwrap().as_contiguous().unwrap()[0], 1u8);
 
-        let band_meta = band.metadata();
-        assert_eq!(band_meta.storage_type().unwrap(), StorageType::InDb);
-        assert_eq!(band_meta.data_type().unwrap(), BandDataType::UInt8);
+        assert!(band.is_indb());
+        assert_eq!(band.data_type(), BandDataType::UInt8);
 
         let crs = raster.crs().unwrap();
         assert_eq!(crs, epsg4326);
 
         // Test array over bands
-        let band_iter: Vec<_> = bands.iter().collect();
+        let band_iter: Vec<_> = (0..raster.num_bands()).map(|i| raster.band(i)).collect();
         assert_eq!(band_iter.len(), 1);
     }
 
@@ -764,30 +740,15 @@ mod tests {
     fn test_multi_band_array() {
         let mut builder = RasterBuilder::new(3);
 
-        let metadata = RasterMetadata {
-            width: 5,
-            height: 5,
-            upperleft_x: 0.0,
-            upperleft_y: 0.0,
-            scale_x: 1.0,
-            scale_y: -1.0,
-            skew_x: 0.0,
-            skew_y: 0.0,
-        };
-
-        builder.start_raster(&metadata, None).unwrap();
+        builder
+            .start_raster_2d(5, 5, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, None)
+            .unwrap();
 
         // Add three bands using the correct API
         for band_idx in 0..3 {
-            let band_metadata = BandMetadata {
-                nodata_value: Some(vec![255u8]),
-                storage_type: StorageType::InDb,
-                datatype: BandDataType::UInt8,
-                outdb_url: None,
-                outdb_band_id: None,
-            };
-
-            builder.start_band(band_metadata).unwrap();
+            builder
+                .start_band_2d(BandDataType::UInt8, Some(&[255u8]))
+                .unwrap();
             let test_data = vec![band_idx as u8; 25]; // 5x5 raster
             builder.band_data_writer().append_value(&test_data);
             builder.finish_band().unwrap();
@@ -800,15 +761,12 @@ mod tests {
 
         let rasters = RasterStructArray::try_new(&raster_array).unwrap();
         let raster = rasters.get(0).unwrap();
-        let bands = raster.bands();
 
-        assert_eq!(bands.len(), 3);
+        assert_eq!(raster.num_bands(), 3);
 
-        // Test each band has different data
-        // Use 1-based band numbers
+        // Test each band has different data (bands are 0-based).
         for i in 0..3 {
-            // Access band with 1-based band_number
-            let band = bands.band(i + 1).unwrap();
+            let band = raster.band(i).unwrap();
             let expected_value = i as u8;
             assert!(band
                 .nd_buffer()
@@ -820,8 +778,8 @@ mod tests {
         }
 
         // Test array
-        let band_values: Vec<u8> = bands
-            .iter()
+        let band_values: Vec<u8> = (0..raster.num_bands())
+            .map(|i| raster.band(i))
             .enumerate()
             .map(|(i, band)| {
                 let band = band.unwrap();
@@ -1026,38 +984,25 @@ mod tests {
         assert_eq!(band0.outdb_format(), Some("GTiff"));
         assert_eq!(band0.nodata(), Some(&[0xFFu8, 0xFE][..]));
 
-        // bands() view: 1-based band(N), len, is_empty, iter — same shape as
-        // pre-N-D callers expect. Exercise via the concrete type and via a
-        // `&dyn RasterRef` to confirm both dispatch paths work.
-        let bands = r.bands();
-        assert_eq!(bands.len(), 2);
-        assert!(!bands.is_empty());
-        assert_eq!(bands.band(1).unwrap().data_type(), BandDataType::UInt16);
-        assert_eq!(bands.band(2).unwrap().data_type(), BandDataType::Float32);
-        assert!(bands.band(0).is_err()); // 0 is invalid (1-based)
-        assert!(bands.band(3).is_err()); // out of range
-        assert_eq!(bands.iter().count(), 2);
+        // num_bands / band(0-based) / iteration. Exercise via the concrete type
+        // and via a `&dyn RasterRef` to confirm both dispatch paths work.
+        assert_eq!(r.num_bands(), 2);
+        assert_ne!(r.num_bands(), 0);
+        assert_eq!(r.band(0).unwrap().data_type(), BandDataType::UInt16);
+        assert_eq!(r.band(1).unwrap().data_type(), BandDataType::Float32);
+        assert!(r.band(2).is_err()); // out of range
+        assert_eq!((0..r.num_bands()).filter_map(|i| r.band(i).ok()).count(), 2);
         let dyn_r: &dyn RasterRef = &r;
-        assert_eq!(dyn_r.bands().len(), 2);
+        assert_eq!(dyn_r.num_bands(), 2);
 
-        // metadata() shim: concrete RasterMetadata/BandMetadata values.
-        let m = r.metadata();
-        assert_eq!(m.width(), 3);
-        assert_eq!(m.height(), 2);
-        assert_eq!(m.upper_left_x(), 0.0);
-        assert_eq!(m.scale_x(), 1.0);
-        let b0 = r.band(0).unwrap();
-        let bm0 = b0.metadata();
-        assert_eq!(bm0.data_type().unwrap(), BandDataType::UInt16);
-        assert_eq!(
-            bm0.storage_type().unwrap(),
-            sedona_schema::raster::StorageType::InDb
-        );
-        assert_eq!(bm0.nodata_value(), Some(&[0xFFu8, 0xFE][..]));
-        // Band 0 is InDb (has bytes), so outdb_* are hidden via the shim
-        // even though the row carries an outdb_uri hint.
-        assert!(bm0.outdb_url().is_none());
-        assert!(bm0.outdb_band_id().is_none());
+        // Raster-level geometry via the direct accessors.
+        assert_eq!(r.width().unwrap(), 3);
+        assert_eq!(r.height().unwrap(), 2);
+        assert_eq!(r.transform()[0], 0.0);
+        assert_eq!(r.transform()[1], 1.0);
+        // Band 0 has bytes, so it reports InDb even though the row carries an
+        // outdb_uri hint.
+        assert!(r.band(0).unwrap().is_indb());
     }
 
     // multi-band, multi-raster identity
@@ -1259,6 +1204,5 @@ mod tests {
             band.is_indb(),
             "a 0-element band holds 0 bytes legitimately and must be InDb"
         );
-        assert_eq!(band.metadata().storage_type().unwrap(), StorageType::InDb);
     }
 }

@@ -17,9 +17,7 @@
 
 use crate::error::SedonaProjError;
 use crate::proj::{Proj, ProjContext};
-use datafusion_common::{DataFusionError, Result};
 use geo_traits::Dimensions;
-use sedona_common::sedona_internal_datafusion_err;
 use sedona_geometry::bounding_box::BoundingBox;
 use sedona_geometry::error::SedonaGeometryError;
 use sedona_geometry::interval::IntervalTrait;
@@ -187,9 +185,9 @@ impl ProjCrsEngineBuilder {
 /// deliberately to ensure that if an error occurs creating an engine that the
 /// configuration can be set again. Notably, this will occur if this crate was
 /// built without proj-sys the first time somebody calls st_transform.
-pub fn configure_global_proj_engine(builder: ProjCrsEngineBuilder) -> Result<()> {
+pub fn configure_global_proj_engine(builder: ProjCrsEngineBuilder) -> Result<(), SedonaProjError> {
     let mut global_builder = PROJ_ENGINE_BUILDER.try_write().map_err(|_| {
-        DataFusionError::Configuration(
+        SedonaProjError::Internal(
             "Failed to acquire write lock for global PROJ configuration".to_string(),
         )
     })?;
@@ -199,9 +197,17 @@ pub fn configure_global_proj_engine(builder: ProjCrsEngineBuilder) -> Result<()>
 
 /// Do something with the global thread-local PROJ engine, creating it if it has not
 /// already been created.
-pub fn with_global_proj_engine<R, F: FnMut(&CachingCrsEngine<ProjCrsEngine>) -> Result<R>>(
+///
+/// The closure receives the engine and returns its own [`Result`]. Only the
+/// engine-acquisition failure surfaces as a [`SedonaProjError`]; callers that
+/// need to reconcile that with a different error type (a DataFusion error, a
+/// binding error) convert it explicitly at the call boundary.
+pub fn with_global_proj_engine<
+    R,
+    F: FnMut(&CachingCrsEngine<ProjCrsEngine>) -> Result<R, SedonaProjError>,
+>(
     mut func: F,
-) -> Result<R> {
+) -> Result<R, SedonaProjError> {
     PROJ_ENGINE.with(|engine_cell| {
         // If there is already an engine, use it!
         if let Some(engine) = engine_cell.get() {
@@ -211,8 +217,8 @@ pub fn with_global_proj_engine<R, F: FnMut(&CachingCrsEngine<ProjCrsEngine>) -> 
         // Otherwise, attempt to get the builder
         let maybe_builder = PROJ_ENGINE_BUILDER.read().map_err(|_| {
             // Highly unlikely (can only occur when a panic occurred during set)
-            sedona_internal_datafusion_err!(
-                "Failed to acquire read lock for global PROJ configuration"
+            SedonaProjError::Internal(
+                "Failed to acquire read lock for global PROJ configuration".to_string(),
             )
         })?;
 
@@ -221,12 +227,13 @@ pub fn with_global_proj_engine<R, F: FnMut(&CachingCrsEngine<ProjCrsEngine>) -> 
         let proj_engine = maybe_builder
             .as_ref()
             .unwrap_or(&ProjCrsEngineBuilder::default())
-            .build()
-            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+            .build()?;
 
         engine_cell
             .set(CachingCrsEngine::new(proj_engine))
-            .map_err(|_| sedona_internal_datafusion_err!("Failed to set cached PROJ transform"))?;
+            .map_err(|_| {
+                SedonaProjError::Internal("Failed to set cached PROJ transform".to_string())
+            })?;
         func(engine_cell.get().unwrap())
     })
 }

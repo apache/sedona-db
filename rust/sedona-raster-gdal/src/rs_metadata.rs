@@ -130,17 +130,17 @@ impl SedonaScalarKernel for RsMetaData {
                     }
                     Some(raster) => {
                         struct_validity.append(true);
-                        let metadata = raster.metadata();
-                        let num_bands = raster.bands().len() as u32;
+                        let transform = raster.transform();
+                        let num_bands = raster.num_bands() as u32;
 
-                        upper_left_x_builder.append_value(metadata.upper_left_x());
-                        upper_left_y_builder.append_value(metadata.upper_left_y());
-                        grid_width_builder.append_value(metadata.width());
-                        grid_height_builder.append_value(metadata.height());
-                        scale_x_builder.append_value(metadata.scale_x());
-                        scale_y_builder.append_value(metadata.scale_y());
-                        skew_x_builder.append_value(metadata.skew_x());
-                        skew_y_builder.append_value(metadata.skew_y());
+                        upper_left_x_builder.append_value(transform[0]);
+                        upper_left_y_builder.append_value(transform[3]);
+                        grid_width_builder.append_value(raster.width()?);
+                        grid_height_builder.append_value(raster.height()?);
+                        scale_x_builder.append_value(transform[1]);
+                        scale_y_builder.append_value(transform[5]);
+                        skew_x_builder.append_value(transform[2]);
+                        skew_y_builder.append_value(transform[4]);
 
                         let srid = match raster.crs() {
                             None => 0i32,
@@ -213,7 +213,6 @@ mod tests {
     use datafusion_expr::ScalarUDF;
     use sedona_raster::array::RasterStructArray;
     use sedona_raster::builder::RasterBuilder;
-    use sedona_raster::traits::RasterMetadata;
     use sedona_schema::datatypes::RASTER;
     use sedona_schema::raster::BandDataType;
     use sedona_testing::{
@@ -268,34 +267,18 @@ mod tests {
 
     fn build_zero_band_raster() -> StructArray {
         let mut builder = RasterBuilder::new(1);
-        let metadata = RasterMetadata {
-            width: 4,
-            height: 3,
-            upperleft_x: 11.0,
-            upperleft_y: 22.0,
-            scale_x: 0.5,
-            scale_y: -0.5,
-            skew_x: 0.0,
-            skew_y: 0.0,
-        };
-        builder.start_raster(&metadata, Some("EPSG:4326")).unwrap();
+        builder
+            .start_raster_2d(4, 3, 11.0, 22.0, 0.5, -0.5, 0.0, 0.0, Some("EPSG:4326"))
+            .unwrap();
         builder.finish_raster().unwrap();
         builder.finish().unwrap()
     }
 
     fn build_no_crs_raster() -> StructArray {
-        let metadata = RasterMetadata {
-            width: 4,
-            height: 3,
-            upperleft_x: 7.0,
-            upperleft_y: 8.0,
-            scale_x: 1.0,
-            scale_y: -1.0,
-            skew_x: 0.0,
-            skew_y: 0.0,
-        };
         build_in_db_raster(
-            metadata,
+            4,
+            3,
+            [7.0, 1.0, 0.0, 8.0, 0.0, -1.0],
             None,
             &[InDbTestBand {
                 datatype: BandDataType::UInt8,

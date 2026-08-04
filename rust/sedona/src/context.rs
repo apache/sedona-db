@@ -27,7 +27,7 @@ use crate::{
     show::{show_batches, DisplayTableOptions},
 };
 use arrow_array::RecordBatch;
-use arrow_schema::DataType;
+use arrow_schema::{DataType, Schema};
 use async_trait::async_trait;
 use datafusion::datasource::file_format::format_as_file_type;
 use datafusion::{
@@ -42,6 +42,7 @@ use datafusion::{
     sql::parser::{DFParser, Statement},
 };
 use datafusion::{dataframe::DataFrameWriteOptions, execution::memory_pool::MemoryLimit};
+use datafusion_common::config::{CsvOptions, JsonOptions};
 use datafusion_common::not_impl_err;
 use datafusion_expr::dml::InsertOp;
 use datafusion_expr::sqlparser::dialect::{dialect_from_str, Dialect};
@@ -66,6 +67,7 @@ use sedona_pointcloud::las::{
     options::{GeometryEncoding, LasExtraBytes, LasOptions},
 };
 use sedona_raster_functions::rs_ensure_loaded::RsEnsureLoaded;
+use sedona_schema::schema::SedonaSchema;
 #[cfg(feature = "gpu")]
 use sedona_spatial_join_gpu::options::GpuOptions;
 
@@ -176,6 +178,21 @@ impl SedonaContext {
 
                 planner = planner.with_spatial_join_physical_planner(Arc::new(
                     GpuSpatialJoinPhysicalPlanner::new(),
+                ));
+            }
+
+            // Register the raster join last so it is consulted before the GPU
+            // planner (planners are tried in reverse registration order). It
+            // recognizes raster/geometry predicates and declines everything else
+            // with `None`, so a raster predicate is handled here rather than
+            // reaching the GPU planner — which would otherwise hard-error on a
+            // raster operand when `GpuOptions.fallback_to_cpu` is false. Anything
+            // it declines falls through to the GPU/geography/default planners.
+            {
+                use sedona_spatial_join_raster::physical_planner::RasterSpatialJoinPhysicalPlanner;
+
+                planner = planner.with_spatial_join_physical_planner(Arc::new(
+                    RasterSpatialJoinPhysicalPlanner::new(),
                 ));
             }
         }
@@ -331,11 +348,6 @@ impl SedonaContext {
         #[cfg(feature = "s2geography")]
         out.register_s2geography()?;
 
-        // Always register proj scalar kernels (although actually calling them will error
-        // without this feature unless sedona_proj::register::configure_global_proj_engine()
-        // is called).
-        out.register_scalar_kernels(sedona_proj::register::scalar_kernels().into_iter())?;
-
         // Always register raster functions
         out.register_function_set(sedona_raster_functions::register::default_function_set());
 
@@ -344,7 +356,7 @@ impl SedonaContext {
 
     #[cfg(feature = "s2geography")]
     fn register_s2geography(&mut self) -> Result<()> {
-        use sedona_proj::sd_order_lnglat;
+        use sedona_functions::sd_order_lnglat;
 
         self.register_scalar_kernels(sedona_s2geography::register::scalar_kernels()?.into_iter())?;
 
@@ -667,6 +679,22 @@ pub trait SedonaDataFrame {
         options: SedonaWriteOptions,
         writer_options: Option<TableGeoParquetOptions>,
     ) -> Result<Vec<RecordBatch>>;
+
+    /// Write this DataFrame to CSV file(s), rejecting geometry columns
+    ///
+    /// CSV has no geometry representation, so a geometry (or nested geometry)
+    /// column is a hard error with a message pointing at the required
+    /// text projection, rather than silently writing an opaque encoding.
+    async fn write_sedona_csv(
+        self,
+        path: &str,
+        has_header: bool,
+        delimiter: u8,
+    ) -> Result<Vec<RecordBatch>>;
+
+    /// Write this DataFrame to newline-delimited JSON file(s), rejecting
+    /// geometry columns (see [`Self::write_sedona_csv`]).
+    async fn write_sedona_json(self, path: &str) -> Result<Vec<RecordBatch>>;
 }
 
 #[async_trait]
@@ -741,6 +769,55 @@ impl SedonaDataFrame for DataFrame {
 
         DataFrame::new(ctx.ctx.state(), plan).collect().await
     }
+
+    async fn write_sedona_csv(
+        self,
+        path: &str,
+        has_header: bool,
+        delimiter: u8,
+    ) -> Result<Vec<RecordBatch>, DataFusionError> {
+        reject_geometry_columns(self.schema().as_arrow(), "CSV")?;
+        let csv_options = CsvOptions {
+            has_header: Some(has_header),
+            delimiter,
+            ..Default::default()
+        };
+        self.write_csv(path, DataFrameWriteOptions::new(), Some(csv_options))
+            .await
+    }
+
+    async fn write_sedona_json(self, path: &str) -> Result<Vec<RecordBatch>, DataFusionError> {
+        reject_geometry_columns(self.schema().as_arrow(), "JSON")?;
+        self.write_json(path, DataFrameWriteOptions::new(), None::<JsonOptions>)
+            .await
+    }
+}
+
+/// Reject a schema that contains geometry/geography columns (including columns
+/// nested inside a struct, list, or map) for a text output format that has no
+/// geometry representation, with a message naming the columns and the required
+/// text projection. Lives here (not in the Python binding) so R can reuse it.
+///
+/// The nested-aware geometry detection is provided by
+/// [`SedonaSchema::geometry_column_indices_recursive`].
+fn reject_geometry_columns(schema: &Schema, format: &str) -> Result<()> {
+    let geometry_columns: Vec<&str> = schema
+        .geometry_column_indices_recursive()?
+        .into_iter()
+        .map(|i| schema.field(i).name().as_str())
+        .collect();
+
+    if !geometry_columns.is_empty() {
+        return plan_err!(
+            "Cannot write geometry column(s) {:?} to {}: this format has no geometry \
+             representation. Convert them to text first (e.g. SELECT ST_AsText(geom) AS geom) \
+             before writing.",
+            geometry_columns,
+            format
+        );
+    }
+
+    Ok(())
 }
 
 /// A Sedona-specific copy of [DataFrameWriteOptions]

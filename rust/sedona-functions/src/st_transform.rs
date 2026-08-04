@@ -22,12 +22,11 @@ use datafusion_common::cast::{as_string_view_array, as_struct_array};
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::{exec_err, DataFusionError, Result, ScalarValue};
 use datafusion_expr::ColumnarValue;
+use sedona_common::option::with_crs_engine;
 use sedona_common::sedona_internal_err;
 use sedona_expr::item_crs::{make_item_crs, parse_item_crs_arg_type};
-use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
-use sedona_functions::executor::WkbExecutor;
-use sedona_functions::st_setsrid::{validate_crs_array_for_type, validate_crs_for_type};
-use sedona_geometry::transform::{transform, CrsEngine, CrsTransform};
+use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel, SedonaScalarUDF};
+use sedona_geometry::transform::{transform, CrsTransform};
 use sedona_geometry::types::Edges;
 use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
 use sedona_schema::crs::{deserialize_crs, Crs};
@@ -38,9 +37,16 @@ use std::iter::zip;
 use std::sync::Arc;
 use wkb::reader::Wkb;
 
-use crate::transform::with_global_proj_engine;
+use crate::executor::WkbExecutor;
+use crate::st_setsrid::{validate_crs_array_for_type, validate_crs_for_type};
 
-/// ST_Transform() implementation using the proj crate
+/// ST_Transform() scalar UDF (reprojects geometries/geographies via the
+/// session's [`CrsEngine`](sedona_geometry::transform::CrsEngine))
+pub fn st_transform_udf() -> SedonaScalarUDF {
+    SedonaScalarUDF::from_impl("st_transform", st_transform_impl())
+}
+
+/// ST_Transform() kernel implementation
 pub fn st_transform_impl() -> ScalarKernelRef {
     Arc::new(STTransform {})
 }
@@ -136,7 +142,7 @@ impl SedonaScalarKernel for STTransform {
         args: &[ColumnarValue],
         return_type: &SedonaType,
         _num_rows: usize,
-        _config_options: Option<&ConfigOptions>,
+        config_options: Option<&ConfigOptions>,
     ) -> Result<ColumnarValue> {
         let inputs = zip(arg_types, args)
             .map(|(arg_type, arg)| ArgInput::from_arg(arg_type, arg))
@@ -165,7 +171,7 @@ impl SedonaScalarKernel for STTransform {
                 let to_crs_opt: Crs = Some(to_crs.clone());
                 validate_crs_for_type(&to_crs_opt, &return_item_type)?;
 
-                with_global_proj_engine(|engine| {
+                with_crs_engine(config_options, |engine| {
                     let crs_transform = engine
                         .get_transform_crs_to_crs(
                             &from_crs.to_crs_string(),
@@ -210,7 +216,7 @@ impl SedonaScalarKernel for STTransform {
             None
         };
 
-        with_global_proj_engine(|engine| {
+        with_crs_engine(config_options, |engine| {
             executor.execute_wkb_void(|maybe_wkb| {
                 match (maybe_wkb, crs_to_crs_iter.next().unwrap()) {
                     (Some(wkb), (Some(from_crs_str), Some(to_crs_str))) => {
@@ -453,6 +459,9 @@ mod tests {
     use sedona_testing::create::create_array_item_crs;
     use sedona_testing::create::create_scalar;
     use sedona_testing::testers::ScalarUdfTester;
+    use std::sync::Arc;
+
+    use sedona_proj::transform::LazyProjEngine;
 
     const NAD83ZONE6PROJ: &str = "EPSG:2230";
     const NAD83_GEOGRAPHIC: &str = "EPSG:4269";
@@ -477,7 +486,8 @@ mod tests {
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![geometry_input.clone(), SedonaType::Arrow(DataType::Utf8)],
-        );
+        )
+        .with_crs_engine(Arc::new(LazyProjEngine));
 
         let wkb = create_array(&[None, Some("POINT (79.3871 43.6426)")], &geometry_input);
         let via_wkt = tester.invoke_array_scalar(wkb.clone(), wkt).unwrap();
@@ -492,7 +502,8 @@ mod tests {
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![geometry_input.clone(), SedonaType::Arrow(DataType::Utf8)],
-        );
+        )
+        .with_crs_engine(Arc::new(LazyProjEngine));
 
         // Return type with scalar to argument (returns type-level CRS)
         let expected_return_type = SedonaType::Wkb(Edges::Planar, get_crs(NAD83ZONE6PROJ));
@@ -533,7 +544,8 @@ mod tests {
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![geography_input.clone(), SedonaType::Arrow(DataType::Utf8)],
-        );
+        )
+        .with_crs_engine(Arc::new(LazyProjEngine));
 
         // Transform to geographic CRS should succeed
         let expected_return_type = SedonaType::Wkb(Edges::Spherical, get_crs(NAD83_GEOGRAPHIC));
@@ -569,7 +581,8 @@ mod tests {
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![geometry_input.clone(), SedonaType::Arrow(DataType::UInt32)],
-        );
+        )
+        .with_crs_engine(Arc::new(LazyProjEngine));
 
         // Return type with scalar to argument (returns type-level CRS)
         let expected_return_type = SedonaType::Wkb(Edges::Planar, get_crs(NAD83ZONE6PROJ));
@@ -610,7 +623,8 @@ mod tests {
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![geography_input.clone(), SedonaType::Arrow(DataType::UInt32)],
-        );
+        )
+        .with_crs_engine(Arc::new(LazyProjEngine));
 
         // Transform to geographic CRS (4269 = NAD83) should succeed
         let expected_return_type = SedonaType::Wkb(Edges::Spherical, get_crs(NAD83_GEOGRAPHIC));
@@ -640,7 +654,8 @@ mod tests {
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![geometry_input.clone(), SedonaType::Arrow(DataType::Utf8)],
-        );
+        )
+        .with_crs_engine(Arc::new(LazyProjEngine));
 
         // Return type with scalar to argument (returns type-level CRS)
         // This is the same as for normal input
@@ -693,7 +708,8 @@ mod tests {
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![geography_input.clone(), SedonaType::Arrow(DataType::Utf8)],
-        );
+        )
+        .with_crs_engine(Arc::new(LazyProjEngine));
 
         // Transform to geographic CRS should succeed
         let expected_return_type = SedonaType::Wkb(Edges::Spherical, get_crs(NAD83_GEOGRAPHIC));
@@ -739,7 +755,8 @@ mod tests {
                 SedonaType::Arrow(DataType::Utf8),
                 SedonaType::Arrow(DataType::Utf8),
             ],
-        );
+        )
+        .with_crs_engine(Arc::new(LazyProjEngine));
 
         // Return type with scalar to argument (returns type-level CRS)
         // This is the same as for normal input
@@ -796,7 +813,8 @@ mod tests {
                 SedonaType::Arrow(DataType::Utf8),
                 SedonaType::Arrow(DataType::Utf8),
             ],
-        );
+        )
+        .with_crs_engine(Arc::new(LazyProjEngine));
 
         // Transform to geographic CRS should succeed
         let expected_return_type = SedonaType::Wkb(Edges::Spherical, get_crs(NAD83_GEOGRAPHIC));

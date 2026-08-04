@@ -27,5 +27,10 @@ pub fn default_function_set() -> FunctionSet {
     function_set.insert_scalar_udf(crate::rs_frompath::rs_frompath_udf());
     function_set.insert_scalar_udf(crate::rs_metadata::rs_metadata_udf());
     function_set.insert_scalar_udf(crate::rs_polygonize::rs_polygonize_udf());
+    function_set.insert_scalar_udf(crate::rs_reproject_match::rs_reproject_match_udf());
+    function_set.insert_scalar_udf(crate::rs_resample::rs_resample_udf());
+    function_set.insert_scalar_udf(crate::rs_tile::rs_tile_udf());
+    function_set.insert_scalar_udf(crate::rs_zonal_stats::rs_zonal_stats_udf());
+    function_set.insert_scalar_udf(crate::rs_zonal_stats::rs_zonal_stats_all_udf());
     function_set
 }

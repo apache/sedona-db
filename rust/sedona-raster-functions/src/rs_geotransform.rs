@@ -161,25 +161,18 @@ impl SedonaScalarKernel for RsGeoTransform {
         executor.execute_raster_void(|_i, raster_opt| {
             match raster_opt {
                 None => builder.append_null(),
-                Some(raster) => {
-                    let metadata = raster.metadata();
-                    match self.param {
-                        GeoTransformParam::Rotation => {
-                            let rotation = rotation(raster);
-                            builder.append_value(rotation);
-                        }
-                        GeoTransformParam::ScaleX => builder.append_value(metadata.scale_x()),
-                        GeoTransformParam::ScaleY => builder.append_value(metadata.scale_y()),
-                        GeoTransformParam::SkewX => builder.append_value(metadata.skew_x()),
-                        GeoTransformParam::SkewY => builder.append_value(metadata.skew_y()),
-                        GeoTransformParam::UpperLeftX => {
-                            builder.append_value(metadata.upper_left_x())
-                        }
-                        GeoTransformParam::UpperLeftY => {
-                            builder.append_value(metadata.upper_left_y())
-                        }
+                Some(raster) => match self.param {
+                    GeoTransformParam::Rotation => {
+                        let rotation = rotation(raster);
+                        builder.append_value(rotation);
                     }
-                }
+                    GeoTransformParam::ScaleX => builder.append_value(raster.transform()[1]),
+                    GeoTransformParam::ScaleY => builder.append_value(raster.transform()[5]),
+                    GeoTransformParam::SkewX => builder.append_value(raster.transform()[2]),
+                    GeoTransformParam::SkewY => builder.append_value(raster.transform()[4]),
+                    GeoTransformParam::UpperLeftX => builder.append_value(raster.transform()[0]),
+                    GeoTransformParam::UpperLeftY => builder.append_value(raster.transform()[3]),
+                },
             }
             Ok(())
         })?;

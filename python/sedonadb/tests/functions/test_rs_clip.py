@@ -18,13 +18,14 @@
 """RS_Clip cross-checked against a rasterio reference implementation.
 
 Every parity test defines the raster once (numpy array + GDAL geotransform,
-written to a CRS-less GeoTIFF) and clips it through both raster engines from
-`sedonadb.raster_testing`, comparing pixels, geotransform, and nodata
-exactly. Option permutations run as rows of one query (via
-`SedonaDB.clip_rows`) so the kernel executes its real array path rather than
-constant-folding literals. Cases rasterio cannot express (empty-mask
-lenient/strict semantics, out-of-range nodata) are asserted directly against
-RS_Clip's documented behavior.
+written to a CRS-less GeoTIFF) and clips it through both SedonaDB
+(`_sedonadb_clip` / `_sedonadb_clip_rows`) and a rasterio reference
+(`_rasterio_clip`), comparing pixels, geotransform, and nodata exactly.
+Option permutations run as rows of one query (via `_sedonadb_clip_rows`) so
+the kernel executes its real array path rather than constant-folding literals.
+Cases rasterio cannot express (empty-mask lenient/strict semantics,
+out-of-range nodata) are asserted directly against RS_Clip's documented
+behavior.
 """
 
 import numpy as np
@@ -34,8 +35,7 @@ import shapely
 
 from sedonadb.expr import lit
 from sedonadb.raster_testing import (
-    Rasterio,
-    SedonaDB,
+    DecodedRaster,
     decode_raster,
     dtype_min,
     random_raster_data,
@@ -87,14 +87,114 @@ BAND_NODATA = {
 }
 
 
-@pytest.fixture()
-def sedona(con):
-    return SedonaDB(con)
+def _sedonadb_clip_rows(con, path, rows):
+    """Run `RS_Clip` once over an N-row table, one row per parameter combo.
+
+    Options travel as table columns rather than literals so the kernel
+    executes its real array path (literals constant-fold). Each row is a
+    dict with keys `wkt`, `band`, `all_touched`, `nodata` (None = use the
+    band's own), and `crop`. Returns one `DecodedRaster` (or None for NULL
+    rows) per input row, in input order.
+    """
+    table = pa.table(
+        {
+            "idx": pa.array(range(len(rows)), type=pa.int64()),
+            "path": pa.array([str(path)] * len(rows), type=pa.utf8()),
+            "wkt": pa.array([r["wkt"] for r in rows], type=pa.utf8()),
+            "band": pa.array([r["band"] for r in rows], type=pa.int32()),
+            "all_touched": pa.array([r["all_touched"] for r in rows], type=pa.bool_()),
+            "nodata": pa.array([r["nodata"] for r in rows], type=pa.float64()),
+            "crop": pa.array([r["crop"] for r in rows], type=pa.bool_()),
+        }
+    )
+    df = con.create_data_frame(table)
+    result = (
+        df.select(
+            "idx",
+            r=df.path.funcs.rs_frompath().funcs.rs_clip(
+                df.band,
+                con.funcs.st_geomfromtext(df.wkt),
+                df.all_touched,
+                df.nodata,
+                df.crop,
+            ),
+        )
+        .sort("idx")
+        .to_arrow_table()["r"]
+    )
+    return [decode_raster(result[i]) for i in range(len(result))]
 
 
-@pytest.fixture()
-def reference():
-    return Rasterio.create_or_skip()
+def _sedonadb_clip(
+    con, path, geometry_wkt, *, band=0, all_touched=False, nodata=None, crop=True
+):
+    """One-row `RS_Clip` through `_sedonadb_clip_rows` (arguments travel as
+    table columns so the kernel runs its real array path)."""
+    (result,) = _sedonadb_clip_rows(
+        con,
+        path,
+        [
+            {
+                "wkt": geometry_wkt,
+                "band": band,
+                "all_touched": all_touched,
+                "nodata": nodata,
+                "crop": crop,
+            }
+        ],
+    )
+    return result
+
+
+def _rasterio_clip(
+    path, geometry_wkt, *, band=0, all_touched=False, nodata=None, crop=True
+):
+    """Rasterio reference clip: the window is the geometry bounds ∩ raster
+    extent (or the full grid when `crop` is off), the selection is
+    `geometry_mask`, and pixels compose as "inside the geometry: source value
+    verbatim; outside: `nodata`". This is deliberately not `rasterio.mask.mask`,
+    which additionally remaps source pixels *valued* at the band nodata. As a
+    reference it takes no position on nodata precedence: `nodata` must be the
+    already-resolved fill (it errors on None rather than guessing)."""
+    import rasterio
+    import rasterio.features
+    import rasterio.windows
+
+    if nodata is None:
+        raise ValueError(
+            "Rasterio is a reference engine: pass the resolved nodata fill"
+        )
+
+    geom = shapely.from_wkt(geometry_wkt)
+    with rasterio.open(str(path)) as src:
+        if band < 0 or band > src.count:
+            raise ValueError(f"band {band} out of range for a {src.count}-band raster")
+        if crop:
+            window = rasterio.features.geometry_window(src, [geom])
+        else:
+            window = rasterio.windows.Window(0, 0, src.width, src.height)
+        transform = src.window_transform(window)
+        data = src.read(window=window)
+        inside = rasterio.features.geometry_mask(
+            [geom],
+            out_shape=(data.shape[1], data.shape[2]),
+            transform=transform,
+            all_touched=all_touched,
+            invert=True,
+        )
+        # numpy raises for out-of-range fills but silently truncates fractional
+        # ones (250.7 -> 250 on uint8); a lossy fill would make the reference
+        # mirror the very bug it exists to catch.
+        fill = np.asarray(nodata, dtype=data.dtype)
+        if float(fill) != float(nodata):
+            raise ValueError(
+                f"nodata {nodata} is not exactly representable as {data.dtype}"
+            )
+        pixels = np.where(inside, data, fill)
+
+    if band != 0:
+        pixels = pixels[band - 1 : band]
+    return DecodedRaster(pixels, tuple(transform.to_gdal()), [nodata] * len(pixels))
 
 
 def _test_data(dtype, band_nodata=None):
@@ -113,7 +213,7 @@ def _test_data(dtype, band_nodata=None):
     )
 
 
-def _assert_clip_matches_reference(got, reference, tiff, row, fill):
+def _assert_clip_matches_reference(got, tiff, row, fill):
     """Compare one RS_Clip result against the rasterio reference clip.
 
     ``fill`` is the resolved nodata (explicit argument or band nodata or dtype
@@ -121,7 +221,7 @@ def _assert_clip_matches_reference(got, reference, tiff, row, fill):
     rasterio's own fallback for a nodata-less band is 0 while RS_Clip's is the
     dtype minimum.
     """
-    expected = reference.clip(
+    expected = _rasterio_clip(
         tiff,
         row["wkt"],
         band=row["band"],
@@ -138,7 +238,7 @@ def _assert_clip_matches_reference(got, reference, tiff, row, fill):
 
 
 @pytest.mark.parametrize("dtype", list(EXPLICIT_NODATA))
-def test_rs_clip_matches_rasterio_permutations(sedona, reference, tmp_path, dtype):
+def test_rs_clip_matches_rasterio_permutations(con, tmp_path, dtype):
     """Cross-product of the optional arguments, one row per combination: band
     (0 = all bands, 1..3), all_touched, explicit vs band nodata, crop — over
     two geometries chosen so every axis discriminates. GEOM_TRIANGLE's
@@ -146,6 +246,7 @@ def test_rs_clip_matches_rasterio_permutations(sedona, reference, tmp_path, dtyp
     raster (crop is a no-op there); GEOM_HOLE's interior window has nonzero
     offsets, so its crop=True rows shift the transform and shrink the shape
     while crop=False rows must fill outside an interior window."""
+    pytest.importorskip("rasterio")
     tiff = tmp_path / f"clip_{dtype}.tif"
     write_geotiff(
         tiff,
@@ -168,12 +269,12 @@ def test_rs_clip_matches_rasterio_permutations(sedona, reference, tmp_path, dtyp
         for nd in (None, EXPLICIT_NODATA[dtype])
         for crop in (True, False)
     ]
-    results = sedona.clip_rows(tiff, rows)
+    results = _sedonadb_clip_rows(con, tiff, rows)
 
     for row, got in zip(rows, results):
         assert got is not None, f"row: {row}"
         fill = row["nodata"] if row["nodata"] is not None else BAND_NODATA[dtype]
-        _assert_clip_matches_reference(got, reference, tiff, row, fill)
+        _assert_clip_matches_reference(got, tiff, row, fill)
 
 
 @pytest.mark.parametrize("all_touched", [False, True])
@@ -182,11 +283,10 @@ def test_rs_clip_matches_rasterio_permutations(sedona, reference, tmp_path, dtyp
     [GEOM_RECT, GEOM_TRIANGLE, GEOM_HOLE, GEOM_OVERHANG],
     ids=["rect", "triangle", "hole", "overhang"],
 )
-def test_rs_clip_matches_rasterio_geometries(
-    sedona, reference, tmp_path, wkt, all_touched
-):
+def test_rs_clip_matches_rasterio_geometries(con, tmp_path, wkt, all_touched):
     """Geometry shapes: axis-aligned, diagonal edges, interior ring, and an
     envelope overhanging the raster edge (crop window = envelope ∩ extent)."""
+    pytest.importorskip("rasterio")
     tiff = tmp_path / "clip_geom.tif"
     write_geotiff(
         tiff,
@@ -202,9 +302,9 @@ def test_rs_clip_matches_rasterio_geometries(
         "nodata": None,
         "crop": True,
     }
-    got = sedona.clip(tiff, wkt, all_touched=all_touched)
+    got = _sedonadb_clip(con, tiff, wkt, all_touched=all_touched)
     assert got is not None
-    _assert_clip_matches_reference(got, reference, tiff, row, BAND_NODATA["uint8"])
+    _assert_clip_matches_reference(got, tiff, row, BAND_NODATA["uint8"])
 
 
 # A sheared grid (one skew term) and a fully rotated one (~30 degrees, both
@@ -221,14 +321,13 @@ ROTATED_TRANSFORM = (100.0, 1.7320508, 1.5, 500.0, 1.0, -2.5980762)
     [SKEWED_TRANSFORM, ROTATED_TRANSFORM],
     ids=["skewed", "rotated"],
 )
-def test_rs_clip_skewed_rasters_match_rasterio(
-    sedona, reference, tmp_path, gdal_transform, crop
-):
+def test_rs_clip_skewed_rasters_match_rasterio(con, tmp_path, gdal_transform, crop):
     """Clipping a skewed or rotated raster: the crop window is the pixel-space
     bounding box of the geometry envelope mapped through the inverted affine,
     and the output geotransform shifts the origin by the full affine (both
     skew terms). The geometry is defined in pixel space and mapped through
     the transform under test so it overlaps the grid whatever the rotation."""
+    pytest.importorskip("rasterio")
     from rasterio.transform import Affine
 
     tiff = tmp_path / "clip_skewed.tif"
@@ -250,21 +349,20 @@ def test_rs_clip_skewed_rasters_match_rasterio(
         "nodata": None,
         "crop": crop,
     }
-    got = sedona.clip(tiff, geom.wkt, crop=crop)
+    got = _sedonadb_clip(con, tiff, geom.wkt, crop=crop)
     assert got is not None
-    _assert_clip_matches_reference(got, reference, tiff, row, BAND_NODATA["uint8"])
+    _assert_clip_matches_reference(got, tiff, row, BAND_NODATA["uint8"])
 
 
 @pytest.mark.parametrize("dtype", list(EXPLICIT_NODATA) + ["int8", "int64", "uint64"])
-def test_rs_clip_default_nodata_sentinel_matches_rasterio(
-    sedona, reference, tmp_path, dtype
-):
+def test_rs_clip_default_nodata_sentinel_matches_rasterio(con, tmp_path, dtype):
     """No explicit nodata and no band nodata: masked pixels get the dtype
     minimum (exact even for 64-bit integers — no f64 round-trip), and the
     output band records it. GEOM_TRIANGLE leaves most of its crop window
     outside the geometry, so the sentinel is actually written to pixels, not
     just metadata. rasterio is handed the same sentinel because its own
     nodata-less fallback is 0."""
+    pytest.importorskip("rasterio")
     tiff = tmp_path / f"clip_sentinel_{dtype}.tif"
     write_geotiff(tiff, _test_data(dtype), gdal_transform=GDAL_TRANSFORM)
 
@@ -275,15 +373,16 @@ def test_rs_clip_default_nodata_sentinel_matches_rasterio(
         "nodata": None,
         "crop": True,
     }
-    got = sedona.clip(tiff, GEOM_TRIANGLE, band=1)
+    got = _sedonadb_clip(con, tiff, GEOM_TRIANGLE, band=1)
     assert got is not None
-    _assert_clip_matches_reference(got, reference, tiff, row, dtype_min(dtype))
+    _assert_clip_matches_reference(got, tiff, row, dtype_min(dtype))
 
 
 def test_rs_clip_signature_defaults(con, tmp_path):
     """Each shorter signature behaves as the full 7-arg form with the defaults
     filled in: all_touched = false, no_data_value = the band's own, crop = true,
     lenient = true."""
+    pytest.importorskip("rasterio")
     pytest.importorskip("sedonadb_expr")
     tiff = tmp_path / "clip_sigs.tif"
     write_geotiff(
@@ -326,10 +425,11 @@ def test_rs_clip_signature_defaults(con, tmp_path):
     assert sql_result.nodata == full.nodata
 
 
-def test_rs_clip_empty_mask_is_null_when_lenient(sedona, reference, tmp_path):
+def test_rs_clip_empty_mask_is_null_when_lenient(con, tmp_path):
     """rasterio has no equivalent of lenient: a geometry selecting no pixels
     (sliver between pixel centers, or fully disjoint) yields NULL by default,
     and all_touched rescues the sliver case."""
+    pytest.importorskip("rasterio")
     tiff = tmp_path / "clip_empty.tif"
     write_geotiff(
         tiff,
@@ -361,20 +461,19 @@ def test_rs_clip_empty_mask_is_null_when_lenient(sedona, reference, tmp_path):
             "crop": True,
         },
     ]
-    results = sedona.clip_rows(tiff, rows)
+    results = _sedonadb_clip_rows(con, tiff, rows)
 
     assert results[0] is None
     assert results[1] is None
     assert results[2] is not None
-    _assert_clip_matches_reference(
-        results[2], reference, tiff, rows[2], BAND_NODATA["uint8"]
-    )
+    _assert_clip_matches_reference(results[2], tiff, rows[2], BAND_NODATA["uint8"])
 
 
 def test_rs_clip_strict_and_argument_errors(con, tmp_path):
     """Error pathways: strict (lenient = false) empty-mask messages depend on
     all_touched; a non-representable nodata and an out-of-range band error
     regardless of leniency."""
+    pytest.importorskip("rasterio")
     pytest.importorskip("sedonadb_expr")
     tiff = tmp_path / "clip_errors.tif"
     write_geotiff(

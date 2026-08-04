@@ -20,7 +20,8 @@
 //! Original code is licensed under MIT.
 
 use crate::gdal_dyn_bindgen::{
-    self, GDALDataType, GDALOpenFlags, GDALRIOResampleAlg, GDAL_OF_READONLY, GDAL_OF_VERBOSE_ERROR,
+    self, GDALDataType, GDALOpenFlags, GDALRIOResampleAlg, GDALResampleAlg, GDAL_OF_READONLY,
+    GDAL_OF_VERBOSE_ERROR,
 };
 
 /// A Rust-friendly enum mirroring the georust/gdal `GdalDataType` names.
@@ -193,6 +194,23 @@ impl ResampleAlg {
             ResampleAlg::Average => gdal_dyn_bindgen::GRIORA_Average,
             ResampleAlg::Mode => gdal_dyn_bindgen::GRIORA_Mode,
             ResampleAlg::Gauss => gdal_dyn_bindgen::GRIORA_Gauss,
+        }
+    }
+
+    /// Convert to the warp `GDALResampleAlg` value used by `GDALReprojectImage`.
+    ///
+    /// Returns `None` for algorithms the warp API has no equivalent for (Gauss),
+    /// so callers surface a clear error rather than silently mis-mapping.
+    pub fn to_gdal_warp(self) -> Option<GDALResampleAlg> {
+        match self {
+            ResampleAlg::NearestNeighbour => Some(gdal_dyn_bindgen::GRA_NearestNeighbour),
+            ResampleAlg::Bilinear => Some(gdal_dyn_bindgen::GRA_Bilinear),
+            ResampleAlg::Cubic => Some(gdal_dyn_bindgen::GRA_Cubic),
+            ResampleAlg::CubicSpline => Some(gdal_dyn_bindgen::GRA_CubicSpline),
+            ResampleAlg::Lanczos => Some(gdal_dyn_bindgen::GRA_Lanczos),
+            ResampleAlg::Average => Some(gdal_dyn_bindgen::GRA_Average),
+            ResampleAlg::Mode => Some(gdal_dyn_bindgen::GRA_Mode),
+            ResampleAlg::Gauss => None,
         }
     }
 

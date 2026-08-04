@@ -120,13 +120,14 @@ fn get_pixel_type(
             Ok(())
         }
         Some(raster) => {
-            let num_bands = raster.bands().len();
+            let num_bands = raster.num_bands();
             if band_index < 1 || band_index > num_bands as i32 {
                 builder.append_null();
                 return Ok(());
             }
-            let band = raster.bands().band(band_index as usize)?;
-            let dt = band.metadata().data_type()?;
+            // `band_index` is 1-based (validated >= 1 above); `band` is 0-based.
+            let band = raster.band(band_index as usize - 1)?;
+            let dt = band.data_type();
             builder.append_value(dt.pixel_type_name());
             Ok(())
         }
@@ -224,14 +225,14 @@ fn get_nodata_value(
             Ok(())
         }
         Some(raster) => {
-            let num_bands = raster.bands().len();
+            let num_bands = raster.num_bands();
             if band_index < 1 || band_index > num_bands as i32 {
                 builder.append_null();
                 return Ok(());
             }
-            let band = raster.bands().band(band_index as usize)?;
-            let band_meta = band.metadata();
-            match band_meta.nodata_value_as_f64()? {
+            // `band_index` is 1-based (validated >= 1 above); `band` is 0-based.
+            let band = raster.band(band_index as usize - 1)?;
+            match band.nodata_as_f64()? {
                 None => builder.append_null(),
                 Some(val) => builder.append_value(val),
             }

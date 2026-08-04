@@ -32,6 +32,7 @@ mod gdal_common;
 #[allow(dead_code)]
 mod gdal_dataset_provider;
 
+mod mask;
 mod raster_loader;
 mod rs_as_geotiff;
 mod rs_as_raster;
@@ -40,7 +41,10 @@ mod rs_from_gdal_raster;
 mod rs_frompath;
 mod rs_metadata;
 mod rs_polygonize;
-mod source_uri;
+mod rs_reproject_match;
+mod rs_resample;
+mod rs_tile;
+mod rs_zonal_stats;
 mod utils;
 
 // Re-export main dataset conversion functions
@@ -56,6 +60,9 @@ pub use rs_from_gdal_raster::rs_from_gdal_raster_udf;
 pub use rs_frompath::rs_frompath_udf;
 pub use rs_metadata::rs_metadata_udf;
 pub use rs_polygonize::rs_polygonize_udf;
+pub use rs_reproject_match::rs_reproject_match_udf;
+pub use rs_resample::rs_resample_udf;
+pub use rs_tile::rs_tile_udf;
 pub use utils::{
     append_as_indb_raster, append_as_outdb_raster, append_nd_from_dataset, dataset_to_indb_raster,
     gdal_dataset_to_nd_raster,

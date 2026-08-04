@@ -19,7 +19,6 @@ use std::fmt;
 
 use crate::affine_transformation::to_world_coordinate;
 use crate::traits::RasterRef;
-use sedona_schema::raster::StorageType;
 
 /// Wrapper for formatting a raster reference as a human-readable string.
 ///
@@ -57,12 +56,10 @@ pub struct RasterDisplay<'a>(pub &'a dyn RasterRef);
 impl fmt::Display for RasterDisplay<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let raster = self.0;
-        let metadata = raster.metadata();
-        let bands = raster.bands();
 
-        let width = metadata.width();
-        let height = metadata.height();
-        let nbands = bands.len();
+        let width = raster.width().unwrap();
+        let height = raster.height().unwrap();
+        let nbands = raster.num_bands();
 
         // Compute axis-aligned bounding box from 4 corners in world coordinates.
         // This handles both skewed and non-skewed rasters correctly.
@@ -78,14 +75,14 @@ impl fmt::Display for RasterDisplay<'_> {
         let ymin = uly.min(ury).min(lry).min(lly);
         let ymax = uly.max(ury).max(lry).max(lly);
 
-        let skew_x = metadata.skew_x();
-        let skew_y = metadata.skew_y();
+        let transform = raster.transform();
+        let skew_x = transform[2];
+        let skew_y = transform[4];
         let has_skew = skew_x != 0.0 || skew_y != 0.0;
 
-        let has_outdb = bands
-            .iter()
-            .filter_map(Result::ok)
-            .any(|band| matches!(band.metadata().storage_type(), Ok(StorageType::OutDbRef)));
+        let has_outdb = (0..raster.num_bands())
+            .filter_map(|i| raster.band(i).ok())
+            .any(|band| !band.is_indb());
 
         // Write: [WxH/nbands] @ [xmin ymin xmax ymax]
         write!(

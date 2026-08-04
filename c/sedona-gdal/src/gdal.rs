@@ -35,12 +35,15 @@ use crate::raster::rasterize::{rasterize, RasterizeOptions};
 use crate::raster::rasterize_affine::rasterize_affine;
 use crate::raster::types::DatasetOptions;
 use crate::raster::types::GdalDataType;
+use crate::raster::types::ResampleAlg;
 use crate::spatial_ref::SpatialRef;
 use crate::vector::feature::FieldDefn;
 use crate::vector::geometry::Geometry;
 use crate::vector::layer::Layer;
 use crate::vrt::VrtDataset;
 use crate::vsi;
+use crate::warp;
+use sedona_raster::geo_transform::GeoTransform;
 
 /// High-level convenience wrapper around [`GdalApi`].
 ///
@@ -67,6 +70,15 @@ impl Gdal {
     /// See also [`GdalApi::version_info`].
     pub fn version_info(&self, request: &str) -> String {
         self.api.version_info(request)
+    }
+
+    /// The linked GDAL library version as an integer, from
+    /// `GDALVersionInfo("VERSION_NUM")`: `major*1_000_000 + minor*10_000 +
+    /// rev*100 + build` (for example `3_080_400` for GDAL 3.8.4, `3_130_000` for
+    /// 3.13.0). Falls back to `0` when the value cannot be parsed, which callers
+    /// treat as "oldest" — the most conservative choice for version gates.
+    pub fn version_num(&self) -> i32 {
+        self.version_info("VERSION_NUM").trim().parse().unwrap_or(0)
     }
 
     // -- Config --------------------------------------------------------------
@@ -119,6 +131,39 @@ impl Gdal {
     /// See also [`SpatialRef::from_wkt`].
     pub fn spatial_ref_from_wkt(&self, wkt: &str) -> Result<SpatialRef> {
         SpatialRef::from_wkt(self.api, wkt)
+    }
+
+    /// Create a spatial reference from any user-input form (`EPSG:xxxx`, WKT,
+    /// PROJJSON, ...). See also [`SpatialRef::from_definition`].
+    pub fn spatial_ref_from_definition(&self, definition: &str) -> Result<SpatialRef> {
+        SpatialRef::from_definition(self.api, definition)
+    }
+
+    // -- Warp / Reproject ----------------------------------------------------
+
+    /// Reproject/warp `src` into the pre-created `dst` dataset.
+    ///
+    /// `warp_memory_limit_bytes` is GDAL's working-memory cache size for the
+    /// warp; pass `0.0` for GDAL's default. See also [`warp::reproject_image`].
+    pub fn reproject_image(
+        &self,
+        src: &Dataset,
+        dst: &Dataset,
+        alg: ResampleAlg,
+        warp_memory_limit_bytes: f64,
+    ) -> Result<()> {
+        warp::reproject_image(self.api, src, dst, alg, warp_memory_limit_bytes)
+    }
+
+    /// Compute the output geotransform and pixel dimensions a reprojection of
+    /// `src` into `dst_srs` should use (GDAL's `GDALSuggestedWarpOutput`).
+    pub fn suggested_warp_output(
+        &self,
+        src: &Dataset,
+        dst_srs: &SpatialRef,
+    ) -> Result<(GeoTransform, usize, usize)> {
+        let transformer = warp::GenImgProjTransformer::new(self.api, src, dst_srs)?;
+        warp::suggested_warp_output(self.api, src, &transformer)
     }
 
     // -- VRT -----------------------------------------------------------------

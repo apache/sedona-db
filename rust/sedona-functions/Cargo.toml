@@ -34,6 +34,7 @@ result_large_err = "allow"
 arrow-json = { workspace = true }
 criterion = { workspace = true }
 rstest = { workspace = true }
+sedona-proj = { workspace = true, features = ["proj-sys"] }
 sedona-testing = { workspace = true, features = ["criterion"] }
 datafusion = { workspace = true, features = ["sql"] }
 tokio = { workspace = true, features = ["rt", "macros"] }
@@ -58,3 +59,7 @@ glam = { workspace = true }
 [[bench]]
 harness = false
 name = "native-functions"
+
+[[bench]]
+harness = false
+name = "proj-functions"

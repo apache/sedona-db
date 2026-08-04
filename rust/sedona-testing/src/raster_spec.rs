@@ -513,8 +513,8 @@ pub fn band_pixels<T: PixelValue>(rasters: &StructArray, row: usize, band_number
     let array = RasterStructArray::try_new(rasters).unwrap();
     assert!(!array.is_null(row), "raster row {row} is null");
     let raster = array.get(row).expect("raster row");
-    let bands = raster.bands();
-    let band = bands.band(band_number).expect("band number (1-based)");
+    // `band_number` is 1-based (see the doc above); `band` is 0-based.
+    let band = raster.band(band_number - 1).expect("band number (1-based)");
     assert_eq!(
         band.data_type(),
         T::DATA_TYPE,
@@ -539,15 +539,13 @@ mod tests {
         let array = RasterStructArray::try_new(&raster).unwrap();
         assert_eq!(array.len(), 1);
         let raster_ref = array.get(0).unwrap();
-        let metadata = raster_ref.metadata();
-        assert_eq!(metadata.width(), 4);
-        assert_eq!(metadata.height(), 5);
-        assert_eq!(metadata.scale_x(), 1.0);
-        assert_eq!(metadata.scale_y(), -1.0);
+        assert_eq!(raster_ref.width().unwrap(), 4);
+        assert_eq!(raster_ref.height().unwrap(), 5);
+        assert_eq!(raster_ref.transform()[1], 1.0);
+        assert_eq!(raster_ref.transform()[5], -1.0);
 
-        let bands = raster_ref.bands();
-        assert_eq!(bands.len(), 1);
-        let band = bands.band(1).unwrap();
+        assert_eq!(raster_ref.num_bands(), 1);
+        let band = raster_ref.band(0).unwrap();
         assert_eq!(band.dim_names(), vec!["y", "x"]);
         assert_eq!(band.shape(), &[5, 4]);
 
@@ -567,13 +565,14 @@ mod tests {
             .band(BandDataType::UInt8)
             .build();
         let array = RasterStructArray::try_new(&raster).unwrap();
-        let metadata = array.get(0).unwrap().metadata();
-        assert_eq!(metadata.upper_left_x(), 100.0);
-        assert_eq!(metadata.upper_left_y(), 500.0);
-        assert_eq!(metadata.scale_x(), 2.0);
-        assert_eq!(metadata.scale_y(), -3.0);
-        assert_eq!(metadata.skew_x(), 0.0);
-        assert_eq!(metadata.skew_y(), 0.0);
+        let raster_ref = array.get(0).unwrap();
+        let transform = raster_ref.transform();
+        assert_eq!(transform[0], 100.0);
+        assert_eq!(transform[3], 500.0);
+        assert_eq!(transform[1], 2.0);
+        assert_eq!(transform[5], -3.0);
+        assert_eq!(transform[2], 0.0);
+        assert_eq!(transform[4], 0.0);
     }
 
     #[test]
@@ -585,11 +584,10 @@ mod tests {
         let raster_ref = array.get(0).unwrap();
 
         // Raster-level spatial metadata is X-first, like the readers emit.
-        assert_eq!(raster_ref.metadata().width(), 5);
-        assert_eq!(raster_ref.metadata().height(), 4);
+        assert_eq!(raster_ref.width().unwrap(), 5);
+        assert_eq!(raster_ref.height().unwrap(), 4);
 
-        let bands = raster_ref.bands();
-        let band = bands.band(1).unwrap();
+        let band = raster_ref.band(0).unwrap();
         assert_eq!(band.dim_names(), vec!["time", "y", "x"]);
         assert_eq!(band.shape(), &[3, 4, 5]);
     }
@@ -609,7 +607,7 @@ mod tests {
             .build();
         let array = RasterStructArray::try_new(&mixed).unwrap();
         let raster_ref = array.get(0).unwrap();
-        assert_eq!(raster_ref.bands().len(), 2);
+        assert_eq!(raster_ref.num_bands(), 2);
 
         // Two bands disagreeing on a non-spatial dim size.
         let conflicting = RasterSpec::nd(&["time", "y", "x"], &[3, 4, 5])
@@ -617,10 +615,9 @@ mod tests {
             .band_nd(&["time", "y", "x"], &[7, 4, 5], BandDataType::Float32)
             .build();
         let array = RasterStructArray::try_new(&conflicting).unwrap();
-        let bands = array.get(0).unwrap();
-        let bands = bands.bands();
-        assert_eq!(bands.band(1).unwrap().shape(), &[3, 4, 5]);
-        assert_eq!(bands.band(2).unwrap().shape(), &[7, 4, 5]);
+        let raster_ref = array.get(0).unwrap();
+        assert_eq!(raster_ref.band(0).unwrap().shape(), &[3, 4, 5]);
+        assert_eq!(raster_ref.band(1).unwrap().shape(), &[7, 4, 5]);
     }
 
     #[test]
@@ -632,8 +629,7 @@ mod tests {
             .build();
         let array = RasterStructArray::try_new(&raster).unwrap();
         let raster_ref = array.get(0).unwrap();
-        let bands = raster_ref.bands();
-        let band = bands.band(1).unwrap();
+        let band = raster_ref.band(0).unwrap();
         assert_eq!(band.data_type(), BandDataType::UInt16);
         assert_eq!(band.nodata(), Some(&[0u8, 0u8][..]));
         assert_eq!(band_pixels::<u16>(&raster, 0, 1), vec![10, 20, 30, 40]);
@@ -653,12 +649,9 @@ mod tests {
             .build();
         let array = RasterStructArray::try_new(&raster).unwrap();
         let raster_ref = array.get(0).unwrap();
-        let bands = raster_ref.bands();
-        let band = bands.band(1).unwrap();
+        let band = raster_ref.band(0).unwrap();
         assert!(!band.is_indb());
-        let metadata = band.metadata();
-        assert_eq!(metadata.outdb_url(), Some("s3://bucket/raster.tif"));
-        assert_eq!(metadata.outdb_band_id(), Some(2));
+        assert_eq!(band.outdb_uri(), Some("s3://bucket/raster.tif#band=2"));
     }
 
     #[test]

@@ -97,7 +97,8 @@ fn configure_proj_shared(
         builder = builder.with_search_paths(vec![search_path.into()]);
     }
 
-    configure_global_proj_engine(builder)?;
+    configure_global_proj_engine(builder)
+        .map_err(|e| PySedonaError::SedonaPython(e.to_string()))?;
     Ok(())
 }
 

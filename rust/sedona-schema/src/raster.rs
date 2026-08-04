@@ -225,21 +225,6 @@ impl BandDataType {
     }
 }
 
-/// Where a band's pixel data lives.
-///
-/// Restored from the pre-N-D schema to keep downstream code that pattern-
-/// matches on `StorageType::InDb` / `StorageType::OutDbRef` compiling.
-/// The current N-D schema discriminates via `BandRef::is_indb()` (true ↔
-/// `InDb`, false ↔ `OutDbRef`); this enum is the shim over that.
-#[repr(u16)]
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Copy)]
-pub enum StorageType {
-    /// Band data is materialized into the raster row's `data` Arrow column.
-    InDb = 0,
-    /// Band data lives outside the row and is referenced by `outdb_uri`.
-    OutDbRef = 1,
-}
-
 /// Hard-coded column indices for performant access to nested struct fields.
 /// These indices must match the exact order defined in the RasterSchema methods.
 ///

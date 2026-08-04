@@ -43,7 +43,6 @@ use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::transform::CrsTransform;
 use sedona_geometry::wkb_header::read_point_xy;
-use sedona_raster::affine_transformation::AffineMatrix;
 use sedona_raster::array::RasterStructArray;
 use sedona_raster::traits::RasterRef;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
@@ -53,7 +52,7 @@ use crate::executor::RasterExecutor;
 use crate::rs_ensure_loaded::NEEDS_PIXELS_METADATA_KEY;
 use crate::sampling::{
     column_point_crs_transform, default_band, int32_array_arg, next_band, point_crs_transform,
-    read_pixel, xy_to_pixel,
+    read_pixel, resolve_band, xy_to_pixel,
 };
 
 /// `RS_Value()` scalar UDF — sample a pixel value at a point.
@@ -179,8 +178,8 @@ impl RsValuePoint {
                     return Ok(());
                 };
 
-                let affine = AffineMatrix::from_metadata(&raster.metadata());
-                match xy_to_pixel("RS_Value", &affine, x, y)? {
+                let transform = raster.transform();
+                match xy_to_pixel("RS_Value", transform, x, y)? {
                     Some((col, row)) => match sample_pixel(raster, col, row, band_num)? {
                         Some(value) => builder.append_value(value),
                         None => builder.append_null(),
@@ -248,7 +247,7 @@ impl RsValuePoint {
                         return executor.finish(Arc::new(Float64Array::from(vec![None; n])));
                     }
                     // Match `next_band`: clamp to 0 so band 0/negative surface as a
-                    // not-1-based error from `Bands::band` rather than being coerced.
+                    // not-1-based error from `resolve_band` rather than being coerced.
                     const_band = Some(arr.value(0).max(0) as usize);
                 }
                 other => band_values = Some(int32_array_arg(other, n)?),
@@ -260,7 +259,7 @@ impl RsValuePoint {
             .transpose()?;
 
         // Affine transform and raster CRS, resolved once for all points.
-        let affine = AffineMatrix::from_metadata(&raster.metadata());
+        let transform = raster.transform();
         let raster_crs = resolve_crs(raster.crs())?;
 
         let mut geom = executor.make_geom_wkb_crs_accessor(1)?;
@@ -327,10 +326,7 @@ impl RsValuePoint {
         // that we know a point needs sampling); a band column resolves per row.
         match const_band {
             Some(band_num) => {
-                let band = raster
-                    .bands()
-                    .band(band_num)
-                    .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
+                let band = resolve_band("RS_Value", &raster, band_num)?;
                 if !band.is_spatial_2d() {
                     return exec_err!(
                         "RS_Value supports 2-D rasters only; band is not a 2-D (y, x) grid"
@@ -343,14 +339,14 @@ impl RsValuePoint {
                     .nodata_as_f64()
                     .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
                 for (i, x, y, _band) in selection {
-                    if let Some((col, row)) = xy_to_pixel("RS_Value", &affine, x, y)? {
+                    if let Some((col, row)) = xy_to_pixel("RS_Value", transform, x, y)? {
                         out[i] = read_pixel("RS_Value", &buffer, nodata, col, row)?;
                     }
                 }
             }
             None => {
                 for (i, x, y, band_num) in selection {
-                    if let Some((col, row)) = xy_to_pixel("RS_Value", &affine, x, y)? {
+                    if let Some((col, row)) = xy_to_pixel("RS_Value", transform, x, y)? {
                         out[i] = sample_pixel(&raster, col, row, band_num)?;
                     }
                 }
@@ -398,10 +394,7 @@ fn sample_pixel(
     row: i64,
     band_num: usize,
 ) -> Result<Option<f64>> {
-    let band = raster
-        .bands()
-        .band(band_num)
-        .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
+    let band = resolve_band("RS_Value", raster, band_num)?;
 
     // 2-D only: the band must be a recognized spatial (y, x) grid, not just any
     // two-axis band (e.g. (time, band) would have len 2 but no spatial meaning).
@@ -818,30 +811,31 @@ mod tests {
     #[test]
     fn non_finite_point_ordinate_is_none() {
         // A point with a NaN/Inf ordinate (e.g. POINT(NaN 5)) has no location to
-        // sample. Without the finite guard a NaN survives `inv_transform` and the
+        // sample. Without the finite guard a NaN survives the inverse transform and the
         // saturating cast turns it into pixel column 0, silently sampling a value.
         let raster = RasterSpec::d2(2, 2)
             .band_values(&[1u8, 2, 3, 4])
             .bbox(0.0, 8.0, 2.0, 10.0)
             .build();
         let rasters = RasterStructArray::try_new(&raster).unwrap();
-        let affine = AffineMatrix::from_metadata(&rasters.get(0).unwrap().metadata());
+        let raster0 = rasters.get(0).unwrap();
+        let transform = raster0.transform();
 
         assert_eq!(
-            xy_to_pixel("RS_Value", &affine, f64::NAN, 5.0).unwrap(),
+            xy_to_pixel("RS_Value", transform, f64::NAN, 5.0).unwrap(),
             None
         );
         assert_eq!(
-            xy_to_pixel("RS_Value", &affine, 5.0, f64::NAN).unwrap(),
+            xy_to_pixel("RS_Value", transform, 5.0, f64::NAN).unwrap(),
             None
         );
         assert_eq!(
-            xy_to_pixel("RS_Value", &affine, f64::INFINITY, 5.0).unwrap(),
+            xy_to_pixel("RS_Value", transform, f64::INFINITY, 5.0).unwrap(),
             None
         );
         // A finite in-bounds point still maps to a real pixel.
         assert_eq!(
-            xy_to_pixel("RS_Value", &affine, 0.5, 9.5).unwrap(),
+            xy_to_pixel("RS_Value", transform, 0.5, 9.5).unwrap(),
             Some((0, 0))
         );
     }

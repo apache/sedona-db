@@ -160,7 +160,7 @@ impl SedonaScalarKernel for RsSetGeoReference {
 /// coordinates are pixel-center and shifted back to the corner.
 ///
 /// The stringly-typed six-value format is a bit unwieldy; a future dedicated
-/// affine-matrix type (cf. `sedona_raster::affine_transformation::AffineMatrix`,
+/// affine-matrix input type (cf. `sedona_raster::geo_transform::GeoTransform`,
 /// which could also back `ST_Affine`) would be a cleaner input.
 fn parse_georeference(georef: &str, format: GeoReferenceFormat) -> Result<[f64; 6]> {
     let values: Vec<f64> = georef

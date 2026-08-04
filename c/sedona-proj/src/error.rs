@@ -27,4 +27,7 @@ pub enum SedonaProjError {
     CreateError(String),
     #[error("{0}")]
     TransformError(String),
+    /// A violation of an internal invariant (e.g. a poisoned global lock)
+    #[error("{0}")]
+    Internal(String),
 }

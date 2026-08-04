@@ -114,9 +114,9 @@ impl SedonaScalarKernel for RsPolygonize {
                 };
 
                 let band_index = band_opt.unwrap();
-                let bands = raster.bands();
-                if band_index <= 0 || band_index as usize > bands.len() {
-                    return exec_err!("Band {} is out of range (1-{})", band_index, bands.len());
+                let num_bands = raster.num_bands();
+                if band_index <= 0 || band_index as usize > num_bands {
+                    return exec_err!("Band {} is out of range (1-{})", band_index, num_bands);
                 }
                 let band_num = band_index as usize;
 
