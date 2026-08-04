@@ -25,6 +25,12 @@ on:
       - '.github/workflows/python-wheels.yml'
       - '.github/workflows/wheels-expr.yml'
       - '.github/workflows/wheels-zarr.yml'
+      # The zarr extension wheel — including the Windows/MSVC build that links
+      # blosc — only builds when this workflow runs. Trigger it on changes to
+      # the zarr crate/package too, so a change there can't skip wheel
+      # validation (blosc on Windows in particular) until the next main push.
+      - 'rust/sedona-raster-zarr/**'
+      - 'python/sedonadb-zarr/**'
       - '.github/actions/setup-wheel-build/**'
   push:
     branches:
