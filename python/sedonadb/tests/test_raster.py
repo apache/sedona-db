@@ -301,6 +301,48 @@ def test_raster_from_numpy_invalid_shape():
         Raster.from_numpy(np.zeros((2, 2, 3), dtype="uint8"))
 
 
+def test_raster_from_numpy_bbox_matches_rasterio():
+    # bbox (pixel/default) must produce rasterio.transform.from_bounds, in GDAL order.
+    rasterio = pytest.importorskip("rasterio")
+
+    xmin, ymin, xmax, ymax = -100.0, 20.0, -40.0, 50.0
+    arr = np.arange(4 * 5, dtype="uint8").reshape(4, 5)  # (height, width) = (4, 5)
+    r = Raster.from_numpy(arr, bbox=[xmin, ymin, xmax, ymax])
+
+    # rasterio reference: from_bounds(west, south, east, north, width, height)
+    # returns an Affine (a, b, c, d, e, f); GDAL order is [c, a, b, f, d, e].
+    a, b, c, d, e, f = rasterio.transform.from_bounds(xmin, ymin, xmax, ymax, 5, 4)[:6]
+    expected = [c, a, b, f, d, e]
+
+    assert list(r.transform) == pytest.approx(expected, abs=1e-12)
+
+
+def test_raster_from_numpy_bbox_and_transform_mutually_exclusive():
+    arr = np.zeros((4, 5), dtype="uint8")
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        Raster.from_numpy(
+            arr,
+            bbox=[-100.0, 20.0, -40.0, 50.0],
+            transform=[0.0, 1.0, 0.0, 0.0, 0.0, -1.0],
+        )
+
+
+def test_raster_from_numpy_bbox_registration_node():
+    # A node-registered grid maps the bbox to cell centers, so its transform
+    # differs from the default pixel registration (exact values are pinned by the
+    # Rust unit test); this is the Python end-to-end smoke.
+    arr = np.zeros((4, 5), dtype="uint8")
+    bbox = [-100.0, 20.0, -40.0, 50.0]
+
+    pixel = Raster.from_numpy(arr, bbox=bbox).transform
+    node = Raster.from_numpy(arr, bbox=bbox, registration="node").transform
+
+    assert list(node) != list(pixel)
+    # node: scale_x = 60/(5-1) = 15, scale_y = -30/(4-1) = -10, corner is half a
+    # cell outside the bbox: origin_x = -100 - 15/2, origin_y = 50 - (-10)/2.
+    assert list(node) == pytest.approx([-107.5, 15.0, 0.0, 55.0, 0.0, -10.0], abs=1e-12)
+
+
 def test_raster_lazy_zero_size():
     """Test that a raster with zero-size shape returns an empty memoryview."""
     r = Raster.lazy(

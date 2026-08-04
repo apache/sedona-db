@@ -20,10 +20,11 @@ use crate::{
     raster_loader::py_raster_loader,
     udf::{sedona_aggregate_udf, sedona_scalar_udf},
 };
-use pyo3::{ffi::Py_uintptr_t, prelude::*};
+use pyo3::{exceptions::PyValueError, ffi::Py_uintptr_t, prelude::*};
 use sedona_adbc::AdbcSedonadbDriverInit;
 use sedona_gdal::global::{configure_global_gdal_api, with_global_gdal, GdalApiBuilder};
 use sedona_proj::register::{configure_global_proj_engine, ProjCrsEngineBuilder};
+use sedona_raster::geo_transform::geotransform_from_bbox_and_spatial_shape;
 use std::ffi::c_void;
 
 mod context;
@@ -111,6 +112,26 @@ fn configure_gdal_shared(shared_library_path: String) -> Result<(), PySedonaErro
     Ok(())
 }
 
+/// Derive a north-up, GDAL-order geotransform from a spatial bounding box and
+/// grid shape. Thin wrapper over `geotransform_from_bbox_and_spatial_shape` so
+/// the bbox-to-transform math stays a single Rust source of truth.
+///
+/// `bbox` is `[xmin, ymin, xmax, ymax]`; `registration` is `"pixel"` (the
+/// default when `None`) or `"node"`. Returns the six coefficients
+/// `[origin_x, scale_x, skew_x, origin_y, skew_y, scale_y]`.
+#[pyfunction]
+#[pyo3(signature = (bbox, height, width, registration=None))]
+fn geotransform_from_bbox(
+    bbox: [f64; 4],
+    height: u64,
+    width: u64,
+    registration: Option<String>,
+) -> PyResult<Vec<f64>> {
+    geotransform_from_bbox_and_spatial_shape(bbox, height, width, registration.as_deref())
+        .map(|gt| gt.to_vec())
+        .map_err(|e| PyValueError::new_err(e.to_string()))
+}
+
 #[pyfunction]
 fn gdal_version() -> Result<Option<String>, PySedonaError> {
     match with_global_gdal(|gdal| gdal.version_info("RELEASE_NAME")) {
@@ -132,6 +153,7 @@ fn _lib(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(expr::expr_not, m)?)?;
     m.add_function(wrap_pyfunction!(expr::expr_sort_expr, m)?)?;
     m.add_function(wrap_pyfunction!(gdal_version, m)?)?;
+    m.add_function(wrap_pyfunction!(geotransform_from_bbox, m)?)?;
     m.add_function(wrap_pyfunction!(py_raster_loader, m)?)?;
     m.add_function(wrap_pyfunction!(schema::raster_type, m)?)?;
     m.add_function(wrap_pyfunction!(sedona_adbc_driver_init, m)?)?;

@@ -22,7 +22,7 @@ from typing import List, Optional, TYPE_CHECKING, Tuple, Any, Iterable
 import geoarrow.types as gat
 import pyarrow as pa
 
-from sedonadb._lib import raster_type
+from sedonadb._lib import geotransform_from_bbox, raster_type
 
 if TYPE_CHECKING:
     import numpy as np
@@ -97,6 +97,8 @@ class Raster:
         crs: Any = None,
         nodata: Any = None,
         transform: Optional[Iterable[float]] = None,
+        bbox: Optional[Iterable[float]] = None,
+        registration: Optional[str] = None,
     ) -> "Raster":
         """Create an in-database raster from a NumPy array, holding pixels inline.
 
@@ -116,7 +118,14 @@ class Raster:
             nodata: Optional nodata sentinel, packed in the array's dtype.
             transform: Optional GDAL-order geotransform
                 `[origin_x, scale_x, skew_x, origin_y, skew_y, scale_y]`;
-                defaults to a north-up identity.
+                defaults to a north-up identity. Mutually exclusive with `bbox`.
+            bbox: Optional spatial bounding box `[xmin, ymin, xmax, ymax]` to
+                derive a north-up geotransform from, using the array's trailing
+                `(y, x)` shape. Mutually exclusive with `transform`.
+            registration: How `bbox` maps to the grid, either `"pixel"` (the
+                default: the bbox is the grid's outer edge) or `"node"` (the bbox
+                endpoints are the centers of the border cells). Only meaningful
+                together with `bbox`.
 
         Returns:
             A new Raster instance with a single in-database band.
@@ -138,6 +147,14 @@ class Raster:
         dtype = str(array.dtype)
         if dtype not in BAND_DATA_TYPE_IDS:
             raise ValueError(f"Unsupported raster dtype: {dtype}")
+
+        if bbox is not None:
+            if transform is not None:
+                raise ValueError("bbox and transform are mutually exclusive")
+            # The trailing (y, x) axes are the spatial pair; the bbox->transform
+            # math lives in Rust (geotransform_from_bbox_and_spatial_shape).
+            height, width = shape[-2], shape[-1]
+            transform = geotransform_from_bbox(list(bbox), height, width, registration)
 
         return _build_raster(
             dim_names,
