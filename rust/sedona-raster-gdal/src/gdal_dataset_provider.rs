@@ -614,7 +614,7 @@ mod tests {
     use arrow_array::StructArray;
     use sedona_gdal::raster::types::Buffer;
     use sedona_raster::array::RasterStructArray;
-    use sedona_raster::builder::RasterBuilder;
+    use sedona_raster::builder::{RasterBuilder, StartBandArgs};
     use sedona_schema::raster::BandDataType;
     use sedona_testing::rasters::{build_in_db_raster, InDbTestBand};
     use tempfile::TempDir;
@@ -677,15 +677,16 @@ mod tests {
             .unwrap();
 
         builder
-            .start_band_nd(
-                None,
-                &["y", "x"],
-                &[8, 8],
-                BandDataType::UInt8,
-                Some(&[0u8]),
-                Some(&format!("{path}#band=1")),
-                None,
-            )
+            .start_band(StartBandArgs {
+                name: None,
+                dim_names: &["y", "x"],
+                source_shape: &[8, 8],
+                view: None,
+                data_type: BandDataType::UInt8,
+                nodata: Some(&[0u8]),
+                outdb_uri: Some(&format!("{path}#band=1")),
+                outdb_format: None,
+            })
             .unwrap();
         builder.band_data_writer().append_value([]);
         builder.finish_band().unwrap();
@@ -707,15 +708,16 @@ mod tests {
         builder.finish_band().unwrap();
 
         builder
-            .start_band_nd(
-                None,
-                &["y", "x"],
-                &[8, 8],
-                BandDataType::UInt8,
-                Some(&[0u8]),
-                Some(&format!("{path}#band=1")),
-                None,
-            )
+            .start_band(StartBandArgs {
+                name: None,
+                dim_names: &["y", "x"],
+                source_shape: &[8, 8],
+                view: None,
+                data_type: BandDataType::UInt8,
+                nodata: Some(&[0u8]),
+                outdb_uri: Some(&format!("{path}#band=1")),
+                outdb_format: None,
+            })
             .unwrap();
         builder.band_data_writer().append_value([]);
         builder.finish_band().unwrap();
@@ -975,30 +977,32 @@ mod tests {
             .start_raster_2d(8, 8, 0.0, 8.0, 1.0, -1.0, 0.0, 0.0, None)
             .unwrap();
         builder
-            .start_band_nd(
-                None,
-                &["time", "y", "x"],
-                &[2, 8, 8],
-                BandDataType::UInt8,
-                None,
-                None,
-                None,
-            )
+            .start_band(StartBandArgs {
+                name: None,
+                dim_names: &["time", "y", "x"],
+                source_shape: &[2, 8, 8],
+                view: None,
+                data_type: BandDataType::UInt8,
+                nodata: None,
+                outdb_uri: None,
+                outdb_format: None,
+            })
             .unwrap();
         builder
             .band_data_writer()
             .append_value(vec![0u8; 2 * 8 * 8]);
         builder.finish_band().unwrap();
         builder
-            .start_band_nd(
-                None,
-                &["y", "x"],
-                &[8, 8],
-                BandDataType::UInt8,
-                Some(&[0u8]),
-                Some(&path),
-                Some("geotiff"),
-            )
+            .start_band(StartBandArgs {
+                name: None,
+                dim_names: &["y", "x"],
+                source_shape: &[8, 8],
+                view: None,
+                data_type: BandDataType::UInt8,
+                nodata: Some(&[0u8]),
+                outdb_uri: Some(&path),
+                outdb_format: Some("geotiff"),
+            })
             .unwrap();
         builder.band_data_writer().append_value([]);
         builder.finish_band().unwrap();
@@ -1029,15 +1033,16 @@ mod tests {
             .start_raster_2d(8, 8, 0.0, 8.0, 1.0, -1.0, 0.0, 0.0, None)
             .unwrap();
         builder
-            .start_band_nd(
-                None,
-                &["y", "x"],
-                &[8, 8],
-                BandDataType::UInt8,
-                Some(&[0u8]),
-                Some(&format!("{path}#band=2")),
-                None,
-            )
+            .start_band(StartBandArgs {
+                name: None,
+                dim_names: &["y", "x"],
+                source_shape: &[8, 8],
+                view: None,
+                data_type: BandDataType::UInt8,
+                nodata: Some(&[0u8]),
+                outdb_uri: Some(&format!("{path}#band=2")),
+                outdb_format: None,
+            })
             .unwrap();
         builder.band_data_writer().append_value([]);
         builder.finish_band().unwrap();

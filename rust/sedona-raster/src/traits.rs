@@ -18,7 +18,7 @@
 use arrow_schema::ArrowError;
 use sedona_schema::raster::BandDataType;
 
-use crate::builder::{RasterBuilder, StartBandWithViewArgs};
+use crate::builder::{RasterBuilder, StartBandArgs};
 use crate::view_entries::{ViewEntries, ViewEntry};
 
 /// Recognized spatial dimension-name pairs, in band C-order: the slower-
@@ -443,7 +443,7 @@ pub trait BandRef {
     /// `overrides` from `self`, and carrying the source bytes over.
     ///
     /// This is the canonical "derive a band from an existing one" path — it
-    /// replaces hand-rebuilding via `start_band_nd` + a manual data append. The
+    /// replaces hand-rebuilding via `start_band` + a manual data append. The
     /// data transfer is zero-copy when the implementation supports it (see
     /// [`Self::append_data_into`]).
     ///
@@ -455,7 +455,7 @@ pub trait BandRef {
     /// inherits the source's view unchanged.
     ///
     /// The composition + persistence is delegated to
-    /// [`RasterBuilder::start_band_with_view`]. Today that stores views only as
+    /// [`RasterBuilder::start_band`]. Today that stores views only as
     /// the canonical identity null sentinel, so a non-identity effective view
     /// is rejected rather than copying mislocated bytes; in practice the source
     /// is identity-viewed and any override must compose back to the identity.
@@ -480,11 +480,11 @@ pub trait BandRef {
             Some(v) => source_view.compose(&ViewEntries::new(v.to_vec()))?,
             None => source_view,
         };
-        builder.start_band_with_view(StartBandWithViewArgs {
+        builder.start_band(StartBandArgs {
             name: overrides.name,
             dim_names: &dim_names,
             source_shape: &source_shape,
-            view: effective_view.as_slice(),
+            view: Some(effective_view.as_slice()),
             data_type: self.data_type(),
             nodata: overrides.nodata.or_else(|| self.nodata()),
             outdb_uri: overrides.outdb_uri.or_else(|| self.outdb_uri()),

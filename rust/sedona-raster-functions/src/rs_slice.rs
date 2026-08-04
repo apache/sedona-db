@@ -24,7 +24,7 @@ use datafusion_common::{arrow_datafusion_err, exec_err};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::sedona_internal_datafusion_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
-use sedona_raster::builder::RasterBuilder;
+use sedona_raster::builder::{RasterBuilder, StartBandArgs};
 use sedona_raster::traits::{BandRef, RasterRef};
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;
@@ -118,15 +118,16 @@ impl SedonaScalarKernel for RsSlice {
                         let Some(dim_idx) = band.dim_index(name) else {
                             let dim_names = band.dim_names();
                             let band_name = raster.band_name(band_idx);
-                            new_builder.start_band_nd(
-                                band_name,
-                                &dim_names,
-                                band.shape(),
-                                band.data_type(),
-                                band.nodata(),
-                                None,
-                                None,
-                            )?;
+                            new_builder.start_band(StartBandArgs {
+name: band_name,
+dim_names: &dim_names,
+source_shape: band.shape(),
+view: None,
+data_type: band.data_type(),
+nodata: band.nodata(),
+outdb_uri: None,
+outdb_format: None,
+})?;
                             let ndb = band.nd_buffer()?;
                             let data = ndb.as_contiguous()?;
                             new_builder.band_data_writer().append_value(data);
@@ -160,15 +161,16 @@ impl SedonaScalarKernel for RsSlice {
                             extract_slice(band.as_ref(), dim_idx, idx, 1)?;
 
                         let band_name = raster.band_name(band_idx);
-                        new_builder.start_band_nd(
-                            band_name,
-                            &new_dim_names,
-                            &new_shape,
-                            band.data_type(),
-                            band.nodata(),
-                            None,
-                            None,
-                        )?;
+                        new_builder.start_band(StartBandArgs {
+name: band_name,
+dim_names: &new_dim_names,
+source_shape: &new_shape,
+view: None,
+data_type: band.data_type(),
+nodata: band.nodata(),
+outdb_uri: None,
+outdb_format: None,
+})?;
                         new_builder.band_data_writer().append_value(&sliced_data);
                         new_builder.finish_band()?;
                     }
@@ -286,15 +288,16 @@ impl SedonaScalarKernel for RsSliceRange {
                         let Some(dim_idx) = band.dim_index(name) else {
                             let dim_names = band.dim_names();
                             let band_name = raster.band_name(band_idx);
-                            new_builder.start_band_nd(
-                                band_name,
-                                &dim_names,
-                                band.shape(),
-                                band.data_type(),
-                                band.nodata(),
-                                None,
-                                None,
-                            )?;
+                            new_builder.start_band(StartBandArgs {
+name: band_name,
+dim_names: &dim_names,
+source_shape: band.shape(),
+view: None,
+data_type: band.data_type(),
+nodata: band.nodata(),
+outdb_uri: None,
+outdb_format: None,
+})?;
                             let ndb = band.nd_buffer()?;
                             let data = ndb.as_contiguous()?;
                             new_builder.band_data_writer().append_value(data);
@@ -319,15 +322,16 @@ impl SedonaScalarKernel for RsSliceRange {
                             extract_slice(band.as_ref(), dim_idx, start_val, range_len)?;
 
                         let band_name = raster.band_name(band_idx);
-                        new_builder.start_band_nd(
-                            band_name,
-                            &dim_names,
-                            &new_shape,
-                            band.data_type(),
-                            band.nodata(),
-                            None,
-                            None,
-                        )?;
+                        new_builder.start_band(StartBandArgs {
+name: band_name,
+dim_names: &dim_names,
+source_shape: &new_shape,
+view: None,
+data_type: band.data_type(),
+nodata: band.nodata(),
+outdb_uri: None,
+outdb_format: None,
+})?;
                         new_builder.band_data_writer().append_value(&sliced_data);
                         new_builder.finish_band()?;
                     }

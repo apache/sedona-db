@@ -33,7 +33,7 @@ use sedona_raster::geo_transform::{GeoTransform, GeoTransformEx};
 use arrow_schema::ArrowError;
 use sedona_common::sedona_internal_err;
 use sedona_raster::array::RasterRefImpl;
-use sedona_raster::builder::RasterBuilder;
+use sedona_raster::builder::{RasterBuilder, StartBandArgs};
 use sedona_raster::traits::RasterRef;
 use sedona_schema::raster::BandDataType;
 
@@ -144,15 +144,16 @@ pub fn append_as_outdb_raster(gdal: &Gdal, path: &str, builder: &mut RasterBuild
 
         // Out-db band: location + band selector in the `#band=N` URI; empty data.
         let outdb_uri = format!("{path}#band={band_idx}");
-        builder.start_band_nd(
-            None,
-            &["y", "x"],
-            &[height as i64, width as i64],
-            band_data_type,
-            nodata_bytes.as_deref(),
-            Some(&outdb_uri),
-            None,
-        )?;
+        builder.start_band(StartBandArgs {
+            name: None,
+            dim_names: &["y", "x"],
+            source_shape: &[height as i64, width as i64],
+            view: None,
+            data_type: band_data_type,
+            nodata: nodata_bytes.as_deref(),
+            outdb_uri: Some(&outdb_uri),
+            outdb_format: None,
+        })?;
         builder.band_data_writer().append_value([]);
         builder.finish_band()?;
     }
@@ -528,7 +529,7 @@ fn filled_with_nodata(total: usize, nodata: Option<&[u8]>) -> Vec<u8> {
 }
 
 /// The descriptive header for one output raster band — everything
-/// [`RasterBuilder::start_band_nd`] needs except the pixel bytes. Bundled so
+/// [`RasterBuilder::start_band`] needs except the pixel bytes. Bundled so
 /// [`append_stacked_band`] takes named fields rather than a long positional list.
 pub(crate) struct BandHeader<'a> {
     pub name: Option<&'a str>,
@@ -563,15 +564,16 @@ pub(crate) fn append_band_from_buffer(
         )
     })?;
     builder
-        .start_band_nd(
-            header.name,
-            header.dim_names,
-            header.shape,
-            header.data_type,
-            header.nodata,
-            None,
-            None,
-        )
+        .start_band(StartBandArgs {
+            name: header.name,
+            dim_names: header.dim_names,
+            source_shape: header.shape,
+            view: None,
+            data_type: header.data_type,
+            nodata: header.nodata,
+            outdb_uri: None,
+            outdb_format: None,
+        })
         .map_err(|e| exec_datafusion_err!("Failed to start band: {e}"))?;
     // Hand the owned buffer to Arrow as a shared data block (a refcount bump,
     // never a copy). `append_band_data_buffer` also stores sub-inline-threshold

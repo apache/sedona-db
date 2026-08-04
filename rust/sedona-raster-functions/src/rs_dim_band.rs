@@ -24,7 +24,7 @@ use datafusion_common::{arrow_datafusion_err, exec_err};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::sedona_internal_datafusion_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
-use sedona_raster::builder::RasterBuilder;
+use sedona_raster::builder::{RasterBuilder, StartBandArgs};
 use sedona_raster::traits::RasterRef;
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;
@@ -112,15 +112,16 @@ impl SedonaScalarKernel for RsDimToBand {
                                 // Band doesn't have this dimension -- pass through
                                 let dim_names = band.dim_names();
                                 let band_name = raster.band_name(band_idx);
-                                new_builder.start_band_nd(
-                                    band_name,
-                                    &dim_names,
-                                    band.shape(),
-                                    band.data_type(),
-                                    band.nodata(),
-                                    None,
-                                    None,
-                                )?;
+                                new_builder.start_band(StartBandArgs {
+                                    name: band_name,
+                                    dim_names: &dim_names,
+                                    source_shape: band.shape(),
+                                    view: None,
+                                    data_type: band.data_type(),
+                                    nodata: band.nodata(),
+                                    outdb_uri: None,
+                                    outdb_format: None,
+                                })?;
                                 let ndb = band.nd_buffer()?;
                                 let data = ndb.as_contiguous()?;
                                 new_builder.band_data_writer().append_value(data);
@@ -151,15 +152,16 @@ impl SedonaScalarKernel for RsDimToBand {
 
                                     let new_band_name =
                                         orig_band_name.map(|n| format!("{n}_{name}_{idx}"));
-                                    new_builder.start_band_nd(
-                                        new_band_name.as_deref(),
-                                        &new_dim_names,
-                                        &new_shape,
-                                        band.data_type(),
-                                        band.nodata(),
-                                        None,
-                                        None,
-                                    )?;
+                                    new_builder.start_band(StartBandArgs {
+                                        name: new_band_name.as_deref(),
+                                        dim_names: &new_dim_names,
+                                        source_shape: &new_shape,
+                                        view: None,
+                                        data_type: band.data_type(),
+                                        nodata: band.nodata(),
+                                        outdb_uri: None,
+                                        outdb_format: None,
+                                    })?;
                                     new_builder.band_data_writer().append_value(&sliced_data);
                                     new_builder.finish_band()?;
                                 }
@@ -306,15 +308,16 @@ impl SedonaScalarKernel for RsBandToDim {
                         raster.spatial_shape(),
                         raster.crs(),
                     )?;
-                    new_builder.start_band_nd(
-                        None,
-                        &new_dim_names,
-                        &new_shape,
-                        ref_data_type,
+                    new_builder.start_band(StartBandArgs {
+                        name: None,
+                        dim_names: &new_dim_names,
+                        source_shape: &new_shape,
+                        view: None,
+                        data_type: ref_data_type,
                         nodata,
-                        None,
-                        None,
-                    )?;
+                        outdb_uri: None,
+                        outdb_format: None,
+                    })?;
                     new_builder.band_data_writer().append_value(&concat_data);
                     new_builder.finish_band()?;
                     new_builder.finish_raster()?;
@@ -335,7 +338,7 @@ mod tests {
     use arrow_schema::DataType;
     use datafusion_expr::ScalarUDF;
     use sedona_raster::array::RasterStructArray;
-    use sedona_raster::builder::RasterBuilder;
+    use sedona_raster::builder::{RasterBuilder, StartBandArgs};
     use sedona_raster::traits::RasterRef;
     use sedona_schema::datatypes::RASTER;
     use sedona_schema::raster::BandDataType;
@@ -435,29 +438,31 @@ mod tests {
             .unwrap();
 
         builder
-            .start_band_nd(
-                None,
-                &["time", "y", "x"],
-                &[3, 2, 2],
-                BandDataType::UInt8,
-                None,
-                None,
-                None,
-            )
+            .start_band(StartBandArgs {
+                name: None,
+                dim_names: &["time", "y", "x"],
+                source_shape: &[3, 2, 2],
+                view: None,
+                data_type: BandDataType::UInt8,
+                nodata: None,
+                outdb_uri: None,
+                outdb_format: None,
+            })
             .unwrap();
         builder.band_data_writer().append_value([0u8; 12]);
         builder.finish_band().unwrap();
 
         builder
-            .start_band_nd(
-                None,
-                &["time", "y", "x"],
-                &[4, 2, 2],
-                BandDataType::UInt8,
-                None,
-                None,
-                None,
-            )
+            .start_band(StartBandArgs {
+                name: None,
+                dim_names: &["time", "y", "x"],
+                source_shape: &[4, 2, 2],
+                view: None,
+                data_type: BandDataType::UInt8,
+                nodata: None,
+                outdb_uri: None,
+                outdb_format: None,
+            })
             .unwrap();
         builder.band_data_writer().append_value([0u8; 16]);
         builder.finish_band().unwrap();
@@ -492,28 +497,30 @@ mod tests {
             .start_raster_nd(&transform, &["x", "y"], &[2, 2], None)
             .unwrap();
         builder
-            .start_band_nd(
-                None,
-                &["y", "x"],
-                &[2, 2],
-                BandDataType::UInt8,
-                Some(&[0u8]),
-                None,
-                None,
-            )
+            .start_band(StartBandArgs {
+                name: None,
+                dim_names: &["y", "x"],
+                source_shape: &[2, 2],
+                view: None,
+                data_type: BandDataType::UInt8,
+                nodata: Some(&[0u8]),
+                outdb_uri: None,
+                outdb_format: None,
+            })
             .unwrap();
         builder.band_data_writer().append_value([0u8; 4]);
         builder.finish_band().unwrap();
         builder
-            .start_band_nd(
-                None,
-                &["y", "x"],
-                &[2, 2],
-                BandDataType::UInt8,
-                Some(&[255u8]),
-                None,
-                None,
-            )
+            .start_band(StartBandArgs {
+                name: None,
+                dim_names: &["y", "x"],
+                source_shape: &[2, 2],
+                view: None,
+                data_type: BandDataType::UInt8,
+                nodata: Some(&[255u8]),
+                outdb_uri: None,
+                outdb_format: None,
+            })
             .unwrap();
         builder.band_data_writer().append_value([0u8; 4]);
         builder.finish_band().unwrap();
@@ -539,15 +546,16 @@ mod tests {
             .unwrap();
         for _ in 0..2 {
             builder
-                .start_band_nd(
-                    None,
-                    &["y", "x"],
-                    &[2, 2],
-                    BandDataType::UInt8,
-                    None,
-                    None,
-                    None,
-                )
+                .start_band(StartBandArgs {
+                    name: None,
+                    dim_names: &["y", "x"],
+                    source_shape: &[2, 2],
+                    view: None,
+                    data_type: BandDataType::UInt8,
+                    nodata: None,
+                    outdb_uri: None,
+                    outdb_format: None,
+                })
                 .unwrap();
             builder.band_data_writer().append_value([0u8; 4]);
             builder.finish_band().unwrap();

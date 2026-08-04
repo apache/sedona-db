@@ -553,7 +553,7 @@ impl<'a> RasterStructArray<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::builder::RasterBuilder;
+    use crate::builder::{RasterBuilder, StartBandArgs};
     use crate::traits::BandOverrides;
     use arrow_array::{ArrayRef, ListArray, StructArray, UInt32Array};
     use arrow_buffer::{OffsetBuffer, ScalarBuffer};
@@ -568,15 +568,16 @@ mod tests {
         let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
         let mut ib = RasterBuilder::new(1);
         ib.start_raster_nd(&transform, &["x"], &[16], None).unwrap();
-        ib.start_band_nd(
-            Some("orig"),
-            &["x"],
-            &[16],
-            BandDataType::UInt8,
-            None,
-            None,
-            None,
-        )
+        ib.start_band(StartBandArgs {
+            name: Some("orig"),
+            dim_names: &["x"],
+            source_shape: &[16],
+            view: None,
+            data_type: BandDataType::UInt8,
+            nodata: None,
+            outdb_uri: None,
+            outdb_format: None,
+        })
         .unwrap();
         ib.band_data_writer()
             .append_value((0u8..16).collect::<Vec<u8>>());
@@ -631,15 +632,16 @@ mod tests {
         let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
         let mut ib = RasterBuilder::new(1);
         ib.start_raster_nd(&transform, &["x"], &[4], None).unwrap();
-        ib.start_band_nd(
-            Some("orig"),
-            &["x"],
-            &[4],
-            BandDataType::UInt8,
-            None,
-            None,
-            None,
-        )
+        ib.start_band(StartBandArgs {
+            name: Some("orig"),
+            dim_names: &["x"],
+            source_shape: &[4],
+            view: None,
+            data_type: BandDataType::UInt8,
+            nodata: None,
+            outdb_uri: None,
+            outdb_format: None,
+        })
         .unwrap();
         ib.band_data_writer().append_value(vec![1u8, 2, 3, 4]);
         ib.finish_band().unwrap();
@@ -814,7 +816,16 @@ mod tests {
             .start_raster_nd(&transform, &["x"], &[3], None)
             .unwrap();
         builder
-            .start_band_nd(None, &["x"], &[3], BandDataType::UInt8, None, None, None)
+            .start_band(StartBandArgs {
+                name: None,
+                dim_names: &["x"],
+                source_shape: &[3],
+                view: None,
+                data_type: BandDataType::UInt8,
+                nodata: None,
+                outdb_uri: None,
+                outdb_format: None,
+            })
             .unwrap();
         builder.band_data_writer().append_value(vec![0u8, 1, 2]);
         builder.finish_band().unwrap();
@@ -929,28 +940,30 @@ mod tests {
             .start_raster_nd(&transform, &["x", "y"], &[3, 2], None)
             .unwrap();
         builder
-            .start_band_nd(
-                Some("a"),
-                &["y", "x"],
-                &[2, 3],
-                BandDataType::UInt16,
-                Some(&[0xFFu8, 0xFE]),
-                Some("s3://bucket/a.tif"),
-                Some("GTiff"),
-            )
+            .start_band(StartBandArgs {
+                name: Some("a"),
+                dim_names: &["y", "x"],
+                source_shape: &[2, 3],
+                view: None,
+                data_type: BandDataType::UInt16,
+                nodata: Some(&[0xFFu8, 0xFE]),
+                outdb_uri: Some("s3://bucket/a.tif"),
+                outdb_format: Some("GTiff"),
+            })
             .unwrap();
         builder.band_data_writer().append_value(vec![0u8; 12]);
         builder.finish_band().unwrap();
         builder
-            .start_band_nd(
-                Some("b"),
-                &["y", "x"],
-                &[2, 3],
-                BandDataType::Float32,
-                None,
-                None,
-                None,
-            )
+            .start_band(StartBandArgs {
+                name: Some("b"),
+                dim_names: &["y", "x"],
+                source_shape: &[2, 3],
+                view: None,
+                data_type: BandDataType::Float32,
+                nodata: None,
+                outdb_uri: None,
+                outdb_format: None,
+            })
             .unwrap();
         builder.band_data_writer().append_value(vec![0u8; 24]);
         builder.finish_band().unwrap();
@@ -1021,17 +1034,44 @@ mod tests {
             .start_raster_nd(&transform, &["x"], &[3], None)
             .unwrap();
         builder
-            .start_band_nd(None, &["x"], &[3], BandDataType::UInt8, None, None, None)
+            .start_band(StartBandArgs {
+                name: None,
+                dim_names: &["x"],
+                source_shape: &[3],
+                view: None,
+                data_type: BandDataType::UInt8,
+                nodata: None,
+                outdb_uri: None,
+                outdb_format: None,
+            })
             .unwrap();
         builder.band_data_writer().append_value(vec![10u8, 20, 30]);
         builder.finish_band().unwrap();
         builder
-            .start_band_nd(None, &["x"], &[3], BandDataType::UInt8, None, None, None)
+            .start_band(StartBandArgs {
+                name: None,
+                dim_names: &["x"],
+                source_shape: &[3],
+                view: None,
+                data_type: BandDataType::UInt8,
+                nodata: None,
+                outdb_uri: None,
+                outdb_format: None,
+            })
             .unwrap();
         builder.band_data_writer().append_value(vec![40u8, 50, 60]);
         builder.finish_band().unwrap();
         builder
-            .start_band_nd(None, &["x"], &[3], BandDataType::UInt8, None, None, None)
+            .start_band(StartBandArgs {
+                name: None,
+                dim_names: &["x"],
+                source_shape: &[3],
+                view: None,
+                data_type: BandDataType::UInt8,
+                nodata: None,
+                outdb_uri: None,
+                outdb_format: None,
+            })
             .unwrap();
         builder
             .band_data_writer()
@@ -1044,14 +1084,32 @@ mod tests {
             .start_raster_nd(&transform, &["x"], &[4], None)
             .unwrap();
         builder
-            .start_band_nd(None, &["x"], &[4], BandDataType::UInt8, None, None, None)
+            .start_band(StartBandArgs {
+                name: None,
+                dim_names: &["x"],
+                source_shape: &[4],
+                view: None,
+                data_type: BandDataType::UInt8,
+                nodata: None,
+                outdb_uri: None,
+                outdb_format: None,
+            })
             .unwrap();
         builder
             .band_data_writer()
             .append_value(vec![42u8, 43, 44, 45]);
         builder.finish_band().unwrap();
         builder
-            .start_band_nd(None, &["x"], &[4], BandDataType::UInt8, None, None, None)
+            .start_band(StartBandArgs {
+                name: None,
+                dim_names: &["x"],
+                source_shape: &[4],
+                view: None,
+                data_type: BandDataType::UInt8,
+                nodata: None,
+                outdb_uri: None,
+                outdb_format: None,
+            })
             .unwrap();
         builder.band_data_writer().append_value(vec![1u8, 2, 3, 4]);
         builder.finish_band().unwrap();
@@ -1137,15 +1195,16 @@ mod tests {
             .start_raster_nd(&transform, &["x"], &[3], None)
             .unwrap();
         builder
-            .start_band_nd(
-                Some("a"),
-                &["x"],
-                &[3],
-                BandDataType::UInt16,
-                Some(&[0xFFu8, 0xFE]),
-                Some("s3://bucket/a.tif"),
-                Some("GTiff"),
-            )
+            .start_band(StartBandArgs {
+                name: Some("a"),
+                dim_names: &["x"],
+                source_shape: &[3],
+                view: None,
+                data_type: BandDataType::UInt16,
+                nodata: Some(&[0xFFu8, 0xFE]),
+                outdb_uri: Some("s3://bucket/a.tif"),
+                outdb_format: Some("GTiff"),
+            })
             .unwrap();
         builder.band_data_writer().append_value(vec![0u8; 6]);
         builder.finish_band().unwrap();
@@ -1182,15 +1241,16 @@ mod tests {
             .start_raster_2d(2, 2, 0.0, 2.0, 1.0, -1.0, 0.0, 0.0, None)
             .unwrap();
         builder
-            .start_band_nd(
-                Some("empty_time"),
-                &["time", "y", "x"],
-                &[0, 2, 2],
-                BandDataType::UInt8,
-                None,
-                None,
-                None,
-            )
+            .start_band(StartBandArgs {
+                name: Some("empty_time"),
+                dim_names: &["time", "y", "x"],
+                source_shape: &[0, 2, 2],
+                view: None,
+                data_type: BandDataType::UInt8,
+                nodata: None,
+                outdb_uri: None,
+                outdb_format: None,
+            })
             .unwrap();
         builder.band_data_writer().append_value([]); // 0 bytes, legitimately
         builder.finish_band().unwrap();

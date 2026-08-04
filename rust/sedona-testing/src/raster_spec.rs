@@ -42,7 +42,7 @@ use arrow_array::{
 use datafusion_common::ScalarValue;
 use datafusion_expr::{Expr, Literal};
 use sedona_raster::array::RasterStructArray;
-use sedona_raster::builder::RasterBuilder;
+use sedona_raster::builder::{RasterBuilder, StartBandArgs};
 use sedona_raster::traits::is_spatial_dim_pair;
 use sedona_schema::crs::lnglat;
 use sedona_schema::raster::BandDataType;
@@ -379,15 +379,16 @@ impl RasterSpec {
         for band in &self.bands {
             let dims: Vec<&str> = band.dims.iter().map(|d| d.as_str()).collect();
             builder
-                .start_band_nd(
-                    band.name.as_deref(),
-                    &dims,
-                    &band.shape,
-                    band.data_type,
-                    band.nodata.as_deref(),
-                    band.outdb_uri.as_deref(),
-                    band.outdb_format.as_deref(),
-                )
+                .start_band(StartBandArgs {
+                    name: band.name.as_deref(),
+                    dim_names: &dims,
+                    source_shape: &band.shape,
+                    view: None,
+                    data_type: band.data_type,
+                    nodata: band.nodata.as_deref(),
+                    outdb_uri: band.outdb_uri.as_deref(),
+                    outdb_format: band.outdb_format.as_deref(),
+                })
                 .expect("start band");
             let bytes = match &band.data {
                 Some(bytes) => bytes.clone(),

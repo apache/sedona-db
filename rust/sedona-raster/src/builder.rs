@@ -142,14 +142,16 @@ pub struct RasterBuilder {
     raster_validity: BooleanBuilder,
 }
 
-/// Arguments to [`RasterBuilder::start_band_with_view`]. Bundled into a
-/// struct to keep the call site readable — eight slots is enough that
-/// positional args invite mis-ordering bugs.
-pub(crate) struct StartBandWithViewArgs<'a> {
+/// Arguments to [`RasterBuilder::start_band`]. Bundled into a struct to keep
+/// the call site readable — eight slots is enough that positional args invite
+/// mis-ordering bugs.
+pub struct StartBandArgs<'a> {
     pub name: Option<&'a str>,
     pub dim_names: &'a [&'a str],
     pub source_shape: &'a [i64],
-    pub view: &'a [ViewEntry],
+    /// Per-axis window of offsets/steps over `source_shape`. `None` is the
+    /// canonical identity view (the whole source buffer in C order).
+    pub view: Option<&'a [ViewEntry]>,
     pub data_type: BandDataType,
     pub nodata: Option<&'a [u8]>,
     pub outdb_uri: Option<&'a str>,
@@ -257,7 +259,7 @@ impl RasterBuilder {
         self.current_raster_bands.clear();
         // Preserve legacy current_width/current_height for start_band_2d (set
         // by start_raster_2d). Callers using this direct entry point drive
-        // their own shapes via start_band_nd.
+        // their own shapes via start_band.
         self.current_width = 0;
         self.current_height = 0;
 
@@ -343,27 +345,68 @@ impl RasterBuilder {
     /// used to interpret the bytes at that location (e.g. `"geotiff"`,
     /// `"zarr"`). A null `outdb_format` means the band is in-memory — the
     /// band's `data` buffer is authoritative.
-    #[allow(clippy::too_many_arguments)]
-    pub fn start_band_nd(
-        &mut self,
-        name: Option<&str>,
-        dim_names: &[&str],
-        shape: &[i64],
-        data_type: BandDataType,
-        nodata: Option<&[u8]>,
-        outdb_uri: Option<&str>,
-        outdb_format: Option<&str>,
-    ) -> Result<(), ArrowError> {
+    ///
+    /// `view` is a per-axis window of offsets/steps over `source_shape`.
+    /// `None` is the canonical identity view — the whole source buffer in C
+    /// order — encoded as the identity null sentinel. A `Some` view is
+    /// validated against `source_shape`; the band schema stores a view only as
+    /// that identity null sentinel, so an identity `Some` view is stored the
+    /// same as `None` and a non-identity view is rejected. View persistence is
+    /// tracked in <https://github.com/apache/sedona-db/issues/897>.
+    pub fn start_band(&mut self, args: StartBandArgs<'_>) -> Result<(), ArrowError> {
+        let StartBandArgs {
+            name,
+            dim_names,
+            source_shape,
+            view,
+            data_type,
+            nodata,
+            outdb_uri,
+            outdb_format,
+        } = args;
+
+        // A caller-supplied view is validated against source_shape. The schema
+        // stores views only as the identity null sentinel today, so a
+        // non-identity view can't round-trip — reject it up front, before any
+        // column append, rather than persisting mislocated bytes.
+        if let Some(view) = view {
+            let ndim = dim_names.len();
+            if ndim == 0 {
+                return Err(ArrowError::InvalidArgumentError(
+                    "start_band: 0-dimensional bands are not supported".into(),
+                ));
+            }
+            if source_shape.len() != ndim || view.len() != ndim {
+                return Err(ArrowError::InvalidArgumentError(format!(
+                    "start_band: dim_names ({}), source_shape ({}), and view ({}) \
+                     must all have the same length",
+                    ndim,
+                    source_shape.len(),
+                    view.len()
+                )));
+            }
+            let view_entries = ViewEntries::new(view.to_vec());
+            view_entries.validate(source_shape)?;
+            if !view_entries.is_identity(source_shape) {
+                return Err(ArrowError::InvalidArgumentError(
+                    "start_band: persisting a non-identity band view is not yet \
+                     supported (see https://github.com/apache/sedona-db/issues/897); \
+                     materialize the band (e.g. via RS_EnsureContiguous) first"
+                        .into(),
+                ));
+            }
+        }
+
         if dim_names.is_empty() {
             return Err(ArrowError::InvalidArgumentError(
-                "start_band_nd: 0-dimensional bands are not supported".into(),
+                "start_band: 0-dimensional bands are not supported".into(),
             ));
         }
-        if dim_names.len() != shape.len() {
+        if dim_names.len() != source_shape.len() {
             return Err(ArrowError::InvalidArgumentError(format!(
-                "start_band_nd: dim_names ({}) and shape ({}) must have the same length",
+                "start_band: dim_names ({}) and shape ({}) must have the same length",
                 dim_names.len(),
-                shape.len(),
+                source_shape.len(),
             )));
         }
         // Name
@@ -380,10 +423,10 @@ impl RasterBuilder {
         self.band_dim_names_offsets.push(next);
 
         // Shape
-        for &s in shape {
+        for &s in source_shape {
             self.band_shape_values.append_value(s);
         }
-        let next = *self.band_shape_offsets.last().unwrap() + shape.len() as i32;
+        let next = *self.band_shape_offsets.last().unwrap() + source_shape.len() as i32;
         self.band_shape_offsets.push(next);
 
         // Data type
@@ -419,73 +462,10 @@ impl RasterBuilder {
         // Record this band's dims/shape for strict validation at finish_raster.
         self.current_raster_bands.push((
             dim_names.iter().map(|s| s.to_string()).collect(),
-            shape.to_vec(),
+            source_shape.to_vec(),
         ));
 
         Ok(())
-    }
-
-    /// Start a band carrying an explicit `view` — a per-axis window of
-    /// offsets/steps over `source_shape` — rather than the implicit identity.
-    ///
-    /// This is the entry point view persistence will use, so callers such as
-    /// [`BandRef::copy_into`] route through it unchanged once persistence
-    /// lands. Today the band schema stores a view only as the canonical
-    /// identity null sentinel, so a non-identity `view` is rejected; an
-    /// identity view is stored exactly as [`Self::start_band_nd`] does. View
-    /// persistence is tracked in
-    /// <https://github.com/apache/sedona-db/issues/897>.
-    pub(crate) fn start_band_with_view(
-        &mut self,
-        args: StartBandWithViewArgs<'_>,
-    ) -> Result<(), ArrowError> {
-        let StartBandWithViewArgs {
-            name,
-            dim_names,
-            source_shape,
-            view,
-            data_type,
-            nodata,
-            outdb_uri,
-            outdb_format,
-        } = args;
-        let ndim = dim_names.len();
-        if ndim == 0 {
-            return Err(ArrowError::InvalidArgumentError(
-                "start_band_with_view: 0-dimensional bands are not supported".into(),
-            ));
-        }
-        if source_shape.len() != ndim || view.len() != ndim {
-            return Err(ArrowError::InvalidArgumentError(format!(
-                "start_band_with_view: dim_names ({}), source_shape ({}), and view ({}) \
-                 must all have the same length",
-                ndim,
-                source_shape.len(),
-                view.len()
-            )));
-        }
-        let view_entries = ViewEntries::new(view.to_vec());
-        view_entries.validate(source_shape)?;
-        // The schema stores views only as the identity null sentinel today, so a
-        // non-identity view can't round-trip — reject it up front, before any
-        // column append, rather than persisting mislocated bytes.
-        if !view_entries.is_identity(source_shape) {
-            return Err(ArrowError::InvalidArgumentError(
-                "start_band_with_view: persisting a non-identity band view is not yet \
-                 supported (see https://github.com/apache/sedona-db/issues/897); \
-                 materialize the band (e.g. via RS_EnsureContiguous) first"
-                    .into(),
-            ));
-        }
-        self.start_band_nd(
-            name,
-            dim_names,
-            source_shape,
-            data_type,
-            nodata,
-            outdb_uri,
-            outdb_format,
-        )
     }
 
     /// Convenience: start a 2D band with `dim_names=["y","x"]` and `shape=[height, width]`.
@@ -502,15 +482,16 @@ impl RasterBuilder {
                 "start_band_2d requires prior start_raster_2d (width and height are 0)".into(),
             ));
         }
-        self.start_band_nd(
-            None,
-            &["y", "x"],
-            &[self.current_height, self.current_width],
+        self.start_band(StartBandArgs {
+            name: None,
+            dim_names: &["y", "x"],
+            source_shape: &[self.current_height, self.current_width],
+            view: None,
             data_type,
             nodata,
-            None,
-            None,
-        )
+            outdb_uri: None,
+            outdb_format: None,
+        })
     }
 
     /// Get direct access to the BinaryViewBuilder for writing the current band's data.
@@ -595,13 +576,13 @@ impl RasterBuilder {
 
     /// Finish writing the current band.
     ///
-    /// Validates that exactly one data value was appended since `start_band_nd()`.
+    /// Validates that exactly one data value was appended since `start_band()`.
     pub fn finish_band(&mut self) -> Result<(), ArrowError> {
         let current_count = self.band_data.len();
         if current_count != self.band_data_count_at_start + 1 {
             return Err(ArrowError::InvalidArgumentError(
                 format!(
-                    "Expected exactly one band data value per band, but got {} appended since start_band_nd()",
+                    "Expected exactly one band data value per band, but got {} appended since start_band()",
                     current_count - self.band_data_count_at_start
                 ),
             ));
@@ -997,18 +978,19 @@ mod tests {
         // copies the N-D spatial grid, so add the band with an explicit shape
         // matching the source's [height, width].
         target_builder
-            .start_band_nd(
-                None,
-                &["y", "x"],
-                &[
+            .start_band(StartBandArgs {
+                name: None,
+                dim_names: &["y", "x"],
+                source_shape: &[
                     source_raster.height().unwrap(),
                     source_raster.width().unwrap(),
                 ],
-                BandDataType::UInt16,
-                None,
-                None,
-                None,
-            )
+                view: None,
+                data_type: BandDataType::UInt16,
+                nodata: None,
+                outdb_uri: None,
+                outdb_format: None,
+            })
             .unwrap();
         let new_data = vec![100u16; 1008]; // Different data, same dimensions
         let new_data_bytes: Vec<u8> = new_data.iter().flat_map(|&x| x.to_le_bytes()).collect();
@@ -1214,15 +1196,16 @@ mod tests {
         // Test OutDbRef band: an out-db location is carried as an `outdb_uri`
         // with the SedonaDB `#band=N` fragment; the band's own `data` is empty.
         builder
-            .start_band_nd(
-                None,
-                &["y", "x"],
-                &[1024, 1024],
-                BandDataType::Float32,
-                None,
-                Some("s3://mybucket/satellite_image.tif#band=2"),
-                None,
-            )
+            .start_band(StartBandArgs {
+                name: None,
+                dim_names: &["y", "x"],
+                source_shape: &[1024, 1024],
+                view: None,
+                data_type: BandDataType::Float32,
+                nodata: None,
+                outdb_uri: Some("s3://mybucket/satellite_image.tif#band=2"),
+                outdb_format: None,
+            })
             .unwrap();
         // For OutDbRef, data field could be empty or contain metadata/thumbnail
         builder.band_data_writer().append_value([]);
@@ -1405,15 +1388,16 @@ mod tests {
 
         // 3D band: [time=3, y=4, x=5]
         builder
-            .start_band_nd(
-                Some("temperature"),
-                &["time", "y", "x"],
-                &[3, 4, 5],
-                BandDataType::Float32,
-                None,
-                None,
-                None,
-            )
+            .start_band(StartBandArgs {
+                name: Some("temperature"),
+                dim_names: &["time", "y", "x"],
+                source_shape: &[3, 4, 5],
+                view: None,
+                data_type: BandDataType::Float32,
+                nodata: None,
+                outdb_uri: None,
+                outdb_format: None,
+            })
             .unwrap();
         let data = vec![0u8; 3 * 4 * 5 * 4]; // 3*4*5 Float32 elements
         builder.band_data_writer().append_value(&data);
@@ -1454,15 +1438,16 @@ mod tests {
             )
             .unwrap();
         builder
-            .start_band_nd(
-                Some("sst"),
-                &["latitude", "longitude"],
-                &[180, 360],
-                BandDataType::Float32,
-                None,
-                None,
-                None,
-            )
+            .start_band(StartBandArgs {
+                name: Some("sst"),
+                dim_names: &["latitude", "longitude"],
+                source_shape: &[180, 360],
+                view: None,
+                data_type: BandDataType::Float32,
+                nodata: None,
+                outdb_uri: None,
+                outdb_format: None,
+            })
             .unwrap();
         let data = vec![0u8; 180 * 360 * 4];
         builder.band_data_writer().append_value(&data);
@@ -1491,15 +1476,16 @@ mod tests {
 
         // Band 0: 3D [time=12, y=64, x=64]
         builder
-            .start_band_nd(
-                Some("temperature"),
-                &["time", "y", "x"],
-                &[12, 64, 64],
-                BandDataType::Float32,
-                None,
-                None,
-                None,
-            )
+            .start_band(StartBandArgs {
+                name: Some("temperature"),
+                dim_names: &["time", "y", "x"],
+                source_shape: &[12, 64, 64],
+                view: None,
+                data_type: BandDataType::Float32,
+                nodata: None,
+                outdb_uri: None,
+                outdb_format: None,
+            })
             .unwrap();
         let data_3d = vec![0u8; 12 * 64 * 64 * 4];
         builder.band_data_writer().append_value(&data_3d);
@@ -1507,15 +1493,16 @@ mod tests {
 
         // Band 1: 2D [y=64, x=64]
         builder
-            .start_band_nd(
-                Some("elevation"),
-                &["y", "x"],
-                &[64, 64],
-                BandDataType::Float64,
-                None,
-                None,
-                None,
-            )
+            .start_band(StartBandArgs {
+                name: Some("elevation"),
+                dim_names: &["y", "x"],
+                source_shape: &[64, 64],
+                view: None,
+                data_type: BandDataType::Float64,
+                nodata: None,
+                outdb_uri: None,
+                outdb_format: None,
+            })
             .unwrap();
         let data_2d = vec![0u8; 64 * 64 * 8];
         builder.band_data_writer().append_value(&data_2d);
@@ -1552,15 +1539,16 @@ mod tests {
             .start_raster_nd(&transform, &["x", "y"], &[32, 32], None)
             .unwrap();
         builder
-            .start_band_nd(
-                None,
-                &["time", "pressure", "y", "x"],
-                &[6, 10, 32, 32],
-                BandDataType::Float32,
-                None,
-                None,
-                None,
-            )
+            .start_band(StartBandArgs {
+                name: None,
+                dim_names: &["time", "pressure", "y", "x"],
+                source_shape: &[6, 10, 32, 32],
+                view: None,
+                data_type: BandDataType::Float32,
+                nodata: None,
+                outdb_uri: None,
+                outdb_format: None,
+            })
             .unwrap();
         let data = vec![0u8; 6 * 10 * 32 * 32 * 4];
         builder.band_data_writer().append_value(&data);
@@ -1620,15 +1608,16 @@ mod tests {
             .start_raster_nd(&transform, &["x", "y"], &[4, 3], None)
             .unwrap();
         builder
-            .start_band_nd(
-                None,
-                &["y", "x"],
-                &[3, 4],
-                BandDataType::UInt8,
-                None,
-                None,
-                None,
-            )
+            .start_band(StartBandArgs {
+                name: None,
+                dim_names: &["y", "x"],
+                source_shape: &[3, 4],
+                view: None,
+                data_type: BandDataType::UInt8,
+                nodata: None,
+                outdb_uri: None,
+                outdb_format: None,
+            })
             .unwrap();
         builder.band_data_writer().append_value(vec![0u8; 12]);
         builder.finish_band().unwrap();
@@ -1639,15 +1628,16 @@ mod tests {
             .start_raster_nd(&transform, &["x", "y"], &[5, 3], None)
             .unwrap();
         builder
-            .start_band_nd(
-                None,
-                &["z", "y", "x"],
-                &[2, 3, 5],
-                BandDataType::Float64,
-                None,
-                None,
-                None,
-            )
+            .start_band(StartBandArgs {
+                name: None,
+                dim_names: &["z", "y", "x"],
+                source_shape: &[2, 3, 5],
+                view: None,
+                data_type: BandDataType::Float64,
+                nodata: None,
+                outdb_uri: None,
+                outdb_format: None,
+            })
             .unwrap();
         builder
             .band_data_writer()
@@ -1661,7 +1651,16 @@ mod tests {
             .start_raster_nd(&transform, &["x"], &[10], None)
             .unwrap();
         builder
-            .start_band_nd(None, &["x"], &[10], BandDataType::UInt16, None, None, None)
+            .start_band(StartBandArgs {
+                name: None,
+                dim_names: &["x"],
+                source_shape: &[10],
+                view: None,
+                data_type: BandDataType::UInt16,
+                nodata: None,
+                outdb_uri: None,
+                outdb_format: None,
+            })
             .unwrap();
         builder.band_data_writer().append_value(vec![0u8; 20]);
         builder.finish_band().unwrap();
@@ -1714,15 +1713,16 @@ mod tests {
 
         // Named band
         builder
-            .start_band_nd(
-                Some("temperature"),
-                &["y", "x"],
-                &[4, 4],
-                BandDataType::Float32,
-                None,
-                None,
-                None,
-            )
+            .start_band(StartBandArgs {
+                name: Some("temperature"),
+                dim_names: &["y", "x"],
+                source_shape: &[4, 4],
+                view: None,
+                data_type: BandDataType::Float32,
+                nodata: None,
+                outdb_uri: None,
+                outdb_format: None,
+            })
             .unwrap();
         builder.band_data_writer().append_value(vec![0u8; 64]);
         builder.finish_band().unwrap();
@@ -1752,15 +1752,16 @@ mod tests {
             .start_raster_nd(&transform, &["longitude", "latitude"], &[360, 180], None)
             .unwrap();
         builder
-            .start_band_nd(
-                None,
-                &["latitude", "longitude"],
-                &[180, 360],
-                BandDataType::UInt8,
-                None,
-                None,
-                None,
-            )
+            .start_band(StartBandArgs {
+                name: None,
+                dim_names: &["latitude", "longitude"],
+                source_shape: &[180, 360],
+                view: None,
+                data_type: BandDataType::UInt8,
+                nodata: None,
+                outdb_uri: None,
+                outdb_format: None,
+            })
             .unwrap();
         builder
             .band_data_writer()
@@ -1812,7 +1813,16 @@ mod tests {
             .unwrap();
         // Band is missing "y" entirely.
         builder
-            .start_band_nd(None, &["x"], &[4], BandDataType::UInt8, None, None, None)
+            .start_band(StartBandArgs {
+                name: None,
+                dim_names: &["x"],
+                source_shape: &[4],
+                view: None,
+                data_type: BandDataType::UInt8,
+                nodata: None,
+                outdb_uri: None,
+                outdb_format: None,
+            })
             .unwrap();
         builder.band_data_writer().append_value(vec![0u8; 4]);
         builder.finish_band().unwrap();
@@ -1827,13 +1837,22 @@ mod tests {
     #[test]
     fn test_start_band_rejects_zero_dim() {
         // 0-D bands carry no spatial extent and no caller has a use for
-        // them. start_band_nd must reject an empty dim_names slice eagerly so
+        // them. start_band must reject an empty dim_names slice eagerly so
         // the malformed band never reaches the buffer layer.
         let mut builder = RasterBuilder::new(1);
         let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
         builder.start_raster_nd(&transform, &[], &[], None).unwrap();
         let err = builder
-            .start_band_nd(None, &[], &[], BandDataType::UInt8, None, None, None)
+            .start_band(StartBandArgs {
+                name: None,
+                dim_names: &[],
+                source_shape: &[],
+                view: None,
+                data_type: BandDataType::UInt8,
+                nodata: None,
+                outdb_uri: None,
+                outdb_format: None,
+            })
             .unwrap_err();
         assert!(
             err.to_string().contains("0-dimensional"),
@@ -1852,15 +1871,16 @@ mod tests {
             .start_raster_nd(&transform, &["x", "y"], &[3, 2], None)
             .unwrap();
         builder
-            .start_band_nd(
-                None,
-                &["y", "x"],
-                &[2, 3],
-                BandDataType::UInt8,
-                None,
-                None,
-                None,
-            )
+            .start_band(StartBandArgs {
+                name: None,
+                dim_names: &["y", "x"],
+                source_shape: &[2, 3],
+                view: None,
+                data_type: BandDataType::UInt8,
+                nodata: None,
+                outdb_uri: None,
+                outdb_format: None,
+            })
             .unwrap();
         let pixels: Vec<u8> = (0..6).collect();
         builder.band_data_writer().append_value(pixels.clone());
@@ -1896,15 +1916,16 @@ mod tests {
             .start_raster_nd(&transform, &["x", "y"], &[2, 2], None)
             .unwrap();
         builder
-            .start_band_nd(
-                None,
-                &["y", "x"],
-                &[2, 2],
-                BandDataType::UInt8,
-                None,
-                None,
-                None,
-            )
+            .start_band(StartBandArgs {
+                name: None,
+                dim_names: &["y", "x"],
+                source_shape: &[2, 2],
+                view: None,
+                data_type: BandDataType::UInt8,
+                nodata: None,
+                outdb_uri: None,
+                outdb_format: None,
+            })
             .unwrap();
         builder.band_data_writer().append_value(vec![0u8; 4]);
         builder.finish_band().unwrap();
@@ -1942,15 +1963,16 @@ mod tests {
             .unwrap();
         // Band has "x" and "y" but x-size disagrees with top-level shape.
         builder
-            .start_band_nd(
-                None,
-                &["y", "x"],
-                &[4, 8],
-                BandDataType::UInt8,
-                None,
-                None,
-                None,
-            )
+            .start_band(StartBandArgs {
+                name: None,
+                dim_names: &["y", "x"],
+                source_shape: &[4, 8],
+                view: None,
+                data_type: BandDataType::UInt8,
+                nodata: None,
+                outdb_uri: None,
+                outdb_format: None,
+            })
             .unwrap();
         builder.band_data_writer().append_value(vec![0u8; 32]);
         builder.finish_band().unwrap();
@@ -1965,7 +1987,7 @@ mod tests {
 
     #[test]
     fn test_view_null_round_trips_through_arrow_ipc() {
-        // Schema invariant: a band built via start_band_nd serialises with a
+        // Schema invariant: a band built via start_band serialises with a
         // null view row, and the null must survive an Arrow IPC round-trip.
         // If a future change accidentally writes a non-null empty list
         // instead, downstream readers (DuckDB, PyArrow, sedona-py) will
@@ -1977,15 +1999,16 @@ mod tests {
             .start_raster_nd(&transform, &["x", "y"], &[3, 2], None)
             .unwrap();
         builder
-            .start_band_nd(
-                None,
-                &["y", "x"],
-                &[2, 3],
-                BandDataType::UInt8,
-                None,
-                None,
-                None,
-            )
+            .start_band(StartBandArgs {
+                name: None,
+                dim_names: &["y", "x"],
+                source_shape: &[2, 3],
+                view: None,
+                data_type: BandDataType::UInt8,
+                nodata: None,
+                outdb_uri: None,
+                outdb_format: None,
+            })
             .unwrap();
         builder.band_data_writer().append_value(vec![0u8; 6]);
         builder.finish_band().unwrap();

@@ -586,7 +586,7 @@ mod tests {
 
     use crate::utils::Grid;
     use sedona_raster::array::RasterStructArray;
-    use sedona_raster::builder::RasterBuilder;
+    use sedona_raster::builder::{RasterBuilder, StartBandArgs};
     use sedona_testing::rasters::{build_in_db_raster, InDbTestBand};
 
     fn single_raster<'a>(
@@ -931,15 +931,16 @@ mod tests {
             .start_raster_2d(1, 1, 0.0, 1.0, 1.0, -1.0, 0.0, 0.0, None)
             .unwrap();
         builder
-            .start_band_nd(
-                None,
-                &["y", "x"],
-                &[1, 1],
-                BandDataType::UInt8,
-                Some(&[0u8]),
-                Some("/tmp/test.tif#band=1"),
-                None,
-            )
+            .start_band(StartBandArgs {
+                name: None,
+                dim_names: &["y", "x"],
+                source_shape: &[1, 1],
+                view: None,
+                data_type: BandDataType::UInt8,
+                nodata: Some(&[0u8]),
+                outdb_uri: Some("/tmp/test.tif#band=1"),
+                outdb_format: None,
+            })
             .unwrap();
         builder.band_data_writer().append_value([]);
         builder.finish_band().unwrap();
@@ -964,15 +965,16 @@ mod tests {
             .start_raster_2d(2, 2, 0.0, 2.0, 1.0, -1.0, 0.0, 0.0, None)
             .unwrap();
         builder
-            .start_band_nd(
-                Some("cube"),
-                &["time", "y", "x"],
-                &[3, 2, 2],
-                BandDataType::UInt8,
-                None,
-                None,
-                None,
-            )
+            .start_band(StartBandArgs {
+                name: Some("cube"),
+                dim_names: &["time", "y", "x"],
+                source_shape: &[3, 2, 2],
+                view: None,
+                data_type: BandDataType::UInt8,
+                nodata: None,
+                outdb_uri: None,
+                outdb_format: None,
+            })
             .unwrap();
         builder.band_data_writer().append_value(&data);
         builder.finish_band().unwrap();
@@ -1015,28 +1017,30 @@ mod tests {
             .start_raster_2d(2, 2, 0.0, 2.0, 1.0, -1.0, 0.0, 0.0, None)
             .unwrap();
         builder
-            .start_band_nd(
-                Some("flat"),
-                &["y", "x"],
-                &[2, 2],
-                BandDataType::UInt8,
-                None,
-                None,
-                None,
-            )
+            .start_band(StartBandArgs {
+                name: Some("flat"),
+                dim_names: &["y", "x"],
+                source_shape: &[2, 2],
+                view: None,
+                data_type: BandDataType::UInt8,
+                nodata: None,
+                outdb_uri: None,
+                outdb_format: None,
+            })
             .unwrap();
         builder.band_data_writer().append_value(&band0);
         builder.finish_band().unwrap();
         builder
-            .start_band_nd(
-                Some("cube"),
-                &["time", "y", "x"],
-                &[3, 2, 2],
-                BandDataType::UInt8,
-                Some(&[7u8]),
-                None,
-                None,
-            )
+            .start_band(StartBandArgs {
+                name: Some("cube"),
+                dim_names: &["time", "y", "x"],
+                source_shape: &[3, 2, 2],
+                view: None,
+                data_type: BandDataType::UInt8,
+                nodata: Some(&[7u8]),
+                outdb_uri: None,
+                outdb_format: None,
+            })
             .unwrap();
         builder.band_data_writer().append_value(&band1);
         builder.finish_band().unwrap();
@@ -1097,15 +1101,16 @@ mod tests {
             .start_raster_2d(2, 2, 0.0, 2.0, 1.0, -1.0, 0.0, 0.0, None)
             .unwrap();
         builder
-            .start_band_nd(
-                Some("hypercube"),
-                &["time", "level", "y", "x"],
-                &[2, 2, 2, 2],
-                BandDataType::UInt8,
-                None,
-                None,
-                None,
-            )
+            .start_band(StartBandArgs {
+                name: Some("hypercube"),
+                dim_names: &["time", "level", "y", "x"],
+                source_shape: &[2, 2, 2, 2],
+                view: None,
+                data_type: BandDataType::UInt8,
+                nodata: None,
+                outdb_uri: None,
+                outdb_format: None,
+            })
             .unwrap();
         builder.band_data_writer().append_value(&data);
         builder.finish_band().unwrap();
@@ -1144,15 +1149,16 @@ mod tests {
             .start_raster_2d(2, 2, 0.0, 2.0, 1.0, -1.0, 0.0, 0.0, None)
             .unwrap();
         builder
-            .start_band_nd(
-                None,
-                &["y", "x", "time"],
-                &[2, 2, 3],
-                BandDataType::UInt8,
-                None,
-                None,
-                None,
-            )
+            .start_band(StartBandArgs {
+                name: None,
+                dim_names: &["y", "x", "time"],
+                source_shape: &[2, 2, 3],
+                view: None,
+                data_type: BandDataType::UInt8,
+                nodata: None,
+                outdb_uri: None,
+                outdb_format: None,
+            })
             .unwrap();
         builder
             .band_data_writer()
