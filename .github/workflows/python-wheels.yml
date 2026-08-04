@@ -80,7 +80,7 @@ jobs:
           # Test command exits 0 even on failure so CIBW continues building all wheels;
           # failures are recorded in .test_failed and checked after upload.
           CIBW_TEST_COMMAND: >-
-            powershell -Command "pytest {package}/tests -vv -o faulthandler_timeout=600; if ($LASTEXITCODE -ne 0) { New-Item -Path '{project}/.test_failed' -ItemType File -Force | Out-Null }"
+            python -c "import subprocess,sys,pathlib; r=subprocess.run([sys.executable,'-m','pytest','{package}/tests','-vv','-o','faulthandler_timeout=600']); r.returncode and pathlib.Path('{project}/.test_failed').touch(); sys.exit(0)"
 
       - uses: actions/upload-artifact@v7
         with:
