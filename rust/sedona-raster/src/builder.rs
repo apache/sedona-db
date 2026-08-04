@@ -595,28 +595,24 @@ impl RasterBuilder {
             outdb_uri,
             outdb_format,
         } = args;
-        let source_shape: Vec<i64> = input.raw_source_shape().to_vec();
-        let composed =
-            ViewEntries::new(input.view().to_vec()).compose(&ViewEntries::new(view.to_vec()))?;
-
-        // Inherit storage metadata from the input unless the caller overrides
-        // it. For OutDb inputs this propagates the external pointer to the
-        // output; for InDb inputs the input's outdb hints are typically None.
-        let final_outdb_uri = outdb_uri.or_else(|| input.outdb_uri());
-        let final_outdb_format = outdb_format.or_else(|| input.outdb_format());
-
-        self.start_band(StartBandArgs {
-            name,
-            view: Some(composed.as_slice()),
-            nodata,
-            outdb_uri: final_outdb_uri,
-            outdb_format: final_outdb_format,
-            ..StartBandArgs::new(dim_names, &source_shape, input.data_type())
-        })?;
-
-        // Carry the source bytes over (zero-copy for Arrow-backed InDb inputs;
-        // OutDb inputs append an empty data value).
-        input.append_data_into(self)
+        // Delegate to `copy_into`, which composes `view` (a delta over the
+        // input's visible axes) onto the input's own view, carries the source
+        // bytes over, and inherits every field left unset here from the input
+        // via `.or_else(|| input.<field>())` — including `nodata`, which the
+        // earlier hand-rolled implementation forwarded verbatim and thereby
+        // dropped. `dim_names` and `view` are always supplied by this call, so
+        // they pass through as explicit overrides.
+        input.copy_into(
+            self,
+            BandOverrides {
+                name,
+                dim_names: Some(dim_names),
+                nodata,
+                outdb_uri,
+                outdb_format,
+                view: Some(view),
+            },
+        )
     }
 
     /// Convenience: start a 2D band with `dim_names=["y","x"]` and `shape=[height, width]`.
@@ -2429,6 +2425,65 @@ mod tests {
         assert_eq!(out_band.view(), &[ve(0, 1, 2, 3)]);
         assert_eq!(out_band.raw_source_shape(), &[8]);
         assert_eq!(out_band.shape(), &[3]);
+    }
+
+    #[test]
+    fn with_view_inherits_source_nodata() {
+        // Viewing a band must not drop its nodata sentinel. The earlier
+        // implementation forwarded the caller's `nodata` (None here) verbatim
+        // and never inherited the source's, so former-nodata pixels silently
+        // became valid. Delegating through `copy_into` inherits it.
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        let mut ib = RasterBuilder::new(1);
+        ib.start_raster_nd(&transform, &["x"], &[4], None).unwrap();
+        ib.start_band(StartBandArgs {
+            name: Some("orig"),
+            nodata: Some(&[255u8]),
+            ..StartBandArgs::new(&["x"], &[4], BandDataType::UInt8)
+        })
+        .unwrap();
+        ib.band_data_writer().append_value(vec![1u8, 2, 3, 4]);
+        ib.finish_band().unwrap();
+        ib.finish_raster().unwrap();
+        let in_array = ib.finish().unwrap();
+        let in_rasters = RasterStructArray::try_new(&in_array).unwrap();
+        let in_raster = in_rasters.get(0).unwrap();
+        let in_band = in_raster.band(0).unwrap();
+        assert_eq!(
+            in_band.nodata(),
+            Some(&[255u8][..]),
+            "fixture must carry nodata"
+        );
+
+        // A non-identity view (every other element) with no explicit nodata
+        // override — the source's [255] must carry over to the derived band.
+        let mut ob = RasterBuilder::new(1);
+        ob.start_raster_nd(&transform, &["x"], &[2], None).unwrap();
+        ob.with_view(WithViewArgs {
+            name: None,
+            dim_names: &["x"],
+            input: in_band.as_ref(),
+            view: &[ve(0, 0, 2, 2)],
+            nodata: None,
+            outdb_uri: None,
+            outdb_format: None,
+        })
+        .unwrap();
+        ob.finish_band().unwrap();
+        ob.finish_raster().unwrap();
+        let out_array = ob.finish().unwrap();
+        let out_rasters = RasterStructArray::try_new(&out_array).unwrap();
+        let out_raster = out_rasters.get(0).unwrap();
+        let out_band = out_raster.band(0).unwrap();
+
+        assert_eq!(
+            out_band.nodata(),
+            Some(&[255u8][..]),
+            "with_view must inherit the source band's nodata"
+        );
+        // The view is still applied: visible bytes are the every-other slice.
+        assert_eq!(out_band.shape(), &[2]);
+        assert_eq!(gather_u8(&out_band.nd_buffer().unwrap()), vec![1, 3]);
     }
 
     #[test]

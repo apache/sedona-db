@@ -122,9 +122,13 @@ impl<'a> BandRef for BandRefImpl<'a> {
     fn is_indb(&self) -> bool {
         // A 0-element visible region (any visible dim is 0) holds no readable
         // bytes — trivially fully in-RAM — so it's InDb, not the OutDb
-        // empty-`data` sentinel. Otherwise the discriminator is buffer presence.
-        self.shape().iter().product::<i64>() == 0
-            || !self.data_array.value(self.band_row).is_empty()
+        // empty-`data` sentinel. Test emptiness with `contains(&0)` rather than
+        // `Π shape`: a broadcast axis can push the visible element count past
+        // i64::MAX (e.g. a huge `time` axis), and the product would
+        // overflow-panic in debug / wrap in release. For non-negative shapes
+        // (guaranteed by `validate`) the two are equivalent. Otherwise the
+        // discriminator is buffer presence.
+        self.shape().contains(&0) || !self.data_array.value(self.band_row).is_empty()
     }
 
     fn nd_buffer(&self) -> Result<NdBuffer<'_>, ArrowError> {
@@ -208,13 +212,43 @@ impl<'a> RasterRefImpl<'a> {
     /// `source_shape`; a non-null row is decoded from the four parallel view
     /// columns. An empty (non-null, zero-length) row is malformed and is
     /// rejected downstream by [`ViewEntries::validate`].
-    fn read_band_view_entries(&self, band_row: usize, source_shape: &[i64]) -> ViewEntries {
+    fn read_band_view_entries(
+        &self,
+        band_row: usize,
+        source_shape: &[i64],
+    ) -> Result<ViewEntries, ArrowError> {
         if self.band_view_list.is_null(band_row) {
-            return ViewEntries::identity_for_shape(source_shape);
+            return Ok(ViewEntries::identity_for_shape(source_shape));
         }
         let v_start = self.band_view_list.value_offsets()[band_row] as usize;
         let v_end = self.band_view_list.value_offsets()[band_row + 1] as usize;
-        ViewEntries::new(
+        // The list offsets are authored by whoever wrote the Arrow array — for a
+        // view round-tripped in from another engine over IPC/FFI (validation is
+        // skipped on import), the four parallel child columns may be shorter
+        // than the offsets claim, or carry a null in a field the schema declares
+        // non-null. Either would panic or silently misread `.value(i)` below, so
+        // validate the child arrays against the offsets before indexing.
+        for (name, arr) in [
+            ("source_axis", self.band_view_source_axis),
+            ("start", self.band_view_start),
+            ("step", self.band_view_step),
+            ("steps", self.band_view_steps),
+        ] {
+            if v_end > arr.len() {
+                return Err(ArrowError::InvalidArgumentError(format!(
+                    "band {band_row}: view '{name}' child array has {} elements but the \
+                     view list addresses up to {v_end}",
+                    arr.len()
+                )));
+            }
+            if arr.null_count() > 0 && (v_start..v_end).any(|i| arr.is_null(i)) {
+                return Err(ArrowError::InvalidArgumentError(format!(
+                    "band {band_row}: view '{name}' child array has a null in \
+                     [{v_start}, {v_end}); view fields must be non-null"
+                )));
+            }
+        }
+        Ok(ViewEntries::new(
             (v_start..v_end)
                 .map(|i| ViewEntry {
                     source_axis: self.band_view_source_axis.value(i),
@@ -223,7 +257,7 @@ impl<'a> RasterRefImpl<'a> {
                     steps: self.band_view_steps.value(i),
                 })
                 .collect(),
-        )
+        ))
     }
 }
 
@@ -309,6 +343,19 @@ fn check_view_buffer_bounds(
     dtype_size: usize,
 ) -> Result<(), ArrowError> {
     if visible_shape.contains(&0) {
+        // An empty visible region addresses no elements, but the composed
+        // `byte_offset` (from a large `start` on a non-empty axis) must still
+        // stay within the buffer so the `NdBuffer.offset <= buffer.len()`
+        // invariant always holds.
+        let buffer_len_i64 = i64::try_from(buffer_len).map_err(|_| {
+            ArrowError::InvalidArgumentError(format!("buffer length {buffer_len} exceeds i64::MAX"))
+        })?;
+        if byte_offset > buffer_len_i64 {
+            return Err(ArrowError::InvalidArgumentError(format!(
+                "view byte offset {byte_offset} exceeds buffer length {buffer_len} \
+                 for an empty visible region"
+            )));
+        }
         return Ok(());
     }
     let mut min_offset = byte_offset;
@@ -401,50 +448,72 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
         // persisted ViewEntry list) and validate it against the source shape —
         // a malformed or corrupt view surfaces loudly rather than mislocating
         // bytes.
-        let view_entries = self.read_band_view_entries(band_row, source_shape);
+        let view_entries = self.read_band_view_entries(band_row, source_shape)?;
         view_entries.validate(source_shape).map_err(|e| {
             ArrowError::ExternalError(Box::new(sedona_common::sedona_internal_datafusion_err!(
                 "band {band_row} has malformed view: {e}"
             )))
         })?;
 
-        // Compose the view onto the source's natural C-order byte strides to
-        // get the visible shape, per-axis byte strides (0 for broadcast,
-        // negative for reverse), and the byte offset of element [0,...,0].
+        // The visible shape is view-derived and needed for every band. The
+        // InDb C-order byte-stride layout, by contrast, is only meaningful for
+        // InDb bands: an OutDb band (empty `data`, non-empty visible region)
+        // never dereferences its strides — `nd_buffer()` errors for it — so we
+        // skip composing them. That also lets an OutDb band whose described
+        // `source_shape` has a stride product exceeding i64 read its metadata
+        // without tripping the InDb source-stride overflow guard.
         let visible_shape = view_entries.visible_shape();
-        let (byte_strides, byte_offset_i64) =
-            compose_byte_strides(band_row, source_shape, &view_entries, data_type.byte_size())?;
-
-        // For InDb bands, verify the data column is long enough to cover every
-        // byte the view can address. The view-machinery validation above
-        // doesn't know the actual `data` BinaryView length — a writer that
-        // lies about source_shape vs the bytes written would otherwise slip
-        // through and panic later when a consumer walks the strided buffer.
-        // OutDb bands skip this check: their data column is empty by design.
         let data_bytes = self.band_data_array.value(band_row);
-        if !data_bytes.is_empty() {
-            check_view_buffer_bounds(
-                data_bytes.len(),
-                &visible_shape,
-                &byte_strides,
-                byte_offset_i64,
-                data_type.byte_size(),
-            )
-            .map_err(|e| {
+
+        // Mirror `BandRef::is_indb`: an empty visible region or non-empty data
+        // buffer is InDb; empty data with a non-empty visible region is OutDb.
+        let is_indb = visible_shape.contains(&0) || !data_bytes.is_empty();
+
+        let (byte_strides, byte_offset) = if is_indb {
+            // Compose the view onto the source's natural C-order byte strides to
+            // get per-axis byte strides (0 for broadcast, negative for reverse)
+            // and the byte offset of element [0,...,0].
+            let (byte_strides, byte_offset_i64) =
+                compose_byte_strides(band_row, source_shape, &view_entries, data_type.byte_size())?;
+
+            // Verify the data column is long enough to cover every byte the view
+            // can address. The view-machinery validation above doesn't know the
+            // actual `data` BinaryView length — a writer that lies about
+            // source_shape vs the bytes written would otherwise slip through and
+            // panic later when a consumer walks the strided buffer. Skipped when
+            // there are no bytes (an empty visible region).
+            if !data_bytes.is_empty() {
+                check_view_buffer_bounds(
+                    data_bytes.len(),
+                    &visible_shape,
+                    &byte_strides,
+                    byte_offset_i64,
+                    data_type.byte_size(),
+                )
+                .map_err(|e| {
+                    ArrowError::ExternalError(Box::new(
+                        sedona_common::sedona_internal_datafusion_err!(
+                            "band {band_row}: view-buffer bounds check failed: {e}"
+                        ),
+                    ))
+                })?;
+            }
+
+            // `compose_byte_strides` guarantees a non-negative offset; cross into
+            // `u64` for storage with a checked conversion that upholds that at
+            // the boundary.
+            let byte_offset = u64::try_from(byte_offset_i64).map_err(|_| {
                 ArrowError::ExternalError(Box::new(sedona_common::sedona_internal_datafusion_err!(
-                    "band {band_row}: view-buffer bounds check failed: {e}"
+                    "band {band_row}: composed byte_offset {byte_offset_i64} is negative"
                 )))
             })?;
-        }
-
-        // `compose_byte_strides` guarantees a non-negative offset; cross into
-        // `u64` for storage with a checked conversion that upholds that at the
-        // boundary.
-        let byte_offset = u64::try_from(byte_offset_i64).map_err(|_| {
-            ArrowError::ExternalError(Box::new(sedona_common::sedona_internal_datafusion_err!(
-                "band {band_row}: composed byte_offset {byte_offset_i64} is negative"
-            )))
-        })?;
+            (byte_strides, byte_offset)
+        } else {
+            // OutDb: the byte strides/offset are never read (`nd_buffer()`
+            // errors for OutDb bands), so leave them zeroed rather than compute
+            // an InDb layout for bytes that live elsewhere.
+            (vec![0i64; view_entries.len()], 0u64)
+        };
 
         Ok(Box::new(BandRefImpl {
             dim_names_list: self.band_dim_names_list,
@@ -1583,6 +1652,161 @@ mod tests {
         assert!(
             band.is_indb(),
             "a 0-element band holds 0 bytes legitimately and must be InDb"
+        );
+    }
+
+    #[test]
+    fn is_indb_does_not_overflow_on_broadcast_axis_exceeding_i64_max() {
+        // A broadcast axis with huge `steps` can push the visible element count
+        // past i64::MAX. `is_indb()` must classify by buffer presence without
+        // computing `Π shape` (which would overflow-panic in debug / wrap in
+        // release), and `nd_buffer()` must not panic either.
+        //
+        // Visible shape = [4, 2^62] → product 2^64 overflows i64. The giant
+        // axis is a broadcast (step=0) over a size-1 source axis, so it
+        // addresses one byte per position and the 4-byte buffer suffices.
+        let big: i64 = 1 << 62;
+        let mut builder = RasterBuilder::new(1);
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        builder
+            .start_raster_nd(&transform, &["y", "t"], &[4, big], None)
+            .unwrap();
+        builder
+            .start_band(StartBandArgs {
+                name: Some("broadcast_time"),
+                view: Some(&[
+                    ViewEntry {
+                        source_axis: 0,
+                        start: 0,
+                        step: 1,
+                        steps: 4,
+                    },
+                    ViewEntry {
+                        source_axis: 1,
+                        start: 0,
+                        step: 0,
+                        steps: big,
+                    },
+                ]),
+                ..StartBandArgs::new(&["y", "t"], &[4, 1], BandDataType::UInt8)
+            })
+            .unwrap();
+        builder.band_data_writer().append_value(vec![0u8, 1, 2, 3]);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+        let array = builder.finish().unwrap();
+
+        let rasters = RasterStructArray::try_new(&array).unwrap();
+        let raster = rasters.get(0).unwrap();
+        let band = raster.band(0).unwrap();
+        assert_eq!(band.shape(), &[4, big]);
+        assert!(
+            band.is_indb(),
+            "a band with bytes is InDb and must not overflow the product"
+        );
+        assert!(
+            band.nd_buffer().is_ok(),
+            "nd_buffer() must not panic on a broadcast axis"
+        );
+    }
+
+    #[test]
+    fn band_errors_when_view_child_arrays_shorter_than_offsets() {
+        // Round-tripping the view columns in from another engine over IPC/FFI
+        // (validation skipped on import) can yield a list whose offsets claim
+        // more entries than the child struct actually holds. Reading it must
+        // surface an error, not panic in `.value(i)`.
+        use arrow_data::ArrayData;
+        let array = build_explicit_view_raster();
+
+        // A valid length-1 view struct, but list offsets [0, 3] claiming three
+        // entries. Built unchecked because the safe constructors reject it.
+        let valid = make_band_view_list(vec![vec![(0, 0, 1, 3)]], None);
+        let valid_list = valid.as_any().downcast_ref::<ListArray>().unwrap();
+        let struct_values = valid_list.values().to_data();
+        let DataType::List(view_field) = RasterSchema::view_type() else {
+            unreachable!()
+        };
+        let over_offsets = arrow_buffer::Buffer::from_slice_ref([0i32, 3i32]);
+        // SAFETY: deliberately building an invalid array (offsets over-run the
+        // child) to exercise the read-path guard; nothing dereferences it
+        // beyond the guarded accessor under test.
+        let list_data = unsafe {
+            ArrayData::builder(DataType::List(view_field))
+                .len(1)
+                .add_buffer(over_offsets)
+                .add_child_data(struct_values)
+                .build_unchecked()
+        };
+        let bad_view: ArrayRef = Arc::new(ListArray::from(list_data));
+        let mutated = replace_band_column(&array, band_indices::VIEW, bad_view);
+        let rasters = RasterStructArray::try_new(&mutated).unwrap();
+        let err = rasters.get(0).unwrap().band(0).err().unwrap();
+        assert!(
+            err.to_string().contains("child array") && err.to_string().contains("addresses up to"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn outdb_band_with_large_source_shape_reads_metadata() {
+        // An OutDb band never dereferences InDb byte strides, so a described
+        // source_shape whose C-order stride product overflows i64 must not
+        // block reading the band's metadata. Before the OutDb read fast-path,
+        // band() always composed strides and tripped the source-stride overflow
+        // guard even though the bytes live elsewhere.
+        //
+        // source_shape [1, 2^32, 2^32]: the C-order stride of axis 0 is
+        // 2^32 × 2^32 = 2^64, which overflows i64.
+        let big: i64 = 1 << 32;
+        let mut builder = RasterBuilder::new(1);
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        builder
+            .start_raster_nd(&transform, &["y", "x"], &[big, big], None)
+            .unwrap();
+        builder
+            .start_band(StartBandArgs {
+                name: Some("external"),
+                nodata: Some(&[7u8]),
+                outdb_uri: Some("s3://bucket/huge.tif#band=1"),
+                outdb_format: Some("geotiff"),
+                ..StartBandArgs::new(&["z", "y", "x"], &[1, big, big], BandDataType::UInt8)
+            })
+            .unwrap();
+        builder.band_data_writer().append_value([]); // empty → OutDb
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+        let array = builder.finish().unwrap();
+
+        let rasters = RasterStructArray::try_new(&array).unwrap();
+        let raster = rasters.get(0).unwrap();
+        let band = raster.band(0).unwrap();
+        assert!(
+            !band.is_indb(),
+            "empty data + non-empty visible region → OutDb"
+        );
+        assert_eq!(band.shape(), &[1, big, big]);
+        assert_eq!(band.nodata(), Some(&[7u8][..]));
+        assert_eq!(band.outdb_uri(), Some("s3://bucket/huge.tif#band=1"));
+    }
+
+    #[test]
+    fn band_errors_when_empty_region_offset_escapes_buffer() {
+        // An empty visible region (steps=0) addresses no elements, but a large
+        // `start` still composes a byte_offset. That offset must stay within
+        // the data buffer so the NdBuffer.offset invariant holds — a view whose
+        // offset runs past the buffer end must error even though it's empty.
+        let array = build_explicit_view_raster(); // source_shape [8], 8 data bytes
+                                                  // start=100 with steps=0: validate skips the start bound for empty axes,
+                                                  // so this composes byte_offset=100 over the 8-byte buffer.
+        let escaping_view = make_band_view_list(vec![vec![(0, 100, 1, 0)]], None);
+        let mutated = replace_band_column(&array, band_indices::VIEW, escaping_view);
+        let rasters = RasterStructArray::try_new(&mutated).unwrap();
+        let err = rasters.get(0).unwrap().band(0).err().unwrap();
+        assert!(
+            err.to_string().contains("view-buffer bounds check failed")
+                && err.to_string().contains("exceeds buffer length"),
+            "got: {err}"
         );
     }
 }

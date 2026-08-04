@@ -6211,6 +6211,7 @@ dependencies = [
  "approx",
  "arrow-array",
  "arrow-buffer",
+ "arrow-data",
  "arrow-ipc",
  "arrow-schema",
  "async-trait",
@@ -6450,7 +6451,7 @@ dependencies = [
 
 [[package]]
 name = "sedona-spatial-join-raster"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",

@@ -230,6 +230,11 @@ impl ViewEntries {
     ///   - `out.step         = next.step * self.step`
     ///   - `out.steps        = next.steps`
     ///
+    /// Each `next` entry is additionally bounded against the parent's *visible*
+    /// extent (`self[next.source_axis].steps`), not just the underlying source:
+    /// a delta may not address an element outside the window `self` already
+    /// exposes, which would re-expose bytes the parent view had sliced away.
+    ///
     /// Uses checked arithmetic at every step. The caller must
     /// [`validate`] the result against the source shape before use.
     ///
@@ -246,6 +251,43 @@ impl ViewEntries {
                 )));
             }
             let input = &self.0[next_entry.source_axis as usize];
+
+            // Bound the delta against the PARENT's visible extent. `next_entry`
+            // indexes the parent's visible axis `next_entry.source_axis`, which
+            // exposes exactly `input.steps` elements; a delta reaching past that
+            // window would re-expose bytes the parent had sliced away. Mirror
+            // `validate`'s start / last-element bounds, but against `input.steps`
+            // (the parent's visible length) rather than the raw source size.
+            if next_entry.steps > 0 {
+                let visible_len = input.steps;
+                if next_entry.start < 0 || next_entry.start >= visible_len {
+                    return Err(ArrowError::InvalidArgumentError(format!(
+                        "compose: next[{k}].start ({}) is out of range [0, {visible_len}) \
+                         for the parent's visible axis {}",
+                        next_entry.start, next_entry.source_axis
+                    )));
+                }
+                if next_entry.step != 0 {
+                    let last = (next_entry.steps - 1)
+                        .checked_mul(next_entry.step)
+                        .and_then(|d| next_entry.start.checked_add(d))
+                        .ok_or_else(|| {
+                            ArrowError::InvalidArgumentError(format!(
+                                "compose: next[{k}] last-element index overflows i64 \
+                                 (start={}, step={}, steps={})",
+                                next_entry.start, next_entry.step, next_entry.steps
+                            ))
+                        })?;
+                    if last < 0 || last >= visible_len {
+                        return Err(ArrowError::InvalidArgumentError(format!(
+                            "compose: next[{k}] addresses element {last}, out of range \
+                             [0, {visible_len}) for the parent's visible axis {}",
+                            next_entry.source_axis
+                        )));
+                    }
+                }
+            }
+
             let step = next_entry.step.checked_mul(input.step).ok_or_else(|| {
                 ArrowError::InvalidArgumentError(format!(
                     "compose: step product overflows i64 at axis {k} \
@@ -600,5 +642,27 @@ mod tests {
             err.to_string().contains("step product overflows"),
             "got {err}"
         );
+    }
+
+    #[test]
+    fn compose_rejects_delta_escaping_parent_visible_window() {
+        // Parent exposes source[0..4] (steps=4) of an 8-long source. A delta
+        // that reads 8 elements would reach source indices 4..8 — bytes the
+        // parent sliced away. Composition must reject it even though those
+        // indices are valid in the raw source.
+        let parent = entries(&[ve(0, 0, 1, 4)]);
+        let escaping = entries(&[ve(0, 0, 1, 8)]);
+        let err = parent.compose(&escaping).unwrap_err();
+        assert!(err.to_string().contains("visible axis"), "got {err}");
+    }
+
+    #[test]
+    fn compose_accepts_delta_within_parent_visible_window() {
+        // The same parent, with a delta that exactly fills the 4-element
+        // window, composes cleanly and stays inside the parent's extent.
+        let parent = entries(&[ve(0, 0, 1, 4)]);
+        let fitting = entries(&[ve(0, 0, 1, 4)]);
+        let composed = parent.compose(&fitting).unwrap();
+        assert_eq!(composed.as_slice(), &[ve(0, 0, 1, 4)]);
     }
 }
