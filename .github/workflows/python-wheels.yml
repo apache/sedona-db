@@ -163,7 +163,7 @@ jobs:
     strategy:
       matrix:
         config:
-          - {os: "ubuntu-latest", label: "linux-x86_64", arch: "x86_64"}
+          # DEBUG: arm64 only (the config that segfaults in test_st_transform).
           - {os: "ubuntu-24.04-arm", label: "linux-arm64", arch: "aarch64"}
 
     steps:
@@ -180,8 +180,13 @@ jobs:
           ./wheels-build-linux.sh ${{ matrix.config.arch }} sedonadb
         env:
           CIBW_SKIP: "*musllinux*"
+          # DEBUG: build only cp39 (the crashing interpreter) and run just
+          # test_st_transform under gdb to capture the native backtrace of the
+          # segfault (throwaway branch — revert before merge).
+          CIBW_BUILD: "cp39-*"
           CIBW_TEST_REQUIRES: pytest adbc_driver_manager geoarrow-pyarrow geopandas duckdb
-          CIBW_TEST_COMMAND: pytest {package}/tests -vv -o faulthandler_timeout=600
+          CIBW_BEFORE_TEST: "yum install -y gdb"
+          CIBW_TEST_COMMAND: "gdb -batch -ex 'set pagination off' -ex run -ex 'bt full' -ex 'thread apply all bt' --args python -m pytest {package}/tests/functions/test_transforms.py -k test_st_transform -vv"
 
       - uses: actions/upload-artifact@v7
         with:
