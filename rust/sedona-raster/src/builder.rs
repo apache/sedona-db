@@ -27,7 +27,7 @@ use sedona_schema::raster::{BandDataType, RasterSchema};
 
 use crate::band_builder::{BandArrayBuilder, BandWriter};
 use crate::error::RasterError;
-use crate::traits::{BandOverrides, BandRef, RasterRef};
+use crate::traits::{BandOverrides, BandRef, Override, RasterRef};
 use crate::view_entries::ViewEntries;
 
 /// Raster-level metadata overrides for [`RasterBuilder::start_raster_from`] and
@@ -394,22 +394,26 @@ impl RasterBuilder {
             outdb_uri,
             outdb_format,
         } = args;
-        // Delegate to `copy_into`, which composes `view` (a delta over the
-        // input's visible axes) onto the input's own view, carries the source
-        // bytes over, and inherits every field left unset here from the input
-        // via `.or_else(|| input.<field>())` — including `nodata`, which the
-        // earlier hand-rolled implementation forwarded verbatim and thereby
-        // dropped. `dim_names` and `view` are always supplied by this call, so
-        // they pass through as explicit overrides.
+        // `copy_into` never composes the view, so compose the delta here:
+        // `view` addresses `input`'s *visible* axes, and composing it onto
+        // `input.view()` yields the absolute source-space view that `copy_into`
+        // persists verbatim (`Override::Set`). `compose` also bounds the delta
+        // against the parent's visible window, so a slice can't re-expose bytes
+        // the input had already sliced away.
+        let composed = input.view().compose(view)?;
+        // Everything the caller leaves unset inherits from the source via
+        // `Override::Keep`, including `nodata` — the source's sentinel must
+        // carry over rather than being dropped. An explicit caller value
+        // becomes `Override::Set`.
         input.copy_into(
             self,
             BandOverrides {
-                name,
+                name: name.map_or(Override::Keep, Override::Set),
                 dim_names: Some(dim_names),
-                nodata,
-                outdb_uri,
-                outdb_format,
-                view: Some(view),
+                nodata: nodata.map_or(Override::Keep, Override::Set),
+                outdb_uri: outdb_uri.map_or(Override::Keep, Override::Set),
+                outdb_format: outdb_format.map_or(Override::Keep, Override::Set),
+                view: Override::Set(&composed),
             },
         )
     }

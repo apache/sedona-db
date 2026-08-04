@@ -275,29 +275,60 @@ pub trait RasterRef {
     }
 }
 
-/// Field overrides for [`BandRef::copy_into`]. Each field defaults to `None`,
-/// meaning "inherit from the source band" — `name` included, sourced from
-/// [`BandRef::name`].
+/// Trinary override for a [`BandOverrides`] field: `Keep` inherits the
+/// source band's value, `Clear` sets the field to absent (`None`), and
+/// `Set(T)` sets it to `T`. `Keep` is the default, so `..Default::default()`
+/// on `BandOverrides` inherits everything.
+///
+/// The three-way distinction matters for clearable fields (nodata, outdb
+/// hints, the view): with a plain `Option` there is no way to say "drop the
+/// source's value" as distinct from "inherit it". `RS_SetBandNoDataValue`
+/// relies on this to clear a band's nodata on a `NULL` argument rather than
+/// nulling the whole raster row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Override<T> {
+    /// Inherit the source band's value.
+    #[default]
+    Keep,
+    /// Set the field to absent (`None`).
+    Clear,
+    /// Set the field to this value.
+    Set(T),
+}
+
+/// Field overrides for [`BandRef::copy_into`]. Each field defaults to
+/// [`Override::Keep`], meaning "inherit from the source band".
 #[derive(Default)]
 pub struct BandOverrides<'a> {
-    /// Override the band name; `None` inherits the source's.
-    pub name: Option<&'a str>,
-    /// Override the dimension names; `None` inherits the source's.
+    /// Override the band name. `Keep` inherits the source's via
+    /// [`BandRef::name`], `Clear` yields an unnamed band, `Set(n)` names it.
+    pub name: Override<&'a str>,
+    /// Override the dimension names; `None` inherits the source's. Unlike the
+    /// other fields this stays a plain `Option`: every band always has dim
+    /// names, so there is no "absent" state for `Clear` to express.
     pub dim_names: Option<&'a [&'a str]>,
-    /// Override the nodata value; `None` inherits the source's.
-    pub nodata: Option<&'a [u8]>,
-    /// Override the OutDb URI; `None` inherits the source's.
-    pub outdb_uri: Option<&'a str>,
-    /// Override the OutDb format; `None` inherits the source's.
-    pub outdb_format: Option<&'a str>,
-    /// View to apply to the derived band, expressed in the **source's visible
-    /// coordinates**. [`BandRef::copy_into`] composes it onto the source's own
-    /// view for you — you don't manage that composition and don't need to know
-    /// whether the source already carries a view. `None` inherits the source's
-    /// view unchanged. A non-identity result is persisted on the derived band
-    /// (as a slice, broadcast, permutation, or reverse) and decoded back by the
-    /// reader; the underlying bytes are carried over unchanged.
-    pub view: Option<&'a ViewEntries>,
+    /// Override the nodata value. `Keep` inherits the source's, `Clear` drops
+    /// it (the derived band has no nodata), `Set(b)` sets it to `b`.
+    pub nodata: Override<&'a [u8]>,
+    /// Override the OutDb URI. `Keep` inherits, `Clear` drops it, `Set(u)` sets
+    /// it.
+    pub outdb_uri: Override<&'a str>,
+    /// Override the OutDb format. `Keep` inherits, `Clear` drops it, `Set(f)`
+    /// sets it.
+    pub outdb_format: Override<&'a str>,
+    /// View for the derived band. [`BandRef::copy_into`] **never composes** it:
+    /// - `Keep` inherits the source's view unchanged.
+    /// - `Clear` gives the derived band the canonical identity view — the bytes
+    ///   already reflect any prior view, so no view is applied.
+    /// - `Set(v)` makes the derived band's view exactly `v`, interpreted
+    ///   against the source's `raw_source_shape`.
+    ///
+    /// Composition is the caller's job: to slice the source's *visible*
+    /// coordinates, pass `Set(&source.view().compose(next)?)` yourself. A
+    /// non-identity result is persisted on the derived band (as a slice,
+    /// broadcast, permutation, or reverse) and decoded back by the reader; the
+    /// underlying bytes are carried over unchanged.
+    pub view: Override<&'a ViewEntries>,
 }
 
 /// Trait for accessing a single band/variable within an N-D raster.
@@ -454,12 +485,14 @@ pub trait BandRef {
     /// data transfer is zero-copy when the implementation supports it (see
     /// [`Self::append_data_into`]).
     ///
-    /// The derived band's view is the source's own view with any
-    /// `overrides.view` **composed on top for you**: express an override in the
-    /// source's *visible* coordinates and `copy_into` composes it against the
-    /// source's view — callers never manage that composition and don't need to
-    /// know whether the source already carries one. `overrides.view = None`
-    /// inherits the source's view unchanged.
+    /// `copy_into` **never composes** the view. `overrides.view` resolves as:
+    /// - [`Override::Keep`] inherits the source's view unchanged.
+    /// - [`Override::Clear`] gives the derived band the canonical identity view
+    ///   over the source shape — the bytes already reflect any prior view, so
+    ///   no view is applied.
+    /// - [`Override::Set(v)`](Override::Set) makes the derived band's view
+    ///   exactly `v`. To slice the source's *visible* coordinates the caller
+    ///   composes first: `view: Override::Set(&source.view().compose(&next)?)`.
     ///
     /// The composition + persistence is delegated to
     /// [`BandWriter::start_band`]: an identity effective view is
@@ -486,19 +519,41 @@ pub trait BandRef {
             None => inherited_dims,
         };
         let source_shape = self.raw_source_shape().to_vec();
-        // Compose the caller's override (if any) onto the source's own view, so
-        // the override is interpreted in the source's visible space and the
-        // caller doesn't have to. `None` keeps the source view unchanged.
-        let effective_view = match overrides.view {
-            Some(v) => self.view().compose(v)?,
-            None => self.view().clone(),
+        // The view is used as-is — never composed onto the source's own view.
+        // `Clear` applies the canonical identity (the bytes already reflect any
+        // prior view); `Set(v)` uses `v` verbatim; `Keep` carries the source's
+        // view forward. Callers who want to compose do so themselves.
+        let effective_view: ViewEntries = match overrides.view {
+            Override::Keep => self.view().clone(),
+            Override::Clear => ViewEntries::identity_for_shape(&source_shape),
+            Override::Set(v) => v.clone(),
+        };
+        let name = match overrides.name {
+            Override::Keep => self.name(),
+            Override::Clear => None,
+            Override::Set(n) => Some(n),
+        };
+        let nodata = match overrides.nodata {
+            Override::Keep => self.nodata(),
+            Override::Clear => None,
+            Override::Set(b) => Some(b),
+        };
+        let outdb_uri = match overrides.outdb_uri {
+            Override::Keep => self.outdb_uri(),
+            Override::Clear => None,
+            Override::Set(u) => Some(u),
+        };
+        let outdb_format = match overrides.outdb_format {
+            Override::Keep => self.outdb_format(),
+            Override::Clear => None,
+            Override::Set(f) => Some(f),
         };
         builder.start_band(StartBandArgs {
-            name: overrides.name.or_else(|| self.name()),
+            name,
             view: Some(&effective_view),
-            nodata: overrides.nodata.or_else(|| self.nodata()),
-            outdb_uri: overrides.outdb_uri.or_else(|| self.outdb_uri()),
-            outdb_format: overrides.outdb_format.or_else(|| self.outdb_format()),
+            nodata,
+            outdb_uri,
+            outdb_format,
             ..StartBandArgs::new(&dim_names, &source_shape, self.data_type())
         })?;
         self.append_data_into(builder)
@@ -942,34 +997,51 @@ mod tests {
         assert_eq!(visited, vec![1, 3, 5]);
     }
 
-    #[test]
-    fn copy_into_persists_non_identity_override_view() {
-        // Identity source; the caller's override slices every other element
-        // (step 2). copy_into composes the override onto the identity source
-        // view and persists the resulting slice — visible values [1, 3].
-        use crate::array::RasterStructArray;
+    /// Build a single-band raster whose sole band has source_shape `[8]`, the
+    /// contiguous bytes `0..8`, and a *non-identity* every-other slice view
+    /// (`start=1, step=2, steps=3` → visible `[1, 3, 5]`). Shared by the
+    /// `copy_into` view-override tests, which each derive a band from it and
+    /// inspect how `overrides.view` reshapes the result.
+    fn source_with_non_identity_view() -> arrow_array::StructArray {
         let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
-
         let mut ib = RasterBuilder::new(1);
-        ib.start_raster_nd(&transform, &["x"], &[4], None).unwrap();
-        ib.start_band(StartBandArgs::new(&["x"], &[4], BandDataType::UInt8))
-            .unwrap();
-        ib.band_data_writer().append_value(vec![1u8, 2, 3, 4]);
+        ib.start_raster_nd(&transform, &["x"], &[3], None).unwrap();
+        let view = ViewEntries::new(vec![ve(0, 1, 2, 3)]);
+        ib.start_band(StartBandArgs {
+            name: None,
+            view: Some(&view),
+            ..StartBandArgs::new(&["x"], &[8], BandDataType::UInt8)
+        })
+        .unwrap();
+        ib.band_data_writer()
+            .append_value((0u8..8).collect::<Vec<u8>>());
         ib.finish_band().unwrap();
         ib.finish_raster().unwrap();
-        let in_array = ib.finish().unwrap();
+        ib.finish().unwrap()
+    }
+
+    #[test]
+    fn copy_into_set_view_uses_it_as_is() {
+        // `Set` is used verbatim against the source's raw_source_shape — it is
+        // NOT composed onto the source's own view. Source view is
+        // (start=1, step=2, steps=3); the override picks (start=1, step=1,
+        // steps=3) → visible [1, 2, 3]. Had copy_into composed the override
+        // onto the source view it would instead yield [3, 5, 7].
+        use crate::array::RasterStructArray;
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        let in_array = source_with_non_identity_view();
         let in_rasters = RasterStructArray::try_new(&in_array).unwrap();
         let in_raster = in_rasters.get(0).unwrap();
         let in_band = in_raster.band(0).unwrap();
 
-        let override_view = ViewEntries::new(vec![ve(0, 0, 2, 2)]);
+        let override_view = ViewEntries::new(vec![ve(0, 1, 1, 3)]);
         let mut ob = RasterBuilder::new(1);
-        ob.start_raster_nd(&transform, &["x"], &[2], None).unwrap();
+        ob.start_raster_nd(&transform, &["x"], &[3], None).unwrap();
         in_band
             .copy_into(
                 &mut ob,
                 BandOverrides {
-                    view: Some(&override_view),
+                    view: Override::Set(&override_view),
                     ..Default::default()
                 },
             )
@@ -981,17 +1053,111 @@ mod tests {
         let out_raster = out_rasters.get(0).unwrap();
         let out_band = out_raster.band(0).unwrap();
 
-        assert_eq!(out_band.view().as_slice(), &[ve(0, 0, 2, 2)]);
+        // The derived view is exactly the override, over the source shape.
+        assert_eq!(out_band.view().as_slice(), &[ve(0, 1, 1, 3)]);
+        assert_eq!(out_band.shape(), &[3]);
+        assert_eq!(out_band.raw_source_shape(), &[8]);
+        let buf = out_band.nd_buffer().unwrap();
+        assert_eq!(buf.strides, &[1]);
+        assert_eq!(buf.offset, 1);
+        let visited: Vec<u8> = (0..buf.shape[0])
+            .map(|i| buf.buffer[(buf.offset as i64 + i * buf.strides[0]) as usize])
+            .collect();
+        assert_eq!(visited, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn copy_into_caller_composed_view() {
+        // Composition is the caller's job: to slice the source's *visible*
+        // coordinates, the caller composes against the source view itself and
+        // passes the result as `Set`. Here `next` takes the first two visible
+        // elements of the source ([1, 3, 5] → [1, 3]); composing it onto the
+        // source view (start=1, step=2, steps=3) yields (start=1, step=2,
+        // steps=2), which copy_into persists verbatim.
+        use crate::array::RasterStructArray;
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        let in_array = source_with_non_identity_view();
+        let in_rasters = RasterStructArray::try_new(&in_array).unwrap();
+        let in_raster = in_rasters.get(0).unwrap();
+        let in_band = in_raster.band(0).unwrap();
+
+        let next = ViewEntries::new(vec![ve(0, 0, 1, 2)]);
+        let composed = in_band.view().compose(&next).unwrap();
+        assert_eq!(composed.as_slice(), &[ve(0, 1, 2, 2)]);
+
+        let mut ob = RasterBuilder::new(1);
+        ob.start_raster_nd(&transform, &["x"], &[2], None).unwrap();
+        in_band
+            .copy_into(
+                &mut ob,
+                BandOverrides {
+                    view: Override::Set(&composed),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        ob.finish_band().unwrap();
+        ob.finish_raster().unwrap();
+        let out_array = ob.finish().unwrap();
+        let out_rasters = RasterStructArray::try_new(&out_array).unwrap();
+        let out_raster = out_rasters.get(0).unwrap();
+        let out_band = out_raster.band(0).unwrap();
+
+        assert_eq!(out_band.view().as_slice(), &[ve(0, 1, 2, 2)]);
         assert_eq!(out_band.shape(), &[2]);
-        assert_eq!(out_band.raw_source_shape(), &[4]);
+        assert_eq!(out_band.raw_source_shape(), &[8]);
         let buf = out_band.nd_buffer().unwrap();
         assert_eq!(buf.strides, &[2]);
-        assert_eq!(buf.offset, 0);
+        assert_eq!(buf.offset, 1);
         assert!(!buf.is_contiguous());
         let visited: Vec<u8> = (0..buf.shape[0])
             .map(|i| buf.buffer[(buf.offset as i64 + i * buf.strides[0]) as usize])
             .collect();
         assert_eq!(visited, vec![1, 3]);
+    }
+
+    #[test]
+    fn copy_into_clear_view_resets_to_identity() {
+        // `Clear` drops the source's non-identity view: the derived band carries
+        // the canonical identity view over the source shape, and the underlying
+        // bytes (0..8) are carried over unchanged and readable contiguously.
+        use crate::array::RasterStructArray;
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        let in_array = source_with_non_identity_view();
+        let in_rasters = RasterStructArray::try_new(&in_array).unwrap();
+        let in_raster = in_rasters.get(0).unwrap();
+        let in_band = in_raster.band(0).unwrap();
+        // Sanity: the source really does carry the non-identity slice.
+        assert_eq!(in_band.view().as_slice(), &[ve(0, 1, 2, 3)]);
+
+        let mut ob = RasterBuilder::new(1);
+        ob.start_raster_nd(&transform, &["x"], &[8], None).unwrap();
+        in_band
+            .copy_into(
+                &mut ob,
+                BandOverrides {
+                    view: Override::Clear,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        ob.finish_band().unwrap();
+        ob.finish_raster().unwrap();
+        let out_array = ob.finish().unwrap();
+        let out_rasters = RasterStructArray::try_new(&out_array).unwrap();
+        let out_raster = out_rasters.get(0).unwrap();
+        let out_band = out_raster.band(0).unwrap();
+
+        // Identity view over the source shape; visible == source.
+        assert_eq!(out_band.view().as_slice(), &[ve(0, 0, 1, 8)]);
+        assert_eq!(out_band.shape(), &[8]);
+        assert_eq!(out_band.raw_source_shape(), &[8]);
+        let buf = out_band.nd_buffer().unwrap();
+        assert!(buf.is_contiguous());
+        assert_eq!(
+            buf.as_contiguous().unwrap(),
+            (0u8..8).collect::<Vec<u8>>().as_slice()
+        );
     }
 
     #[test]
