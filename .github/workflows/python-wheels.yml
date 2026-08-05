@@ -81,7 +81,7 @@ jobs:
           # failures are recorded in .test_failed and checked after upload.
           # We use Python here to be absolutely sure there are no shell escaping issues.
           CIBW_TEST_COMMAND: >-
-            python -c "import subprocess,sys,pathlib; r=subprocess.run([sys.executable,'-m','pytest',str(pathlib.Path(r'{package}')/'tests'),'-vv','-o','faulthandler_timeout=600']); r.returncode and (print(f'Tests failed (exit {r.returncode}), creating .test_failed marker at {pathlib.Path(r\"{project}\").absolute()}') or (pathlib.Path(r'{project}')/'.test_failed').touch() or True); sys.exit(0)"
+            python -c "import subprocess,sys,pathlib; proj=pathlib.Path(r'{project}'); r=subprocess.run([sys.executable,'-m','pytest',str(pathlib.Path(r'{package}')/'tests'),'-vv','-o','faulthandler_timeout=600']); r.returncode and (print(f'Tests failed (exit {r.returncode}), creating .test_failed marker at {proj.absolute()}') or (proj/'.test_failed').touch() or True); sys.exit(0)"
 
       - uses: actions/upload-artifact@v7
         with:
