@@ -100,6 +100,7 @@ datafusion-optimizer = { version = "52.5.0" }
 datafusion-physical-expr = { version = "52.5.0" }
 datafusion-physical-plan = { version = "52.5.0" }
 datafusion-pruning = { version = "52.5.0" }
+datafusion-session = { version = "52.5.0" }
 dirs = "6.0.0"
 env_logger = "0.11"
 fastrand = "2.4"

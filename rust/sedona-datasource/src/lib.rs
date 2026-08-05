@@ -18,4 +18,5 @@
 pub mod format;
 pub mod provider;
 pub mod spec;
+pub mod url_table;
 pub mod utility;

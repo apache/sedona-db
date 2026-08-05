@@ -51,6 +51,7 @@ use parking_lot::Mutex;
 use sedona_common::{sedona_internal_datafusion_err, SedonaOptions};
 use sedona_datasource::provider::external_table;
 use sedona_datasource::spec::ExternalFormatSpec;
+use sedona_datasource::url_table::enable_sedona_url_table;
 use sedona_expr::scalar_udf::{IntoScalarKernelRefs, SedonaScalarUDF};
 use sedona_expr::{
     aggregate_udf::{IntoSedonaAccumulatorRefs, SedonaAggregateUDF},
@@ -249,8 +250,12 @@ impl SedonaContext {
             state.register_file_format(Arc::new(LasFormatFactory::new(Extension::Las)), false)?;
         }
 
-        // Enable dynamic file query (i.e., select * from 'filename')
-        let ctx = SessionContext::new_with_state(state).enable_url_table();
+        // Enable dynamic file query (i.e., select * from 'filename').
+        // Uses SedonaDB's resolver instead of DataFusion's
+        // `enable_url_table` so directory-shaped external formats (Zarr)
+        // resolve to a single-object table rather than a listing over the
+        // directory's contents.
+        let ctx = enable_sedona_url_table(SessionContext::new_with_state(state));
 
         // Install dynamic catalog provider that can register required object stores
         ctx.refresh_catalogs().await?;
