@@ -80,7 +80,7 @@ jobs:
           # Test command exits 0 even on failure so CIBW continues building all wheels;
           # failures are recorded in .test_failed and checked after upload.
           CIBW_TEST_COMMAND: >-
-            python -c "import subprocess,sys,pathlib; r=subprocess.run([sys.executable,'-m','pytest','{package}/tests','-vv','-o','faulthandler_timeout=600']); r.returncode and pathlib.Path('{project}/.test_failed').touch(); sys.exit(0)"
+            python -c "import subprocess,sys,pathlib; r=subprocess.run([sys.executable,'-m','pytest',str(pathlib.Path('{package}')/'tests'),'-vv','-o','faulthandler_timeout=600']); r.returncode and pathlib.Path('{project}/.test_failed').touch(); sys.exit(0)"
 
       - uses: actions/upload-artifact@v7
         with:
