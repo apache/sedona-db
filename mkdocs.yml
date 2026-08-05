@@ -45,6 +45,8 @@ nav:
         - Zarr Extension (Python): reference/python-zarr.md
         - SQL: reference/sql/index.md
         - Spatial Joins: reference/sql-joins.md
+      - Concepts:
+        - Coordinate Reference Systems: concepts/crs.md
       - Examples:
         - GeoPandas interop: geopandas-interop.md
         - Overture Examples: overture-examples.md

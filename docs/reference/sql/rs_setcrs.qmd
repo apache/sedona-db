@@ -31,6 +31,8 @@ kernels:
 Sets a CRS on a raster. This is metadata-only: raster cell values and
 geotransform are not transformed.
 
+See [Coordinate Reference Systems](../../concepts/crs.md) for how SedonaDB represents and compares CRS.
+
 ## Examples
 
 ```sql
