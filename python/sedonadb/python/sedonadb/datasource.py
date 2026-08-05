@@ -141,7 +141,12 @@ class PyogrioFormatSpec(ExternalFormatSpec):
         return self._extension
 
     def open_reader(self, args):
-        import pyogrio.raw
+        try:
+            import pyogrio.raw
+        except ImportError as e:
+            raise ImportError(
+                f"pyogrio must be installed to read {self.extension!r} files"
+            ) from e
 
         url = args.src.to_url()
         if url is None:

@@ -15,7 +15,6 @@
 # specific language governing permissions and limitations
 # under the License.
 
-import importlib.util
 import os
 import sys
 from functools import cached_property
@@ -136,18 +135,10 @@ class SedonaContext:
 
         This makes `SELECT * FROM 'file:///path/to/data.<ext>'` work
         zero-config for the common pyogrio/GDAL formats, matching the way
-        Parquet is handled. pyogrio is an optional dependency, so this is a
-        no-op when it is not installed (the availability check does not import
-        pyogrio, which keeps context creation cheap and side-effect free).
+        Parquet is handled. Registering does not import pyogrio — that happens
+        lazily in `PyogrioFormatSpec.open_reader` when a file is actually read —
+        so this is safe even when pyogrio is not installed.
         """
-        try:
-            pyogrio_available = importlib.util.find_spec("pyogrio") is not None
-        except (ImportError, ValueError):
-            pyogrio_available = False
-
-        if not pyogrio_available:
-            return
-
         from sedonadb.datasource import PyogrioFormatSpec
 
         for extension in _DEFAULT_PYOGRIO_EXTENSIONS:
