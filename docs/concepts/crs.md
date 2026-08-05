@@ -103,11 +103,11 @@ PROJ using an approximate, confidence-based similarity threshold.
 
 ### What this means for you
 
-Operations that require their inputs to share a CRS — spatial joins,
+**Vector** operations that require their inputs to share a CRS — spatial joins,
 `ST_Intersects`, distance predicates, and so on — **raise an error on a
 mismatch** rather than silently reprojecting one side to match the other.
-Silent reprojection is exactly the kind of hidden, easy-to-miss behavior that
-produces wrong answers, so SedonaDB refuses to guess:
+Silently reprojecting geometry coordinates is exactly the kind of hidden,
+easy-to-miss behavior that produces wrong answers, so SedonaDB refuses to guess:
 
 ```
 Error during planning: Mismatched CRS arguments: epsg:3857 vs epsg:4326
@@ -127,6 +127,17 @@ are spelled differently (say, an authority code on one side and an
 authority-less WKT on the other) may be reported as mismatched. The fix is the
 same: normalize both sides to the same definition with `ST_Transform` or
 `ST_SetCRS`.
+
+### Raster joins are an exception
+
+A spatial join involving a raster — raster-to-raster, or a raster against a
+geometry — tests the raster's **envelope** (its footprint), not its pixels. So
+SedonaDB reprojects that envelope to a common CRS on the fly and the join works
+across mismatched CRSes rather than erroring. Reprojecting a footprint is a
+cheap, exact operation on a handful of corner coordinates, whereas reprojecting
+the pixel grid itself would require resampling — so the join aligns CRSes
+without touching the pixels. The error-on-mismatch rule above therefore applies
+to the vector/geometry path; raster joins handle the CRS mismatch for you.
 
 ## SRID vs CRS
 
