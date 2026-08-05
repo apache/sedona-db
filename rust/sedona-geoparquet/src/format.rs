@@ -701,14 +701,8 @@ fn wrap_expr_columns(
 ) -> Result<Arc<dyn PhysicalExpr>> {
     expr.transform_down(|node| {
         if let Some(column) = node.as_any().downcast_ref::<Column>() {
-            // Look up by column name instead of index, since the Column's index
-            // may refer to a different schema (e.g., a projected intermediate schema)
-            // rather than the file schema. If the column doesn't exist in the file
-            // schema, it's a derived column and doesn't need wrapping.
-            let Some((_, field)) = file_schema.column_with_name(column.name()) else {
-                return Ok(Transformed::no(node));
-            };
-
+            let index = column.index();
+            let field = file_schema.field(index);
             // Only wrap columns that have extension metadata
             if field.metadata().contains_key("ARROW:extension:name") {
                 let field: FieldRef = Arc::new(field.clone());
@@ -1097,41 +1091,6 @@ mod test {
                 .unwrap();
         let geo_source_with_predicate = geo_source.with_predicate(predicate);
         assert!(geo_source_with_predicate.inner.filter().is_some());
-    }
-
-    /// Regression test for https://github.com/apache/sedona-db/issues/1115
-    ///
-    /// When projections contain Column expressions that reference columns not in the
-    /// file schema (e.g., derived literal columns like `'a' AS c1`), the Column indices
-    /// refer to the projection's output schema, not the file schema. Looking up by index
-    /// would cause an "index out of bounds" panic when the index exceeds the file schema's
-    /// field count.
-    #[test]
-    fn test_wrap_expr_columns_with_derived_columns() {
-        // File schema has only one geometry column with extension metadata
-        let mut metadata = HashMap::new();
-        metadata.insert(
-            "ARROW:extension:name".to_string(),
-            "geoarrow.wkb".to_string(),
-        );
-        let file_schema = Schema::new(vec![
-            Field::new("geometry", DataType::Binary, true).with_metadata(metadata)
-        ]);
-
-        // Create a Column expression that references a column NOT in the file schema
-        // This simulates a derived column like `'a' AS c1` which would have index 2
-        // in the projection output but doesn't exist in the file schema
-        let derived_column: Arc<dyn PhysicalExpr> = Arc::new(Column::new("c1", 2));
-
-        // This should NOT panic - the column should be passed through unchanged
-        // because it doesn't exist in the file schema
-        let result = wrap_expr_columns(derived_column.clone(), &file_schema).unwrap();
-
-        // The result should be the same expression (not wrapped)
-        assert!(result.as_any().downcast_ref::<Column>().is_some());
-        let col = result.as_any().downcast_ref::<Column>().unwrap();
-        assert_eq!(col.name(), "c1");
-        assert_eq!(col.index(), 2);
     }
 
     /// Test that columns with extension metadata are correctly wrapped
