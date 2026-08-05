@@ -31,6 +31,18 @@ sd.register(sedonadb_zarr.ZarrExtension())
 sd.read("file:///path/to/foo.zarr").show()
 ```
 
+Once the extension is registered, you can also query a Zarr group directly in
+SQL by its URL, without an explicit format:
+
+```python
+sd.sql("SELECT * FROM 'file:///path/to/foo.zarr'").show()
+```
+
+The URL must end in `.zarr`: SedonaDB routes it to the Zarr reader by that
+extension, so a group at a path without the `.zarr` suffix falls back to the
+default file listing (which fails on a Zarr directory). This URL-as-table
+support is **experimental**.
+
 For an end-to-end walkthrough, see
 [Working with Zarr and NDArray data in SedonaDB](../working-with-zarr-ndarray-sedonadb.md).
 
