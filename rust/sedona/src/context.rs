@@ -77,7 +77,7 @@ use sedona_query_planner::{
     tile_explode_analyzer::TileExplodeAnalyzerRule,
 };
 use sedona_raster::raster_loader::{AsyncRasterLoader, RasterLoaderConfig, RasterLoaderRegistry};
-use sedona_tile_explode::DefaultTileExplodePhysicalPlanner;
+use sedona_raster_gdal::rs_tile_udf;
 
 /// Sedona SessionContext wrapper
 ///
@@ -153,11 +153,6 @@ impl SedonaContext {
         // Register the spatial join planner extension
         #[allow(unused_mut)]
         let mut planner = SedonaQueryPlanner::new();
-
-        // Register the tile-explode planner, which plans an RS_TileExplode
-        // TileExplodePlanNode into a streaming TileExplodeExec.
-        planner = planner
-            .with_tile_explode_physical_planner(Arc::new(DefaultTileExplodePhysicalPlanner::new()));
 
         #[cfg(feature = "spatial-join")]
         {
@@ -246,10 +241,11 @@ impl SedonaContext {
         state_builder = register_ensure_loaded_optimizer(state_builder)?;
         // Append the tile-explode analyzer rule (singular `with_analyzer_rule`, so
         // it runs after the default `TypeCoercion` rule rather than replacing the
-        // defaults). It lifts a top-level `RS_TileExplode(...)` projection column
-        // into a `TileExplodePlanNode`, which the query planner above plans as a
-        // streaming `TileExplodeExec`.
-        state_builder = state_builder.with_analyzer_rule(Arc::new(TileExplodeAnalyzerRule::new()));
+        // defaults). It rewrites a top-level `RS_TileExplode(...)` projection column
+        // into `UNNEST(RS_Tile(...))` + a struct-flattening projection.
+        state_builder = state_builder.with_analyzer_rule(Arc::new(TileExplodeAnalyzerRule::new(
+            Arc::new(rs_tile_udf().into()),
+        )));
         state_builder = state_builder.with_query_planner(Arc::new(planner));
 
         let mut state = state_builder.build();

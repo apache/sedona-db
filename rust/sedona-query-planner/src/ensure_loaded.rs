@@ -32,7 +32,10 @@
 //! look `RS_EnsureLoaded` up from the [`FunctionRegistry`] rather than
 //! capturing an `Arc` at construction time. Because optimizer rules run
 //! to a fixpoint, the rewrite is idempotent: an argument already wrapped
-//! in `RS_EnsureLoaded` is left alone (see [`already_loaded`]).
+//! in `RS_EnsureLoaded` is left alone (see [`already_loaded`]), and a
+//! redundant `RS_EnsureLoaded` of an already-loaded argument — which
+//! projection merging can synthesise after the wrap guard has run — is
+//! collapsed back to a single load (see [`rewrite_expr_node`]).
 
 use std::sync::Arc;
 
@@ -154,9 +157,29 @@ fn rewrite_expr_node(
         return Ok(Transformed::no(expr));
     };
 
-    // Recursion guard: don't wrap rs_ensureloaded itself.
+    // `rs_ensureloaded` itself is never wrapped (recursion guard). It is also
+    // *collapsed* when redundant: `rs_ensureloaded(x)` where `x` already yields
+    // loaded bytes is a no-op. That nesting arises when projection merging
+    // inlines an already-loaded raster column into the wrap this rule injected
+    // over the bare `Column` reference — the wrap fired before the merge exposed
+    // the column's `rs_ensureloaded`/`returns_bytes` definition, which
+    // `already_loaded` cannot see through a `Column`. Left in place, the outer
+    // async load nests inside the inner one and can't be hoisted
+    // (apache/datafusion#20031), so a pixel UDF (e.g. `RS_Tile`) reading a raster
+    // column that was explicitly `RS_EnsureLoaded` upstream fails at execution
+    // with "async functions should not be called directly". `transform_up` visits
+    // the inlined arg first, so the collapse runs on the rebuilt nesting.
     let name = func_call.func.name();
     if name == "rs_ensureloaded" {
+        let redundant = func_call.args.len() == 1 && already_loaded(&func_call.args[0]);
+        if redundant {
+            let Expr::ScalarFunction(ScalarFunction { mut args, .. }) = expr else {
+                return sedona_internal_err!(
+                    "rewrite_expr_node: expected ScalarFunction after matching rs_ensureloaded"
+                );
+            };
+            return Ok(Transformed::yes(args.swap_remove(0)));
+        }
         return Ok(Transformed::no(expr));
     }
 
@@ -553,6 +576,57 @@ mod tests {
             count_ensure_loaded(&out),
             1,
             "arg already wrapped as sd_restore_metadata(rs_ensureloaded(..)) must not be re-wrapped: {out:?}"
+        );
+    }
+
+    #[test]
+    fn collapses_redundant_ensure_loaded_over_loaded_arg() {
+        // Projection merging can inline an already-loaded raster column into the
+        // wrap this rule injected over the bare column reference, producing
+        // rs_ensureloaded(rs_ensureloaded(rast)). The `already_loaded` wrap guard
+        // can't prevent it (it fired on the `Column`, before the merge), so the
+        // redundant outer load — which can't be hoisted — is collapsed instead.
+        let schema = raster_schema_named("rast");
+        let udf = fake_ensure_loaded_udf();
+
+        let double = wrap_for_loading(wrap_for_loading(col("rast"), &udf), &udf);
+        assert_eq!(count_ensure_loaded(&double), 2, "fixture should nest two");
+        let out = double
+            .transform_up(|e| rewrite_expr_node(e, &schema, &udf))
+            .unwrap()
+            .data;
+        assert_eq!(
+            count_ensure_loaded(&out),
+            1,
+            "a redundant nested rs_ensureloaded must collapse to one: {out:?}"
+        );
+    }
+
+    #[test]
+    fn collapses_redundant_load_through_restore_metadata_wrapper() {
+        // The post-merge nesting WrapAsyncUdfRule leaves is
+        // rs_ensureloaded(sd_restore_metadata(rs_ensureloaded(rast))); the outer
+        // load is redundant (its argument is already loaded) and collapses to a
+        // single load, leaving one hoistable async call.
+        use crate::restore_metadata::restore_metadata_udf;
+        use std::collections::HashMap;
+
+        let schema = raster_schema_named("rast");
+        let udf = fake_ensure_loaded_udf();
+
+        let inner = Expr::ScalarFunction(ScalarFunction {
+            func: restore_metadata_udf(HashMap::new()),
+            args: vec![wrap_for_loading(col("rast"), &udf)],
+        });
+        let outer = wrap_for_loading(inner, &udf);
+        let out = outer
+            .transform_up(|e| rewrite_expr_node(e, &schema, &udf))
+            .unwrap()
+            .data;
+        assert_eq!(
+            count_ensure_loaded(&out),
+            1,
+            "a redundant load over sd_restore_metadata(rs_ensureloaded(..)) must collapse: {out:?}"
         );
     }
 

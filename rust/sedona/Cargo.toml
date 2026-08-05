@@ -93,7 +93,6 @@ sedona-spatial-join-gpu = { workspace = true, optional = true }
 sedona-spatial-join-geography = { workspace = true, optional = true }
 sedona-spatial-join-raster = { workspace = true, optional = true }
 sedona-query-planner = { workspace = true }
-sedona-tile-explode = { workspace = true }
 sedona-s2geography = { workspace = true, optional = true }
 sedona-testing = { workspace = true }
 sedona-tg = { workspace = true, optional = true }

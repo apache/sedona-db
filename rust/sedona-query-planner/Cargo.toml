@@ -33,6 +33,8 @@ datafusion = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-execution = { workspace = true }
 datafusion-expr = { workspace = true }
+datafusion-functions = { workspace = true }
+datafusion-functions-nested = { workspace = true }
 datafusion-optimizer = { workspace = true }
 datafusion-physical-expr = { workspace = true }
 datafusion-physical-plan = { workspace = true }

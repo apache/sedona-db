@@ -15,32 +15,34 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! Analyzer rule that lifts a top-level `RS_TileExplode(...)` projection column
-//! into a streaming [`TileExplodePlanNode`].
+//! Analyzer rule that rewrites a top-level `RS_TileExplode(...)` projection
+//! column into `UNNEST(RS_Tile(...))` plus a struct-flattening projection.
 //!
 //! `SELECT RS_TileExplode(rast, w, h) FROM t` parses to a `Projection` whose
 //! single output column is the marker call's `Struct<x, y, tile>`. This rule
-//! rewrites that into a `Projection` over an `Extension(TileExplodePlanNode)`
-//! that emits one row per tile with **top-level** `(x, y, tile)` columns
-//! (alongside any pass-through sibling columns) — mirroring how a
-//! `SELECT id, UNNEST(arr)` plan is a `Projection` over the row-multiplying
-//! `Unnest` node.
+//! rewrites that into an `Unnest` of `RS_Tile(rast, w, h)`'s
+//! `List<Struct<x, y, tile>>` output, wrapped in a `Projection` that lifts the
+//! resulting struct into **top-level** `(x, y, tile)` columns (alongside any
+//! pass-through sibling columns) — mirroring how a `SELECT id, UNNEST(arr)` plan
+//! is a `Projection` over the row-multiplying `Unnest` node. `RS_Tile` shares the
+//! tiling core with `RS_TileExplode` and already carries the tile grid
+//! coordinates, so the two surfaces stay byte-identical by construction.
 //!
-//! This lift **changes the plan's output schema** (a one-column projection
+//! This rewrite **changes the plan's output schema** (a one-column projection
 //! becomes `(…siblings…, x, y, tile)`), which DataFusion forbids an
 //! `OptimizerRule` from doing — every optimizer rule is checked against
 //! `logically_equivalent_names_and_types`. The `Analyzer` has no per-rule schema
 //! check (it is where `TypeCoercion` changes column types), so the schema-changing
-//! lift belongs here.
+//! rewrite belongs here.
 //!
 //! The rule is applied in two places, and is **idempotent** — once the marker is
 //! lifted there is nothing left to match, so a second pass is a no-op:
 //! - **Eagerly** on the unoptimized plan the SQL front-end builds (see
 //!   `sedona::exec::create_plan_from_sql`), so the returned `DataFrame`'s
 //!   `schema()` already reports the top-level `(x, y, tile)` columns before any
-//!   execution — matching Sedona Spark's plan-time-honest generator schema. It
-//!   matches by function name and builds a fixed `(x, y, tile)` schema, so it
-//!   works on the pre-`TypeCoercion` arguments the binder produced.
+//!   execution — matching Sedona Spark's plan-time-honest generator schema. The
+//!   native `Unnest`/`Projection` the rewrite produces has a schema DataFusion
+//!   computes at plan-build time.
 //! - As a registered `SessionStateBuilder::with_analyzer_rule` (appended *after*
 //!   `TypeCoercion`), a safety net for plans built through other paths and so the
 //!   optimize/execute path is unchanged.
@@ -50,27 +52,113 @@ use std::sync::Arc;
 use arrow_schema::DataType;
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::tree_node::{Transformed, TreeNode, TreeNodeRecursion};
-use datafusion_common::{plan_err, DFSchema, Result};
+use datafusion_common::{plan_err, Column, DFSchema, Result, UnnestOptions};
 use datafusion_expr::expr::ScalarFunction;
 use datafusion_expr::expr_schema::ExprSchemable;
-use datafusion_expr::{col, Expr, Extension, LogicalPlan, LogicalPlanBuilder, Projection};
+use datafusion_expr::{col, Expr, LogicalPlan, LogicalPlanBuilder, Projection, ScalarUDF};
+use datafusion_functions::core::expr_ext::FieldAccessor;
+use datafusion_functions_nested::expr_fn::make_array;
 use datafusion_optimizer::analyzer::AnalyzerRule;
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
-
-use crate::tile_explode_node::{TileArgLayout, TileExplodePlanNode};
 
 /// The registered name of the `RS_TileExplode` marker UDF.
 const TILE_EXPLODE_NAME: &str = "rs_tileexplode";
 
+/// Internal name for the `RS_Tile` list column the rewrite unnests. Deliberately
+/// unlikely to collide with a user column so the outer projection can reference
+/// the unnested struct unambiguously.
+const TILES_ALIAS: &str = "__sedona_tiles";
+
+/// The positions of the `RS_TileExplode` arguments within the marker call,
+/// mirroring `RS_Tile`'s overload layout.
+///
+/// [`build_tile_explode_plan`] reads the tile parameters out of the argument
+/// expressions through these positions when it assembles the `RS_Tile` call, so
+/// the argument-order knowledge lives in one place (resolved via
+/// [`infer_tile_arg_layout`]).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd)]
+pub struct TileArgLayout {
+    /// Position of the raster argument (typically a column reference).
+    pub raster: usize,
+    /// Position of the `bandIndices` list (or scalar `bandIndex`) argument, when
+    /// the band overload carries one.
+    pub band: Option<usize>,
+    /// Position of the `width` argument.
+    pub width: usize,
+    /// Position of the `height` argument.
+    pub height: usize,
+    /// Position of the `padWithNoData` argument, when this overload carries one.
+    pub pad: Option<usize>,
+    /// Position of the `noDataVal` argument, when this overload carries one.
+    pub nodata: Option<usize>,
+}
+
 /// Analyzer rule that expands a top-level `RS_TileExplode(...)` projection column
-/// into a streaming [`TileExplodePlanNode`] and enforces the generator's
-/// placement rules.
-#[derive(Debug, Default)]
-pub struct TileExplodeAnalyzerRule {}
+/// into `UNNEST(RS_Tile(...))` + a struct-flattening projection and enforces the
+/// generator's placement rules.
+#[derive(Debug)]
+pub struct TileExplodeAnalyzerRule {
+    /// The `RS_Tile` UDF the rewrite calls to produce the tile list. Threaded in
+    /// so this (dependency-light) crate does not depend on the GDAL-backed UDF
+    /// crate that defines it.
+    rs_tile: Arc<ScalarUDF>,
+}
 
 impl TileExplodeAnalyzerRule {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(rs_tile: Arc<ScalarUDF>) -> Self {
+        Self { rs_tile }
+    }
+
+    /// Rewrite a `Projection` that carries a single top-level `RS_TileExplode(...)`
+    /// column into `UNNEST(RS_Tile(...))` + a struct-flattening projection. Leaves
+    /// every other plan node unchanged.
+    fn lift_tile_explode_projection(&self, plan: LogicalPlan) -> Result<Transformed<LogicalPlan>> {
+        let LogicalPlan::Projection(projection) = &plan else {
+            return Ok(Transformed::no(plan));
+        };
+
+        // Locate the single top-level `RS_TileExplode` column, rejecting a nested
+        // call (illegal placement) or a second generator (only one is allowed).
+        let mut explode_index: Option<usize> = None;
+        for (index, expr) in projection.expr.iter().enumerate() {
+            if as_tile_explode(expr).is_some() {
+                if explode_index.is_some() {
+                    return plan_err!("RS_TileExplode may appear at most once in a SELECT list");
+                }
+                explode_index = Some(index);
+            } else if contains_tile_explode(expr)? {
+                return plan_err!(
+                    "RS_TileExplode must be a single top-level column of a SELECT; it cannot be nested inside another expression"
+                );
+            }
+        }
+        let Some(explode_index) = explode_index else {
+            return Ok(Transformed::no(plan));
+        };
+
+        // Re-bind by value so the projection's fields can be moved into the rewrite.
+        let LogicalPlan::Projection(Projection { expr, input, .. }) = plan else {
+            return sedona_internal_err!("TileExplode: expected a Projection after matching one");
+        };
+
+        let call = as_tile_explode(&expr[explode_index]).ok_or_else(|| {
+            sedona_internal_datafusion_err!("TileExplode: the marker column vanished during lift")
+        })?;
+        let args = call.args.clone();
+
+        // The pass-through siblings are the original projection columns other than
+        // the explode column, in order; the shared builder appends (x, y, tile),
+        // dropping the raster and any other unselected input column.
+        let siblings: Vec<Expr> = expr
+            .into_iter()
+            .enumerate()
+            .filter(|(index, _)| *index != explode_index)
+            .map(|(_, sibling)| sibling)
+            .collect();
+
+        let lifted =
+            build_tile_explode_plan(input.as_ref().clone(), args, siblings, &self.rs_tile)?;
+        Ok(Transformed::yes(lifted))
     }
 }
 
@@ -80,7 +168,9 @@ impl AnalyzerRule for TileExplodeAnalyzerRule {
     }
 
     fn analyze(&self, plan: LogicalPlan, _config: &ConfigOptions) -> Result<LogicalPlan> {
-        let plan = plan.transform_down(lift_tile_explode_projection)?.data;
+        let plan = plan
+            .transform_down(|node| self.lift_tile_explode_projection(node))?
+            .data;
 
         // Any `RS_TileExplode` call still present is in an illegal place: a
         // `WHERE`/`HAVING`/aggregate/`GROUP BY` expression, nested inside another
@@ -92,68 +182,79 @@ impl AnalyzerRule for TileExplodeAnalyzerRule {
     }
 }
 
-/// Rewrite a `Projection` that carries a single top-level `RS_TileExplode(...)`
-/// column into a `Projection` over an `Extension(TileExplodePlanNode)`. Leaves
-/// every other plan node unchanged.
-fn lift_tile_explode_projection(plan: LogicalPlan) -> Result<Transformed<LogicalPlan>> {
-    let LogicalPlan::Projection(projection) = &plan else {
-        return Ok(Transformed::no(plan));
-    };
-
-    // Locate the single top-level `RS_TileExplode` column, rejecting a nested
-    // call (illegal placement) or a second generator (only one is allowed).
-    let mut explode_index: Option<usize> = None;
-    for (index, expr) in projection.expr.iter().enumerate() {
-        if as_tile_explode(expr).is_some() {
-            if explode_index.is_some() {
-                return plan_err!("RS_TileExplode may appear at most once in a SELECT list");
-            }
-            explode_index = Some(index);
-        } else if contains_tile_explode(expr)? {
-            return plan_err!(
-                "RS_TileExplode must be a single top-level column of a SELECT; it cannot be nested inside another expression"
-            );
-        }
-    }
-    let Some(explode_index) = explode_index else {
-        return Ok(Transformed::no(plan));
-    };
-
-    // Re-bind by value so the projection's fields can be moved into the node.
-    let LogicalPlan::Projection(Projection { expr, input, .. }) = plan else {
-        return sedona_internal_err!("TileExplode: expected a Projection after matching one");
-    };
-
-    let call = as_tile_explode(&expr[explode_index]).ok_or_else(|| {
-        sedona_internal_datafusion_err!("TileExplode: the marker column vanished during lift")
-    })?;
-    let args = call.args.clone();
+/// Build the `UNNEST(RS_Tile(...))` + struct-flattening projection plan that
+/// replaces an `RS_TileExplode(...)` generator column.
+///
+/// `args` are the `RS_TileExplode` argument expressions (raster, `[band]`, width,
+/// height, `[pad, [nodata]]`); `siblings` are the output columns carried through
+/// ahead of the appended `(x, y, tile)`, in order; `rs_tile` is the `RS_Tile` UDF
+/// used to produce the tile list. Shared by the SQL analyzer rewrite and the
+/// Python `DataFrame.tile_explode` surface so both resolve the argument layout
+/// and shape the plan the same way.
+pub fn build_tile_explode_plan(
+    input: LogicalPlan,
+    args: Vec<Expr>,
+    siblings: Vec<Expr>,
+    rs_tile: &Arc<ScalarUDF>,
+) -> Result<LogicalPlan> {
     let layout = infer_tile_arg_layout(&args, input.schema())?;
 
-    // The node replicates its input columns and appends `(x, y, tile)`; the input
-    // still carries the raster (the exec reads its pixels). The re-projection
-    // above the node reshapes that to the SELECT's output — the pass-through
-    // sibling columns, then the appended `(x, y, tile)` — dropping the raster and
-    // any other unselected input column.
-    let node = TileExplodePlanNode::try_new(input.as_ref().clone(), args, layout)?;
-    let extension = LogicalPlan::Extension(Extension {
-        node: Arc::new(node),
-    });
+    // Assemble the `RS_Tile` arguments from the resolved layout. `RS_Tile` shares
+    // the tiling core with `RS_TileExplode`, so its `List<Struct<x, y, tile>>`
+    // carries exactly the tiles (with their grid coordinates) the generator emits
+    // one per row.
+    let mut rs_tile_args: Vec<Expr> = vec![args[layout.raster].clone()];
+    if let Some(band) = layout.band {
+        if second_is_band_list(&args, input.schema())? {
+            // Already a `bandIndices` list — matches `RS_Tile`'s list overload.
+            rs_tile_args.push(args[band].clone());
+        } else {
+            // `RS_Tile` carries only a `bandIndices` *list* overload, so a scalar
+            // `bandIndex` is wrapped in a single-element list (identical tiles).
+            rs_tile_args.push(make_array(vec![args[band].clone()]));
+        }
+    }
+    rs_tile_args.push(args[layout.width].clone());
+    rs_tile_args.push(args[layout.height].clone());
+    if let Some(pad) = layout.pad {
+        rs_tile_args.push(args[pad].clone());
+    }
+    if let Some(nodata) = layout.nodata {
+        rs_tile_args.push(args[nodata].clone());
+    }
 
-    let mut projected: Vec<Expr> = expr
+    let tiles = Expr::ScalarFunction(ScalarFunction::new_udf(rs_tile.clone(), rs_tile_args))
+        .alias(TILES_ALIAS);
+
+    // Inner projection: every input column (qualifiers preserved) so the
+    // pass-through siblings survive the unnest, followed by the tile list.
+    let mut inner: Vec<Expr> = input
+        .schema()
+        .columns()
         .into_iter()
-        .enumerate()
-        .filter(|(index, _)| *index != explode_index)
-        .map(|(_, sibling)| sibling)
+        .map(Expr::Column)
         .collect();
-    projected.push(col("x"));
-    projected.push(col("y"));
-    projected.push(col("tile"));
+    inner.push(tiles);
 
-    let lifted = LogicalPlanBuilder::from(extension)
-        .project(projected)?
-        .build()?;
-    Ok(Transformed::yes(lifted))
+    // Unnest the tile list with `preserve_nulls = false`, so a NULL or empty tile
+    // list (e.g. from a NULL raster) contributes zero rows — matching Sedona
+    // Spark's generator. The list column becomes a `Struct<x, y, tile>` column of
+    // the same name.
+    let unnest_options = UnnestOptions::new().with_preserve_nulls(false);
+
+    // Outer projection: the pass-through siblings, then the tile struct flattened
+    // into top-level (x, y, tile).
+    let mut outer = siblings;
+    let tiles_column = col(TILES_ALIAS);
+    outer.push(tiles_column.clone().field("x").alias("x"));
+    outer.push(tiles_column.clone().field("y").alias("y"));
+    outer.push(tiles_column.field("tile").alias("tile"));
+
+    LogicalPlanBuilder::from(input)
+        .project(inner)?
+        .unnest_column_with_options(Column::from_name(TILES_ALIAS), unnest_options)?
+        .project(outer)?
+        .build()
 }
 
 /// If `expr` is (an alias of) an `RS_TileExplode(...)` call, return the call.
@@ -189,7 +290,7 @@ fn contains_tile_explode(expr: &Expr) -> Result<bool> {
 /// A 3-argument call is always no-band; a 6-argument non-list call is always
 /// scalar-band (no-band tops out at 5 arguments).
 ///
-/// Exposed so a caller building a [`TileExplodePlanNode`] directly (the Python
+/// Exposed so a caller assembling the tile-explode plan directly (the Python
 /// `DataFrame.tile_explode` surface) resolves the layout through this one shared
 /// mapping rather than re-encoding the argument positions.
 pub fn infer_tile_arg_layout(args: &[Expr], input_schema: &DFSchema) -> Result<TileArgLayout> {

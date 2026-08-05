@@ -26,10 +26,7 @@ use datafusion::config::ConfigField;
 use datafusion::logical_expr::SortExpr;
 use datafusion::prelude::DataFrame;
 use datafusion_common::{Column, DataFusionError, ParamValues, ScalarValue};
-use datafusion_expr::{
-    col, lit, ExplainFormat, ExplainOption, Expr, Extension, JoinType, LogicalPlan,
-    LogicalPlanBuilder,
-};
+use datafusion_expr::{col, lit, ExplainFormat, ExplainOption, Expr, JoinType, LogicalPlanBuilder};
 use futures::lock::Mutex;
 use futures::TryStreamExt;
 use pyo3::prelude::*;
@@ -39,8 +36,7 @@ use sedona::projected_reader::simplify_record_batch_reader;
 use sedona::show::{DisplayMode, DisplayTableOptions};
 use sedona_extension::runtime::RuntimeHandle;
 use sedona_geoparquet::options::TableGeoParquetOptions;
-use sedona_query_planner::tile_explode_analyzer::infer_tile_arg_layout;
-use sedona_query_planner::tile_explode_node::TileExplodePlanNode;
+use sedona_query_planner::tile_explode_analyzer::build_tile_explode_plan;
 use sedona_schema::schema::SedonaSchema;
 
 use crate::context::InternalContext;
@@ -251,18 +247,18 @@ impl InternalDataFrame {
     /// Explode `raster_column` into one output row per `width` x `height` tile,
     /// the row-multiplying `RS_TileExplode` generator as a DataFrame method.
     ///
-    /// This builds a `TileExplodePlanNode` directly over the current plan — the
-    /// same node the SQL analyzer lift and the tile-explode physical planner use —
-    /// so the returned `DataFrame`'s schema is honest immediately (no marker /
-    /// analyzer round-trip). The output columns are the DataFrame's other columns
-    /// (the raster argument is consumed) followed by the appended
-    /// `(x: Int32, y: Int32, tile: raster)`, replicated per tile.
+    /// This rewrites the current plan into `UNNEST(RS_Tile(...))` + a
+    /// struct-flattening projection via the shared `build_tile_explode_plan` — the
+    /// same rewrite the SQL analyzer applies — so the returned `DataFrame`'s schema
+    /// is honest immediately (no marker / analyzer round-trip). The output columns
+    /// are the DataFrame's other columns (the raster argument is consumed) followed
+    /// by the appended `(x: Int32, y: Int32, tile: raster)`, replicated per tile.
     ///
     /// The tile-generator argument expressions are assembled in the canonical
     /// order — `raster, [band_indices], width, height, [pad_with_no_data,
-    /// [no_data_value]]` — and their `TileArgLayout` is resolved through the
-    /// shared `infer_tile_arg_layout`, so the argument positions live in one place.
-    /// A scalar `band_index` is normalized to a single-element list on the Python
+    /// [no_data_value]]` — and the argument layout is resolved inside
+    /// `build_tile_explode_plan`, so the argument positions live in one place. A
+    /// scalar `band_index` is normalized to a single-element list on the Python
     /// side, so this only ever builds the array-band shape.
     #[pyo3(signature = (raster_column, width, height, band_indices=None, pad_with_no_data=false, no_data_value=None))]
     fn tile_explode(
@@ -303,28 +299,29 @@ impl InternalDataFrame {
             args.push(lit(no_data_value));
         }
 
-        let layout = infer_tile_arg_layout(&args, input_schema)?;
-
         // Carry through the DataFrame's other columns (dropping the raster
-        // argument, which the tiling reads but the generator does not re-emit),
-        // then the appended (x, y, tile).
-        let mut projected: Vec<Expr> = input_schema
+        // argument, which the tiling reads but the generator does not re-emit);
+        // the shared builder appends (x, y, tile).
+        let siblings: Vec<Expr> = input_schema
             .columns()
             .into_iter()
             .filter(|column| column.name() != raster_column)
             .map(Expr::Column)
             .collect();
-        projected.push(col("x"));
-        projected.push(col("y"));
-        projected.push(col("tile"));
 
-        let node = TileExplodePlanNode::try_new(plan, args, layout)?;
-        let extension = LogicalPlan::Extension(Extension {
-            node: Arc::new(node),
-        });
-        let new_plan = LogicalPlanBuilder::from(extension)
-            .project(projected)?
-            .build()?;
+        // The RS_Tile UDF the rewrite calls to produce the tile list, resolved
+        // from the session's registered scalar functions.
+        let rs_tile = state
+            .scalar_functions()
+            .get("rs_tile")
+            .cloned()
+            .ok_or_else(|| {
+                PySedonaError::SedonaPython(
+                    "tile_explode(): the RS_Tile function is not registered".to_string(),
+                )
+            })?;
+
+        let new_plan = build_tile_explode_plan(plan, args, siblings, &rs_tile)?;
         let inner = DataFrame::new(state, new_plan);
         Ok(InternalDataFrame::new(inner, self.runtime.clone()))
     }

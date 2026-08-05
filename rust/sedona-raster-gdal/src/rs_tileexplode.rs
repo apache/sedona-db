@@ -27,10 +27,10 @@
 //!
 //! This UDF is a **planning marker only**. Registering it lets the SQL binder
 //! accept `RS_TileExplode(rast, w, h, …)` and resolve its argument types before
-//! the tile-explode analyzer rule rewrites the call into a streaming
-//! `TileExplodeExec`. Its kernel therefore never executes: `invoke_batch`
-//! returns an internal error, the last-resort net for a call the rule missed
-//! (templated on `st_dump.rs`'s guard).
+//! the tile-explode analyzer rule rewrites the call into `UNNEST(RS_Tile(...))`
+//! plus a struct-flattening projection. Its kernel therefore never executes:
+//! `invoke_batch` returns an internal error, the last-resort net for a call the
+//! rule missed (templated on `st_dump.rs`'s guard).
 
 use std::sync::Arc;
 
