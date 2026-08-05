@@ -81,3 +81,19 @@ This approach provides the same functionality and is the standard practice in Sp
 # Step 3: You can now successfully query the view using SQL
 >>> sd.sql("SELECT * FROM b LIMIT 5").show()
 ```
+
+## Reading Files Directly in SQL
+
+You can query a file directly in a `FROM` clause by quoting its path or URL, with no separate `read_*` call. This works for Parquet out of the box:
+
+```python
+>>> sd.sql("SELECT * FROM '/path/to/buildings.parquet' LIMIT 5").show()
+```
+
+When `pyogrio` is installed, the common single-file OGR formats (`.fgb`, `.gpkg`, `.shp`, `.geojson`) are auto-registered on each connection, so their file URLs resolve the same way. This behavior is **experimental** and may change:
+
+```python
+>>> sd.sql("SELECT * FROM 'file:///path/to/roads.fgb'").show()
+```
+
+The geometry column name is set by the underlying OGR driver, not by SedonaDB: FlatGeobuf, GeoJSON, and Shapefile expose an unnamed geometry field, which reads back as `wkb_geometry`, whereas GeoPackage carries its stored geometry-column name (for example `geom`).
