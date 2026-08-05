@@ -698,7 +698,7 @@ fn wrap_expr_columns(
                 return Ok(Transformed::no(node));
             };
 
-            // Only wrap columns that have extension metadata to preserve
+            // Only wrap columns that have extension metadata
             if field.metadata().contains_key("ARROW:extension:name") {
                 let field: FieldRef = Arc::new(field.clone());
                 let wrapped = Arc::new(MetadataPreservingColumn::new(column.clone(), field));
@@ -1108,9 +1108,9 @@ mod test {
         ]);
 
         // Create a Column expression that references a column NOT in the file schema
-        // This simulates a derived column like `'a' AS c1` which would have index 0
+        // This simulates a derived column like `'a' AS c1` which would have index 2
         // in the projection output but doesn't exist in the file schema
-        let derived_column: Arc<dyn PhysicalExpr> = Arc::new(Column::new("c1", 0));
+        let derived_column: Arc<dyn PhysicalExpr> = Arc::new(Column::new("c1", 2));
 
         // This should NOT panic - the column should be passed through unchanged
         // because it doesn't exist in the file schema
@@ -1120,7 +1120,7 @@ mod test {
         assert!(result.as_any().downcast_ref::<Column>().is_some());
         let col = result.as_any().downcast_ref::<Column>().unwrap();
         assert_eq!(col.name(), "c1");
-        assert_eq!(col.index(), 0);
+        assert_eq!(col.index(), 2);
     }
 
     /// Test that columns with extension metadata are correctly wrapped
