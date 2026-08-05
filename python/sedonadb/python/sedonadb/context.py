@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import importlib.util
 import os
 import sys
 from functools import cached_property
@@ -50,6 +51,12 @@ from sedonadb.expr.expression import (
 )
 from sedonadb.expr.literal import lit as lit_expr, Literal as LiteralExpr
 from sedonadb.utility import sedona  # noqa: F401
+
+
+# Single-file OGR formats auto-registered (via pyogrio/GDAL) when a context is
+# created, so that `SELECT * FROM 'file:///path/to/data.<ext>'` works without a
+# manual `register()` call. Add an extension here to enable another format.
+_DEFAULT_PYOGRIO_EXTENSIONS = ("fgb", "gpkg", "shp", "geojson")
 
 
 class SedonaContext:
@@ -121,7 +128,30 @@ class SedonaContext:
             impl = InternalContext(opts)
             self.__impl = impl
             self.options.freeze_runtime()
+            self._register_default_formats()
         return self.__impl
+
+    def _register_default_formats(self):
+        """Auto-register the built-in single-file OGR formats.
+
+        This makes `SELECT * FROM 'file:///path/to/data.<ext>'` work
+        zero-config for the common pyogrio/GDAL formats, matching the way
+        Parquet is handled. pyogrio is an optional dependency, so this is a
+        no-op when it is not installed (the availability check does not import
+        pyogrio, which keeps context creation cheap and side-effect free).
+        """
+        try:
+            pyogrio_available = importlib.util.find_spec("pyogrio") is not None
+        except (ImportError, ValueError):
+            pyogrio_available = False
+
+        if not pyogrio_available:
+            return
+
+        from sedonadb.datasource import PyogrioFormatSpec
+
+        for extension in _DEFAULT_PYOGRIO_EXTENSIONS:
+            self.register(PyogrioFormatSpec(extension))
 
     def create_data_frame(self, obj: Any, schema: Any = None) -> DataFrame:
         """Create a DataFrame from an in-memory or protocol-enabled object.

@@ -395,3 +395,60 @@ def test_pyogrio_format_register():
         # Should be able to SELECT * from 'file' after registering the format
         df = sd.sql(f"SELECT * FROM '{temp_fgb_path}' ORDER BY idx")
         geopandas.testing.assert_geodataframe_equal(df.to_pandas(), gdf)
+
+
+@pytest.mark.parametrize(
+    ("extension", "geometry_column"),
+    [
+        ("fgb", "wkb_geometry"),
+        ("gpkg", "geom"),
+        ("geojson", "wkb_geometry"),
+        ("shp", "wkb_geometry"),
+    ],
+)
+def test_url_table_autoregistered(extension, geometry_column):
+    # The common single-file OGR formats are auto-registered when a context is
+    # created, so a bare file URL resolves as a table without a manual
+    # register() call (the way GeoParquet already does). A fresh connection is
+    # used so this exercises context-creation wiring rather than any state left
+    # on the shared session fixture.
+    pytest.importorskip("pyogrio")
+    sd = sedonadb.connect()
+
+    gdf = geopandas.GeoDataFrame(
+        {"idx": [0, 1, 2]},
+        geometry=geopandas.GeoSeries.from_xy([0, 1, 2], [1, 2, 3], crs="EPSG:4326"),
+    )
+
+    with tempfile.TemporaryDirectory() as td:
+        path = Path(td) / f"data.{extension}"
+        gdf.to_file(path)
+
+        # to_arrow_table() runs the full execution path.
+        table = sd.sql(f"SELECT * FROM '{path.as_uri()}' ORDER BY idx").to_arrow_table()
+        assert table.num_rows == 3
+        assert table.column_names == ["idx", geometry_column]
+        assert table.column("idx").to_pylist() == [0, 1, 2]
+
+        # Pass-through geometry values round-trip exactly (no reprojection).
+        result = sd.sql(f"SELECT * FROM '{path.as_uri()}' ORDER BY idx").to_pandas()
+        assert result.geometry.tolist() == gdf.geometry.tolist()
+
+
+def test_url_table_smoke_bare_path(con):
+    # SQL-text smoke covering the plain (non file://) path form the SQL URL
+    # table also accepts.
+    pytest.importorskip("pyogrio")
+
+    gdf = geopandas.GeoDataFrame(
+        {"idx": [0, 1, 2]},
+        geometry=geopandas.GeoSeries.from_xy([0, 1, 2], [1, 2, 3], crs="EPSG:4326"),
+    )
+
+    with tempfile.TemporaryDirectory() as td:
+        path = f"{td}/data.fgb"
+        gdf.to_file(path)
+
+        table = con.sql(f"SELECT * FROM '{path}' ORDER BY idx").to_arrow_table()
+        assert table.num_rows == 3
+        assert table.column("idx").to_pylist() == [0, 1, 2]
