@@ -180,6 +180,7 @@ jobs:
     runs-on: ${{ matrix.config.os }}
     timeout-minutes: 150
     strategy:
+      fail-fast: false
       matrix:
         config:
           - {os: "ubuntu-latest", label: "linux-x86_64", arch: "x86_64"}
