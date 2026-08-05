@@ -397,6 +397,9 @@ def test_pyogrio_format_register():
         geopandas.testing.assert_geodataframe_equal(df.to_pandas(), gdf)
 
 
+# The geometry-column name is GDAL's OGR reader's, not ours: fgb/geojson/shp
+# store no named geometry field, so GDAL falls back to `wkb_geometry`, whereas
+# GeoPackage persists a named geometry column (GDAL defaults it to `geom`).
 @pytest.mark.parametrize(
     ("extension", "geometry_column"),
     [
