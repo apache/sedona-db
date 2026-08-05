@@ -79,8 +79,9 @@ jobs:
           CIBW_TEST_REQUIRES: pytest adbc_driver_manager geoarrow-pyarrow geopandas
           # Test command exits 0 even on failure so CIBW continues building all wheels;
           # failures are recorded in .test_failed and checked after upload.
+          # We use Python here to be absolutely sure there are no shell escaping issues.
           CIBW_TEST_COMMAND: >-
-            python -c "import subprocess,sys,pathlib; r=subprocess.run([sys.executable,'-m','pytest',str(pathlib.Path(r'{package}')/'tests'),'-vv','-o','faulthandler_timeout=600']); r.returncode and (pathlib.Path(r'{project}')/'.test_failed').touch(); sys.exit(0)"
+            python -c "import subprocess,sys,pathlib; r=subprocess.run([sys.executable,'-m','pytest',str(pathlib.Path(r'{package}')/'tests'),'-vv','-o','faulthandler_timeout=600']); r.returncode and (print(f'Tests failed (exit {r.returncode}), creating .test_failed marker at {pathlib.Path(r\"{project}\").absolute()}') or (pathlib.Path(r'{project}')/'.test_failed').touch() or True); sys.exit(0)"
 
       - uses: actions/upload-artifact@v7
         with:
@@ -88,7 +89,7 @@ jobs:
           path: python/sedonadb/dist/*.whl
 
       - name: Fail if tests failed
-        run: if (Test-Path .test_failed) { exit 1 }
+        run: python -c "import sys,pathlib; f=pathlib.Path('.test_failed'); print(f'Checking for {f.absolute()}, exists={f.exists()}'); sys.exit(1 if f.exists() else 0)"
 
   macOS-arm64:
     runs-on: macOS-latest
