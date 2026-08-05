@@ -391,7 +391,32 @@ impl FileFormat for GeoParquetFormat {
         )
         .unwrap();
         source.options = self.options.clone();
-        Arc::new(source)
+
+        // DataFusion 52 has an issue where field metadata (like ARROW:extension:name)
+        // is stripped when evaluating embedded projections in ParquetOpener. This is
+        // because the batch schema comes from the parquet reader (which doesn't have
+        // extension metadata), and Column::return_field() looks up fields from that schema.
+        // This isn't a bug in DataFusion because we're the ones that advertised the table
+        // schema as having metadata'd expressions in the first place.
+        //
+        // We fix this by wrapping Column expressions with MetadataPreservingColumn,
+        // which stores the correct field from the file schema and returns it from
+        // return_field() regardless of the input schema.
+        let initial_projection = source.projection().cloned().unwrap_or_else(|| {
+            ProjectionExprs::from_indices(&[0], source.table_schema().table_schema())
+        });
+        let projection_with_types = wrap_columns_with_metadata_preserving(
+            initial_projection,
+            source.table_schema().table_schema(),
+        )
+        .map(|projection_with_types| source.try_pushdown_projection(&projection_with_types));
+
+        // These are both failable but we can't fail here, so fall back to the original
+        // source.
+        match projection_with_types {
+            Ok(Ok(Some(modified))) => modified,
+            _ => Arc::new(source),
+        }
     }
 }
 
@@ -616,24 +641,10 @@ impl FileSource for GeoParquetFileSource {
         &self,
         projection: &ProjectionExprs,
     ) -> Result<Option<Arc<dyn FileSource>>> {
-        // DataFusion 52 has an issue where field metadata (like ARROW:extension:name)
-        // is stripped when evaluating embedded projections in ParquetOpener. This is
-        // because the batch schema comes from the parquet reader (which doesn't have
-        // extension metadata), and Column::return_field() looks up fields from that schema.
-        // This isn't a bug in DataFusion because we're the ones that advertised the table
-        // schema as having metadata'd expressions in the first place.
-        //
-        // We fix this by wrapping Column expressions with MetadataPreservingColumn,
-        // which stores the correct field from the file schema and returns it from
-        // return_field() regardless of the input schema.
-        let transformed_projection = wrap_columns_with_metadata_preserving(
-            projection.clone(),
-            self.inner.table_schema().table_schema(),
-        )?;
-
         let inner_result = self
             .inner
-            .try_pushdown_projection(&transformed_projection)?;
+            .try_pushdown_projection(projection)?;
+
         match inner_result {
             Some(updated_inner) => {
                 let mut updated_source = Self::try_from_file_source(
