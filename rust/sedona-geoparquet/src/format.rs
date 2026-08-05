@@ -641,9 +641,7 @@ impl FileSource for GeoParquetFileSource {
         &self,
         projection: &ProjectionExprs,
     ) -> Result<Option<Arc<dyn FileSource>>> {
-        let inner_result = self
-            .inner
-            .try_pushdown_projection(projection)?;
+        let inner_result = self.inner.try_pushdown_projection(projection)?;
 
         match inner_result {
             Some(updated_inner) => {
