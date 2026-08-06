@@ -702,6 +702,13 @@ fn wrap_expr_columns(
     expr.transform_down(|node| {
         if let Some(column) = node.as_any().downcast_ref::<Column>() {
             let index = column.index();
+
+            if index >= file_schema.fields().len() {
+                return sedona_internal_err!(
+                    "Unexpected projection expression in GeoParquet source: index {index} out of bounds"
+                );
+            }
+
             let field = file_schema.field(index);
             // Only wrap columns that have extension metadata
             if field.metadata().contains_key("ARROW:extension:name") {
@@ -1137,6 +1144,27 @@ mod test {
 
         // The result should NOT be wrapped (still a Column)
         assert!(result.as_any().downcast_ref::<Column>().is_some());
+    }
+
+    /// Test that column index out of file schema bounds returns an error
+    #[test]
+    fn test_wrap_expr_columns_errors_on_out_of_bounds_index() {
+        let file_schema = Schema::new(vec![
+            Field::new("name", DataType::Utf8, true),
+            Field::new("age", DataType::Int32, true),
+        ]);
+
+        // Column expression with index 5, but schema only has 2 fields (indices 0 and 1)
+        let out_of_bounds_column: Arc<dyn PhysicalExpr> = Arc::new(Column::new("phantom", 5));
+
+        let result = wrap_expr_columns(out_of_bounds_column, &file_schema);
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("index 5 out of bounds"),
+            "Error message should mention out of bounds index, got: {err_msg}"
+        );
     }
 
     /// Integration test for projection with multiple derived columns plus geometry accessor

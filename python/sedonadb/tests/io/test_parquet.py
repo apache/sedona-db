@@ -842,10 +842,12 @@ def test_st_accessor_with_multiple_non_geometry_columns_from_scan(con, tmp_path)
         CREATE OR REPLACE VIEW g1 AS
         SELECT 'a' AS c1, 'b' AS c2, ST_SetSRID(ST_GeomFromWKB(geometry), 4326) AS geometry
         FROM raw
-    """)
+    """).execute()
 
     # Add an ST_* accessor function - this combination triggers the bug
-    con.sql("CREATE OR REPLACE VIEW t AS SELECT *, ST_IsEmpty(geometry) AS _e FROM g1")
+    con.sql(
+        "CREATE OR REPLACE VIEW t AS SELECT *, ST_IsEmpty(geometry) AS _e FROM g1"
+    ).execute()
 
     # This should not panic - the issue was "index out of bounds: the len is 2 but the index is 2"
     # when iterating through the Arrow reader
