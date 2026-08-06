@@ -85,9 +85,10 @@ form still returns the authority code exactly as you set it.
 
 ## Column-level and row-level CRS
 
-A CRS can attach at two levels. A **column-level** CRS is a property of the
-whole column: a geometry or geography column carries a single CRS in its type
-(and, on disk, in its field metadata), and every value in the column shares it.
+For **vector** data — geometry and geography — a CRS can attach at two levels.
+A **column-level** CRS is a property of the whole column: the column carries a
+single CRS in its type (and, on disk, in its field metadata), and every value
+in the column shares it.
 This is the form `ST_CRS` and `ST_SRID` read, the form the equality rules below
 compare, and the one `ST_SetCRS` sets.
 
@@ -95,14 +96,19 @@ A **row-level** CRS instead travels with each value, which carries its own CRS
 rather than inheriting one from the column. Internally this is the value paired
 with a per-row CRS string.
 
-Most functions accept either form. For a row-level input, SedonaDB applies the
-CRS rules per value: a function whose result does not depend on the CRS (such as
-`ST_Area`) simply uses the geometry; a function taking two or more geometries
-requires their CRSes to be compatible; and a function that returns a geometry
-carries the CRS through to its result. The important difference from a
+Most vector functions accept either form. For a row-level input, SedonaDB
+applies the CRS rules per value: a function whose result does not depend on the
+CRS (such as `ST_Area`) simply uses the geometry; a function taking two or more
+geometries requires their CRSes to be compatible; and a function that returns a
+geometry carries the CRS through to its result. The important difference from a
 column-level CRS is *when* compatibility is enforced — a column-level mismatch
 is caught at query-planning time (see below), whereas a row-level CRS is not
 known until the data flows, so it is reconciled while the query runs.
+
+**Rasters do not have a column-level CRS.** A raster carries its own CRS as part
+of the raster value, so every raster in a column is self-describing; `RS_CRS` /
+`RS_SRID` read the CRS from each raster and `RS_SetCRS` sets it on individual
+rasters.
 
 ## Equality: how SedonaDB compares two CRSes
 
