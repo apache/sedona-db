@@ -1,0 +1,54 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: RS_Max
+description: Returns the pixel-wise maximum of one band of two rasters.
+kernels:
+  - returns: raster
+    args: [raster, raster]
+  - returns: raster
+    args:
+    - raster
+    - raster
+    - name: band
+      type: int
+      description: Band index (1-based, default 1). A null or out-of-range index returns null.
+---
+
+::: callout-warning
+**Experimental.** This function is experimental; its behavior may change without notice.
+:::
+
+## Description
+
+Computes the pixel-wise maximum of one band of two rasters, analogous to `GREATEST` for scalar values. Both
+rasters must share the same dimension names, shape, data type, and nodata value for the selected band.
+
+A pixel equal to the band's nodata value is treated as absent rather than as a comparable number: the other
+raster's value wins outright, and a pixel that is nodata in both rasters stays nodata.
+
+See [RS_Max_Agg](rs_max_agg.qmd) for the equivalent aggregate across rows.
+
+## Examples
+
+```sql
+SELECT RS_Max(RS_Example(), RS_Example());
+```
+```sql
+SELECT RS_Max(RS_Example(), RS_Example(), 2);
+```

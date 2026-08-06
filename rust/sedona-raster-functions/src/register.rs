@@ -59,6 +59,8 @@ pub fn default_function_set() -> FunctionSet {
         crate::rs_geotransform::rs_skewy_udf,
         crate::rs_geotransform::rs_upperleftx_udf,
         crate::rs_geotransform::rs_upperlefty_udf,
+        crate::rs_min_max::rs_min_udf,
+        crate::rs_min_max::rs_max_udf,
         crate::rs_numbands::rs_numbands_udf,
         crate::rs_pixel_functions::rs_pixelaspoint_udf,
         crate::rs_pixel_functions::rs_pixelascentroid_udf,
@@ -86,7 +88,11 @@ pub fn default_function_set() -> FunctionSet {
         crate::rs_worldcoordinate::rs_rastertoworldcoordy_udf,
     );
 
-    register_aggregate_udfs!(function_set,);
+    register_aggregate_udfs!(
+        function_set,
+        crate::rs_min_max_agg::rs_min_agg_udf,
+        crate::rs_min_max_agg::rs_max_agg_udf,
+    );
 
     function_set
 }
