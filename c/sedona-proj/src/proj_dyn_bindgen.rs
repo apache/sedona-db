@@ -81,7 +81,20 @@ pub struct PJ_INFO {
     pub release: *const c_char,
     pub version: *const c_char,
     pub searchpath: *const c_char,
+    pub paths: *const *const c_char,
+    pub path_count: usize,
 }
+
+// `proj_info` returns `PJ_INFO` by value, so this hand-written layout must match
+// PROJ's ABI exactly: a struct that is too small makes PROJ write past the
+// caller's return buffer, corrupting adjacent stack memory. When the `proj-sys`
+// feature is available its generated bindings are the source of truth, so pin
+// our size and alignment to them to catch any future drift at compile time.
+#[cfg(feature = "proj-sys")]
+const _: () = {
+    assert!(std::mem::size_of::<PJ_INFO>() == std::mem::size_of::<proj_sys::PJ_INFO>());
+    assert!(std::mem::align_of::<PJ_INFO>() == std::mem::align_of::<proj_sys::PJ_INFO>());
+};
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, Default)]
