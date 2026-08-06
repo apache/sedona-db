@@ -20,13 +20,13 @@ use std::sync::Arc;
 
 use arrow_array::ffi_stream::FFI_ArrowArrayStream;
 use arrow_array::{RecordBatch, RecordBatchReader};
-use arrow_schema::{Schema, SchemaRef};
+use arrow_schema::{DataType, Schema, SchemaRef};
 use datafusion::catalog::MemTable;
 use datafusion::config::ConfigField;
 use datafusion::logical_expr::SortExpr;
 use datafusion::prelude::DataFrame;
-use datafusion_common::{Column, DataFusionError, ParamValues};
-use datafusion_expr::{ExplainFormat, ExplainOption, Expr, JoinType, LogicalPlanBuilder};
+use datafusion_common::{Column, DataFusionError, ParamValues, ScalarValue};
+use datafusion_expr::{col, lit, ExplainFormat, ExplainOption, Expr, JoinType, LogicalPlanBuilder};
 use futures::lock::Mutex;
 use futures::TryStreamExt;
 use pyo3::prelude::*;
@@ -36,6 +36,7 @@ use sedona::projected_reader::simplify_record_batch_reader;
 use sedona::show::{DisplayMode, DisplayTableOptions};
 use sedona_extension::runtime::RuntimeHandle;
 use sedona_geoparquet::options::TableGeoParquetOptions;
+use sedona_query_planner::tile_explode_analyzer::build_tile_explode_plan;
 use sedona_schema::schema::SedonaSchema;
 
 use crate::context::InternalContext;
@@ -240,6 +241,88 @@ impl InternalDataFrame {
         }
         let borrowed: Vec<&str> = columns.iter().map(String::as_str).collect();
         let inner = self.inner.clone().unnest_columns(&borrowed)?;
+        Ok(InternalDataFrame::new(inner, self.runtime.clone()))
+    }
+
+    /// Explode `raster_column` into one output row per `width` x `height` tile,
+    /// the row-multiplying `RS_TileExplode` generator as a DataFrame method.
+    ///
+    /// This rewrites the current plan into `UNNEST(RS_Tile(...))` + a
+    /// struct-flattening projection via the shared `build_tile_explode_plan` — the
+    /// same rewrite the SQL analyzer applies — so the returned `DataFrame`'s schema
+    /// is honest immediately (no marker / analyzer round-trip). The output columns
+    /// are the DataFrame's other columns (the raster argument is consumed) followed
+    /// by the appended `(x: Int32, y: Int32, tile: raster)`, replicated per tile.
+    ///
+    /// The tile-generator argument expressions are assembled in the canonical
+    /// order — `raster, [band_indices], width, height, [pad_with_no_data,
+    /// [no_data_value]]` — and the argument layout is resolved inside
+    /// `build_tile_explode_plan`, so the argument positions live in one place. A
+    /// scalar `band_index` is normalized to a single-element list on the Python
+    /// side, so this only ever builds the array-band shape.
+    #[pyo3(signature = (raster_column, width, height, band_indices=None, pad_with_no_data=false, no_data_value=None))]
+    fn tile_explode(
+        &self,
+        raster_column: String,
+        width: i64,
+        height: i64,
+        band_indices: Option<Vec<i64>>,
+        pad_with_no_data: bool,
+        no_data_value: Option<f64>,
+    ) -> Result<InternalDataFrame, PySedonaError> {
+        let (state, plan) = self.inner.clone().into_parts();
+        let input_schema = plan.schema();
+
+        if input_schema
+            .field_with_unqualified_name(&raster_column)
+            .is_err()
+        {
+            return Err(PySedonaError::SedonaPython(format!(
+                "tile_explode(): raster column '{raster_column}' not found in the DataFrame"
+            )));
+        }
+
+        // Assemble the tile-generator arguments in the same positional order the
+        // SQL overloads use, appending the trailing optionals only when they
+        // diverge from their defaults (so the resolved layout mirrors the overload
+        // the caller asked for).
+        let mut args: Vec<Expr> = vec![col(&raster_column)];
+        if let Some(bands) = &band_indices {
+            args.push(band_indices_literal(bands));
+        }
+        args.push(lit(width));
+        args.push(lit(height));
+        if pad_with_no_data || no_data_value.is_some() {
+            args.push(lit(pad_with_no_data));
+        }
+        if let Some(no_data_value) = no_data_value {
+            args.push(lit(no_data_value));
+        }
+
+        // Carry through the DataFrame's other columns (dropping the raster
+        // argument, which the tiling reads but the generator does not re-emit);
+        // the shared builder appends (x, y, tile).
+        let siblings: Vec<Expr> = input_schema
+            .columns()
+            .into_iter()
+            .filter(|column| column.name() != raster_column)
+            .map(Expr::Column)
+            .collect();
+
+        // The RS_Tile UDF the rewrite calls to produce the tile list, resolved
+        // from the session's registered scalar functions.
+        let rs_tile = state
+            .scalar_functions()
+            .get("rs_tile")
+            .cloned()
+            .ok_or_else(|| {
+                PySedonaError::SedonaPython(
+                    "tile_explode(): the RS_Tile function is not registered".to_string(),
+                )
+            })?;
+
+        let new_plan = build_tile_explode_plan(plan, args, siblings, &rs_tile)?;
+        let inner = DataFrame::new(state, new_plan);
         Ok(InternalDataFrame::new(inner, self.runtime.clone()))
     }
 
@@ -796,6 +879,17 @@ impl StreamingResult {
             ))
         }
     }
+}
+
+/// Build a `bandIndices` list literal (Int64) for the array-band tile-explode
+/// shape. `i64` is kept end to end (no lossy narrowing); `RS_Tile` resolves the
+/// band values against the band count when it runs.
+fn band_indices_literal(bands: &[i64]) -> Expr {
+    let values: Vec<ScalarValue> = bands.iter().map(|b| ScalarValue::Int64(Some(*b))).collect();
+    Expr::Literal(
+        ScalarValue::List(ScalarValue::new_list_nullable(&values, &DataType::Int64)),
+        None,
+    )
 }
 
 fn check_py_requested_schema<'py>(

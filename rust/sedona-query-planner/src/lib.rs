@@ -26,4 +26,5 @@ mod restore_metadata;
 mod spatial_expr_utils;
 pub mod spatial_join_physical_planner;
 pub mod spatial_predicate;
+pub mod tile_explode_analyzer;
 pub mod wrap_async_udf;

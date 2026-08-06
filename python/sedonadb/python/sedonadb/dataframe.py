@@ -563,6 +563,79 @@ class DataFrame:
 
         return DataFrame(self._ctx, self._impl.unnest(list(columns)))
 
+    def tile_explode(
+        self,
+        raster_column: str,
+        width: int,
+        height: int,
+        *,
+        band_indices: Optional[Union[int, List[int]]] = None,
+        pad_with_no_data: bool = False,
+        no_data_value: Optional[float] = None,
+    ) -> "DataFrame":
+        """Explode a raster column into one row per tile.
+
+        **Experimental.** This method is experimental and mirrors the
+        `RS_TileExplode` SQL generator; its arguments may change without notice.
+
+        Each input row's raster is cut into a grid of `width` x `height` tiles and
+        emitted as one output row per tile — the row-multiplying form of
+        `RS_Tile`, which returns every tile of a raster in one list cell. The
+        output columns are the DataFrame's other columns (the `raster_column`
+        argument is consumed, not re-emitted), repeated across each tile, followed
+        by `x`, `y`, and `tile`:
+
+        - `x`: the tile's grid column (0-based), counting from the left.
+        - `y`: the tile's grid row (0-based), counting from the top.
+        - `tile`: the tile raster, with a geotransform shifted to its own origin.
+
+        Tiles are emitted in row-major order (`y` then `x`), identical to
+        `UNNEST(RS_Tile(...))` on the same input. A null or untileable raster
+        contributes zero rows.
+
+        Args:
+            raster_column: Name of the raster column to explode.
+            width: Tile width in pixels. Must be >= 1.
+            height: Tile height in pixels. Must be >= 1.
+            band_indices: Optional 1-based band index or list of band indices to
+                include in each tile, in the given order. A single integer selects
+                one band. When omitted, every band is included.
+            pad_with_no_data: When true, pad the last partial row/column of tiles
+                to the full tile size with a nodata fill; when false the smaller
+                edge tile is emitted as-is.
+            no_data_value: The value written to padded pixels (only valid with
+                `pad_with_no_data=True`); defaults to the band's own nodata value,
+                or the band data type's minimum if it has none.
+
+        Note:
+            Tiling reads band pixels, so an OutDb raster must be loaded before it
+            can be exploded. An unloaded OutDb raster raises a clear error.
+
+        Examples:
+
+            >>> sd = sedona.db.connect()
+            >>> df = sd.sql("SELECT 1 AS id, RS_Example() AS rast")
+            >>> df.tile_explode("rast", 32, 16).count()
+            4
+        """
+        if band_indices is not None and not isinstance(band_indices, (list, tuple)):
+            # A scalar band index is a single-element list, matching the SQL
+            # scalar-band overload.
+            band_indices = [band_indices]
+        bands = None if band_indices is None else [int(b) for b in band_indices]
+
+        return DataFrame(
+            self._ctx,
+            self._impl.tile_explode(
+                raster_column,
+                int(width),
+                int(height),
+                bands,
+                bool(pad_with_no_data),
+                None if no_data_value is None else float(no_data_value),
+            ),
+        )
+
     def agg(self, *exprs: Expr, **named_exprs: Expr) -> "DataFrame":
         """Aggregate the entire DataFrame to a single row.
 

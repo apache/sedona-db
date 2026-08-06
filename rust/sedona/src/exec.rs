@@ -14,6 +14,8 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+use std::sync::Arc;
+
 use datafusion_expr::{DdlStatement, LogicalPlan};
 
 use crate::{context::SedonaContext, object_storage::register_object_store_and_config_extensions};
@@ -21,8 +23,11 @@ use crate::{context::SedonaContext, object_storage::register_object_store_and_co
 use datafusion::{
     config::ConfigFileType,
     error::{DataFusionError, Result},
+    optimizer::analyzer::AnalyzerRule,
     sql::parser::Statement,
 };
+use sedona_query_planner::tile_explode_analyzer::TileExplodeAnalyzerRule;
+use sedona_raster_gdal::rs_tile_udf;
 
 /// A Sedona-specific hook for creating a logical plan from a SQL Statement
 ///
@@ -54,6 +59,17 @@ pub(crate) async fn create_plan_from_sql(
         )
         .await?;
     }
+
+    // Lift a top-level `RS_TileExplode(...)` projection eagerly on the unoptimized
+    // plan so the `DataFrame` this plan is wrapped in already reports the
+    // generator's top-level `(x, y, tile)` output schema — matching Sedona Spark's
+    // plan-time-honest generator, rather than the marker's un-lifted single struct
+    // column. The rule is idempotent (a no-op once the marker is lifted), so the
+    // analyzer pass that also runs it during optimization sees nothing to do. An
+    // illegal generator placement is rejected here, at plan-build time.
+    let state = ctx.ctx.state();
+    let rs_tile = Arc::new(rs_tile_udf().into());
+    let plan = TileExplodeAnalyzerRule::new(rs_tile).analyze(plan, state.config_options())?;
 
     Ok(plan)
 }
