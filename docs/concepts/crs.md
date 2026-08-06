@@ -161,23 +161,31 @@ same: normalize both sides to the same definition with `ST_Transform` or
 
 ### Raster joins are an exception
 
-A spatial join involving a raster — raster-to-raster, or a raster against a
-geometry — tests the raster's **footprint** (the polygon through its corners),
-not its pixels. So SedonaDB reprojects that footprint to a common CRS and the
-join works across mismatched CRSes rather than erroring — reprojecting a
-footprint is far cheaper and safer than resampling the pixel grid.
+A spatial join involving a raster tests the raster's **footprint** (the polygon
+through its corners), not its pixels. When a raster is joined against a geometry,
+SedonaDB reconciles the two CRSes as follows:
 
-It is a close approximation rather than an exact boundary, though: reprojection
-is sometimes non-linear, so the footprint's straight edges may bow into curves
-in the target CRS, and reprojecting only the four corners can under-cover the
-true extent.
-SedonaDB handles this by **densifying** each edge — adding interior points in the
-raster's own CRS, where the edges are still straight — then reprojecting all of
-them, so the reprojected footprint follows the curve. (A same-CRS raster join
-skips this and uses the exact four-corner footprint.)
+- **They share a CRS, or both are CRS-less** — the footprints are compared
+  directly, with no reprojection.
+- **Both have a CRS but they differ** — SedonaDB reprojects the raster's
+  footprint into the geometry's CRS and the join proceeds, rather than erroring
+  as the vector path would. Reprojecting a footprint is far cheaper and safer
+  than resampling the pixel grid.
+- **Only one side has a CRS** — this is an error, just as on the vector path:
+  SedonaDB will not reproject into or out of an unknown frame.
 
-So the error-on-mismatch rule above applies to the vector/geometry path; raster
-joins reproject the densified footprint for you.
+The reprojected case is a close approximation rather than an exact boundary:
+reprojection is sometimes non-linear, so the footprint's straight edges may bow
+into curves in the target CRS, and reprojecting only the four corners can
+under-cover the true extent. SedonaDB handles this by **densifying** each edge —
+adding interior points in the raster's own CRS, where the edges are still
+straight — then reprojecting all of them, so the reprojected footprint follows
+the curve.
+
+One performance note: an accelerated spatial join relies on a spatial index
+built over a single, column-level CRS. A geometry or raster column that carries
+a *row-level* CRS can't use that index, so the join falls back to a slower
+per-row evaluation — prefer a column-level CRS for join-heavy work.
 
 ## SRID vs CRS
 
