@@ -14,7 +14,10 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{Arc, OnceLock},
+};
 
 use arrow_schema::DataType;
 use pyo3::prelude::*;
@@ -61,27 +64,46 @@ fn stringify_options(
         .collect()
 }
 
+/// The process-wide Tokio runtime shared by every [`InternalContext`].
+///
+/// One multi-threaded runtime backs all contexts so the worker and
+/// blocking-thread pools are bounded per process rather than per session.
+/// Building a runtime per `connect()` meant opening N sessions spawned N
+/// runtimes' worth of threads; under a free-threaded interpreter (no GIL to
+/// serialize the Python-touching workers) those piled up across short-lived
+/// sessions and exhausted the OS per-process thread limit. A single shared
+/// runtime keeps full `num_cpus` parallelism for queries while making a new
+/// session cost no additional threads. It lives for the process, so it is
+/// never torn down on an interpreter thread.
+fn shared_runtime() -> Result<Arc<RuntimeHandle>, PySedonaError> {
+    static SHARED: OnceLock<Arc<RuntimeHandle>> = OnceLock::new();
+    if let Some(runtime) = SHARED.get() {
+        return Ok(runtime.clone());
+    }
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| PySedonaError::SedonaPython(format!("Failed to build shared runtime: {e}")))?;
+    // On the rare initialization race, the losing thread's freshly built handle
+    // is dropped here (draining on a janitor thread, never the caller's), and
+    // the winner's runtime is returned.
+    let handle = Arc::new(RuntimeHandle::new(runtime));
+    Ok(SHARED.get_or_init(|| handle).clone())
+}
+
 #[pymethods]
 impl InternalContext {
     #[new]
     #[pyo3(signature = (options=HashMap::new()))]
     fn new(py: Python, options: HashMap<String, String>) -> Result<Self, PySedonaError> {
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| {
-                PySedonaError::SedonaPython(format!("Failed to build multithreaded runtime: {e}"))
-            })?;
+        let runtime = shared_runtime()?;
 
         let builder = SedonaContextBuilder::from_options(&options)
             .map_err(|e| PySedonaError::SedonaPython(e.to_string()))?;
 
         let inner = wait_for_future(py, &runtime, builder.build())??;
 
-        Ok(Self {
-            inner,
-            runtime: Arc::new(RuntimeHandle::new(runtime)),
-        })
+        Ok(Self { inner, runtime })
     }
 
     pub fn view<'py>(
