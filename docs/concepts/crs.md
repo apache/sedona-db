@@ -159,7 +159,7 @@ authority-less WKT on the other) may be reported as mismatched. The fix is the
 same: normalize both sides to the same definition with `ST_Transform` or
 `ST_SetCRS`.
 
-### Raster joins are an exception
+### `RS_Intersects` has different behaviour than `ST_Intersects`
 
 A spatial join involving a raster tests the raster's **footprint** (the polygon
 through its corners), not its pixels. When a raster is joined against a geometry,
@@ -185,13 +185,13 @@ the curve.
 One performance note: an accelerated spatial join relies on a spatial index
 built over a single, column-level CRS. A geometry or raster column that carries
 a *row-level* CRS can't use that index, so the join falls back to a slower
-per-row evaluation — prefer a column-level CRS for join-heavy work.
+nested loop join evaluation — prefer a column-level CRS for join-heavy work.
 
 ## SRID vs CRS
 
 An **SRID** (Spatial Reference Identifier) is just the numeric-code view of a
 CRS. `ST_SRID` / `RS_SRID` return the integer, and `ST_SetSRID` / `RS_SetSRID`
-set a CRS from one. SedonaDB maps between the two the obvious way: SRID `0`
+set a CRS from one. SedonaDB maps between the two following the majority of SRID usage in the wild: SRID `0`
 means "no CRS", `4326` maps to `OGC:CRS84`, and any other value `N` maps to
 `EPSG:N`. A CRS only has an SRID when it carries an EPSG (or lon/lat) authority
 code; a purely custom WKT or PROJJSON definition with no authority has no SRID.
