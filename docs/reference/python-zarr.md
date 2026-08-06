@@ -35,7 +35,7 @@ Once the extension is registered, you can also query a Zarr group directly in
 SQL by its URL, without an explicit format:
 
 ```python
-sd.sql("SELECT * FROM 'file:///path/to/foo.zarr'").show()
+sd.sql("SELECT * FROM 'path/to/foo.zarr'").show()
 ```
 
 The URL must end in `.zarr`: SedonaDB routes it to the Zarr reader by that
