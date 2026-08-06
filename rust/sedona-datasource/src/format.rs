@@ -407,8 +407,7 @@ mod test {
     use datafusion::{
         assert_batches_eq,
         datasource::listing::ListingTableUrl,
-        execution::SessionStateBuilder,
-        prelude::{col, lit, SessionContext},
+        prelude::{col, SessionContext},
     };
     use datafusion_common::plan_err;
     use std::{
@@ -419,25 +418,8 @@ mod test {
     use url::Url;
 
     use crate::provider::external_table;
-    use crate::url_table::enable_sedona_url_table;
 
     use super::*;
-
-    /// Register `spec` as a file format and return a context with the
-    /// SedonaDB URL-as-table resolver installed, so `SELECT * FROM '<url>'`
-    /// routes through [`enable_sedona_url_table`].
-    fn create_spec_ctx(spec: Arc<dyn ExternalFormatSpec>) -> SessionContext {
-        let factory = ExternalFormatFactory::new(spec);
-
-        // Register the format - use new_with_default_features to get default catalogs
-        let mut state = SessionStateBuilder::new_with_default_features().build();
-        state.register_file_format(Arc::new(factory), true).unwrap();
-        enable_sedona_url_table(SessionContext::new_with_state(state))
-    }
-
-    fn create_echo_spec_ctx() -> SessionContext {
-        create_spec_ctx(Arc::new(EchoSpec::default()))
-    }
 
     fn create_echo_spec_temp_dir() -> (TempDir, Vec<PathBuf>) {
         // Create a temporary directory with a few files with the declared extension
@@ -551,75 +533,6 @@ mod test {
 
             Ok(Box::new(RecordBatchIterator::new([Ok(batch)], schema)))
         }
-    }
-
-    #[tokio::test]
-    async fn spec_format() {
-        let ctx = create_echo_spec_ctx();
-        let (temp_dir, files) = create_echo_spec_temp_dir();
-
-        // Select using just the filename and ensure we get a result
-        // Quote the path to prevent it from being parsed as a multi-part identifier
-        let batches_item0 = ctx
-            .table(format!("\"{}\"", files[0].to_string_lossy()))
-            .await
-            .unwrap()
-            .collect()
-            .await
-            .unwrap();
-
-        assert_eq!(batches_item0.len(), 1);
-        assert_eq!(batches_item0[0].num_rows(), 1);
-
-        // With a glob we should get all the files
-        let batches = ctx
-            .table(format!(
-                "\"{}/*.echospec\"",
-                temp_dir.path().to_string_lossy()
-            ))
-            .await
-            .unwrap()
-            .collect()
-            .await
-            .unwrap();
-        // We should get one value per partition
-        assert_eq!(batches.len(), 2);
-        assert_eq!(batches[0].num_rows(), 1);
-        assert_eq!(batches[1].num_rows(), 1);
-    }
-
-    #[tokio::test]
-    async fn spec_format_project_filter() {
-        let ctx = create_echo_spec_ctx();
-        let (temp_dir, _files) = create_echo_spec_temp_dir();
-
-        // Ensure that if we pass
-        // Quote the path to prevent it from being parsed as a multi-part identifier
-        let batches = ctx
-            .table(format!(
-                "\"{}/*.echospec\"",
-                temp_dir.path().to_string_lossy()
-            ))
-            .await
-            .unwrap()
-            .filter(col("src").like(lit("%item0%")))
-            .unwrap()
-            .select(vec![col("batch_size"), col("filter_count")])
-            .unwrap()
-            .collect()
-            .await
-            .unwrap();
-
-        assert_batches_eq!(
-            [
-                "+------------+--------------+",
-                "| batch_size | filter_count |",
-                "+------------+--------------+",
-                "| 8192       | 1            |",
-                "+------------+--------------+",
-            ],
-            &batches
-        );
     }
 
     #[tokio::test]
@@ -871,82 +784,5 @@ mod test {
             "unexpected error: {}",
             err.message()
         );
-    }
-
-    /// Build a `file://` URL for a local filesystem path.
-    fn file_url(path: &std::path::Path) -> String {
-        url::Url::from_file_path(path).unwrap().to_string()
-    }
-
-    #[tokio::test]
-    async fn url_table_routes_directory_shape_to_single_object() {
-        // `SELECT * FROM '<dir-url>'` for a directory-shaped format must
-        // resolve through the single-object path, not DataFusion's listing
-        // path. The `group.dirfmt` directory contains a `metadata.json`
-        // file: the listing path would list that inner file, key on its
-        // `json` extension, and read it as the wrong format — returning the
-        // wrong rows (or erroring). The single-object path passes the
-        // directory URL straight to the spec, so we get its one synthetic
-        // row describing the directory itself.
-        let ctx = create_spec_ctx(Arc::new(DirectorySpec));
-        let temp_dir = TempDir::new().unwrap();
-        let dir_path = temp_dir.path().join("group.dirfmt");
-        std::fs::create_dir(&dir_path).unwrap();
-        std::fs::File::create(dir_path.join("metadata.json"))
-            .unwrap()
-            .write_all(b"{}")
-            .unwrap();
-
-        // Quote the URL so it resolves as a single table reference rather
-        // than a multi-part identifier — the same catalog path SQL's
-        // `FROM '<url>'` takes.
-        let batches = ctx
-            .table(format!("\"{}\"", file_url(&dir_path)))
-            .await
-            .unwrap()
-            .collect()
-            .await
-            .unwrap();
-
-        assert_eq!(batches.len(), 1);
-        assert_eq!(batches[0].num_rows(), 1);
-        let uri_path = batches[0]
-            .column_by_name("uri_path")
-            .unwrap()
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .unwrap();
-        // The single-object path passed the directory URL through; the
-        // listing path would instead have surfaced `metadata.json`.
-        assert!(uri_path.value(0).ends_with("group.dirfmt"));
-        let row_idx = batches[0]
-            .column_by_name("row_idx")
-            .unwrap()
-            .as_any()
-            .downcast_ref::<Int32Array>()
-            .unwrap();
-        assert_eq!(row_idx.value(0), 0);
-    }
-
-    #[tokio::test]
-    async fn url_table_file_shape_still_lists() {
-        // A file-shaped format (`list_single_object = false`) must keep
-        // resolving through DataFusion's listing path unchanged: the glob
-        // fans out to one row per matching file rather than treating the
-        // directory as a single object.
-        let ctx = create_echo_spec_ctx();
-        let (temp_dir, _files) = create_echo_spec_temp_dir();
-
-        let glob = format!("{}/*.echospec", temp_dir.path().to_string_lossy());
-        let batches = ctx
-            .table(format!("\"{glob}\""))
-            .await
-            .unwrap()
-            .collect()
-            .await
-            .unwrap();
-
-        let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
-        assert_eq!(total_rows, 2);
     }
 }

@@ -26,3 +26,4 @@ pub mod random_geometry_provider;
 pub mod record_batch_reader_provider;
 pub mod show;
 pub mod size_parser;
+pub mod url_table;

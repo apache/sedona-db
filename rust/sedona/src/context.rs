@@ -21,6 +21,7 @@ use std::{
 
 use crate::exec::create_plan_from_sql;
 use crate::object_storage::ensure_object_store_registered_with_options;
+use crate::url_table::enable_sedona_url_table;
 use crate::{
     catalog::DynamicObjectStoreCatalog,
     random_geometry_provider::RandomGeometryFunction,
@@ -51,7 +52,6 @@ use parking_lot::Mutex;
 use sedona_common::{sedona_internal_datafusion_err, SedonaOptions};
 use sedona_datasource::provider::external_table;
 use sedona_datasource::spec::ExternalFormatSpec;
-use sedona_datasource::url_table::enable_sedona_url_table;
 use sedona_expr::scalar_udf::{IntoScalarKernelRefs, SedonaScalarUDF};
 use sedona_expr::{
     aggregate_udf::{IntoSedonaAccumulatorRefs, SedonaAggregateUDF},
