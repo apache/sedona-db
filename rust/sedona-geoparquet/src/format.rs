@@ -403,7 +403,9 @@ impl FileFormat for GeoParquetFormat {
         // which stores the correct field from the file schema and returns it from
         // return_field() regardless of the input schema.
         let initial_projection = source.projection().cloned().unwrap_or_else(|| {
-            ProjectionExprs::from_indices(&[0], source.table_schema().table_schema())
+            let indices: Vec<usize> =
+                (0..source.table_schema().table_schema().fields().len()).collect();
+            ProjectionExprs::from_indices(&indices, source.table_schema().table_schema())
         });
         let projection_with_types = wrap_columns_with_metadata_preserving(
             initial_projection,
