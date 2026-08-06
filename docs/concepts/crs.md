@@ -137,8 +137,9 @@ join works across mismatched CRSes rather than erroring — reprojecting a
 footprint is far cheaper and safer than resampling the pixel grid.
 
 It is a close approximation rather than an exact boundary, though: reprojection
-is nonlinear, so the footprint's straight edges bow into curves in the target
-CRS, and reprojecting only the four corners would under-cover the true extent.
+is sometimes non-linear, so the footprint's straight edges may bow into curves
+in the target CRS, and reprojecting only the four corners can under-cover the
+true extent.
 SedonaDB handles this by **densifying** each edge — adding interior points in the
 raster's own CRS, where the edges are still straight — then reprojecting all of
 them, so the reprojected footprint follows the curve. (A same-CRS raster join
