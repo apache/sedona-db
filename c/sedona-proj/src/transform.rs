@@ -143,6 +143,27 @@ impl ProjCrsEngineBuilder {
 
     /// Build a [ProjCrsEngine] with the specified options
     pub fn build(&self) -> Result<ProjCrsEngine, SedonaProjError> {
+        // DB407 DEBUG (throwaway): isolate whether the SIGSEGV at :153 comes from a
+        // wild `self` (builder ref) or a corrupt `database_path` PathBuf. The first
+        // line prints the ref address WITHOUT dereferencing; the second derefs the
+        // Option fields; the third prints the PathBuf's byte ptr/len *before*
+        // to_string_lossy touches it. eprintln is unbuffered so nothing is lost on crash.
+        eprintln!("DB407 build() ENTER self={self:p}");
+        eprintln!(
+            "DB407 fields: shared_lib={} db_path={} search={} log={:?}",
+            self.shared_library.is_some(),
+            self.database_path.is_some(),
+            self.search_paths.is_some(),
+            self.log_level
+        );
+        if let Some(p) = &self.database_path {
+            let os = p.as_os_str();
+            eprintln!(
+                "DB407 database_path len={} bytes_ptr={:p}",
+                os.len(),
+                os.as_encoded_bytes().as_ptr()
+            );
+        }
         let mut ctx = if let Some(shared_library) = self.shared_library.clone() {
             ProjContext::try_from_shared_library(shared_library)?
         } else {
