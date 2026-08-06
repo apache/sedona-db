@@ -131,13 +131,21 @@ same: normalize both sides to the same definition with `ST_Transform` or
 ### Raster joins are an exception
 
 A spatial join involving a raster — raster-to-raster, or a raster against a
-geometry — tests the raster's **envelope** (its footprint), not its pixels. So
-SedonaDB reprojects that envelope to a common CRS on the fly and the join works
-across mismatched CRSes rather than erroring. Reprojecting a footprint is a
-cheap, exact operation on a handful of corner coordinates, whereas reprojecting
-the pixel grid itself would require resampling — so the join aligns CRSes
-without touching the pixels. The error-on-mismatch rule above therefore applies
-to the vector/geometry path; raster joins handle the CRS mismatch for you.
+geometry — tests the raster's **footprint** (the polygon through its corners),
+not its pixels. So SedonaDB reprojects that footprint to a common CRS and the
+join works across mismatched CRSes rather than erroring — reprojecting a
+footprint is far cheaper and safer than resampling the pixel grid.
+
+It is a close approximation rather than an exact boundary, though: reprojection
+is nonlinear, so the footprint's straight edges bow into curves in the target
+CRS, and reprojecting only the four corners would under-cover the true extent.
+SedonaDB handles this by **densifying** each edge — adding interior points in the
+raster's own CRS, where the edges are still straight — then reprojecting all of
+them, so the reprojected footprint follows the curve. (A same-CRS raster join
+skips this and uses the exact four-corner footprint.)
+
+So the error-on-mismatch rule above applies to the vector/geometry path; raster
+joins reproject the densified footprint for you.
 
 ## SRID vs CRS
 
