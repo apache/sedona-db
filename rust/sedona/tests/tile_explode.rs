@@ -15,14 +15,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! End-to-end tests for the `RS_TileExplode` streaming generator.
+//! End-to-end tests for `RS_TileExplode`.
 //!
 //! `SELECT RS_TileExplode(rast, w, h) FROM t` must emit one row per tile with
-//! **top-level** `(x, y, tile)` columns (plus any pass-through sibling columns),
-//! which is produced by the tile-explode analyzer rule lifting the marker call
-//! into a `TileExplodePlanNode` planned as a streaming `TileExplodeExec`. The
-//! tiles are compared against `RS_Tile` — the two functions share one tiling core
-//! and must not diverge.
+//! **top-level** `(x, y, tile)` columns (plus any pass-through sibling columns).
+//! `RS_TileExplode` is a marker function that never executes: the tile-explode
+//! analyzer rule rewrites the call into `UNNEST(RS_Tile(...))` plus a projection
+//! that flattens the tile struct into those top-level columns. The tiles are
+//! compared against `RS_Tile` — the two share one tiling core and must not diverge.
 
 use std::sync::Arc;
 

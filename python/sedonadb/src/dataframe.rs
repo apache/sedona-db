@@ -882,8 +882,8 @@ impl StreamingResult {
 }
 
 /// Build a `bandIndices` list literal (Int64) for the array-band tile-explode
-/// shape. `i64` is kept end to end (no lossy narrowing); the tile-explode
-/// physical planner casts to the band count when it resolves the value.
+/// shape. `i64` is kept end to end (no lossy narrowing); `RS_Tile` resolves the
+/// band values against the band count when it runs.
 fn band_indices_literal(bands: &[i64]) -> Expr {
     let values: Vec<ScalarValue> = bands.iter().map(|b| ScalarValue::Int64(Some(*b))).collect();
     Expr::Literal(

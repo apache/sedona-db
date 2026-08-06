@@ -300,8 +300,9 @@ pub fn infer_tile_arg_layout(args: &[Expr], input_schema: &DFSchema) -> Result<T
     }
 
     // The scalar-band and array-band shapes both carry a band argument at
-    // position 1 with the same downstream layout (the physical planner tells a
-    // scalar `bandIndex` from a `bandIndices` list when it resolves the value).
+    // position 1 with the same downstream layout: `build_tile_explode_plan` wraps
+    // a scalar `bandIndex` into a single-element `bandIndices` list, so `RS_Tile`
+    // always resolves a list.
     let has_band = second_is_band_list(args, input_schema)?
         || second_is_scalar_band(args, count, input_schema)?;
 
