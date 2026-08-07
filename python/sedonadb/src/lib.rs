@@ -140,11 +140,21 @@ fn gdal_version() -> Result<Option<String>, PySedonaError> {
     }
 }
 
+/// Signal that GDAL is shutting down so datasets are left open during
+/// interpreter/library teardown. Registered as a Python `atexit` callback to
+/// avoid a Windows process-exit abort (`0xC0000409`) when a GDAL dataset is
+/// closed while the library is being unloaded.
+#[pyfunction]
+fn begin_gdal_shutdown() {
+    sedona_gdal::global::begin_gdal_shutdown();
+}
+
 #[pymodule(gil_used = false)]
 fn _lib(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "mimalloc")]
     configure_tg_allocator();
 
+    m.add_function(wrap_pyfunction!(begin_gdal_shutdown, m)?)?;
     m.add_function(wrap_pyfunction!(configure_gdal_shared, m)?)?;
     m.add_function(wrap_pyfunction!(configure_proj_shared, m)?)?;
     m.add_function(wrap_pyfunction!(expr::expr_binary, m)?)?;
