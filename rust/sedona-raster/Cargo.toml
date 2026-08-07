@@ -42,5 +42,6 @@ sedona-schema = { workspace = true }
 [dev-dependencies]
 sedona-testing = { workspace = true }
 approx = { workspace = true }
+arrow-data = { workspace = true }
 arrow-ipc = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
