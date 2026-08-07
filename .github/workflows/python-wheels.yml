@@ -270,6 +270,21 @@ jobs:
 
       - uses: ./.github/actions/setup-wheel-build
 
+      # Persist vcpkg's built binaries across runs. vcpkg runs inside the
+      # manylinux container, so wheels-build-linux.sh bind-mounts this host
+      # directory in and points VCPKG_DEFAULT_BINARY_CACHE at it; a hit turns
+      # the from-source `vcpkg install` into a seconds-long unpack. Restore and
+      # save are split so the cache is written even when the build/test step
+      # fails, and the combined cache action skips its save on job failure.
+      - name: Restore vcpkg binaries
+        id: vcpkg-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ github.workspace }}/vcpkg-bincache
+          key: vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ env.VCPKG_REF }}-${{ hashFiles('ci/scripts/custom-triplets/**', 'ci/scripts/wheels-bootstrap-vcpkg.sh') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ env.VCPKG_REF }}-
+
       - name: Build and test wheels (sedonadb)
         run: |
           rm -f .test_failed
@@ -277,10 +292,18 @@ jobs:
           ./wheels-build-linux.sh ${{ matrix.config.arch }} sedonadb
         env:
           CIBW_SKIP: "*musllinux*"
+          VCPKG_BINARY_CACHE_HOST: ${{ github.workspace }}/vcpkg-bincache
           CIBW_TEST_REQUIRES: pytest adbc_driver_manager geoarrow-pyarrow geopandas duckdb
           # Test command exits 0 even on failure so CIBW continues building all wheels;
           # failures are recorded in .test_failed and checked after upload.
           CIBW_TEST_COMMAND: "pytest {package}/tests -vv -o faulthandler_timeout=600 || touch {project}/.test_failed"
+
+      - name: Save vcpkg binaries
+        if: always() && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ github.workspace }}/vcpkg-bincache
+          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
 
       - uses: actions/upload-artifact@v7
         with:

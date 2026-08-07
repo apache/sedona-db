@@ -49,6 +49,17 @@ BEFORE_ALL_MANYLINUX="yum install -y curl zip unzip tar clang perl"
 # The native and Rust builds are cached on each image such that compile work is effectively
 # cached between Python versions (just not between invocations of this script).
 export CIBW_ENVIRONMENT_LINUX="VCPKG_ROOT=/vcpkg VCPKG_REF=$VCPKG_REF VCPKG_DEFAULT_TRIPLET=$VCPKG_DEFAULT_TRIPLET CMAKE_TOOLCHAIN_FILE=/vcpkg/scripts/buildsystems/vcpkg.cmake PKG_CONFIG_PATH=/vcpkg/installed/$VCPKG_DEFAULT_TRIPLET/lib/pkgconfig LD_LIBRARY_PATH=/vcpkg/installed/$VCPKG_DEFAULT_TRIPLET/lib MATURIN_PEP517_ARGS='--features s2geography,pyo3/extension-module'"
+
+# When a persistent vcpkg binary cache is provided (CI), bind-mount it into the
+# build container and point vcpkg at it, so `vcpkg install` restores prebuilt
+# binaries instead of rebuilding from source. Left unset for local builds, which
+# fall back to vcpkg's in-container default cache and mount nothing.
+if [ -n "${VCPKG_BINARY_CACHE_HOST}" ]; then
+    mkdir -p "${VCPKG_BINARY_CACHE_HOST}"
+    export CIBW_CONTAINER_ENGINE="docker; create_args: --volume ${VCPKG_BINARY_CACHE_HOST}:/vcpkg-bincache"
+    export CIBW_ENVIRONMENT_LINUX="$CIBW_ENVIRONMENT_LINUX VCPKG_DEFAULT_BINARY_CACHE=/vcpkg-bincache"
+fi
+
 export CIBW_BEFORE_ALL="$BEFORE_ALL_MANYLINUX && git clone https://github.com/microsoft/vcpkg.git /vcpkg && bash {package}/../../ci/scripts/wheels-bootstrap-vcpkg.sh"
 
 pushd "${SEDONADB_DIR}"
