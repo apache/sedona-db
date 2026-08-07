@@ -44,7 +44,7 @@ NC='\033[0m' # No Color
 
 # Script directory and workspace root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # Parse arguments
 DRY_RUN=true
@@ -112,44 +112,54 @@ done
 
 # Crates in dependency order (leaf crates first)
 # This order ensures that when publishing a crate, all its dependencies are already published
+# Updated: 2026-08-07 - Added missing crates and fixed dependency order
 CRATES=(
     # Tier 1 - Foundation crates (no internal dependencies)
     "rust/sedona-geo-traits-ext"
-    "rust/sedona-geo-generic-alg"
-
-    # Tier 2 - Core types (no internal deps)
     "rust/sedona-geometry"
     "rust/sedona-common"
+    "c/sedona-gdal"
 
-    # Tier 3 - Schema (depends on common)
-    "rust/sedona-schema"
+    # Tier 2 - Depends only on tier 1
+    "rust/sedona-geo-generic-alg"   # depends on: sedona-geo-traits-ext
+    "rust/sedona-schema"            # depends on: sedona-common
 
-    # Tier 4 - Expression (depends on common, geometry, schema)
-    "rust/sedona-expr"
+    # Tier 3 - Basic types
+    "rust/sedona-raster"            # depends on: sedona-common, sedona-schema
+    "rust/sedona-expr"              # depends on: sedona-common, sedona-geometry, sedona-schema
+    "c/sedona-libgpuspatial"        # depends on: sedona-schema
 
-    # Tier 5 - Functions (depends on expr, geometry, schema, common)
-    "rust/sedona-functions"
+    # Tier 4 - Higher-level crates
+    "rust/sedona-functions"         # depends on: sedona-common, sedona-expr, sedona-geometry, sedona-raster, sedona-schema
+    "rust/sedona-testing"           # depends on: sedona-common, sedona-expr, sedona-geometry, sedona-raster, sedona-schema (required by sedona main crate)
+    "c/sedona-extension"            # depends on: sedona-common, sedona-expr, sedona-schema
+    "rust/sedona-datasource"        # depends on: sedona-common, sedona-expr, sedona-schema
+    "rust/sedona-query-planner"     # depends on: sedona-common, sedona-expr, sedona-schema
+    "rust/sedona-pointcloud"        # depends on: sedona-expr, sedona-geometry
+    "rust/sedona-raster-zarr"       # depends on: sedona-common, sedona-raster, sedona-schema
 
-    # Tier 6 - C wrappers and sedona-geo (all depend on functions)
-    "c/sedona-tg"
-    "c/sedona-geos"
-    "c/sedona-proj"
-    "c/sedona-s2geography"
-    "c/sedona-geoarrow-c"
-    "rust/sedona-geo"
+    # Tier 5 - C wrappers (depend on functions)
+    "c/sedona-tg"                   # depends on: sedona-expr, sedona-functions, sedona-schema
+    "c/sedona-geos"                 # depends on: sedona-common, sedona-expr, sedona-functions, sedona-geometry, sedona-schema
+    "c/sedona-proj"                 # depends on: sedona-common, sedona-expr, sedona-functions, sedona-geometry, sedona-schema
+    "c/sedona-geoarrow-c"           # depends on: sedona-expr, sedona-functions, sedona-schema
+    "rust/sedona-geo"               # depends on: sedona-common, sedona-expr, sedona-functions, sedona-geo-generic-alg, sedona-geometry, sedona-schema
+    "rust/sedona-geoparquet"        # depends on: sedona-common, sedona-expr, sedona-functions, sedona-geometry, sedona-schema
 
-    # Tier 7 - Higher-level features
-    "rust/sedona-geoparquet"
-    "rust/sedona-raster"
-    "rust/sedona-raster-functions"
-    "rust/sedona-spatial-join"
-    "rust/sedona-datasource"
+    # Tier 6 - Raster functions and s2geography
+    "rust/sedona-raster-functions"  # depends on: sedona-common, sedona-expr, sedona-geometry, sedona-proj, sedona-raster, sedona-schema, sedona-tg
+    "c/sedona-s2geography"          # depends on: sedona-common, sedona-expr, sedona-extension, sedona-functions, sedona-geometry, sedona-schema
+    "rust/sedona-raster-gdal"       # depends on: sedona-common, sedona-expr, sedona-functions, sedona-gdal, sedona-raster, sedona-raster-functions, sedona-schema
 
-    # Tier 8 - Testing utilities (depends on expr, geometry, schema, raster)
-    "rust/sedona-testing"
+    # Tier 7 - Spatial join
+    "rust/sedona-spatial-join"      # depends on: sedona-common, sedona-expr, sedona-functions, sedona-geo, sedona-geo-generic-alg, sedona-geo-traits-ext, sedona-geometry, sedona-geos, sedona-query-planner, sedona-schema, sedona-tg
 
-    # Tier 9 - Main library (depends on most crates including sedona-testing)
-    "rust/sedona"
+    # Tier 8 - GPU and geography spatial joins
+    "rust/sedona-spatial-join-gpu"         # depends on: sedona-spatial-join, sedona-libgpuspatial, sedona-query-planner
+    "rust/sedona-spatial-join-geography"   # depends on: sedona-spatial-join, sedona-s2geography, sedona-query-planner
+
+    # Tier 9 - Main library
+    "rust/sedona"                   # depends on: most crates including sedona-testing
 
     # Tier 10 - Crates that depend on main library
     "rust/sedona-adbc"
@@ -158,9 +168,9 @@ CRATES=(
 
 # Crates that should NOT be published
 EXCLUDED_CRATES=(
-    "python/sedonadb"      # Python bindings - use PyPI
-    "r/sedonadb/src/rust"  # R bindings - use CRAN
-    "rust/sedona-testing"  # Test utilities only
+    "python/sedonadb"       # Python bindings - use PyPI
+    "python/sedonadb-zarr"  # Python bindings - use PyPI
+    "r/sedonadb/src/rust"   # R bindings - use CRAN
 )
 
 echo -e "${BLUE}============================================${NC}"
