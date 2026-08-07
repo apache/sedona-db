@@ -68,9 +68,13 @@ jobs:
 
       # Persist vcpkg's built binaries across runs. The pinned VCPKG_REF and
       # custom triplets fully determine what gets built, so a hit turns the
-      # ~40-minute `vcpkg install` into a seconds-long unpack.
-      - name: Cache vcpkg binaries
-        uses: actions/cache@v6
+      # ~40-minute `vcpkg install` into a seconds-long unpack. Restore and save
+      # are split so the cache is written even when the build/test step fails —
+      # a failing build still produces reusable binaries, and the combined
+      # cache action skips its save on job failure.
+      - name: Restore vcpkg binaries
+        id: vcpkg-cache
+        uses: actions/cache/restore@v6
         with:
           path: ${{ github.workspace }}/vcpkg-bincache
           key: vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ env.VCPKG_REF }}-${{ hashFiles('ci/scripts/custom-triplets/**', 'ci/scripts/wheels-build-windows.ps1') }}
@@ -95,6 +99,15 @@ jobs:
           # We use Python here to be absolutely sure there are no shell escaping issues.
           CIBW_TEST_COMMAND: >-
             python -c "import subprocess,sys,pathlib; proj=pathlib.Path(r'{project}'); r=subprocess.run([sys.executable,'-m','pytest',str(pathlib.Path(r'{package}')/'tests'),'-vv','-o','faulthandler_timeout=600']); r.returncode and (print(f'Tests failed (exit {r.returncode}), creating .test_failed marker at {proj.absolute()}') or (proj/'.test_failed').touch() or True); sys.exit(0)"
+
+      # Save even on failure (hence a standalone save step gated only on a miss):
+      # binaries built before a later test failure stay cached for the next run.
+      - name: Save vcpkg binaries
+        if: always() && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ github.workspace }}/vcpkg-bincache
+          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
 
       - uses: actions/upload-artifact@v7
         with:
@@ -128,9 +141,13 @@ jobs:
 
       # Persist vcpkg's built binaries across runs. The pinned VCPKG_REF and
       # custom triplets fully determine what gets built, so a hit turns the
-      # ~40-minute `vcpkg install` into a seconds-long unpack.
-      - name: Cache vcpkg binaries
-        uses: actions/cache@v6
+      # ~40-minute `vcpkg install` into a seconds-long unpack. Restore and save
+      # are split so the cache is written even when the build/test step fails —
+      # a failing build still produces reusable binaries, and the combined
+      # cache action skips its save on job failure.
+      - name: Restore vcpkg binaries
+        id: vcpkg-cache
+        uses: actions/cache/restore@v6
         with:
           path: ${{ github.workspace }}/vcpkg-bincache
           key: vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ env.VCPKG_REF }}-${{ hashFiles('ci/scripts/custom-triplets/**', 'ci/scripts/wheels-bootstrap-vcpkg.sh') }}
@@ -150,6 +167,13 @@ jobs:
           # Test command exits 0 even on failure so CIBW continues building all wheels;
           # failures are recorded in .test_failed and checked after upload.
           CIBW_TEST_COMMAND: "pytest {package}/tests -vv -o faulthandler_timeout=600 || touch {project}/.test_failed"
+
+      - name: Save vcpkg binaries
+        if: always() && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ github.workspace }}/vcpkg-bincache
+          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
 
       - uses: actions/upload-artifact@v7
         with:
@@ -183,9 +207,13 @@ jobs:
 
       # Persist vcpkg's built binaries across runs. The pinned VCPKG_REF and
       # custom triplets fully determine what gets built, so a hit turns the
-      # ~40-minute `vcpkg install` into a seconds-long unpack.
-      - name: Cache vcpkg binaries
-        uses: actions/cache@v6
+      # ~40-minute `vcpkg install` into a seconds-long unpack. Restore and save
+      # are split so the cache is written even when the build/test step fails —
+      # a failing build still produces reusable binaries, and the combined
+      # cache action skips its save on job failure.
+      - name: Restore vcpkg binaries
+        id: vcpkg-cache
+        uses: actions/cache/restore@v6
         with:
           path: ${{ github.workspace }}/vcpkg-bincache
           key: vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ env.VCPKG_REF }}-${{ hashFiles('ci/scripts/custom-triplets/**', 'ci/scripts/wheels-bootstrap-vcpkg.sh') }}
@@ -206,6 +234,13 @@ jobs:
           # failures are recorded in .test_failed and checked after upload.
           CIBW_TEST_COMMAND: "pytest {package}/tests -vv -o faulthandler_timeout=600 || touch {project}/.test_failed"
           SEDONADB_MACOS_ARCH: x86_64
+
+      - name: Save vcpkg binaries
+        if: always() && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ github.workspace }}/vcpkg-bincache
+          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
 
       - uses: actions/upload-artifact@v7
         with:
