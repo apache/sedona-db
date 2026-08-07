@@ -47,13 +47,24 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-# geopandas is only needed for the from_geopandas / to_geopandas interop
-# helpers, so it is an opt-in extra rather than a hard dependency.
-geopandas = ["geopandas"]
+# GeoPandas interop is opt-in rather than a hard dependency. It routes through
+# sedonadb's pandas/GeoPandas conversion, which needs geoarrow-pyarrow as well
+# as geopandas itself — without it, anything calling to_geopandas() fails with
+# `ModuleNotFoundError: No module named 'geoarrow'`.
+#
+# These are listed directly rather than as `sedonadb[geopandas]` so that
+# installing this package can never cause pip to re-resolve sedonadb itself:
+# in CI sedonadb is an editable build from source, and a resolver that decided
+# to satisfy it from PyPI instead would quietly stop testing the source tree.
+geopandas = [
+    "geopandas",
+    "geoarrow-pyarrow",
+]
 test = [
     "pytest",
     "pandas",
     "geopandas",
+    "geoarrow-pyarrow",
 ]
 
 [tool.hatch.version]

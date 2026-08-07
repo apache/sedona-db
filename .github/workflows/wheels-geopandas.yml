@@ -78,14 +78,16 @@ jobs:
 
       - name: Install and test
         run: |
-          # geopandas is an optional extra of this package but is required to
-          # exercise the from_geopandas/to_geopandas interop in the tests.
-          pip install pytest geopandas
-
           cd python/sedonadb-geopandas
           pip install --no-deps --pre --find-links prebuilt sedonadb sedonadb-expr
           pip install --pre --find-links prebuilt sedonadb sedonadb-expr
-          pip install dist/*.whl
+          # Install the built wheel with its test extra so the test-time
+          # dependencies (pytest, geopandas, geoarrow-pyarrow) come from
+          # pyproject.toml. Listing them here instead lets the two drift apart,
+          # which is how geoarrow-pyarrow came to be missing: geopandas interop
+          # goes through sedonadb's conversion layer, which needs it, so without
+          # it every to_geopandas() call fails with `No module named 'geoarrow'`.
+          pip install "$(ls dist/*.whl)[test]"
           pytest tests -vv
 
       - uses: actions/upload-artifact@v7
