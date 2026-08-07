@@ -66,14 +66,27 @@ jobs:
           ref: ${{ env.VCPKG_REF }}
           path: vcpkg
 
+      # Persist vcpkg's built binaries across runs. The pinned VCPKG_REF and
+      # custom triplets fully determine what gets built, so a hit turns the
+      # ~40-minute `vcpkg install` into a seconds-long unpack.
+      - name: Cache vcpkg binaries
+        uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/vcpkg-bincache
+          key: vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ env.VCPKG_REF }}-${{ hashFiles('ci/scripts/custom-triplets/**', 'ci/scripts/wheels-build-windows.ps1') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ env.VCPKG_REF }}-
+
       - name: Build and test wheels (sedonadb)
         run: |
           Remove-Item -Force .test_failed -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path "$env:VCPKG_DEFAULT_BINARY_CACHE" | Out-Null
           cd ci/scripts
           .\wheels-build-windows.ps1
         env:
           VCPKG_ROOT: ${{ github.workspace }}/vcpkg
           VCPKG_DEFAULT_TRIPLET: x64-windows-dynamic-release
+          VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-bincache
           CMAKE_TOOLCHAIN_FILE: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
           CIBW_BUILD: "*-win_amd64"
           CIBW_TEST_REQUIRES: pytest adbc_driver_manager geoarrow-pyarrow geopandas
@@ -113,13 +126,26 @@ jobs:
           ref: ${{ env.VCPKG_REF }}
           path: vcpkg
 
+      # Persist vcpkg's built binaries across runs. The pinned VCPKG_REF and
+      # custom triplets fully determine what gets built, so a hit turns the
+      # ~40-minute `vcpkg install` into a seconds-long unpack.
+      - name: Cache vcpkg binaries
+        uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/vcpkg-bincache
+          key: vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ env.VCPKG_REF }}-${{ hashFiles('ci/scripts/custom-triplets/**', 'ci/scripts/wheels-bootstrap-vcpkg.sh') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ env.VCPKG_REF }}-
+
       - name: Build and test wheels (sedonadb)
         run: |
           rm -f .test_failed
+          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
           cd ci/scripts
           ./wheels-build-macos.sh sedonadb
         env:
           VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+          VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-bincache
           CIBW_TEST_REQUIRES: pytest adbc_driver_manager geoarrow-pyarrow geopandas duckdb
           # Test command exits 0 even on failure so CIBW continues building all wheels;
           # failures are recorded in .test_failed and checked after upload.
@@ -155,13 +181,26 @@ jobs:
           ref: ${{ env.VCPKG_REF }}
           path: vcpkg
 
+      # Persist vcpkg's built binaries across runs. The pinned VCPKG_REF and
+      # custom triplets fully determine what gets built, so a hit turns the
+      # ~40-minute `vcpkg install` into a seconds-long unpack.
+      - name: Cache vcpkg binaries
+        uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/vcpkg-bincache
+          key: vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ env.VCPKG_REF }}-${{ hashFiles('ci/scripts/custom-triplets/**', 'ci/scripts/wheels-bootstrap-vcpkg.sh') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ env.VCPKG_REF }}-
+
       - name: Build and test wheels (sedonadb)
         run: |
           rm -f .test_failed
+          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
           cd ci/scripts
           ./wheels-build-macos.sh sedonadb
         env:
           VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+          VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-bincache
           CIBW_TEST_REQUIRES: pytest adbc_driver_manager geoarrow-pyarrow geopandas duckdb
           # Test command exits 0 even on failure so CIBW continues building all wheels;
           # failures are recorded in .test_failed and checked after upload.
