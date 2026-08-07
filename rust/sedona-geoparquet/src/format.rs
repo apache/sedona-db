@@ -38,8 +38,11 @@ use datafusion::{
     },
 };
 use datafusion_catalog::{memory::DataSourceExec, Session};
-use datafusion_common::tree_node::{Transformed, TreeNode, TreeNodeRecursion};
 use datafusion_common::{plan_err, GetExt, Result, Statistics};
+use datafusion_common::{
+    tree_node::{Transformed, TreeNode, TreeNodeRecursion},
+    DataFusionError,
+};
 use datafusion_datasource_parquet::metadata::DFParquetMetadata;
 use datafusion_datasource_parquet::{CachedParquetFileReaderFactory, ParquetFileReaderFactory};
 use datafusion_execution::cache::cache_manager::FileMetadataCache;
@@ -413,10 +416,11 @@ impl FileFormat for GeoParquetFormat {
         )
         .map(|projection_with_types| source.try_pushdown_projection(&projection_with_types));
 
-        // These are both failable but we can't fail here, so fall back to the original
-        // source.
+        // These are both failable but we can't fail here, so defer the error so that it is
+        // communicated on file open.
         match projection_with_types {
             Ok(Ok(Some(modified))) => modified,
+            Err(err) | Ok(Err(err)) => Arc::new(source.with_deferred_error(err)),
             _ => Arc::new(source),
         }
     }
@@ -442,6 +446,7 @@ pub struct GeoParquetFileSource {
     /// Enables spatial pruning for both GEOMETRY and GEOGRAPHY columns.
     /// This is typically obtained from `SedonaOptions::runtime.bounder_factory()`.
     bounder_factory: WkbBounder2DFactory,
+    deferred_error: Option<Arc<DataFusionError>>,
 }
 
 impl GeoParquetFileSource {
@@ -455,7 +460,14 @@ impl GeoParquetFileSource {
             options,
             metadata_cache: None,
             bounder_factory: WkbBounder2DFactory::default(),
+            deferred_error: None,
         }
+    }
+
+    /// Construct with a deferred error from a previously unfailable operation
+    pub fn with_deferred_error(mut self, deferred_error: DataFusionError) -> Self {
+        self.deferred_error = Some(Arc::new(deferred_error));
+        self
     }
 
     /// Set the bounder factory for spatial pruning support
@@ -523,6 +535,7 @@ impl GeoParquetFileSource {
                 ),
                 metadata_cache: None,
                 bounder_factory: WkbBounder2DFactory::default(),
+                deferred_error: None,
             })
         } else {
             sedona_internal_err!("GeoParquetFileSource constructed from non-ParquetSource")
@@ -538,6 +551,7 @@ impl GeoParquetFileSource {
             options: self.options.clone(),
             metadata_cache: self.metadata_cache.clone(),
             bounder_factory: self.bounder_factory.clone(),
+            deferred_error: self.deferred_error.clone(),
         }
     }
 
@@ -550,6 +564,7 @@ impl GeoParquetFileSource {
             options: self.options.clone(),
             metadata_cache: self.metadata_cache.clone(),
             bounder_factory: self.bounder_factory.clone(),
+            deferred_error: self.deferred_error.clone(),
         }
     }
 
@@ -565,6 +580,7 @@ impl GeoParquetFileSource {
             options: self.options.clone(),
             metadata_cache: self.metadata_cache.clone(),
             bounder_factory: self.bounder_factory.clone(),
+            deferred_error: self.deferred_error.clone(),
         }
     }
 }
@@ -576,6 +592,10 @@ impl FileSource for GeoParquetFileSource {
         base_config: &FileScanConfig,
         partition: usize,
     ) -> Result<Arc<dyn FileOpener>> {
+        if let Some(err) = &self.deferred_error {
+            return sedona_internal_err!("Error constructing GeoParquetFileSource: {err}");
+        }
+
         let inner_opener =
             self.inner
                 .create_file_opener(object_store.clone(), base_config, partition)?;
@@ -605,6 +625,10 @@ impl FileSource for GeoParquetFileSource {
         filters: Vec<Arc<dyn PhysicalExpr>>,
         config: &ConfigOptions,
     ) -> Result<FilterPushdownPropagation<Arc<dyn FileSource>>> {
+        if let Some(err) = &self.deferred_error {
+            return sedona_internal_err!("Error constructing GeoParquetFileSource: {err}");
+        }
+
         let inner_result = self.inner.try_pushdown_filters(filters.clone(), config)?;
         match &inner_result.updated_node {
             Some(updated_node) => {
@@ -636,6 +660,7 @@ impl FileSource for GeoParquetFileSource {
         source.options = self.options.clone();
         source.metadata_cache = self.metadata_cache.clone();
         source.bounder_factory = self.bounder_factory.clone();
+        source.deferred_error = self.deferred_error.clone();
         Arc::new(source)
     }
 
@@ -643,6 +668,10 @@ impl FileSource for GeoParquetFileSource {
         &self,
         projection: &ProjectionExprs,
     ) -> Result<Option<Arc<dyn FileSource>>> {
+        if let Some(err) = &self.deferred_error {
+            return sedona_internal_err!("Error constructing GeoParquetFileSource: {err}");
+        }
+
         let inner_result = self.inner.try_pushdown_projection(projection)?;
 
         match inner_result {
@@ -1190,5 +1219,15 @@ mod test {
         let batches = df.collect().await.unwrap();
         assert!(!batches.is_empty());
         assert_eq!(batches[0].num_columns(), 3);
+
+        // Verify the geometry column's extension metadata survives into the batch schema
+        let batch_schema = batches[0].schema();
+        let geometry_field = batch_schema.field(2);
+        assert_eq!(geometry_field.name(), "geometry");
+        assert_eq!(
+            geometry_field.metadata().get("ARROW:extension:name"),
+            Some(&"geoarrow.wkb".to_string()),
+            "Geometry column should preserve geoarrow extension metadata"
+        );
     }
 }
