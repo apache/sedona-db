@@ -286,6 +286,11 @@ fn geoarrow_type_id(sedona_type: &SedonaType) -> Result<GeoArrowType, GeoArrowCE
                 "GeoArrow does not support Raster types".to_string(),
             ))
         }
+        SedonaType::Extension(_) => {
+            return Err(GeoArrowCError::Invalid(
+                "GeoArrow does not support user-defined extension types".to_string(),
+            ))
+        }
     };
 
     Ok(type_id)
