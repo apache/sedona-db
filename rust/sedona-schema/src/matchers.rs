@@ -181,14 +181,16 @@ impl ArgMatcher {
         Self::is_exact(RASTER)
     }
 
-    /// Matches any [`SedonaType::Extension`] with the given extension name.
-    ///
-    /// Prototype convenience for user-defined types (see
-    /// `crate::extension_type_registry`) -- lets a kernel declare "I accept
-    /// the Tensor type" the same way `is_raster()` declares "I accept
-    /// Raster", without `SedonaType` needing a dedicated variant per type.
-    pub fn is_extension(extension_name: &'static str) -> Arc<dyn TypeMatcher + Send + Sync> {
-        Arc::new(IsExtension { extension_name })
+    /// Matches any [`SedonaType::UnrecognizedExtension`] with the given
+    /// extension name -- the type-discrimination half of implementing a UDT
+    /// this way: an out-of-tree crate tags its columns with its own
+    /// `ARROW:extension:name`, then declares "I accept *my* extension type"
+    /// the same way `is_raster()` declares "I accept Raster", without
+    /// `SedonaType` needing a dedicated variant for it.
+    pub fn is_extension(extension_name: impl Into<String>) -> Arc<dyn TypeMatcher + Send + Sync> {
+        Arc::new(IsExtension {
+            extension_name: extension_name.into(),
+        })
     }
 
     /// Matches a null argument
@@ -512,87 +514,57 @@ impl TypeMatcher for IsNull {
 
 #[derive(Debug)]
 struct IsExtension {
-    extension_name: &'static str,
+    extension_name: String,
 }
 
 impl TypeMatcher for IsExtension {
     fn match_type(&self, arg: &SedonaType) -> bool {
-        matches!(arg, SedonaType::Extension(ext) if ext.extension_name() == self.extension_name)
+        matches!(
+            arg,
+            SedonaType::UnrecognizedExtension(ext) if ext.extension_name == self.extension_name
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
     use arrow_schema::Field;
-    use std::any::Any;
-    use std::sync::LazyLock;
 
     use crate::datatypes::{WKB_GEOGRAPHY, WKB_GEOMETRY};
-    use crate::extension_type_registry::SedonaExtensionType;
+    use crate::extension_type::ExtensionType;
 
     use super::*;
 
-    /// A toy "Tensor"-shaped extension type -- just enough to prove a
-    /// function signature can be declared against `SedonaType::Extension`
-    /// and dispatched the same way `is_raster()`/`is_geometry()` are today.
-    #[derive(Debug, PartialEq)]
-    struct ToyTensorType {
-        dtype: &'static str,
+    /// A toy "Tensor"-shaped UDT, exactly as an out-of-tree crate would
+    /// build one: a plain Struct `DataType` plus an `ExtensionType` giving
+    /// it a name, no trait or registry involved. Just enough to prove a
+    /// function signature can be declared against
+    /// `SedonaType::UnrecognizedExtension` and dispatched the same way
+    /// `is_raster()`/`is_geometry()` are today.
+    fn toy_tensor_storage_type() -> DataType {
+        DataType::Struct(vec![Field::new("dtype", DataType::Utf8, false)].into())
     }
 
-    static TOY_TENSOR_STORAGE_TYPE: LazyLock<DataType> =
-        LazyLock::new(|| DataType::Struct(vec![Field::new("dtype", DataType::Utf8, false)].into()));
-
-    impl SedonaExtensionType for ToyTensorType {
-        fn extension_name(&self) -> &'static str {
-            "sedona.test.toy_tensor"
-        }
-
-        fn storage_type(&self) -> &DataType {
-            &TOY_TENSOR_STORAGE_TYPE
-        }
-
-        fn as_any(&self) -> &dyn Any {
-            self
-        }
-
-        fn dyn_eq(&self, other: &dyn SedonaExtensionType) -> bool {
-            other.as_any().downcast_ref::<Self>() == Some(self)
-        }
+    fn toy_tensor_named(extension_name: &str) -> SedonaType {
+        SedonaType::UnrecognizedExtension(ExtensionType::new(
+            extension_name,
+            toy_tensor_storage_type(),
+            None,
+        ))
     }
 
-    fn toy_tensor(dtype: &'static str) -> SedonaType {
-        SedonaType::Extension(Arc::new(ToyTensorType { dtype }))
+    fn toy_tensor() -> SedonaType {
+        toy_tensor_named("sedona.test.toy_tensor")
     }
 
     #[test]
     fn is_extension_matches_the_named_extension_type_only() {
         let matcher = ArgMatcher::is_extension("sedona.test.toy_tensor");
-        assert!(matcher.match_type(&toy_tensor("float64")));
-        assert!(!matcher.match_type(&toy_tensor_with_other_name()));
+        assert!(matcher.match_type(&toy_tensor()));
+        assert!(!matcher.match_type(&toy_tensor_named("sedona.test.other")));
         assert!(!matcher.match_type(&RASTER));
         assert!(!matcher.match_type(&WKB_GEOMETRY));
         assert!(!matcher.match_type(&SedonaType::Arrow(DataType::Int32)));
-
-        fn toy_tensor_with_other_name() -> SedonaType {
-            #[derive(Debug, PartialEq)]
-            struct OtherType;
-            impl SedonaExtensionType for OtherType {
-                fn extension_name(&self) -> &'static str {
-                    "sedona.test.other"
-                }
-                fn storage_type(&self) -> &DataType {
-                    &TOY_TENSOR_STORAGE_TYPE
-                }
-                fn as_any(&self) -> &dyn Any {
-                    self
-                }
-                fn dyn_eq(&self, other: &dyn SedonaExtensionType) -> bool {
-                    other.as_any().downcast_ref::<Self>() == Some(self)
-                }
-            }
-            SedonaType::Extension(Arc::new(OtherType))
-        }
     }
 
     /// The end-to-end proof this is meant to unblock: a two-argument
@@ -608,26 +580,24 @@ mod tests {
                 ArgMatcher::is_extension("sedona.test.toy_tensor"),
                 ArgMatcher::is_extension("sedona.test.toy_tensor"),
             ],
-            toy_tensor("float64"),
+            toy_tensor(),
         );
 
-        assert!(signature.matches(&[toy_tensor("float64"), toy_tensor("float64")]));
+        assert!(signature.matches(&[toy_tensor(), toy_tensor()]));
         // Wrong type in either position: no match, same as a real kernel's
         // signature correctly declining a Raster/Wkb argument.
-        assert!(!signature.matches(&[toy_tensor("float64"), RASTER]));
-        assert!(!signature.matches(&[RASTER, toy_tensor("float64")]));
+        assert!(!signature.matches(&[toy_tensor(), RASTER]));
+        assert!(!signature.matches(&[RASTER, toy_tensor()]));
 
-        let resolved = signature
-            .match_args(&[toy_tensor("float64"), toy_tensor("float64")])
-            .unwrap();
-        assert_eq!(resolved, Some(toy_tensor("float64")));
+        let resolved = signature.match_args(&[toy_tensor(), toy_tensor()]).unwrap();
+        assert_eq!(resolved, Some(toy_tensor()));
     }
 
     #[test]
-    fn extension_type_equality_and_display_work_without_a_core_variant_match() {
-        let a = toy_tensor("float64");
-        let b = toy_tensor("float64");
-        let c = toy_tensor("int32");
+    fn extension_type_equality_and_display_work_without_a_core_variant_per_type() {
+        let a = toy_tensor();
+        let b = toy_tensor();
+        let c = toy_tensor_named("sedona.test.other");
         assert!(a.match_signature(&b));
         assert!(!a.match_signature(&c));
         assert_eq!(a.to_string(), "sedona.test.toy_tensor");

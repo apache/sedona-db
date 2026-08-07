@@ -40,7 +40,7 @@ use arrow_schema::{DataType, Field};
 /// This wrapping/unwrapping can disappear when there is a built-in logical type
 /// and/or DataFusion is better at propagating metadata through various pieces of
 /// infrastructure.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ExtensionType {
     pub extension_name: String,
     pub storage_type: DataType,

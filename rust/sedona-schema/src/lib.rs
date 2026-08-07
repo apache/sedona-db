@@ -18,7 +18,6 @@
 pub mod crs;
 pub mod datatypes;
 pub mod extension_type;
-pub mod extension_type_registry;
 pub mod matchers;
 pub mod raster;
 pub mod schema;

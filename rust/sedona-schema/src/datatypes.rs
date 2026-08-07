@@ -26,9 +26,7 @@ pub use sedona_geometry::types::Edges;
 
 use crate::crs::{deserialize_crs, deserialize_crs_from_obj, lnglat, Crs};
 use crate::extension_type::ExtensionType;
-use crate::extension_type_registry::{lookup_extension_type_factory, SedonaExtensionType};
 use crate::raster::RasterSchema;
-use std::sync::Arc;
 
 /// Data types supported by Sedona that resolve to a concrete Arrow DataType
 #[derive(Debug, PartialEq, Clone)]
@@ -37,12 +35,17 @@ pub enum SedonaType {
     Wkb(Edges, Crs),
     WkbView(Edges, Crs),
     Raster,
-    /// A user-defined type registered from outside this crate -- see
-    /// `extension_type_registry`. Prototyped so a new logical type (e.g. an
-    /// experimental Tensor type) can flow through function dispatch,
-    /// coercion, and display without a core-crate change for every new type,
-    /// only for this one open-ended slot.
-    Extension(Arc<dyn SedonaExtensionType>),
+    /// A column tagged with an Arrow `ARROW:extension:name` this crate
+    /// doesn't have built-in support for (e.g. a third-party UDT, or one not
+    /// yet implemented here). Carries the raw `(name, storage_type,
+    /// metadata)` triple verbatim -- no trait, no registry, nothing to look
+    /// up -- so reading this data back never has to choose between
+    /// guessing at semantics and refusing to read the column at all. See
+    /// `from_extension_type`'s fallback arm for where this is constructed,
+    /// and the module-level docs for how an out-of-tree crate uses this to
+    /// give its own UDT real identity (type discrimination + a real name in
+    /// `DESCRIBE`), without sedona-schema knowing anything about it.
+    UnrecognizedExtension(ExtensionType),
 }
 
 impl From<DataType> for SedonaType {
@@ -161,8 +164,13 @@ impl SedonaType {
 
     /// Given an [`ExtensionType`], construct a SedonaType
     pub fn from_extension_type(extension: ExtensionType) -> Result<SedonaType> {
-        let (edges, crs) = deserialize_edges_and_crs(&extension.extension_metadata)?;
         if extension.extension_name == "geoarrow.wkb" {
+            // Only the one extension type whose metadata we actually parse
+            // gets that parsing attempted -- an unrecognized extension's
+            // metadata is never touched, so a third-party UDT with its own,
+            // non-JSON metadata format still degrades gracefully below
+            // rather than failing here first.
+            let (edges, crs) = deserialize_edges_and_crs(&extension.extension_metadata)?;
             sedona_type_wkb(edges, crs, extension.storage_type)
         } else if extension.extension_name == "sedona.raster" {
             if extension.storage_type == *RASTER_DATATYPE {
@@ -173,21 +181,14 @@ impl SedonaType {
                     extension.storage_type
                 )
             }
-        } else if let Some(factory) = lookup_extension_type_factory(&extension.extension_name) {
-            // Prototype path for a user-defined type: nothing above knows
-            // extension.extension_name at compile time, so the concrete
-            // Arc<dyn SedonaExtensionType> has to be reconstructed via a
-            // factory the extension registered up front (see
-            // extension_type_registry::register_extension_type) -- there's
-            // no live Rust value to recover otherwise, only the bare
-            // (name, storage_type, metadata) triple a Field carries.
-            Ok(SedonaType::Extension(factory(&extension)?))
         } else {
-            sedona_internal_err!(
-                "Extension type not implemented: <{}>:{}",
-                extension.extension_name,
-                extension.storage_type
-            )
+            // Anything else -- a third-party UDT, or a real Arrow extension
+            // type (e.g. geoarrow.point) this crate has no built-in support
+            // for -- degrades to a plain, inert holder rather than erroring.
+            // Nothing here needs to know what the name means; the raw
+            // triple just rides along so the caller can still read the
+            // column as its physical type.
+            Ok(SedonaType::UnrecognizedExtension(extension))
         }
     }
 
@@ -206,17 +207,21 @@ impl SedonaType {
             SedonaType::Wkb(_, _) => &DataType::Binary,
             SedonaType::WkbView(_, _) => &DataType::BinaryView,
             SedonaType::Raster => &RASTER_DATATYPE,
-            SedonaType::Extension(ext) => ext.storage_type(),
+            SedonaType::UnrecognizedExtension(ext) => &ext.storage_type,
         }
     }
 
-    /// Compute the extension name if this is an Arrow extension type or `None` otherwise
-    pub fn extension_name(&self) -> Option<&'static str> {
+    /// Compute the extension name if this is an Arrow extension type or `None` otherwise.
+    ///
+    /// Not `&'static str`: an `UnrecognizedExtension`'s name is whatever
+    /// arbitrary string a `Field`'s metadata carried, not a compile-time
+    /// constant like the built-in variants use.
+    pub fn extension_name(&self) -> Option<&str> {
         match self {
             SedonaType::Arrow(_) => None,
             SedonaType::Wkb(_, _) | SedonaType::WkbView(_, _) => Some("geoarrow.wkb"),
             SedonaType::Raster => Some("sedona.raster"),
-            SedonaType::Extension(ext) => Some(ext.extension_name()),
+            SedonaType::UnrecognizedExtension(ext) => Some(&ext.extension_name),
         }
     }
 
@@ -235,11 +240,9 @@ impl SedonaType {
                 self.storage_type().clone(),
                 None,
             )),
-            SedonaType::Extension(ext) => Some(ExtensionType::new(
-                ext.extension_name(),
-                ext.storage_type().clone(),
-                ext.extension_metadata(),
-            )),
+            // Already exactly the ExtensionType this variant was built from
+            // -- no reconstruction needed, just hand the same data back.
+            SedonaType::UnrecognizedExtension(ext) => Some(ext.clone()),
             _ => None,
         }
     }
@@ -257,7 +260,7 @@ impl SedonaType {
             }
             SedonaType::Wkb(_, _) | SedonaType::WkbView(_, _) => "geography".to_string(),
             SedonaType::Raster => "raster".to_string(),
-            SedonaType::Extension(ext) => ext.logical_type_name(),
+            SedonaType::UnrecognizedExtension(ext) => ext.extension_name.clone(),
             SedonaType::Arrow(data_type) => match data_type {
                 DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View => "utf8".to_string(),
                 DataType::Binary
@@ -304,7 +307,7 @@ impl SedonaType {
                 edges == other_edges
             }
             (SedonaType::Raster, SedonaType::Raster) => true,
-            (SedonaType::Extension(a), SedonaType::Extension(b)) => a == b,
+            (SedonaType::UnrecognizedExtension(a), SedonaType::UnrecognizedExtension(b)) => a == b,
             _ => false,
         }
     }
@@ -336,7 +339,7 @@ impl Display for SedonaType {
             SedonaType::Wkb(edges, crs) => display_geometry("Wkb", edges, crs, f),
             SedonaType::WkbView(edges, crs) => display_geometry("WkbView", edges, crs, f),
             SedonaType::Raster => Display::fmt("Raster", f),
-            SedonaType::Extension(ext) => Display::fmt(ext.extension_name(), f),
+            SedonaType::UnrecognizedExtension(ext) => Display::fmt(&ext.extension_name, f),
         }
     }
 }
@@ -712,5 +715,94 @@ mod tests {
             .unwrap_err()
             .message()
             .contains("Unsupported edges value"));
+    }
+
+    /// An extension name this crate has no built-in support for -- a
+    /// third-party UDT, or a real Arrow extension type like `geoarrow.point`
+    /// -- degrades to `UnrecognizedExtension` rather than erroring.
+    #[test]
+    fn unrecognized_extension_type_degrades_gracefully_instead_of_erroring() {
+        let ext = ExtensionType::new("geoarrow.point", DataType::Binary, None);
+        let sedona_type = SedonaType::from_extension_type(ext.clone()).unwrap();
+        assert_eq!(sedona_type, SedonaType::UnrecognizedExtension(ext));
+    }
+
+    /// The metadata parsing this crate only knows how to do for
+    /// `geoarrow.wkb` must never run against an unrecognized extension's
+    /// metadata -- a third party's own (non-JSON, or JSON-shaped
+    /// differently) metadata format must not be mistaken for ours and fail
+    /// to parse before ever reaching the graceful-degradation fallback.
+    #[test]
+    fn unrecognized_extension_with_non_json_metadata_still_degrades_gracefully() {
+        let ext = ExtensionType::new(
+            "some.other.format",
+            DataType::Utf8,
+            Some("not json at all, and that's fine".to_string()),
+        );
+        let sedona_type = SedonaType::from_extension_type(ext.clone()).unwrap();
+        assert_eq!(sedona_type, SedonaType::UnrecognizedExtension(ext));
+    }
+
+    /// Full round trip through the same `to_storage_field`/`from_storage_field`
+    /// path a real `RecordBatch` schema goes through -- not just the direct
+    /// `from_extension_type` constructor.
+    #[test]
+    fn unrecognized_extension_type_roundtrips_through_a_storage_field() {
+        let original = SedonaType::UnrecognizedExtension(ExtensionType::new(
+            "myorg.custom_type",
+            DataType::Struct(vec![Field::new("x", DataType::Int64, false)].into()),
+            None,
+        ));
+        let field = original.to_storage_field("col", true).unwrap();
+        assert_eq!(
+            field.metadata().get("ARROW:extension:name"),
+            Some(&"myorg.custom_type".to_string())
+        );
+
+        let roundtripped = SedonaType::from_storage_field(&field).unwrap();
+        assert_eq!(roundtripped, original);
+    }
+
+    /// The pretty-printing half of implementing a UDT this way: once a
+    /// value carries its real extension name (instead of collapsing to a
+    /// bare `Arrow(Struct(...))`), `DESCRIBE`/error messages show that name
+    /// instead of a raw struct dump.
+    #[test]
+    fn unrecognized_extension_type_has_a_real_name_not_a_raw_struct_dump() {
+        let sedona_type = SedonaType::UnrecognizedExtension(ExtensionType::new(
+            "myorg.custom_type",
+            DataType::Struct(vec![Field::new("x", DataType::Int64, false)].into()),
+            None,
+        ));
+        assert_eq!(sedona_type.to_string(), "myorg.custom_type");
+        assert_eq!(sedona_type.logical_type_name(), "myorg.custom_type");
+        assert_eq!(sedona_type.extension_name(), Some("myorg.custom_type"));
+    }
+
+    /// Two different unrecognized extension names -- or the same name with
+    /// a different physical storage type -- are different types. This is
+    /// the type-discrimination half: a UDT is identified by its declared
+    /// name, not by structural shape alone.
+    #[test]
+    fn unrecognized_extension_types_are_distinguished_by_name_and_storage_type() {
+        let tensor = SedonaType::UnrecognizedExtension(ExtensionType::new(
+            "myorg.tensor",
+            DataType::Struct(vec![Field::new("x", DataType::Int64, false)].into()),
+            None,
+        ));
+        let other_name = SedonaType::UnrecognizedExtension(ExtensionType::new(
+            "myorg.other",
+            DataType::Struct(vec![Field::new("x", DataType::Int64, false)].into()),
+            None,
+        ));
+        let other_shape = SedonaType::UnrecognizedExtension(ExtensionType::new(
+            "myorg.tensor",
+            DataType::Struct(vec![Field::new("y", DataType::Int64, false)].into()),
+            None,
+        ));
+        assert!(!tensor.match_signature(&other_name));
+        assert!(!tensor.match_signature(&other_shape));
+        assert_ne!(tensor, other_name);
+        assert_ne!(tensor, other_shape);
     }
 }
