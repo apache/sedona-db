@@ -40,11 +40,27 @@ use arrow_schema::{DataType, Field};
 /// This wrapping/unwrapping can disappear when there is a built-in logical type
 /// and/or DataFusion is better at propagating metadata through various pieces of
 /// infrastructure.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct ExtensionType {
     pub extension_name: String,
     pub storage_type: DataType,
     pub extension_metadata: Option<String>,
+}
+
+impl std::fmt::Debug for ExtensionType {
+    /// Hand-rolled instead of derived: `extension_metadata` is an arbitrary,
+    /// unbounded, third-party-controlled string (long for things like
+    /// `geoarrow.point`). A derived `Debug` would print it in full, so any
+    /// `{:?}`-formatted error message built from a `SedonaType` (which embeds
+    /// `ExtensionType`) would leak it verbatim to the user. This prints
+    /// whether metadata is present, never its content.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExtensionType")
+            .field("extension_name", &self.extension_name)
+            .field("storage_type", &self.storage_type)
+            .field("extension_metadata", &self.extension_metadata.is_some())
+            .finish()
+    }
 }
 
 impl ExtensionType {
@@ -128,5 +144,18 @@ mod tests {
         assert_eq!(metadata["ARROW:extension:name"], "foofy");
         assert!(metadata.contains_key("ARROW:extension:metadata"));
         assert_eq!(metadata["ARROW:extension:metadata"], "foofy metadata");
+    }
+
+    #[test]
+    fn debug_never_prints_the_metadata_string_itself() {
+        let ext_type = ExtensionType::new(
+            "foofy",
+            DataType::Binary,
+            Some("a long metadata payload that must never leak into an error message".to_string()),
+        );
+        let debug = format!("{ext_type:?}");
+        assert!(!debug.contains("a long metadata payload"));
+        assert!(debug.contains("foofy"));
+        assert!(debug.contains("extension_metadata: true"));
     }
 }
