@@ -35,6 +35,8 @@ kernels:
 
 Sets a CRS to a geometry/geography. This is metadata-only - no coordinates are transformed.
 
+See [Coordinate Reference Systems](../../concepts/crs.md) for how SedonaDB represents and compares CRS.
+
 This is different from ST_Transform which actually transforms coordinates.
 
 `target_crs` accepts an authority code (e.g. `'EPSG:4326'`), PROJJSON, or WKT.

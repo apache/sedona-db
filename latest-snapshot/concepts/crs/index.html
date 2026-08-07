@@ -7,27 +7,31 @@
       
       
       
-        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/reference/sql/rs_bandtodim/">
+        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/concepts/crs/">
       
       
+        <link rel="prev" href="../../reference/sql-joins/">
+      
+      
+        <link rel="next" href="../../geopandas-interop/">
       
       
         
       
       
-      <link rel="icon" href="../../../image/sedona_logo_symbol.png">
+      <link rel="icon" href="../../image/sedona_logo_symbol.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
-        <title>RS_BandToDim - Apache Sedona</title>
+        <title>Coordinate Reference Systems - Apache Sedona</title>
       
     
     
-      <link rel="stylesheet" href="../../../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
       
         
-        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -46,17 +50,17 @@
       
     
     
-      <link rel="stylesheet" href="../../../assets/_mkdocstrings.css">
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
     
-      <link rel="stylesheet" href="../../../stylesheets/extra.css">
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
     
-    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
     
     
-  <link href="../../../assets/stylesheets/glightbox.min.css" rel="stylesheet"><script src="../../../assets/javascripts/glightbox.min.js"></script><style id="glightbox-style">
+  <link href="../../assets/stylesheets/glightbox.min.css" rel="stylesheet"><script src="../../assets/javascripts/glightbox.min.js"></script><style id="glightbox-style">
             html.glightbox-open { overflow: initial; height: 100%; }
             .gslide-title { margin-top: 0px; user-select: text; }
             .gslide-desc { color: #666; user-select: text; }
@@ -84,7 +88,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rs_bandtodim" class="md-skip">
+        <a href="#coordinate-reference-systems" class="md-skip">
           Skip to content
         </a>
       
@@ -140,9 +144,9 @@
         </label>
 
         <!-- Link to home -->
-        <a href="../../.." title="Apache Sedona" class="header-logo" aria-label="Apache Sedona" data-md-component="logo">
+        <a href="../.." title="Apache Sedona" class="header-logo" aria-label="Apache Sedona" data-md-component="logo">
           
-  <img src="../../../image/logo.svg" alt="logo">
+  <img src="../../image/logo.svg" alt="logo">
 
         </a>
 
@@ -157,7 +161,7 @@
             <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RS_BandToDim
+              Coordinate Reference Systems
             
           </span>
             </div>
@@ -279,11 +283,13 @@
   
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
-        <a href="../../.." class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../.." class="md-tabs__link">
           
   
   
@@ -519,8 +525,8 @@
 <nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
 
   <label class="md-nav__title" for="__drawer">
-    <a href="../../.." title="Apache Sedona" class="logo-link" aria-label="Apache Sedona" data-md-component="logo">
-      <img src="../../../image/header/logo-mobile.svg" alt="" class="logo">
+    <a href="../.." title="Apache Sedona" class="logo-link" aria-label="Apache Sedona" data-md-component="logo">
+      <img src="../../image/header/logo-mobile.svg" alt="" class="logo">
     </a>
   </label>
 
@@ -571,26 +577,31 @@
     
   
   
+    
   
   
+  
     
     
     
     
+      
+        
+        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2">
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked="">
         
           
-          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
             
   
   
@@ -608,7 +619,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -626,7 +637,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../.." class="md-nav__link">
+      <a href="../.." class="md-nav__link">
         
   
   
@@ -654,7 +665,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../quickstart-python/" class="md-nav__link">
+      <a href="../../quickstart-python/" class="md-nav__link">
         
   
   
@@ -682,7 +693,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../programming-guide/" class="md-nav__link">
+      <a href="../../programming-guide/" class="md-nav__link">
         
   
   
@@ -716,17 +727,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_4">
         
           
-          <label class="md-nav__link" for="__nav_2_4" id="__nav_2_4_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_2_4" id="__nav_2_4_label" tabindex="">
             
   
   
@@ -762,7 +776,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../memory-management/" class="md-nav__link">
+      <a href="../../memory-management/" class="md-nav__link">
         
   
   
@@ -790,7 +804,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../gpu-acceleration/" class="md-nav__link">
+      <a href="../../gpu-acceleration/" class="md-nav__link">
         
   
   
@@ -832,17 +846,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_5">
         
           
-          <label class="md-nav__link" for="__nav_2_5" id="__nav_2_5_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_2_5" id="__nav_2_5_label" tabindex="">
             
   
   
@@ -878,7 +895,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../python/" class="md-nav__link">
+      <a href="../../reference/python/" class="md-nav__link">
         
   
   
@@ -906,7 +923,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../python-zarr/" class="md-nav__link">
+      <a href="../../reference/python-zarr/" class="md-nav__link">
         
   
   
@@ -934,7 +951,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../" class="md-nav__link">
+      <a href="../../reference/sql/" class="md-nav__link">
         
   
   
@@ -962,7 +979,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../sql-joins/" class="md-nav__link">
+      <a href="../../reference/sql-joins/" class="md-nav__link">
         
   
   
@@ -995,26 +1012,31 @@
                 
   
   
+    
   
   
+  
     
     
     
     
       
       
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_6">
         
           
-          <label class="md-nav__link" for="__nav_2_6" id="__nav_2_6_label" tabindex="0">
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_6" checked="">
+        
+          
+          <label class="md-nav__link" for="__nav_2_6" id="__nav_2_6_label" tabindex="">
             
   
   
@@ -1032,7 +1054,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_6_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_6_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_2_6">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1047,10 +1069,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../../concepts/crs/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Coordinate Reference Systems
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1066,6 +1115,131 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+      
+        <li class="md-nav__item">
+  <a href="#the-three-forms-of-a-crs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The three forms of a CRS
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-definition-is-preserved-verbatim" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The definition is preserved verbatim
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#column-level-and-row-level-crs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Column-level and row-level CRS
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#equality-how-sedonadb-compares-two-crses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Equality: how SedonaDB compares two CRSes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Equality: how SedonaDB compares two CRSes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-this-means-for-you" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What this means for you
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rs_intersects-has-different-behaviour-than-st_intersects" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RS_Intersects has different behaviour than ST_Intersects
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#srid-vs-crs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SRID vs CRS
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#internals-design" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Internals / design
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1092,17 +1266,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_7">
         
           
-          <label class="md-nav__link" for="__nav_2_7" id="__nav_2_7_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_2_7" id="__nav_2_7_label" tabindex="">
             
   
   
@@ -1138,7 +1315,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../geopandas-interop/" class="md-nav__link">
+      <a href="../../geopandas-interop/" class="md-nav__link">
         
   
   
@@ -1166,7 +1343,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../overture-examples/" class="md-nav__link">
+      <a href="../../overture-examples/" class="md-nav__link">
         
   
   
@@ -1194,7 +1371,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../crs-examples/" class="md-nav__link">
+      <a href="../../crs-examples/" class="md-nav__link">
         
   
   
@@ -1222,7 +1399,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../delta-lake/" class="md-nav__link">
+      <a href="../../delta-lake/" class="md-nav__link">
         
   
   
@@ -1250,7 +1427,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../iceberg/" class="md-nav__link">
+      <a href="../../iceberg/" class="md-nav__link">
         
   
   
@@ -1278,7 +1455,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../working-with-parquet-files/" class="md-nav__link">
+      <a href="../../working-with-parquet-files/" class="md-nav__link">
         
   
   
@@ -1306,7 +1483,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../working-with-sql-sedonadb/" class="md-nav__link">
+      <a href="../../working-with-sql-sedonadb/" class="md-nav__link">
         
   
   
@@ -1334,7 +1511,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../working-with-zarr-ndarray-sedonadb/" class="md-nav__link">
+      <a href="../../working-with-zarr-ndarray-sedonadb/" class="md-nav__link">
         
   
   
@@ -1370,7 +1547,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../contributors-guide/" class="md-nav__link">
+      <a href="../../contributors-guide/" class="md-nav__link">
         
   
   
@@ -1398,7 +1575,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../release-notes/" class="md-nav__link">
+      <a href="../../release-notes/" class="md-nav__link">
         
   
   
@@ -1649,10 +1826,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
       
         <li class="md-nav__item">
-  <a href="#usage" class="md-nav__link">
+  <a href="#the-three-forms-of-a-crs" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Usage
+        The three forms of a CRS
       
     </span>
   </a>
@@ -1660,10 +1837,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#arguments" class="md-nav__link">
+  <a href="#the-definition-is-preserved-verbatim" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Arguments
+        The definition is preserved verbatim
       
     </span>
   </a>
@@ -1671,10 +1848,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#description" class="md-nav__link">
+  <a href="#column-level-and-row-level-crs" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Description
+        Column-level and row-level CRS
       
     </span>
   </a>
@@ -1682,10 +1859,71 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#examples" class="md-nav__link">
+  <a href="#equality-how-sedonadb-compares-two-crses" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Examples
+        Equality: how SedonaDB compares two CRSes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Equality: how SedonaDB compares two CRSes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-this-means-for-you" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What this means for you
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rs_intersects-has-different-behaviour-than-st_intersects" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RS_Intersects has different behaviour than ST_Intersects
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#srid-vs-crs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SRID vs CRS
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#internals-design" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Internals / design
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
       
     </span>
   </a>
@@ -1709,7 +1947,7 @@
 
 
   
-    <a href="https://github.com/apache/sedona-db/blob/main/docs/reference/sql/rs_bandtodim.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/apache/sedona-db/blob/main/docs/concepts/crs.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"></path></svg>
     </a>
@@ -1717,64 +1955,201 @@
   
 
 
-<h1 id="rs_bandtodim">RS_BandToDim<a class="headerlink" href="#rs_bandtodim" title="Permanent link">¶</a></h1>
-<p>Collapses all bands into a single band with a new dimension.</p>
-<h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">¶</a></h2>
-<div class="highlight"><pre><span></span><code><span class="n">raster</span><span class="w"> </span><span class="n">RS_BandToDim</span><span class="p">(</span><span class="n">rast</span><span class="p">:</span><span class="w"> </span><span class="n">raster</span><span class="p">,</span><span class="w"> </span><span class="n">dim_name</span><span class="p">:</span><span class="w"> </span><span class="n">utf8</span><span class="p">)</span>
-</code></pre></div>
-<h2 id="arguments">Arguments<a class="headerlink" href="#arguments" title="Permanent link">¶</a></h2>
-<ul>
-<li><strong>rast</strong> (raster): Input raster</li>
-<li><strong>dim_name</strong> (utf8): Name for the new dimension (e.g., ‘time’,
-  ‘band’).</li>
-</ul>
-<blockquote>
-<p>[!WARNING]</p>
-<p><strong>Experimental.</strong> This function is experimental; its behavior may
-change without notice.</p>
-</blockquote>
-<h2 id="description">Description<a class="headerlink" href="#description" title="Permanent link">¶</a></h2>
-<p>Collapses all bands in a raster into a single band by introducing a new
-dimension. The new dimension is prepended to the existing dimensions,
-with size equal to the number of bands. Band data is concatenated in
-band order.</p>
-<p>All bands must have identical dimension names, shapes, data types, and
-nodata values. If any of these differ, an error is returned — collapsing
-bands with different nodata sentinels would silently lose information
-about which sentinel applies where.</p>
-<p>The new dimension name must not already exist on the input bands. For
-example, <code>RS_BandToDim(raster_with_y_x, 'y')</code> is rejected because the
-output would carry duplicate <code>y</code> dimensions and the round-trip through
-<a href="../rs_dimtoband.qmd">RS_DimToBand</a> cannot recover the original layout.</p>
-<p>This is the inverse of <a href="../rs_dimtoband.qmd">RS_DimToBand</a>. A round-trip
-<code>RS_BandToDim(RS_DimToBand(raster, 'dim'), 'dim')</code> recovers the original
-data layout.</p>
-<p>This is useful for converting GeoTIFF-style multi-band rasters into a
-single N-dimensional chunk for export to formats like Zarr.</p>
-<h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">¶</a></h2>
-<div class="highlight"><pre><span></span><code><span class="c1">-- Collapse RS_Example()'s bands into a single band carrying a new 'band'</span>
-<span class="c1">-- dimension, e.g. [y, x] bands become one [band, y, x] band.</span>
-<span class="k">SELECT</span><span class="w"> </span><span class="n">RS_BandToDim</span><span class="p">(</span><span class="n">RS_Example</span><span class="p">(),</span><span class="w"> </span><span class="s1">'band'</span><span class="p">);</span>
-</code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌─────────────────────────────────────────────────────────────────────────────┐
-│                   rs_bandtodim(rs_example(),Utf8("band"))                   │
-│                                    raster                                   │
-╞═════════════════════════════════════════════════════════════════════════════╡
-│ [64x32/1] @ [43.08 79.07 203.07999999999998 207.07] skew=(1, 1) / OGC:CRS84 │
-└─────────────────────────────────────────────────────────────────────────────┘
-</code></pre></div>
+<!---
+  Licensed to the Apache Software Foundation (ASF) under one
+  or more contributor license agreements.  See the NOTICE file
+  distributed with this work for additional information
+  regarding copyright ownership.  The ASF licenses this file
+  to you under the Apache License, Version 2.0 (the
+  "License"); you may not use this file except in compliance
+  with the License.  You may obtain a copy of the License at
 
-<div class="highlight"><pre><span></span><code><span class="c1">-- The inverse RS_DimToBand recovers the original bands, so the round-trip</span>
-<span class="c1">-- returns to the starting layout.</span>
-<span class="k">SELECT</span><span class="w"> </span><span class="n">RS_DimToBand</span><span class="p">(</span><span class="n">RS_BandToDim</span><span class="p">(</span><span class="n">RS_Example</span><span class="p">(),</span><span class="w"> </span><span class="s1">'band'</span><span class="p">),</span><span class="w"> </span><span class="s1">'band'</span><span class="p">);</span>
+    http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing,
+  software distributed under the License is distributed on an
+  "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+  KIND, either express or implied.  See the License for the
+  specific language governing permissions and limitations
+  under the License.
+--><h1 id="coordinate-reference-systems">Coordinate Reference Systems<a class="headerlink" href="#coordinate-reference-systems" title="Permanent link">¶</a></h1>
+<p>A Coordinate Reference System (CRS) describes how the numeric coordinates in a
+geometry, geography, or raster relate to locations on the Earth. Two datasets
+whose coordinates look similar are only comparable if they share a CRS, so
+SedonaDB tracks a CRS alongside every spatial value and uses it to decide
+whether an operation is well defined.</p>
+<p>This page explains how SedonaDB <em>represents</em> a CRS, how it decides whether two
+CRSes are <em>equal</em>, and what that means when you combine data from different
+sources.</p>
+<h2 id="the-three-forms-of-a-crs">The three forms of a CRS<a class="headerlink" href="#the-three-forms-of-a-crs" title="Permanent link">¶</a></h2>
+<p>A CRS definition attached to a spatial value can take one of three forms.
+SedonaDB recognizes and stores whichever form you provide:</p>
+<ul>
+<li><strong>An authority code</strong> — a compact <code>AUTHORITY:CODE</code> string such as
+  <code>EPSG:4326</code>, <code>EPSG:3857</code>, <code>ESRI:102005</code>, or <code>OGC:CRS84</code>. This is the most
+  common and most portable form. A bare numeric code like <code>4269</code> is accepted and
+  interpreted as <code>EPSG:4269</code>.</li>
+<li><strong>PROJJSON</strong> — a JSON object following the
+  <a href="https://proj.org/en/stable/specifications/projjson.html">PROJJSON schema</a>.
+  This is the fully self-describing form used when writing GeoParquet and
+  Iceberg.</li>
+<li><strong>A WKT string</strong> — a WKT1 or WKT2 CRS definition (<code>PROJCRS[...]</code>,
+  <code>GEOGCRS[...]</code>, <code>PROJCS[...]</code>, and similar). This is the form most often found
+  in GeoTIFF and other GDAL-sourced files.</li>
+</ul>
+<p>You choose the form when you set a CRS (for example with <code>ST_SetCRS</code> /
+<code>RS_SetCRS</code>), and files you read carry whichever form they were written with.</p>
+<h2 id="the-definition-is-preserved-verbatim">The definition is preserved verbatim<a class="headerlink" href="#the-definition-is-preserved-verbatim" title="Permanent link">¶</a></h2>
+<p>SedonaDB does <strong>not</strong> rewrite a CRS you give it. Whatever form you supply is the
+form stored and the form you get back:</p>
+<div class="highlight"><pre><span></span><code><span class="c1">-- Set as an authority code, read back as that same authority code</span>
+<span class="k">SELECT</span><span class="w"> </span><span class="n">ST_CRS</span><span class="p">(</span><span class="n">ST_SetCRS</span><span class="p">(</span><span class="n">ST_Point</span><span class="p">(</span><span class="mi">0</span><span class="p">.</span><span class="mi">25</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">.</span><span class="mi">25</span><span class="p">),</span><span class="w"> </span><span class="s1">'EPSG:3857'</span><span class="p">));</span>
+<span class="c1">-- =&gt; EPSG:3857</span>
 </code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌─────────────────────────────────────────────────────────────────────────────┐
-│      rs_dimtoband(rs_bandtodim(rs_example(),Utf8("band")),Utf8("band"))     │
-│                                    raster                                   │
-╞═════════════════════════════════════════════════════════════════════════════╡
-│ [64x32/3] @ [43.08 79.07 203.07999999999998 207.07] skew=(1, 1) / OGC:CRS84 │
-└─────────────────────────────────────────────────────────────────────────────┘
+<p>A WKT or PROJJSON definition is kept in full — SedonaDB will <strong>not</strong> collapse it
+down to an embedded <code>AUTHORITY:CODE</code> even when one is present. Nothing is
+discarded on the way in, so a consumer that wants the compact form can ask for
+it, but one that needs the full definition still has it.</p>
+<p>Internally there are two views of the stored definition:</p>
+<ul>
+<li>the <strong>round-trippable / PROJ-consumable</strong> form (what <code>ST_CRS</code> and <code>RS_CRS</code>
+  return, and what is handed to PROJ at transform time), and</li>
+<li>the <strong>field-metadata</strong> form (what is embedded in GeoArrow / GeoParquet
+  metadata).</li>
+</ul>
+<p>Both preserve the original authority code, PROJJSON, or WKT as given. The
+<strong>only</strong> canonicalization SedonaDB applies is for the longitude/latitude WGS84
+aliases: <code>EPSG:4326</code> and <code>OGC:CRS84</code> describe the same datum but imply different
+axis orders, so in the field-metadata form both are written as <code>OGC:CRS84</code> to
+keep the axis order (longitude, latitude) explicit for downstream readers. More
+generally, SedonaDB always assumes longitude, latitude axis order regardless of
+what a CRS declares — many geographic CRSes, <code>EPSG:4326</code> included, officially
+specify latitude first, but coordinates are longitude-first everywhere and
+<code>ST_Transform</code> normalizes every transform to that order. The PROJ-consumable
+form still returns the authority code exactly as you set it.</p>
+<h2 id="column-level-and-row-level-crs">Column-level and row-level CRS<a class="headerlink" href="#column-level-and-row-level-crs" title="Permanent link">¶</a></h2>
+<p>For <strong>vector</strong> data — geometry and geography — a CRS can attach at two levels.
+A <strong>column-level</strong> CRS is a property of the whole column: the column carries a
+single CRS in its type (and, on disk, in its field metadata), and every value
+in the column shares it.
+This is the form <code>ST_CRS</code> and <code>ST_SRID</code> read, the form the equality rules below
+compare, and the one <code>ST_SetCRS</code> sets.</p>
+<p>A <strong>row-level</strong> CRS instead travels with each value, which carries its own CRS
+rather than inheriting one from the column. Internally this is the value paired
+with a per-row CRS string.</p>
+<p>Most vector functions accept either form. For a row-level input, SedonaDB
+applies the CRS rules per value: a function whose result does not depend on the
+CRS (such as <code>ST_Area</code>) simply uses the geometry; a function taking two or more
+geometries requires their CRSes to be compatible; and a function that returns a
+geometry carries the CRS through to its result. The important difference from a
+column-level CRS is <em>when</em> compatibility is enforced — a column-level mismatch
+is caught at query-planning time (see below), whereas a row-level CRS is not
+known until the data flows, so it is reconciled while the query runs.</p>
+<p><strong>Rasters do not have a column-level CRS.</strong> A raster carries its own CRS as part
+of the raster value, so every raster in a column is self-describing; <code>RS_CRS</code> /
+<code>RS_SRID</code> read the CRS from each raster and <code>RS_SetCRS</code> sets it on individual
+rasters.</p>
+<h2 id="equality-how-sedonadb-compares-two-crses">Equality: how SedonaDB compares two CRSes<a class="headerlink" href="#equality-how-sedonadb-compares-two-crses" title="Permanent link">¶</a></h2>
+<p>Deciding whether two CRSes are "the same" is the subtle part, and SedonaDB's
+rule is deliberately simple and conservative:</p>
+<ul>
+<li><strong>If both CRSes expose an authority code, the authority codes are compared.</strong>
+  The issuing authority is treated as the source of truth about identity, so
+  <code>EPSG:3857</code> equals <code>EPSG:3857</code> regardless of how each side was originally
+  spelled. (The <code>EPSG:4326</code> / <code>OGC:CRS84</code> lon/lat pair is the one built-in
+  alias that compares equal.)</li>
+<li><strong>Otherwise, SedonaDB falls back to a structural / string comparison</strong> of the
+  definitions — matching PROJJSON objects structurally, or comparing WKT strings
+  directly.</li>
+</ul>
+<p>This comparison is intentionally <strong>lenient</strong>: it can <em>false-negative</em> (report
+two definitions as different when a full geodetic analysis would call them
+equivalent), but it will never <em>false-positive</em> (it never claims two genuinely
+different CRSes are the same). SedonaDB keeps the PROJ library out of the core
+schema layer entirely, so there is no semantic-equivalence check here. This is a
+different trade-off from, for example, GeoPandas, which compares CRSes through
+PROJ using an approximate, confidence-based similarity threshold.</p>
+<h3 id="what-this-means-for-you">What this means for you<a class="headerlink" href="#what-this-means-for-you" title="Permanent link">¶</a></h3>
+<p><strong>Vector</strong> operations that require their inputs to share a CRS — spatial joins,
+<code>ST_Intersects</code>, distance predicates, and so on — <strong>raise an error on a
+mismatch</strong> rather than silently reprojecting one side to match the other.
+Silently reprojecting geometry coordinates is exactly the kind of hidden,
+easy-to-miss behavior that produces wrong answers, so SedonaDB refuses to guess:</p>
+<div class="highlight"><pre><span></span><code>Error during planning: Mismatched CRS arguments: epsg:3857 vs epsg:4326
+Use ST_Transform() or ST_SetSRID() to ensure arguments are compatible.
 </code></pre></div>
+<p>To fix a mismatch, make the CRSes agree before the operation:</p>
+<ul>
+<li>If the coordinates are in different systems, reproject one side with
+  <code>ST_Transform</code> (which actually moves the coordinates).</li>
+<li>If a value is simply <em>missing</em> a CRS, or is labeled incorrectly, attach the
+  right one with <code>ST_SetCRS</code> / <code>ST_SetSRID</code> (metadata only — no coordinates
+  change).</li>
+</ul>
+<p>Because equality can false-negative, two definitions that <em>are</em> equivalent but
+are spelled differently (say, an authority code on one side and an
+authority-less WKT on the other) may be reported as mismatched. The fix is the
+same: normalize both sides to the same definition with <code>ST_Transform</code> or
+<code>ST_SetCRS</code>.</p>
+<h3 id="rs_intersects-has-different-behaviour-than-st_intersects"><code>RS_Intersects</code> has different behaviour than <code>ST_Intersects</code><a class="headerlink" href="#rs_intersects-has-different-behaviour-than-st_intersects" title="Permanent link">¶</a></h3>
+<p>A spatial join involving a raster tests the raster's <strong>footprint</strong> (the polygon
+through its corners), not its pixels. When a raster is joined against a geometry,
+SedonaDB reconciles the two CRSes as follows:</p>
+<ul>
+<li><strong>They share a CRS, or both are CRS-less</strong> — the footprints are compared
+  directly, with no reprojection.</li>
+<li><strong>Both have a CRS but they differ</strong> — SedonaDB reprojects the raster's
+  footprint into the geometry's CRS and the join proceeds, rather than erroring
+  as the vector path would. Reprojecting a footprint is far cheaper and safer
+  than resampling the pixel grid.</li>
+<li><strong>Only one side has a CRS</strong> — this is an error, just as on the vector path:
+  SedonaDB will not reproject into or out of an unknown frame.</li>
+</ul>
+<p>The reprojected case is a close approximation rather than an exact boundary:
+reprojection is sometimes non-linear, so the footprint's straight edges may bow
+into curves in the target CRS, and reprojecting only the four corners can
+under-cover the true extent. SedonaDB handles this by <strong>densifying</strong> each edge —
+adding interior points in the raster's own CRS, where the edges are still
+straight — then reprojecting all of them, so the reprojected footprint follows
+the curve.</p>
+<p>One performance note: an accelerated spatial join relies on a spatial index
+built over a single, column-level CRS. A geometry or raster column that carries
+a <em>row-level</em> CRS can't use that index, so the join falls back to a slower
+nested loop join evaluation — prefer a column-level CRS for join-heavy work.</p>
+<h2 id="srid-vs-crs">SRID vs CRS<a class="headerlink" href="#srid-vs-crs" title="Permanent link">¶</a></h2>
+<p>An <strong>SRID</strong> (Spatial Reference Identifier) is just the numeric-code view of a
+CRS. <code>ST_SRID</code> / <code>RS_SRID</code> return the integer, and <code>ST_SetSRID</code> / <code>RS_SetSRID</code>
+set a CRS from one. SedonaDB maps between the two following the majority of SRID usage in the wild: SRID <code>0</code>
+means "no CRS", <code>4326</code> maps to <code>OGC:CRS84</code>, and any other value <code>N</code> maps to
+<code>EPSG:N</code>. A CRS only has an SRID when it carries an EPSG (or lon/lat) authority
+code; a purely custom WKT or PROJJSON definition with no authority has no SRID.</p>
+<h2 id="internals-design">Internals / design<a class="headerlink" href="#internals-design" title="Permanent link">¶</a></h2>
+<p>A few deeper points, for the curious:</p>
+<ul>
+<li><strong>The core schema layer is PROJ-free and GDAL-free.</strong> CRS representation,
+  storage, and equality all live in the <code>sedona-schema</code> crate, which has no
+  dependency on PROJ or GDAL. This keeps the low-level crate light and means
+  equality never depends on a native geodetic library being present.</li>
+<li><strong>PROJ is used only at transform time.</strong> Reprojection (<code>ST_Transform</code>) is
+  performed by a pluggable CRS engine; the default is a PROJ-backed engine that
+  lives in its own crate and is injected into the session. The stored CRS
+  definition — including verbatim WKT — is handed to PROJ only when a transform
+  actually runs.</li>
+<li><strong>A small in-crate WKT parser extracts identity without pulling in PROJ.</strong> To
+  read an authority code, SRID, or ellipsoid parameters out of a WKT definition
+  (needed for equality and for spherical geography), <code>sedona-schema</code> uses a
+  tiny, self-contained WKT-node parser rather than linking PROJ. It reads the
+  authority only from the top-level <code>AUTHORITY[...]</code> / <code>ID[...]</code> tag, so a custom
+  CRS is never misidentified by an authority tag buried on a nested unit or
+  projection parameter. A WKT that is malformed or carries no top-level
+  authority is still stored verbatim — it simply has no derived SRID.</li>
+</ul>
+<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">¶</a></h2>
+<ul>
+<li><a href="../../crs-examples/">Joining Spatial Data with Different Coordinate Systems</a> —
+  a worked example of the CRS-mismatch error and how to resolve it across a
+  spatial join.</li>
+</ul>
 
 
 
@@ -1795,7 +2170,7 @@ single N-dimensional chunk for export to formats like Zarr.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"></path></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="August 7, 2026 18:23:35 UTC">August 7, 2026 18:23:35</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="August 6, 2026 20:35:51 UTC">August 6, 2026 20:35:51</span>
   </span>
 
     
@@ -1830,7 +2205,7 @@ single N-dimensional chunk for export to formats like Zarr.</p>
     <div class="footer__top">
 
       <div class="col-left">
-        <img src="../../../image/footer/logo-footer.svg" alt="" class="footer-logo">
+        <img src="../../image/footer/logo-footer.svg" alt="" class="footer-logo">
       </div>
 
       <div class="col-right">
@@ -1904,10 +2279,10 @@ single N-dimensional chunk for export to formats like Zarr.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["content.code.copy", "content.action.edit", "search.highlight", "search.share", "search.suggest", "navigation.footer", "navigation.instant", "navigation.top", "navigation.sections", "navigation.tabs", "navigation.tabs.sticky"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": ["latest"], "provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.copy", "content.action.edit", "search.highlight", "search.share", "search.suggest", "navigation.footer", "navigation.instant", "navigation.top", "navigation.sections", "navigation.tabs", "navigation.tabs.sticky"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": ["latest"], "provider": "mike"}}</script>
     
     
-      <script src="../../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   

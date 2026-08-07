@@ -39,6 +39,8 @@ kernels:
         rasters too.
 ---
 
+See [Coordinate Reference Systems](../../concepts/crs.md) for how SedonaDB represents and compares CRS.
+
 ## Examples
 
 ```sql

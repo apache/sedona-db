@@ -30,6 +30,8 @@ kernels:
 
 Sets the SRID (spatial reference system identifier) of the geometry. This is metadata only - no coordinate transformation occurs. Use ST_Transform to actually reproject coordinates.
 
+See [Coordinate Reference Systems](../../concepts/crs.md) for how SedonaDB represents and compares CRS.
+
 ## Examples
 
 ```sql
