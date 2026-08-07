@@ -14,6 +14,8 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+import atexit
+
 from sedonadb import _lib
 from sedonadb.context import connect, configure_proj, configure_gdal
 
@@ -30,3 +32,8 @@ __all__ = ["connect", "options"]
 # GDAL-backed operation (e.g., raster I/O).
 configure_proj("auto")
 configure_gdal("auto")
+
+# During interpreter shutdown, leave GDAL datasets open instead of closing them:
+# on Windows, closing a dataset while GDAL's library is being unloaded aborts the
+# process. Registered here so it runs before the extension is torn down.
+atexit.register(_lib.begin_gdal_shutdown)

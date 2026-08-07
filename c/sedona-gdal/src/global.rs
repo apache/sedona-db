@@ -19,7 +19,31 @@ use crate::errors::GdalInitLibraryError;
 use crate::gdal::Gdal;
 use crate::gdal_api::GdalApi;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
+
+/// Set once the process is shutting down so GDAL datasets are left open during
+/// teardown instead of being closed.
+///
+/// On Windows, running `GDALClose` from a (thread-local) dataset cache's
+/// destructor while the GDAL shared library is being unloaded corrupts the
+/// teardown and aborts the process (`0xC0000409`). Leaking the handles at
+/// process exit is harmless — the OS reclaims them — so once shutdown begins
+/// [`crate::dataset::Dataset`]'s `Drop` skips `GDALClose`.
+static GDAL_SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
+
+/// Signal that the process is shutting down; see [`GDAL_SHUTTING_DOWN`].
+///
+/// Intended to run on the interpreter thread during finalization (e.g. a Python
+/// `atexit` callback), before GDAL's library is unloaded.
+pub fn begin_gdal_shutdown() {
+    GDAL_SHUTTING_DOWN.store(true, Ordering::SeqCst);
+}
+
+/// Whether [`begin_gdal_shutdown`] has been called.
+pub fn is_gdal_shutting_down() -> bool {
+    GDAL_SHUTTING_DOWN.load(Ordering::SeqCst)
+}
 
 /// Minimum GDAL version required by sedona-gdal.
 const MIN_GDAL_VERSION_MAJOR: i32 = 3;
