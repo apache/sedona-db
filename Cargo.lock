@@ -3914,9 +3914,23 @@ dependencies = [
 
 [[package]]
 name = "las"
-version = "0.9.10"
+version = "0.9.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "501d35a98a0bf1e7d30cd61899741af22f853110021be78175926cc870a39dfd"
+checksum = "48c2594be0d2ec4f04c944f5cb5160625cd1a69451db14de73b990065f97fb84"
+dependencies = [
+ "byteorder",
+ "chrono",
+ "log",
+ "num-traits",
+ "thiserror 2.0.17",
+ "uuid",
+]
+
+[[package]]
+name = "las"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62f1a1abaa9217530731d35a08a5e37828b2f6158196cdd61252c017bbdace95"
 dependencies = [
  "byteorder",
  "chrono",
@@ -3933,7 +3947,7 @@ version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7b25b1e192564ebf5b563e821c4924ce97bd703f445e851117db2e656499c21c"
 dependencies = [
- "las",
+ "las 0.9.11",
  "log",
  "thiserror 2.0.17",
 ]
@@ -6160,7 +6174,7 @@ dependencies = [
  "futures",
  "geoarrow-array",
  "geoarrow-schema",
- "las",
+ "las 0.10.0",
  "las-crs",
  "laz",
  "object_store",
