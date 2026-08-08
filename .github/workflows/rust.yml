@@ -153,11 +153,7 @@ jobs:
       - name: Clippy
         if: matrix.name == 'clippy'
         run: |
-          cargo clippy --workspace --all-targets --all-features -- -Dwarnings
-          # Clean up clippy artifacts aggressively
-          rm -rf target/debug/deps
-          rm -rf target/debug/incremental
-          rm -rf target/debug/build
+          bash ci/scripts/cargo-clippy.sh --ci-cleanup
 
       - name: Test
         if: matrix.name == 'test'
