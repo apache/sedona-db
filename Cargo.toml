@@ -84,7 +84,7 @@ bytemuck = "1.25"
 byteorder = "1"
 bytes = "1.11"
 chrono = { version = "0.4.41", default-features = false }
-comfy-table = { version = "7.2" }
+comfy-table = { version = "8.0" }
 criterion = { version = "0.8", features = ["html_reports"] }
 datafusion = { version = "52.5.0", default-features = false }
 datafusion-catalog = { version = "52.5.0" }
