@@ -43,6 +43,7 @@ use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_raster::array::RasterRefImpl;
 use sedona_raster::builder::RasterBuilder;
+use sedona_raster::error::RasterResultExt;
 use sedona_raster::geo_transform::{GeoTransform, GeoTransformEx};
 use sedona_raster::traits::{is_spatial_dim_pair, nodata_f64_to_bytes, RasterRef};
 use sedona_raster_functions::rs_ensure_loaded::NEEDS_PIXELS_METADATA_KEY;
@@ -355,9 +356,7 @@ impl RsTile {
 /// The `List<Struct<x, y, tile>>` element struct fields, mirroring Spark's
 /// `(x int, y int, tile raster)` generator output.
 fn tile_struct_fields() -> Result<Fields> {
-    let tile_field = RASTER
-        .to_storage_field("tile", false)
-        .map_err(|e| exec_datafusion_err!("RS_Tile: {e}"))?;
+    let tile_field = RASTER.to_storage_field("tile", false).context("RS_Tile")?;
     Ok(Fields::from(vec![
         Field::new("x", DataType::Int32, false),
         Field::new("y", DataType::Int32, false),
@@ -558,7 +557,7 @@ fn append_tile(
             &tile_spatial_shape,
             raster.crs(),
         )
-        .map_err(|e| exec_datafusion_err!("RS_Tile: failed to start raster: {e}"))?;
+        .context("RS_Tile: failed to start raster")?;
 
     for &band_idx in band_indices {
         append_tile_band(raster, band_idx, window, params, rast_builder)?;
@@ -566,7 +565,7 @@ fn append_tile(
 
     rast_builder
         .finish_raster()
-        .map_err(|e| exec_datafusion_err!("RS_Tile: failed to finish raster: {e}"))?;
+        .context("RS_Tile: failed to finish raster")?;
     Ok(())
 }
 
@@ -581,7 +580,7 @@ fn append_tile_band(
     // `band_idx` is 1-based; the `band`/`band_name` accessors are 0-based.
     let band = raster
         .band(band_idx - 1)
-        .map_err(|e| exec_datafusion_err!("RS_Tile: failed to get band {band_idx}: {e}"))?;
+        .with_context(|| format!("RS_Tile: failed to get band {band_idx}"))?;
     let band_name = raster.band_name(band_idx - 1).map(|s| s.to_string());
 
     let data_type = band.data_type();
@@ -617,10 +616,10 @@ fn append_tile_band(
     // the tile's own buffer, so no copy of the source is needed here).
     let nd_buffer = band
         .nd_buffer()
-        .map_err(|e| exec_datafusion_err!("RS_Tile: failed to read band {band_idx}: {e}"))?;
+        .with_context(|| format!("RS_Tile: failed to read band {band_idx}"))?;
     let source = nd_buffer
         .as_contiguous()
-        .map_err(|e| exec_datafusion_err!("RS_Tile: band {band_idx} is not contiguous: {e}"))?;
+        .with_context(|| format!("RS_Tile: band {band_idx} is not contiguous"))?;
     let in_plane_bytes = width * height * byte_size;
     if source.len() != n_planes * in_plane_bytes {
         return exec_err!(
@@ -637,9 +636,8 @@ fn append_tile_band(
     // doesn't fit the band dtype errors rather than silently saturating.
     let (pad_fill, tile_nodata): (Option<Vec<u8>>, Option<Vec<u8>>) = if window.needs_padding() {
         let fill = match params.nodata {
-            Some(value) => nodata_f64_to_bytes(value, &data_type).map_err(|e| {
-                exec_datafusion_err!("RS_Tile: invalid nodata for band {band_idx}: {e}")
-            })?,
+            Some(value) => nodata_f64_to_bytes(value, &data_type)
+                .with_context(|| format!("RS_Tile: invalid nodata for band {band_idx}"))?,
             None => match band.nodata() {
                 Some(bytes) => bytes.to_vec(),
                 None => data_type.min_value_le_bytes(),
@@ -755,13 +753,13 @@ fn assemble_tile_list(
     let tile_array: ArrayRef = Arc::new(
         rast_builder
             .finish()
-            .map_err(|e| exec_datafusion_err!("RS_Tile: failed to build tiles: {e}"))?,
+            .context("RS_Tile: failed to build tiles")?,
     );
 
     let fields = tile_struct_fields()?;
     let element_struct =
         StructArray::try_new(fields.clone(), vec![x_array, y_array, tile_array], None)
-            .map_err(|e| exec_datafusion_err!("RS_Tile: failed to build tile struct: {e}"))?;
+            .context("RS_Tile: failed to build tile struct")?;
 
     let list_field = Arc::new(Field::new("item", DataType::Struct(fields), true));
     ListArray::try_new(

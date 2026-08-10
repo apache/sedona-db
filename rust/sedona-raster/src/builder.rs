@@ -20,12 +20,13 @@ use arrow_array::{
     Array, ArrayRef, BinaryViewArray, ListArray, StructArray,
 };
 use arrow_buffer::{Buffer, OffsetBuffer, ScalarBuffer};
-use arrow_schema::{ArrowError, DataType};
+use arrow_schema::DataType;
 use std::sync::Arc;
 
 use sedona_schema::raster::{BandDataType, RasterSchema};
 
 use crate::band_builder::{BandArrayBuilder, BandWriter};
+use crate::error::RasterError;
 use crate::traits::{BandOverrides, BandRef, RasterRef};
 use crate::view_entries::ViewEntry;
 
@@ -200,9 +201,9 @@ impl RasterBuilder {
         spatial_dims: &[&str],
         spatial_shape: &[i64],
         crs: Option<&str>,
-    ) -> Result<(), ArrowError> {
+    ) -> Result<(), RasterError> {
         if spatial_dims.len() != spatial_shape.len() {
-            return Err(ArrowError::InvalidArgumentError(format!(
+            return Err(RasterError::Invalid(format!(
                 "spatial_dims.len() ({}) must equal spatial_shape.len() ({})",
                 spatial_dims.len(),
                 spatial_shape.len()
@@ -259,11 +260,11 @@ impl RasterBuilder {
         &mut self,
         source: &dyn RasterRef,
         overrides: RasterOverrides,
-    ) -> Result<(), ArrowError> {
+    ) -> Result<(), RasterError> {
         let transform: [f64; 6] = match overrides.transform {
             Some(transform) => transform,
             None => source.transform().try_into().map_err(|_| {
-                ArrowError::InvalidArgumentError("raster transform is not 6 elements".to_string())
+                RasterError::Invalid("raster transform is not 6 elements".to_string())
             })?,
         };
         let spatial_dims = source.spatial_dims();
@@ -284,7 +285,7 @@ impl RasterBuilder {
         &mut self,
         source: &dyn RasterRef,
         overrides: RasterOverrides,
-    ) -> Result<(), ArrowError> {
+    ) -> Result<(), RasterError> {
         self.start_raster_from(source, overrides)?;
         for band_idx in 0..source.num_bands() {
             source
@@ -312,7 +313,7 @@ impl RasterBuilder {
         skew_x: f64,
         skew_y: f64,
         crs: Option<&str>,
-    ) -> Result<(), ArrowError> {
+    ) -> Result<(), RasterError> {
         let transform = [origin_x, scale_x, skew_x, origin_y, skew_y, scale_y];
         self.start_raster_nd(&transform, &["x", "y"], &[width, height], crs)?;
         self.current_width = width;
@@ -337,7 +338,7 @@ impl RasterBuilder {
     /// band's four parallel view columns. In that case the `shape` column holds
     /// the *source* shape and the visible shape is derived from the view on
     /// read; the source bytes are carried over unchanged.
-    pub fn start_band(&mut self, args: StartBandArgs<'_>) -> Result<(), ArrowError> {
+    pub fn start_band(&mut self, args: StartBandArgs<'_>) -> Result<(), RasterError> {
         self.start_band_and_record(args)?;
         Ok(())
     }
@@ -353,7 +354,7 @@ impl RasterBuilder {
     fn start_band_and_record(
         &mut self,
         args: StartBandArgs<'_>,
-    ) -> Result<(Vec<String>, Vec<i64>), ArrowError> {
+    ) -> Result<(Vec<String>, Vec<i64>), RasterError> {
         let (dim_names, shape) = self.bands.start_band(args)?;
         self.current_band_count += 1;
         self.current_raster_bands
@@ -383,7 +384,7 @@ impl RasterBuilder {
     ///
     /// Identity-input shortcut: when `input` carries the identity view, the
     /// composed view equals `view` verbatim.
-    pub fn with_view(&mut self, args: WithViewArgs) -> Result<(), ArrowError> {
+    pub fn with_view(&mut self, args: WithViewArgs) -> Result<(), RasterError> {
         let WithViewArgs {
             name,
             dim_names,
@@ -421,9 +422,9 @@ impl RasterBuilder {
         &mut self,
         data_type: BandDataType,
         nodata: Option<&[u8]>,
-    ) -> Result<(), ArrowError> {
+    ) -> Result<(), RasterError> {
         if self.current_width == 0 && self.current_height == 0 {
-            return Err(ArrowError::InvalidArgumentError(
+            return Err(RasterError::Invalid(
                 "start_band_2d requires prior start_raster_2d (width and height are 0)".into(),
             ));
         }
@@ -455,7 +456,7 @@ impl RasterBuilder {
         buffer: &Buffer,
         offset: u32,
         len: u32,
-    ) -> Result<(), ArrowError> {
+    ) -> Result<(), RasterError> {
         self.bands.append_band_data_buffer(buffer, offset, len)
     }
 
@@ -472,14 +473,14 @@ impl RasterBuilder {
         &mut self,
         src: &BinaryViewArray,
         row: usize,
-    ) -> Result<(), ArrowError> {
+    ) -> Result<(), RasterError> {
         self.bands.append_band_data_from(src, row)
     }
 
     /// Finish writing the current band.
     ///
     /// Validates that exactly one data value was appended since `start_band()`.
-    pub fn finish_band(&mut self) -> Result<(), ArrowError> {
+    pub fn finish_band(&mut self) -> Result<(), RasterError> {
         self.bands.finish_band()
     }
 
@@ -488,14 +489,14 @@ impl RasterBuilder {
     /// Strictly validates every band added since `start_raster_nd`: each name in
     /// the top-level `spatial_dims` must appear in the band's own `dim_names`
     /// with a size matching the corresponding entry in `spatial_shape`.
-    pub fn finish_raster(&mut self) -> Result<(), ArrowError> {
+    pub fn finish_raster(&mut self) -> Result<(), RasterError> {
         for (band_idx, (band_dims, band_shape)) in self.current_raster_bands.iter().enumerate() {
             for (spatial_idx, spatial_dim) in self.current_spatial_dims.iter().enumerate() {
                 let pos = band_dims
                     .iter()
                     .position(|d| d == spatial_dim)
                     .ok_or_else(|| {
-                        ArrowError::InvalidArgumentError(format!(
+                        RasterError::Invalid(format!(
                             "Band {band_idx} is missing spatial dimension {spatial_dim:?} \
                          (band dim_names = {band_dims:?})"
                         ))
@@ -503,7 +504,7 @@ impl RasterBuilder {
                 let expected = self.current_spatial_shape[spatial_idx];
                 let actual = band_shape[pos];
                 if actual != expected {
-                    return Err(ArrowError::InvalidArgumentError(format!(
+                    return Err(RasterError::Invalid(format!(
                         "Band {band_idx} dimension {spatial_dim:?} has size {actual}, \
                          expected {expected} from top-level spatial_shape"
                     )));
@@ -521,7 +522,7 @@ impl RasterBuilder {
     }
 
     /// Append a null raster.
-    pub fn append_null(&mut self) -> Result<(), ArrowError> {
+    pub fn append_null(&mut self) -> Result<(), RasterError> {
         // Transform: append 6 zeros
         for _ in 0..6 {
             self.transform_values.append_value(0.0);
@@ -549,12 +550,12 @@ impl RasterBuilder {
     }
 
     /// Finish building and return the constructed StructArray.
-    pub fn finish(mut self) -> Result<StructArray, ArrowError> {
+    pub fn finish(mut self) -> Result<StructArray, RasterError> {
         // Build transform list
         let transform_values = self.transform_values.finish();
         let transform_offsets = OffsetBuffer::new(ScalarBuffer::from(self.transform_offsets));
         let DataType::List(transform_field) = RasterSchema::transform_type() else {
-            return Err(ArrowError::SchemaError(
+            return Err(RasterError::Invalid(
                 "Expected list type for transform".to_string(),
             ));
         };
@@ -569,7 +570,7 @@ impl RasterBuilder {
         let spatial_dims_values = self.spatial_dims_values.finish();
         let spatial_dims_offsets = OffsetBuffer::new(ScalarBuffer::from(self.spatial_dims_offsets));
         let DataType::List(spatial_dims_field) = RasterSchema::spatial_dims_type() else {
-            return Err(ArrowError::SchemaError(
+            return Err(RasterError::Invalid(
                 "Expected list type for spatial_dims".to_string(),
             ));
         };
@@ -585,7 +586,7 @@ impl RasterBuilder {
         let spatial_shape_offsets =
             OffsetBuffer::new(ScalarBuffer::from(self.spatial_shape_offsets));
         let DataType::List(spatial_shape_field) = RasterSchema::spatial_shape_type() else {
-            return Err(ArrowError::SchemaError(
+            return Err(RasterError::Invalid(
                 "Expected list type for spatial_shape".to_string(),
             ));
         };
@@ -603,7 +604,7 @@ impl RasterBuilder {
 
         // Build bands list
         let DataType::List(bands_field) = RasterSchema::bands_type() else {
-            return Err(ArrowError::SchemaError(
+            return Err(RasterError::Invalid(
                 "Expected list type for bands".to_string(),
             ));
         };
@@ -641,7 +642,7 @@ impl BandWriter for RasterBuilder {
     fn start_band(
         &mut self,
         args: StartBandArgs<'_>,
-    ) -> Result<(Vec<String>, Vec<i64>), ArrowError> {
+    ) -> Result<(Vec<String>, Vec<i64>), RasterError> {
         self.start_band_and_record(args)
     }
 
@@ -653,7 +654,7 @@ impl BandWriter for RasterBuilder {
         &mut self,
         src: &BinaryViewArray,
         row: usize,
-    ) -> Result<(), ArrowError> {
+    ) -> Result<(), RasterError> {
         self.bands.append_band_data_from(src, row)
     }
 }

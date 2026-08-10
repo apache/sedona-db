@@ -15,11 +15,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use arrow_schema::ArrowError;
 use sedona_schema::raster::BandDataType;
 
 use crate::band_builder::BandWriter;
 use crate::builder::StartBandArgs;
+use crate::error::RasterError;
 use crate::view_entries::{ViewEntries, ViewEntry};
 
 /// Recognized spatial dimension-name pairs, in band C-order: the slower-
@@ -96,9 +96,9 @@ impl<'a> NdBuffer<'a> {
     /// (<https://github.com/apache/sedona-db/issues/899>). Never copies or
     /// allocates — a strided layout returns an error, it is not materialized
     /// here.
-    pub fn as_contiguous(&self) -> Result<&'a [u8], ArrowError> {
+    pub fn as_contiguous(&self) -> Result<&'a [u8], RasterError> {
         if !self.is_contiguous() {
-            return Err(ArrowError::InvalidArgumentError(format!(
+            return Err(RasterError::Invalid(format!(
                 "band view is not contiguous (shape {:?}, strides {:?}); \
                  materialize it with RS_EnsureContiguous before contiguous \
                  byte access — see https://github.com/apache/sedona-db/issues/899",
@@ -111,7 +111,7 @@ impl<'a> NdBuffer<'a> {
         let buffer: &'a [u8] = self.buffer;
         match start.checked_add(len) {
             Some(end) if end <= buffer.len() => Ok(&buffer[start..end]),
-            _ => Err(ArrowError::ExternalError(Box::new(
+            _ => Err(RasterError::External(Box::new(
                 sedona_common::sedona_internal_datafusion_err!(
                     "contiguous region [{start}, {start}+{len}) is out of bounds \
                      for buffer of length {}",
@@ -140,12 +140,12 @@ impl<'a> NdBuffer<'a> {
 ///
 /// This is the shared convention consumers use to recover the source path and
 /// band from a band's `outdb_uri()`.
-pub fn split_outdb_band_fragment(uri: &str) -> Result<(String, u32), ArrowError> {
+pub fn split_outdb_band_fragment(uri: &str) -> Result<(String, u32), RasterError> {
     if let Some((prefix, fragment)) = uri.rsplit_once('#') {
         if let Some(band_str) = fragment.strip_prefix("band=") {
             return match band_str.parse::<u32>() {
                 Ok(band) if band >= 1 => Ok((prefix.to_string(), band)),
-                _ => Err(ArrowError::InvalidArgumentError(format!(
+                _ => Err(RasterError::Invalid(format!(
                     "Invalid band index in outdb URI fragment '#band={band_str}': expected a positive integer in 1..=u32::MAX"
                 ))),
             };
@@ -163,12 +163,12 @@ pub trait RasterRef {
     /// Number of bands/variables
     fn num_bands(&self) -> usize;
 
-    /// Access a band by 0-based index. Returns an `ArrowError` when the
+    /// Access a band by 0-based index. Returns a `RasterError` when the
     /// index is out of range or when the underlying schema is malformed
     /// (unknown data-type discriminant, corrupt view, etc.). The latter
     /// cases route through `sedona_common::sedona_internal_datafusion_err!`
     /// so they carry the standardised "SedonaDB internal error" framing.
-    fn band(&self, index: usize) -> Result<Box<dyn BandRef + '_>, ArrowError>;
+    fn band(&self, index: usize) -> Result<Box<dyn BandRef + '_>, RasterError>;
 
     /// Band name (e.g., Zarr variable name). None for unnamed bands.
     fn band_name(&self, index: usize) -> Option<&str>;
@@ -246,21 +246,19 @@ pub trait RasterRef {
     /// Width in pixels — size of the X spatial dimension from the top-level
     /// `spatial_shape`. Errors if `spatial_shape` is empty, which is an
     /// invariant violation rather than a legitimate "no value" state.
-    fn width(&self) -> Result<i64, ArrowError> {
+    fn width(&self) -> Result<i64, RasterError> {
         let shape = self.spatial_shape();
         shape.first().copied().ok_or_else(|| {
-            ArrowError::InvalidArgumentError(
-                "raster has no width (spatial_shape is empty)".to_string(),
-            )
+            RasterError::Invalid("raster has no width (spatial_shape is empty)".to_string())
         })
     }
 
     /// Height in pixels — size of the Y spatial dimension from the top-level
     /// `spatial_shape`. Errors if `spatial_shape` has fewer than two entries.
-    fn height(&self) -> Result<i64, ArrowError> {
+    fn height(&self) -> Result<i64, RasterError> {
         let shape = self.spatial_shape();
         shape.get(1).copied().ok_or_else(|| {
-            ArrowError::InvalidArgumentError(format!(
+            RasterError::Invalid(format!(
                 "raster has no height (spatial_shape has {} entries, need >= 2)",
                 shape.len()
             ))
@@ -269,12 +267,10 @@ pub trait RasterRef {
 
     /// Look up a band by name. Returns an error if no band has that
     /// name or if the matching band is malformed.
-    fn band_by_name(&self, name: &str) -> Result<Box<dyn BandRef + '_>, ArrowError> {
+    fn band_by_name(&self, name: &str) -> Result<Box<dyn BandRef + '_>, RasterError> {
         let i = (0..self.num_bands())
             .find(|&i| self.band_name(i) == Some(name))
-            .ok_or_else(|| {
-                ArrowError::InvalidArgumentError(format!("Band with name '{name}' not found"))
-            })?;
+            .ok_or_else(|| RasterError::Invalid(format!("Band with name '{name}' not found")))?;
         self.band(i)
     }
 }
@@ -418,7 +414,7 @@ pub trait BandRef {
     /// `offset` are computed by composing the view with the source's
     /// natural C-order byte strides. Strides may be zero (broadcast) or
     /// negative (reverse iteration).
-    fn nd_buffer(&self) -> Result<NdBuffer<'_>, ArrowError>;
+    fn nd_buffer(&self) -> Result<NdBuffer<'_>, RasterError>;
 
     /// Nodata value interpreted as f64.
     ///
@@ -433,7 +429,7 @@ pub trait BandRef {
     /// value. Use `nodata()` directly to recover the exact bytes when full
     /// integer precision matters (e.g. when nodata is the type's extreme
     /// value like `0xFF…FF`).
-    fn nodata_as_f64(&self) -> Result<Option<f64>, ArrowError> {
+    fn nodata_as_f64(&self) -> Result<Option<f64>, RasterError> {
         let bytes = match self.nodata() {
             Some(b) => b,
             None => return Ok(None),
@@ -474,7 +470,7 @@ pub trait BandRef {
         &self,
         builder: &mut dyn BandWriter,
         overrides: BandOverrides<'_>,
-    ) -> Result<(), ArrowError> {
+    ) -> Result<(), RasterError> {
         let inherited_dims = self.dim_names();
         let dim_names: Vec<&str> = match overrides.dim_names {
             Some(d) => d.to_vec(),
@@ -508,7 +504,7 @@ pub trait BandRef {
     /// [`BandWriter::append_band_data_from`]), keeping the buffer plumbing
     /// encapsulated rather than exposing a raw `Buffer` accessor. Call after the
     /// band's schema has been written (e.g. by [`Self::copy_into`]).
-    fn append_data_into(&self, builder: &mut dyn BandWriter) -> Result<(), ArrowError> {
+    fn append_data_into(&self, builder: &mut dyn BandWriter) -> Result<(), RasterError> {
         if self.is_indb() {
             let ndb = self.nd_buffer()?;
             builder.band_data_writer().append_value(ndb.buffer);
@@ -524,11 +520,11 @@ pub trait BandRef {
 /// The bytes are expected to be in little-endian order and exactly match the
 /// byte size of the data type. Internal helper for the lossless wrapper;
 /// non-i64/u64 callers reach for `nodata_bytes_to_f64_lossless` instead.
-fn nodata_bytes_to_f64(bytes: &[u8], dt: &BandDataType) -> Result<f64, ArrowError> {
+fn nodata_bytes_to_f64(bytes: &[u8], dt: &BandDataType) -> Result<f64, RasterError> {
     macro_rules! read_le {
         ($t:ty, $n:expr) => {{
             let arr: [u8; $n] = bytes.try_into().map_err(|_| {
-                ArrowError::InvalidArgumentError(format!(
+                RasterError::Invalid(format!(
                     "Invalid nodata byte length for {:?}: expected {}, got {}",
                     dt,
                     $n,
@@ -542,7 +538,7 @@ fn nodata_bytes_to_f64(bytes: &[u8], dt: &BandDataType) -> Result<f64, ArrowErro
     match dt {
         BandDataType::UInt8 => {
             if bytes.len() != 1 {
-                return Err(ArrowError::InvalidArgumentError(format!(
+                return Err(RasterError::Invalid(format!(
                     "Invalid nodata byte length for UInt8: expected 1, got {}",
                     bytes.len()
                 )));
@@ -551,7 +547,7 @@ fn nodata_bytes_to_f64(bytes: &[u8], dt: &BandDataType) -> Result<f64, ArrowErro
         }
         BandDataType::Int8 => {
             if bytes.len() != 1 {
-                return Err(ArrowError::InvalidArgumentError(format!(
+                return Err(RasterError::Invalid(format!(
                     "Invalid nodata byte length for Int8: expected 1, got {}",
                     bytes.len()
                 )));
@@ -577,18 +573,18 @@ fn nodata_bytes_to_f64(bytes: &[u8], dt: &BandDataType) -> Result<f64, ArrowErro
 /// pixel == nodata) should prefer this over the lossy variant — a rounded
 /// `0xFFFF_FFFF_FFFF_FFFE` sentinel can silently collide with a real
 /// pixel value.
-pub fn nodata_bytes_to_f64_lossless(bytes: &[u8], dt: &BandDataType) -> Result<f64, ArrowError> {
+pub fn nodata_bytes_to_f64_lossless(bytes: &[u8], dt: &BandDataType) -> Result<f64, RasterError> {
     match dt {
         BandDataType::UInt64 => {
             let arr: [u8; 8] = bytes.try_into().map_err(|_| {
-                ArrowError::InvalidArgumentError(format!(
+                RasterError::Invalid(format!(
                     "Invalid nodata byte length for UInt64: expected 8, got {}",
                     bytes.len()
                 ))
             })?;
             let v = u64::from_le_bytes(arr);
             if v > (1u64 << 53) {
-                return Err(ArrowError::InvalidArgumentError(format!(
+                return Err(RasterError::Invalid(format!(
                     "UInt64 nodata value {v} cannot be represented exactly as f64 \
                      (magnitude > 2^53); use the raw nodata bytes instead"
                 )));
@@ -597,14 +593,14 @@ pub fn nodata_bytes_to_f64_lossless(bytes: &[u8], dt: &BandDataType) -> Result<f
         }
         BandDataType::Int64 => {
             let arr: [u8; 8] = bytes.try_into().map_err(|_| {
-                ArrowError::InvalidArgumentError(format!(
+                RasterError::Invalid(format!(
                     "Invalid nodata byte length for Int64: expected 8, got {}",
                     bytes.len()
                 ))
             })?;
             let v = i64::from_le_bytes(arr);
             if v.unsigned_abs() > (1u64 << 53) {
-                return Err(ArrowError::InvalidArgumentError(format!(
+                return Err(RasterError::Invalid(format!(
                     "Int64 nodata value {v} cannot be represented exactly as f64 \
                      (magnitude > 2^53); use the raw nodata bytes instead"
                 )));
@@ -623,10 +619,10 @@ pub fn nodata_bytes_to_f64_lossless(bytes: &[u8], dt: &BandDataType) -> Result<f
 /// integer beyond 2^53 (which can't have arrived losslessly through `f64`).
 /// `Float32` is the one lossy case allowed — it rounds to the nearest `f32`, as
 /// any f64 → f32 narrowing does.
-pub fn nodata_f64_to_bytes(value: f64, dt: &BandDataType) -> Result<Vec<u8>, ArrowError> {
-    fn check_integer(value: f64, min: f64, max: f64, dt: &BandDataType) -> Result<(), ArrowError> {
+pub fn nodata_f64_to_bytes(value: f64, dt: &BandDataType) -> Result<Vec<u8>, RasterError> {
+    fn check_integer(value: f64, min: f64, max: f64, dt: &BandDataType) -> Result<(), RasterError> {
         if value.fract() != 0.0 || value < min || value > max {
-            return Err(ArrowError::InvalidArgumentError(format!(
+            return Err(RasterError::Invalid(format!(
                 "nodata value {value} is not a valid {dt:?} value"
             )));
         }
@@ -857,7 +853,7 @@ mod tests {
         fn nodata(&self) -> Option<&[u8]> {
             None
         }
-        fn nd_buffer(&self) -> Result<NdBuffer<'_>, ArrowError> {
+        fn nd_buffer(&self) -> Result<NdBuffer<'_>, RasterError> {
             unimplemented!("not used in is_spatial_2d tests")
         }
         fn is_indb(&self) -> bool {

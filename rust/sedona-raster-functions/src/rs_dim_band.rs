@@ -20,7 +20,7 @@ use std::sync::Arc;
 use arrow_schema::DataType;
 use datafusion_common::cast::as_string_view_array;
 use datafusion_common::error::Result;
-use datafusion_common::{arrow_datafusion_err, exec_err};
+use datafusion_common::exec_err;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::sedona_internal_datafusion_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
@@ -102,9 +102,7 @@ impl SedonaScalarKernel for RsDimToBand {
                     )?;
 
                     for band_idx in 0..raster.num_bands() {
-                        let band = raster
-                            .band(band_idx)
-                            .map_err(|e| arrow_datafusion_err!(e))?;
+                        let band = raster.band(band_idx)?;
 
                         let maybe_dim_idx = band.dim_index(name);
                         match maybe_dim_idx {
@@ -228,7 +226,7 @@ impl SedonaScalarKernel for RsBandToDim {
                         return exec_err!("RS_BandToDim: raster has no bands");
                     }
 
-                    let band0 = raster.band(0).map_err(|e| arrow_datafusion_err!(e))?;
+                    let band0 = raster.band(0)?;
                     let ref_dim_names = band0.dim_names();
                     let ref_shape = band0.shape().to_vec();
                     let ref_data_type = band0.data_type();
@@ -246,7 +244,7 @@ impl SedonaScalarKernel for RsBandToDim {
                     }
 
                     for i in 1..num_bands {
-                        let band = raster.band(i).map_err(|e| arrow_datafusion_err!(e))?;
+                        let band = raster.band(i)?;
                         if band.dim_names() != ref_dim_names {
                             return exec_err!(
                                 "RS_BandToDim: band {i} has different dim_names than band 0"
@@ -284,7 +282,7 @@ impl SedonaScalarKernel for RsBandToDim {
 
                     let mut concat_data = Vec::new();
                     for i in 0..num_bands {
-                        let band = raster.band(i).map_err(|e| arrow_datafusion_err!(e))?;
+                        let band = raster.band(i)?;
                         let ndb = band.nd_buffer()?;
                         let data = ndb.as_contiguous()?;
                         concat_data.extend_from_slice(data);

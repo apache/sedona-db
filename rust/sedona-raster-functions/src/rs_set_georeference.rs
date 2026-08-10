@@ -41,7 +41,7 @@ use arrow_array::Array;
 use arrow_schema::DataType;
 use datafusion_common::cast::as_string_array;
 use datafusion_common::error::Result;
-use datafusion_common::{arrow_datafusion_err, exec_datafusion_err, exec_err};
+use datafusion_common::{exec_datafusion_err, exec_err};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_raster::builder::{RasterBuilder, RasterOverrides};
@@ -112,8 +112,7 @@ impl SedonaScalarKernel for RsSetGeoReference {
 
         let mut builder = RasterBuilder::new(n);
         executor.execute_raster_void(|i, raster_opt| {
-            let null_out =
-                |b: &mut RasterBuilder| b.append_null().map_err(|e| arrow_datafusion_err!(e));
+            let null_out = |b: &mut RasterBuilder| b.append_null().map_err(Into::into);
 
             // A null georef or format is a null *input* and yields a null raster
             // (matching RS_SetCRS); check those first so a null-driven row never
@@ -143,12 +142,10 @@ impl SedonaScalarKernel for RsSetGeoReference {
                         transform: Some(transform),
                     },
                 )
-                .map_err(|e| arrow_datafusion_err!(e))
+                .map_err(Into::into)
         })?;
 
-        executor.finish(Arc::new(
-            builder.finish().map_err(|e| arrow_datafusion_err!(e))?,
-        ))
+        executor.finish(Arc::new(builder.finish()?))
     }
 }
 
