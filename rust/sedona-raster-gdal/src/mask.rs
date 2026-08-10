@@ -26,11 +26,12 @@
 //! module owns only the window addressing and rasterization, not the
 //! per-pixel consumption.
 
-use datafusion_common::{exec_datafusion_err, Result};
+use datafusion_common::Result;
 use sedona_gdal::gdal::Gdal;
 use sedona_gdal::mem::MemDatasetBuilder;
 use sedona_gdal::raster::types::GdalDataType;
 use sedona_gdal::vector::geometry::Geometry;
+use sedona_raster::error::RasterResultExt;
 use sedona_raster::geo_transform::{GeoTransform, GeoTransformEx};
 
 /// A rectangular pixel window (offset + size) into a raster grid.
@@ -62,7 +63,7 @@ pub fn envelope_window(
     let env = geometry.envelope();
     let inverse = transform
         .invert()
-        .map_err(|e| exec_datafusion_err!("raster mask: geotransform is not invertible: {e}"))?;
+        .context("raster mask: geotransform is not invertible")?;
 
     let corners = [
         (env.MinX, env.MinY),
@@ -128,7 +129,7 @@ pub fn rasterize_geometry_mask(
 ) -> Result<()> {
     let mask_dataset =
         MemDatasetBuilder::create(gdal, window.width, window.height, 1, GdalDataType::UInt8)
-            .map_err(|e| exec_datafusion_err!("raster mask: failed to create mask dataset: {e}"))?;
+            .context("raster mask: failed to create mask dataset")?;
     let (window_ulx, window_uly) = transform.apply(window.col_off as f64, window.row_off as f64);
     let mask_transform = [
         window_ulx,
@@ -140,14 +141,14 @@ pub fn rasterize_geometry_mask(
     ];
     mask_dataset
         .set_geo_transform(&mask_transform)
-        .map_err(|e| exec_datafusion_err!("raster mask: failed to set mask geotransform: {e}"))?;
+        .context("raster mask: failed to set mask geotransform")?;
 
     gdal.rasterize_affine(&mask_dataset, &[1], &[geometry], &[1.0], all_touched)
-        .map_err(|e| exec_datafusion_err!("raster mask: failed to rasterize geometry: {e}"))?;
+        .context("raster mask: failed to rasterize geometry")?;
 
     let mask_band = mask_dataset
         .rasterband(1)
-        .map_err(|e| exec_datafusion_err!("raster mask: failed to read mask band: {e}"))?;
+        .context("raster mask: failed to read mask band")?;
     let mask_buffer = mask_band
         .read_as::<u8>(
             (0, 0),
@@ -155,7 +156,7 @@ pub fn rasterize_geometry_mask(
             (window.width, window.height),
             None,
         )
-        .map_err(|e| exec_datafusion_err!("raster mask: failed to read mask: {e}"))?;
+        .context("raster mask: failed to read mask")?;
     out.clear();
     out.extend_from_slice(mask_buffer.data());
     Ok(())

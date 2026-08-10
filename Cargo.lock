@@ -6220,6 +6220,7 @@ dependencies = [
  "sedona-common",
  "sedona-schema",
  "sedona-testing",
+ "thiserror 2.0.17",
  "tokio",
 ]
 
