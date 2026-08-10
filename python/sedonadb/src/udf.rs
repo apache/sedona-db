@@ -41,7 +41,10 @@ use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use crate::{
     error::PySedonaError,
     expr::PyExpr,
-    import_from::{check_pycapsule, import_arg_matcher, import_arrow_array, import_sedona_type},
+    import_from::{
+        check_pycapsule, import_arg_matcher, import_arrow_array, import_sedona_ffi_scalar_kernel,
+        import_sedona_type,
+    },
     schema::PySedonaType,
 };
 
@@ -204,6 +207,58 @@ pub fn sedona_scalar_udf<'py>(
 
     Ok(PySedonaScalarUdf {
         inner: sedona_scalar_udf,
+    })
+}
+
+/// Build a [`PySedonaScalarUdf`] from one or more natively-compiled kernel
+/// capsules (see [`crate::import_from::import_sedona_ffi_scalar_kernel`]),
+/// instead of `sedona_scalar_udf`'s single Python-callable kernel. Real
+/// compiled Rust runs per invocation -- no GIL re-entry, no Python callback
+/// per batch.
+///
+/// `kernels` are typically the overloads of one logical function (e.g. a
+/// plugin's own `tn_add(Tensor, Tensor)` and any other signatures it
+/// supports) -- each capsule's own declared name (read from the kernel
+/// itself, not supplied here) must agree, or this errors rather than
+/// silently registering under a name that doesn't match every kernel.
+/// `name` defaults to that shared name if not given.
+///
+/// Unlike `register()`'s `__sedonadb_native_scalar_udfs__` protocol (which
+/// always registers Immutable), `volatility` is caller-supplied here -- a
+/// plugin kernel that needs Volatile or Stable (e.g. one reading external
+/// state per call, like `RS_FromPath`) should build its `PySedonaScalarUdf`
+/// with this function directly and return it via the existing
+/// `__sedonadb_internal_udf__` protocol instead.
+#[pyfunction]
+#[pyo3(signature = (kernels, volatility="immutable", name=None))]
+pub fn sedona_native_scalar_udf(
+    kernels: Vec<Bound<PyAny>>,
+    volatility: &str,
+    name: Option<&str>,
+) -> Result<PySedonaScalarUdf, PySedonaError> {
+    let volatility = parse_volatility(volatility)?;
+
+    let imported = kernels
+        .iter()
+        .map(import_sedona_ffi_scalar_kernel)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut names = imported.iter().map(|(n, _)| n.as_str());
+    let declared_name = names.next().ok_or_else(|| {
+        PySedonaError::SedonaPython("sedona_native_scalar_udf: kernels must be non-empty".into())
+    })?;
+    if let Some(mismatched) = names.find(|n| *n != declared_name) {
+        return Err(PySedonaError::SedonaPython(format!(
+            "sedona_native_scalar_udf: kernels have mismatched names \
+             ('{declared_name}' vs '{mismatched}') -- pass same-named \
+             overloads only, or build separate UDFs"
+        )));
+    }
+    let udf_name = name.unwrap_or(declared_name).to_string();
+
+    let kernel_refs = imported.into_iter().map(|(_, k)| k).collect();
+    Ok(PySedonaScalarUdf {
+        inner: SedonaScalarUDF::new(&udf_name, kernel_refs, volatility),
     })
 }
 
@@ -684,5 +739,168 @@ impl Accumulator for PySedonaAccumulator {
         // for v1 (a conservative under-estimate). A future `mem_used()` hook on
         // the Python class could report the true size.
         std::mem::size_of::<Self>()
+    }
+}
+
+#[cfg(test)]
+mod native_scalar_udf_tests {
+    use super::*;
+    use arrow_schema::DataType;
+    use sedona::context::SedonaContext;
+    use sedona_expr::scalar_udf::SimpleSedonaScalarKernel;
+    use sedona_extension::{extension::SedonaCScalarKernel, scalar_kernel::ExportedScalarKernel};
+
+    fn identity_kernel_capsule<'py>(py: Python<'py>, function_name: &str) -> Bound<'py, PyCapsule> {
+        identity_kernel_capsule_for_type(py, function_name, SedonaType::Arrow(DataType::Int64))
+    }
+
+    /// Like `identity_kernel_capsule`, but matching only the exact given
+    /// type (not the broad `is_numeric()` category) -- lets a grouping test
+    /// prove two kernels are genuinely both present, rather than one kernel
+    /// alone happening to already cover both cases.
+    fn identity_kernel_capsule_for_type<'py>(
+        py: Python<'py>,
+        function_name: &str,
+        exact_type: SedonaType,
+    ) -> Bound<'py, PyCapsule> {
+        let kernel = SimpleSedonaScalarKernel::new_ref(
+            ArgMatcher::new(vec![ArgMatcher::is_exact(exact_type.clone())], exact_type),
+            Arc::new(|_, args| Ok(args[0].clone())),
+        );
+        let exported = ExportedScalarKernel::from(kernel).with_function_name(function_name);
+        let ffi_kernel = SedonaCScalarKernel::from(exported);
+        PyCapsule::new_with_value(py, ffi_kernel, c"sedonadb_scalar_kernel").unwrap()
+    }
+
+    #[test]
+    fn sedona_native_scalar_udf_builds_a_working_udf() {
+        Python::initialize();
+        Python::attach(|py| {
+            let capsule = identity_kernel_capsule(py, "probe_e2e");
+            let udf =
+                sedona_native_scalar_udf(vec![capsule.into_any()], "immutable", None).unwrap();
+            assert_eq!(udf.name(), "probe_e2e");
+        });
+    }
+
+    /// Two distinct kernel capsules sharing one declared name, but matching
+    /// disjoint exact types, must become one SedonaScalarUDF with *both*
+    /// kernels dispatchable as overloads -- not two separate UDFs, and not
+    /// silently dropping one. `SedonaScalarUDF` has no public kernel-count
+    /// accessor, so this is proven functionally: register the grouped UDF
+    /// into a real context and confirm SQL dispatches correctly to each
+    /// kernel by its argument type.
+    #[tokio::test]
+    async fn sedona_native_scalar_udf_groups_same_named_kernels_into_one_overloaded_udf() {
+        Python::initialize();
+        let udf = Python::attach(|py| {
+            let int_kernel = identity_kernel_capsule_for_type(
+                py,
+                "probe_grouped",
+                SedonaType::Arrow(DataType::Int64),
+            );
+            let float_kernel = identity_kernel_capsule_for_type(
+                py,
+                "probe_grouped",
+                SedonaType::Arrow(DataType::Float64),
+            );
+            sedona_native_scalar_udf(
+                vec![int_kernel.into_any(), float_kernel.into_any()],
+                "immutable",
+                None,
+            )
+            .unwrap()
+        });
+        assert_eq!(udf.name(), "probe_grouped");
+
+        let ctx = SedonaContext::new();
+        ctx.register_sedona_scalar_udf(udf.inner).unwrap();
+
+        let int_batches = ctx
+            .sql("SELECT probe_grouped(42) AS x")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        let int_col = int_batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow_array::Int64Array>()
+            .unwrap();
+        assert_eq!(int_col.value(0), 42);
+
+        let float_batches = ctx
+            .sql("SELECT probe_grouped(4.5) AS x")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        let float_col = float_batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow_array::Float64Array>()
+            .unwrap();
+        assert_eq!(float_col.value(0), 4.5);
+    }
+
+    #[test]
+    fn sedona_native_scalar_udf_rejects_mismatched_names() {
+        Python::initialize();
+        Python::attach(|py| {
+            let a = identity_kernel_capsule(py, "probe_a");
+            let b = identity_kernel_capsule(py, "probe_b");
+            let result =
+                sedona_native_scalar_udf(vec![a.into_any(), b.into_any()], "immutable", None);
+            let err = match result {
+                Err(e) => e,
+                Ok(_) => panic!("expected an error"),
+            };
+            assert!(err.to_string().contains("mismatched names"));
+        });
+    }
+
+    #[test]
+    fn sedona_native_scalar_udf_rejects_empty_kernel_list() {
+        // No capsule involved at all -- doesn't need a live interpreter.
+        assert!(sedona_native_scalar_udf(vec![], "immutable", None).is_err());
+    }
+
+    #[test]
+    fn sedona_native_scalar_udf_name_override_wins_over_declared_name() {
+        Python::initialize();
+        Python::attach(|py| {
+            let capsule = identity_kernel_capsule(py, "probe_e2e");
+            let udf =
+                sedona_native_scalar_udf(vec![capsule.into_any()], "immutable", Some("renamed"))
+                    .unwrap();
+            assert_eq!(udf.name(), "renamed");
+        });
+    }
+
+    /// The real end-to-end proof: an imported native kernel, registered into
+    /// a live SedonaContext, actually executes via a real SQL query -- not
+    /// just constructs without error.
+    #[tokio::test]
+    async fn native_scalar_udf_executes_via_real_sql() {
+        Python::initialize();
+        let udf = Python::attach(|py| {
+            let capsule = identity_kernel_capsule(py, "probe_e2e");
+            sedona_native_scalar_udf(vec![capsule.into_any()], "immutable", None).unwrap()
+        });
+
+        let ctx = SedonaContext::new();
+        ctx.register_sedona_scalar_udf(udf.inner).unwrap();
+
+        let df = ctx.sql("SELECT probe_e2e(42) AS x").await.unwrap();
+        let batches = df.collect().await.unwrap();
+        assert_eq!(batches.len(), 1);
+        let column = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow_array::Int64Array>()
+            .unwrap();
+        assert_eq!(column.value(0), 42);
     }
 }

@@ -34,7 +34,11 @@ use pyo3::{
     Bound, PyAny, Python,
 };
 use sedona::record_batch_reader_provider::RecordBatchReaderProvider;
-use sedona_extension::{extension::SedonaCTableProvider, table_provider::ImportedTableProvider};
+use sedona_expr::scalar_udf::ScalarKernelRef;
+use sedona_extension::{
+    extension::SedonaCScalarKernel, extension::SedonaCTableProvider,
+    scalar_kernel::ImportedScalarKernel, table_provider::ImportedTableProvider,
+};
 use sedona_schema::{
     datatypes::SedonaType,
     matchers::{ArgMatcher, TypeMatcher},
@@ -93,6 +97,47 @@ pub fn import_sedona_ffi_table_provider(
         .with_check_interval(Duration::from_millis(2_000));
 
     Ok(Arc::new(provider))
+}
+
+/// Import a natively-compiled scalar kernel from a `PyCapsule` wrapping a
+/// [`SedonaCScalarKernel`] -- the same Arrow-C-Data-Interface-style ABI
+/// (opaque pointer + function-pointer vtable + explicit release) already
+/// used by `sedona-extension` to statically link in kernels at build time
+/// (see `c/sedona-s2geography`); this is the runtime counterpart, letting an
+/// out-of-tree plugin hand in a real `SedonaScalarKernel` -- no Python
+/// callback per invocation -- via `__sedonadb_native_scalar_udfs__`.
+///
+/// Returns the kernel's own declared name (read from the capsule via
+/// [`ImportedScalarKernel::function_name`], not supplied by the caller) so
+/// multiple kernels sharing one name can be grouped into a single overloaded
+/// [`sedona_expr::scalar_udf::SedonaScalarUDF`] by the caller, the same way
+/// [`sedona::context::SedonaContext::register_scalar_kernels`] already
+/// groups statically-linked kernels.
+pub fn import_sedona_ffi_scalar_kernel(
+    obj: &Bound<PyAny>,
+) -> Result<(String, ScalarKernelRef), PySedonaError> {
+    let contents = check_pycapsule(obj, "sedonadb_scalar_kernel")? as *mut SedonaCScalarKernel;
+
+    // Move the SedonaCScalarKernel out of the capsule into our
+    // ImportedScalarKernel. Clear the structure after reading to prevent
+    // double-free when the capsule is dropped -- same pattern as
+    // import_sedona_ffi_table_provider above.
+    let ffi_kernel = unsafe {
+        let kernel = std::ptr::read(contents);
+        std::ptr::write_bytes(contents, 0, 1);
+        kernel
+    };
+    let imported = ImportedScalarKernel::try_from(ffi_kernel)?;
+    let name = imported
+        .function_name()
+        .ok_or_else(|| {
+            PySedonaError::SedonaPython(
+                "native scalar kernel capsule has no function name".to_string(),
+            )
+        })?
+        .to_string();
+
+    Ok((name, Arc::new(imported)))
 }
 
 pub fn import_arrow_array_stream<'py>(
@@ -210,4 +255,98 @@ pub fn check_pycapsule(obj: &Bound<PyAny>, name: &str) -> Result<*mut c_void, Py
         .map_err(|e| PySedonaError::SedonaPython(e.to_string()))?;
 
     Ok(pointer.as_ptr())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow_schema::DataType;
+    use sedona_expr::scalar_udf::SimpleSedonaScalarKernel;
+    use sedona_extension::{extension::SedonaCScalarKernel, scalar_kernel::ExportedScalarKernel};
+
+    /// A trivial real kernel (matches any single numeric arg, returns it
+    /// unchanged), exported to a `SedonaCScalarKernel` and wrapped in a real
+    /// `PyCapsule` -- the exact same export path `sedona-extension`'s own
+    /// `ffi_roundtrip`/`named_kernel` tests already prove correct end to
+    /// end. `#[dev-dependencies] pyo3 = { features = ["auto-initialize"] }`
+    /// is what makes `Python::attach` usable here at all: `extension-module`
+    /// (needed for the real wheel build) is only ever added by maturin's own
+    /// build flags, never by this crate's Cargo.toml, so it's never present
+    /// during `cargo test`.
+    fn capsule_with_named_kernel<'py>(
+        py: Python<'py>,
+        function_name: &str,
+    ) -> Bound<'py, PyCapsule> {
+        let kernel = SimpleSedonaScalarKernel::new_ref(
+            ArgMatcher::new(
+                vec![ArgMatcher::is_numeric()],
+                SedonaType::Arrow(DataType::Int64),
+            ),
+            Arc::new(|_, args| Ok(args[0].clone())),
+        );
+        let exported = ExportedScalarKernel::from(kernel).with_function_name(function_name);
+        let ffi_kernel = SedonaCScalarKernel::from(exported);
+        PyCapsule::new_with_value(py, ffi_kernel, c"sedonadb_scalar_kernel").unwrap()
+    }
+
+    #[test]
+    fn import_sedona_ffi_scalar_kernel_reads_the_declared_name_and_works() {
+        Python::initialize();
+        Python::attach(|py| {
+            let capsule = capsule_with_named_kernel(py, "test_kernel");
+            let (name, kernel) = import_sedona_ffi_scalar_kernel(capsule.as_any()).unwrap();
+            assert_eq!(name, "test_kernel");
+
+            // Not just a name round-trip -- the imported kernel is a real,
+            // callable SedonaScalarKernel.
+            let sedona_type = SedonaType::Arrow(DataType::Int64);
+            let resolved = kernel
+                .return_type_from_args_and_scalars(std::slice::from_ref(&sedona_type), &[None])
+                .unwrap();
+            assert_eq!(resolved, Some(sedona_type));
+        });
+    }
+
+    #[test]
+    fn import_sedona_ffi_scalar_kernel_rejects_wrong_capsule_name() {
+        Python::initialize();
+        Python::attach(|py| {
+            let kernel = SimpleSedonaScalarKernel::new_ref(
+                ArgMatcher::new(
+                    vec![ArgMatcher::is_numeric()],
+                    SedonaType::Arrow(DataType::Int64),
+                ),
+                Arc::new(|_, args| Ok(args[0].clone())),
+            );
+            let exported = ExportedScalarKernel::from(kernel);
+            let ffi_kernel = SedonaCScalarKernel::from(exported);
+            // Wrong capsule name -- e.g. a __sedonadb_table_provider__
+            // capsule accidentally handed to the scalar-kernel importer.
+            let capsule = PyCapsule::new_with_value(py, ffi_kernel, c"some_other_name").unwrap();
+            assert!(import_sedona_ffi_scalar_kernel(capsule.as_any()).is_err());
+        });
+    }
+
+    #[test]
+    fn import_sedona_ffi_scalar_kernel_rejects_double_import_safely() {
+        // The capsule's contents are zeroed on first read to prevent a
+        // double-free when the PyCapsule's own destructor later runs.
+        // Reading it again must fail cleanly, not read garbage or crash.
+        Python::initialize();
+        Python::attach(|py| {
+            let capsule = capsule_with_named_kernel(py, "test_kernel");
+            import_sedona_ffi_scalar_kernel(capsule.as_any()).unwrap();
+            let second = import_sedona_ffi_scalar_kernel(capsule.as_any());
+            assert!(second.is_err());
+        });
+    }
+
+    #[test]
+    fn import_sedona_ffi_scalar_kernel_rejects_non_capsule_input() {
+        Python::initialize();
+        Python::attach(|py| {
+            let not_a_capsule = py.eval(c"42", None, None).unwrap();
+            assert!(import_sedona_ffi_scalar_kernel(&not_a_capsule).is_err());
+        });
+    }
 }

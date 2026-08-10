@@ -20,17 +20,19 @@ use std::{
 };
 
 use arrow_schema::DataType;
+use datafusion_expr::Volatility;
 use pyo3::prelude::*;
 use sedona::context::SedonaContext;
 use sedona::context_builder::SedonaContextBuilder;
 use sedona_datasource::format::ExternalFormatFactory;
+use sedona_expr::scalar_udf::SedonaScalarUDF;
 use sedona_extension::runtime::RuntimeHandle;
 
 use crate::{
     dataframe::InternalDataFrame,
     datasource::PyExternalFormat,
     error::PySedonaError,
-    import_from::import_table_provider_from_any,
+    import_from::{import_sedona_ffi_scalar_kernel, import_table_provider_from_any},
     raster_loader::PyRasterLoaderWrapper,
     runtime::wait_for_future,
     udf::{PyAggregateUdf, PyScalarUdf, PySedonaAggregateUdf, PySedonaScalarUdf},
@@ -353,6 +355,47 @@ impl InternalContext {
                 .call_method0("__sedonadb_raster_loader__")?
                 .extract::<PyRasterLoaderWrapper>()?;
             self.inner.register_raster_loader(wrapper.inner);
+            return Ok(());
+        } else if component.hasattr("__sedonadb_native_scalar_udfs__")? {
+            // One or more natively-compiled kernel capsules (see
+            // import_sedona_ffi_scalar_kernel), potentially spanning several
+            // distinct function names -- grouped here by each kernel's own
+            // declared name, so two capsules sharing one name become one
+            // overloaded SedonaScalarUDF (proven directly: registering an
+            // Int64 kernel and a Float64 kernel under the same name and
+            // dispatching both via SQL). This grouping is scoped to this one
+            // call's own capsule list, not accumulated across calls the way
+            // SedonaContext::register_scalar_kernels accumulates
+            // statically-linked (e.g. s2geography) kernels -- registration
+            // goes through register_sedona_scalar_udf, which replaces any
+            // existing UDF of that name outright (a plain HashMap insert,
+            // same as DataFusion's own register_udf) rather than merging
+            // into it. Re-registering under a name already in use -- a
+            // plugin's own name, another plugin's, or a built-in's -- silently
+            // drops whatever was there before; this mirrors the existing,
+            // already-trusted __sedonadb_internal_udf__ path's behavior, not
+            // a new risk this protocol introduces.
+            //
+            // Volatility isn't plugin-configurable through this protocol,
+            // hardcoded to Immutable -- not because every native kernel is
+            // Immutable (RS_FromPath, for one, is Volatile), but because a
+            // bare capsule has nowhere to carry a volatility value. A plugin
+            // needing Volatile/Stable can call sedona_native_scalar_udf(...,
+            // volatility=...) directly and return the resulting
+            // PySedonaScalarUdf via the existing __sedonadb_internal_udf__
+            // protocol instead of this one.
+            let capsules = component
+                .call_method0("__sedonadb_native_scalar_udfs__")?
+                .extract::<Vec<Bound<PyAny>>>()?;
+            let mut kernels_by_name: HashMap<String, Vec<_>> = HashMap::new();
+            for capsule in &capsules {
+                let (name, kernel) = import_sedona_ffi_scalar_kernel(capsule)?;
+                kernels_by_name.entry(name).or_default().push(kernel);
+            }
+            for (name, kernels) in kernels_by_name {
+                let udf = SedonaScalarUDF::new(&name, kernels, Volatility::Immutable);
+                self.inner.register_sedona_scalar_udf(udf)?;
+            }
             return Ok(());
         } else if let Ok(py_raster_loader) = component.extract::<PyRasterLoaderWrapper>() {
             self.inner.register_raster_loader(py_raster_loader.inner);
