@@ -77,6 +77,31 @@ def test_st_area(eng, geog, expected):
     )
 
 
+@pytest.mark.parametrize("eng", [SedonaDB])
+def test_st_area_self_intersecting_ring(eng):
+    # A counterclockwise ring with a "spike" whose return path crosses its
+    # outgoing path. The crossing makes the ring's turning angle useless for
+    # determining its winding direction, which previously inverted the
+    # polygon's interior to cover nearly the entire sphere (negative area,
+    # and predicates matching points anywhere on Earth). See #1085.
+    ring = "POLYGON ((0 0, 10 0, 10 10, 6 10, 7 14, 6.2 10.5, 5 10, 0 10, 0 0))"
+
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_Area(ST_GeogFromWKT('{ring}'))",
+        1231926073889.81,
+        numeric_epsilon=1e-9,
+    )
+    eng.assert_query_result(
+        f"SELECT ST_Within(ST_GeogFromWKT('POINT (5 5)'), ST_GeogFromWKT('{ring}'))",
+        True,
+    )
+    eng.assert_query_result(
+        f"SELECT ST_Within(ST_GeogFromWKT('POINT (-150 0)'), ST_GeogFromWKT('{ring}'))",
+        False,
+    )
+
+
 @pytest.mark.parametrize("eng", [SedonaDB, BigQuery, PostGIS])
 @pytest.mark.parametrize(
     ("geog", "expected"),
