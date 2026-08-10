@@ -25,6 +25,19 @@ _REPR_HTML_ROWS = 10
 # heuristic" from an explicit `None` meaning "this frame has no active geometry".
 _DERIVE = object()
 
+# GeoPandas sjoin predicate -> the corresponding method on the `.geo` accessor.
+_SJOIN_PREDICATES = {
+    "intersects": "intersects",
+    "within": "within",
+    "contains": "contains",
+    "touches": "touches",
+    "crosses": "crosses",
+    "overlaps": "overlaps",
+    "covers": "covers",
+    "covered_by": "covered_by",
+    "dwithin": "d_within",
+}
+
 
 def _geometry_column_names(df):
     names = df.schema.names
@@ -115,6 +128,52 @@ class GeoDataFrame:
             f"boolean mask, not {type(key).__name__}"
         )
 
+    def __setitem__(self, key, value):
+        """Add or replace a column, as in `gdf["buffered"] = gdf.geometry.buffer(1)`.
+
+        The underlying frame is immutable, so this rebinds this object to a new
+        frame rather than mutating data in place. A consequence worth knowing:
+        `Series` objects taken from this frame *before* the assignment still
+        refer to the previous frame, so combining one with a column read
+        afterwards raises rather than silently mixing two frames.
+
+        Args:
+            key: Column name to add or replace.
+            value: A `Series`/`GeoSeries` from this same frame, a SedonaDB
+                expression, or a scalar to broadcast to every row.
+        """
+        if not isinstance(key, str):
+            raise TypeError(f"Column name must be a string, not {type(key).__name__}")
+
+        from sedonadb.expr import Expr, Literal, lit
+
+        if isinstance(value, Series):
+            if value._df is not self._df:
+                raise ValueError(
+                    "Cannot assign a Series that comes from a different "
+                    "DataFrame: there is no row alignment, so the result would "
+                    "be silently wrong. Note that assigning to this frame "
+                    "rebinds it, so a Series read before an earlier assignment "
+                    "is already stale; re-read it as gdf[...] and try again."
+                )
+            expr = value._expr
+        elif isinstance(value, (Expr, Literal)):
+            expr = value
+        elif hasattr(value, "__array__"):
+            raise TypeError(
+                "Assigning a pandas/numpy array-like isn't supported (there is "
+                "no row alignment). Build the column from this frame's own "
+                "columns, or load the data as a frame and join it."
+            )
+        else:
+            expr = lit(value)
+
+        self._df = self._df.mutate(**{key: expr})
+        # Assigning geometry to a frame that had none makes it the active column,
+        # matching what `from_geopandas` would have inferred for such a frame.
+        if self._geometry_name is None and key in _geometry_column_names(self._df):
+            self._geometry_name = key
+
     def head(self, n=5):
         """Return a `GeoDataFrame` of at most `n` rows.
 
@@ -131,6 +190,150 @@ class GeoDataFrame:
 
         transformed = self._df[self._geometry_name].geo.transform(lit(crs))
         new_df = self._df.mutate(**{self._geometry_name: transformed})
+        return GeoDataFrame(new_df, self._geometry_name)
+
+    def sjoin(
+        self,
+        other,
+        how="inner",
+        predicate="intersects",
+        lsuffix="left",
+        rsuffix="right",
+        distance=None,
+    ):
+        """Join two frames on a spatial predicate.
+
+        The predicate reads left-relative-to-right, as in GeoPandas: with
+        `predicate="within"`, rows are matched where the left geometry is within
+        the right geometry.
+
+        Args:
+            other: The right-hand `GeoDataFrame`.
+            how: `"inner"`, `"left"`, or `"right"`.
+            predicate: One of `intersects`, `within`, `contains`, `touches`,
+                `crosses`, `overlaps`, `covers`, `covered_by`, `dwithin`.
+            lsuffix: Suffix for left columns whose names also occur on the right.
+            rsuffix: Suffix for the corresponding right columns.
+            distance: Required by (and only used with) `predicate="dwithin"`.
+
+        Returns:
+            A `GeoDataFrame` carrying one geometry column: the left frame's for
+            `how="inner"`/`"left"`, the right frame's for `how="right"`, matching
+            which side GeoPandas keeps.
+
+        Unlike GeoPandas, no `index_left`/`index_right` column is produced —
+        there is no row index to report.
+        """
+        if not isinstance(other, GeoDataFrame):
+            raise TypeError(
+                f"sjoin() expects a GeoDataFrame, got {type(other).__name__}"
+            )
+        if self._geometry_name is None or other._geometry_name is None:
+            raise ValueError(
+                "sjoin() requires an active geometry column on both frames"
+            )
+
+        if how not in ("inner", "left", "right"):
+            raise ValueError(
+                f"sjoin() `how` must be 'inner', 'left', or 'right', got {how!r}"
+            )
+
+        if predicate not in _SJOIN_PREDICATES:
+            raise ValueError(
+                f"sjoin() `predicate` must be one of "
+                f"{sorted(_SJOIN_PREDICATES)}, got {predicate!r}"
+            )
+        if (predicate == "dwithin") != (distance is not None):
+            raise ValueError(
+                "sjoin() `distance` is required for predicate='dwithin' and "
+                "accepted only for that predicate"
+            )
+
+        # Alias both sides so the predicate and the output projection can name
+        # columns unambiguously even when both frames use the same names.
+        left = self._df.alias("sjoin_left")
+        right = other._df.alias("sjoin_right")
+
+        left_geom = left[self._geometry_name]
+        right_geom = right[other._geometry_name]
+        method = getattr(left_geom.geo, _SJOIN_PREDICATES[predicate])
+        on = (
+            method(right_geom, distance)
+            if predicate == "dwithin"
+            else method(right_geom)
+        )
+
+        joined = left.join(right, on=on, how=how)
+
+        # Keep exactly one geometry column — whichever side GeoPandas keeps — and
+        # suffix the non-geometry names that occur on both sides.
+        keep_left_geom = how != "right"
+        left_names = list(self.columns)
+        right_names = list(other.columns)
+        overlap = (set(left_names) - {self._geometry_name}) & (
+            set(right_names) - {other._geometry_name}
+        )
+
+        projection = []
+        for name in left_names:
+            if name == self._geometry_name and not keep_left_geom:
+                continue
+            out = f"{name}_{lsuffix}" if name in overlap else name
+            projection.append(left[name].alias(out))
+        for name in right_names:
+            if name == other._geometry_name and keep_left_geom:
+                continue
+            out = f"{name}_{rsuffix}" if name in overlap else name
+            projection.append(right[name].alias(out))
+
+        geometry = self._geometry_name if keep_left_geom else other._geometry_name
+        return GeoDataFrame(joined.select(*projection), geometry)
+
+    def dissolve(self, by=None, aggfunc="first"):
+        """Group rows and union each group's geometry.
+
+        Args:
+            by: Column name, or list of names, to group on. With `None`, every
+                row is dissolved into one.
+            aggfunc: How to aggregate the remaining non-geometry columns.
+                Only `"first"` is currently supported.
+
+        Returns:
+            A `GeoDataFrame` with one row per group. Unlike GeoPandas, the group
+            keys stay ordinary columns rather than becoming the index.
+        """
+        if self._geometry_name is None:
+            raise ValueError("dissolve() requires an active geometry column")
+        if aggfunc != "first":
+            raise NotImplementedError(
+                f"dissolve() currently supports aggfunc='first' only, got "
+                f"{aggfunc!r}. Aggregate explicitly with group_by/agg on the "
+                f"underlying SedonaDB DataFrame if you need something else."
+            )
+
+        if by is None:
+            keys = []
+        elif isinstance(by, str):
+            keys = [by]
+        else:
+            keys = list(by)
+
+        unknown = [k for k in keys if k not in self.columns]
+        if unknown:
+            raise KeyError(f"Column(s) {unknown} not found. Columns: {self.columns}")
+
+        aggregates = [
+            self._df[self._geometry_name].geo.union_agg().alias(self._geometry_name)
+        ]
+        for name in self.columns:
+            if name == self._geometry_name or name in keys:
+                continue
+            aggregates.append(self._df[name].funcs.first_value().alias(name))
+
+        if keys:
+            new_df = self._df.group_by(*keys).agg(*aggregates)
+        else:
+            new_df = self._df.agg(*aggregates)
         return GeoDataFrame(new_df, self._geometry_name)
 
     def to_geopandas(self):

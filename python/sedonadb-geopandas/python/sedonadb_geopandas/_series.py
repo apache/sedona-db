@@ -94,7 +94,63 @@ class Series:
     def __invert__(self):
         return Series(self._df, ~self._expr, self._name)
 
+    # -- arithmetic --------------------------------------------------------
+    # The reflected forms build `other <op> self._expr`; for a scalar left
+    # operand Python falls through to the underlying expression's reflected
+    # operator, so no special-casing is needed here.
+    def __add__(self, other):
+        return Series(self._df, self._expr + _operand(self._df, other), self._name)
+
+    def __radd__(self, other):
+        return Series(self._df, _operand(self._df, other) + self._expr, self._name)
+
+    def __sub__(self, other):
+        return Series(self._df, self._expr - _operand(self._df, other), self._name)
+
+    def __rsub__(self, other):
+        return Series(self._df, _operand(self._df, other) - self._expr, self._name)
+
+    def __mul__(self, other):
+        return Series(self._df, self._expr * _operand(self._df, other), self._name)
+
+    def __rmul__(self, other):
+        return Series(self._df, _operand(self._df, other) * self._expr, self._name)
+
+    # `/` is true division here, as in pandas. The engine follows SQL, where
+    # dividing two integers truncates (`1 / 2` is 0), so the numerator is cast to
+    # double first — otherwise integer columns would silently return floored
+    # results. `//` is deliberately not implemented rather than mapped onto SQL
+    # division, which truncates toward zero where Python floors.
+    def __truediv__(self, other):
+        return Series(
+            self._df, self._as_double() / _operand(self._df, other), self._name
+        )
+
+    def __rtruediv__(self, other):
+        return Series(
+            self._df, _operand(self._df, other) / self._as_double(), self._name
+        )
+
+    def __neg__(self):
+        return Series(self._df, -self._expr, self._name)
+
+    def _as_double(self):
+        """This column cast to double, so integer division does not truncate."""
+        import pyarrow as pa
+
+        return self._expr.cast(pa.float64())
+
     __hash__ = None
+
+    @property
+    def expr(self):
+        """The underlying SedonaDB expression.
+
+        An escape hatch to the full expression API for anything this wrapper does
+        not cover — for example `series.expr.funcs.st_point(other.expr)`. The
+        result can be assigned back onto a frame with `gdf["name"] = ...`.
+        """
+        return self._expr
 
     # -- materialization ---------------------------------------------------
     def to_pandas(self):

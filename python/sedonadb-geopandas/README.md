@@ -31,9 +31,14 @@ import sedonadb_geopandas as sgpd
 
 gdf = sgpd.from_geopandas(geopandas.read_file("cities.geojson"))
 big = gdf[gdf["pop"] > 1_000_000]          # boolean-mask filter
+gdf["density"] = gdf["pop"] / gdf["area"]  # assign a computed column
 buffered = gdf.geometry.buffer(0.5)        # element-wise .geo operation
 web = gdf.to_crs("EPSG:3857")              # reproject (CRS tracked through)
-result = web.to_geopandas()                # back to a real GeoDataFrame
+
+joined = gdf.sjoin(regions, predicate="within")   # spatial join
+zones = joined.dissolve(by="region")              # group and union geometry
+
+result = zones.to_geopandas()               # back to a real GeoDataFrame
 ```
 
 ## Intentional differences from GeoPandas
@@ -44,10 +49,23 @@ deliberately *not* identical to GeoPandas:
 - **Lazy, not eager**: operations build a query; data materializes on
   `to_geopandas()` / `to_pandas()` / display.
 - **No row index / alignment**: there is no pandas `Index`; joins and filters
-  are positional/relational, not index-aligned.
+  are positional/relational, not index-aligned. Consequently `sjoin()` produces
+  no `index_left`/`index_right` column, and `dissolve()` leaves the group keys as
+  ordinary columns instead of moving them into the index.
 - **Immutable under the hood**: "in-place" style operations return a new frame.
+  Assigning a column with `gdf["x"] = ...` rebinds the frame, so a `Series` read
+  before the assignment is stale and cannot be combined with later reads.
+- **Columns cannot be mixed across frames**: without row alignment, combining
+  columns from two different frames raises rather than guessing. Join first.
 - **Plotting and arbitrary `apply`**: use the `to_geopandas()` escape hatch and
   operate on the materialized result.
+- **Expression escape hatch**: `series.expr` exposes the underlying SedonaDB
+  expression for anything the wrapper does not cover, and the result can be
+  assigned back with `gdf["name"] = ...`.
+
+Division follows pandas rather than SQL: `/` is true division, so integer
+columns do not silently truncate. `//` is not implemented, since SQL division
+truncates toward zero where Python floors.
 
 See the SedonaDB "Migrating from GeoPandas" guide for the relational model that
 underlies each method.
