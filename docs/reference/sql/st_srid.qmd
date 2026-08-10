@@ -21,6 +21,8 @@ description: Returns the SRID (spatial reference identifier) of a geometry.
 kernels:
   - returns: integer
     args: [geometry]
+  - returns: integer
+    args: [geography]
 ---
 
 See [Coordinate Reference Systems](../../concepts/crs.md) for how SedonaDB represents and compares CRS.

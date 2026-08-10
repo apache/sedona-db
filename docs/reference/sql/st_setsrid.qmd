@@ -24,6 +24,11 @@ kernels:
     - geometry
     - name: srid
       type: integer
+  - returns: geography
+    args:
+    - geography
+    - name: srid
+      type: integer
 ---
 
 ## Description

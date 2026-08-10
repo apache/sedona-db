@@ -21,6 +21,8 @@ description: Returns the Z coordinate of the point, or NULL if not available.
 kernels:
   - returns: double
     args: [geometry]
+  - returns: double
+    args: [geography]
 ---
 
 ## Description

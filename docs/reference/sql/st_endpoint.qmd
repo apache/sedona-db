@@ -21,6 +21,8 @@ description: Returns last point of a linestring.
 kernels:
   - returns: geometry
     args: [geometry]
+  - returns: geography
+    args: [geography]
 ---
 
 ## Examples

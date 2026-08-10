@@ -21,6 +21,8 @@ description: Returns true if the geometry has a M dimension.
 kernels:
   - returns: boolean
     args: [geometry]
+  - returns: boolean
+    args: [geography]
 ---
 
 ## Examples

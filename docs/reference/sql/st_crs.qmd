@@ -21,6 +21,8 @@ description: Returns the Coordinate Reference System (CRS) metadata associated w
 kernels:
   - returns: string
     args: [geometry]
+  - returns: string
+    args: [geography]
 ---
 
 ## Description

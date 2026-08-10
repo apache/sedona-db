@@ -21,6 +21,8 @@ description: Returns the M (measure) coordinate of a Point geometry.
 kernels:
   - returns: double
     args: [geometry]
+  - returns: double
+    args: [geography]
 ---
 
 ## Description
