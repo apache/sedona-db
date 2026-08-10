@@ -44,6 +44,8 @@ struct BandRefImpl<'a> {
     outdb_uri_array: &'a StringArray,
     outdb_format_array: &'a StringViewArray,
     data_array: &'a BinaryViewArray,
+    chunk_index_list: &'a ListArray,
+    chunk_index_values: &'a Int64Array,
     /// Absolute row index within the flattened bands arrays
     band_row: usize,
     /// Resolved at construction so accessors don't re-decode the discriminant.
@@ -110,6 +112,16 @@ impl<'a> BandRef for BandRefImpl<'a> {
             None
         } else {
             Some(self.outdb_format_array.value(self.band_row))
+        }
+    }
+
+    fn chunk_index(&self) -> Option<&[i64]> {
+        if self.chunk_index_list.is_null(self.band_row) {
+            None
+        } else {
+            let start = self.chunk_index_list.value_offsets()[self.band_row] as usize;
+            let end = self.chunk_index_list.value_offsets()[self.band_row + 1] as usize;
+            Some(&self.chunk_index_values.values()[start..end])
         }
     }
 
@@ -180,6 +192,8 @@ pub struct RasterRefImpl<'a> {
     band_outdb_uri_array: &'a StringArray,
     band_outdb_format_array: &'a StringViewArray,
     band_data_array: &'a BinaryViewArray,
+    band_chunk_index_list: &'a ListArray,
+    band_chunk_index_values: &'a Int64Array,
     raster_index: usize,
 }
 
@@ -281,6 +295,8 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
             outdb_uri_array: self.band_outdb_uri_array,
             outdb_format_array: self.band_outdb_format_array,
             data_array: self.band_data_array,
+            chunk_index_list: self.band_chunk_index_list,
+            chunk_index_values: self.band_chunk_index_values,
             band_row,
             data_type,
             view_entries,
@@ -411,6 +427,8 @@ pub struct RasterStructArray<'a> {
     band_outdb_uri_array: &'a StringArray,
     band_outdb_format_array: &'a StringViewArray,
     band_data_array: &'a BinaryViewArray,
+    band_chunk_index_list: &'a ListArray,
+    band_chunk_index_values: &'a Int64Array,
 }
 
 impl<'a> RasterStructArray<'a> {
@@ -458,6 +476,8 @@ impl<'a> RasterStructArray<'a> {
         let band_outdb_format_array =
             as_string_view_array(bands_struct.column(band_indices::OUTDB_FORMAT))?;
         let band_data_array = as_binary_view_array(bands_struct.column(band_indices::DATA))?;
+        let band_chunk_index_list = as_list_array(bands_struct.column(band_indices::CHUNK_INDEX))?;
+        let band_chunk_index_values = as_int64_array(band_chunk_index_list.values())?;
 
         Ok(Self {
             raster_array,
@@ -480,6 +500,8 @@ impl<'a> RasterStructArray<'a> {
             band_outdb_uri_array,
             band_outdb_format_array,
             band_data_array,
+            band_chunk_index_list,
+            band_chunk_index_values,
         })
     }
 
@@ -523,6 +545,8 @@ impl<'a> RasterStructArray<'a> {
             band_outdb_uri_array: self.band_outdb_uri_array,
             band_outdb_format_array: self.band_outdb_format_array,
             band_data_array: self.band_data_array,
+            band_chunk_index_list: self.band_chunk_index_list,
+            band_chunk_index_values: self.band_chunk_index_values,
             raster_index: index,
         })
     }
@@ -616,6 +640,60 @@ mod tests {
         assert_eq!(out_raster.band_name(0), Some("derived"));
         assert_eq!(out_band.dim_names(), vec!["x"]);
         assert_eq!(out_band.data_type(), BandDataType::UInt8);
+    }
+
+    #[test]
+    fn copy_into_inherits_and_overrides_chunk_index() {
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        let mut ib = RasterBuilder::new(1);
+        ib.start_raster_nd(&transform, &["x"], &[4], None).unwrap();
+        ib.start_band(StartBandArgs {
+            chunk_index: Some(&[7]),
+            ..StartBandArgs::new(&["x"], &[4], BandDataType::UInt8)
+        })
+        .unwrap();
+        ib.band_data_writer().append_value([0u8; 4]);
+        ib.finish_band().unwrap();
+        ib.finish_raster().unwrap();
+        let input_array = ib.finish().unwrap();
+        let input_rasters = RasterStructArray::try_new(&input_array).unwrap();
+        let input_raster = input_rasters.get(0).unwrap();
+        let input_band = input_raster.band(0).unwrap();
+        assert_eq!(input_band.chunk_index(), Some(&[7i64][..]));
+
+        // No override -- inherits the source's chunk_index unchanged.
+        let mut ob = RasterBuilder::new(1);
+        ob.start_raster_nd(&transform, &["x"], &[4], None).unwrap();
+        input_band
+            .copy_into(&mut ob, BandOverrides::default())
+            .unwrap();
+        ob.finish_band().unwrap();
+        ob.finish_raster().unwrap();
+        let out_array = ob.finish().unwrap();
+        let out_rasters = RasterStructArray::try_new(&out_array).unwrap();
+        let out_raster = out_rasters.get(0).unwrap();
+        let out_band = out_raster.band(0).unwrap();
+        assert_eq!(out_band.chunk_index(), Some(&[7i64][..]));
+
+        // Explicit override replaces the inherited value.
+        let mut ob2 = RasterBuilder::new(1);
+        ob2.start_raster_nd(&transform, &["x"], &[4], None).unwrap();
+        input_band
+            .copy_into(
+                &mut ob2,
+                BandOverrides {
+                    chunk_index: Some(&[9]),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        ob2.finish_band().unwrap();
+        ob2.finish_raster().unwrap();
+        let out_array2 = ob2.finish().unwrap();
+        let out_rasters2 = RasterStructArray::try_new(&out_array2).unwrap();
+        let out_raster2 = out_rasters2.get(0).unwrap();
+        let out_band2 = out_raster2.band(0).unwrap();
+        assert_eq!(out_band2.chunk_index(), Some(&[9i64][..]));
     }
 
     #[test]

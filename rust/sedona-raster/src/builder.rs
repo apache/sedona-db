@@ -115,6 +115,14 @@ pub struct RasterBuilder {
     band_outdb_uri: StringBuilder,
     band_outdb_format: StringViewBuilder,
     band_data: BinaryViewBuilder,
+    // CHUNK_INDEX field — one entry per dim per band, nullable at the list
+    // level (same shape as source_shape's values+offsets, plus a validity
+    // vector like the VIEW field's since, unlike source_shape, most bands
+    // genuinely have no chunk_index at all rather than a not-yet-supported
+    // non-identity case).
+    band_chunk_index_values: Int64Builder,
+    band_chunk_index_offsets: Vec<i32>,
+    band_chunk_index_validity: Vec<bool>,
 
     // List structure tracking
     band_offsets: Vec<i32>,  // Track where each raster's bands start/end
@@ -156,12 +164,17 @@ pub struct StartBandArgs<'a> {
     pub nodata: Option<&'a [u8]>,
     pub outdb_uri: Option<&'a str>,
     pub outdb_format: Option<&'a str>,
+    /// This band's block coordinate within the larger logical array it's
+    /// one chunk of, one entry per `dim_names` entry. `None` for a band
+    /// playing its ordinary role inside `Raster.bands` (addressed by
+    /// index/name, not block coordinate) — see `RasterSchema::chunk_index_type`.
+    pub chunk_index: Option<&'a [i64]>,
 }
 
 impl<'a> StartBandArgs<'a> {
     /// The required band descriptors; the optional fields (`name`, `view`,
-    /// `nodata`, `outdb_uri`, `outdb_format`) default to `None`. Override any of
-    /// them with struct-update syntax, e.g.
+    /// `nodata`, `outdb_uri`, `outdb_format`, `chunk_index`) default to
+    /// `None`. Override any of them with struct-update syntax, e.g.
     /// `StartBandArgs { nodata: Some(&nd), ..StartBandArgs::new(dims, shape, dtype) }`.
     pub fn new(dim_names: &'a [&'a str], source_shape: &'a [i64], data_type: BandDataType) -> Self {
         Self {
@@ -173,6 +186,7 @@ impl<'a> StartBandArgs<'a> {
             nodata: None,
             outdb_uri: None,
             outdb_format: None,
+            chunk_index: None,
         }
     }
 }
@@ -205,6 +219,9 @@ impl RasterBuilder {
             band_outdb_uri: StringBuilder::with_capacity(capacity, capacity),
             band_outdb_format: StringViewBuilder::with_capacity(capacity),
             band_data: BinaryViewBuilder::with_capacity(capacity),
+            band_chunk_index_values: Int64Builder::with_capacity(capacity * 2),
+            band_chunk_index_offsets: vec![0],
+            band_chunk_index_validity: Vec::with_capacity(capacity),
 
             band_offsets: vec![0],
             current_band_count: 0,
@@ -382,7 +399,19 @@ impl RasterBuilder {
             nodata,
             outdb_uri,
             outdb_format,
+            chunk_index,
         } = args;
+
+        if let Some(chunk_index) = chunk_index {
+            if chunk_index.len() != dim_names.len() {
+                return Err(ArrowError::InvalidArgumentError(format!(
+                    "start_band: chunk_index ({}) must have one entry per \
+                     dim_names entry ({})",
+                    chunk_index.len(),
+                    dim_names.len()
+                )));
+            }
+        }
 
         // A caller-supplied view is validated against source_shape. The schema
         // stores views only as the identity null sentinel today, so a
@@ -473,6 +502,26 @@ impl RasterBuilder {
         match outdb_format {
             Some(format) => self.band_outdb_format.append_value(format),
             None => self.band_outdb_format.append_null(),
+        }
+
+        // Chunk index — unlike VIEW, a genuinely present value is stored
+        // (not just validated then discarded): most bands have none at all
+        // (the ordinary Raster.bands role), so absence is the common case,
+        // not an unsupported one.
+        match chunk_index {
+            Some(ci) => {
+                for &v in ci {
+                    self.band_chunk_index_values.append_value(v);
+                }
+                let next = *self.band_chunk_index_offsets.last().unwrap() + ci.len() as i32;
+                self.band_chunk_index_offsets.push(next);
+                self.band_chunk_index_validity.push(true);
+            }
+            None => {
+                let next = *self.band_chunk_index_offsets.last().unwrap();
+                self.band_chunk_index_offsets.push(next);
+                self.band_chunk_index_validity.push(false);
+            }
         }
 
         self.current_band_count += 1;
@@ -790,6 +839,30 @@ impl RasterBuilder {
             view_nulls,
         );
 
+        // Build band chunk_index nested list (List<Int64>, nullable — most
+        // bands have none at all, unlike source_shape which every band has).
+        let chunk_index_values = self.band_chunk_index_values.finish();
+        let chunk_index_offsets =
+            OffsetBuffer::new(ScalarBuffer::from(self.band_chunk_index_offsets));
+        let DataType::List(chunk_index_field) = RasterSchema::chunk_index_type() else {
+            return Err(ArrowError::SchemaError(
+                "Expected list type for chunk_index".to_string(),
+            ));
+        };
+        let chunk_index_nulls = if self.band_chunk_index_validity.iter().all(|&b| b) {
+            None
+        } else {
+            Some(NullBuffer::from_iter(
+                self.band_chunk_index_validity.iter().copied(),
+            ))
+        };
+        let chunk_index_list = ListArray::new(
+            chunk_index_field,
+            chunk_index_offsets,
+            Arc::new(chunk_index_values),
+            chunk_index_nulls,
+        );
+
         // Build band struct
         let DataType::Struct(band_fields) = RasterSchema::band_type() else {
             return Err(ArrowError::SchemaError(
@@ -807,6 +880,7 @@ impl RasterBuilder {
             Arc::new(self.band_outdb_uri.finish()),
             Arc::new(self.band_outdb_format.finish()),
             Arc::new(self.band_data.finish()),
+            Arc::new(chunk_index_list),
         ];
         let band_struct = StructArray::new(band_fields, band_arrays, None);
 
@@ -1422,6 +1496,160 @@ mod tests {
         let buf = band.nd_buffer().unwrap();
         assert_eq!(buf.strides, &[80, 20, 4]);
         assert_eq!(buf.offset, 0);
+    }
+
+    #[test]
+    fn test_chunk_index_round_trips() {
+        let mut builder = RasterBuilder::new(1);
+        builder
+            .start_raster_nd(&[0.0, 1.0, 0.0, 0.0, 0.0, -1.0], &["x", "y"], &[2, 2], None)
+            .unwrap();
+        builder
+            .start_band(StartBandArgs {
+                chunk_index: Some(&[1, 2]),
+                ..StartBandArgs::new(&["y", "x"], &[2, 2], BandDataType::UInt8)
+            })
+            .unwrap();
+        builder.band_data_writer().append_value([0u8; 4]);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+
+        let array = builder.finish().unwrap();
+        let rasters = RasterStructArray::try_new(&array).unwrap();
+        let raster = rasters.get(0).unwrap();
+        let band = raster.band(0).unwrap();
+
+        assert_eq!(band.chunk_index(), Some(&[1i64, 2][..]));
+    }
+
+    #[test]
+    fn test_chunk_index_defaults_to_none() {
+        // The ordinary Raster.bands role -- no chunk_index given -- must
+        // round-trip as None, not e.g. an empty slice or a zero-filled one.
+        let mut builder = RasterBuilder::new(1);
+        builder
+            .start_raster_nd(&[0.0, 1.0, 0.0, 0.0, 0.0, -1.0], &["x", "y"], &[2, 2], None)
+            .unwrap();
+        builder
+            .start_band(StartBandArgs::new(
+                &["y", "x"],
+                &[2, 2],
+                BandDataType::UInt8,
+            ))
+            .unwrap();
+        builder.band_data_writer().append_value([0u8; 4]);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+
+        let array = builder.finish().unwrap();
+        let rasters = RasterStructArray::try_new(&array).unwrap();
+        let raster = rasters.get(0).unwrap();
+        let band = raster.band(0).unwrap();
+
+        assert_eq!(band.chunk_index(), None);
+    }
+
+    #[test]
+    fn test_chunk_index_mixed_present_and_absent_across_bands() {
+        // A validity bitmap bug (e.g. an off-by-one in offsets vs. the
+        // validity vec) would only surface with a mix of present/absent
+        // rows in one array -- a single-band test can't catch it.
+        let mut builder = RasterBuilder::new(2);
+        builder
+            .start_raster_nd(&[0.0, 1.0, 0.0, 0.0, 0.0, -1.0], &["x", "y"], &[1, 1], None)
+            .unwrap();
+        builder
+            .start_band(StartBandArgs::new(
+                &["y", "x"],
+                &[1, 1],
+                BandDataType::UInt8,
+            ))
+            .unwrap();
+        builder.band_data_writer().append_value([0u8]);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+
+        builder
+            .start_raster_nd(&[0.0, 1.0, 0.0, 0.0, 0.0, -1.0], &["x", "y"], &[1, 1], None)
+            .unwrap();
+        builder
+            .start_band(StartBandArgs {
+                chunk_index: Some(&[3, 4]),
+                ..StartBandArgs::new(&["y", "x"], &[1, 1], BandDataType::UInt8)
+            })
+            .unwrap();
+        builder.band_data_writer().append_value([0u8]);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+
+        let array = builder.finish().unwrap();
+        let rasters = RasterStructArray::try_new(&array).unwrap();
+        assert_eq!(rasters.get(0).unwrap().band(0).unwrap().chunk_index(), None);
+        assert_eq!(
+            rasters.get(1).unwrap().band(0).unwrap().chunk_index(),
+            Some(&[3i64, 4][..])
+        );
+    }
+
+    #[test]
+    fn test_chunk_index_length_mismatch_rejected() {
+        let mut builder = RasterBuilder::new(1);
+        builder
+            .start_raster_nd(&[0.0, 1.0, 0.0, 0.0, 0.0, -1.0], &["x", "y"], &[2, 2], None)
+            .unwrap();
+        let err = builder
+            .start_band(StartBandArgs {
+                chunk_index: Some(&[1]), // 2 dims, only 1 chunk_index entry
+                ..StartBandArgs::new(&["y", "x"], &[2, 2], BandDataType::UInt8)
+            })
+            .unwrap_err();
+        assert!(err.to_string().contains("chunk_index"));
+    }
+
+    #[test]
+    fn test_chunk_index_round_trips_through_arrow_ipc() {
+        // Same regression-shape as test_view_null_round_trips_through_arrow_ipc:
+        // a nullable list field's null bitmap must survive a real IPC
+        // serialize/deserialize cycle, not just an in-process check.
+        let mut builder = RasterBuilder::new(1);
+        builder
+            .start_raster_nd(&[0.0, 1.0, 0.0, 0.0, 0.0, -1.0], &["x", "y"], &[1, 1], None)
+            .unwrap();
+        builder
+            .start_band(StartBandArgs {
+                chunk_index: Some(&[5, 6]),
+                ..StartBandArgs::new(&["y", "x"], &[1, 1], BandDataType::UInt8)
+            })
+            .unwrap();
+        builder.band_data_writer().append_value([0u8]);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+        let array = builder.finish().unwrap();
+        let schema = Arc::new(Schema::new(vec![Arc::new(arrow_schema::Field::new(
+            "raster",
+            array.data_type().clone(),
+            true,
+        )) as arrow_schema::FieldRef]));
+        let batch = RecordBatch::try_new(schema.clone(), vec![Arc::new(array)]).unwrap();
+
+        let mut buf = Vec::new();
+        {
+            let mut writer = StreamWriter::try_new(&mut buf, schema.as_ref()).unwrap();
+            writer.write(&batch).unwrap();
+            writer.finish().unwrap();
+        }
+        let mut reader = StreamReader::try_new(Cursor::new(buf), None).unwrap();
+        let roundtripped = reader.next().unwrap().unwrap();
+        let roundtripped_array = roundtripped
+            .column(0)
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+
+        let rasters = RasterStructArray::try_new(roundtripped_array).unwrap();
+        let raster = rasters.get(0).unwrap();
+        let band = raster.band(0).unwrap();
+        assert_eq!(band.chunk_index(), Some(&[5i64, 6][..]));
     }
 
     #[test]
