@@ -40,13 +40,10 @@ The goal of sdplyr is to provide a [dplyr](https://dplyr.tidyverse.org/) interfa
 
 ## Installation
 
-sdplyr can be installed from [R-universe](https://apache.r-universe.dev/sdplyr):
+sdplyr can be installed from [R-multiverse](https://community.r-multiverse.org/):
 
 ``` r
-install.packages(
-  "sdplyr",
-  repos = c("https://apache.r-universe.dev", "https://cloud.r-project.org")
-)
+install.packages("sdplyr", repos = "https://community.r-multiverse.org")
 ```
 
 You can install the development version of sdplyr from [GitHub](https://github.com/) with:

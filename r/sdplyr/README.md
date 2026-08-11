@@ -32,13 +32,10 @@ by sedonafns with SedonaDB-backed lazy data frames.
 ## Installation
 
 sdplyr can be installed from
-[R-universe](https://apache.r-universe.dev/sdplyr):
+[R-multiverse](https://community.r-multiverse.org/):
 
 ``` r
-install.packages(
-  "sdplyr",
-  repos = c("https://apache.r-universe.dev", "https://cloud.r-project.org")
-)
+install.packages("sdplyr", repos = "https://community.r-multiverse.org")
 ```
 
 You can install the development version of sdplyr from
