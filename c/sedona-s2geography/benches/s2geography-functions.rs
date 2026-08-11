@@ -44,6 +44,22 @@ fn criterion_benchmark(c: &mut Criterion) {
         c,
         &f,
         "s2geography",
+        "st_area",
+        Transformed(Polygon(500).into(), to_geography()),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
+        "st_area",
+        Transformed(PolygonWithHole(500).into(), to_geography()),
+    );
+
+    benchmark::scalar(
+        c,
+        &f,
+        "s2geography",
         "st_length",
         Transformed(LineString(10).into(), to_geography()),
     );
