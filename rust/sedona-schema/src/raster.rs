@@ -94,7 +94,23 @@ impl RasterSchema {
             Field::new(column::OUTDB_URI, DataType::Utf8, true),
             Field::new(column::OUTDB_FORMAT, DataType::Utf8View, true),
             Field::new(column::DATA, DataType::BinaryView, false),
+            Field::new(column::CHUNK_INDEX, Self::chunk_index_type(), true),
         ]))
+    }
+
+    /// Chunk-index list type — one entry per `dim_names` entry, in the same
+    /// order. `chunk_index[i]` is the zero-based block coordinate this band
+    /// occupies along `dim_names[i]` within the larger logical (multi-row)
+    /// array it's one piece of — a chunk *number*, not a pixel offset, so it
+    /// stays meaningful across uneven/remainder chunk sizes.
+    ///
+    /// Nullable at the schema level, same as `crs`/`transform` on `Raster`
+    /// today: required and validated by whichever accessor or function
+    /// actually depends on it (a chunked-table/DataArray use case), left
+    /// unset by a band's ordinary role inside `Raster.bands` (bands there
+    /// are addressed by index/name, not block coordinate).
+    pub fn chunk_index_type() -> DataType {
+        DataType::List(FieldRef::new(Field::new("item", DataType::Int64, false)))
     }
 
     /// Dimension names list type
@@ -249,7 +265,8 @@ pub mod band_indices {
     pub const OUTDB_URI: usize = 6;
     pub const OUTDB_FORMAT: usize = 7;
     pub const DATA: usize = 8;
-    pub const FIELD_COUNT: usize = 9;
+    pub const CHUNK_INDEX: usize = 9;
+    pub const FIELD_COUNT: usize = 10;
 }
 
 /// Field indices within the `view` struct (`(source_axis, start, step, steps)`).
@@ -282,6 +299,7 @@ pub mod column {
     pub const OUTDB_URI: &str = "outdb_uri";
     pub const OUTDB_FORMAT: &str = "outdb_format";
     pub const DATA: &str = "data";
+    pub const CHUNK_INDEX: &str = "chunk_index";
 }
 
 #[cfg(test)]
@@ -336,7 +354,7 @@ mod tests {
         // Test band indices
         let band_type = RasterSchema::band_type();
         if let DataType::Struct(band_fields) = band_type {
-            assert_eq!(band_fields.len(), 9, "Expected exactly 9 band fields");
+            assert_eq!(band_fields.len(), 10, "Expected exactly 10 band fields");
             assert_eq!(band_fields[band_indices::NAME].name(), column::NAME);
             assert_eq!(
                 band_fields[band_indices::DIM_NAMES].name(),
@@ -365,6 +383,17 @@ mod tests {
                 column::OUTDB_FORMAT
             );
             assert_eq!(band_fields[band_indices::DATA].name(), column::DATA);
+            assert_eq!(
+                band_fields[band_indices::CHUNK_INDEX].name(),
+                column::CHUNK_INDEX
+            );
+            assert!(
+                band_fields[band_indices::CHUNK_INDEX].is_nullable(),
+                "chunk_index must be nullable — unset for a band's ordinary \
+                 role inside Raster.bands, required only by whichever \
+                 accessor/function depends on it for a standalone \
+                 chunked-table use case"
+            );
         } else {
             panic!("Expected Struct type for band");
         }

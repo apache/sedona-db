@@ -300,6 +300,9 @@ pub struct BandOverrides<'a> {
     /// view unchanged. (A non-identity result isn't persistable yet and
     /// `copy_into` rejects it; see <https://github.com/apache/sedona-db/issues/897>.)
     pub view: Option<&'a [ViewEntry]>,
+    /// Override the chunk index; `None` inherits the source's (which is
+    /// itself usually `None` — see [`BandRef::chunk_index`]).
+    pub chunk_index: Option<&'a [i64]>,
 }
 
 /// Trait for accessing a single band/variable within an N-D raster.
@@ -389,6 +392,19 @@ pub trait BandRef {
     /// (e.g. `"geotiff"`, `"zarr"`). None means in-memory — the band's
     /// `contiguous_data()` / `nd_buffer()` is authoritative.
     fn outdb_format(&self) -> Option<&str> {
+        None
+    }
+
+    /// This band's block coordinate within the larger logical array it's one
+    /// chunk of, one entry per `dim_names` entry (`chunk_index()[i]` is the
+    /// zero-based block number along `dim_names()[i]`) — a chunk *number*,
+    /// not a pixel offset, so it stays meaningful across uneven/remainder
+    /// chunk sizes. `None` (the default) for a band playing its ordinary
+    /// role inside `Raster.bands` (addressed by index/name, not block
+    /// coordinate); required and validated by whichever accessor or
+    /// function actually depends on it for a standalone chunked-table
+    /// (DataArray) use case — see `RasterSchema::chunk_index_type`.
+    fn chunk_index(&self) -> Option<&[i64]> {
         None
     }
 
@@ -486,6 +502,7 @@ pub trait BandRef {
             nodata: overrides.nodata.or_else(|| self.nodata()),
             outdb_uri: overrides.outdb_uri.or_else(|| self.outdb_uri()),
             outdb_format: overrides.outdb_format.or_else(|| self.outdb_format()),
+            chunk_index: overrides.chunk_index.or_else(|| self.chunk_index()),
             ..StartBandArgs::new(&dim_names, &source_shape, self.data_type())
         })?;
         self.append_data_into(builder)
@@ -823,6 +840,7 @@ mod tests {
         source_shape: Vec<i64>,
         shape: Vec<i64>,
         view: Vec<ViewEntry>,
+        chunk_index: Option<Vec<i64>>,
     }
 
     impl BandRef for StubBand {
@@ -847,6 +865,9 @@ mod tests {
         fn nodata(&self) -> Option<&[u8]> {
             None
         }
+        fn chunk_index(&self) -> Option<&[i64]> {
+            self.chunk_index.as_deref()
+        }
         fn nd_buffer(&self) -> Result<NdBuffer<'_>, ArrowError> {
             unimplemented!("not used in is_spatial_2d tests")
         }
@@ -862,6 +883,7 @@ mod tests {
             source_shape: source_shape.to_vec(),
             shape,
             view: view.to_vec(),
+            chunk_index: None,
         }
     }
 
