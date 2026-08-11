@@ -1,0 +1,98 @@
+---
+output: github_document
+---
+
+<!---
+  Licensed to the Apache Software Foundation (ASF) under one
+  or more contributor license agreements.  See the NOTICE file
+  distributed with this work for additional information
+  regarding copyright ownership.  The ASF licenses this file
+  to you under the Apache License, Version 2.0 (the
+  "License"); you may not use this file except in compliance
+  with the License.  You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing,
+  software distributed under the License is distributed on an
+  "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+  KIND, either express or implied.  See the License for the
+  specific language governing permissions and limitations
+  under the License.
+-->
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.path = "man/figures/README-",
+  out.width = "100%"
+)
+```
+
+# sdplyr
+
+<!-- badges: start -->
+[![R-universe status](https://apache.r-universe.dev/badges/sdplyr)](https://apache.r-universe.dev/sdplyr)
+<!-- badges: end -->
+
+The goal of sdplyr is to provide a [dplyr](https://dplyr.tidyverse.org/) interface to [Apache SedonaDB](https://sedona.apache.org/sedonadb). It lets you use familiar dplyr verbs and the spatial functions documented by [sedonafns](../sedonafns) with SedonaDB-backed lazy data frames.
+
+## Installation
+
+sdplyr can be installed from [R-universe](https://apache.r-universe.dev/sdplyr):
+
+``` r
+install.packages(
+  "sdplyr",
+  repos = c("https://apache.r-universe.dev", "https://cloud.r-project.org")
+)
+```
+
+You can install the development version of sdplyr from [GitHub](https://github.com/) with:
+
+``` r
+pak::pkg_install("apache/sedona-db/r/sdplyr")
+```
+
+Installing a development version of sdplyr requires a [Rust compiler](https://rustup.rs) and a GEOS system dependency (e.g., `brew install geos` or `apt-get install libgeos-dev`). Install instructions for these dependencies on other platforms can be found on the [sf package homepage](https://r-spatial.github.io/sf).
+
+## Example
+
+Read GeoParquet files into lazy SedonaDB data frames and use dplyr verbs to perform a spatial join:
+
+```{r example}
+library(sdplyr)
+
+cities_url <- "https://raw.githubusercontent.com/geoarrow/geoarrow-data/v0.2.0/natural-earth/files/natural-earth_cities.parquet"
+countries_url <- "https://raw.githubusercontent.com/geoarrow/geoarrow-data/v0.2.0/natural-earth/files/natural-earth_countries.parquet"
+
+cities <- sd_read_parquet(cities_url)
+countries <- sd_read_parquet(countries_url)
+
+cities |>
+  inner_join(
+    countries,
+    by = sd_join_intersects()
+  ) |>
+  filter(continent != "North America") |>
+  select(
+    city = name.x,
+    country = name.y,
+    continent
+  ) |>
+  arrange(country) |>
+  head(10)
+```
+
+Spatial predicates can also compare a geometry column with an R spatial object. For example, this query finds cities inside a longitude-latitude bounding box:
+
+```{r}
+cities |>
+  filter(
+    sd_intersects(
+      geometry,
+      wk::rct(-80, 40, -60, 60, wk::wk_crs_longlat())
+    )
+  )
+```
