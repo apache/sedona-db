@@ -27,7 +27,7 @@ status](https://apache.r-universe.dev/badges/sdplyr)](https://apache.r-universe.
 The goal of sdplyr is to provide a [dplyr](https://dplyr.tidyverse.org/)
 interface to [Apache SedonaDB](https://sedona.apache.org/sedonadb). It
 lets you use familiar dplyr verbs and the spatial functions documented
-by [sedonafns](../sedonafns) with SedonaDB-backed lazy data frames.
+by sedonafns with SedonaDB-backed lazy data frames.
 
 ## Installation
 
