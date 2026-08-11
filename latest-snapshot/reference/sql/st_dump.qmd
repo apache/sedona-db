@@ -21,6 +21,8 @@ description: Expands multi-part geometries into child parts
 kernels:
   - returns: struct
     args: [geometry]
+  - returns: struct
+    args: [geography]
 ---
 
 ## Description

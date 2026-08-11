@@ -31,6 +31,18 @@ kernels:
       type: string
     - name: target_crs
       type: string
+  - returns: geography
+    args:
+    - geography
+    - name: target_crs
+      type: string
+  - returns: geography
+    args:
+    - geography
+    - name: source_crs
+      type: string
+    - name: target_crs
+      type: string
 ---
 
 ## Description
@@ -40,6 +52,8 @@ Transforms the coordinate reference system of a geometry between EPSG reference 
 See [Coordinate Reference Systems](../../concepts/crs.md) for how SedonaDB represents and compares CRS.
 
 When 3 arguments are provided, a source_crs can be used to specify the source CRS in case the input geometry doesn't have an SRID defined. The source_crs takes precedence over the geometry's SRID.
+
+Geography input is also accepted; because geography is always defined on a geographic (longitude/latitude) CRS, the target_crs must be geographic as well.
 
 ## Examples
 

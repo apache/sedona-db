@@ -17,17 +17,19 @@
 # under the License.
 
 title: ST_Collect_Agg
-description: Combines multiple geometries from a set of rows into a single collection.
+description: Combines multiple geometries or geographies from a set of rows into a single collection.
 kernels:
   - returns: geometry
     args: [geometry]
+  - returns: geography
+    args: [geography]
 ---
 
 ## Description
 
-An aggregate function that collects multiple geometries into a single
-GeometryCollection or the appropriate Multi-type if all inputs share the same
-geometry type.
+An aggregate function that collects multiple geometries or geographies into a
+single GeometryCollection or the appropriate Multi-type if all inputs share the
+same geometry type. Collecting geographies returns a geography.
 
 ## Examples
 

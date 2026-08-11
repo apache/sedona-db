@@ -21,6 +21,8 @@ description: Returns the start point of a linestring geometry.
 kernels:
   - returns: geometry
     args: [geometry]
+  - returns: geography
+    args: [geography]
 ---
 
 ## Examples

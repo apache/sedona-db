@@ -21,6 +21,8 @@ description: Returns the EWKB representation of a geometry or geography.
 kernels:
   - returns: binary
     args: [geometry]
+  - returns: binary
+    args: [geography]
 ---
 
 ## Description

@@ -17,15 +17,17 @@
 # under the License.
 
 title: ST_MakeLine
-description: Creates a LineString from two or more input geometries.
+description: Creates a LineString from two or more input geometries or geographies.
 kernels:
   - returns: geometry
     args: [geometry, geometry]
+  - returns: geography
+    args: [geography, geography]
 ---
 
 ## Description
 
-Creates a `LineString` from two or more input `Point`, `MultiPoint`, or `LineString` geometries. The function connects the input geometries in the order they are provided to form a single continuous line.
+Creates a `LineString` from two or more input `Point`, `MultiPoint`, or `LineString` geometries or geographies. The function connects the inputs in the order they are provided to form a single continuous line. Combining geographies returns a geography.
 
 ## Examples
 

@@ -21,6 +21,8 @@ description: Returns a code indicating the dimension of the coordinates in a geo
 kernels:
   - returns: integer
     args: [geometry]
+  - returns: integer
+    args: [geography]
 ---
 
 ## Description
