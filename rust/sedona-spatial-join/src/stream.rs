@@ -1375,7 +1375,15 @@ impl SpatialJoinBatchIterator {
             probe_indices_array,
             probe_range,
         )?;
-        Ok(Some(batch))
+
+        // Join types that don't produce unmatched probe rows (e.g. inner joins) end up
+        // with an empty batch here; don't emit it. build_joined_batch was still called
+        // for its visited-bitmap bookkeeping.
+        if batch.num_rows() > 0 {
+            Ok(Some(batch))
+        } else {
+            Ok(None)
+        }
     }
 
     fn drain_produced_indices(&self, progress: &mut ProbeProgress) {

@@ -17,7 +17,7 @@
 
 use arrow_array::{
     ffi::{from_ffi_and_data_type, FFI_ArrowArray, FFI_ArrowSchema},
-    make_array, ArrayRef,
+    make_array, new_empty_array, ArrayRef,
 };
 use arrow_schema::{ArrowError, Field};
 use datafusion_common::config::ConfigOptions;
@@ -104,6 +104,19 @@ impl SedonaScalarKernel for ImportedScalarKernel {
         num_rows: usize,
         _config_options: Option<&ConfigOptions>,
     ) -> Result<ColumnarValue> {
+        // Zero-length array inputs can't be passed to the C kernel: implementations
+        // may broadcast scalar arguments using modulo indexing (e.g., the
+        // sedona-s2geography kernels reject empty arrays for this reason).
+        if num_rows == 0
+            && args
+                .iter()
+                .any(|arg| matches!(arg, ColumnarValue::Array(_)))
+        {
+            return Ok(ColumnarValue::Array(new_empty_array(
+                return_type.storage_type(),
+            )));
+        }
+
         let arg_scalars = args
             .iter()
             .map(|arg| {
@@ -737,6 +750,43 @@ mod test {
             err.message(),
             "simple_udf_from_ffi(): No kernel matching arguments"
         );
+    }
+
+    #[test]
+    fn empty_array_input() {
+        // Mimic the sedona-s2geography kernels, which reject zero-length array
+        // inputs because they broadcast scalar arguments using modulo indexing
+        let kernel = SimpleSedonaScalarKernel::new_ref(
+            ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY),
+            Arc::new(|_, args| {
+                for arg in args {
+                    if let ColumnarValue::Array(array) = arg {
+                        if array.is_empty() {
+                            return exec_err!("Array input must not be empty");
+                        }
+                    }
+                }
+                Ok(args[0].clone())
+            }),
+        );
+
+        let exported_kernel = ExportedScalarKernel::from(kernel.clone());
+        let ffi_kernel = SedonaCScalarKernel::from(exported_kernel);
+        let imported_kernel = ImportedScalarKernel::try_from(ffi_kernel).unwrap();
+
+        let udf_from_ffi = SedonaScalarUDF::new(
+            "simple_udf_from_ffi",
+            vec![Arc::new(imported_kernel)],
+            Volatility::Immutable,
+        );
+
+        let tester = ScalarUdfTester::new(udf_from_ffi.into(), vec![WKB_GEOMETRY]);
+        tester.assert_return_type(WKB_GEOMETRY);
+
+        let empty_array = create_array(&[], &WKB_GEOMETRY);
+        let result = tester.invoke_array(empty_array).unwrap();
+        assert_eq!(result.len(), 0);
+        assert_eq!(result.data_type(), WKB_GEOMETRY.storage_type());
     }
 
     #[test]

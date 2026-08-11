@@ -619,6 +619,62 @@ async fn test_spatial_join_with_filter() -> Result<()> {
     Ok(())
 }
 
+/// The spatial join should never emit empty batches. Scalar UDFs backed by C
+/// implementations reject zero-length array inputs, and some consumers of our
+/// Arrow output (e.g. lonboard) reject empty batches, so a selective join used
+/// to break any query applying a scalar function on top of its output.
+/// See https://github.com/apache/sedona-db/issues/1084
+#[tokio::test]
+async fn test_no_empty_batches_in_join_output() -> Result<()> {
+    let ((left_schema, left_partitions), (right_schema, right_partitions)) =
+        create_test_data_with_size_range((0.1, 10.0), WKB_GEOMETRY)?;
+
+    let ctx = setup_context(Some(SpatialJoinOptions::default()), 10)?;
+    let mem_table_left: Arc<dyn TableProvider> =
+        Arc::new(MemTable::try_new(left_schema, left_partitions)?);
+    let mem_table_right: Arc<dyn TableProvider> =
+        Arc::new(MemTable::try_new(right_schema, right_partitions)?);
+    ctx.register_table("L", mem_table_left)?;
+    ctx.register_table("R", mem_table_right)?;
+
+    // A join producing matches for some probe batches, and a very selective join
+    // producing no matches at all; neither should emit empty batches
+    for sql in [
+        "SELECT L.id, R.id FROM L JOIN R ON ST_Intersects(L.geometry, R.geometry)",
+        "SELECT L.id, R.id FROM L JOIN R ON ST_Intersects(L.geometry, R.geometry) AND L.dist > R.dist + 1e9",
+    ] {
+        let df = ctx.sql(sql).await?;
+        let plan = df.create_physical_plan().await?;
+        let spatial_join =
+            find_spatial_join_exec_arc(&plan)?.expect("plan should contain SpatialJoinExec");
+
+        for partition in 0..spatial_join.output_partitioning().partition_count() {
+            let stream = spatial_join.execute(partition, ctx.task_ctx())?;
+            let batches = datafusion_physical_plan::common::collect(stream).await?;
+            assert!(
+                batches.iter().all(|batch| batch.num_rows() > 0),
+                "Spatial join emitted an empty batch for partition {partition} of query {sql}"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn find_spatial_join_exec_arc(
+    plan: &Arc<dyn ExecutionPlan>,
+) -> Result<Option<Arc<dyn ExecutionPlan>>> {
+    let mut found = None;
+    plan.apply(|node| {
+        if node.as_any().downcast_ref::<SpatialJoinExec>().is_some() {
+            found = Some(Arc::clone(node));
+            return Ok(TreeNodeRecursion::Stop);
+        }
+        Ok(TreeNodeRecursion::Continue)
+    })?;
+    Ok(found)
+}
+
 #[rstest]
 #[tokio::test]
 async fn test_spatial_join_swap_inputs_produces_same_plan(
