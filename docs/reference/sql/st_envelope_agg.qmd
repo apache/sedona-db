@@ -27,7 +27,7 @@ kernels:
 
 ## Description
 
-An aggregate function that computes the collective bounding box (envelope) of all geometries in a group. Geography input is also accepted; the envelope is always returned as a geometry.
+An aggregate function that computes the collective bounding box (envelope) of all geometries in a group. Geography input is also accepted; the envelope is always returned as a geometry. For geographies that cross the antimeridian, a multi geometry is returned with one polygon each for the west and east component.
 
 ## Examples
 
