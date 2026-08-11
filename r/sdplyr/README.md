@@ -35,7 +35,10 @@ sdplyr can be installed from
 [R-multiverse](https://community.r-multiverse.org/):
 
 ``` r
-install.packages("sdplyr", repos = "https://community.r-multiverse.org")
+install.packages(
+  "sdplyr",
+  repos = c("https://community.r-multiverse.org", "https://cloud.r-project.org")
+)
 ```
 
 You can install the development version of sdplyr from
@@ -58,7 +61,7 @@ to perform a spatial join:
 
 ``` r
 library(sdplyr)
-#> ── Attaching sdplyr packages ────────────────────────────────────────────────────────────────────────────────────────── 0.4.0.9000 ──
+#> ── Attaching sdplyr packages ───────────────────────────────────────────────────────────────────────── 0.4.0.9000 ──
 #> ✔ sedonadb  0.4.0.9000
 #> ✔ sedonafns 0.4.0.9000
 #> ✔ dplyr     1.2.0
