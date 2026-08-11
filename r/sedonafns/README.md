@@ -20,6 +20,8 @@
 
 <!-- badges: start -->
 
+[![R-multiverse
+status](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fcommunity.r-multiverse.org%2Fapi%2Fpackages%2Fsedonafns&query=%24.Version&label=r-multiverse)](https://community.r-multiverse.org/sedonafns)
 <!-- badges: end -->
 
 The goal of sedonafns is to provide function definitions and
@@ -28,12 +30,18 @@ practice.
 
 ## Installation
 
+sedonafns can be installed from
+[R-multiverse](https://community.r-multiverse.org/):
+
+``` r
+install.packages("sedonafns", repos = "https://community.r-multiverse.org")
+```
+
 You can install the development version of sedonafns from
 [GitHub](https://github.com/) with:
 
 ``` r
-# install.packages("pak")
-pak::pak("apache/sedona-db/r/sedonafns")
+pak::pkg_install("apache/sedona-db/r/sedonafns")
 ```
 
 ## Example
