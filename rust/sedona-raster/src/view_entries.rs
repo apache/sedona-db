@@ -20,7 +20,7 @@
 //! and is the entry point for all view-machinery operations
 //! (validation, identity check, visible-shape derivation, composition).
 
-use arrow_schema::ArrowError;
+use crate::error::RasterError;
 
 /// One per-dimension entry of a band's logical view. Describes how a
 /// visible axis maps onto an axis of the underlying source buffer.
@@ -65,7 +65,7 @@ impl ViewEntries {
     /// Wrap a pre-built vector of entries and validate it against
     /// `source_shape` in one step — [`Self::new`] followed by
     /// [`Self::validate`].
-    pub fn try_new(inner: Vec<ViewEntry>, source_shape: &[i64]) -> Result<Self, ArrowError> {
+    pub fn try_new(inner: Vec<ViewEntry>, source_shape: &[i64]) -> Result<Self, RasterError> {
         let entries = Self::new(inner);
         entries.validate(source_shape)?;
         Ok(entries)
@@ -141,10 +141,10 @@ impl ViewEntries {
     /// - When `steps > 0`: `start ∈ [0, source_shape[source_axis])`,
     ///   and when `step != 0` the last addressed element
     ///   `start + (steps - 1) * step` is also in that range.
-    pub fn validate(&self, source_shape: &[i64]) -> Result<(), ArrowError> {
+    pub fn validate(&self, source_shape: &[i64]) -> Result<(), RasterError> {
         let ndim = source_shape.len();
         if self.0.len() != ndim {
-            return Err(ArrowError::InvalidArgumentError(format!(
+            return Err(RasterError::Invalid(format!(
                 "view length ({}) must equal source_shape length ({ndim})",
                 self.0.len()
             )));
@@ -152,14 +152,14 @@ impl ViewEntries {
         let mut seen = vec![false; ndim];
         for (k, v) in self.0.iter().enumerate() {
             if v.source_axis < 0 || (v.source_axis as usize) >= ndim {
-                return Err(ArrowError::InvalidArgumentError(format!(
+                return Err(RasterError::Invalid(format!(
                     "view[{k}].source_axis = {} is out of range [0, {ndim})",
                     v.source_axis
                 )));
             }
             let sa = v.source_axis as usize;
             if seen[sa] {
-                return Err(ArrowError::InvalidArgumentError(format!(
+                return Err(RasterError::Invalid(format!(
                     "view source_axis values must be a permutation of 0..{ndim}; \
                      axis {sa} appears more than once"
                 )));
@@ -167,13 +167,13 @@ impl ViewEntries {
             seen[sa] = true;
 
             if v.steps < 0 {
-                return Err(ArrowError::InvalidArgumentError(format!(
+                return Err(RasterError::Invalid(format!(
                     "view[{k}].steps = {} must be >= 0",
                     v.steps
                 )));
             }
             if source_shape[sa] < 0 {
-                return Err(ArrowError::InvalidArgumentError(format!(
+                return Err(RasterError::Invalid(format!(
                     "source_shape[{sa}] = {} must be >= 0",
                     source_shape[sa]
                 )));
@@ -181,7 +181,7 @@ impl ViewEntries {
             if v.steps > 0 {
                 let s = source_shape[sa];
                 if v.start < 0 || v.start >= s {
-                    return Err(ArrowError::InvalidArgumentError(format!(
+                    return Err(RasterError::Invalid(format!(
                         "view[{k}].start = {} is out of range [0, {s}) for source axis {sa}",
                         v.start
                     )));
@@ -195,14 +195,14 @@ impl ViewEntries {
                         .checked_mul(v.step)
                         .and_then(|d| v.start.checked_add(d))
                         .ok_or_else(|| {
-                            ArrowError::InvalidArgumentError(format!(
+                            RasterError::Invalid(format!(
                                 "view[{k}] last-element index overflows i64 for \
                                  start={}, step={}, steps={} on source axis {sa}",
                                 v.start, v.step, v.steps
                             ))
                         })?;
                     if last < 0 || last >= s {
-                        return Err(ArrowError::InvalidArgumentError(format!(
+                        return Err(RasterError::Invalid(format!(
                             "view[{k}] addresses element {last} which is out of range \
                              [0, {s}) for source axis {sa}"
                         )));
@@ -234,11 +234,11 @@ impl ViewEntries {
     /// [`validate`] the result against the source shape before use.
     ///
     /// [`validate`]: Self::validate
-    pub fn compose(&self, next: &Self) -> Result<Self, ArrowError> {
+    pub fn compose(&self, next: &Self) -> Result<Self, RasterError> {
         let mut out = Vec::with_capacity(next.0.len());
         for (k, next_entry) in next.0.iter().enumerate() {
             if next_entry.source_axis < 0 || (next_entry.source_axis as usize) >= self.0.len() {
-                return Err(ArrowError::InvalidArgumentError(format!(
+                return Err(RasterError::Invalid(format!(
                     "compose: next[{k}].source_axis ({}) is out of range \
                      for input with {} visible axes",
                     next_entry.source_axis,
@@ -247,21 +247,21 @@ impl ViewEntries {
             }
             let input = &self.0[next_entry.source_axis as usize];
             let step = next_entry.step.checked_mul(input.step).ok_or_else(|| {
-                ArrowError::InvalidArgumentError(format!(
+                RasterError::Invalid(format!(
                     "compose: step product overflows i64 at axis {k} \
                      (next.step={}, input.step={})",
                     next_entry.step, input.step
                 ))
             })?;
             let start_offset = next_entry.start.checked_mul(input.step).ok_or_else(|| {
-                ArrowError::InvalidArgumentError(format!(
+                RasterError::Invalid(format!(
                     "compose: next.start * input.step overflows i64 at axis {k} \
                      (next.start={}, input.step={})",
                     next_entry.start, input.step
                 ))
             })?;
             let start = input.start.checked_add(start_offset).ok_or_else(|| {
-                ArrowError::InvalidArgumentError(format!(
+                RasterError::Invalid(format!(
                     "compose: composed start overflows i64 at axis {k} \
                      (input.start={}, offset={})",
                     input.start, start_offset

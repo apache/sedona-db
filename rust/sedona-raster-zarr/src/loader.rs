@@ -186,7 +186,7 @@ impl ZarrChunkReader {
             builder.band_data_writer().append_value([0u8; 0]);
             builder.finish_band()?;
         }
-        builder.finish_raster()
+        Ok(builder.finish_raster()?)
     }
 }
 
@@ -218,7 +218,7 @@ impl Iterator for ZarrChunkReader {
         }
         let struct_arr = match builder.finish() {
             Ok(arr) => arr,
-            Err(e) => return Some(Err(e)),
+            Err(e) => return Some(Err(e.into())),
         };
         Some(RecordBatch::try_new(
             self.schema.clone(),

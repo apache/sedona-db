@@ -38,12 +38,13 @@ use arrow_array::{builder::Float64Builder, Array, ArrayRef, Float64Array, Struct
 use arrow_schema::DataType;
 use datafusion_common::cast::as_int32_array;
 use datafusion_common::config::ConfigOptions;
-use datafusion_common::{exec_datafusion_err, exec_err, Result, ScalarValue};
+use datafusion_common::{exec_err, Result, ScalarValue};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::transform::CrsTransform;
 use sedona_geometry::wkb_header::read_point_xy;
 use sedona_raster::array::RasterStructArray;
+use sedona_raster::error::RasterResultExt;
 use sedona_raster::traits::RasterRef;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
@@ -332,12 +333,8 @@ impl RsValuePoint {
                         "RS_Value supports 2-D rasters only; band is not a 2-D (y, x) grid"
                     );
                 }
-                let buffer = band
-                    .nd_buffer()
-                    .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
-                let nodata = band
-                    .nodata_as_f64()
-                    .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
+                let buffer = band.nd_buffer().context("RS_Value")?;
+                let nodata = band.nodata_as_f64().context("RS_Value")?;
                 for (i, x, y, _band) in selection {
                     if let Some((col, row)) = xy_to_pixel("RS_Value", transform, x, y)? {
                         out[i] = read_pixel("RS_Value", &buffer, nodata, col, row)?;
@@ -368,15 +365,11 @@ fn resolve_point_xy(
     point_wkb: &[u8],
     trans: Option<&dyn CrsTransform>,
 ) -> Result<Option<(f64, f64)>> {
-    let Some(mut xy) =
-        read_point_xy(point_wkb).map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?
-    else {
+    let Some(mut xy) = read_point_xy(point_wkb).context("RS_Value")? else {
         return Ok(None);
     };
     if let Some(trans) = trans {
-        trans
-            .transform_coord(&mut xy)
-            .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
+        trans.transform_coord(&mut xy).context("RS_Value")?;
     }
     Ok(Some(xy))
 }
@@ -401,12 +394,8 @@ fn sample_pixel(
     if !band.is_spatial_2d() {
         return exec_err!("RS_Value supports 2-D rasters only; band is not a 2-D (y, x) grid");
     }
-    let buffer = band
-        .nd_buffer()
-        .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
-    let nodata = band
-        .nodata_as_f64()
-        .map_err(|e| exec_datafusion_err!("RS_Value: {e}"))?;
+    let buffer = band.nd_buffer().context("RS_Value")?;
+    let nodata = band.nodata_as_f64().context("RS_Value")?;
     read_pixel("RS_Value", &buffer, nodata, col, row)
 }
 

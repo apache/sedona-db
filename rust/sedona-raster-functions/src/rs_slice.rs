@@ -20,7 +20,7 @@ use std::sync::Arc;
 use arrow_schema::DataType;
 use datafusion_common::cast::{as_int64_array, as_string_array};
 use datafusion_common::error::Result;
-use datafusion_common::{arrow_datafusion_err, exec_err};
+use datafusion_common::exec_err;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::sedona_internal_datafusion_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
@@ -107,9 +107,7 @@ impl SedonaScalarKernel for RsSlice {
                     require_any_band_has_dim(raster, name, "RS_Slice")?;
 
                     for band_idx in 0..raster.num_bands() {
-                        let band = raster
-                            .band(band_idx)
-                            .map_err(|e| arrow_datafusion_err!(e))?;
+                        let band = raster.band(band_idx)?;
 
                         // Pass-through: bands that don't carry the named
                         // dimension are emitted unchanged. Same convention as
@@ -268,9 +266,7 @@ impl SedonaScalarKernel for RsSliceRange {
                     require_any_band_has_dim(raster, name, "RS_SliceRange")?;
 
                     for band_idx in 0..raster.num_bands() {
-                        let band = raster
-                            .band(band_idx)
-                            .map_err(|e| arrow_datafusion_err!(e))?;
+                        let band = raster.band(band_idx)?;
 
                         // Pass-through: bands that don't carry the named
                         // dimension are emitted unchanged. Same convention as

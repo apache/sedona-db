@@ -18,8 +18,9 @@
 use std::borrow::Cow;
 
 use datafusion_common::config::ConfigOptions;
-use datafusion_common::{exec_datafusion_err, exec_err, DataFusionError, Result};
+use datafusion_common::{exec_err, DataFusionError, Result};
 use sedona_geometry::transform::{transform, CrsEngine};
+use sedona_raster::error::RasterResultExt;
 use sedona_schema::crs::{deserialize_crs, CoordinateReferenceSystem, Crs, CrsRef};
 use wkb::reader::read_wkb;
 
@@ -73,11 +74,10 @@ pub fn crs_transform_wkb(
 ) -> Result<Vec<u8>> {
     let crs_transform = engine
         .get_transform_crs_to_crs(&from_crs.to_crs_string(), &to_crs.to_crs_string(), None, "")
-        .map_err(|e| exec_datafusion_err!("CRS transform error: {}", e))?;
+        .context("CRS transform error")?;
     let geom = read_wkb(wkb).map_err(|e| DataFusionError::External(Box::new(e)))?;
     let mut out = Vec::with_capacity(wkb.len());
-    transform(geom, crs_transform.as_ref(), &mut out)
-        .map_err(|e| exec_datafusion_err!("Transform error: {}", e))?;
+    transform(geom, crs_transform.as_ref(), &mut out).context("Transform error")?;
     Ok(out)
 }
 

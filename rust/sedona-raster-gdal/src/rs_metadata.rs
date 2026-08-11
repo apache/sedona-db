@@ -25,9 +25,9 @@ use arrow_buffer::NullBufferBuilder;
 use arrow_schema::{DataType, Field, Fields};
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::error::Result;
-use datafusion_common::exec_datafusion_err;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_raster::error::RasterResultExt;
 use sedona_raster::traits::RasterRef;
 use sedona_schema::crs::deserialize_crs;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
@@ -108,8 +108,7 @@ impl SedonaScalarKernel for RsMetaData {
 
         with_gdal(|gdal| {
             configure_thread_local_options(gdal, config_options)?;
-            let provider = thread_local_provider(gdal)
-                .map_err(|e| exec_datafusion_err!("Failed to init GDAL provider: {e}"))?;
+            let provider = thread_local_provider(gdal).context("Failed to init GDAL provider")?;
 
             executor.execute_raster_void(|_i, raster_opt| {
                 match raster_opt {
@@ -162,13 +161,13 @@ impl SedonaScalarKernel for RsMetaData {
                             tile_width_builder.append_value(0);
                             tile_height_builder.append_value(0);
                         } else {
-                            let dataset = provider.raster_ref_to_gdal(raster).map_err(|e| {
-                                exec_datafusion_err!("Failed to create GDAL dataset: {e}")
-                            })?;
+                            let dataset = provider
+                                .raster_ref_to_gdal(raster)
+                                .context("Failed to create GDAL dataset")?;
                             let band1 = dataset
                                 .as_dataset()
                                 .rasterband(1)
-                                .map_err(|e| exec_datafusion_err!("Failed to get band 1: {e}"))?;
+                                .context("Failed to get band 1")?;
                             let (block_x, block_y) = band1.block_size();
                             tile_width_builder.append_value(block_x as u64);
                             tile_height_builder.append_value(block_y as u64);

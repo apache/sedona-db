@@ -24,9 +24,9 @@
 //!
 //! [`GeoTransform`]: crate::geo_transform::GeoTransform
 
+use crate::error::RasterError;
 use crate::geo_transform::GeoTransformEx;
 use crate::traits::RasterRef;
-use arrow_schema::ArrowError;
 
 /// Computes the rotation angle (in radians) of the raster based on its geotransform metadata.
 #[inline]
@@ -57,11 +57,9 @@ pub fn to_raster_coordinate(
     raster: &dyn RasterRef,
     world_x: f64,
     world_y: f64,
-) -> Result<(i64, i64), ArrowError> {
+) -> Result<(i64, i64), RasterError> {
     let inverse = raster.transform().invert().map_err(|_| {
-        ArrowError::InvalidArgumentError(
-            "Cannot compute coordinate: determinant is zero.".to_string(),
-        )
+        RasterError::Invalid("Cannot compute coordinate: determinant is zero.".to_string())
     })?;
     let (rx, ry) = inverse.apply(world_x, world_y);
     Ok((rx as i64, ry as i64))
@@ -87,8 +85,8 @@ mod tests {
         fn num_bands(&self) -> usize {
             0
         }
-        fn band(&self, index: usize) -> Result<Box<dyn BandRef + '_>, ArrowError> {
-            Err(ArrowError::InvalidArgumentError(format!(
+        fn band(&self, index: usize) -> Result<Box<dyn BandRef + '_>, RasterError> {
+            Err(RasterError::Invalid(format!(
                 "Band index {index} is out of range: this raster has 0 bands"
             )))
         }
