@@ -44,6 +44,25 @@ def _geometry_column_names(df):
     return {names[i] for i in df.schema.geometry_column_indices}
 
 
+def _is_scalar(value):
+    """Whether `value` is a single value that can be broadcast to every row.
+
+    Checking for `__array__` alone is not enough in either direction: a list or
+    tuple has no `__array__` yet is a sequence, while a NumPy scalar has one and
+    *is* a single value. So sequences are rejected explicitly, and anything
+    array-like is judged by its dimensionality — 0-d is a scalar, anything else
+    holds multiple values and has no defined row alignment here.
+    """
+    if isinstance(value, (str, bytes, bytearray)):
+        return True
+    if isinstance(value, (list, tuple, set, frozenset, dict, range)):
+        return False
+    if hasattr(value, "__array__"):
+        return getattr(value, "ndim", None) == 0
+    # Non-sequence objects (numbers, shapely geometries, None, ...) broadcast.
+    return not hasattr(value, "__len__")
+
+
 class GeoDataFrame:
     """A lazy SedonaDB frame in the shape of a `geopandas.GeoDataFrame`.
 
@@ -139,8 +158,13 @@ class GeoDataFrame:
 
         Args:
             key: Column name to add or replace.
-            value: A `Series`/`GeoSeries` from this same frame, a SedonaDB
-                expression, or a scalar to broadcast to every row.
+            value: A `Series`/`GeoSeries` from this same frame, or a scalar (which
+                may be a geometry) to broadcast to every row.
+
+        A bare SedonaDB expression is deliberately not accepted. An expression
+        carries no record of the frame it was built from, so a column reference
+        taken from another frame would resolve against this one and silently
+        produce this frame's values instead of the intended ones.
         """
         if not isinstance(key, str):
             raise TypeError(f"Column name must be a string, not {type(key).__name__}")
@@ -157,21 +181,36 @@ class GeoDataFrame:
                     "is already stale; re-read it as gdf[...] and try again."
                 )
             expr = value._expr
-        elif isinstance(value, (Expr, Literal)):
+        elif isinstance(value, Literal):
+            # A literal holds a value rather than a column reference, so there is
+            # no frame for it to be misattributed to.
             expr = value
-        elif hasattr(value, "__array__"):
+        elif isinstance(value, Expr):
             raise TypeError(
-                "Assigning a pandas/numpy array-like isn't supported (there is "
-                "no row alignment). Build the column from this frame's own "
-                "columns, or load the data as a frame and join it."
+                "Assigning a bare expression isn't supported: an expression does "
+                "not record which frame its columns came from, so one built "
+                "against another frame would silently resolve against this one. "
+                "Assign a Series read from this frame, or a literal."
+            )
+        elif not _is_scalar(value):
+            raise TypeError(
+                f"Assigning a {type(value).__name__} isn't supported (there is no "
+                f"row alignment, so the values could not be matched to rows). "
+                f"Build the column from this frame's own columns, or load the "
+                f"data as a frame and join it."
             )
         else:
             expr = lit(value)
 
         self._df = self._df.mutate(**{key: expr})
-        # Assigning geometry to a frame that had none makes it the active column,
-        # matching what `from_geopandas` would have inferred for such a frame.
-        if self._geometry_name is None and key in _geometry_column_names(self._df):
+
+        # Assignment can change whether the active geometry column is still a
+        # geometry: replacing it with a number leaves nothing to be active, and
+        # giving a frame without geometry one makes that column active.
+        geometry_columns = _geometry_column_names(self._df)
+        if key == self._geometry_name and key not in geometry_columns:
+            self._geometry_name = None
+        elif self._geometry_name is None and key in geometry_columns:
             self._geometry_name = key
 
     def head(self, n=5):

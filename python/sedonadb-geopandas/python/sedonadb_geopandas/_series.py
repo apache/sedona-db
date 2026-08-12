@@ -142,16 +142,6 @@ class Series:
 
     __hash__ = None
 
-    @property
-    def expr(self):
-        """The underlying SedonaDB expression.
-
-        An escape hatch to the full expression API for anything this wrapper does
-        not cover — for example `series.expr.funcs.st_point(other.expr)`. The
-        result can be assigned back onto a frame with `gdf["name"] = ...`.
-        """
-        return self._expr
-
     # -- materialization ---------------------------------------------------
     def to_pandas(self):
         """Execute and return this column as a pandas (or GeoPandas) Series."""
