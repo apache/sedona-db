@@ -815,7 +815,7 @@ impl<'a> RasterStructArray<'a> {
 mod tests {
     use super::*;
     use crate::builder::{RasterBuilder, StartBandArgs};
-    use crate::traits::BandOverrides;
+    use crate::traits::{BandOverrides, Override};
     use arrow_array::{ArrayRef, ListArray, StructArray, UInt32Array};
     use arrow_buffer::{NullBuffer, OffsetBuffer, ScalarBuffer};
     use arrow_schema::{DataType, Field, Fields};
@@ -851,7 +851,7 @@ mod tests {
             .copy_into(
                 &mut ob,
                 BandOverrides {
-                    name: Some("derived"),
+                    name: Override::Set("derived"),
                     ..Default::default()
                 },
             )
@@ -881,9 +881,9 @@ mod tests {
 
     #[test]
     fn copy_into_with_identity_override_view_succeeds() {
-        // An explicit identity override composes back to the identity, so it is
-        // accepted and behaves exactly like the inherited (None) case — this
-        // exercises the new `BandOverrides::view` path end to end.
+        // An explicit identity `Set` override is the identity view, so it is
+        // accepted and behaves exactly like the inherited (`Keep`) case — this
+        // exercises the `BandOverrides::view` `Set` path end to end.
         let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
         let mut ib = RasterBuilder::new(1);
         ib.start_raster_nd(&transform, &["x"], &[4], None).unwrap();
@@ -912,7 +912,7 @@ mod tests {
             .copy_into(
                 &mut ob,
                 BandOverrides {
-                    view: Some(&identity),
+                    view: Override::Set(&identity),
                     ..Default::default()
                 },
             )
