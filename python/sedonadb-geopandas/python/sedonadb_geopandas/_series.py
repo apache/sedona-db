@@ -23,11 +23,11 @@ def _operand(df, other):
     A `Series` is unwrapped to its expression, but only if it came from the same
     source frame as `df`: combining columns from two different frames has no
     defined meaning here (there is no row alignment) and would otherwise build a
-    plan that silently returns wrong rows. A raw SedonaDB `Expr` or `Literal` is
-    passed through as-is (`lit()` is a useful escape hatch for specifying a
-    literal that carries a CRS); other scalars pass through unchanged. A
-    pandas/numpy array-like is rejected with a clear message, since it would
-    otherwise fail obscurely as a multi-element literal.
+    plan that silently returns wrong rows. A `Literal` passes through, since it
+    holds a value rather than a column reference (`lit()` is a useful escape hatch
+    for specifying a literal that carries a CRS). Other scalars pass through
+    unchanged. A pandas/numpy array-like is rejected with a clear message, since it
+    would otherwise fail obscurely as a multi-element literal.
     """
     from sedonadb.expr import Expr, Literal
 
@@ -40,8 +40,18 @@ def _operand(df, other):
                 "frames first."
             )
         return other._expr
-    if isinstance(other, (Expr, Literal)):
+    if isinstance(other, Literal):
         return other
+    if isinstance(other, Expr):
+        # A bare expression records no origin, so a column reference built against
+        # another frame would resolve against this one and quietly contribute this
+        # frame's values. Same reasoning as assignment, which also refuses these.
+        raise TypeError(
+            "Cannot combine with a bare expression: an expression does not "
+            "record which frame its columns came from, so one built against "
+            "another frame would silently resolve against this one. Use a "
+            "Series read from the same frame, or a literal."
+        )
     if hasattr(other, "__array__"):
         raise TypeError(
             "Operating against a pandas/numpy array-like isn't supported "

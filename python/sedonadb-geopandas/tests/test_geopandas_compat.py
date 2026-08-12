@@ -602,9 +602,15 @@ def test_setitem_over_active_geometry_clears_it(points):
         gdf.geometry
 
 
-def test_sjoin_dwithin_matches_crossing_lines():
-    # ST_Distance reports the endpoint gap for properly crossing linestrings, so
-    # dwithin used to miss a pair GeoPandas matches.
+def test_sjoin_dwithin_misses_crossing_lines_pending_engine_fix():
+    """Documents a known deviation, so it cannot change unnoticed.
+
+    ST_Distance reports the endpoint gap rather than zero for properly crossing
+    linestrings (apache/sedona-db#1156), so dwithin misses a pair GeoPandas
+    matches. Composing the predicate with ST_Intersects would recover the pair but
+    is not recognized by the planner, which turns the join into a nested loop, so
+    the deviation is accepted until the engine is fixed.
+    """
     a = gpd.GeoDataFrame(
         {"i": [1]},
         geometry=gpd.GeoSeries.from_wkt(["LINESTRING (0 0, 2 2)"]),
@@ -618,11 +624,24 @@ def test_sjoin_dwithin_matches_crossing_lines():
     got = sgpd.from_geopandas(a).sjoin(
         sgpd.from_geopandas(b), predicate="dwithin", distance=0
     )
-    assert (
-        len(got.to_geopandas())
-        == len(gpd.sjoin(a, b, predicate="dwithin", distance=0))
-        == 1
+    assert len(gpd.sjoin(a, b, predicate="dwithin", distance=0)) == 1
+    assert len(got.to_geopandas()) == 0  # change this when #1156 is fixed
+
+
+def test_sjoin_uses_a_planner_recognizable_spatial_predicate():
+    # A composed predicate returns the same rows but drops the plan to a nested
+    # loop join, which is quadratic; every predicate must stay rewritable.
+    points = gpd.GeoDataFrame(
+        {"i": [1, 2]},
+        geometry=gpd.GeoSeries.from_wkt(["POINT (0 0)", "POINT (5 5)"]),
+        crs="EPSG:3857",
     )
+    joined = sgpd.from_geopandas(points).sjoin(
+        sgpd.from_geopandas(points), predicate="dwithin", distance=1.0
+    )
+    plan = joined._df.explain().to_pandas().to_string()
+    assert "SpatialJoinExec" in plan
+    assert "NestedLoopJoin" not in plan
 
 
 @pytest.mark.parametrize("distance", [0.5, 1.0, 2.0])
@@ -666,3 +685,96 @@ def test_sjoin_collision_with_retained_geometry_name():
     # side's conflicting column.
     assert got.columns == _without_index_cols(expected)
     assert got._geometry_name == expected.geometry.name
+
+
+# -- regressions from the second review pass --------------------------------
+
+
+def test_operators_reject_bare_expression(points):
+    # Same provenance hole as assignment: a bare expression built from another
+    # frame resolved against this one and silently contributed this frame's values.
+    gdf = sgpd.from_geopandas(points)
+    other_raw = sgpd.default_context().create_data_frame(points)
+    with pytest.raises(TypeError, match="bare expression"):
+        gdf["v"] + other_raw["v"]
+
+
+def test_operators_still_accept_literals(points):
+    from sedonadb.expr import lit
+
+    gdf = sgpd.from_geopandas(points)
+    assert sorted((gdf["v"] > lit(1)).to_pandas().tolist()) == [False, True, True]
+
+
+def test_getitem_rejects_stale_mask(points):
+    # Assignment rebinds the frame, so a mask captured beforehand belongs to the
+    # previous one. It used to be accepted and quietly resolve against the new
+    # frame while the referenced column happened to still exist.
+    gdf = sgpd.from_geopandas(points)
+    mask = gdf["v"] > 1
+    gdf["k"] = 1
+    with pytest.raises(ValueError, match="different DataFrame"):
+        gdf[mask]
+
+
+def test_sjoin_rejects_suffix_generated_duplicates():
+    # Suffixing can collide with a column that already carries the suffix.
+    left = gpd.GeoDataFrame(
+        {"v": [1], "v_left": [9]},
+        geometry=gpd.GeoSeries.from_wkt(["POINT (0 0)"]),
+        crs="EPSG:3857",
+    )
+    right = gpd.GeoDataFrame(
+        {"v": [1]},
+        geometry=gpd.GeoSeries.from_wkt(["POLYGON ((-1 -1, 1 -1, 1 1, -1 1, -1 -1))"]),
+        crs="EPSG:3857",
+    )
+    with pytest.raises(ValueError, match="duplicate column name"):
+        sgpd.from_geopandas(left).sjoin(sgpd.from_geopandas(right), predicate="within")
+
+    # Different suffixes resolve it.
+    got = sgpd.from_geopandas(left).sjoin(
+        sgpd.from_geopandas(right), predicate="within", lsuffix="a", rsuffix="b"
+    )
+    assert len(got.columns) == len(set(got.columns))
+
+
+def test_dissolve_drops_nan_group_keys():
+    # dropna has to cover IEEE NaN as well as SQL null: a float key read from
+    # pandas carries NaN, which grouping otherwise treats as its own group.
+    df = sgpd.default_context().sql(
+        "SELECT CAST('NaN' AS DOUBLE) k, ST_Point(0.0, 0.0) geometry "
+        "UNION ALL SELECT 1.0, ST_Point(1.0, 1.0)"
+    )
+    assert len(GeoDataFrame(df).dissolve(by="k").to_geopandas()) == 1
+    assert len(GeoDataFrame(df).dissolve(by="k", dropna=False).to_geopandas()) == 2
+
+
+def test_setitem_scalar_geometry_keeps_crs(points):
+    # A bare Shapely geometry carries no CRS; GeoPandas keeps the column's.
+    from shapely.geometry import Point
+
+    gdf = sgpd.from_geopandas(points)
+    before = str(gdf.crs)
+    gdf["geometry"] = Point(5, 5)
+    assert gdf._geometry_name == "geometry"
+    assert "3857" in str(gdf.crs)
+    assert "3857" in before
+
+
+def test_setitem_none_keeps_geometry_column(points):
+    # Assigning None used to turn the column untyped and clear the active geometry;
+    # GeoPandas keeps a geometry column with its CRS.
+    gdf = sgpd.from_geopandas(points)
+    gdf["geometry"] = None
+    assert gdf._geometry_name == "geometry"
+    assert "3857" in str(gdf.crs)
+    assert gdf.to_geopandas().geometry.isna().all()
+
+
+def test_setitem_non_geometry_over_geometry_still_clears(points):
+    # The CRS-preserving path must not dress a number up as geometry.
+    gdf = sgpd.from_geopandas(points)
+    gdf["geometry"] = 7
+    assert gdf._geometry_name is None
+    assert gdf.to_geopandas()["geometry"].tolist() == [7, 7, 7]

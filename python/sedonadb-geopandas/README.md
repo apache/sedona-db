@@ -69,11 +69,19 @@ Division follows pandas rather than SQL: `/` is true division, so integer
 columns do not silently truncate. `//` is not implemented, since SQL division
 truncates toward zero where Python floors.
 
-`dissolve()` aggregates non-geometry columns with `"first"`, which skips SQL
-nulls but treats a NaN loaded from pandas as an ordinary value where GeoPandas
-would skip it. Dissolving an empty frame without a group key returns one all-null
-row rather than zero rows, because that is what a grouping-free SQL aggregate
-produces.
+`dissolve()` aggregates non-geometry columns with `"first"`, which is an
+unordered aggregate: it returns *some* value from the group rather than the one
+from the first row, and unlike GeoPandas it does not skip missing values, so a
+group containing a null or NaN may aggregate to that. Dissolving an empty frame
+without a group key returns one all-null row rather than zero rows, because that
+is what a grouping-free SQL aggregate produces, and a group mixing 2D and 3D
+geometries raises rather than being promoted to 3D.
+
+`sjoin(predicate="dwithin")` misses geometries that properly cross without
+sharing a vertex, because `ST_Distance` reports their endpoint gap rather than
+zero (apache/sedona-db#1156). Composing the predicate to work around it would
+stop the planner recognising it and turn the join into a nested loop, so the
+deviation stands until the engine is fixed.
 
 See the SedonaDB "Migrating from GeoPandas" guide for the relational model that
 underlies each method.

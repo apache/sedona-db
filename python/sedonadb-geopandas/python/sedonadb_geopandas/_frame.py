@@ -44,6 +44,11 @@ def _geometry_column_names(df):
     return {names[i] for i in df.schema.geometry_column_indices}
 
 
+def _is_floating(df, name):
+    """Whether column `name` is a floating-point column, so it can hold NaN."""
+    return "float" in str(df.schema.field(name).type).lower()
+
+
 def _is_scalar(value):
     """Whether `value` is a single value that can be broadcast to every row.
 
@@ -109,6 +114,18 @@ class GeoDataFrame:
     def __getitem__(self, key):
         # Boolean mask -> row filter (gdf[gdf["pop"] > 1000]).
         if isinstance(key, Series):
+            if key._df is not self._df:
+                # Same check assignment makes. Without it a mask captured before an
+                # assignment is silently reused against the rebound frame: it
+                # happens to resolve while the referenced column still exists, and
+                # fails obscurely at collection when it does not.
+                raise ValueError(
+                    "Cannot filter with a mask built from a different DataFrame: "
+                    "there is no row alignment, so the result would be silently "
+                    "wrong. Note that assigning a column rebinds this frame, so a "
+                    "mask taken beforehand is stale; re-read it as gdf[...] > ... "
+                    "and try again."
+                )
             return GeoDataFrame(self._df.filter(key._expr), self._geometry_name)
 
         # Column subset -> GeoDataFrame. Matching GeoPandas, the active geometry
@@ -169,7 +186,7 @@ class GeoDataFrame:
         if not isinstance(key, str):
             raise TypeError(f"Column name must be a string, not {type(key).__name__}")
 
-        from sedonadb.expr import Expr, Literal, lit
+        from sedonadb.expr import Expr, Literal
 
         if isinstance(value, Series):
             if value._df is not self._df:
@@ -200,7 +217,7 @@ class GeoDataFrame:
                 f"data as a frame and join it."
             )
         else:
-            expr = lit(value)
+            expr = self._scalar_expr(key, value)
 
         self._df = self._df.mutate(**{key: expr})
 
@@ -212,6 +229,37 @@ class GeoDataFrame:
             self._geometry_name = None
         elif self._geometry_name is None and key in geometry_columns:
             self._geometry_name = key
+
+    def _scalar_expr(self, key, value):
+        """Build the expression for broadcasting `value` into column `key`.
+
+        Replacing an existing geometry column keeps that column's CRS, as GeoPandas
+        does: a bare Shapely geometry (or `None`) carries no CRS of its own, and
+        letting the assignment silently reset the column to no CRS loses
+        information the frame already had. `None` is additionally built as a typed
+        null geometry so the column stays a geometry column rather than becoming
+        untyped.
+        """
+        from sedonadb.expr import lit
+
+        # Only geometry values inherit the column's CRS. Assigning a number over a
+        # geometry column is a legitimate way to turn it into an ordinary column,
+        # and must not be dressed up as geometry.
+        is_geometry_value = value is None or hasattr(value, "__geo_interface__")
+        replacing_geometry = key in _geometry_column_names(self._df)
+        if not (replacing_geometry and is_geometry_value):
+            return lit(value)
+
+        crs = self._df.schema.field(key).type.crs
+        # A context-bound literal is needed to call functions on it.
+        ctx = self._df._ctx
+        if value is None:
+            expr = ctx.lit(None).funcs.st_geomfromwkt()
+        else:
+            expr = ctx.lit(value)
+        if crs is not None:
+            expr = expr.funcs.st_setcrs(ctx.lit(crs.to_json()))
+        return expr
 
     def head(self, n=5):
         """Return a `GeoDataFrame` of at most `n` rows.
@@ -295,16 +343,15 @@ class GeoDataFrame:
 
         left_geom = left[self._geometry_name]
         right_geom = right[other._geometry_name]
+        # Always a single spatial predicate. The planner recognizes one and rewrites
+        # it into a spatial join; composing predicates (`a OR b`) still returns
+        # correct rows but drops the plan to a nested-loop join, which is quadratic.
+        # That matters more than the one case a composition would fix: ST_DWithin
+        # misses properly crossing linestrings, because ST_Distance reports their
+        # endpoint gap rather than zero (apache/sedona-db#1156). That belongs in the
+        # engine rather than being worked around at the cost of every join's plan.
         if predicate == "dwithin":
-            # ST_Distance reports the endpoint gap rather than zero for geometries
-            # that properly cross without sharing a vertex, so ST_DWithin misses
-            # crossing linestrings that GeoPandas matches. Anything that crosses
-            # intersects, and intersecting means a distance of zero, which is
-            # within any non-negative bound — so the union of the two predicates
-            # covers that case without changing any other.
-            on = left_geom.geo.d_within(
-                right_geom, distance
-            ) | left_geom.geo.intersects(right_geom)
+            on = left_geom.geo.d_within(right_geom, distance)
         else:
             on = getattr(left_geom.geo, _SJOIN_PREDICATES[predicate])(right_geom)
 
@@ -336,17 +383,35 @@ class GeoDataFrame:
                 return name
             return f"{name}_{suffix}"
 
-        projection = [
-            left[name].alias(
-                out_name(name, lsuffix, keep_left_geom and name == geometry)
-            )
+        left_out = [
+            out_name(name, lsuffix, keep_left_geom and name == geometry)
             for name in emitted_left
         ]
-        projection += [
-            right[name].alias(
-                out_name(name, rsuffix, not keep_left_geom and name == geometry)
-            )
+        right_out = [
+            out_name(name, rsuffix, not keep_left_geom and name == geometry)
             for name in emitted_right
+        ]
+
+        # Suffixing can itself collide — left columns `v` and `v_left` against a
+        # right `v` both want to be `v_left`. The engine cannot represent duplicate
+        # output names, so say so here rather than letting the planner fail on a
+        # generated name the caller never wrote. (GeoPandas currently allows the
+        # duplicate with a FutureWarning that it will become an error.)
+        final_names = left_out + right_out
+        duplicates = sorted({n for n in final_names if final_names.count(n) > 1})
+        if duplicates:
+            raise ValueError(
+                f"sjoin() would produce duplicate column name(s) {duplicates}: "
+                f"applying the suffixes {lsuffix!r}/{rsuffix!r} collides with a "
+                f"column that already exists. Pass different lsuffix/rsuffix "
+                f"values, or rename the conflicting column first."
+            )
+
+        projection = [
+            left[name].alias(out) for name, out in zip(emitted_left, left_out)
+        ]
+        projection += [
+            right[name].alias(out) for name, out in zip(emitted_right, right_out)
         ]
 
         return GeoDataFrame(joined.select(*projection), geometry)
@@ -365,15 +430,18 @@ class GeoDataFrame:
             A `GeoDataFrame` with one row per group. Unlike GeoPandas, the group
             keys stay ordinary columns rather than becoming the index.
 
-        Two remaining differences from GeoPandas, both consequences of doing this
-        as a lazy aggregation:
+        Three remaining differences from GeoPandas:
 
-        - `aggfunc="first"` skips SQL nulls, but a NaN loaded from pandas is an
-          ordinary floating-point value to the engine, so a group whose first row
-          is NaN aggregates to NaN where GeoPandas would skip it.
+        - `aggfunc="first"` is an unordered aggregate: it returns *some* value from
+          the group, not necessarily the one from the first row, and it does not
+          skip missing values the way GeoPandas' `first` does. A group containing a
+          null or NaN may therefore aggregate to that value.
         - Dissolving an empty frame with `by=None` yields one all-null row rather
           than zero rows, because that is what a grouping-free SQL aggregate
           returns. Detecting it would require executing the query first.
+        - A group mixing 2D and 3D geometries raises, because the collect step
+          rejects mixed coordinate dimensions; GeoPandas promotes to 3D with NaN.
+          Normalize the dimension first if a group can contain both.
         """
         if self._geometry_name is None:
             raise ValueError("dissolve() requires an active geometry column")
@@ -397,9 +465,16 @@ class GeoDataFrame:
 
         source = self._df
         if keys and dropna:
-            # GeoPandas drops rows with a missing group key by default.
+            # GeoPandas drops rows with a missing group key by default. "Missing"
+            # has to cover IEEE NaN as well as SQL null: a float column read from
+            # pandas carries NaN, and grouping treats it as an ordinary value, so
+            # filtering nulls alone would leave it as its own group.
             for key in keys:
-                source = source.filter(source[key].is_not_null())
+                column = source[key]
+                keep = column.is_not_null()
+                if _is_floating(source, key):
+                    keep = keep & ~column.funcs.isnan()
+                source = source.filter(keep)
 
         # Collect each group into one geometry and union it afterwards, rather than
         # using ST_Union_Agg: that aggregate only initializes for polygonal input,
