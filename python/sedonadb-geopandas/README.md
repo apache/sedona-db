@@ -59,13 +59,21 @@ deliberately *not* identical to GeoPandas:
   columns from two different frames raises rather than guessing. Join first.
 - **Plotting and arbitrary `apply`**: use the `to_geopandas()` escape hatch and
   operate on the materialized result.
-- **Expression escape hatch**: `series.expr` exposes the underlying SedonaDB
-  expression for anything the wrapper does not cover, and the result can be
-  assigned back with `gdf["name"] = ...`.
+- **Assignment takes a column or a scalar, not a bare expression**: a SedonaDB
+  expression records no origin, so one built from another frame would resolve
+  against the destination and silently write the wrong values. Assign a `Series`
+  read from the same frame, or a scalar (a geometry included). For anything the
+  wrapper does not cover, drop to the SedonaDB `DataFrame` API directly.
 
 Division follows pandas rather than SQL: `/` is true division, so integer
 columns do not silently truncate. `//` is not implemented, since SQL division
 truncates toward zero where Python floors.
+
+`dissolve()` aggregates non-geometry columns with `"first"`, which skips SQL
+nulls but treats a NaN loaded from pandas as an ordinary value where GeoPandas
+would skip it. Dissolving an empty frame without a group key returns one all-null
+row rather than zero rows, because that is what a grouping-free SQL aggregate
+produces.
 
 See the SedonaDB "Migrating from GeoPandas" guide for the relational model that
 underlies each method.
