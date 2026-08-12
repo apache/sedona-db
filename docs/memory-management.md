@@ -19,13 +19,13 @@
 
 # Memory Management and Spilling
 
-SedonaDB uses memory-limited execution with automatic spill-to-disk out of the box. By default, the memory limit is set to **75% of the system's physical memory** and memory is managed by a **fair** pool. When operators exceed their memory budget they automatically spill intermediate data to temporary files on disk and read them back as needed.
+SedonaDB supports memory-limited execution with automatic spill-to-disk. When a memory limit is set, memory is managed by a **fair** pool by default, and operators that exceed their memory budget automatically spill intermediate data to temporary files on disk and read them back as needed.
 
-This means SedonaDB works well for large datasets without any configuration. The sections below explain how to tune the defaults when needed.
+By default, no memory limit is enforced: operators can use as much memory as needed (until the process hits system limits) and won't spill to disk. The sections below explain how to enable and tune memory-limited execution.
 
 ## Configuring Memory Limits
 
-By default, SedonaDB limits query execution memory to **75% of the system's physical memory**. You can override this by setting `memory_limit` on the context options before running your first query. The limit accepts an integer (bytes) or a human-readable string such as `"4gb"`, `"512m"`, or `"1.5g"`.
+To enable memory-limited execution, set `memory_limit` on the context options before running your first query. The limit accepts an integer (bytes) or a human-readable string such as `"4gb"`, `"512m"`, or `"1.5g"`.
 
 
 ```python
@@ -35,14 +35,7 @@ sd = sedona.db.connect()
 sd.options.memory_limit = "4gb"
 ```
 
-To disable the memory limit entirely and use an unbounded memory pool, set `memory_limit` to `"unlimited"`:
-
-```python
-sd = sedona.db.connect()
-sd.options.memory_limit = "unlimited"
-```
-
-In unbounded mode, operators can use as much memory as needed (until the process hits system limits) and typically won't spill to disk because there is no memory budget to enforce.
+When no memory limit is set (the default), an unbounded memory pool is used: operators can use as much memory as needed (until the process hits system limits) and typically won't spill to disk because there is no memory budget to enforce.
 
 > **Note:** All runtime options (`memory_limit`, `memory_pool_type`, `temp_dir`, `unspillable_reserve_ratio`) must be set before the internal context is initialized. The internal context is created on the first call to `sd.sql(...)` (including `SET` statements) or any read method (for example, `sd.read_parquet(...)`) -- not when you call `.execute()` on the returned DataFrame. Once the internal context is created, these runtime options become read-only.
 
@@ -64,7 +57,7 @@ sd.options.memory_limit = "4gb"
 sd.options.memory_pool_type = "greedy"
 ```
 
-> **Note:** `memory_pool_type` only takes effect when a memory limit is active (i.e., `memory_limit` is not set to `"unlimited"`).
+> **Note:** `memory_pool_type` only takes effect when a memory limit is set.
 
 ### Unspillable reserve ratio
 

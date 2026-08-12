@@ -37,9 +37,9 @@ class Options:
     created will raise a `RuntimeError`:
 
     - `memory_limit`: Maximum memory for execution, in bytes or as a
-      human-readable string (e.g., `"4gb"`, `"512m"`). Set to
-      `"unlimited"` to disable the memory limit. Defaults to 75% of
-      system physical memory.
+      human-readable string (e.g., `"4gb"`, `"512m"`). Unlimited by
+      default; setting a limit enables memory-limited execution with
+      spill-to-disk.
     - `temp_dir`: Directory for temporary/spill files.
     - `memory_pool_type`: Memory pool type (`"greedy"` or `"fair"`).
       Defaults to `"fair"`.
@@ -49,7 +49,7 @@ class Options:
     Examples:
 
         >>> sd = sedona.db.connect()
-        >>> sd.options.memory_limit = "4gb"          # override default (75% of RAM)
+        >>> sd.options.memory_limit = "4gb"          # enable memory-limited execution
         >>> sd.options.memory_pool_type = "greedy"    # override default (fair)
         >>> sd.options.temp_dir = "/tmp/sedona-spill"
         >>> sd.options.interactive = True
@@ -129,9 +129,9 @@ class Options:
         """Maximum memory for query execution.
 
         Accepts an integer (bytes) or a human-readable string such as
-        `"4gb"`, `"512m"`, or `"1.5g"`. Set to `"unlimited"` to disable
-        the memory limit entirely. When `None`, the Rust-side default
-        (75% of system physical memory) is used.
+        `"4gb"`, `"512m"`, or `"1.5g"`. When `None` (the default), no
+        memory limit is enforced. Setting a limit enables memory-limited
+        execution with spill-to-disk.
 
         Must be set before the first query is executed.
 

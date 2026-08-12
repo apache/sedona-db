@@ -66,7 +66,7 @@ struct Args {
     #[clap(
         short = 'm',
         long,
-        help = "The memory pool limitation (e.g. '10g'), default to 75% of physical memory. Use 'unlimited' to disable",
+        help = "The memory pool limitation (e.g. '10g'), default to unlimited. Setting a limit enables spilling to disk",
         value_parser(parse_memory_limit)
     )]
     memory_limit: Option<MemoryLimitArg>,

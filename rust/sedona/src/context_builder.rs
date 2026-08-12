@@ -33,18 +33,6 @@ use crate::{
     size_parser,
 };
 
-/// The fraction of total physical memory to use as the default memory limit.
-const DEFAULT_MEMORY_FRACTION: f64 = 0.75;
-
-/// Compute the default memory limit as 75% of total physical memory.
-fn default_memory_limit() -> usize {
-    let mut sys = sysinfo::System::new();
-    sys.refresh_memory();
-    // `System::total_memory()` returns bytes since sysinfo 0.23+.
-    let total = sys.total_memory() as f64;
-    (total * DEFAULT_MEMORY_FRACTION) as usize
-}
-
 /// Builder for constructing a [`SedonaContext`] with configurable runtime
 /// environment settings.
 ///
@@ -52,9 +40,10 @@ fn default_memory_limit() -> usize {
 /// and runtime environments so that the same logic can be reused across the
 /// CLI, Python bindings, ADBC driver, and any future entry points.
 ///
-/// By default, the builder uses 75% of the system's physical memory as the
-/// memory limit and a fair memory pool. Use [`without_memory_limit`](Self::without_memory_limit)
-/// or pass `"unlimited"` as the `memory_limit` option to disable the limit.
+/// By default, no memory limit is enforced and DataFusion's unbounded memory
+/// pool is used. Set a limit with [`with_memory_limit`](Self::with_memory_limit)
+/// or the `memory_limit` option to enable memory-limited execution with
+/// spill-to-disk.
 ///
 /// # Examples
 ///
@@ -63,7 +52,7 @@ fn default_memory_limit() -> usize {
 /// use sedona::context_builder::SedonaContextBuilder;
 /// use sedona::pool_type::PoolType;
 ///
-/// // Uses defaults: 75% of physical memory, fair pool
+/// // Uses defaults: unlimited memory
 /// let ctx = SedonaContextBuilder::new()
 ///     .build()
 ///     .await?;
@@ -76,11 +65,6 @@ fn default_memory_limit() -> usize {
 ///     .build()
 ///     .await?;
 ///
-/// // Disable memory limit entirely
-/// let ctx = SedonaContextBuilder::new()
-///     .without_memory_limit()
-///     .build()
-///     .await?;
 /// # Ok(())
 /// # }
 /// ```
@@ -122,13 +106,13 @@ impl SedonaContextBuilder {
     /// Create a new builder with default settings.
     ///
     /// Defaults:
-    /// - `memory_limit`: 75% of total physical memory
+    /// - `memory_limit`: `None` (unlimited; uses DataFusion's unbounded memory pool)
     /// - `pool_type`: `PoolType::Fair`
     /// - `unspillable_reserve_ratio`: `0.2`
     /// - `temp_dir`: `None` (uses DataFusion's default temp directory)
     pub fn new() -> Self {
         Self {
-            memory_limit: Some(default_memory_limit()),
+            memory_limit: None,
             temp_dir: None,
             pool_type: PoolType::Fair,
             unspillable_reserve_ratio: DEFAULT_UNSPILLABLE_RESERVE_RATIO,
@@ -286,10 +270,8 @@ mod tests {
     #[test]
     fn test_default_builder() {
         let builder = SedonaContextBuilder::new();
-        // Default memory limit should be 75% of physical memory
-        let expected_limit = default_memory_limit();
-        assert_eq!(builder.memory_limit, Some(expected_limit));
-        assert!(builder.memory_limit.unwrap() > 0);
+        // No memory limit by default (unbounded memory pool, no spilling)
+        assert!(builder.memory_limit.is_none());
         assert!(builder.temp_dir.is_none());
         assert_eq!(builder.pool_type, PoolType::Fair);
         assert!(
@@ -353,8 +335,8 @@ mod tests {
     fn test_from_options_empty() {
         let opts = HashMap::new();
         let builder = SedonaContextBuilder::from_options(&opts).unwrap();
-        // Empty options should use defaults (75% memory, Fair pool)
-        assert!(builder.memory_limit.is_some());
+        // Empty options should use defaults (unlimited memory, Fair pool)
+        assert!(builder.memory_limit.is_none());
         assert!(builder.temp_dir.is_none());
         assert_eq!(builder.pool_type, PoolType::Fair);
     }
@@ -425,8 +407,8 @@ mod tests {
         let mut opts = HashMap::new();
         opts.insert("unknown_key".to_string(), "value".to_string());
         let builder = SedonaContextBuilder::from_options(&opts).unwrap();
-        // Default memory limit should still be set
-        assert!(builder.memory_limit.is_some());
+        // Defaults should be preserved (no memory limit)
+        assert!(builder.memory_limit.is_none());
     }
 
     #[test]
@@ -458,7 +440,7 @@ mod tests {
 
     #[test]
     fn test_build_runtime_env_default() {
-        // Default builder should build successfully with 75% memory + fair pool
+        // Default builder should build successfully with the unbounded memory pool
         let builder = SedonaContextBuilder::new();
         let result = builder.build_runtime_env();
         assert!(result.is_ok());
