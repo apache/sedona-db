@@ -295,37 +295,60 @@ class GeoDataFrame:
 
         left_geom = left[self._geometry_name]
         right_geom = right[other._geometry_name]
-        method = getattr(left_geom.geo, _SJOIN_PREDICATES[predicate])
-        on = (
-            method(right_geom, distance)
-            if predicate == "dwithin"
-            else method(right_geom)
-        )
+        if predicate == "dwithin":
+            # ST_Distance reports the endpoint gap rather than zero for geometries
+            # that properly cross without sharing a vertex, so ST_DWithin misses
+            # crossing linestrings that GeoPandas matches. Anything that crosses
+            # intersects, and intersecting means a distance of zero, which is
+            # within any non-negative bound — so the union of the two predicates
+            # covers that case without changing any other.
+            on = left_geom.geo.d_within(
+                right_geom, distance
+            ) | left_geom.geo.intersects(right_geom)
+        else:
+            on = getattr(left_geom.geo, _SJOIN_PREDICATES[predicate])(right_geom)
 
         joined = left.join(right, on=on, how=how)
 
-        # Keep exactly one geometry column — whichever side GeoPandas keeps — and
-        # suffix the non-geometry names that occur on both sides.
+        # Keep exactly one geometry column — whichever side GeoPandas keeps.
         keep_left_geom = how != "right"
-        left_names = list(self.columns)
-        right_names = list(other.columns)
-        overlap = (set(left_names) - {self._geometry_name}) & (
-            set(right_names) - {other._geometry_name}
-        )
-
-        projection = []
-        for name in left_names:
-            if name == self._geometry_name and not keep_left_geom:
-                continue
-            out = f"{name}_{lsuffix}" if name in overlap else name
-            projection.append(left[name].alias(out))
-        for name in right_names:
-            if name == other._geometry_name and keep_left_geom:
-                continue
-            out = f"{name}_{rsuffix}" if name in overlap else name
-            projection.append(right[name].alias(out))
-
         geometry = self._geometry_name if keep_left_geom else other._geometry_name
+
+        # Collisions are computed over the columns actually emitted, so a dropped
+        # geometry does not count as a collision while an ordinary column sharing
+        # the *retained* geometry's name does. Following GeoPandas, the retained
+        # geometry keeps its name and only the opposite side's column is suffixed;
+        # ordinary collisions suffix both sides.
+        emitted_left = [
+            name
+            for name in self.columns
+            if keep_left_geom or name != self._geometry_name
+        ]
+        emitted_right = [
+            name
+            for name in other.columns
+            if not keep_left_geom or name != other._geometry_name
+        ]
+        collisions = set(emitted_left) & set(emitted_right)
+
+        def out_name(name, suffix, is_retained_geometry):
+            if name not in collisions or is_retained_geometry:
+                return name
+            return f"{name}_{suffix}"
+
+        projection = [
+            left[name].alias(
+                out_name(name, lsuffix, keep_left_geom and name == geometry)
+            )
+            for name in emitted_left
+        ]
+        projection += [
+            right[name].alias(
+                out_name(name, rsuffix, not keep_left_geom and name == geometry)
+            )
+            for name in emitted_right
+        ]
+
         return GeoDataFrame(joined.select(*projection), geometry)
 
     def dissolve(self, by=None, aggfunc="first", dropna=True):

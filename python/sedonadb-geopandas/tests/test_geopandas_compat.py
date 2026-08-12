@@ -443,12 +443,14 @@ def test_setitem_replaces_existing_column(points):
 
 
 def test_setitem_makes_geometry_active_when_frame_had_none():
-    # Building geometry from coordinate columns, as points_from_xy would: a frame
-    # that starts without geometry gains an active one on assignment.
-    plain = GeoDataFrame(sgpd.default_context().sql("SELECT 1.0 AS x, 2.0 AS y"))
+    # A frame that starts without geometry gains an active geometry column when
+    # one is assigned.
+    from shapely.geometry import Point
+
+    plain = GeoDataFrame(sgpd.default_context().sql("SELECT 1 AS a"))
     assert plain._geometry_name is None
 
-    plain["geometry"] = plain["x"].expr.funcs.st_point(plain["y"].expr)
+    plain["geometry"] = Point(1, 2)
     assert plain._geometry_name == "geometry"
     assert plain.to_geopandas().geometry.to_wkt().tolist() == ["POINT (1 2)"]
 
@@ -463,7 +465,7 @@ def test_setitem_rejects_bad_inputs(points):
     gdf = sgpd.from_geopandas(points)
     with pytest.raises(TypeError, match="must be a string"):
         gdf[0] = 1
-    with pytest.raises(TypeError, match="array-like"):
+    with pytest.raises(TypeError, match="isn't supported"):
         gdf["x"] = points["v"]
     # A Series from a different frame has no row alignment.
     other = sgpd.from_geopandas(points)
@@ -498,3 +500,169 @@ def test_series_arithmetic_between_columns(points):
     gdf = sgpd.from_geopandas(points)
     got = (gdf["v"] + gdf["v"]).to_pandas().tolist()
     assert sorted(got) == sorted((points["v"] + points["v"]).tolist())
+
+
+# -- regressions from review -------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "wkts",
+    [
+        ["POINT (0 0)", "POINT (1 1)"],
+        ["LINESTRING (0 0, 1 1)", "LINESTRING (1 1, 2 2)"],
+        ["POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))", "POLYGON ((1 1, 3 1, 3 3, 1 3, 1 1))"],
+    ],
+    ids=["points", "lines", "polygons"],
+)
+def test_dissolve_handles_every_geometry_type(wkts):
+    # ST_Union_Agg only initializes for polygonal input, so points and linestrings
+    # used to dissolve to NULL geometry.
+    g = gpd.GeoDataFrame(
+        {"zone": ["A", "A"]},
+        geometry=gpd.GeoSeries.from_wkt(wkts),
+        crs="EPSG:3857",
+    )
+    got = sgpd.from_geopandas(g).dissolve(by="zone").to_geopandas()
+    expected = g.dissolve(by="zone")
+    assert got.geometry.iloc[0] is not None
+    assert got.geometry.iloc[0].geom_type == expected.geometry.iloc[0].geom_type
+    assert got.geometry.iloc[0].equals(expected.geometry.iloc[0])
+
+
+def test_dissolve_dropna_matches_geopandas():
+    g = gpd.GeoDataFrame(
+        {"zone": ["A", None], "v": [1, 2]},
+        geometry=gpd.GeoSeries.from_wkt(
+            [
+                "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
+                "POLYGON ((2 2, 3 2, 3 3, 2 3, 2 2))",
+            ]
+        ),
+        crs="EPSG:3857",
+    )
+    gdf = sgpd.from_geopandas(g)
+    # GeoPandas drops the missing key by default; dropna=False keeps it.
+    assert len(gdf.dissolve(by="zone").to_geopandas()) == len(g.dissolve(by="zone"))
+    assert len(gdf.dissolve(by="zone", dropna=False).to_geopandas()) == 2
+
+
+def test_setitem_rejects_bare_expression(points):
+    # A bare expression carries no origin, so one built from another frame would
+    # resolve against this frame and silently write this frame's values.
+    left = sgpd.from_geopandas(points)
+    right = sgpd.from_geopandas(points)
+    with pytest.raises(TypeError, match="bare expression"):
+        left["copied"] = right["v"]._expr
+
+
+def test_series_has_no_unguarded_expr_escape_hatch(points):
+    assert not hasattr(sgpd.from_geopandas(points)["v"], "expr")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [[10, 20, 30], (10, 20, 30), {10, 20}],
+    ids=["list", "tuple", "set"],
+)
+def test_setitem_rejects_sequences(points, value):
+    # Sequences have no __array__, so they used to be broadcast whole into every
+    # row rather than rejected.
+    gdf = sgpd.from_geopandas(points)
+    with pytest.raises(TypeError, match="isn't supported"):
+        gdf["x"] = value
+
+
+def test_setitem_accepts_numpy_scalar(points):
+    # NumPy scalars do have __array__ but are single values, so they used to be
+    # rejected as array-likes.
+    import numpy as np
+
+    gdf = sgpd.from_geopandas(points)
+    gdf["x"] = np.int64(5)
+    assert gdf.to_geopandas()["x"].tolist() == [5, 5, 5]
+
+
+def test_setitem_rejects_numpy_array(points):
+    import numpy as np
+
+    gdf = sgpd.from_geopandas(points)
+    with pytest.raises(TypeError, match="isn't supported"):
+        gdf["x"] = np.array([1, 2, 3])
+
+
+def test_setitem_over_active_geometry_clears_it(points):
+    # Replacing the active geometry with a number used to leave the name pointing
+    # at an integer column, so .geometry still returned a GeoSeries and .area
+    # failed later with a kernel error.
+    gdf = sgpd.from_geopandas(points)
+    gdf["geometry"] = 7
+    assert gdf._geometry_name is None
+    assert gdf.crs is None
+    with pytest.raises(AttributeError, match="no active geometry"):
+        gdf.geometry
+
+
+def test_sjoin_dwithin_matches_crossing_lines():
+    # ST_Distance reports the endpoint gap for properly crossing linestrings, so
+    # dwithin used to miss a pair GeoPandas matches.
+    a = gpd.GeoDataFrame(
+        {"i": [1]},
+        geometry=gpd.GeoSeries.from_wkt(["LINESTRING (0 0, 2 2)"]),
+        crs="EPSG:3857",
+    )
+    b = gpd.GeoDataFrame(
+        {"j": [1]},
+        geometry=gpd.GeoSeries.from_wkt(["LINESTRING (0 2, 2 0)"]),
+        crs="EPSG:3857",
+    )
+    got = sgpd.from_geopandas(a).sjoin(
+        sgpd.from_geopandas(b), predicate="dwithin", distance=0
+    )
+    assert (
+        len(got.to_geopandas())
+        == len(gpd.sjoin(a, b, predicate="dwithin", distance=0))
+        == 1
+    )
+
+
+@pytest.mark.parametrize("distance", [0.5, 1.0, 2.0])
+def test_sjoin_dwithin_unchanged_for_non_crossing(distance):
+    p = gpd.GeoDataFrame(
+        {"i": [1, 2]},
+        geometry=gpd.GeoSeries.from_wkt(["POINT (0 0)", "POINT (9 9)"]),
+        crs="EPSG:3857",
+    )
+    q = gpd.GeoDataFrame(
+        {"j": [1]},
+        geometry=gpd.GeoSeries.from_wkt(["POINT (0 1)"]),
+        crs="EPSG:3857",
+    )
+    got = sgpd.from_geopandas(p).sjoin(
+        sgpd.from_geopandas(q), predicate="dwithin", distance=distance
+    )
+    assert len(got.to_geopandas()) == len(
+        gpd.sjoin(p, q, predicate="dwithin", distance=distance)
+    )
+
+
+def test_sjoin_collision_with_retained_geometry_name():
+    # The retained geometry was named `geom` and the other frame had an ordinary
+    # `geom` column, so both projected as `geom` and planning failed.
+    left = gpd.GeoDataFrame(
+        {"x": [1]},
+        geometry=gpd.GeoSeries.from_wkt(["POINT (0 0)"]),
+        crs="EPSG:3857",
+    ).rename_geometry("geom")
+    right = gpd.GeoDataFrame(
+        {"geom": ["ordinary"]},
+        geometry=gpd.GeoSeries.from_wkt(["POLYGON ((-1 -1, 1 -1, 1 1, -1 1, -1 -1))"]),
+        crs="EPSG:3857",
+    )
+    got = sgpd.from_geopandas(left).sjoin(
+        sgpd.from_geopandas(right), predicate="within"
+    )
+    expected = gpd.sjoin(left, right, predicate="within")
+    # GeoPandas keeps the retained geometry's name and suffixes only the other
+    # side's conflicting column.
+    assert got.columns == _without_index_cols(expected)
+    assert got._geometry_name == expected.geometry.name
