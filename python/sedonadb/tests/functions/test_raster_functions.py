@@ -278,9 +278,10 @@ def test_rs_setgeoreference_esri_skewed_roundtrips():
         # Three-arg form targets a specific band; read it back with the getter.
         ("RS_BandNoDataValue(RS_SetBandNoDataValue(RS_Example(), 1, 0), 1)", 0.0),
         ("RS_BandNoDataValue(RS_SetBandNoDataValue(RS_Example(), 2, 255), 2)", 255.0),
-        # A null nodata value yields a null raster, so the getter returns null.
+        # A null nodata value clears the addressed band's nodata (band 1 starts
+        # at 127), so the getter then reads back null for that band.
         (
-            "RS_BandNoDataValue(RS_SetBandNoDataValue(RS_Example(), CAST(NULL AS DOUBLE)), 1)",
+            "RS_BandNoDataValue(RS_SetBandNoDataValue(RS_Example(), 1, CAST(NULL AS DOUBLE)), 1)",
             None,
         ),
     ],
@@ -289,12 +290,15 @@ def test_rs_setbandnodatavalue(expr, expected):
     SedonaDB().assert_query_result(f"SELECT {expr}", expected)
 
 
-def test_rs_setbandnodatavalue_two_arg_requires_single_band():
+@pytest.mark.parametrize("value", ["0", "CAST(NULL AS DOUBLE)"])
+def test_rs_setbandnodatavalue_two_arg_requires_single_band(value):
     # The 2-arg form is ambiguous on a multiband raster (RS_Example has multiple
-    # bands), so it errors rather than silently setting only band 1.
+    # bands), so it errors rather than silently setting only band 1. A null value
+    # clears the band's nodata rather than short-circuiting to a null raster, so
+    # it hits the same ambiguity and errors too.
     with pytest.raises(Exception, match="specify which band"):
         SedonaDB().assert_query_result(
-            "SELECT RS_SetBandNoDataValue(RS_Example(), 0)", None
+            f"SELECT RS_SetBandNoDataValue(RS_Example(), {value})", None
         )
 
 
