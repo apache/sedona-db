@@ -17,6 +17,28 @@
 """pandas/GeoPandas-style Series backed by a SedonaDB expression."""
 
 
+def is_scalar(value):
+    """Whether `value` is a single value that can be broadcast to every row.
+
+    Checking for `__array__` alone is not enough in either direction: a list or
+    tuple has no `__array__` yet is a sequence, while a NumPy scalar has one and
+    *is* a single value. So sequences are rejected explicitly, and anything
+    array-like is judged by its dimensionality — 0-d is a scalar, anything else
+    holds multiple values and has no defined row alignment here.
+
+    Shared by operators and assignment so the two cannot disagree about what
+    counts as a scalar.
+    """
+    if isinstance(value, (str, bytes, bytearray)):
+        return True
+    if isinstance(value, (list, tuple, set, frozenset, dict, range)):
+        return False
+    if hasattr(value, "__array__"):
+        return getattr(value, "ndim", None) == 0
+    # Non-sequence objects (numbers, shapely geometries, None, ...) broadcast.
+    return not hasattr(value, "__len__")
+
+
 def _operand(df, other):
     """Coerce the right-hand side of an operator into something usable.
 
@@ -52,12 +74,14 @@ def _operand(df, other):
             "another frame would silently resolve against this one. Use a "
             "Series read from the same frame, or a literal."
         )
-    if hasattr(other, "__array__"):
+    if not is_scalar(other):
         raise TypeError(
-            "Operating against a pandas/numpy array-like isn't supported "
-            "(there is no row alignment). Operate within this frame, or collect "
-            "with to_pandas() first."
+            f"Operating against a {type(other).__name__} isn't supported (there "
+            f"is no row alignment). Operate within this frame, or collect with "
+            f"to_pandas() first."
         )
+    # A 0-d value such as a NumPy scalar reaches here and broadcasts, matching
+    # what assignment accepts.
     return other
 
 

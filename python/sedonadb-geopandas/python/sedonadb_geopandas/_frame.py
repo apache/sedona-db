@@ -16,7 +16,7 @@
 # under the License.
 """GeoPandas-style GeoDataFrame backed by a lazy SedonaDB frame."""
 
-from sedonadb_geopandas._series import GeoSeries, Series
+from sedonadb_geopandas._series import GeoSeries, Series, is_scalar
 
 # Rows to collect for the Jupyter rich-text (`_repr_html_`) preview.
 _REPR_HTML_ROWS = 10
@@ -45,27 +45,36 @@ def _geometry_column_names(df):
 
 
 def _is_floating(df, name):
-    """Whether column `name` is a floating-point column, so it can hold NaN."""
-    return "float" in str(df.schema.field(name).type).lower()
+    """Whether column `name` is a scalar floating-point column, so it can hold NaN.
 
-
-def _is_scalar(value):
-    """Whether `value` is a single value that can be broadcast to every row.
-
-    Checking for `__array__` alone is not enough in either direction: a list or
-    tuple has no `__array__` yet is a sequence, while a NumPy scalar has one and
-    *is* a single value. So sequences are rejected explicitly, and anything
-    array-like is judged by its dimensionality — 0-d is a scalar, anything else
-    holds multiple values and has no defined row alignment here.
+    The Arrow datatype is checked rather than its string form: a rendered type such
+    as `list<item: double>` or `struct<x: double>` contains "float"/"double" while
+    being nothing `isnan()` can be applied to, and passing one to `isnan()` fails
+    at planning time.
     """
-    if isinstance(value, (str, bytes, bytearray)):
+    import pyarrow as pa
+
+    field = pa.schema(df.schema).field(name)
+    return pa.types.is_floating(field.type)
+
+
+def _is_missing(value):
+    """Whether `value` is one of the missing-value sentinels.
+
+    `None`, NaN, and `pandas.NA` all mean "no value" to GeoPandas, and a geometry
+    column assigned any of them keeps its type and CRS rather than becoming an
+    ordinary column of nulls.
+    """
+    if value is None:
         return True
-    if isinstance(value, (list, tuple, set, frozenset, dict, range)):
-        return False
-    if hasattr(value, "__array__"):
-        return getattr(value, "ndim", None) == 0
-    # Non-sequence objects (numbers, shapely geometries, None, ...) broadcast.
-    return not hasattr(value, "__len__")
+    try:
+        import pandas as pd
+
+        # Safe for scalars; geometries and numbers simply return False.
+        return bool(pd.isna(value))
+    except Exception:
+        # Without pandas, catch NaN via its self-inequality.
+        return isinstance(value, float) and value != value
 
 
 class GeoDataFrame:
@@ -200,8 +209,10 @@ class GeoDataFrame:
             expr = value._expr
         elif isinstance(value, Literal):
             # A literal holds a value rather than a column reference, so there is
-            # no frame for it to be misattributed to.
-            expr = value
+            # no frame for it to be misattributed to. It still goes through the
+            # scalar path so that a literal geometry gets the same CRS treatment as
+            # a plain one.
+            expr = self._scalar_expr(key, value)
         elif isinstance(value, Expr):
             raise TypeError(
                 "Assigning a bare expression isn't supported: an expression does "
@@ -209,7 +220,7 @@ class GeoDataFrame:
                 "against another frame would silently resolve against this one. "
                 "Assign a Series read from this frame, or a literal."
             )
-        elif not _is_scalar(value):
+        elif not is_scalar(value):
             raise TypeError(
                 f"Assigning a {type(value).__name__} isn't supported (there is no "
                 f"row alignment, so the values could not be matched to rows). "
@@ -233,30 +244,36 @@ class GeoDataFrame:
     def _scalar_expr(self, key, value):
         """Build the expression for broadcasting `value` into column `key`.
 
-        Replacing an existing geometry column keeps that column's CRS, as GeoPandas
-        does: a bare Shapely geometry (or `None`) carries no CRS of its own, and
-        letting the assignment silently reset the column to no CRS loses
-        information the frame already had. `None` is additionally built as a typed
-        null geometry so the column stays a geometry column rather than becoming
-        untyped.
-        """
-        from sedonadb.expr import lit
+        Replacing an existing geometry column keeps that column's type and CRS, as
+        GeoPandas does. A bare Shapely geometry carries no CRS of its own, and any
+        missing-value sentinel (`None`, NaN, `pandas.NA`) means "no geometry" rather
+        than "no longer a geometry column", so neither should silently reset what
+        the frame already knew.
 
-        # Only geometry values inherit the column's CRS. Assigning a number over a
-        # geometry column is a legitimate way to turn it into an ordinary column,
-        # and must not be dressed up as geometry.
-        is_geometry_value = value is None or hasattr(value, "__geo_interface__")
+        A `Literal` is unwrapped and rebuilt on this frame's context: a literal
+        constructed by the bare `lit()` has no context, so functions cannot be
+        applied to it, and passing it straight through would skip the CRS handling.
+        """
+        from sedonadb.expr import Literal, lit
+
+        raw = value._value if isinstance(value, Literal) else value
+
+        # Only geometry values inherit the column's type and CRS. Assigning a number
+        # over a geometry column is a legitimate way to turn it into an ordinary
+        # column, and must not be dressed up as geometry.
+        missing = _is_missing(raw)
+        is_geometry_value = missing or hasattr(raw, "__geo_interface__")
         replacing_geometry = key in _geometry_column_names(self._df)
         if not (replacing_geometry and is_geometry_value):
-            return lit(value)
+            return value if isinstance(value, Literal) else lit(value)
 
         crs = self._df.schema.field(key).type.crs
         # A context-bound literal is needed to call functions on it.
         ctx = self._df._ctx
-        if value is None:
+        if missing:
             expr = ctx.lit(None).funcs.st_geomfromwkt()
         else:
-            expr = ctx.lit(value)
+            expr = ctx.lit(raw)
         if crs is not None:
             expr = expr.funcs.st_setcrs(ctx.lit(crs.to_json()))
         return expr
@@ -343,13 +360,17 @@ class GeoDataFrame:
 
         left_geom = left[self._geometry_name]
         right_geom = right[other._geometry_name]
-        # Always a single spatial predicate. The planner recognizes one and rewrites
-        # it into a spatial join; composing predicates (`a OR b`) still returns
-        # correct rows but drops the plan to a nested-loop join, which is quadratic.
-        # That matters more than the one case a composition would fix: ST_DWithin
-        # misses properly crossing linestrings, because ST_Distance reports their
-        # endpoint gap rather than zero (apache/sedona-db#1156). That belongs in the
-        # engine rather than being worked around at the cost of every join's plan.
+        # Always a single spatial predicate. Composing them (`a OR b`) was tried and
+        # reverted, for two independent reasons: the planner only recognizes a single
+        # predicate, so a composition drops the plan to a nested-loop join and makes
+        # the join quadratic; and OR-ing ST_Intersects in also broke the bound's
+        # semantics, matching coincident geometries at a negative or NaN distance
+        # where GeoPandas matches nothing.
+        #
+        # The case a composition would have fixed is that ST_DWithin misses properly
+        # crossing linestrings, because ST_Distance reports their endpoint gap rather
+        # than zero (apache/sedona-db#1156). That belongs in the engine rather than
+        # being worked around here at the cost of both plan shape and semantics.
         if predicate == "dwithin":
             on = left_geom.geo.d_within(right_geom, distance)
         else:
@@ -497,11 +518,23 @@ class GeoDataFrame:
         else:
             collected = source.agg(*aggregates)
 
-        unioned = collected.mutate(
-            **{
-                self._geometry_name: collected[self._geometry_name].geo.unary_union(),
-            }
+        # A group whose geometries are all null unions to null; GeoPandas yields an
+        # empty geometry collection, which behaves differently for isna, is_empty,
+        # predicates, and serialization. Coalescing loses the geometry type, so the
+        # result is re-typed and the source column's CRS re-applied.
+        ctx = self._df._ctx
+        crs = self._df.schema.field(self._geometry_name).type.crs
+        empty = ctx.lit("GEOMETRYCOLLECTION EMPTY").funcs.st_geomfromwkt()
+        geometry_expr = (
+            collected[self._geometry_name]
+            .geo.unary_union()
+            .funcs.coalesce(empty)
+            .funcs.st_geomfromwkb()
         )
+        if crs is not None:
+            geometry_expr = geometry_expr.funcs.st_setcrs(ctx.lit(crs.to_json()))
+
+        unioned = collected.mutate(**{self._geometry_name: geometry_expr})
         return GeoDataFrame(unioned, self._geometry_name)
 
     def to_geopandas(self):

@@ -228,7 +228,7 @@ def test_repr_is_lazy(cities):
 
 def test_operand_rejects_arraylike(cities):
     gdf = sgpd.from_geopandas(cities)
-    with pytest.raises(TypeError, match="array-like"):
+    with pytest.raises(TypeError, match="isn't supported"):
         gdf["pop"] > cities["pop"]  # a real pandas Series
 
 
@@ -778,3 +778,87 @@ def test_setitem_non_geometry_over_geometry_still_clears(points):
     gdf["geometry"] = 7
     assert gdf._geometry_name is None
     assert gdf.to_geopandas()["geometry"].tolist() == [7, 7, 7]
+
+
+# -- regressions from the third review pass ---------------------------------
+
+
+def test_dissolve_by_nested_float_column():
+    # _is_floating used to match the rendered type string, so `list<item: double>`
+    # looked like a float column and dropna called isnan() on it, failing at
+    # planning time.
+    df = sgpd.default_context().sql(
+        "SELECT [1.0, 2.0] AS k, ST_Point(0.0, 0.0) AS geometry"
+    )
+    got = GeoDataFrame(df).dissolve(by="k").to_geopandas()
+    assert len(got) == 1
+
+
+@pytest.mark.parametrize(
+    "value_name",
+    ["none", "nan", "pandas_na", "geometry", "literal_geometry", "literal_none"],
+)
+def test_setitem_geometry_scalars_keep_type_and_crs(points, value_name):
+    # Every supported scalar path has to go through the CRS-preserving branch:
+    # GeoPandas treats None, NaN and pd.NA as missing geometry and keeps the typed
+    # column and its CRS.
+    import numpy as np
+    import pandas as pd
+    from shapely.geometry import Point
+
+    from sedonadb.expr import lit
+
+    values = {
+        "none": None,
+        "nan": np.nan,
+        "pandas_na": pd.NA,
+        "geometry": Point(5, 5),
+        "literal_geometry": lit(Point(5, 5)),
+        "literal_none": lit(None),
+    }
+    gdf = sgpd.from_geopandas(points)
+    gdf["geometry"] = values[value_name]
+    assert gdf._geometry_name == "geometry"
+    assert "3857" in str(gdf.crs)
+
+
+def test_dissolve_all_null_group_is_empty_geometry(points):
+    # GeoPandas returns GEOMETRYCOLLECTION EMPTY rather than None, which behaves
+    # differently for isna, is_empty, predicates and serialization.
+    df = sgpd.default_context().sql(
+        "SELECT 'A' AS z, "
+        "ST_SetSRID(ST_GeomFromText(CAST(NULL AS VARCHAR)), 3857) AS geometry "
+        "UNION ALL SELECT 'A', "
+        "ST_SetSRID(ST_GeomFromText(CAST(NULL AS VARCHAR)), 3857)"
+    )
+    got = GeoDataFrame(df).dissolve(by="z").to_geopandas()
+    expected = gpd.GeoDataFrame(
+        {"z": ["A", "A"]},
+        geometry=gpd.GeoSeries.from_wkt([None, None]),
+        crs="EPSG:3857",
+    ).dissolve(by="z")
+    assert got.geometry.iloc[0].equals(expected.geometry.iloc[0])
+    assert got.geometry.iloc[0].is_empty
+    assert not got.geometry.isna().any()
+
+
+def test_operators_accept_numpy_scalars(points):
+    # Operators rejected anything with __array__, including NumPy scalars, even
+    # though assignment already accepted them.
+    import numpy as np
+
+    gdf = sgpd.from_geopandas(points)
+    assert sorted((gdf["v"] + np.int64(1)).to_pandas().tolist()) == [2, 3, 4]
+    assert sorted((gdf["v"] > np.float64(1)).to_pandas().tolist()) == [
+        False,
+        True,
+        True,
+    ]
+
+
+def test_operators_still_reject_arrays(points):
+    import numpy as np
+
+    gdf = sgpd.from_geopandas(points)
+    with pytest.raises(TypeError, match="isn't supported"):
+        gdf["v"] + np.array([1, 2, 3])
