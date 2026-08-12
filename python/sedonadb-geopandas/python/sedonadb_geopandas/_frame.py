@@ -289,7 +289,7 @@ class GeoDataFrame:
         geometry = self._geometry_name if keep_left_geom else other._geometry_name
         return GeoDataFrame(joined.select(*projection), geometry)
 
-    def dissolve(self, by=None, aggfunc="first"):
+    def dissolve(self, by=None, aggfunc="first", dropna=True):
         """Group rows and union each group's geometry.
 
         Args:
@@ -297,10 +297,21 @@ class GeoDataFrame:
                 row is dissolved into one.
             aggfunc: How to aggregate the remaining non-geometry columns.
                 Only `"first"` is currently supported.
+            dropna: Drop rows whose group key is missing, as GeoPandas does.
 
         Returns:
             A `GeoDataFrame` with one row per group. Unlike GeoPandas, the group
             keys stay ordinary columns rather than becoming the index.
+
+        Two remaining differences from GeoPandas, both consequences of doing this
+        as a lazy aggregation:
+
+        - `aggfunc="first"` skips SQL nulls, but a NaN loaded from pandas is an
+          ordinary floating-point value to the engine, so a group whose first row
+          is NaN aggregates to NaN where GeoPandas would skip it.
+        - Dissolving an empty frame with `by=None` yields one all-null row rather
+          than zero rows, because that is what a grouping-free SQL aggregate
+          returns. Detecting it would require executing the query first.
         """
         if self._geometry_name is None:
             raise ValueError("dissolve() requires an active geometry column")
@@ -322,19 +333,39 @@ class GeoDataFrame:
         if unknown:
             raise KeyError(f"Column(s) {unknown} not found. Columns: {self.columns}")
 
+        source = self._df
+        if keys and dropna:
+            # GeoPandas drops rows with a missing group key by default.
+            for key in keys:
+                source = source.filter(source[key].is_not_null())
+
+        # Collect each group into one geometry and union it afterwards, rather than
+        # using ST_Union_Agg: that aggregate only initializes for polygonal input,
+        # so a group of points or linestrings dissolves to NULL
+        # (apache/sedona-db#1093). Collect-then-unary-union is geometry-general and
+        # also produces the geometry types GeoPandas produces.
+        #
+        # The union is a separate projection because a scalar function wrapped
+        # around an aggregate is not a valid aggregate expression.
         aggregates = [
-            self._df[self._geometry_name].geo.union_agg().alias(self._geometry_name)
+            source[self._geometry_name].geo.collect_agg().alias(self._geometry_name)
         ]
         for name in self.columns:
             if name == self._geometry_name or name in keys:
                 continue
-            aggregates.append(self._df[name].funcs.first_value().alias(name))
+            aggregates.append(source[name].funcs.first_value().alias(name))
 
         if keys:
-            new_df = self._df.group_by(*keys).agg(*aggregates)
+            collected = source.group_by(*keys).agg(*aggregates)
         else:
-            new_df = self._df.agg(*aggregates)
-        return GeoDataFrame(new_df, self._geometry_name)
+            collected = source.agg(*aggregates)
+
+        unioned = collected.mutate(
+            **{
+                self._geometry_name: collected[self._geometry_name].geo.unary_union(),
+            }
+        )
+        return GeoDataFrame(unioned, self._geometry_name)
 
     def to_geopandas(self):
         """Execute and return a `geopandas.GeoDataFrame` (or plain DataFrame).
