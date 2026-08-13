@@ -35,6 +35,7 @@ pub mod st_envelope;
 pub mod st_envelope_agg;
 mod st_flipcoordinates;
 mod st_force_dim;
+mod st_geohash;
 mod st_geometryn;
 mod st_geometrytype;
 mod st_geomfromewkb;
