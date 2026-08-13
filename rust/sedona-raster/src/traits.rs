@@ -119,6 +119,60 @@ impl<'a> NdBuffer<'a> {
             ))),
         }
     }
+
+    /// Materialize the visible region into `out` as a packed row-major
+    /// (C-order) byte buffer — the strided-to-contiguous repack behind
+    /// `RS_EnsureContiguous`.
+    ///
+    /// `out` is cleared and refilled with exactly `Π shape × byte_size` bytes:
+    /// the visible elements walked in C-order (last axis fastest), each read
+    /// from `buffer[pos .. pos + byte_size]` where
+    /// `pos = offset + Σ idx[i] × strides[i]`. `strides` and `offset` are byte
+    /// units, so this handles zero strides (broadcast — the same source element
+    /// is copied repeatedly) and negative strides (reverse iteration) uniformly.
+    /// For an already-contiguous view the output equals [`as_contiguous`](Self::as_contiguous).
+    ///
+    /// Passing the same `out` across calls reuses its capacity — the walk itself
+    /// allocates nothing after the first call. Every visited byte position is
+    /// in-bounds for any `NdBuffer` a reader composed from a validated view.
+    pub fn materialize_into(&self, out: &mut Vec<u8>) {
+        out.clear();
+        let byte_size = self.data_type.byte_size();
+        let n: i64 = self.shape.iter().product();
+        // A zero-extent axis (or empty shape product) leaves `out` empty.
+        if n <= 0 {
+            return;
+        }
+        out.reserve(n as usize * byte_size);
+        let ndim = self.shape.len();
+        let mut idx = vec![0i64; ndim];
+        for _ in 0..n {
+            let mut pos = self.offset as i64;
+            for (k, &i) in idx.iter().enumerate() {
+                pos += i * self.strides[k];
+            }
+            let start = pos as usize;
+            out.extend_from_slice(&self.buffer[start..start + byte_size]);
+            // Increment the multi-index in C-order (last axis fastest).
+            for k in (0..ndim).rev() {
+                idx[k] += 1;
+                if idx[k] < self.shape[k] {
+                    break;
+                }
+                idx[k] = 0;
+            }
+        }
+    }
+
+    /// Materialize the visible region into a fresh packed row-major `Vec<u8>`.
+    /// Convenience wrapper over [`materialize_into`](Self::materialize_into) for
+    /// callers that want an owned buffer to move onward (e.g. into an Arrow
+    /// [`arrow_buffer::Buffer`]) rather than reuse scratch.
+    pub fn materialize_contiguous(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        self.materialize_into(&mut out);
+        out
+    }
 }
 
 /// Parse the SedonaDB `#band=N` fragment out of an out-DB URI into the base
@@ -1060,6 +1114,116 @@ mod tests {
     fn is_contiguous_broadcast_is_false() {
         // Zero stride (broadcast) is not packed.
         assert!(!ndbuf(&[2, 3], &[0, 1], 0).is_contiguous());
+    }
+
+    /// Build an `NdBuffer` over `bytes` with explicit layout for the
+    /// materialize tests. Unlike [`ndbuf`], the bytes are meaningful — the
+    /// walk reads them.
+    fn ndbuf_over<'a>(
+        bytes: &'a [u8],
+        shape: &[i64],
+        strides: &[i64],
+        offset: u64,
+        data_type: BandDataType,
+    ) -> NdBuffer<'a> {
+        NdBuffer {
+            buffer: bytes,
+            shape: shape.to_vec(),
+            strides: strides.to_vec(),
+            offset,
+            data_type,
+        }
+    }
+
+    #[test]
+    fn materialize_into_contiguous_equals_as_contiguous() {
+        // Packed [2, 3] view over [0..6]: the walk reproduces the source and
+        // matches the zero-copy contiguous borrow byte-for-byte.
+        let data: Vec<u8> = (0..6).collect();
+        let buf = ndbuf_over(&data, &[2, 3], &[3, 1], 0, BandDataType::UInt8);
+        let mut out = Vec::new();
+        buf.materialize_into(&mut out);
+        assert_eq!(out, vec![0, 1, 2, 3, 4, 5]);
+        assert_eq!(out.as_slice(), buf.as_contiguous().unwrap());
+    }
+
+    #[test]
+    fn materialize_into_strided_1d() {
+        // Every-other slice of [0..8]: offset 1, stride 2, 3 steps → 1, 3, 5.
+        let data: Vec<u8> = (0..8).collect();
+        let buf = ndbuf_over(&data, &[3], &[2], 1, BandDataType::UInt8);
+        assert!(!buf.is_contiguous());
+        assert_eq!(buf.materialize_contiguous(), vec![1, 3, 5]);
+    }
+
+    #[test]
+    fn materialize_into_broadcast_zero_stride() {
+        // 2-D broadcast: [4, 3] over a single source row via a zero outer
+        // stride — every visible row repeats [10, 20, 30].
+        let data = vec![10u8, 20, 30];
+        let buf = ndbuf_over(&data, &[4, 3], &[0, 1], 0, BandDataType::UInt8);
+        assert!(!buf.is_contiguous());
+        assert_eq!(
+            buf.materialize_contiguous(),
+            vec![10, 20, 30, 10, 20, 30, 10, 20, 30, 10, 20, 30]
+        );
+    }
+
+    #[test]
+    fn materialize_into_permutation_and_slice() {
+        // 2-D source [Y=4, X=3], data 0..12 row-major, viewed as [X, Y] with Y
+        // sliced start=1 step=2 steps=2: byte strides [1, 6], offset 3 → the
+        // C-order gather is [3, 9, 4, 10, 5, 11] (mirrors the builder's
+        // view_axis_permutation_and_slice test).
+        let data: Vec<u8> = (0..12).collect();
+        let buf = ndbuf_over(&data, &[3, 2], &[1, 6], 3, BandDataType::UInt8);
+        assert!(!buf.is_contiguous());
+        assert_eq!(buf.materialize_contiguous(), vec![3, 9, 4, 10, 5, 11]);
+    }
+
+    #[test]
+    fn materialize_into_reverse_negative_stride() {
+        // Negative stride walks backwards: offset 6, stride -2, 3 steps → 6, 4, 2.
+        let data: Vec<u8> = (0..8).collect();
+        let buf = ndbuf_over(&data, &[3], &[-2], 6, BandDataType::UInt8);
+        assert!(!buf.is_contiguous());
+        assert_eq!(buf.materialize_contiguous(), vec![6, 4, 2]);
+    }
+
+    #[test]
+    fn materialize_into_multibyte_dtype_respects_element_size() {
+        // UInt16 (2 bytes/elem): LE bytes for [1, 2, 3, 4]; a stride of 4 bytes
+        // picks every other element (indices 0, 2 → values 1, 3), copying whole
+        // 2-byte elements, not single bytes.
+        let data: Vec<u8> = vec![1, 0, 2, 0, 3, 0, 4, 0];
+        let buf = ndbuf_over(&data, &[2], &[4], 0, BandDataType::UInt16);
+        assert!(!buf.is_contiguous());
+        assert_eq!(buf.materialize_contiguous(), vec![1, 0, 3, 0]);
+    }
+
+    #[test]
+    fn materialize_into_zero_extent_axis_is_empty() {
+        // A zero-extent axis addresses no elements → empty output.
+        let data = vec![0u8; 60];
+        let buf = ndbuf_over(&data, &[3, 0, 5], &[20, 5, 1], 0, BandDataType::UInt8);
+        buf.materialize_into(&mut Vec::new());
+        assert!(buf.materialize_contiguous().is_empty());
+    }
+
+    #[test]
+    fn materialize_into_reuses_scratch_across_calls() {
+        // Reusing the same `out` clears the previous contents each call, so a
+        // longer band followed by a shorter one yields exactly the shorter
+        // band's bytes — no stale tail.
+        let long: Vec<u8> = (0..8).collect();
+        let short: Vec<u8> = (100..104).collect();
+        let mut scratch = Vec::new();
+
+        ndbuf_over(&long, &[8], &[1], 0, BandDataType::UInt8).materialize_into(&mut scratch);
+        assert_eq!(scratch, vec![0, 1, 2, 3, 4, 5, 6, 7]);
+
+        ndbuf_over(&short, &[4], &[1], 0, BandDataType::UInt8).materialize_into(&mut scratch);
+        assert_eq!(scratch, vec![100, 101, 102, 103]);
     }
 
     #[test]

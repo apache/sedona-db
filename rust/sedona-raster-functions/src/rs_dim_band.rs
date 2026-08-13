@@ -30,6 +30,7 @@ use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;
 
 use crate::executor::RasterExecutor;
+use crate::rs_ensure_contiguous::NEEDS_CONTIGUOUS_METADATA_KEY;
 use crate::rs_ensure_loaded::{NEEDS_PIXELS_METADATA_KEY, RETURNS_BYTES_METADATA_KEY};
 use crate::rs_slice::{extract_slice, require_any_band_has_dim};
 
@@ -45,7 +46,11 @@ pub fn rs_dimtoband_udf() -> SedonaScalarUDF {
         vec![Arc::new(RsDimToBand {})],
         Volatility::Immutable,
     )
+    // Reads band pixels via `as_contiguous`, so the planner materializes OutDb
+    // rasters (RS_EnsureLoaded) and repacks strided bands (RS_EnsureContiguous)
+    // first; emits a fresh InDb raster (its output is already loaded).
     .with_metadata(NEEDS_PIXELS_METADATA_KEY, "true")
+    .with_metadata(NEEDS_CONTIGUOUS_METADATA_KEY, "true")
     .with_metadata(RETURNS_BYTES_METADATA_KEY, "true")
 }
 
@@ -184,7 +189,11 @@ pub fn rs_bandtodim_udf() -> SedonaScalarUDF {
         vec![Arc::new(RsBandToDim {})],
         Volatility::Immutable,
     )
+    // Reads band pixels via `as_contiguous`, so the planner materializes OutDb
+    // rasters (RS_EnsureLoaded) and repacks strided bands (RS_EnsureContiguous)
+    // first; emits a fresh InDb raster (its output is already loaded).
     .with_metadata(NEEDS_PIXELS_METADATA_KEY, "true")
+    .with_metadata(NEEDS_CONTIGUOUS_METADATA_KEY, "true")
     .with_metadata(RETURNS_BYTES_METADATA_KEY, "true")
 }
 

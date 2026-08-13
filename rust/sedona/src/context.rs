@@ -67,6 +67,7 @@ use sedona_pointcloud::las::{
     format::{Extension, LasFormatFactory},
     options::{GeometryEncoding, LasExtraBytes, LasOptions},
 };
+use sedona_raster_functions::rs_ensure_contiguous::RsEnsureContiguous;
 use sedona_raster_functions::rs_ensure_loaded::RsEnsureLoaded;
 use sedona_schema::schema::SedonaSchema;
 #[cfg(feature = "gpu")]
@@ -309,6 +310,17 @@ impl SedonaContext {
             let udf = AsyncScalarUDF::new(Arc::new(RsEnsureLoaded::new()));
             out.ctx.register_udf(udf.into_scalar_udf());
         };
+
+        // Register the RS_EnsureContiguous sync UDF alongside RS_EnsureLoaded.
+        // Repacking strided bands is pure CPU, so this one is a plain
+        // `ScalarUDFImpl` — no registry, config extension, or async needed. The
+        // same optimizer rule resolves it by name to wrap raster arguments of
+        // `needs_contiguous` UDFs, so it must be registered before any query is
+        // planned.
+        out.ctx
+            .register_udf(datafusion_expr::ScalarUDF::new_from_impl(
+                RsEnsureContiguous::new(),
+            ));
 
         // Register the GDAL raster byte loader. `sedona-raster-gdal` is a
         // mandatory dep on `sedona`, but libgdal itself is dlopen'd
@@ -996,16 +1008,16 @@ mod tests {
             assert_eq!(reg.get(None).unwrap().name(), "gdal");
         }
 
-        // RS_EnsureLoaded is registered as a UDF at session bootstrap.
-        let udf = ctx
-            .ctx
-            .state()
-            .scalar_functions()
-            .get("rs_ensureloaded")
-            .cloned();
+        // RS_EnsureLoaded and RS_EnsureContiguous are registered as UDFs at
+        // session bootstrap (the optimizer rule resolves both by name).
+        let scalar_functions = ctx.ctx.state().scalar_functions().clone();
         assert!(
-            udf.is_some(),
+            scalar_functions.contains_key("rs_ensureloaded"),
             "RS_EnsureLoaded should be registered by SedonaContext::new()"
+        );
+        assert!(
+            scalar_functions.contains_key("rs_ensurecontiguous"),
+            "RS_EnsureContiguous should be registered by SedonaContext::new()"
         );
     }
 

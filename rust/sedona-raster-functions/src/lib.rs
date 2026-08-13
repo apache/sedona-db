@@ -25,6 +25,7 @@ pub mod rs_bandpath;
 pub mod rs_convexhull;
 pub mod rs_dim_band;
 pub mod rs_dimensions;
+pub mod rs_ensure_contiguous;
 pub mod rs_ensure_loaded;
 pub mod rs_envelope;
 pub mod rs_example;
