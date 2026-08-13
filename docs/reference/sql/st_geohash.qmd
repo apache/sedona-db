@@ -28,7 +28,8 @@ kernels:
 Encodes the geometry as a base-32 GeoHash string with `precision` characters.
 Non-point geometries are encoded using the center of their bounding box.
 Returns `NULL` when the geometry's bounding box is not fully contained in the
-longitude/latitude range [-180, 180] x [-90, 90]. A non-positive precision
+valid longitude/latitude domain (longitudes -180 to 180, latitudes -90 to 90).
+A non-positive precision
 returns an empty string, and precision is capped at 20 characters.
 
 ## Examples
