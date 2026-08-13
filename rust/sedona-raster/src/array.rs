@@ -25,7 +25,7 @@ use datafusion_common::cast::{
     as_string_array, as_string_view_array, as_struct_array, as_uint32_array,
 };
 
-use crate::builder::RasterBuilder;
+use crate::band_builder::BandWriter;
 use crate::traits::{BandRef, NdBuffer, RasterRef};
 use crate::view_entries::{ViewEntries, ViewEntry};
 use sedona_schema::raster::{band_indices, band_view_indices, raster_indices, BandDataType};
@@ -153,7 +153,7 @@ impl<'a> BandRef for BandRefImpl<'a> {
     /// Zero-copy override: share the source row's backing `Buffer` into the
     /// builder (refcount bump) instead of copying the visible bytes. OutDb
     /// bands have an empty data column by design.
-    fn append_data_into(&self, builder: &mut RasterBuilder) -> Result<(), ArrowError> {
+    fn append_data_into(&self, builder: &mut dyn BandWriter) -> Result<(), ArrowError> {
         if self.is_indb() {
             builder.append_band_data_from(self.data_array, self.band_row)
         } else {
@@ -796,8 +796,8 @@ impl<'a> RasterStructArray<'a> {
 
     /// The flattened band `data` column (BinaryView) shared by every raster
     /// in this array. Pair with [`Self::band_data_row`] to address a single
-    /// band's bytes — e.g. for zero-copy passthrough into a [`RasterBuilder`]
-    /// via `append_band_data_from`.
+    /// band's bytes — e.g. for zero-copy passthrough into a
+    /// [`crate::builder::RasterBuilder`] via `append_band_data_from`.
     #[inline(always)]
     pub fn band_data_array(&self) -> &'a BinaryViewArray {
         self.band_data_array

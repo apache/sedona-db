@@ -18,7 +18,8 @@
 use arrow_schema::ArrowError;
 use sedona_schema::raster::BandDataType;
 
-use crate::builder::{RasterBuilder, StartBandArgs};
+use crate::band_builder::BandWriter;
+use crate::builder::StartBandArgs;
 use crate::view_entries::{ViewEntries, ViewEntry};
 
 /// Recognized spatial dimension-name pairs, in band C-order: the slower-
@@ -456,14 +457,22 @@ pub trait BandRef {
     /// inherits the source's view unchanged.
     ///
     /// The composition + persistence is delegated to
-    /// [`RasterBuilder::start_band`]: an identity effective view is
+    /// [`BandWriter::start_band`]: an identity effective view is
     /// stored as the canonical null sentinel, and a non-identity one (a slice,
     /// broadcast, permutation, or reverse) is persisted explicitly and decoded
     /// back by the reader. The source bytes are carried over unchanged — the
     /// view relocates the visible window over them, it does not repack them.
+    ///
+    /// `builder` is a [`BandWriter`] rather than a concrete
+    /// [`crate::builder::RasterBuilder`] so a derived band can be written
+    /// into a bare [`crate::band_builder::BandArrayBuilder`] (no enclosing
+    /// raster) too — `RasterBuilder` implements the trait by delegating to
+    /// its own internal `BandArrayBuilder` plus its own per-raster
+    /// bookkeeping, so calling this with a `&mut RasterBuilder` behaves
+    /// exactly as before.
     fn copy_into(
         &self,
-        builder: &mut RasterBuilder,
+        builder: &mut dyn BandWriter,
         overrides: BandOverrides<'_>,
     ) -> Result<(), ArrowError> {
         let inherited_dims = self.dim_names();
@@ -496,10 +505,10 @@ pub trait BandRef {
     /// The default copies the visible source bytes via `append_value`. Arrow-
     /// backed implementations override this to share the source row's backing
     /// `Buffer` zero-copy (a refcount bump via
-    /// [`RasterBuilder::append_band_data_from`]), keeping the buffer plumbing
+    /// [`BandWriter::append_band_data_from`]), keeping the buffer plumbing
     /// encapsulated rather than exposing a raw `Buffer` accessor. Call after the
     /// band's schema has been written (e.g. by [`Self::copy_into`]).
-    fn append_data_into(&self, builder: &mut RasterBuilder) -> Result<(), ArrowError> {
+    fn append_data_into(&self, builder: &mut dyn BandWriter) -> Result<(), ArrowError> {
         if self.is_indb() {
             let ndb = self.nd_buffer()?;
             builder.band_data_writer().append_value(ndb.buffer);
@@ -668,6 +677,7 @@ pub fn nodata_f64_to_bytes(value: f64, dt: &BandDataType) -> Result<Vec<u8>, Arr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::builder::RasterBuilder;
 
     #[test]
     fn test_nodata_bytes_to_f64_uint8() {
