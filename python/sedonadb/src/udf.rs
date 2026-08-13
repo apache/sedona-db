@@ -36,6 +36,7 @@ use pyo3::{
 };
 use sedona_expr::aggregate_udf::{SedonaAccumulator, SedonaAccumulatorRef, SedonaAggregateUDF};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_extension::{extension::SedonaCScalarKernel, scalar_kernel::ExportedScalarKernel};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 use crate::{
@@ -159,6 +160,35 @@ impl PySedonaScalarUdf {
             c"datafusion_scalar_udf",
         )?)
     }
+
+    /// Export this UDF's overload kernels as native kernel capsules.
+    ///
+    /// Each kernel becomes a `PyCapsule` wrapping a [`SedonaCScalarKernel`],
+    /// stamped with this UDF's SQL name -- the same capsule shape
+    /// [`crate::import_from::import_sedona_ffi_scalar_kernel`] reads back in.
+    /// This is the export counterpart of the `__sedonadb_scalar_udf__`
+    /// registration protocol: a component exposing this method hands its
+    /// function's kernels to another SedonaDB instance (or back to this one
+    /// under a new name), no Python callback per invocation.
+    fn __sedonadb_scalar_udf__<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> Result<Vec<Bound<'py, PyCapsule>>, PySedonaError> {
+        let name = self.inner.name();
+        self.inner
+            .kernels()
+            .iter()
+            .map(|kernel| {
+                let exported = ExportedScalarKernel::from(kernel.clone()).with_function_name(name);
+                let ffi = SedonaCScalarKernel::from(exported);
+                Ok(PyCapsule::new_with_value(
+                    py,
+                    ffi,
+                    c"sedonadb_scalar_kernel",
+                )?)
+            })
+            .collect()
+    }
 }
 
 /// Parse a Python-supplied volatility string into a [Volatility].
@@ -223,12 +253,12 @@ pub fn sedona_scalar_udf<'py>(
 /// silently registering under a name that doesn't match every kernel.
 /// `name` defaults to that shared name if not given.
 ///
-/// Unlike `register()`'s `__sedonadb_native_scalar_udfs__` protocol (which
-/// always registers Immutable), `volatility` is caller-supplied here -- a
-/// plugin kernel that needs Volatile or Stable (e.g. one reading external
-/// state per call, like `RS_FromPath`) should build its `PySedonaScalarUdf`
-/// with this function directly and return it via the existing
-/// `__sedonadb_internal_udf__` protocol instead.
+/// Unlike `register()`'s `__sedonadb_scalar_udf__` protocol (which always
+/// registers Immutable), `volatility` is caller-supplied here -- a plugin
+/// kernel that needs Volatile or Stable (e.g. one reading external state per
+/// call, like `RS_FromPath`) should build its `PySedonaScalarUdf` with this
+/// function directly and return it via the existing `__sedonadb_internal_udf__`
+/// protocol instead.
 #[pyfunction]
 #[pyo3(signature = (kernels, volatility="immutable", name=None))]
 pub fn sedona_native_scalar_udf(
@@ -748,7 +778,6 @@ mod native_scalar_udf_tests {
     use arrow_schema::DataType;
     use sedona::context::SedonaContext;
     use sedona_expr::scalar_udf::SimpleSedonaScalarKernel;
-    use sedona_extension::{extension::SedonaCScalarKernel, scalar_kernel::ExportedScalarKernel};
 
     fn identity_kernel_capsule<'py>(py: Python<'py>, function_name: &str) -> Bound<'py, PyCapsule> {
         identity_kernel_capsule_for_type(py, function_name, SedonaType::Arrow(DataType::Int64))

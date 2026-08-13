@@ -105,14 +105,14 @@ pub fn import_sedona_ffi_table_provider(
 /// used by `sedona-extension` to statically link in kernels at build time
 /// (see `c/sedona-s2geography`); this is the runtime counterpart, letting an
 /// out-of-tree plugin hand in a real `SedonaScalarKernel` -- no Python
-/// callback per invocation -- via `__sedonadb_native_scalar_udfs__`.
+/// callback per invocation -- via `__sedonadb_scalar_udf__`.
 ///
 /// Returns the kernel's own declared name (read from the capsule via
 /// [`ImportedScalarKernel::function_name`], not supplied by the caller) so
-/// multiple kernels sharing one name can be grouped into a single overloaded
-/// [`sedona_expr::scalar_udf::SedonaScalarUDF`] by the caller, the same way
-/// [`sedona::context::SedonaContext::register_scalar_kernels`] already
-/// groups statically-linked kernels.
+/// the overload kernels of one function can be grouped into a single
+/// overloaded [`sedona_expr::scalar_udf::SedonaScalarUDF`] by the caller, the
+/// same way [`sedona::context::SedonaContext::register_scalar_kernels`]
+/// already groups statically-linked kernels.
 pub fn import_sedona_ffi_scalar_kernel(
     obj: &Bound<PyAny>,
 ) -> Result<(String, ScalarKernelRef), PySedonaError> {

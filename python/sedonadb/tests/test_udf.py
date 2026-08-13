@@ -218,3 +218,37 @@ def test_udf_bad_return_length(con):
         match="Expected result of user-defined function to return array of length 1 but got 2",
     ):
         con.sql("SELECT questionable_udf(123) as col").to_pandas()
+
+
+def test_native_scalar_udf_export_import_roundtrip(con):
+    # A SedonaDB built-in scalar function exposes its native overload kernels
+    # via __sedonadb_scalar_udf__ (the export side of the plugin protocol).
+    # Exporting those capsules and rebuilding a UDF under a new name must
+    # produce a function whose output is identical to the built-in's, proving
+    # the native kernels survive a full export -> capsule -> import roundtrip.
+    from sedonadb._lib import sedona_native_scalar_udf
+
+    st_asbinary = con.funcs.st_asbinary._impl
+    assert hasattr(st_asbinary, "__sedonadb_scalar_udf__")
+
+    capsules = st_asbinary.__sedonadb_scalar_udf__()
+    assert len(capsules) >= 1
+
+    # Rebuild under a fresh name so it doesn't collide with the built-in, then
+    # register it back into the same context.
+    rebuilt = sedona_native_scalar_udf(capsules, name="rt_asbinary_roundtrip")
+    con.register(rebuilt)
+
+    # Run both the built-in and the reimported UDF over a real one-row table
+    # column (not a literal) so the full execution path runs.
+    con.sql("SELECT ST_Point(30.0, 10.0) AS geom").to_view(
+        "rt_native_roundtrip", overwrite=True
+    )
+    expected = con.sql(
+        "SELECT ST_AsBinary(geom) AS col FROM rt_native_roundtrip"
+    ).to_arrow_table()
+    actual = con.sql(
+        "SELECT rt_asbinary_roundtrip(geom) AS col FROM rt_native_roundtrip"
+    ).to_arrow_table()
+
+    assert actual.equals(expected)
