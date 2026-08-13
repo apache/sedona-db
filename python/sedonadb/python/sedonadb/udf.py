@@ -28,7 +28,7 @@ from sedonadb.utility import sedona  # noqa: F401
 
 
 def sedona_native_scalar_udf(
-    kernels,
+    kernels: List[Any],
     volatility: Literal["immutable", "stable", "volatile"] = "immutable",
     name: Optional[str] = None,
 ):
