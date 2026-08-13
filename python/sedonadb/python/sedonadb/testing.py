@@ -176,6 +176,26 @@ class DBEngine:
         """Copy an Arrow readable into an engine's native table format"""
         raise NotImplementedError()
 
+    def create_raster_view(self, name, path) -> "DBEngine":
+        """Register a one-row view `name` with a raster column `rast` read from
+        the GeoTIFF at `path`.
+
+        The single dialect-specific shim in the raster parity suite: each engine
+        ingests the file its own way (SedonaDB via `RS_FromPath`, Sedona Spark
+        via `RS_FromGeoTiff` over a `binaryFile` read), so the query under test
+        stays one shared SQL string that references `rast`.
+        """
+        raise NotImplementedError()
+
+    def decode_raster_result(self, sql):
+        """Run `sql` (which selects a single raster column) and decode the result
+        raster to a `sedonadb.raster_testing.DecodedRaster` — pixels, geotransform,
+        and per-band nodata — for cross-engine comparison. `None` if the raster is
+        NULL. Each engine decodes its own way (SedonaDB reads the native raster
+        column; Sedona Spark transports it out as GeoTIFF bytes).
+        """
+        raise NotImplementedError()
+
     def execute_and_collect(self, query):
         """Execute a query and collect results to the driver
 
@@ -374,6 +394,22 @@ class SedonaDB(DBEngine):
     def create_table_arrow(self, name, obj) -> "SedonaDB":
         self.con.create_data_frame(obj).to_view(name, overwrite=True)
         return self
+
+    def create_raster_view(self, name, path) -> "SedonaDB":
+        self.con.sql(f"SELECT RS_FromPath('{path}') AS rast").to_view(
+            name, overwrite=True
+        )
+        return self
+
+    def decode_raster_result(self, sql):
+        from sedonadb.raster_testing import decode_raster
+
+        # RS_FromPath yields an OutDb (lazy) raster, so materialize the result
+        # before reading its pixels; Sedona Spark's RS_FromGeoTiff loads eagerly,
+        # so this keeps the two engines comparing the same bytes.
+        loaded = f"SELECT RS_EnsureLoaded(c) AS c FROM ({sql}) AS sub(c)"
+        table = self.execute_and_collect(loaded)
+        return decode_raster(table.column(0)[0])
 
     def execute_and_collect(self, query) -> "sedonadb.dataframe.DataFrame":
         # Use to_arrow_table() to maintain ordering of the input table
