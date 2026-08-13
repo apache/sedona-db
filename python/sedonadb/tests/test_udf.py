@@ -226,9 +226,9 @@ def test_native_scalar_udf_export_import_roundtrip(con):
     # Exporting those capsules and rebuilding a UDF under a new name must
     # produce a function whose output is identical to the built-in's, proving
     # the native kernels survive a full export -> capsule -> import roundtrip.
-    from sedonadb._lib import sedona_native_scalar_udf
+    from sedonadb.udf import sedona_native_scalar_udf
 
-    st_asbinary = con.funcs.st_asbinary._impl
+    st_asbinary = con.funcs.st_asbinary
     assert hasattr(st_asbinary, "__sedonadb_scalar_udf__")
 
     capsules = st_asbinary.__sedonadb_scalar_udf__()
@@ -252,3 +252,43 @@ def test_native_scalar_udf_export_import_roundtrip(con):
     ).to_arrow_table()
 
     assert actual.equals(expected)
+
+
+def test_native_scalar_udf_register_appends_overload(con):
+    # Registering a native scalar UDF under a name already in use appends its
+    # kernels as overloads rather than replacing the function: both the
+    # previously registered signature and the newly registered one stay
+    # dispatchable. Two built-ins with disjoint input types are exported and
+    # re-registered under one shared name -- ST_AsBinary takes a geometry,
+    # ST_GeomFromWKT takes a WKT string. If registration replaced rather than
+    # appended, the geometry overload registered first would vanish and calling
+    # it would raise "No kernel matching arguments".
+    from sedonadb.udf import sedona_native_scalar_udf
+
+    name = "rt_overload_probe"
+
+    con.register(
+        sedona_native_scalar_udf(
+            con.funcs.st_asbinary.__sedonadb_scalar_udf__(), name=name
+        )
+    )
+    con.register(
+        sedona_native_scalar_udf(
+            con.funcs.st_geomfromwkt.__sedonadb_scalar_udf__(), name=name
+        )
+    )
+
+    # The geometry -> binary overload registered first is still reachable...
+    assert (
+        con.sql(f"SELECT {name}(ST_Point(30.0, 10.0)) AS col")
+        .to_arrow_table()
+        .equals(
+            con.sql("SELECT ST_AsBinary(ST_Point(30.0, 10.0)) AS col").to_arrow_table()
+        )
+    )
+
+    # ...and the WKT-string -> geometry overload appended second dispatches too.
+    pd.testing.assert_frame_equal(
+        con.sql(f"SELECT ST_AsText({name}('POINT (1 2)')) AS col").to_pandas(),
+        pd.DataFrame({"col": ["POINT(1 2)"]}),
+    )

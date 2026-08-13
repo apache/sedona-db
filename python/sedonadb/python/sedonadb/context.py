@@ -449,13 +449,16 @@ class SedonaContext:
           that one function, each wrapping a natively-compiled
           SedonaCScalarKernel sharing the function's SQL name -- so real
           compiled Rust runs per invocation, not a Python callback. Register
-          each function individually. The kernels are grouped into one
-          overloaded UDF; registering under a name already in use, including a
-          built-in's, replaces it, the same as __sedonadb_internal_udf__ already
-          does. Volatility is always Immutable through this protocol; a kernel
-          needing Volatile or Stable should be registered via
-          __sedonadb_internal_udf__ instead, built with
-          sedonadb._lib.sedona_native_scalar_udf(kernels, volatility=...).
+          each function individually. The kernels are appended as overloads to
+          the function of that name (a new function is created when none exists
+          yet). A kernel whose signature matches an existing overload --
+          including a built-in's -- overrides that one signature (kernels
+          resolve newest-first) while the function's other overloads stay
+          reachable, so a plugin can add an overload to an existing function
+          without replacing it. Volatility is always Immutable through this
+          protocol; a kernel needing Volatile or Stable should be registered
+          via __sedonadb_internal_udf__ instead, built with
+          sedonadb.udf.sedona_native_scalar_udf(kernels, volatility=...).
 
         The extension interface is experimental and may change.
 
