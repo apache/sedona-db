@@ -39,6 +39,8 @@ kernels:
 
 If the geometry already has Z values they are preserved; otherwise the optional `z` argument (default 0) is used.
 
+Aliases: `ST_Force3DZ`.
+
 ## Examples
 
 ```sql

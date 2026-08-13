@@ -29,6 +29,8 @@ kernels:
 
 Discards any Z and M values present (if any).
 
+Aliases: `ST_Force_2D`.
+
 ## Examples
 
 ```sql
