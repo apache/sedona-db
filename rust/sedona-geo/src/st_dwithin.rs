@@ -174,4 +174,29 @@ mod tests {
             &expected,
         );
     }
+
+    #[rstest]
+    fn crossing_linestrings_are_dwithin_zero(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY, WKB_GEOMETRY_ITEM_CRS.clone())] left: SedonaType,
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY, WKB_GEOMETRY_ITEM_CRS.clone())] right: SedonaType,
+    ) {
+        let udf = SedonaScalarUDF::from_impl("st_dwithin", st_dwithin_impl());
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![
+                left.clone(),
+                right.clone(),
+                SedonaType::Arrow(DataType::Float64),
+            ],
+        );
+        let result = tester
+            .invoke_scalar_scalar_scalar(
+                create_scalar(Some("LINESTRING (0 0, 2 2)"), &left),
+                create_scalar(Some("LINESTRING (0 2, 2 0)"), &right),
+                0.0,
+            )
+            .unwrap();
+
+        assert_eq!(result, ScalarValue::Boolean(Some(true)));
+    }
 }

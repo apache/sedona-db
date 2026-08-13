@@ -212,6 +212,7 @@ def test_st_disjoint(eng, geom1, geom2, expected):
         (None, None, None, None),
         ("POINT (0 0)", "POINT (0 0)", 1.0, True),
         ("POINT (0 0)", "POINT (5 0)", 2.0, False),
+        ("LINESTRING (0 0, 2 2)", "LINESTRING (0 2, 2 0)", 0.0, True),
         ("LINESTRING (0 0, 1 1)", "LINESTRING (2 2, 3 3)", 1.0, False),
         ("LINESTRING (0 0, 1 1)", "LINESTRING (10 0, 11 1)", 2.0, False),
         (
