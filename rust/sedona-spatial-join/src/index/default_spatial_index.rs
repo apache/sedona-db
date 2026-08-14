@@ -116,6 +116,7 @@ impl DefaultSpatialIndex {
         schema: SchemaRef,
         options: SpatialJoinOptions,
         refiner: Arc<dyn IndexQueryResultRefiner>,
+        visited_build_side: Option<Mutex<Vec<BooleanBufferBuilder>>>,
         probe_threads_counter: AtomicUsize,
     ) -> Self {
         let rtree = RTreeBuilder::<f32>::new(0).finish::<HilbertSort>();
@@ -131,7 +132,7 @@ impl DefaultSpatialIndex {
                 data_id_to_batch_pos: Vec::new(),
                 indexed_batches: Vec::new(),
                 geom_idx_vec: Vec::new(),
-                visited_build_side: None,
+                visited_build_side,
                 probe_threads_counter,
                 knn_components,
             }),
@@ -755,20 +756,31 @@ mod tests {
             SpatialRelationType::Intersects,
         ));
 
-        let mut builder = DefaultSpatialIndexBuilder::new(
-            schema.clone(),
-            spatial_predicate,
-            options,
-            JoinType::Inner,
-            4,
-            metrics,
-        )
-        .unwrap();
+        for (join_type, needs_visited_build_side) in
+            [(JoinType::Inner, false), (JoinType::Left, true)]
+        {
+            let mut builder = DefaultSpatialIndexBuilder::new(
+                schema.clone(),
+                spatial_predicate.clone(),
+                options.clone(),
+                join_type,
+                4,
+                metrics.clone(),
+            )
+            .unwrap();
 
-        // Test finishing with empty data
-        let index = builder.finish().unwrap();
-        assert_eq!(index.schema(), schema);
-        assert_eq!(index.num_indexed_batches(), 0);
+            // Test finishing with empty data
+            let index = builder.finish().unwrap();
+            assert_eq!(index.schema(), schema);
+            assert_eq!(index.num_indexed_batches(), 0);
+            assert_eq!(
+                index.visited_build_side().is_some(),
+                needs_visited_build_side
+            );
+            if let Some(visited_build_side) = index.visited_build_side() {
+                assert!(visited_build_side.lock().is_empty());
+            }
+        }
     }
 
     #[tokio::test]
