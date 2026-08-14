@@ -602,14 +602,12 @@ def test_setitem_over_active_geometry_clears_it(points):
         gdf.geometry
 
 
-def test_sjoin_dwithin_misses_crossing_lines_pending_engine_fix():
-    """Documents a known deviation, so it cannot change unnoticed.
+def test_sjoin_dwithin_matches_crossing_lines():
+    """Crossing linestrings at distance 0 match, as in GeoPandas.
 
-    ST_Distance reports the endpoint gap rather than zero for properly crossing
-    linestrings (apache/sedona-db#1156), so dwithin misses a pair GeoPandas
-    matches. Composing the predicate with ST_Intersects would recover the pair but
-    is not recognized by the planner, which turns the join into a nested loop, so
-    the deviation is accepted until the engine is fixed.
+    This was a documented deviation while ST_Distance reported the endpoint gap
+    for properly crossing linestrings; the engine fix (apache/sedona-db#1164)
+    made the single ST_DWithin predicate correct, with no workaround needed here.
     """
     a = gpd.GeoDataFrame(
         {"i": [1]},
@@ -624,8 +622,11 @@ def test_sjoin_dwithin_misses_crossing_lines_pending_engine_fix():
     got = sgpd.from_geopandas(a).sjoin(
         sgpd.from_geopandas(b), predicate="dwithin", distance=0
     )
-    assert len(gpd.sjoin(a, b, predicate="dwithin", distance=0)) == 1
-    assert len(got.to_geopandas()) == 0  # change this when #1156 is fixed
+    assert (
+        len(got.to_geopandas())
+        == len(gpd.sjoin(a, b, predicate="dwithin", distance=0))
+        == 1
+    )
 
 
 def test_sjoin_uses_a_planner_recognizable_spatial_predicate():

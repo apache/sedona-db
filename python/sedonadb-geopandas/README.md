@@ -77,11 +77,5 @@ without a group key returns one all-null row rather than zero rows, because that
 is what a grouping-free SQL aggregate produces, and a group mixing 2D and 3D
 geometries raises rather than being promoted to 3D.
 
-`sjoin(predicate="dwithin")` misses geometries that properly cross without
-sharing a vertex, because `ST_Distance` reports their endpoint gap rather than
-zero (apache/sedona-db#1156). Composing the predicate to work around it would
-stop the planner recognising it and turn the join into a nested loop, so the
-deviation stands until the engine is fixed.
-
 See the SedonaDB "Migrating from GeoPandas" guide for the relational model that
 underlies each method.

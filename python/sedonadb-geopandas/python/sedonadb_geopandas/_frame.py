@@ -365,12 +365,10 @@ class GeoDataFrame:
         # predicate, so a composition drops the plan to a nested-loop join and makes
         # the join quadratic; and OR-ing ST_Intersects in also broke the bound's
         # semantics, matching coincident geometries at a negative or NaN distance
-        # where GeoPandas matches nothing.
-        #
-        # The case a composition would have fixed is that ST_DWithin misses properly
-        # crossing linestrings, because ST_Distance reports their endpoint gap rather
-        # than zero (apache/sedona-db#1156). That belongs in the engine rather than
-        # being worked around here at the cost of both plan shape and semantics.
+        # where GeoPandas matches nothing. (The composition was a workaround for
+        # ST_Distance mis-measuring crossing linestrings, fixed in the engine by
+        # apache/sedona-db#1164 — keeping the engine honest beats patching over it
+        # here.)
         if predicate == "dwithin":
             on = left_geom.geo.d_within(right_geom, distance)
         else:
