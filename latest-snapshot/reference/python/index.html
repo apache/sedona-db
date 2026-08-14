@@ -1548,6 +1548,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#sedonadb.udf.sedona_native_scalar_udf" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;sedona_native_scalar_udf
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2909,6 +2920,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#sedonadb.udf.sedona_native_scalar_udf" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;sedona_native_scalar_udf
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -3547,6 +3569,21 @@ entirely.</p>
 <li>An ExternalFormatSpec implementing a custom datasource type</li>
 <li>An object implementing <strong>sedonadb_extension</strong>(ctx, **kwargs), which
   is called with this context and any keyword arguments passed.</li>
+<li>A single function object implementing <strong>sedonadb_scalar_udf</strong>(self),
+  which returns a list of PyCapsule objects -- the overload kernels of
+  that one function, each wrapping a natively-compiled
+  SedonaCScalarKernel sharing the function's SQL name -- so real
+  compiled Rust runs per invocation, not a Python callback. Register
+  each function individually. The kernels are appended as overloads to
+  the function of that name (a new function is created when none exists
+  yet). A kernel whose signature matches an existing overload --
+  including a built-in's -- overrides that one signature (kernels
+  resolve newest-first) while the function's other overloads stay
+  reachable, so a plugin can add an overload to an existing function
+  without replacing it. Volatility is always Immutable through this
+  protocol; a kernel needing Volatile or Stable should be registered
+  via <strong>sedonadb_internal_udf</strong> instead, built with
+  sedonadb.udf.sedona_native_scalar_udf(kernels, volatility=...).</li>
 </ul>
 <p>The extension interface is experimental and may change.</p>
 
@@ -8950,6 +8987,77 @@ the name of the provided function.</p>
 <span class="err">│</span> <span class="mf">0.35385555</span> <span class="err">┆</span> <span class="mf">0.24793247139474195</span> <span class="err">│</span>
 <span class="err">└────────────┴─────────────────────┘</span>
 </code></pre></div>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="sedonadb.udf.sedona_native_scalar_udf" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">sedona_native_scalar_udf</span>
+
+
+<a href="#sedonadb.udf.sedona_native_scalar_udf" class="headerlink" title="Permanent link">¶</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">sedona_native_scalar_udf</span><span class="p">(</span>
+    <span class="n">kernels</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" title="typing.List" href="https://docs.python.org/3/library/typing.html#typing.List">List</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" title="typing.Any" href="https://docs.python.org/3/library/typing.html#typing.Any">Any</a></span><span class="p">],</span>
+    <span class="n">volatility</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Literal" href="https://docs.python.org/3/library/typing.html#typing.Literal">Literal</a></span><span class="p">[</span><span class="s2">"immutable"</span><span class="p">,</span> <span class="s2">"stable"</span><span class="p">,</span> <span class="s2">"volatile"</span><span class="p">]</span> <span class="o">=</span> <span class="s2">"immutable"</span><span class="p">,</span>
+    <span class="n">name</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Optional" href="https://docs.python.org/3/library/typing.html#typing.Optional">Optional</a></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a></span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Build a scalar UDF from natively-compiled kernel capsules.</p>
+<p>Groups one or more native scalar-kernel capsules -- such as those a
+function exports via <code>__sedonadb_scalar_udf__()</code> -- into a single
+overloaded UDF backed by compiled Rust (no Python callback per
+invocation). Each capsule carries its own declared SQL name; the names
+must agree, and <code>name</code> overrides that shared name when given.</p>
+<p>Unlike the <code>__sedonadb_scalar_udf__</code> registration protocol, which always
+registers as immutable, <code>volatility</code> is caller-supplied here.</p>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>SedonaDB native scalar UDFs are experimental and this interface may
+change based on user feedback.</p>
+</div>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+            <b><code>kernels</code></b>
+              (<code><a class="autorefs autorefs-external" title="typing.List" href="https://docs.python.org/3/library/typing.html#typing.List">List</a>[<a class="autorefs autorefs-external" title="typing.Any" href="https://docs.python.org/3/library/typing.html#typing.Any">Any</a>]</code>)
+          –
+          <div class="doc-md-description">
+            <p>A non-empty list of PyCapsule objects wrapping
+natively-compiled scalar kernels that share one SQL name.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>volatility</code></b>
+              (<code><a class="autorefs autorefs-external" title="typing.Literal" href="https://docs.python.org/3/library/typing.html#typing.Literal">Literal</a>['immutable', 'stable', 'volatile']</code>, default:
+                  <code>'immutable'</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>"immutable" (default), "stable", or "volatile".</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>name</code></b>
+              (<code><a class="autorefs autorefs-external" title="typing.Optional" href="https://docs.python.org/3/library/typing.html#typing.Optional">Optional</a>[<a class="autorefs autorefs-external" href="https://docs.python.org/3/library/stdtypes.html#str">str</a>]</code>, default:
+                  <code>None</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>An optional SQL name overriding the kernels' shared declared
+name.</p>
+          </div>
+        </li>
+    </ul>
 
 
     </div>
