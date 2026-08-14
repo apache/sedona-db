@@ -863,3 +863,99 @@ def test_operators_still_reject_arrays(points):
     gdf = sgpd.from_geopandas(points)
     with pytest.raises(TypeError, match="isn't supported"):
         gdf["v"] + np.array([1, 2, 3])
+
+
+# -- regressions from the fourth review pass --------------------------------
+
+
+def test_sjoin_dwithin_distance_must_be_a_number(points, regions):
+    # A Series or expression cannot be a distance: the predicate is built against
+    # re-aliased copies of both frames, so a column reference would resolve by
+    # name inside the join rather than against its own frame.
+    L = sgpd.from_geopandas(points)
+    R = sgpd.from_geopandas(regions)
+    with pytest.raises(TypeError, match="must be a number"):
+        L.sjoin(R, predicate="dwithin", distance=L["v"])
+    raw = sgpd.default_context().create_data_frame(points)["v"]
+    with pytest.raises(TypeError, match="must be a number"):
+        L.sjoin(R, predicate="dwithin", distance=raw)
+    # NumPy numeric scalars are fine.
+    import numpy as np
+
+    got = L.sjoin(R, predicate="dwithin", distance=np.float64(1.0))
+    assert len(got.to_geopandas()) >= 1
+
+
+def test_setitem_crs_carrying_literal_keeps_its_crs(points):
+    # A literal that carries its own CRS must not be relabeled with the
+    # destination column's CRS — that changes what the coordinates mean without
+    # transforming them.
+    from sedonadb.expr import lit
+
+    src = gpd.GeoSeries.from_wkt(["POINT (10 10)"], crs="EPSG:4326")
+    gdf = sgpd.from_geopandas(points)  # column is EPSG:3857
+    gdf["geometry"] = lit(src)
+    assert "4326" in str(gdf.crs)
+
+
+def test_division_preserves_decimal_exactness():
+    from decimal import Decimal
+
+    import pandas as pd
+
+    df = sgpd.default_context().create_data_frame(
+        pd.DataFrame({"d": [Decimal("1.23")]})
+    )
+    got = (GeoDataFrame(df)["d"] / Decimal("0.1")).to_pandas().tolist()
+    # Forced through double this would be 12.299999999999999.
+    assert got == [Decimal("12.300000")]
+
+
+def test_division_still_true_for_integers():
+    df = sgpd.default_context().sql("SELECT 1 AS n UNION ALL SELECT 3")
+    assert sorted((GeoDataFrame(df)["n"] / 2).to_pandas().tolist()) == [0.5, 1.5]
+
+
+def test_numpy_array_plus_series_is_rejected_whole(points):
+    # Without opting out of ufunc dispatch, NumPy broadcasts element-by-element
+    # and returns an object array of lazy Series instead of an error.
+    import numpy as np
+
+    gdf = sgpd.from_geopandas(points)
+    with pytest.raises(TypeError):
+        np.array([10, 20, 30]) + gdf["v"]
+    with pytest.raises(TypeError):
+        gdf["v"] + np.array([10, 20, 30])
+
+
+def test_zero_dimensional_array_normalizes(points):
+    import numpy as np
+
+    gdf = sgpd.from_geopandas(points)
+    gdf["z"] = np.array(5)  # 0-d: scalar by classification, unwrapped on use
+    assert gdf.to_geopandas()["z"].tolist() == [5, 5, 5]
+
+
+def test_pandas_na_assigns_as_null_to_ordinary_column(points):
+    import pandas as pd
+
+    gdf = sgpd.from_geopandas(points)
+    gdf["z"] = pd.NA
+    assert gdf.to_geopandas()["z"].isna().all()
+
+
+def test_is_floating_unwraps_dictionary_encoding():
+    import pyarrow as pa
+
+    from sedonadb_geopandas._frame import _is_floating
+
+    tbl = pa.table(
+        {
+            "k": pa.DictionaryArray.from_arrays(
+                pa.array([0, 1], type=pa.int8()), pa.array([1.0, float("nan")])
+            ),
+            "x": [1, 2],
+        }
+    )
+    df = sgpd.default_context().create_data_frame(tbl)
+    assert _is_floating(df, "k")

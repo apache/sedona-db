@@ -39,6 +39,29 @@ def is_scalar(value):
     return not hasattr(value, "__len__")
 
 
+def normalize_scalar(value):
+    """Normalize an accepted scalar into something a literal can hold.
+
+    Passing the classifier is not the same as being constructible: a 0-d NumPy
+    array is a scalar but `lit()` cannot take it, and `pandas.NA` is a missing
+    sentinel `lit()` does not recognize. Unwrap the former to its Python value
+    and convert missing sentinels to `None` (SQL null). Callers apply this only
+    after `is_scalar` has accepted the value.
+    """
+    if hasattr(value, "__array__") and getattr(value, "ndim", None) == 0:
+        value = value.item()
+    try:
+        import pandas as pd
+
+        # NaN is deliberately left as-is — pandas keeps NaN a float value; only
+        # the NA sentinel becomes SQL null.
+        if value is pd.NA:
+            return None
+    except ImportError:
+        pass
+    return value
+
+
 def _operand(df, other):
     """Coerce the right-hand side of an operator into something usable.
 
@@ -81,8 +104,9 @@ def _operand(df, other):
             f"to_pandas() first."
         )
     # A 0-d value such as a NumPy scalar reaches here and broadcasts, matching
-    # what assignment accepts.
-    return other
+    # what assignment accepts; normalization unwraps it into something a
+    # literal can actually hold.
+    return normalize_scalar(other)
 
 
 class Series:
@@ -93,6 +117,13 @@ class Series:
     as a filter mask (`gdf[gdf["pop"] > 1000]`). Nothing is computed until
     `to_pandas()`.
     """
+
+    # Without this, `np.array([...]) + series` never reaches our reflected
+    # operator: NumPy broadcasts element-by-element and returns an object array
+    # of lazy Series. Opting out of ufunc dispatch makes NumPy defer, so the
+    # whole array reaches `__radd__` and is rejected by `_operand` like any
+    # other multi-element operand.
+    __array_ufunc__ = None
 
     def __init__(self, df, expr, name):
         self._df = df
@@ -151,28 +182,38 @@ class Series:
         return Series(self._df, _operand(self._df, other) * self._expr, self._name)
 
     # `/` is true division here, as in pandas. The engine follows SQL, where
-    # dividing two integers truncates (`1 / 2` is 0), so the numerator is cast to
-    # double first — otherwise integer columns would silently return floored
-    # results. `//` is deliberately not implemented rather than mapped onto SQL
-    # division, which truncates toward zero where Python floors.
+    # dividing two integers truncates (`1 / 2` is 0), so an *integer* numerator is
+    # cast to double first. The cast is restricted to integers because it is
+    # lossy elsewhere: a decimal forced through double picks up binary rounding
+    # (1.23/0.1 -> 12.299999...), and a duration would become a float nanosecond
+    # count instead of staying a duration. `//` is deliberately not implemented
+    # rather than mapped onto SQL division, which truncates toward zero where
+    # Python floors.
     def __truediv__(self, other):
         return Series(
-            self._df, self._as_double() / _operand(self._df, other), self._name
+            self._df, self._for_division() / _operand(self._df, other), self._name
         )
 
     def __rtruediv__(self, other):
         return Series(
-            self._df, _operand(self._df, other) / self._as_double(), self._name
+            self._df, _operand(self._df, other) / self._for_division(), self._name
         )
 
     def __neg__(self):
         return Series(self._df, -self._expr, self._name)
 
-    def _as_double(self):
-        """This column cast to double, so integer division does not truncate."""
+    def _for_division(self):
+        """This expression, cast to double only when it is integer-typed.
+
+        The type is read from the projected schema, which is a plan build, not an
+        execution.
+        """
         import pyarrow as pa
 
-        return self._expr.cast(pa.float64())
+        projected = pa.schema(self._df.select(self._expr.alias("x")).schema)
+        if pa.types.is_integer(projected.field("x").type):
+            return self._expr.cast(pa.float64())
+        return self._expr
 
     __hash__ = None
 

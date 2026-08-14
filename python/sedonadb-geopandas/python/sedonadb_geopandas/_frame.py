@@ -45,17 +45,27 @@ def _geometry_column_names(df):
 
 
 def _is_floating(df, name):
-    """Whether column `name` is a scalar floating-point column, so it can hold NaN.
+    """Whether column `name` holds scalar floating-point values, so it can hold NaN.
 
     The Arrow datatype is checked rather than its string form: a rendered type such
     as `list<item: double>` or `struct<x: double>` contains "float"/"double" while
     being nothing `isnan()` can be applied to, and passing one to `isnan()` fails
-    at planning time.
+    at planning time. Dictionary encoding is unwrapped — a
+    `dictionary<values=double>` column is floating for NaN purposes, and `isnan()`
+    handles it.
     """
     import pyarrow as pa
 
-    field = pa.schema(df.schema).field(name)
-    return pa.types.is_floating(field.type)
+    dtype = pa.schema(df.schema).field(name).type
+    if pa.types.is_dictionary(dtype):
+        dtype = dtype.value_type
+    return pa.types.is_floating(dtype)
+
+
+def _expr_crs(df, expr):
+    """The CRS carried by `expr`, read from a projected schema (a plan build)."""
+    field = df.select(expr.alias("x")).schema.field("x")
+    return getattr(field.type, "crs", None)
 
 
 def _is_missing(value):
@@ -256,7 +266,10 @@ class GeoDataFrame:
         """
         from sedonadb.expr import Literal, lit
 
+        from sedonadb_geopandas._series import normalize_scalar
+
         raw = value._value if isinstance(value, Literal) else value
+        raw = normalize_scalar(raw)
 
         # Only geometry values inherit the column's type and CRS. Assigning a number
         # over a geometry column is a legitimate way to turn it into an ordinary
@@ -265,7 +278,7 @@ class GeoDataFrame:
         is_geometry_value = missing or hasattr(raw, "__geo_interface__")
         replacing_geometry = key in _geometry_column_names(self._df)
         if not (replacing_geometry and is_geometry_value):
-            return value if isinstance(value, Literal) else lit(value)
+            return lit(raw)
 
         crs = self._df.schema.field(key).type.crs
         # A context-bound literal is needed to call functions on it.
@@ -274,7 +287,11 @@ class GeoDataFrame:
             expr = ctx.lit(None).funcs.st_geomfromwkt()
         else:
             expr = ctx.lit(raw)
-        if crs is not None:
+        # The destination CRS is inherited only by genuinely CRS-less geometry.
+        # A value that carries its own CRS (a GeoSeries literal, say) keeps it:
+        # stamping the destination CRS over it would relabel the coordinates
+        # without transforming them, which is silently wrong data.
+        if crs is not None and _expr_crs(self._df, expr) is None:
             expr = expr.funcs.st_setcrs(ctx.lit(crs.to_json()))
         return expr
 
@@ -352,6 +369,23 @@ class GeoDataFrame:
                 "sjoin() `distance` is required for predicate='dwithin' and "
                 "accepted only for that predicate"
             )
+        if distance is not None:
+            # Only a plain number. A Series or expression cannot be accepted here:
+            # the predicate is built against re-aliased copies of both frames, so a
+            # column reference would resolve by name inside the join rather than
+            # against whatever frame it was read from — silently using the wrong
+            # values in the worst case, failing obscurely in the best.
+            import numbers
+
+            from sedonadb_geopandas._series import normalize_scalar
+
+            distance = normalize_scalar(distance) if is_scalar(distance) else distance
+            if not isinstance(distance, numbers.Real):
+                raise TypeError(
+                    f"sjoin() `distance` must be a number, got "
+                    f"{type(distance).__name__}. A per-row distance column isn't "
+                    f"supported; filter on st_distance explicitly if you need one."
+                )
 
         # Alias both sides so the predicate and the output projection can name
         # columns unambiguously even when both frames use the same names.
@@ -455,9 +489,10 @@ class GeoDataFrame:
           the group, not necessarily the one from the first row, and it does not
           skip missing values the way GeoPandas' `first` does. A group containing a
           null or NaN may therefore aggregate to that value.
-        - Dissolving an empty frame with `by=None` yields one all-null row rather
-          than zero rows, because that is what a grouping-free SQL aggregate
-          returns. Detecting it would require executing the query first.
+        - Dissolving an empty frame with `by=None` yields one row — empty geometry
+          collection, null attribute values — rather than zero rows, because that
+          is what a grouping-free SQL aggregate returns. Detecting emptiness would
+          require executing the query first.
         - A group mixing 2D and 3D geometries raises, because the collect step
           rejects mixed coordinate dimensions; GeoPandas promotes to 3D with NaN.
           Normalize the dimension first if a group can contain both.

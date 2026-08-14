@@ -73,9 +73,17 @@ truncates toward zero where Python floors.
 unordered aggregate: it returns *some* value from the group rather than the one
 from the first row, and unlike GeoPandas it does not skip missing values, so a
 group containing a null or NaN may aggregate to that. Dissolving an empty frame
-without a group key returns one all-null row rather than zero rows, because that
-is what a grouping-free SQL aggregate produces, and a group mixing 2D and 3D
-geometries raises rather than being promoted to 3D.
+without a group key returns one row — empty geometry collection, null attribute
+values — rather than zero rows, because that is what a grouping-free SQL
+aggregate produces, and a group mixing 2D and 3D geometries raises rather than
+being promoted to 3D.
+
+Two known engine-side issues surface through `sjoin` and are tracked upstream
+rather than worked around here: `touches` misses a line whose *interior* passes
+exactly through a polygon corner (an endpoint meeting the corner works), and
+`within` wrongly matches a line lying exactly on a hole's boundary; and an outer
+join whose preserved side is empty (`how="left"` with an empty left frame) fails
+with an internal error where GeoPandas returns an empty frame.
 
 See the SedonaDB "Migrating from GeoPandas" guide for the relational model that
 underlies each method.
