@@ -1780,6 +1780,40 @@ def test_st_geometrytype(eng, geom, expected):
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
+    ("geom", "precision", "expected"),
+    [
+        (None, 10, None),
+        # Increasing precision on one point: each result is a prefix of the next,
+        # so a wrong bit order or a dropped bit shows up as a diverging suffix.
+        ("POINT (21.4234 52.0423)", 1, "u"),
+        ("POINT (21.4234 52.0423)", 5, "u3r0p"),
+        ("POINT (21.4234 52.0423)", 10, "u3r0pd0037"),
+        ("POINT (21.4234 52.0423)", 12, "u3r0pd0037ug"),
+        # Western and southern hemispheres, to pin the longitude/latitude signs.
+        ("POINT (-122.4194 37.7749)", 9, "9q8yyk8yt"),
+        ("POINT (-43.2 -22.9)", 8, "75cm8znt"),
+        # Non-point geometries hash the center of their bounding box, so the
+        # linestring and the multipoint below share a bounding box (10 10,
+        # 40 40) and therefore a geohash.
+        ("LINESTRING (30 10, 10 30, 40 40)", 10, "ss3y0zh7w1"),
+        ("MULTIPOINT ((10 40), (40 30), (20 20), (30 10))", 10, "ss3y0zh7w1"),
+        ("POLYGON ((35 10, 45 45, 15 40, 10 20, 35 10))", 10, "ssgs3y0zh7"),
+    ],
+)
+def test_st_geohash(eng, geom, precision, expected):
+    if eng == PostGIS and geom is None:
+        # As in ST_GeometryType above, PostGIS needs the NULL cast to resolve
+        # the overload.
+        arg = "NULL::geometry"
+    else:
+        arg = geom_or_null(geom)
+
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_GeoHash({arg}, {precision})", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
     ("wkt", "expected"),
     [
         (None, None),
