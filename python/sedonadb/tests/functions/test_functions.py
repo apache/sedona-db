@@ -1798,6 +1798,13 @@ def test_st_geometrytype(eng, geom, expected):
         ("LINESTRING (30 10, 10 30, 40 40)", 10, "ss3y0zh7w1"),
         ("MULTIPOINT ((10 40), (40 30), (20 20), (30 10))", 10, "ss3y0zh7w1"),
         ("POLYGON ((35 10, 45 45, 15 40, 10 20, 35 10))", 10, "ssgs3y0zh7"),
+        # A coordinate sitting exactly on a cell boundary. Both engines resolve
+        # the tie the same way -- a value equal to the midpoint goes to the
+        # upper half (`value >= mid`) -- so (0 0), which lands on the first
+        # split of both axes, agrees. PostGIS pins the same value in its own
+        # suite (cu_algorithm.c asserts (0, 0) at precision 16 is
+        # "s000000000000000").
+        ("POINT (0 0)", 10, "s000000000"),
     ],
 )
 def test_st_geohash(eng, geom, precision, expected):
@@ -1810,25 +1817,6 @@ def test_st_geohash(eng, geom, precision, expected):
 
     eng = eng.create_or_skip()
     eng.assert_query_result(f"SELECT ST_GeoHash({arg}, {precision})", expected)
-
-
-@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
-def test_st_geohash_cell_boundary_differs_from_postgis(eng):
-    # A coordinate lying exactly on a cell boundary is the one case where the
-    # two engines disagree, so it is pinned separately rather than hidden.
-    # SedonaDB follows Apache Sedona and assigns a coordinate equal to the
-    # midpoint to the *lower* half (`lon > mid`); PostGIS's geohash_point()
-    # uses `>=` and assigns it to the *upper* half. (0 0) sits on the very
-    # first split of both axes, so the two answers differ from the first
-    # character on and are exact opposites: all-lowest vs all-highest base32
-    # digit. PostGIS pins the same value in its own suite (cu_algorithm.c
-    # asserts (0, 0) at precision 16 is "s000000000000000").
-    expected = "s000000000" if eng == PostGIS else "7zzzzzzzzz"
-
-    eng = eng.create_or_skip()
-    eng.assert_query_result(
-        f"SELECT ST_GeoHash({geom_or_null('POINT (0 0)')}, 10)", expected
-    )
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
