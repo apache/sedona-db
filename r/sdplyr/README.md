@@ -85,7 +85,7 @@ cities |>
   ) |>
   arrange(country) |>
   head(10)
-#> <sedonab_dataframe: NA x 3>
+#> <sedonab_dataframe: ?? x 3>
 #> ┌──────────────┬─────────────┬───────────────┐
 #> │     city     ┆   country   ┆   continent   │
 #> │     utf8     ┆     utf8    ┆      utf8     │
@@ -117,7 +117,7 @@ cities |>
       wk::rct(-80, 40, -60, 60, wk::wk_crs_longlat())
     )
   )
-#> <sedonab_dataframe: NA x 2>
+#> <sedonab_dataframe: ?? x 2>
 #> ┌──────────┬─────────────────────────────────────────────┐
 #> │   name   ┆                   geometry                  │
 #> │   utf8   ┆                   geometry                  │

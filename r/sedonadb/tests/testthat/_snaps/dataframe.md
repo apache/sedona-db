@@ -15,7 +15,7 @@
     Code
       print(df)
     Output
-      <sedonab_dataframe: NA x 1>
+      <sedonab_dataframe: ?? x 1>
       +------------+
       |     pt     |
       |  geometry  |
@@ -29,7 +29,7 @@
     Code
       print(grouped)
     Output
-      <grouped sedonab_dataframe: NA x 1 | [`x`]>
+      <grouped sedonab_dataframe: ?? x 1 | [`x`]>
       +------------+
       |     pt     |
       |  geometry  |
@@ -49,4 +49,3 @@
 ---
 
     All option values must be named
-
