@@ -112,10 +112,6 @@ sd_expr_scalar_function <- function(function_name, args, factory = sd_expr_facto
 
 # Construct access to a named field of a nested expression.
 sd_expr_get_field <- function(expr, field_name, factory) {
-  if (!is_sd_expr(expr)) {
-    rlang::abort("`expr` must be a SedonaDB expression")
-  }
-
   if (!is.character(field_name) || length(field_name) != 1L || is.na(field_name)) {
     rlang::abort("`field_name` must be a single non-missing string")
   }
