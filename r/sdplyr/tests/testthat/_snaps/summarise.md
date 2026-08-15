@@ -22,3 +22,4 @@
       |     6.0 |
       +---------+
       Preview of up to 6 row(s)
+
