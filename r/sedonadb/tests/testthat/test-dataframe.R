@@ -486,6 +486,27 @@ test_that("sd_filter() works with dplyr-like filter syntax", {
   )
 })
 
+test_that("dataframe expressions support nested struct fields", {
+  df <- sd_sql(
+    "SELECT named_struct('bar', named_struct('baz', 1)) AS foo"
+  )
+
+  expect_identical(
+    df |>
+      sd_filter(foo$bar$baz > 0) |>
+      sd_transmute(value = foo$bar$baz) |>
+      sd_collect(),
+    data.frame(value = 1)
+  )
+
+  expect_identical(
+    df |>
+      sd_transmute(value = .data$foo$bar$baz) |>
+      sd_collect(),
+    data.frame(value = 1)
+  )
+})
+
 test_that("sd_arrange() works with dplyr-like arrange syntax", {
   df_in <- data.frame(x = 1:10, y = letters[10:1])
 

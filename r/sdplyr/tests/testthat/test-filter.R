@@ -83,6 +83,20 @@ test_that("filter() handles NA values", {
   )
 })
 
+test_that("filter() supports nested struct fields", {
+  df <- sedonadb::sd_sql(
+    "SELECT named_struct('bar', named_struct('baz', 1)) AS foo"
+  )
+
+  expect_identical(
+    df |>
+      filter(foo$bar$baz > 0) |>
+      transmute(value = foo$bar$baz) |>
+      collect(),
+    tibble(value = 1)
+  )
+})
+
 test_that("filter(..., .by) is unsupported", {
   df <- tibble(x = 1:3, g = c("a", "a", "b"))
   expect_snapshot_error(

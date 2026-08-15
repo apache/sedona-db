@@ -110,6 +110,23 @@ sd_expr_scalar_function <- function(function_name, args, factory = sd_expr_facto
   factory$scalar_function(function_name, args_as_expr)
 }
 
+# Construct access to a named field of a nested expression.
+sd_expr_get_field <- function(expr, field_name, factory) {
+  if (!is_sd_expr(expr)) {
+    rlang::abort("`expr` must be a SedonaDB expression")
+  }
+
+  if (!is.character(field_name) || length(field_name) != 1L || is.na(field_name)) {
+    rlang::abort("`field_name` must be a single non-missing string")
+  }
+
+  field_name_expr <- sd_expr_literal(field_name, factory = factory)
+  factory$scalar_function(
+    "get_field",
+    list(expr, field_name_expr)
+  )
+}
+
 #' @rdname sd_expr_column
 #' @export
 sd_expr_aggregate_function <- function(
@@ -242,11 +259,30 @@ sd_eval_expr <- function(expr, expr_ctx = sd_expr_ctx(env = env), env = parent.f
 
 sd_eval_expr_inner <- function(expr, expr_ctx) {
   if (rlang::is_call(expr)) {
-    # Special syntax for the escape hatch of "just call a DataFusion function" is
-    # the expression .fns$datafusion_fn_name(arg1, arg2)
+    # .fns$fn() is special syntax for the escape hatch of "just call a
+    # DataFusion function". In this case, expr is the function invocation and
+    # expr[[1]] is the `$` call `.fns$fn`. This is distinct from struct field
+    # access below, where expr itself is the `$` call.
     if (rlang::is_call(expr[[1]], "$") && rlang::is_symbol(expr[[1]][[2]], ".fns")) {
       fn_key <- as.character(expr[[1]][[3]])
       return(sd_eval_datafusion_fn(fn_key, expr, expr_ctx))
+    }
+
+    # For foo$bar, expr itself is a `$` call: expr[[1]] is the symbol `$`,
+    # expr[[2]] is foo, and expr[[3]] is bar. Evaluate the left-hand side
+    # recursively so the top-level column is resolved through the data mask
+    # and chained field access such as foo$bar$baz works.
+    if (rlang::is_call(expr, "$")) {
+      lhs <- sd_eval_expr_inner(expr[[2]], expr_ctx)
+      if (is_sd_expr(lhs)) {
+        return(
+          sd_expr_get_field(
+            lhs,
+            as.character(expr[[3]]),
+            factory = expr_ctx$factory
+          )
+        )
+      }
     }
 
     # Extract `pkg::fun` or `fun` if this is a usual call (e.g., not
