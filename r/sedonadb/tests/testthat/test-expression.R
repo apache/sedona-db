@@ -105,6 +105,25 @@ test_that("nested struct field expressions can be translated", {
   actual_data_pronoun <- sd_eval_expr(quote(.data$foo$bar$baz), expr_ctx)
   expect_identical(actual_data_pronoun$debug_string(), expected$debug_string())
 
+  struct_expr <- sd_expr_scalar_function(
+    "named_struct",
+    list("value", 1L),
+    factory = expr_ctx$factory
+  )
+  expected_function_field <- sd_expr_get_field(
+    struct_expr,
+    "value",
+    factory = expr_ctx$factory
+  )
+  actual_function_field <- sd_eval_expr(
+    quote(.fns$named_struct("value", 1L)$value),
+    expr_ctx
+  )
+  expect_identical(
+    actual_function_field$debug_string(),
+    expected_function_field$debug_string()
+  )
+
   local_object <- list(value = 1L)
   actual_local <- sd_eval_expr(quote(local_object$value), expr_ctx)
   expected_local <- sd_expr_literal(1L, factory = expr_ctx$factory)
