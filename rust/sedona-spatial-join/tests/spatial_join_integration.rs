@@ -912,6 +912,29 @@ async fn test_full_outer_join() -> Result<()> {
     Ok(())
 }
 
+#[rstest]
+#[tokio::test]
+async fn test_probe_chunk_parallel_join_types(
+    #[values(
+        JoinType::Inner,
+        JoinType::Left,
+        JoinType::Right,
+        JoinType::Full,
+        JoinType::LeftSemi,
+        JoinType::LeftAnti,
+        JoinType::RightSemi,
+        JoinType::RightAnti
+    )]
+    join_type: JoinType,
+) -> Result<()> {
+    let options = SpatialJoinOptions {
+        parallel_probe_chunk_size: 1,
+        ..Default::default()
+    };
+    test_with_join_types(join_type, options, 30).await?;
+    Ok(())
+}
+
 #[tokio::test]
 async fn test_geography_join_is_not_optimized() -> Result<()> {
     let options = SpatialJoinOptions::default();

@@ -77,7 +77,7 @@ datafusion = { workspace = true, features = ["sql"] }
 rstest = { workspace = true }
 sedona-testing = { workspace = true }
 wkt = { workspace = true }
-tokio = { workspace = true, features = ["macros"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 rand = { workspace = true }
 env_logger = { workspace = true }
 
@@ -104,6 +104,11 @@ harness = false
 [[bench]]
 name = "external_evaluated_batch_stream"
 path = "bench/evaluated_batch/external_evaluated_batch_stream.rs"
+harness = false
+
+[[bench]]
+name = "query_batch_parallel"
+path = "bench/query_batch_parallel.rs"
 harness = false
 
 [[bench]]

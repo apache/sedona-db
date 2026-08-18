@@ -110,6 +110,28 @@ pub(crate) struct DefaultSpatialIndex {
     inner: Arc<DefaultSpatialIndexInner>,
 }
 
+struct QueryBatchRowOutput {
+    row_idx: usize,
+    metrics: QueryResultMetrics,
+    build_batch_positions: Vec<(i32, i32)>,
+}
+
+impl QueryBatchRowOutput {
+    fn empty(row_idx: usize) -> Self {
+        Self {
+            row_idx,
+            metrics: QueryResultMetrics {
+                count: 0,
+                candidate_count: 0,
+            },
+            build_batch_positions: Vec::new(),
+        }
+    }
+}
+
+/// Row results of one probe chunk, keyed by the global probe-row index.
+type ProbeChunkRowResults = Vec<(usize, Result<QueryBatchRowOutput>)>;
+
 impl DefaultSpatialIndex {
     pub(crate) fn empty(
         spatial_predicate: SpatialPredicate,
@@ -177,6 +199,250 @@ impl DefaultSpatialIndex {
             &self.inner.indexed_batches,
             &self.inner.data_id_to_batch_pos,
             knn_components,
+        ))
+    }
+
+    async fn query_batch_row(
+        &self,
+        evaluated_batch: &Arc<EvaluatedBatch>,
+        row_idx: usize,
+    ) -> Result<QueryBatchRowOutput> {
+        let rects = evaluated_batch.geom_array.rects();
+        let dist = evaluated_batch.geom_array.distance();
+
+        let probe_rect = &rects[row_idx];
+        if probe_rect.is_empty() {
+            return Ok(QueryBatchRowOutput::empty(row_idx));
+        }
+
+        let mut candidates = if let Some(wraparound) = &self.inner.wraparound {
+            let (left, right) = probe_rect.split(wraparound);
+            if left.is_empty() {
+                return sedona_internal_err!("Probe rectangle split produced empty left split");
+            }
+
+            let (x, y) = left.into_inner();
+            let mut candidates = self.inner.rtree.search(x.0, y.0, x.1, y.1);
+            if !right.is_empty() {
+                let (x, y) = right.into_inner();
+                candidates.extend(self.inner.rtree.search(x.0, y.0, x.1, y.1));
+            }
+
+            candidates
+        } else {
+            let (x, y) = probe_rect.clone().into_inner();
+            self.inner.rtree.search(x.0, y.0, x.1, y.1)
+        };
+
+        if candidates.is_empty() {
+            return Ok(QueryBatchRowOutput::empty(row_idx));
+        }
+
+        // Deduplicate the data_idx themselves. This can happen if the same build rectangle
+        // intersects both the left and right probe rectangles.
+        if probe_rect.is_wraparound() {
+            candidates.sort_unstable();
+            candidates.dedup();
+        }
+
+        // Deduplicate candidates arising from distinct data_idx in candidates that resolve
+        // to the same build batch positions due to multiple rectangles for the same item
+        // in the tree.
+        if self.inner.wraparound.is_some() {
+            let mut indexed_candidates: Vec<_> = candidates
+                .iter()
+                .map(|&data_idx| (self.inner.data_id_to_batch_pos[data_idx as usize], data_idx))
+                .collect();
+            indexed_candidates.sort_unstable_by_key(|(pos, _)| *pos);
+            indexed_candidates.dedup_by_key(|(pos, _)| *pos);
+            candidates = indexed_candidates
+                .into_iter()
+                .map(|(_, data_idx)| data_idx)
+                .collect();
+        }
+
+        let distance = match dist {
+            Some(dist_array) => distance_value_at(dist_array, row_idx)?,
+            None => None,
+        };
+
+        // Refine the candidates retrieved from the r-tree index by evaluating the actual spatial predicate
+        let refine_chunk_size = self.inner.options.parallel_refinement_chunk_size;
+        let (metrics, build_batch_positions) =
+            if refine_chunk_size == 0 || candidates.len() < refine_chunk_size * 2 {
+                let Some(probe_wkb) = evaluated_batch.geom_array.wkb(row_idx) else {
+                    return sedona_internal_err!(
+                        "Failed to get WKB for row {} in evaluated batch",
+                        row_idx
+                    );
+                };
+
+                // For small candidate sets, use refine synchronously
+                let mut build_batch_positions = Vec::new();
+                let metrics = self.refine(
+                    probe_wkb,
+                    &candidates,
+                    &distance,
+                    &mut build_batch_positions,
+                )?;
+                (metrics, build_batch_positions)
+            } else {
+                // For large candidate sets, spawn several tasks to parallelize refinement
+                self.refine_concurrently(
+                    evaluated_batch,
+                    row_idx,
+                    &candidates,
+                    distance,
+                    refine_chunk_size,
+                )
+                .await?
+            };
+
+        Ok(QueryBatchRowOutput {
+            row_idx,
+            metrics,
+            build_batch_positions,
+        })
+    }
+
+    fn append_query_batch_row(
+        row_output: QueryBatchRowOutput,
+        max_result_size: usize,
+        build_batch_positions: &mut Vec<(i32, i32)>,
+        probe_indices: &mut Vec<u32>,
+        total_count: &mut usize,
+        total_candidates_count: &mut usize,
+    ) -> bool {
+        let QueryBatchRowOutput {
+            row_idx,
+            metrics,
+            build_batch_positions: row_build_batch_positions,
+        } = row_output;
+
+        debug_assert_eq!(row_build_batch_positions.len(), metrics.count);
+
+        let count = metrics.count;
+        let candidate_count = metrics.candidate_count;
+        build_batch_positions.extend(row_build_batch_positions);
+        probe_indices.extend(std::iter::repeat_n(row_idx as u32, count));
+        *total_count += count;
+        *total_candidates_count += candidate_count;
+
+        candidate_count > 0 && *total_count >= max_result_size
+    }
+
+    async fn query_batch_sequential(
+        &self,
+        evaluated_batch: &Arc<EvaluatedBatch>,
+        range: Range<usize>,
+        max_result_size: usize,
+        build_batch_positions: &mut Vec<(i32, i32)>,
+        probe_indices: &mut Vec<u32>,
+    ) -> Result<(QueryResultMetrics, usize)> {
+        let mut total_candidates_count = 0;
+        let mut total_count = 0;
+        let mut current_row_idx = range.start;
+
+        for row_idx in range {
+            current_row_idx = row_idx;
+            let row_output = self.query_batch_row(evaluated_batch, row_idx).await?;
+            if Self::append_query_batch_row(
+                row_output,
+                max_result_size,
+                build_batch_positions,
+                probe_indices,
+                &mut total_count,
+                &mut total_candidates_count,
+            ) {
+                break;
+            }
+        }
+
+        let end_idx = current_row_idx + 1;
+        Ok((
+            QueryResultMetrics {
+                count: total_count,
+                candidate_count: total_candidates_count,
+            },
+            end_idx,
+        ))
+    }
+
+    async fn query_batch_probe_chunks(
+        &self,
+        evaluated_batch: &Arc<EvaluatedBatch>,
+        range: Range<usize>,
+        max_result_size: usize,
+        build_batch_positions: &mut Vec<(i32, i32)>,
+        probe_indices: &mut Vec<u32>,
+        probe_chunk_size: usize,
+    ) -> Result<(QueryResultMetrics, usize)> {
+        let mut join_set = JoinSet::new();
+        for (chunk_idx, chunk_start) in (range.start..range.end)
+            .step_by(probe_chunk_size)
+            .enumerate()
+        {
+            let chunk_end = (chunk_start + probe_chunk_size).min(range.end);
+            let cloned_evaluated_batch = Arc::clone(evaluated_batch);
+            let index_owned = self.clone();
+            join_set.spawn(async move {
+                let mut row_results = Vec::with_capacity(chunk_end - chunk_start);
+                for row_idx in chunk_start..chunk_end {
+                    let row_result = index_owned
+                        .query_batch_row(&cloned_evaluated_batch, row_idx)
+                        .await;
+                    row_results.push((row_idx, row_result));
+                }
+                (chunk_idx, row_results)
+            });
+        }
+
+        // Collect chunks by chunk index so rows can be committed in global probe-row order.
+        let mut chunk_results: Vec<Option<ProbeChunkRowResults>> =
+            Vec::with_capacity(join_set.len());
+        chunk_results.resize_with(join_set.len(), || None);
+        while let Some(res) = join_set.join_next().await {
+            let (chunk_idx, row_results) =
+                res.map_err(|e| DataFusionError::External(Box::new(e)))?;
+            chunk_results[chunk_idx] = Some(row_results);
+        }
+
+        let mut total_candidates_count = 0;
+        let mut total_count = 0;
+        let mut current_row_idx = range.start;
+
+        for chunk_result in chunk_results {
+            let row_results = chunk_result.expect("All chunks should be processed");
+            for (row_idx, row_result) in row_results {
+                current_row_idx = row_idx;
+                let row_output = row_result?;
+                if Self::append_query_batch_row(
+                    row_output,
+                    max_result_size,
+                    build_batch_positions,
+                    probe_indices,
+                    &mut total_count,
+                    &mut total_candidates_count,
+                ) {
+                    let end_idx = current_row_idx + 1;
+                    return Ok((
+                        QueryResultMetrics {
+                            count: total_count,
+                            candidate_count: total_candidates_count,
+                        },
+                        end_idx,
+                    ));
+                }
+            }
+        }
+
+        let end_idx = current_row_idx + 1;
+        Ok((
+            QueryResultMetrics {
+                count: total_count,
+                candidate_count: total_candidates_count,
+            },
+            end_idx,
         ))
     }
 
@@ -526,115 +792,27 @@ impl SpatialIndex for DefaultSpatialIndex {
             ));
         }
 
-        let rects = evaluated_batch.geom_array.rects();
-        let dist = evaluated_batch.geom_array.distance();
-        let mut total_candidates_count = 0;
-        let mut total_count = 0;
-        let mut current_row_idx = range.start;
-        for row_idx in range {
-            current_row_idx = row_idx;
-            let probe_rect = &rects[row_idx];
-            if probe_rect.is_empty() {
-                continue;
-            }
-
-            let mut candidates = if let Some(wraparound) = &self.inner.wraparound {
-                let (left, right) = probe_rect.split(wraparound);
-                if left.is_empty() {
-                    return sedona_internal_err!("Probe rectangle split produced empty left split");
-                }
-
-                let (x, y) = left.into_inner();
-                let mut candidates = self.inner.rtree.search(x.0, y.0, x.1, y.1);
-                if !right.is_empty() {
-                    let (x, y) = right.into_inner();
-                    candidates.extend(self.inner.rtree.search(x.0, y.0, x.1, y.1));
-                }
-
-                candidates
-            } else {
-                let (x, y) = probe_rect.clone().into_inner();
-                self.inner.rtree.search(x.0, y.0, x.1, y.1)
-            };
-
-            if candidates.is_empty() {
-                continue;
-            }
-
-            // Deduplicate the data_idx themselves. This can happen if the same build rectangle
-            // intersects both the left and right probe rectangles.
-            if probe_rect.is_wraparound() {
-                candidates.sort_unstable();
-                candidates.dedup();
-            }
-
-            // Deduplicate candidates arising from distinct data_idx in candidates that resolve
-            // to the same build batch positions due to multiple rectangles for the same item
-            // in the tree.
-            if self.inner.wraparound.is_some() {
-                let mut indexed_candidates: Vec<_> = candidates
-                    .iter()
-                    .map(|&data_idx| (self.inner.data_id_to_batch_pos[data_idx as usize], data_idx))
-                    .collect();
-                indexed_candidates.sort_unstable_by_key(|(pos, _)| *pos);
-                indexed_candidates.dedup_by_key(|(pos, _)| *pos);
-                candidates = indexed_candidates
-                    .into_iter()
-                    .map(|(_, data_idx)| data_idx)
-                    .collect();
-            }
-
-            let Some(probe_wkb) = evaluated_batch.geom_array.wkb(row_idx) else {
-                return sedona_internal_err!(
-                    "Failed to get WKB for row {} in evaluated batch",
-                    row_idx
-                );
-            };
-
-            let distance = match dist {
-                Some(dist_array) => distance_value_at(dist_array, row_idx)?,
-                None => None,
-            };
-
-            // Refine the candidates retrieved from the r-tree index by evaluating the actual spatial predicate
-            let refine_chunk_size = self.inner.options.parallel_refinement_chunk_size;
-            if refine_chunk_size == 0 || candidates.len() < refine_chunk_size * 2 {
-                // For small candidate sets, use refine synchronously
-                let metrics =
-                    self.refine(probe_wkb, &candidates, &distance, build_batch_positions)?;
-                probe_indices.extend(std::iter::repeat_n(row_idx as u32, metrics.count));
-                total_count += metrics.count;
-                total_candidates_count += metrics.candidate_count;
-            } else {
-                // For large candidate sets, spawn several tasks to parallelize refinement
-                let (metrics, positions) = self
-                    .refine_concurrently(
-                        evaluated_batch,
-                        row_idx,
-                        &candidates,
-                        distance,
-                        refine_chunk_size,
-                    )
-                    .await?;
-                build_batch_positions.extend(positions);
-                probe_indices.extend(std::iter::repeat_n(row_idx as u32, metrics.count));
-                total_count += metrics.count;
-                total_candidates_count += metrics.candidate_count;
-            }
-
-            if total_count >= max_result_size {
-                break;
-            }
+        let probe_chunk_size = self.inner.options.parallel_probe_chunk_size;
+        if probe_chunk_size == 0 || range.len() < probe_chunk_size.saturating_mul(2) {
+            self.query_batch_sequential(
+                evaluated_batch,
+                range,
+                max_result_size,
+                build_batch_positions,
+                probe_indices,
+            )
+            .await
+        } else {
+            self.query_batch_probe_chunks(
+                evaluated_batch,
+                range,
+                max_result_size,
+                build_batch_positions,
+                probe_indices,
+                probe_chunk_size,
+            )
+            .await
         }
-
-        let end_idx = current_row_idx + 1;
-        Ok((
-            QueryResultMetrics {
-                count: total_count,
-                candidate_count: total_candidates_count,
-            },
-            end_idx,
-        ))
     }
 
     fn need_more_probe_stats(&self) -> bool {
@@ -681,6 +859,7 @@ mod tests {
     use crate::index::spatial_index::SpatialIndexRef;
     use crate::index::spatial_index_builder::{SpatialIndexBuilder, SpatialJoinBuildMetrics};
     use crate::index::DefaultSpatialIndexBuilder;
+    use crate::utils::bounds::Bounds2D;
     use arrow_array::RecordBatch;
     use arrow_schema::{DataType, Field};
     use datafusion_common::JoinSide;
@@ -689,7 +868,10 @@ mod tests {
     use futures::Stream;
     use geo_traits::Dimensions;
     use sedona_common::option::{ExecutionMode, SpatialJoinOptions};
-    use sedona_geometry::wkb_factory::write_wkb_empty_point;
+    use sedona_geometry::{
+        interval::{IntervalTrait, WraparoundInterval},
+        wkb_factory::write_wkb_empty_point,
+    };
     use sedona_schema::datatypes::WKB_GEOMETRY;
     use sedona_testing::create::create_array;
 
@@ -1817,6 +1999,31 @@ mod tests {
         })
     }
 
+    fn create_probe_batch_with_rects(
+        probe_geoms: &[Option<&str>],
+        rects: Vec<Bounds2D>,
+    ) -> Arc<EvaluatedBatch> {
+        let geom_array = create_array(probe_geoms, &WKB_GEOMETRY);
+        let batch = RecordBatch::try_new(
+            Arc::new(arrow_schema::Schema::new(vec![Field::new(
+                "geom",
+                DataType::Binary,
+                true,
+            )])),
+            vec![Arc::new(geom_array.clone())],
+        )
+        .unwrap();
+        Arc::new(EvaluatedBatch {
+            batch,
+            geom_array: EvaluatedGeometryArray::try_new_with_rects(
+                geom_array,
+                rects,
+                &WKB_GEOMETRY,
+            )
+            .unwrap(),
+        })
+    }
+
     #[tokio::test]
     async fn test_query_batch_empty_results() {
         let build_geoms = &[Some("POINT (0 0)"), Some("POINT (1 1)")];
@@ -2038,5 +2245,187 @@ mod tests {
         assert!(result.is_ok());
         let (metrics, _) = result.unwrap();
         assert_eq!(metrics.count, 3);
+    }
+
+    #[tokio::test]
+    async fn test_query_batch_parallel_probe_chunks_matches_sequential() {
+        let build_geoms = &[
+            Some("POINT (0 0)"),
+            Some("POINT (1 1)"),
+            Some("POINT (2 2)"),
+            Some("POINT (5 5)"),
+        ];
+        let sequential_index =
+            setup_index_for_batch_test(build_geoms, SpatialJoinOptions::default()).await;
+        let parallel_index = setup_index_for_batch_test(
+            build_geoms,
+            SpatialJoinOptions {
+                parallel_probe_chunk_size: 1,
+                ..Default::default()
+            },
+        )
+        .await;
+
+        let probe_geoms = &[
+            Some("POLYGON ((-1 -1, 1.5 -1, 1.5 1.5, -1 1.5, -1 -1))"),
+            Some("POINT (5 5)"),
+            None,
+            Some("POINT (2 2)"),
+        ];
+        let probe_batch = create_probe_batch(probe_geoms);
+
+        let mut sequential_build_positions = Vec::new();
+        let mut sequential_probe_indices = Vec::new();
+        let (sequential_metrics, sequential_next_idx) = sequential_index
+            .query_batch(
+                &probe_batch,
+                0..probe_geoms.len(),
+                usize::MAX,
+                &mut sequential_build_positions,
+                &mut sequential_probe_indices,
+            )
+            .await
+            .unwrap();
+
+        let mut parallel_build_positions = Vec::new();
+        let mut parallel_probe_indices = Vec::new();
+        let (parallel_metrics, parallel_next_idx) = parallel_index
+            .query_batch(
+                &probe_batch,
+                0..probe_geoms.len(),
+                usize::MAX,
+                &mut parallel_build_positions,
+                &mut parallel_probe_indices,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(parallel_metrics.count, sequential_metrics.count);
+        assert_eq!(
+            parallel_metrics.candidate_count,
+            sequential_metrics.candidate_count
+        );
+        assert_eq!(parallel_next_idx, sequential_next_idx);
+        assert_eq!(parallel_build_positions, sequential_build_positions);
+        assert_eq!(parallel_probe_indices, sequential_probe_indices);
+    }
+
+    #[tokio::test]
+    async fn test_query_batch_parallel_probe_chunks_max_result_size() {
+        let build_geoms = &[
+            Some("POINT (0 0)"),
+            Some("POINT (0 0)"),
+            Some("POINT (0 0)"),
+        ];
+        let index = setup_index_for_batch_test(
+            build_geoms,
+            SpatialJoinOptions {
+                parallel_probe_chunk_size: 1,
+                ..Default::default()
+            },
+        )
+        .await;
+
+        let probe_geoms = &[Some("POINT (0 0)"), Some("POINT (0 0)")];
+        let probe_batch = create_probe_batch(probe_geoms);
+
+        let mut build_batch_positions = Vec::new();
+        let mut probe_indices = Vec::new();
+        let (metrics, next_idx) = index
+            .query_batch(
+                &probe_batch,
+                0..2,
+                2,
+                &mut build_batch_positions,
+                &mut probe_indices,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(metrics.count, 3);
+        assert_eq!(next_idx, 1);
+        assert_eq!(build_batch_positions.len(), 3);
+        assert_eq!(probe_indices, vec![0, 0, 0]);
+    }
+
+    #[tokio::test]
+    async fn test_query_batch_parallel_probe_chunks_wraparound_deduplicates() {
+        let metrics = SpatialJoinBuildMetrics::default();
+        let spatial_predicate = SpatialPredicate::Relation(RelationPredicate::new(
+            Arc::new(Column::new("left", 0)),
+            Arc::new(Column::new("right", 0)),
+            SpatialRelationType::Intersects,
+        ));
+        let schema = Arc::new(arrow_schema::Schema::new(vec![Field::new(
+            "geom",
+            DataType::Binary,
+            true,
+        )]));
+        let options = SpatialJoinOptions {
+            parallel_probe_chunk_size: 1,
+            ..Default::default()
+        };
+
+        let builder = DefaultSpatialIndexBuilder::new(
+            schema.clone(),
+            spatial_predicate,
+            options,
+            JoinType::Inner,
+            1,
+            metrics,
+        )
+        .unwrap()
+        .with_wraparound((-180.0, 180.0));
+
+        let build_geoms = &[Some("POINT (179 0)")];
+        let build_geom_array = create_array(build_geoms, &WKB_GEOMETRY);
+        let build_batch = RecordBatch::try_new(
+            Arc::new(arrow_schema::Schema::new(vec![Field::new(
+                "geom",
+                DataType::Binary,
+                true,
+            )])),
+            vec![Arc::new(build_geom_array.clone())],
+        )
+        .unwrap();
+        let build_evaluated_batch = EvaluatedBatch {
+            batch: build_batch,
+            geom_array: EvaluatedGeometryArray::try_new_with_rects(
+                build_geom_array,
+                vec![Bounds2D::new(
+                    WraparoundInterval::new(170.0, -170.0),
+                    (-1.0, 1.0),
+                )],
+                &WKB_GEOMETRY,
+            )
+            .unwrap(),
+        };
+        let index = build_index(builder, build_evaluated_batch, schema).await;
+
+        let probe_batch = create_probe_batch_with_rects(
+            &[Some("POINT (179 0)"), Some("POINT (0 0)")],
+            vec![
+                Bounds2D::new(WraparoundInterval::new(175.0, -175.0), (-1.0, 1.0)),
+                Bounds2D::new((0.0, 0.0), (0.0, 0.0)),
+            ],
+        );
+
+        let mut build_batch_positions = Vec::new();
+        let mut probe_indices = Vec::new();
+        let (metrics, next_idx) = index
+            .query_batch(
+                &probe_batch,
+                0..2,
+                usize::MAX,
+                &mut build_batch_positions,
+                &mut probe_indices,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(metrics.count, 1);
+        assert_eq!(next_idx, 2);
+        assert_eq!(build_batch_positions, vec![(0, 0)]);
+        assert_eq!(probe_indices, vec![0]);
     }
 }
