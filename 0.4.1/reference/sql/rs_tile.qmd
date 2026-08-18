@@ -1,0 +1,120 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: RS_Tile
+description: >
+  Returns an array of rasters resulting from the split of the input raster into
+  a grid of fixed-size tiles, one list item per tile with its grid position.
+kernels:
+  - returns: list
+    args:
+    - raster
+    - name: width
+      type: integer
+      description: Tile width in pixels. Must be >= 1.
+    - name: height
+      type: integer
+      description: Tile height in pixels. Must be >= 1.
+    - name: pad_with_no_data
+      type: boolean
+      description: >
+        Optional (default false). When true, pad the last partial row/column of
+        tiles to the full tile size with a nodata fill; when false the smaller
+        edge tile is emitted as-is.
+    - name: no_data_value
+      type: double
+      description: >
+        Optional. The value written to padded pixels (only valid with
+        `pad_with_no_data = true`); defaults to the band's own nodata value, or
+        the band data type's minimum if it has none. It is an error if it does
+        not fit the band's data type.
+  - returns: list
+    args:
+    - raster
+    - name: band_indices
+      type: array
+      description: >
+        `Array[Int]` of 1-based band indices to include in each tile, in the
+        given order.
+    - name: width
+      type: integer
+    - name: height
+      type: integer
+    - name: pad_with_no_data
+      type: boolean
+    - name: no_data_value
+      type: double
+---
+
+::: callout-warning
+**Experimental.** This function is experimental; its behavior may change without notice.
+:::
+
+## Description
+
+`RS_Tile` cuts a raster into a grid of `width` x `height` tiles, returning a
+list with one item per tile that you `UNNEST` to get one row per tile.
+
+When no band argument is given, every band is included. `band_indices` selects
+an ordered subset of bands. Band indices are 1-based.
+
+Each returned list item is a struct with:
+
+- `x`: the tile's grid column (0-based), counting from the left
+- `y`: the tile's grid row (0-based), counting from the top
+- `tile`: the tile raster, with a geotransform shifted to the tile's own origin
+
+The grid is `ceil(width / tile_width)` columns by `ceil(height / tile_height)`
+rows. When the raster does not divide evenly, the last column and row of tiles
+are partial: with `pad_with_no_data = false` the smaller edge tile is emitted
+as-is, and with `pad_with_no_data = true` those tiles are padded to the full
+tile size with a nodata fill. When the band(s) have no nodata value,
+`no_data_value` supplies one.
+
+::: callout-note
+`RS_Tile` **copies the raster**: every tile carries its own pixels, so the
+returned list materializes a full copy of the raster spread across the tiles and
+held in memory as one list value. A small tile size produces many tiles (a
+`1 x 1` tile size yields one tile per pixel).
+:::
+
+## Examples
+
+Tile every band into a 2x2 grid of 32x16 tiles, then `UNNEST` the list to get
+one row per tile (counted here so the example output stays small rather than
+printing every tile raster):
+
+```sql
+SELECT COUNT(*) AS num_tiles
+FROM (SELECT UNNEST(RS_Tile(RS_Example(), 32, 16)) AS tile);
+```
+
+Tile every band, padding the edge tiles to the full 40x20 size with a nodata
+fill of 0:
+
+```sql
+SELECT COUNT(*) AS num_tiles
+FROM (SELECT UNNEST(RS_Tile(RS_Example(), 40, 20, true, 0.0)) AS tile);
+```
+
+Tile an ordered subset of bands:
+
+```sql
+SELECT COUNT(*) AS num_tiles
+FROM (SELECT UNNEST(RS_Tile(RS_Example(), make_array(1, 3), 32, 16)) AS tile);
+```

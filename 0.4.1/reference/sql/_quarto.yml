@@ -1,0 +1,46 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# This quarto project allows `quarto render` from this directory to be
+# used such that it takes care of executing code blocks to create figures
+# and render standardized frontmatter defining function arguments into
+# usage/argument documentation.
+project:
+  title: "Function Reference"
+format:
+  gfm:
+    # Increase the quality of the figures (the default of 72 is not very
+    # appealing)
+    fig-dpi: 300
+
+# Use jupyter to render python code blocks. We could also use knitr, which
+# is more flexible but requires an R install available.
+engine: jupyter
+
+# By default, don't echo the Python code for Python code blocks. We use these
+# blocks primarily to create figures, not to demo Python code and its output.
+# individual code blocks can add `#| echo: true` to override this default.
+execute:
+  echo: false
+
+# These filters take care of rendering ```sql code blocks, rendering the
+# standardized description/usage/arguments based on document frontmatter,
+# and providing the function-listing shortcode used to list all the functions
+# in index.qmd.
+filters:
+  - _extensions/render-meta-and-examples.lua
+  - _extensions/function-listing

@@ -1,0 +1,83 @@
+{#-
+  Licensed to the Apache Software Foundation (ASF) under one
+  or more contributor license agreements.  See the NOTICE file
+  distributed with this work for additional information
+  regarding copyright ownership.  The ASF licenses this file
+  to you under the Apache License, Version 2.0 (the
+  "License"); you may not use this file except in compliance
+  with the License.  You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing,
+  software distributed under the License is distributed on an
+  "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+  KIND, either express or implied.  See the License for the
+  specific language governing permissions and limitations
+  under the License.
+-#}
+{% extends "base.html" %}
+
+{% block header %}
+  <div id="announcement-bar"></div>
+  {{ super() }}
+  <script>
+    (function () {
+      // Fetch the main Sedona site and extract its announcement bar
+      fetch("https://sedona.apache.org/latest/")
+        .then(function (res) {
+          if (!res.ok) throw new Error("Failed to fetch");
+          return res.text();
+        })
+        .then(function (html) {
+          var parser = new DOMParser();
+          var doc = parser.parseFromString(html, "text/html");
+          // The announcement bar is the first div inside <body> before the header,
+          // styled with inline background: #CA463A
+          var candidates = doc.querySelectorAll("body > div, header > div, .md-header ~ div, body > .md-banner");
+          var announcement = null;
+
+          // Strategy 1: Look for a div with the Sedona red background color
+          for (var i = 0; i < candidates.length; i++) {
+            var style = candidates[i].getAttribute("style") || "";
+            if (style.indexOf("CA463A") !== -1 || style.indexOf("ca463a") !== -1) {
+              announcement = candidates[i];
+              break;
+            }
+          }
+
+          // Strategy 2: Check for Material's built-in announcement banner
+          if (!announcement) {
+            announcement = doc.querySelector(".md-banner");
+          }
+
+          // Strategy 3: Check first child of body if it's a div with a link
+          if (!announcement) {
+            var first = doc.body.firstElementChild;
+            if (first && first.tagName === "DIV" && first.querySelector("a")) {
+              var bg = first.style.backgroundColor || first.getAttribute("style") || "";
+              if (bg && first.textContent.trim().length > 0) {
+                announcement = first;
+              }
+            }
+          }
+
+          if (announcement) {
+            var bar = document.getElementById("announcement-bar");
+            // Fix relative links to point to the main site
+            var links = announcement.querySelectorAll("a");
+            for (var j = 0; j < links.length; j++) {
+              var href = links[j].getAttribute("href");
+              if (href && !href.startsWith("http") && !href.startsWith("//")) {
+                links[j].setAttribute("href", "/latest/" + href.replace(/^\//, ""));
+              }
+            }
+            bar.innerHTML = announcement.outerHTML;
+          }
+        })
+        .catch(function () {
+          // Silently fail — no announcement bar shown
+        });
+    })();
+  </script>
+{% endblock %}
