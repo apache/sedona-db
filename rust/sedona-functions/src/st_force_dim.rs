@@ -72,7 +72,7 @@ fn build_return_matcher(is_geography: bool, num_optional_numeric_args: usize) ->
 
 /// ST_Force2D() scalar UDF
 pub fn st_force2d_udf() -> SedonaScalarUDF {
-    let udf = SedonaScalarUDF::new(
+    SedonaScalarUDF::new(
         "st_force2d",
         ItemCrsKernel::wrap_impl(vec![
             Arc::new(STForce2D {
@@ -81,9 +81,7 @@ pub fn st_force2d_udf() -> SedonaScalarUDF {
             Arc::new(STForce2D { is_geography: true }),
         ]),
         Volatility::Immutable,
-    );
-    // Sedona Spark registers this function as ST_Force_2D as well
-    udf.with_aliases(vec!["st_force_2d".to_string()])
+    )
 }
 
 #[derive(Debug)]
@@ -442,7 +440,6 @@ mod tests {
     fn udf_metadata() {
         let st_force2d: ScalarUDF = st_force2d_udf().into();
         assert_eq!(st_force2d.name(), "st_force2d");
-        assert!(st_force2d.aliases().contains(&"st_force_2d".to_string()));
 
         let st_force3d: ScalarUDF = st_force3d_udf().into();
         assert_eq!(st_force3d.name(), "st_force3d");
