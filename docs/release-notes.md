@@ -19,6 +19,173 @@
 
 # Release Notes
 
+## SedonaDB 0.4.1
+
+### Highlights
+
+* Experimental GeoPandas-compatible API package (sedonadb-geopandas)
+* GDAL-backed raster processing functions (RS_Clip, RS_Resample, RS_Tile, RS_ZonalStats, RS_AsRaster, RS_Polygonize, RS_AsGeoTiff, RS_FromGDALRaster, RS_ReprojectMatch)
+* Raster-vector spatial join (RS_Intersects, RS_Contains, RS_Within)
+* Expanded Python DataFrame API (mutate, rename, unnest, union, intersect, except_, CSV and JSON read/write)
+* New spatial functions: ST_BuildArea, ST_DelaunayTriangles, ST_ExteriorRing, ST_PointOnSurface, ST_HausdorffDistance, ST_LineLocatePoint, ST_MaxDistance, ST_ReducePrecision, ST_ConvexHull_Agg
+* FFI table provider with filter pushdown across the FFI boundary
+* Free-threaded Python support
+* Point-coordinate fast paths for ST_Distance, ST_DWithin, ST_Azimuth, ST_X, ST_Y
+* Memory limit and spatial join robustness fixes
+
+### New Features
+
+* feat(python/sedonadb-geopandas): GeoPandas-compatible API package (experimental) (#1052)
+* feat(rust/sedona-raster-gdal): Add RS_Clip, RS_Resample, RS_ZonalStats/RS_ZonalStatsAll, RS_AsGeoTiff, RS_Polygonize, RS_AsRaster, RS_FromGDALRaster (#1000, #1064, #1066, #1028, #955, #956, #1030)
+* feat: Add RS_Tile raster tiling function (#1065)
+* feat: Add RS_ReprojectMatch (#1068)
+* feat(rust/sedona-raster-functions): Add RS_Value and RS_Values for sampling raster values (#974, #1027)
+* feat(rust/sedona-raster-functions): Add RS_SetGeoReference and RS_SetBandNoDataValue (#1003)
+* feat(rust/sedona-raster): Persist and read non-identity band views (#1113)
+* feat(rust/sedona-spatial-join-raster): Raster-vector spatial join (RS_Intersects/Contains/Within) (#1073)
+* feat(rust/sedona-raster-zarr): Read CF spatial_ref GeoTransform georeferencing and derive transform from spatial:bbox (#975, #1009)
+* feat: Implement ST_BuildArea, ST_DelaunayTriangles, ST_ExteriorRing, ST_PointOnSurface, ST_NumInteriorRing alias (#990)
+* feat(c/sedona-geos): Add ST_HausdorffDistance (#1039)
+* feat(c/sedona-geos): Add geometry support for ST_LineLocatePoint, ST_MaxDistance, ST_ReducePrecision (#994)
+* feat(rust/sedona-geo): Add ST_ConvexHull_Agg (#1043)
+* feat(rust/sedona-functions): Implement typed geometry constructors (ST_PointFromText and friends) (#993)
+* feat(rust/sedona-functions): Add ST_NumPoints alias for ST_NPoints (#989)
+* feat(c/sedona-s2geography): Parameterize S2_CoveringCellIds (min_level, max_level, max_cells) (#1023)
+* feat(python/sedonadb): Add DataFrame.mutate and rename (#1010)
+* feat(python/sedonadb): Add DataFrame.unnest (#1050)
+* feat(python/sedonadb): Add DataFrame.union, union_distinct, intersect, intersect_distinct, except_ (#965, #1006)
+* feat(python/sedonadb): Add DataFrame.to_csv and to_json (#1044)
+* feat(python/sedonadb): Add read_csv and read_json (#1034)
+* feat(python/sedonadb): Add a native scalar UDF import path for plugins (#1146)
+* feat(python/sedonadb): Raster.from_numpy(bbox=, registration=) and zero-copy raster IO to/from numpy (#999, #1119)
+* feat(c/sedona-extension): Add FFI table provider, exec plan, and synchronous stream exchange (#1004)
+* feat(c/sedona-extension): Push Expr filters into the TableProvider across the FFI boundary (#1094)
+* feat(sedona-datasource): Resolve directory-shaped formats as URL tables (#1125)
+* feat(rust/sedona): Auto-register common OGR formats so file URLs work as tables (#1124)
+* feat(rust/sedona-schema): SedonaType::UnrecognizedExtension for user-defined types (#1129)
+* feat(r/sedonadb): Add SQL translation for nested field (#1171)
+* feat(python/sedonadb): Upgrade PyO3 and enable free-threaded Python support (#1012, #1017)
+
+### Bug Fixes
+
+* fix(rust/sedona): Disable the default memory limit to avoid excessive spilling (#1155)
+* fix(rust/sedona-spatial-join): Fix geography scalar functions failing over spatial join output (#1153)
+* fix(rust/sedona-spatial-join): Handle empty left join build side (#1167)
+* fix(c/sedona-s2geography): Make geography ring orientation less surprising for rings with crossing edges (#1143)
+* fix(rust): Return zero distance for crossing linestrings (#1164)
+* fix(rust/sedona-geoparquet): Handle intermediary columns in projection expressions in GeoParquet reader (#1116)
+* fix(python/sedonadb): Share one Tokio runtime across contexts (#1128)
+* fix(python/sedonadb): Free-threading-safe Tokio runtime teardown; re-enable cp314t macOS wheels (#1067)
+* fix(python/sedonadb): Serialize pyogrio open/close (#1051)
+* fix(sedona-gdal): Skip GDALClose during interpreter shutdown (#1135)
+* fix(sedona-proj): Add missing PJ_INFO fields to match PROJ's ABI (#1127)
+* fix(c/sedona-tg): Fix polygon hole containment and collection point containment boundary predicates (#1022, #1042)
+* fix(rust/sedona-functions): Fix scalar iteration with num_iterations > 1 (#1041)
+* fix(rust/sedona-raster-functions): Exact ESRI/NODE georeference for skewed rasters (#1049)
+* fix(rust/sedona): Accept aws.allow_http and aws.session_token; reject dead AWS options (#1013)
+* fix(python/sedonadb-geopandas): Add missing geoarrow-pyarrow dependency (#1134)
+* fix(r/sedonadb): Fix build on Windows ARM64 (#1137)
+
+### Improvements
+
+* perf(rust): Point-coordinate fast paths for ST_Distance/ST_DWithin/ST_Azimuth (#1008)
+* perf(rust/sedona-functions): Fast-path ST_X/ST_Y Point coordinates via read_point_xy (#1005)
+* perf(rust/sedona-spatial-join-raster): Pin raster operand to the probe side (#1074)
+* refactor(rust/sedona-common): Consolidate CrsEngine and Bounder into SedonaOptions (#1001)
+* refactor(rust): Route ST_Transform and sd_order through the injected CRS engine (#1102)
+* docs: Add Coordinate Reference Systems concept page (#1126)
+* docs: Add missing geography kernels to SQL function reference pages (#1141)
+* docs(r/sdplyr): Add README for the sdplyr package (#1147)
+* ci(python/sedonadb-geopandas): Run tests, build wheels, and verify in releases (#1095)
+
+## SedonaDB 0.4.0
+
+### Highlights
+
+* Packaging for conda-forge
+* Python DataFrame API (select, filter, join, group_by, sort, and composable expressions)
+* R dplyr interface (sdplyr)
+* Expanded geography support (structural functions, accessors, envelopes, spatial join, GeoParquet pruning)
+* GPU-accelerated spatial join via libgpuspatial integration
+* GeoParquet 2.0/Parquet-native geometry and geography write support with partitioned datasets
+* N-dimensional raster type with GDAL and Zarr support, lazy loading, and cloud storage backends
+* New raster functions: RS_FromPath, RS_MetaData, RS_Contains, RS_Intersects, RS_Within, RS_IsEmpty
+* New spatial functions: ST_Relate, ST_Normalize, ST_LineSubstring, ST_Segmentize, ST_TessellateGeom, ST_TessellateGeog
+
+### New Features
+
+* feat(python/sedonadb): Add Expr foundation, operator overloads, and context-aware piped expressions (#807, #823, #901)
+* feat(python/sedonadb): Add DataFrame.select, filter/where, __getitem__, sort, drop, agg, group_by().agg(), join, cross_join, distinct/distinct_on (#832, #835, #846, #852, #859, #871, #887, #893, #908, #925, #961)
+* feat(python/sedonadb): Add Python aggregate UDF decorator (#937)
+* feat(python/sedonadb): Expose scalar and aggregate UDFs from context registry (#885)
+* feat(python/sedonadb): Expose simplified Arrow stream export (#873)
+* feat(python/sedonadb): Add Python GDAL configuration API (#689)
+* feat(python/sedonadb): Support layer names and archive sub-paths for pyogrio sources (#778)
+* feat(python/sedonadb): Enable Zarr read via sedonadb-zarr (#916)
+* feat(rust/sedona,python/sedonadb): Support nested expressions in Python and SQL (#973)
+* feat(r/sdplyr): Add sdplyr package (dplyr method implementations) with filter translation (#931, #972)
+* feat(r/sedonafns): Add generated Sedona documentation as an R package (#851)
+* feat(r/sedonadb): Add spatial join syntax, join type helpers, and join expression evaluation (#781, #814)
+* feat(rust/sedona-functions,c/sedona-geos): Implement geography kernels for structural transformations and accessors (#844)
+* feat(c/sedona-s2geography): Add ST_(X|Y)(Min|Max), ST_Envelope, ST_Envelope_Agg, and ST_Analyze_Agg implementations for geography (#850)
+* feat(c/sedona-s2geography,rust/sedona-functions): Add ST_Segmentize, ST_TessellateGeom, ST_TessellateGeog (#867)
+* feat(rust/sedona-functions,c/sedona-proj): Support geography in CRS/SRID functions (#848)
+* feat(rust/sedona-functions): Add geography and CRS propagation to ST_Dump (#847)
+* feat(rust/sedona-expr): Add pruning capability for geography type (#806)
+* feat(rust/sedona-spatial-join-geography): Implement spatial join for geography type (#775)
+* feat(rust/sedona-spatial-join-gpu): Integrate libgpuspatial into sedona-spatial-join (#722)
+* feat(python/sedonadb): Enable GPU feature in Python package and add spatial join tests (#768)
+* feat(docker): Publish multi-arch GPU image with multi-CUDA-arch support (#872, #909)
+* feat(c/sedona-libgpuspatial): Interface, robustness, synchronization, and RMM upgrades (#717, #718, #719, #721, #767)
+* feat(rust/sedona-raster): N-dimensional raster type extension and dimension query/manipulation functions (#749, #750)
+* feat(c/sedona-gdal): Add crate with dynamically loaded GDAL bindings and wrapper utilities (#681, #695, #696, #697, #698, #699)
+* feat(rust/sedona-raster-gdal): Add GDAL foundation library, in-db raster loading, RS_FromPath, RS_MetaData (#787, #811, #812, #831, #833)
+* feat(rust): Lazy raster loading support for Zarr and GDAL (#886)
+* feat(rust/sedona-raster): Zero-copy band data in RS_EnsureLoaded and zero-copy raster access from pyarrow arrays (#917, #942)
+* feat(rust/sedona-raster-functions): Add RS_Contains, RS_Intersects, RS_Within, RS_IsEmpty (#615, #944)
+* feat(rust/sedona-raster-gdal): Pass N-D rasters through the GDAL bridge via plane stacking (#928)
+* feat(rust/sedona-raster-zarr,python/sedonadb-zarr): Add sedona-raster-zarr crate and sedona-zarr plugin (#858)
+* feat(rust/sedona-raster-zarr): Cloud storage backends (S3, GCS, Azure, HTTP) via object_store (#888)
+* feat(rust/sedona-raster-zarr): Georeferencing from coordinate arrays, CF/rioxarray CRS conventions, zlib codec (#954, #985, #987)
+* feat(raster): Accept lat/lon and latitude/longitude spatial dimension names (#910)
+* feat(rust/sedona-query-planner): Skip RS_EnsureLoaded on args returning loaded bytes (#979)
+* feat(rust/sedona-geoparquet): Add GeoParquet 2.0/Parquet-native geometry and geography support to Parquet writer (#805)
+* feat(rust/sedona-geoparquet,rust/sedona-datasource): Add support for partition columns and discovery (#906)
+* feat(c/sedona-geos): Add ST_Relate implementation and boolean variant (#691, #741)
+* feat(c/sedona-geos): Add ST_Normalize (#802)
+* feat(rust/sedona-functions): Add ST_LineSubstring (#777)
+* feat(rust/sedona-schema): Support WKT1/WKT2 CRS strings in deserialize_crs (#953)
+* feat(rust/sedona-spatial-join): Make SpatialIndex a trait; configurable SpatialIndexBuilder and EvaluatedGeometryArray (#645, #737)
+* feat(rust/sedona-spatial-join): Add config to disable spatial join reordering (#733)
+
+### Bug Fixes
+
+* fix(rust/sedona-query-planner): RS_EnsureLoaded idempotency, metadata preservation, and column-name preservation (#969, #976, #978)
+* fix(rust): Clean up CRS string handling (preserve definitions, consolidate equality/SRID) (#962)
+* fix(c/sedona-gdal): Resolve MEMDataset::Create on GDAL 3.13 and use MEMCreate C-API when available (#963)
+* fix(python/sedonadb): Ensure PROJ and GDAL are detected on Windows + Conda (#980)
+* fix(rust/sedona-pointcloud): Fix projection regression (#825)
+* fix(rust/sedona-geo): Support array distances in ST_Buffer (#881)
+* fix(rust/sedona-spatial-join): Improve evaluated batch memory accounting, implement EvaluatedGeometryArray::concat, fix customized join provider (#766, #784, #884)
+* fix(rust/sedona-geoparquet): Cache metadata in inner ParquetOpener (#843)
+* fix(rust/sedona-raster): Classify 0-element bands as InDb; make is_indb required (#929)
+* fix(rust/sedona-raster-zarr): Discover child arrays via consolidated metadata; parse spatial:transform as affine order (#943, #950)
+* fix(c/sedona-proj): Allow bound parameter for CRS argument of ST_Transform (#904)
+
+### Improvements
+
+* perf(rust/sedona-functions): Improve performance of ST_Reverse() (#912)
+* perf(rust/sedona-spatial-join): Use row count first to decide join order (#725)
+* refactor(rust/sedona-query-planner): Move query planner and utilities to dedicated crate (#735)
+* refactor(c/sedona-s2geography): Move s2geography UDFs to extension ABI (#683)
+* refactor(python/sedonadb): Refactor registration of extension components (#940)
+* feat(rust/sedona-testing): Add ergonomic raster function test harness (#945)
+* chore: Ensure workspace can be built and verified under GDAL 3.13 (#984)
+* docs: Add GPU acceleration guide for spatial joins (#774)
+* docs(examples): Add "Working with Zarr and NDArray data in SedonaDB" tutorial (#938)
+* docs: Add conda installation method to docs (#786)
+* docs: Add release notes for SedonaDB 0.1.0, 0.2.0, and 0.3.0 (#771)
+
 ## SedonaDB 0.3.0
 
 ### Highlights
