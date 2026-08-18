@@ -75,7 +75,7 @@ def test_spatial_left_join_with_empty_left_side(con):
 
     result = left_empty.join(
         right,
-        on=left_empty["g"].geo.intersects(right["g2"]),
+        on=left_empty["g"].funcs.st_intersects(right["g2"]),
         how="left",
     ).to_arrow_table()
 
