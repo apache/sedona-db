@@ -54,7 +54,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.5.0"
+version = "0.4.1"
 authors = ["Apache Sedona <dev@sedona.apache.org>"]
 license = "Apache-2.0"
 homepage = "https://github.com/apache/sedona-db"
@@ -144,36 +144,36 @@ zarrs_filesystem = "0.3"
 zarrs_object_store = "0.5"
 
 # Workspace path dependencies for internal crates
-sedona = { version = "0.5.0", path = "rust/sedona" }
-sedona-adbc = { version = "0.5.0", path = "rust/sedona-adbc" }
-sedona-common = { version = "0.5.0", path = "rust/sedona-common" }
-sedona-datasource = { version = "0.5.0", path = "rust/sedona-datasource" }
-sedona-expr = { version = "0.5.0", path = "rust/sedona-expr" }
-sedona-functions = { version = "0.5.0", path = "rust/sedona-functions" }
-sedona-geo = { version = "0.5.0", path = "rust/sedona-geo" }
-sedona-geo-generic-alg = { version = "0.5.0", path = "rust/sedona-geo-generic-alg" }
-sedona-geo-traits-ext = { version = "0.5.0", path = "rust/sedona-geo-traits-ext" }
-sedona-geometry = { version = "0.5.0", path = "rust/sedona-geometry" }
-sedona-geoparquet = { version = "0.5.0", path = "rust/sedona-geoparquet" }
-sedona-pointcloud = { version = "0.5.0", path = "rust/sedona-pointcloud" }
-sedona-raster = { version = "0.5.0", path = "rust/sedona-raster" }
-sedona-raster-functions = { version = "0.5.0", path = "rust/sedona-raster-functions" }
-sedona-raster-gdal = { version = "0.5.0", path = "rust/sedona-raster-gdal" }
-sedona-raster-zarr = { version = "0.5.0", path = "rust/sedona-raster-zarr" }
-sedona-schema = { version = "0.5.0", path = "rust/sedona-schema" }
-sedona-spatial-join = { version = "0.5.0", path = "rust/sedona-spatial-join" }
-sedona-spatial-join-gpu = { version = "0.5.0", path = "rust/sedona-spatial-join-gpu" }
-sedona-spatial-join-geography = { version = "0.5.0", path = "rust/sedona-spatial-join-geography" }
-sedona-spatial-join-raster = { version = "0.5.0", path = "rust/sedona-spatial-join-raster" }
-sedona-query-planner = { version = "0.5.0", path = "rust/sedona-query-planner" }
-sedona-testing = { version = "0.5.0", path = "rust/sedona-testing" }
+sedona = { version = "0.4.1", path = "rust/sedona" }
+sedona-adbc = { version = "0.4.1", path = "rust/sedona-adbc" }
+sedona-common = { version = "0.4.1", path = "rust/sedona-common" }
+sedona-datasource = { version = "0.4.1", path = "rust/sedona-datasource" }
+sedona-expr = { version = "0.4.1", path = "rust/sedona-expr" }
+sedona-functions = { version = "0.4.1", path = "rust/sedona-functions" }
+sedona-geo = { version = "0.4.1", path = "rust/sedona-geo" }
+sedona-geo-generic-alg = { version = "0.4.1", path = "rust/sedona-geo-generic-alg" }
+sedona-geo-traits-ext = { version = "0.4.1", path = "rust/sedona-geo-traits-ext" }
+sedona-geometry = { version = "0.4.1", path = "rust/sedona-geometry" }
+sedona-geoparquet = { version = "0.4.1", path = "rust/sedona-geoparquet" }
+sedona-pointcloud = { version = "0.4.1", path = "rust/sedona-pointcloud" }
+sedona-raster = { version = "0.4.1", path = "rust/sedona-raster" }
+sedona-raster-functions = { version = "0.4.1", path = "rust/sedona-raster-functions" }
+sedona-raster-gdal = { version = "0.4.1", path = "rust/sedona-raster-gdal" }
+sedona-raster-zarr = { version = "0.4.1", path = "rust/sedona-raster-zarr" }
+sedona-schema = { version = "0.4.1", path = "rust/sedona-schema" }
+sedona-spatial-join = { version = "0.4.1", path = "rust/sedona-spatial-join" }
+sedona-spatial-join-gpu = { version = "0.4.1", path = "rust/sedona-spatial-join-gpu" }
+sedona-spatial-join-geography = { version = "0.4.1", path = "rust/sedona-spatial-join-geography" }
+sedona-spatial-join-raster = { version = "0.4.1", path = "rust/sedona-spatial-join-raster" }
+sedona-query-planner = { version = "0.4.1", path = "rust/sedona-query-planner" }
+sedona-testing = { version = "0.4.1", path = "rust/sedona-testing" }
 
 # C wrapper crates
-sedona-extension = { version = "0.5.0", path = "c/sedona-extension" }
-sedona-gdal = { version = "0.5.0", path = "c/sedona-gdal", default-features = false }
-sedona-geoarrow-c = { version = "0.5.0", path = "c/sedona-geoarrow-c" }
-sedona-geos = { version = "0.5.0", path = "c/sedona-geos" }
-sedona-libgpuspatial = { version = "0.5.0", path = "c/sedona-libgpuspatial" }
-sedona-proj = { version = "0.5.0", path = "c/sedona-proj", default-features = false }
-sedona-s2geography = { version = "0.5.0", path = "c/sedona-s2geography" }
-sedona-tg = { version = "0.5.0", path = "c/sedona-tg" }
+sedona-extension = { version = "0.4.1", path = "c/sedona-extension" }
+sedona-gdal = { version = "0.4.1", path = "c/sedona-gdal", default-features = false }
+sedona-geoarrow-c = { version = "0.4.1", path = "c/sedona-geoarrow-c" }
+sedona-geos = { version = "0.4.1", path = "c/sedona-geos" }
+sedona-libgpuspatial = { version = "0.4.1", path = "c/sedona-libgpuspatial" }
+sedona-proj = { version = "0.4.1", path = "c/sedona-proj", default-features = false }
+sedona-s2geography = { version = "0.4.1", path = "c/sedona-s2geography" }
+sedona-tg = { version = "0.4.1", path = "c/sedona-tg" }
