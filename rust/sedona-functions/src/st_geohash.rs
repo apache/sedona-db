@@ -255,7 +255,12 @@ fn invoke_scalar(
         return Ok(None);
     }
 
-    // Longitude can take values in [-180, 180]; latitude can take values in [-90, 90]
+    // Longitude can take values in [-180, 180]; latitude can take values in [-90, 90].
+    // Out-of-range coordinates yield null rather than an error, matching Apache
+    // Sedona (GeometryGeoHashEncoder.calculate returns null here). PostGIS instead
+    // raises "Geohash requires inputs in decimal degrees"; the divergence is
+    // deliberate, since a Spark query that returns nulls for out-of-range input
+    // should keep returning nulls here rather than start failing.
     if x.lo() < -180.0 || y.lo() < -90.0 || x.hi() > 180.0 || y.hi() > 90.0 {
         return Ok(None);
     }
