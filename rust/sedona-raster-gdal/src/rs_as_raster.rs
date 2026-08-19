@@ -38,6 +38,8 @@ use sedona_gdal::raster::{rasterband::RasterBand, types::Buffer};
 use sedona_raster::array::RasterRefImpl;
 use sedona_raster::builder::RasterBuilder;
 use sedona_raster::traits::RasterRef;
+use sedona_raster_functions::rs_ensure_contiguous::NEEDS_CONTIGUOUS_METADATA_KEY;
+use sedona_raster_functions::rs_ensure_loaded::NEEDS_PIXELS_METADATA_KEY;
 use sedona_raster_functions::{
     crs_utils::{align_wkb_to_crs, resolve_crs},
     RasterExecutor,
@@ -62,6 +64,12 @@ pub fn rs_as_raster_udf() -> SedonaScalarUDF {
         ],
         Volatility::Immutable,
     )
+    // The reference raster (arg 1) is materialized into a GDAL dataset through
+    // the bridge (`as_contiguous`) to pull its CRS/grid, so the planner
+    // materializes OutDb references via RS_EnsureLoaded and repacks strided ones
+    // via RS_EnsureContiguous first.
+    .with_metadata(NEEDS_PIXELS_METADATA_KEY, "true")
+    .with_metadata(NEEDS_CONTIGUOUS_METADATA_KEY, "true")
 }
 
 #[derive(Debug)]

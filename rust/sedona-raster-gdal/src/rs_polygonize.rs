@@ -36,6 +36,8 @@ use sedona_gdal::gdal_dyn_bindgen::{OGRFieldType, OGRwkbGeometryType};
 use sedona_gdal::raster::polygonize::PolygonizeOptions;
 use sedona_gdal::raster::types::GdalDataType;
 use sedona_raster::traits::RasterRef;
+use sedona_raster_functions::rs_ensure_contiguous::NEEDS_CONTIGUOUS_METADATA_KEY;
+use sedona_raster_functions::rs_ensure_loaded::NEEDS_PIXELS_METADATA_KEY;
 use sedona_raster_functions::RasterExecutor;
 use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY_ITEM_CRS};
 use sedona_schema::matchers::ArgMatcher;
@@ -51,6 +53,11 @@ pub fn rs_polygonize_udf() -> SedonaScalarUDF {
         vec![Arc::new(RsPolygonize)],
         Volatility::Immutable,
     )
+    // Reads band pixels through the GDAL bridge (`as_contiguous`) to trace
+    // polygons, so the planner materializes OutDb rasters via RS_EnsureLoaded
+    // and repacks strided bands via RS_EnsureContiguous first.
+    .with_metadata(NEEDS_PIXELS_METADATA_KEY, "true")
+    .with_metadata(NEEDS_CONTIGUOUS_METADATA_KEY, "true")
 }
 
 #[derive(Debug)]

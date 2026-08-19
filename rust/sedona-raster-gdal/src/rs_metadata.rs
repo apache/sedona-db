@@ -29,6 +29,8 @@ use datafusion_common::exec_datafusion_err;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_raster::traits::RasterRef;
+use sedona_raster_functions::rs_ensure_contiguous::NEEDS_CONTIGUOUS_METADATA_KEY;
+use sedona_raster_functions::rs_ensure_loaded::NEEDS_PIXELS_METADATA_KEY;
 use sedona_schema::crs::deserialize_crs;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
@@ -41,6 +43,12 @@ pub fn rs_metadata_udf() -> SedonaScalarUDF {
         vec![Arc::new(RsMetaData {})],
         Volatility::Immutable,
     )
+    // Materializes the raster into a GDAL dataset through the bridge
+    // (`as_contiguous`) to read the native tile/block size, so the planner
+    // materializes OutDb rasters via RS_EnsureLoaded and repacks strided bands
+    // via RS_EnsureContiguous first.
+    .with_metadata(NEEDS_PIXELS_METADATA_KEY, "true")
+    .with_metadata(NEEDS_CONTIGUOUS_METADATA_KEY, "true")
 }
 
 fn metadata_struct_fields() -> Fields {
