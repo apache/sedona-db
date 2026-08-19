@@ -20,7 +20,21 @@ title: ST_GeoHash
 description: Returns the GeoHash string of a geometry with the given precision.
 kernels:
   - returns: string
-    args: [geometry, integer]
+    args: [geometry]
+  - returns: string
+    args:
+    - geometry
+    - name: precision
+      type: integer
+      description: Number of base-32 characters in the returned GeoHash.
+  - returns: string
+    args: [geography]
+  - returns: string
+    args:
+    - geography
+    - name: precision
+      type: integer
+      description: Number of base-32 characters in the returned GeoHash.
 ---
 
 ## Description
@@ -32,6 +46,14 @@ valid longitude/latitude domain (longitudes -180 to 180, latitudes -90 to 90).
 A non-positive precision
 returns an empty string, and precision is capped at 20 characters.
 
+When `precision` is omitted, the argument must be a `POINT` and is encoded at
+the maximum precision of 20 characters. Any other geometry type raises an
+error, because there is no single obvious precision for a geometry that covers
+an area.
+
+Geography arguments are bounded on the sphere and require the s2geography
+bounder to be registered on the session.
+
 ## Examples
 
 ```sql
@@ -40,4 +62,8 @@ SELECT ST_GeoHash(ST_GeomFromWKT('POINT (21.4234 52.0423)'), 10);
 
 ```sql
 SELECT ST_GeoHash(ST_GeomFromWKT('POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))'), 8);
+```
+
+```sql
+SELECT ST_GeoHash(ST_GeomFromWKT('POINT (21.4234 52.0423)'));
 ```

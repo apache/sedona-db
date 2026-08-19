@@ -1805,6 +1805,19 @@ def test_st_geometrytype(eng, geom, expected):
         # suite (cu_algorithm.c asserts (0, 0) at precision 16 is
         # "s000000000000000").
         ("POINT (0 0)", 10, "s000000000"),
+        # Every empty geometry has no bounding box to hash, so both engines
+        # return NULL. In PostGIS, lwgeom_geohash() bails out when
+        # lwgeom_calculate_gbox_cartesian() reports LW_FAILURE -- which it does
+        # for an empty point array, an empty ring list, and an empty collection
+        # -- and the ST_GeoHash() wrapper turns that into a SQL NULL rather than
+        # an error.
+        ("POINT EMPTY", 10, None),
+        ("LINESTRING EMPTY", 10, None),
+        ("POLYGON EMPTY", 10, None),
+        ("MULTIPOINT EMPTY", 10, None),
+        ("MULTILINESTRING EMPTY", 10, None),
+        ("MULTIPOLYGON EMPTY", 10, None),
+        ("GEOMETRYCOLLECTION EMPTY", 10, None),
     ],
 )
 def test_st_geohash(eng, geom, precision, expected):
@@ -1817,6 +1830,42 @@ def test_st_geohash(eng, geom, precision, expected):
 
     eng = eng.create_or_skip()
     eng.assert_query_result(f"SELECT ST_GeoHash({arg}, {precision})", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        (None, None),
+        # Without a precision, a point is hashed at the 20 character maximum.
+        # PostGIS reaches the same place by a different route: its `maxchars`
+        # defaults to 0, and lwgeom_geohash_precision() returns
+        # GEOHASH_MAX_DOUBLE_PRECISION_CHARS (20) for a zero-extent box. Each
+        # expected value extends the shorter hash pinned for the same point in
+        # test_st_geohash above, so a wrong tail shows up as a diverging suffix.
+        ("POINT (21.4234 52.0423)", "u3r0pd0037ugg6hm1kb1"),
+        ("POINT (-122.4194 37.7749)", "9q8yyk8ytpxr8wwhcg8j"),
+        ("POINT EMPTY", None),
+    ],
+)
+def test_st_geohash_no_precision(eng, geom, expected):
+    # Non-point geometries are not compared here: SedonaDB errors (a precision
+    # must be stated), whereas PostGIS derives one from the bounding box.
+    if eng == PostGIS and geom is None:
+        arg = "NULL::geometry"
+    else:
+        arg = geom_or_null(geom)
+
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_GeoHash({arg})", expected)
+
+
+def test_st_geohash_no_precision_requires_point():
+    eng = SedonaDB.create_or_skip()
+    with pytest.raises(Exception, match="only defined for POINT"):
+        eng.execute_and_collect(
+            "SELECT ST_GeoHash(ST_GeomFromText('LINESTRING (30 10, 10 30, 40 40)'))"
+        )
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
