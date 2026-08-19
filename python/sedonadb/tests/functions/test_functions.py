@@ -1870,6 +1870,36 @@ def test_st_geohash_no_precision_requires_point():
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
+    "geom",
+    [
+        "POINT (190.0 50.0)",
+        "POINT (-190.0 50.0)",
+        "POINT (50.0 100.0)",
+        "POINT (50.0 -100.0)",
+    ],
+)
+def test_st_geohash_out_of_range_diverges_from_postgis(eng, geom):
+    # The one place the two engines deliberately disagree. A coordinate outside
+    # [-180, 180] x [-90, 90] is NULL in SedonaDB, matching Apache Sedona
+    # (GeometryGeoHashEncoder.calculate returns null), because a Spark query
+    # that returns nulls here should keep returning nulls after migrating.
+    # PostGIS instead raises "Geohash requires inputs in decimal degrees": its
+    # lwgeom_geohash() range check runs once the bounding box is computed, and
+    # calls lwerror() rather than returning NULL. Pinned on both sides so the
+    # divergence is verified rather than merely asserted in a comment.
+    raises = eng == PostGIS
+    sql = f"SELECT ST_GeoHash({geom_or_null(geom)}, 10)"
+    eng = eng.create_or_skip()
+
+    if raises:
+        with pytest.raises(Exception):
+            eng.execute_and_collect(sql)
+    else:
+        eng.assert_query_result(sql, None)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
     ("wkt", "expected"),
     [
         (None, None),
