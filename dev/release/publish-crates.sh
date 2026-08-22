@@ -118,7 +118,6 @@ CRATES=(
     "rust/sedona-geo-traits-ext"
     "rust/sedona-geometry"
     "rust/sedona-common"
-    "c/sedona-gdal"
 
     # Tier 2 - Depends only on tier 1
     "rust/sedona-geo-generic-alg"   # depends on: sedona-geo-traits-ext
@@ -126,6 +125,7 @@ CRATES=(
 
     # Tier 3 - Basic types
     "rust/sedona-raster"            # depends on: sedona-common, sedona-schema
+    "c/sedona-gdal"                 # depends on: sedona-common, sedona-raster, sedona-schema
     "rust/sedona-expr"              # depends on: sedona-common, sedona-geometry, sedona-schema
 
     # Tier 4 - Higher-level crates
@@ -157,6 +157,7 @@ CRATES=(
     # Tier 8 - GPU and geography spatial joins
     "rust/sedona-spatial-join-gpu"         # depends on: sedona-spatial-join, sedona-libgpuspatial, sedona-query-planner
     "rust/sedona-spatial-join-geography"   # depends on: sedona-spatial-join, sedona-s2geography, sedona-query-planner
+    "rust/sedona-spatial-join-raster"      # depends on: sedona-spatial-join, sedona-raster, sedona-raster-functions, sedona-proj, sedona-query-planner
 
     # Tier 9 - Main library
     "rust/sedona"                   # depends on: most crates including sedona-testing
