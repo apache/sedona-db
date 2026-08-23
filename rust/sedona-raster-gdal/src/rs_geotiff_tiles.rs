@@ -46,14 +46,14 @@ use futures::{StreamExt, TryStreamExt};
 use sedona_gdal::gdal_dyn_bindgen::{VSI_S_IFMT, VSI_S_IFREG};
 use sedona_gdal::spatial_ref::SpatialRef;
 use sedona_gdal::vsi::directory_separator_for_path;
-use sedona_raster::builder::RasterBuilder;
-use sedona_raster::traits::{BandMetadata, RasterMetadata};
-use sedona_schema::raster::StorageType;
+use sedona_raster::builder::{RasterBuilder, StartBandArgs};
+use sedona_raster::view_entries::ViewEntry;
 
 use crate::gdal_common::{
     convert_gdal_err, gdal_to_band_data_type, nodata_f64_to_bytes, normalize_outdb_source_path,
     open_gdal_dataset, with_gdal,
 };
+use crate::utils::Grid;
 
 pub fn rs_geotiff_tiles_udtf() -> Arc<dyn TableFunctionImpl> {
     Arc::new(RsGeoTiffTilesFunction {})
@@ -299,17 +299,6 @@ pub fn build_batch_for_file(
             .geo_transform()
             .map_err(|e| exec_datafusion_err!("Failed to get geotransform for {path_str}: {e}"))?;
 
-        let base_metadata = RasterMetadata {
-            width: width as i64,
-            height: height as i64,
-            upperleft_x: geotransform[0],
-            upperleft_y: geotransform[3],
-            scale_x: geotransform[1],
-            scale_y: geotransform[5],
-            skew_x: geotransform[2],
-            skew_y: geotransform[4],
-        };
-
         let crs = ds
             .spatial_ref()
             .ok()
@@ -333,30 +322,21 @@ pub fn build_batch_for_file(
                     continue;
                 }
 
-                let tile_ulx = base_metadata.upperleft_x
-                    + (px as f64) * base_metadata.scale_x
-                    + (py as f64) * base_metadata.skew_x;
-                let tile_uly = base_metadata.upperleft_y
-                    + (px as f64) * base_metadata.skew_y
-                    + (py as f64) * base_metadata.scale_y;
-
-                let tile_metadata = RasterMetadata {
-                    width: tw as i64,
-                    height: th as i64,
-                    upperleft_x: tile_ulx,
-                    upperleft_y: tile_uly,
-                    scale_x: base_metadata.scale_x,
-                    scale_y: base_metadata.scale_y,
-                    skew_x: base_metadata.skew_x,
-                    skew_y: base_metadata.skew_y,
-                };
+                let tile_transform = [
+                    geotransform[0] + (px as f64) * geotransform[1] + (py as f64) * geotransform[2],
+                    geotransform[1],
+                    geotransform[2],
+                    geotransform[3] + (px as f64) * geotransform[4] + (py as f64) * geotransform[5],
+                    geotransform[4],
+                    geotransform[5],
+                ];
 
                 path_builder.append_value(&path_str);
                 x_builder.append_value(tile_x);
                 y_builder.append_value(tile_y);
 
-                rast_builder
-                    .start_raster(&tile_metadata, crs.as_deref())
+                Grid::from_gdal(tile_transform, tw as usize, th as usize)
+                    .start_raster_into(&mut rast_builder, crs.as_deref())
                     .map_err(|e| {
                         exec_datafusion_err!(
                             "Failed to start raster for {path_str} tile ({tile_x},{tile_y}): {e}"
@@ -379,17 +359,38 @@ pub fn build_batch_for_file(
                         .no_data_value()
                         .map(|v| nodata_f64_to_bytes(v, &band_data_type));
 
-                    let band_metadata = BandMetadata {
-                        nodata_value: nodata_bytes,
-                        storage_type: StorageType::OutDbRef,
-                        datatype: band_data_type,
-                        outdb_url: Some(path_str.clone()),
-                        outdb_band_id: Some(band_idx as u32),
-                    };
+                    let outdb_uri = format!("{path_str}#band={band_idx}");
+                    let view = [
+                        ViewEntry {
+                            source_axis: 0,
+                            start: py as i64,
+                            step: 1,
+                            steps: th as i64,
+                        },
+                        ViewEntry {
+                            source_axis: 1,
+                            start: px as i64,
+                            step: 1,
+                            steps: tw as i64,
+                        },
+                    ];
 
-                    rast_builder.start_band(band_metadata).map_err(|e| {
-                        exec_datafusion_err!("Failed to start band {band_idx} for {path_str}: {e}")
-                    })?;
+                    rast_builder
+                        .start_band(StartBandArgs {
+                            nodata: nodata_bytes.as_deref(),
+                            outdb_uri: Some(&outdb_uri),
+                            view: Some(&view),
+                            ..StartBandArgs::new(
+                                &["y", "x"],
+                                &[height as i64, width as i64],
+                                band_data_type,
+                            )
+                        })
+                        .map_err(|e| {
+                            exec_datafusion_err!(
+                                "Failed to start band {band_idx} for {path_str}: {e}"
+                            )
+                        })?;
 
                     rast_builder.band_data_writer().append_value([]);
 
