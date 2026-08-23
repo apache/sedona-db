@@ -15,268 +15,174 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! rs_geotiff_tiles UDTF
+//! GeoTIFF tiles format spec and `rs_geotiff_tiles` UDTF.
 
-use std::any::Any;
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use arrow_array::{builder::StringBuilder, builder::UInt32Builder, ArrayRef, RecordBatch};
+use arrow_array::{
+    builder::StringBuilder, builder::UInt32Builder, ArrayRef, RecordBatch, RecordBatchIterator,
+    RecordBatchReader,
+};
 use arrow_schema::{DataType, Field, Schema, SchemaRef};
 use async_trait::async_trait;
-use datafusion::catalog::{Session, TableFunctionImpl, TableProvider};
-use datafusion::execution::context::TaskContext;
-use datafusion::physical_plan::execution_plan::{Boundedness, EmissionType};
-use datafusion::physical_plan::expressions::Column;
-use datafusion::physical_plan::projection::ProjectionExec;
-use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
-use datafusion::physical_plan::{
-    DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, PhysicalExpr,
+use datafusion::catalog::{TableFunctionImpl, TableProvider};
+use datafusion::datasource::listing::{
+    ListingOptions, ListingTable, ListingTableConfig, ListingTableUrl,
 };
-use datafusion::{
-    common::{plan_err, Result},
-    datasource::TableType,
-    physical_expr::EquivalenceProperties,
-    physical_plan::PlanProperties,
-    prelude::Expr,
-};
-use datafusion_common::{exec_datafusion_err, exec_err, DataFusionError, ScalarValue};
-use datafusion_common_runtime::SpawnedTask;
-use futures::{StreamExt, TryStreamExt};
-use sedona_gdal::gdal_dyn_bindgen::{VSI_S_IFMT, VSI_S_IFREG};
+use datafusion_common::{exec_datafusion_err, plan_err, Result, ScalarValue, Statistics};
+use datafusion_expr::Expr;
+use sedona_datasource::format::ExternalFileFormat;
+use sedona_datasource::spec::{ExternalFormatSpec, Object, OpenReaderArgs, SupportsRepartition};
 use sedona_gdal::spatial_ref::SpatialRef;
-use sedona_gdal::vsi::directory_separator_for_path;
 use sedona_raster::builder::{RasterBuilder, StartBandArgs};
 use sedona_raster::view_entries::ViewEntry;
 
 use crate::gdal_common::{
-    convert_gdal_err, gdal_to_band_data_type, nodata_f64_to_bytes, normalize_outdb_source_path,
-    open_gdal_dataset, with_gdal,
+    gdal_to_band_data_type, nodata_f64_to_bytes, normalize_outdb_source_path, open_gdal_dataset,
+    with_gdal,
 };
 use crate::utils::Grid;
 
-pub fn rs_geotiff_tiles_udtf() -> Arc<dyn TableFunctionImpl> {
-    Arc::new(RsGeoTiffTilesFunction {})
+/// Returns the fixed 4-column schema produced for GeoTIFF tile readers:
+/// - `path`: Utf8
+/// - `x`: UInt32
+/// - `y`: UInt32
+/// - `rast`: `sedona.raster` extension type
+pub fn geotiff_tile_schema() -> SchemaRef {
+    let rast_field = sedona_schema::datatypes::RASTER
+        .to_storage_field("rast", false)
+        .expect("raster storage field");
+    Arc::new(Schema::new(vec![
+        Field::new("path", DataType::Utf8, false),
+        Field::new("x", DataType::UInt32, false),
+        Field::new("y", DataType::UInt32, false),
+        rast_field,
+    ]))
 }
 
-#[derive(Debug)]
-pub struct RsGeoTiffTilesFunction {}
+/// [`ExternalFormatSpec`] implementation for reading GeoTIFF files as tiled rasters.
+#[derive(Debug, Clone)]
+pub struct GeoTiffTilesSpec {
+    extension: String,
+}
 
-impl TableFunctionImpl for RsGeoTiffTilesFunction {
-    fn call(&self, exprs: &[Expr]) -> Result<Arc<dyn TableProvider>> {
-        if exprs.is_empty() || exprs.len() > 2 {
-            return plan_err!(
-                "rs_geotiff_tiles() expected 1 or 2 arguments (path[, recursive]) but got {}",
-                exprs.len()
-            );
+impl GeoTiffTilesSpec {
+    pub fn new(extension: impl Into<String>) -> Self {
+        Self {
+            extension: extension.into(),
         }
-
-        let dir = match &exprs[0] {
-            Expr::Literal(ScalarValue::Utf8(Some(s)), _) => s.clone(),
-            Expr::Literal(ScalarValue::Utf8View(Some(s)), _) => s.to_string(),
-            Expr::Literal(ScalarValue::LargeUtf8(Some(s)), _) => s.clone(),
-            other => {
-                return plan_err!("rs_geotiff_tiles() expected literal string path but got {other}")
-            }
-        };
-
-        let recursive = if exprs.len() == 2 {
-            match &exprs[1] {
-                Expr::Literal(ScalarValue::Boolean(Some(v)), _) => *v,
-                other => {
-                    return plan_err!(
-                        "rs_geotiff_tiles() expected literal boolean recursive but got {other}"
-                    )
-                }
-            }
-        } else {
-            false
-        };
-
-        Ok(Arc::new(GeoTiffTilesProvider::try_new(dir, recursive)?))
     }
 }
 
-#[derive(Debug)]
-pub struct GeoTiffTilesProvider {
-    dir: String,
-    recursive: bool,
-    schema: SchemaRef,
-}
-
-impl GeoTiffTilesProvider {
-    pub fn try_new(dir: String, recursive: bool) -> Result<Self> {
-        let rast_field = sedona_schema::datatypes::RASTER
-            .to_storage_field("rast", false)
-            .map_err(|e| exec_datafusion_err!("{e}"))?;
-        let schema = Schema::new(vec![
-            Field::new("path", DataType::Utf8, false),
-            Field::new("x", DataType::UInt32, false),
-            Field::new("y", DataType::UInt32, false),
-            rast_field,
-        ]);
-
-        Ok(Self {
-            dir,
-            recursive,
-            schema: Arc::new(schema),
-        })
+impl Default for GeoTiffTilesSpec {
+    fn default() -> Self {
+        Self::new("tif")
     }
 }
 
 #[async_trait]
-impl TableProvider for GeoTiffTilesProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
+impl ExternalFormatSpec for GeoTiffTilesSpec {
+    async fn infer_schema(&self, _location: &Object) -> Result<Schema> {
+        Ok((*geotiff_tile_schema()).clone())
     }
 
-    fn schema(&self) -> SchemaRef {
-        self.schema.clone()
-    }
-
-    fn table_type(&self) -> TableType {
-        TableType::Base
-    }
-
-    async fn scan(
+    async fn open_reader(
         &self,
-        _state: &dyn Session,
-        projection: Option<&Vec<usize>>,
-        _filters: &[Expr],
-        _limit: Option<usize>,
-    ) -> Result<Arc<dyn ExecutionPlan>> {
-        let exec = Arc::new(GeoTiffTilesExec::new(
-            self.dir.clone(),
-            self.recursive,
-            self.schema.clone(),
-        ));
+        args: &OpenReaderArgs,
+    ) -> Result<Box<dyn RecordBatchReader + Send>> {
+        let path = args
+            .src
+            .to_url_string()
+            .or_else(|| {
+                args.src
+                    .meta
+                    .as_ref()
+                    .map(|m| m.location.as_ref().to_string())
+            })
+            .ok_or_else(|| {
+                exec_datafusion_err!(
+                    "Cannot determine location for GeoTIFF source object: {:?}",
+                    args.src
+                )
+            })?;
 
-        if let Some(projection) = projection {
-            let schema = self.schema();
-            let exprs: Vec<_> = projection
-                .iter()
-                .map(|index| -> (Arc<dyn PhysicalExpr>, String) {
-                    let name = schema.field(*index).name();
-                    (Arc::new(Column::new(name, *index)), name.clone())
-                })
-                .collect();
-            Ok(Arc::new(ProjectionExec::try_new(exprs, exec)?))
+        let schema = geotiff_tile_schema();
+        let batch = build_batch_for_file(&path, schema.clone())?;
+        let batch = match batch {
+            Some(mut b) => {
+                if let Some(projection) = &args.file_projection {
+                    b = b.project(projection)?;
+                }
+                b
+            }
+            None => {
+                let s = match &args.file_projection {
+                    Some(proj) => Arc::new(schema.project(proj)?),
+                    None => schema,
+                };
+                RecordBatch::new_empty(s)
+            }
+        };
+
+        let batch_schema = batch.schema();
+        let batch_size = args.batch_size.unwrap_or(usize::MAX);
+        let batches: Vec<RecordBatch> = if batch.num_rows() <= batch_size || batch_size == 0 {
+            vec![batch]
         } else {
-            Ok(exec)
-        }
-    }
-}
+            let mut offset = 0;
+            let mut result = Vec::new();
+            while offset < batch.num_rows() {
+                let len = (batch.num_rows() - offset).min(batch_size);
+                result.push(batch.slice(offset, len));
+                offset += len;
+            }
+            result
+        };
 
-#[derive(Debug)]
-struct GeoTiffTilesExec {
-    dir: String,
-    recursive: bool,
-    schema: SchemaRef,
-    properties: PlanProperties,
-}
-
-impl GeoTiffTilesExec {
-    fn new(dir: String, recursive: bool, schema: SchemaRef) -> Self {
-        let properties = PlanProperties::new(
-            EquivalenceProperties::new(schema.clone()),
-            // TODO: allow split paths to load into multiple partitions to enable parallelism.
-            Partitioning::UnknownPartitioning(1),
-            EmissionType::Incremental,
-            Boundedness::Bounded,
-        );
-
-        Self {
-            dir,
-            recursive,
-            schema,
-            properties,
-        }
-    }
-}
-
-impl DisplayAs for GeoTiffTilesExec {
-    fn fmt_as(&self, _t: DisplayFormatType, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(
-            f,
-            "GeoTiffTilesExec: path='{}', recursive={}",
-            self.dir, self.recursive
-        )
-    }
-}
-
-impl ExecutionPlan for GeoTiffTilesExec {
-    fn name(&self) -> &str {
-        "GeoTiffTilesExec"
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn schema(&self) -> SchemaRef {
-        self.schema.clone()
-    }
-
-    fn properties(&self) -> &PlanProperties {
-        &self.properties
-    }
-
-    fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
-        Vec::new()
-    }
-
-    fn with_new_children(
-        self: Arc<Self>,
-        _children: Vec<Arc<dyn ExecutionPlan>>,
-    ) -> Result<Arc<dyn ExecutionPlan>> {
-        Ok(self)
-    }
-
-    fn execute(
-        &self,
-        partition: usize,
-        _context: Arc<TaskContext>,
-    ) -> Result<datafusion::physical_plan::SendableRecordBatchStream> {
-        if partition != 0 {
-            return exec_err!("GeoTiffTilesExec only has one partition (partition 0) but got partition {partition}");
-        }
-
-        let schema_worker = self.schema.clone();
-        let schema_empty = self.schema.clone();
-        let schema_adapter = self.schema.clone();
-        let dir = self.dir.clone();
-        let recursive = self.recursive;
-
-        let paths = list_geotiffs(&dir, recursive)?;
-
-        let stream = futures::stream::iter(paths)
-            .map(move |path| {
-                let schema = schema_worker.clone();
-                SpawnedTask::spawn_blocking(move || build_batch_for_file(path, schema))
-            })
-            .buffered(2)
-            .map(move |res| match res {
-                Ok(Ok(Some(batch))) => Ok(batch),
-                Ok(Ok(None)) => Ok(RecordBatch::new_empty(schema_empty.clone())),
-                Ok(Err(e)) => Err(e),
-                Err(e) => Err(exec_datafusion_err!("Task failed: {e}")),
-            })
-            .try_filter(|batch| futures::future::ready(batch.num_rows() > 0));
-
-        Ok(Box::pin(RecordBatchStreamAdapter::new(
-            schema_adapter,
-            Box::pin(stream),
+        Ok(Box::new(RecordBatchIterator::new(
+            batches.into_iter().map(Ok),
+            batch_schema,
         )))
     }
+
+    fn with_options(
+        &self,
+        options: &HashMap<String, String>,
+    ) -> Result<Arc<dyn ExternalFormatSpec>> {
+        if let Some(k) = options.keys().next() {
+            return plan_err!("Unsupported option for GeoTiffTilesSpec: '{k}'");
+        }
+        Ok(Arc::new(self.clone()))
+    }
+
+    fn extension(&self) -> &str {
+        &self.extension
+    }
+
+    fn list_single_object(&self) -> bool {
+        false
+    }
+
+    fn supports_repartition(&self) -> SupportsRepartition {
+        SupportsRepartition::None
+    }
+
+    async fn infer_stats(&self, _location: &Object, table_schema: &Schema) -> Result<Statistics> {
+        Ok(Statistics::new_unknown(table_schema))
+    }
 }
 
+/// Constructs a `RecordBatch` containing tiles for the GeoTIFF at `path`.
 pub fn build_batch_for_file(
     path: impl AsRef<Path>,
     schema: SchemaRef,
 ) -> Result<Option<RecordBatch>> {
     let path_str = path.as_ref().to_string_lossy().to_string();
+    let normalized_path = normalize_outdb_source_path(&path_str);
     with_gdal(|gdal| {
-        let ds = open_gdal_dataset(gdal, &path_str, None)
+        let ds = open_gdal_dataset(gdal, &normalized_path, None)
             .map_err(|e| exec_datafusion_err!("Failed to open GeoTIFF {path_str}: {e}"))?;
         let (width, height) = ds.raster_size();
 
@@ -306,7 +212,7 @@ pub fn build_batch_for_file(
 
         let total_tiles = (tiles_x * tiles_y) as usize;
         let mut path_builder =
-            StringBuilder::with_capacity(total_tiles, total_tiles * path_str.len());
+            StringBuilder::with_capacity(total_tiles, total_tiles * normalized_path.len());
         let mut x_builder = UInt32Builder::with_capacity(total_tiles);
         let mut y_builder = UInt32Builder::with_capacity(total_tiles);
         let mut rast_builder = RasterBuilder::new(total_tiles);
@@ -331,7 +237,7 @@ pub fn build_batch_for_file(
                     geotransform[5],
                 ];
 
-                path_builder.append_value(&path_str);
+                path_builder.append_value(&normalized_path);
                 x_builder.append_value(tile_x);
                 y_builder.append_value(tile_y);
 
@@ -359,7 +265,7 @@ pub fn build_batch_for_file(
                         .no_data_value()
                         .map(|v| nodata_f64_to_bytes(v, &band_data_type));
 
-                    let outdb_uri = format!("{path_str}#band={band_idx}");
+                    let outdb_uri = format!("{normalized_path}#band={band_idx}");
                     let view = [
                         ViewEntry {
                             source_axis: 0,
@@ -417,79 +323,79 @@ pub fn build_batch_for_file(
         let y_array: ArrayRef = Arc::new(y_builder.finish());
 
         let batch = RecordBatch::try_new(schema, vec![path_array, x_array, y_array, rast_array])
-            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+            .map_err(|e| exec_datafusion_err!("Failed to create RecordBatch: {e}"))?;
 
         Ok(Some(batch))
     })
 }
 
-fn list_geotiffs(path: &str, recursive: bool) -> Result<Vec<String>> {
-    let normalized_path = normalize_outdb_source_path(path);
-
-    if with_gdal(|gdal| Ok(open_gdal_dataset(gdal, &normalized_path, None).is_ok()))? {
-        if !is_geotiff_path_str(&normalized_path) {
-            return exec_err!("rs_geotiff_tiles(): path is not a GeoTIFF file: {path}");
-        }
-        return Ok(vec![normalized_path]);
-    }
-
-    let recurse_depth = if recursive { -1 } else { 0 };
-    let list_result = with_gdal(|gdal| {
-        let separator = directory_separator_for_path(&normalized_path);
-        let mut dir = gdal
-            .open_vsi_dir(&normalized_path, recurse_depth, None)
-            .map_err(convert_gdal_err)?;
-
-        let mut out = Vec::new();
-        for entry in &mut dir {
-            let Some(mode) = entry.mode else {
-                continue;
-            };
-
-            if (mode & VSI_S_IFMT) != VSI_S_IFREG {
-                continue;
-            }
-
-            let child_path = join_vsi_path(&normalized_path, separator, &entry.name);
-            if is_geotiff_path_str(&child_path) {
-                out.push(child_path);
-            }
-        }
-
-        out.sort();
-        Ok(out)
-    });
-
-    match list_result {
-        Ok(paths) => Ok(paths),
-        Err(_) if is_geotiff_path_str(&normalized_path) => {
-            exec_err!("rs_geotiff_tiles(): failed to open GeoTIFF file: {path}")
-        }
-        Err(_) => exec_err!("rs_geotiff_tiles(): path is not a GeoTIFF file or directory: {path}"),
-    }
+/// Returns a [`TableFunctionImpl`] for `rs_geotiff_tiles(path[, recursive])`.
+pub fn rs_geotiff_tiles_udtf() -> Arc<dyn TableFunctionImpl> {
+    Arc::new(RsGeoTiffTilesFunction {})
 }
 
-fn join_vsi_path(base: &str, separator: &str, child_name: &str) -> String {
-    if base.ends_with(separator) {
-        format!("{base}{child_name}")
-    } else {
-        format!("{base}{separator}{child_name}")
-    }
-}
+#[derive(Debug)]
+pub struct RsGeoTiffTilesFunction {}
 
-fn is_geotiff_path_str(path: &str) -> bool {
-    let path_without_fragment = path.split('#').next().unwrap_or(path);
-    let path_without_query = path_without_fragment
-        .split('?')
-        .next()
-        .unwrap_or(path_without_fragment);
-    let file_name = path_without_query
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or(path_without_query);
-    match file_name.rsplit_once('.') {
-        Some((_, ext)) => ext.eq_ignore_ascii_case("tif") || ext.eq_ignore_ascii_case("tiff"),
-        None => false,
+impl TableFunctionImpl for RsGeoTiffTilesFunction {
+    fn call(&self, exprs: &[Expr]) -> Result<Arc<dyn TableProvider>> {
+        if exprs.is_empty() || exprs.len() > 2 {
+            return plan_err!(
+                "rs_geotiff_tiles() expected 1 or 2 arguments (path[, recursive]) but got {}",
+                exprs.len()
+            );
+        }
+
+        let path = match &exprs[0] {
+            Expr::Literal(ScalarValue::Utf8(Some(s)), _) => s.clone(),
+            Expr::Literal(ScalarValue::Utf8View(Some(s)), _) => s.to_string(),
+            Expr::Literal(ScalarValue::LargeUtf8(Some(s)), _) => s.clone(),
+            other => {
+                return plan_err!("rs_geotiff_tiles() expected literal string path but got {other}")
+            }
+        };
+
+        let recursive = if exprs.len() == 2 {
+            match &exprs[1] {
+                Expr::Literal(ScalarValue::Boolean(Some(v)), _) => *v,
+                other => {
+                    return plan_err!(
+                        "rs_geotiff_tiles() expected literal boolean recursive but got {other}"
+                    )
+                }
+            }
+        } else {
+            false
+        };
+
+        let table_url = if recursive {
+            let path_buf = Path::new(&path);
+            if path_buf.is_dir() {
+                let trimmed = path.trim_end_matches(['/', '\\']);
+                ListingTableUrl::parse(format!("{trimmed}/**"))?
+            } else {
+                ListingTableUrl::parse(&path)?
+            }
+        } else {
+            let path_buf = Path::new(&path);
+            if path_buf.is_dir() {
+                let trimmed = path.trim_end_matches(['/', '\\']);
+                ListingTableUrl::parse(format!("{trimmed}/*"))?
+            } else {
+                ListingTableUrl::parse(&path)?
+            }
+        };
+
+        let spec = Arc::new(GeoTiffTilesSpec::new(""));
+        let format = Arc::new(ExternalFileFormat::new(spec));
+        let listing_options = ListingOptions::new(format).with_file_extension("");
+        let schema = geotiff_tile_schema();
+        let config = ListingTableConfig::new(table_url)
+            .with_listing_options(listing_options)
+            .with_schema(schema);
+
+        let provider = ListingTable::try_new(config)?;
+        Ok(Arc::new(provider))
     }
 }
 
@@ -507,7 +413,6 @@ mod tests {
     use sedona_gdal::raster::types::Buffer;
     use std::path::PathBuf;
     use tempfile::tempdir;
-    use TableProvider;
 
     fn write_test_geotiff(base: &Path, name: &str) -> PathBuf {
         let path = base.join(name);
@@ -536,81 +441,8 @@ mod tests {
     }
 
     #[test]
-    fn list_geotiffs_non_recursive() {
-        let tmp = tempdir().unwrap();
-        let base = tmp.path();
-        let file_path = write_test_geotiff(base, "a.tif");
-
-        let files = list_geotiffs(file_path.to_str().unwrap(), false).unwrap();
-        assert_eq!(files.len(), 1);
-        assert!(files[0].ends_with("a.tif"));
-    }
-
-    #[test]
-    fn list_geotiffs_file_input_returns_single() {
-        let tmp = tempdir().unwrap();
-        let base = tmp.path();
-        let file_path = write_test_geotiff(base, "single.tiff");
-
-        let files = list_geotiffs(file_path.to_str().unwrap(), true).unwrap();
-        assert_eq!(files.len(), 1);
-        assert_eq!(files[0], file_path.to_string_lossy().to_string());
-    }
-
-    #[test]
-    fn list_geotiffs_file_input_non_tiff_errors() {
-        let tmp = tempdir().unwrap();
-        let base = tmp.path();
-        let file_path = base.join("single.txt");
-        std::fs::write(&file_path, b"not a real tiff").unwrap();
-
-        let err = list_geotiffs(file_path.to_str().unwrap(), false).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("rs_geotiff_tiles(): path is not a GeoTIFF file"));
-    }
-
-    #[test]
-    fn helper_join_vsi_path_and_extension_filtering() {
-        assert_eq!(
-            join_vsi_path("/vsis3/bucket/prefix", "/", "x.tif"),
-            "/vsis3/bucket/prefix/x.tif"
-        );
-        assert_eq!(
-            join_vsi_path("/vsis3/bucket/prefix/", "/", "x.tif"),
-            "/vsis3/bucket/prefix/x.tif"
-        );
-
-        assert!(is_geotiff_path_str("/tmp/a.tif"));
-        assert!(is_geotiff_path_str("/tmp/a.TIFF"));
-        assert!(is_geotiff_path_str("https://host/data.tif?token=abc#f"));
-        assert!(!is_geotiff_path_str("/tmp/a.txt"));
-        assert!(!is_geotiff_path_str("/tmp/a"));
-    }
-
-    #[tokio::test]
-    async fn provider_builds_rows_for_test_raster() {
-        let tmp = tempdir().unwrap();
-        let base = tmp.path();
-
-        let dst = write_test_geotiff(base, "test4.tiff");
-
-        let provider = GeoTiffTilesProvider::try_new(base.to_string_lossy().to_string(), false)
-            .expect("provider created");
-
-        let batch = build_batch_for_file(dst, provider.schema())
-            .expect("build success")
-            .expect("batch present");
-
-        assert_eq!(batch.schema().fields().len(), 4);
-        assert_eq!(batch.num_columns(), 4);
-        assert!(batch.num_rows() >= 1);
-    }
-
-    #[test]
     fn rast_field_has_raster_metadata() {
-        let provider = GeoTiffTilesProvider::try_new("/tmp".to_string(), false).unwrap();
-        let schema = provider.schema();
+        let schema = geotiff_tile_schema();
         let rast_field = schema.field_with_name("rast").unwrap();
         let sedona_type = sedona_schema::datatypes::SedonaType::from_storage_field(rast_field)
             .expect("sedona type");
@@ -622,5 +454,51 @@ mod tests {
                 .map(|s| s.as_str()),
             Some("sedona.raster")
         );
+    }
+
+    #[tokio::test]
+    async fn spec_reads_geotiff_tiles_via_sql() {
+        let tmp = tempdir().unwrap();
+        let base = tmp.path();
+        let file_path = write_test_geotiff(base, "test.tif");
+
+        let ctx = SessionContext::new();
+        ctx.register_udtf("rs_geotiff_tiles", rs_geotiff_tiles_udtf());
+
+        let df = ctx
+            .sql(&format!(
+                "SELECT path, x, y FROM rs_geotiff_tiles('{}')",
+                file_path.to_string_lossy()
+            ))
+            .await
+            .unwrap();
+
+        let batches = df.collect().await.unwrap();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].num_columns(), 3);
+        assert!(batches[0].num_rows() >= 1);
+    }
+
+    #[tokio::test]
+    async fn spec_reads_geotiff_directory_via_sql() {
+        let tmp = tempdir().unwrap();
+        let base = tmp.path();
+        write_test_geotiff(base, "test1.tif");
+        write_test_geotiff(base, "test2.tif");
+
+        let ctx = SessionContext::new();
+        ctx.register_udtf("rs_geotiff_tiles", rs_geotiff_tiles_udtf());
+
+        let df = ctx
+            .sql(&format!(
+                "SELECT path, x, y FROM rs_geotiff_tiles('{}', false)",
+                base.to_string_lossy()
+            ))
+            .await
+            .unwrap();
+
+        let batches = df.collect().await.unwrap();
+        let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        assert_eq!(total_rows, 2);
     }
 }

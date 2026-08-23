@@ -502,6 +502,7 @@ pub fn open_gdal_dataset(gdal: &Gdal, url: &str, open_options: Option<&[&str]>) 
 /// Normalize out-db raster URLs to GDAL VSI paths.
 ///
 /// Supported translations:
+/// - `file://...` -> `/...` (or local Windows path)
 /// - `s3://bucket/key` -> `/vsis3/bucket/key`
 /// - `s3a://bucket/key` -> `/vsis3/bucket/key`
 /// - `gs://bucket/key` -> `/vsigs/bucket/key`
@@ -522,6 +523,22 @@ pub(crate) fn normalize_outdb_source_path(path: &str) -> String {
         .is_some_and(|prefix| prefix.eq_ignore_ascii_case("/vsi"))
     {
         return path.to_string();
+    }
+
+    if let Some(rest) = strip_scheme_prefix(path, "file://") {
+        let rest = rest.strip_prefix("localhost").unwrap_or(rest);
+        #[cfg(windows)]
+        {
+            let trimmed = rest.trim_start_matches('/');
+            return trimmed.to_string();
+        }
+        #[cfg(not(windows))]
+        {
+            if !rest.starts_with('/') {
+                return format!("/{rest}");
+            }
+            return rest.to_string();
+        }
     }
 
     if let Some(rest) = strip_scheme_prefix(path, "s3://") {
@@ -741,6 +758,17 @@ mod tests {
             normalize_outdb_source_path("/tmp/test.tif"),
             "/tmp/test.tif"
         );
+        #[cfg(not(windows))]
+        {
+            assert_eq!(
+                normalize_outdb_source_path("file:///tmp/test.tif"),
+                "/tmp/test.tif"
+            );
+            assert_eq!(
+                normalize_outdb_source_path("file://localhost/tmp/test.tif"),
+                "/tmp/test.tif"
+            );
+        }
         assert_eq!(
             normalize_outdb_source_path("relative/path/test.tif"),
             "relative/path/test.tif"

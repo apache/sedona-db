@@ -18,11 +18,8 @@
 //! Benchmarks for rs_geotiff_tiles.
 
 use std::hint::black_box;
-use std::sync::Arc;
 
-use arrow_schema::SchemaRef;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use datafusion::catalog::TableProvider;
 use sedona_gdal::driver::DriverManager;
 use sedona_gdal::global::with_global_gdal_api;
 use sedona_gdal::raster::types::Buffer;
@@ -47,16 +44,10 @@ fn write_test_geotiff(dir: &TempDir, name: &str) -> String {
     path_str
 }
 
-fn provider_schema() -> SchemaRef {
-    sedona_raster_gdal::rs_geotiff_tiles::GeoTiffTilesProvider::try_new("/tmp".to_string(), false)
-        .unwrap()
-        .schema()
-}
-
 fn bench_rs_geotiff_tiles(c: &mut Criterion) {
     let tmp = TempDir::new().unwrap();
     let path = write_test_geotiff(&tmp, "bench.tiff");
-    let schema = Arc::new(provider_schema());
+    let schema = sedona_raster_gdal::geotiff_tile_schema();
     let mut group = c.benchmark_group("rs_geotiff_tiles");
     group.throughput(Throughput::Elements(1));
     group.bench_with_input(
@@ -67,7 +58,7 @@ fn bench_rs_geotiff_tiles(c: &mut Criterion) {
                 black_box(
                     sedona_raster_gdal::rs_geotiff_tiles::build_batch_for_file(
                         input,
-                        (*schema).clone(),
+                        schema.clone(),
                     )
                     .unwrap(),
                 )
