@@ -76,9 +76,11 @@ export SEDONADB_CARGO_TEST_ARGS="--features bindgen"
 
 The Python test suite includes comparison tests that connect to a PostGIS instance at
 `postgresql://localhost:5432/postgres?user=postgres&password=password` when one is
-reachable. Start the pinned version with `docker compose up -d postgis` from the
-repository root before verifying; an unrelated local PostgreSQL listening on port 5432
-(e.g., an older PostGIS that lacks `ST_HasM`) will cause these tests to fail.
+reachable.  A live PostGIS on localhost is not needed for successful verification;
+however, those who wish to run these extra tests can start the pinned version
+with `docker compose up -d postgis` from the repository root before verifying; 
+an unrelated local PostgreSQL listening on port 5432 (e.g., an older PostGIS that
+lacks `ST_HasM`) will cause these tests to fail.
 
 ## Pre-release
 
