@@ -59,7 +59,7 @@ pub use rs_as_raster::rs_as_raster_udf;
 pub use rs_clip::rs_clip_udf;
 pub use rs_from_gdal_raster::rs_from_gdal_raster_udf;
 pub use rs_frompath::rs_frompath_udf;
-pub use rs_geotiff_tiles::rs_geotiff_tiles_udtf;
+pub use rs_geotiff_tiles::{geotiff_tile_schema, rs_geotiff_tiles_udtf, GeoTiffTilesSpec};
 pub use rs_metadata::rs_metadata_udf;
 pub use rs_polygonize::rs_polygonize_udf;
 pub use rs_reproject_match::rs_reproject_match_udf;
