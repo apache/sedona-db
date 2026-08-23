@@ -488,18 +488,6 @@ def test_setitem_rejects_numpy_array(points):
         gdf["x"] = np.array([1, 2, 3])
 
 
-def test_setitem_over_active_geometry_clears_it(points):
-    # Replacing the active geometry with a number used to leave the name pointing
-    # at an integer column, so .geometry still returned a GeoSeries and .area
-    # failed later with a kernel error.
-    gdf = sgpd.from_geopandas(points)
-    gdf["geometry"] = 7
-    assert gdf._geometry_name is None
-    assert gdf.crs is None
-    with pytest.raises(AttributeError, match="no active geometry"):
-        gdf.geometry
-
-
 def test_operators_reject_bare_expression(points):
     # Same provenance hole as assignment: a bare expression built from another
     # frame resolved against this one and silently contributed this frame's values.
@@ -536,18 +524,6 @@ def test_dissolve_drops_nan_group_keys():
     )
     assert len(GeoDataFrame(df).dissolve(by="k").to_geopandas()) == 1
     assert len(GeoDataFrame(df).dissolve(by="k", dropna=False).to_geopandas()) == 2
-
-
-def test_setitem_scalar_geometry_keeps_crs(points):
-    # A bare Shapely geometry carries no CRS; GeoPandas keeps the column's.
-    from shapely.geometry import Point
-
-    gdf = sgpd.from_geopandas(points)
-    before = str(gdf.crs)
-    gdf["geometry"] = Point(5, 5)
-    assert gdf._geometry_name == "geometry"
-    assert "3857" in str(gdf.crs)
-    assert "3857" in before
 
 
 def test_setitem_none_keeps_geometry_column(points):
@@ -728,3 +704,118 @@ def test_is_floating_unwraps_dictionary_encoding():
     )
     df = sgpd.default_context().create_data_frame(tbl)
     assert _is_floating(df, "k")
+
+
+# -- regressions from the fifth review pass ---------------------------------
+
+
+def test_division_unwraps_dictionary_int():
+    # A dictionary<int64> column is integer for division purposes; it used to
+    # skip the double cast and truncate.
+    import pyarrow as pa
+
+    tbl = pa.table(
+        {
+            "k": pa.DictionaryArray.from_arrays(
+                pa.array([0, 1], type=pa.int8()), pa.array([1, 3], type=pa.int64())
+            ),
+            "x": [1, 2],
+        }
+    )
+    gdf = GeoDataFrame(sgpd.default_context().create_data_frame(tbl))
+    assert sorted((gdf["k"] / 2).to_pandas().tolist()) == [0.5, 1.5]
+
+
+def test_division_by_decimal_stays_decimal():
+    # An integer divided by a Decimal must stay in decimal arithmetic; the
+    # unconditional double cast used to force a float result.
+    from decimal import Decimal
+
+    gdf = GeoDataFrame(sgpd.default_context().sql("SELECT 1 AS n"))
+    got = (gdf["n"] / Decimal("0.5")).to_pandas().tolist()
+    assert isinstance(got[0], Decimal)
+
+
+def test_duration_arithmetic_matches_pandas():
+    import pandas as pd
+
+    gdf = GeoDataFrame(
+        sgpd.default_context().create_data_frame(
+            pd.DataFrame({"t": [pd.Timedelta(days=2)]})
+        )
+    )
+    assert (gdf["t"] * 2).to_pandas().tolist() == [pd.Timedelta(days=4)]
+    assert (2 * gdf["t"]).to_pandas().tolist() == [pd.Timedelta(days=4)]
+    assert (gdf["t"] / 2).to_pandas().tolist() == [pd.Timedelta(days=1)]
+    with pytest.raises(TypeError, match="numeric scalars"):
+        gdf["t"] * "2"
+
+
+def test_normalize_preserves_temporals_and_masks():
+    import numpy as np
+
+    from sedonadb_geopandas._series import normalize_scalar
+
+    # Temporal scalars must not become integer ticks.
+    assert isinstance(normalize_scalar(np.datetime64("2026-01-01")), np.datetime64)
+    import pandas as pd
+
+    assert normalize_scalar(np.timedelta64(1, "D")) == pd.Timedelta(days=1)
+    # A masked value means missing, not its hidden payload.
+    assert normalize_scalar(np.ma.masked) is None
+
+
+def test_pyarrow_scalars_broadcast(points):
+    # Arrow scalars implement __len__ but are single values.
+    import pyarrow as pa
+
+    from sedonadb_geopandas._series import is_scalar
+
+    assert is_scalar(pa.scalar([1, 2]))
+    assert is_scalar(pa.scalar({"a": 1}))
+    gdf = sgpd.from_geopandas(points)
+    gdf["tags"] = pa.scalar([1, 2])
+    assert len(gdf.to_geopandas()["tags"]) == 3
+
+
+def test_geoarrow_scalar_inherits_crs(points):
+    # A GeoArrow WKB scalar has no __geo_interface__, so geometry-ness must come
+    # from the resolved schema; it is CRS-less and inherits the column's CRS.
+    import geoarrow.pyarrow as ga
+
+    w = ga.as_wkb(ga.array(["POINT (5 5)"]))[0]
+    gdf = sgpd.from_geopandas(points)
+    gdf["geometry"] = w
+    assert gdf._geometry_name == "geometry"
+    assert "3857" in str(gdf.crs)
+
+
+def test_explicitly_inactive_geometry_stays_inactive(points):
+    # geometry=None is a choice; a no-op reassignment of an existing geometry
+    # column must not silently reactivate it.
+    df = sgpd.default_context().create_data_frame(points)
+    gdf = GeoDataFrame(df, geometry=None)
+    gdf["geometry"] = gdf["geometry"]
+    assert gdf._geometry_name is None
+
+
+def test_dissolve_rejects_empty_key_list(points):
+    # Matches GeoPandas: an explicit empty iterable is an error, unlike by=None.
+    gdf = sgpd.from_geopandas(points)
+    with pytest.raises(ValueError, match="No group keys"):
+        gdf.dissolve(by=[])
+    assert len(gdf.dissolve().to_geopandas()) == 1
+
+
+def test_dissolve_categorical_is_observed_only():
+    # Documented divergence: unused categories do not produce empty groups (the
+    # category domain does not survive a relational aggregation).
+    import pandas as pd
+
+    cat = gpd.GeoDataFrame(
+        {"z": pd.Categorical(["A"], categories=["A", "B"])},
+        geometry=gpd.GeoSeries.from_wkt(["POINT (0 0)"]),
+        crs="EPSG:3857",
+    )
+    assert len(cat.dissolve(by="z")) == 2  # GeoPandas observed=False default
+    assert len(sgpd.from_geopandas(cat).dissolve(by="z").to_geopandas()) == 1

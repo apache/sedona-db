@@ -227,15 +227,23 @@ class GeoDataFrame:
         else:
             expr = self._scalar_expr(key, value)
 
+        geometry_before = _geometry_column_names(self._df)
         self._df = self._df.mutate(**{key: expr})
 
         # Assignment can change whether the active geometry column is still a
         # geometry: replacing it with a number leaves nothing to be active, and
-        # giving a frame without geometry one makes that column active.
-        geometry_columns = _geometry_column_names(self._df)
-        if key == self._geometry_name and key not in geometry_columns:
+        # *creating* a geometry column on a frame without one activates it. The
+        # created-not-preexisting distinction matters: a frame whose geometry was
+        # explicitly deactivated (geometry=None) must not be reactivated by a
+        # no-op reassignment of a column that was already geometry.
+        geometry_after = _geometry_column_names(self._df)
+        if key == self._geometry_name and key not in geometry_after:
             self._geometry_name = None
-        elif self._geometry_name is None and key in geometry_columns:
+        elif (
+            self._geometry_name is None
+            and key in geometry_after
+            and key not in geometry_before
+        ):
             self._geometry_name = key
 
     def _scalar_expr(self, key, value):
@@ -260,12 +268,18 @@ class GeoDataFrame:
 
         # Only geometry values inherit the column's type and CRS. Assigning a number
         # over a geometry column is a legitimate way to turn it into an ordinary
-        # column, and must not be dressed up as geometry.
+        # column, and must not be dressed up as geometry. Geometry-ness is decided
+        # from the resolved literal's schema rather than by duck-typing the Python
+        # value: a GeoArrow scalar carries no __geo_interface__ yet is geometry.
         missing = _is_missing(raw)
-        is_geometry_value = missing or hasattr(raw, "__geo_interface__")
         replacing_geometry = key in _geometry_column_names(self._df)
-        if not (replacing_geometry and is_geometry_value):
+        if not replacing_geometry:
             return lit(raw)
+        if not missing:
+            candidate = lit(raw)
+            projected = self._df.select(candidate.alias("x")).schema
+            if not projected.geometry_column_indices:
+                return candidate
 
         crs = self._df.schema.field(key).type.crs
         # A context-bound literal is needed to call functions on it.
@@ -327,6 +341,11 @@ class GeoDataFrame:
         - A group mixing 2D and 3D geometries raises, because the collect step
           rejects mixed coordinate dimensions; GeoPandas promotes to 3D with NaN.
           Normalize the dimension first if a group can contain both.
+        - Grouping is observed-only: a categorical key contributes one group per
+          value actually present. GeoPandas defaults to `observed=False` and also
+          emits empty groups for unused categories, but the category domain does
+          not survive a relational aggregation, so those groups cannot be
+          reconstructed here.
         """
         if self._geometry_name is None:
             raise ValueError("dissolve() requires an active geometry column")
@@ -343,6 +362,10 @@ class GeoDataFrame:
             keys = [by]
         else:
             keys = list(by)
+            if not keys:
+                # Matches GeoPandas: an explicit empty iterable is almost
+                # certainly a bug, unlike by=None which means dissolve-all.
+                raise ValueError("No group keys passed!")
 
         unknown = [k for k in keys if k not in self.columns]
         if unknown:

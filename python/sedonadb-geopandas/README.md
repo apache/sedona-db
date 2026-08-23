@@ -75,7 +75,10 @@ group containing a null or NaN may aggregate to that. Dissolving an empty frame
 without a group key returns one row — empty geometry collection, null attribute
 values — rather than zero rows, because that is what a grouping-free SQL
 aggregate produces, and a group mixing 2D and 3D geometries raises rather than
-being promoted to 3D.
+being promoted to 3D. Grouping is observed-only: unused categories of a
+categorical key do not produce empty groups the way GeoPandas' default
+`observed=False` does, because the category domain does not survive a relational
+aggregation.
 
 See the SedonaDB "Migrating from GeoPandas" guide for the relational model that
 underlies each method.
