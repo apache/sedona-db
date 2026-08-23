@@ -84,10 +84,10 @@ jobs:
 
       - name: Build and test wheels (sedonadb)
         run: |
-          Remove-Item -Force .test_failed -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path "$env:VCPKG_DEFAULT_BINARY_CACHE" | Out-Null
           cd ci/scripts
           .\wheels-build-windows.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         env:
           VCPKG_ROOT: ${{ github.workspace }}/vcpkg
           VCPKG_DEFAULT_TRIPLET: x64-windows-dynamic-release
@@ -95,11 +95,9 @@ jobs:
           CMAKE_TOOLCHAIN_FILE: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
           CIBW_BUILD: "*-win_amd64"
           CIBW_TEST_REQUIRES: pytest adbc_driver_manager geoarrow-pyarrow geopandas
-          # Test command exits 0 even on failure so CIBW continues building all wheels;
-          # failures are recorded in .test_failed and checked after upload.
-          # We use Python here to be absolutely sure there are no shell escaping issues.
-          CIBW_TEST_COMMAND: >-
-            python -c "import subprocess,sys,pathlib; proj=pathlib.Path(r'{project}'); r=subprocess.run([sys.executable,'-m','pytest',str(pathlib.Path(r'{package}')/'tests'),'-vv','-o','faulthandler_timeout=600']); r.returncode and (print(f'Tests failed (exit {r.returncode}), creating .test_failed marker at {proj.absolute()}') or (proj/'.test_failed').touch() or True); sys.exit(0)"
+          # A test failure stops cibuildwheel immediately, so this job cannot
+          # upload wheels from a failed or incomplete build.
+          CIBW_TEST_COMMAND: "python -m pytest {package}/tests -vv -o faulthandler_timeout=600"
 
       # Save even on failure (hence a standalone save step gated only on a miss):
       # binaries built before a later test failure stay cached for the next run.
@@ -114,9 +112,6 @@ jobs:
         with:
           name: release-wheels-windows-x86_64
           path: python/sedonadb/dist/*.whl
-
-      - name: Fail if tests failed
-        run: python -c "import sys,pathlib; f=pathlib.Path('.test_failed'); print(f'Checking for {f.absolute()}, exists={f.exists()}'); sys.exit(1 if f.exists() else 0)"
 
   macOS-arm64:
     runs-on: macOS-latest
@@ -157,7 +152,6 @@ jobs:
 
       - name: Build and test wheels (sedonadb)
         run: |
-          rm -f .test_failed
           mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
           cd ci/scripts
           ./wheels-build-macos.sh sedonadb
@@ -165,9 +159,9 @@ jobs:
           VCPKG_ROOT: ${{ github.workspace }}/vcpkg
           VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-bincache
           CIBW_TEST_REQUIRES: pytest adbc_driver_manager geoarrow-pyarrow geopandas duckdb
-          # Test command exits 0 even on failure so CIBW continues building all wheels;
-          # failures are recorded in .test_failed and checked after upload.
-          CIBW_TEST_COMMAND: "pytest {package}/tests -vv -o faulthandler_timeout=600 || touch {project}/.test_failed"
+          # A test failure stops cibuildwheel immediately, so this job cannot
+          # upload wheels from a failed or incomplete build.
+          CIBW_TEST_COMMAND: "python -m pytest {package}/tests -vv -o faulthandler_timeout=600"
 
       - name: Save vcpkg binaries
         if: always() && steps.vcpkg-cache.outputs.cache-hit != 'true'
@@ -180,9 +174,6 @@ jobs:
         with:
           name: release-wheels-macOS-arm64
           path: python/sedonadb/dist/*.whl
-
-      - name: Fail if tests failed
-        run: test ! -f .test_failed
 
   macOS-amd64:
     runs-on: macos-15-intel
@@ -223,7 +214,6 @@ jobs:
 
       - name: Build and test wheels (sedonadb)
         run: |
-          rm -f .test_failed
           mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
           cd ci/scripts
           ./wheels-build-macos.sh sedonadb
@@ -231,9 +221,9 @@ jobs:
           VCPKG_ROOT: ${{ github.workspace }}/vcpkg
           VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-bincache
           CIBW_TEST_REQUIRES: pytest adbc_driver_manager geoarrow-pyarrow geopandas duckdb
-          # Test command exits 0 even on failure so CIBW continues building all wheels;
-          # failures are recorded in .test_failed and checked after upload.
-          CIBW_TEST_COMMAND: "pytest {package}/tests -vv -o faulthandler_timeout=600 || touch {project}/.test_failed"
+          # A test failure stops cibuildwheel immediately, so this job cannot
+          # upload wheels from a failed or incomplete build.
+          CIBW_TEST_COMMAND: "python -m pytest {package}/tests -vv -o faulthandler_timeout=600"
           SEDONADB_MACOS_ARCH: x86_64
 
       - name: Save vcpkg binaries
@@ -247,9 +237,6 @@ jobs:
         with:
           name: release-wheels-macOS-amd64
           path: python/sedonadb/dist/*.whl
-
-      - name: Fail if tests failed
-        run: test ! -f .test_failed
 
   wheels-linux:
     name: ${{ matrix.config.label }}
@@ -287,20 +274,15 @@ jobs:
 
       - name: Build and test wheels (sedonadb)
         run: |
-          rm -f .test_failed
           cd ci/scripts
           ./wheels-build-linux.sh ${{ matrix.config.arch }} sedonadb
         env:
           CIBW_SKIP: "*musllinux*"
           VCPKG_BINARY_CACHE_HOST: ${{ github.workspace }}/vcpkg-bincache
-          HOST_WORKSPACE: ${{ github.workspace }}
           CIBW_TEST_REQUIRES: pytest adbc_driver_manager geoarrow-pyarrow geopandas duckdb
-          # Test command exits 0 even on failure so CIBW continues building all wheels;
-          # failures are recorded in .test_failed and checked after upload. The
-          # marker goes to the bind-mounted /host-workspace rather than {project}:
-          # cibuildwheel copies the project into the container, so a marker
-          # written there would be discarded and the gate would pass silently.
-          CIBW_TEST_COMMAND: "pytest {package}/tests -vv -o faulthandler_timeout=600 || touch /host-workspace/.test_failed"
+          # A test failure stops cibuildwheel immediately, so this job cannot
+          # upload wheels from a failed or incomplete build.
+          CIBW_TEST_COMMAND: "python -m pytest {package}/tests -vv -o faulthandler_timeout=600"
 
       - name: Save vcpkg binaries
         if: always() && steps.vcpkg-cache.outputs.cache-hit != 'true'
@@ -314,23 +296,18 @@ jobs:
           name: release-wheels-${{ matrix.config.label }}
           path: python/sedonadb/dist/*.whl
 
-      - name: Fail if tests failed
-        run: test ! -f .test_failed
-
   # Extension wheels build in their own reusable workflow, gated on the
   # sedonadb jobs (so they run in the same run and can download those wheels
   # to test against) but isolated so an extension failure can't block the
-  # core package's nightly. Future extensions follow the same shape.
-  # !cancelled() ensures extensions build even if sedonadb tests failed.
+  # core package's nightly. Future extensions follow the same shape. The
+  # default success gate prevents extensions from consuming partial artifacts.
   expr:
     needs: ["windows-x86_64", "macOS-arm64", "macOS-amd64", "wheels-linux"]
-    if: ${{ !cancelled() }}
     uses: ./.github/workflows/wheels-expr.yml
     secrets: inherit
 
   zarr:
     needs: ["windows-x86_64", "macOS-arm64", "macOS-amd64", "wheels-linux"]
-    if: ${{ !cancelled() }}
     uses: ./.github/workflows/wheels-zarr.yml
     secrets: inherit
 
@@ -338,24 +315,15 @@ jobs:
   # needs the sedonadb-expr wheel (for the `.geo` accessor) in addition to the
   # core wheels, and expr already waits on those.
   #
-  # !cancelled() for the same reason as expr/zarr: without it, a cancelled
-  # platform job upstream skips this one even when expr itself succeeded. The
-  # extra result check keeps the requirement this job actually has — it
-  # downloads expr's wheel artifact, which only exists if expr succeeded.
   geopandas:
     needs: ["expr"]
-    if: ${{ !cancelled() && needs.expr.result == 'success' }}
     uses: ./.github/workflows/wheels-geopandas.yml
     secrets: inherit
 
   upload_nightly:
     needs: ["wheels-linux", "macOS-arm64", "macOS-amd64", "windows-x86_64"]
-    # Publish whatever wheels built, even when some platform jobs fail. A job
-    # that fails to build or test never reaches its upload-artifact step, so the
-    # release-wheels-* artifacts hold only wheels that built and passed their
-    # tests -- one platform's failure no longer blocks the nightly for the rest.
-    # !cancelled() still skips a run superseded by a newer push to the branch.
-    if: ${{ !cancelled() }}
+    # The default success gate prevents publishing a partial wheel set when
+    # any platform fails to build or test.
     name: Upload nightly packages
     runs-on: "macos-latest"
     steps:
