@@ -38,14 +38,16 @@ returns one row per internal GDAL block. Each row contains the source `path`,
 the zero-based tile indices `x` and `y`, and an out-db `rast` value pointing
 back to the source file.
 
+GeoTIFF files can also be queried directly by file path (e.g., `SELECT * FROM 'path/to/raster.tif'`).
+
 ## Examples
 
 ```sql
 SELECT path, x, y
-FROM rs_geotiff_tiles('../../../submodules/sedona-testing/data/raster/test4.tiff');
+FROM rs_geotiff_tiles('https://download.osgeo.org/geotiff/samples/gdal_eg/cea.tif');
 ```
 
 ```sql
 SELECT RS_MetaData(rast)
-FROM rs_geotiff_tiles('../../../submodules/sedona-testing/data/raster/test4.tiff');
+FROM rs_geotiff_tiles('https://download.osgeo.org/geotiff/samples/gdal_eg/cea.tif');
 ```
