@@ -52,6 +52,9 @@ pub struct PyExternalFormat {
     /// `False`); we snapshot it once to avoid GIL traffic in
     /// `list_single_object()`, which is called on hot paths.
     list_single_object: bool,
+    /// Cached from the Python spec so physical scan planning does not need the
+    /// GIL merely to decide whether file readers may overlap.
+    supports_concurrent_file_reads: bool,
     py_spec: Py<PyAny>,
 }
 
@@ -60,6 +63,7 @@ impl Clone for PyExternalFormat {
         Python::attach(|py| Self {
             extension: self.extension.clone(),
             list_single_object: self.list_single_object,
+            supports_concurrent_file_reads: self.supports_concurrent_file_reads,
             py_spec: self.py_spec.clone_ref(py),
         })
     }
@@ -78,9 +82,12 @@ impl PyExternalFormat {
             .getattr(py, "extension")?
             .extract::<String>(py)?;
         let new_list_single_object = read_list_single_object(py, &new_py_spec)?;
+        let new_supports_concurrent_file_reads =
+            read_supports_concurrent_file_reads(py, &new_py_spec)?;
         Ok(Self {
             extension: new_extension,
             list_single_object: new_list_single_object,
+            supports_concurrent_file_reads: new_supports_concurrent_file_reads,
             py_spec: new_py_spec,
         })
     }
@@ -138,8 +145,10 @@ impl PyExternalFormat {
         )?;
 
         let reader = import_arrow_array_stream(py, reader_obj.bind(py), None)?;
+        let schema = reader.schema();
         let wrapped_reader = WrappedRecordBatchReader {
-            inner: reader,
+            inner: Some(reader),
+            schema,
             shelter: Some(reader_obj),
         };
         Ok(Box::new(wrapped_reader))
@@ -152,9 +161,11 @@ impl PyExternalFormat {
     fn new<'py>(py: Python<'py>, py_spec: Py<PyAny>) -> Result<Self, PySedonaError> {
         let extension = py_spec.getattr(py, "extension")?.extract::<String>(py)?;
         let list_single_object = read_list_single_object(py, &py_spec)?;
+        let supports_concurrent_file_reads = read_supports_concurrent_file_reads(py, &py_spec)?;
         Ok(Self {
             extension,
             list_single_object,
+            supports_concurrent_file_reads,
             py_spec,
         })
     }
@@ -175,6 +186,18 @@ fn read_list_single_object<'py>(
         .extract::<bool>(py)?)
 }
 
+/// Read the `supports_concurrent_file_reads` attribute on a Python spec.
+///
+/// The [`ExternalFormatSpec`] Python base class defaults this to `True`.
+fn read_supports_concurrent_file_reads<'py>(
+    py: Python<'py>,
+    py_spec: &Py<PyAny>,
+) -> Result<bool, PySedonaError> {
+    Ok(py_spec
+        .getattr(py, "supports_concurrent_file_reads")?
+        .extract::<bool>(py)?)
+}
+
 #[async_trait]
 impl ExternalFormatSpec for PyExternalFormat {
     fn extension(&self) -> &str {
@@ -183,6 +206,10 @@ impl ExternalFormatSpec for PyExternalFormat {
 
     fn list_single_object(&self) -> bool {
         self.list_single_object
+    }
+
+    fn supports_concurrent_file_reads(&self) -> bool {
+        self.supports_concurrent_file_reads
     }
 
     fn with_options(
@@ -400,13 +427,30 @@ impl PyProjectedRecordBatchReader {
 /// ArrowArrayStream/RecordBatchReader (e.g., the pyogrio context manager, or
 /// an ADBC statement/cursor).
 struct WrappedRecordBatchReader {
-    pub inner: Box<dyn RecordBatchReader + Send>,
+    pub inner: Option<Box<dyn RecordBatchReader + Send>>,
+    pub schema: SchemaRef,
     pub shelter: Option<Py<PyAny>>,
+}
+
+impl WrappedRecordBatchReader {
+    /// Release resources in dependency order: the Arrow FFI stream first and
+    /// its owning Python context second. Explicitly dropping the shelter while
+    /// attached avoids PyO3 deferring its decref until a later Python callback.
+    fn finish(&mut self) {
+        self.inner = None;
+
+        if let Some(shelter) = self.shelter.take() {
+            if Python::try_attach(|_| drop(shelter)).is_none() {
+                // During interpreter shutdown PyO3 cannot safely decref the
+                // object. Let PyO3's normal deferred-drop path handle it.
+            }
+        }
+    }
 }
 
 impl RecordBatchReader for WrappedRecordBatchReader {
     fn schema(&self) -> SchemaRef {
-        self.inner.schema()
+        self.schema.clone()
     }
 }
 
@@ -414,11 +458,68 @@ impl Iterator for WrappedRecordBatchReader {
     type Item = Result<RecordBatch, ArrowError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(item) = self.inner.next() {
+        if let Some(item) = self.inner.as_mut().and_then(|inner| inner.next()) {
             Some(item)
         } else {
-            self.shelter = None;
+            self.finish();
             None
         }
+    }
+}
+
+impl Drop for WrappedRecordBatchReader {
+    fn drop(&mut self) {
+        self.finish();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow_array::RecordBatchIterator;
+    use pyo3::types::{PyAnyMethods, PyModule};
+
+    #[test]
+    fn wrapped_reader_drops_python_shelter_at_eof() {
+        let (shelter, shelter_class) = Python::attach(|py| {
+            let module = PyModule::from_code(
+                py,
+                cr#"
+class Shelter:
+    destroyed = 0
+
+    def __del__(self):
+        type(self).destroyed += 1
+"#,
+                cr"wrapped_reader_test.py",
+                cr"wrapped_reader_test",
+            )
+            .unwrap();
+            let shelter_class = module.getattr("Shelter").unwrap();
+            let shelter = shelter_class.call0().unwrap().unbind();
+            (shelter, shelter_class.unbind())
+        });
+
+        let schema = Arc::new(Schema::empty());
+        let inner = RecordBatchIterator::new(
+            std::iter::empty::<std::result::Result<RecordBatch, ArrowError>>(),
+            schema.clone(),
+        );
+        let mut reader = WrappedRecordBatchReader {
+            inner: Some(Box::new(inner)),
+            schema,
+            shelter: Some(shelter),
+        };
+
+        assert!(reader.next().is_none());
+        Python::attach(|py| {
+            let destroyed = shelter_class
+                .bind(py)
+                .getattr("destroyed")
+                .unwrap()
+                .extract::<usize>()
+                .unwrap();
+            assert_eq!(destroyed, 1);
+        });
     }
 }

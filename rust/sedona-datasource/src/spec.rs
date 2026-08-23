@@ -88,6 +88,16 @@ pub trait ExternalFormatSpec: Debug + Send + Sync {
         false
     }
 
+    /// Whether readers for different files in the same physical scan may be
+    /// opened and consumed concurrently.
+    ///
+    /// Return `false` for native libraries that require one file reader to be
+    /// fully consumed and closed before the scan opens the next. This limit is
+    /// scoped to a single physical scan; independent scans remain independent.
+    fn supports_concurrent_file_reads(&self) -> bool {
+        true
+    }
+
     /// Fill in default options from [TableOptions]
     ///
     /// The TableOptions are a DataFusion concept that provide a means by which
