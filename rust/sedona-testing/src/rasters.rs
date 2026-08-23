@@ -536,8 +536,8 @@ mod tests {
 
             // Convert raw bytes back to u16 values for comparison
             let mut actual_pixel_values = Vec::new();
-            for chunk in band_data.chunks_exact(2) {
-                let value = u16::from_le_bytes([chunk[0], chunk[1]]);
+            for chunk in band_data.as_chunks::<2>().0 {
+                let value = u16::from_le_bytes(*chunk);
                 actual_pixel_values.push(value);
             }
             let expected_pixel_values: Vec<u16> = (0..expected_pixel_count as u16).collect();
