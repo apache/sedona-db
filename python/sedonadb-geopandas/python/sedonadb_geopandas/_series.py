@@ -64,15 +64,28 @@ def normalize_scalar(value):
         # a missing value into a real number; masked means missing.
         if value is np.ma.masked or np.ma.is_masked(value):
             return None
-        # NumPy temporal scalars must not be unwrapped: .item() yields integer
-        # ticks. datetime64 is accepted by lit() directly; timedelta64 is not,
-        # so it goes through pandas, which lit() understands.
-        if isinstance(value, np.datetime64):
-            return value
-        if isinstance(value, np.timedelta64):
-            import pandas as pd
+        # A 0-D array wrapping a temporal must be unwrapped to its NumPy scalar
+        # (not .item(), which yields integer ticks) so it reaches the temporal
+        # handling below.
+        if (
+            isinstance(value, np.ndarray)
+            and value.ndim == 0
+            and value.dtype.kind in "mM"
+        ):
+            value = value[()]
+        # NumPy temporal scalars are rebuilt as typed Arrow scalars: .item()
+        # would flatten them to integer ticks, lit() rejects non-nanosecond
+        # units, and NaT needs to become a typed null rather than an error.
+        if isinstance(value, (np.datetime64, np.timedelta64)):
+            import pyarrow as pa
 
-            return pd.Timedelta(value)
+            kind = "datetime64" if isinstance(value, np.datetime64) else "timedelta64"
+            arrow_null = (
+                pa.timestamp("ns") if kind == "datetime64" else pa.duration("ns")
+            )
+            if np.isnat(value):
+                return pa.scalar(None, arrow_null)
+            return pa.scalar(value.astype(f"{kind}[ns]"))
     except ImportError:
         pass
     if hasattr(value, "__array__") and getattr(value, "ndim", None) == 0:
@@ -84,6 +97,31 @@ def normalize_scalar(value):
         # the NA sentinel becomes SQL null.
         if value is pd.NA:
             return None
+    except ImportError:
+        pass
+    return value
+
+
+def _numeric_value(other):
+    """Resolve an operand to its numeric payload, unwrapping supported wrappers.
+
+    A `Literal` or Arrow scalar is one value by the shared scalar contract, so a
+    type decision (is this integer division? is this a numeric duration operand?)
+    must look through the wrapper at the payload rather than judging the wrapper
+    itself.
+    """
+    from sedonadb.expr import Literal
+
+    value = other
+    if isinstance(value, Literal):
+        value = value._value
+    if is_scalar(value):
+        value = normalize_scalar(value)
+    try:
+        import pyarrow as pa
+
+        if isinstance(value, pa.Scalar):
+            value = value.as_py()
     except ImportError:
         pass
     return value
@@ -269,14 +307,12 @@ class Series:
         if isinstance(other, Series):
             other_integer = pa.types.is_integer(other._dtype())
         else:
-            from decimal import Decimal
-
-            normalized = normalize_scalar(other) if is_scalar(other) else other
-            other_integer = isinstance(normalized, numbers.Integral) and not isinstance(
-                normalized, bool
+            # Look through Literal / Arrow-scalar wrappers: `series / lit(2)` is
+            # integer division just as much as `series / 2` is.
+            resolved = _numeric_value(other)
+            other_integer = isinstance(resolved, numbers.Integral) and not isinstance(
+                resolved, bool
             )
-            if isinstance(normalized, Decimal):
-                other_integer = False
         if other_integer:
             return self._expr.cast(pa.float64())
         return self._expr
@@ -292,19 +328,40 @@ class Series:
         microseconds. Only numeric scalars are supported; anything else keeps the
         engine's own error.
         """
+        import math
         import numbers
 
         import pyarrow as pa
 
-        value = normalize_scalar(other) if is_scalar(other) else other
+        from sedonadb.expr import lit
+
+        value = _numeric_value(other)
         if not isinstance(value, numbers.Real) or isinstance(value, bool):
             raise TypeError(
                 f"Duration arithmetic supports numeric scalars only, got "
                 f"{type(other).__name__}"
             )
+
         dtype = self._dtype()
+
+        # Division by zero and non-finite operands have no integer form to cast
+        # back to. Pandas yields NaT for a Series in these cases, and a scalar
+        # operand makes every row NaT, so the result is a typed null broadcast.
+        if not math.isfinite(value) or (op == "/" and value == 0):
+            return Series(self._df, lit(pa.scalar(None, dtype)), self._name)
+
         ticks = self._expr.cast(pa.int64())
-        result = ticks * value if op == "*" else ticks.cast(pa.float64()) / value
+        integral = isinstance(value, numbers.Integral)
+        if op == "*":
+            result = (
+                ticks * int(value) if integral else ticks.cast(pa.float64()) * value
+            )
+        elif integral:
+            # Exact integer tick division: routing an integral divisor through
+            # float64 loses precision above 2**53 ticks.
+            result = ticks / int(value)
+        else:
+            result = ticks.cast(pa.float64()) / value
         return Series(
             self._df,
             result.cast(pa.int64()).cast(dtype),

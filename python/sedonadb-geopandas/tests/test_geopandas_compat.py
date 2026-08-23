@@ -751,20 +751,6 @@ def test_duration_arithmetic_matches_pandas():
         gdf["t"] * "2"
 
 
-def test_normalize_preserves_temporals_and_masks():
-    import numpy as np
-
-    from sedonadb_geopandas._series import normalize_scalar
-
-    # Temporal scalars must not become integer ticks.
-    assert isinstance(normalize_scalar(np.datetime64("2026-01-01")), np.datetime64)
-    import pandas as pd
-
-    assert normalize_scalar(np.timedelta64(1, "D")) == pd.Timedelta(days=1)
-    # A masked value means missing, not its hidden payload.
-    assert normalize_scalar(np.ma.masked) is None
-
-
 def test_pyarrow_scalars_broadcast(points):
     # Arrow scalars implement __len__ but are single values.
     import pyarrow as pa
@@ -819,3 +805,105 @@ def test_dissolve_categorical_is_observed_only():
     )
     assert len(cat.dissolve(by="z")) == 2  # GeoPandas observed=False default
     assert len(sgpd.from_geopandas(cat).dissolve(by="z").to_geopandas()) == 1
+
+
+# -- regressions from the sixth review pass ---------------------------------
+
+
+@pytest.mark.parametrize(
+    "value_name,expected_kind",
+    [
+        ("ns_datetime", "datetime"),
+        ("zero_d_ns_datetime", "datetime"),
+        ("day_unit_datetime", "datetime"),
+        ("day_unit_timedelta", "timedelta"),
+        ("datetime_nat", "datetime_nat"),
+        ("timedelta_nat", "timedelta_nat"),
+    ],
+)
+def test_numpy_temporals_materialize_correctly(points, value_name, expected_kind):
+    # Asserted end to end (assignment then collection), not on the normalization
+    # helper: .item() flattening, unit rejection, and zeroed durations were all
+    # invisible to helper-level equality checks.
+    import numpy as np
+    import pandas as pd
+
+    values = {
+        "ns_datetime": np.datetime64("2026-01-01", "ns"),
+        "zero_d_ns_datetime": np.array(np.datetime64("2026-01-01", "ns")),
+        "day_unit_datetime": np.datetime64("2026-01-01"),
+        "day_unit_timedelta": np.timedelta64(2, "D"),
+        "datetime_nat": np.datetime64("NaT"),
+        "timedelta_nat": np.timedelta64("NaT"),
+    }
+    gdf = sgpd.from_geopandas(points)
+    gdf["t"] = values[value_name]
+    out = gdf.to_geopandas()["t"]
+    if expected_kind == "datetime":
+        assert out.tolist() == [pd.Timestamp("2026-01-01")] * 3
+    elif expected_kind == "timedelta":
+        assert out.tolist() == [pd.Timedelta(days=2)] * 3
+    else:
+        # NaT stays a typed null of the right family.
+        assert out.isna().all()
+        expected_dtype = "datetime64" if "datetime" in expected_kind else "timedelta64"
+        assert expected_dtype in str(out.dtype)
+
+
+def test_masked_scalar_assigns_as_missing(points):
+    import numpy as np
+
+    gdf = sgpd.from_geopandas(points)
+    gdf["m"] = np.ma.masked
+    assert gdf.to_geopandas()["m"].isna().all()
+
+
+def test_duration_division_is_exact_for_integral_divisors():
+    # Routing an integral divisor through float64 rounded 2**53 + 1 ticks.
+    import pandas as pd
+
+    gdf = GeoDataFrame(
+        sgpd.default_context().create_data_frame(
+            pd.DataFrame({"t": [pd.Timedelta(2**53 + 1)]})
+        )
+    )
+    assert (gdf["t"] / 1).to_pandas().tolist()[0].value == 2**53 + 1
+
+
+def test_division_by_wrapped_integers_is_true_division():
+    # lit(2) and pa.scalar(2) are integer operands just as 2 is.
+    import pyarrow as pa
+
+    from sedonadb.expr import lit
+
+    gdf = GeoDataFrame(sgpd.default_context().sql("SELECT 1 AS n UNION ALL SELECT 3"))
+    assert sorted((gdf["n"] / lit(2)).to_pandas().tolist()) == [0.5, 1.5]
+    assert sorted((gdf["n"] / pa.scalar(2)).to_pandas().tolist()) == [0.5, 1.5]
+
+
+def test_duration_arithmetic_accepts_wrapped_numbers():
+    import pandas as pd
+    import pyarrow as pa
+
+    from sedonadb.expr import lit
+
+    gdf = GeoDataFrame(
+        sgpd.default_context().create_data_frame(
+            pd.DataFrame({"t": [pd.Timedelta(days=2)]})
+        )
+    )
+    assert (gdf["t"] * lit(2)).to_pandas().tolist() == [pd.Timedelta(days=4)]
+    assert (gdf["t"] / pa.scalar(2)).to_pandas().tolist() == [pd.Timedelta(days=1)]
+
+
+def test_duration_non_finite_results_are_nat():
+    # Pandas yields NaT for these; the int64 cast-back used to fail on inf/NaN.
+    import pandas as pd
+
+    gdf = GeoDataFrame(
+        sgpd.default_context().create_data_frame(
+            pd.DataFrame({"t": [pd.Timedelta(days=2)]})
+        )
+    )
+    assert (gdf["t"] / 0).to_pandas().isna().all()
+    assert (gdf["t"] * float("nan")).to_pandas().isna().all()
