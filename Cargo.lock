@@ -3543,9 +3543,9 @@ dependencies = [
 
 [[package]]
 name = "i_float"
-version = "4.0.0"
+version = "4.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97c128b7edf06aa28e02763854c84ce5dd91d31ae3e533e24e9b5201a8bc4cd4"
+checksum = "c614c2cfc06cfe8809ccc48cd445864502478e673721ca2a05931fc057ec33a0"
 dependencies = [
  "libm",
 ]
@@ -3577,11 +3577,11 @@ dependencies = [
 
 [[package]]
 name = "i_overlay"
-version = "8.0.0"
+version = "8.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "391901c4c5db3968bd11af0d0166c575a6c2f554f3b40d1bfe12df043c3607ca"
+checksum = "ca5d3f41731d03eafa48213609113563099a479f593cc7c635b7e836fc52a3c8"
 dependencies = [
- "i_float 4.0.0",
+ "i_float 4.1.0",
  "i_key_sort 0.11.0",
  "i_shape 4.0.0",
  "i_tree 0.19.0",
@@ -3602,7 +3602,7 @@ version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67ec1fc3ad980a24e4761b763bf5bfbf58c1d88be1bffb14654d369d7f420258"
 dependencies = [
- "i_float 4.0.0",
+ "i_float 4.1.0",
 ]
 
 [[package]]
@@ -5913,7 +5913,7 @@ dependencies = [
  "geo",
  "geo-traits",
  "geo-types",
- "i_overlay 8.0.0",
+ "i_overlay 8.1.0",
  "log",
  "num-traits",
  "pretty_env_logger",
