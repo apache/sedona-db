@@ -76,9 +76,9 @@ export SEDONADB_CARGO_TEST_ARGS="--features bindgen"
 
 The Python test suite includes comparison tests that connect to a PostGIS instance at
 `postgresql://localhost:5432/postgres?user=postgres&password=password` when one is
-reachable.  A live PostGIS on localhost is not needed for successful verification;
+reachable. A live PostGIS on localhost is not needed for successful verification;
 however, those who wish to run these extra tests can start the pinned version
-with `docker compose up -d postgis` from the repository root before verifying; 
+with `docker compose up -d postgis` from the repository root before verifying;
 an unrelated local PostgreSQL listening on port 5432 (e.g., an older PostGIS that
 lacks `ST_HasM`) will cause these tests to fail.
 
@@ -282,8 +282,13 @@ If publishing stops partway, fix the problem and resume with
 `--start-from <crate-name>`.
 
 `cargo publish` resolves `[dev-dependencies]` that carry a version requirement, so
-dev-dependencies that form a cycle with a crate published later must be removed from
-the local checkout before publishing (do not commit these changes). As of 0.4.1 these are
+dev-dependencies that form a cycle with a crate published later currently prevent
+publishing. Removing these cycles is tracked in
+[#702](https://github.com/apache/sedona-db/issues/702) (see also
+[#1025](https://github.com/apache/sedona-db/pull/1025)); until that lands, the
+workaround is to remove the offending dev-dependencies from the local checkout used for
+publishing. This is a stopgap: the modifications are never committed, and the published
+crate contents are otherwise identical to the voted release. As of 0.4.1 the cycles are
 `sedona-testing` in `sedona-geometry`, `sedona-gdal`, `sedona-geo-generic-alg`,
 `sedona-raster`, `sedona-expr`, and `sedona-functions`; `sedona-proj` in
 `sedona-functions`; and `sedona` in `sedona-pointcloud`, `sedona-tg`, `sedona-geos`,
