@@ -833,8 +833,8 @@ def test_numpy_temporals_materialize_correctly(points, value_name, expected_kind
         "zero_d_ns_datetime": np.array(np.datetime64("2026-01-01", "ns")),
         "day_unit_datetime": np.datetime64("2026-01-01"),
         "day_unit_timedelta": np.timedelta64(2, "D"),
-        "datetime_nat": np.datetime64("NaT"),
-        "timedelta_nat": np.timedelta64("NaT"),
+        "datetime_nat": np.datetime64("NaT", "ns"),
+        "timedelta_nat": np.timedelta64("NaT", "ns"),
     }
     gdf = sgpd.from_geopandas(points)
     gdf["t"] = values[value_name]
@@ -907,3 +907,73 @@ def test_duration_non_finite_results_are_nat():
     )
     assert (gdf["t"] / 0).to_pandas().isna().all()
     assert (gdf["t"] * float("nan")).to_pandas().isna().all()
+
+
+# -- regressions from the seventh review pass -------------------------------
+
+
+def test_coarse_unit_temporals_are_exact(points):
+    # Forcing every temporal through nanoseconds silently wrapped values
+    # outside the ns range (1677-2262): 2500-01-01 materialized as 1915-06-14.
+    # Coarse units convert exactly to seconds instead. Comparisons are done as
+    # numpy values because 200000 days exceeds the ns-backed scalar Timedelta.
+    import numpy as np
+
+    cases = [
+        np.datetime64("2500-01-01", "D"),
+        np.timedelta64(200000, "D"),
+        np.datetime64("2500", "Y"),
+    ]
+    for value in cases:
+        gdf = sgpd.from_geopandas(points)
+        gdf["t"] = value
+        got = gdf.to_geopandas()["t"].values[0]
+        assert got == value.astype(got.dtype)
+
+
+def test_ambiguous_and_subnano_temporal_units_are_rejected(points):
+    # Matches pandas: timedelta months/years have no fixed length, and
+    # sub-nanosecond units cannot be represented.
+    import numpy as np
+
+    gdf = sgpd.from_geopandas(points)
+    with pytest.raises(TypeError, match="exactly"):
+        gdf["t"] = np.timedelta64(1, "M")
+    with pytest.raises(TypeError, match="exactly"):
+        gdf["t"] = np.timedelta64(1, "ps")
+
+
+def test_duration_division_by_infinity_is_zero_preserving_nulls():
+    # Blanket NaT for non-finite operands regressed /inf, which pandas defines
+    # as zero for valid rows while keeping source nulls null.
+    import pandas as pd
+
+    gdf = GeoDataFrame(
+        sgpd.default_context().create_data_frame(
+            pd.DataFrame({"t": [pd.Timedelta(days=2), pd.NaT]})
+        )
+    )
+    got = (gdf["t"] / float("inf")).to_pandas()
+    assert got.tolist()[0] == pd.Timedelta(0)
+    assert pd.isna(got.tolist()[1])
+
+
+def test_singleton_container_literals_resolve_as_numbers():
+    # SedonaDB accepts one-element containers as single-value literals; the
+    # numeric resolver must look through them like any other wrapper.
+    import pandas as pd
+    import pyarrow as pa
+
+    from sedonadb.expr import lit
+
+    gdf = GeoDataFrame(sgpd.default_context().sql("SELECT 1 AS n UNION ALL SELECT 3"))
+    assert sorted((gdf["n"] / lit(pa.array([2]))).to_pandas().tolist()) == [0.5, 1.5]
+    assert sorted((gdf["n"] / lit(pd.Series([2]))).to_pandas().tolist()) == [0.5, 1.5]
+    tdf = GeoDataFrame(
+        sgpd.default_context().create_data_frame(
+            pd.DataFrame({"t": [pd.Timedelta(days=2)]})
+        )
+    )
+    assert (tdf["t"] * lit(pd.Series([2]))).to_pandas().tolist() == [
+        pd.Timedelta(days=4)
+    ]

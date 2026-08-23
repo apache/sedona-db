@@ -74,18 +74,40 @@ def normalize_scalar(value):
         ):
             value = value[()]
         # NumPy temporal scalars are rebuilt as typed Arrow scalars: .item()
-        # would flatten them to integer ticks, lit() rejects non-nanosecond
-        # units, and NaT needs to become a typed null rather than an error.
+        # would flatten them to integer ticks and lit() rejects most NumPy
+        # units directly. The Arrow unit is chosen losslessly rather than
+        # forcing nanoseconds: the ns range covers only 1677-2262, so an
+        # unchecked astype silently wraps coarse-unit values centuries away.
         if isinstance(value, (np.datetime64, np.timedelta64)):
             import pyarrow as pa
 
-            kind = "datetime64" if isinstance(value, np.datetime64) else "timedelta64"
-            arrow_null = (
-                pa.timestamp("ns") if kind == "datetime64" else pa.duration("ns")
-            )
+            is_datetime = isinstance(value, np.datetime64)
+            kind = "datetime64" if is_datetime else "timedelta64"
             if np.isnat(value):
-                return pa.scalar(None, arrow_null)
-            return pa.scalar(value.astype(f"{kind}[ns]"))
+                null_type = pa.timestamp("ns") if is_datetime else pa.duration("ns")
+                return pa.scalar(None, null_type)
+
+            unit = np.datetime_data(value.dtype)[0]
+            if unit in ("s", "ms", "us", "ns"):
+                # Arrow-native resolution: keep it exactly.
+                target = unit
+            elif unit in ("W", "D", "h", "m") or (is_datetime and unit in ("Y", "M")):
+                # Whole multiples of seconds — and for datetimes, calendar
+                # year/month positions — convert exactly to seconds.
+                target = "s"
+            else:
+                # timedelta64 in months/years is ambiguous (pandas rejects it
+                # too), and sub-nanosecond units cannot be represented.
+                raise TypeError(
+                    f"Cannot represent a {kind}[{unit}] value exactly; use an "
+                    f"unambiguous unit no finer than nanoseconds"
+                )
+            converted = value.astype(f"{kind}[{target}]")
+            if converted.astype(value.dtype) != value:
+                raise OverflowError(
+                    f"{value!r} does not fit the Arrow {target!r} resolution"
+                )
+            return pa.scalar(converted)
     except ImportError:
         pass
     if hasattr(value, "__array__") and getattr(value, "ndim", None) == 0:
@@ -114,7 +136,20 @@ def _numeric_value(other):
 
     value = other
     if isinstance(value, Literal):
-        value = value._value
+        # Resolve through the literal's Arrow value rather than its raw Python
+        # payload: SedonaDB accepts one-element containers (an Arrow array, a
+        # pandas Series or one-cell frame) as single-value literals, and the
+        # payload alone does not reveal that.
+        try:
+            import pyarrow as pa
+
+            arr = pa.array(value)
+            if len(arr) == 1:
+                value = arr[0].as_py()
+            else:
+                value = value._value
+        except Exception:
+            value = value._value
     if is_scalar(value):
         value = normalize_scalar(value)
     try:
@@ -344,9 +379,17 @@ class Series:
 
         dtype = self._dtype()
 
-        # Division by zero and non-finite operands have no integer form to cast
-        # back to. Pandas yields NaT for a Series in these cases, and a scalar
-        # operand makes every row NaT, so the result is a typed null broadcast.
+        # Non-finite operands have no integer form to cast back to, so they are
+        # resolved up front the way pandas resolves them. Division by infinity
+        # is zero for every valid row — computed as ticks * 0 so source nulls
+        # stay null — while division by zero or NaN, and multiplication by a
+        # non-finite value, make every row NaT.
+        if op == "/" and math.isinf(value):
+            return Series(
+                self._df,
+                (self._expr.cast(pa.int64()) * 0).cast(dtype),
+                self._name,
+            )
         if not math.isfinite(value) or (op == "/" and value == 0):
             return Series(self._df, lit(pa.scalar(None, dtype)), self._name)
 
