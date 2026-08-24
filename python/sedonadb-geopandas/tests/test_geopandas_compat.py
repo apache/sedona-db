@@ -915,32 +915,35 @@ def test_duration_non_finite_results_are_nat():
 def test_coarse_unit_temporals_are_exact(points):
     # Forcing every temporal through nanoseconds silently wrapped values
     # outside the ns range (1677-2262): 2500-01-01 materialized as 1915-06-14.
-    # Coarse units convert exactly to seconds instead. Comparisons are done as
-    # numpy values because 200000 days exceeds the ns-backed scalar Timedelta.
+    # Coarse units convert exactly to seconds instead. Expectations are
+    # independent second-resolution constants — deriving them from the
+    # materialized dtype would repeat the conversion under test and wrap
+    # identically against a broken implementation.
     import numpy as np
 
     cases = [
-        np.datetime64("2500-01-01", "D"),
-        np.timedelta64(200000, "D"),
-        np.datetime64("2500", "Y"),
+        (np.datetime64("2500-01-01", "D"), np.datetime64("2500-01-01T00:00:00", "s")),
+        (np.timedelta64(200000, "D"), np.timedelta64(200000 * 86400, "s")),
+        (np.datetime64("2500", "Y"), np.datetime64("2500-01-01T00:00:00", "s")),
     ]
-    for value in cases:
+    for value, expected in cases:
         gdf = sgpd.from_geopandas(points)
         gdf["t"] = value
         got = gdf.to_geopandas()["t"].values[0]
-        assert got == value.astype(got.dtype)
+        assert got.dtype == expected.dtype
+        assert got == expected
 
 
 def test_ambiguous_and_subnano_temporal_units_are_rejected(points):
-    # Matches pandas: timedelta months/years have no fixed length, and
-    # sub-nanosecond units cannot be represented.
+    # Matches pandas, exception type included: timedelta months/years have no
+    # fixed length, and pandas raises ValueError for sub-nanosecond timedeltas
+    # even when the value is exactly representable.
     import numpy as np
 
     gdf = sgpd.from_geopandas(points)
-    with pytest.raises(TypeError, match="exactly"):
-        gdf["t"] = np.timedelta64(1, "M")
-    with pytest.raises(TypeError, match="exactly"):
-        gdf["t"] = np.timedelta64(1, "ps")
+    for unit in ("M", "Y", "ps"):
+        with pytest.raises(ValueError, match="exactly"):
+            gdf["t"] = np.timedelta64(1, unit)
 
 
 def test_duration_division_by_infinity_is_zero_preserving_nulls():
@@ -956,6 +959,73 @@ def test_duration_division_by_infinity_is_zero_preserving_nulls():
     got = (gdf["t"] / float("inf")).to_pandas()
     assert got.tolist()[0] == pd.Timedelta(0)
     assert pd.isna(got.tolist()[1])
+
+
+# -- regressions from the eighth review pass --------------------------------
+
+
+def test_exact_subnanosecond_datetimes_are_accepted(points):
+    # 10**6 fs and 10**9 as are exactly one nanosecond and GeoPandas accepts
+    # them, so rejecting every sub-ns datetime unit up front was too broad.
+    # Lossy values are still rejected — GeoPandas silently truncates those to
+    # nanoseconds instead, which this layer deliberately does not do.
+    import numpy as np
+
+    for value in (np.datetime64(10**6, "fs"), np.datetime64(10**9, "as")):
+        gdf = sgpd.from_geopandas(points)
+        gdf["t"] = value
+        assert gdf.to_geopandas()["t"].values[0] == np.datetime64(1, "ns")
+
+    gdf = sgpd.from_geopandas(points)
+    with pytest.raises(ValueError, match="precision"):
+        gdf["t"] = np.datetime64(1, "fs")
+
+
+def test_zero_dim_object_array_holding_temporal(points):
+    # A 0-d object array classifies as a broadcastable scalar, but its .item()
+    # returns the wrapped numpy temporal, which bypassed temporal
+    # normalization and failed assignment for non-Arrow-native units.
+    import numpy as np
+
+    gdf = sgpd.from_geopandas(points)
+    gdf["t"] = np.array(np.datetime64("2500-01-01", "D"), dtype=object)
+    got = gdf.to_geopandas()["t"].values[0]
+    assert got == np.datetime64("2500-01-01T00:00:00", "s")
+
+
+def test_multi_value_literal_errors_propagate():
+    # The Literal resolver's precise error (a Series of length != 1) was
+    # swallowed and replaced by a generic duration-arithmetic TypeError.
+    import pandas as pd
+    import pyarrow as pa
+    from sedonadb.expr import lit
+
+    gdf = GeoDataFrame(
+        sgpd.default_context().create_data_frame(
+            pd.DataFrame({"t": [pd.Timedelta(days=2)]})
+        )
+    )
+    with pytest.raises(ValueError, match="length != 1"):
+        gdf["t"] * lit(pd.Series([2, 3]))
+    with pytest.raises(ValueError, match="single value"):
+        gdf["t"] * lit(pa.array([2, 3]))
+
+
+def test_duration_multiplication_overflow_is_null_not_wrapped():
+    # Integer tick multiplication silently wrapped on int64 overflow:
+    # 2**62 ticks * 3 came back as a large negative duration. pandas 3 raises
+    # OverflowError there; a lazy expression cannot raise per row, so rows
+    # whose product would overflow become NaT instead, while in-range rows —
+    # the largest exactly-representable product included — are unaffected.
+    import pandas as pd
+
+    boundary = (2**63 - 1) // 3
+    pdf = pd.DataFrame({"t": [pd.Timedelta(2**62), pd.Timedelta(boundary), pd.NaT]})
+    gdf = GeoDataFrame(sgpd.default_context().create_data_frame(pdf))
+    got = (gdf["t"] * 3).to_pandas()
+    assert pd.isna(got.tolist()[0])
+    assert got.tolist()[1] == pd.Timedelta(boundary * 3)
+    assert pd.isna(got.tolist()[2])
 
 
 def test_singleton_container_literals_resolve_as_numbers():

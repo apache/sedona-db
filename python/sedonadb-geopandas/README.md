@@ -66,7 +66,10 @@ deliberately *not* identical to GeoPandas:
 
 Division follows pandas rather than SQL: `/` is true division, so integer
 columns do not silently truncate. `//` is not implemented, since SQL division
-truncates toward zero where Python floors.
+truncates toward zero where Python floors. Duration arithmetic whose result
+overflows the 64-bit tick range produces missing values (`NaT`) rather than
+raising the way pandas does — a lazy expression cannot raise for individual
+rows.
 
 `dissolve()` aggregates non-geometry columns with `"first"`, which is an
 unordered aggregate: it returns *some* value from the group rather than the one

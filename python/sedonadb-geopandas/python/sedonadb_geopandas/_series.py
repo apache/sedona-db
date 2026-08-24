@@ -64,15 +64,13 @@ def normalize_scalar(value):
         # a missing value into a real number; masked means missing.
         if value is np.ma.masked or np.ma.is_masked(value):
             return None
-        # A 0-D array wrapping a temporal must be unwrapped to its NumPy scalar
-        # (not .item(), which yields integer ticks) so it reaches the temporal
-        # handling below.
-        if (
-            isinstance(value, np.ndarray)
-            and value.ndim == 0
-            and value.dtype.kind in "mM"
-        ):
-            value = value[()]
+        # A 0-D array is unwrapped first and the result re-normalized: the
+        # wrapped value may itself need handling below (an object-dtype 0-d
+        # array can hold a NumPy temporal). Temporal dtypes unwrap via [()]
+        # because .item() would flatten them to integer ticks.
+        if isinstance(value, np.ndarray) and value.ndim == 0:
+            unwrapped = value[()] if value.dtype.kind in "mM" else value.item()
+            return normalize_scalar(unwrapped)
         # NumPy temporal scalars are rebuilt as typed Arrow scalars: .item()
         # would flatten them to integer ticks and lit() rejects most NumPy
         # units directly. The Arrow unit is chosen losslessly rather than
@@ -95,15 +93,29 @@ def normalize_scalar(value):
                 # Whole multiples of seconds — and for datetimes, calendar
                 # year/month positions — convert exactly to seconds.
                 target = "s"
+            elif is_datetime:
+                # Sub-nanosecond datetimes narrow to nanoseconds; the
+                # round-trip check below rejects only the values that
+                # actually lose precision (GeoPandas silently truncates
+                # these instead, which this layer deliberately does not do).
+                target = "ns"
             else:
-                # timedelta64 in months/years is ambiguous (pandas rejects it
-                # too), and sub-nanosecond units cannot be represented.
-                raise TypeError(
+                # timedelta64 in months/years is ambiguous, and pandas
+                # rejects sub-nanosecond timedeltas outright, exactly
+                # representable or not.
+                raise ValueError(
                     f"Cannot represent a {kind}[{unit}] value exactly; use an "
                     f"unambiguous unit no finer than nanoseconds"
                 )
             converted = value.astype(f"{kind}[{target}]")
             if converted.astype(value.dtype) != value:
+                # A same-unit conversion is the identity, so a mismatch means
+                # either a sub-nanosecond value that has no exact ns form or
+                # a coarse value whose seconds form overflows int64.
+                if unit not in ("s", "ms", "us", "ns", "W", "D", "h", "m", "Y", "M"):
+                    raise ValueError(
+                        f"{value!r} loses precision at the Arrow 'ns' resolution"
+                    )
                 raise OverflowError(
                     f"{value!r} does not fit the Arrow {target!r} resolution"
                 )
@@ -139,17 +151,17 @@ def _numeric_value(other):
         # Resolve through the literal's Arrow value rather than its raw Python
         # payload: SedonaDB accepts one-element containers (an Arrow array, a
         # pandas Series or one-cell frame) as single-value literals, and the
-        # payload alone does not reveal that.
-        try:
-            import pyarrow as pa
+        # payload alone does not reveal that. Conversion and validation errors
+        # propagate as-is — the resolver's own message (a Series of length
+        # != 1, say) is more precise than any downstream type-check error.
+        import pyarrow as pa
 
-            arr = pa.array(value)
-            if len(arr) == 1:
-                value = arr[0].as_py()
-            else:
-                value = value._value
-        except Exception:
-            value = value._value
+        arr = pa.array(value)
+        if len(arr) != 1:
+            raise ValueError(
+                f"Can't use a Literal resolving to {len(arr)} values as a single value"
+            )
+        value = arr[0].as_py()
     if is_scalar(value):
         value = normalize_scalar(value)
     try:
@@ -396,9 +408,24 @@ class Series:
         ticks = self._expr.cast(pa.int64())
         integral = isinstance(value, numbers.Integral)
         if op == "*":
-            result = (
-                ticks * int(value) if integral else ticks.cast(pa.float64()) * value
-            )
+            if integral:
+                factor = int(value)
+                result = ticks * factor
+                if factor not in (-1, 0, 1):
+                    # Integer tick multiplication wraps on int64 overflow.
+                    # pandas raises there (silently wrapped before pandas 3);
+                    # a lazy expression cannot raise per row, so rows whose
+                    # product would overflow become null instead: the gate is
+                    # 1 in range and null past the (conservatively symmetric)
+                    # bound, and multiplying by it preserves in-range values.
+                    bound = (2**63 - 1) // abs(factor)
+                    in_range = (ticks <= lit(bound)) & (ticks >= lit(-bound))
+                    gate = in_range.funcs.nullif(lit(False)).cast(pa.int64())
+                    result = result * gate
+            else:
+                # Float products past int64 fail the cast back to ticks at
+                # materialization, so they raise rather than wrap.
+                result = ticks.cast(pa.float64()) * value
         elif integral:
             # Exact integer tick division: routing an integral divisor through
             # float64 loses precision above 2**53 ticks.
