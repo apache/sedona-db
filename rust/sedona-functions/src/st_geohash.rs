@@ -35,7 +35,7 @@ use sedona_expr::{
 };
 use sedona_geometry::{
     bounds::{WkbBounder2D, WkbBounder2DFactory},
-    interval::{IntervalTrait, WraparoundInterval},
+    interval::{Interval, IntervalTrait, WraparoundInterval},
     types::Edges,
 };
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
@@ -113,10 +113,14 @@ impl SedonaScalarKernel for STGeoHash {
         // instance and clear()s it per row rather than allocating per row.
         let mut bounder = bounder_for_arg_type(&arg_types[0], config_options)?;
 
+        // The CRS is a property of the type, so whether longitudes may be
+        // wrapped is decided once for the batch rather than per row.
+        let wrap = longitude_wrap_for_arg_type(&arg_types[0])?;
+
         if args.len() > 1 {
-            append_geohash_with_precision(&executor, args, bounder.as_mut(), &mut builder)?;
+            append_geohash_with_precision(&executor, args, bounder.as_mut(), wrap, &mut builder)?;
         } else {
-            append_point_geohash(&executor, bounder.as_mut(), &mut builder)?;
+            append_point_geohash(&executor, bounder.as_mut(), wrap, &mut builder)?;
         }
 
         executor.finish(Arc::new(builder.finish()))
@@ -164,11 +168,59 @@ fn bounder_for_arg_type(
     })
 }
 
+/// Whether an out-of-range longitude may be wrapped back into [-180, 180]
+///
+/// Wrapping is only meaningful when the coordinates are known to be longitude
+/// and latitude in degrees: 181 is then an unambiguous spelling of -179, and
+/// hashing it is better than dropping the row. Applied to a projected CRS the
+/// same arithmetic would turn a coordinate in metres into a plausible-looking
+/// geohash for somewhere it has nothing to do with, so it stays off unless the
+/// units are known.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum LongitudeWrap {
+    /// The argument is known to be in longitude/latitude degrees
+    Enabled,
+    /// The units are projected, or simply not known, so an out-of-range
+    /// coordinate is not necessarily a wrapped longitude
+    Disabled,
+}
+
+/// Decide whether an argument's coordinates are known to be lon/lat degrees
+///
+/// A geography is lon/lat by definition. A geometry qualifies only when its
+/// type-level CRS resolves to geographic parameters (EPSG:4326, OGC:CRS84,
+/// EPSG:4269, ...), which is the same test `st_setsrid` uses to decide whether
+/// a CRS is usable as a geography.
+///
+/// An absent CRS does *not* qualify. Undeclared coordinates are the common case
+/// for `ST_GeomFromText()` and could be anything, so they keep the pre-existing
+/// null-on-out-of-range behavior rather than being silently reinterpreted.
+/// Item-level CRS does not qualify either: [`ItemCrsKernel`] resolves the
+/// per-row CRS outside this kernel and hands the inner kernel an item type with
+/// no CRS attached, so there is nothing to inspect here.
+fn longitude_wrap_for_arg_type(arg_type: &SedonaType) -> Result<LongitudeWrap> {
+    let edges = match arg_type {
+        SedonaType::Wkb(edges, _) | SedonaType::WkbView(edges, _) => *edges,
+        // A literal NULL argument: every row is null, so this is never consulted.
+        _ => return Ok(LongitudeWrap::Disabled),
+    };
+
+    if edges == Edges::Spherical {
+        return Ok(LongitudeWrap::Enabled);
+    }
+
+    match arg_type.crs() {
+        Some(crs) if crs.geographic_params()?.is_some() => Ok(LongitudeWrap::Enabled),
+        _ => Ok(LongitudeWrap::Disabled),
+    }
+}
+
 /// Append the geohash of each geometry at the precision given by the second argument
 fn append_geohash_with_precision(
     executor: &WkbExecutor<'_, '_>,
     args: &[ColumnarValue],
     bounder: &mut dyn WkbBounder2D,
+    wrap: LongitudeWrap,
     builder: &mut StringBuilder,
 ) -> Result<()> {
     let precision_value = args[1]
@@ -179,7 +231,7 @@ fn append_geohash_with_precision(
 
     executor.execute_wkb_void(|maybe_wkb| {
         match (maybe_wkb, precision_iter.next().unwrap()) {
-            (Some(wkb), Some(precision)) => match invoke_scalar(wkb, precision, bounder)? {
+            (Some(wkb), Some(precision)) => match invoke_scalar(wkb, precision, bounder, wrap)? {
                 Some(geohash) => builder.append_value(geohash),
                 // Geometry was empty or outside the lon/lat bounds
                 None => builder.append_null(),
@@ -200,6 +252,7 @@ fn append_geohash_with_precision(
 fn append_point_geohash(
     executor: &WkbExecutor<'_, '_>,
     bounder: &mut dyn WkbBounder2D,
+    wrap: LongitudeWrap,
     builder: &mut StringBuilder,
 ) -> Result<()> {
     executor.execute_wkb_void(|maybe_wkb| {
@@ -216,7 +269,7 @@ fn append_point_geohash(
                     );
                 }
 
-                match invoke_scalar(wkb, MAX_PRECISION, bounder)? {
+                match invoke_scalar(wkb, MAX_PRECISION, bounder, wrap)? {
                     Some(geohash) => builder.append_value(geohash),
                     // Point was empty or outside the lon/lat bounds
                     None => builder.append_null(),
@@ -231,11 +284,22 @@ fn append_point_geohash(
 /// Compute the geohash of a geometry
 ///
 /// Follows Apache Sedona's GeometryGeoHashEncoder.calculate(): the point that
-/// is hashed is the center of the geometry's bounding box, and null is
-/// returned when the bounding box is not fully contained in
-/// [-180, 180] x [-90, 90]. Unlike Sedona's Java implementation (where an
-/// empty geometry yields JTS' "null envelope" and thus an accidental hash of
-/// (-0.5, -0.5)), empty geometries return null here.
+/// is hashed is the center of the geometry's bounding box. Unlike Sedona's Java
+/// implementation (where an empty geometry yields JTS' "null envelope" and thus
+/// an accidental hash of (-0.5, -0.5)), empty geometries return null here.
+///
+/// Out-of-range coordinates yield null rather than an error, matching Apache
+/// Sedona (GeometryGeoHashEncoder.calculate returns null) rather than PostGIS'
+/// `geometry` overload (which raises "Geohash requires inputs in decimal
+/// degrees"). The divergence is deliberate: a Spark query that returns nulls
+/// for out-of-range input should keep returning nulls here rather than start
+/// failing partway through a large scan.
+///
+/// When `wrap` is [`LongitudeWrap::Enabled`], an out-of-range *longitude* is
+/// first wrapped back into [-180, 180] instead of nulling the row, so a
+/// longitude of 181 hashes as -179. Latitude is never wrapped; see
+/// [`normalize_longitude`] and [`in_latitude_range`] for why the two axes are
+/// treated differently.
 ///
 /// The bounding box comes from `bounder`, which the caller resolved from the
 /// argument's edge type, so a geography is bounded on the sphere rather than
@@ -244,6 +308,7 @@ fn invoke_scalar(
     geom: &Wkb,
     precision: i64,
     bounder: &mut dyn WkbBounder2D,
+    wrap: LongitudeWrap,
 ) -> Result<Option<String>> {
     bounder.clear();
     bounder
@@ -255,20 +320,90 @@ fn invoke_scalar(
         return Ok(None);
     }
 
-    // Longitude can take values in [-180, 180]; latitude can take values in [-90, 90].
-    // Out-of-range coordinates yield null rather than an error, matching Apache
-    // Sedona (GeometryGeoHashEncoder.calculate returns null here). PostGIS instead
-    // raises "Geohash requires inputs in decimal degrees"; the divergence is
-    // deliberate, since a Spark query that returns nulls for out-of-range input
-    // should keep returning nulls here rather than start failing.
-    if x.lo() < -180.0 || y.lo() < -90.0 || x.hi() > 180.0 || y.hi() > 90.0 {
+    // Latitude can take values in [-90, 90]. Unlike longitude it is not cyclic,
+    // so there is no reinterpretation of an out-of-range value that recovers a
+    // real location, and it nulls out under both wrap settings.
+    if !in_latitude_range(&y) {
         return Ok(None);
     }
+
+    // Longitude can take values in [-180, 180].
+    let Some(x) = normalize_longitude(&x, wrap) else {
+        return Ok(None);
+    };
 
     let lon = center_longitude(&x);
     let lat = y.lo() + (y.hi() - y.lo()) / 2.0;
 
     Ok(Some(geohash_encode(lon, lat, precision)))
+}
+
+/// Whether a latitude interval lies within [-90, 90]
+///
+/// Latitude is not cyclic -- the bounder hands it back as a plain [`Interval`]
+/// rather than a [`WraparoundInterval`] for exactly that reason -- so a latitude
+/// of 100 does not denote a real place the way a longitude of 190 does. PostGIS'
+/// `geography` cast reflects it back over the pole (100 becomes 80) but leaves
+/// the longitude alone, which lands on a different point than either reading of
+/// the input; rather than reproduce that, an out-of-range latitude stays null.
+fn in_latitude_range(y: &Interval) -> bool {
+    y.lo() >= -90.0 && y.hi() <= 90.0
+}
+
+/// Bring a longitude interval into [-180, 180], or reject it
+///
+/// Returns `None` when the interval cannot be hashed: it is out of range and
+/// wrapping is disabled, it is not finite, or it spans a full turn or more (in
+/// which case no single longitude is its center).
+///
+/// Wrapping happens at the interval level rather than per coordinate, which
+/// preserves information that per-coordinate wrapping destroys: the bounding
+/// box of LINESTRING (179 0, 181 0) is 179..181, which wraps to the two-degree
+/// interval 179..-179 centered on 180. Wrapping the coordinates first and
+/// bounding afterwards would instead give 179 and -179 to a bounder that knows
+/// nothing about wraparound, yielding the 358-degree interval -179..179 and a
+/// center of 0 -- the opposite side of the planet.
+fn normalize_longitude(x: &WraparoundInterval, wrap: LongitudeWrap) -> Option<WraparoundInterval> {
+    // Already in range. This deliberately includes the wraparound intervals a
+    // spherical bounder produces (lo > hi, e.g. 170..-170), where both bounds
+    // are in range and the interval already means what it should.
+    if x.lo() >= -180.0 && x.hi() <= 180.0 {
+        return Some(*x);
+    }
+
+    if wrap == LongitudeWrap::Disabled {
+        return None;
+    }
+
+    if !x.lo().is_finite() || !x.hi().is_finite() {
+        return None;
+    }
+
+    // A box spanning 360 degrees or more covers every longitude, so wrapping it
+    // would collapse it to an arbitrary point rather than find its center.
+    if x.hi() - x.lo() >= 360.0 {
+        return None;
+    }
+
+    Some(WraparoundInterval::new(
+        wrap_longitude(x.lo()),
+        wrap_longitude(x.hi()),
+    ))
+}
+
+/// Wrap a single longitude into [-180, 180]
+///
+/// Matches the coercion PostGIS applies when a geometry is cast to `geography`
+/// ("Coordinate values were coerced into range [-180 -90, 180 90] for
+/// GEOGRAPHY"): 190 becomes -170, -190 becomes 170, and 541 becomes -179.
+/// Values already in range are returned untouched so that the closed bounds
+/// -180 and 180 keep their sign rather than folding onto each other.
+fn wrap_longitude(lon: f64) -> f64 {
+    if (-180.0..=180.0).contains(&lon) {
+        return lon;
+    }
+
+    (lon + 180.0).rem_euclid(360.0) - 180.0
 }
 
 /// The center of a longitude interval, in [-180, 180]
@@ -344,6 +479,7 @@ mod tests {
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_geometry::bounds::WkbGeometryBounder;
+    use sedona_schema::crs::{deserialize_crs, lnglat};
     use sedona_schema::datatypes::{
         WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS,
         WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY,
@@ -370,6 +506,248 @@ mod tests {
             .with_bounder(Edges::Spherical, Arc::new(WkbGeometryBounder::default()))
             .unwrap();
         tester
+    }
+
+    /// A geometry type tagged with a lon/lat CRS, which enables longitude wrapping
+    fn lnglat_geometry() -> SedonaType {
+        SedonaType::Wkb(Edges::Planar, lnglat())
+    }
+
+    /// A geometry type tagged with a projected CRS, which does not
+    fn projected_geometry() -> SedonaType {
+        SedonaType::Wkb(Edges::Planar, deserialize_crs("EPSG:3857").unwrap())
+    }
+
+    fn geohash_tester(sedona_type: SedonaType) -> ScalarUdfTester {
+        ScalarUdfTester::new(
+            st_geohash_udf().into(),
+            vec![sedona_type, SedonaType::Arrow(DataType::Int64)],
+        )
+    }
+
+    #[test]
+    fn wrap_longitude_matches_postgis_geography_coercion() {
+        // Values pinned against PostGIS 3.6, which reports "Coordinate values
+        // were coerced into range [-180 -90, 180 90] for GEOGRAPHY" and then
+        // hashes the coerced point:
+        //   SELECT ST_AsText('POINT (190 50)'::geography)  -> POINT(-170 50)
+        //   SELECT ST_AsText('POINT (-190 50)'::geography) -> POINT(170 50)
+        //   SELECT ST_AsText('POINT (541 50)'::geography)  -> POINT(-179 50)
+        assert_eq!(wrap_longitude(190.0), -170.0);
+        assert_eq!(wrap_longitude(-190.0), 170.0);
+        assert_eq!(wrap_longitude(541.0), -179.0);
+
+        // In-range values are returned untouched, so the closed bounds keep
+        // their sign instead of folding onto each other.
+        assert_eq!(wrap_longitude(180.0), 180.0);
+        assert_eq!(wrap_longitude(-180.0), -180.0);
+        assert_eq!(wrap_longitude(0.0), 0.0);
+    }
+
+    #[test]
+    fn normalize_longitude_only_wraps_when_enabled() {
+        let out_of_range = WraparoundInterval::new(190.0, 190.0);
+
+        assert_eq!(
+            normalize_longitude(&out_of_range, LongitudeWrap::Enabled),
+            Some(WraparoundInterval::new(-170.0, -170.0))
+        );
+        assert_eq!(
+            normalize_longitude(&out_of_range, LongitudeWrap::Disabled),
+            None
+        );
+
+        // An in-range interval is untouched under either setting, including the
+        // wraparound intervals a spherical bounder produces.
+        for wrap in [LongitudeWrap::Enabled, LongitudeWrap::Disabled] {
+            let in_range = WraparoundInterval::new(10.0, 20.0);
+            assert_eq!(normalize_longitude(&in_range, wrap), Some(in_range));
+
+            let crosses_antimeridian = WraparoundInterval::new(170.0, -170.0);
+            assert_eq!(
+                normalize_longitude(&crosses_antimeridian, wrap),
+                Some(crosses_antimeridian)
+            );
+        }
+    }
+
+    #[test]
+    fn normalize_longitude_rejects_unhashable_intervals() {
+        // A box spanning a full turn or more has no single center longitude.
+        assert_eq!(
+            normalize_longitude(&WraparoundInterval::new(0.0, 360.0), LongitudeWrap::Enabled),
+            None
+        );
+        assert_eq!(
+            normalize_longitude(
+                &WraparoundInterval::new(-400.0, 400.0),
+                LongitudeWrap::Enabled
+            ),
+            None
+        );
+
+        // Non-finite bounds have nothing to wrap into.
+        assert_eq!(
+            normalize_longitude(
+                &WraparoundInterval::new(f64::NEG_INFINITY, f64::INFINITY),
+                LongitudeWrap::Enabled
+            ),
+            None
+        );
+        assert_eq!(
+            normalize_longitude(
+                &WraparoundInterval::new(f64::INFINITY, f64::INFINITY),
+                LongitudeWrap::Enabled
+            ),
+            None
+        );
+    }
+
+    #[rstest]
+    fn longitude_wrap_follows_the_crs(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+    ) {
+        let edges = match &sedona_type {
+            SedonaType::Wkb(edges, _) | SedonaType::WkbView(edges, _) => *edges,
+            _ => unreachable!(),
+        };
+
+        // A known lon/lat CRS enables wrapping...
+        assert_eq!(
+            longitude_wrap_for_arg_type(&SedonaType::Wkb(edges, lnglat())).unwrap(),
+            LongitudeWrap::Enabled
+        );
+        // ...as does NAD83, which geographic_params() also recognizes as degrees.
+        assert_eq!(
+            longitude_wrap_for_arg_type(&SedonaType::Wkb(
+                edges,
+                deserialize_crs("EPSG:4269").unwrap()
+            ))
+            .unwrap(),
+            LongitudeWrap::Enabled
+        );
+        // A geography is lon/lat by definition, whatever its declared CRS.
+        assert_eq!(
+            longitude_wrap_for_arg_type(&WKB_GEOGRAPHY).unwrap(),
+            LongitudeWrap::Enabled
+        );
+
+        // A projected CRS does not, because wrapping metres would produce a
+        // plausible-looking hash for the wrong place.
+        assert_eq!(
+            longitude_wrap_for_arg_type(&SedonaType::Wkb(
+                edges,
+                deserialize_crs("EPSG:3857").unwrap()
+            ))
+            .unwrap(),
+            LongitudeWrap::Disabled
+        );
+        // Neither does an absent CRS, which is the ST_GeomFromText() default.
+        assert_eq!(
+            longitude_wrap_for_arg_type(&sedona_type).unwrap(),
+            LongitudeWrap::Disabled
+        );
+    }
+
+    #[test]
+    fn udf_wraps_longitude_for_lnglat_crs() {
+        let tester = geohash_tester(lnglat_geometry());
+
+        // 190 is the same meridian as -170, so the two hash identically rather
+        // than the out-of-range one dropping to null. Pinned against PostGIS:
+        //   SELECT ST_GeoHash('POINT (190 50)'::geography, 12)  -> b0zh7w1z0gs3
+        //   SELECT ST_GeoHash('POINT (-170 50)'::geography, 12) -> b0zh7w1z0gs3
+        let wrapped = tester
+            .invoke_scalar_scalar("POINT (190.0 50.0)", ScalarValue::Int64(Some(12)))
+            .unwrap();
+        tester.assert_scalar_result_equals(wrapped, "b0zh7w1z0gs3");
+
+        let equivalent = tester
+            .invoke_scalar_scalar("POINT (-170.0 50.0)", ScalarValue::Int64(Some(12)))
+            .unwrap();
+        tester.assert_scalar_result_equals(equivalent, "b0zh7w1z0gs3");
+
+        // -190 wraps the other way, to 170.
+        //   SELECT ST_GeoHash('POINT (-190 50)'::geography, 12) -> zbbukqnpp5e9
+        //   SELECT ST_GeoHash('POINT (170 50)'::geography, 12)  -> zbbukqnpp5e9
+        let result = tester
+            .invoke_scalar_scalar("POINT (-190.0 50.0)", ScalarValue::Int64(Some(12)))
+            .unwrap();
+        tester.assert_scalar_result_equals(result, "zbbukqnpp5e9");
+
+        // Multiple turns wrap too: 541 - 720 = -179.
+        //   SELECT ST_GeoHash('POINT (541 50)'::geography, 12)  -> b0bsqy0pjew1
+        //   SELECT ST_GeoHash('POINT (-179 50)'::geography, 12) -> b0bsqy0pjew1
+        let result = tester
+            .invoke_scalar_scalar("POINT (541.0 50.0)", ScalarValue::Int64(Some(12)))
+            .unwrap();
+        tester.assert_scalar_result_equals(result, "b0bsqy0pjew1");
+    }
+
+    #[test]
+    fn udf_wrapping_keeps_a_bbox_centered_across_the_antimeridian() {
+        let tester = geohash_tester(lnglat_geometry());
+
+        // The bounding box of this linestring is 179..181, whose center is the
+        // antimeridian itself. Wrapping the interval (rather than the vertices)
+        // preserves that: the equivalent in-range geometry hashes the same.
+        //   SELECT ST_GeoHash(ST_GeomFromText('POINT (180 0)'), 12) -> xbpbpbpbpbpb
+        let wrapped = tester
+            .invoke_scalar_scalar(
+                "LINESTRING (179.0 0.0, 181.0 0.0)",
+                ScalarValue::Int64(Some(12)),
+            )
+            .unwrap();
+        tester.assert_scalar_result_equals(wrapped, "xbpbpbpbpbpb");
+    }
+
+    #[test]
+    fn udf_does_not_wrap_longitude_without_a_lnglat_crs() {
+        // A projected CRS keeps the pre-existing null, because an out-of-range
+        // easting is not a wrapped longitude.
+        let tester = geohash_tester(projected_geometry());
+        let result = tester
+            .invoke_scalar_scalar("POINT (190.0 50.0)", ScalarValue::Int64(Some(12)))
+            .unwrap();
+        tester.assert_scalar_result_equals(result, ScalarValue::Utf8(None));
+
+        // An undeclared CRS does the same.
+        let tester = geohash_tester(WKB_GEOMETRY);
+        let result = tester
+            .invoke_scalar_scalar("POINT (190.0 50.0)", ScalarValue::Int64(Some(12)))
+            .unwrap();
+        tester.assert_scalar_result_equals(result, ScalarValue::Utf8(None));
+    }
+
+    #[test]
+    fn udf_never_wraps_latitude() {
+        // Latitude is not cyclic, so it stays null even where longitude wraps.
+        // (PostGIS' geography cast would reflect 100 to 80 while leaving the
+        // longitude alone, landing on a third point entirely.)
+        let tester = geohash_tester(lnglat_geometry());
+        for wkt in ["POINT (50.0 100.0)", "POINT (50.0 -100.0)"] {
+            let result = tester
+                .invoke_scalar_scalar(wkt, ScalarValue::Int64(Some(12)))
+                .unwrap();
+            tester.assert_scalar_result_equals(result, ScalarValue::Utf8(None));
+        }
+
+        // Out of range on both axes is null as well -- latitude is checked first
+        // and there is no wrapping that rescues it.
+        let result = tester
+            .invoke_scalar_scalar("POINT (190.0 100.0)", ScalarValue::Int64(Some(12)))
+            .unwrap();
+        tester.assert_scalar_result_equals(result, ScalarValue::Utf8(None));
+    }
+
+    #[test]
+    fn udf_one_arg_wraps_longitude() {
+        // The one-argument overload shares invoke_scalar(), so it wraps too.
+        //   SELECT ST_GeoHash(ST_GeomFromText('POINT (-170 50)'), 20)
+        //     -> b0zh7w1z0gs3y0zh7w1z
+        let tester = ScalarUdfTester::new(st_geohash_udf().into(), vec![lnglat_geometry()]);
+        let wrapped = tester.invoke_scalar("POINT (190.0 50.0)").unwrap();
+        tester.assert_scalar_result_equals(wrapped, "b0zh7w1z0gs3y0zh7w1z");
     }
 
     #[test]
