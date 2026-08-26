@@ -206,11 +206,12 @@ mod tests {
     use sedona_testing::raster_spec::{assert_rasters_equal, raster_array, RasterSpec};
     use sedona_testing::testers::ScalarUdfTester;
 
-    /// A 2x2 raster with a CRS — so the comparisons confirm the CRS (and pixels)
-    /// survive the transform swap.
+    /// A 2x2 raster with a CRS and a named band — so the comparisons confirm
+    /// the CRS, the band name, and the pixels all survive the transform swap.
     fn base() -> RasterSpec {
         RasterSpec::d2(2, 2)
             .band_values(&[1u8, 2, 3, 4])
+            .name("temperature")
             .crs(Some("OGC:CRS84"))
     }
 
@@ -260,6 +261,29 @@ mod tests {
             .invoke_array_scalar_scalar(Arc::new(base().build()), "2 0 0 -3 101 198.5", "ESRI")
             .unwrap();
         let expected = base().transform([100.0, 2.0, 0.0, 200.0, 0.0, -3.0]);
+        assert_rasters_equal(&result, &[Some(expected)]);
+    }
+
+    #[test]
+    fn preserves_per_band_names_across_multiple_bands() {
+        // Band names live on the raster (`RasterRef::band_name(i)`), not on
+        // `BandRef`, so the rebuild has to carry each one across by index.
+        // Two differently-named bands pin the indexing, not just the presence
+        // of a name.
+        let multi = || {
+            RasterSpec::d2(2, 2)
+                .band_values(&[1u8, 2, 3, 4])
+                .name("temperature")
+                .band_values(&[5u8, 6, 7, 8])
+                .name("precipitation")
+                .crs(Some("OGC:CRS84"))
+        };
+
+        let result = tester_2arg()
+            .invoke_array_scalar(Arc::new(multi().build()), "2 0 0 -3 100 200")
+            .unwrap();
+
+        let expected = multi().transform([100.0, 2.0, 0.0, 200.0, 0.0, -3.0]);
         assert_rasters_equal(&result, &[Some(expected)]);
     }
 

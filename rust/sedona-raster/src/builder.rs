@@ -287,9 +287,17 @@ impl RasterBuilder {
     ) -> Result<(), ArrowError> {
         self.start_raster_from(source, overrides)?;
         for band_idx in 0..source.num_bands() {
-            source
-                .band(band_idx)?
-                .copy_into(self, BandOverrides::default())?;
+            // The band name lives on the *raster* (`RasterRef::band_name`), not
+            // on `BandRef`, so `copy_into` has nothing to inherit it from and
+            // must be handed it explicitly — otherwise every copied band comes
+            // out unnamed.
+            source.band(band_idx)?.copy_into(
+                self,
+                BandOverrides {
+                    name: source.band_name(band_idx),
+                    ..BandOverrides::default()
+                },
+            )?;
             self.finish_band()?;
         }
         self.finish_raster()
@@ -883,6 +891,7 @@ mod tests {
         // Source: a CRS, a nodata sentinel, and pixel values to preserve.
         let source = RasterSpec::d2(2, 1)
             .band_values(&[1u8, 2])
+            .name("temperature")
             .nodata(9u8)
             .crs(Some("OGC:CRS84"))
             .build();
@@ -899,9 +908,11 @@ mod tests {
             .unwrap();
         let out: ArrayRef = Arc::new(builder.finish().unwrap());
 
-        // Only the transform changed; CRS, nodata, and pixels carried over.
+        // Only the transform changed; CRS, nodata, band name, and pixels
+        // carried over.
         let expected = RasterSpec::d2(2, 1)
             .band_values(&[1u8, 2])
+            .name("temperature")
             .nodata(9u8)
             .crs(Some("OGC:CRS84"))
             .transform([100.0, 2.0, 0.0, 200.0, 0.0, -3.0]);
