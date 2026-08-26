@@ -67,12 +67,12 @@ deliberately *not* identical to GeoPandas:
 Division follows pandas rather than SQL: `/` is true division, so integer
 columns do not silently truncate. `//` is not implemented, since SQL division
 truncates toward zero where Python floors. Duration arithmetic whose row
-results overflow the 64-bit tick range produces missing values (`NaT`) rather
-than raising the way pandas does — a lazy expression cannot raise for
-individual rows. (pandas clamps finite positive float overflow to
-`Timedelta.max`, a casting artifact this layer treats as overflow instead. An
-integer operand that itself exceeds the 64-bit range raises `OverflowError`,
-as in pandas.)
+results overflow the 64-bit tick range produces missing values (`NaT`) — a
+lazy expression cannot raise for individual rows the way pandas 3 does, and
+pandas 2 silently wraps integer overflow instead. (pandas also clamps finite
+positive float overflow to `Timedelta.max`, a casting artifact this layer
+treats as overflow. An integer operand that itself exceeds the 64-bit range
+raises `OverflowError`, as in every pandas version.)
 
 `dissolve()` aggregates non-geometry columns with `"first"`, which is an
 unordered aggregate: it returns *some* value from the group rather than the one

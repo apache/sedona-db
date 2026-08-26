@@ -154,8 +154,16 @@ def _numeric_value(other):
         # payload alone does not reveal that. Conversion and validation errors
         # propagate as-is — the resolver's own message (a Series of length
         # != 1, say) is more precise than any downstream type-check error.
+        # The exception is a plain integer past int64: the resolver's failure
+        # for it names the wrong problem, so it is reported as the overflow
+        # it is, matching the unwrapped-integer behavior.
+        import numbers
+
         import pyarrow as pa
 
+        raw = value._value
+        if isinstance(raw, numbers.Integral) and not -(2**63) <= int(raw) < 2**63:
+            raise OverflowError(f"{raw} overflows the signed 64-bit range")
         arr = pa.array(value)
         if len(arr) != 1:
             raise ValueError(
@@ -391,17 +399,21 @@ class Series:
 
         dtype = self._dtype()
 
+        # INT64_MIN is a representable Arrow duration tick, but it is the
+        # missing-value sentinel in the pandas model this layer implements
+        # (Timedelta.min is one tick above it). Treating it as a value breaks
+        # every path — division by -1 aborts on arithmetic overflow, negation
+        # wraps back onto the sentinel, other divisors produce real-looking
+        # results pandas would call NaT — so it becomes null at the source.
+        ticks = self._expr.cast(pa.int64()).funcs.nullif(lit(-(2**63)))
+
         # Non-finite operands have no integer form to cast back to, so they are
         # resolved up front the way pandas resolves them. Division by infinity
         # is zero for every valid row — computed as ticks * 0 so source nulls
         # stay null — while division by zero or NaN, and multiplication by a
         # non-finite value, make every row NaT.
         if op == "/" and math.isinf(value):
-            return Series(
-                self._df,
-                (self._expr.cast(pa.int64()) * 0).cast(dtype),
-                self._name,
-            )
+            return Series(self._df, (ticks * 0).cast(dtype), self._name)
         if not math.isfinite(value) or (op == "/" and value == 0):
             return Series(self._df, lit(pa.scalar(None, dtype)), self._name)
 
@@ -412,16 +424,14 @@ class Series:
         if is_int and not -(2**63) <= int(value) < 2**63:
             raise OverflowError(f"{value} overflows the signed 64-bit tick range")
 
-        ticks = self._expr.cast(pa.int64())
-        # Integral-valued floats take the exact integer path too: pandas keeps
-        # identity operations like `* 1.0` exact, and float64 cannot represent
-        # every int64 tick. Floats past the int64 range stay on the float path
-        # (pandas computes those in float as well rather than raising).
-        exact = is_int or (
-            isinstance(value, float)
-            and value.is_integer()
-            and -(2**63) <= int(value) < 2**63
-        )
+        # Among floats, only the identities ±1.0 take the exact integer path:
+        # float64 cannot represent every int64 tick, so the float round trip
+        # would corrupt (or, at the extremes, null) a value the operation was
+        # supposed to return unchanged. Every other float stays on the float
+        # path — pandas computes those in float too, losing sub-tick precision
+        # above 2**53, and matching those in-range results matters more than
+        # improving on them.
+        exact = is_int or value in (1.0, -1.0)
         if exact:
             factor = int(value)
             if op == "*":

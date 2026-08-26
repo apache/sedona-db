@@ -1059,17 +1059,18 @@ def test_oversized_integer_duration_operand_raises_overflow():
             gdf["t"] / operand
 
 
-def test_integral_float_duration_arithmetic_is_exact():
-    # `* 1.0` and `/ 1.0` are identities in pandas even at the largest tick,
-    # but the float64 round trip cannot represent every int64 tick and the
-    # cast back aborted. Integral-valued floats use the exact integer path.
+def test_identity_float_duration_arithmetic_is_exact():
+    # `* 1.0` and `/ 1.0` return the input unchanged even at the largest
+    # tick, where the float64 round trip cannot represent the value and the
+    # cast back aborted. Only the identities ±1.0 take the exact integer
+    # path; other floats keep pandas' float64 semantics.
     import pandas as pd
 
     gdf = _duration_frame([pd.Timedelta(2**63 - 1)])
     assert (gdf["t"] * 1.0).to_pandas().tolist()[0] == pd.Timedelta(2**63 - 1)
     assert (gdf["t"] / 1.0).to_pandas().tolist()[0] == pd.Timedelta(2**63 - 1)
     got = (gdf["t"] * 3.0).to_pandas()
-    assert got.isna().all()  # routed through the gated integer path
+    assert got.isna().all()  # float path: past the tick range, so null
 
 
 def test_float_duration_overflow_is_null_not_abort():
@@ -1097,6 +1098,84 @@ def test_float_duration_overflow_is_null_not_abort():
     assert got.tolist()[0] == pd.Timedelta(0)
     assert pd.isna(got.tolist()[1])
     assert pd.isna(got.tolist()[2])
+
+
+# -- regressions from the tenth review pass ---------------------------------
+
+
+def test_int64_min_duration_tick_is_missing():
+    # INT64_MIN is a representable Arrow duration tick but the pandas missing
+    # sentinel (Timedelta.min sits one tick above it). Treated as a value it
+    # aborted `/ -1` on arithmetic overflow, survived `* -1.0` internally by
+    # wrapping back onto the sentinel (so a chained `* 0` resurrected it as
+    # zero), and divided into real-looking results. It is null at the source.
+    import pandas as pd
+    import pyarrow as pa
+
+    tbl = pa.table({"t": pa.array([-(2**63), 5], pa.duration("ns"))})
+    gdf = GeoDataFrame(sgpd.default_context().create_data_frame(tbl))
+    got = (gdf["t"] / -1).to_pandas()
+    assert pd.isna(got.tolist()[0])
+    assert got.tolist()[1] == pd.Timedelta(-5)
+    chained = ((gdf["t"] * -1.0) * 0).to_pandas()
+    assert pd.isna(chained.tolist()[0])
+    assert chained.tolist()[1] == pd.Timedelta(0)
+    divided = (gdf["t"] / 3).to_pandas()
+    assert pd.isna(divided.tolist()[0])
+
+
+def test_non_identity_float_duration_arithmetic_matches_pandas():
+    # Routing every integral-valued float through exact integer arithmetic
+    # silently changed in-range results: pandas computes `* 3.0` in float64,
+    # losing sub-tick precision above 2**53, and matching pandas there
+    # matters more than improving on it. The identities ±1.0 stay exact —
+    # pandas loses precision even on those above 2**53, a corruption of an
+    # operation that should return its input; that one this layer does not
+    # reproduce.
+    import pandas as pd
+
+    pdf = pd.DataFrame({"t": [pd.Timedelta(2**53 + 1)]})
+    gdf = GeoDataFrame(sgpd.default_context().create_data_frame(pdf))
+    for operand in (3.0, 1 / 3):
+        assert (gdf["t"] * operand).to_pandas().tolist()[0] == (
+            pdf["t"] * operand
+        ).tolist()[0]
+        assert (gdf["t"] / operand).to_pandas().tolist()[0] == (
+            pdf["t"] / operand
+        ).tolist()[0]
+    assert (gdf["t"] * 1.0).to_pandas().tolist()[0] == pd.Timedelta(2**53 + 1)
+    assert (gdf["t"] * -1.0).to_pandas().tolist()[0] == pd.Timedelta(-(2**53) - 1)
+
+
+def test_oversized_integer_literal_raises_overflow():
+    # lit(2**63) failed Arrow conversion inside the operand resolver with a
+    # misleading ValueError before the range check could run; the payload is
+    # inspected first and reported as the overflow it is.
+    import pandas as pd
+    from sedonadb.expr import lit
+
+    gdf = _duration_frame([pd.Timedelta(0), pd.Timedelta(1)])
+    with pytest.raises(OverflowError):
+        gdf["t"] * lit(2**63)
+    with pytest.raises(OverflowError):
+        gdf["t"] / lit(2**63)
+
+
+def test_negative_float_overflow_and_exact_boundary():
+    # The earlier negative case computed exactly -2**63, which lands on the
+    # pandas NaT sentinel even without the lower-bound gate, so it could not
+    # prove the gate exists. -2**64 is a genuine negative overflow — it
+    # aborts the cast without the gate — and (2**62 - 512) / 0.5 lands
+    # exactly on the largest float64 inside the tick range, proving the gate
+    # keeps the boundary itself.
+    import pandas as pd
+
+    gdf = _duration_frame([pd.Timedelta(-(2**62)), pd.Timedelta(2**62 - 512)])
+    got = (gdf["t"] / 0.25).to_pandas()
+    assert pd.isna(got.tolist()[0])
+    got = (gdf["t"] / 0.5).to_pandas()
+    assert pd.isna(got.tolist()[0])
+    assert got.tolist()[1] == pd.Timedelta(2**63 - 1024)
 
 
 def test_singleton_container_literals_resolve_as_numbers():
