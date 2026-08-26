@@ -22,10 +22,9 @@ use datafusion_common::cast::as_string_view_array;
 use datafusion_common::error::Result;
 use datafusion_common::{arrow_datafusion_err, exec_err};
 use datafusion_expr::{ColumnarValue, Volatility};
-use sedona_common::sedona_internal_datafusion_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
-use sedona_raster::builder::{RasterBuilder, StartBandArgs};
-use sedona_raster::traits::RasterRef;
+use sedona_raster::builder::{RasterBuilder, RasterOverrides, StartBandArgs};
+use sedona_raster::traits::{BandOverrides, RasterRef};
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;
 
@@ -90,16 +89,7 @@ impl SedonaScalarKernel for RsDimToBand {
 
                     require_any_band_has_dim(raster, name, "RS_DimToBand")?;
 
-                    let t: [f64; 6] = raster.transform().try_into().map_err(|_| {
-                        sedona_internal_datafusion_err!("raster transform is not 6 elements")
-                    })?;
-                    let spatial_dims = raster.spatial_dims();
-                    new_builder.start_raster_nd(
-                        &t,
-                        &spatial_dims,
-                        raster.spatial_shape(),
-                        raster.crs(),
-                    )?;
+                    new_builder.start_raster_from(raster, RasterOverrides::default())?;
 
                     for band_idx in 0..raster.num_bands() {
                         let band = raster
@@ -110,16 +100,7 @@ impl SedonaScalarKernel for RsDimToBand {
                         match maybe_dim_idx {
                             None => {
                                 // Band doesn't have this dimension -- pass through
-                                let dim_names = band.dim_names();
-                                let band_name = raster.band_name(band_idx);
-                                new_builder.start_band(StartBandArgs {
-                                    name: band_name,
-                                    nodata: band.nodata(),
-                                    ..StartBandArgs::new(&dim_names, band.shape(), band.data_type())
-                                })?;
-                                let ndb = band.nd_buffer()?;
-                                let data = ndb.as_contiguous()?;
-                                new_builder.band_data_writer().append_value(data);
+                                band.copy_into(&mut new_builder, BandOverrides::default())?;
                                 new_builder.finish_band()?;
                             }
                             Some(dim_idx) => {
@@ -292,16 +273,7 @@ impl SedonaScalarKernel for RsBandToDim {
 
                     let nodata = ref_nodata.as_deref();
 
-                    let t: [f64; 6] = raster.transform().try_into().map_err(|_| {
-                        sedona_internal_datafusion_err!("raster transform is not 6 elements")
-                    })?;
-                    let spatial_dims = raster.spatial_dims();
-                    new_builder.start_raster_nd(
-                        &t,
-                        &spatial_dims,
-                        raster.spatial_shape(),
-                        raster.crs(),
-                    )?;
+                    new_builder.start_raster_from(raster, RasterOverrides::default())?;
                     new_builder.start_band(StartBandArgs {
                         nodata,
                         ..StartBandArgs::new(&new_dim_names, &new_shape, ref_data_type)
@@ -379,6 +351,43 @@ mod tests {
         assert_eq!(raster.band_name(0), Some("temp_time_0"));
         assert_eq!(raster.band_name(1), Some("temp_time_1"));
         assert_eq!(raster.band_name(2), Some("temp_time_2"));
+    }
+
+    #[test]
+    fn dimtoband_passes_through_bands_without_dim_preserving_names() {
+        // Heterogeneous raster: the band carrying `time` expands into one band
+        // per index, while the band without it is passed through untouched.
+        // The pass-through derives the output band via `BandRef::copy_into`,
+        // which inherits the name — assert it survives, since a dropped name is
+        // silent otherwise.
+        let udf: ScalarUDF = rs_dimtoband_udf().into();
+        let tester = ScalarUdfTester::new(udf, vec![RASTER, SedonaType::Arrow(DataType::Utf8)]);
+
+        let rasters = RasterSpec::nd(&["time", "y", "x"], &[2, 2, 2])
+            .crs(None)
+            .band_nd(&["y", "x"], &[2, 2], BandDataType::UInt8)
+            .name("elevation")
+            .band(BandDataType::UInt8)
+            .name("temperature")
+            .build();
+
+        let result = tester
+            .invoke_array_scalar(Arc::new(rasters), "time")
+            .unwrap();
+
+        let result_struct = result.as_any().downcast_ref::<StructArray>().unwrap();
+        let raster_array = RasterStructArray::try_new(result_struct).unwrap();
+        let raster = raster_array.get(0).unwrap();
+
+        // Pass-through band keeps its own name; the expanded band contributes
+        // one suffixed band per `time` index.
+        assert_eq!(raster.num_bands(), 3);
+        assert_eq!(raster.band_name(0), Some("elevation"));
+        assert_eq!(raster.band_name(1), Some("temperature_time_0"));
+        assert_eq!(raster.band_name(2), Some("temperature_time_1"));
+        // The pass-through band is emitted unchanged, not expanded.
+        assert_eq!(raster.band(0).unwrap().dim_names(), vec!["y", "x"]);
+        assert_eq!(raster.band(0).unwrap().shape(), &[2, 2]);
     }
 
     #[test]
