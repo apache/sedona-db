@@ -15,22 +15,22 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::sync::Arc;
+use std::{collections::HashMap, iter::zip, sync::Arc};
 
 use crate::executor::WkbExecutor;
-use arrow_array::builder::StringBuilder;
+use arrow_array::{builder::StringBuilder, Array};
 use arrow_schema::DataType;
 use datafusion_common::{
-    cast::as_int64_array,
+    cast::{as_int64_array, as_string_view_array, as_struct_array},
     config::ConfigOptions,
     error::{DataFusionError, Result},
-    exec_err,
+    exec_err, plan_err, ScalarValue,
 };
 use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::{GeometryTrait, GeometryType};
 use sedona_common::{option::SedonaOptions, sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_expr::{
-    item_crs::ItemCrsKernel,
+    item_crs::parse_item_crs_arg_type,
     scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
 };
 use sedona_geometry::{
@@ -38,7 +38,11 @@ use sedona_geometry::{
     interval::{Interval, IntervalTrait, WraparoundInterval},
     types::Edges,
 };
-use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
+use sedona_schema::{
+    crs::{deserialize_crs, lnglat},
+    datatypes::SedonaType,
+    matchers::ArgMatcher,
+};
 use wkb::reader::Wkb;
 
 /// The base32 alphabet used by geohash encoding (Gustavo Niemeyer's specification)
@@ -56,13 +60,31 @@ const MAX_PRECISION: i64 = 20;
 pub fn st_geohash_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_geohash",
-        ItemCrsKernel::wrap_impl(vec![
+        // ST_GeoHash cannot use ItemCrsKernel::wrap_impl(): that wrapper strips
+        // the CRS before calling the inner kernel, which is what makes it free
+        // for functions like ST_Area() whose answer does not depend on the CRS.
+        // This one rejects a non-WGS84 CRS, so it needs to see it. The sibling
+        // kernels below are the same shape ST_SRID() and ST_CRS() use, one
+        // matching the plain types and one matching item_crs.
+        vec![
+            Arc::new(STGeoHashItemCrs {
+                matcher: ArgMatcher::new(
+                    vec![ArgMatcher::is_item_crs()],
+                    SedonaType::Arrow(DataType::Utf8),
+                ),
+            }) as _,
+            Arc::new(STGeoHashItemCrs {
+                matcher: ArgMatcher::new(
+                    vec![ArgMatcher::is_item_crs(), ArgMatcher::is_integer()],
+                    SedonaType::Arrow(DataType::Utf8),
+                ),
+            }) as _,
             Arc::new(STGeoHash {
                 matcher: ArgMatcher::new(
                     vec![ArgMatcher::is_geometry_or_geography()],
                     SedonaType::Arrow(DataType::Utf8),
                 ),
-            }),
+            }) as _,
             Arc::new(STGeoHash {
                 matcher: ArgMatcher::new(
                     vec![
@@ -71,8 +93,8 @@ pub fn st_geohash_udf() -> SedonaScalarUDF {
                     ],
                     SedonaType::Arrow(DataType::Utf8),
                 ),
-            }),
-        ]),
+            }) as _,
+        ],
         Volatility::Immutable,
     )
 }
@@ -84,7 +106,16 @@ struct STGeoHash {
 
 impl SedonaScalarKernel for STGeoHash {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        self.matcher.match_args(args)
+        let Some(out_type) = self.matcher.match_args(args)? else {
+            return Ok(None);
+        };
+
+        // Checked only after the argument shapes match, so that a call with a
+        // different arity falls through to the next kernel rather than erroring
+        // out of kernel resolution here.
+        ensure_wgs84_crs(&args[0])?;
+
+        Ok(Some(out_type))
     }
 
     fn invoke_batch(
@@ -113,14 +144,21 @@ impl SedonaScalarKernel for STGeoHash {
         // instance and clear()s it per row rather than allocating per row.
         let mut bounder = bounder_for_arg_type(&arg_types[0], config_options)?;
 
-        // The CRS is a property of the type, so whether longitudes may be
-        // wrapped is decided once for the batch rather than per row.
-        let wrap = longitude_wrap_for_arg_type(&arg_types[0])?;
+        // The CRS is a property of the type, so this is decided once for the
+        // batch rather than per row.
+        let wrap = longitude_wrap_for_arg_type(&arg_types[0]);
+        let mut next_wrap = move || Ok(wrap);
 
         if args.len() > 1 {
-            append_geohash_with_precision(&executor, args, bounder.as_mut(), wrap, &mut builder)?;
+            append_geohash_with_precision(
+                &executor,
+                args,
+                bounder.as_mut(),
+                &mut next_wrap,
+                &mut builder,
+            )?;
         } else {
-            append_point_geohash(&executor, bounder.as_mut(), wrap, &mut builder)?;
+            append_point_geohash(&executor, bounder.as_mut(), &mut next_wrap, &mut builder)?;
         }
 
         executor.finish(Arc::new(builder.finish()))
@@ -168,51 +206,251 @@ fn bounder_for_arg_type(
     })
 }
 
+/// Per-batch cache of the WGS84 verdict for each distinct CRS string
+///
+/// Deserializing a CRS is expensive and an item_crs column carries only a
+/// handful of distinct values across many rows, so each is resolved once.
+/// Mirrors `CachedCrsToSRIDMapping`, which exists for the same reason.
+#[derive(Default)]
+struct CachedWgs84Check {
+    /// `None` marks a CRS that is not WGS84, i.e. one this function rejects
+    cache: HashMap<String, Option<LongitudeWrap>>,
+}
+
+impl CachedWgs84Check {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            cache: HashMap::with_capacity(capacity),
+        }
+    }
+
+    /// Resolve one row's CRS into a wrap setting, or reject the row
+    ///
+    /// Applies exactly the rule [`ensure_wgs84_crs`] applies to a type-level
+    /// CRS, so the same geometry is treated the same way whether its CRS is
+    /// attached to the type or to the row.
+    fn wrap_for(&mut self, maybe_crs: Option<&str>) -> Result<LongitudeWrap> {
+        // No CRS on this row: accepted and assumed WGS84, but not wrapped,
+        // matching an absent type-level CRS.
+        let Some(crs_str) = maybe_crs else {
+            return Ok(LongitudeWrap::Disabled);
+        };
+
+        if let Some(cached) = self.cache.get(crs_str) {
+            return cached.map_or_else(|| non_wgs84_err(crs_str), Ok);
+        }
+
+        // `deserialize_crs` yields None for the "no CRS" sentinels ("0", "").
+        let crs = deserialize_crs(crs_str)?;
+        let verdict = if crs.is_none() {
+            Some(LongitudeWrap::Disabled)
+        } else if crs == lnglat() {
+            Some(LongitudeWrap::Enabled)
+        } else {
+            None
+        };
+
+        self.cache.insert(crs_str.to_string(), verdict);
+        verdict.map_or_else(|| non_wgs84_err(crs_str), Ok)
+    }
+}
+
+fn non_wgs84_err<T>(name: &str) -> Result<T> {
+    exec_err!(
+        "ST_GeoHash() requires WGS84 longitude/latitude coordinates but a row has CRS \
+         '{name}'. Use ST_Transform() to reproject to EPSG:4326 first."
+    )
+}
+
+/// ST_GeoHash() over an item_crs argument, where each row carries its own CRS
+///
+/// The rule is the one [`ensure_wgs84_crs`] applies at the type level; only the
+/// moment of detection differs. A type-level CRS is known while the query is
+/// planned, so it is rejected before any row is read; a row-level CRS is not
+/// known until the row is in hand, so it is rejected then. Erroring rather than
+/// nulling keeps the two consistent, and matches how the crate already treats a
+/// bad row-level CRS elsewhere (`ensure_crs_string_arrays_equal2` raises on the
+/// first mismatched row).
+///
+/// Seeing the per-row CRS also means a row that declares WGS84 gets longitude
+/// wrapping, so item-level and type-level WGS84 agree on the same input rather
+/// than one nulling where the other wraps.
+#[derive(Debug)]
+struct STGeoHashItemCrs {
+    matcher: ArgMatcher,
+}
+
+impl SedonaScalarKernel for STGeoHashItemCrs {
+    fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
+        self.matcher.match_args(args)
+    }
+
+    fn invoke_batch(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+    ) -> Result<ColumnarValue> {
+        self.invoke_batch_from_args(arg_types, args, &SedonaType::Arrow(DataType::Utf8), 0, None)
+    }
+
+    fn invoke_batch_from_args(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+        _return_type: &SedonaType,
+        _num_rows: usize,
+        config_options: Option<&ConfigOptions>,
+    ) -> Result<ColumnarValue> {
+        let struct_array = match &args[0] {
+            ColumnarValue::Array(array) => as_struct_array(array)?,
+            ColumnarValue::Scalar(ScalarValue::Struct(struct_array)) => struct_array.as_ref(),
+            ColumnarValue::Scalar(ScalarValue::Null) => {
+                return Ok(ColumnarValue::Scalar(ScalarValue::Utf8(None)));
+            }
+            _ => return sedona_internal_err!("Unexpected input to ST_GeoHash()"),
+        };
+
+        let (item_type, _) = parse_item_crs_arg_type(&arg_types[0])?;
+        let crs_array = as_string_view_array(struct_array.column(1))?;
+
+        // Rebuild the arguments against the unwrapped item so the geometry path
+        // below is the same one the type-level kernel takes. A scalar argument
+        // stays scalar, so that `WkbExecutor` still sizes the batch from
+        // whichever argument is an array.
+        let item_arg = match &args[0] {
+            ColumnarValue::Array(_) => ColumnarValue::Array(struct_array.column(0).clone()),
+            _ => ColumnarValue::Scalar(ScalarValue::try_from_array(struct_array.column(0), 0)?),
+        };
+        let mut item_arg_types = vec![item_type.clone()];
+        let mut item_args = vec![item_arg];
+        for (arg_type, arg) in zip(&arg_types[1..], &args[1..]) {
+            item_arg_types.push(arg_type.clone());
+            item_args.push(arg.clone());
+        }
+
+        let executor = WkbExecutor::new(&item_arg_types, &item_args);
+        let mut builder = StringBuilder::with_capacity(
+            executor.num_iterations(),
+            MAX_PRECISION as usize * executor.num_iterations(),
+        );
+        let mut bounder = bounder_for_arg_type(&item_type, config_options)?;
+        let mut checker = CachedWgs84Check::with_capacity(crs_array.len());
+
+        // A scalar struct carries a single CRS that applies to every iteration;
+        // an array carries one per row.
+        let scalar_wrap = match &args[0] {
+            ColumnarValue::Array(_) => None,
+            _ => Some(checker.wrap_for(crs_array.iter().next().flatten())?),
+        };
+        let mut crs_iter = crs_array.iter();
+        let mut next_wrap = move || match scalar_wrap {
+            Some(wrap) => Ok(wrap),
+            // Every row is validated, including one whose geometry is null, so
+            // that a column fails the same way regardless of where its nulls
+            // happen to fall.
+            None => checker.wrap_for(crs_iter.next().flatten()),
+        };
+
+        if item_args.len() > 1 {
+            append_geohash_with_precision(
+                &executor,
+                &item_args,
+                bounder.as_mut(),
+                &mut next_wrap,
+                &mut builder,
+            )?;
+        } else {
+            append_point_geohash(&executor, bounder.as_mut(), &mut next_wrap, &mut builder)?;
+        }
+
+        executor.finish(Arc::new(builder.finish()))
+    }
+}
+
 /// Whether an out-of-range longitude may be wrapped back into [-180, 180]
 ///
-/// Wrapping is only meaningful when the coordinates are known to be longitude
-/// and latitude in degrees: 181 is then an unambiguous spelling of -179, and
-/// hashing it is better than dropping the row. Applied to a projected CRS the
-/// same arithmetic would turn a coordinate in metres into a plausible-looking
-/// geohash for somewhere it has nothing to do with, so it stays off unless the
-/// units are known.
+/// [`ensure_wgs84_crs`] has already rejected any CRS that is not WGS84, so this
+/// only separates coordinates *declared* to be WGS84 from coordinates carrying
+/// no CRS at all.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum LongitudeWrap {
-    /// The argument is known to be in longitude/latitude degrees
+    /// The argument declares a WGS84 CRS, or is a geography
     Enabled,
-    /// The units are projected, or simply not known, so an out-of-range
-    /// coordinate is not necessarily a wrapped longitude
+    /// The argument carries no CRS, so its units are assumed but not known
     Disabled,
 }
 
-/// Decide whether an argument's coordinates are known to be lon/lat degrees
+/// Decide whether an argument's longitudes may be wrapped
 ///
-/// A geography is lon/lat by definition. A geometry qualifies only when its
-/// type-level CRS resolves to geographic parameters (EPSG:4326, OGC:CRS84,
-/// EPSG:4269, ...), which is the same test `st_setsrid` uses to decide whether
-/// a CRS is usable as a geography.
+/// Wrapping requires a *declared* WGS84 CRS (or a geography, which carries one
+/// by construction). An absent CRS is accepted by [`ensure_wgs84_crs`] but does
+/// not earn wrapping: accepting it is passive -- we cannot know, so we do not
+/// break the query -- whereas wrapping it is active, and would invent a location
+/// for coordinates whose provenance is unknown.
 ///
-/// An absent CRS does *not* qualify. Undeclared coordinates are the common case
-/// for `ST_GeomFromText()` and could be anything, so they keep the pre-existing
-/// null-on-out-of-range behavior rather than being silently reinterpreted.
-/// Item-level CRS does not qualify either: [`ItemCrsKernel`] resolves the
-/// per-row CRS outside this kernel and hands the inner kernel an item type with
-/// no CRS attached, so there is nothing to inspect here.
-fn longitude_wrap_for_arg_type(arg_type: &SedonaType) -> Result<LongitudeWrap> {
+/// This is also what keeps faith with Apache Sedona. Spark has no CRS concept,
+/// so every geometry migrated from it arrives here undeclared; wrapping those
+/// would change the out-of-range result from Spark's null to a hash, which is
+/// precisely the parity this function is built to preserve.
+///
+/// Item-level CRS resolves to `None` here for the reasons given on
+/// [`ensure_wgs84_crs`], so it does not wrap either.
+fn longitude_wrap_for_arg_type(arg_type: &SedonaType) -> LongitudeWrap {
     let edges = match arg_type {
         SedonaType::Wkb(edges, _) | SedonaType::WkbView(edges, _) => *edges,
         // A literal NULL argument: every row is null, so this is never consulted.
-        _ => return Ok(LongitudeWrap::Disabled),
+        _ => return LongitudeWrap::Disabled,
     };
 
-    if edges == Edges::Spherical {
-        return Ok(LongitudeWrap::Enabled);
+    if edges == Edges::Spherical || arg_type.crs() == &lnglat() {
+        LongitudeWrap::Enabled
+    } else {
+        LongitudeWrap::Disabled
+    }
+}
+
+/// Ensure a geohash argument's coordinates are WGS84 longitude/latitude
+///
+/// A geohash is defined against the WGS84 datum, so this is the only CRS whose
+/// coordinates it can encode correctly. Anything else is rejected rather than
+/// hashed: a projected coordinate is in metres, not degrees, and one that
+/// happens to land inside [-180, 180] x [-90, 90] would otherwise produce a
+/// confident geohash for an unrelated place. EPSG:3857 POINT (10 20) is ten
+/// metres east and twenty metres north of the origin, in the Gulf of Guinea,
+/// but reads as 10 degrees east and 20 degrees north -- in Chad.
+///
+/// `EPSG:4326` and `OGC:CRS84` are the same CRS here (see `authority_codes_equal`),
+/// so both are accepted. Other geographic CRSes are *not*, even though their units
+/// are also degrees: NAD83 sits one to two metres from WGS84 and NAD27 up to a
+/// hundred, which is many cells wide at high precision. Reproject them with
+/// `ST_Transform()`.
+///
+/// An absent CRS is accepted and assumed to be WGS84. This is what the function
+/// already assumes of undeclared coordinates -- the [-180, 180] x [-90, 90]
+/// domain check is only meaningful under that reading -- and rejecting it would
+/// break every `ST_GeomFromText()` call, which carries no CRS.
+///
+/// Item-level CRS is *not* checked: [`ItemCrsKernel`] resolves the per-row CRS
+/// outside this kernel and hands the inner kernel an item type whose CRS has
+/// been stripped to `None` (`parse_item_crs_arg_type_strip_crs`), which is
+/// indistinguishable here from a genuinely absent one. Validating it would mean
+/// changing that kernel's contract for every function built on it.
+fn ensure_wgs84_crs(arg_type: &SedonaType) -> Result<()> {
+    let crs = arg_type.crs();
+
+    if crs.is_none() || crs == &lnglat() {
+        return Ok(());
     }
 
-    match arg_type.crs() {
-        Some(crs) if crs.geographic_params()?.is_some() => Ok(LongitudeWrap::Enabled),
-        _ => Ok(LongitudeWrap::Disabled),
-    }
+    let name = crs
+        .as_ref()
+        .map(|crs| crs.to_crs_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    plan_err!(
+        "ST_GeoHash() requires WGS84 longitude/latitude coordinates but the argument has CRS \
+         '{name}'. Use ST_Transform() to reproject to EPSG:4326 first."
+    )
 }
 
 /// Append the geohash of each geometry at the precision given by the second argument
@@ -220,7 +458,7 @@ fn append_geohash_with_precision(
     executor: &WkbExecutor<'_, '_>,
     args: &[ColumnarValue],
     bounder: &mut dyn WkbBounder2D,
-    wrap: LongitudeWrap,
+    next_wrap: &mut dyn FnMut() -> Result<LongitudeWrap>,
     builder: &mut StringBuilder,
 ) -> Result<()> {
     let precision_value = args[1]
@@ -230,6 +468,7 @@ fn append_geohash_with_precision(
     let mut precision_iter = precision_array.iter();
 
     executor.execute_wkb_void(|maybe_wkb| {
+        let wrap = next_wrap()?;
         match (maybe_wkb, precision_iter.next().unwrap()) {
             (Some(wkb), Some(precision)) => match invoke_scalar(wkb, precision, bounder, wrap)? {
                 Some(geohash) => builder.append_value(geohash),
@@ -252,10 +491,11 @@ fn append_geohash_with_precision(
 fn append_point_geohash(
     executor: &WkbExecutor<'_, '_>,
     bounder: &mut dyn WkbBounder2D,
-    wrap: LongitudeWrap,
+    next_wrap: &mut dyn FnMut() -> Result<LongitudeWrap>,
     builder: &mut StringBuilder,
 ) -> Result<()> {
     executor.execute_wkb_void(|maybe_wkb| {
+        let wrap = next_wrap()?;
         match maybe_wkb {
             Some(wkb) => {
                 // Only a single POINT counts: a MULTIPOINT, even one holding
@@ -296,10 +536,9 @@ fn append_point_geohash(
 /// failing partway through a large scan.
 ///
 /// When `wrap` is [`LongitudeWrap::Enabled`], an out-of-range *longitude* is
-/// first wrapped back into [-180, 180] instead of nulling the row, so a
-/// longitude of 181 hashes as -179. Latitude is never wrapped; see
-/// [`normalize_longitude`] and [`in_latitude_range`] for why the two axes are
-/// treated differently.
+/// wrapped back into [-180, 180] rather than nulling the row, so a longitude of
+/// 181 hashes as -179. Latitude is never wrapped; see [`normalize_longitude`]
+/// and [`in_latitude_range`] for why the two axes are treated differently.
 ///
 /// The bounding box comes from `bounder`, which the caller resolved from the
 /// argument's edge type, so a geography is bounded on the sphere rather than
@@ -545,20 +784,9 @@ mod tests {
     }
 
     #[test]
-    fn normalize_longitude_only_wraps_when_enabled() {
-        let out_of_range = WraparoundInterval::new(190.0, 190.0);
-
-        assert_eq!(
-            normalize_longitude(&out_of_range, LongitudeWrap::Enabled),
-            Some(WraparoundInterval::new(-170.0, -170.0))
-        );
-        assert_eq!(
-            normalize_longitude(&out_of_range, LongitudeWrap::Disabled),
-            None
-        );
-
-        // An in-range interval is untouched under either setting, including the
-        // wraparound intervals a spherical bounder produces.
+    fn normalize_longitude_leaves_in_range_intervals_alone() {
+        // In-range intervals are untouched under either setting, including the
+        // wraparound intervals a spherical bounder produces (lo > hi).
         for wrap in [LongitudeWrap::Enabled, LongitudeWrap::Disabled] {
             let in_range = WraparoundInterval::new(10.0, 20.0);
             assert_eq!(normalize_longitude(&in_range, wrap), Some(in_range));
@@ -569,6 +797,20 @@ mod tests {
                 Some(crosses_antimeridian)
             );
         }
+    }
+
+    #[test]
+    fn normalize_longitude_wraps_out_of_range_intervals() {
+        let out_of_range = WraparoundInterval::new(190.0, 190.0);
+        assert_eq!(
+            normalize_longitude(&out_of_range, LongitudeWrap::Enabled),
+            Some(WraparoundInterval::new(-170.0, -170.0))
+        );
+        // Without a declared WGS84 CRS the row stays null.
+        assert_eq!(
+            normalize_longitude(&out_of_range, LongitudeWrap::Disabled),
+            None
+        );
     }
 
     #[test]
@@ -604,49 +846,48 @@ mod tests {
     }
 
     #[rstest]
-    fn longitude_wrap_follows_the_crs(
-        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
-    ) {
+    fn wgs84_crs_is_required(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
         let edges = match &sedona_type {
             SedonaType::Wkb(edges, _) | SedonaType::WkbView(edges, _) => *edges,
             _ => unreachable!(),
         };
 
-        // A known lon/lat CRS enables wrapping...
-        assert_eq!(
-            longitude_wrap_for_arg_type(&SedonaType::Wkb(edges, lnglat())).unwrap(),
-            LongitudeWrap::Enabled
-        );
-        // ...as does NAD83, which geographic_params() also recognizes as degrees.
-        assert_eq!(
-            longitude_wrap_for_arg_type(&SedonaType::Wkb(
-                edges,
-                deserialize_crs("EPSG:4269").unwrap()
-            ))
-            .unwrap(),
-            LongitudeWrap::Enabled
-        );
-        // A geography is lon/lat by definition, whatever its declared CRS.
-        assert_eq!(
-            longitude_wrap_for_arg_type(&WKB_GEOGRAPHY).unwrap(),
-            LongitudeWrap::Enabled
-        );
+        // Both spellings of WGS84 are accepted...
+        for code in ["EPSG:4326", "OGC:CRS84"] {
+            let crs = deserialize_crs(code).unwrap();
+            ensure_wgs84_crs(&SedonaType::Wkb(edges, crs))
+                .unwrap_or_else(|e| panic!("{code} should be accepted: {e}"));
+        }
+        // ...as is lnglat() itself, and an absent CRS.
+        ensure_wgs84_crs(&SedonaType::Wkb(edges, lnglat())).unwrap();
+        ensure_wgs84_crs(&sedona_type).unwrap();
+        // A geography carries lnglat by construction.
+        ensure_wgs84_crs(&WKB_GEOGRAPHY).unwrap();
 
-        // A projected CRS does not, because wrapping metres would produce a
-        // plausible-looking hash for the wrong place.
-        assert_eq!(
-            longitude_wrap_for_arg_type(&SedonaType::Wkb(
-                edges,
-                deserialize_crs("EPSG:3857").unwrap()
-            ))
-            .unwrap(),
-            LongitudeWrap::Disabled
-        );
-        // Neither does an absent CRS, which is the ST_GeomFromText() default.
-        assert_eq!(
-            longitude_wrap_for_arg_type(&sedona_type).unwrap(),
-            LongitudeWrap::Disabled
-        );
+        // A projected CRS is rejected, and so is a non-WGS84 geographic one:
+        // NAD83's units are degrees but its datum is not WGS84.
+        for code in ["EPSG:3857", "EPSG:26918", "EPSG:4269"] {
+            let crs = deserialize_crs(code).unwrap();
+            let err = ensure_wgs84_crs(&SedonaType::Wkb(edges, crs))
+                .expect_err("{code} should be rejected");
+            let msg = err.to_string();
+            assert!(msg.contains("requires WGS84"), "unexpected message: {msg}");
+            assert!(
+                msg.contains("ST_Transform"),
+                "message should suggest a fix: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn udf_rejects_non_wgs84_crs_at_plan_time() {
+        // The rejection happens while resolving the kernel, so it surfaces
+        // before any row is read rather than partway through a scan.
+        let tester = geohash_tester(projected_geometry());
+        let err = tester
+            .return_type()
+            .expect_err("a projected CRS should be rejected");
+        assert!(err.to_string().contains("requires WGS84"), "{err}");
     }
 
     #[test]
@@ -702,23 +943,16 @@ mod tests {
     }
 
     #[test]
-    fn udf_does_not_wrap_longitude_without_a_lnglat_crs() {
-        // A projected CRS keeps the pre-existing null, because an out-of-range
-        // easting is not a wrapped longitude.
-        let tester = geohash_tester(projected_geometry());
-        let result = tester
-            .invoke_scalar_scalar("POINT (190.0 50.0)", ScalarValue::Int64(Some(12)))
-            .unwrap();
-        tester.assert_scalar_result_equals(result, ScalarValue::Utf8(None));
-
-        // An undeclared CRS does the same.
+    fn udf_does_not_wrap_longitude_for_an_absent_crs() {
+        // Accepted, but not wrapped: an undeclared geometry keeps Apache
+        // Sedona's null so that a Spark query migrating here keeps its results.
+        // ST_SetSRID(geom, 4326) opts into wrapping.
         let tester = geohash_tester(WKB_GEOMETRY);
         let result = tester
             .invoke_scalar_scalar("POINT (190.0 50.0)", ScalarValue::Int64(Some(12)))
             .unwrap();
         tester.assert_scalar_result_equals(result, ScalarValue::Utf8(None));
     }
-
     #[test]
     fn udf_never_wraps_latitude() {
         // Latitude is not cyclic, so it stays null even where longitude wraps.
@@ -748,6 +982,129 @@ mod tests {
         let tester = ScalarUdfTester::new(st_geohash_udf().into(), vec![lnglat_geometry()]);
         let wrapped = tester.invoke_scalar("POINT (190.0 50.0)").unwrap();
         tester.assert_scalar_result_equals(wrapped, "b0zh7w1z0gs3y0zh7w1z");
+    }
+
+    /// Invoke ST_GeoHash over an item_crs array with one CRS per row
+    fn invoke_item_crs(
+        wkts: &[Option<&str>],
+        crses: &[Option<&str>],
+        precision: i64,
+    ) -> Result<Vec<Option<String>>> {
+        use arrow_array::cast::as_string_array;
+        use sedona_testing::create::create_array_item_crs;
+
+        let tester = ScalarUdfTester::new(
+            st_geohash_udf().into(),
+            vec![
+                WKB_GEOMETRY_ITEM_CRS.clone(),
+                SedonaType::Arrow(DataType::Int64),
+            ],
+        );
+        let array = create_array_item_crs(wkts, crses.iter().copied(), &WKB_GEOMETRY);
+        let out = tester.invoke_array_scalar(array, ScalarValue::Int64(Some(precision)))?;
+        let out = as_string_array(&out);
+        Ok((0..Array::len(out))
+            .map(|i| {
+                if Array::is_null(out, i) {
+                    None
+                } else {
+                    Some(arrow_array::array::StringArray::value(out, i).to_string())
+                }
+            })
+            .collect())
+    }
+
+    #[test]
+    fn udf_item_crs_rejects_non_wgs84_rows() {
+        // The same rule the type level applies, detected when the row arrives
+        // rather than when the query is planned. Before this, a per-row
+        // EPSG:3857 was hashed as though it were degrees: POINT (10 20) in
+        // metres is in the Gulf of Guinea, but hashed as degrees it lands in
+        // Chad.
+        for crs in ["EPSG:3857", "EPSG:26918", "EPSG:4269"] {
+            let err = invoke_item_crs(&[Some("POINT (10 20)")], &[Some(crs)], 10)
+                .expect_err("{crs} should be rejected");
+            let msg = err.to_string();
+            assert!(msg.contains("requires WGS84"), "unexpected message: {msg}");
+            assert!(msg.contains(crs), "message should name the CRS: {msg}");
+        }
+
+        // One bad row is enough, wherever it sits in the batch.
+        let err = invoke_item_crs(
+            &[Some("POINT (10 20)"), Some("POINT (10 20)")],
+            &[Some("EPSG:4326"), Some("EPSG:3857")],
+            10,
+        )
+        .expect_err("a mixed batch should be rejected");
+        assert!(err.to_string().contains("requires WGS84"), "{err}");
+    }
+
+    #[test]
+    fn udf_item_crs_accepts_wgs84_and_absent_rows() {
+        // Both spellings of WGS84, plus the "no CRS" spellings: a null entry
+        // and the "0" sentinel that deserialize_crs() resolves to no CRS.
+        let out = invoke_item_crs(
+            &[
+                Some("POINT (10 20)"),
+                Some("POINT (10 20)"),
+                Some("POINT (10 20)"),
+                Some("POINT (10 20)"),
+            ],
+            &[Some("EPSG:4326"), Some("OGC:CRS84"), None, Some("0")],
+            10,
+        )
+        .unwrap();
+        assert_eq!(out, vec![Some("s5x1g8cu2y".to_string()); 4]);
+    }
+
+    #[test]
+    fn udf_item_crs_wraps_longitude_only_for_declared_wgs84_rows() {
+        // The inconsistency this closes: with the CRS visible per row, an
+        // item-level WGS84 row wraps exactly as a type-level WGS84 column does,
+        // instead of nulling where the other wraps. A row with no CRS keeps
+        // Apache Sedona's null.
+        let out = invoke_item_crs(
+            &[Some("POINT (190 50)"), Some("POINT (190 50)")],
+            &[Some("EPSG:4326"), None],
+            12,
+        )
+        .unwrap();
+        assert_eq!(out, vec![Some("b0zh7w1z0gs3".to_string()), None]);
+
+        // Which is the same answer the type-level kernel gives for that point.
+        let tester = geohash_tester(lnglat_geometry());
+        let type_level = tester
+            .invoke_scalar_scalar("POINT (190.0 50.0)", ScalarValue::Int64(Some(12)))
+            .unwrap();
+        tester.assert_scalar_result_equals(type_level, "b0zh7w1z0gs3");
+    }
+
+    #[test]
+    fn udf_item_crs_rejects_a_bad_crs_on_a_null_geometry_row() {
+        // A row is validated even when its geometry is null, so that a column
+        // fails the same way regardless of where its nulls happen to fall.
+        let err = invoke_item_crs(&[None], &[Some("EPSG:3857")], 10)
+            .expect_err("a null geometry should not excuse a bad CRS");
+        assert!(err.to_string().contains("requires WGS84"), "{err}");
+    }
+
+    #[test]
+    fn udf_item_crs_caches_each_distinct_crs_once() {
+        let mut checker = CachedWgs84Check::default();
+        assert_eq!(
+            checker.wrap_for(Some("EPSG:4326")).unwrap(),
+            LongitudeWrap::Enabled
+        );
+        assert_eq!(checker.wrap_for(None).unwrap(), LongitudeWrap::Disabled);
+        assert!(checker.wrap_for(Some("EPSG:3857")).is_err());
+
+        // Repeats are served from the cache, including the rejection.
+        assert_eq!(
+            checker.wrap_for(Some("EPSG:4326")).unwrap(),
+            LongitudeWrap::Enabled
+        );
+        assert!(checker.wrap_for(Some("EPSG:3857")).is_err());
+        assert_eq!(checker.cache.len(), 2);
     }
 
     #[test]
