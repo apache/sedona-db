@@ -43,7 +43,7 @@
 //! directly — same as `sedona-geometry`, which has no internal variant.
 
 use arrow_schema::ArrowError;
-use datafusion_common::DataFusionError;
+use datafusion_common::{exec_datafusion_err, DataFusionError};
 use thiserror::Error;
 
 /// Error type for the raster crates.
@@ -72,14 +72,23 @@ impl From<RasterError> for DataFusionError {
     fn from(value: RasterError) -> Self {
         match value {
             // Keep Arrow errors typed so DataFusion renders them as Arrow
-            // errors rather than an opaque external error.
-            RasterError::Arrow(e) => DataFusionError::ArrowError(Box::new(e), None),
+            // errors rather than an opaque external error. Delegate to
+            // DataFusion's own `From` so the backtrace is attached exactly as
+            // `arrow_datafusion_err!` would have done at the sites this
+            // replaces.
+            RasterError::Arrow(e) => DataFusionError::from(e),
             // `Execution` (not `Internal`/`External`) matches the existing
             // `exec_datafusion_err!` sites this replaces: a user-facing
             // execution error without the "this is a DataFusion bug" framing.
-            RasterError::Invalid(msg) => DataFusionError::Execution(msg),
+            // Go through the macro rather than constructing `Execution`
+            // directly — `Execution` has no backtrace slot, so the macro
+            // appends the backtrace to the message, and building the variant
+            // by hand would silently drop it.
+            RasterError::Invalid(msg) => exec_datafusion_err!("{msg}"),
+            // `External` has no backtrace slot either, and no macro precedent
+            // among the replaced sites — carry the source through unchanged.
             RasterError::External(e) => DataFusionError::External(e),
-            RasterError::Unknown => DataFusionError::Execution("Unknown raster error".to_string()),
+            RasterError::Unknown => exec_datafusion_err!("Unknown raster error"),
         }
     }
 }
@@ -88,6 +97,13 @@ impl From<RasterError> for ArrowError {
     fn from(value: RasterError) -> Self {
         match value {
             RasterError::Arrow(e) => e,
+            // `InvalidArgumentError` is what `Invalid` is built from on the way
+            // in, so map it back rather than collapsing it into
+            // `ExternalError`. Functions that still return `ArrowError` (e.g.
+            // `Grid::from_raster`) otherwise change variant for the same
+            // failure.
+            RasterError::Invalid(msg) => ArrowError::InvalidArgumentError(msg),
+            RasterError::External(e) => ArrowError::ExternalError(e),
             other => ArrowError::ExternalError(Box::new(other)),
         }
     }
@@ -159,6 +175,35 @@ mod test {
         // boxing it as an ExternalError.
         let back: ArrowError = err.into();
         assert!(matches!(back, ArrowError::ComputeError(_)));
+    }
+
+    #[test]
+    fn invalid_argument_round_trips_to_the_same_arrow_variant() {
+        // Functions that still return `ArrowError` reach it through this
+        // bridge (e.g. `Grid::from_raster` calling `RasterRef::width`), so the
+        // variant a caller sees must not change just because the value took a
+        // detour through `RasterError`.
+        let original = ArrowError::InvalidArgumentError("no width".to_string());
+        let via_raster: RasterError = original.into();
+        let back: ArrowError = via_raster.into();
+        assert!(
+            matches!(back, ArrowError::InvalidArgumentError(_)),
+            "expected InvalidArgumentError, got {back:?}"
+        );
+        assert_eq!(back.to_string(), "Invalid argument error: no width");
+
+        // A `RasterError::Invalid` raised directly (not from Arrow) maps to the
+        // same variant, so both origins are indistinguishable downstream.
+        let direct: ArrowError = RasterError::Invalid("no width".to_string()).into();
+        assert!(matches!(direct, ArrowError::InvalidArgumentError(_)));
+
+        // `External` unwraps to `ExternalError` rather than double-boxing.
+        let external: ArrowError =
+            RasterError::External(Box::new(std::io::Error::other("boom"))).into();
+        match external {
+            ArrowError::ExternalError(e) => assert_eq!(e.to_string(), "boom"),
+            other => panic!("expected ExternalError, got {other:?}"),
+        }
     }
 
     #[test]
