@@ -944,6 +944,10 @@ def test_ambiguous_and_subnano_temporal_units_are_rejected(points):
     for unit in ("M", "Y", "ps"):
         with pytest.raises(ValueError, match="exactly"):
             gdf["t"] = np.timedelta64(1, unit)
+    # 1000 ps is exactly one nanosecond, and both pandas and GeoPandas still
+    # reject it — the rejection is per unit, not per value.
+    with pytest.raises(ValueError, match="exactly"):
+        gdf["t"] = np.timedelta64(1000, "ps")
 
 
 def test_duration_division_by_infinity_is_zero_preserving_nulls():
@@ -1025,6 +1029,73 @@ def test_duration_multiplication_overflow_is_null_not_wrapped():
     got = (gdf["t"] * 3).to_pandas()
     assert pd.isna(got.tolist()[0])
     assert got.tolist()[1] == pd.Timedelta(boundary * 3)
+    assert pd.isna(got.tolist()[2])
+
+
+# -- regressions from the ninth review pass ---------------------------------
+
+
+def _duration_frame(values):
+    import pandas as pd
+
+    return GeoDataFrame(
+        sgpd.default_context().create_data_frame(pd.DataFrame({"t": values}))
+    )
+
+
+def test_oversized_integer_duration_operand_raises_overflow():
+    # An integer operand past the signed 64-bit tick range failed literal
+    # construction with an unrelated ValueError, aborting even the rows whose
+    # result is representable. pandas raises OverflowError for the operand
+    # itself, on multiplication and division alike; so does this layer now.
+    import pandas as pd
+    import pyarrow as pa
+
+    gdf = _duration_frame([pd.Timedelta(0), pd.Timedelta(1)])
+    for operand in (2**63, pa.scalar(2**63, pa.uint64())):
+        with pytest.raises(OverflowError):
+            gdf["t"] * operand
+        with pytest.raises(OverflowError):
+            gdf["t"] / operand
+
+
+def test_integral_float_duration_arithmetic_is_exact():
+    # `* 1.0` and `/ 1.0` are identities in pandas even at the largest tick,
+    # but the float64 round trip cannot represent every int64 tick and the
+    # cast back aborted. Integral-valued floats use the exact integer path.
+    import pandas as pd
+
+    gdf = _duration_frame([pd.Timedelta(2**63 - 1)])
+    assert (gdf["t"] * 1.0).to_pandas().tolist()[0] == pd.Timedelta(2**63 - 1)
+    assert (gdf["t"] / 1.0).to_pandas().tolist()[0] == pd.Timedelta(2**63 - 1)
+    got = (gdf["t"] * 3.0).to_pandas()
+    assert got.isna().all()  # routed through the gated integer path
+
+
+def test_float_duration_overflow_is_null_not_abort():
+    # A finite float result past the tick range aborted the whole query at
+    # the int64 cast. Out-of-range rows become NaT while in-range rows and
+    # source nulls are unaffected. pandas clamps positive finite overflow to
+    # Timedelta.max and sends negative overflow to NaT — an asymmetric
+    # casting artifact this layer does not copy: both directions are NaT.
+    import pandas as pd
+
+    gdf = _duration_frame(
+        [pd.Timedelta(2**62), pd.Timedelta(-(2**62)), pd.Timedelta(5), pd.NaT]
+    )
+    got = (gdf["t"] / 0.5).to_pandas()
+    assert pd.isna(got.tolist()[0])
+    assert pd.isna(got.tolist()[1])
+    assert got.tolist()[2] == pd.Timedelta(10)
+    assert pd.isna(got.tolist()[3])
+
+    # A float operand past int64 stays on the float path the way pandas keeps
+    # it in float arithmetic (it must not raise the integer-operand
+    # OverflowError): zero ticks survive, everything else overflows to NaT.
+    gdf = _duration_frame([pd.Timedelta(0), pd.Timedelta(5), pd.NaT])
+    got = (gdf["t"] * 1e300).to_pandas()
+    assert got.tolist()[0] == pd.Timedelta(0)
+    assert pd.isna(got.tolist()[1])
     assert pd.isna(got.tolist()[2])
 
 

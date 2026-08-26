@@ -405,11 +405,26 @@ class Series:
         if not math.isfinite(value) or (op == "/" and value == 0):
             return Series(self._df, lit(pa.scalar(None, dtype)), self._name)
 
+        # An integer operand that itself exceeds the signed 64-bit tick range
+        # cannot become a literal; pandas raises OverflowError for it on both
+        # multiplication and division, before any row is touched.
+        is_int = isinstance(value, numbers.Integral)
+        if is_int and not -(2**63) <= int(value) < 2**63:
+            raise OverflowError(f"{value} overflows the signed 64-bit tick range")
+
         ticks = self._expr.cast(pa.int64())
-        integral = isinstance(value, numbers.Integral)
-        if op == "*":
-            if integral:
-                factor = int(value)
+        # Integral-valued floats take the exact integer path too: pandas keeps
+        # identity operations like `* 1.0` exact, and float64 cannot represent
+        # every int64 tick. Floats past the int64 range stay on the float path
+        # (pandas computes those in float as well rather than raising).
+        exact = is_int or (
+            isinstance(value, float)
+            and value.is_integer()
+            and -(2**63) <= int(value) < 2**63
+        )
+        if exact:
+            factor = int(value)
+            if op == "*":
                 result = ticks * factor
                 if factor not in (-1, 0, 1):
                     # Integer tick multiplication wraps on int64 overflow.
@@ -423,15 +438,29 @@ class Series:
                     gate = in_range.funcs.nullif(lit(False)).cast(pa.int64())
                     result = result * gate
             else:
-                # Float products past int64 fail the cast back to ticks at
-                # materialization, so they raise rather than wrap.
-                result = ticks.cast(pa.float64()) * value
-        elif integral:
-            # Exact integer tick division: routing an integral divisor through
-            # float64 loses precision above 2**53 ticks.
-            result = ticks / int(value)
+                # Exact integer tick division: routing an integral divisor
+                # through float64 loses precision above 2**53 ticks, and the
+                # result magnitude never exceeds the ticks, so it cannot
+                # overflow.
+                result = ticks / factor
         else:
-            result = ticks.cast(pa.float64()) / value
+            fresult = (
+                ticks.cast(pa.float64()) * value
+                if op == "*"
+                else ticks.cast(pa.float64()) / value
+            )
+            # Range-gate before casting back to ticks: an out-of-range or
+            # non-finite float result would abort the whole query at the
+            # int64 cast, losing the in-range rows with it. The bound is the
+            # largest float64 that fits the tick range. Rows past it become
+            # null; pandas instead clamps finite positive overflow to
+            # Timedelta.max while negative overflow lands on the NaT
+            # sentinel — an asymmetric casting artifact this layer does not
+            # copy.
+            fbound = float(2**63 - 1024)
+            in_range = (fresult <= lit(fbound)) & (fresult >= lit(-fbound))
+            fgate = in_range.funcs.nullif(lit(False)).cast(pa.float64())
+            result = fresult * fgate
         return Series(
             self._df,
             result.cast(pa.int64()).cast(dtype),
