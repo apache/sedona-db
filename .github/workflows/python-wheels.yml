@@ -293,10 +293,14 @@ jobs:
         env:
           CIBW_SKIP: "*musllinux*"
           VCPKG_BINARY_CACHE_HOST: ${{ github.workspace }}/vcpkg-bincache
+          HOST_WORKSPACE: ${{ github.workspace }}
           CIBW_TEST_REQUIRES: pytest adbc_driver_manager geoarrow-pyarrow geopandas duckdb
           # Test command exits 0 even on failure so CIBW continues building all wheels;
-          # failures are recorded in .test_failed and checked after upload.
-          CIBW_TEST_COMMAND: "pytest {package}/tests -vv -o faulthandler_timeout=600 || touch {project}/.test_failed"
+          # failures are recorded in .test_failed and checked after upload. The
+          # marker goes to the bind-mounted /host-workspace rather than {project}:
+          # cibuildwheel copies the project into the container, so a marker
+          # written there would be discarded and the gate would pass silently.
+          CIBW_TEST_COMMAND: "pytest {package}/tests -vv -o faulthandler_timeout=600 || touch /host-workspace/.test_failed"
 
       - name: Save vcpkg binaries
         if: always() && steps.vcpkg-cache.outputs.cache-hit != 'true'

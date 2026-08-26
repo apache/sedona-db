@@ -80,6 +80,61 @@ test_that("column expressions can be translated", {
   )
 })
 
+test_that("nested struct field expressions can be translated", {
+  schema <- nanoarrow::na_struct(list(
+    foo = nanoarrow::na_struct(list(
+      bar = nanoarrow::na_struct(list(baz = nanoarrow::na_int32()))
+    ))
+  ))
+  expr_ctx <- sd_expr_ctx(schema)
+
+  bar <- sd_expr_scalar_function(
+    "get_field",
+    list(sd_expr_column("foo", factory = expr_ctx$factory), "bar"),
+    factory = expr_ctx$factory
+  )
+  expected <- sd_expr_scalar_function(
+    "get_field",
+    list(bar, "baz"),
+    factory = expr_ctx$factory
+  )
+
+  actual <- sd_eval_expr(quote(foo$bar$baz), expr_ctx)
+  expect_identical(actual$debug_string(), expected$debug_string())
+
+  actual_data_pronoun <- sd_eval_expr(quote(.data$foo$bar$baz), expr_ctx)
+  expect_identical(actual_data_pronoun$debug_string(), expected$debug_string())
+
+  struct_expr <- sd_expr_scalar_function(
+    "named_struct",
+    list("value", 1L),
+    factory = expr_ctx$factory
+  )
+  expected_function_field <- sd_expr_get_field(
+    struct_expr,
+    "value",
+    factory = expr_ctx$factory
+  )
+  actual_function_field <- sd_eval_expr(
+    quote(.fns$named_struct("value", 1L)$value),
+    expr_ctx
+  )
+  expect_identical(
+    actual_function_field$debug_string(),
+    expected_function_field$debug_string()
+  )
+
+  local_object <- list(value = 1L)
+  actual_local <- sd_eval_expr(quote(local_object$value), expr_ctx)
+  expected_local <- sd_expr_literal(1L, factory = expr_ctx$factory)
+  expect_identical(actual_local$debug_string(), expected_local$debug_string())
+
+  expect_error(
+    sd_eval_expr(quote(not_a_column$bar$baz), expr_ctx),
+    "object 'not_a_column' not found"
+  )
+})
+
 test_that("function calls with a translation become function calls", {
   # Should work for the qualified or unqualified versions
   expect_snapshot(sd_eval_expr(quote(abs(-1L))))

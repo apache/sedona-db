@@ -145,7 +145,7 @@ impl CrsTransform for Force2DTransform {
 
 /// ST_Force3D() scalar UDF
 pub fn st_force3d_udf() -> SedonaScalarUDF {
-    SedonaScalarUDF::new(
+    let udf = SedonaScalarUDF::new(
         "st_force3d",
         ItemCrsKernel::wrap_impl(vec![
             Arc::new(STForce3D {
@@ -154,7 +154,9 @@ pub fn st_force3d_udf() -> SedonaScalarUDF {
             Arc::new(STForce3D { is_geography: true }),
         ]),
         Volatility::Immutable,
-    )
+    );
+    // Sedona Spark registers this function as ST_Force3DZ as well
+    udf.with_aliases(vec!["st_force3dz".to_string()])
 }
 
 #[derive(Debug)]
@@ -441,6 +443,7 @@ mod tests {
 
         let st_force3d: ScalarUDF = st_force3d_udf().into();
         assert_eq!(st_force3d.name(), "st_force3d");
+        assert!(st_force3d.aliases().contains(&"st_force3dz".to_string()));
 
         let st_force3dm: ScalarUDF = st_force3dm_udf().into();
         assert_eq!(st_force3dm.name(), "st_force3dm");

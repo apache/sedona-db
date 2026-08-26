@@ -22,13 +22,13 @@
 ## Verifying a release candidate
 
 Release candidates are verified using the script `verify-release-candidate.sh <version> <rc_num>`.
-For example, to verify SedonaDB 0.3.0 RC0, run:
+For example, to verify SedonaDB 0.4.1 RC0, run:
 
 ```shell
 # git clone https://github.com/apache/sedona-db.git && cd sedona-db
 # or
 # cd existing/sedona-db && git fetch upstream && git switch main && git pull upstream main
-dev/release/verify-release-candidate.sh 0.3.0 0
+dev/release/verify-release-candidate.sh 0.4.1 0
 ```
 
 Release verification requires a recent Rust toolchain. This toolchain can be installed
@@ -74,6 +74,14 @@ enable runtime binding generation:
 export SEDONADB_CARGO_TEST_ARGS="--features bindgen"
 ```
 
+The Python test suite includes comparison tests that connect to a PostGIS instance at
+`postgresql://localhost:5432/postgres?user=postgres&password=password` when one is
+reachable. A live PostGIS on localhost is not needed for successful verification;
+however, those who wish to run these extra tests can start the pinned version
+with `docker compose up -d postgis` from the repository root before verifying;
+an unrelated local PostgreSQL listening on port 5432 (e.g., an older PostGIS that
+lacks `ST_HasM`) will cause these tests to fail.
+
 ## Pre-release
 
 Approaching the release date, create a draft pull request into Apache Sedona
@@ -106,8 +114,8 @@ a committer.
 
 ```shell
 git pull upstream main
-git checkout -b branch-0.3.0
-git push upstream -u branch-0.3.0:branch-0.3.0
+git checkout -b branch-0.4.1
+git push upstream -u branch-0.4.1:branch-0.4.1
 ```
 
 This push should cause two CI runs to begin:
@@ -133,8 +141,8 @@ When the state of the `branch-x.x.x` branch is clean and checks are complete,
 the release candidate tag can be created:
 
 ```shell
-git tag -a apache-sedona-db-0.3.0-rc0 -m "Tag Apache SedonaDB 0.3.0-rc0"
-git push upstream apache-sedona-db-0.3.0-rc0
+git tag -a apache-sedona-db-0.4.1-rc0 -m "Tag Apache SedonaDB 0.4.1-rc0"
+git push upstream apache-sedona-db-0.4.1-rc0
 ```
 
 This will trigger another packaging CI run that, if successful, will create a
@@ -149,7 +157,7 @@ The GPG_KEY_ID in dev/release/.env must have its public component listed in the
 
 ```shell
 # sign-assets.sh <version> <rc_number>
-dev/release/sign-assets.sh 0.3.0 0
+dev/release/sign-assets.sh 0.4.1 0
 ```
 
 After the assets are signed, they can be committed and uploaded to the
@@ -158,7 +166,7 @@ is provided:
 
 ```shell
 # upload-candidate.sh <version> <rc_number>
-APACHE_USERNAME=your_apache_username dev/release/upload-candidate.sh 0.3.0 0
+APACHE_USERNAME=your_apache_username dev/release/upload-candidate.sh 0.4.1 0
 ```
 
 ## Vote
@@ -168,11 +176,11 @@ the release verification instructions and vote appropriately on the source relea
 The following may be used as a template:
 
 ```
-[VOTE] Release Apache SedonaDB 0.3.0-rc0
+[VOTE] Release Apache SedonaDB 0.4.1-rc0
 
 Hello,
 
-I would like to propose the following release candidate (rc0) of Apache SedonaDB [0] version 0.3.0. This is a release consisting of 138 resolved GitHub issues from 17 contributors [1].
+I would like to propose the following release candidate (rc0) of Apache SedonaDB [0] version 0.4.1. This is a release consisting of 138 resolved GitHub issues from 17 contributors [1].
 
 This release candidate is based on commit: 69f89a9a0cced55a3792eb6dfe1f76e9dd01033c [2]
 
@@ -182,14 +190,14 @@ Please download, verify checksums and signatures, run the unit tests, and vote o
 
 The vote will be open for at least 72 hours.
 
-[ ] +1 Release this as Apache SedonaDB 0.3.0
+[ ] +1 Release this as Apache SedonaDB 0.4.1
 [ ] +0
-[ ] -1 Do not release this as Apache SedonaDB 0.3.0 because...
+[ ] -1 Do not release this as Apache SedonaDB 0.4.1 because...
 
 [0] https://github.com/apache/sedona-db
 [1] https://github.com/apache/sedona-db/milestone/1?closed=1
-[2] https://github.com/apache/sedona-db/tree/apache-sedona-db-0.3.0-rc1
-[3] https://dist.apache.org/repos/dist/dev/sedona/apache-sedona-db-0.3.0-rc1
+[2] https://github.com/apache/sedona-db/tree/apache-sedona-db-0.4.1-rc0
+[3] https://dist.apache.org/repos/dist/dev/sedona/apache-sedona-db-0.4.1-rc0
 [4] https://github.com/apache/arrow-nanoarrow/blob/main/dev/release/README.md
 [5] https://github.com/apache/sedona/pull/2540
 ```
@@ -207,20 +215,20 @@ Apache release repository. A helper script is provided:
 
 ```shell
 # upload-release.sh <version> <rc_number>
-dev/release/upload-release.sh 0.3.0 0
+dev/release/upload-release.sh 0.4.1 0
 ```
 
 An official Git tag must also be created and uploaded to the Apache remote:
 
 ```shell
-git tag -a apache-sedona-db-0.3.0 -m "SedonaDB 0.3.0" apache-sedona-db-0.3.0-rc0^{}
-git push upstream apache-sedona-db-0.3.0
+git tag -a apache-sedona-db-0.4.1 -m "SedonaDB 0.4.1" apache-sedona-db-0.4.1-rc0^{}
+git push upstream apache-sedona-db-0.4.1
 ```
 
-The prerelease located at <https://github.com/apache/sedona-db/releases/tag/apache-sedona-db-0.3.0-rc0>
+The prerelease located at <https://github.com/apache/sedona-db/releases/tag/apache-sedona-db-0.4.1-rc0>
 can now be edited to point to the official release tag and the GitHub release published
-from the UI. The release notes may be automatically generated by selecting
-`apache-sedona-db-0.3.0.dev` as the previous release.
+from the UI. The release notes may be automatically generated by selecting the
+previous release tag (e.g., `apache-sedona-db-0.4.0`) as the previous release.
 
 ### Publish Python package
 
@@ -242,21 +250,58 @@ popd
 ```
 
 Use `twine` to upload the release to PyPI. This will require a token created
-in the PyPI UI.
+in the PyPI UI. The pure-Python packages (e.g., `sedonadb-expr`) are built with
+Metadata-Version 2.5, which requires `twine>=7`. If the token is stored in
+`~/.pypirc`, the `[distutils] index-servers` list must include `pypi` or twine will
+not read the `[pypi]` section. The native wheels are large, so `--skip-existing`
+allows the upload to be resumed if it is interrupted.
 
 ```shell
-# pip install twine
-twine upload wheels/**/*.whl
+# pip install "twine>=7"
+twine upload --repository pypi --skip-existing wheels/**/*.whl wheels/**/*.tar.gz
 rm -rf wheels
 ```
 
 ### Upload to `crates.io`
 
-A script is provided to upload the crates to <https://crates.io>.
+A script is provided to upload the crates to <https://crates.io>. Run it from a
+checkout of the release tag with submodules initialized (the `sedona-s2geography`
+crate compiles the `s2geography` and `s2geometry` submodules during verification).
 
 ```shell
+git checkout apache-sedona-db-0.4.1
+git submodule update --init c/sedona-s2geography/s2geography c/sedona-s2geography/s2geometry
 cargo login
-dev/release/upload-crates-io.sh
+# Validate first, then publish. Tests and the release build can be skipped if the
+# release tarball has already been verified.
+dev/release/publish-crates.sh --dry-run-local
+dev/release/publish-crates.sh --publish --skip-tests --skip-validation
+```
+
+If publishing stops partway, fix the problem and resume with
+`--start-from <crate-name>`.
+
+`cargo publish` resolves `[dev-dependencies]` that carry a version requirement, so
+dev-dependencies that form a cycle with a crate published later currently prevent
+publishing. Removing these cycles is tracked in
+[#702](https://github.com/apache/sedona-db/issues/702) (see also
+[#1025](https://github.com/apache/sedona-db/pull/1025)); until that lands, the
+workaround is to remove the offending dev-dependencies from the local checkout used for
+publishing. This is a stopgap: the modifications are never committed, and the published
+crate contents are otherwise identical to the voted release. As of 0.4.1 the cycles are
+`sedona-testing` in `sedona-geometry`, `sedona-gdal`, `sedona-geo-generic-alg`,
+`sedona-raster`, `sedona-expr`, and `sedona-functions`; `sedona-proj` in
+`sedona-functions`; and `sedona` in `sedona-pointcloud`, `sedona-tg`, `sedona-geos`,
+`sedona-geoarrow-c`, and `sedona-s2geography`.
+
+Users with GDAL 3.13+ should also set `GDAL_VERSION=3.12.0` so that the `gdal-sys`
+build script uses its pre-built bindings during the verification builds.
+
+New crates are owned by whoever publishes them first; add the committers team as an
+owner so that future releases can be published by any committer:
+
+```shell
+cargo owner --add github:apache:sedona-committers <crate-name>
 ```
 
 ### Publish release blog post
@@ -270,11 +315,11 @@ as ready for review, solicit final reviews, and merge to publish the post to the
 The following template may be used:
 
 ```
-[ANNOUNCE] Apache SedonaDB 0.3.0 released
+[ANNOUNCE] Apache SedonaDB 0.4.1 released
 
 Dear all,
 
-We are happy to report that we have released Apache SedonaDB 0.3.0.
+We are happy to report that we have released Apache SedonaDB 0.4.1.
 Thank you again for your help.
 
 SedonaDB is the first open-source, single-node analytical database engine that treats spatial data as a first-class citizen. It is developed as a subproject of Apache Sedona.
@@ -286,7 +331,7 @@ Release notes:
 https://sedona.apache.org/latest/blog/2025/12/01/sedonadb-020-release/
 
 Download link:
-https://www.apache.org/dyn/closer.cgi/sedona/apache-sedona-db-0.3.0
+https://www.apache.org/dyn/closer.cgi/sedona/apache-sedona-db-0.4.1
 
 Additional resources:
 Mailing list: dev@sedona.apache.org
@@ -312,12 +357,12 @@ are currently all derived from `Cargo.toml`, which can be updated to:
 
 ```
 [workspace.package]
-version = "0.4.0"
+version = "0.5.0"
 ```
 
 The R package must also be updated. R Packages use a different convention for development
-versions such that in preparation for 0.4.0 the development version should be
-`0.3.0.9000`. This is set the DESCRIPTION of the requisite package.
+versions such that in preparation for 0.5.0 the development version should be
+`0.4.1.9000`. This is set the DESCRIPTION of the requisite package.
 
 Development versions and the changelog are derived from the presence of a development
 tag on the main branch signifying where development of that version "started". After
@@ -325,6 +370,6 @@ the version bump PR merges, that commit should be tagged with the appropriate
 development tag:
 
 ```shell
-git tag -a apache-sedona-db-0.4.0.dev -m "tag dev 0.4.0"
-git push upstream apache-sedona-db-0.4.0.dev
+git tag -a apache-sedona-db-0.5.0.dev -m "tag dev 0.5.0"
+git push upstream apache-sedona-db-0.5.0.dev
 ```

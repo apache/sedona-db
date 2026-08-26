@@ -227,6 +227,15 @@ impl SedonaScalarUDF {
         &self.metadata
     }
 
+    /// The kernels (overload implementations) this UDF dispatches to.
+    ///
+    /// Exposed so a UDF's kernels can be exported across the
+    /// `sedona-extension` FFI boundary (e.g. handed to an out-of-tree
+    /// plugin as capsules).
+    pub fn kernels(&self) -> &[ScalarKernelRef] {
+        &self.kernels
+    }
+
     /// Create a SedonaScalarUDF from a single kernel
     ///
     /// This constructor creates a [Volatility::Immutable] function with no documentation

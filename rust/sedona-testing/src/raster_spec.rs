@@ -505,6 +505,9 @@ pub fn list_i64_row(result: &ArrayRef, row: usize) -> Option<Vec<i64>> {
 
 /// Decode the pixel values of one band (1-based `band_number`) of one row of
 /// a raster `StructArray`. `T` must match the band's data type.
+// `as_chunks` requires a const chunk size, but generic const expressions cannot
+// use `size_of::<T>()` on stable Rust.
+#[allow(clippy::chunks_exact_to_as_chunks)]
 pub fn band_pixels<T: PixelValue>(rasters: &StructArray, row: usize, band_number: usize) -> Vec<T> {
     use sedona_raster::traits::RasterRef;
 

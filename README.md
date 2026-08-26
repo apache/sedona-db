@@ -22,6 +22,8 @@
 [![PyPI Version](https://img.shields.io/pypi/v/sedonadb)](https://pypi.org/project/sedonadb/) [![PyPI Downloads](https://static.pepy.tech/personalized-badge/sedonadb?period=monthly&units=NONE&left_color=BLACK&right_color=GREEN&left_text=downloads%2Fmonth)](https://pepy.tech/projects/sedonadb) [![Downloads](https://static.pepy.tech/personalized-badge/sedonadb?period=total&units=international_system&left_color=black&right_color=brightgreen&left_text=total%20downloads)](https://pepy.tech/project/sedonadb)
 [![Anaconda Version](
 https://anaconda.org/conda-forge/sedonadb/badges/version.svg)](https://anaconda.org/conda-forge/sedonadb) [![Conda Downloads](https://anaconda.org/conda-forge/sedonadb/badges/downloads.svg)](https://anaconda.org/channels/conda-forge/packages/sedonadb/overview)
+[![R-multiverse
+status](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fcommunity.r-multiverse.org%2Fapi%2Fpackages%2Fsedonadb&query=%24.Version&label=r-multiverse)](https://community.r-multiverse.org/sedonadb)
 
 SedonaDB is an open-source single-node analytical database engine with **geospatial as a first-class citizen**. It aims to deliver the fastest spatial analytics query speed and the most comprehensive function coverage available.
 

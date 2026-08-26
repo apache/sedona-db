@@ -78,6 +78,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_iscollection::st_iscollection_udf,
         crate::st_isempty::st_isempty_udf,
         crate::st_knn::st_knn_udf,
+        crate::st_makeenvelope::st_makeenvelope_udf,
         crate::st_makeline::st_makeline_udf,
         crate::st_numgeometries::st_numgeometries_udf,
         crate::st_point::st_geogpoint_udf,

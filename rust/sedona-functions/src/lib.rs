@@ -48,6 +48,7 @@ mod st_iscollection;
 mod st_isempty;
 mod st_knn;
 mod st_linesubstring;
+mod st_makeenvelope;
 mod st_makeline;
 mod st_max_distance;
 mod st_numgeometries;

@@ -18,7 +18,7 @@
 use crate::{
     error::PySedonaError,
     raster_loader::py_raster_loader,
-    udf::{sedona_aggregate_udf, sedona_scalar_udf},
+    udf::{sedona_aggregate_udf, sedona_native_scalar_udf, sedona_scalar_udf},
 };
 use pyo3::{exceptions::PyValueError, ffi::Py_uintptr_t, prelude::*};
 use sedona_adbc::AdbcSedonadbDriverInit;
@@ -168,6 +168,7 @@ fn _lib(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(schema::raster_type, m)?)?;
     m.add_function(wrap_pyfunction!(sedona_adbc_driver_init, m)?)?;
     m.add_function(wrap_pyfunction!(sedona_aggregate_udf, m)?)?;
+    m.add_function(wrap_pyfunction!(sedona_native_scalar_udf, m)?)?;
     m.add_function(wrap_pyfunction!(sedona_python_features, m)?)?;
     m.add_function(wrap_pyfunction!(sedona_python_version, m)?)?;
     m.add_function(wrap_pyfunction!(sedona_scalar_udf, m)?)?;

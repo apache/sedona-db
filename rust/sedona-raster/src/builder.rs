@@ -16,21 +16,18 @@
 // under the License.
 
 use arrow_array::{
-    builder::{
-        ArrayBuilder, BinaryBuilder, BinaryViewBuilder, BooleanBuilder, Float64Builder,
-        Int64Builder, StringBuilder, StringViewBuilder, UInt32Builder,
-    },
+    builder::{BinaryViewBuilder, BooleanBuilder, Float64Builder, Int64Builder, StringViewBuilder},
     Array, ArrayRef, BinaryViewArray, ListArray, StructArray,
 };
-use arrow_buffer::{Buffer, NullBuffer, OffsetBuffer, ScalarBuffer};
+use arrow_buffer::{Buffer, OffsetBuffer, ScalarBuffer};
 use arrow_schema::{ArrowError, DataType};
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use sedona_schema::raster::{BandDataType, RasterSchema};
 
+use crate::band_builder::{BandArrayBuilder, BandWriter};
 use crate::traits::{BandOverrides, BandRef, RasterRef};
-use crate::view_entries::{ViewEntries, ViewEntry};
+use crate::view_entries::ViewEntry;
 
 /// Raster-level metadata overrides for [`RasterBuilder::start_raster_from`] and
 /// [`RasterBuilder::copy_raster_from`]. A `None` field inherits the source
@@ -40,11 +37,6 @@ pub struct RasterOverrides {
     /// Override the 6-element GDAL geotransform; `None` inherits the source's.
     pub transform: Option<[f64; 6]>,
 }
-
-/// Maximum byte length of an inline `BinaryViewArray` view. Views this short
-/// store their bytes in the 16-byte view itself; longer views reference a data
-/// block by `(buffer_index, offset)`. Fixed by the Arrow columnar format spec.
-const MAX_INLINE_VIEW_LEN: u32 = 12;
 
 /// Builder for constructing raster arrays with zero-copy band data writing
 ///
@@ -92,29 +84,11 @@ pub struct RasterBuilder {
     spatial_shape_values: Int64Builder,
     spatial_shape_offsets: Vec<i32>,
 
-    // Band fields (flattened across all bands)
-    band_name: StringBuilder,
-    band_dim_names_values: StringBuilder,
-    band_dim_names_offsets: Vec<i32>,
-    band_shape_values: Int64Builder,
-    band_shape_offsets: Vec<i32>,
-    band_datatype: UInt32Builder,
-    band_nodata: BinaryBuilder,
-    // VIEW field — one entry per visible dimension per band. Stored as four
-    // parallel Int64 columns + a List offset vector; assembled into a
-    // `ListArray<StructArray<Int64,Int64,Int64,Int64>>` in `finish()`.
-    band_view_source_axis_values: Int64Builder,
-    band_view_start_values: Int64Builder,
-    band_view_step_values: Int64Builder,
-    band_view_steps_values: Int64Builder,
-    band_view_offsets: Vec<i32>,
-    // Per-band validity for the view list. `false` means the row is null —
-    // the canonical representation of an identity view. `true` means the row
-    // carries an explicit view in the four parallel value builders.
-    band_view_validity: Vec<bool>,
-    band_outdb_uri: StringBuilder,
-    band_outdb_format: StringViewBuilder,
-    band_data: BinaryViewBuilder,
+    // The flat, per-band columns — see [`BandArrayBuilder`]. Everything
+    // below is raster-envelope bookkeeping layered on top of it: grouping
+    // its rows into a per-raster list, and validating them against each
+    // raster's spatial grid.
+    bands: BandArrayBuilder,
 
     // List structure tracking
     band_offsets: Vec<i32>,  // Track where each raster's bands start/end
@@ -129,15 +103,6 @@ pub struct RasterBuilder {
     current_spatial_dims: Vec<String>,
     current_spatial_shape: Vec<i64>,
     current_raster_bands: Vec<(Vec<String>, Vec<i64>)>,
-
-    // Track band_data count at the start of each band for finish_band validation
-    band_data_count_at_start: usize,
-
-    // Zero-copy band-data dedup: maps an already-appended source `Buffer`'s
-    // data pointer to its block index in `band_data`, so the same backing
-    // buffer (e.g. many bands sharing one source column block) is attached
-    // once and referenced by multiple views. See `append_band_data_buffer`.
-    band_data_blocks: HashMap<usize, u32>,
 
     raster_validity: BooleanBuilder,
 }
@@ -205,22 +170,7 @@ impl RasterBuilder {
             spatial_shape_values: Int64Builder::with_capacity(capacity * 2),
             spatial_shape_offsets: vec![0],
 
-            band_name: StringBuilder::with_capacity(capacity, capacity),
-            band_dim_names_values: StringBuilder::with_capacity(capacity * 2, capacity * 4),
-            band_dim_names_offsets: vec![0],
-            band_shape_values: Int64Builder::with_capacity(capacity * 2),
-            band_shape_offsets: vec![0],
-            band_datatype: UInt32Builder::with_capacity(capacity),
-            band_nodata: BinaryBuilder::with_capacity(capacity, capacity),
-            band_view_source_axis_values: Int64Builder::with_capacity(capacity * 2),
-            band_view_start_values: Int64Builder::with_capacity(capacity * 2),
-            band_view_step_values: Int64Builder::with_capacity(capacity * 2),
-            band_view_steps_values: Int64Builder::with_capacity(capacity * 2),
-            band_view_offsets: vec![0],
-            band_view_validity: Vec::with_capacity(capacity),
-            band_outdb_uri: StringBuilder::with_capacity(capacity, capacity),
-            band_outdb_format: StringViewBuilder::with_capacity(capacity),
-            band_data: BinaryViewBuilder::with_capacity(capacity),
+            bands: BandArrayBuilder::new(capacity),
 
             band_offsets: vec![0],
             current_band_count: 0,
@@ -230,9 +180,6 @@ impl RasterBuilder {
             current_spatial_dims: Vec::new(),
             current_spatial_shape: Vec::new(),
             current_raster_bands: Vec::new(),
-
-            band_data_count_at_start: 0,
-            band_data_blocks: HashMap::new(),
 
             raster_validity: BooleanBuilder::with_capacity(capacity),
         }
@@ -391,176 +338,27 @@ impl RasterBuilder {
     /// the *source* shape and the visible shape is derived from the view on
     /// read; the source bytes are carried over unchanged.
     pub fn start_band(&mut self, args: StartBandArgs<'_>) -> Result<(), ArrowError> {
-        let StartBandArgs {
-            name,
-            dim_names,
-            source_shape,
-            view,
-            data_type,
-            nodata,
-            outdb_uri,
-            outdb_format,
-        } = args;
-
-        // A caller-supplied view is validated against source_shape. An identity
-        // view falls through to the null-sentinel storage path below (identical
-        // to `None`) so downstream readers agree on the canonical
-        // representation; a genuinely non-identity view is persisted explicitly
-        // into the band's four parallel view columns here.
-        if let Some(view) = view {
-            let ndim = dim_names.len();
-            if ndim == 0 {
-                return Err(ArrowError::InvalidArgumentError(
-                    "start_band: 0-dimensional bands are not supported".into(),
-                ));
-            }
-            if source_shape.len() != ndim || view.len() != ndim {
-                return Err(ArrowError::InvalidArgumentError(format!(
-                    "start_band: dim_names ({}), source_shape ({}), and view ({}) \
-                     must all have the same length",
-                    ndim,
-                    source_shape.len(),
-                    view.len()
-                )));
-            }
-            let view_entries = ViewEntries::new(view.to_vec());
-            view_entries.validate(source_shape)?;
-
-            if !view_entries.is_identity(source_shape) {
-                // -- Non-identity view: persist the explicit ViewEntry list. --
-                match name {
-                    Some(n) => self.band_name.append_value(n),
-                    None => self.band_name.append_null(),
-                }
-
-                for dn in dim_names {
-                    self.band_dim_names_values.append_value(dn);
-                }
-                let next = *self.band_dim_names_offsets.last().unwrap() + ndim as i32;
-                self.band_dim_names_offsets.push(next);
-
-                // The `shape` column stores the *source* shape; the visible
-                // shape is derived from the view at read time.
-                for &s in source_shape {
-                    self.band_shape_values.append_value(s);
-                }
-                let next = *self.band_shape_offsets.last().unwrap() + ndim as i32;
-                self.band_shape_offsets.push(next);
-
-                self.band_datatype.append_value(data_type as u32);
-
-                match nodata {
-                    Some(b) => self.band_nodata.append_value(b),
-                    None => self.band_nodata.append_null(),
-                }
-
-                // VIEW: one entry per visible axis written into the four
-                // parallel columns, offset advanced by the entry count,
-                // validity bit set — the mirror of the null-sentinel path below
-                // (validity false, offset unchanged).
-                for v in view {
-                    self.band_view_source_axis_values
-                        .append_value(v.source_axis);
-                    self.band_view_start_values.append_value(v.start);
-                    self.band_view_step_values.append_value(v.step);
-                    self.band_view_steps_values.append_value(v.steps);
-                }
-                let next = *self.band_view_offsets.last().unwrap() + ndim as i32;
-                self.band_view_offsets.push(next);
-                self.band_view_validity.push(true);
-
-                match outdb_uri {
-                    Some(uri) => self.band_outdb_uri.append_value(uri),
-                    None => self.band_outdb_uri.append_null(),
-                }
-                match outdb_format {
-                    Some(format) => self.band_outdb_format.append_value(format),
-                    None => self.band_outdb_format.append_null(),
-                }
-
-                self.current_band_count += 1;
-                self.band_data_count_at_start = self.band_data.len();
-
-                // finish_raster compares the band's *visible* shape against
-                // spatial_shape.
-                self.current_raster_bands.push((
-                    dim_names.iter().map(|s| s.to_string()).collect(),
-                    view_entries.visible_shape(),
-                ));
-
-                return Ok(());
-            }
-        }
-
-        if dim_names.is_empty() {
-            return Err(ArrowError::InvalidArgumentError(
-                "start_band: 0-dimensional bands are not supported".into(),
-            ));
-        }
-        if dim_names.len() != source_shape.len() {
-            return Err(ArrowError::InvalidArgumentError(format!(
-                "start_band: dim_names ({}) and shape ({}) must have the same length",
-                dim_names.len(),
-                source_shape.len(),
-            )));
-        }
-        // Name
-        match name {
-            Some(n) => self.band_name.append_value(n),
-            None => self.band_name.append_null(),
-        }
-
-        // Dim names
-        for dn in dim_names {
-            self.band_dim_names_values.append_value(dn);
-        }
-        let next = *self.band_dim_names_offsets.last().unwrap() + dim_names.len() as i32;
-        self.band_dim_names_offsets.push(next);
-
-        // Shape
-        for &s in source_shape {
-            self.band_shape_values.append_value(s);
-        }
-        let next = *self.band_shape_offsets.last().unwrap() + source_shape.len() as i32;
-        self.band_shape_offsets.push(next);
-
-        // Data type
-        self.band_datatype.append_value(data_type as u32);
-
-        // Nodata
-        match nodata {
-            Some(nodata_bytes) => self.band_nodata.append_value(nodata_bytes),
-            None => self.band_nodata.append_null(),
-        }
-
-        // VIEW: canonical identity is encoded as a null list entry — no
-        // values appended, offset unchanged, validity bit cleared.
-        let next = *self.band_view_offsets.last().unwrap();
-        self.band_view_offsets.push(next);
-        self.band_view_validity.push(false);
-
-        // OutDb URI
-        match outdb_uri {
-            Some(uri) => self.band_outdb_uri.append_value(uri),
-            None => self.band_outdb_uri.append_null(),
-        }
-
-        // OutDb format
-        match outdb_format {
-            Some(format) => self.band_outdb_format.append_value(format),
-            None => self.band_outdb_format.append_null(),
-        }
-
-        self.current_band_count += 1;
-        self.band_data_count_at_start = self.band_data.len();
-
-        // Record this band's dims/shape for strict validation at finish_raster.
-        self.current_raster_bands.push((
-            dim_names.iter().map(|s| s.to_string()).collect(),
-            source_shape.to_vec(),
-        ));
-
+        self.start_band_and_record(args)?;
         Ok(())
+    }
+
+    /// Shared by the inherent [`Self::start_band`] (used directly by ~20
+    /// call sites across the raster function crates, which don't need the
+    /// recorded `(dim_names, visible_shape)`) and `impl BandWriter for
+    /// RasterBuilder` (used by [`BandRef::copy_into`](crate::traits::
+    /// BandRef::copy_into), which does need it — see [`BandWriter::
+    /// start_band`]). Both delegate here rather than to each other, so
+    /// there's no same-type self-call to disambiguate between the inherent
+    /// method and the trait impl of the same name.
+    fn start_band_and_record(
+        &mut self,
+        args: StartBandArgs<'_>,
+    ) -> Result<(Vec<String>, Vec<i64>), ArrowError> {
+        let (dim_names, shape) = self.bands.start_band(args)?;
+        self.current_band_count += 1;
+        self.current_raster_bands
+            .push((dim_names.clone(), shape.clone()));
+        Ok((dim_names, shape))
     }
 
     /// Build a band that is a new view into an existing band.
@@ -641,23 +439,13 @@ impl RasterBuilder {
 
     /// Get direct access to the BinaryViewBuilder for writing the current band's data.
     pub fn band_data_writer(&mut self) -> &mut BinaryViewBuilder {
-        &mut self.band_data
+        self.bands.band_data_writer()
     }
 
     /// Append the current band's data as a **zero-copy** view into an existing
-    /// Arrow [`Buffer`], rather than copying bytes via `append_value`.
-    ///
-    /// `buffer` is attached to the output `BinaryViewArray` as a shared data
-    /// block (a refcount bump, never a copy) and a single view row referencing
-    /// `[offset, offset + len)` is appended. Buffers are de-duplicated by data
-    /// pointer, so handing the same backing buffer for many bands attaches it
-    /// once and points every view at it.
-    ///
-    /// Bytes at or under the inline threshold ([`MAX_INLINE_VIEW_LEN`]) are
-    /// stored inline (a tiny copy) instead, since the `BinaryViewArray` layout
-    /// requires such views to be inline and a block-referencing view of that
-    /// size is non-canonical (it fails array validation on roundtrip). Band
-    /// data is realistically always larger, so this is the degenerate path.
+    /// Arrow [`Buffer`], rather than copying bytes via `append_value`. See
+    /// [`crate::band_builder::BandArrayBuilder::append_band_data_buffer`] for
+    /// the full documentation — identical logic, delegated.
     ///
     /// Counts as the one data value for the current band (see [`finish_band`]).
     ///
@@ -668,28 +456,14 @@ impl RasterBuilder {
         offset: u32,
         len: u32,
     ) -> Result<(), ArrowError> {
-        if len <= MAX_INLINE_VIEW_LEN {
-            self.band_data
-                .append_value(&buffer.as_slice()[offset as usize..(offset + len) as usize]);
-            return Ok(());
-        }
-        let block = match self.band_data_blocks.get(&(buffer.as_ptr() as usize)) {
-            Some(&idx) => idx,
-            None => {
-                // `clone` bumps the buffer's refcount; the bytes are not copied.
-                let idx = self.band_data.append_block(buffer.clone());
-                self.band_data_blocks.insert(buffer.as_ptr() as usize, idx);
-                idx
-            }
-        };
-        self.band_data.try_append_view(block, offset, len)
+        self.bands.append_band_data_buffer(buffer, offset, len)
     }
 
     /// Append the current band's data by copying row `row` of `src` through —
     /// zero-copy when the row's bytes are block-backed (shares the backing
     /// `Buffer` via [`append_band_data_buffer`]), with a small copy only for
-    /// inline views (≤ [`MAX_INLINE_VIEW_LEN`] bytes, which live in the view
-    /// itself and have no backing buffer).
+    /// inline views (which live in the view itself and have no backing
+    /// buffer).
     ///
     /// Counts as the one data value for the current band (see [`finish_band`]).
     ///
@@ -699,40 +473,14 @@ impl RasterBuilder {
         src: &BinaryViewArray,
         row: usize,
     ) -> Result<(), ArrowError> {
-        // Arrow BYTE_VIEW layout (u128, little-endian fields), fixed by the
-        // columnar format spec:
-        //   bits   0..32  length
-        //   bits  32..64  prefix
-        //   bits  64..96  buffer_index
-        //   bits  96..128 offset
-        // A view of `length <= MAX_INLINE_VIEW_LEN` stores its bytes inline and
-        // has no backing buffer to share.
-        let view = src.views()[row];
-        let len = view as u32;
-        if len <= MAX_INLINE_VIEW_LEN {
-            self.band_data.append_value(src.value(row));
-            Ok(())
-        } else {
-            let buffer_index = (view >> 64) as u32;
-            let offset = (view >> 96) as u32;
-            self.append_band_data_buffer(&src.data_buffers()[buffer_index as usize], offset, len)
-        }
+        self.bands.append_band_data_from(src, row)
     }
 
     /// Finish writing the current band.
     ///
     /// Validates that exactly one data value was appended since `start_band()`.
     pub fn finish_band(&mut self) -> Result<(), ArrowError> {
-        let current_count = self.band_data.len();
-        if current_count != self.band_data_count_at_start + 1 {
-            return Err(ArrowError::InvalidArgumentError(
-                format!(
-                    "Expected exactly one band data value per band, but got {} appended since start_band()",
-                    current_count - self.band_data_count_at_start
-                ),
-            ));
-        }
-        Ok(())
+        self.bands.finish_band()
     }
 
     /// Finish all bands for the current raster.
@@ -848,95 +596,10 @@ impl RasterBuilder {
             None,
         );
 
-        // Build band dim_names nested list
-        let dim_names_values = self.band_dim_names_values.finish();
-        let dim_names_offsets = OffsetBuffer::new(ScalarBuffer::from(self.band_dim_names_offsets));
-        let DataType::List(dim_names_field) = RasterSchema::dim_names_type() else {
-            return Err(ArrowError::SchemaError(
-                "Expected list type for dim_names".to_string(),
-            ));
-        };
-        let dim_names_list = ListArray::new(
-            dim_names_field,
-            dim_names_offsets,
-            Arc::new(dim_names_values),
-            None,
-        );
-
-        // Build band source_shape nested list
-        let source_shape_values = self.band_shape_values.finish();
-        let source_shape_offsets = OffsetBuffer::new(ScalarBuffer::from(self.band_shape_offsets));
-        let DataType::List(source_shape_field) = RasterSchema::source_shape_type() else {
-            return Err(ArrowError::SchemaError(
-                "Expected list type for source_shape".to_string(),
-            ));
-        };
-        let source_shape_list = ListArray::new(
-            source_shape_field,
-            source_shape_offsets,
-            Arc::new(source_shape_values),
-            None,
-        );
-
-        // Build band view nested list (List<Struct<Int64×4>>).
-        let view_source_axis = self.band_view_source_axis_values.finish();
-        let view_start = self.band_view_start_values.finish();
-        let view_step = self.band_view_step_values.finish();
-        let view_steps = self.band_view_steps_values.finish();
-        let view_offsets = OffsetBuffer::new(ScalarBuffer::from(self.band_view_offsets));
-        let DataType::List(view_list_field) = RasterSchema::view_type() else {
-            return Err(ArrowError::SchemaError(
-                "Expected list type for view".to_string(),
-            ));
-        };
-        let DataType::Struct(view_struct_fields) = view_list_field.data_type().clone() else {
-            return Err(ArrowError::SchemaError(
-                "Expected struct type inside view list".to_string(),
-            ));
-        };
-        let view_struct = StructArray::new(
-            view_struct_fields,
-            vec![
-                Arc::new(view_source_axis) as ArrayRef,
-                Arc::new(view_start) as ArrayRef,
-                Arc::new(view_step) as ArrayRef,
-                Arc::new(view_steps) as ArrayRef,
-            ],
-            None,
-        );
-        let view_nulls = if self.band_view_validity.iter().all(|&b| b) {
-            None
-        } else {
-            Some(NullBuffer::from_iter(
-                self.band_view_validity.iter().copied(),
-            ))
-        };
-        let view_list = ListArray::new(
-            view_list_field,
-            view_offsets,
-            Arc::new(view_struct),
-            view_nulls,
-        );
-
-        // Build band struct
-        let DataType::Struct(band_fields) = RasterSchema::band_type() else {
-            return Err(ArrowError::SchemaError(
-                "Expected struct type for band".to_string(),
-            ));
-        };
-
-        let band_arrays: Vec<ArrayRef> = vec![
-            Arc::new(self.band_name.finish()),
-            Arc::new(dim_names_list),
-            Arc::new(source_shape_list),
-            Arc::new(self.band_datatype.finish()),
-            Arc::new(self.band_nodata.finish()),
-            Arc::new(view_list),
-            Arc::new(self.band_outdb_uri.finish()),
-            Arc::new(self.band_outdb_format.finish()),
-            Arc::new(self.band_data.finish()),
-        ];
-        let band_struct = StructArray::new(band_fields, band_arrays, None);
+        // Build the flat band struct — delegated to `BandArrayBuilder`,
+        // which owns all the per-band columns (name, dim_names, shape,
+        // datatype, nodata, view, outdb_uri/format, data).
+        let band_struct = self.bands.finish()?;
 
         // Build bands list
         let DataType::List(bands_field) = RasterSchema::bands_type() else {
@@ -962,6 +625,36 @@ impl RasterBuilder {
         let raster_nulls = raster_validity_array.nulls().cloned();
 
         Ok(StructArray::new(raster_fields, raster_arrays, raster_nulls))
+    }
+}
+
+/// Lets [`BandRef::copy_into`](crate::traits::BandRef::copy_into) and
+/// [`BandRef::append_data_into`](crate::traits::BandRef::append_data_into)
+/// target a `RasterBuilder` directly, same as before this trait existed:
+/// `start_band` here does the *same* per-raster bookkeeping as the inherent
+/// [`RasterBuilder::start_band`] (both delegate to
+/// [`Self::start_band_and_record`]) — deriving a band via `copy_into` into a
+/// `RasterBuilder` is still validated against that raster's spatial grid at
+/// `finish_raster`, exactly as it was when `copy_into` was hardcoded to this
+/// type.
+impl BandWriter for RasterBuilder {
+    fn start_band(
+        &mut self,
+        args: StartBandArgs<'_>,
+    ) -> Result<(Vec<String>, Vec<i64>), ArrowError> {
+        self.start_band_and_record(args)
+    }
+
+    fn band_data_writer(&mut self) -> &mut BinaryViewBuilder {
+        self.bands.band_data_writer()
+    }
+
+    fn append_band_data_from(
+        &mut self,
+        src: &BinaryViewArray,
+        row: usize,
+    ) -> Result<(), ArrowError> {
+        self.bands.append_band_data_from(src, row)
     }
 }
 

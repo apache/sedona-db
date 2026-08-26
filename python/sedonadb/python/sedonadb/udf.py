@@ -19,8 +19,42 @@ import inspect
 import re
 from typing import Any, List, Literal, Optional, Union
 
-from sedonadb._lib import sedona_aggregate_udf, sedona_scalar_udf
+from sedonadb._lib import (
+    sedona_aggregate_udf,
+    sedona_native_scalar_udf as _sedona_native_scalar_udf,
+    sedona_scalar_udf,
+)
 from sedonadb.utility import sedona  # noqa: F401
+
+
+def sedona_native_scalar_udf(
+    kernels: List[Any],
+    volatility: Literal["immutable", "stable", "volatile"] = "immutable",
+    name: Optional[str] = None,
+):
+    """Build a scalar UDF from natively-compiled kernel capsules.
+
+    Groups one or more native scalar-kernel capsules -- such as those a
+    function exports via `__sedonadb_scalar_udf__()` -- into a single
+    overloaded UDF backed by compiled Rust (no Python callback per
+    invocation). Each capsule carries its own declared SQL name; the names
+    must agree, and `name` overrides that shared name when given.
+
+    Unlike the `__sedonadb_scalar_udf__` registration protocol, which always
+    registers as immutable, `volatility` is caller-supplied here.
+
+    !!! warning
+        SedonaDB native scalar UDFs are experimental and this interface may
+        change based on user feedback.
+
+    Args:
+        kernels: A non-empty list of PyCapsule objects wrapping
+            natively-compiled scalar kernels that share one SQL name.
+        volatility: "immutable" (default), "stable", or "volatile".
+        name: An optional SQL name overriding the kernels' shared declared
+            name.
+    """
+    return _sedona_native_scalar_udf(kernels, volatility, name)
 
 
 class TypeMatcher(str):

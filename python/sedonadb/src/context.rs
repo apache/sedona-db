@@ -20,6 +20,7 @@ use std::{
 };
 
 use arrow_schema::DataType;
+use datafusion_expr::ScalarUDFImpl;
 use pyo3::prelude::*;
 use sedona::context::SedonaContext;
 use sedona::context_builder::SedonaContextBuilder;
@@ -353,6 +354,31 @@ impl InternalContext {
                 .call_method0("__sedonadb_raster_loader__")?
                 .extract::<PyRasterLoaderWrapper>()?;
             self.inner.register_raster_loader(wrapper.inner);
+            return Ok(());
+        } else if component.hasattr("__sedonadb_scalar_udf__")? {
+            // One function's overload kernels, each a natively-compiled kernel
+            // capsule (see import_sedona_ffi_scalar_kernel) all sharing this
+            // function's SQL name. `sedona_native_scalar_udf` imports each
+            // capsule, checks the declared names agree, and groups them into
+            // one overloaded UDF. Its kernels are then appended as overloads to
+            // any existing UDF of that name (or a new UDF is created when none
+            // exists yet). Because kernels resolve newest-first, an appended
+            // kernel whose signature matches an existing overload wins for that
+            // signature — a per-signature ("kernel-level") override — while the
+            // function's other overloads stay reachable. This lets a plugin add
+            // an overload to an existing function (e.g. an st_intersects
+            // overload for a new type) without discarding its other signatures.
+            // Volatility is Immutable via this path; a plugin needing
+            // Volatile/Stable builds a PySedonaScalarUdf with
+            // sedona_native_scalar_udf(..., volatility=...) and returns it
+            // through __sedonadb_internal_udf__ instead.
+            let capsules = component
+                .call_method0("__sedonadb_scalar_udf__")?
+                .extract::<Vec<Bound<PyAny>>>()?;
+            let py_udf = crate::udf::sedona_native_scalar_udf(capsules, "immutable", None)?;
+            let name = py_udf.inner.name().to_string();
+            let kernels = py_udf.inner.kernels().to_vec();
+            self.inner.append_sedona_scalar_kernels(&name, kernels)?;
             return Ok(());
         } else if let Ok(py_raster_loader) = component.extract::<PyRasterLoaderWrapper>() {
             self.inner.register_raster_loader(py_raster_loader.inner);

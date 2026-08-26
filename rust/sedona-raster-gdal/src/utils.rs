@@ -1028,8 +1028,10 @@ mod tests {
             .unwrap()
             .as_contiguous()
             .unwrap()
-            .chunks_exact(8)
-            .map(|chunk| u64::from_le_bytes(chunk.try_into().unwrap()))
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|chunk| u64::from_le_bytes(*chunk))
             .collect();
         assert_eq!(pixels, vec![1, 2, 3, 4]);
     }
@@ -1060,8 +1062,10 @@ mod tests {
             .unwrap()
             .as_contiguous()
             .unwrap()
-            .chunks_exact(8)
-            .map(|chunk| i64::from_le_bytes(chunk.try_into().unwrap()))
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|chunk| i64::from_le_bytes(*chunk))
             .collect();
         assert_eq!(pixels, vec![-1, -2, -3, -4]);
     }
@@ -1092,8 +1096,10 @@ mod tests {
             .unwrap()
             .as_contiguous()
             .unwrap()
-            .chunks_exact(2)
-            .map(|chunk| u16::from_le_bytes(chunk.try_into().unwrap()))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|chunk| u16::from_le_bytes(*chunk))
             .collect();
         assert_eq!(pixels, vec![1, 256, 511, 1024]);
     }

@@ -68,6 +68,21 @@ def test_spatial_join(join_type, on):
         eng_postgis.assert_query_result(sql, sedonadb_results)
 
 
+def test_spatial_left_join_with_empty_left_side(con):
+    left = con.sql("SELECT ST_Point(0.0, 0.0) AS g, 1 AS x").alias("l")
+    left_empty = left.filter(left["x"] > 99)
+    right = con.sql("SELECT ST_Point(0.0, 0.0) AS g2, 2 AS y").alias("r")
+
+    result = left_empty.join(
+        right,
+        on=left_empty["g"].funcs.st_intersects(right["g2"]),
+        how="left",
+    ).to_arrow_table()
+
+    assert result.num_rows == 0
+    assert result.schema.names == ["g", "x", "g2", "y"]
+
+
 def _plan_text(df):
     query_plan = df.to_pandas()
     return "\n".join(query_plan.iloc[:, 1].astype(str).tolist())

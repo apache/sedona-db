@@ -306,6 +306,9 @@ impl DefaultSpatialIndexBuilder {
 impl SpatialIndexBuilder for DefaultSpatialIndexBuilder {
     fn finish(&mut self) -> Result<SpatialIndexRef> {
         if self.indexed_batches.is_empty() {
+            // Match GPUSpatialIndexBuilder's empty-index path: outer joins still need a
+            // configured (empty) visited-build bitmap.
+            let visited_build_side = self.build_visited_bitmaps()?;
             let empty_refiner = self.refiner_factory.create_refiner(
                 &self.spatial_predicate,
                 self.options.clone(),
@@ -318,6 +321,7 @@ impl SpatialIndexBuilder for DefaultSpatialIndexBuilder {
                 self.schema.clone(),
                 self.options.clone(),
                 empty_refiner,
+                visited_build_side,
                 AtomicUsize::new(self.probe_threads_count),
             )));
         }

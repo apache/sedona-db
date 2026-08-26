@@ -840,6 +840,45 @@ async fn test_range_join_with_empty_partitions() -> Result<()> {
 }
 
 #[tokio::test]
+async fn test_left_join_with_empty_left_side() -> Result<()> {
+    let ((left_schema, _), (right_schema, right_partitions)) = create_default_test_data()?;
+    let left_partitions = vec![vec![]];
+    let sql =
+        "SELECT L.id l_id, R.id r_id FROM L LEFT JOIN R ON ST_Intersects(L.geometry, R.geometry)";
+
+    // Keep the empty left relation on the indexed build side so this exercises the
+    // empty-index outer-join finalization path.
+    let options = SpatialJoinOptions {
+        spatial_join_reordering: false,
+        ..Default::default()
+    };
+    let actual = run_spatial_join_query(
+        &left_schema,
+        &right_schema,
+        left_partitions.clone(),
+        right_partitions.clone(),
+        Some(options),
+        30,
+        sql,
+    )
+    .await?;
+    let expected = run_spatial_join_query(
+        &left_schema,
+        &right_schema,
+        left_partitions,
+        right_partitions,
+        None,
+        30,
+        sql,
+    )
+    .await?;
+
+    assert_eq!(actual.num_rows(), 0);
+    assert_eq!(actual, expected);
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_inner_join() -> Result<()> {
     let options = SpatialJoinOptions::default();
     test_with_join_types(JoinType::Inner, options, 30).await?;

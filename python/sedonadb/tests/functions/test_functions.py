@@ -3099,6 +3099,55 @@ def test_st_reverse(eng, geom, expected):
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
+    ("min_x", "min_y", "max_x", "max_y", "expected"),
+    [
+        (None, 2, 3, 4, None),
+        (1, None, 3, 4, None),
+        (1, 2, None, 4, None),
+        (1, 2, 3, None, None),
+        (1, 2, 3, 4, "POLYGON ((1 2, 1 4, 3 4, 3 2, 1 2))"),
+        (
+            1.234,
+            2.234,
+            3.345,
+            3.345,
+            "POLYGON ((1.234 2.234, 1.234 3.345, 3.345 3.345, 3.345 2.234, 1.234 2.234))",
+        ),
+        (-10, -20, 10, 20, "POLYGON ((-10 -20, -10 20, 10 20, 10 -20, -10 -20))"),
+    ],
+)
+def test_st_makeenvelope(eng, min_x, min_y, max_x, max_y, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        "SELECT ST_MakeEnvelope("
+        f"{val_or_null(min_x)}, {val_or_null(min_y)}, "
+        f"{val_or_null(max_x)}, {val_or_null(max_y)})",
+        expected,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("min_x", "min_y", "max_x", "max_y", "srid", "expected"),
+    [
+        (None, 2, 3, 4, 4326, None),
+        (1, 2, 3, 4, None, None),
+        (1, 2, 3, 4, 0, 0),
+        (1, 2, 3, 4, 4326, 4326),
+    ],
+)
+def test_st_makeenvelope_with_srid(eng, min_x, min_y, max_x, max_y, srid, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        "SELECT ST_SRID(ST_MakeEnvelope("
+        f"{val_or_null(min_x)}, {val_or_null(min_y)}, "
+        f"{val_or_null(max_x)}, {val_or_null(max_y)}, {val_or_null(srid)}))",
+        expected,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
     ("x", "y", "expected"),
     [
         (None, None, None),

@@ -473,6 +473,15 @@ class ScalarUdf:
 
         return Expr(self._impl.call(args), self._ctx)
 
+    def __sedonadb_scalar_udf__(self):
+        """Export this function's native overload kernels as capsules.
+
+        Delegates to the wrapped internal UDF. Only Sedona-native scalar
+        UDFs implement this; a DataFusion-backed function does not, so
+        calling this on one raises AttributeError.
+        """
+        return self._impl.__sedonadb_scalar_udf__()
+
 
 class AggregateUdf:
     """Concrete aggregate function that can generate call expressions

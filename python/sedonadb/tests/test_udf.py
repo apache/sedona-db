@@ -218,3 +218,77 @@ def test_udf_bad_return_length(con):
         match="Expected result of user-defined function to return array of length 1 but got 2",
     ):
         con.sql("SELECT questionable_udf(123) as col").to_pandas()
+
+
+def test_native_scalar_udf_export_import_roundtrip(con):
+    # A SedonaDB built-in scalar function exposes its native overload kernels
+    # via __sedonadb_scalar_udf__ (the export side of the plugin protocol).
+    # Exporting those capsules and rebuilding a UDF under a new name must
+    # produce a function whose output is identical to the built-in's, proving
+    # the native kernels survive a full export -> capsule -> import roundtrip.
+    from sedonadb.udf import sedona_native_scalar_udf
+
+    st_asbinary = con.funcs.st_asbinary
+    assert hasattr(st_asbinary, "__sedonadb_scalar_udf__")
+
+    capsules = st_asbinary.__sedonadb_scalar_udf__()
+    assert len(capsules) >= 1
+
+    # Rebuild under a fresh name so it doesn't collide with the built-in, then
+    # register it back into the same context.
+    rebuilt = sedona_native_scalar_udf(capsules, name="rt_asbinary_roundtrip")
+    con.register(rebuilt)
+
+    # Run both the built-in and the reimported UDF over a real one-row table
+    # column (not a literal) so the full execution path runs.
+    con.sql("SELECT ST_Point(30.0, 10.0) AS geom").to_view(
+        "rt_native_roundtrip", overwrite=True
+    )
+    expected = con.sql(
+        "SELECT ST_AsBinary(geom) AS col FROM rt_native_roundtrip"
+    ).to_arrow_table()
+    actual = con.sql(
+        "SELECT rt_asbinary_roundtrip(geom) AS col FROM rt_native_roundtrip"
+    ).to_arrow_table()
+
+    assert actual.equals(expected)
+
+
+def test_native_scalar_udf_register_appends_overload(con):
+    # Registering a native scalar UDF under a name already in use appends its
+    # kernels as overloads rather than replacing the function: both the
+    # previously registered signature and the newly registered one stay
+    # dispatchable. Two built-ins with disjoint input types are exported and
+    # re-registered under one shared name -- ST_AsBinary takes a geometry,
+    # ST_GeomFromWKT takes a WKT string. If registration replaced rather than
+    # appended, the geometry overload registered first would vanish and calling
+    # it would raise "No kernel matching arguments".
+    from sedonadb.udf import sedona_native_scalar_udf
+
+    name = "rt_overload_probe"
+
+    con.register(
+        sedona_native_scalar_udf(
+            con.funcs.st_asbinary.__sedonadb_scalar_udf__(), name=name
+        )
+    )
+    con.register(
+        sedona_native_scalar_udf(
+            con.funcs.st_geomfromwkt.__sedonadb_scalar_udf__(), name=name
+        )
+    )
+
+    # The geometry -> binary overload registered first is still reachable...
+    assert (
+        con.sql(f"SELECT {name}(ST_Point(30.0, 10.0)) AS col")
+        .to_arrow_table()
+        .equals(
+            con.sql("SELECT ST_AsBinary(ST_Point(30.0, 10.0)) AS col").to_arrow_table()
+        )
+    )
+
+    # ...and the WKT-string -> geometry overload appended second dispatches too.
+    pd.testing.assert_frame_equal(
+        con.sql(f"SELECT ST_AsText({name}('POINT (1 2)')) AS col").to_pandas(),
+        pd.DataFrame({"col": ["POINT(1 2)"]}),
+    )
