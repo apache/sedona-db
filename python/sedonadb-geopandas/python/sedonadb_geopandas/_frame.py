@@ -26,6 +26,28 @@ _REPR_HTML_ROWS = 10
 _DERIVE = object()
 
 
+def _sanitize_temporal(df, expr, name):
+    """Null out the pandas missing-value sentinel in temporal columns.
+
+    INT64_MIN is a representable Arrow duration/timestamp tick, but it is what
+    numpy-backed pandas stores for NaT, so data arriving through Arrow can
+    carry it as a real value. Treated as data it corrupts every operator:
+    self-subtraction returns zero instead of missing, negation wraps back onto
+    the sentinel, subtracting a tick aborts the query on arithmetic overflow,
+    and equality matches, so a filter retains rows that materialize as NaT.
+    It becomes SQL null here, where columns are read, so every downstream
+    operator sees it as missing.
+    """
+    import pyarrow as pa
+
+    from sedonadb.expr import lit
+
+    dtype = pa.schema(df.schema).field(name).type
+    if pa.types.is_duration(dtype) or pa.types.is_timestamp(dtype):
+        return expr.cast(pa.int64()).funcs.nullif(lit(-(2**63))).cast(dtype)
+    return expr
+
+
 def _geometry_column_names(df):
     names = df.schema.names
     return {names[i] for i in df.schema.geometry_column_indices}
@@ -149,7 +171,7 @@ class GeoDataFrame:
             expr = self._df[key]
             if key == self._geometry_name:
                 return GeoSeries(self._df, expr, key)
-            return Series(self._df, expr, key)
+            return Series(self._df, _sanitize_temporal(self._df, expr, key), key)
 
         if isinstance(key, slice):
             raise TypeError(

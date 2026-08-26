@@ -58,6 +58,21 @@ def normalize_scalar(value):
     after `is_scalar` has accepted the value.
     """
     try:
+        import pyarrow as pa
+
+        # An Arrow temporal scalar holding INT64_MIN carries the pandas NaT
+        # sentinel, not a value (see _frame._sanitize_temporal for the column
+        # side of the same invariant).
+        if (
+            isinstance(value, pa.Scalar)
+            and (pa.types.is_duration(value.type) or pa.types.is_timestamp(value.type))
+            and value.is_valid
+            and value.value == -(2**63)
+        ):
+            return pa.scalar(None, value.type)
+    except ImportError:
+        pass
+    try:
         import numpy as np
 
         # A masked value's .item() would expose the hidden data, silently turning
@@ -127,6 +142,14 @@ def normalize_scalar(value):
     try:
         import pandas as pd
 
+        # pandas temporal scalars resolve to microsecond literals downstream,
+        # silently zeroing nanoseconds; their numpy form routes through the
+        # lossless unit handling above instead. (A timezone-aware Timestamp
+        # keeps the current path — asm8 would drop its zone.)
+        if isinstance(value, pd.Timedelta) or (
+            isinstance(value, pd.Timestamp) and value.tz is None
+        ):
+            return normalize_scalar(value.asm8)
         # NaN is deliberately left as-is — pandas keeps NaN a float value; only
         # the NA sentinel becomes SQL null.
         if value is pd.NA:
@@ -399,13 +422,10 @@ class Series:
 
         dtype = self._dtype()
 
-        # INT64_MIN is a representable Arrow duration tick, but it is the
-        # missing-value sentinel in the pandas model this layer implements
-        # (Timedelta.min is one tick above it). Treating it as a value breaks
-        # every path — division by -1 aborts on arithmetic overflow, negation
-        # wraps back onto the sentinel, other divisors produce real-looking
-        # results pandas would call NaT — so it becomes null at the source.
-        ticks = self._expr.cast(pa.int64()).funcs.nullif(lit(-(2**63)))
+        # Column reads null out the INT64_MIN missing-value sentinel at the
+        # frame boundary (see _frame._sanitize_temporal), so the ticks here
+        # never carry it as data.
+        ticks = self._expr.cast(pa.int64())
 
         # Non-finite operands have no integer form to cast back to, so they are
         # resolved up front the way pandas resolves them. Division by infinity

@@ -1178,6 +1178,68 @@ def test_negative_float_overflow_and_exact_boundary():
     assert got.tolist()[1] == pd.Timedelta(2**63 - 1024)
 
 
+# -- regressions from the eleventh review pass ------------------------------
+
+
+def test_sentinel_ticks_are_missing_for_every_operator():
+    # The sentinel fix covered only * and /. Addition, subtraction, and
+    # comparisons still treated INT64_MIN as data: self-subtraction returned
+    # zero, adding one tick produced a finite Timedelta.min, subtracting one
+    # tick aborted the query on arithmetic overflow, and equality matched, so
+    # a filter retained a row that materializes as NaT. The sentinel becomes
+    # null where columns are read, covering every operator at once.
+    import numpy as np
+    import pandas as pd
+    import pyarrow as pa
+
+    tbl = pa.table({"t": pa.array([-(2**63), 5], pa.duration("ns"))})
+    gdf = GeoDataFrame(sgpd.default_context().create_data_frame(tbl))
+    got = (gdf["t"] - gdf["t"]).to_pandas()
+    assert pd.isna(got.tolist()[0])
+    assert got.tolist()[1] == pd.Timedelta(0)
+    got = (gdf["t"] + pd.Timedelta(1)).to_pandas()
+    assert pd.isna(got.tolist()[0])
+    assert got.tolist()[1] == pd.Timedelta(6)
+    got = (gdf["t"] - np.timedelta64(1, "ns")).to_pandas()
+    assert pd.isna(got.tolist()[0])
+    assert got.tolist()[1] == pd.Timedelta(4)
+    kept = gdf[gdf["t"] == gdf["t"]].to_pandas()["t"]
+    assert kept.tolist() == [pd.Timedelta(5)]
+
+
+def test_sentinel_timestamp_ticks_are_missing():
+    # Timestamps share the sentinel: numpy-backed pandas stores datetime NaT
+    # as INT64_MIN too, so the column boundary treats both temporal kinds the
+    # same way.
+    import pandas as pd
+    import pyarrow as pa
+
+    tbl = pa.table({"ts": pa.array([-(2**63), 10**18], pa.timestamp("ns"))})
+    gdf = GeoDataFrame(sgpd.default_context().create_data_frame(tbl))
+    got = (gdf["ts"] - gdf["ts"]).to_pandas()
+    assert pd.isna(got.tolist()[0])
+    assert got.tolist()[1] == pd.Timedelta(0)
+    kept = gdf[gdf["ts"] == gdf["ts"]].to_pandas()["ts"]
+    assert kept.tolist() == [pd.Timestamp(10**18)]
+
+
+def test_pandas_temporal_scalars_keep_nanoseconds(points):
+    # pandas Timestamp/Timedelta scalars resolved to microsecond literals:
+    # assignment silently zeroed nanoseconds, and duration arithmetic lost
+    # them behind an interval coercion (`t + pd.Timedelta(1)` came back as
+    # DateOffset objects with the tick dropped). They route through their
+    # numpy form and its lossless unit handling instead.
+    import pandas as pd
+
+    gdf = sgpd.from_geopandas(points)
+    gdf["t"] = pd.Timedelta(1)
+    got = gdf.to_geopandas()["t"]
+    assert got.tolist() == [pd.Timedelta(1)] * len(got)
+    gdf["ts"] = pd.Timestamp("2026-01-01 00:00:00.000000001")
+    got = gdf.to_geopandas()["ts"]
+    assert got.tolist() == [pd.Timestamp("2026-01-01 00:00:00.000000001")] * len(got)
+
+
 def test_singleton_container_literals_resolve_as_numbers():
     # SedonaDB accepts one-element containers as single-value literals; the
     # numeric resolver must look through them like any other wrapper.
