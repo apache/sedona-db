@@ -42,6 +42,7 @@ struct BandRefImpl<'a> {
     dim_names_values: &'a StringArray,
     source_shape_list: &'a ListArray,
     source_shape_values: &'a Int64Array,
+    band_name_array: &'a StringArray,
     nodata_array: &'a BinaryArray,
     outdb_uri_array: &'a StringArray,
     outdb_format_array: &'a StringViewArray,
@@ -93,6 +94,14 @@ impl<'a> BandRef for BandRefImpl<'a> {
 
     fn data_type(&self) -> BandDataType {
         self.data_type
+    }
+
+    fn name(&self) -> Option<&str> {
+        if self.band_name_array.is_null(self.band_row) {
+            None
+        } else {
+            Some(self.band_name_array.value(self.band_row))
+        }
     }
 
     fn nodata(&self) -> Option<&[u8]> {
@@ -520,6 +529,7 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
             dim_names_values: self.band_dim_names_values,
             source_shape_list: self.band_source_shape_list,
             source_shape_values: self.band_source_shape_values,
+            band_name_array: self.band_name_array,
             nodata_array: self.band_nodata_array,
             outdb_uri_array: self.band_outdb_uri_array,
             outdb_format_array: self.band_outdb_format_array,
@@ -822,6 +832,39 @@ mod tests {
     use sedona_schema::raster::{band_indices, raster_indices, BandDataType, RasterSchema};
     use sedona_testing::rasters::generate_test_rasters;
     use std::sync::Arc;
+
+    #[test]
+    fn band_ref_exposes_its_name() {
+        // `name()` is the band-level accessor that lets `copy_into` inherit the
+        // name; assert it directly (and agrees with the raster-level fast path)
+        // rather than only through a derive.
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        let mut b = RasterBuilder::new(1);
+        b.start_raster_nd(&transform, &["x"], &[2], None).unwrap();
+        b.start_band(StartBandArgs {
+            name: Some("temperature"),
+            ..StartBandArgs::new(&["x"], &[2], BandDataType::UInt8)
+        })
+        .unwrap();
+        b.band_data_writer().append_value([1u8, 2]);
+        b.finish_band().unwrap();
+        // A second, deliberately unnamed band: `None` must survive too.
+        b.start_band(StartBandArgs::new(&["x"], &[2], BandDataType::UInt8))
+            .unwrap();
+        b.band_data_writer().append_value([3u8, 4]);
+        b.finish_band().unwrap();
+        b.finish_raster().unwrap();
+
+        let arr = b.finish().unwrap();
+        let rasters = RasterStructArray::try_new(&arr).unwrap();
+        let raster = rasters.get(0).unwrap();
+
+        assert_eq!(raster.band(0).unwrap().name(), Some("temperature"));
+        assert_eq!(raster.band(1).unwrap().name(), None);
+        // Band-level accessor and raster-level fast path must not disagree.
+        assert_eq!(raster.band(0).unwrap().name(), raster.band_name(0));
+        assert_eq!(raster.band(1).unwrap().name(), raster.band_name(1));
+    }
 
     #[test]
     fn copy_into_shares_buffer_zero_copy_and_overrides() {

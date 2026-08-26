@@ -287,17 +287,9 @@ impl RasterBuilder {
     ) -> Result<(), ArrowError> {
         self.start_raster_from(source, overrides)?;
         for band_idx in 0..source.num_bands() {
-            // The band name lives on the *raster* (`RasterRef::band_name`), not
-            // on `BandRef`, so `copy_into` has nothing to inherit it from and
-            // must be handed it explicitly — otherwise every copied band comes
-            // out unnamed.
-            source.band(band_idx)?.copy_into(
-                self,
-                BandOverrides {
-                    name: source.band_name(band_idx),
-                    ..BandOverrides::default()
-                },
-            )?;
+            source
+                .band(band_idx)?
+                .copy_into(self, BandOverrides::default())?;
             self.finish_band()?;
         }
         self.finish_raster()

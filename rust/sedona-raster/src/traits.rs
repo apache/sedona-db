@@ -284,7 +284,7 @@ pub trait RasterRef {
 /// (band names live at the raster level), so it defaults to unnamed.
 #[derive(Default)]
 pub struct BandOverrides<'a> {
-    /// Name for the derived band (the source has none to inherit).
+    /// Override the band name; `None` inherits the source's.
     pub name: Option<&'a str>,
     /// Override the dimension names; `None` inherits the source's.
     pub dim_names: Option<&'a [&'a str]>,
@@ -375,6 +375,15 @@ pub trait BandRef {
 
     /// Data type for all elements in this band
     fn data_type(&self) -> BandDataType;
+
+    /// Band name (e.g. a Zarr variable name). None for unnamed bands.
+    ///
+    /// The band-level counterpart to [`RasterRef::band_name`], which indexes
+    /// the same value from the raster. Required rather than defaulted: a
+    /// backend that silently returned `None` here would drop names on every
+    /// derived band, which is precisely the failure this accessor exists to
+    /// prevent.
+    fn name(&self) -> Option<&str>;
 
     /// Nodata value as raw bytes (None if not set)
     fn nodata(&self) -> Option<&[u8]>;
@@ -490,7 +499,7 @@ pub trait BandRef {
             None => source_view,
         };
         builder.start_band(StartBandArgs {
-            name: overrides.name,
+            name: overrides.name.or_else(|| self.name()),
             view: Some(effective_view.as_slice()),
             nodata: overrides.nodata.or_else(|| self.nodata()),
             outdb_uri: overrides.outdb_uri.or_else(|| self.outdb_uri()),
@@ -853,6 +862,9 @@ mod tests {
         }
         fn data_type(&self) -> BandDataType {
             BandDataType::UInt8
+        }
+        fn name(&self) -> Option<&str> {
+            None
         }
         fn nodata(&self) -> Option<&[u8]> {
             None
