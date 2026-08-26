@@ -1889,8 +1889,13 @@ def test_st_geohash_out_of_range_untagged_diverges_from_postgis(eng, geom):
     # calls lwerror() rather than returning NULL. Pinned on both sides so the
     # divergence is verified rather than merely asserted in a comment.
     #
-    # Tagging the same geometry with a lon/lat CRS changes the longitude cases;
-    # see test_st_geohash_wraps_longitude_for_lnglat_crs below.
+    # An undeclared CRS is accepted (see test_st_geohash_accepts_wgs84_and_
+    # undeclared_crs) but does not earn wrapping: accepting it is passive, while
+    # wrapping it would invent a location for coordinates of unknown provenance.
+    # It also keeps faith with Apache Sedona, which has no CRS concept at all, so
+    # every geometry migrated from Spark arrives here undeclared. Tagging the
+    # same geometry 4326 opts into wrapping; see
+    # test_st_geohash_wraps_longitude_for_lnglat_crs below.
     raises = eng == PostGIS
     sql = f"SELECT ST_GeoHash({geom_or_null(geom)}, 10)"
     eng = eng.create_or_skip()
@@ -1987,16 +1992,112 @@ def test_st_geohash_never_wraps_latitude(eng, geom):
         "POINT (541.0 50.0)",
     ],
 )
-def test_st_geohash_does_not_wrap_longitude_for_projected_crs(geom):
-    # Wrapping is gated on the CRS being in degrees. Applied to a projected CRS
-    # the same arithmetic would turn a coordinate in metres into a
-    # plausible-looking geohash for somewhere unrelated, so a projected CRS
-    # keeps the NULL. SedonaDB-only: PostGIS ignores SRID entirely on the
-    # geometry overload (ST_GeoHash of POINT (10 20) is the same whether it is
-    # tagged 4326, 3857 or 26918), so it has no comparable behavior to pin.
+def test_st_geohash_rejects_non_wgs84_crs(geom):
+    # A geohash is defined against the WGS84 datum, so anything else is refused
+    # rather than hashed. The refusal happens while the query is planned, before
+    # any row is read, so it cannot fail partway through a large scan.
+    #
+    # SedonaDB-only: PostGIS ignores SRID entirely on the geometry overload
+    # (ST_GeoHash of POINT (10 20) returns the same value whether it is tagged
+    # 4326, 3857 or 26918), so it has no comparable behavior to pin.
     eng = SedonaDB.create_or_skip()
     sql = f"SELECT ST_GeoHash(ST_SetSRID({geom_or_null(geom)}, 3857), 12)"
-    eng.assert_query_result(sql, None)
+    with pytest.raises(Exception, match="requires WGS84"):
+        eng.execute_and_collect(sql)
+
+
+@pytest.mark.parametrize("srid", [3857, 26918, 4269])
+def test_st_geohash_rejects_non_wgs84_crs_in_range(srid):
+    # The case the CRS check really exists for. These coordinates are inside
+    # [-180, 180] x [-90, 90], so no domain check catches them, and without the
+    # CRS check EPSG:3857 POINT (10 20) -- ten metres east and twenty metres
+    # north of the origin, in the Gulf of Guinea -- would hash as 10 degrees
+    # east, 20 degrees north, in Chad.
+    #
+    # EPSG:4269 (NAD83) is refused too. Its units are degrees, but its datum is
+    # not WGS84: NAD83 sits one to two metres away and NAD27 up to a hundred,
+    # which is many cells wide at high precision.
+    eng = SedonaDB.create_or_skip()
+    sql = f"SELECT ST_GeoHash(ST_SetSRID(ST_GeomFromText('POINT (10 20)'), {srid}), 12)"
+    with pytest.raises(Exception, match="requires WGS84"):
+        eng.execute_and_collect(sql)
+
+
+@pytest.mark.parametrize("srid", [4326, 0])
+def test_st_geohash_accepts_wgs84_and_undeclared_crs(srid):
+    # WGS84 is accepted, and so is an undeclared CRS: rejecting the latter would
+    # break every ST_GeomFromText() call, which carries no CRS at all.
+    eng = SedonaDB.create_or_skip()
+    sql = f"SELECT ST_GeoHash(ST_SetSRID(ST_GeomFromText('POINT (10 20)'), {srid}), 10)"
+    eng.assert_query_result(sql, "s5x1g8cu2y")
+
+
+def _item_crs_table(eng):
+    """A table whose geometry column carries a per-row (item-level) CRS
+
+    ST_SetSRID() with a non-constant SRID returns an item_crs type, which is the
+    only way rows in one column can disagree about their CRS.
+    """
+    eng.execute_and_collect(
+        """
+        CREATE OR REPLACE TABLE geohash_mixed AS SELECT * FROM (VALUES
+            (1, 3857,  'POINT (10 20)'),
+            (2, 4326,  'POINT (10 20)'),
+            (3, 4326,  'POINT (190 50)'),
+            (4, 26918, 'POINT (10 20)')
+        ) AS v(id, srid, wkt)
+        """
+    )
+    return "ST_SetSRID(ST_GeomFromText(wkt), srid)"
+
+
+def test_st_geohash_item_crs_rejects_non_wgs84_rows():
+    # A per-row CRS is held to the same rule as a type-level one. Before this,
+    # rows 1 and 4 were hashed as though their metres were degrees.
+    eng = SedonaDB.create_or_skip()
+    g = _item_crs_table(eng)
+    with pytest.raises(Exception, match="requires WGS84"):
+        eng.execute_and_collect(f"SELECT ST_GeoHash({g}, 12) FROM geohash_mixed")
+
+
+def test_st_geohash_item_crs_filtered_to_wgs84_rows():
+    # Selecting only the WGS84 rows is the natural way to use a mixed column,
+    # and it works: WHERE is planned below the projection (FilterExec under
+    # ProjectionExec), so the rejected rows never reach ST_GeoHash.
+    #
+    # Row 3 is the one that changed. It declares 4326 with longitude 190, and
+    # now wraps to the same value a type-level 4326 column gives, instead of
+    # returning NULL because the per-row CRS was invisible.
+    eng = SedonaDB.create_or_skip()
+    g = _item_crs_table(eng)
+    # Rows 2 and 3 in id order; rows 1 (3857) and 4 (26918) are filtered out.
+    eng.assert_query_result(
+        f"SELECT ST_GeoHash({g}, 12) FROM geohash_mixed "
+        f"WHERE ST_SRID({g}) = 4326 ORDER BY id",
+        [("s5x1g8cu2yhr",), ("b0zh7w1z0gs3",)],
+    )
+
+
+def test_st_geohash_item_crs_agrees_with_type_level_crs():
+    # The inconsistency this closes: identical coordinates, identical CRS,
+    # differing only in whether the CRS rides on the type or the row.
+    eng = SedonaDB.create_or_skip()
+    g = _item_crs_table(eng)
+    item_level = (
+        eng.execute_and_collect(
+            f"SELECT ST_GeoHash({g}, 12) FROM geohash_mixed WHERE id = 3"
+        )
+        .column(0)[0]
+        .as_py()
+    )
+    type_level = (
+        eng.execute_and_collect(
+            "SELECT ST_GeoHash(ST_SetSRID(ST_GeomFromText('POINT (190 50)'), 4326), 12)"
+        )
+        .column(0)[0]
+        .as_py()
+    )
+    assert item_level == type_level == "b0zh7w1z0gs3"
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
