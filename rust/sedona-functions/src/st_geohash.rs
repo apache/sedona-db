@@ -143,6 +143,7 @@ impl SedonaScalarKernel for STGeoHash {
         // A bounder is a resettable accumulator, so the batch shares one
         // instance and clear()s it per row rather than allocating per row.
         let mut bounder = bounder_for_arg_type(&arg_types[0], config_options)?;
+        let mut raw_bounder = raw_bounder_for_arg_type(&arg_types[0]);
 
         // The CRS is a property of the type, so this is decided once for the
         // batch rather than per row.
@@ -154,11 +155,18 @@ impl SedonaScalarKernel for STGeoHash {
                 &executor,
                 args,
                 bounder.as_mut(),
+                &mut raw_bounder,
                 &mut next_wrap,
                 &mut builder,
             )?;
         } else {
-            append_point_geohash(&executor, bounder.as_mut(), &mut next_wrap, &mut builder)?;
+            append_point_geohash(
+                &executor,
+                bounder.as_mut(),
+                &mut raw_bounder,
+                &mut next_wrap,
+                &mut builder,
+            )?;
         }
 
         executor.finish(Arc::new(builder.finish()))
@@ -204,6 +212,34 @@ fn bounder_for_arg_type(
                 .to_string(),
         )
     })
+}
+
+/// A planar bounder for range-checking the coordinates a spherical bounder hides
+///
+/// s2geography bounds a geography with an `S2LatLngRect`, whose latitudes are
+/// constrained to [-90, 90] by construction, so an out-of-range latitude is
+/// clamped inside S2 before [`WkbBounder2D::finish`] returns it: a geography at
+/// latitude 100, 91 or 270 all come back as 90 and would otherwise encode as
+/// the pole. Bounding the same bytes in the plane recovers what the input
+/// actually said, so the domain check sees the original value.
+///
+/// Only the latitude check uses this. The centre still comes from the spherical
+/// bounds, which is the point of bounding a geography on the sphere. Longitude
+/// needs no such care: S2 normalizes it into [-180, 180], which is the same
+/// wrapping this function applies to a geometry.
+///
+/// Returns `None` for a planar argument, whose bounder does no clamping and can
+/// be range-checked directly.
+fn raw_bounder_for_arg_type(arg_type: &SedonaType) -> Option<Box<dyn WkbBounder2D>> {
+    let edges = match arg_type {
+        SedonaType::Wkb(edges, _) | SedonaType::WkbView(edges, _) => *edges,
+        _ => return None,
+    };
+
+    match edges {
+        Edges::Planar => None,
+        _ => WkbBounder2DFactory::default().bounder_for_edge_type(Edges::Planar),
+    }
 }
 
 /// Per-batch cache of the WGS84 verdict for each distinct CRS string
@@ -334,6 +370,7 @@ impl SedonaScalarKernel for STGeoHashItemCrs {
             MAX_PRECISION as usize * executor.num_iterations(),
         );
         let mut bounder = bounder_for_arg_type(&item_type, config_options)?;
+        let mut raw_bounder = raw_bounder_for_arg_type(&item_type);
         let mut checker = CachedWgs84Check::with_capacity(crs_array.len());
 
         // A scalar struct carries a single CRS that applies to every iteration;
@@ -356,11 +393,18 @@ impl SedonaScalarKernel for STGeoHashItemCrs {
                 &executor,
                 &item_args,
                 bounder.as_mut(),
+                &mut raw_bounder,
                 &mut next_wrap,
                 &mut builder,
             )?;
         } else {
-            append_point_geohash(&executor, bounder.as_mut(), &mut next_wrap, &mut builder)?;
+            append_point_geohash(
+                &executor,
+                bounder.as_mut(),
+                &mut raw_bounder,
+                &mut next_wrap,
+                &mut builder,
+            )?;
         }
 
         executor.finish(Arc::new(builder.finish()))
@@ -458,6 +502,7 @@ fn append_geohash_with_precision(
     executor: &WkbExecutor<'_, '_>,
     args: &[ColumnarValue],
     bounder: &mut dyn WkbBounder2D,
+    raw_bounder: &mut Option<Box<dyn WkbBounder2D>>,
     next_wrap: &mut dyn FnMut() -> Result<LongitudeWrap>,
     builder: &mut StringBuilder,
 ) -> Result<()> {
@@ -470,11 +515,13 @@ fn append_geohash_with_precision(
     executor.execute_wkb_void(|maybe_wkb| {
         let wrap = next_wrap()?;
         match (maybe_wkb, precision_iter.next().unwrap()) {
-            (Some(wkb), Some(precision)) => match invoke_scalar(wkb, precision, bounder, wrap)? {
-                Some(geohash) => builder.append_value(geohash),
-                // Geometry was empty or outside the lon/lat bounds
-                None => builder.append_null(),
-            },
+            (Some(wkb), Some(precision)) => {
+                match invoke_scalar(wkb, precision, bounder, raw_bounder, wrap)? {
+                    Some(geohash) => builder.append_value(geohash),
+                    // Geometry was empty or outside the lon/lat bounds
+                    None => builder.append_null(),
+                }
+            }
             _ => builder.append_null(),
         }
         Ok(())
@@ -491,6 +538,7 @@ fn append_geohash_with_precision(
 fn append_point_geohash(
     executor: &WkbExecutor<'_, '_>,
     bounder: &mut dyn WkbBounder2D,
+    raw_bounder: &mut Option<Box<dyn WkbBounder2D>>,
     next_wrap: &mut dyn FnMut() -> Result<LongitudeWrap>,
     builder: &mut StringBuilder,
 ) -> Result<()> {
@@ -509,7 +557,7 @@ fn append_point_geohash(
                     );
                 }
 
-                match invoke_scalar(wkb, MAX_PRECISION, bounder, wrap)? {
+                match invoke_scalar(wkb, MAX_PRECISION, bounder, raw_bounder, wrap)? {
                     Some(geohash) => builder.append_value(geohash),
                     // Point was empty or outside the lon/lat bounds
                     None => builder.append_null(),
@@ -547,6 +595,7 @@ fn invoke_scalar(
     geom: &Wkb,
     precision: i64,
     bounder: &mut dyn WkbBounder2D,
+    raw_bounder: &mut Option<Box<dyn WkbBounder2D>>,
     wrap: LongitudeWrap,
 ) -> Result<Option<String>> {
     bounder.clear();
@@ -562,7 +611,23 @@ fn invoke_scalar(
     // Latitude can take values in [-90, 90]. Unlike longitude it is not cyclic,
     // so there is no reinterpretation of an out-of-range value that recovers a
     // real location, and it nulls out under both wrap settings.
-    if !in_latitude_range(&y) {
+    //
+    // The check runs against the raw planar bounds where they are available,
+    // because a spherical bounder clamps latitude into range before returning
+    // it; see [`raw_bounder_for_arg_type`].
+    let raw_y = match raw_bounder.as_mut() {
+        Some(raw_bounder) => {
+            raw_bounder.clear();
+            raw_bounder
+                .update_wkb_bytes(geom.buf())
+                .map_err(|e| sedona_internal_datafusion_err!("Error computing bounds: {e}"))?;
+            let (_, raw_y) = raw_bounder.finish();
+            raw_y
+        }
+        None => y,
+    };
+
+    if !in_latitude_range(&raw_y) {
         return Ok(None);
     }
 
@@ -1105,6 +1170,110 @@ mod tests {
         );
         assert!(checker.wrap_for(Some("EPSG:3857")).is_err());
         assert_eq!(checker.cache.len(), 2);
+    }
+
+    /// A stand-in for the s2geography bounder that reproduces its latitude clamp
+    ///
+    /// s2geography bounds into an `S2LatLngRect`, whose latitudes are
+    /// constrained to [-90, 90], so an out-of-range latitude never reaches the
+    /// domain check. sedona-functions cannot depend on sedona-s2geography, so
+    /// this wrapper reproduces just that behavior: the real bounder is exercised
+    /// by the Python tests, which run against an s2geography build in CI.
+    #[derive(Debug, Default)]
+    struct ClampingBounder {
+        inner: WkbGeometryBounder,
+    }
+
+    impl WkbBounder2D for ClampingBounder {
+        fn clear(&mut self) {
+            self.inner.clear()
+        }
+
+        fn update_bounds(
+            &mut self,
+            x: WraparoundInterval,
+            y: Interval,
+        ) -> std::result::Result<(), sedona_geometry::error::SedonaGeometryError> {
+            self.inner.update_bounds(x, y)
+        }
+
+        fn update_wkb_bytes(
+            &mut self,
+            wkb_value: &[u8],
+        ) -> std::result::Result<(), sedona_geometry::error::SedonaGeometryError> {
+            self.inner.update_wkb_bytes(wkb_value)
+        }
+
+        fn finish(&self) -> (WraparoundInterval, Interval) {
+            let (x, y) = self.inner.finish();
+            if y.is_empty() {
+                return (x, y);
+            }
+            // The clamp S2 applies.
+            (
+                x,
+                Interval::new(y.lo().clamp(-90.0, 90.0), y.hi().clamp(-90.0, 90.0)),
+            )
+        }
+
+        fn expand_by_distance(
+            &mut self,
+            distance: f64,
+            radius: Option<f64>,
+        ) -> std::result::Result<(), sedona_geometry::error::SedonaGeometryError> {
+            self.inner.expand_by_distance(distance, radius)
+        }
+
+        fn mem_used(&self) -> usize {
+            self.inner.mem_used()
+        }
+
+        fn create_instance(&self) -> Box<dyn WkbBounder2D> {
+            Box::new(Self::default())
+        }
+    }
+
+    #[test]
+    fn udf_geography_rejects_latitude_the_bounder_clamps() {
+        // With a bounder that clamps like S2, an out-of-range latitude would
+        // otherwise be invisible: it arrives as exactly 90 and encodes as the
+        // pole. The raw planar bound taken alongside it recovers the input.
+        let mut tester = ScalarUdfTester::new(
+            st_geohash_udf().into(),
+            vec![WKB_GEOGRAPHY, SedonaType::Arrow(DataType::Int64)],
+        );
+        let options = tester.sedona_options_mut();
+        options.runtime = options
+            .runtime
+            .with_bounder(Edges::Spherical, Arc::new(ClampingBounder::default()))
+            .unwrap();
+
+        for wkt in [
+            "POINT (50.0 100.0)",
+            "POINT (50.0 91.0)",
+            "POINT (50.0 -91.0)",
+            "LINESTRING (50.0 80.0, 60.0 100.0)",
+        ] {
+            let result = tester
+                .invoke_scalar_scalar(wkt, ScalarValue::Int64(Some(12)))
+                .unwrap();
+            tester.assert_scalar_result_equals(result, ScalarValue::Utf8(None));
+        }
+
+        // The genuine poles are in range and still encode.
+        let pole = tester
+            .invoke_scalar_scalar("POINT (50.0 90.0)", ScalarValue::Int64(Some(12)))
+            .unwrap();
+        tester.assert_scalar_result_equals(pole, "vpgxczbzuryp");
+    }
+
+    #[test]
+    fn raw_bounder_is_only_resolved_for_spherical_arguments() {
+        // A planar bounder does no clamping, so a geometry needs no second pass.
+        assert!(raw_bounder_for_arg_type(&WKB_GEOMETRY).is_none());
+        assert!(raw_bounder_for_arg_type(&WKB_VIEW_GEOMETRY).is_none());
+        assert!(raw_bounder_for_arg_type(&WKB_GEOGRAPHY).is_some());
+        assert!(raw_bounder_for_arg_type(&WKB_VIEW_GEOGRAPHY).is_some());
     }
 
     #[test]
