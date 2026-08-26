@@ -280,8 +280,8 @@ pub trait RasterRef {
 }
 
 /// Field overrides for [`BandRef::copy_into`]. Each field defaults to `None`,
-/// meaning "inherit from the source band". `name` has no source on a `BandRef`
-/// (band names live at the raster level), so it defaults to unnamed.
+/// meaning "inherit from the source band" — `name` included, sourced from
+/// [`BandRef::name`].
 #[derive(Default)]
 pub struct BandOverrides<'a> {
     /// Override the band name; `None` inherits the source's.

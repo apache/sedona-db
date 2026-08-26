@@ -32,8 +32,9 @@
 //! skewed rasters and round-trips with the getter.
 //!
 //! The raster is rebuilt with [`RasterBuilder::copy_raster_from`] overriding the
-//! transform; each band's pixel buffers are shared zero-copy, and the CRS is
-//! carried over unchanged.
+//! transform; each band's pixel buffers are shared zero-copy, and the CRS plus
+//! every inherited band field — name, nodata, OutDb pointers — are carried over
+//! unchanged.
 
 use std::sync::Arc;
 
