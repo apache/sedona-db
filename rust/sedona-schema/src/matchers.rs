@@ -172,8 +172,27 @@ impl ArgMatcher {
     }
 
     /// Matches any argument that is an item-level Crs type
+    ///
+    /// This only checks the shape of the struct, not the type of the wrapped
+    /// `item`. Use it to ask "is this an item_crs type at all" (e.g., when
+    /// inspecting a return type); an *input* matcher for a kernel that reads
+    /// the item should use [`Self::is_item_crs_of`] so that a struct wrapping
+    /// an unrelated item type is not accepted.
     pub fn is_item_crs() -> Arc<dyn TypeMatcher + Send + Sync> {
         Arc::new(IsItemCrs {})
+    }
+
+    /// Matches an item-level Crs type whose wrapped `item` matches `inner`
+    ///
+    /// For example, `is_item_crs_of(is_geometry_or_geography())` matches
+    /// `struct(item: geometry, crs: string)` but not `struct(item: int64,
+    /// crs: string)`.
+    pub fn is_item_crs_of(
+        inner: Arc<dyn TypeMatcher + Send + Sync>,
+    ) -> Arc<dyn TypeMatcher + Send + Sync> {
+        Arc::new(IsItemCrsOf {
+            item_matcher: inner,
+        })
     }
 
     /// Matches any raster argument
@@ -384,6 +403,32 @@ impl TypeMatcher for IsItemCrs {
 }
 
 #[derive(Debug)]
+struct IsItemCrsOf {
+    item_matcher: Arc<dyn TypeMatcher + Send + Sync>,
+}
+
+impl TypeMatcher for IsItemCrsOf {
+    fn match_type(&self, arg: &SedonaType) -> bool {
+        if !arg.is_item_crs() {
+            return false;
+        }
+
+        let SedonaType::Arrow(DataType::Struct(fields)) = arg else {
+            return false;
+        };
+
+        // is_item_crs() guarantees exactly two fields, so fields[0] is the item.
+        // A field this crate can't interpret as a SedonaType is not something
+        // this matcher can vouch for, so it doesn't match rather than erroring:
+        // matching is a predicate, and another kernel may still apply.
+        match SedonaType::from_storage_field(&fields[0]) {
+            Ok(item_type) => self.item_matcher.match_type(&item_type),
+            Err(_) => false,
+        }
+    }
+}
+
+#[derive(Debug)]
 struct IsNumeric {}
 
 impl TypeMatcher for IsNumeric {
@@ -530,7 +575,10 @@ impl TypeMatcher for IsExtension {
 mod tests {
     use arrow_schema::Field;
 
-    use crate::datatypes::{WKB_GEOGRAPHY, WKB_GEOMETRY};
+    use crate::datatypes::{
+        WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS,
+        WKB_VIEW_GEOMETRY_ITEM_CRS,
+    };
     use crate::extension_type::ExtensionType;
 
     use super::*;
@@ -794,5 +842,70 @@ mod tests {
             let matcher = ArgMatcher::new(vec![type_matcher], SedonaType::Arrow(DataType::Null));
             assert!(matcher.matches(&[SedonaType::Arrow(DataType::Null)]));
         }
+    }
+
+    /// An item_crs-shaped struct wrapping an arbitrary item type, i.e. what
+    /// `named_struct('item', 1, 'crs', <utf8view>)` produces in SQL.
+    fn item_crs_of_storage(item: Field) -> SedonaType {
+        SedonaType::Arrow(DataType::Struct(
+            vec![item, Field::new("crs", DataType::Utf8View, true)].into(),
+        ))
+    }
+
+    #[test]
+    fn is_item_crs_of_checks_the_wrapped_item_type() {
+        let matcher = ArgMatcher::is_item_crs_of(ArgMatcher::is_geometry_or_geography());
+
+        // Real item_crs types, which is what the affected kernels are for.
+        assert!(matcher.match_type(&WKB_GEOMETRY_ITEM_CRS));
+        assert!(matcher.match_type(&WKB_VIEW_GEOMETRY_ITEM_CRS));
+        assert!(matcher.match_type(&WKB_GEOGRAPHY_ITEM_CRS));
+
+        // The regression this matcher exists for: an item_crs-shaped struct
+        // whose item is not spatial must not match, where the shape-only
+        // is_item_crs() happily accepts it.
+        let not_spatial = item_crs_of_storage(Field::new("item", DataType::Int64, true));
+        assert!(!matcher.match_type(&not_spatial));
+        assert!(ArgMatcher::is_item_crs().match_type(&not_spatial));
+
+        // Not an item_crs struct at all.
+        assert!(!matcher.match_type(&WKB_GEOMETRY));
+        assert!(!matcher.match_type(&SedonaType::Arrow(DataType::Int64)));
+        assert!(!matcher.match_type(&RASTER));
+        assert!(!matcher.match_type(&item_crs_of_storage(Field::new(
+            "not_item",
+            DataType::Int64,
+            true
+        ))));
+    }
+
+    #[test]
+    fn is_item_crs_of_honors_a_narrower_inner_matcher() {
+        let geometry_only = ArgMatcher::is_item_crs_of(ArgMatcher::is_geometry());
+        assert!(geometry_only.match_type(&WKB_GEOMETRY_ITEM_CRS));
+        assert!(!geometry_only.match_type(&WKB_GEOGRAPHY_ITEM_CRS));
+
+        let geography_only = ArgMatcher::is_item_crs_of(ArgMatcher::is_geography());
+        assert!(!geography_only.match_type(&WKB_GEOMETRY_ITEM_CRS));
+        assert!(geography_only.match_type(&WKB_GEOGRAPHY_ITEM_CRS));
+    }
+
+    #[test]
+    fn is_item_crs_of_declines_an_uninterpretable_item_field() {
+        // A field that claims to be geoarrow.wkb but whose storage type can't
+        // hold WKB: from_storage_field() errors on it. The matcher is a
+        // predicate, so it declines rather than propagating the error.
+        let bad_item = Field::new("item", DataType::Int64, true).with_metadata(
+            [(
+                "ARROW:extension:name".to_string(),
+                "geoarrow.wkb".to_string(),
+            )]
+            .into_iter()
+            .collect(),
+        );
+        assert!(SedonaType::from_storage_field(&bad_item).is_err());
+
+        let matcher = ArgMatcher::is_item_crs_of(ArgMatcher::is_geometry_or_geography());
+        assert!(!matcher.match_type(&item_crs_of_storage(bad_item)));
     }
 }
