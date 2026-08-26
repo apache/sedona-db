@@ -41,10 +41,26 @@ kernels:
 
 Encodes the geometry as a base-32 GeoHash string with `precision` characters.
 Non-point geometries are encoded using the center of their bounding box.
-Returns `NULL` when the geometry's bounding box is not fully contained in the
-valid longitude/latitude domain (longitudes -180 to 180, latitudes -90 to 90).
 A non-positive precision
 returns an empty string, and precision is capped at 20 characters.
+
+A GeoHash is defined against the WGS84 datum, so the argument must carry either
+a WGS84 CRS (`EPSG:4326` / `OGC:CRS84`) or no CRS at all; anything else raises
+an error. Use `ST_Transform()` to reproject first. This includes other
+geographic CRSes such as NAD83, whose units are degrees but whose datum differs
+from WGS84 by enough to shift the result at high precision.
+
+The same rule applies whether the CRS belongs to the column or to the
+individual rows; only the timing differs. A column-level CRS is known while the
+query is planned, so it is rejected before any row is read. A row-level CRS is
+not known until the row is reached, so it is rejected then. To encode only the
+WGS84 rows of a mixed column, filter them first — `WHERE ST_SRID(geom) = 4326`
+is applied before the encoding, so the other rows never reach it.
+
+Latitudes outside -90 to 90 return `NULL`. Longitudes outside -180 to 180 are
+wrapped back into range when the argument declares a WGS84 CRS, so a longitude
+of 181 encodes as -179; without a declared CRS they return `NULL` instead,
+matching Apache Sedona.
 
 When `precision` is omitted, the argument must be a `POINT` and is encoded at
 the maximum precision of 20 characters. Any other geometry type raises an
