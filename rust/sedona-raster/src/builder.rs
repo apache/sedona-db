@@ -28,7 +28,7 @@ use sedona_schema::raster::{BandDataType, RasterSchema};
 use crate::band_builder::{BandArrayBuilder, BandWriter};
 use crate::error::RasterError;
 use crate::traits::{BandOverrides, BandRef, RasterRef};
-use crate::view_entries::ViewEntry;
+use crate::view_entries::ViewEntries;
 
 /// Raster-level metadata overrides for [`RasterBuilder::start_raster_from`] and
 /// [`RasterBuilder::copy_raster_from`]. A `None` field inherits the source
@@ -117,7 +117,7 @@ pub struct StartBandArgs<'a> {
     pub source_shape: &'a [i64],
     /// Per-axis window of offsets/steps over `source_shape`. `None` is the
     /// canonical identity view (the whole source buffer in C order).
-    pub view: Option<&'a [ViewEntry]>,
+    pub view: Option<&'a ViewEntries>,
     pub data_type: BandDataType,
     pub nodata: Option<&'a [u8]>,
     pub outdb_uri: Option<&'a str>,
@@ -153,7 +153,7 @@ pub struct WithViewArgs<'a> {
     pub name: Option<&'a str>,
     pub dim_names: &'a [&'a str],
     pub input: &'a dyn BandRef,
-    pub view: &'a [ViewEntry],
+    pub view: &'a ViewEntries,
     pub nodata: Option<&'a [u8]>,
     pub outdb_uri: Option<&'a str>,
     pub outdb_format: Option<&'a str>,
@@ -664,6 +664,7 @@ mod tests {
     use super::*;
     use crate::array::RasterStructArray;
     use crate::traits::RasterRef;
+    use crate::view_entries::ViewEntry;
     use arrow_array::RecordBatch;
     use arrow_ipc::reader::StreamReader;
     use arrow_ipc::writer::StreamWriter;
@@ -1680,7 +1681,7 @@ mod tests {
     fn build_viewed_u8(
         source_shape: &[i64],
         dim_names: &[&str],
-        view: &[ViewEntry],
+        view: &ViewEntries,
         data: Vec<u8>,
     ) -> StructArray {
         let mut b = RasterBuilder::new(1);
@@ -1733,7 +1734,7 @@ mod tests {
         // is indistinguishable from the `None` path: null view row, same
         // visible shape/strides, zero-copy borrow.
         use arrow_array::Array;
-        let view = [ve(0, 0, 1, 2), ve(1, 0, 1, 3)];
+        let view = ViewEntries::new(vec![ve(0, 0, 1, 2), ve(1, 0, 1, 3)]);
         let pixels: Vec<u8> = (0..6).collect();
         let array = build_viewed_u8(&[2, 3], &["y", "x"], &view, pixels.clone());
 
@@ -1775,7 +1776,7 @@ mod tests {
         // offset 0, so the region is contiguous and borrows the source prefix
         // zero-copy.
         let data: Vec<u8> = (0..9).collect();
-        let view = [ve(0, 0, 1, 2), ve(1, 0, 1, 3)];
+        let view = ViewEntries::new(vec![ve(0, 0, 1, 2), ve(1, 0, 1, 3)]);
         let array = build_viewed_u8(&[3, 3], &["y", "x"], &view, data.clone());
         let rasters = RasterStructArray::try_new(&array).unwrap();
         let r = rasters.get(0).unwrap();
@@ -1796,7 +1797,7 @@ mod tests {
         // Every-other slice of an 8-element source: start=1, step=2, steps=3
         // addresses source indices 1, 3, 5.
         let data: Vec<u8> = (0..8).collect();
-        let array = build_viewed_u8(&[8], &["x"], &[ve(0, 1, 2, 3)], data);
+        let array = build_viewed_u8(&[8], &["x"], &ViewEntries::new(vec![ve(0, 1, 2, 3)]), data);
         let rasters = RasterStructArray::try_new(&array).unwrap();
         let r = rasters.get(0).unwrap();
         let band = r.band(0).unwrap();
@@ -1816,7 +1817,7 @@ mod tests {
     fn view_broadcast_zero_stride_repeats_source_row() {
         // 2D broadcast: source shape [1, 3], the view broadcasts axis 0 four
         // times (step 0) so every visible row equals the source's single row.
-        let view = [ve(0, 0, 0, 4), ve(1, 0, 1, 3)];
+        let view = ViewEntries::new(vec![ve(0, 0, 0, 4), ve(1, 0, 1, 3)]);
         let array = build_viewed_u8(&[1, 3], &["row", "col"], &view, vec![10u8, 20, 30]);
         let rasters = RasterStructArray::try_new(&array).unwrap();
         let r = rasters.get(0).unwrap();
@@ -1847,7 +1848,7 @@ mod tests {
         // Visible[i, j] (i over X 0..3, j over Y {1,3}) sits at source byte
         // 3 + i + 6j → C-order gather = [3, 9, 4, 10, 5, 11].
         let data: Vec<u8> = (0..12).collect();
-        let view = [ve(1, 0, 1, 3), ve(0, 1, 2, 2)];
+        let view = ViewEntries::new(vec![ve(1, 0, 1, 3), ve(0, 1, 2, 2)]);
         let array = build_viewed_u8(&[4, 3], &["x", "y"], &view, data);
         let rasters = RasterStructArray::try_new(&array).unwrap();
         let r = rasters.get(0).unwrap();
@@ -1868,7 +1869,7 @@ mod tests {
         // 1D source [0..8]; start=6, step=-2, steps=3 walks backwards picking
         // every other element: source indices 6, 4, 2.
         let data: Vec<u8> = (0..8).collect();
-        let array = build_viewed_u8(&[8], &["x"], &[ve(0, 6, -2, 3)], data);
+        let array = build_viewed_u8(&[8], &["x"], &ViewEntries::new(vec![ve(0, 6, -2, 3)]), data);
         let rasters = RasterStructArray::try_new(&array).unwrap();
         let r = rasters.get(0).unwrap();
         let band = r.band(0).unwrap();
@@ -1888,7 +1889,7 @@ mod tests {
     fn view_multidim_with_zero_axis_borrows_empty() {
         // A zero-extent middle axis addresses no bytes: the visible region is
         // empty, trivially contiguous, and as_contiguous borrows an empty slice.
-        let view = [ve(0, 0, 1, 3), ve(1, 0, 1, 0), ve(2, 0, 1, 5)];
+        let view = ViewEntries::new(vec![ve(0, 0, 1, 3), ve(1, 0, 1, 0), ve(2, 0, 1, 5)]);
         let array = build_viewed_u8(&[3, 4, 5], &["a", "b", "c"], &view, vec![0u8; 60]);
         let rasters = RasterStructArray::try_new(&array).unwrap();
         let r = rasters.get(0).unwrap();
@@ -1912,7 +1913,7 @@ mod tests {
             .unwrap();
         let err = builder
             .start_band(StartBandArgs {
-                view: Some(&[]),
+                view: Some(&ViewEntries::new(vec![])),
                 ..StartBandArgs::new(&[], &[], BandDataType::UInt8)
             })
             .unwrap_err();
@@ -1933,7 +1934,7 @@ mod tests {
             .unwrap();
         let err = builder
             .start_band(StartBandArgs {
-                view: Some(&[ve(0, 1, 2, 4)]),
+                view: Some(&ViewEntries::new(vec![ve(0, 1, 2, 4)])),
                 ..StartBandArgs::new(&["x"], &[7], BandDataType::UInt8)
             })
             .unwrap_err();
@@ -1976,7 +1977,7 @@ mod tests {
             name: None,
             dim_names: &["x"],
             input: input_band.as_ref(),
-            view: &[ve(0, 1, 2, 3)],
+            view: &ViewEntries::new(vec![ve(0, 1, 2, 3)]),
             nodata: None,
             outdb_uri: None,
             outdb_format: None,
@@ -2020,7 +2021,7 @@ mod tests {
             name: None,
             dim_names: &["x"],
             input: input_band.as_ref(),
-            view: &[ve(0, 1, 2, 4)],
+            view: &ViewEntries::new(vec![ve(0, 1, 2, 4)]),
             nodata: None,
             outdb_uri: None,
             outdb_format: None,
@@ -2044,7 +2045,7 @@ mod tests {
             name: None,
             dim_names: &["x"],
             input: mid_band.as_ref(),
-            view: &[ve(0, 1, 1, 2)],
+            view: &ViewEntries::new(vec![ve(0, 1, 1, 2)]),
             nodata: None,
             outdb_uri: None,
             outdb_format: None,
@@ -2098,7 +2099,7 @@ mod tests {
             name: None,
             dim_names: &["x"],
             input: input_band.as_ref(),
-            view: &[ve(0, 1, 2, 3)],
+            view: &ViewEntries::new(vec![ve(0, 1, 2, 3)]),
             nodata: None,
             outdb_uri: None,
             outdb_format: None,
@@ -2119,7 +2120,7 @@ mod tests {
         assert_eq!(out_band.outdb_uri(), Some("s3://bucket/file.tif#band=1"));
         assert_eq!(out_band.outdb_format(), Some("geotiff"));
         // Input had identity view, so composed == supplied view verbatim.
-        assert_eq!(out_band.view(), &[ve(0, 1, 2, 3)]);
+        assert_eq!(out_band.view().as_slice(), &[ve(0, 1, 2, 3)]);
         assert_eq!(out_band.raw_source_shape(), &[8]);
         assert_eq!(out_band.shape(), &[3]);
     }
@@ -2160,7 +2161,7 @@ mod tests {
             name: None,
             dim_names: &["x"],
             input: in_band.as_ref(),
-            view: &[ve(0, 0, 2, 2)],
+            view: &ViewEntries::new(vec![ve(0, 0, 2, 2)]),
             nodata: None,
             outdb_uri: None,
             outdb_format: None,
@@ -2287,7 +2288,7 @@ mod tests {
             .unwrap();
         builder
             .start_band(StartBandArgs {
-                view: Some(&[ve(0, 1, 2, 3)]),
+                view: Some(&ViewEntries::new(vec![ve(0, 1, 2, 3)])),
                 ..StartBandArgs::new(&["x"], &[8], BandDataType::UInt8)
             })
             .unwrap();

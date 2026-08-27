@@ -32,7 +32,6 @@ use sedona_schema::raster::RasterSchema;
 
 use crate::builder::StartBandArgs;
 use crate::error::RasterError;
-use crate::view_entries::ViewEntries;
 
 /// Maximum byte length of an inline `BinaryViewArray` view. Views this short
 /// store their bytes in the 16-byte view itself; longer views reference a data
@@ -191,10 +190,9 @@ impl BandArrayBuilder {
                     view.len()
                 )));
             }
-            let view_entries = ViewEntries::new(view.to_vec());
-            view_entries.validate(source_shape)?;
+            view.validate(source_shape)?;
 
-            if !view_entries.is_identity(source_shape) {
+            if !view.is_identity(source_shape) {
                 // -- Non-identity view: persist the explicit ViewEntry list. --
                 match name {
                     Some(n) => self.name.append_value(n),
@@ -251,7 +249,7 @@ impl BandArrayBuilder {
                 // the band's *visible* shape against its raster's spatial_shape.
                 return Ok((
                     dim_names.iter().map(|s| s.to_string()).collect(),
-                    view_entries.visible_shape(),
+                    view.visible_shape(),
                 ));
             }
         }

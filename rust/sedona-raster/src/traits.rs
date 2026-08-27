@@ -20,7 +20,7 @@ use sedona_schema::raster::BandDataType;
 use crate::band_builder::BandWriter;
 use crate::builder::StartBandArgs;
 use crate::error::RasterError;
-use crate::view_entries::{ViewEntries, ViewEntry};
+use crate::view_entries::ViewEntries;
 
 /// Recognized spatial dimension-name pairs, in band C-order: the slower-
 /// varying Y-like (row) axis first, the faster-varying X-like (column) axis
@@ -297,7 +297,7 @@ pub struct BandOverrides<'a> {
     /// view unchanged. A non-identity result is persisted on the derived band
     /// (as a slice, broadcast, permutation, or reverse) and decoded back by the
     /// reader; the underlying bytes are carried over unchanged.
-    pub view: Option<&'a [ViewEntry]>,
+    pub view: Option<&'a ViewEntries>,
 }
 
 /// Trait for accessing a single band/variable within an N-D raster.
@@ -339,7 +339,7 @@ pub trait BandRef {
     /// Per-visible-dimension view entries describing how the band's
     /// visible axes map onto its `source_shape`. `view().len() == ndim()`.
     /// See `ViewEntry` for per-entry semantics.
-    fn view(&self) -> &[ViewEntry];
+    fn view(&self) -> &ViewEntries;
 
     /// Size of a named dimension (None if doesn't exist)
     fn dim_size(&self, name: &str) -> Option<i64> {
@@ -489,14 +489,13 @@ pub trait BandRef {
         // Compose the caller's override (if any) onto the source's own view, so
         // the override is interpreted in the source's visible space and the
         // caller doesn't have to. `None` keeps the source view unchanged.
-        let source_view = ViewEntries::new(self.view().to_vec());
         let effective_view = match overrides.view {
-            Some(v) => source_view.compose(&ViewEntries::new(v.to_vec()))?,
-            None => source_view,
+            Some(v) => self.view().compose(v)?,
+            None => self.view().clone(),
         };
         builder.start_band(StartBandArgs {
             name: overrides.name.or_else(|| self.name()),
-            view: Some(effective_view.as_slice()),
+            view: Some(&effective_view),
             nodata: overrides.nodata.or_else(|| self.nodata()),
             outdb_uri: overrides.outdb_uri.or_else(|| self.outdb_uri()),
             outdb_format: overrides.outdb_format.or_else(|| self.outdb_format()),
@@ -683,6 +682,7 @@ pub fn nodata_f64_to_bytes(value: f64, dt: &BandDataType) -> Result<Vec<u8>, Ras
 mod tests {
     use super::*;
     use crate::builder::RasterBuilder;
+    use crate::view_entries::ViewEntry;
 
     #[test]
     fn test_nodata_bytes_to_f64_uint8() {
@@ -837,7 +837,7 @@ mod tests {
         dim_names: Vec<String>,
         source_shape: Vec<i64>,
         shape: Vec<i64>,
-        view: Vec<ViewEntry>,
+        view: ViewEntries,
     }
 
     impl BandRef for StubBand {
@@ -853,7 +853,7 @@ mod tests {
         fn raw_source_shape(&self) -> &[i64] {
             &self.source_shape
         }
-        fn view(&self) -> &[ViewEntry] {
+        fn view(&self) -> &ViewEntries {
             &self.view
         }
         fn data_type(&self) -> BandDataType {
@@ -879,7 +879,7 @@ mod tests {
             dim_names: dims.iter().map(|s| (*s).to_string()).collect(),
             source_shape: source_shape.to_vec(),
             shape,
-            view: view.to_vec(),
+            view: ViewEntries::new(view.to_vec()),
         }
     }
 
@@ -903,7 +903,7 @@ mod tests {
         let mut ib = RasterBuilder::new(1);
         ib.start_raster_nd(&transform, &["x"], &[3], None).unwrap();
         ib.start_band(StartBandArgs {
-            view: Some(&[ve(0, 1, 2, 3)]),
+            view: Some(&ViewEntries::new(vec![ve(0, 1, 2, 3)])),
             ..StartBandArgs::new(&["x"], &[8], BandDataType::UInt8)
         })
         .unwrap();
@@ -928,7 +928,7 @@ mod tests {
         let out_raster = out_rasters.get(0).unwrap();
         let out_band = out_raster.band(0).unwrap();
 
-        assert_eq!(out_band.view(), &[ve(0, 1, 2, 3)]);
+        assert_eq!(out_band.view().as_slice(), &[ve(0, 1, 2, 3)]);
         assert_eq!(out_band.shape(), &[3]);
         assert_eq!(out_band.raw_source_shape(), &[8]);
         let buf = out_band.nd_buffer().unwrap();
@@ -962,7 +962,7 @@ mod tests {
         let in_raster = in_rasters.get(0).unwrap();
         let in_band = in_raster.band(0).unwrap();
 
-        let override_view = [ve(0, 0, 2, 2)];
+        let override_view = ViewEntries::new(vec![ve(0, 0, 2, 2)]);
         let mut ob = RasterBuilder::new(1);
         ob.start_raster_nd(&transform, &["x"], &[2], None).unwrap();
         in_band
@@ -981,7 +981,7 @@ mod tests {
         let out_raster = out_rasters.get(0).unwrap();
         let out_band = out_raster.band(0).unwrap();
 
-        assert_eq!(out_band.view(), &[ve(0, 0, 2, 2)]);
+        assert_eq!(out_band.view().as_slice(), &[ve(0, 0, 2, 2)]);
         assert_eq!(out_band.shape(), &[2]);
         assert_eq!(out_band.raw_source_shape(), &[4]);
         let buf = out_band.nd_buffer().unwrap();
