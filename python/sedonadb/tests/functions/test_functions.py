@@ -2032,6 +2032,61 @@ def test_st_geohash_accepts_wgs84_and_undeclared_crs(srid):
     eng.assert_query_result(sql, "s5x1g8cu2y")
 
 
+@pytest.mark.parametrize("lat", [100, 91, 270, -91, -100])
+def test_st_geohash_geography_rejects_out_of_range_latitude(lat):
+    # s2geography bounds a geography with an S2LatLngRect, whose latitudes are
+    # constrained to [-90, 90] by construction, so an out-of-range latitude is
+    # clamped inside S2 before the domain check can see it. Without the raw
+    # planar bound taken alongside it, every latitude here encoded as the pole:
+    # POINT (50 100), POINT (50 91) and POINT (50 270) all returned
+    # 'vpgxczbzuryp', which is the hash of the genuine POINT (50 90).
+    #
+    # Only reachable in a build with the s2geography feature; the Rust unit
+    # tests substitute the planar bounder, which does no clamping and so cannot
+    # exercise this at all.
+    if "s2geography" not in sedonadb.__features__:
+        pytest.skip("Geography bounds require a build with feature s2geography")
+
+    eng = SedonaDB.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_GeoHash(ST_GeogFromText('POINT (50 {lat})'), 12)", None
+    )
+
+
+def test_st_geohash_geography_keeps_the_poles_and_wrapping():
+    # The other side of the check above: latitudes that really are in range
+    # still encode, including the poles themselves, and longitude wrapping is
+    # untouched. Longitude deliberately keeps using the spherical bounds --
+    # S2 normalizes it into [-180, 180], which is the same wrapping applied to
+    # a geometry -- so 190 and -170 agree.
+    if "s2geography" not in sedonadb.__features__:
+        pytest.skip("Geography bounds require a build with feature s2geography")
+
+    eng = SedonaDB.create_or_skip()
+    eng.assert_query_result(
+        "SELECT ST_GeoHash(ST_GeogFromText('POINT (50 90)'), 12)", "vpgxczbzuryp"
+    )
+    eng.assert_query_result(
+        "SELECT ST_GeoHash(ST_GeogFromText('POINT (50 -90)'), 12)", "j0581b0bh2n0"
+    )
+    eng.assert_query_result(
+        "SELECT ST_GeoHash(ST_GeogFromText('POINT (190 50)'), 12)", "b0zh7w1z0gs3"
+    )
+    eng.assert_query_result(
+        "SELECT ST_GeoHash(ST_GeogFromText('POINT (-170 50)'), 12)", "b0zh7w1z0gs3"
+    )
+
+    # A non-point geography takes the same path through its bounding box: this
+    # linestring reaches latitude 100, so it is rejected rather than clamped.
+    eng.assert_query_result(
+        "SELECT ST_GeoHash(ST_GeogFromText('LINESTRING (50 80, 60 100)'), 12)", None
+    )
+    eng.assert_query_result(
+        "SELECT ST_GeoHash(ST_GeogFromText('LINESTRING (50 80, 60 85)'), 12)",
+        "vnxj7d9v2fsm",
+    )
+
+
 def _item_crs_table(eng):
     """A table whose geometry column carries a per-row (item-level) CRS
 
