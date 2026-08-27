@@ -891,6 +891,31 @@ mod tests {
     }
 
     #[test]
+    fn is_item_crs_matchers_decline_a_non_utf8_view_crs_field() {
+        // A struct can carry a perfectly good spatial item and still not be an
+        // item_crs type, because the kernels downcast the crs field to
+        // Utf8View. Both matchers have to decline it, so the mismatch is
+        // reported while the query is planned rather than surfacing as an
+        // internal downcast error at execution.
+        let item_field = WKB_GEOMETRY.to_storage_field("item", true).unwrap();
+        let bad = SedonaType::Arrow(DataType::Struct(
+            vec![item_field, Field::new("crs", DataType::Utf8, true)].into(),
+        ));
+
+        assert!(!ArgMatcher::is_item_crs().match_type(&bad));
+        assert!(
+            !ArgMatcher::is_item_crs_of(ArgMatcher::is_geometry_or_geography()).match_type(&bad)
+        );
+
+        // The canonical shape still matches through both.
+        assert!(ArgMatcher::is_item_crs().match_type(&WKB_GEOMETRY_ITEM_CRS));
+        assert!(
+            ArgMatcher::is_item_crs_of(ArgMatcher::is_geometry_or_geography())
+                .match_type(&WKB_GEOMETRY_ITEM_CRS)
+        );
+    }
+
+    #[test]
     fn is_item_crs_of_declines_an_uninterpretable_item_field() {
         // A field that claims to be geoarrow.wkb but whose storage type can't
         // hold WKB: from_storage_field() errors on it. The matcher is a

@@ -321,11 +321,21 @@ impl SedonaType {
     }
 
     /// Return true if this is an item-level CRS wrapper type.
+    ///
+    /// The `crs` field must be [`DataType::Utf8View`], which is what
+    /// [`SedonaType::new_item_crs`] builds and what every kernel that reads the
+    /// field downcasts to. Matching on the field *names* alone would let a
+    /// struct carrying, say, a `Utf8` or `Int64` `crs` reach those kernels and
+    /// fail there with an internal downcast error instead of being reported as
+    /// an ordinary signature mismatch while the query is planned.
     pub fn is_item_crs(&self) -> bool {
         matches!(
             self,
             SedonaType::Arrow(DataType::Struct(fields))
-                if fields.len() == 2 && fields[0].name() == "item" && fields[1].name() == "crs"
+                if fields.len() == 2
+                    && fields[0].name() == "item"
+                    && fields[1].name() == "crs"
+                    && fields[1].data_type() == &DataType::Utf8View
         )
     }
 }
@@ -629,6 +639,30 @@ mod tests {
         assert!(item_crs.is_item_crs());
         assert!(!geometry.is_item_crs());
         assert!(!non_geo.is_item_crs());
+    }
+
+    #[test]
+    fn item_crs_requires_a_utf8_view_crs_field() {
+        let item_field = WKB_GEOMETRY.to_storage_field("item", true).unwrap();
+        let with_crs_type = |crs_type: DataType| {
+            SedonaType::Arrow(DataType::Struct(
+                vec![item_field.clone(), Field::new("crs", crs_type, true)].into(),
+            ))
+        };
+
+        // What new_item_crs() builds, and what the kernels downcast to.
+        assert!(with_crs_type(DataType::Utf8View).is_item_crs());
+
+        // Everything else is a struct that merely has the right field names.
+        // Accepting these let them reach a kernel that downcasts the field,
+        // which failed there as an internal error rather than being reported
+        // as a signature mismatch while the query was planned.
+        for crs_type in [DataType::Utf8, DataType::LargeUtf8, DataType::Int64] {
+            assert!(
+                !with_crs_type(crs_type.clone()).is_item_crs(),
+                "a {crs_type:?} crs field should not be an item_crs type"
+            );
+        }
     }
 
     #[test]
