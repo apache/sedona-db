@@ -32,8 +32,9 @@
 //! skewed rasters and round-trips with the getter.
 //!
 //! The raster is rebuilt with [`RasterBuilder::copy_raster_from`] overriding the
-//! transform; each band's pixel buffers are shared zero-copy, and the CRS is
-//! carried over unchanged.
+//! transform; each band's pixel buffers are shared zero-copy, and the CRS plus
+//! every inherited band field — name, nodata, OutDb pointers — are carried over
+//! unchanged.
 
 use std::sync::Arc;
 
@@ -41,7 +42,7 @@ use arrow_array::Array;
 use arrow_schema::DataType;
 use datafusion_common::cast::as_string_array;
 use datafusion_common::error::Result;
-use datafusion_common::{arrow_datafusion_err, exec_datafusion_err, exec_err};
+use datafusion_common::{exec_datafusion_err, exec_err};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_raster::builder::{RasterBuilder, RasterOverrides};
@@ -112,8 +113,7 @@ impl SedonaScalarKernel for RsSetGeoReference {
 
         let mut builder = RasterBuilder::new(n);
         executor.execute_raster_void(|i, raster_opt| {
-            let null_out =
-                |b: &mut RasterBuilder| b.append_null().map_err(|e| arrow_datafusion_err!(e));
+            let null_out = |b: &mut RasterBuilder| b.append_null().map_err(Into::into);
 
             // A null georef or format is a null *input* and yields a null raster
             // (matching RS_SetCRS); check those first so a null-driven row never
@@ -143,12 +143,10 @@ impl SedonaScalarKernel for RsSetGeoReference {
                         transform: Some(transform),
                     },
                 )
-                .map_err(|e| arrow_datafusion_err!(e))
+                .map_err(Into::into)
         })?;
 
-        executor.finish(Arc::new(
-            builder.finish().map_err(|e| arrow_datafusion_err!(e))?,
-        ))
+        executor.finish(Arc::new(builder.finish()?))
     }
 }
 
@@ -206,11 +204,12 @@ mod tests {
     use sedona_testing::raster_spec::{assert_rasters_equal, raster_array, RasterSpec};
     use sedona_testing::testers::ScalarUdfTester;
 
-    /// A 2x2 raster with a CRS — so the comparisons confirm the CRS (and pixels)
-    /// survive the transform swap.
+    /// A 2x2 raster with a CRS and a named band — so the comparisons confirm
+    /// the CRS, the band name, and the pixels all survive the transform swap.
     fn base() -> RasterSpec {
         RasterSpec::d2(2, 2)
             .band_values(&[1u8, 2, 3, 4])
+            .name("temperature")
             .crs(Some("OGC:CRS84"))
     }
 
@@ -260,6 +259,29 @@ mod tests {
             .invoke_array_scalar_scalar(Arc::new(base().build()), "2 0 0 -3 101 198.5", "ESRI")
             .unwrap();
         let expected = base().transform([100.0, 2.0, 0.0, 200.0, 0.0, -3.0]);
+        assert_rasters_equal(&result, &[Some(expected)]);
+    }
+
+    #[test]
+    fn preserves_per_band_names_across_multiple_bands() {
+        // Band names live on the raster (`RasterRef::band_name(i)`), not on
+        // `BandRef`, so the rebuild has to carry each one across by index.
+        // Two differently-named bands pin the indexing, not just the presence
+        // of a name.
+        let multi = || {
+            RasterSpec::d2(2, 2)
+                .band_values(&[1u8, 2, 3, 4])
+                .name("temperature")
+                .band_values(&[5u8, 6, 7, 8])
+                .name("precipitation")
+                .crs(Some("OGC:CRS84"))
+        };
+
+        let result = tester_2arg()
+            .invoke_array_scalar(Arc::new(multi().build()), "2 0 0 -3 100 200")
+            .unwrap();
+
+        let expected = multi().transform([100.0, 2.0, 0.0, 200.0, 0.0, -3.0]);
         assert_rasters_equal(&result, &[Some(expected)]);
     }
 

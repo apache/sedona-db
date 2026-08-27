@@ -27,7 +27,7 @@ use arrow_array::{cast::AsArray, Array};
 use arrow_schema::DataType;
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::error::Result;
-use datafusion_common::{exec_datafusion_err, ScalarValue};
+use datafusion_common::ScalarValue;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
@@ -35,6 +35,7 @@ use sedona_gdal::gdal::Gdal;
 use sedona_gdal::gdal_dyn_bindgen::{GDAL_OF_RASTER, GDAL_OF_READONLY};
 use sedona_gdal::raster::types::DatasetOptions;
 use sedona_raster::builder::RasterBuilder;
+use sedona_raster::error::RasterResultExt;
 use sedona_raster_functions::rs_ensure_loaded::RETURNS_BYTES_METADATA_KEY;
 use sedona_schema::datatypes::{SedonaType, RASTER};
 use sedona_schema::matchers::ArgMatcher;
@@ -83,7 +84,7 @@ impl RsFromGDALRaster {
     fn append_gdal_raster(gdal: &Gdal, content: &[u8], builder: &mut RasterBuilder) -> Result<()> {
         let vsi_path = Self::generate_vsi_path();
         gdal.create_mem_file(&vsi_path, content)
-            .map_err(|e| exec_datafusion_err!("Failed to create VSI memory file: {e}"))?;
+            .context("Failed to create VSI memory file")?;
 
         // Open + decode, then always unlink the VSI file (the dataset is dropped
         // at the end of the closure, before the unlink).
@@ -113,9 +114,7 @@ impl RsFromGDALRaster {
     ) -> Result<()> {
         for row in rows {
             match row {
-                None => builder
-                    .append_null()
-                    .map_err(|e| exec_datafusion_err!("Failed to append null: {e}"))?,
+                None => builder.append_null().context("Failed to append null")?,
                 Some(content) => Self::append_gdal_raster(gdal, content, builder)?,
             }
         }
@@ -132,9 +131,7 @@ impl RsFromGDALRaster {
     ) -> Result<arrow_array::StructArray> {
         let mut builder = RasterBuilder::new(1);
         Self::append_gdal_raster(gdal, content, &mut builder)?;
-        builder
-            .finish()
-            .map_err(|e| exec_datafusion_err!("Failed to build raster: {e}"))
+        Ok(builder.finish().context("Failed to build raster")?)
     }
 }
 
@@ -166,7 +163,7 @@ impl SedonaScalarKernel for RsFromGDALRaster {
             let content_array = match &args[0] {
                 ColumnarValue::Scalar(scalar) => scalar
                     .to_array()
-                    .map_err(|e| exec_datafusion_err!("Failed to convert scalar to array: {e}"))?,
+                    .context("Failed to convert scalar to array")?,
                 ColumnarValue::Array(array) => array.clone(),
             };
 
@@ -188,9 +185,7 @@ impl SedonaScalarKernel for RsFromGDALRaster {
                     )
                 }
             }
-            let result = builder
-                .finish()
-                .map_err(|e| exec_datafusion_err!("Failed to build raster: {e}"))?;
+            let result = builder.finish().context("Failed to build raster")?;
 
             match &args[0] {
                 ColumnarValue::Scalar(_) => Ok(ColumnarValue::Scalar(ScalarValue::try_from_array(

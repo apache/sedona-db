@@ -19,13 +19,12 @@ use std::convert::TryInto;
 use std::{cell::RefCell, marker::PhantomData, num::NonZeroUsize, rc::Rc};
 
 use datafusion_common::config::ConfigOptions;
-use datafusion_common::{
-    arrow_datafusion_err, exec_datafusion_err, exec_err, DataFusionError, Result,
-};
+use datafusion_common::{exec_datafusion_err, exec_err, DataFusionError, Result};
 
 use sedona_gdal::dataset::Dataset;
 use sedona_gdal::gdal::Gdal;
 use sedona_gdal::raster::types::GdalDataType;
+use sedona_raster::error::RasterResultExt;
 use sedona_raster::geo_transform::{GeoTransform, GeoTransformEx};
 
 use sedona_common::SedonaOptions;
@@ -214,8 +213,8 @@ impl GDALDatasetCache {
     ) -> Result<(Rc<Dataset>, Vec<Rc<Dataset>>)> {
         let num_bands = raster.num_bands();
 
-        let metadata_width = raster.width().map_err(|e| arrow_datafusion_err!(e))?;
-        let metadata_height = raster.height().map_err(|e| arrow_datafusion_err!(e))?;
+        let metadata_width = raster.width()?;
+        let metadata_height = raster.height()?;
         let width: i32 = metadata_width.try_into().map_err(|_| {
             exec_datafusion_err!(
                 "Raster width {} exceeds supported GDAL/i32 limit {}",
@@ -259,7 +258,7 @@ impl GDALDatasetCache {
         // `i` is 1-based here because it also indexes GDAL's own 1-based
         // `rasterband(i)` below; the raster's `band` accessor is 0-based.
         for i in 1..=num_bands {
-            let band = raster.band(i - 1).map_err(|e| arrow_datafusion_err!(e))?;
+            let band = raster.band(i - 1)?;
 
             if !band.is_spatial_2d() {
                 return exec_err!(
@@ -306,8 +305,7 @@ impl GDALDatasetCache {
                 let uri = band.outdb_uri().ok_or_else(|| {
                     exec_datafusion_err!("Band {} is out-db but missing outdb_uri", i)
                 })?;
-                let (url, source_band_num_u32) =
-                    split_outdb_band_fragment(uri).map_err(|e| arrow_datafusion_err!(e))?;
+                let (url, source_band_num_u32) = split_outdb_band_fragment(uri)?;
                 let source_band_num: usize = source_band_num_u32
                     .try_into()
                     .map_err(|_| exec_datafusion_err!("Band {} out-db band_id is too large", i))?;
@@ -386,7 +384,7 @@ impl<'a> GDALDatasetProvider<'a> {
         let mut indb_band_indices = Vec::with_capacity(num_bands);
         let mut has_outdb = false;
         for i in 1..=num_bands {
-            let band = raster.band(i - 1).map_err(|e| arrow_datafusion_err!(e))?;
+            let band = raster.band(i - 1)?;
             if band.is_indb() {
                 indb_band_indices.push(i);
             } else {
@@ -482,7 +480,7 @@ impl VrtKey {
 
         let mut band_keys = Vec::with_capacity(num_bands);
         for i in 0..num_bands {
-            let band = raster.band(i).map_err(|e| arrow_datafusion_err!(e))?;
+            let band = raster.band(i)?;
             let band_type = band.data_type();
             let nodata_bits = match (band.nodata(), band_type) {
                 (Some(bytes), BandDataType::UInt64) => {
@@ -504,8 +502,7 @@ impl VrtKey {
             // URI; in-db bands have no URI hint here.
             let (outdb_url, outdb_band_id) = match band.outdb_uri() {
                 Some(uri) => {
-                    let (url, band_num) =
-                        split_outdb_band_fragment(uri).map_err(|e| arrow_datafusion_err!(e))?;
+                    let (url, band_num) = split_outdb_band_fragment(uri)?;
                     (Some(normalize_outdb_source_path(&url)), Some(band_num))
                 }
                 None => (None, None),
@@ -566,7 +563,7 @@ fn compute_vrt_simple_source_windows(
     // Compute the pixel/line offset of the destination upper-left in the source grid.
     let inv_src = src_gt
         .invert()
-        .map_err(|e| exec_datafusion_err!("Failed to invert source geotransform: {e}"))?;
+        .context("Failed to invert source geotransform")?;
     let (off_x_f, off_y_f) = inv_src.apply(dst_gt[0], dst_gt[3]);
 
     let off_x_r: f64 = off_x_f.round();

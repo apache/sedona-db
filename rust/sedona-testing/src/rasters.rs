@@ -441,6 +441,11 @@ pub fn assert_raster_equal(raster1: &impl RasterRef, raster2: &impl RasterRef) {
         let band2 = raster2.band(band_index).unwrap();
 
         assert_eq!(
+            raster1.band_name(band_index),
+            raster2.band_name(band_index),
+            "Band names do not match"
+        );
+        assert_eq!(
             band1.dim_names(),
             band2.dim_names(),
             "Band dim names do not match"
