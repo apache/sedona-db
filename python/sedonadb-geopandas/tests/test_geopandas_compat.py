@@ -587,6 +587,23 @@ def test_geography_column_replacement_preserves_geography():
     got = gdf.to_geopandas()["g"]
     assert got.tolist()[0] == Point(1, 1)
 
+    # A non-default CRS survives too: the geography constructors synthesize
+    # CRS84, which must not be mistaken for a CRS the value carried itself.
+    def geog_4267():
+        return GeoDataFrame(
+            sgpd.default_context().sql(
+                "SELECT ST_SetSRID(ST_GeogFromWKT('POINT (0 0)'), 4267) AS g, 1 AS v"
+            ),
+            geometry="g",
+        )
+
+    for value in (None, Point(1, 1)):
+        gdf = geog_4267()
+        gdf["g"] = value
+        dtype = str(gdf._df.schema.field("g").type)
+        assert "geography" in dtype
+        assert "4267" in dtype
+
 
 def test_numpy_scalar_dtypes_are_preserved(points):
     # .item() promoted np.int8/np.float32 to int64/float64 columns and
@@ -670,3 +687,57 @@ def test_multipart_geometries_classify_as_scalars(points):
     gdf = sgpd.from_geopandas(points)
     gdf["mp"] = value
     assert gdf.to_geopandas()["mp"].tolist() == [value] * len(points)
+
+
+def test_no_active_geometry_survives_any_column_name(points):
+    # The materializer rebuild went through the GeoDataFrame constructor,
+    # which auto-activates a geometry column literally named "geometry" — so
+    # clearing the active `geom` resurrected the secondary column and a later
+    # to_crs() would transform it. The no-active marker is preserved
+    # explicitly, whatever the remaining columns are called.
+    gdf = GeoDataFrame(
+        sgpd.default_context().sql(
+            "SELECT ST_SetSRID(ST_Point(0.0, 0.0), 3857) AS geom, "
+            "ST_SetSRID(ST_Point(9.0, 9.0), 4326) AS geometry, 1 AS a"
+        ),
+        geometry="geom",
+    )
+    gdf["geom"] = 7
+    assert gdf._geometry_name is None
+    out = gdf.to_geopandas()
+    with pytest.raises(AttributeError):
+        out.geometry
+
+    explicit = GeoDataFrame(
+        sgpd.default_context().create_data_frame(points), geometry=None
+    )
+    out = explicit.to_geopandas()
+    with pytest.raises(AttributeError):
+        out.geometry
+
+
+def test_numpy_void_scalars_broadcast_as_binary(points):
+    # np.void has no Arrow scalar form, so the typed-scalar conversion broke
+    # what previously worked: void values broadcast through .item() as bytes.
+    import numpy as np
+
+    gdf = sgpd.from_geopandas(points)
+    gdf["x"] = np.void(b"abcd")
+    assert gdf.to_geopandas()["x"].tolist() == [b"abcd"] * len(points)
+    gdf["y"] = np.array(np.void(b"ab"))
+    assert gdf.to_geopandas()["y"].tolist() == [b"ab"] * len(points)
+
+
+def test_typed_null_nested_scalar_keeps_geometry(points):
+    # Normalization rewrites a typed-null nested scalar into its one-element
+    # array spelling before missingness is judged; recognizing that spelling
+    # only worked through pandas coincidence, and without pandas the null
+    # converted the geometry column to a list column. Classification is
+    # explicit now: one null element is one missing value.
+    import pyarrow as pa
+
+    gdf = sgpd.from_geopandas(points)
+    gdf["geometry"] = pa.scalar(None, pa.list_(pa.int64()))
+    assert gdf._geometry_name == "geometry"
+    assert "3857" in str(gdf.crs)
+    assert gdf.to_geopandas()["geometry"].isna().all()

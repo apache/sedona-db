@@ -60,6 +60,12 @@ def _is_missing(value):
                 payload = value.as_py()
                 return payload != payload
             return False
+        if isinstance(value, pa.Array):
+            # A typed-null nested scalar is normalized into its one-element
+            # array spelling before missingness is judged; one null element
+            # is still one missing value. Classified here explicitly so the
+            # answer does not depend on optional pandas being installed.
+            return len(value) == 1 and value.null_count == 1
     except ImportError:
         pass
     try:
@@ -309,10 +315,13 @@ class GeoDataFrame:
         spherical = "SPHERICAL" in str(getattr(dtype, "edge_type", "")).upper()
         # A context-bound literal is needed to call functions on it.
         ctx = self._df._ctx
+        inherits_crs = False
         if missing:
             # The typed null is built with the destination's own spatial kind:
             # a geography column stays geography rather than degrading to
-            # planar geometry.
+            # planar geometry. A missing value has no CRS of its own, whatever
+            # CRS the constructor synthesizes.
+            inherits_crs = True
             if spherical:
                 expr = ctx.lit(None).funcs.st_geogfromwkt()
             else:
@@ -324,20 +333,24 @@ class GeoDataFrame:
                 BaseGeometry = ()
             if isinstance(raw, BaseGeometry):
                 # A bare Shapely value re-enters through WKB as geography.
-                # (A value that already carries a spatial type — a GeoArrow
-                # scalar, say — keeps it; converting between planar and
-                # spherical semantics is not something an assignment should
-                # do silently.)
+                # It carries no CRS of its own — the constructor synthesizes
+                # CRS84 — so the destination CRS applies. (A value that
+                # already carries a spatial type — a GeoArrow scalar, say —
+                # keeps it; converting between planar and spherical semantics
+                # is not something an assignment should do silently.)
+                inherits_crs = True
                 expr = ctx.lit(raw.wkb).funcs.st_geogfromwkb()
             else:
                 expr = ctx.lit(raw)
         else:
             expr = ctx.lit(raw)
-        # The destination CRS is inherited only by genuinely CRS-less geometry.
-        # A value that carries its own CRS (a GeoSeries literal, say) keeps it:
-        # stamping the destination CRS over it would relabel the coordinates
-        # without transforming them, which is silently wrong data.
-        if crs is not None and _expr_crs(self._df, expr) is None:
+        # The destination CRS is inherited by values that have none of their
+        # own: missing values, bare Shapely geometry, and anything whose
+        # projection shows no CRS. A value that carries its own CRS (a
+        # GeoSeries literal, say) keeps it: stamping the destination CRS over
+        # it would relabel the coordinates without transforming them, which
+        # is silently wrong data.
+        if crs is not None and (inherits_crs or _expr_crs(self._df, expr) is None):
             expr = expr.funcs.st_setcrs(ctx.lit(crs.to_json()))
         return expr
 
@@ -375,13 +388,16 @@ class GeoDataFrame:
             # but the materializer heuristically activates one whenever a
             # geometry column exists — and a later to_crs() on the result
             # would silently target a column this frame never had active.
-            # Rebuilding through the GeoDataFrame constructor applies
-            # GeoPandas' own rule instead: only a geometry column literally
-            # named "geometry" comes back active.
+            # There is no public constructor spelling for "GeoDataFrame
+            # with geometry columns but no active one" — the constructor
+            # auto-activates a geometry column literally named "geometry" —
+            # so the marker is cleared directly after rebuilding.
             import geopandas as gpd
             import pandas as pd
 
-            return gpd.GeoDataFrame(pd.DataFrame(result))
+            result = gpd.GeoDataFrame(pd.DataFrame(result))
+            result._geometry_column_name = None
+            return result
         try:
             active = result.geometry.name
         except Exception:

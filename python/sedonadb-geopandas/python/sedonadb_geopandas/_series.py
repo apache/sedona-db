@@ -106,10 +106,14 @@ def normalize_scalar(value):
                 "NumPy temporal scalars are not supported yet; faithful unit "
                 "handling arrives in a follow-up change"
             )
-        if isinstance(value, np.generic) and not isinstance(value, (str, bytes)):
+        if isinstance(value, np.generic) and not isinstance(
+            value, (str, bytes, np.void)
+        ):
             # A typed Arrow scalar keeps the NumPy dtype: .item() would
             # promote int8/float32 to int64/float64 columns and overflow
             # uint64 values past int64, which the engine supports natively.
+            # (np.void has no Arrow scalar form; it falls through to .item(),
+            # which yields its bytes.)
             import pyarrow as pa
 
             return pa.scalar(value)
