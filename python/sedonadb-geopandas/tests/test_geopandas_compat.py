@@ -1598,19 +1598,6 @@ def test_is_floating_unwraps_dictionary_encoding():
     assert _is_floating(df, "k")
 
 
-def test_dissolve_temporal_keys_are_deferred():
-    # pandas missing values arrive from numpy-backed frames as a sentinel
-    # tick that must group as missing rather than as a value; temporal keys
-    # are rejected until the dedicated temporal handling lands.
-    gdf = GeoDataFrame(
-        sgpd.default_context().sql(
-            "SELECT TIMESTAMP '2026-01-01' AS ts, ST_Point(0.0, 0.0) AS geometry"
-        )
-    )
-    with pytest.raises(NotImplementedError, match="not supported yet"):
-        gdf.dissolve(by="ts")
-
-
 def test_series_arithmetic():
     points = gpd.GeoDataFrame(
         {"name": ["A", "B", "C"], "v": [1, 2, 3]},
@@ -1814,17 +1801,290 @@ def test_singleton_container_literals_resolve_as_numbers():
     assert sorted((gdf["n"] / lit(pd.Series([2]))).to_pandas().tolist()) == [0.5, 1.5]
 
 
-def test_duration_arithmetic_is_deferred():
-    # Multiplying or dividing a duration column needs tick-level overflow,
-    # precision, and missing-value handling that arrives with the dedicated
-    # temporal support; a clear error beats a silently lossy result.
+def test_duration_arithmetic_matches_pandas():
+    gdf = GeoDataFrame(
+        sgpd.default_context().create_data_frame(
+            pd.DataFrame({"t": [pd.Timedelta(days=2)]})
+        )
+    )
+    assert (gdf["t"] * 2).to_pandas().tolist() == [pd.Timedelta(days=4)]
+    assert (2 * gdf["t"]).to_pandas().tolist() == [pd.Timedelta(days=4)]
+    assert (gdf["t"] / 2).to_pandas().tolist() == [pd.Timedelta(days=1)]
+    with pytest.raises(TypeError, match="numeric scalars"):
+        gdf["t"] * "2"
+
+
+def test_duration_division_is_exact_for_integral_divisors():
+    # Routing an integral divisor through float64 rounded 2**53 + 1 ticks.
+
+    gdf = GeoDataFrame(
+        sgpd.default_context().create_data_frame(
+            pd.DataFrame({"t": [pd.Timedelta(2**53 + 1)]})
+        )
+    )
+    assert (gdf["t"] / 1).to_pandas().tolist()[0].value == 2**53 + 1
+
+
+def test_duration_arithmetic_accepts_wrapped_numbers():
+    gdf = GeoDataFrame(
+        sgpd.default_context().create_data_frame(
+            pd.DataFrame({"t": [pd.Timedelta(days=2)]})
+        )
+    )
+    assert (gdf["t"] * lit(2)).to_pandas().tolist() == [pd.Timedelta(days=4)]
+    assert (gdf["t"] / pa.scalar(2)).to_pandas().tolist() == [pd.Timedelta(days=1)]
+
+
+def test_duration_non_finite_results_are_nat():
+    # Pandas yields NaT for these; the int64 cast-back used to fail on inf/NaN.
 
     gdf = GeoDataFrame(
         sgpd.default_context().create_data_frame(
             pd.DataFrame({"t": [pd.Timedelta(days=2)]})
         )
     )
-    with pytest.raises(NotImplementedError, match="not supported yet"):
-        gdf["t"] * 2
-    with pytest.raises(NotImplementedError, match="not supported yet"):
-        gdf["t"] / 2
+    assert (gdf["t"] / 0).to_pandas().isna().all()
+    assert (gdf["t"] * float("nan")).to_pandas().isna().all()
+
+
+def test_duration_division_by_infinity_is_zero_preserving_nulls():
+    # Blanket NaT for non-finite operands regressed /inf, which pandas defines
+    # as zero for valid rows while keeping source nulls null.
+
+    gdf = GeoDataFrame(
+        sgpd.default_context().create_data_frame(
+            pd.DataFrame({"t": [pd.Timedelta(days=2), pd.NaT]})
+        )
+    )
+    got = (gdf["t"] / float("inf")).to_pandas()
+    assert got.tolist()[0] == pd.Timedelta(0)
+    assert pd.isna(got.tolist()[1])
+
+
+def test_duration_multiplication_overflow_is_null_not_wrapped():
+    # Integer tick multiplication silently wrapped on int64 overflow:
+    # 2**62 ticks * 3 came back as a large negative duration. pandas 3 raises
+    # OverflowError there; a lazy expression cannot raise per row, so rows
+    # whose product would overflow become NaT instead, while in-range rows —
+    # the largest exactly-representable product included — are unaffected.
+
+    boundary = (2**63 - 1) // 3
+    pdf = pd.DataFrame({"t": [pd.Timedelta(2**62), pd.Timedelta(boundary), pd.NaT]})
+    gdf = GeoDataFrame(sgpd.default_context().create_data_frame(pdf))
+    got = (gdf["t"] * 3).to_pandas()
+    assert pd.isna(got.tolist()[0])
+    assert got.tolist()[1] == pd.Timedelta(boundary * 3)
+    assert pd.isna(got.tolist()[2])
+
+
+def _duration_frame(values):
+    return GeoDataFrame(
+        sgpd.default_context().create_data_frame(pd.DataFrame({"t": values}))
+    )
+
+
+def test_oversized_integer_duration_operand_raises_overflow():
+    # An integer operand past the signed 64-bit tick range failed literal
+    # construction with an unrelated ValueError, aborting even the rows whose
+    # result is representable. pandas raises OverflowError for the operand
+    # itself, on multiplication and division alike; so does this layer now.
+
+    gdf = _duration_frame([pd.Timedelta(0), pd.Timedelta(1)])
+    for operand in (2**63, pa.scalar(2**63, pa.uint64())):
+        with pytest.raises(OverflowError):
+            gdf["t"] * operand
+        with pytest.raises(OverflowError):
+            gdf["t"] / operand
+
+
+def test_identity_float_duration_arithmetic_is_exact():
+    # `* 1.0` and `/ 1.0` return the input unchanged even at the largest
+    # tick, where the float64 round trip cannot represent the value and the
+    # cast back aborted. Only the identities ±1.0 take the exact integer
+    # path; other floats keep pandas' float64 semantics.
+
+    gdf = _duration_frame([pd.Timedelta(2**63 - 1)])
+    assert (gdf["t"] * 1.0).to_pandas().tolist()[0] == pd.Timedelta(2**63 - 1)
+    assert (gdf["t"] / 1.0).to_pandas().tolist()[0] == pd.Timedelta(2**63 - 1)
+    got = (gdf["t"] * 3.0).to_pandas()
+    assert got.isna().all()  # float path: past the tick range, so null
+
+
+def test_float_duration_overflow_is_null_not_abort():
+    # A finite float result past the tick range aborted the whole query at
+    # the int64 cast. Out-of-range rows become NaT while in-range rows and
+    # source nulls are unaffected. pandas clamps positive finite overflow to
+    # Timedelta.max and sends negative overflow to NaT — an asymmetric
+    # casting artifact this layer does not copy: both directions are NaT.
+
+    gdf = _duration_frame(
+        [pd.Timedelta(2**62), pd.Timedelta(-(2**62)), pd.Timedelta(5), pd.NaT]
+    )
+    got = (gdf["t"] / 0.5).to_pandas()
+    assert pd.isna(got.tolist()[0])
+    assert pd.isna(got.tolist()[1])
+    assert got.tolist()[2] == pd.Timedelta(10)
+    assert pd.isna(got.tolist()[3])
+
+    # A float operand past int64 stays on the float path the way pandas keeps
+    # it in float arithmetic (it must not raise the integer-operand
+    # OverflowError): zero ticks survive, everything else overflows to NaT.
+    gdf = _duration_frame([pd.Timedelta(0), pd.Timedelta(5), pd.NaT])
+    got = (gdf["t"] * 1e300).to_pandas()
+    assert got.tolist()[0] == pd.Timedelta(0)
+    assert pd.isna(got.tolist()[1])
+    assert pd.isna(got.tolist()[2])
+
+
+def test_int64_min_duration_tick_is_missing():
+    # INT64_MIN is a representable Arrow duration tick but the pandas missing
+    # sentinel (Timedelta.min sits one tick above it). Treated as a value it
+    # aborted `/ -1` on arithmetic overflow, survived `* -1.0` internally by
+    # wrapping back onto the sentinel (so a chained `* 0` resurrected it as
+    # zero), and divided into real-looking results. It is null at the source.
+
+    tbl = pa.table({"t": pa.array([-(2**63), 5], pa.duration("ns"))})
+    gdf = GeoDataFrame(sgpd.default_context().create_data_frame(tbl))
+    got = (gdf["t"] / -1).to_pandas()
+    assert pd.isna(got.tolist()[0])
+    assert got.tolist()[1] == pd.Timedelta(-5)
+    chained = ((gdf["t"] * -1.0) * 0).to_pandas()
+    assert pd.isna(chained.tolist()[0])
+    assert chained.tolist()[1] == pd.Timedelta(0)
+    divided = (gdf["t"] / 3).to_pandas()
+    assert pd.isna(divided.tolist()[0])
+
+
+def test_non_identity_float_duration_arithmetic_matches_pandas():
+    # Routing every integral-valued float through exact integer arithmetic
+    # silently changed in-range results: pandas computes `* 3.0` in float64,
+    # losing sub-tick precision above 2**53, and matching pandas there
+    # matters more than improving on it. The identities ±1.0 stay exact —
+    # pandas loses precision even on those above 2**53, a corruption of an
+    # operation that should return its input; that one this layer does not
+    # reproduce.
+
+    pdf = pd.DataFrame({"t": [pd.Timedelta(2**53 + 1)]})
+    gdf = GeoDataFrame(sgpd.default_context().create_data_frame(pdf))
+    for operand in (3.0, 1 / 3):
+        assert (gdf["t"] * operand).to_pandas().tolist()[0] == (
+            pdf["t"] * operand
+        ).tolist()[0]
+        assert (gdf["t"] / operand).to_pandas().tolist()[0] == (
+            pdf["t"] / operand
+        ).tolist()[0]
+    assert (gdf["t"] * 1.0).to_pandas().tolist()[0] == pd.Timedelta(2**53 + 1)
+    assert (gdf["t"] * -1.0).to_pandas().tolist()[0] == pd.Timedelta(-(2**53) - 1)
+
+
+def test_negative_float_overflow_and_exact_boundary():
+    # The earlier negative case computed exactly -2**63, which lands on the
+    # pandas NaT sentinel even without the lower-bound gate, so it could not
+    # prove the gate exists. -2**64 is a genuine negative overflow — it
+    # aborts the cast without the gate — and (2**62 - 512) / 0.5 lands
+    # exactly on the largest float64 inside the tick range, proving the gate
+    # keeps the boundary itself.
+
+    gdf = _duration_frame([pd.Timedelta(-(2**62)), pd.Timedelta(2**62 - 512)])
+    got = (gdf["t"] / 0.25).to_pandas()
+    assert pd.isna(got.tolist()[0])
+    got = (gdf["t"] / 0.5).to_pandas()
+    assert pd.isna(got.tolist()[0])
+    assert got.tolist()[1] == pd.Timedelta(2**63 - 1024)
+
+
+def test_sentinel_ticks_are_missing_for_every_operator():
+    # The sentinel fix covered only * and /. Addition, subtraction, and
+    # comparisons still treated INT64_MIN as data: self-subtraction returned
+    # zero, adding one tick produced a finite Timedelta.min, subtracting one
+    # tick aborted the query on arithmetic overflow, and equality matched, so
+    # a filter retained a row that materializes as NaT. The sentinel becomes
+    # null where columns are read, covering every operator at once.
+
+    tbl = pa.table({"t": pa.array([-(2**63), 5], pa.duration("ns"))})
+    gdf = GeoDataFrame(sgpd.default_context().create_data_frame(tbl))
+    got = (gdf["t"] - gdf["t"]).to_pandas()
+    assert pd.isna(got.tolist()[0])
+    assert got.tolist()[1] == pd.Timedelta(0)
+    got = (gdf["t"] + pd.Timedelta(1)).to_pandas()
+    assert pd.isna(got.tolist()[0])
+    assert got.tolist()[1] == pd.Timedelta(6)
+    got = (gdf["t"] - np.timedelta64(1, "ns")).to_pandas()
+    assert pd.isna(got.tolist()[0])
+    assert got.tolist()[1] == pd.Timedelta(4)
+    kept = gdf[gdf["t"] == gdf["t"]].to_pandas()["t"]
+    assert kept.tolist() == [pd.Timedelta(5)]
+
+
+def test_sentinel_timestamp_ticks_are_missing():
+    # Timestamps share the sentinel: numpy-backed pandas stores datetime NaT
+    # as INT64_MIN too, so the column boundary treats both temporal kinds the
+    # same way.
+
+    tbl = pa.table({"ts": pa.array([-(2**63), 10**18], pa.timestamp("ns"))})
+    gdf = GeoDataFrame(sgpd.default_context().create_data_frame(tbl))
+    got = (gdf["ts"] - gdf["ts"]).to_pandas()
+    assert pd.isna(got.tolist()[0])
+    assert got.tolist()[1] == pd.Timedelta(0)
+    kept = gdf[gdf["ts"] == gdf["ts"]].to_pandas()["ts"]
+    assert kept.tolist() == [pd.Timestamp(10**18)]
+
+
+def test_dissolve_temporal_keys_group_sentinels_as_missing():
+    # numpy-backed pandas delivers NaT group keys as sentinel ticks; the key
+    # column goes through the same normalization as column access, so dropna
+    # drops them like GeoPandas drops NaT keys, and dropna=False groups them
+    # together as one missing-key group.
+
+    tbl = pa.table({"k": pa.array([-(2**63), 5, 5], pa.duration("ns"))})
+    gdf = GeoDataFrame(sgpd.default_context().create_data_frame(tbl))
+    gdf["geometry"] = Point(0, 0)
+    assert len(gdf.dissolve(by="k").to_geopandas()) == 1
+    kept = gdf.dissolve(by="k", dropna=False).to_geopandas()
+    assert len(kept) == 2
+    assert kept["k"].isna().sum() == 1
+
+    stamped = GeoDataFrame(
+        sgpd.default_context().sql(
+            "SELECT TIMESTAMP '2026-01-01' AS ts, ST_Point(0.0, 0.0) AS geometry"
+        )
+    )
+    assert len(stamped.dissolve(by="ts").to_geopandas()) == 1
+
+
+@pytest.mark.parametrize(
+    "make",
+    [
+        lambda np, pd, pa: np.timedelta64(3, "us"),
+        lambda np, pd, pa: pd.Timedelta(microseconds=3),
+        lambda np, pd, pa: pa.scalar(3, pa.duration("us")),
+        lambda np, pd, pa: pa.scalar(3000, pa.duration("ns")),
+    ],
+    ids=["numpy-us", "pandas", "arrow-us", "arrow-ns"],
+)
+def test_duration_scalar_representations_are_unit_coerced(make):
+    # Every representation of the same 3µs must behave identically against a
+    # nanosecond column. The engine's own mixed-unit answer widens to its
+    # interval type — materializing as DateOffset objects, not timedeltas —
+    # so duration scalars are rebuilt in the column's unit first.
+
+    value = make(np, pd, pa)
+    gdf = _duration_frame([pd.Timedelta(1000), pd.NaT])
+    got = (gdf["t"] + value).to_pandas()
+    assert got.tolist()[0] == pd.Timedelta(microseconds=4)
+    assert pd.isna(got.tolist()[1])
+    got = (gdf["t"] - value).to_pandas()
+    assert got.tolist()[0] == pd.Timedelta(microseconds=-2)
+    assert pd.isna(got.tolist()[1])
+
+
+def test_duration_unit_coercion_is_exact_or_raises():
+    # Coercing into a coarser column unit must divide exactly: the column
+    # cannot hold a fraction of a tick, and silently rounding would corrupt.
+
+    tbl = pa.table({"t": pa.array([5], pa.duration("us"))})
+    gdf = GeoDataFrame(sgpd.default_context().create_data_frame(tbl))
+    got = (gdf["t"] + pa.scalar(2000, pa.duration("ns"))).to_pandas()
+    assert got.tolist()[0] == pd.Timedelta(microseconds=7)
+    with pytest.raises(ValueError, match="exactly"):
+        gdf["t"] + pa.scalar(1500, pa.duration("ns"))
