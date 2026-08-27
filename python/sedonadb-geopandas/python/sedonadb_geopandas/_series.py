@@ -89,6 +89,32 @@ def normalize_scalar(value):
     try:
         import numpy as np
 
+        # A structured masked record must come before the generic mask check:
+        # np.ma.is_masked itself raises on the mask dtype. A fully masked
+        # record is missing; otherwise it broadcasts as a typed struct with
+        # each masked field as null.
+        if isinstance(value, np.ma.mvoid):
+            import pyarrow as pa
+
+            names = value.dtype.names or ()
+            fields_vals = {name: value[name] for name in names}
+            if names and all(v is np.ma.masked for v in fields_vals.values()):
+                return None
+            try:
+                fields = [
+                    (name, pa.from_numpy_dtype(value.dtype[name])) for name in names
+                ]
+            except (pa.ArrowNotImplementedError, ValueError) as err:
+                raise TypeError(
+                    f"Cannot represent a structured NumPy scalar of dtype "
+                    f"{value.dtype} faithfully; use a typed Arrow struct "
+                    f"scalar instead"
+                ) from err
+            payload = {
+                name: None if v is np.ma.masked else v.item()
+                for name, v in fields_vals.items()
+            }
+            return pa.scalar(payload, type=pa.struct(fields))
         # A masked value's .item() would expose the hidden data, silently turning
         # a missing value into a real number; masked means missing.
         if value is np.ma.masked or np.ma.is_masked(value):

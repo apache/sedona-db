@@ -304,27 +304,27 @@ class GeoDataFrame:
         replacing_geometry = key in _geometry_column_names(self._df)
         if not replacing_geometry:
             return lit(raw)
-        if not missing:
+
+        # A GeoArrow-typed scalar — valid or null — is recognized from its
+        # extension name, not by resolving it: the scalar resolver drops the
+        # planar/spherical edge type and rejects non-WKB storage outright.
+        # Its one-element-array spelling resolves with the complete extension
+        # metadata, so that is the form it takes.
+        geoarrow_typed = False
+        try:
+            import pyarrow as pa
+
+            geoarrow_typed = isinstance(raw, pa.Scalar) and str(
+                getattr(raw.type, "extension_name", "")
+            ).startswith("geoarrow.")
+        except ImportError:
+            pass
+
+        if not missing and not geoarrow_typed:
             candidate = lit(raw)
             projected = self._df.select(candidate.alias("x")).schema
             if not projected.geometry_column_indices:
                 return candidate
-
-        # A typed spatial null (an invalid GeoArrow scalar, say) is a geometry
-        # value that happens to be null: it carries its own kind and CRS
-        # metadata, which synthesizing a destination-kind null would discard.
-        # It takes the value path below. Typed *non-spatial* nulls stay on the
-        # missing path, like the bare sentinels.
-        spatial_typed_null = False
-        if missing:
-            try:
-                import pyarrow as pa
-
-                if isinstance(raw, pa.Scalar):
-                    projected = self._df.select(lit(raw).alias("x")).schema
-                    spatial_typed_null = bool(projected.geometry_column_indices)
-            except ImportError:
-                pass
 
         dtype = self._df.schema.field(key).type
         crs = dtype.crs
@@ -333,7 +333,36 @@ class GeoDataFrame:
         ctx = self._df._ctx
         inherits_crs = False
         strips_crs = False
-        if missing and not spatial_typed_null:
+        expr = None
+        if geoarrow_typed:
+            scalar_spherical = (
+                "SPHERICAL" in str(getattr(raw.type, "edge_type", "")).upper()
+            )
+            scalar_crs = getattr(raw.type, "crs", None)
+            if str(raw.type.extension_name) == "geoarrow.wkb":
+                expr = ctx.lit(pa.array([raw.as_py()], type=raw.type))
+            elif missing:
+                # Non-WKB storage cannot become a literal; a null of it is
+                # rebuilt from its own metadata. Kind and CRS survive; the
+                # storage kind, which holds nothing for a null, does not.
+                if scalar_spherical:
+                    expr = ctx.lit(None).funcs.st_geogfromwkt()
+                else:
+                    expr = ctx.lit(None).funcs.st_geomfromwkt()
+                if scalar_crs:
+                    expr = expr.funcs.st_setcrs(ctx.lit(str(scalar_crs)))
+                else:
+                    # A CRS-less carrier inherits the destination CRS like
+                    # any other, shedding any constructor-synthesized one.
+                    inherits_crs = True
+                    strips_crs = crs is None
+            else:
+                # A valid non-WKB GeoArrow scalar keeps the literal
+                # resolver's own error, which names the unsupported storage.
+                expr = ctx.lit(raw)
+        if expr is not None:
+            pass
+        elif missing:
             # The typed null is built with the destination's own spatial kind:
             # a geography column stays geography rather than degrading to
             # planar geometry. A missing value has no CRS of its own, whatever
@@ -345,8 +374,6 @@ class GeoDataFrame:
                 strips_crs = crs is None
             else:
                 expr = ctx.lit(None).funcs.st_geomfromwkt()
-        elif missing:
-            expr = ctx.lit(raw)
         elif spherical:
             try:
                 from shapely.geometry.base import BaseGeometry
@@ -375,7 +402,9 @@ class GeoDataFrame:
         if crs is not None and (inherits_crs or _expr_crs(self._df, expr) is None):
             expr = expr.funcs.st_setcrs(ctx.lit(crs.to_json()))
         elif strips_crs and _expr_crs(self._df, expr) is not None:
-            expr = expr.funcs.st_setcrs(ctx.lit(None))
+            # SRID 0 means "no CRS" and keeps the value; st_setcrs(NULL)
+            # would null-propagate and erase every row.
+            expr = expr.funcs.st_setsrid(ctx.lit(0))
         return expr
 
     def head(self, n=5):

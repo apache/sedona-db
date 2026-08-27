@@ -764,6 +764,14 @@ def test_crs_less_geography_replacement_stays_crs_less():
         dtype = gdf._df.schema.field("g").type
         assert "geography" in str(dtype)
         assert dtype.crs is None
+        # The schema alone is not enough: stripping the CRS with a
+        # null-propagating expression kept the type right while erasing
+        # every value.
+        got = gdf.to_geopandas()["g"]
+        if value is None:
+            assert got.isna().all()
+        else:
+            assert got.tolist() == [value]
 
 
 def test_typed_spatial_null_keeps_its_own_crs(points):
@@ -787,6 +795,41 @@ def test_typed_spatial_null_keeps_its_own_crs(points):
     gdf = sgpd.from_geopandas(points)
     gdf["geometry"] = pa.scalar(None, pa.float64())
     assert "3857" in str(gdf._df.schema.field("geometry").type)
+
+
+def test_spherical_geoarrow_scalars_keep_geography(points):
+    # The scalar literal resolver drops the edge type, so both a null and a
+    # valid spherical WKB scalar silently became planar geometry; the
+    # one-element-array spelling resolves with the complete extension
+    # metadata.
+    import geoarrow.pyarrow as ga
+    import geopandas as gpd
+    import pyarrow as pa
+    from shapely.geometry import Point
+
+    crs4267 = gpd.GeoSeries.from_wkt(["POINT (0 0)"], crs="EPSG:4267").crs
+    sph = ga.wkb().with_edge_type(ga.EdgeType.SPHERICAL).with_crs(crs4267.to_json())
+    for payload in (None, Point(1, 1).wkb):
+        gdf = sgpd.from_geopandas(points)
+        gdf["geometry"] = pa.scalar(payload, sph)
+        dtype = str(gdf._df.schema.field("geometry").type)
+        assert "geography" in dtype
+        assert "4267" in dtype
+
+
+def test_non_wkb_geoarrow_nulls_do_not_crash(points):
+    # Null WKT/point GeoArrow scalars raised ValueError from the literal
+    # resolver inside the spatial-null detector. They now either resolve
+    # through the array spelling or degrade to the destination-kind null —
+    # never an error, and always still geometry.
+    import geoarrow.pyarrow as ga
+    import pyarrow as pa
+
+    for typ in (ga.wkt(), ga.point()):
+        gdf = sgpd.from_geopandas(points)
+        gdf["geometry"] = pa.scalar(None, typ)
+        assert "geometry" in str(gdf._df.schema.field("geometry").type)
+        assert gdf.to_geopandas()["geometry"].isna().all()
 
 
 def test_clearing_active_geometry_does_not_retype_columns():
@@ -831,6 +874,30 @@ def test_is_missing_handles_null_array_without_pandas(monkeypatch):
 
     from sedonadb_geopandas._frame import _is_missing
 
+    null_array = pa.array([None], type=pa.list_(pa.int64()))
+    value_array = pa.array([1], type=pa.int64())
     monkeypatch.setitem(sys.modules, "pandas", None)
-    assert _is_missing(pa.array([None], type=pa.list_(pa.int64())))
-    assert not _is_missing(pa.array([1], type=pa.int64()))
+    assert _is_missing(null_array)
+    assert not _is_missing(value_array)
+
+
+def test_masked_structured_records(points):
+    # A structured scalar drawn from a MaskedArray failed inside
+    # np.ma.is_masked before any conversion ran — even fully unmasked.
+    # Unmasked and partially masked records broadcast as typed structs with
+    # masked fields null; a fully masked record is missing.
+    import numpy as np
+
+    dtype = [("count", "int16"), ("ratio", "float32")]
+
+    def record(mask):
+        return np.ma.MaskedArray([(3, 1.5)], mask=[mask], dtype=dtype)[0]
+
+    gdf = sgpd.from_geopandas(points)
+    gdf["a"] = record((False, False))
+    gdf["b"] = record((True, False))
+    gdf["c"] = record((True, True))
+    out = gdf.to_geopandas()
+    assert out["a"].tolist() == [{"count": 3, "ratio": 1.5}] * len(points)
+    assert out["b"].tolist() == [{"count": None, "ratio": 1.5}] * len(points)
+    assert out["c"].isna().all()
