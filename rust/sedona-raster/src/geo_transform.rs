@@ -34,7 +34,7 @@
 //!
 //! [`RasterRef::transform`]: crate::traits::RasterRef::transform
 
-use arrow_schema::ArrowError;
+use crate::error::RasterError;
 
 /// An affine geo-transform: six coefficients mapping pixel/line to projection coordinates.
 ///
@@ -59,7 +59,7 @@ pub trait GeoTransformEx {
 
     /// Invert this geo-transform, returning the inverse coefficients for
     /// computing (geo_x, geo_y) -> (x, y) transformations.
-    fn invert(&self) -> Result<GeoTransform, ArrowError>;
+    fn invert(&self) -> Result<GeoTransform, RasterError>;
 
     /// Rotation angle (radians) implied by the coefficients.
     fn rotation(&self) -> f64;
@@ -88,7 +88,7 @@ impl GeoTransformEx for [f64] {
     }
 
     /// Pure-Rust equivalent of GDAL's `GDALInvGeoTransform`.
-    fn invert(&self) -> Result<GeoTransform, ArrowError> {
+    fn invert(&self) -> Result<GeoTransform, RasterError> {
         let gt = self;
 
         // Fast path: no rotation/skew — avoid determinant and precision issues.
@@ -111,7 +111,7 @@ impl GeoTransformEx for [f64] {
             .max(gt[4].abs().max(gt[5].abs()));
 
         if det.abs() <= 1e-10 * magnitude * magnitude {
-            return Err(ArrowError::InvalidArgumentError(
+            return Err(RasterError::Invalid(
                 "Geo transform is uninvertible".to_string(),
             ));
         }
@@ -180,18 +180,18 @@ pub fn geotransform_from_bbox_and_spatial_shape(
     height: u64,
     width: u64,
     registration: Option<&str>,
-) -> Result<GeoTransform, ArrowError> {
+) -> Result<GeoTransform, RasterError> {
     let [xmin, ymin, xmax, ymax] = bbox;
     // Reject a degenerate or inverted bbox: a zero span gives a non-invertible
     // (zero-scale) transform and a negative span isn't north-up.
     if !(xmax > xmin && ymax > ymin) {
-        return Err(ArrowError::InvalidArgumentError(format!(
+        return Err(RasterError::Invalid(format!(
             "bbox must have xmin < xmax and ymin < ymax; got [{xmin}, {ymin}, {xmax}, {ymax}]"
         )));
     }
     // A real raster axis is at least 1 cell.
     if height == 0 || width == 0 {
-        return Err(ArrowError::InvalidArgumentError(
+        return Err(RasterError::Invalid(
             "raster spatial dimensions must be non-zero to derive a transform from a bbox".into(),
         ));
     }
@@ -213,7 +213,7 @@ pub fn geotransform_from_bbox_and_spatial_shape(
         // a cell beyond — the corner sits half a cell outside the bbox.
         "node" => {
             if width < 2.0 || height < 2.0 {
-                return Err(ArrowError::InvalidArgumentError(
+                return Err(RasterError::Invalid(
                     "node-registered grid must be at least 2 cells in each spatial dimension"
                         .into(),
                 ));
@@ -223,7 +223,7 @@ pub fn geotransform_from_bbox_and_spatial_shape(
             (scale_x, scale_y, xmin - scale_x / 2.0, ymax - scale_y / 2.0)
         }
         other => {
-            return Err(ArrowError::InvalidArgumentError(format!(
+            return Err(RasterError::Invalid(format!(
                 "registration must be \"pixel\" or \"node\"; got {other:?}"
             )))
         }

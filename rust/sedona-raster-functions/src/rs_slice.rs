@@ -20,12 +20,11 @@ use std::sync::Arc;
 use arrow_schema::DataType;
 use datafusion_common::cast::{as_int64_array, as_string_array};
 use datafusion_common::error::Result;
-use datafusion_common::{arrow_datafusion_err, exec_err};
+use datafusion_common::exec_err;
 use datafusion_expr::{ColumnarValue, Volatility};
-use sedona_common::sedona_internal_datafusion_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
-use sedona_raster::builder::{RasterBuilder, StartBandArgs};
-use sedona_raster::traits::{BandRef, RasterRef};
+use sedona_raster::builder::{RasterBuilder, RasterOverrides, StartBandArgs};
+use sedona_raster::traits::{BandOverrides, BandRef, RasterRef};
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;
 
@@ -98,34 +97,19 @@ impl SedonaScalarKernel for RsSlice {
                     }
                     validate_not_spatial(raster, name, "RS_Slice")?;
 
-                    let t: [f64; 6] = raster.transform().try_into().map_err(|_| {
-                        sedona_internal_datafusion_err!("raster transform is not 6 elements")
-                    })?;
-                    let spatial_dims = raster.spatial_dims();
-                    new_builder.start_raster_nd(&t, &spatial_dims, raster.spatial_shape(), raster.crs())?;
+                    new_builder.start_raster_from(raster, RasterOverrides::default())?;
 
                     require_any_band_has_dim(raster, name, "RS_Slice")?;
 
                     for band_idx in 0..raster.num_bands() {
-                        let band = raster
-                            .band(band_idx)
-                            .map_err(|e| arrow_datafusion_err!(e))?;
+                        let band = raster.band(band_idx)?;
 
                         // Pass-through: bands that don't carry the named
                         // dimension are emitted unchanged. Same convention as
                         // RS_DimToBand, and matches xarray's `isel` — variables
                         // without the indexed dim are left alone.
                         let Some(dim_idx) = band.dim_index(name) else {
-                            let dim_names = band.dim_names();
-                            let band_name = raster.band_name(band_idx);
-                            new_builder.start_band(StartBandArgs {
-                                name: band_name,
-                                nodata: band.nodata(),
-                                ..StartBandArgs::new(&dim_names, band.shape(), band.data_type())
-                            })?;
-                            let ndb = band.nd_buffer()?;
-                            let data = ndb.as_contiguous()?;
-                            new_builder.band_data_writer().append_value(data);
+                            band.copy_into(&mut new_builder, BandOverrides::default())?;
                             new_builder.finish_band()?;
                             continue;
                         };
@@ -259,33 +243,18 @@ impl SedonaScalarKernel for RsSliceRange {
                         );
                     }
 
-                    let t: [f64; 6] = raster.transform().try_into().map_err(|_| {
-                        sedona_internal_datafusion_err!("raster transform is not 6 elements")
-                    })?;
-                    let spatial_dims = raster.spatial_dims();
-                    new_builder.start_raster_nd(&t, &spatial_dims, raster.spatial_shape(), raster.crs())?;
+                    new_builder.start_raster_from(raster, RasterOverrides::default())?;
 
                     require_any_band_has_dim(raster, name, "RS_SliceRange")?;
 
                     for band_idx in 0..raster.num_bands() {
-                        let band = raster
-                            .band(band_idx)
-                            .map_err(|e| arrow_datafusion_err!(e))?;
+                        let band = raster.band(band_idx)?;
 
                         // Pass-through: bands that don't carry the named
                         // dimension are emitted unchanged. Same convention as
                         // RS_Slice and RS_DimToBand.
                         let Some(dim_idx) = band.dim_index(name) else {
-                            let dim_names = band.dim_names();
-                            let band_name = raster.band_name(band_idx);
-                            new_builder.start_band(StartBandArgs {
-                                name: band_name,
-                                nodata: band.nodata(),
-                                ..StartBandArgs::new(&dim_names, band.shape(), band.data_type())
-                            })?;
-                            let ndb = band.nd_buffer()?;
-                            let data = ndb.as_contiguous()?;
-                            new_builder.band_data_writer().append_value(data);
+                            band.copy_into(&mut new_builder, BandOverrides::default())?;
                             new_builder.finish_band()?;
                             continue;
                         };
@@ -424,7 +393,9 @@ mod tests {
         RasterSpec::nd(&["time", "y", "x"], &[3, 2, 3])
             .crs(None)
             .band_nd(&["y", "x"], &[2, 3], BandDataType::UInt8)
+            .name("elevation")
             .band(BandDataType::UInt8)
+            .name("temperature")
             .build()
     }
 
@@ -453,7 +424,9 @@ mod tests {
         let expected = RasterSpec::nd(&["time", "y", "x"], &[3, 2, 3])
             .crs(None)
             .band_values_nd(&["y", "x"], &[2, 3], &(0u8..6).collect::<Vec<u8>>())
-            .band_values_nd(&["y", "x"], &[2, 3], &(6u8..12).collect::<Vec<u8>>());
+            .name("elevation")
+            .band_values_nd(&["y", "x"], &[2, 3], &(6u8..12).collect::<Vec<u8>>())
+            .name("temperature");
         assert_rasters_equal(&result, &[Some(expected)]);
     }
 
@@ -485,11 +458,13 @@ mod tests {
         let expected = RasterSpec::nd(&["time", "y", "x"], &[3, 2, 3])
             .crs(None)
             .band_values_nd(&["y", "x"], &[2, 3], &(0u8..6).collect::<Vec<u8>>())
+            .name("elevation")
             .band_values_nd(
                 &["time", "y", "x"],
                 &[2, 2, 3],
                 &(6u8..18).collect::<Vec<u8>>(),
-            );
+            )
+            .name("temperature");
         assert_rasters_equal(&result, &[Some(expected)]);
     }
 

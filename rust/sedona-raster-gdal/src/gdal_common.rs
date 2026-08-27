@@ -28,9 +28,7 @@ use sedona_raster::geo_transform::GeoTransform;
 use sedona_raster::traits::{is_spatial_dim_pair, RasterRef};
 use sedona_schema::raster::BandDataType;
 
-use datafusion_common::{
-    arrow_datafusion_err, exec_datafusion_err, exec_err, DataFusionError, Result,
-};
+use datafusion_common::{exec_datafusion_err, exec_err, DataFusionError, Result};
 
 /// Execute a closure with a reference to the global [`Gdal`] handle,
 /// converting initialization errors to [`DataFusionError`].
@@ -173,8 +171,8 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
     raster: &R,
     band_indices: &[usize],
 ) -> Result<Dataset> {
-    let width = raster.width().map_err(|e| arrow_datafusion_err!(e))? as usize;
-    let height = raster.height().map_err(|e| arrow_datafusion_err!(e))? as usize;
+    let width = raster.width()? as usize;
+    let height = raster.height()? as usize;
 
     // The N-D → flat-GDAL plane layout (band-major, plane-major). Deriving it
     // performs the trailing-(y, x)-pair check and records each band's plane
@@ -190,9 +188,7 @@ pub unsafe fn raster_ref_to_gdal_mem<R: RasterRef + ?Sized>(
     let mut base_ptrs: Vec<*mut u8> = Vec::with_capacity(layout.bands.len());
     for (&src_band_index, plan) in band_indices.iter().zip(&layout.bands) {
         // `band_indices` are 1-based; the `band` accessor is 0-based.
-        let band = raster
-            .band(src_band_index - 1)
-            .map_err(|e| arrow_datafusion_err!(e))?;
+        let band = raster.band(src_band_index - 1)?;
 
         // The plane's 2-D extent must equal the MEM dataset's (and the raster's
         // spatial grid); otherwise the per-plane byte slicing would disagree
@@ -345,7 +341,7 @@ impl GdalBandLayout {
         let mut plans = Vec::with_capacity(band_indices.len());
         for &i in band_indices {
             // `band_indices` are 1-based; the `band` accessor is 0-based.
-            let band = raster.band(i - 1).map_err(|e| arrow_datafusion_err!(e))?;
+            let band = raster.band(i - 1)?;
             let dim_names: Vec<String> = band.dim_names().iter().map(|s| s.to_string()).collect();
             let ndim = dim_names.len();
             if ndim < 2 || !is_spatial_dim_pair(&dim_names[ndim - 2], &dim_names[ndim - 1]) {

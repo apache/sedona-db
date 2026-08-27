@@ -45,7 +45,7 @@ use arrow_array::types::{Float64Type, Int64Type};
 use arrow_array::Array;
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
-use datafusion_common::{arrow_datafusion_err, exec_err};
+use datafusion_common::exec_err;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_raster::builder::{RasterBuilder, RasterOverrides};
@@ -121,8 +121,7 @@ impl SedonaScalarKernel for RsSetBandNoDataValue {
 
         let mut builder = RasterBuilder::new(n);
         executor.execute_raster_void(|i, raster_opt| {
-            let null_out =
-                |b: &mut RasterBuilder| b.append_null().map_err(|e| arrow_datafusion_err!(e));
+            let null_out = |b: &mut RasterBuilder| b.append_null().map_err(Into::into);
 
             // A null raster, band, or value yields a null raster.
             let Some(raster) = raster_opt else {

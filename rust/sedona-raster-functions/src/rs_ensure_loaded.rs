@@ -40,7 +40,7 @@ use datafusion_expr::{
 };
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_raster::array::RasterStructArray;
-use sedona_raster::builder::{RasterBuilder, StartBandArgs};
+use sedona_raster::builder::{RasterBuilder, RasterOverrides, StartBandArgs};
 use sedona_raster::raster_loader::{
     AsyncRasterLoader, RasterLoadRequest, RasterLoaderConfig, RasterLoaderRegistry,
 };
@@ -294,27 +294,11 @@ where
             )
         })?;
 
-        // Owned per-row metadata so the borrows don't span the per-band
-        // `await` points further down.
-        let transform: [f64; 6] = raster.transform().try_into().map_err(|_| {
-            sedona_internal_datafusion_err!(
-                "RS_EnsureLoaded: raster row {raster_idx} transform is not 6 elements"
-            )
-        })?;
-        let spatial_dims_owned: Vec<String> = raster
-            .spatial_dims()
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        let spatial_dims: Vec<&str> = spatial_dims_owned.iter().map(String::as_str).collect();
-        let spatial_shape: Vec<i64> = raster.spatial_shape().to_vec();
-        let crs: Option<String> = raster.crs().map(|s| s.to_string());
-
         builder
-            .start_raster_nd(&transform, &spatial_dims, &spatial_shape, crs.as_deref())
+            .start_raster_from(&raster, RasterOverrides::default())
             .map_err(|e| {
                 sedona_internal_datafusion_err!(
-                    "RS_EnsureLoaded: start_raster_nd failed at row {raster_idx}: {e}"
+                    "RS_EnsureLoaded: start_raster_from failed at row {raster_idx}: {e}"
                 )
             })?;
 

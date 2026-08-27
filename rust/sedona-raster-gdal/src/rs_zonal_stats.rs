@@ -64,6 +64,7 @@ use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_gdal::gdal::Gdal;
 use sedona_raster::array::RasterRefImpl;
+use sedona_raster::error::RasterResultExt;
 use sedona_raster::traits::RasterRef;
 use sedona_raster_functions::crs_utils::{align_wkb_to_crs, resolve_crs, with_crs_engine};
 use sedona_raster_functions::rs_ensure_loaded::NEEDS_PIXELS_METADATA_KEY;
@@ -671,7 +672,7 @@ fn collect_zonal_values(
     // `band_num` is 1-based (>= 1, guaranteed by `resolve_band`); `band` is 0-based.
     let band = raster
         .band(band_num - 1)
-        .map_err(|e| exec_datafusion_err!("RS_ZonalStats: failed to read band {band_num}: {e}"))?;
+        .with_context(|| format!("RS_ZonalStats: failed to read band {band_num}"))?;
     if !band.is_spatial_2d() {
         return exec_err!(
             "RS_ZonalStats supports 2-D rasters only; band {band_num} is not a 2-D (y, x) grid"
@@ -701,7 +702,7 @@ fn collect_zonal_values(
     // pixels, so it is count 0 rather than no-intersection.
     let geometry = gdal
         .geometry_from_wkb(geom_wkb)
-        .map_err(|e| exec_datafusion_err!("RS_ZonalStats: failed to parse geometry: {e}"))?;
+        .context("RS_ZonalStats: failed to parse geometry")?;
     let Some(window) = envelope_window(&geometry, &transform, width, height)? else {
         scratch.clear();
         return Ok(RoiCoverage::Collected);
@@ -722,10 +723,10 @@ fn collect_zonal_values(
     // Read the band once (zero-copy borrow) and collect the selected values.
     let nd_buffer = band
         .nd_buffer()
-        .map_err(|e| exec_datafusion_err!("RS_ZonalStats: failed to read band {band_num}: {e}"))?;
-    let band_bytes = nd_buffer.as_contiguous().map_err(|e| {
-        exec_datafusion_err!("RS_ZonalStats: band {band_num} is not contiguous: {e}")
-    })?;
+        .with_context(|| format!("RS_ZonalStats: failed to read band {band_num}"))?;
+    let band_bytes = nd_buffer
+        .as_contiguous()
+        .with_context(|| format!("RS_ZonalStats: band {band_num} is not contiguous"))?;
     let expected = width
         .checked_mul(height)
         .and_then(|n| n.checked_mul(byte_size))

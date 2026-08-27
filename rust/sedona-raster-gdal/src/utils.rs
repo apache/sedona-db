@@ -34,6 +34,7 @@ use arrow_schema::ArrowError;
 use sedona_common::sedona_internal_err;
 use sedona_raster::array::RasterRefImpl;
 use sedona_raster::builder::{RasterBuilder, StartBandArgs};
+use sedona_raster::error::RasterResultExt;
 use sedona_raster::traits::RasterRef;
 use sedona_schema::raster::BandDataType;
 
@@ -48,7 +49,7 @@ pub fn append_as_indb_raster(dataset: &Dataset, builder: &mut RasterBuilder) -> 
 
     let geotransform = dataset
         .geo_transform()
-        .map_err(|e| exec_datafusion_err!("Failed to get geotransform: {}", e))?;
+        .context("Failed to get geotransform")?;
 
     let grid = Grid::from_gdal(geotransform, width, height);
 
@@ -58,13 +59,13 @@ pub fn append_as_indb_raster(dataset: &Dataset, builder: &mut RasterBuilder) -> 
         .and_then(|sr: SpatialRef| sr.to_projjson().ok());
 
     grid.start_raster_into(builder, crs.as_deref())
-        .map_err(|e| exec_datafusion_err!("Failed to start raster: {}", e))?;
+        .context("Failed to start raster")?;
 
     let band_count = dataset.raster_count();
     for band_idx in 1..=band_count {
         let band = dataset
             .rasterband(band_idx)
-            .map_err(|e| exec_datafusion_err!("Failed to get band {}: {}", band_idx, e))?;
+            .with_context(|| format!("Failed to get band {band_idx}"))?;
 
         let gdal_type = band.band_type();
         let band_data_type = gdal_to_band_data_type(gdal_type)
@@ -74,7 +75,7 @@ pub fn append_as_indb_raster(dataset: &Dataset, builder: &mut RasterBuilder) -> 
 
         let band_data = band
             .read_as_bytes((0, 0), (width, height), (width, height), None)
-            .map_err(|e| exec_datafusion_err!("Failed to read band {} data: {}", band_idx, e))?;
+            .with_context(|| format!("Failed to read band {band_idx} data"))?;
         // Single-band native read: the 2-D `["y", "x"]` band `start_band_2d`
         // would build, shape `[height, width]`.
         append_band_from_buffer(
@@ -90,9 +91,7 @@ pub fn append_as_indb_raster(dataset: &Dataset, builder: &mut RasterBuilder) -> 
         )?;
     }
 
-    builder
-        .finish_raster()
-        .map_err(|e| exec_datafusion_err!("Failed to finish raster: {}", e))?;
+    builder.finish_raster().context("Failed to finish raster")?;
 
     Ok(())
 }
@@ -108,19 +107,14 @@ pub fn append_as_outdb_raster(gdal: &Gdal, path: &str, builder: &mut RasterBuild
                 ..Default::default()
             },
         )
-        .map_err(|e| {
-            exec_datafusion_err!(
-                "Failed to open raster file '{}' (GDAL path '{}'): {}",
-                path,
-                gdal_path,
-                e
-            )
+        .with_context(|| {
+            format!("Failed to open raster file '{path}' (GDAL path '{gdal_path}')")
         })?;
 
     let (width, height) = dataset.raster_size();
     let geotransform = dataset
         .geo_transform()
-        .map_err(|e| exec_datafusion_err!("Failed to get geotransform: {}", e))?;
+        .context("Failed to get geotransform")?;
     let grid = Grid::from_gdal(geotransform, width, height);
 
     let crs = dataset
@@ -134,7 +128,7 @@ pub fn append_as_outdb_raster(gdal: &Gdal, path: &str, builder: &mut RasterBuild
     for band_idx in 1..=band_count {
         let band = dataset
             .rasterband(band_idx)
-            .map_err(|e| exec_datafusion_err!("Failed to get band {}: {}", band_idx, e))?;
+            .with_context(|| format!("Failed to get band {band_idx}"))?;
 
         let gdal_type = band.band_type();
         let band_data_type = gdal_to_band_data_type(gdal_type)
@@ -185,7 +179,7 @@ pub fn append_nd_from_dataset(
 
     let geotransform = dataset
         .geo_transform()
-        .map_err(|e| exec_datafusion_err!("Failed to get geotransform: {}", e))?;
+        .context("Failed to get geotransform")?;
     let grid = Grid::from_gdal(geotransform, width, height);
 
     let crs = dataset
@@ -249,17 +243,19 @@ impl Grid {
         crs: Option<&str>,
     ) -> Result<(), ArrowError> {
         let t = self.transform;
-        builder.start_raster_2d(
-            self.width,
-            self.height,
-            t[0],
-            t[3],
-            t[1],
-            t[5],
-            t[2],
-            t[4],
-            crs,
-        )
+        builder
+            .start_raster_2d(
+                self.width,
+                self.height,
+                t[0],
+                t[3],
+                t[1],
+                t[5],
+                t[2],
+                t[4],
+                crs,
+            )
+            .map_err(Into::into)
     }
 
     /// Bounding box of the four grid corners (handles skew; reduces to
@@ -564,16 +560,14 @@ pub(crate) fn append_band_from_buffer(
             nodata: header.nodata,
             ..StartBandArgs::new(header.dim_names, header.shape, header.data_type)
         })
-        .map_err(|e| exec_datafusion_err!("Failed to start band: {e}"))?;
+        .context("Failed to start band")?;
     // Hand the owned buffer to Arrow as a shared data block (a refcount bump,
     // never a copy). `append_band_data_buffer` also stores sub-inline-threshold
     // bands inline, keeping the view canonical.
     builder
         .append_band_data_buffer(&Buffer::from(band_data), 0, band_data_len)
-        .map_err(|e| exec_datafusion_err!("Failed to append band data: {e}"))?;
-    builder
-        .finish_band()
-        .map_err(|e| exec_datafusion_err!("Failed to finish band: {e}"))?;
+        .context("Failed to append band data")?;
+    builder.finish_band().context("Failed to finish band")?;
     Ok(())
 }
 
@@ -671,7 +665,7 @@ fn append_nd_from_dataset_inner(
     let out_height = grid.height as usize;
 
     grid.start_raster_into(builder, crs)
-        .map_err(|e| exec_datafusion_err!("Failed to start raster: {}", e))?;
+        .context("Failed to start raster")?;
 
     let total_planes: usize = layout.bands.iter().map(|b| b.plane_count).sum();
     let gdal_band_count = dataset.raster_count();
@@ -706,7 +700,7 @@ fn append_nd_from_dataset_inner(
                 let gdal_band = gdal_band_base + plane;
                 let band = dataset
                     .rasterband(gdal_band)
-                    .map_err(|e| exec_datafusion_err!("Failed to get band {gdal_band}: {e}"))?;
+                    .with_context(|| format!("Failed to get band {gdal_band}"))?;
                 let plane = band
                     .read_as_bytes(
                         (0, 0),
@@ -714,9 +708,7 @@ fn append_nd_from_dataset_inner(
                         (out_width, out_height),
                         alg,
                     )
-                    .map_err(|e| {
-                        exec_datafusion_err!("Failed to read band {gdal_band} data: {e}")
-                    })?;
+                    .with_context(|| format!("Failed to read band {gdal_band} data"))?;
                 out.extend_from_slice(&plane);
                 Ok(())
             },
@@ -724,9 +716,7 @@ fn append_nd_from_dataset_inner(
         gdal_band += plan.plane_count;
     }
 
-    builder
-        .finish_raster()
-        .map_err(|e| exec_datafusion_err!("Failed to finish raster: {}", e))?;
+    builder.finish_raster().context("Failed to finish raster")?;
 
     Ok(())
 }

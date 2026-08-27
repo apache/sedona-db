@@ -26,11 +26,12 @@ use arrow_array::{
     ArrayRef, BinaryViewArray, ListArray, StructArray,
 };
 use arrow_buffer::{Buffer, NullBuffer, OffsetBuffer, ScalarBuffer};
-use arrow_schema::{ArrowError, DataType};
+use arrow_schema::DataType;
 
 use sedona_schema::raster::RasterSchema;
 
 use crate::builder::StartBandArgs;
+use crate::error::RasterError;
 use crate::view_entries::ViewEntries;
 
 /// Maximum byte length of an inline `BinaryViewArray` view. Views this short
@@ -54,13 +55,13 @@ pub trait BandWriter {
     fn start_band(
         &mut self,
         args: StartBandArgs<'_>,
-    ) -> Result<(Vec<String>, Vec<i64>), ArrowError>;
+    ) -> Result<(Vec<String>, Vec<i64>), RasterError>;
     fn band_data_writer(&mut self) -> &mut BinaryViewBuilder;
     fn append_band_data_from(
         &mut self,
         src: &BinaryViewArray,
         row: usize,
-    ) -> Result<(), ArrowError>;
+    ) -> Result<(), RasterError>;
 }
 
 /// Builder for the flat, per-band columns of `RasterSchema::band_type()` —
@@ -157,7 +158,7 @@ impl BandArrayBuilder {
     fn start_band_impl(
         &mut self,
         args: StartBandArgs<'_>,
-    ) -> Result<(Vec<String>, Vec<i64>), ArrowError> {
+    ) -> Result<(Vec<String>, Vec<i64>), RasterError> {
         let StartBandArgs {
             name,
             dim_names,
@@ -177,12 +178,12 @@ impl BandArrayBuilder {
         if let Some(view) = view {
             let ndim = dim_names.len();
             if ndim == 0 {
-                return Err(ArrowError::InvalidArgumentError(
+                return Err(RasterError::Invalid(
                     "start_band: 0-dimensional bands are not supported".into(),
                 ));
             }
             if source_shape.len() != ndim || view.len() != ndim {
-                return Err(ArrowError::InvalidArgumentError(format!(
+                return Err(RasterError::Invalid(format!(
                     "start_band: dim_names ({}), source_shape ({}), and view ({}) \
                      must all have the same length",
                     ndim,
@@ -256,12 +257,12 @@ impl BandArrayBuilder {
         }
 
         if dim_names.is_empty() {
-            return Err(ArrowError::InvalidArgumentError(
+            return Err(RasterError::Invalid(
                 "start_band: 0-dimensional bands are not supported".into(),
             ));
         }
         if dim_names.len() != source_shape.len() {
-            return Err(ArrowError::InvalidArgumentError(format!(
+            return Err(RasterError::Invalid(format!(
                 "start_band: dim_names ({}) and shape ({}) must have the same length",
                 dim_names.len(),
                 source_shape.len(),
@@ -333,7 +334,7 @@ impl BandArrayBuilder {
         buffer: &Buffer,
         offset: u32,
         len: u32,
-    ) -> Result<(), ArrowError> {
+    ) -> Result<(), RasterError> {
         if len <= MAX_INLINE_VIEW_LEN {
             self.data
                 .append_value(&buffer.as_slice()[offset as usize..(offset + len) as usize]);
@@ -348,16 +349,16 @@ impl BandArrayBuilder {
                 idx
             }
         };
-        self.data.try_append_view(block, offset, len)
+        Ok(self.data.try_append_view(block, offset, len)?)
     }
 
     /// Finish writing the current band.
     ///
     /// Validates that exactly one data value was appended since `start_band()`.
-    pub fn finish_band(&mut self) -> Result<(), ArrowError> {
+    pub fn finish_band(&mut self) -> Result<(), RasterError> {
         let current_count = self.data.len();
         if current_count != self.data_count_at_start + 1 {
-            return Err(ArrowError::InvalidArgumentError(
+            return Err(RasterError::Invalid(
                 format!(
                     "Expected exactly one band data value per band, but got {} appended since start_band()",
                     current_count - self.data_count_at_start
@@ -369,12 +370,12 @@ impl BandArrayBuilder {
 
     /// Finish building and return the flat band `StructArray` — one row per
     /// band appended via [`Self::start_band`], in order.
-    pub fn finish(mut self) -> Result<StructArray, ArrowError> {
+    pub fn finish(mut self) -> Result<StructArray, RasterError> {
         // Build band dim_names nested list
         let dim_names_values = self.dim_names_values.finish();
         let dim_names_offsets = OffsetBuffer::new(ScalarBuffer::from(self.dim_names_offsets));
         let DataType::List(dim_names_field) = RasterSchema::dim_names_type() else {
-            return Err(ArrowError::SchemaError(
+            return Err(RasterError::Invalid(
                 "Expected list type for dim_names".to_string(),
             ));
         };
@@ -389,7 +390,7 @@ impl BandArrayBuilder {
         let source_shape_values = self.shape_values.finish();
         let source_shape_offsets = OffsetBuffer::new(ScalarBuffer::from(self.shape_offsets));
         let DataType::List(source_shape_field) = RasterSchema::source_shape_type() else {
-            return Err(ArrowError::SchemaError(
+            return Err(RasterError::Invalid(
                 "Expected list type for source_shape".to_string(),
             ));
         };
@@ -407,12 +408,12 @@ impl BandArrayBuilder {
         let view_steps = self.view_steps_values.finish();
         let view_offsets = OffsetBuffer::new(ScalarBuffer::from(self.view_offsets));
         let DataType::List(view_list_field) = RasterSchema::view_type() else {
-            return Err(ArrowError::SchemaError(
+            return Err(RasterError::Invalid(
                 "Expected list type for view".to_string(),
             ));
         };
         let DataType::Struct(view_struct_fields) = view_list_field.data_type().clone() else {
-            return Err(ArrowError::SchemaError(
+            return Err(RasterError::Invalid(
                 "Expected struct type inside view list".to_string(),
             ));
         };
@@ -440,7 +441,7 @@ impl BandArrayBuilder {
 
         // Build band struct
         let DataType::Struct(band_fields) = RasterSchema::band_type() else {
-            return Err(ArrowError::SchemaError(
+            return Err(RasterError::Invalid(
                 "Expected struct type for band".to_string(),
             ));
         };
@@ -464,7 +465,7 @@ impl BandWriter for BandArrayBuilder {
     fn start_band(
         &mut self,
         args: StartBandArgs<'_>,
-    ) -> Result<(Vec<String>, Vec<i64>), ArrowError> {
+    ) -> Result<(Vec<String>, Vec<i64>), RasterError> {
         self.start_band_impl(args)
     }
 
@@ -476,7 +477,7 @@ impl BandWriter for BandArrayBuilder {
         &mut self,
         src: &BinaryViewArray,
         row: usize,
-    ) -> Result<(), ArrowError> {
+    ) -> Result<(), RasterError> {
         // Arrow BYTE_VIEW layout (u128, little-endian fields), fixed by the
         // columnar format spec:
         //   bits   0..32  length
