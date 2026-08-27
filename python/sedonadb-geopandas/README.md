@@ -58,6 +58,9 @@ deliberately *not* identical to GeoPandas:
   against the destination and silently write the wrong values. Assign a `Series`
   read from the same frame, or a scalar (a geometry included). For anything the
   wrapper does not cover, drop to the SedonaDB `DataFrame` API directly.
+  NumPy and pandas temporal scalars (`datetime64`, `timedelta64`, `Timestamp`,
+  `Timedelta`, `NaT`) are temporarily rejected: representing them faithfully
+  needs dedicated unit and timezone handling, which arrives in a follow-up.
 
 See the SedonaDB "Migrating from GeoPandas" guide for the relational model that
 underlies each method.

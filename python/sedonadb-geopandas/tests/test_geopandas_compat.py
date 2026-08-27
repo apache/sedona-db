@@ -513,3 +513,160 @@ def test_temporal_scalars_are_deferred(points):
     ):
         with pytest.raises(TypeError, match="not supported yet"):
             gdf["t"] = value
+
+
+# -- regressions from review ------------------------------------------------
+
+
+def test_assigned_geometry_column_reads_back_as_geoseries(points):
+    # Only the active geometry name produced a GeoSeries, so the advertised
+    # gdf["buffered"] = gdf.geometry.buffer(...) gave back a plain Series
+    # with no .area or .buffer(). Geometry-ness comes from the schema.
+    gdf = sgpd.from_geopandas(points)
+    gdf["buffered"] = gdf.geometry.buffer(0.5)
+    col = gdf["buffered"]
+    assert isinstance(col, type(gdf.geometry))
+    assert (col.area.to_pandas() > 0).all()
+
+
+def test_cleared_geometry_is_not_resurrected_by_materialization(points):
+    # With the active geometry replaced by a number, the wrapper records no
+    # active geometry — but the materializer heuristically activated any
+    # remaining geometry column, so a later to_crs() on the result silently
+    # targeted a column this frame never had active.
+    gdf = sgpd.from_geopandas(points)
+    gdf["copy"] = gdf.geometry
+    gdf["geometry"] = 7
+    assert gdf._geometry_name is None
+    out = gdf.to_geopandas()
+    with pytest.raises(AttributeError):
+        out.geometry
+
+
+def test_series_assignment_inherits_destination_crs():
+    # Assigning a CRS-less same-frame geometry column over a column that has
+    # a CRS dropped it; GeoPandas keeps the frame CRS. A column carrying its
+    # own CRS keeps it instead.
+    gdf = GeoDataFrame(
+        sgpd.default_context().sql(
+            "SELECT ST_SetSRID(ST_Point(0.0, 0.0), 3857) AS geometry, "
+            "ST_Point(5.0, 5.0) AS bare, "
+            "ST_SetSRID(ST_Point(7.0, 7.0), 4326) AS own, 1 AS v"
+        )
+    )
+    gdf["geometry"] = gdf["bare"]
+    assert "3857" in str(gdf.crs)
+    gdf["geometry"] = gdf["own"]
+    # The engine reports SRID 4326 as OGC:CRS84; the point is that the
+    # source's own CRS survives instead of being restamped with 3857.
+    assert gdf.crs is not None
+    assert "3857" not in str(gdf.crs)
+
+
+def test_geography_column_replacement_preserves_geography():
+    # Replacing a geography column with None or a Shapely scalar rebuilt it
+    # as planar geometry; replacements are constructed with the destination's
+    # own spatial kind.
+    from shapely.geometry import Point
+
+    def geog_frame():
+        return GeoDataFrame(
+            sgpd.default_context().sql(
+                "SELECT ST_GeogFromWKT('POINT (0 0)') AS g, 1 AS v"
+            ),
+            geometry="g",
+        )
+
+    gdf = geog_frame()
+    gdf["g"] = None
+    assert "geography" in str(gdf._df.schema.field("g").type)
+    assert gdf._geometry_name == "g"
+    gdf = geog_frame()
+    gdf["g"] = Point(1, 1)
+    assert "geography" in str(gdf._df.schema.field("g").type)
+    got = gdf.to_geopandas()["g"]
+    assert got.tolist()[0] == Point(1, 1)
+
+
+def test_numpy_scalar_dtypes_are_preserved(points):
+    # .item() promoted np.int8/np.float32 to int64/float64 columns and
+    # overflowed np.uint64 past int64, which the engine supports natively.
+    import numpy as np
+
+    gdf = sgpd.from_geopandas(points)
+    gdf["i8"] = np.int8(5)
+    gdf["f4"] = np.float32(1.5)
+    gdf["u64"] = np.uint64(2**63 + 1)
+    gdf["z"] = np.array(np.int32(9))  # 0-d arrays unwrap to the typed scalar
+    out = gdf.to_geopandas()
+    assert str(out["i8"].dtype) == "int8"
+    assert str(out["f4"].dtype) == "float32"
+    assert out["u64"].tolist() == [2**63 + 1] * len(out)
+    assert str(out["z"].dtype) == "int32"
+
+
+def test_arrow_wrapped_missing_values_keep_geometry(points):
+    # pa.scalar(None), typed Arrow nulls, and Arrow-wrapped NaN cleared the
+    # active geometry and CRS, unlike the equivalent bare None/NaN; a wrapped
+    # value means whatever its payload means.
+    import pyarrow as pa
+
+    for value in (
+        pa.scalar(None),
+        pa.scalar(None, pa.float64()),
+        pa.scalar(float("nan")),
+    ):
+        gdf = sgpd.from_geopandas(points)
+        gdf["geometry"] = value
+        assert gdf._geometry_name == "geometry"
+        assert "3857" in str(gdf.crs)
+        assert gdf.to_geopandas()["geometry"].isna().all()
+
+
+def test_typed_null_nested_scalars_broadcast(points):
+    # Valid nested Arrow scalars broadcast, but their typed-null forms failed
+    # literal construction; they re-enter as one-element typed arrays.
+    import pyarrow as pa
+
+    for value in (
+        pa.scalar(None, pa.list_(pa.int64())),
+        pa.scalar(None, pa.map_(pa.string(), pa.int64())),
+    ):
+        gdf = sgpd.from_geopandas(points)
+        gdf["x"] = value
+        assert gdf.to_geopandas()["x"].isna().all()
+
+
+def test_nat_is_rejected_like_other_temporals(points):
+    # pd.NaT is an instance of neither Timestamp nor Timedelta, so it slipped
+    # past the temporal deferral: ordinary assignment failed with a backend
+    # error while geometry assignment absorbed it as missing.
+    import pandas as pd
+
+    gdf = sgpd.from_geopandas(points)
+    with pytest.raises(TypeError, match="not supported yet"):
+        gdf["x"] = pd.NaT
+    with pytest.raises(TypeError, match="not supported yet"):
+        gdf["geometry"] = pd.NaT
+
+
+def test_multipart_geometries_classify_as_scalars(points):
+    # Shapely 1.x multipart geometries implement __len__, so the generic
+    # sequence check rejected them; any BaseGeometry is a single value.
+    from shapely.geometry import MultiPoint
+    from shapely.geometry.base import BaseGeometry
+
+    from sedonadb_geopandas._series import is_scalar
+
+    value = MultiPoint([(0, 0), (1, 1)])
+    assert is_scalar(value)
+    import warnings
+
+    legacy = type("LegacyMultipart", (BaseGeometry,), {"__len__": lambda self: 2})
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")  # instantiating BaseGeometry warns
+        instance = legacy.__new__(legacy)
+    assert is_scalar(instance)
+    gdf = sgpd.from_geopandas(points)
+    gdf["mp"] = value
+    assert gdf.to_geopandas()["mp"].tolist() == [value] * len(points)

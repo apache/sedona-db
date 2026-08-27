@@ -40,6 +40,16 @@ def is_scalar(value):
             return True
     except ImportError:
         pass
+    try:
+        from shapely.geometry.base import BaseGeometry
+
+        # Shapely 1.x multipart geometries implement __len__ and __iter__;
+        # they are still single values. (Shapely 2 removed the sequence
+        # protocol, but the package floor does not require Shapely 2.)
+        if isinstance(value, BaseGeometry):
+            return True
+    except ImportError:
+        pass
     if isinstance(value, (list, tuple, set, frozenset, dict, range)):
         return False
     if hasattr(value, "__array__"):
@@ -63,6 +73,20 @@ def normalize_scalar(value):
     as its own change.
     """
     try:
+        import pyarrow as pa
+
+        # lit() rejects a typed-null *nested* scalar (list, map, struct); a
+        # one-element typed Arrow array is the resolver's supported spelling
+        # of the same broadcast value.
+        if (
+            isinstance(value, pa.Scalar)
+            and not value.is_valid
+            and pa.types.is_nested(value.type)
+        ):
+            return pa.array([None], type=value.type)
+    except ImportError:
+        pass
+    try:
         import numpy as np
 
         # A masked value's .item() would expose the hidden data, silently turning
@@ -74,13 +98,21 @@ def normalize_scalar(value):
         # array can hold a NumPy temporal). Temporal dtypes unwrap via [()]
         # because .item() would flatten them to integer ticks.
         if isinstance(value, np.ndarray) and value.ndim == 0:
-            unwrapped = value[()] if value.dtype.kind in "mM" else value.item()
-            return normalize_scalar(unwrapped)
+            # [()] keeps the typed NumPy scalar; .item() would promote it to a
+            # Python int/float (and flatten temporals to integer ticks).
+            return normalize_scalar(value[()])
         if isinstance(value, (np.datetime64, np.timedelta64)):
             raise TypeError(
                 "NumPy temporal scalars are not supported yet; faithful unit "
                 "handling arrives in a follow-up change"
             )
+        if isinstance(value, np.generic) and not isinstance(value, (str, bytes)):
+            # A typed Arrow scalar keeps the NumPy dtype: .item() would
+            # promote int8/float32 to int64/float64 columns and overflow
+            # uint64 values past int64, which the engine supports natively.
+            import pyarrow as pa
+
+            return pa.scalar(value)
     except ImportError:
         pass
     if hasattr(value, "__array__") and getattr(value, "ndim", None) == 0:
@@ -88,7 +120,10 @@ def normalize_scalar(value):
     try:
         import pandas as pd
 
-        if isinstance(value, (pd.Timestamp, pd.Timedelta)):
+        if value is pd.NaT or isinstance(value, (pd.Timestamp, pd.Timedelta)):
+            # NaT is an instance of neither Timestamp nor Timedelta, but it is
+            # just as temporal: without this it fails ordinary assignment with
+            # a backend error while geometry assignment absorbs it as missing.
             raise TypeError(
                 "pandas temporal scalars are not supported yet; faithful unit "
                 "handling arrives in a follow-up change"

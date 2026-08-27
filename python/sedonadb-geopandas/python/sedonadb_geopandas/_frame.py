@@ -47,6 +47,22 @@ def _is_missing(value):
     if value is None:
         return True
     try:
+        import pyarrow as pa
+
+        # An Arrow-wrapped value means whatever its payload means: a typed
+        # null is missing like bare None, and a wrapped NaN is missing like
+        # bare NaN. The original scalar is kept by the caller for
+        # type-preserving literal construction; this only classifies.
+        if isinstance(value, pa.Scalar):
+            if not value.is_valid:
+                return True
+            if pa.types.is_floating(value.type):
+                payload = value.as_py()
+                return payload != payload
+            return False
+    except ImportError:
+        pass
+    try:
         import pandas as pd
 
         # Safe for scalars; geometries and numbers simply return False.
@@ -129,7 +145,10 @@ class GeoDataFrame:
         # Single column -> (Geo)Series.
         if isinstance(key, str):
             expr = self._df[key]
-            if key == self._geometry_name:
+            # Any geometry-typed column reads back as a GeoSeries — not just
+            # the active one — so a freshly assigned geometry column supports
+            # .area and .buffer() immediately, as it does in GeoPandas.
+            if key == self._geometry_name or key in _geometry_column_names(self._df):
                 return GeoSeries(self._df, expr, key)
             return Series(self._df, expr, key)
 
@@ -185,7 +204,7 @@ class GeoDataFrame:
                     "rebinds it, so a Series read before an earlier assignment "
                     "is already stale; re-read it as gdf[...] and try again."
                 )
-            expr = value._expr
+            expr = self._series_expr(key, value)
         elif isinstance(value, Literal):
             # A literal holds a value rather than a column reference, so there is
             # no frame for it to be misattributed to. It still goes through the
@@ -228,6 +247,28 @@ class GeoDataFrame:
         ):
             self._geometry_name = key
 
+    def _series_expr(self, key, value):
+        """Adjust a same-frame `Series` expression for assignment to `key`.
+
+        Mirrors the scalar path's CRS rule: a geometry column that carries no
+        CRS of its own inherits the destination column's CRS when it replaces
+        one that has it — GeoPandas keeps the frame CRS in this situation —
+        while a column that carries its own CRS keeps it, since restamping
+        would relabel coordinates without transforming them.
+        """
+        expr = value._expr
+        if key not in _geometry_column_names(self._df):
+            return expr
+        crs = self._df.schema.field(key).type.crs
+        if crs is None or _expr_crs(self._df, expr) is not None:
+            return expr
+        projected = self._df.select(expr.alias("x")).schema
+        if not projected.geometry_column_indices:
+            # A non-geometry value legitimately converts the column.
+            return expr
+        ctx = self._df._ctx
+        return expr.funcs.st_setcrs(ctx.lit(crs.to_json()))
+
     def _scalar_expr(self, key, value):
         """Build the expression for broadcasting `value` into column `key`.
 
@@ -263,11 +304,33 @@ class GeoDataFrame:
             if not projected.geometry_column_indices:
                 return candidate
 
-        crs = self._df.schema.field(key).type.crs
+        dtype = self._df.schema.field(key).type
+        crs = dtype.crs
+        spherical = "SPHERICAL" in str(getattr(dtype, "edge_type", "")).upper()
         # A context-bound literal is needed to call functions on it.
         ctx = self._df._ctx
         if missing:
-            expr = ctx.lit(None).funcs.st_geomfromwkt()
+            # The typed null is built with the destination's own spatial kind:
+            # a geography column stays geography rather than degrading to
+            # planar geometry.
+            if spherical:
+                expr = ctx.lit(None).funcs.st_geogfromwkt()
+            else:
+                expr = ctx.lit(None).funcs.st_geomfromwkt()
+        elif spherical:
+            try:
+                from shapely.geometry.base import BaseGeometry
+            except ImportError:
+                BaseGeometry = ()
+            if isinstance(raw, BaseGeometry):
+                # A bare Shapely value re-enters through WKB as geography.
+                # (A value that already carries a spatial type — a GeoArrow
+                # scalar, say — keeps it; converting between planar and
+                # spherical semantics is not something an assignment should
+                # do silently.)
+                expr = ctx.lit(raw.wkb).funcs.st_geogfromwkb()
+            else:
+                expr = ctx.lit(raw)
         else:
             expr = ctx.lit(raw)
         # The destination CRS is inherited only by genuinely CRS-less geometry.
@@ -305,13 +368,26 @@ class GeoDataFrame:
         the expected column active.
         """
         result = self._df.to_pandas()
-        if self._geometry_name is not None and hasattr(result, "set_geometry"):
-            try:
-                active = result.geometry.name
-            except Exception:
-                active = None
-            if active != self._geometry_name:
-                result = result.set_geometry(self._geometry_name)
+        if not hasattr(result, "set_geometry"):
+            return result
+        if self._geometry_name is None:
+            # The frame has no active geometry (possibly explicitly cleared),
+            # but the materializer heuristically activates one whenever a
+            # geometry column exists — and a later to_crs() on the result
+            # would silently target a column this frame never had active.
+            # Rebuilding through the GeoDataFrame constructor applies
+            # GeoPandas' own rule instead: only a geometry column literally
+            # named "geometry" comes back active.
+            import geopandas as gpd
+            import pandas as pd
+
+            return gpd.GeoDataFrame(pd.DataFrame(result))
+        try:
+            active = result.geometry.name
+        except Exception:
+            active = None
+        if active != self._geometry_name:
+            result = result.set_geometry(self._geometry_name)
         return result
 
     # Alias: results carry geometry, so this returns a GeoDataFrame too.
