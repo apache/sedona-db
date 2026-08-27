@@ -31,7 +31,8 @@ import sedonadb_geopandas as sgpd
 
 gdf = sgpd.from_geopandas(geopandas.read_file("cities.geojson"))
 big = gdf[gdf["pop"] > 1_000_000]          # boolean-mask filter
-buffered = gdf.geometry.buffer(0.5)        # element-wise .geo operation
+gdf["surveyed"] = True                     # broadcast a scalar column
+gdf["centers"] = gdf.geometry.centroid     # assign a computed column
 web = gdf.to_crs("EPSG:3857")              # reproject (CRS tracked through)
 result = web.to_geopandas()                # back to a real GeoDataFrame
 ```
@@ -46,8 +47,17 @@ deliberately *not* identical to GeoPandas:
 - **No row index / alignment**: there is no pandas `Index`; joins and filters
   are positional/relational, not index-aligned.
 - **Immutable under the hood**: "in-place" style operations return a new frame.
+  Assigning a column with `gdf["x"] = ...` rebinds the frame, so a `Series` read
+  before the assignment is stale and cannot be combined with later reads.
+- **Columns cannot be mixed across frames**: without row alignment, combining
+  columns from two different frames raises rather than guessing. Join first.
 - **Plotting and arbitrary `apply`**: use the `to_geopandas()` escape hatch and
   operate on the materialized result.
+- **Assignment takes a column or a scalar, not a bare expression**: a SedonaDB
+  expression records no origin, so one built from another frame would resolve
+  against the destination and silently write the wrong values. Assign a `Series`
+  read from the same frame, or a scalar (a geometry included). For anything the
+  wrapper does not cover, drop to the SedonaDB `DataFrame` API directly.
 
 See the SedonaDB "Migrating from GeoPandas" guide for the relational model that
 underlies each method.

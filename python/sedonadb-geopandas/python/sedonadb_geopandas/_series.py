@@ -17,6 +17,91 @@
 """pandas/GeoPandas-style Series backed by a SedonaDB expression."""
 
 
+def is_scalar(value):
+    """Whether `value` is a single value that can be broadcast to every row.
+
+    Checking for `__array__` alone is not enough in either direction: a list or
+    tuple has no `__array__` yet is a sequence, while a NumPy scalar has one and
+    *is* a single value. So sequences are rejected explicitly, and anything
+    array-like is judged by its dimensionality — 0-d is a scalar, anything else
+    holds multiple values and has no defined row alignment here.
+
+    Shared by operators and assignment so the two cannot disagree about what
+    counts as a scalar.
+    """
+    if isinstance(value, (str, bytes, bytearray)):
+        return True
+    try:
+        import pyarrow as pa
+
+        # An Arrow scalar is one value even when it implements __len__ (a
+        # ListScalar's length is its element count, not a row count).
+        if isinstance(value, pa.Scalar):
+            return True
+    except ImportError:
+        pass
+    if isinstance(value, (list, tuple, set, frozenset, dict, range)):
+        return False
+    if hasattr(value, "__array__"):
+        return getattr(value, "ndim", None) == 0
+    # Non-sequence objects (numbers, shapely geometries, None, ...) broadcast.
+    return not hasattr(value, "__len__")
+
+
+def normalize_scalar(value):
+    """Normalize an accepted scalar into something a literal can hold.
+
+    Passing the classifier is not the same as being constructible: a 0-d NumPy
+    array is a scalar but `lit()` cannot take it, and `pandas.NA` is a missing
+    sentinel `lit()` does not recognize. Unwrap the former to its Python value
+    and convert missing sentinels to `None` (SQL null). Callers apply this only
+    after `is_scalar` has accepted the value.
+
+    NumPy and pandas temporal scalars are rejected for now: representing them
+    faithfully needs dedicated unit and timezone handling (`lit()` would
+    silently truncate nanoseconds or reject most NumPy units), which arrives
+    as its own change.
+    """
+    try:
+        import numpy as np
+
+        # A masked value's .item() would expose the hidden data, silently turning
+        # a missing value into a real number; masked means missing.
+        if value is np.ma.masked or np.ma.is_masked(value):
+            return None
+        # A 0-D array is unwrapped first and the result re-normalized: the
+        # wrapped value may itself need handling below (an object-dtype 0-d
+        # array can hold a NumPy temporal). Temporal dtypes unwrap via [()]
+        # because .item() would flatten them to integer ticks.
+        if isinstance(value, np.ndarray) and value.ndim == 0:
+            unwrapped = value[()] if value.dtype.kind in "mM" else value.item()
+            return normalize_scalar(unwrapped)
+        if isinstance(value, (np.datetime64, np.timedelta64)):
+            raise TypeError(
+                "NumPy temporal scalars are not supported yet; faithful unit "
+                "handling arrives in a follow-up change"
+            )
+    except ImportError:
+        pass
+    if hasattr(value, "__array__") and getattr(value, "ndim", None) == 0:
+        value = value.item()
+    try:
+        import pandas as pd
+
+        if isinstance(value, (pd.Timestamp, pd.Timedelta)):
+            raise TypeError(
+                "pandas temporal scalars are not supported yet; faithful unit "
+                "handling arrives in a follow-up change"
+            )
+        # NaN is deliberately left as-is — pandas keeps NaN a float value; only
+        # the NA sentinel becomes SQL null.
+        if value is pd.NA:
+            return None
+    except ImportError:
+        pass
+    return value
+
+
 def _operand(df, other):
     """Coerce the right-hand side of an operator into something usable.
 

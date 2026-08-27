@@ -26,12 +26,12 @@ readme = "README.md"
 requires-python = ">=3.9"
 dynamic = ["version"]
 dependencies = [
-    # The `.geo` accessor and `DataFrame.unnest` this package builds on landed in
-    # 0.4.0. Keep this floor at a *released* version rather than raising it to
-    # the current development version: nightlies are versioned `X.Y.ZaN`, which
-    # PEP 440 orders *below* `X.Y.Z`, so a floor equal to the version being
-    # developed would reject the matching nightly wheels.
-    "sedonadb>=0.4.0",
+    # `DataFrame.mutate`, which `to_crs()` and column assignment are built on,
+    # first shipped in the released 0.4.1 (it is absent from 0.4.0). Nightlies
+    # version as `0.5.0aN`, which PEP 440 orders above `0.4.1`, so they satisfy
+    # this floor naturally. The APIs this wrapper needs from sedonadb-expr (the
+    # generated .geo accessor methods it calls) are all available in 0.4.0.
+    "sedonadb>=0.4.1",
     "sedonadb-expr>=0.4.0",
     "pyarrow",
 ]

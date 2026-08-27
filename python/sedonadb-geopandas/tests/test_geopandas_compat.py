@@ -32,6 +32,16 @@ def cities():
 
 
 @pytest.fixture
+def points():
+    """A small frame in a projected CRS, shared across the tests."""
+    return gpd.GeoDataFrame(
+        {"name": ["A", "B", "C"], "v": [1, 2, 3]},
+        geometry=gpd.GeoSeries.from_wkt(["POINT (0 0)", "POINT (5 5)", "POINT (9 9)"]),
+        crs="EPSG:3857",
+    )
+
+
+@pytest.fixture
 def con_free_geom_frame():
     """A frame whose active geometry column is *not* the heuristic's pick.
 
@@ -242,3 +252,264 @@ def test_head(cities):
     assert len(gdf.head(2)) == 2
     # head() keeps the active geometry column.
     assert isinstance(gdf.head(2).geometry, GeoSeries)
+
+
+# -- column assignment -------------------------------------------------------
+
+
+def test_setitem_from_series(points):
+    gdf = sgpd.from_geopandas(points)
+    gdf["v2"] = gdf["v"]
+    got = gdf.to_geopandas().sort_values("name")
+    assert got["v2"].tolist() == points["v"].tolist()
+
+
+def test_setitem_replaces_existing_column(points):
+    gdf = sgpd.from_geopandas(points)
+    gdf["v"] = gdf["name"]
+    assert sorted(gdf.to_geopandas()["v"]) == ["A", "B", "C"]
+    assert gdf.columns.count("v") == 1
+
+
+def test_setitem_scalar_broadcasts(points):
+    gdf = sgpd.from_geopandas(points)
+    gdf["k"] = 7
+    assert gdf.to_geopandas()["k"].tolist() == [7, 7, 7]
+
+
+def test_setitem_geometry_column(points):
+    gdf = sgpd.from_geopandas(points)
+    gdf["buffered"] = gdf.geometry.buffer(0.5)
+    assert "buffered" in gdf.columns
+    # The active geometry column is unchanged by adding another one.
+    assert gdf.geometry._name == "geometry"
+
+
+def test_setitem_makes_geometry_active_when_frame_had_none():
+    # A frame that starts without geometry gains an active geometry column when
+    # one is assigned.
+    from shapely.geometry import Point
+
+    plain = GeoDataFrame(sgpd.default_context().sql("SELECT 1 AS a"))
+    assert plain._geometry_name is None
+
+    plain["geometry"] = Point(1, 2)
+    assert plain._geometry_name == "geometry"
+    assert plain.to_geopandas().geometry.to_wkt().tolist() == ["POINT (1 2)"]
+
+
+def test_setitem_non_geometry_leaves_frame_without_geometry():
+    plain = GeoDataFrame(sgpd.default_context().sql("SELECT 1.0 AS x"))
+    plain["doubled"] = plain["x"]
+    assert plain._geometry_name is None
+
+
+def test_setitem_rejects_bad_inputs(points):
+    gdf = sgpd.from_geopandas(points)
+    with pytest.raises(TypeError, match="must be a string"):
+        gdf[0] = 1
+    with pytest.raises(TypeError, match="isn't supported"):
+        gdf["x"] = points["v"]
+    # A Series from a different frame has no row alignment.
+    other = sgpd.from_geopandas(points)
+    with pytest.raises(ValueError, match="different"):
+        gdf["y"] = other["v"]
+
+
+def test_setitem_stale_series_raises(points):
+    # Assignment rebinds the frame, so a Series read beforehand is stale.
+    gdf = sgpd.from_geopandas(points)
+    before = gdf["v"]
+    gdf["k"] = 1
+    with pytest.raises(ValueError, match="different"):
+        gdf["z"] = before
+
+
+def test_setitem_rejects_bare_expression(points):
+    # A bare expression carries no origin, so one built from another frame would
+    # resolve against this frame and silently write this frame's values.
+    left = sgpd.from_geopandas(points)
+    right = sgpd.from_geopandas(points)
+    with pytest.raises(TypeError, match="bare expression"):
+        left["copied"] = right["v"]._expr
+
+
+def test_series_has_no_unguarded_expr_escape_hatch(points):
+    assert not hasattr(sgpd.from_geopandas(points)["v"], "expr")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [[10, 20, 30], (10, 20, 30), {10, 20}],
+    ids=["list", "tuple", "set"],
+)
+def test_setitem_rejects_sequences(points, value):
+    # Sequences have no __array__, so they used to be broadcast whole into every
+    # row rather than rejected.
+    gdf = sgpd.from_geopandas(points)
+    with pytest.raises(TypeError, match="isn't supported"):
+        gdf["x"] = value
+
+
+def test_setitem_accepts_numpy_scalar(points):
+    # NumPy scalars do have __array__ but are single values, so they used to be
+    # rejected as array-likes.
+    import numpy as np
+
+    gdf = sgpd.from_geopandas(points)
+    gdf["x"] = np.int64(5)
+    assert gdf.to_geopandas()["x"].tolist() == [5, 5, 5]
+
+
+def test_setitem_rejects_numpy_array(points):
+    import numpy as np
+
+    gdf = sgpd.from_geopandas(points)
+    with pytest.raises(TypeError, match="isn't supported"):
+        gdf["x"] = np.array([1, 2, 3])
+
+
+def test_getitem_rejects_stale_mask(points):
+    # Assignment rebinds the frame, so a mask captured beforehand belongs to the
+    # previous one. It used to be accepted and quietly resolve against the new
+    # frame while the referenced column happened to still exist.
+    gdf = sgpd.from_geopandas(points)
+    mask = gdf["v"] > 1
+    gdf["k"] = 1
+    with pytest.raises(ValueError, match="different DataFrame"):
+        gdf[mask]
+
+
+def test_setitem_none_keeps_geometry_column(points):
+    # Assigning None used to turn the column untyped and clear the active geometry;
+    # GeoPandas keeps a geometry column with its CRS.
+    gdf = sgpd.from_geopandas(points)
+    gdf["geometry"] = None
+    assert gdf._geometry_name == "geometry"
+    assert "3857" in str(gdf.crs)
+    assert gdf.to_geopandas().geometry.isna().all()
+
+
+def test_setitem_non_geometry_over_geometry_still_clears(points):
+    # The CRS-preserving path must not dress a number up as geometry.
+    gdf = sgpd.from_geopandas(points)
+    gdf["geometry"] = 7
+    assert gdf._geometry_name is None
+    assert gdf.to_geopandas()["geometry"].tolist() == [7, 7, 7]
+
+
+@pytest.mark.parametrize(
+    "value_name",
+    ["none", "nan", "pandas_na", "geometry", "literal_geometry", "literal_none"],
+)
+def test_setitem_geometry_scalars_keep_type_and_crs(points, value_name):
+    # Every supported scalar path has to go through the CRS-preserving branch:
+    # GeoPandas treats None, NaN and pd.NA as missing geometry and keeps the typed
+    # column and its CRS.
+    import numpy as np
+    import pandas as pd
+    from shapely.geometry import Point
+
+    from sedonadb.expr import lit
+
+    values = {
+        "none": None,
+        "nan": np.nan,
+        "pandas_na": pd.NA,
+        "geometry": Point(5, 5),
+        "literal_geometry": lit(Point(5, 5)),
+        "literal_none": lit(None),
+    }
+    gdf = sgpd.from_geopandas(points)
+    gdf["geometry"] = values[value_name]
+    assert gdf._geometry_name == "geometry"
+    assert "3857" in str(gdf.crs)
+
+
+def test_setitem_crs_carrying_literal_keeps_its_crs(points):
+    # A literal that carries its own CRS must not be relabeled with the
+    # destination column's CRS — that changes what the coordinates mean without
+    # transforming them.
+    from sedonadb.expr import lit
+
+    src = gpd.GeoSeries.from_wkt(["POINT (10 10)"], crs="EPSG:4326")
+    gdf = sgpd.from_geopandas(points)  # column is EPSG:3857
+    gdf["geometry"] = lit(src)
+    assert "4326" in str(gdf.crs)
+
+
+def test_pandas_na_assigns_as_null_to_ordinary_column(points):
+    import pandas as pd
+
+    gdf = sgpd.from_geopandas(points)
+    gdf["z"] = pd.NA
+    assert gdf.to_geopandas()["z"].isna().all()
+
+
+def test_zero_dimensional_array_normalizes(points):
+    import numpy as np
+
+    gdf = sgpd.from_geopandas(points)
+    gdf["z"] = np.array(5)  # 0-d: scalar by classification, unwrapped on use
+    assert gdf.to_geopandas()["z"].tolist() == [5, 5, 5]
+
+
+def test_masked_scalar_assigns_as_missing(points):
+    import numpy as np
+
+    gdf = sgpd.from_geopandas(points)
+    gdf["m"] = np.ma.masked
+    assert gdf.to_geopandas()["m"].isna().all()
+
+
+def test_pyarrow_scalars_broadcast(points):
+    # Arrow scalars implement __len__ but are single values.
+    import pyarrow as pa
+
+    from sedonadb_geopandas._series import is_scalar
+
+    assert is_scalar(pa.scalar([1, 2]))
+    assert is_scalar(pa.scalar({"a": 1}))
+    gdf = sgpd.from_geopandas(points)
+    gdf["tags"] = pa.scalar([1, 2])
+    assert len(gdf.to_geopandas()["tags"]) == 3
+
+
+def test_geoarrow_scalar_inherits_crs(points):
+    # A GeoArrow WKB scalar has no __geo_interface__, so geometry-ness must come
+    # from the resolved schema; it is CRS-less and inherits the column's CRS.
+    import geoarrow.pyarrow as ga
+
+    w = ga.as_wkb(ga.array(["POINT (5 5)"]))[0]
+    gdf = sgpd.from_geopandas(points)
+    gdf["geometry"] = w
+    assert gdf._geometry_name == "geometry"
+    assert "3857" in str(gdf.crs)
+
+
+def test_explicitly_inactive_geometry_stays_inactive(points):
+    # geometry=None is a choice; a no-op reassignment of an existing geometry
+    # column must not silently reactivate it.
+    df = sgpd.default_context().create_data_frame(points)
+    gdf = GeoDataFrame(df, geometry=None)
+    gdf["geometry"] = gdf["geometry"]
+    assert gdf._geometry_name is None
+
+
+def test_temporal_scalars_are_deferred(points):
+    # Representing temporal scalars faithfully needs dedicated unit and
+    # timezone handling — a naive literal would silently truncate nanoseconds
+    # or reject most NumPy units — which arrives as its own change; until
+    # then they are rejected outright rather than stored subtly wrong.
+    import numpy as np
+    import pandas as pd
+
+    gdf = sgpd.from_geopandas(points)
+    for value in (
+        np.datetime64("2026-01-01", "ns"),
+        np.timedelta64(1, "ns"),
+        pd.Timestamp("2026-01-01"),
+        pd.Timedelta(1),
+    ):
+        with pytest.raises(TypeError, match="not supported yet"):
+            gdf["t"] = value
