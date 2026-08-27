@@ -189,7 +189,7 @@ def test_repr_is_lazy(cities):
 
 def test_operand_rejects_arraylike(cities):
     gdf = sgpd.from_geopandas(cities)
-    with pytest.raises(TypeError, match="array-like"):
+    with pytest.raises(TypeError, match="isn't supported"):
         gdf["pop"] > cities["pop"]  # a real pandas Series
 
 
@@ -1609,3 +1609,196 @@ def test_dissolve_temporal_keys_are_deferred():
     )
     with pytest.raises(NotImplementedError, match="not supported yet"):
         gdf.dissolve(by="ts")
+
+
+def test_series_arithmetic():
+    points = gpd.GeoDataFrame(
+        {"name": ["A", "B", "C"], "v": [1, 2, 3]},
+        geometry=gpd.points_from_xy([0, 5, 9], [0, 5, 9]),
+        crs=3857,
+    )
+    gdf = sgpd.from_geopandas(points)
+    for label, series, expected in [
+        ("add", gdf["v"] + 1, (points["v"] + 1).tolist()),
+        ("radd", 1 + gdf["v"], (1 + points["v"]).tolist()),
+        ("sub", gdf["v"] - 1, (points["v"] - 1).tolist()),
+        ("rsub", 10 - gdf["v"], (10 - points["v"]).tolist()),
+        ("mul", gdf["v"] * 2, (points["v"] * 2).tolist()),
+        ("truediv", gdf["v"] / 2, (points["v"] / 2).tolist()),
+        ("neg", -gdf["v"], (-points["v"]).tolist()),
+    ]:
+        assert sorted(series.to_pandas().tolist()) == sorted(expected), label
+
+
+def test_series_arithmetic_between_columns():
+    points = gpd.GeoDataFrame(
+        {"name": ["A", "B", "C"], "v": [1, 2, 3]},
+        geometry=gpd.points_from_xy([0, 5, 9], [0, 5, 9]),
+        crs=3857,
+    )
+    gdf = sgpd.from_geopandas(points)
+    got = (gdf["v"] + gdf["v"]).to_pandas().tolist()
+    assert sorted(got) == sorted((points["v"] + points["v"]).tolist())
+
+
+def test_operators_reject_bare_expression():
+    # Same provenance hole as assignment: a bare expression built from another
+    # frame resolved against this one and silently contributed this frame's values.
+    points = gpd.GeoDataFrame(
+        {"name": ["A", "B", "C"], "v": [1, 2, 3]},
+        geometry=gpd.points_from_xy([0, 5, 9], [0, 5, 9]),
+        crs=3857,
+    )
+    gdf = sgpd.from_geopandas(points)
+    other_raw = sgpd.default_context().create_data_frame(points)
+    with pytest.raises(TypeError, match="bare expression"):
+        gdf["v"] + other_raw["v"]
+
+
+def test_operators_still_accept_literals():
+    points = gpd.GeoDataFrame(
+        {"name": ["A", "B", "C"], "v": [1, 2, 3]},
+        geometry=gpd.points_from_xy([0, 5, 9], [0, 5, 9]),
+        crs=3857,
+    )
+    gdf = sgpd.from_geopandas(points)
+    assert sorted((gdf["v"] > lit(1)).to_pandas().tolist()) == [False, True, True]
+
+
+def test_operators_accept_numpy_scalars():
+    # Operators rejected anything with __array__, including NumPy scalars, even
+    # though assignment already accepted them.
+    points = gpd.GeoDataFrame(
+        {"name": ["A", "B", "C"], "v": [1, 2, 3]},
+        geometry=gpd.points_from_xy([0, 5, 9], [0, 5, 9]),
+        crs=3857,
+    )
+    gdf = sgpd.from_geopandas(points)
+    assert sorted((gdf["v"] + np.int64(1)).to_pandas().tolist()) == [2, 3, 4]
+    assert sorted((gdf["v"] > np.float64(1)).to_pandas().tolist()) == [
+        False,
+        True,
+        True,
+    ]
+
+
+def test_operators_still_reject_arrays():
+    points = gpd.GeoDataFrame(
+        {"name": ["A", "B", "C"], "v": [1, 2, 3]},
+        geometry=gpd.points_from_xy([0, 5, 9], [0, 5, 9]),
+        crs=3857,
+    )
+    gdf = sgpd.from_geopandas(points)
+    with pytest.raises(TypeError, match="isn't supported"):
+        gdf["v"] + np.array([1, 2, 3])
+
+
+def test_numpy_array_plus_series_is_rejected_whole():
+    # Without opting out of ufunc dispatch, NumPy broadcasts element-by-element
+    # and returns an object array of lazy Series instead of an error.
+    points = gpd.GeoDataFrame(
+        {"name": ["A", "B", "C"], "v": [1, 2, 3]},
+        geometry=gpd.points_from_xy([0, 5, 9], [0, 5, 9]),
+        crs=3857,
+    )
+    gdf = sgpd.from_geopandas(points)
+    with pytest.raises(TypeError):
+        np.array([10, 20, 30]) + gdf["v"]
+    with pytest.raises(TypeError):
+        gdf["v"] + np.array([10, 20, 30])
+
+
+def test_division_preserves_decimal_exactness():
+    from decimal import Decimal
+
+    df = sgpd.default_context().create_data_frame(
+        pd.DataFrame({"d": [Decimal("1.23")]})
+    )
+    got = (GeoDataFrame(df)["d"] / Decimal("0.1")).to_pandas().tolist()
+    # Forced through double this would be 12.299999999999999.
+    assert got == [Decimal("12.300000")]
+
+
+def test_division_still_true_for_integers():
+    df = sgpd.default_context().sql("SELECT 1 AS n UNION ALL SELECT 3")
+    assert sorted((GeoDataFrame(df)["n"] / 2).to_pandas().tolist()) == [0.5, 1.5]
+
+
+def test_division_unwraps_dictionary_int():
+    # A dictionary<int64> column is integer for division purposes; it used to
+    # skip the double cast and truncate.
+
+    tbl = pa.table(
+        {
+            "k": pa.DictionaryArray.from_arrays(
+                pa.array([0, 1], type=pa.int8()), pa.array([1, 3], type=pa.int64())
+            ),
+            "x": [1, 2],
+        }
+    )
+    gdf = GeoDataFrame(sgpd.default_context().create_data_frame(tbl))
+    assert sorted((gdf["k"] / 2).to_pandas().tolist()) == [0.5, 1.5]
+
+
+def test_division_by_decimal_stays_decimal():
+    # An integer divided by a Decimal must stay in decimal arithmetic; the
+    # unconditional double cast used to force a float result.
+    from decimal import Decimal
+
+    gdf = GeoDataFrame(sgpd.default_context().sql("SELECT 1 AS n"))
+    got = (gdf["n"] / Decimal("0.5")).to_pandas().tolist()
+    assert isinstance(got[0], Decimal)
+
+
+def test_division_by_wrapped_integers_is_true_division():
+    # lit(2) and pa.scalar(2) are integer operands just as 2 is.
+
+    gdf = GeoDataFrame(sgpd.default_context().sql("SELECT 1 AS n UNION ALL SELECT 3"))
+    assert sorted((gdf["n"] / lit(2)).to_pandas().tolist()) == [0.5, 1.5]
+    assert sorted((gdf["n"] / pa.scalar(2)).to_pandas().tolist()) == [0.5, 1.5]
+
+
+def test_multi_value_literal_errors_propagate():
+    # The Literal resolver's precise error (a Series of length != 1) must
+    # reach the caller instead of being swallowed by the numeric resolver.
+
+    gdf = GeoDataFrame(sgpd.default_context().sql("SELECT 4 AS n"))
+    with pytest.raises(ValueError, match="length != 1"):
+        gdf["n"] / lit(pd.Series([2, 3]))
+    with pytest.raises(ValueError, match="single value"):
+        gdf["n"] / lit(pa.array([2, 3]))
+
+
+def test_oversized_integer_literal_raises_overflow():
+    # An integer payload past int64 failed Arrow conversion inside the
+    # numeric resolver with a misleading ValueError; it is reported as the
+    # overflow it is, matching the unwrapped-integer behavior.
+
+    gdf = GeoDataFrame(sgpd.default_context().sql("SELECT 4 AS n"))
+    with pytest.raises(OverflowError):
+        gdf["n"] / lit(2**63)
+
+
+def test_singleton_container_literals_resolve_as_numbers():
+    # SedonaDB accepts one-element containers as single-value literals; the
+    # numeric resolver must look through them like any other wrapper.
+
+    gdf = GeoDataFrame(sgpd.default_context().sql("SELECT 1 AS n UNION ALL SELECT 3"))
+    assert sorted((gdf["n"] / lit(pa.array([2]))).to_pandas().tolist()) == [0.5, 1.5]
+    assert sorted((gdf["n"] / lit(pd.Series([2]))).to_pandas().tolist()) == [0.5, 1.5]
+
+
+def test_duration_arithmetic_is_deferred():
+    # Multiplying or dividing a duration column needs tick-level overflow,
+    # precision, and missing-value handling that arrives with the dedicated
+    # temporal support; a clear error beats a silently lossy result.
+
+    gdf = GeoDataFrame(
+        sgpd.default_context().create_data_frame(
+            pd.DataFrame({"t": [pd.Timedelta(days=2)]})
+        )
+    )
+    with pytest.raises(NotImplementedError, match="not supported yet"):
+        gdf["t"] * 2
+    with pytest.raises(NotImplementedError, match="not supported yet"):
+        gdf["t"] / 2

@@ -180,17 +180,59 @@ def normalize_scalar(value):
     return value
 
 
+def _numeric_value(other):
+    """Resolve an operand to its numeric payload, unwrapping supported wrappers.
+
+    A `Literal` or Arrow scalar is one value by the shared scalar contract, so a
+    type decision (is this integer division? is this a numeric duration operand?)
+    must look through the wrapper at the payload rather than judging the wrapper
+    itself.
+    """
+    from sedonadb.expr import Literal
+
+    value = other
+    if isinstance(value, Literal):
+        # Resolve through the literal's Arrow value rather than its raw Python
+        # payload: SedonaDB accepts one-element containers (an Arrow array, a
+        # pandas Series or one-cell frame) as single-value literals, and the
+        # payload alone does not reveal that. Conversion and validation errors
+        # propagate as-is — the resolver's own message (a Series of length
+        # != 1, say) is more precise than any downstream type-check error.
+        # The exception is a plain integer past int64: the resolver's failure
+        # for it names the wrong problem, so it is reported as the overflow
+        # it is, matching the unwrapped-integer behavior.
+        import numbers
+
+        raw = value._value
+        if isinstance(raw, numbers.Integral) and not -(2**63) <= int(raw) < 2**63:
+            raise OverflowError(f"{raw} overflows the signed 64-bit range")
+        arr = pa.array(value)
+        if len(arr) != 1:
+            raise ValueError(
+                f"Can't use a Literal resolving to {len(arr)} values as a single value"
+            )
+        value = arr[0].as_py()
+    if is_scalar(value):
+        value = normalize_scalar(value)
+    try:
+        if isinstance(value, pa.Scalar):
+            value = value.as_py()
+    except ImportError:
+        pass
+    return value
+
+
 def _operand(df, other):
     """Coerce the right-hand side of an operator into something usable.
 
     A `Series` is unwrapped to its expression, but only if it came from the same
     source frame as `df`: combining columns from two different frames has no
     defined meaning here (there is no row alignment) and would otherwise build a
-    plan that silently returns wrong rows. A raw SedonaDB `Expr` or `Literal` is
-    passed through as-is (`lit()` is a useful escape hatch for specifying a
-    literal that carries a CRS); other scalars pass through unchanged. A
-    pandas/numpy array-like is rejected with a clear message, since it would
-    otherwise fail obscurely as a multi-element literal.
+    plan that silently returns wrong rows. A `Literal` passes through, since it
+    holds a value rather than a column reference (`lit()` is a useful escape hatch
+    for specifying a literal that carries a CRS). Other scalars pass through
+    unchanged. A pandas/numpy array-like is rejected with a clear message, since it
+    would otherwise fail obscurely as a multi-element literal.
     """
     from sedonadb.expr import Expr, Literal
 
@@ -203,15 +245,28 @@ def _operand(df, other):
                 "frames first."
             )
         return other._expr
-    if isinstance(other, (Expr, Literal)):
+    if isinstance(other, Literal):
         return other
-    if hasattr(other, "__array__"):
+    if isinstance(other, Expr):
+        # A bare expression records no origin, so a column reference built against
+        # another frame would resolve against this one and quietly contribute this
+        # frame's values. Same reasoning as assignment, which also refuses these.
         raise TypeError(
-            "Operating against a pandas/numpy array-like isn't supported "
-            "(there is no row alignment). Operate within this frame, or collect "
-            "with to_pandas() first."
+            "Cannot combine with a bare expression: an expression does not "
+            "record which frame its columns came from, so one built against "
+            "another frame would silently resolve against this one. Use a "
+            "Series read from the same frame, or a literal."
         )
-    return other
+    if not is_scalar(other):
+        raise TypeError(
+            f"Operating against a {type(other).__name__} isn't supported (there "
+            f"is no row alignment). Operate within this frame, or collect with "
+            f"to_pandas() first."
+        )
+    # A 0-d value such as a NumPy scalar reaches here and broadcasts, matching
+    # what assignment accepts; normalization unwraps it into something a
+    # literal can actually hold.
+    return normalize_scalar(other)
 
 
 class Series:
@@ -222,6 +277,13 @@ class Series:
     as a filter mask (`gdf[gdf["pop"] > 1000]`). Nothing is computed until
     `to_pandas()`.
     """
+
+    # Without this, `np.array([...]) + series` never reaches our reflected
+    # operator: NumPy broadcasts element-by-element and returns an object array
+    # of lazy Series. Opting out of ufunc dispatch makes NumPy defer, so the
+    # whole array reaches `__radd__` and is rejected by `_operand` like any
+    # other multi-element operand.
+    __array_ufunc__ = None
 
     def __init__(self, df, expr, name):
         self._df = df
@@ -256,6 +318,102 @@ class Series:
 
     def __invert__(self):
         return Series(self._df, ~self._expr, self._name)
+
+    # -- arithmetic --------------------------------------------------------
+    # The reflected forms build `other <op> self._expr`; for a scalar left
+    # operand Python falls through to the underlying expression's reflected
+    # operator, so no special-casing is needed here.
+    def __add__(self, other):
+        return Series(self._df, self._expr + _operand(self._df, other), self._name)
+
+    def __radd__(self, other):
+        return Series(self._df, _operand(self._df, other) + self._expr, self._name)
+
+    def __sub__(self, other):
+        return Series(self._df, self._expr - _operand(self._df, other), self._name)
+
+    def __rsub__(self, other):
+        return Series(self._df, _operand(self._df, other) - self._expr, self._name)
+
+    def __mul__(self, other):
+        if self._is_duration():
+            return self._duration_arith("*", other)
+        return Series(self._df, self._expr * _operand(self._df, other), self._name)
+
+    def __rmul__(self, other):
+        if self._is_duration():
+            return self._duration_arith("*", other)
+        return Series(self._df, _operand(self._df, other) * self._expr, self._name)
+
+    # `/` is true division here, as in pandas. The engine follows SQL, where
+    # dividing two integers truncates (`1 / 2` is 0), so an integer expression is
+    # cast to double first — but only when the *other* operand is also
+    # integer-like. The cast is scoped that tightly because it is lossy
+    # elsewhere: an integer divided by a Decimal must stay in decimal arithmetic
+    # (forcing double gives 1/Decimal("0.1") -> binary rounding), and durations
+    # are handled separately below. Dictionary encoding is unwrapped before
+    # deciding, so a dictionary<int64> column does not silently truncate.
+    # `//` is deliberately not implemented rather than mapped onto SQL division,
+    # which truncates toward zero where Python floors.
+    def __truediv__(self, other):
+        if self._is_duration():
+            return self._duration_arith("/", other)
+        return Series(
+            self._df,
+            self._for_division(other) / _operand(self._df, other),
+            self._name,
+        )
+
+    def __rtruediv__(self, other):
+        return Series(
+            self._df,
+            _operand(self._df, other) / self._for_division(other),
+            self._name,
+        )
+
+    def __neg__(self):
+        return Series(self._df, -self._expr, self._name)
+
+    def _dtype(self):
+        """This expression's Arrow type, dictionary-unwrapped.
+
+        Read from the projected schema, which is a plan build, not an execution.
+        """
+        dtype = pa.schema(self._df.select(self._expr.alias("x")).schema).field("x").type
+        if pa.types.is_dictionary(dtype):
+            dtype = dtype.value_type
+        return dtype
+
+    def _is_duration(self):
+        return pa.types.is_duration(self._dtype())
+
+    def _for_division(self, other):
+        """This expression, cast to double only for integer/integer division."""
+        import numbers
+
+        if not pa.types.is_integer(self._dtype()):
+            return self._expr
+        if isinstance(other, Series):
+            other_integer = pa.types.is_integer(other._dtype())
+        else:
+            # Look through Literal / Arrow-scalar wrappers: `series / lit(2)` is
+            # integer division just as much as `series / 2` is.
+            resolved = _numeric_value(other)
+            other_integer = isinstance(resolved, numbers.Integral) and not isinstance(
+                resolved, bool
+            )
+        if other_integer:
+            return self._expr.cast(pa.float64())
+        return self._expr
+
+    def _duration_arith(self, op, other):
+        # Tick-level arithmetic needs overflow, precision, and missing-value
+        # handling — the pandas NaT sentinel arrives from Arrow data as a
+        # representable tick — that lands with the dedicated temporal support.
+        raise NotImplementedError(
+            "duration arithmetic is not supported yet; temporal support "
+            "arrives in a follow-up change"
+        )
 
     __hash__ = None
 
