@@ -2032,6 +2032,28 @@ def test_st_geohash_accepts_wgs84_and_undeclared_crs(srid):
     eng.assert_query_result(sql, "s5x1g8cu2y")
 
 
+@pytest.mark.parametrize(
+    "precision_sql",
+    [
+        "arrow_cast('20', 'UInt64')",
+        "arrow_cast('9223372036854775807', 'UInt64')",  # i64::MAX
+        "arrow_cast('9223372036854775808', 'UInt64')",  # i64::MAX + 1
+        "arrow_cast('18446744073709551615', 'UInt64')",  # u64::MAX
+        "arrow_cast('4294967295', 'UInt32')",
+        "arrow_cast('9223372036854775807', 'Int64')",
+    ],
+)
+def test_st_geohash_precision_wider_than_i64(precision_sql):
+    # The signature accepts UInt64, whose upper half does not fit in an i64, so
+    # a precision above i64::MAX used to fail with "Can't cast value ... to type
+    # Int64" rather than encoding. Precision is capped at 20 characters, so
+    # every value here means the same thing and returns the same hash.
+    eng = SedonaDB.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_GeoHash(ST_Point(1, 2), {precision_sql})", "s02equ04ven09qv80meq"
+    )
+
+
 @pytest.mark.parametrize("lat", [100, 91, 270, -91, -100])
 def test_st_geohash_geography_rejects_out_of_range_latitude(lat):
     # s2geography bounds a geography with an S2LatLngRect, whose latitudes are
