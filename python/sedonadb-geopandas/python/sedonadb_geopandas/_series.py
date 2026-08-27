@@ -106,6 +106,29 @@ def normalize_scalar(value):
                 "NumPy temporal scalars are not supported yet; faithful unit "
                 "handling arrives in a follow-up change"
             )
+        if isinstance(value, np.void):
+            import pyarrow as pa
+
+            if value.dtype.fields is None:
+                # A plain void's payload is its bytes.
+                return value.item()
+            # A structured scalar flattened to a tuple loses its field names
+            # and dtypes (int16 became float64 inside a list column); a typed
+            # Arrow struct keeps both. Exotic field dtypes with no Arrow
+            # mapping are rejected rather than stored lossily.
+            try:
+                fields = [
+                    (name, pa.from_numpy_dtype(value.dtype[name]))
+                    for name in value.dtype.names
+                ]
+            except (pa.ArrowNotImplementedError, ValueError) as err:
+                raise TypeError(
+                    f"Cannot represent a structured NumPy scalar of dtype "
+                    f"{value.dtype} faithfully; use a typed Arrow struct "
+                    f"scalar instead"
+                ) from err
+            payload = {name: value[name].item() for name in value.dtype.names}
+            return pa.scalar(payload, type=pa.struct(fields))
         if isinstance(value, np.generic) and not isinstance(
             value, (str, bytes, np.void)
         ):

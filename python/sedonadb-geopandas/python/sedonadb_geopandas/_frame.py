@@ -310,22 +310,43 @@ class GeoDataFrame:
             if not projected.geometry_column_indices:
                 return candidate
 
+        # A typed spatial null (an invalid GeoArrow scalar, say) is a geometry
+        # value that happens to be null: it carries its own kind and CRS
+        # metadata, which synthesizing a destination-kind null would discard.
+        # It takes the value path below. Typed *non-spatial* nulls stay on the
+        # missing path, like the bare sentinels.
+        spatial_typed_null = False
+        if missing:
+            try:
+                import pyarrow as pa
+
+                if isinstance(raw, pa.Scalar):
+                    projected = self._df.select(lit(raw).alias("x")).schema
+                    spatial_typed_null = bool(projected.geometry_column_indices)
+            except ImportError:
+                pass
+
         dtype = self._df.schema.field(key).type
         crs = dtype.crs
         spherical = "SPHERICAL" in str(getattr(dtype, "edge_type", "")).upper()
         # A context-bound literal is needed to call functions on it.
         ctx = self._df._ctx
         inherits_crs = False
-        if missing:
+        strips_crs = False
+        if missing and not spatial_typed_null:
             # The typed null is built with the destination's own spatial kind:
             # a geography column stays geography rather than degrading to
             # planar geometry. A missing value has no CRS of its own, whatever
-            # CRS the constructor synthesizes.
+            # CRS the constructor synthesizes — so a CRS-less destination
+            # strips the synthesized one back off.
             inherits_crs = True
             if spherical:
                 expr = ctx.lit(None).funcs.st_geogfromwkt()
+                strips_crs = crs is None
             else:
                 expr = ctx.lit(None).funcs.st_geomfromwkt()
+        elif missing:
+            expr = ctx.lit(raw)
         elif spherical:
             try:
                 from shapely.geometry.base import BaseGeometry
@@ -339,6 +360,7 @@ class GeoDataFrame:
                 # keeps it; converting between planar and spherical semantics
                 # is not something an assignment should do silently.)
                 inherits_crs = True
+                strips_crs = crs is None
                 expr = ctx.lit(raw.wkb).funcs.st_geogfromwkb()
             else:
                 expr = ctx.lit(raw)
@@ -352,6 +374,8 @@ class GeoDataFrame:
         # is silently wrong data.
         if crs is not None and (inherits_crs or _expr_crs(self._df, expr) is None):
             expr = expr.funcs.st_setcrs(ctx.lit(crs.to_json()))
+        elif strips_crs and _expr_crs(self._df, expr) is not None:
+            expr = expr.funcs.st_setcrs(ctx.lit(None))
         return expr
 
     def head(self, n=5):
@@ -388,14 +412,11 @@ class GeoDataFrame:
             # but the materializer heuristically activates one whenever a
             # geometry column exists — and a later to_crs() on the result
             # would silently target a column this frame never had active.
-            # There is no public constructor spelling for "GeoDataFrame
-            # with geometry columns but no active one" — the constructor
-            # auto-activates a geometry column literally named "geometry" —
-            # so the marker is cleared directly after rebuilding.
-            import geopandas as gpd
-            import pandas as pd
-
-            result = gpd.GeoDataFrame(pd.DataFrame(result))
+            # There is no public spelling for "GeoDataFrame with geometry
+            # columns but no active one", so the marker is cleared in place.
+            # (Reconstructing the frame instead would let the constructor
+            # coerce an unrelated all-null column named "geometry" to
+            # geometry dtype.)
             result._geometry_column_name = None
             return result
         try:

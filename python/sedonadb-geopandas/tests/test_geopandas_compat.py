@@ -741,3 +741,96 @@ def test_typed_null_nested_scalar_keeps_geometry(points):
     assert gdf._geometry_name == "geometry"
     assert "3857" in str(gdf.crs)
     assert gdf.to_geopandas()["geometry"].isna().all()
+
+
+def test_crs_less_geography_replacement_stays_crs_less():
+    # A geography constructor synthesizes CRS84, so replacing a CRS-less
+    # geography with None or a Shapely value silently gained a CRS; the
+    # synthesized one is stripped back off when the destination has none.
+    from shapely.geometry import Point
+
+    def crs_less():
+        df = sgpd.default_context().sql(
+            "SELECT ST_GeogFromWKT('POINT (0 0)') AS g, 1 AS v"
+        )
+        df = df.mutate(g=df["g"].funcs.st_setcrs(df._ctx.lit(None)))
+        return GeoDataFrame(df, geometry="g")
+
+    base = crs_less()
+    assert base._df.schema.field("g").type.crs is None
+    for value in (None, Point(1, 1)):
+        gdf = crs_less()
+        gdf["g"] = value
+        dtype = gdf._df.schema.field("g").type
+        assert "geography" in str(dtype)
+        assert dtype.crs is None
+
+
+def test_typed_spatial_null_keeps_its_own_crs(points):
+    # An invalid GeoArrow scalar typed EPSG:4267 was routed through the
+    # missing path, which synthesized a destination-kind null stamped with
+    # the destination CRS — while the equivalent valid scalar kept 4267. A
+    # typed spatial null is a geometry value that happens to be null: it
+    # keeps its own kind and CRS metadata.
+    import geopandas as gpd
+    import geoarrow.pyarrow as ga
+    import pyarrow as pa
+
+    crs4267 = gpd.GeoSeries.from_wkt(["POINT (0 0)"], crs="EPSG:4267").crs
+    null_scalar = pa.scalar(None, ga.wkb().with_crs(crs4267.to_json()))
+    gdf = sgpd.from_geopandas(points)
+    gdf["geometry"] = null_scalar
+    dtype = gdf._df.schema.field("geometry").type
+    assert "4267" in str(dtype)
+    assert gdf.to_geopandas()["geometry"].isna().all()
+    # A typed *non-spatial* null still means "missing geometry".
+    gdf = sgpd.from_geopandas(points)
+    gdf["geometry"] = pa.scalar(None, pa.float64())
+    assert "3857" in str(gdf._df.schema.field("geometry").type)
+
+
+def test_clearing_active_geometry_does_not_retype_columns():
+    # Clearing the marker by reconstructing the frame let the GeoDataFrame
+    # constructor coerce an unrelated all-null column named "geometry" to
+    # geometry dtype; the marker is cleared in place instead.
+    gdf = GeoDataFrame(
+        sgpd.default_context().sql(
+            "SELECT CAST(NULL AS VARCHAR) AS geometry, "
+            "ST_SetSRID(ST_Point(0.0, 0.0), 3857) AS copy"
+        ),
+        geometry=None,
+    )
+    out = gdf.to_geopandas()
+    assert str(out["geometry"].dtype) != "geometry"
+    with pytest.raises(AttributeError):
+        out.geometry
+
+
+def test_structured_numpy_scalars_keep_fields_and_dtypes(points):
+    # A structured np.void flattened to a tuple, silently storing
+    # [("count", int16), ("ratio", float32)] as list<float64>; it broadcasts
+    # as a typed Arrow struct with field names and dtypes intact.
+    import numpy as np
+
+    rec = np.array([(3, 1.5)], dtype=[("count", "int16"), ("ratio", "float32")])[0]
+    gdf = sgpd.from_geopandas(points)
+    gdf["x"] = rec
+    dtype = str(gdf._df.schema.field("x").type)
+    assert "Int16" in dtype and "Float32" in dtype
+    assert gdf.to_geopandas()["x"].tolist() == [{"count": 3, "ratio": 1.5}] * len(
+        points
+    )
+
+
+def test_is_missing_handles_null_array_without_pandas(monkeypatch):
+    # The one-element-null array classification must not depend on optional
+    # pandas; blocking the import proves the branch answers on its own.
+    import sys
+
+    import pyarrow as pa
+
+    from sedonadb_geopandas._frame import _is_missing
+
+    monkeypatch.setitem(sys.modules, "pandas", None)
+    assert _is_missing(pa.array([None], type=pa.list_(pa.int64())))
+    assert not _is_missing(pa.array([1], type=pa.int64()))
