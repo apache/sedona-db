@@ -22,19 +22,14 @@ value), these tests assert the two engines return the *same* result for the
 oracle. SedonaDB's own correctness is covered by the rasterio-oracle tests in
 `test_rs_value.py`; this suite only asks whether Sedona Spark agrees.
 
-The whole test skips unless `SEDONADB_RUN_SPARK_TESTS` is set (see
-`SedonaSpark.create_or_skip`). Where the two engines are known to diverge and we
-intend to close the gap, mark the case `xfail(reason=...)` so the suite doubles
-as a catalog of what to fix — it flips to xpass the day the fix lands.
+Where the two engines are known to diverge and we intend to close the gap, mark
+the case `xfail(reason=...)` so the suite doubles as a catalog of what to fix —
+it flips to xpass the day the fix lands.
 """
 
 import pytest
 
 from sedonadb.raster_testing import random_raster_data, write_geotiff
-from sedonadb.testing import SedonaDB
-from sedonadb.testing_spark import SedonaSpark
-
-pytest.importorskip("rasterio")  # write_geotiff writes the fixtures via rasterio
 
 # North-up, CRS-less: origin (100, 500) with 2-wide by 3-tall pixels. These
 # functions take no geometry, so a CRS would only add a reprojection difference.
@@ -52,7 +47,7 @@ def _one(engine, sql):
 
 
 @pytest.mark.parametrize("dtype", list(BAND_NODATA))
-def test_rs_band_nodata_spark_parity(dtype, tmp_path):
+def test_rs_band_nodata(dtype, engines, tmp_path):
     """SedonaDB and Sedona Spark read back the same band nodata for the same
     GeoTIFF, and both return NULL for a band written without one."""
     data = random_raster_data(dtype, bands=BANDS, height=HEIGHT, width=WIDTH)
@@ -63,9 +58,8 @@ def test_rs_band_nodata_spark_parity(dtype, tmp_path):
     )
     write_geotiff(without_nodata, data, gdal_transform=GDAL_TRANSFORM)
 
-    sedona = SedonaDB.create_or_skip()
-    spark = SedonaSpark.create_or_skip()  # skips the whole test unless opted in
-    for eng in (sedona, spark):
+    sedona, spark = engines
+    for eng in engines:
         eng.create_raster_view("nd_raster", with_nodata)
         eng.create_raster_view("nond_raster", without_nodata)
 

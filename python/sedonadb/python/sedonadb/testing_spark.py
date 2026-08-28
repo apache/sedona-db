@@ -23,10 +23,10 @@ its own module because the engine needs pyspark, a JVM, and network access,
 none of which the core :mod:`sedonadb.testing` module should pull in.
 
 Bootstrapping a ``SparkSession`` (downloading the Sedona jars from Maven, JVM
-startup) costs tens of seconds, so these tests are opt-in: :meth:`create_or_skip`
-skips — even under ``SEDONADB_PYTHON_NO_SKIP_TESTS`` — unless
-``SEDONADB_RUN_SPARK_TESTS`` is set, in which case construction failures
-propagate.
+startup) costs tens of seconds, which is why the tests that use this engine live
+in their own suite under ``python/spark-parity`` rather than in
+``python/sedonadb/tests``. That suite is run deliberately and assumes the engine
+is available, so construction failures here propagate rather than skipping.
 
 Requires Spark 4.0+ (results travel out of the JVM through ``DataFrame.toArrow``,
 which preserves nulls Arrow-natively — unlike ``toPandas``, which would coerce a
@@ -72,17 +72,8 @@ class SedonaSpark(DBEngine):
     def install_hint(cls) -> str:
         return (
             "- Run `pip install 'pyspark>=4.0' apache-sedona` (needs a JVM; the "
-            "first run downloads the Sedona jars from Maven)\n"
-            "- Set SEDONADB_RUN_SPARK_TESTS=true to opt in"
+            "first run downloads the Sedona jars from Maven)"
         )
-
-    @classmethod
-    def create_or_skip(cls, *args, **kwargs) -> "SedonaSpark":
-        import pytest
-
-        if os.environ.get("SEDONADB_RUN_SPARK_TESTS", "false") not in ("true", "1"):
-            pytest.skip("Sedona Spark parity tests are opt-in:\n" + cls.install_hint())
-        return cls(*args, **kwargs)
 
     @classmethod
     def _ensure_session(cls):
