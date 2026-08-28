@@ -29,7 +29,7 @@ use pyo3::{
 };
 use sedona_raster::{
     raster_loader::{AsyncRasterLoader, RasterLoadRequest, RasterLoadResult},
-    view_entries::ViewEntry,
+    view_entries::{ViewEntries, ViewEntry},
 };
 use sedona_schema::raster::BandDataType;
 
@@ -92,7 +92,7 @@ impl AsyncRasterLoader for PyRasterLoader {
                 uri: req.uri.to_string(),
                 dim_names: req.dim_names.iter().map(|s| s.to_string()).collect(),
                 source_shape: req.source_shape.to_vec(),
-                view: req.view.to_vec(),
+                view: req.view.as_slice().to_vec(),
                 data_type: req.data_type,
             })
             .collect();
@@ -204,7 +204,7 @@ impl AsyncRasterLoader for PyRasterLoader {
             .map(|r| RasterLoadResult {
                 bytes: Buffer::from(r.bytes),
                 source_shape: r.source_shape,
-                view: r.view,
+                view: ViewEntries::new(r.view),
             })
             .collect();
 

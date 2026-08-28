@@ -16,41 +16,35 @@
 # specific language governing permissions and limitations
 # under the License.
 
-title: ST_Force3D
-description: Forces a geometry or geography into a XYZ coordinate model with an optional Z value.
+title: ST_MakeEnvelope
+description: Constructs a rectangular Polygon from minimum and maximum coordinates.
 kernels:
   - returns: geometry
-    args: [geometry]
-  - returns: geometry
     args:
-    - geometry
-    - name: z
+    - name: min_x
       type: double
-  - returns: geography
-    args: [geography]
-  - returns: geography
-    args:
-    - geography
-    - name: z
+    - name: min_y
       type: double
+    - name: max_x
+      type: double
+    - name: max_y
+      type: double
+    - name: srid
+      type: crs
 ---
 
 ## Description
 
-If the geometry already has Z values they are preserved; otherwise the optional `z` argument (default 0) is used.
-
-Aliases: `ST_Force3DZ`.
+Constructs a rectangular Polygon from minimum X, minimum Y, maximum X, and maximum Y coordinates. An optional SRID or CRS can be provided as a fifth argument.
 
 ## Examples
 
 ```sql
-SELECT ST_Force3D(ST_GeomFromWKT('POINT (1 2)'), 10.0);
+SELECT ST_MakeEnvelope(1.234, 2.234, 3.345, 3.345);
 ```
 
-```sql
-SELECT ST_Force3D(ST_GeomFromWKT('POINT (1 2)'));
-```
+With an SRID:
 
 ```sql
-SELECT ST_Force3D(ST_GeogFromWKT('POINT (1 2)'), 10.0);
+SELECT ST_MakeEnvelope(1.234, 2.234, 3.345, 3.345, 4326);
 ```

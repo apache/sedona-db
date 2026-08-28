@@ -15,11 +15,12 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use arrow_schema::ArrowError;
 use sedona_schema::raster::BandDataType;
 
-use crate::builder::{RasterBuilder, StartBandArgs};
-use crate::view_entries::{ViewEntries, ViewEntry};
+use crate::band_builder::BandWriter;
+use crate::builder::StartBandArgs;
+use crate::error::RasterError;
+use crate::view_entries::ViewEntries;
 
 /// Recognized spatial dimension-name pairs, in band C-order: the slower-
 /// varying Y-like (row) axis first, the faster-varying X-like (column) axis
@@ -95,9 +96,9 @@ impl<'a> NdBuffer<'a> {
     /// (<https://github.com/apache/sedona-db/issues/899>). Never copies or
     /// allocates — a strided layout returns an error, it is not materialized
     /// here.
-    pub fn as_contiguous(&self) -> Result<&'a [u8], ArrowError> {
+    pub fn as_contiguous(&self) -> Result<&'a [u8], RasterError> {
         if !self.is_contiguous() {
-            return Err(ArrowError::InvalidArgumentError(format!(
+            return Err(RasterError::Invalid(format!(
                 "band view is not contiguous (shape {:?}, strides {:?}); \
                  materialize it with RS_EnsureContiguous before contiguous \
                  byte access — see https://github.com/apache/sedona-db/issues/899",
@@ -110,7 +111,7 @@ impl<'a> NdBuffer<'a> {
         let buffer: &'a [u8] = self.buffer;
         match start.checked_add(len) {
             Some(end) if end <= buffer.len() => Ok(&buffer[start..end]),
-            _ => Err(ArrowError::ExternalError(Box::new(
+            _ => Err(RasterError::External(Box::new(
                 sedona_common::sedona_internal_datafusion_err!(
                     "contiguous region [{start}, {start}+{len}) is out of bounds \
                      for buffer of length {}",
@@ -139,12 +140,12 @@ impl<'a> NdBuffer<'a> {
 ///
 /// This is the shared convention consumers use to recover the source path and
 /// band from a band's `outdb_uri()`.
-pub fn split_outdb_band_fragment(uri: &str) -> Result<(String, u32), ArrowError> {
+pub fn split_outdb_band_fragment(uri: &str) -> Result<(String, u32), RasterError> {
     if let Some((prefix, fragment)) = uri.rsplit_once('#') {
         if let Some(band_str) = fragment.strip_prefix("band=") {
             return match band_str.parse::<u32>() {
                 Ok(band) if band >= 1 => Ok((prefix.to_string(), band)),
-                _ => Err(ArrowError::InvalidArgumentError(format!(
+                _ => Err(RasterError::Invalid(format!(
                     "Invalid band index in outdb URI fragment '#band={band_str}': expected a positive integer in 1..=u32::MAX"
                 ))),
             };
@@ -162,12 +163,12 @@ pub trait RasterRef {
     /// Number of bands/variables
     fn num_bands(&self) -> usize;
 
-    /// Access a band by 0-based index. Returns an `ArrowError` when the
+    /// Access a band by 0-based index. Returns a `RasterError` when the
     /// index is out of range or when the underlying schema is malformed
     /// (unknown data-type discriminant, corrupt view, etc.). The latter
     /// cases route through `sedona_common::sedona_internal_datafusion_err!`
     /// so they carry the standardised "SedonaDB internal error" framing.
-    fn band(&self, index: usize) -> Result<Box<dyn BandRef + '_>, ArrowError>;
+    fn band(&self, index: usize) -> Result<Box<dyn BandRef + '_>, RasterError>;
 
     /// Band name (e.g., Zarr variable name). None for unnamed bands.
     fn band_name(&self, index: usize) -> Option<&str>;
@@ -245,21 +246,19 @@ pub trait RasterRef {
     /// Width in pixels — size of the X spatial dimension from the top-level
     /// `spatial_shape`. Errors if `spatial_shape` is empty, which is an
     /// invariant violation rather than a legitimate "no value" state.
-    fn width(&self) -> Result<i64, ArrowError> {
+    fn width(&self) -> Result<i64, RasterError> {
         let shape = self.spatial_shape();
         shape.first().copied().ok_or_else(|| {
-            ArrowError::InvalidArgumentError(
-                "raster has no width (spatial_shape is empty)".to_string(),
-            )
+            RasterError::Invalid("raster has no width (spatial_shape is empty)".to_string())
         })
     }
 
     /// Height in pixels — size of the Y spatial dimension from the top-level
     /// `spatial_shape`. Errors if `spatial_shape` has fewer than two entries.
-    fn height(&self) -> Result<i64, ArrowError> {
+    fn height(&self) -> Result<i64, RasterError> {
         let shape = self.spatial_shape();
         shape.get(1).copied().ok_or_else(|| {
-            ArrowError::InvalidArgumentError(format!(
+            RasterError::Invalid(format!(
                 "raster has no height (spatial_shape has {} entries, need >= 2)",
                 shape.len()
             ))
@@ -268,22 +267,20 @@ pub trait RasterRef {
 
     /// Look up a band by name. Returns an error if no band has that
     /// name or if the matching band is malformed.
-    fn band_by_name(&self, name: &str) -> Result<Box<dyn BandRef + '_>, ArrowError> {
+    fn band_by_name(&self, name: &str) -> Result<Box<dyn BandRef + '_>, RasterError> {
         let i = (0..self.num_bands())
             .find(|&i| self.band_name(i) == Some(name))
-            .ok_or_else(|| {
-                ArrowError::InvalidArgumentError(format!("Band with name '{name}' not found"))
-            })?;
+            .ok_or_else(|| RasterError::Invalid(format!("Band with name '{name}' not found")))?;
         self.band(i)
     }
 }
 
 /// Field overrides for [`BandRef::copy_into`]. Each field defaults to `None`,
-/// meaning "inherit from the source band". `name` has no source on a `BandRef`
-/// (band names live at the raster level), so it defaults to unnamed.
+/// meaning "inherit from the source band" — `name` included, sourced from
+/// [`BandRef::name`].
 #[derive(Default)]
 pub struct BandOverrides<'a> {
-    /// Name for the derived band (the source has none to inherit).
+    /// Override the band name; `None` inherits the source's.
     pub name: Option<&'a str>,
     /// Override the dimension names; `None` inherits the source's.
     pub dim_names: Option<&'a [&'a str]>,
@@ -300,7 +297,7 @@ pub struct BandOverrides<'a> {
     /// view unchanged. A non-identity result is persisted on the derived band
     /// (as a slice, broadcast, permutation, or reverse) and decoded back by the
     /// reader; the underlying bytes are carried over unchanged.
-    pub view: Option<&'a [ViewEntry]>,
+    pub view: Option<&'a ViewEntries>,
 }
 
 /// Trait for accessing a single band/variable within an N-D raster.
@@ -342,7 +339,7 @@ pub trait BandRef {
     /// Per-visible-dimension view entries describing how the band's
     /// visible axes map onto its `source_shape`. `view().len() == ndim()`.
     /// See `ViewEntry` for per-entry semantics.
-    fn view(&self) -> &[ViewEntry];
+    fn view(&self) -> &ViewEntries;
 
     /// Size of a named dimension (None if doesn't exist)
     fn dim_size(&self, name: &str) -> Option<i64> {
@@ -374,6 +371,15 @@ pub trait BandRef {
 
     /// Data type for all elements in this band
     fn data_type(&self) -> BandDataType;
+
+    /// Band name (e.g. a Zarr variable name). None for unnamed bands.
+    ///
+    /// The band-level counterpart to [`RasterRef::band_name`], which indexes
+    /// the same value from the raster. Required rather than defaulted: a
+    /// backend that silently returned `None` here would drop names on every
+    /// derived band, which is precisely the failure this accessor exists to
+    /// prevent.
+    fn name(&self) -> Option<&str>;
 
     /// Nodata value as raw bytes (None if not set)
     fn nodata(&self) -> Option<&[u8]>;
@@ -417,7 +423,7 @@ pub trait BandRef {
     /// `offset` are computed by composing the view with the source's
     /// natural C-order byte strides. Strides may be zero (broadcast) or
     /// negative (reverse iteration).
-    fn nd_buffer(&self) -> Result<NdBuffer<'_>, ArrowError>;
+    fn nd_buffer(&self) -> Result<NdBuffer<'_>, RasterError>;
 
     /// Nodata value interpreted as f64.
     ///
@@ -432,7 +438,7 @@ pub trait BandRef {
     /// value. Use `nodata()` directly to recover the exact bytes when full
     /// integer precision matters (e.g. when nodata is the type's extreme
     /// value like `0xFF…FF`).
-    fn nodata_as_f64(&self) -> Result<Option<f64>, ArrowError> {
+    fn nodata_as_f64(&self) -> Result<Option<f64>, RasterError> {
         let bytes = match self.nodata() {
             Some(b) => b,
             None => return Ok(None),
@@ -456,16 +462,24 @@ pub trait BandRef {
     /// inherits the source's view unchanged.
     ///
     /// The composition + persistence is delegated to
-    /// [`RasterBuilder::start_band`]: an identity effective view is
+    /// [`BandWriter::start_band`]: an identity effective view is
     /// stored as the canonical null sentinel, and a non-identity one (a slice,
     /// broadcast, permutation, or reverse) is persisted explicitly and decoded
     /// back by the reader. The source bytes are carried over unchanged — the
     /// view relocates the visible window over them, it does not repack them.
+    ///
+    /// `builder` is a [`BandWriter`] rather than a concrete
+    /// [`crate::builder::RasterBuilder`] so a derived band can be written
+    /// into a bare [`crate::band_builder::BandArrayBuilder`] (no enclosing
+    /// raster) too — `RasterBuilder` implements the trait by delegating to
+    /// its own internal `BandArrayBuilder` plus its own per-raster
+    /// bookkeeping, so calling this with a `&mut RasterBuilder` behaves
+    /// exactly as before.
     fn copy_into(
         &self,
-        builder: &mut RasterBuilder,
+        builder: &mut dyn BandWriter,
         overrides: BandOverrides<'_>,
-    ) -> Result<(), ArrowError> {
+    ) -> Result<(), RasterError> {
         let inherited_dims = self.dim_names();
         let dim_names: Vec<&str> = match overrides.dim_names {
             Some(d) => d.to_vec(),
@@ -475,14 +489,13 @@ pub trait BandRef {
         // Compose the caller's override (if any) onto the source's own view, so
         // the override is interpreted in the source's visible space and the
         // caller doesn't have to. `None` keeps the source view unchanged.
-        let source_view = ViewEntries::new(self.view().to_vec());
         let effective_view = match overrides.view {
-            Some(v) => source_view.compose(&ViewEntries::new(v.to_vec()))?,
-            None => source_view,
+            Some(v) => self.view().compose(v)?,
+            None => self.view().clone(),
         };
         builder.start_band(StartBandArgs {
-            name: overrides.name,
-            view: Some(effective_view.as_slice()),
+            name: overrides.name.or_else(|| self.name()),
+            view: Some(&effective_view),
             nodata: overrides.nodata.or_else(|| self.nodata()),
             outdb_uri: overrides.outdb_uri.or_else(|| self.outdb_uri()),
             outdb_format: overrides.outdb_format.or_else(|| self.outdb_format()),
@@ -496,10 +509,10 @@ pub trait BandRef {
     /// The default copies the visible source bytes via `append_value`. Arrow-
     /// backed implementations override this to share the source row's backing
     /// `Buffer` zero-copy (a refcount bump via
-    /// [`RasterBuilder::append_band_data_from`]), keeping the buffer plumbing
+    /// [`BandWriter::append_band_data_from`]), keeping the buffer plumbing
     /// encapsulated rather than exposing a raw `Buffer` accessor. Call after the
     /// band's schema has been written (e.g. by [`Self::copy_into`]).
-    fn append_data_into(&self, builder: &mut RasterBuilder) -> Result<(), ArrowError> {
+    fn append_data_into(&self, builder: &mut dyn BandWriter) -> Result<(), RasterError> {
         if self.is_indb() {
             let ndb = self.nd_buffer()?;
             builder.band_data_writer().append_value(ndb.buffer);
@@ -515,11 +528,11 @@ pub trait BandRef {
 /// The bytes are expected to be in little-endian order and exactly match the
 /// byte size of the data type. Internal helper for the lossless wrapper;
 /// non-i64/u64 callers reach for `nodata_bytes_to_f64_lossless` instead.
-fn nodata_bytes_to_f64(bytes: &[u8], dt: &BandDataType) -> Result<f64, ArrowError> {
+fn nodata_bytes_to_f64(bytes: &[u8], dt: &BandDataType) -> Result<f64, RasterError> {
     macro_rules! read_le {
         ($t:ty, $n:expr) => {{
             let arr: [u8; $n] = bytes.try_into().map_err(|_| {
-                ArrowError::InvalidArgumentError(format!(
+                RasterError::Invalid(format!(
                     "Invalid nodata byte length for {:?}: expected {}, got {}",
                     dt,
                     $n,
@@ -533,7 +546,7 @@ fn nodata_bytes_to_f64(bytes: &[u8], dt: &BandDataType) -> Result<f64, ArrowErro
     match dt {
         BandDataType::UInt8 => {
             if bytes.len() != 1 {
-                return Err(ArrowError::InvalidArgumentError(format!(
+                return Err(RasterError::Invalid(format!(
                     "Invalid nodata byte length for UInt8: expected 1, got {}",
                     bytes.len()
                 )));
@@ -542,7 +555,7 @@ fn nodata_bytes_to_f64(bytes: &[u8], dt: &BandDataType) -> Result<f64, ArrowErro
         }
         BandDataType::Int8 => {
             if bytes.len() != 1 {
-                return Err(ArrowError::InvalidArgumentError(format!(
+                return Err(RasterError::Invalid(format!(
                     "Invalid nodata byte length for Int8: expected 1, got {}",
                     bytes.len()
                 )));
@@ -568,18 +581,18 @@ fn nodata_bytes_to_f64(bytes: &[u8], dt: &BandDataType) -> Result<f64, ArrowErro
 /// pixel == nodata) should prefer this over the lossy variant — a rounded
 /// `0xFFFF_FFFF_FFFF_FFFE` sentinel can silently collide with a real
 /// pixel value.
-pub fn nodata_bytes_to_f64_lossless(bytes: &[u8], dt: &BandDataType) -> Result<f64, ArrowError> {
+pub fn nodata_bytes_to_f64_lossless(bytes: &[u8], dt: &BandDataType) -> Result<f64, RasterError> {
     match dt {
         BandDataType::UInt64 => {
             let arr: [u8; 8] = bytes.try_into().map_err(|_| {
-                ArrowError::InvalidArgumentError(format!(
+                RasterError::Invalid(format!(
                     "Invalid nodata byte length for UInt64: expected 8, got {}",
                     bytes.len()
                 ))
             })?;
             let v = u64::from_le_bytes(arr);
             if v > (1u64 << 53) {
-                return Err(ArrowError::InvalidArgumentError(format!(
+                return Err(RasterError::Invalid(format!(
                     "UInt64 nodata value {v} cannot be represented exactly as f64 \
                      (magnitude > 2^53); use the raw nodata bytes instead"
                 )));
@@ -588,14 +601,14 @@ pub fn nodata_bytes_to_f64_lossless(bytes: &[u8], dt: &BandDataType) -> Result<f
         }
         BandDataType::Int64 => {
             let arr: [u8; 8] = bytes.try_into().map_err(|_| {
-                ArrowError::InvalidArgumentError(format!(
+                RasterError::Invalid(format!(
                     "Invalid nodata byte length for Int64: expected 8, got {}",
                     bytes.len()
                 ))
             })?;
             let v = i64::from_le_bytes(arr);
             if v.unsigned_abs() > (1u64 << 53) {
-                return Err(ArrowError::InvalidArgumentError(format!(
+                return Err(RasterError::Invalid(format!(
                     "Int64 nodata value {v} cannot be represented exactly as f64 \
                      (magnitude > 2^53); use the raw nodata bytes instead"
                 )));
@@ -614,10 +627,10 @@ pub fn nodata_bytes_to_f64_lossless(bytes: &[u8], dt: &BandDataType) -> Result<f
 /// integer beyond 2^53 (which can't have arrived losslessly through `f64`).
 /// `Float32` is the one lossy case allowed — it rounds to the nearest `f32`, as
 /// any f64 → f32 narrowing does.
-pub fn nodata_f64_to_bytes(value: f64, dt: &BandDataType) -> Result<Vec<u8>, ArrowError> {
-    fn check_integer(value: f64, min: f64, max: f64, dt: &BandDataType) -> Result<(), ArrowError> {
+pub fn nodata_f64_to_bytes(value: f64, dt: &BandDataType) -> Result<Vec<u8>, RasterError> {
+    fn check_integer(value: f64, min: f64, max: f64, dt: &BandDataType) -> Result<(), RasterError> {
         if value.fract() != 0.0 || value < min || value > max {
-            return Err(ArrowError::InvalidArgumentError(format!(
+            return Err(RasterError::Invalid(format!(
                 "nodata value {value} is not a valid {dt:?} value"
             )));
         }
@@ -668,6 +681,8 @@ pub fn nodata_f64_to_bytes(value: f64, dt: &BandDataType) -> Result<Vec<u8>, Arr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::builder::RasterBuilder;
+    use crate::view_entries::ViewEntry;
 
     #[test]
     fn test_nodata_bytes_to_f64_uint8() {
@@ -822,7 +837,7 @@ mod tests {
         dim_names: Vec<String>,
         source_shape: Vec<i64>,
         shape: Vec<i64>,
-        view: Vec<ViewEntry>,
+        view: ViewEntries,
     }
 
     impl BandRef for StubBand {
@@ -838,16 +853,19 @@ mod tests {
         fn raw_source_shape(&self) -> &[i64] {
             &self.source_shape
         }
-        fn view(&self) -> &[ViewEntry] {
+        fn view(&self) -> &ViewEntries {
             &self.view
         }
         fn data_type(&self) -> BandDataType {
             BandDataType::UInt8
         }
+        fn name(&self) -> Option<&str> {
+            None
+        }
         fn nodata(&self) -> Option<&[u8]> {
             None
         }
-        fn nd_buffer(&self) -> Result<NdBuffer<'_>, ArrowError> {
+        fn nd_buffer(&self) -> Result<NdBuffer<'_>, RasterError> {
             unimplemented!("not used in is_spatial_2d tests")
         }
         fn is_indb(&self) -> bool {
@@ -861,7 +879,7 @@ mod tests {
             dim_names: dims.iter().map(|s| (*s).to_string()).collect(),
             source_shape: source_shape.to_vec(),
             shape,
-            view: view.to_vec(),
+            view: ViewEntries::new(view.to_vec()),
         }
     }
 
@@ -885,7 +903,7 @@ mod tests {
         let mut ib = RasterBuilder::new(1);
         ib.start_raster_nd(&transform, &["x"], &[3], None).unwrap();
         ib.start_band(StartBandArgs {
-            view: Some(&[ve(0, 1, 2, 3)]),
+            view: Some(&ViewEntries::new(vec![ve(0, 1, 2, 3)])),
             ..StartBandArgs::new(&["x"], &[8], BandDataType::UInt8)
         })
         .unwrap();
@@ -910,7 +928,7 @@ mod tests {
         let out_raster = out_rasters.get(0).unwrap();
         let out_band = out_raster.band(0).unwrap();
 
-        assert_eq!(out_band.view(), &[ve(0, 1, 2, 3)]);
+        assert_eq!(out_band.view().as_slice(), &[ve(0, 1, 2, 3)]);
         assert_eq!(out_band.shape(), &[3]);
         assert_eq!(out_band.raw_source_shape(), &[8]);
         let buf = out_band.nd_buffer().unwrap();
@@ -944,7 +962,7 @@ mod tests {
         let in_raster = in_rasters.get(0).unwrap();
         let in_band = in_raster.band(0).unwrap();
 
-        let override_view = [ve(0, 0, 2, 2)];
+        let override_view = ViewEntries::new(vec![ve(0, 0, 2, 2)]);
         let mut ob = RasterBuilder::new(1);
         ob.start_raster_nd(&transform, &["x"], &[2], None).unwrap();
         in_band
@@ -963,7 +981,7 @@ mod tests {
         let out_raster = out_rasters.get(0).unwrap();
         let out_band = out_raster.band(0).unwrap();
 
-        assert_eq!(out_band.view(), &[ve(0, 0, 2, 2)]);
+        assert_eq!(out_band.view().as_slice(), &[ve(0, 0, 2, 2)]);
         assert_eq!(out_band.shape(), &[2]);
         assert_eq!(out_band.raw_source_shape(), &[4]);
         let buf = out_band.nd_buffer().unwrap();

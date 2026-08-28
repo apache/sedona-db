@@ -40,12 +40,12 @@ use datafusion_expr::{
 };
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_raster::array::RasterStructArray;
-use sedona_raster::builder::{RasterBuilder, StartBandArgs};
+use sedona_raster::builder::{RasterBuilder, RasterOverrides, StartBandArgs};
 use sedona_raster::raster_loader::{
     AsyncRasterLoader, RasterLoadRequest, RasterLoaderConfig, RasterLoaderRegistry,
 };
 use sedona_raster::traits::RasterRef;
-use sedona_raster::view_entries::ViewEntry;
+use sedona_raster::view_entries::ViewEntries;
 
 /// `SedonaScalarUDF` metadata key marking a UDF whose kernels read raster
 /// pixel bytes. A raster function sets it (value `"true"`) via
@@ -140,21 +140,6 @@ fn lookup_loader(
     })?;
     // The registry owns format resolution + the missing-loader diagnostic.
     guard.get_or_error(format)
-}
-
-/// True if `view` is the canonical identity over `source_shape` (each visible
-/// axis maps to the same source axis, full extent, unit step). An empty view
-/// is treated as identity. Used to detect whether a loader returned an
-/// already-resolved (identity) layout we can build directly.
-fn view_is_identity(view: &[ViewEntry], source_shape: &[i64]) -> bool {
-    view.is_empty()
-        || (view.len() == source_shape.len()
-            && view.iter().enumerate().all(|(i, v)| {
-                v.source_axis == i as i64
-                    && v.start == 0
-                    && v.step == 1
-                    && v.steps == source_shape[i]
-            }))
 }
 
 // One RsEnsureLoaded per session by construction — equality and hash
@@ -294,27 +279,11 @@ where
             )
         })?;
 
-        // Owned per-row metadata so the borrows don't span the per-band
-        // `await` points further down.
-        let transform: [f64; 6] = raster.transform().try_into().map_err(|_| {
-            sedona_internal_datafusion_err!(
-                "RS_EnsureLoaded: raster row {raster_idx} transform is not 6 elements"
-            )
-        })?;
-        let spatial_dims_owned: Vec<String> = raster
-            .spatial_dims()
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        let spatial_dims: Vec<&str> = spatial_dims_owned.iter().map(String::as_str).collect();
-        let spatial_shape: Vec<i64> = raster.spatial_shape().to_vec();
-        let crs: Option<String> = raster.crs().map(|s| s.to_string());
-
         builder
-            .start_raster_nd(&transform, &spatial_dims, &spatial_shape, crs.as_deref())
+            .start_raster_from(&raster, RasterOverrides::default())
             .map_err(|e| {
                 sedona_internal_datafusion_err!(
-                    "RS_EnsureLoaded: start_raster_nd failed at row {raster_idx}: {e}"
+                    "RS_EnsureLoaded: start_raster_from failed at row {raster_idx}: {e}"
                 )
             })?;
 
@@ -343,7 +312,7 @@ where
                 let source_shape: Vec<i64> = band.raw_source_shape().to_vec();
                 // Passed to the loader so it can (eventually) prune I/O; today
                 // every loader ignores it and returns the full source.
-                let view_owned: Vec<ViewEntry> = band.view().to_vec();
+                let view_owned: ViewEntries = band.view().clone();
                 let data_type = band.data_type();
                 let nodata: Option<Vec<u8>> = band.nodata().map(|b| b.to_vec());
                 let outdb_uri: Option<String> = band.outdb_uri().map(|s| s.to_string());
@@ -358,7 +327,7 @@ where
                 // internal gap it is. Fixed alongside the view-preserving
                 // passthrough
                 // https://github.com/apache/sedona-db/pull/897
-                if is_indb && !view_is_identity(&view_owned, &source_shape) {
+                if is_indb && !view_owned.is_identity(&source_shape) {
                     return sedona_internal_err!(
                         "RS_EnsureLoaded: InDb band ({raster_idx},{band_idx}) has a \
                          non-identity view; view-preserving passthrough is not \
@@ -454,7 +423,7 @@ where
                 // https://github.com/apache/sedona-db/issues/897.
                 let result = &result[0];
                 if result.source_shape != source_shape
-                    || !view_is_identity(&result.view, &result.source_shape)
+                    || !result.view.is_identity(&result.source_shape)
                 {
                     return sedona_internal_err!(
                         "RS_EnsureLoaded: band ({raster_idx},{band_idx}) loader returned a \
@@ -512,6 +481,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sedona_raster::view_entries::ViewEntry;
     use std::sync::Mutex;
 
     use arrow_array::Array;
@@ -902,7 +872,7 @@ mod tests {
                             bytes: Buffer::from_vec(vec![0u8; len]),
                             source_shape: req.source_shape.to_vec(),
                             // Non-identity: first axis sliced to a single step.
-                            view: vec![
+                            view: ViewEntries::new(vec![
                                 ViewEntry {
                                     source_axis: 0,
                                     start: 0,
@@ -915,7 +885,7 @@ mod tests {
                                     step: 1,
                                     steps: 3,
                                 },
-                            ],
+                            ]),
                         }
                     })
                     .collect())

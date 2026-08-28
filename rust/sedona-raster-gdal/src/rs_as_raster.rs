@@ -37,6 +37,7 @@ use sedona_gdal::mem::MemDatasetBuilder;
 use sedona_gdal::raster::{rasterband::RasterBand, types::Buffer};
 use sedona_raster::array::RasterRefImpl;
 use sedona_raster::builder::RasterBuilder;
+use sedona_raster::error::RasterResultExt;
 use sedona_raster::traits::RasterRef;
 use sedona_raster_functions::{
     crs_utils::{align_wkb_to_crs, resolve_crs},
@@ -242,24 +243,22 @@ impl SedonaScalarKernel for RsAsRaster {
                     nodata_value_opt,
                     use_geometry_extent_opt,
                 )
-                .map_err(|e| exec_datafusion_err!("RS_AsRaster failed: {}", e))?;
+                .context("RS_AsRaster failed")?;
 
                 rasterized
                     .grid
                     .start_raster_into(&mut builder, raster.crs())
-                    .map_err(|e| exec_datafusion_err!("Failed to start output raster: {}", e))?;
+                    .context("Failed to start output raster")?;
                 builder
                     .start_band_2d(rasterized.data_type, rasterized.nodata.as_deref())
-                    .map_err(|e| {
-                        exec_datafusion_err!("Failed to start output raster band: {}", e)
-                    })?;
+                    .context("Failed to start output raster band")?;
                 builder.band_data_writer().append_value(rasterized.data);
-                builder.finish_band().map_err(|e| {
-                    exec_datafusion_err!("Failed to finish output raster band: {}", e)
-                })?;
+                builder
+                    .finish_band()
+                    .context("Failed to finish output raster band")?;
                 builder
                     .finish_raster()
-                    .map_err(|e| exec_datafusion_err!("Failed to finish output raster: {}", e))?;
+                    .context("Failed to finish output raster")?;
 
                 Ok(())
             })
@@ -436,7 +435,7 @@ fn as_raster(
 
     let geometry = gdal
         .geometry_from_wkb(geom_wkb)
-        .map_err(|e| exec_datafusion_err!("Failed to parse geometry from WKB: {}", e))?;
+        .context("Failed to parse geometry from WKB")?;
 
     let (out_width, out_height, out_ulx, out_uly) = if use_geometry_extent {
         let env = geometry.envelope();
@@ -491,7 +490,7 @@ fn as_raster(
         1,
         band_data_type_to_gdal(&band_type),
     )
-    .map_err(|e| exec_datafusion_err!("Failed to create dataset: {}", e))?;
+    .context("Failed to create dataset")?;
 
     let out_transform = [
         out_ulx,
@@ -503,17 +502,16 @@ fn as_raster(
     ];
     out_dataset
         .set_geo_transform(&out_transform)
-        .map_err(|e| exec_datafusion_err!("Failed to set geotransform: {}", e))?;
+        .context("Failed to set geotransform")?;
 
-    let provider = thread_local_provider(gdal)
-        .map_err(|e| exec_datafusion_err!("Failed to init GDAL provider: {}", e))?;
+    let provider = thread_local_provider(gdal).context("Failed to init GDAL provider")?;
     let ref_raster_ds = provider
         .raster_ref_to_gdal(reference_raster)
-        .map_err(|e| exec_datafusion_err!("Failed to create GDAL dataset: {}", e))?;
+        .context("Failed to create GDAL dataset")?;
     if let Ok(srs) = ref_raster_ds.as_dataset().spatial_ref() {
         out_dataset
             .set_spatial_ref(&srs)
-            .map_err(|e| exec_datafusion_err!("Failed to set spatial reference: {}", e))?;
+            .context("Failed to set spatial reference")?;
     }
 
     let init_value =
@@ -524,16 +522,16 @@ fn as_raster(
         let nodata = cast_f64_to_band_value(nodata, band_type, "nodata value")?;
         let band = out_dataset
             .rasterband(1)
-            .map_err(|e| exec_datafusion_err!("Failed to get output band: {}", e))?;
+            .context("Failed to get output band")?;
         set_band_nodata(&band, nodata)?;
     }
 
     gdal.rasterize_affine(&out_dataset, &[1], &[geometry], &[burn_value], all_touched)
-        .map_err(|e| exec_datafusion_err!("Failed to rasterize geometry: {}", e))?;
+        .context("Failed to rasterize geometry")?;
 
     let band = out_dataset
         .rasterband(1)
-        .map_err(|e| exec_datafusion_err!("Failed to get output band: {}", e))?;
+        .context("Failed to get output band")?;
     let band_bytes = band
         .read_as_bytes(
             (0, 0),
@@ -541,7 +539,7 @@ fn as_raster(
             (out_width, out_height),
             None,
         )
-        .map_err(|e| exec_datafusion_err!("Failed to read band data: {}", e))?;
+        .context("Failed to read band data")?;
 
     let out_grid = Grid {
         transform: out_transform,
@@ -621,12 +619,10 @@ fn initialize_band_t<T: sedona_gdal::raster::types::GdalType + Copy>(
     height: usize,
     init_value: T,
 ) -> Result<()> {
-    let band = dataset
-        .rasterband(1)
-        .map_err(|e| exec_datafusion_err!("Failed to get output band: {}", e))?;
+    let band = dataset.rasterband(1).context("Failed to get output band")?;
     let mut buffer = Buffer::new((width, height), vec![init_value; width * height]);
     band.write((0, 0), (width, height), &mut buffer)
-        .map_err(|e| exec_datafusion_err!("Failed to initialize band: {}", e))?;
+        .context("Failed to initialize band")?;
     Ok(())
 }
 

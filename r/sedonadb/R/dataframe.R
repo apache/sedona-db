@@ -269,7 +269,7 @@ sd_preview <- function(.data, n = NULL, ascii = NULL, width = NULL) {
 
   cat(
     sprintf(
-      "<%ssedonab_dataframe: NA x %d%s>\n",
+      "<%ssedonab_dataframe: ?? x %d%s>\n",
       grouped_label,
       length(schema$children),
       grouped_vars

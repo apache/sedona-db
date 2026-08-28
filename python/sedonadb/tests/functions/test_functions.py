@@ -1780,6 +1780,442 @@ def test_st_geometrytype(eng, geom, expected):
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
+    ("geom", "precision", "expected"),
+    [
+        (None, 10, None),
+        # Increasing precision on one point: each result is a prefix of the next,
+        # so a wrong bit order or a dropped bit shows up as a diverging suffix.
+        ("POINT (21.4234 52.0423)", 1, "u"),
+        ("POINT (21.4234 52.0423)", 5, "u3r0p"),
+        ("POINT (21.4234 52.0423)", 10, "u3r0pd0037"),
+        ("POINT (21.4234 52.0423)", 12, "u3r0pd0037ug"),
+        # Western and southern hemispheres, to pin the longitude/latitude signs.
+        ("POINT (-122.4194 37.7749)", 9, "9q8yyk8yt"),
+        ("POINT (-43.2 -22.9)", 8, "75cm8znt"),
+        # Non-point geometries hash the center of their bounding box, so the
+        # linestring and the multipoint below share a bounding box (10 10,
+        # 40 40) and therefore a geohash.
+        ("LINESTRING (30 10, 10 30, 40 40)", 10, "ss3y0zh7w1"),
+        ("MULTIPOINT ((10 40), (40 30), (20 20), (30 10))", 10, "ss3y0zh7w1"),
+        ("POLYGON ((35 10, 45 45, 15 40, 10 20, 35 10))", 10, "ssgs3y0zh7"),
+        # A coordinate sitting exactly on a cell boundary. Both engines resolve
+        # the tie the same way -- a value equal to the midpoint goes to the
+        # upper half (`value >= mid`) -- so (0 0), which lands on the first
+        # split of both axes, agrees. PostGIS pins the same value in its own
+        # suite (cu_algorithm.c asserts (0, 0) at precision 16 is
+        # "s000000000000000").
+        ("POINT (0 0)", 10, "s000000000"),
+        # Every empty geometry has no bounding box to hash, so both engines
+        # return NULL. In PostGIS, lwgeom_geohash() bails out when
+        # lwgeom_calculate_gbox_cartesian() reports LW_FAILURE -- which it does
+        # for an empty point array, an empty ring list, and an empty collection
+        # -- and the ST_GeoHash() wrapper turns that into a SQL NULL rather than
+        # an error.
+        ("POINT EMPTY", 10, None),
+        ("LINESTRING EMPTY", 10, None),
+        ("POLYGON EMPTY", 10, None),
+        ("MULTIPOINT EMPTY", 10, None),
+        ("MULTILINESTRING EMPTY", 10, None),
+        ("MULTIPOLYGON EMPTY", 10, None),
+        ("GEOMETRYCOLLECTION EMPTY", 10, None),
+    ],
+)
+def test_st_geohash(eng, geom, precision, expected):
+    if eng == PostGIS and geom is None:
+        # As in ST_GeometryType above, PostGIS needs the NULL cast to resolve
+        # the overload.
+        arg = "NULL::geometry"
+    else:
+        arg = geom_or_null(geom)
+
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_GeoHash({arg}, {precision})", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        (None, None),
+        # Without a precision, a point is hashed at the 20 character maximum.
+        # PostGIS reaches the same place by a different route: its `maxchars`
+        # defaults to 0, and lwgeom_geohash_precision() returns
+        # GEOHASH_MAX_DOUBLE_PRECISION_CHARS (20) for a zero-extent box. Each
+        # expected value extends the shorter hash pinned for the same point in
+        # test_st_geohash above, so a wrong tail shows up as a diverging suffix.
+        ("POINT (21.4234 52.0423)", "u3r0pd0037ugg6hm1kb1"),
+        ("POINT (-122.4194 37.7749)", "9q8yyk8ytpxr8wwhcg8j"),
+        ("POINT EMPTY", None),
+    ],
+)
+def test_st_geohash_no_precision(eng, geom, expected):
+    # Non-point geometries are not compared here: SedonaDB errors (a precision
+    # must be stated), whereas PostGIS derives one from the bounding box.
+    if eng == PostGIS and geom is None:
+        arg = "NULL::geometry"
+    else:
+        arg = geom_or_null(geom)
+
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_GeoHash({arg})", expected)
+
+
+def test_st_geohash_no_precision_requires_point():
+    eng = SedonaDB.create_or_skip()
+    with pytest.raises(Exception, match="only defined for POINT"):
+        eng.execute_and_collect(
+            "SELECT ST_GeoHash(ST_GeomFromText('LINESTRING (30 10, 10 30, 40 40)'))"
+        )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    "geom",
+    [
+        "POINT (190.0 50.0)",
+        "POINT (-190.0 50.0)",
+        "POINT (50.0 100.0)",
+        "POINT (50.0 -100.0)",
+    ],
+)
+def test_st_geohash_out_of_range_untagged_diverges_from_postgis(eng, geom):
+    # The one place the two engines deliberately disagree. With no CRS to say
+    # the coordinates are degrees, a coordinate outside [-180, 180] x [-90, 90]
+    # is NULL in SedonaDB, matching Apache Sedona (GeometryGeoHashEncoder
+    # .calculate returns null), because a Spark query that returns nulls here
+    # should keep returning nulls after migrating. PostGIS' geometry overload
+    # instead raises "Geohash requires inputs in decimal degrees": its
+    # lwgeom_geohash() range check runs once the bounding box is computed, and
+    # calls lwerror() rather than returning NULL. Pinned on both sides so the
+    # divergence is verified rather than merely asserted in a comment.
+    #
+    # An undeclared CRS is accepted (see test_st_geohash_accepts_wgs84_and_
+    # undeclared_crs) but does not earn wrapping: accepting it is passive, while
+    # wrapping it would invent a location for coordinates of unknown provenance.
+    # It also keeps faith with Apache Sedona, which has no CRS concept at all, so
+    # every geometry migrated from Spark arrives here undeclared. Tagging the
+    # same geometry 4326 opts into wrapping; see
+    # test_st_geohash_wraps_longitude_for_lnglat_crs below.
+    raises = eng == PostGIS
+    sql = f"SELECT ST_GeoHash({geom_or_null(geom)}, 10)"
+    eng = eng.create_or_skip()
+
+    if raises:
+        with pytest.raises(Exception):
+            eng.execute_and_collect(sql)
+    else:
+        eng.assert_query_result(sql, None)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("out_of_range", "equivalent"),
+    [
+        # Longitude is cyclic, so each of these denotes exactly the same
+        # meridian as its in-range counterpart.
+        ("POINT (190.0 50.0)", "POINT (-170.0 50.0)"),
+        ("POINT (-190.0 50.0)", "POINT (170.0 50.0)"),
+        # More than one turn.
+        ("POINT (541.0 50.0)", "POINT (-179.0 50.0)"),
+        ("POINT (-541.0 50.0)", "POINT (179.0 50.0)"),
+    ],
+)
+def test_st_geohash_wraps_longitude_for_lnglat_crs(eng, out_of_range, equivalent):
+    # Once the CRS says the coordinates are lon/lat degrees, an out-of-range
+    # longitude is an unambiguous spelling of an in-range one, so it hashes to
+    # the same value instead of dropping to NULL. Returning NULL here silently
+    # drops rows from any filter or join keyed on the geohash, which is the
+    # accident this avoids.
+    #
+    # PostGIS reaches the same place through its geography type, which is lon/lat
+    # by definition and coerces on input ("Coordinate values were coerced into
+    # range [-180 -90, 180 90] for GEOGRAPHY"). Its geometry overload has no CRS
+    # semantics to lean on and still raises, which is why this test casts to
+    # geography on the PostGIS side and sets SRID 4326 on the SedonaDB side --
+    # the two are the same statement about the input, spelled per engine.
+    eng_cls = eng
+    eng = eng.create_or_skip()
+
+    if eng_cls == PostGIS:
+        lhs = f"ST_GeoHash({geom_or_null(out_of_range)}::geography, 12)"
+        rhs = f"ST_GeoHash({geom_or_null(equivalent)}::geography, 12)"
+    else:
+        lhs = f"ST_GeoHash(ST_SetSRID({geom_or_null(out_of_range)}, 4326), 12)"
+        rhs = f"ST_GeoHash(ST_SetSRID({geom_or_null(equivalent)}, 4326), 12)"
+
+    expected = eng.execute_and_collect(f"SELECT {rhs}").column(0)[0].as_py()
+    assert expected is not None
+    eng.assert_query_result(f"SELECT {lhs}", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    "geom",
+    [
+        "POINT (50.0 100.0)",
+        "POINT (50.0 -100.0)",
+        # Out of range on both axes: latitude is checked first, and no amount of
+        # longitude wrapping rescues it.
+        "POINT (190.0 100.0)",
+    ],
+)
+def test_st_geohash_never_wraps_latitude(eng, geom):
+    # Latitude is not cyclic, so an out-of-range value has no reading that
+    # recovers a real location and stays NULL even under a lon/lat CRS.
+    #
+    # This is the one half of PostGIS' geography coercion that SedonaDB declines
+    # to copy. PostGIS reflects latitude back over the pole while leaving the
+    # longitude untouched (POINT (50 100) becomes POINT (50 80)), which is a
+    # third location again -- going over the pole from longitude 50 comes down
+    # at -130, not 50. A plausible-looking hash for the wrong place is worse
+    # than a NULL, so SedonaDB nulls and PostGIS' geography path is not matched
+    # here.
+    eng_cls = eng
+    eng = eng.create_or_skip()
+
+    if eng_cls == PostGIS:
+        # Pin the divergence rather than assert it in a comment: PostGIS returns
+        # a hash for the reflected point.
+        sql = f"SELECT ST_GeoHash({geom_or_null(geom)}::geography, 12)"
+        result = eng.execute_and_collect(sql).column(0)[0].as_py()
+        assert result is not None
+    else:
+        sql = f"SELECT ST_GeoHash(ST_SetSRID({geom_or_null(geom)}, 4326), 12)"
+        eng.assert_query_result(sql, None)
+
+
+@pytest.mark.parametrize(
+    "geom",
+    [
+        "POINT (190.0 50.0)",
+        "POINT (-190.0 50.0)",
+        "POINT (541.0 50.0)",
+    ],
+)
+def test_st_geohash_rejects_non_wgs84_crs(geom):
+    # A geohash is defined against the WGS84 datum, so anything else is refused
+    # rather than hashed. The refusal happens while the query is planned, before
+    # any row is read, so it cannot fail partway through a large scan.
+    #
+    # SedonaDB-only: PostGIS ignores SRID entirely on the geometry overload
+    # (ST_GeoHash of POINT (10 20) returns the same value whether it is tagged
+    # 4326, 3857 or 26918), so it has no comparable behavior to pin.
+    eng = SedonaDB.create_or_skip()
+    sql = f"SELECT ST_GeoHash(ST_SetSRID({geom_or_null(geom)}, 3857), 12)"
+    with pytest.raises(Exception, match="requires WGS84"):
+        eng.execute_and_collect(sql)
+
+
+@pytest.mark.parametrize("srid", [3857, 26918, 4269])
+def test_st_geohash_rejects_non_wgs84_crs_in_range(srid):
+    # The case the CRS check really exists for. These coordinates are inside
+    # [-180, 180] x [-90, 90], so no domain check catches them, and without the
+    # CRS check EPSG:3857 POINT (10 20) -- ten metres east and twenty metres
+    # north of the origin, in the Gulf of Guinea -- would hash as 10 degrees
+    # east, 20 degrees north, in Chad.
+    #
+    # EPSG:4269 (NAD83) is refused too. Its units are degrees, but its datum is
+    # not WGS84: NAD83 sits one to two metres away and NAD27 up to a hundred,
+    # which is many cells wide at high precision.
+    eng = SedonaDB.create_or_skip()
+    sql = f"SELECT ST_GeoHash(ST_SetSRID(ST_GeomFromText('POINT (10 20)'), {srid}), 12)"
+    with pytest.raises(Exception, match="requires WGS84"):
+        eng.execute_and_collect(sql)
+
+
+@pytest.mark.parametrize("srid", [4326, 0])
+def test_st_geohash_accepts_wgs84_and_undeclared_crs(srid):
+    # WGS84 is accepted, and so is an undeclared CRS: rejecting the latter would
+    # break every ST_GeomFromText() call, which carries no CRS at all.
+    eng = SedonaDB.create_or_skip()
+    sql = f"SELECT ST_GeoHash(ST_SetSRID(ST_GeomFromText('POINT (10 20)'), {srid}), 10)"
+    eng.assert_query_result(sql, "s5x1g8cu2y")
+
+
+@pytest.mark.parametrize(
+    "precision_sql",
+    [
+        "arrow_cast('20', 'UInt64')",
+        "arrow_cast('9223372036854775807', 'UInt64')",  # i64::MAX
+        "arrow_cast('9223372036854775808', 'UInt64')",  # i64::MAX + 1
+        "arrow_cast('18446744073709551615', 'UInt64')",  # u64::MAX
+        "arrow_cast('4294967295', 'UInt32')",
+        "arrow_cast('9223372036854775807', 'Int64')",
+    ],
+)
+def test_st_geohash_precision_wider_than_i64(precision_sql):
+    # The signature accepts UInt64, whose upper half does not fit in an i64, so
+    # a precision above i64::MAX used to fail with "Can't cast value ... to type
+    # Int64" rather than encoding. Precision is capped at 20 characters, so
+    # every value here means the same thing and returns the same hash.
+    eng = SedonaDB.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_GeoHash(ST_Point(1, 2), {precision_sql})", "s02equ04ven09qv80meq"
+    )
+
+
+@pytest.mark.parametrize("lat", [100, 91, 270, -91, -100])
+def test_st_geohash_geography_rejects_out_of_range_latitude(lat):
+    # s2geography bounds a geography with an S2LatLngRect, whose latitudes are
+    # constrained to [-90, 90] by construction, so an out-of-range latitude is
+    # clamped inside S2 before the domain check can see it. Without the raw
+    # planar bound taken alongside it, every latitude here encoded as the pole:
+    # POINT (50 100), POINT (50 91) and POINT (50 270) all returned
+    # 'vpgxczbzuryp', which is the hash of the genuine POINT (50 90).
+    #
+    # Only reachable in a build with the s2geography feature; the Rust unit
+    # tests substitute the planar bounder, which does no clamping and so cannot
+    # exercise this at all.
+    if "s2geography" not in sedonadb.__features__:
+        pytest.skip("Geography bounds require a build with feature s2geography")
+
+    eng = SedonaDB.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_GeoHash(ST_GeogFromText('POINT (50 {lat})'), 12)", None
+    )
+
+
+def test_st_geohash_geography_keeps_the_poles_and_wrapping():
+    # The other side of the check above: latitudes that really are in range
+    # still encode, including the poles themselves, and longitude wrapping is
+    # untouched. Longitude deliberately keeps using the spherical bounds --
+    # S2 normalizes it into [-180, 180], which is the same wrapping applied to
+    # a geometry -- so 190 and -170 agree.
+    if "s2geography" not in sedonadb.__features__:
+        pytest.skip("Geography bounds require a build with feature s2geography")
+
+    eng = SedonaDB.create_or_skip()
+    eng.assert_query_result(
+        "SELECT ST_GeoHash(ST_GeogFromText('POINT (50 90)'), 12)", "vpgxczbzuryp"
+    )
+    eng.assert_query_result(
+        "SELECT ST_GeoHash(ST_GeogFromText('POINT (50 -90)'), 12)", "j0581b0bh2n0"
+    )
+    eng.assert_query_result(
+        "SELECT ST_GeoHash(ST_GeogFromText('POINT (190 50)'), 12)", "b0zh7w1z0gs3"
+    )
+    eng.assert_query_result(
+        "SELECT ST_GeoHash(ST_GeogFromText('POINT (-170 50)'), 12)", "b0zh7w1z0gs3"
+    )
+
+    # A non-point geography takes the same path through its bounding box: this
+    # linestring reaches latitude 100, so it is rejected rather than clamped.
+    eng.assert_query_result(
+        "SELECT ST_GeoHash(ST_GeogFromText('LINESTRING (50 80, 60 100)'), 12)", None
+    )
+    eng.assert_query_result(
+        "SELECT ST_GeoHash(ST_GeogFromText('LINESTRING (50 80, 60 85)'), 12)",
+        "vnxj7d9v2fsm",
+    )
+
+
+def _item_crs_table(eng):
+    """A table whose geometry column carries a per-row (item-level) CRS
+
+    ST_SetSRID() with a non-constant SRID returns an item_crs type, which is the
+    only way rows in one column can disagree about their CRS.
+    """
+    eng.execute_and_collect(
+        """
+        CREATE OR REPLACE TABLE geohash_mixed AS SELECT * FROM (VALUES
+            (1, 3857,  'POINT (10 20)'),
+            (2, 4326,  'POINT (10 20)'),
+            (3, 4326,  'POINT (190 50)'),
+            (4, 26918, 'POINT (10 20)')
+        ) AS v(id, srid, wkt)
+        """
+    )
+    return "ST_SetSRID(ST_GeomFromText(wkt), srid)"
+
+
+def test_st_geohash_item_crs_rejects_non_wgs84_rows():
+    # A per-row CRS is held to the same rule as a type-level one. Before this,
+    # rows 1 and 4 were hashed as though their metres were degrees.
+    eng = SedonaDB.create_or_skip()
+    g = _item_crs_table(eng)
+    with pytest.raises(Exception, match="requires WGS84"):
+        eng.execute_and_collect(f"SELECT ST_GeoHash({g}, 12) FROM geohash_mixed")
+
+
+def test_st_geohash_item_crs_filtered_to_wgs84_rows():
+    # Selecting only the WGS84 rows is the natural way to use a mixed column,
+    # and it works: WHERE is planned below the projection (FilterExec under
+    # ProjectionExec), so the rejected rows never reach ST_GeoHash.
+    #
+    # Row 3 is the one that changed. It declares 4326 with longitude 190, and
+    # now wraps to the same value a type-level 4326 column gives, instead of
+    # returning NULL because the per-row CRS was invisible.
+    eng = SedonaDB.create_or_skip()
+    g = _item_crs_table(eng)
+    # Rows 2 and 3 in id order; rows 1 (3857) and 4 (26918) are filtered out.
+    eng.assert_query_result(
+        f"SELECT ST_GeoHash({g}, 12) FROM geohash_mixed "
+        f"WHERE ST_SRID({g}) = 4326 ORDER BY id",
+        [("s5x1g8cu2yhr",), ("b0zh7w1z0gs3",)],
+    )
+
+
+def test_st_geohash_item_crs_agrees_with_type_level_crs():
+    # The inconsistency this closes: identical coordinates, identical CRS,
+    # differing only in whether the CRS rides on the type or the row.
+    eng = SedonaDB.create_or_skip()
+    g = _item_crs_table(eng)
+    item_level = (
+        eng.execute_and_collect(
+            f"SELECT ST_GeoHash({g}, 12) FROM geohash_mixed WHERE id = 3"
+        )
+        .column(0)[0]
+        .as_py()
+    )
+    type_level = (
+        eng.execute_and_collect(
+            "SELECT ST_GeoHash(ST_SetSRID(ST_GeomFromText('POINT (190 50)'), 4326), 12)"
+        )
+        .column(0)[0]
+        .as_py()
+    )
+    assert item_level == type_level == "b0zh7w1z0gs3"
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+def test_st_geohash_antimeridian_bbox_diverges_from_postgis(eng):
+    # A geometry whose bounding box straddles the antimeridian, where SedonaDB
+    # is deliberately more accurate than PostGIS.
+    #
+    # LINESTRING (179 0, 181 0) is two degrees long and centered on longitude
+    # 180. SedonaDB wraps the bounding *interval* (179..181 -> the two-degree
+    # wraparound interval 179..-179) and hashes its center, 180.
+    #
+    # PostGIS coerces each *vertex* on the way into geography --
+    #   SELECT ST_AsText('LINESTRING (179 0, 181 0)'::geography)
+    #     -> LINESTRING(179 0,-179 0)
+    # -- and then bounds those with a bbox that knows nothing about wraparound,
+    # turning a two-degree span across the antimeridian into a 358-degree span
+    # the other way around. Its center lands on longitude 0, so PostGIS returns
+    # the geohash of POINT (0 0): the antipode of the right answer.
+    #
+    # Pinned on both sides so the divergence is verified rather than merely
+    # asserted in a comment. Wrapping the interval instead of the vertices is
+    # what buys the difference; see normalize_longitude() in st_geohash.rs.
+    geom = "LINESTRING (179.0 0.0, 181.0 0.0)"
+    eng_cls = eng
+    eng = eng.create_or_skip()
+
+    if eng_cls == PostGIS:
+        # Same value as ST_GeoHash('POINT (0 0)'::geography, 12).
+        eng.assert_query_result(
+            f"SELECT ST_GeoHash({geom_or_null(geom)}::geography, 12)", "s00000000000"
+        )
+    else:
+        # Same value as ST_GeoHash(ST_SetSRID('POINT (180 0)', 4326), 12).
+        eng.assert_query_result(
+            f"SELECT ST_GeoHash(ST_SetSRID({geom_or_null(geom)}, 4326), 12)",
+            "xbpbpbpbpbpb",
+        )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
     ("wkt", "expected"),
     [
         (None, None),
@@ -2837,6 +3273,55 @@ def test_st_perimeter(eng, geom, expected):
 def test_st_reverse(eng, geom, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(f"SELECT ST_Reverse({geom_or_null(geom)})", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("min_x", "min_y", "max_x", "max_y", "expected"),
+    [
+        (None, 2, 3, 4, None),
+        (1, None, 3, 4, None),
+        (1, 2, None, 4, None),
+        (1, 2, 3, None, None),
+        (1, 2, 3, 4, "POLYGON ((1 2, 1 4, 3 4, 3 2, 1 2))"),
+        (
+            1.234,
+            2.234,
+            3.345,
+            3.345,
+            "POLYGON ((1.234 2.234, 1.234 3.345, 3.345 3.345, 3.345 2.234, 1.234 2.234))",
+        ),
+        (-10, -20, 10, 20, "POLYGON ((-10 -20, -10 20, 10 20, 10 -20, -10 -20))"),
+    ],
+)
+def test_st_makeenvelope(eng, min_x, min_y, max_x, max_y, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        "SELECT ST_MakeEnvelope("
+        f"{val_or_null(min_x)}, {val_or_null(min_y)}, "
+        f"{val_or_null(max_x)}, {val_or_null(max_y)})",
+        expected,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("min_x", "min_y", "max_x", "max_y", "srid", "expected"),
+    [
+        (None, 2, 3, 4, 4326, None),
+        (1, 2, 3, 4, None, None),
+        (1, 2, 3, 4, 0, 0),
+        (1, 2, 3, 4, 4326, 4326),
+    ],
+)
+def test_st_makeenvelope_with_srid(eng, min_x, min_y, max_x, max_y, srid, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        "SELECT ST_SRID(ST_MakeEnvelope("
+        f"{val_or_null(min_x)}, {val_or_null(min_y)}, "
+        f"{val_or_null(max_x)}, {val_or_null(max_y)}, {val_or_null(srid)}))",
+        expected,
+    )
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])

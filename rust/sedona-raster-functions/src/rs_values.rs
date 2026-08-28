@@ -44,10 +44,11 @@ use arrow_array::{Array, ArrayRef, StructArray};
 use arrow_schema::DataType;
 use datafusion_common::cast::as_int32_array;
 use datafusion_common::config::ConfigOptions;
-use datafusion_common::{exec_datafusion_err, exec_err, Result, ScalarValue};
+use datafusion_common::{exec_err, Result, ScalarValue};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_raster::array::RasterStructArray;
+use sedona_raster::error::RasterResultExt;
 use sedona_raster::traits::{BandRef, NdBuffer, RasterRef};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
@@ -185,12 +186,8 @@ impl RsValues {
                 // this row, then sample every sub-point against them.
                 let raster_crs = resolve_crs(raster.crs())?;
                 let band = resolve_band_2d(raster, band_num)?;
-                let buffer = band
-                    .nd_buffer()
-                    .map_err(|e| exec_datafusion_err!("RS_Values: {e}"))?;
-                let nodata = band
-                    .nodata_as_f64()
-                    .map_err(|e| exec_datafusion_err!("RS_Values: {e}"))?;
+                let buffer = band.nd_buffer().context("RS_Values")?;
+                let nodata = band.nodata_as_f64().context("RS_Values")?;
                 let transform = raster.transform();
 
                 // Sample each sub-point in one pass: the visitor transforms
@@ -353,12 +350,8 @@ impl RsValues {
         match const_band {
             Some(band_num) => {
                 let band = resolve_band_2d(&raster, band_num)?;
-                let buffer = band
-                    .nd_buffer()
-                    .map_err(|e| exec_datafusion_err!("RS_Values: {e}"))?;
-                let nodata = band
-                    .nodata_as_f64()
-                    .map_err(|e| exec_datafusion_err!("RS_Values: {e}"))?;
+                let buffer = band.nd_buffer().context("RS_Values")?;
+                let nodata = band.nodata_as_f64().context("RS_Values")?;
                 for row in &rows {
                     let Some((start, len, _band)) = row else {
                         list_builder.append_null();
@@ -377,12 +370,8 @@ impl RsValues {
                         continue;
                     };
                     let band = resolve_band_2d(&raster, *band_num)?;
-                    let buffer = band
-                        .nd_buffer()
-                        .map_err(|e| exec_datafusion_err!("RS_Values: {e}"))?;
-                    let nodata = band
-                        .nodata_as_f64()
-                        .map_err(|e| exec_datafusion_err!("RS_Values: {e}"))?;
+                    let buffer = band.nd_buffer().context("RS_Values")?;
+                    let nodata = band.nodata_as_f64().context("RS_Values")?;
                     for xy in &coords[*start..*start + *len] {
                         append_sample(*xy, transform, &buffer, nodata, &mut list_builder)?;
                     }

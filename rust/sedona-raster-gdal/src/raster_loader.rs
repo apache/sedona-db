@@ -373,6 +373,7 @@ mod tests {
     use super::*;
     use crate::gdal_common::with_gdal;
     use sedona_gdal::raster::types::Buffer as GdalBuffer;
+    use sedona_raster::view_entries::ViewEntries;
     use sedona_schema::raster::BandDataType;
     use tempfile::TempDir;
 
@@ -433,7 +434,7 @@ mod tests {
             uri: &uri,
             dim_names: &["y", "x"],
             source_shape: &[2, 3],
-            view: &[],
+            view: &ViewEntries::identity_for_shape(&[2, 3]),
             data_type: BandDataType::UInt8,
         };
 
@@ -453,7 +454,7 @@ mod tests {
             uri: &uri,
             dim_names: &["y", "x"],
             source_shape: &[2, 3],
-            view: &[],
+            view: &ViewEntries::identity_for_shape(&[2, 3]),
             data_type: BandDataType::UInt8,
         };
         let result = loader.load(&[&req]).await.unwrap();
@@ -467,7 +468,7 @@ mod tests {
             uri: "ignored",
             dim_names: &["t", "y", "x"],
             source_shape: &[2, 3, 4],
-            view: &[],
+            view: &ViewEntries::identity_for_shape(&[2, 3, 4]),
             data_type: BandDataType::UInt8,
         };
         let err = loader.load(&[&req]).await.unwrap_err();
@@ -484,7 +485,7 @@ mod tests {
             uri: "ignored",
             dim_names: &["x", "y"], // transposed — not a recognized (y, x) pair
             source_shape: &[2, 3],
-            view: &[],
+            view: &ViewEntries::identity_for_shape(&[2, 3]),
             data_type: BandDataType::UInt8,
         };
         let err = loader.load(&[&req]).await.unwrap_err();
@@ -505,7 +506,7 @@ mod tests {
             uri: &uri,
             dim_names: &["lat", "lon"],
             source_shape: &[2, 3],
-            view: &[],
+            view: &ViewEntries::identity_for_shape(&[2, 3]),
             data_type: BandDataType::UInt8,
         };
         // lat/lon is a recognized spatial pair, so the request is accepted and
@@ -525,7 +526,7 @@ mod tests {
             uri: &uri,
             dim_names: &["y", "x"],
             source_shape: &[2, 3],
-            view: &[], // File is UInt8 but we claim Int16 — should fail with a
+            view: &ViewEntries::identity_for_shape(&[2, 3]), // File is UInt8 but we claim Int16 — should fail with a
             // clear dtype-mismatch message, not garbled bytes.
             data_type: BandDataType::Int16,
         };
@@ -544,7 +545,7 @@ mod tests {
             uri: "/nonexistent/path/to/file.tif#band=1",
             dim_names: &["y", "x"],
             source_shape: &[2, 3],
-            view: &[],
+            view: &ViewEntries::identity_for_shape(&[2, 3]),
             data_type: BandDataType::UInt8,
         };
         let err = loader.load(&[&req]).await.unwrap_err();
@@ -564,7 +565,7 @@ mod tests {
             uri: &uri,
             dim_names: &["y", "x"],
             source_shape: &[2, 3],
-            view: &[],
+            view: &ViewEntries::identity_for_shape(&[2, 3]),
             data_type: BandDataType::UInt8,
         };
         let err = loader.load(&[&req]).await.unwrap_err();
@@ -588,7 +589,7 @@ mod tests {
             uri: "ignored",
             dim_names: &["y", "x"],
             source_shape: &[1 << 16, 1 << 16],
-            view: &[],
+            view: &ViewEntries::identity_for_shape(&[1 << 16, 1 << 16]),
             data_type: BandDataType::Float32,
         };
         let err = loader.load(&[&req]).await.unwrap_err();
@@ -612,7 +613,7 @@ mod tests {
             uri: &uri,
             dim_names: &["y", "x"],
             source_shape: &[64, 16],
-            view: &[],
+            view: &ViewEntries::identity_for_shape(&[64, 16]),
             data_type: BandDataType::UInt8,
         };
         let result = loader.load(&[&req]).await.unwrap();

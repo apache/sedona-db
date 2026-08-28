@@ -64,3 +64,15 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 mimalloc = { workspace = true, optional = true }
 libmimalloc-sys = { workspace = true, optional = true }
+
+[dev-dependencies]
+# `extension-module` (needed for the real cdylib/wheel build) is only ever
+# added by maturin's own build flags (see pyproject.toml's [tool.maturin]),
+# never by this Cargo.toml -- so `cargo test` builds this crate without it,
+# and `auto-initialize` here is what lets a #[test] embed and drive a real
+# Python interpreter via Python::attach. Confirmed directly: explicitly
+# compiling with `--features pyo3/extension-module` fails to link (undefined
+# libpython symbols), but plain `cargo test`/`cargo test --all-features`
+# (CI's actual invocation) never requests that feature, so the two never
+# collide in practice.
+pyo3 = { workspace = true, features = ["auto-initialize"] }

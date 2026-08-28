@@ -19,13 +19,13 @@ use arrow_array::{
     Array, BinaryArray, BinaryViewArray, Float64Array, Int64Array, ListArray, StringArray,
     StringViewArray, StructArray, UInt32Array,
 };
-use arrow_schema::ArrowError;
 use datafusion_common::cast::{
     as_binary_array, as_binary_view_array, as_float64_array, as_int64_array, as_list_array,
     as_string_array, as_string_view_array, as_struct_array, as_uint32_array,
 };
 
-use crate::builder::RasterBuilder;
+use crate::band_builder::BandWriter;
+use crate::error::RasterError;
 use crate::traits::{BandRef, NdBuffer, RasterRef};
 use crate::view_entries::{ViewEntries, ViewEntry};
 use sedona_schema::raster::{band_indices, band_view_indices, raster_indices, BandDataType};
@@ -42,6 +42,7 @@ struct BandRefImpl<'a> {
     dim_names_values: &'a StringArray,
     source_shape_list: &'a ListArray,
     source_shape_values: &'a Int64Array,
+    band_name_array: &'a StringArray,
     nodata_array: &'a BinaryArray,
     outdb_uri_array: &'a StringArray,
     outdb_format_array: &'a StringViewArray,
@@ -87,12 +88,20 @@ impl<'a> BandRef for BandRefImpl<'a> {
         &self.source_shape_values.values()[start..end]
     }
 
-    fn view(&self) -> &[ViewEntry] {
-        self.view_entries.as_slice()
+    fn view(&self) -> &ViewEntries {
+        &self.view_entries
     }
 
     fn data_type(&self) -> BandDataType {
         self.data_type
+    }
+
+    fn name(&self) -> Option<&str> {
+        if self.band_name_array.is_null(self.band_row) {
+            None
+        } else {
+            Some(self.band_name_array.value(self.band_row))
+        }
     }
 
     fn nodata(&self) -> Option<&[u8]> {
@@ -131,9 +140,9 @@ impl<'a> BandRef for BandRefImpl<'a> {
         self.shape().contains(&0) || !self.data_array.value(self.band_row).is_empty()
     }
 
-    fn nd_buffer(&self) -> Result<NdBuffer<'_>, ArrowError> {
+    fn nd_buffer(&self) -> Result<NdBuffer<'_>, RasterError> {
         if !self.is_indb() {
-            return Err(ArrowError::NotYetImplemented(
+            return Err(RasterError::Invalid(
                 "OutDb byte access via nd_buffer() is not yet implemented; \
                  backend-specific OutDb resolvers are tracked separately"
                     .to_string(),
@@ -153,7 +162,7 @@ impl<'a> BandRef for BandRefImpl<'a> {
     /// Zero-copy override: share the source row's backing `Buffer` into the
     /// builder (refcount bump) instead of copying the visible bytes. OutDb
     /// bands have an empty data column by design.
-    fn append_data_into(&self, builder: &mut RasterBuilder) -> Result<(), ArrowError> {
+    fn append_data_into(&self, builder: &mut dyn BandWriter) -> Result<(), RasterError> {
         if self.is_indb() {
             builder.append_band_data_from(self.data_array, self.band_row)
         } else {
@@ -216,7 +225,7 @@ impl<'a> RasterRefImpl<'a> {
         &self,
         band_row: usize,
         source_shape: &[i64],
-    ) -> Result<ViewEntries, ArrowError> {
+    ) -> Result<ViewEntries, RasterError> {
         if self.band_view_list.is_null(band_row) {
             return Ok(ViewEntries::identity_for_shape(source_shape));
         }
@@ -235,14 +244,14 @@ impl<'a> RasterRefImpl<'a> {
             ("steps", self.band_view_steps),
         ] {
             if v_end > arr.len() {
-                return Err(ArrowError::InvalidArgumentError(format!(
+                return Err(RasterError::Invalid(format!(
                     "band {band_row}: view '{name}' child array has {} elements but the \
                      view list addresses up to {v_end}",
                     arr.len()
                 )));
             }
             if arr.null_count() > 0 && (v_start..v_end).any(|i| arr.is_null(i)) {
-                return Err(ArrowError::InvalidArgumentError(format!(
+                return Err(RasterError::Invalid(format!(
                     "band {band_row}: view '{name}' child array has a null in \
                      [{v_start}, {v_end}); view fields must be non-null"
                 )));
@@ -279,9 +288,9 @@ fn compose_byte_strides(
     source_shape: &[i64],
     view_entries: &ViewEntries,
     dtype_byte_size: usize,
-) -> Result<(Vec<i64>, i64), ArrowError> {
+) -> Result<(Vec<i64>, i64), RasterError> {
     let overflow_err = |msg: &str| {
-        ArrowError::ExternalError(Box::new(sedona_common::sedona_internal_datafusion_err!(
+        RasterError::External(Box::new(sedona_common::sedona_internal_datafusion_err!(
             "band {band_row}: {msg}"
         )))
     };
@@ -341,17 +350,17 @@ fn check_view_buffer_bounds(
     byte_strides: &[i64],
     byte_offset: i64,
     dtype_size: usize,
-) -> Result<(), ArrowError> {
+) -> Result<(), RasterError> {
     if visible_shape.contains(&0) {
         // An empty visible region addresses no elements, but the composed
         // `byte_offset` (from a large `start` on a non-empty axis) must still
         // stay within the buffer so the `NdBuffer.offset <= buffer.len()`
         // invariant always holds.
         let buffer_len_i64 = i64::try_from(buffer_len).map_err(|_| {
-            ArrowError::InvalidArgumentError(format!("buffer length {buffer_len} exceeds i64::MAX"))
+            RasterError::Invalid(format!("buffer length {buffer_len} exceeds i64::MAX"))
         })?;
         if byte_offset > buffer_len_i64 {
-            return Err(ArrowError::InvalidArgumentError(format!(
+            return Err(RasterError::Invalid(format!(
                 "view byte offset {byte_offset} exceeds buffer length {buffer_len} \
                  for an empty visible region"
             )));
@@ -365,19 +374,17 @@ fn check_view_buffer_bounds(
         // in-range for any non-empty axis.
         let last_idx = visible_shape[k] - 1;
         let contribution = last_idx.checked_mul(stride).ok_or_else(|| {
-            ArrowError::InvalidArgumentError(format!(
-                "max addressable offset on axis {k} overflows i64"
-            ))
+            RasterError::Invalid(format!("max addressable offset on axis {k} overflows i64"))
         })?;
         if contribution > 0 {
             max_offset = max_offset.checked_add(contribution).ok_or_else(|| {
-                ArrowError::InvalidArgumentError(
+                RasterError::Invalid(
                     "max addressable offset accumulation overflows i64".to_string(),
                 )
             })?;
         } else if contribution < 0 {
             min_offset = min_offset.checked_add(contribution).ok_or_else(|| {
-                ArrowError::InvalidArgumentError(
+                RasterError::Invalid(
                     "min addressable offset accumulation overflows i64".to_string(),
                 )
             })?;
@@ -385,19 +392,17 @@ fn check_view_buffer_bounds(
     }
     let last_byte = max_offset
         .checked_add(dtype_size as i64 - 1)
-        .ok_or_else(|| {
-            ArrowError::InvalidArgumentError("max addressable byte overflows i64".to_string())
-        })?;
+        .ok_or_else(|| RasterError::Invalid("max addressable byte overflows i64".to_string()))?;
     if min_offset < 0 {
-        return Err(ArrowError::InvalidArgumentError(format!(
+        return Err(RasterError::Invalid(format!(
             "view addresses out-of-bounds negative byte offset {min_offset}"
         )));
     }
     let buffer_len_i64 = i64::try_from(buffer_len).map_err(|_| {
-        ArrowError::InvalidArgumentError(format!("buffer length {buffer_len} exceeds i64::MAX"))
+        RasterError::Invalid(format!("buffer length {buffer_len} exceeds i64::MAX"))
     })?;
     if last_byte >= buffer_len_i64 {
-        return Err(ArrowError::InvalidArgumentError(format!(
+        return Err(RasterError::Invalid(format!(
             "view addresses byte {last_byte} but buffer is only {buffer_len} bytes"
         )));
     }
@@ -409,10 +414,10 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
         self.bands_list.value_length(self.raster_index) as usize
     }
 
-    fn band(&self, index: usize) -> Result<Box<dyn BandRef + '_>, ArrowError> {
+    fn band(&self, index: usize) -> Result<Box<dyn BandRef + '_>, RasterError> {
         let nbands = self.num_bands();
         if index >= nbands {
-            return Err(ArrowError::InvalidArgumentError(format!(
+            return Err(RasterError::Invalid(format!(
                 "Band index {index} is out of range: this raster has {nbands} bands"
             )));
         }
@@ -427,7 +432,7 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
         // Reject 0-D bands at the read boundary. Schema doesn't forbid them
         // outright but every consumer assumes ndim >= 1.
         if source_shape.is_empty() {
-            return Err(ArrowError::ExternalError(Box::new(
+            return Err(RasterError::External(Box::new(
                 sedona_common::sedona_internal_datafusion_err!(
                     "band {band_row} has empty source_shape; ndim must be >= 1"
                 ),
@@ -439,7 +444,7 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
         // here is appropriate.
         let data_type_value = self.band_datatype_array.value(band_row);
         let data_type = BandDataType::try_from_u32(data_type_value).ok_or_else(|| {
-            ArrowError::ExternalError(Box::new(sedona_common::sedona_internal_datafusion_err!(
+            RasterError::External(Box::new(sedona_common::sedona_internal_datafusion_err!(
                 "band {band_row} has unknown data_type discriminant {data_type_value}"
             )))
         })?;
@@ -450,7 +455,7 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
         // bytes.
         let view_entries = self.read_band_view_entries(band_row, source_shape)?;
         view_entries.validate(source_shape).map_err(|e| {
-            ArrowError::ExternalError(Box::new(sedona_common::sedona_internal_datafusion_err!(
+            RasterError::External(Box::new(sedona_common::sedona_internal_datafusion_err!(
                 "band {band_row} has malformed view: {e}"
             )))
         })?;
@@ -491,11 +496,9 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
                     data_type.byte_size(),
                 )
                 .map_err(|e| {
-                    ArrowError::ExternalError(Box::new(
-                        sedona_common::sedona_internal_datafusion_err!(
-                            "band {band_row}: view-buffer bounds check failed: {e}"
-                        ),
-                    ))
+                    RasterError::External(Box::new(sedona_common::sedona_internal_datafusion_err!(
+                        "band {band_row}: view-buffer bounds check failed: {e}"
+                    )))
                 })?;
             }
 
@@ -503,7 +506,7 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
             // `u64` for storage with a checked conversion that upholds that at
             // the boundary.
             let byte_offset = u64::try_from(byte_offset_i64).map_err(|_| {
-                ArrowError::ExternalError(Box::new(sedona_common::sedona_internal_datafusion_err!(
+                RasterError::External(Box::new(sedona_common::sedona_internal_datafusion_err!(
                     "band {band_row}: composed byte_offset {byte_offset_i64} is negative"
                 )))
             })?;
@@ -520,6 +523,7 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
             dim_names_values: self.band_dim_names_values,
             source_shape_list: self.band_source_shape_list,
             source_shape_values: self.band_source_shape_values,
+            band_name_array: self.band_name_array,
             nodata_array: self.band_nodata_array,
             outdb_uri_array: self.band_outdb_uri_array,
             outdb_format_array: self.band_outdb_format_array,
@@ -665,9 +669,9 @@ impl<'a> RasterStructArray<'a> {
     ///
     /// Returns an error if the array doesn't have the expected raster schema.
     #[inline]
-    pub fn try_new(raster_array: &'a StructArray) -> Result<Self, ArrowError> {
+    pub fn try_new(raster_array: &'a StructArray) -> Result<Self, RasterError> {
         if raster_array.fields().len() != raster_indices::FIELD_COUNT {
-            return Err(ArrowError::SchemaError(
+            return Err(RasterError::Invalid(
                 "Unexpected column count for raster array".to_string(),
             ));
         }
@@ -686,7 +690,7 @@ impl<'a> RasterStructArray<'a> {
         let bands_struct = as_struct_array(bands_list.values())?;
 
         if bands_struct.fields().len() != band_indices::FIELD_COUNT {
-            return Err(ArrowError::SchemaError(
+            return Err(RasterError::Invalid(
                 "Unexpected column count for band array".to_string(),
             ));
         }
@@ -754,9 +758,9 @@ impl<'a> RasterStructArray<'a> {
 
     /// Get a specific raster by index.
     #[inline(always)]
-    pub fn get(&self, index: usize) -> Result<RasterRefImpl<'a>, ArrowError> {
+    pub fn get(&self, index: usize) -> Result<RasterRefImpl<'a>, RasterError> {
         if index >= self.raster_array.len() {
-            return Err(ArrowError::InvalidArgumentError(format!(
+            return Err(RasterError::Invalid(format!(
                 "Invalid raster index: {index}"
             )));
         }
@@ -796,8 +800,8 @@ impl<'a> RasterStructArray<'a> {
 
     /// The flattened band `data` column (BinaryView) shared by every raster
     /// in this array. Pair with [`Self::band_data_row`] to address a single
-    /// band's bytes — e.g. for zero-copy passthrough into a [`RasterBuilder`]
-    /// via `append_band_data_from`.
+    /// band's bytes — e.g. for zero-copy passthrough into a
+    /// [`crate::builder::RasterBuilder`] via `append_band_data_from`.
     #[inline(always)]
     pub fn band_data_array(&self) -> &'a BinaryViewArray {
         self.band_data_array
@@ -822,6 +826,39 @@ mod tests {
     use sedona_schema::raster::{band_indices, raster_indices, BandDataType, RasterSchema};
     use sedona_testing::rasters::generate_test_rasters;
     use std::sync::Arc;
+
+    #[test]
+    fn band_ref_exposes_its_name() {
+        // `name()` is the band-level accessor that lets `copy_into` inherit the
+        // name; assert it directly (and agrees with the raster-level fast path)
+        // rather than only through a derive.
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        let mut b = RasterBuilder::new(1);
+        b.start_raster_nd(&transform, &["x"], &[2], None).unwrap();
+        b.start_band(StartBandArgs {
+            name: Some("temperature"),
+            ..StartBandArgs::new(&["x"], &[2], BandDataType::UInt8)
+        })
+        .unwrap();
+        b.band_data_writer().append_value([1u8, 2]);
+        b.finish_band().unwrap();
+        // A second, deliberately unnamed band: `None` must survive too.
+        b.start_band(StartBandArgs::new(&["x"], &[2], BandDataType::UInt8))
+            .unwrap();
+        b.band_data_writer().append_value([3u8, 4]);
+        b.finish_band().unwrap();
+        b.finish_raster().unwrap();
+
+        let arr = b.finish().unwrap();
+        let rasters = RasterStructArray::try_new(&arr).unwrap();
+        let raster = rasters.get(0).unwrap();
+
+        assert_eq!(raster.band(0).unwrap().name(), Some("temperature"));
+        assert_eq!(raster.band(1).unwrap().name(), None);
+        // Band-level accessor and raster-level fast path must not disagree.
+        assert_eq!(raster.band(0).unwrap().name(), raster.band_name(0));
+        assert_eq!(raster.band(1).unwrap().name(), raster.band_name(1));
+    }
 
     #[test]
     fn copy_into_shares_buffer_zero_copy_and_overrides() {
@@ -900,12 +937,12 @@ mod tests {
         let in_raster = in_rasters.get(0).unwrap();
         let in_band = in_raster.band(0).unwrap();
 
-        let identity = [ViewEntry {
+        let identity = ViewEntries::new(vec![ViewEntry {
             source_axis: 0,
             start: 0,
             step: 1,
             steps: 4,
-        }];
+        }]);
         let mut ob = RasterBuilder::new(1);
         ob.start_raster_nd(&transform, &["x"], &[4], None).unwrap();
         in_band
@@ -1130,7 +1167,7 @@ mod tests {
         let rasters = RasterStructArray::try_new(&mutated).unwrap();
         let r = rasters.get(0).unwrap();
         // band() surfaces the corruption through the standardized
-        // SedonaDB-internal-error message routed via ArrowError::ExternalError.
+        // SedonaDB-internal-error message routed via RasterError::External.
         // `Box<dyn BandRef>` isn't `Debug`, so unwrap_err doesn't compile —
         // pull the error out via `.err().unwrap()` on the `Option<E>` side.
         let err = r.band(0).err().unwrap();
@@ -1181,12 +1218,12 @@ mod tests {
             .unwrap();
         builder
             .start_band(StartBandArgs {
-                view: Some(&[ViewEntry {
+                view: Some(&ViewEntries::new(vec![ViewEntry {
                     source_axis: 0,
                     start: 1,
                     step: 2,
                     steps: 3,
-                }]),
+                }])),
                 ..StartBandArgs::new(&["x"], &[8], BandDataType::UInt8)
             })
             .unwrap();
@@ -1350,12 +1387,12 @@ mod tests {
         builder
             .start_band(StartBandArgs {
                 name: Some("a"),
-                view: Some(&[ViewEntry {
+                view: Some(&ViewEntries::new(vec![ViewEntry {
                     source_axis: 0,
                     start: 1,
                     step: 2,
                     steps: 3,
-                }]),
+                }])),
                 nodata: Some(&[0u8, 0, 0, 0]),
                 outdb_uri: Some("s3://bucket/a.tif"),
                 outdb_format: Some("GTiff"),
@@ -1674,7 +1711,7 @@ mod tests {
         builder
             .start_band(StartBandArgs {
                 name: Some("broadcast_time"),
-                view: Some(&[
+                view: Some(&ViewEntries::new(vec![
                     ViewEntry {
                         source_axis: 0,
                         start: 0,
@@ -1687,7 +1724,7 @@ mod tests {
                         step: 0,
                         steps: big,
                     },
-                ]),
+                ])),
                 ..StartBandArgs::new(&["y", "t"], &[4, 1], BandDataType::UInt8)
             })
             .unwrap();

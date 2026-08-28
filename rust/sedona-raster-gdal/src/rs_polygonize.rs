@@ -35,6 +35,7 @@ use sedona_gdal::gdal::Gdal;
 use sedona_gdal::gdal_dyn_bindgen::{OGRFieldType, OGRwkbGeometryType};
 use sedona_gdal::raster::polygonize::PolygonizeOptions;
 use sedona_gdal::raster::types::GdalDataType;
+use sedona_raster::error::RasterResultExt;
 use sedona_raster::traits::RasterRef;
 use sedona_raster_functions::RasterExecutor;
 use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY_ITEM_CRS};
@@ -94,12 +95,11 @@ impl SedonaScalarKernel for RsPolygonize {
 
         with_gdal(|gdal| {
             configure_thread_local_options(gdal, config_options)?;
-            let provider = thread_local_provider(gdal)
-                .map_err(|e| exec_datafusion_err!("Failed to init GDAL provider: {e}"))?;
+            let provider = thread_local_provider(gdal).context("Failed to init GDAL provider")?;
             // Note: We deliberately use "Memory" instead of "MEM" to be compatible with older GDAL versions.
             let mem_driver = gdal
                 .get_driver_by_name("Memory")
-                .map_err(|e| exec_datafusion_err!("Failed to get Memory driver: {e}"))?;
+                .context("Failed to get Memory driver")?;
 
             executor.execute_raster_void(|_, raster_opt| {
                 let band_opt = band_iter.next().expect("band iteration should match rows");
@@ -122,7 +122,7 @@ impl SedonaScalarKernel for RsPolygonize {
 
                 let raster_ds = provider
                     .raster_ref_to_gdal(raster)
-                    .map_err(|e| exec_datafusion_err!("Failed to create GDAL dataset: {e}"))?;
+                    .context("Failed to create GDAL dataset")?;
 
                 let crs_str = raster.crs();
                 let mut num_polygons = 0;
@@ -234,12 +234,12 @@ where
 
     let raster_band = gdal_dataset
         .rasterband(band_num)
-        .map_err(|e| exec_datafusion_err!("Failed to get band {}: {}", band_num, e))?;
+        .with_context(|| format!("Failed to get band {band_num}"))?;
 
     // Create a memory dataset containing one vector layer to hold the polygonized output.
     let vector_ds = mem_driver
         .create_vector_only("")
-        .map_err(|e| exec_datafusion_err!("Failed to create vector dataset: {e}"))?;
+        .context("Failed to create vector dataset")?;
 
     let spatial_ref = gdal_dataset.spatial_ref().ok();
     let mut layer = vector_ds
@@ -249,14 +249,14 @@ where
             ty: OGRwkbGeometryType::wkbPolygon,
             options: None,
         })
-        .map_err(|e| exec_datafusion_err!("Failed to create layer: {e}"))?;
+        .context("Failed to create layer")?;
 
     let field_defn = gdal
         .create_field_defn("value", OGRFieldType::OFTReal)
-        .map_err(|e| exec_datafusion_err!("Failed to create field definition: {e}"))?;
+        .context("Failed to create field definition")?;
     layer
         .create_field(&field_defn)
-        .map_err(|e| exec_datafusion_err!("Failed to add field to layer: {e}"))?;
+        .context("Failed to add field to layer")?;
 
     // Polygonize the raster band into the vector layer, using the "value" field to store pixel values.
     let band_type = raster_band.band_type();
@@ -264,10 +264,10 @@ where
 
     if is_float {
         gdal.fpolygonize(&raster_band, None, &layer, 0, &PolygonizeOptions::default())
-            .map_err(|e| exec_datafusion_err!("GDAL fpolygonize failed: {e}"))?;
+            .context("GDAL fpolygonize failed")?;
     } else {
         gdal.polygonize(&raster_band, None, &layer, 0, &PolygonizeOptions::default())
-            .map_err(|e| exec_datafusion_err!("GDAL polygonize failed: {e}"))?;
+            .context("GDAL polygonize failed")?;
     }
 
     // Extract the WKB geometry and value for each feature in the layer.
@@ -276,16 +276,14 @@ where
         let geom = feature
             .geometry()
             .ok_or_else(|| exec_datafusion_err!("Polygonize output feature missing geometry"))?;
-        let wkb = geom
-            .wkb()
-            .map_err(|e| exec_datafusion_err!("Failed to export geometry to WKB: {e}"))?;
+        let wkb = geom.wkb().context("Failed to export geometry to WKB")?;
 
         let idx = match value_field_idx {
             Some(idx) => idx,
             None => {
                 let idx = feature
                     .field_index("value")
-                    .map_err(|e| exec_datafusion_err!("Missing 'value' field: {e}"))?;
+                    .context("Missing 'value' field")?;
                 value_field_idx = Some(idx);
                 idx
             }

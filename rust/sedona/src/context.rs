@@ -435,6 +435,30 @@ impl SedonaContext {
         Ok(())
     }
 
+    /// Append kernels as overloads to a scalar UDF, creating it if absent.
+    ///
+    /// Unlike [`Self::register_sedona_scalar_udf`], which replaces any
+    /// same-named UDF outright, this appends `kernels` to the existing UDF of
+    /// that name (creating a new UDF if none exists yet). Because a
+    /// [`SedonaScalarUDF`] resolves kernels newest-first, an appended kernel
+    /// whose signature matches an existing overload wins for that signature —
+    /// a per-signature ("kernel-level") override — while the function's other
+    /// overloads stay reachable. Mirrors [`Self::register_scalar_kernels`] but
+    /// runs behind `&self` via the interior-mutable `functions` lock, so it is
+    /// callable from the `&self` Python registration path.
+    pub fn append_sedona_scalar_kernels(
+        &self,
+        name: &str,
+        kernels: impl IntoScalarKernelRefs,
+    ) -> Result<()> {
+        let mut functions = self.functions_mut()?;
+        let udf = functions.add_scalar_udf_impl(name, kernels)?.clone();
+        drop(functions);
+
+        self.ctx.register_udf(udf.into());
+        Ok(())
+    }
+
     pub fn register_sedona_aggregate_udf(&self, udf: SedonaAggregateUDF) -> Result<()> {
         let name = udf.name().to_string();
         let mut functions = self.functions_mut()?;

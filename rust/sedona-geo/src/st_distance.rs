@@ -202,4 +202,21 @@ mod tests {
         let expected: ArrayRef = Arc::new(Float64Array::from(vec![Some(5.0), Some(0.0)]));
         assert_array_equal(&tester.invoke_array_array(arg0, arg1).unwrap(), &expected);
     }
+
+    #[rstest]
+    fn crossing_linestrings_have_zero_distance(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY, WKB_GEOMETRY_ITEM_CRS.clone())] left: SedonaType,
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY, WKB_GEOMETRY_ITEM_CRS.clone())] right: SedonaType,
+    ) {
+        let udf = SedonaScalarUDF::from_impl("st_distance", st_distance_impl());
+        let tester = ScalarUdfTester::new(udf.into(), vec![left.clone(), right.clone()]);
+        let result = tester
+            .invoke_scalar_scalar(
+                create_scalar(Some("LINESTRING (0 0, 2 2)"), &left),
+                create_scalar(Some("LINESTRING (0 2, 2 0)"), &right),
+            )
+            .unwrap();
+
+        assert_eq!(result, ScalarValue::Float64(Some(0.0)));
+    }
 }

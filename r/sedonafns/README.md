@@ -59,7 +59,7 @@ sd_read_sf(system.file("shape/nc.shp", package = "sf")) |>
     NAME,
     area = sd_area(wkb_geometry)
   )
-#> <sedonab_dataframe: NA x 2>
+#> <sedonab_dataframe: ?? x 2>
 #> ┌─────────────┬─────────────────────┐
 #> │     NAME    ┆         area        │
 #> │     utf8    ┆       float64       │

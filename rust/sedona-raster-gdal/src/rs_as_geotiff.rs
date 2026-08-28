@@ -40,6 +40,7 @@ use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_gdal::vsi::VSIBuffer;
 use sedona_raster::array::RasterRefImpl;
+use sedona_raster::error::RasterResultExt;
 use sedona_raster::traits::RasterRef;
 use sedona_raster_functions::RasterExecutor;
 use sedona_schema::datatypes::SedonaType;
@@ -150,12 +151,12 @@ impl RsAsGeoTiff {
     ) -> Result<VSIBuffer> {
         let raster_ds = provider
             .raster_ref_to_gdal(raster)
-            .map_err(|e| exec_datafusion_err!("Failed to create GDAL dataset: {}", e))?;
+            .context("Failed to create GDAL dataset")?;
         let source_dataset = raster_ds.as_dataset();
 
         let driver = gdal
             .get_driver_by_name("GTiff")
-            .map_err(|e| exec_datafusion_err!("Failed to get GTiff driver: {}", e))?;
+            .context("Failed to get GTiff driver")?;
 
         // Validate and map the quality up front so an out-of-range value errors
         // for every codec, not only JPEG (the codecs that ignore quality should
@@ -211,7 +212,7 @@ impl RsAsGeoTiff {
         // the bytes to the vsimem file.
         source_dataset
             .create_copy(&driver, &vsi_path, &options_refs)
-            .map_err(|e| exec_datafusion_err!("Failed to create GeoTiff: {}", e))?;
+            .context("Failed to create GeoTiff")?;
 
         // Seize the vsimem file's buffer without copying: `VSIBuffer` owns the
         // GDAL allocation (freed on drop) and unlinks the file, so the only
@@ -220,7 +221,7 @@ impl RsAsGeoTiff {
         // `create_copy` or the seize fails.
         let bytes = gdal
             .get_vsi_mem_file_buffer_owned(&vsi_path)
-            .map_err(|e| exec_datafusion_err!("Failed to read GeoTiff bytes: {}", e))?;
+            .context("Failed to read GeoTiff bytes")?;
 
         drop(guard);
         Ok(bytes)
@@ -297,9 +298,7 @@ fn predictor_for(raster: &RasterRefImpl) -> Result<i32> {
     if raster.num_bands() == 0 {
         return Ok(2);
     }
-    let band = raster
-        .band(0)
-        .map_err(|e| exec_datafusion_err!("RS_AsGeoTiff: {e}"))?;
+    let band = raster.band(0).context("RS_AsGeoTiff")?;
     let data_type = band.data_type();
     Ok(match data_type {
         BandDataType::Float32 | BandDataType::Float64 => 3,
@@ -449,8 +448,7 @@ impl SedonaScalarKernel for RsAsGeoTiff {
 
         with_gdal(|gdal| {
             configure_thread_local_options(gdal, config_options)?;
-            let provider = thread_local_provider(gdal)
-                .map_err(|e| exec_datafusion_err!("Failed to init GDAL provider: {e}"))?;
+            let provider = thread_local_provider(gdal).context("Failed to init GDAL provider")?;
             executor.execute_raster_void(|_i, raster_opt| {
                 let compression_opt = compression_iter.next().unwrap();
                 let quality_opt = quality_iter.next().unwrap();

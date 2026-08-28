@@ -33,6 +33,7 @@ use datafusion_common::{exec_datafusion_err, exec_err, DataFusionError, Result};
 use datafusion_expr::ColumnarValue;
 use sedona_geometry::error::SedonaGeometryError;
 use sedona_geometry::transform::{visit_point_coords, CrsEngine, CrsTransform};
+use sedona_raster::error::RasterResultExt;
 use sedona_raster::geo_transform::GeoTransformEx;
 use sedona_raster::traits::{nodata_bytes_to_f64_lossless, BandRef, NdBuffer, RasterRef};
 use sedona_schema::crs::CrsRef;
@@ -180,7 +181,7 @@ pub(crate) fn visit_points(
     trans: Option<&dyn CrsTransform>,
     mut visit: impl FnMut(Option<(f64, f64)>) -> Result<()>,
 ) -> Result<()> {
-    let geom = read_wkb(wkb).map_err(|e| exec_datafusion_err!("{func}: {e}"))?;
+    let geom = read_wkb(wkb).context(func)?;
     visit_point_coords(&geom, trans, |xy| {
         visit(xy).map_err(|e| SedonaGeometryError::External(Box::new(e)))
     })
@@ -269,8 +270,7 @@ pub(crate) fn read_pixel(
     // silently rounding) on Int64/UInt64 values beyond f64's exact-integer
     // range (2^53) — the value functions return a Double, so such a pixel can't
     // be represented faithfully; failing loudly is preferred over a wrong value.
-    let value = nodata_bytes_to_f64_lossless(bytes, &buffer.data_type)
-        .map_err(|e| exec_datafusion_err!("{func}: {e}"))?;
+    let value = nodata_bytes_to_f64_lossless(bytes, &buffer.data_type).context(func)?;
 
     if let Some(nodata) = nodata {
         if value == nodata || (value.is_nan() && nodata.is_nan()) {

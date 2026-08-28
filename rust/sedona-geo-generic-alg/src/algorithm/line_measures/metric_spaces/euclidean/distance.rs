@@ -491,12 +491,10 @@ where
         let mut min_dist: F = Float::max_value();
         for line1 in self.lines() {
             for line2 in rhs.lines() {
-                // Line-to-line distance using endpoints
-                let d1 = distance_coord_to_line_generic(&line1.start_coord(), &line2);
-                let d2 = distance_coord_to_line_generic(&line1.end_coord(), &line2);
-                let d3 = distance_coord_to_line_generic(&line2.start_coord(), &line1);
-                let d4 = distance_coord_to_line_generic(&line2.end_coord(), &line1);
-                let line_dist = d1.min(d2).min(d3).min(d4);
+                let line_dist = distance_line_to_line_generic(&line1, &line2);
+                if line_dist == F::zero() {
+                    return F::zero();
+                }
                 min_dist = min_dist.min(line_dist);
             }
         }
@@ -1858,6 +1856,36 @@ mod tests {
             // Ensure both implementations agree
             assert_relative_eq!(distance, generic_distance);
         }
+
+        #[test]
+        fn test_crossing_linestring_distance() {
+            let issue_left = LineString::from(vec![(0.0, 0.0), (2.0, 2.0)]);
+            let issue_right = LineString::from(vec![(0.0, 2.0), (2.0, 0.0)]);
+            let later_segment_left = LineString::from(vec![(-2.0, -2.0), (-1.0, -1.0), (2.0, 2.0)]);
+            let later_segment_right = LineString::from(vec![(-2.0, 2.0), (-1.0, 1.0), (2.0, -2.0)]);
+
+            for (left, right) in [
+                (&issue_left, &issue_right),
+                (&later_segment_left, &later_segment_right),
+            ] {
+                let distance = Euclidean.distance(left, right);
+                assert_relative_eq!(distance, 0.0);
+                assert_relative_eq!(left.distance_ext(right), distance);
+                assert_relative_eq!(right.distance_ext(left), distance);
+            }
+
+            // Multi-geometries and collections delegate to the same public
+            // LineString-to-LineString dispatch.
+            let multi = MultiLineString::new(vec![
+                LineString::from(vec![(10.0, 10.0), (11.0, 11.0)]),
+                issue_left.clone(),
+            ]);
+            assert_relative_eq!(multi.distance_ext(&issue_right), 0.0);
+
+            let collection = GeometryCollection(vec![Geometry::LineString(issue_left.clone())]);
+            assert_relative_eq!(collection.distance_ext(&issue_right), 0.0);
+        }
+
         #[test]
         // Line-Polygon test: closest point on Polygon is NOT nearest to a Line end-point
         fn test_line_polygon_simple() {

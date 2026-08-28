@@ -444,6 +444,21 @@ class SedonaContext:
         - An ExternalFormatSpec implementing a custom datasource type
         - An object implementing __sedonadb_extension__(ctx, **kwargs), which
           is called with this context and any keyword arguments passed.
+        - A single function object implementing __sedonadb_scalar_udf__(self),
+          which returns a list of PyCapsule objects -- the overload kernels of
+          that one function, each wrapping a natively-compiled
+          SedonaCScalarKernel sharing the function's SQL name -- so real
+          compiled Rust runs per invocation, not a Python callback. Register
+          each function individually. The kernels are appended as overloads to
+          the function of that name (a new function is created when none exists
+          yet). A kernel whose signature matches an existing overload --
+          including a built-in's -- overrides that one signature (kernels
+          resolve newest-first) while the function's other overloads stay
+          reachable, so a plugin can add an overload to an existing function
+          without replacing it. Volatility is always Immutable through this
+          protocol; a kernel needing Volatile or Stable should be registered
+          via __sedonadb_internal_udf__ instead, built with
+          sedonadb.udf.sedona_native_scalar_udf(kernels, volatility=...).
 
         The extension interface is experimental and may change.
 
@@ -490,6 +505,7 @@ class SedonaContext:
             "__sedonadb_internal_aggregate_udf__",
             "__sedonadb_external_format__",
             "__sedonadb_raster_loader__",
+            "__sedonadb_scalar_udf__",
         )
         for interface in supported_interfaces:
             if hasattr(component, interface):

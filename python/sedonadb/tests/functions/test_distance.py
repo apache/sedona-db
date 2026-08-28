@@ -36,6 +36,11 @@ from sedonadb.testing import geom_or_null, PostGIS, SedonaDB
             "POLYGON ((5 5, 6 5, 6 6, 5 6, 5 5))",
             5.656854249492381,
         ),
+        (
+            "LINESTRING (0 0, 2 2)",
+            "LINESTRING (0 2, 2 0)",
+            0,
+        ),
     ],
 )
 def test_st_distance(eng, geom1, geom2, expected):

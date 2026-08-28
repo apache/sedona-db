@@ -29,7 +29,7 @@ use datafusion_common::cast::{as_boolean_array, as_float64_array, as_int32_array
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::error::Result;
 use datafusion_common::exec_err;
-use datafusion_common::{exec_datafusion_err, ScalarValue};
+use datafusion_common::ScalarValue;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::sedona_internal_err;
 use sedona_gdal::gdal::Gdal;
@@ -38,6 +38,7 @@ use arrow_schema::DataType;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_raster::array::RasterRefImpl;
 use sedona_raster::builder::RasterBuilder;
+use sedona_raster::error::RasterResultExt;
 use sedona_raster::traits::{is_spatial_dim_pair, RasterRef};
 use sedona_raster_functions::crs_utils::{crs_transform_wkb, resolve_crs, with_crs_engine};
 use sedona_raster_functions::rs_ensure_loaded::{
@@ -383,7 +384,7 @@ fn clip_raster(
     // Parse geometry from WKB
     let geometry = gdal
         .geometry_from_wkb(geom_wkb)
-        .map_err(|e| exec_datafusion_err!("Failed to parse geometry from WKB: {}", e))?;
+        .context("Failed to parse geometry from WKB")?;
 
     // GDAL geotransform: [upper_left_x, scale_x, skew_x, upper_left_y, skew_y, scale_y].
     let geotransform = raster_geo_transform(raster)?;
@@ -439,7 +440,7 @@ fn clip_raster(
         // `band_idx` is 1-based; the `band`/`band_name` accessors are 0-based.
         let band = raster
             .band(band_idx - 1)
-            .map_err(|e| exec_datafusion_err!("Failed to get band {}: {}", band_idx, e))?;
+            .with_context(|| format!("Failed to get band {band_idx}"))?;
         let band_name = raster.band_name(band_idx - 1).map(|s| s.to_string());
 
         let data_type = band.data_type();
@@ -483,12 +484,12 @@ fn clip_raster(
         // `as_contiguous` borrows the band bytes; we only ever read them here
         // (the mask/crop helpers write into the band's output buffer), so no
         // copy is needed.
-        let nd_buffer = band.nd_buffer().map_err(|e| {
-            exec_datafusion_err!("RS_Clip: failed to read band {}: {}", band_idx, e)
-        })?;
-        let original_data = nd_buffer.as_contiguous().map_err(|e| {
-            exec_datafusion_err!("RS_Clip: band {} is not contiguous: {}", band_idx, e)
-        })?;
+        let nd_buffer = band
+            .nd_buffer()
+            .with_context(|| format!("RS_Clip: failed to read band {band_idx}"))?;
+        let original_data = nd_buffer
+            .as_contiguous()
+            .with_context(|| format!("RS_Clip: band {band_idx} is not contiguous"))?;
 
         // nodata precedence: the explicit argument, then the band's own nodata
         // bytes (used verbatim — no lossy f64 round-trip for Int64/UInt64),
@@ -498,9 +499,8 @@ fn clip_raster(
         // rather than silently saturating — e.g. -9999 on UInt8 would collide
         // with real zero-adjacent data.
         let nodata_bytes: Vec<u8> = match custom_nodata {
-            Some(cn) => nodata_f64_to_bytes(cn, &data_type).map_err(|e| {
-                exec_datafusion_err!("RS_Clip: invalid no_data_value for band {band_idx}: {e}")
-            })?,
+            Some(cn) => nodata_f64_to_bytes(cn, &data_type)
+                .with_context(|| format!("RS_Clip: invalid no_data_value for band {band_idx}"))?,
             None => match band.nodata() {
                 Some(bytes) => bytes.to_vec(),
                 None => data_type.min_value_le_bytes(),
@@ -722,7 +722,7 @@ fn build_clipped_raster(
             &spatial_shape,
             original_raster.crs(),
         )
-        .map_err(|e| exec_datafusion_err!("Failed to start raster: {}", e))?;
+        .context("Failed to start raster")?;
 
     for band in clipped_data.bands {
         let dim_names: Vec<&str> = band.dim_names.iter().map(String::as_str).collect();
@@ -739,9 +739,7 @@ fn build_clipped_raster(
         )?;
     }
 
-    builder
-        .finish_raster()
-        .map_err(|e| exec_datafusion_err!("Failed to finish raster: {}", e))?;
+    builder.finish_raster().context("Failed to finish raster")?;
 
     Ok(())
 }

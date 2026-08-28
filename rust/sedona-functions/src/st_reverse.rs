@@ -198,7 +198,7 @@ fn write_reversed_coords(
     if needs_byteswap {
         let mut ord_reversed = [0u8; size_of::<f64>()];
         for coord in coords.rchunks_exact(coord_bytes) {
-            for ord in coord.chunks_exact(size_of::<f64>()) {
+            for ord in coord.as_chunks::<{ size_of::<f64>() }>().0 {
                 ord_reversed.copy_from_slice(ord);
                 ord_reversed.reverse();
                 writer.write_all(&ord_reversed)?;
