@@ -23,6 +23,11 @@ native raster column; Sedona Spark transports the result as GeoTIFF bytes
 `assert_decoded_equal`. Same `xfail`-for-known-divergence policy as the scalar
 suite.
 
+Both engines are constructed directly rather than through fixtures: this suite is
+only run deliberately, so a missing pyspark, JVM, or Sedona jar should be a
+failure with a real traceback, not a skip. `SedonaSpark` caches its
+`SparkSession` on the class, so building one per test reuses the same JVM.
+
 `RS_SetBandNoDataValue` is the first case on purpose: it is raster-in/raster-out
 but passes pixels through untouched, so a mismatch is a round-trip bug, not an
 operation divergence — it isolates the transport. Pixel-transforming ops
@@ -36,6 +41,8 @@ from sedonadb.raster_testing import (
     random_raster_data,
     write_geotiff,
 )
+from sedonadb.testing import SedonaDB
+from sedonadb.testing_spark import SedonaSpark
 
 GDAL_TRANSFORM = (100.0, 2.0, 0.0, 500.0, 0.0, -3.0)
 BANDS, HEIGHT, WIDTH = 2, 6, 7
@@ -45,7 +52,7 @@ BAND_NODATA = {"uint8": 200.0, "int32": -99999.0, "float64": -12345.5}
 
 
 @pytest.mark.parametrize("dtype", list(BAND_NODATA))
-def test_rs_setbandnodata(dtype, engines, tmp_path):
+def test_rs_setbandnodata(dtype, tmp_path):
     """RS_SetBandNoDataValue sets band 1's nodata and passes pixels through, so
     SedonaDB and Sedona Spark must return the same raster: identical pixels and
     geotransform, band 1's nodata set, band 2's still absent."""
@@ -53,8 +60,8 @@ def test_rs_setbandnodata(dtype, engines, tmp_path):
     data = random_raster_data(dtype, bands=BANDS, height=HEIGHT, width=WIDTH)
     write_geotiff(tif, data, gdal_transform=GDAL_TRANSFORM)  # no nodata to start
 
-    sedona, spark = engines
-    for eng in engines:
+    sedona, spark = SedonaDB(), SedonaSpark()
+    for eng in (sedona, spark):
         eng.create_raster_view("src", tif)
 
     sql = f"SELECT RS_SetBandNoDataValue(rast, 1, {BAND_NODATA[dtype]}) FROM src"

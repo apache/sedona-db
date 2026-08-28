@@ -35,9 +35,9 @@ live here and are run deliberately.
 
 Nothing else collects this directory: every other pytest invocation in the repo
 is scoped to its own project directory, so `python/sedonadb`'s suite and this one
-never see each other. There is deliberately no opt-in environment variable — the
-fixtures in `conftest.py` construct both engines outright, so a missing pyspark,
-JVM, or jar is a failure with a real traceback, not a skip.
+never see each other. There is deliberately no opt-in environment variable — each
+test constructs both engines outright, so a missing pyspark, JVM, or jar is a
+failure with a real traceback, not a skip.
 
 This suite is not wired into CI.
 
