@@ -153,9 +153,10 @@ class SedonaSpark(DBEngine):
     def _ivy_dir() -> str:
         """Directory Ivy resolves ``spark.jars.packages`` into.
 
-        Pinned so CI can cache the downloaded jars: newer Ivy releases (bundled
-        with newer Spark) moved the default location, silently breaking a cache
-        keyed on the old path. Override with SEDONADB_SPARK_IVY_DIR.
+        Pinned so repeat runs reuse one jar cache: newer Ivy releases (bundled
+        with newer Spark) moved the default location, so leaving it implicit
+        re-downloads the jars whenever that default shifts. Override with
+        SEDONADB_SPARK_IVY_DIR.
         """
         return os.environ.get(
             "SEDONADB_SPARK_IVY_DIR",

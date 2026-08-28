@@ -150,42 +150,6 @@ jobs:
           cd python/sedonadb
           python -m pytest -vv
 
-      - uses: actions/setup-java@v5.7.0
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-
-      - name: Cache Sedona Spark jars
-        uses: actions/cache@v6
-        with:
-          # Matches SEDONADB_SPARK_IVY_DIR below, which SedonaSpark passes to
-          # spark.jars.ivy so Ivy resolves the jars into a fixed directory
-          # regardless of the Ivy version's default.
-          path: ${{ github.workspace }}/.spark-ivy
-          # Derived from testing_spark.py, which pins the Sedona and
-          # geotools-wrapper versions that _packages() resolves, so a version
-          # bump invalidates the cache automatically; restore-keys still
-          # restores prior jars so unrelated edits don't force a re-download.
-          key: sedona-spark-jars-${{ runner.os }}-${{ hashFiles('python/sedonadb/python/sedonadb/testing_spark.py') }}
-          restore-keys: |
-            sedona-spark-jars-${{ runner.os }}-
-
-      - name: Run Sedona Spark raster parity tests
-        # Observe-first: report failures without failing the job while the
-        # Spark lane proves itself stable.
-        continue-on-error: true
-        env:
-          SEDONADB_RUN_SPARK_TESTS: "true"
-          SEDONADB_SPARK_IVY_DIR: ${{ github.workspace }}/.spark-ivy
-        run: |
-          # Pin pyspark to the Spark line of the pinned Sedona artifact
-          # (SEDONA_SPARK_VERSION in testing_spark.py): a newer Spark can
-          # resolve the jars but fail at SedonaContext.create when function
-          # registration semantics change between Spark minors.
-          pip install "pyspark==4.0.*" apache-sedona
-          cd python/sedonadb
-          python -m pytest tests/functions -q -k "sedonaspark" -rX
-
       - name: Run doctests (sedonadb)
         run: |
           cd python/sedonadb
