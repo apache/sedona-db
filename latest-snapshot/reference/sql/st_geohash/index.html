@@ -7,7 +7,7 @@
       
       
       
-        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/reference/sql/st_zmflag/">
+        <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/reference/sql/st_geohash/">
       
       
       
@@ -20,7 +20,7 @@
     
     
       
-        <title>ST_Zmflag - Apache Sedona</title>
+        <title>ST_GeoHash - Apache Sedona</title>
       
     
     
@@ -84,7 +84,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#st_zmflag" class="md-skip">
+        <a href="#st_geohash" class="md-skip">
           Skip to content
         </a>
       
@@ -157,7 +157,7 @@
             <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              ST_Zmflag
+              ST_GeoHash
             
           </span>
             </div>
@@ -1709,7 +1709,7 @@
 
 
   
-    <a href="https://github.com/apache/sedona-db/blob/main/docs/reference/sql/st_zmflag.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/apache/sedona-db/blob/main/docs/reference/sql/st_geohash.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"></path></svg>
     </a>
@@ -1717,69 +1717,78 @@
   
 
 
-<h1 id="st_zmflag">ST_Zmflag<a class="headerlink" href="#st_zmflag" title="Permanent link">¶</a></h1>
-<p>Returns a code indicating the dimension of the coordinates in a
-geometry.</p>
+<h1 id="st_geohash">ST_GeoHash<a class="headerlink" href="#st_geohash" title="Permanent link">¶</a></h1>
+<p>Returns the GeoHash string of a geometry with the given precision.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">¶</a></h2>
-<div class="highlight"><pre><span></span><code><span class="nb">integer</span><span class="w"> </span><span class="n">ST_Zmflag</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
-<span class="nb">integer</span><span class="w"> </span><span class="n">ST_Zmflag</span><span class="p">(</span><span class="n">geog</span><span class="p">:</span><span class="w"> </span><span class="n">geography</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><span class="n">string</span><span class="w"> </span><span class="n">ST_GeoHash</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">)</span>
+<span class="n">string</span><span class="w"> </span><span class="n">ST_GeoHash</span><span class="p">(</span><span class="n">geom</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="p">,</span><span class="w"> </span><span class="k">precision</span><span class="p">:</span><span class="w"> </span><span class="nb">integer</span><span class="p">)</span>
+<span class="n">string</span><span class="w"> </span><span class="n">ST_GeoHash</span><span class="p">(</span><span class="n">geog</span><span class="p">:</span><span class="w"> </span><span class="n">geography</span><span class="p">)</span>
+<span class="n">string</span><span class="w"> </span><span class="n">ST_GeoHash</span><span class="p">(</span><span class="n">geog</span><span class="p">:</span><span class="w"> </span><span class="n">geography</span><span class="p">,</span><span class="w"> </span><span class="k">precision</span><span class="p">:</span><span class="w"> </span><span class="nb">integer</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="arguments">Arguments<a class="headerlink" href="#arguments" title="Permanent link">¶</a></h2>
 <ul>
 <li><strong>geog</strong> (geography): Input geography</li>
+<li><strong>precision</strong> (integer): Number of base-32 characters in the returned
+  GeoHash.</li>
 <li><strong>geom</strong> (geometry): Input geometry</li>
 </ul>
 <h2 id="description">Description<a class="headerlink" href="#description" title="Permanent link">¶</a></h2>
-<p>Returns a code indicating the coordinate dimension:</p>
-<ul>
-<li>0 = 2D (XY)</li>
-<li>1 = 3D with M coordinate (XYM)</li>
-<li>2 = 3D with Z coordinate (XYZ)</li>
-<li>3 = 4D (XYZM)</li>
-</ul>
+<p>Encodes the geometry as a base-32 GeoHash string with <code>precision</code>
+characters. Non-point geometries are encoded using the center of their
+bounding box. A non-positive precision returns an empty string, and
+precision is capped at 20 characters.</p>
+<p>A GeoHash is defined against the WGS84 datum, so the argument must carry
+either a WGS84 CRS (<code>EPSG:4326</code> / <code>OGC:CRS84</code>) or no CRS at all;
+anything else raises an error. Use <code>ST_Transform()</code> to reproject first.
+This includes other geographic CRSes such as NAD83, whose units are
+degrees but whose datum differs from WGS84 by enough to shift the result
+at high precision.</p>
+<p>The same rule applies whether the CRS belongs to the column or to the
+individual rows; only the timing differs. A column-level CRS is known
+while the query is planned, so it is rejected before any row is read. A
+row-level CRS is not known until the row is reached, so it is rejected
+then. To encode only the WGS84 rows of a mixed column, filter them first
+— <code>WHERE ST_SRID(geom) = 4326</code> is applied before the encoding, so the
+other rows never reach it.</p>
+<p>Latitudes outside -90 to 90 return <code>NULL</code>. Longitudes outside -180 to
+180 are wrapped back into range when the argument declares a WGS84 CRS,
+so a longitude of 181 encodes as -179; without a declared CRS they
+return <code>NULL</code> instead, matching Apache Sedona.</p>
+<p>When <code>precision</code> is omitted, the argument must be a <code>POINT</code> and is
+encoded at the maximum precision of 20 characters. Any other geometry
+type raises an error, because there is no single obvious precision for a
+geometry that covers an area.</p>
+<p>Geography arguments are bounded on the sphere and require the
+s2geography bounder to be registered on the session.</p>
 <h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">¶</a></h2>
-<p>2D (XY) returns 0:</p>
-<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">ST_Zmflag</span><span class="p">(</span><span class="n">ST_GeomFromWKT</span><span class="p">(</span><span class="s1">'LINESTRING(1 2, 3 4)'</span><span class="p">));</span>
+<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">ST_GeoHash</span><span class="p">(</span><span class="n">ST_GeomFromWKT</span><span class="p">(</span><span class="s1">'POINT (21.4234 52.0423)'</span><span class="p">),</span><span class="w"> </span><span class="mi">10</span><span class="p">);</span>
 </code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌─────────────────────────────────────────────────────────┐
-│ st_zmflag(st_geomfromwkt(Utf8("LINESTRING(1 2, 3 4)"))) │
-│                           int8                          │
-╞═════════════════════════════════════════════════════════╡
-│                                                       0 │
-└─────────────────────────────────────────────────────────┘
-</code></pre></div>
-
-<p>3D with M coordinate (XYM) returns 1:</p>
-<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">ST_Zmflag</span><span class="p">(</span><span class="n">ST_GeomFromWKT</span><span class="p">(</span><span class="s1">'LINESTRING M(1 2 3, 3 4 3)'</span><span class="p">));</span>
-</code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌───────────────────────────────────────────────────────────────┐
-│ st_zmflag(st_geomfromwkt(Utf8("LINESTRING M(1 2 3, 3 4 3)"))) │
-│                              int8                             │
-╞═══════════════════════════════════════════════════════════════╡
-│                                                             1 │
-└───────────────────────────────────────────────────────────────┘
+<div class="codehilite"><pre><span></span><code>┌───────────────────────────────────────────────────────────────────────┐
+│ st_geohash(st_geomfromwkt(Utf8("POINT (21.4234 52.0423)")),Int64(10)) │
+│                                  utf8                                 │
+╞═══════════════════════════════════════════════════════════════════════╡
+│ u3r0pd0037                                                            │
+└───────────────────────────────────────────────────────────────────────┘
 </code></pre></div>
 
-<p>3D with Z coordinate (XYZ) returns 2:</p>
-<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">ST_Zmflag</span><span class="p">(</span><span class="n">ST_GeomFromWKT</span><span class="p">(</span><span class="s1">'LINESTRING Z(1 2 3, 3 4 5)'</span><span class="p">));</span>
+<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">ST_GeoHash</span><span class="p">(</span><span class="n">ST_GeomFromWKT</span><span class="p">(</span><span class="s1">'POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))'</span><span class="p">),</span><span class="w"> </span><span class="mi">8</span><span class="p">);</span>
 </code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌───────────────────────────────────────────────────────────────┐
-│ st_zmflag(st_geomfromwkt(Utf8("LINESTRING Z(1 2 3, 3 4 5)"))) │
-│                              int8                             │
-╞═══════════════════════════════════════════════════════════════╡
-│                                                             2 │
-└───────────────────────────────────────────────────────────────┘
+<div class="codehilite"><pre><span></span><code>┌──────────────────────────────────────────────────────────────────────────────┐
+│ st_geohash(st_geomfromwkt(Utf8("POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))")),Int64 │
+│                                     (8))…                                    │
+╞══════════════════════════════════════════════════════════════════════════════╡
+│ s00twy01                                                                     │
+└──────────────────────────────────────────────────────────────────────────────┘
 </code></pre></div>
 
-<p>4D (XYZM) returns 3:</p>
-<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">ST_Zmflag</span><span class="p">(</span><span class="n">ST_GeomFromWKT</span><span class="p">(</span><span class="s1">'LINESTRING ZM(1 2 3 4, 3 4 5 6)'</span><span class="p">));</span>
+<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">ST_GeoHash</span><span class="p">(</span><span class="n">ST_GeomFromWKT</span><span class="p">(</span><span class="s1">'POINT (21.4234 52.0423)'</span><span class="p">));</span>
 </code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌────────────────────────────────────────────────────────────────────┐
-│ st_zmflag(st_geomfromwkt(Utf8("LINESTRING ZM(1 2 3 4, 3 4 5 6)"))) │
-│                                int8                                │
-╞════════════════════════════════════════════════════════════════════╡
-│                                                                  3 │
-└────────────────────────────────────────────────────────────────────┘
+<div class="codehilite"><pre><span></span><code>┌─────────────────────────────────────────────────────────────┐
+│ st_geohash(st_geomfromwkt(Utf8("POINT (21.4234 52.0423)"))) │
+│                             utf8                            │
+╞═════════════════════════════════════════════════════════════╡
+│ u3r0pd0037ugg6hm1kb1                                        │
+└─────────────────────────────────────────────────────────────┘
 </code></pre></div>
 
 
@@ -1801,7 +1810,7 @@ geometry.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"></path></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="August 28, 2026 17:22:24 UTC">August 28, 2026 17:22:24</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="August 28, 2026 17:22:23 UTC">August 28, 2026 17:22:23</span>
   </span>
 
     
