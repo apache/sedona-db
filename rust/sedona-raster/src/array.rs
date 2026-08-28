@@ -16,9 +16,11 @@
 // under the License.
 
 use arrow_array::{
-    Array, BinaryArray, BinaryViewArray, Float64Array, Int64Array, ListArray, StringArray,
-    StringViewArray, StructArray, UInt32Array,
+    new_null_array, Array, ArrayRef, BinaryArray, BinaryViewArray, Float64Array, Int64Array,
+    ListArray, StringArray, StringViewArray, StructArray, UInt32Array,
 };
+use arrow_buffer::NullBuffer;
+use arrow_schema::DataType;
 use datafusion_common::cast::{
     as_binary_array, as_binary_view_array, as_float64_array, as_int64_array, as_list_array,
     as_string_array, as_string_view_array, as_struct_array, as_uint32_array,
@@ -26,9 +28,11 @@ use datafusion_common::cast::{
 
 use crate::band_builder::BandWriter;
 use crate::error::RasterError;
-use crate::traits::{BandRef, NdBuffer, RasterRef};
+use crate::traits::{BandRef, NdBuffer, Override, RasterRef};
 use crate::view_entries::{ViewEntries, ViewEntry};
-use sedona_schema::raster::{band_indices, band_view_indices, raster_indices, BandDataType};
+use sedona_schema::raster::{
+    band_indices, band_view_indices, raster_indices, BandDataType, RasterSchema,
+};
 
 /// Arrow-backed implementation of BandRef for a single band within a raster.
 ///
@@ -409,6 +413,74 @@ fn check_view_buffer_bounds(
     Ok(())
 }
 
+/// A new raster `StructArray` with specific top-level columns replaced,
+/// sharing every untouched column's `Arc` with the input.
+///
+/// This is the array-level edit path, for setters that change only
+/// top-level metadata (`RS_SetCRS`, `RS_SetSRID`, `RS_SetGeoReference`).
+/// The bands column is never read, copied, or rebuilt, so the output's
+/// bands are byte-for-byte identical to the input's *by construction* —
+/// unlike the builder path
+/// ([`RasterBuilder::copy_raster_from`](crate::builder::RasterBuilder::copy_raster_from)),
+/// where identical output depends on the rebuild reproducing every band
+/// field faithfully.
+///
+/// `input_nulls` nulls whole rasters where the *setter's own argument* was
+/// null, and is unioned with the input raster's existing nulls. A length-1
+/// buffer is broadcast to every row, for the scalar-argument case. Note
+/// this is distinct from an override that [`Override::Clear`]s a column:
+/// `RS_SetSRID(raster, 0)` clears the CRS but keeps the raster, whereas
+/// `RS_SetSRID(raster, NULL)` nulls the raster itself.
+pub fn with_column_overrides(
+    raster: &StructArray,
+    overrides: RasterColumnOverrides,
+    input_nulls: Option<&NullBuffer>,
+) -> Result<StructArray, RasterError> {
+    let num_rows = raster.len();
+    // `to_vec` clones five `Arc`s, not five columns.
+    let mut columns: Vec<ArrayRef> = raster.columns().to_vec();
+
+    apply_column_override(
+        &mut columns,
+        raster_indices::CRS,
+        overrides.crs,
+        num_rows,
+        RasterSchema::crs_type(),
+        "crs",
+    )?;
+    apply_column_override(
+        &mut columns,
+        raster_indices::TRANSFORM,
+        overrides.transform,
+        num_rows,
+        RasterSchema::transform_type(),
+        "transform",
+    )?;
+
+    let broadcast;
+    let input_nulls = match input_nulls {
+        Some(nulls) if nulls.len() == num_rows => Some(nulls),
+        Some(nulls) if nulls.len() == 1 => {
+            broadcast = if nulls.is_valid(0) {
+                NullBuffer::new_valid(num_rows)
+            } else {
+                NullBuffer::new_null(num_rows)
+            };
+            Some(&broadcast)
+        }
+        Some(nulls) => {
+            return Err(RasterError::Invalid(format!(
+                "with_column_overrides: input nulls have {} rows, expected {num_rows} or 1",
+                nulls.len()
+            )))
+        }
+        None => None,
+    };
+    let nulls = NullBuffer::union(raster.nulls(), input_nulls);
+
+    Ok(StructArray::new(RasterSchema::fields(), columns, nulls))
+}
+
 impl<'a> RasterRef for RasterRefImpl<'a> {
     fn num_bands(&self) -> usize {
         self.bands_list.value_length(self.raster_index) as usize
@@ -664,6 +736,53 @@ pub struct RasterStructArray<'a> {
     band_data_array: &'a BinaryViewArray,
 }
 
+/// Array-level overrides for [`with_column_overrides`].
+/// Each field replaces one whole top-level column:
+///
+/// - [`Override::Keep`] leaves the input's column in place, sharing its `Arc`.
+/// - [`Override::Clear`] replaces it with an all-null column.
+/// - [`Override::Set(a)`](Override::Set) installs `a`, which must have one
+///   entry per raster row.
+///
+/// This is the array-level counterpart to
+/// [`RasterOverrides`](crate::builder::RasterOverrides), which is the
+/// *builder's* vocabulary: a scalar value applied while a row is constructed.
+/// The two share [`Override`] but not a struct, because the operations differ
+/// — the builder emits rows one at a time, while this replaces a column
+/// wholesale and so takes per-row values already in an array.
+#[derive(Debug, Default, Clone)]
+pub struct RasterColumnOverrides {
+    /// Override the CRS column (`Utf8View`).
+    pub crs: Override<ArrayRef>,
+    /// Override the geotransform column (`List<Float64>`, 6 values per row).
+    pub transform: Override<ArrayRef>,
+}
+
+/// Resolve one column override in place against `columns`.
+fn apply_column_override(
+    columns: &mut [ArrayRef],
+    index: usize,
+    over: Override<ArrayRef>,
+    num_rows: usize,
+    data_type: DataType,
+    label: &str,
+) -> Result<(), RasterError> {
+    match over {
+        Override::Keep => {}
+        Override::Clear => columns[index] = new_null_array(&data_type, num_rows),
+        Override::Set(array) => {
+            if array.len() != num_rows {
+                return Err(RasterError::Invalid(format!(
+                    "with_column_overrides: {label} override has {} rows, expected {num_rows}",
+                    array.len()
+                )));
+            }
+            columns[index] = array;
+        }
+    }
+    Ok(())
+}
+
 impl<'a> RasterStructArray<'a> {
     /// Create a new RasterStructArray from an existing StructArray.
     ///
@@ -826,6 +945,93 @@ mod tests {
     use sedona_schema::raster::{band_indices, raster_indices, BandDataType, RasterSchema};
     use sedona_testing::rasters::generate_test_rasters;
     use std::sync::Arc;
+
+    #[test]
+    fn with_column_overrides_shares_untouched_columns() {
+        use sedona_schema::raster::raster_indices;
+
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        let mut b = RasterBuilder::new(1);
+        b.start_raster_nd(&transform, &["x"], &[2], Some("OGC:CRS84"))
+            .unwrap();
+        b.start_band(StartBandArgs::new(&["x"], &[2], BandDataType::UInt8))
+            .unwrap();
+        b.band_data_writer().append_value([1u8, 2]);
+        b.finish_band().unwrap();
+        b.finish_raster().unwrap();
+        let input = b.finish().unwrap();
+
+        let new_crs: ArrayRef = Arc::new(StringViewArray::from(vec![Some("EPSG:4326")]));
+        let out = with_column_overrides(
+            &input,
+            RasterColumnOverrides {
+                crs: Override::Set(new_crs),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+
+        // The replaced column is new; every other column is the *same
+        // allocation*, which is the whole point of the array-level edit —
+        // `Arc::ptr_eq` is the only assertion that distinguishes a shared
+        // column from an equal-looking rebuild.
+        assert!(!Arc::ptr_eq(
+            input.column(raster_indices::CRS),
+            out.column(raster_indices::CRS)
+        ));
+        for idx in [
+            raster_indices::TRANSFORM,
+            raster_indices::SPATIAL_DIMS,
+            raster_indices::SPATIAL_SHAPE,
+            raster_indices::BANDS,
+        ] {
+            assert!(
+                Arc::ptr_eq(input.column(idx), out.column(idx)),
+                "column {idx} was rebuilt rather than shared"
+            );
+        }
+    }
+
+    #[test]
+    fn with_column_overrides_clear_and_null_merge() {
+        use sedona_schema::raster::raster_indices;
+
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        let mut b = RasterBuilder::new(1);
+        b.start_raster_nd(&transform, &["x"], &[2], Some("OGC:CRS84"))
+            .unwrap();
+        b.start_band(StartBandArgs::new(&["x"], &[2], BandDataType::UInt8))
+            .unwrap();
+        b.band_data_writer().append_value([1u8, 2]);
+        b.finish_band().unwrap();
+        b.finish_raster().unwrap();
+        let input = b.finish().unwrap();
+
+        // `Clear` nulls the column but leaves the raster row valid — this is
+        // RS_SetSRID(raster, 0): the CRS goes away, the raster does not.
+        let cleared = with_column_overrides(
+            &input,
+            RasterColumnOverrides {
+                crs: Override::Clear,
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        assert!(cleared.column(raster_indices::CRS).is_null(0));
+        assert!(cleared.is_valid(0), "Clear must not null the raster itself");
+
+        // `input_nulls` is the other axis: a null *argument* nulls the row.
+        // This is RS_SetSRID(raster, NULL).
+        let nulled = with_column_overrides(
+            &input,
+            RasterColumnOverrides::default(),
+            Some(&NullBuffer::new_null(1)),
+        )
+        .unwrap();
+        assert!(nulled.is_null(0), "a null input argument must null the row");
+    }
 
     #[test]
     fn band_ref_exposes_its_name() {
