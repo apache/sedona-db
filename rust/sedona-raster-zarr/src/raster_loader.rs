@@ -153,6 +153,7 @@ impl ZarrLoader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sedona_raster::view_entries::ViewEntries;
     use std::sync::Arc;
 
     use sedona_schema::raster::BandDataType;
@@ -207,7 +208,7 @@ mod tests {
             uri: &uri,
             dim_names: &["y", "x"],
             source_shape: &[2, 3],
-            view: &[],
+            view: &ViewEntries::identity_for_shape(&[2, 3]),
             data_type: BandDataType::UInt8,
         };
         let result = loader.load(&[&req]).await.unwrap();
@@ -225,7 +226,7 @@ mod tests {
             uri: &uri,
             dim_names: &["y", "x"],
             source_shape: &[2, 3],
-            view: &[], // Array is UInt8 but the band claims Int16.
+            view: &ViewEntries::identity_for_shape(&[2, 3]), // Array is UInt8 but the band claims Int16.
             data_type: BandDataType::Int16,
         };
         let err = loader.load(&[&req]).await.unwrap_err();
@@ -243,7 +244,7 @@ mod tests {
             uri: "file:///tmp/foo.zarr", // missing fragment
             dim_names: &["y", "x"],
             source_shape: &[2, 3],
-            view: &[],
+            view: &ViewEntries::identity_for_shape(&[2, 3]),
             data_type: BandDataType::UInt8,
         };
         let err = loader.load(&[&req]).await.unwrap_err();
@@ -265,7 +266,7 @@ mod tests {
             uri: &uri,
             dim_names: &["y", "x"],
             source_shape: &[2, 3],
-            view: &[],
+            view: &ViewEntries::identity_for_shape(&[2, 3]),
             data_type: BandDataType::UInt8,
         };
         let err = loader.load(&[&req]).await.unwrap_err();
@@ -286,7 +287,7 @@ mod tests {
             uri: &uri,
             dim_names: &["y", "x"],
             source_shape: &[2, 3],
-            view: &[],
+            view: &ViewEntries::identity_for_shape(&[2, 3]),
             data_type: BandDataType::UInt8,
         };
         let err = loader.load(&[&req]).await.unwrap_err();

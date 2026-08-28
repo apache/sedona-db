@@ -239,9 +239,10 @@ impl ViewEntries {
     /// [`validate`] the result against the source shape before use.
     ///
     /// [`validate`]: Self::validate
-    pub fn compose(&self, next: &Self) -> Result<Self, RasterError> {
-        let mut out = Vec::with_capacity(next.0.len());
-        for (k, next_entry) in next.0.iter().enumerate() {
+    pub fn compose(&self, next: impl AsRef<[ViewEntry]>) -> Result<Self, RasterError> {
+        let next = next.as_ref();
+        let mut out = Vec::with_capacity(next.len());
+        for (k, next_entry) in next.iter().enumerate() {
             if next_entry.source_axis < 0 || (next_entry.source_axis as usize) >= self.0.len() {
                 return Err(RasterError::Invalid(format!(
                     "compose: next[{k}].source_axis ({}) is out of range \

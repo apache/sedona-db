@@ -88,8 +88,8 @@ impl<'a> BandRef for BandRefImpl<'a> {
         &self.source_shape_values.values()[start..end]
     }
 
-    fn view(&self) -> &[ViewEntry] {
-        self.view_entries.as_slice()
+    fn view(&self) -> &ViewEntries {
+        &self.view_entries
     }
 
     fn data_type(&self) -> BandDataType {
@@ -937,12 +937,12 @@ mod tests {
         let in_raster = in_rasters.get(0).unwrap();
         let in_band = in_raster.band(0).unwrap();
 
-        let identity = [ViewEntry {
+        let identity = ViewEntries::new(vec![ViewEntry {
             source_axis: 0,
             start: 0,
             step: 1,
             steps: 4,
-        }];
+        }]);
         let mut ob = RasterBuilder::new(1);
         ob.start_raster_nd(&transform, &["x"], &[4], None).unwrap();
         in_band
@@ -1218,12 +1218,12 @@ mod tests {
             .unwrap();
         builder
             .start_band(StartBandArgs {
-                view: Some(&[ViewEntry {
+                view: Some(&ViewEntries::new(vec![ViewEntry {
                     source_axis: 0,
                     start: 1,
                     step: 2,
                     steps: 3,
-                }]),
+                }])),
                 ..StartBandArgs::new(&["x"], &[8], BandDataType::UInt8)
             })
             .unwrap();
@@ -1387,12 +1387,12 @@ mod tests {
         builder
             .start_band(StartBandArgs {
                 name: Some("a"),
-                view: Some(&[ViewEntry {
+                view: Some(&ViewEntries::new(vec![ViewEntry {
                     source_axis: 0,
                     start: 1,
                     step: 2,
                     steps: 3,
-                }]),
+                }])),
                 nodata: Some(&[0u8, 0, 0, 0]),
                 outdb_uri: Some("s3://bucket/a.tif"),
                 outdb_format: Some("GTiff"),
@@ -1711,7 +1711,7 @@ mod tests {
         builder
             .start_band(StartBandArgs {
                 name: Some("broadcast_time"),
-                view: Some(&[
+                view: Some(&ViewEntries::new(vec![
                     ViewEntry {
                         source_axis: 0,
                         start: 0,
@@ -1724,7 +1724,7 @@ mod tests {
                         step: 0,
                         steps: big,
                     },
-                ]),
+                ])),
                 ..StartBandArgs::new(&["y", "t"], &[4, 1], BandDataType::UInt8)
             })
             .unwrap();

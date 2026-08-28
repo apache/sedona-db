@@ -30,7 +30,7 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::ffi::Py_buffer;
 use pyo3::prelude::*;
 use pyo3::types::PyCapsule;
-use sedona_raster::view_entries::ViewEntry;
+use sedona_raster::view_entries::{ViewEntries, ViewEntry};
 use sedona_raster_zarr::{
     object_store_for_uri, open_storage_from_uri, ZarrChunkReader, ZarrLoader,
 };
@@ -341,7 +341,7 @@ impl PyZarrRasterLoader {
                 uri,
                 dim_names,
                 source_shape,
-                view,
+                view: ViewEntries::new(view),
                 data_type,
             });
         }
@@ -386,7 +386,7 @@ impl PyZarrRasterLoader {
                     source_shape: r.source_shape,
                     view: r
                         .view
-                        .into_iter()
+                        .iter()
                         .map(|v| ZarrViewEntry {
                             source_axis: v.source_axis,
                             start: v.start,
@@ -411,7 +411,7 @@ struct OwnedLoadRequest {
     uri: String,
     dim_names: Vec<String>,
     source_shape: Vec<i64>,
-    view: Vec<ViewEntry>,
+    view: ViewEntries,
     data_type: sedona_schema::raster::BandDataType,
 }
 

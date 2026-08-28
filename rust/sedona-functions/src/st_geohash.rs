@@ -18,10 +18,10 @@
 use std::{collections::HashMap, iter::zip, sync::Arc};
 
 use crate::executor::WkbExecutor;
-use arrow_array::{builder::StringBuilder, Array};
+use arrow_array::{builder::StringBuilder, Array, ArrayRef, Int64Array};
 use arrow_schema::DataType;
 use datafusion_common::{
-    cast::{as_int64_array, as_string_view_array, as_struct_array},
+    cast::{as_int64_array, as_string_view_array, as_struct_array, as_uint64_array},
     config::ConfigOptions,
     error::{DataFusionError, Result},
     exec_err, plan_err, ScalarValue,
@@ -502,6 +502,34 @@ fn ensure_wgs84_crs(arg_type: &SedonaType) -> Result<()> {
     )
 }
 
+/// Narrow the precision argument to `Int64`, saturating rather than failing
+///
+/// `ArgMatcher::is_integer()` accepts `UInt64`, whose upper half does not fit in
+/// an `i64`, so casting it directly raised "Can't cast value ... to type Int64"
+/// for any precision above `i64::MAX`. That is a signature the function offers
+/// but could not honour.
+///
+/// Nothing is lost by saturating: [`geohash_encode`] caps precision at
+/// [`MAX_PRECISION`], so every value at or above 20 already produces the same
+/// 20-character hash. A `UInt64` precision of `u64::MAX` therefore encodes
+/// exactly as a precision of 20 does, which is what the cap already promised.
+///
+/// Every other integer width fits in an `i64` and is cast directly.
+fn precision_as_int64(arg: &ColumnarValue, num_rows: usize) -> Result<ArrayRef> {
+    if !matches!(arg.data_type(), DataType::UInt64) {
+        return arg.cast_to(&DataType::Int64, None)?.to_array(num_rows);
+    }
+
+    let values = arg.to_array(num_rows)?;
+    let values = as_uint64_array(&values)?;
+    let saturated: Int64Array = values
+        .iter()
+        .map(|maybe_value| maybe_value.map(|value| value.min(i64::MAX as u64) as i64))
+        .collect();
+
+    Ok(Arc::new(saturated))
+}
+
 /// Append the geohash of each geometry at the precision given by the second argument
 fn append_geohash_with_precision(
     executor: &WkbExecutor<'_, '_>,
@@ -511,9 +539,7 @@ fn append_geohash_with_precision(
     next_wrap: &mut dyn FnMut() -> Result<LongitudeWrap>,
     builder: &mut StringBuilder,
 ) -> Result<()> {
-    let precision_value = args[1]
-        .cast_to(&DataType::Int64, None)?
-        .to_array(executor.num_iterations())?;
+    let precision_value = precision_as_int64(&args[1], executor.num_iterations())?;
     let precision_array = as_int64_array(&precision_value)?;
     let mut precision_iter = precision_array.iter();
 
@@ -783,7 +809,7 @@ fn geohash_encode(lon: f64, lat: f64, precision: i64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use arrow_array::{create_array, ArrayRef};
+    use arrow_array::{create_array, ArrayRef, UInt32Array, UInt64Array};
     use arrow_schema::Field;
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
@@ -797,46 +823,6 @@ mod tests {
     use sedona_testing::{create::create_array as create_wkb_array, testers::ScalarUdfTester};
 
     use super::*;
-
-    /// An item_crs-shaped struct whose `item` is not spatial, i.e. what
-    /// `named_struct('item', 1, 'crs', arrow_cast('EPSG:4326', 'Utf8View'))`
-    /// produces in SQL.
-    fn non_spatial_item_crs() -> SedonaType {
-        SedonaType::Arrow(DataType::Struct(
-            vec![
-                Field::new("item", DataType::Int64, true),
-                Field::new("crs", DataType::Utf8View, true),
-            ]
-            .into(),
-        ))
-    }
-
-    /// Regression: the shape-only `is_item_crs()` matcher accepted an
-    /// item_crs-shaped struct wrapping any item type, so this reached
-    /// execution and blew up with an internal error ("Expected geometry or
-    /// geography argument but got Arrow(Int64)") instead of failing as a
-    /// signature mismatch. Both arities are checked.
-    #[test]
-    fn item_crs_kernels_require_a_spatial_item() {
-        let udf = st_geohash_udf();
-        let one_arg = vec![non_spatial_item_crs()];
-        let two_args = vec![non_spatial_item_crs(), SedonaType::Arrow(DataType::Int64)];
-        for kernel in udf.kernels() {
-            assert_eq!(kernel.return_type(&one_arg).unwrap(), None);
-            assert_eq!(kernel.return_type(&two_args).unwrap(), None);
-        }
-
-        for args in [one_arg, two_args] {
-            let tester = ScalarUdfTester::new(st_geohash_udf().into(), args);
-            let err = tester.return_type().unwrap_err().to_string();
-            assert!(err.contains("No kernel matching arguments"), "{err}");
-        }
-
-        // A real item_crs argument still resolves.
-        let tester =
-            ScalarUdfTester::new(st_geohash_udf().into(), vec![WKB_GEOMETRY_ITEM_CRS.clone()]);
-        assert!(tester.return_type().is_ok());
-    }
 
     /// A tester whose session has a spherical bounder registered
     ///
@@ -1320,6 +1306,107 @@ mod tests {
         assert!(raw_bounder_for_arg_type(&WKB_VIEW_GEOMETRY).is_none());
         assert!(raw_bounder_for_arg_type(&WKB_GEOGRAPHY).is_some());
         assert!(raw_bounder_for_arg_type(&WKB_VIEW_GEOGRAPHY).is_some());
+    }
+
+    #[rstest]
+    fn udf_saturates_a_precision_wider_than_i64(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+    ) {
+        // ArgMatcher::is_integer() accepts UInt64, whose upper half does not fit
+        // in an i64. Casting it directly raised "Can't cast value ... to type
+        // Int64" for any precision above i64::MAX, so the function rejected a
+        // precision its own signature accepted.
+        //
+        // Precision is capped at MAX_PRECISION, so everything at or above 20 is
+        // the same 20-character hash; saturating loses nothing.
+        let tester = ScalarUdfTester::new(
+            st_geohash_udf().into(),
+            vec![sedona_type, SedonaType::Arrow(DataType::UInt64)],
+        );
+
+        let expected = "s02equ04ven09qv80meq";
+        for precision in [20_u64, i64::MAX as u64, i64::MAX as u64 + 1, u64::MAX] {
+            let result = tester
+                .invoke_scalar_scalar("POINT (1 2)", ScalarValue::UInt64(Some(precision)))
+                .unwrap();
+            tester.assert_scalar_result_equals(result, expected);
+        }
+
+        // A null precision still yields a null result.
+        let result = tester
+            .invoke_scalar_scalar("POINT (1 2)", ScalarValue::UInt64(None))
+            .unwrap();
+        tester.assert_scalar_result_equals(result, ScalarValue::Utf8(None));
+    }
+
+    #[test]
+    fn precision_as_int64_saturates_only_unsigned_64_bit() {
+        // UInt64 saturates at i64::MAX ...
+        let wide = ColumnarValue::Array(Arc::new(UInt64Array::from(vec![
+            Some(0),
+            Some(20),
+            Some(i64::MAX as u64),
+            Some(u64::MAX),
+            None,
+        ])));
+        let out = precision_as_int64(&wide, 5).unwrap();
+        let out = as_int64_array(&out).unwrap();
+        assert_eq!(
+            out.iter().collect::<Vec<_>>(),
+            vec![Some(0), Some(20), Some(i64::MAX), Some(i64::MAX), None]
+        );
+
+        // ... while narrower widths and signed values are cast unchanged,
+        // including the negative precision that means "empty string".
+        let signed = ColumnarValue::Array(Arc::new(Int64Array::from(vec![Some(-1), Some(10)])));
+        let out = precision_as_int64(&signed, 2).unwrap();
+        let out = as_int64_array(&out).unwrap();
+        assert_eq!(out.iter().collect::<Vec<_>>(), vec![Some(-1), Some(10)]);
+
+        let small = ColumnarValue::Array(Arc::new(UInt32Array::from(vec![Some(u32::MAX)])));
+        let out = precision_as_int64(&small, 1).unwrap();
+        let out = as_int64_array(&out).unwrap();
+        assert_eq!(out.iter().collect::<Vec<_>>(), vec![Some(u32::MAX as i64)]);
+    }
+
+    /// An item_crs-shaped struct whose `item` is not spatial, i.e. what
+    /// `named_struct('item', 1, 'crs', arrow_cast('EPSG:4326', 'Utf8View'))`
+    /// produces in SQL.
+    fn non_spatial_item_crs() -> SedonaType {
+        SedonaType::Arrow(DataType::Struct(
+            vec![
+                Field::new("item", DataType::Int64, true),
+                Field::new("crs", DataType::Utf8View, true),
+            ]
+            .into(),
+        ))
+    }
+
+    /// Regression: the shape-only `is_item_crs()` matcher accepted an
+    /// item_crs-shaped struct wrapping any item type, so this reached
+    /// execution and blew up with an internal error ("Expected geometry or
+    /// geography argument but got Arrow(Int64)") instead of failing as a
+    /// signature mismatch. Both arities are checked.
+    #[test]
+    fn item_crs_kernels_require_a_spatial_item() {
+        let udf = st_geohash_udf();
+        let one_arg = vec![non_spatial_item_crs()];
+        let two_args = vec![non_spatial_item_crs(), SedonaType::Arrow(DataType::Int64)];
+        for kernel in udf.kernels() {
+            assert_eq!(kernel.return_type(&one_arg).unwrap(), None);
+            assert_eq!(kernel.return_type(&two_args).unwrap(), None);
+        }
+
+        for args in [one_arg, two_args] {
+            let tester = ScalarUdfTester::new(st_geohash_udf().into(), args);
+            let err = tester.return_type().unwrap_err().to_string();
+            assert!(err.contains("No kernel matching arguments"), "{err}");
+        }
+
+        // A real item_crs argument still resolves.
+        let tester =
+            ScalarUdfTester::new(st_geohash_udf().into(), vec![WKB_GEOMETRY_ITEM_CRS.clone()]);
+        assert!(tester.return_type().is_ok());
     }
 
     #[test]
