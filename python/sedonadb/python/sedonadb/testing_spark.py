@@ -44,6 +44,12 @@ from sedonadb.testing import DBEngine
 SEDONA_SPARK_VERSION = "1.9.0"
 GEOTOOLS_WRAPPER_VERSION = "1.9.0-33.5"
 
+# ``result_to_table`` collects through ``DataFrame.toArrow``, which landed in
+# Spark 4.0. That floor is a property of this harness rather than of the jars,
+# so it holds even when SEDONADB_SEDONA_SPARK_PACKAGES overrides the
+# coordinates.
+MIN_PYSPARK_VERSION = (4, 0)
+
 
 class SedonaSpark(DBEngine):
     """Runs Sedona Spark SQL — the compatibility-target dialect.
@@ -81,6 +87,7 @@ class SedonaSpark(DBEngine):
     @classmethod
     def _ensure_session(cls):
         if SedonaSpark._spark is None:
+            cls._check_pyspark_version()
             from sedona.spark import SedonaContext
 
             config = (
@@ -96,30 +103,48 @@ class SedonaSpark(DBEngine):
         return SedonaSpark._spark
 
     @staticmethod
-    def _packages() -> str:
+    def _pyspark_version() -> tuple:
+        import pyspark
+
+        return tuple(int(part) for part in pyspark.__version__.split(".")[:2])
+
+    @classmethod
+    def _check_pyspark_version(cls) -> None:
+        """Reject a pyspark that predates the Arrow collect path.
+
+        Without this a 3.5 install selects jars and builds a session happily,
+        then dies with an ``AttributeError`` on ``toArrow`` inside the first
+        comparison — a failure far from its cause. Checked at session setup, not
+        in :meth:`_packages`, so an explicit SEDONADB_SEDONA_SPARK_PACKAGES
+        override cannot route around it.
+        """
+        import pyspark
+
+        if cls._pyspark_version() < MIN_PYSPARK_VERSION:
+            minimum = ".".join(str(part) for part in MIN_PYSPARK_VERSION)
+            raise RuntimeError(
+                f"Sedona Spark parity tests need pyspark >= {minimum} for "
+                f"DataFrame.toArrow; found {pyspark.__version__}. Run "
+                f"`pip install 'pyspark>={minimum}'`"
+            )
+
+    @classmethod
+    def _packages(cls) -> str:
         env = os.environ.get("SEDONADB_SEDONA_SPARK_PACKAGES")
         if env:
             return env
-        import pyspark
-
-        major, minor = (int(part) for part in pyspark.__version__.split(".")[:2])
-        # Sedona publishes per-Spark-minor artifacts. A pyspark older than every
-        # published artifact is an error (a newer jar on an older runtime fails
-        # at class load); a pyspark newer than the newest artifact tries the
-        # newest, which usually loads — override the coordinates if it doesn't.
-        known = ("3.5", "4.0")
+        major, minor = cls._pyspark_version()
+        # Sedona publishes per-Spark-minor artifacts, and 1.9.0's only Spark 4
+        # build is 4.0 (Scala 2.13); _check_pyspark_version has already rejected
+        # everything below that. A pyspark newer than the newest published
+        # artifact gets the newest, which usually loads — override the
+        # coordinates if it doesn't.
+        known = ("4.0",)
         spark_suffix = f"{major}.{minor}"
         if spark_suffix not in known:
-            if (major, minor) < (3, 5):
-                raise RuntimeError(
-                    f"No Sedona {SEDONA_SPARK_VERSION} artifact supports pyspark "
-                    f"{pyspark.__version__}; install pyspark >= 3.5 or set "
-                    "SEDONADB_SEDONA_SPARK_PACKAGES to explicit Maven coordinates"
-                )
             spark_suffix = known[-1]
-        scala_suffix = "2.13" if spark_suffix == "4.0" else "2.12"
         return (
-            f"org.apache.sedona:sedona-spark-shaded-{spark_suffix}_{scala_suffix}:"
+            f"org.apache.sedona:sedona-spark-shaded-{spark_suffix}_2.13:"
             f"{SEDONA_SPARK_VERSION},"
             f"org.datasyslab:geotools-wrapper:{GEOTOOLS_WRAPPER_VERSION}"
         )
