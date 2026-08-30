@@ -302,14 +302,12 @@ class GeoDataFrame:
         # value: a GeoArrow scalar carries no __geo_interface__ yet is geometry.
         missing = _is_missing(raw)
         replacing_geometry = key in _geometry_column_names(self._df)
-        if not replacing_geometry:
-            return lit(raw)
 
         # A GeoArrow-typed scalar — valid or null — is recognized from its
         # extension name, not by resolving it: the scalar resolver drops the
         # planar/spherical edge type and rejects non-WKB storage outright.
-        # Its one-element-array spelling resolves with the complete extension
-        # metadata, so that is the form it takes.
+        # It needs the handling below even for a brand-new or non-geometry
+        # column, so this must come before that early return.
         geoarrow_typed = False
         try:
             import pyarrow as pa
@@ -320,15 +318,24 @@ class GeoDataFrame:
         except ImportError:
             pass
 
+        if not replacing_geometry and not geoarrow_typed:
+            return lit(raw)
+
         if not missing and not geoarrow_typed:
             candidate = lit(raw)
             projected = self._df.select(candidate.alias("x")).schema
             if not projected.geometry_column_indices:
                 return candidate
 
-        dtype = self._df.schema.field(key).type
-        crs = dtype.crs
-        spherical = "SPHERICAL" in str(getattr(dtype, "edge_type", "")).upper()
+        if replacing_geometry:
+            dtype = self._df.schema.field(key).type
+            crs = dtype.crs
+            spherical = "SPHERICAL" in str(getattr(dtype, "edge_type", "")).upper()
+        else:
+            # A new or non-geometry destination has no type or CRS to
+            # inherit; the value's own metadata is all there is.
+            crs = None
+            spherical = False
         # A context-bound literal is needed to call functions on it.
         ctx = self._df._ctx
         inherits_crs = False
@@ -350,7 +357,15 @@ class GeoDataFrame:
                 else:
                     expr = ctx.lit(None).funcs.st_geomfromwkt()
                 if scalar_crs:
-                    expr = expr.funcs.st_setcrs(ctx.lit(str(scalar_crs)))
+                    # GeoArrow CRS wrappers stringify as StringCrs(...);
+                    # to_json() is the canonical PROJJSON form ST_SetCRS
+                    # accepts.
+                    crs_text = (
+                        scalar_crs.to_json()
+                        if hasattr(scalar_crs, "to_json")
+                        else str(scalar_crs)
+                    )
+                    expr = expr.funcs.st_setcrs(ctx.lit(crs_text))
                 else:
                     # A CRS-less carrier inherits the destination CRS like
                     # any other, shedding any constructor-synthesized one.

@@ -115,6 +115,15 @@ def normalize_scalar(value):
                 for name, v in fields_vals.items()
             }
             return pa.scalar(payload, type=pa.struct(fields))
+        # A 0-d structured masked container unwraps to its record form first:
+        # the generic mask check below itself raises on structured dtypes.
+        # (np.ma.masked has no field names, so it never matches here.)
+        if (
+            isinstance(value, np.ma.MaskedArray)
+            and value.ndim == 0
+            and value.dtype.names
+        ):
+            return normalize_scalar(value[()])
         # A masked value's .item() would expose the hidden data, silently turning
         # a missing value into a real number; masked means missing.
         if value is np.ma.masked or np.ma.is_masked(value):

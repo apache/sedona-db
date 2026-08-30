@@ -901,3 +901,72 @@ def test_masked_structured_records(points):
     assert out["a"].tolist() == [{"count": 3, "ratio": 1.5}] * len(points)
     assert out["b"].tolist() == [{"count": None, "ratio": 1.5}] * len(points)
     assert out["c"].isna().all()
+
+
+def test_geoarrow_scalars_to_new_columns(points):
+    # The new-column fast path returned lit(raw) before GeoArrow handling
+    # began: null WKT/point scalars raised ValueError, and a spherical WKB
+    # scalar silently became planar — and could even become the active
+    # geometry of a geometry-less frame with the wrong semantics.
+    import geoarrow.pyarrow as ga
+    import geopandas as gpd
+    import pyarrow as pa
+    from shapely.geometry import Point
+
+    crs4267 = gpd.GeoSeries.from_wkt(["POINT (0 0)"], crs="EPSG:4267").crs
+    sph = ga.wkb().with_edge_type(ga.EdgeType.SPHERICAL).with_crs(crs4267.to_json())
+
+    gdf = sgpd.from_geopandas(points)
+    gdf["fresh"] = pa.scalar(Point(1, 1).wkb, sph)
+    dtype = str(gdf._df.schema.field("fresh").type)
+    assert "geography" in dtype and "4267" in dtype
+    for typ in (ga.wkt(), ga.point()):
+        gdf = sgpd.from_geopandas(points)
+        gdf["fresh"] = pa.scalar(None, typ)
+        assert "geometry" in str(gdf._df.schema.field("fresh").type)
+
+    plain = GeoDataFrame(sgpd.default_context().sql("SELECT 1 AS a"))
+    plain["g"] = pa.scalar(Point(1, 1).wkb, sph)
+    assert "geography" in str(plain._df.schema.field("g").type)
+    assert plain._geometry_name == "g"
+
+
+def test_non_wkb_geoarrow_null_keeps_its_own_crs(points):
+    # The metadata-rebuilt null stamped str(StringCrs(...)) into ST_SetCRS,
+    # which is not PROJJSON and failed deserialization; the canonical
+    # to_json() form is used instead.
+    import geoarrow.pyarrow as ga
+    import geopandas as gpd
+    import pyarrow as pa
+
+    crs4267 = gpd.GeoSeries.from_wkt(["POINT (0 0)"], crs="EPSG:4267").crs
+    gdf = sgpd.from_geopandas(points)
+    gdf["geometry"] = pa.scalar(None, ga.wkt().with_crs(crs4267.to_json()))
+    dtype = str(gdf._df.schema.field("geometry").type)
+    assert "4267" in dtype
+    assert gdf.to_geopandas()["geometry"].isna().all()
+
+
+def test_zero_dim_structured_masked_containers(points):
+    # A 0-d structured MaskedArray raised an opaque structured-dtype-to-bool
+    # TypeError inside the generic mask check, directly and inside a Literal;
+    # it unwraps to its record form first.
+    import numpy as np
+
+    from sedonadb.expr import lit
+
+    dtype = [("count", "int16"), ("ratio", "float32")]
+
+    def container(mask):
+        return np.ma.MaskedArray((3, 1.5), mask=mask, dtype=dtype)
+
+    gdf = sgpd.from_geopandas(points)
+    gdf["a"] = container((False, False))
+    gdf["b"] = container((True, False))
+    gdf["c"] = container((True, True))
+    gdf["d"] = lit(container((True, False)))
+    out = gdf.to_geopandas()
+    assert out["a"].tolist() == [{"count": 3, "ratio": 1.5}] * len(points)
+    assert out["b"].tolist() == [{"count": None, "ratio": 1.5}] * len(points)
+    assert out["c"].isna().all()
+    assert out["d"].tolist() == [{"count": None, "ratio": 1.5}] * len(points)
