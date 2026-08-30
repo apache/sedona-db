@@ -970,3 +970,59 @@ def test_zero_dim_structured_masked_containers(points):
     assert out["b"].tolist() == [{"count": None, "ratio": 1.5}] * len(points)
     assert out["c"].isna().all()
     assert out["d"].tolist() == [{"count": None, "ratio": 1.5}] * len(points)
+
+
+def test_large_wkb_scalars_normalize_to_binary_storage(points):
+    # ga.large_wkb() scalars carry LargeBinary storage, which SedonaDB's WKB
+    # importer rejects; they are rebuilt on Binary storage with the same CRS
+    # and edge metadata. Valid and null, direct and Literal, fresh and
+    # geometry destinations.
+    import geoarrow.pyarrow as ga
+    import geopandas as gpd
+    import pyarrow as pa
+    from shapely.geometry import Point
+
+    from sedonadb.expr import lit
+
+    crs4267 = gpd.GeoSeries.from_wkt(["POINT (0 0)"], crs="EPSG:4267").crs
+    lws = (
+        ga.large_wkb().with_edge_type(ga.EdgeType.SPHERICAL).with_crs(crs4267.to_json())
+    )
+    for payload in (Point(1, 1).wkb, None):
+        gdf = sgpd.from_geopandas(points)
+        gdf["fresh"] = pa.scalar(payload, lws)
+        dtype = str(gdf._df.schema.field("fresh").type)
+        assert "geography" in dtype and "4267" in dtype
+    gdf = sgpd.from_geopandas(points)
+    gdf["geometry"] = lit(pa.scalar(Point(1, 1).wkb, ga.large_wkb()))
+    assert "3857" in str(gdf._df.schema.field("geometry").type)
+    assert gdf.to_geopandas()["geometry"].tolist() == [Point(1, 1)] * len(points)
+
+
+def test_masked_records_do_not_recurse(points):
+    # 0-d MaskedRecords' own [()] returns another 0-d MaskedRecords, so the
+    # structured-masked unwrap recursed until RecursionError; the base
+    # MaskedArray view yields the record form. All three mask states, direct
+    # and through Literal.
+    import numpy as np
+    import numpy.ma.mrecords as mrecords
+
+    from sedonadb.expr import lit
+
+    dtype = [("count", "int16"), ("ratio", "float32")]
+
+    def record(mask):
+        return np.ma.MaskedArray((3, 1.5), mask=mask, dtype=dtype).view(
+            mrecords.MaskedRecords
+        )
+
+    gdf = sgpd.from_geopandas(points)
+    gdf["a"] = record((False, False))
+    gdf["b"] = record((True, False))
+    gdf["c"] = record((True, True))
+    gdf["d"] = lit(record((True, False)))
+    out = gdf.to_geopandas()
+    assert out["a"].tolist() == [{"count": 3, "ratio": 1.5}] * len(points)
+    assert out["b"].tolist() == [{"count": None, "ratio": 1.5}] * len(points)
+    assert out["c"].isna().all()
+    assert out["d"].tolist() == [{"count": None, "ratio": 1.5}] * len(points)

@@ -347,7 +347,18 @@ class GeoDataFrame:
             )
             scalar_crs = getattr(raw.type, "crs", None)
             if str(raw.type.extension_name) == "geoarrow.wkb":
-                expr = ctx.lit(pa.array([raw.as_py()], type=raw.type))
+                arr_type = raw.type
+                if pa.types.is_large_binary(arr_type.storage_type):
+                    # SedonaDB's WKB importer requires Binary storage; the
+                    # type is rebuilt on Binary with the same CRS and edge
+                    # metadata rather than passed through and rejected.
+                    import geoarrow.pyarrow as ga
+
+                    rebuilt = ga.wkb().with_edge_type(arr_type.edge_type)
+                    if arr_type.crs is not None:
+                        rebuilt = rebuilt.with_crs(arr_type.crs)
+                    arr_type = rebuilt
+                expr = ctx.lit(pa.array([raw.as_py()], type=arr_type))
             elif missing:
                 # Non-WKB storage cannot become a literal; a null of it is
                 # rebuilt from its own metadata. Kind and CRS survive; the

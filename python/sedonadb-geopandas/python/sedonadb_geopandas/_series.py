@@ -123,7 +123,10 @@ def normalize_scalar(value):
             and value.ndim == 0
             and value.dtype.names
         ):
-            return normalize_scalar(value[()])
+            # Unwrap through the base MaskedArray view: MaskedRecords' own
+            # [()] returns another 0-d MaskedRecords, recursing forever,
+            # while the base view yields the record form.
+            return normalize_scalar(value.view(np.ma.MaskedArray)[()])
         # A masked value's .item() would expose the hidden data, silently turning
         # a missing value into a real number; masked means missing.
         if value is np.ma.masked or np.ma.is_masked(value):
