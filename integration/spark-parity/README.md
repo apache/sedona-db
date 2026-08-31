@@ -33,9 +33,10 @@ reason to pay. Rather than ship that as skip logic inside the main suite, where
 it silently degrades to "passed" for anyone without a Spark toolchain, the tests
 live here and are run deliberately.
 
-Nothing else collects this directory: every other pytest invocation in the repo
-is scoped to its own project directory, so `python/sedonadb`'s suite and this one
-never see each other. There is deliberately no opt-in environment variable — each
+Nothing else collects this directory. It sits outside `python/` on purpose, so
+that `pytest` under `python/` is testing Python code rather than reaching out to
+another engine, and every pytest invocation in the repo is scoped to its own
+directory anyway. There is deliberately no opt-in environment variable — each
 test constructs both engines outright, so a missing pyspark, JVM, or jar is a
 failure with a real traceback, not a skip.
 
@@ -46,7 +47,7 @@ This suite is not wired into CI.
 ```bash
 pip install -e "python/sedonadb[test]"      # the engine under test
 pip install "pyspark>=4.0" apache-sedona    # the compatibility target
-cd python/spark-parity
+cd integration/spark-parity
 pytest -v
 ```
 

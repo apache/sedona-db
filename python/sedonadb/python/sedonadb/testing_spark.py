@@ -24,7 +24,7 @@ none of which the core :mod:`sedonadb.testing` module should pull in.
 
 Bootstrapping a ``SparkSession`` (downloading the Sedona jars from Maven, JVM
 startup) costs tens of seconds, which is why the tests that use this engine live
-in their own suite under ``python/spark-parity`` rather than in
+in their own suite under ``integration/spark-parity`` rather than in
 ``python/sedonadb/tests``. That suite is run deliberately and assumes the engine
 is available, so construction failures here propagate rather than skipping.
 
