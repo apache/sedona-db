@@ -16,8 +16,10 @@
 // under the License.
 use arrow_array::{ArrayRef, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema};
-use comfy_table::presets::UTF8_FULL;
-use comfy_table::{Cell, CellAlignment, ColumnConstraint, ContentArrangement, Row, Table, Width};
+use comfy_table::presets::{ASCII_FULL_CONDENSED, UTF8_FULL};
+use comfy_table::{
+    Cell, CellAlignment, ColumnConstraint, ContentArrangement, LineStyle, Row, Table, Width,
+};
 use datafusion::arrow::util::display::{ArrayFormatter, FormatOptions};
 use datafusion::error::Result;
 use datafusion_common::format::DEFAULT_FORMAT_OPTIONS;
@@ -256,10 +258,12 @@ impl<'a> DisplayTable<'a> {
 
         match self.options.display_mode {
             DisplayMode::ASCII => {
-                table.load_preset("||--+-++|    ++++++");
+                table.load_style(
+                    ASCII_FULL_CONDENSED.header_separator(LineStyle::new('+', '-', '+', '+')),
+                );
             }
             DisplayMode::Utf8 => {
-                table.load_preset(UTF8_FULL);
+                table.load_style(UTF8_FULL);
             }
         }
 
