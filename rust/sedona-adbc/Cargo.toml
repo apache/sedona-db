@@ -34,7 +34,9 @@ result_large_err = "allow"
 adbc_core = { workspace = true }
 adbc_ffi = { workspace = true }
 arrow-array = { workspace = true }
+arrow-array-adbc = { package = "arrow-array", version = "59.2.0" }
 arrow-schema = { workspace = true }
+arrow-schema-adbc = { package = "arrow-schema", version = "59.2.0" }
 datafusion = { workspace = true }
 futures = { workspace = true }
 sedona = { workspace = true }
