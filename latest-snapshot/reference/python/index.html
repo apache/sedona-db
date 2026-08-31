@@ -7113,6 +7113,31 @@ avoid accidentally skipping tests on CI.</p>
 <div class="doc doc-object doc-function">
 
 
+<h4 id="sedonadb.testing.DBEngine.create_raster_view" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">create_raster_view</span>
+
+
+<a href="#sedonadb.testing.DBEngine.create_raster_view" class="headerlink" title="Permanent link">¶</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">create_raster_view</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="DBEngine (sedonadb.testing.DBEngine)" href="#sedonadb.testing.DBEngine">DBEngine</a></span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Register a one-row view <code>name</code> with a raster column <code>rast</code> read from
+the GeoTIFF at <code>path</code>.</p>
+<p>The single dialect-specific shim in the raster parity suite: each engine
+ingests the file its own way (SedonaDB via <code>RS_FromPath</code>, Sedona Spark
+via <code>RS_FromGeoTiff</code> over a <code>binaryFile</code> read), so the query under test
+stays one shared SQL string that references <code>rast</code>.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
 <h4 id="sedonadb.testing.DBEngine.create_table_arrow" class="doc doc-heading">
             <span class="doc doc-object-name doc-function-name">create_table_arrow</span>
 
@@ -7190,6 +7215,30 @@ push down a scan into their own table format is variable.</p>
 <p>This is usually the best option for a benchmark if both engines support
 pushing down a spatial filter into the Parquet files in question. This
 is not supported by the PostGIS engine.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="sedonadb.testing.DBEngine.decode_raster_result" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">decode_raster_result</span>
+
+
+<a href="#sedonadb.testing.DBEngine.decode_raster_result" class="headerlink" title="Permanent link">¶</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">decode_raster_result</span><span class="p">(</span><span class="n">sql</span><span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Run <code>sql</code> (which selects a single raster column) and decode the result
+raster to a <code>sedonadb.raster_testing.DecodedRaster</code> — pixels, geotransform,
+and per-band nodata — for cross-engine comparison. <code>None</code> if the raster is
+NULL. Each engine decodes its own way (SedonaDB reads the native raster
+column; Sedona Spark transports it out as GeoTIFF bytes).</p>
 
 
     </div>
