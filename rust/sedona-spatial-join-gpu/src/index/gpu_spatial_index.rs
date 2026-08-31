@@ -275,6 +275,7 @@ mod tests {
     use datafusion_physical_expr::expressions::Column;
     use futures::Stream;
     use sedona_expr::statistics::GeoStatistics;
+    use sedona_libgpuspatial::{GpuSpatialIndex as RawGpuSpatialIndex, GpuSpatialOptions};
     use sedona_schema::datatypes::WKB_GEOMETRY;
     use sedona_spatial_join::evaluated_batch::evaluated_batch_stream::{
         EvaluatedBatchStream, SendableEvaluatedBatchStream,
@@ -292,6 +293,18 @@ mod tests {
     use std::sync::Arc;
     use std::task::{Context, Poll};
     use std::vec::IntoIter;
+
+    fn gpu_available() -> bool {
+        RawGpuSpatialIndex::try_new(&GpuSpatialOptions {
+            cuda_use_memory_pool: true,
+            cuda_memory_pool_init_percent: 10,
+            concurrency: 1,
+            device_id: 0,
+            compress_bvh: false,
+            pipeline_batches: 1,
+        })
+        .is_ok()
+    }
 
     pub struct SingleBatchStream {
         // We use an Option so we can `take()` it on the first poll,
@@ -396,6 +409,10 @@ mod tests {
     }
     #[test]
     fn test_spatial_index_builder_empty() {
+        if !gpu_available() {
+            return;
+        }
+
         let options = GpuOptions {
             enable: true,
             ..Default::default()
@@ -425,6 +442,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_spatial_index_builder_add_batch() {
+        if !gpu_available() {
+            return;
+        }
+
         let options = GpuOptions {
             enable: true,
             ..Default::default()
@@ -476,6 +497,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_spatial_index_builder_add_multiple_batches() {
+        if !gpu_available() {
+            return;
+        }
+
         let gpu_options = GpuOptions {
             enable: true,
             concat_build: false,
@@ -613,6 +638,10 @@ mod tests {
     }
     #[tokio::test]
     async fn test_query_batch_empty_results() {
+        if !gpu_available() {
+            return;
+        }
+
         let build_geoms = &[Some("POINT (0 0)"), Some("POINT (1 1)")];
         let options = GpuOptions {
             enable: true,
@@ -645,6 +674,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_query_batch_non_empty_results_multiple_build_batches() {
+        if !gpu_available() {
+            return;
+        }
+
         let gpu_options = GpuOptions {
             enable: true,
             concat_build: false,
