@@ -3942,7 +3942,7 @@ checksum = "987ee68552c50b61259b693e8b4f57b948990754d9ac401ea33cf392b551a018"
 dependencies = [
  "byteorder",
  "chrono",
- "laz 0.13.0",
+ "laz",
  "log",
  "num-traits",
  "thiserror 2.0.17",
@@ -3951,23 +3951,13 @@ dependencies = [
 
 [[package]]
 name = "las-crs"
-version = "1.0.0"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b25b1e192564ebf5b563e821c4924ce97bd703f445e851117db2e656499c21c"
+checksum = "249568d517d0dcf0581d1c8241b05cd76559ec1c01e5ded1878645d158cdf594"
 dependencies = [
  "las 0.9.11",
  "log",
  "thiserror 2.0.17",
-]
-
-[[package]]
-name = "laz"
-version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7390b35d7f7e1f22bdbe5ef4e19a4b9f8ba44927cb55d267e42cafc180fca48c"
-dependencies = [
- "byteorder",
- "num-traits",
 ]
 
 [[package]]
@@ -6127,7 +6117,7 @@ dependencies = [
  "geoarrow-schema",
  "las 0.11.1",
  "las-crs",
- "laz 0.12.0",
+ "laz",
  "object_store",
  "rayon",
  "sedona",
