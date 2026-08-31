@@ -41,8 +41,8 @@ from sedonadb.testing import DBEngine
 
 # Sedona jar coordinates. Override with SEDONADB_SEDONA_SPARK_PACKAGES (full
 # Maven coordinates) when testing against a different Sedona release.
-SEDONA_SPARK_VERSION = "1.9.0"
-GEOTOOLS_WRAPPER_VERSION = "1.9.0-33.5"
+SEDONA_SPARK_VERSION = "1.9.1"
+GEOTOOLS_WRAPPER_VERSION = "1.9.1-33.5"
 
 # ``result_to_table`` collects through ``DataFrame.toArrow``, which landed in
 # Spark 4.0. That floor is a property of this harness rather than of the jars,
@@ -125,12 +125,13 @@ class SedonaSpark(DBEngine):
         if env:
             return env
         major, minor = cls._pyspark_version()
-        # Sedona publishes per-Spark-minor artifacts, and 1.9.0's only Spark 4
-        # build is 4.0 (Scala 2.13); _check_pyspark_version has already rejected
-        # everything below that. A pyspark newer than the newest published
-        # artifact gets the newest, which usually loads — override the
-        # coordinates if it doesn't.
-        known = ("4.0",)
+        # Sedona publishes a shaded artifact per Spark minor; 1.9.1 ships 4.0
+        # and 4.1 on the Spark 4 line (both Scala 2.13), and
+        # _check_pyspark_version has already rejected everything below 4.0.
+        # Keep this ordered oldest-to-newest: a pyspark newer than the newest
+        # published artifact falls back to that newest one, which usually loads
+        # — override the coordinates if it doesn't.
+        known = ("4.0", "4.1")
         spark_suffix = f"{major}.{minor}"
         if spark_suffix not in known:
             spark_suffix = known[-1]
