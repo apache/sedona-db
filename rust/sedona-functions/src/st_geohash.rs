@@ -69,13 +69,18 @@ pub fn st_geohash_udf() -> SedonaScalarUDF {
         vec![
             Arc::new(STGeoHashItemCrs {
                 matcher: ArgMatcher::new(
-                    vec![ArgMatcher::is_item_crs()],
+                    vec![ArgMatcher::is_item_crs_of(
+                        ArgMatcher::is_geometry_or_geography(),
+                    )],
                     SedonaType::Arrow(DataType::Utf8),
                 ),
             }) as _,
             Arc::new(STGeoHashItemCrs {
                 matcher: ArgMatcher::new(
-                    vec![ArgMatcher::is_item_crs(), ArgMatcher::is_integer()],
+                    vec![
+                        ArgMatcher::is_item_crs_of(ArgMatcher::is_geometry_or_geography()),
+                        ArgMatcher::is_integer(),
+                    ],
                     SedonaType::Arrow(DataType::Utf8),
                 ),
             }) as _,
@@ -805,6 +810,7 @@ fn geohash_encode(lon: f64, lat: f64, precision: i64) -> String {
 #[cfg(test)]
 mod tests {
     use arrow_array::{create_array, ArrayRef, UInt32Array, UInt64Array};
+    use arrow_schema::Field;
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
@@ -1361,6 +1367,46 @@ mod tests {
         let out = precision_as_int64(&small, 1).unwrap();
         let out = as_int64_array(&out).unwrap();
         assert_eq!(out.iter().collect::<Vec<_>>(), vec![Some(u32::MAX as i64)]);
+    }
+
+    /// An item_crs-shaped struct whose `item` is not spatial, i.e. what
+    /// `named_struct('item', 1, 'crs', arrow_cast('EPSG:4326', 'Utf8View'))`
+    /// produces in SQL.
+    fn non_spatial_item_crs() -> SedonaType {
+        SedonaType::Arrow(DataType::Struct(
+            vec![
+                Field::new("item", DataType::Int64, true),
+                Field::new("crs", DataType::Utf8View, true),
+            ]
+            .into(),
+        ))
+    }
+
+    /// Regression: the shape-only `is_item_crs()` matcher accepted an
+    /// item_crs-shaped struct wrapping any item type, so this reached
+    /// execution and blew up with an internal error ("Expected geometry or
+    /// geography argument but got Arrow(Int64)") instead of failing as a
+    /// signature mismatch. Both arities are checked.
+    #[test]
+    fn item_crs_kernels_require_a_spatial_item() {
+        let udf = st_geohash_udf();
+        let one_arg = vec![non_spatial_item_crs()];
+        let two_args = vec![non_spatial_item_crs(), SedonaType::Arrow(DataType::Int64)];
+        for kernel in udf.kernels() {
+            assert_eq!(kernel.return_type(&one_arg).unwrap(), None);
+            assert_eq!(kernel.return_type(&two_args).unwrap(), None);
+        }
+
+        for args in [one_arg, two_args] {
+            let tester = ScalarUdfTester::new(st_geohash_udf().into(), args);
+            let err = tester.return_type().unwrap_err().to_string();
+            assert!(err.contains("No kernel matching arguments"), "{err}");
+        }
+
+        // A real item_crs argument still resolves.
+        let tester =
+            ScalarUdfTester::new(st_geohash_udf().into(), vec![WKB_GEOMETRY_ITEM_CRS.clone()]);
+        assert!(tester.return_type().is_ok());
     }
 
     #[test]

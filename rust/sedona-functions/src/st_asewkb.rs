@@ -102,7 +102,9 @@ struct STAsEWKBItemCrs {}
 impl SedonaScalarKernel for STAsEWKBItemCrs {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(
-            vec![ArgMatcher::is_item_crs()],
+            vec![ArgMatcher::is_item_crs_of(
+                ArgMatcher::is_geometry_or_geography(),
+            )],
             SedonaType::Arrow(DataType::Binary),
         );
 
@@ -173,6 +175,7 @@ impl SedonaScalarKernel for STAsEWKBItemCrs {
 #[cfg(test)]
 mod tests {
     use arrow_array::{ArrayRef, BinaryArray};
+    use arrow_schema::Field;
     use datafusion_common::scalar::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
@@ -200,6 +203,40 @@ mod tests {
         0x01, 0x01, 0x00, 0x00, 0x20, 0xe6, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0xf0, 0x3f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40,
     ];
+
+    /// An item_crs-shaped struct whose `item` is not spatial, i.e. what
+    /// `named_struct('item', 1, 'crs', arrow_cast('EPSG:4326', 'Utf8View'))`
+    /// produces in SQL.
+    fn non_spatial_item_crs() -> SedonaType {
+        SedonaType::Arrow(DataType::Struct(
+            vec![
+                Field::new("item", DataType::Int64, true),
+                Field::new("crs", DataType::Utf8View, true),
+            ]
+            .into(),
+        ))
+    }
+
+    /// Regression: the shape-only `is_item_crs()` matcher accepted an
+    /// item_crs-shaped struct wrapping any item type, so this reached
+    /// execution and blew up with an internal error ("Can't iterate over
+    /// Arrow(Int64) as Wkb") instead of failing as a signature mismatch.
+    #[test]
+    fn item_crs_kernel_requires_a_spatial_item() {
+        let udf = st_asewkb_udf();
+        for kernel in udf.kernels() {
+            assert_eq!(kernel.return_type(&[non_spatial_item_crs()]).unwrap(), None);
+        }
+
+        let tester = ScalarUdfTester::new(udf.into(), vec![non_spatial_item_crs()]);
+        let err = tester.return_type().unwrap_err().to_string();
+        assert!(err.contains("No kernel matching arguments"), "{err}");
+
+        // A real item_crs argument still resolves.
+        let tester =
+            ScalarUdfTester::new(st_asewkb_udf().into(), vec![WKB_GEOMETRY_ITEM_CRS.clone()]);
+        assert!(tester.return_type().is_ok());
+    }
 
     #[test]
     fn udf_metadata() {

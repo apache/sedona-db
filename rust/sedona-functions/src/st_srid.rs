@@ -106,7 +106,9 @@ struct StSridItemCrs {}
 impl SedonaScalarKernel for StSridItemCrs {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(
-            vec![ArgMatcher::is_item_crs()],
+            vec![ArgMatcher::is_item_crs_of(
+                ArgMatcher::is_geometry_or_geography(),
+            )],
             SedonaType::Arrow(DataType::UInt32),
         );
 
@@ -211,7 +213,9 @@ struct StCrsItemCrs {}
 impl SedonaScalarKernel for StCrsItemCrs {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(
-            vec![ArgMatcher::is_item_crs()],
+            vec![ArgMatcher::is_item_crs_of(
+                ArgMatcher::is_geometry_or_geography(),
+            )],
             SedonaType::Arrow(DataType::Utf8View),
         );
 
@@ -269,6 +273,7 @@ impl SedonaScalarKernel for StCrsItemCrs {
 mod test {
     use super::*;
     use arrow_array::{create_array, ArrayRef};
+    use arrow_schema::Field;
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use sedona_geometry::types::Edges;
@@ -276,6 +281,47 @@ mod test {
     use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS};
     use sedona_testing::create::{create_array, create_array_item_crs, create_scalar_item_crs};
     use sedona_testing::testers::ScalarUdfTester;
+
+    /// An item_crs-shaped struct whose `item` is not spatial, i.e. what
+    /// `named_struct('item', 1, 'crs', arrow_cast('EPSG:4326', 'Utf8View'))`
+    /// produces in SQL.
+    fn non_spatial_item_crs() -> SedonaType {
+        SedonaType::Arrow(DataType::Struct(
+            vec![
+                Field::new("item", DataType::Int64, true),
+                Field::new("crs", DataType::Utf8View, true),
+            ]
+            .into(),
+        ))
+    }
+
+    /// Regression: an item_crs-shaped struct wrapping a non-spatial item used
+    /// to sail through the shape-only `is_item_crs()` matcher, so ST_SRID()
+    /// answered 4326 and ST_CRS() answered 'EPSG:4326' for an input that has
+    /// no geometry in it at all. Neither kernel should match it.
+    #[test]
+    fn item_crs_kernels_require_a_spatial_item() {
+        for (name, udf) in [("st_srid", st_srid_udf()), ("st_crs", st_crs_udf())] {
+            for kernel in udf.kernels() {
+                assert_eq!(
+                    kernel.return_type(&[non_spatial_item_crs()]).unwrap(),
+                    None,
+                    "{name} matched a non-spatial item_crs argument"
+                );
+            }
+
+            // With no kernel matching, resolution fails at planning time.
+            let tester = ScalarUdfTester::new(udf.into(), vec![non_spatial_item_crs()]);
+            let err = tester.return_type().unwrap_err().to_string();
+            assert!(err.contains("No kernel matching arguments"), "{err}");
+        }
+
+        // A real item_crs argument still resolves.
+        for udf in [st_srid_udf(), st_crs_udf()] {
+            let tester = ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY_ITEM_CRS.clone()]);
+            assert!(tester.return_type().is_ok());
+        }
+    }
 
     #[test]
     fn udf_metadata() {
