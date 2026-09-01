@@ -187,6 +187,43 @@ class DBEngine:
         """
         raise NotImplementedError()
 
+    def create_random_raster_view(
+        self,
+        name,
+        path,
+        *,
+        dtype="uint8",
+        bands=2,
+        height=6,
+        width=7,
+        gdal_transform=(100.0, 2.0, 0.0, 500.0, 0.0, -3.0),
+        nodata=None,
+        plants=None,
+    ) -> "DBEngine":
+        """Write a random GeoTIFF at `path` and register it as view `name`
+        (see `create_raster_view`).
+
+        The default grid is small and north-up/CRS-less so nothing reprojects
+        and results stay bit-comparable across engines. The pixels come from
+        `sedonadb.raster_testing.random_raster_data` with a fixed seed, so
+        registering the same `path` on several engines rewrites identical
+        bytes and every engine sees the same raster. `nodata` and `plants` are
+        as `write_random_geotiff`.
+        """
+        from sedonadb.raster_testing import write_random_geotiff
+
+        write_random_geotiff(
+            path,
+            dtype,
+            bands=bands,
+            height=height,
+            width=width,
+            gdal_transform=gdal_transform,
+            nodata=nodata,
+            plants=plants,
+        )
+        return self.create_raster_view(name, path)
+
     def decode_raster_result(self, sql):
         """Run `sql` (which selects a single raster column) and decode the result
         raster to a `sedonadb.raster_testing.DecodedRaster` — pixels, geotransform,

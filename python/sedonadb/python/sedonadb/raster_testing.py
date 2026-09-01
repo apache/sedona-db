@@ -158,15 +158,27 @@ def write_geotiff(
 
 
 def write_random_geotiff(
-    path, dtype, *, bands, height, width, gdal_transform, crs=None, nodata=None
+    path,
+    dtype,
+    *,
+    bands,
+    height,
+    width,
+    gdal_transform,
+    crs=None,
+    nodata=None,
+    plants=None,
 ) -> None:
     """Write a GeoTIFF of random `dtype` pixels on the given grid.
 
     Combines `random_raster_data` (dtype extremes planted in opposite corners)
     with `write_geotiff` — the input-raster fixture shape shared by raster warp
-    parity tests. `gdal_transform`, `crs`, and `nodata` are as `write_geotiff`.
+    parity tests. `gdal_transform`, `crs`, and `nodata` are as `write_geotiff`;
+    `plants` is as `random_raster_data`.
     """
-    data = random_raster_data(dtype, bands=bands, height=height, width=width)
+    data = random_raster_data(
+        dtype, bands=bands, height=height, width=width, plants=plants
+    )
     write_geotiff(path, data, gdal_transform=gdal_transform, nodata=nodata, crs=crs)
 
 
