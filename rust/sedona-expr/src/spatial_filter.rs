@@ -939,13 +939,30 @@ mod test {
             func: Arc::new(distance),
             args: vec![
                 datafusion_expr::col("geometry"),
-                literal,
+                literal.clone(),
                 Expr::Literal(ScalarValue::Float64(Some(10.0)), None),
             ],
         });
         assert!(matches!(
             factory.try_from_logical_expr(&distance_expr).unwrap(),
             SpatialFilter::Intersects(_, _)
+        ));
+
+        let st_distance = create_dummy_spatial_function("st_distance", 2);
+        let distance_comparison = Expr::ScalarFunction(ScalarFunction {
+            func: Arc::new(st_distance),
+            args: vec![datafusion_expr::col("geometry"), literal.clone()],
+        })
+        .lt_eq(Expr::Literal(ScalarValue::Float64(Some(10.0)), None));
+        assert!(matches!(
+            factory.try_from_logical_expr(&distance_comparison).unwrap(),
+            SpatialFilter::Intersects(_, _)
+        ));
+
+        let unsupported = datafusion_expr::col("geometry").alias("aliased_geometry");
+        assert!(matches!(
+            factory.try_from_logical_expr(&unsupported).unwrap(),
+            SpatialFilter::Unknown
         ));
     }
 
