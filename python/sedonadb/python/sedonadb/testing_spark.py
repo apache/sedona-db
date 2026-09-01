@@ -169,6 +169,12 @@ class SedonaSpark(DBEngine):
         # nodata None into a float NaN and mask the value under test.
         return result.toArrow()
 
+    def result_has_raster(self, sql) -> bool:
+        from sedona.spark.sql.types import RasterType
+
+        fields = self._session.sql(sql).schema.fields
+        return any(isinstance(field.dataType, RasterType) for field in fields)
+
     def decode_raster_result(self, sql):
         from sedonadb.raster_testing import DecodedRaster, decode_geotiff_bytes
 
