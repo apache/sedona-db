@@ -31,8 +31,8 @@ failure with a real traceback, not a skip. `SedonaSpark` caches its
 
 `RS_SetBandNoDataValue` is the first case on purpose: it is raster-in/raster-out
 but passes pixels through untouched, so a mismatch is a round-trip bug, not an
-operation divergence — it isolates the transport. Pixel-transforming ops
-(RS_Resample, RS_MapAlgebra) come next, with their known divergences as xfails.
+operation divergence — it isolates the transport. Pixel-transforming coverage
+continues in test_rs_resample.py.
 """
 
 import pytest
