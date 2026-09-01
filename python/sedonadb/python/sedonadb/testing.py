@@ -196,28 +196,36 @@ class DBEngine:
         bands=2,
         height=6,
         width=7,
-        gdal_transform=(100.0, 2.0, 0.0, 500.0, 0.0, -3.0),
+        bbox=None,
+        gdal_transform=None,
         nodata=None,
         plants=None,
     ) -> "DBEngine":
         """Write a random GeoTIFF at `path` and register it as view `name`
         (see `create_raster_view`).
 
-        The default grid is small and north-up/CRS-less so nothing reprojects
-        and results stay bit-comparable across engines. The pixels come from
-        `sedonadb.raster_testing.random_raster_data` with a fixed seed, so
-        registering the same `path` on several engines rewrites identical
-        bytes and every engine sees the same raster. `nodata` and `plants` are
-        as `write_random_geotiff`.
+        The grid is placed by `bbox` (`(minx, miny, maxx, maxy)`, north-up,
+        no skew) or, for grids a bbox cannot express, a raw GDAL
+        `gdal_transform` — at most one; the default is
+        `bbox=(100, 482, 114, 500)`, whose extent divided by the default 7x6
+        grid gives 2x3 pixels. The grid is small and north-up/CRS-less so
+        nothing reprojects and results stay bit-comparable across engines.
+        The pixels come from `sedonadb.raster_testing.random_raster_data`
+        with a fixed seed, so registering the same `path` on several engines
+        rewrites identical bytes and every engine sees the same raster.
+        `nodata` and `plants` are as `write_random_geotiff`.
         """
         from sedonadb.raster_testing import write_random_geotiff
 
+        if bbox is None and gdal_transform is None:
+            bbox = (100.0, 482.0, 114.0, 500.0)
         write_random_geotiff(
             path,
             dtype,
             bands=bands,
             height=height,
             width=width,
+            bbox=bbox,
             gdal_transform=gdal_transform,
             nodata=nodata,
             plants=plants,
