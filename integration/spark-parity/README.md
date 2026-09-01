@@ -47,7 +47,7 @@ The suite runs in CI as part of the `python` workflow
 
 ```bash
 pip install -e "python/sedonadb[test]"      # the engine under test
-pip install "pyspark>=4.0" apache-sedona    # the compatibility target
+pip install "pyspark>=4.0,<4.2" apache-sedona    # the compatibility target
 cd integration/spark-parity
 pytest -v
 ```

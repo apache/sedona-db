@@ -173,7 +173,12 @@ jobs:
 
       - name: Install Sedona Spark test dependencies
         run: |
-          pip install "pyspark>=4.0" apache-sedona
+          # Ceiling tracks the newest Spark minor Sedona publishes a shaded
+          # artifact for (1.9.1 ships 4.0 and 4.1). An unpinned install pulled
+          # pyspark 4.2.0, whose function registry rejects the fallback 4.1
+          # jar at SedonaContext.create. Raise the ceiling when Sedona ships
+          # an artifact for a newer Spark line.
+          pip install "pyspark>=4.0,<4.2" apache-sedona
 
       - name: Cache Sedona Spark jars
         uses: actions/cache@v6
