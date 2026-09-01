@@ -1179,6 +1179,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#sedonadb.testing.compare" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;compare
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#sedonadb.testing.geog_or_null" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2544,6 +2555,17 @@
     <span class="md-ellipsis">
       
         <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;SedonaDBSingleThread
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sedonadb.testing.compare" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;compare
       
     </span>
   </a>
@@ -7113,6 +7135,44 @@ avoid accidentally skipping tests on CI.</p>
 <div class="doc doc-object doc-function">
 
 
+<h4 id="sedonadb.testing.DBEngine.create_random_raster_view" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">create_random_raster_view</span>
+
+
+<a href="#sedonadb.testing.DBEngine.create_random_raster_view" class="headerlink" title="Permanent link">¶</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">create_random_raster_view</span><span class="p">(</span>
+    <span class="n">name</span><span class="p">,</span>
+    <span class="n">path</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">dtype</span><span class="o">=</span><span class="s2">"uint8"</span><span class="p">,</span>
+    <span class="n">bands</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+    <span class="n">height</span><span class="o">=</span><span class="mi">6</span><span class="p">,</span>
+    <span class="n">width</span><span class="o">=</span><span class="mi">7</span><span class="p">,</span>
+    <span class="n">gdal_transform</span><span class="o">=</span><span class="p">(</span><span class="mf">100.0</span><span class="p">,</span> <span class="mf">2.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">500.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">3.0</span><span class="p">),</span>
+    <span class="n">nodata</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">plants</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="DBEngine (sedonadb.testing.DBEngine)" href="#sedonadb.testing.DBEngine">DBEngine</a></span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Write a random GeoTIFF at <code>path</code> and register it as view <code>name</code>
+(see <code>create_raster_view</code>).</p>
+<p>The default grid is small and north-up/CRS-less so nothing reprojects
+and results stay bit-comparable across engines. The pixels come from
+<code>sedonadb.raster_testing.random_raster_data</code> with a fixed seed, so
+registering the same <code>path</code> on several engines rewrites identical
+bytes and every engine sees the same raster. <code>nodata</code> and <code>plants</code> are
+as <code>write_random_geotiff</code>.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
 <h4 id="sedonadb.testing.DBEngine.create_raster_view" class="doc doc-heading">
             <span class="doc doc-object-name doc-function-name">create_raster_view</span>
 
@@ -7336,6 +7396,30 @@ some result types)</p>
         <p>This engine's name</p>
 <p>A short string used to identify this engine in error messages and work
 around differences in behaviour.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="sedonadb.testing.DBEngine.result_has_raster" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">result_has_raster</span>
+
+
+<a href="#sedonadb.testing.DBEngine.result_has_raster" class="headerlink" title="Permanent link">¶</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">result_has_raster</span><span class="p">(</span><span class="n">sql</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-external" href="https://docs.python.org/3/library/functions.html#bool">bool</a></span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Whether <code>sql</code> produces a raster column on this engine.</p>
+<p>Answered from the engine's lazy result schema — nothing executes.
+This is what lets <code>compare</code> pick between the tuple comparison and the
+decoded-raster comparison without assuming a particular engine as the
+subject.</p>
 
 
     </div>
@@ -7748,6 +7832,41 @@ connect to non-docker PostGIS.</p>
 
 </div>
 
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="sedonadb.testing.compare" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">compare</span>
+
+
+<a href="#sedonadb.testing.compare" class="headerlink" title="Permanent link">¶</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">compare</span><span class="p">(</span><span class="n">sql</span><span class="p">,</span> <span class="o">*</span><span class="n">engines</span><span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Assert every engine returns the same result for one shared SQL string.</p>
+<p>The cross-engine parity assertion. The first engine is the subject — its
+result is the "got" side of every failure message — and each further
+engine's result is an expected side, so with more than two engines the
+subject is checked against every reference (which, by transitivity, means
+they all agree).</p>
+<p>Table-shaped results are compared in <code>result_to_tuples</code> form, the
+representation built for verifying results between engines: Arrow
+stringifies values identically on every side, NULL stays <code>None</code>, and NaN
+becomes the string <code>"nan"</code> (bare float equality would lose it). A result
+with a raster column is instead decoded on every engine
+(<code>decode_raster_result</code>) and compared with
+<code>sedonadb.raster_testing.assert_decoded_equal</code>; every engine agreeing the
+raster is NULL also counts as agreement. The dispatch asks the subject's
+<code>result_has_raster</code>, answered from its lazy result schema, so any engine
+that implements the raster hooks can be the subject.</p>
+
+
+    </div>
+
+</div>
 
 <div class="doc doc-object doc-function">
 
@@ -8243,7 +8362,16 @@ e.g. as the reference grid for <code>RS_ReprojectMatch</code>.</p>
 
 <a href="#sedonadb.raster_testing.write_random_geotiff" class="headerlink" title="Permanent link">¶</a></h3>
 <div class="doc-signature highlight"><pre><span></span><code><span class="nf">write_random_geotiff</span><span class="p">(</span>
-    <span class="n">path</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">bands</span><span class="p">,</span> <span class="n">height</span><span class="p">,</span> <span class="n">width</span><span class="p">,</span> <span class="n">gdal_transform</span><span class="p">,</span> <span class="n">crs</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">nodata</span><span class="o">=</span><span class="kc">None</span>
+    <span class="n">path</span><span class="p">,</span>
+    <span class="n">dtype</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">bands</span><span class="p">,</span>
+    <span class="n">height</span><span class="p">,</span>
+    <span class="n">width</span><span class="p">,</span>
+    <span class="n">gdal_transform</span><span class="p">,</span>
+    <span class="n">crs</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">nodata</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">plants</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
 </code></pre></div>
 
@@ -8252,7 +8380,8 @@ e.g. as the reference grid for <code>RS_ReprojectMatch</code>.</p>
         <p>Write a GeoTIFF of random <code>dtype</code> pixels on the given grid.</p>
 <p>Combines <code>random_raster_data</code> (dtype extremes planted in opposite corners)
 with <code>write_geotiff</code> — the input-raster fixture shape shared by raster warp
-parity tests. <code>gdal_transform</code>, <code>crs</code>, and <code>nodata</code> are as <code>write_geotiff</code>.</p>
+parity tests. <code>gdal_transform</code>, <code>crs</code>, and <code>nodata</code> are as <code>write_geotiff</code>;
+<code>plants</code> is as <code>random_raster_data</code>.</p>
 
 
     </div>
