@@ -476,50 +476,105 @@ impl Drop for WrappedRecordBatchReader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::RecordBatchIterator;
-    use pyo3::types::{PyAnyMethods, PyModule};
+    use pyo3::types::{PyAnyMethods, PyList, PyModule};
 
-    #[test]
-    fn wrapped_reader_drops_python_shelter_at_eof() {
-        let (shelter, shelter_class) = Python::attach(|py| {
+    struct DropTrackingReader {
+        log: Py<PyAny>,
+        batch: Option<RecordBatch>,
+        schema: SchemaRef,
+    }
+
+    impl Iterator for DropTrackingReader {
+        type Item = std::result::Result<RecordBatch, ArrowError>;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            self.batch.take().map(Ok)
+        }
+    }
+
+    impl RecordBatchReader for DropTrackingReader {
+        fn schema(&self) -> SchemaRef {
+            self.schema.clone()
+        }
+    }
+
+    impl Drop for DropTrackingReader {
+        fn drop(&mut self) {
+            Python::attach(|py| {
+                self.log
+                    .bind(py)
+                    .call_method1("append", ("inner",))
+                    .unwrap();
+            });
+        }
+    }
+
+    fn shelter_and_log() -> (Py<PyAny>, Py<PyAny>) {
+        Python::attach(|py| {
+            let log = PyList::empty(py).unbind();
             let module = PyModule::from_code(
                 py,
                 cr#"
 class Shelter:
-    destroyed = 0
+    def __init__(self, log):
+        self.log = log
 
     def __del__(self):
-        type(self).destroyed += 1
+        self.log.append("shelter")
 "#,
                 cr"wrapped_reader_test.py",
                 cr"wrapped_reader_test",
             )
             .unwrap();
-            let shelter_class = module.getattr("Shelter").unwrap();
-            let shelter = shelter_class.call0().unwrap().unbind();
-            (shelter, shelter_class.unbind())
-        });
+            let shelter = module
+                .getattr("Shelter")
+                .unwrap()
+                .call1((log.bind(py),))
+                .unwrap()
+                .unbind();
+            (log.into_any(), shelter)
+        })
+    }
 
+    #[test]
+    fn wrapped_reader_drops_inner_before_python_shelter_at_eof() {
+        let (log, shelter) = shelter_and_log();
         let schema = Arc::new(Schema::empty());
-        let inner = RecordBatchIterator::new(
-            std::iter::empty::<std::result::Result<RecordBatch, ArrowError>>(),
-            schema.clone(),
-        );
         let mut reader = WrappedRecordBatchReader {
-            inner: Some(Box::new(inner)),
+            inner: Some(Box::new(DropTrackingReader {
+                log: Python::attach(|py| log.clone_ref(py)),
+                batch: None,
+                schema: schema.clone(),
+            })),
             schema,
             shelter: Some(shelter),
         };
 
         assert!(reader.next().is_none());
         Python::attach(|py| {
-            let destroyed = shelter_class
-                .bind(py)
-                .getattr("destroyed")
-                .unwrap()
-                .extract::<usize>()
-                .unwrap();
-            assert_eq!(destroyed, 1);
+            let observed = log.bind(py).extract::<Vec<String>>().unwrap();
+            assert_eq!(observed, vec!["inner", "shelter"]);
+        });
+    }
+
+    #[test]
+    fn wrapped_reader_drops_inner_before_python_shelter_before_eof() {
+        let (log, shelter) = shelter_and_log();
+        let schema = Arc::new(Schema::empty());
+        let reader = WrappedRecordBatchReader {
+            inner: Some(Box::new(DropTrackingReader {
+                log: Python::attach(|py| log.clone_ref(py)),
+                batch: Some(RecordBatch::new_empty(schema.clone())),
+                schema: schema.clone(),
+            })),
+            schema,
+            shelter: Some(shelter),
+        };
+
+        drop(reader);
+        Python::attach(|py| {
+            let observed = log.bind(py).extract::<Vec<String>>().unwrap();
+            assert_eq!(observed, vec!["inner", "shelter"]);
         });
     }
 }
