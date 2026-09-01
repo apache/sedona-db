@@ -127,21 +127,45 @@ def decode_geotiff_bytes(data: bytes) -> DecodedRaster:
         )
 
 
+def bbox_geotransform(bbox, *, width, height) -> Tuple[float, ...]:
+    """The north-up GDAL geotransform that lays a `width` x `height` pixel
+    grid over `bbox` (`(minx, miny, maxx, maxy)`) — what rasterio's
+    `transform.from_bounds` computes, in GDAL order."""
+    minx, miny, maxx, maxy = bbox
+    return (minx, (maxx - minx) / width, 0.0, maxy, 0.0, (miny - maxy) / height)
+
+
+def _resolve_geotransform(bbox, gdal_transform, *, width, height):
+    """The GDAL geotransform from exactly one of `bbox`/`gdal_transform`."""
+    if (gdal_transform is None) == (bbox is None):
+        raise ValueError("pass exactly one of gdal_transform or bbox")
+    if bbox is not None:
+        return bbox_geotransform(bbox, width=width, height=height)
+    return gdal_transform
+
+
 def write_geotiff(
-    path, data: "np.ndarray", *, gdal_transform, nodata=None, crs=None
+    path, data: "np.ndarray", *, bbox=None, gdal_transform=None, nodata=None, crs=None
 ) -> None:
     """Write a `(bands, height, width)` array as a GeoTIFF.
 
-    `gdal_transform` is GDAL-order `(origin_x, scale_x, skew_x, origin_y,
-    skew_y, scale_y)`; `nodata` (optional) becomes the per-band nodata of
-    every band. `crs` (optional) is any CRS rasterio accepts; parity fixtures
-    stay CRS-less unless an engine requires one, and then use the same CRS
-    everywhere so nothing reprojects.
+    The grid is placed by exactly one of `bbox` — `(minx, miny, maxx, maxy)`,
+    the readable spelling: north-up, no skew, pixel size derived from the
+    data's shape — or `gdal_transform` — GDAL-order `(origin_x, scale_x,
+    skew_x, origin_y, skew_y, scale_y)`, for grids a bbox cannot express
+    (skew, south-up).
+    `nodata` (optional) becomes the per-band nodata of every band. `crs`
+    (optional) is any CRS rasterio accepts; parity fixtures stay CRS-less
+    unless an engine requires one, and then use the same CRS everywhere so
+    nothing reprojects.
     """
     import rasterio
     from rasterio.transform import Affine
 
     bands, height, width = data.shape
+    gdal_transform = _resolve_geotransform(
+        bbox, gdal_transform, width=width, height=height
+    )
     with rasterio.open(
         str(path),
         "w",
@@ -164,7 +188,8 @@ def write_random_geotiff(
     bands,
     height,
     width,
-    gdal_transform,
+    bbox=None,
+    gdal_transform=None,
     crs=None,
     nodata=None,
     plants=None,
@@ -173,23 +198,28 @@ def write_random_geotiff(
 
     Combines `random_raster_data` (dtype extremes planted in opposite corners)
     with `write_geotiff` — the input-raster fixture shape shared by raster warp
-    parity tests. `gdal_transform`, `crs`, and `nodata` are as `write_geotiff`;
-    `plants` is as `random_raster_data`.
+    parity tests. `bbox`/`gdal_transform` (exactly one), `crs`, and `nodata`
+    are as `write_geotiff`; `plants` is as `random_raster_data`.
     """
     data = random_raster_data(
         dtype, bands=bands, height=height, width=width, plants=plants
     )
-    write_geotiff(path, data, gdal_transform=gdal_transform, nodata=nodata, crs=crs)
+    write_geotiff(
+        path, data, bbox=bbox, gdal_transform=gdal_transform, nodata=nodata, crs=crs
+    )
 
 
-def write_grid_geotiff(path, *, gdal_transform, width, height, crs=None) -> None:
+def write_grid_geotiff(
+    path, *, bbox=None, gdal_transform=None, width, height, crs=None
+) -> None:
     """Write a zeroed single-band GeoTIFF whose only role is to define a grid.
 
     Its pixels are never read — only its extent, resolution, and CRS matter,
-    e.g. as the reference grid for `RS_ReprojectMatch`.
+    e.g. as the reference grid for `RS_ReprojectMatch`. `bbox`/`gdal_transform`
+    (exactly one) are as `write_geotiff`.
     """
     data = np.zeros((1, height, width), dtype="uint8")
-    write_geotiff(path, data, gdal_transform=gdal_transform, crs=crs)
+    write_geotiff(path, data, bbox=bbox, gdal_transform=gdal_transform, crs=crs)
 
 
 def assert_transform_and_nodata(got: DecodedRaster, expected: DecodedRaster) -> None:
