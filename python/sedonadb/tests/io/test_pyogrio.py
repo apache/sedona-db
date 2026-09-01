@@ -563,9 +563,7 @@ def test_independent_scans_from_threads():
             path = Path(td) / filename
             geopandas.GeoDataFrame(
                 {"idx": values},
-                geometry=geopandas.GeoSeries.from_xy(
-                    values, values, crs="EPSG:4326"
-                ),
+                geometry=geopandas.GeoSeries.from_xy(values, values, crs="EPSG:4326"),
             ).to_file(path)
             paths.append(str(path))
         assert len(paths) == 2
