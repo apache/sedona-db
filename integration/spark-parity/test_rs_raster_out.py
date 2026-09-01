@@ -45,9 +45,12 @@ from sedonadb.testing_spark import SedonaSpark
 BAND_NODATA = {"uint8": 200.0, "int32": -99999.0, "float64": -12345.5}
 
 # The grid the anchored tests write and reconstruct. Anchors must state the
-# exact raster they expect, so these are passed to create_random_raster_view
-# explicitly rather than relying on its defaults staying in sync.
+# exact raster they expect, so the placement is passed to
+# create_random_raster_view explicitly rather than relying on its defaults
+# staying in sync. GDAL_TRANSFORM is BBOX on the WIDTH x HEIGHT grid — the
+# transform an anchored `DecodedRaster` must decode back to.
 BANDS, HEIGHT, WIDTH = 2, 6, 7
+BBOX = (100.0, 482.0, 114.0, 500.0)
 GDAL_TRANSFORM = (100.0, 2.0, 0.0, 500.0, 0.0, -3.0)
 
 
@@ -81,7 +84,7 @@ def test_rs_setbandnodata(dtype, tmp_path):
             bands=BANDS,
             height=HEIGHT,
             width=WIDTH,
-            gdal_transform=GDAL_TRANSFORM,
+            bbox=BBOX,
             plants=plants,
         )
 
@@ -107,7 +110,7 @@ def test_rs_setbandnodata_band2(tmp_path):
             bands=BANDS,
             height=HEIGHT,
             width=WIDTH,
-            gdal_transform=GDAL_TRANSFORM,
+            bbox=BBOX,
         )
     sql = "SELECT RS_SetBandNoDataValue(rast, 2, 5.0) FROM band2_src"
     compare(sql, sedona, spark, expected=_anchor("float64", [None, 5.0]))
@@ -124,7 +127,7 @@ def test_rs_setbandnodata_overwrite(tmp_path):
             bands=1,
             height=HEIGHT,
             width=WIDTH,
-            gdal_transform=GDAL_TRANSFORM,
+            bbox=BBOX,
             nodata=7.0,
         )
     for sql, new_nodata in (
@@ -145,7 +148,7 @@ def test_rs_setbandnodata_two_arg_single_band(tmp_path):
             bands=1,
             height=HEIGHT,
             width=WIDTH,
-            gdal_transform=GDAL_TRANSFORM,
+            bbox=BBOX,
         )
     sql = "SELECT RS_SetBandNoDataValue(rast, 5.0) FROM two_arg_src"
     compare(sql, sedona, spark, expected=_anchor("uint8", [5.0], bands=1))
