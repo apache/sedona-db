@@ -127,21 +127,15 @@ def decode_geotiff_bytes(data: bytes) -> DecodedRaster:
         )
 
 
-def bbox_geotransform(bbox, *, width, height) -> Tuple[float, ...]:
-    """The north-up GDAL geotransform that lays a `width` x `height` pixel
-    grid over `bbox` (`(minx, miny, maxx, maxy)`) — what rasterio's
-    `transform.from_bounds` computes, in GDAL order."""
-    minx, miny, maxx, maxy = bbox
-    return (minx, (maxx - minx) / width, 0.0, maxy, 0.0, (miny - maxy) / height)
+def _resolve_transform(bbox, gdal_transform, *, width, height):
+    """The rasterio `Affine` from exactly one of `bbox`/`gdal_transform`."""
+    from rasterio.transform import Affine, from_bounds
 
-
-def _resolve_geotransform(bbox, gdal_transform, *, width, height):
-    """The GDAL geotransform from exactly one of `bbox`/`gdal_transform`."""
     if (gdal_transform is None) == (bbox is None):
         raise ValueError("pass exactly one of gdal_transform or bbox")
     if bbox is not None:
-        return bbox_geotransform(bbox, width=width, height=height)
-    return gdal_transform
+        return from_bounds(*bbox, width=width, height=height)
+    return Affine.from_gdal(*gdal_transform)
 
 
 def write_geotiff(
@@ -151,21 +145,17 @@ def write_geotiff(
 
     The grid is placed by exactly one of `bbox` — `(minx, miny, maxx, maxy)`,
     the readable spelling: north-up, no skew, pixel size derived from the
-    data's shape — or `gdal_transform` — GDAL-order `(origin_x, scale_x,
-    skew_x, origin_y, skew_y, scale_y)`, for grids a bbox cannot express
-    (skew, south-up).
+    data's shape (rasterio's `transform.from_bounds`) — or `gdal_transform` —
+    GDAL-order `(origin_x, scale_x, skew_x, origin_y, skew_y, scale_y)`, for
+    grids a bbox cannot express (skew, south-up).
     `nodata` (optional) becomes the per-band nodata of every band. `crs`
     (optional) is any CRS rasterio accepts; parity fixtures stay CRS-less
     unless an engine requires one, and then use the same CRS everywhere so
     nothing reprojects.
     """
     import rasterio
-    from rasterio.transform import Affine
 
     bands, height, width = data.shape
-    gdal_transform = _resolve_geotransform(
-        bbox, gdal_transform, width=width, height=height
-    )
     with rasterio.open(
         str(path),
         "w",
@@ -174,7 +164,7 @@ def write_geotiff(
         width=width,
         count=bands,
         dtype=str(data.dtype),
-        transform=Affine.from_gdal(*gdal_transform),
+        transform=_resolve_transform(bbox, gdal_transform, width=width, height=height),
         nodata=nodata,
         crs=crs,
     ) as dst:

@@ -25,7 +25,6 @@ import numpy as np
 import pytest
 
 from sedonadb.raster_testing import (
-    bbox_geotransform,
     decode_geotiff,
     write_geotiff,
     write_random_geotiff,
@@ -33,15 +32,6 @@ from sedonadb.raster_testing import (
 
 # The default extent of `DBEngine.create_random_raster_view`.
 BBOX = (100.0, 482.0, 114.0, 500.0)
-
-
-def test_bbox_geotransform_matches_rasterio():
-    from rasterio.transform import from_bounds
-
-    assert (
-        bbox_geotransform(BBOX, width=7, height=6)
-        == from_bounds(*BBOX, width=7, height=6).to_gdal()
-    )
 
 
 def test_write_geotiff_bbox_places_the_grid(tmp_path):
