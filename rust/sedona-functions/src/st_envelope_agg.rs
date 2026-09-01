@@ -173,7 +173,7 @@ impl<T: std::fmt::Debug + WkbBounder2D + Default> BoundsAccumulator2D<T> {
     }
 }
 
-impl<T: std::fmt::Debug + WkbBounder2D + Default> Accumulator for BoundsAccumulator2D<T> {
+impl<T: std::fmt::Debug + WkbBounder2D + Default + 'static> Accumulator for BoundsAccumulator2D<T> {
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
         Self::check_update_input_len(values, 1, "update_batch")?;
         let arg_types = [self.input_type.clone()];
@@ -417,7 +417,7 @@ impl<T: WkbBounder2D + Default> BoundsGroupsAccumulator2D<T> {
     }
 }
 
-impl<T: WkbBounder2D + Default> GroupsAccumulator for BoundsGroupsAccumulator2D<T> {
+impl<T: WkbBounder2D + Default + 'static> GroupsAccumulator for BoundsGroupsAccumulator2D<T> {
     fn update_batch(
         &mut self,
         values: &[ArrayRef],
@@ -442,10 +442,21 @@ impl<T: WkbBounder2D + Default> GroupsAccumulator for BoundsGroupsAccumulator2D<
         &mut self,
         values: &[ArrayRef],
         group_indices: &[usize],
-        opt_filter: Option<&arrow_array::BooleanArray>,
         total_num_groups: usize,
     ) -> Result<()> {
-        self.merge_state(values, group_indices, opt_filter, total_num_groups)
+        self.merge_state(values, group_indices, None, total_num_groups)
+    }
+
+    fn convert_to_state(
+        &self,
+        values: &[ArrayRef],
+        opt_filter: Option<&BooleanArray>,
+    ) -> Result<Vec<ArrayRef>> {
+        let num_rows = values.first().map_or(0, |array| array.len());
+        let group_indices = (0..num_rows).collect::<Vec<_>>();
+        let mut accumulator = Self::new(self.input_type.clone());
+        accumulator.update_batch(values, &group_indices, opt_filter, num_rows)?;
+        accumulator.state(EmitTo::All)
     }
 
     fn evaluate(&mut self, emit_to: EmitTo) -> Result<ArrayRef> {

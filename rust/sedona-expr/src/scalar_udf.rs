@@ -14,7 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::{any::Any, collections::HashMap, fmt::Debug, sync::Arc};
+use std::{collections::HashMap, fmt::Debug, sync::Arc};
 
 use arrow_schema::{DataType, FieldRef};
 use datafusion_common::config::ConfigOptions;
@@ -284,10 +284,6 @@ impl SedonaScalarUDF {
 }
 
 impl ScalarUDFImpl for SedonaScalarUDF {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         &self.name
     }

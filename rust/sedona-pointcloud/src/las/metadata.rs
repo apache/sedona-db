@@ -89,7 +89,7 @@ impl FileMetadata for LasMetadata {
 pub struct LasMetadataReader<'a> {
     store: &'a dyn ObjectStore,
     object_meta: &'a ObjectMeta,
-    file_metadata_cache: Option<Arc<dyn FileMetadataCache>>,
+    file_metadata_cache: Option<Arc<FileMetadataCache>>,
     options: LasOptions,
 }
 
@@ -106,7 +106,7 @@ impl<'a> LasMetadataReader<'a> {
     /// set file metadata cache
     pub fn with_file_metadata_cache(
         mut self,
-        file_metadata_cache: Option<Arc<dyn FileMetadataCache>>,
+        file_metadata_cache: Option<Arc<FileMetadataCache>>,
     ) -> Self {
         self.file_metadata_cache = file_metadata_cache;
         self

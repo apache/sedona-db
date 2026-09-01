@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::{any::Any, collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use arrow_array::{
     builder::{Float32Builder, NullBufferBuilder},
@@ -239,10 +239,6 @@ impl DisplayAs for GeoParquetSink {
 
 #[async_trait]
 impl DataSink for GeoParquetSink {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn schema(&self) -> &SchemaRef {
         &self.sink_input_schema
     }
@@ -602,10 +598,6 @@ impl std::hash::Hash for NormalizeForGeoParquet {
 impl Eq for NormalizeForGeoParquet {}
 
 impl ScalarUDFImpl for NormalizeForGeoParquet {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         "normalize_for_geoparquet"
     }
@@ -1231,8 +1223,8 @@ mod test {
         let logical_types = test_dataframe_roundtrip(&ctx, df, options).await;
         let logical_type = logical_types.get("geometry").unwrap().clone().unwrap();
         match logical_type {
-            LogicalType::Geometry { crs } => {
-                assert!(crs.is_none());
+            LogicalType::Geometry(geometry) => {
+                assert!(geometry.crs.is_none());
             }
             unknown => panic!("Unexpected logical type {unknown:?}"),
         }
@@ -1252,11 +1244,14 @@ mod test {
         let logical_types = test_dataframe_roundtrip(&ctx, df, options).await;
         let logical_type = logical_types.get("geometry").unwrap().clone().unwrap();
         match logical_type {
-            LogicalType::Geography { crs, algorithm } => {
-                assert!(crs.is_none());
+            LogicalType::Geography(geography) => {
+                assert!(geography.crs.is_none());
                 assert!(
-                    algorithm.is_none()
-                        || matches!(algorithm.unwrap(), EdgeInterpolationAlgorithm::SPHERICAL)
+                    geography.algorithm.is_none()
+                        || matches!(
+                            geography.algorithm.unwrap(),
+                            EdgeInterpolationAlgorithm::SPHERICAL
+                        )
                 );
             }
             unknown => panic!("Unexpected logical type {unknown:?}"),
@@ -1277,9 +1272,9 @@ mod test {
         let logical_types = test_dataframe_roundtrip(&ctx, df, options).await;
         let logical_type = logical_types.get("geometry").unwrap().clone().unwrap();
         match logical_type {
-            LogicalType::Geometry { crs } => {
-                assert!(crs.as_ref().unwrap().starts_with("{"));
-                let parsed = deserialize_crs(crs.as_ref().unwrap()).unwrap();
+            LogicalType::Geometry(geometry) => {
+                assert!(geometry.crs.as_ref().unwrap().starts_with("{"));
+                let parsed = deserialize_crs(geometry.crs.as_ref().unwrap()).unwrap();
                 assert_eq!(
                     parsed.unwrap().to_authority_code().unwrap(),
                     Some("EPSG:32618".to_string())
@@ -1303,8 +1298,8 @@ mod test {
         let logical_types = test_dataframe_roundtrip(&ctx, df, options).await;
         let logical_type = logical_types.get("geometry").unwrap().clone().unwrap();
         match logical_type {
-            LogicalType::Geometry { crs } => {
-                assert!(crs.is_none());
+            LogicalType::Geometry(geometry) => {
+                assert!(geometry.crs.is_none());
             }
             unknown => panic!("Unexpected logical type {unknown:?}"),
         }

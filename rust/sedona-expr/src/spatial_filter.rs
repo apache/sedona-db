@@ -201,7 +201,7 @@ impl SpatialFilterFactory {
             Ok(spatial_filter)
         } else if let Some(spatial_filter) = self.try_from_distance_predicate(expr)? {
             Ok(spatial_filter)
-        } else if let Some(binary_expr) = expr.as_any().downcast_ref::<BinaryExpr>() {
+        } else if let Some(binary_expr) = expr.downcast_ref::<BinaryExpr>() {
             match binary_expr.op() {
                 Operator::And => Ok(SpatialFilter::And(
                     Box::new(self.try_from_expr(binary_expr.left())?),
@@ -214,7 +214,7 @@ impl SpatialFilterFactory {
                 // Not a binary expression we know about
                 _ => Ok(SpatialFilter::Unknown),
             }
-        } else if let Some(literal) = expr.as_any().downcast_ref::<Literal>() {
+        } else if let Some(literal) = expr.downcast_ref::<Literal>() {
             if let ScalarValue::Boolean(Some(value)) = literal.value() {
                 match value {
                     true => Ok(SpatialFilter::Unknown),
@@ -234,7 +234,7 @@ impl SpatialFilterFactory {
         &self,
         expr: &Arc<dyn PhysicalExpr>,
     ) -> Result<Option<SpatialFilter>> {
-        let Some(scalar_fun) = expr.as_any().downcast_ref::<ScalarFunctionExpr>() else {
+        let Some(scalar_fun) = expr.downcast_ref::<ScalarFunctionExpr>() else {
             return Ok(None);
         };
 
@@ -575,19 +575,19 @@ fn parse_args(args: &[Arc<dyn PhysicalExpr>]) -> Vec<ArgRef<'_>> {
 }
 
 fn parse_arg(arg: &Arc<dyn PhysicalExpr>) -> ArgRef<'_> {
-    if let Some(column_wrapper) = arg.as_any().downcast_ref::<MetadataPreservingColumn>() {
+    if let Some(column_wrapper) = arg.downcast_ref::<MetadataPreservingColumn>() {
         return parse_arg(column_wrapper.inner());
     }
 
-    if let Some(column) = arg.as_any().downcast_ref::<Column>() {
+    if let Some(column) = arg.downcast_ref::<Column>() {
         ArgRef::Col(column.clone())
-    } else if let Some(column_wrapper) = arg.as_any().downcast_ref::<MetadataPreservingColumn>() {
-        if let Some(column) = column_wrapper.inner().as_any().downcast_ref::<Column>() {
+    } else if let Some(column_wrapper) = arg.downcast_ref::<MetadataPreservingColumn>() {
+        if let Some(column) = column_wrapper.inner().downcast_ref::<Column>() {
             ArgRef::Col(column.clone())
         } else {
             ArgRef::Other
         }
-    } else if let Some(literal) = arg.as_any().downcast_ref::<Literal>() {
+    } else if let Some(literal) = arg.downcast_ref::<Literal>() {
         ArgRef::Lit(literal)
     } else {
         ArgRef::Other

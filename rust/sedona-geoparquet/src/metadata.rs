@@ -650,14 +650,16 @@ fn column_from_logical_type(
         let mut column_metadata = GeoParquetColumnMetadata::default();
 
         match logical_type {
-            LogicalType::Geometry { crs } => {
-                column_metadata.crs = geoparquet_crs_from_logical_type(crs.as_ref(), kv_metadata);
+            LogicalType::Geometry(geometry) => {
+                column_metadata.crs =
+                    geoparquet_crs_from_logical_type(geometry.crs.as_ref(), kv_metadata);
                 Ok(Some(column_metadata))
             }
-            LogicalType::Geography { crs, algorithm } => {
-                column_metadata.crs = geoparquet_crs_from_logical_type(crs.as_ref(), kv_metadata);
+            LogicalType::Geography(geography) => {
+                column_metadata.crs =
+                    geoparquet_crs_from_logical_type(geography.crs.as_ref(), kv_metadata);
 
-                let edges = match algorithm {
+                let edges = match geography.algorithm {
                     None | Some(EdgeInterpolationAlgorithm::SPHERICAL) => "spherical",
                     Some(EdgeInterpolationAlgorithm::VINCENTY) => "vincenty",
                     Some(EdgeInterpolationAlgorithm::ANDOYER) => "andoyer",
@@ -803,7 +805,7 @@ mod test {
 
         let schema_additional_parquet_geo = make_parquet_schema(&[
             ("geom_geoparquet", None),
-            ("geom_parquet", Some(LogicalType::Geometry { crs: None })),
+            ("geom_parquet", Some(LogicalType::geometry(None))),
         ]);
         let metadata = GeoParquetMetadata::try_from_parquet_metadata_impl(
             &schema_additional_parquet_geo,
@@ -816,7 +818,7 @@ mod test {
         assert!(metadata.columns.contains_key("geom_parquet"));
 
         let schema_overlapping_columns =
-            make_parquet_schema(&[("geom_geoparquet", Some(LogicalType::Geometry { crs: None }))]);
+            make_parquet_schema(&[("geom_geoparquet", Some(LogicalType::geometry(None)))]);
         let metadata = GeoParquetMetadata::try_from_parquet_metadata_impl(
             &schema_overlapping_columns,
             kv_metadata_with_geo_key.as_ref(),
@@ -834,7 +836,7 @@ mod test {
         );
 
         let schema_only_parquet_geo =
-            make_parquet_schema(&[("geom_parquet", Some(LogicalType::Geometry { crs: None }))]);
+            make_parquet_schema(&[("geom_parquet", Some(LogicalType::geometry(None)))]);
         let metadata = GeoParquetMetadata::try_from_parquet_metadata_impl(
             &schema_only_parquet_geo,
             None, // No key/value metadata
@@ -862,19 +864,17 @@ mod test {
         );
 
         // Geometry logical type
-        let metadata = column_from_logical_type(
-            Some(&LogicalType::Geometry { crs: None }),
-            kv_metadata.as_ref(),
-        )
-        .unwrap()
-        .unwrap();
+        let metadata =
+            column_from_logical_type(Some(&LogicalType::geometry(None)), kv_metadata.as_ref())
+                .unwrap()
+                .unwrap();
         assert_eq!(metadata, GeoParquetColumnMetadata::default());
 
         // Ensure CRS is translated
         let metadata = column_from_logical_type(
-            Some(&LogicalType::Geometry {
-                crs: Some("projjson:some_projjson_key".to_string()),
-            }),
+            Some(&LogicalType::geometry(Some(
+                "projjson:some_projjson_key".to_string(),
+            ))),
             kv_metadata.as_ref(),
         )
         .unwrap()
@@ -886,10 +886,7 @@ mod test {
 
         // Geography logical type
         let metadata = column_from_logical_type(
-            Some(&LogicalType::Geography {
-                crs: None,
-                algorithm: None,
-            }),
+            Some(&LogicalType::geography(None, None)),
             kv_metadata.as_ref(),
         )
         .unwrap()
@@ -898,10 +895,10 @@ mod test {
 
         // Ensure CRS is translated
         let metadata = column_from_logical_type(
-            Some(&LogicalType::Geography {
-                crs: Some("projjson:some_projjson_key".to_string()),
-                algorithm: None,
-            }),
+            Some(&LogicalType::geography(
+                Some("projjson:some_projjson_key".to_string()),
+                None,
+            )),
             kv_metadata.as_ref(),
         )
         .unwrap()
@@ -913,10 +910,10 @@ mod test {
 
         // Ensure algorithm is translated
         let metadata = column_from_logical_type(
-            Some(&LogicalType::Geography {
-                crs: None,
-                algorithm: Some(EdgeInterpolationAlgorithm::VINCENTY),
-            }),
+            Some(&LogicalType::geography(
+                None,
+                Some(EdgeInterpolationAlgorithm::VINCENTY),
+            )),
             kv_metadata.as_ref(),
         )
         .unwrap()

@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::{any::Any, iter, sync::Arc};
+use std::{iter, sync::Arc};
 
 use datafusion_common::{config::ConfigOptions, error::DataFusionError};
 use datafusion_datasource::{
@@ -88,6 +88,22 @@ impl LasSource {
 }
 
 impl FileSource for LasSource {
+    fn apply_expressions(
+        &self,
+        f: &mut dyn FnMut(
+            &Arc<dyn PhysicalExpr>,
+        ) -> datafusion_common::Result<
+            datafusion_common::tree_node::TreeNodeRecursion,
+        >,
+    ) -> datafusion_common::Result<datafusion_common::tree_node::TreeNodeRecursion> {
+        datafusion_physical_plan::apply_expression_roots(
+            self.predicate
+                .iter()
+                .chain(self.projection.iter().map(|expr| &expr.expr)),
+            f,
+        )
+    }
+
     fn create_file_opener(
         &self,
         object_store: Arc<dyn ObjectStore>,
@@ -114,10 +130,6 @@ impl FileSource for LasSource {
 
         // Wrap with ProjectionOpener to handle reordering/expressions
         ProjectionOpener::try_new(split_projection, las_opener, table_schema)
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 
     fn table_schema(&self) -> &TableSchema {

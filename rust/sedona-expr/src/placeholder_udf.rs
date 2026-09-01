@@ -37,8 +37,9 @@ use datafusion_execution::FunctionRegistry;
 use datafusion_expr::{
     expr::ScalarFunction,
     function::{AccumulatorArgs, PartitionEvaluatorArgs, WindowUDFFieldArgs},
-    Accumulator, AggregateUDF, AggregateUDFImpl, Expr, PartitionEvaluator, ScalarUDF,
-    ScalarUDFImpl, Signature, Volatility, WindowFunctionDefinition, WindowUDF, WindowUDFImpl,
+    Accumulator, AggregateUDF, AggregateUDFImpl, Expr, HigherOrderUDF, PartitionEvaluator,
+    ScalarUDF, ScalarUDFImpl, Signature, Volatility, WindowFunctionDefinition, WindowUDF,
+    WindowUDFImpl,
 };
 use sedona_common::sedona_internal_err;
 
@@ -55,13 +56,7 @@ impl PlaceholderRegistry {
         let mut found = false;
         expr.apply(|e| {
             if let Expr::ScalarFunction(func) = e {
-                if func
-                    .func
-                    .inner()
-                    .as_any()
-                    .downcast_ref::<PlaceholderUDF>()
-                    .is_some()
-                {
+                if func.func.inner().downcast_ref::<PlaceholderUDF>().is_some() {
                     found = true;
                     return Ok(TreeNodeRecursion::Stop);
                 }
@@ -78,13 +73,7 @@ impl PlaceholderRegistry {
         expr.apply(|e| {
             match e {
                 Expr::ScalarFunction(func) => {
-                    if func
-                        .func
-                        .inner()
-                        .as_any()
-                        .downcast_ref::<PlaceholderUDF>()
-                        .is_some()
-                    {
+                    if func.func.inner().downcast_ref::<PlaceholderUDF>().is_some() {
                         found = true;
                         return Ok(TreeNodeRecursion::Stop);
                     }
@@ -93,7 +82,6 @@ impl PlaceholderRegistry {
                     if func
                         .func
                         .inner()
-                        .as_any()
                         .downcast_ref::<PlaceholderUDAF>()
                         .is_some()
                     {
@@ -103,12 +91,7 @@ impl PlaceholderRegistry {
                 }
                 Expr::WindowFunction(func) => {
                     if let WindowFunctionDefinition::WindowUDF(ref udf) = func.fun {
-                        if udf
-                            .inner()
-                            .as_any()
-                            .downcast_ref::<PlaceholderUDWF>()
-                            .is_some()
-                        {
+                        if udf.inner().downcast_ref::<PlaceholderUDWF>().is_some() {
                             found = true;
                             return Ok(TreeNodeRecursion::Stop);
                         }
@@ -129,13 +112,7 @@ impl PlaceholderRegistry {
         expr.transform_up(|e| {
             match &e {
                 Expr::ScalarFunction(func) => {
-                    if func
-                        .func
-                        .inner()
-                        .as_any()
-                        .downcast_ref::<PlaceholderUDF>()
-                        .is_some()
-                    {
+                    if func.func.inner().downcast_ref::<PlaceholderUDF>().is_some() {
                         let real_udf = registry.udf(func.name())?;
                         let replaced = Expr::ScalarFunction(ScalarFunction {
                             func: real_udf,
@@ -148,7 +125,6 @@ impl PlaceholderRegistry {
                     if func
                         .func
                         .inner()
-                        .as_any()
                         .downcast_ref::<PlaceholderUDAF>()
                         .is_some()
                     {
@@ -168,12 +144,7 @@ impl PlaceholderRegistry {
                 }
                 Expr::WindowFunction(func) => {
                     if let WindowFunctionDefinition::WindowUDF(ref udf) = func.fun {
-                        if udf
-                            .inner()
-                            .as_any()
-                            .downcast_ref::<PlaceholderUDWF>()
-                            .is_some()
-                        {
+                        if udf.inner().downcast_ref::<PlaceholderUDWF>().is_some() {
                             let real_udwf = registry.udwf(udf.name())?;
                             let replaced = Expr::WindowFunction(Box::new(
                                 datafusion_expr::expr::WindowFunction {
@@ -198,6 +169,10 @@ impl FunctionRegistry for PlaceholderRegistry {
         HashSet::new()
     }
 
+    fn higher_order_function_names(&self) -> HashSet<String> {
+        HashSet::new()
+    }
+
     fn udafs(&self) -> HashSet<String> {
         HashSet::new()
     }
@@ -210,6 +185,10 @@ impl FunctionRegistry for PlaceholderRegistry {
         Ok(Arc::new(ScalarUDF::new_from_impl(PlaceholderUDF::new(
             name,
         ))))
+    }
+
+    fn higher_order_function(&self, name: &str) -> Result<Arc<HigherOrderUDF>> {
+        sedona_internal_err!("Higher-order placeholder function '{name}' is not supported")
     }
 
     fn udaf(&self, name: &str) -> Result<Arc<AggregateUDF>> {
@@ -248,10 +227,6 @@ impl PlaceholderUDF {
 }
 
 impl ScalarUDFImpl for PlaceholderUDF {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     fn name(&self) -> &str {
         &self.name
     }
@@ -301,10 +276,6 @@ impl PlaceholderUDAF {
 }
 
 impl AggregateUDFImpl for PlaceholderUDAF {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     fn name(&self) -> &str {
         &self.name
     }
@@ -348,10 +319,6 @@ impl PlaceholderUDWF {
 }
 
 impl WindowUDFImpl for PlaceholderUDWF {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     fn name(&self) -> &str {
         &self.name
     }
@@ -401,7 +368,7 @@ mod tests {
 
         // Verify it's a PlaceholderUDF
         let inner = udf.inner();
-        assert!(inner.as_any().downcast_ref::<PlaceholderUDF>().is_some());
+        assert!(inner.downcast_ref::<PlaceholderUDF>().is_some());
     }
 
     #[test]
@@ -412,7 +379,7 @@ mod tests {
 
         // Verify it's a PlaceholderUDAF
         let inner = udaf.inner();
-        assert!(inner.as_any().downcast_ref::<PlaceholderUDAF>().is_some());
+        assert!(inner.downcast_ref::<PlaceholderUDAF>().is_some());
     }
 
     #[test]
@@ -423,7 +390,7 @@ mod tests {
 
         // Verify it's a PlaceholderUDWF
         let inner = udwf.inner();
-        assert!(inner.as_any().downcast_ref::<PlaceholderUDWF>().is_some());
+        assert!(inner.downcast_ref::<PlaceholderUDWF>().is_some());
     }
 
     #[test]
@@ -620,6 +587,10 @@ mod tests {
                 HashSet::new()
             }
 
+            fn higher_order_function_names(&self) -> HashSet<String> {
+                HashSet::new()
+            }
+
             fn udafs(&self) -> HashSet<String> {
                 HashSet::new()
             }
@@ -638,6 +609,10 @@ mod tests {
                 )
                 .into();
                 Ok(Arc::new(udf))
+            }
+
+            fn higher_order_function(&self, name: &str) -> Result<Arc<HigherOrderUDF>> {
+                sedona_internal_err!("attempt to replace higher-order function '{name}'")
             }
 
             fn udaf(&self, name: &str) -> Result<Arc<AggregateUDF>> {
@@ -668,11 +643,7 @@ mod tests {
             Expr::ScalarFunction(ScalarFunction { func, .. }) => {
                 assert_eq!(func.name(), "original");
                 // Verify it's NOT a PlaceholderUDF anymore
-                assert!(func
-                    .inner()
-                    .as_any()
-                    .downcast_ref::<PlaceholderUDF>()
-                    .is_none());
+                assert!(func.inner().downcast_ref::<PlaceholderUDF>().is_none());
             }
             other => panic!("Expected ScalarFunction, got {:?}", other),
         }

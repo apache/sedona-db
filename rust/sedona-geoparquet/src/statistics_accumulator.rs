@@ -64,19 +64,21 @@ impl SedonaGeoStatsAccumulatorFactory {
 
 impl GeoStatsAccumulatorFactory for SedonaGeoStatsAccumulatorFactory {
     fn new_accumulator(&self, descr: &ColumnDescPtr) -> Box<dyn GeoStatsAccumulator> {
-        if let Some(LogicalType::Geometry { .. }) = descr.logical_type_ref() {
+        if let Some(LogicalType::Geometry(_)) = descr.logical_type_ref() {
             return Box::new(ParquetGeoStatsAccumulator::default());
         }
 
         // Handle Geography with either no algorithm specified (defaults to spherical)
         // or explicit SPHERICAL algorithm
-        if let Some(LogicalType::Geography {
-            crs: _,
-            algorithm: None | Some(parquet::basic::EdgeInterpolationAlgorithm::SPHERICAL),
-        }) = descr.logical_type_ref()
-        {
-            if let Some(bounder) = self.bounder_factory.bounder_for_edge_type(Edges::Spherical) {
-                return Box::new(GeographyGeoStatsAccumulator::new(bounder));
+        if let Some(LogicalType::Geography(geography)) = descr.logical_type_ref() {
+            if matches!(
+                geography.algorithm,
+                None | Some(parquet::basic::EdgeInterpolationAlgorithm::SPHERICAL)
+            ) {
+                if let Some(bounder) = self.bounder_factory.bounder_for_edge_type(Edges::Spherical)
+                {
+                    return Box::new(GeographyGeoStatsAccumulator::new(bounder));
+                }
             }
         }
 
