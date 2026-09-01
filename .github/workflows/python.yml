@@ -28,6 +28,7 @@ on:
       - 'rust/**'
       - 'c/**'
       - 'python/**'
+      - 'integration/spark-parity/**'
   push:
     branches:
       - main
@@ -163,6 +164,34 @@ jobs:
       - name: Run tests (sedonadb-geopandas)
         run: |
           cd python/sedonadb-geopandas
+          python -m pytest -vv
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install Sedona Spark test dependencies
+        run: |
+          pip install "pyspark>=4.0" apache-sedona
+
+      - name: Cache Sedona Spark jars
+        uses: actions/cache@v6
+        with:
+          # Matches SEDONADB_SPARK_IVY_DIR below, which SedonaSpark passes to
+          # spark.jars.ivy so Ivy resolves the jars into a fixed directory
+          # regardless of the Ivy version's default.
+          path: ~/.ivy2-spark-parity
+          # testing_spark.py pins SEDONA_SPARK_VERSION and
+          # GEOTOOLS_WRAPPER_VERSION, so the cache invalidates exactly when
+          # the jar pins change.
+          key: spark-parity-jars-${{ runner.os }}-${{ hashFiles('python/sedonadb/python/sedonadb/testing_spark.py') }}
+
+      - name: Run tests (spark-parity)
+        env:
+          SEDONADB_SPARK_IVY_DIR: /home/runner/.ivy2-spark-parity
+        run: |
+          cd integration/spark-parity
           python -m pytest -vv
 
       - name: Shutdown docker compose services

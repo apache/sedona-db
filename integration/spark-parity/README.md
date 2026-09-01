@@ -40,7 +40,8 @@ directory anyway. There is deliberately no opt-in environment variable — each
 test constructs both engines outright, so a missing pyspark, JVM, or jar is a
 failure with a real traceback, not a skip.
 
-This suite is not wired into CI.
+The suite runs in CI as part of the `python` workflow
+(`.github/workflows/python.yml`), after the main sedonadb test steps.
 
 ## Running
 
