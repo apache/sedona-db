@@ -36,7 +36,7 @@ then every side carries the same CRS.
 """
 
 import math
-from dataclasses import dataclass
+from dataclasses import InitVar, dataclass
 from typing import Any, List, Mapping, Optional, Tuple
 
 import numpy as np
@@ -46,18 +46,38 @@ import numpy as np
 class DecodedRaster:
     """One raster decoded to plain values.
 
-    `pixels` is `(band, rows, cols)`, `gdal_transform` is GDAL-order
-    `(origin_x, scale_x, skew_x, origin_y, skew_y, scale_y)`, and `nodata`
-    holds one sentinel per band (unpacked in the band's dtype).
+    `pixels` is `(band, rows, cols)` and `nodata` holds one sentinel per band
+    (unpacked in the band's dtype). The grid is stated as exactly one of
+    `gdal_transform` — GDAL-order `(origin_x, scale_x, skew_x, origin_y,
+    skew_y, scale_y)` — or, for a north-up grid, the readable `bbox` spelling
+    `(minx, miny, maxx, maxy)` (pixel size derived from the data's shape),
+    mirroring `write_geotiff`. Either way the instance carries a
+    `gdal_transform`: decoders produce transforms and `assert_decoded_equal`
+    compares them, so `bbox` is construction sugar for anchors, not a second
+    stored representation.
     `compression` is the codec name of the decoded container when one was
     read (GeoTIFF decodes only); it is carried for encoder tests to assert
     on and deliberately not part of `assert_decoded_equal`.
     """
 
     pixels: "np.ndarray"
-    gdal_transform: Tuple[float, ...]
-    nodata: List[Any]
+    gdal_transform: Optional[Tuple[float, ...]] = None
+    nodata: Optional[List[Any]] = None
     compression: Optional[str] = None
+    bbox: InitVar[Optional[Tuple[float, float, float, float]]] = None
+
+    def __post_init__(self, bbox):
+        if self.nodata is None:
+            raise ValueError("nodata is required (one entry per band)")
+        # A plain-transform construction skips _resolve_transform so decoders
+        # (which never pass bbox) stay rasterio-free.
+        if bbox is not None or self.gdal_transform is None:
+            _, height, width = self.pixels.shape
+            self.gdal_transform = tuple(
+                _resolve_transform(
+                    bbox, self.gdal_transform, width=width, height=height
+                ).to_gdal()
+            )
 
 
 def _is_nodata(sampled, nodata) -> bool:
