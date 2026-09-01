@@ -17,8 +17,10 @@
 
 import io
 import tempfile
+import threading
 import warnings
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import geoarrow.pyarrow as ga
@@ -395,6 +397,51 @@ def test_pyogrio_format_register():
         # Should be able to SELECT * from 'file' after registering the format
         df = sd.sql(f"SELECT * FROM '{temp_fgb_path}' ORDER BY idx")
         geopandas.testing.assert_geodataframe_equal(df.to_pandas(), gdf)
+
+
+def test_independent_scans_from_threads():
+    pytest.importorskip("pyogrio")
+
+    # Use independent contexts to characterize whether pyogrio/GDAL scans can
+    # safely overlap outside the per-scan reader serialization in this PR.
+    left = sedonadb.connect()
+    right = sedonadb.connect()
+    datasets = (
+        (left, "left.fgb", [10, 11, 12]),
+        (right, "right.fgb", [20, 21, 22, 23]),
+    )
+
+    with tempfile.TemporaryDirectory() as td:
+        paths = []
+        for _, filename, values in datasets:
+            path = Path(td) / filename
+            geopandas.GeoDataFrame(
+                {"idx": values},
+                geometry=geopandas.GeoSeries.from_xy(
+                    values, values, crs="EPSG:4326"
+                ),
+            ).to_file(path)
+            paths.append(path)
+
+        barrier = threading.Barrier(2)
+
+        def scan(connection, path):
+            barrier.wait()
+            return connection.read_pyogrio(path).to_arrow_table()
+
+        executor = ThreadPoolExecutor(max_workers=2)
+        futures = [
+            executor.submit(scan, connection, path)
+            for (connection, _, _), path in zip(datasets, paths, strict=True)
+        ]
+        try:
+            tables = [future.result(timeout=30) for future in futures]
+        finally:
+            executor.shutdown(wait=all(future.done() for future in futures))
+
+    for table, (_, _, expected_values) in zip(tables, datasets, strict=True):
+        assert table.num_rows == len(expected_values)
+        assert sorted(table.column("idx").to_pylist()) == expected_values
 
 
 # The geometry-column name is GDAL's OGR reader's, not ours: fgb/geojson/shp
