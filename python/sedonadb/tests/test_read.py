@@ -15,12 +15,86 @@
 # specific language governing permissions and limitations
 # under the License.
 
+from pathlib import Path
+import threading
+
 import geopandas
 import geopandas.testing
+import pyarrow as pa
 import pytest
 
 import sedonadb
 from sedonadb.datasource import ExternalFormatSpec
+
+
+class ReaderLifecycleState:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self._condition = threading.Condition(self.lock)
+        self.active = 0
+        self.max_active = 0
+        self.opened = 0
+        self.closed = 0
+
+    def enter(self):
+        with self._condition:
+            self.active += 1
+            self.opened += 1
+            self.max_active = max(self.max_active, self.active)
+            self._condition.notify_all()
+
+    def wait_for_peer(self):
+        with self._condition:
+            if self.active == 1:
+                self._condition.wait_for(lambda: self.active > 1, timeout=0.25)
+
+    def exit(self):
+        with self._condition:
+            self.active -= 1
+            self.closed += 1
+            self._condition.notify_all()
+
+
+class TrackingArrowReader:
+    def __init__(self, state, src):
+        self._state = state
+        self._closed = False
+        self._state.enter()
+        self._state.wait_for_peer()
+        value = int(Path(src.to_url()).stem)
+        self._reader = pa.RecordBatchReader.from_batches(
+            pa.schema({"value": pa.int64()}),
+            [pa.record_batch({"value": [value]})],
+        )
+
+    def __del__(self):
+        if not self._closed:
+            self._closed = True
+            self._state.exit()
+
+    def __arrow_c_stream__(self, requested_schema=None):
+        if requested_schema is None:
+            return self._reader.__arrow_c_stream__()
+        return self._reader.__arrow_c_stream__(requested_schema)
+
+
+class TrackingFormatSpec(ExternalFormatSpec):
+    def __init__(self, state):
+        self._state = state
+
+    @property
+    def extension(self):
+        return "tracking"
+
+    @property
+    def supports_concurrent_file_reads(self):
+        return False
+
+    def infer_schema(self, src):
+        return pa.schema({"value": pa.int64()})
+
+    def open_reader(self, args):
+        return TrackingArrowReader(self._state, args.src)
 
 
 def test_read_guess_format(con):
@@ -101,3 +175,23 @@ def test_format_register():
 
     with pytest.raises(ValueError, match="test format spec!"):
         sd.read("test.foofy", options={"k": "v"})
+
+
+def test_external_format_serializes_reader_lifecycles(con, tmp_path):
+    paths = []
+    for value in range(16):
+        path = tmp_path / f"{value}.tracking"
+        path.write_text("tracking")
+        paths.append(path)
+
+    state = ReaderLifecycleState()
+    spec = TrackingFormatSpec(state)
+    con.sql("SET datafusion.execution.target_partitions TO 8").execute()
+
+    table = con.read(paths, format=spec).to_arrow_table()
+
+    assert table.num_rows == 16
+    assert sorted(table.column("value").to_pylist()) == list(range(16))
+    assert state.max_active == 1
+    assert state.active == 0
+    assert state.opened == state.closed
