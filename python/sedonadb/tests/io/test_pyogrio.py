@@ -16,8 +16,11 @@
 # under the License.
 
 import io
+import multiprocessing
 import tempfile
 import threading
+import time
+import traceback
 import warnings
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
@@ -399,21 +402,142 @@ def test_pyogrio_format_register():
         geopandas.testing.assert_geodataframe_equal(df.to_pandas(), gdf)
 
 
+class _ArrowStreamBoundary:
+    def __init__(self):
+        self._barrier = threading.Barrier(2, timeout=10)
+        self._lock = threading.Lock()
+        self.reached = 0
+        self.sources = []
+
+    def wait(self, source):
+        with self._lock:
+            self.reached += 1
+            self.sources.append(source)
+        self._barrier.wait()
+
+
+class _ArrowStreamBoundaryReader:
+    def __init__(self, inner, boundary, source):
+        self._inner = inner
+        self._boundary = boundary
+        self._source = source
+
+    def __arrow_c_stream__(self, requested_schema=None):
+        # The real open_reader() has already entered pyogrio/GDAL and created
+        # its shelter. Hold both real shelters live before importing either
+        # Arrow C stream, outside the shelter's open/close lock.
+        self._boundary.wait(self._source)
+        if requested_schema is None:
+            return self._inner.__arrow_c_stream__()
+        return self._inner.__arrow_c_stream__(requested_schema)
+
+
+def _run_independent_pyogrio_scans(result_sender, paths, expected_values):
+    boundary = _ArrowStreamBoundary()
+    original_open_reader = PyogrioFormatSpec.open_reader
+    executor = None
+    futures = []
+
+    def open_reader(format_spec, args):
+        return _ArrowStreamBoundaryReader(
+            original_open_reader(format_spec, args), boundary, args.src.to_url()
+        )
+
+    try:
+        PyogrioFormatSpec.open_reader = open_reader
+        connections = [sedonadb.connect(), sedonadb.connect()]
+
+        def scan(connection, path):
+            return connection.read_pyogrio(path).to_arrow_table()
+
+        executor = ThreadPoolExecutor(max_workers=2)
+        futures = [
+            executor.submit(scan, connection, path)
+            for connection, path in zip(connections, paths, strict=True)
+        ]
+        tables = [future.result() for future in futures]
+
+        for table, values in zip(tables, expected_values, strict=True):
+            assert table.num_rows == len(values)
+            assert sorted(table.column("idx").to_pylist()) == values
+        assert boundary.reached >= 2
+        assert {Path(source).name for source in boundary.sources} == {
+            Path(path).name for path in paths
+        }
+        result_sender.send(
+            {
+                "ok": True,
+                "reader_boundary_reached": boundary.reached,
+                "reader_boundary_sources": boundary.sources,
+            }
+        )
+    except BaseException:
+        result_sender.send(
+            {
+                "ok": False,
+                "error": traceback.format_exc(),
+                "reader_boundary_reached": boundary.reached,
+            }
+        )
+    finally:
+        PyogrioFormatSpec.open_reader = original_open_reader
+        if executor is not None:
+            executor.shutdown(wait=all(future.done() for future in futures))
+        result_sender.close()
+
+
+def _block_child_process(result_sender):
+    threading.Event().wait()
+
+
+def _terminate_child(process):
+    process.terminate()
+    process.join(5)
+    if process.is_alive():
+        process.kill()
+        process.join(5)
+
+
+def _run_child_process(target, *args, timeout):
+    context = multiprocessing.get_context("spawn")
+    result_receiver, result_sender = context.Pipe(duplex=False)
+    process = context.Process(target=target, args=(result_sender, *args))
+    process.start()
+    result_sender.close()
+    try:
+        process.join(timeout)
+        if process.is_alive():
+            _terminate_child(process)
+            raise TimeoutError(f"child process exceeded {timeout} seconds")
+
+        child_result = result_receiver.recv() if result_receiver.poll() else None
+        if process.exitcode != 0:
+            raise AssertionError(
+                f"child process exited with {process.exitcode}: {child_result}"
+            )
+        if child_result is None:
+            raise AssertionError("child process exited without reporting a result")
+        return child_result
+    finally:
+        if process.is_alive():
+            _terminate_child(process)
+        result_receiver.close()
+
+
+def test_independent_scans_child_timeout_is_bounded():
+    started = time.monotonic()
+    with pytest.raises(TimeoutError, match="exceeded 0.2 seconds"):
+        _run_child_process(_block_child_process, timeout=0.2)
+    assert time.monotonic() - started < 5
+
+
 def test_independent_scans_from_threads():
     pytest.importorskip("pyogrio")
-
-    # Use independent contexts to characterize whether pyogrio/GDAL scans can
-    # safely overlap outside the per-scan reader serialization in this PR.
-    left = sedonadb.connect()
-    right = sedonadb.connect()
-    datasets = (
-        (left, "left.fgb", [10, 11, 12]),
-        (right, "right.fgb", [20, 21, 22, 23]),
-    )
+    expected_values = ([10, 11, 12], [20, 21, 22, 23])
 
     with tempfile.TemporaryDirectory() as td:
         paths = []
-        for _, filename, values in datasets:
+        for filename, values in zip(("left.fgb", "right.fgb"), expected_values):
             path = Path(td) / filename
             geopandas.GeoDataFrame(
                 {"idx": values},
@@ -421,27 +545,18 @@ def test_independent_scans_from_threads():
                     values, values, crs="EPSG:4326"
                 ),
             ).to_file(path)
-            paths.append(path)
+            paths.append(str(path))
 
-        barrier = threading.Barrier(2)
+        result = _run_child_process(
+            _run_independent_pyogrio_scans, paths, expected_values, timeout=30
+        )
 
-        def scan(connection, path):
-            barrier.wait()
-            return connection.read_pyogrio(path).to_arrow_table()
-
-        executor = ThreadPoolExecutor(max_workers=2)
-        futures = [
-            executor.submit(scan, connection, path)
-            for (connection, _, _), path in zip(datasets, paths, strict=True)
-        ]
-        try:
-            tables = [future.result(timeout=30) for future in futures]
-        finally:
-            executor.shutdown(wait=all(future.done() for future in futures))
-
-    for table, (_, _, expected_values) in zip(tables, datasets, strict=True):
-        assert table.num_rows == len(expected_values)
-        assert sorted(table.column("idx").to_pylist()) == expected_values
+    assert result["ok"], result["error"]
+    assert result["reader_boundary_reached"] >= 2
+    assert {Path(source).name for source in result["reader_boundary_sources"]} == {
+        "left.fgb",
+        "right.fgb",
+    }
 
 
 # The geometry-column name is GDAL's OGR reader's, not ours: fgb/geojson/shp
