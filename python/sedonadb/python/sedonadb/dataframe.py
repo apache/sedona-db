@@ -142,9 +142,21 @@ class DataFrame:
         └────────────┘
     """
 
-    def __init__(self, ctx, impl):
-        self._ctx = ctx
-        self._impl = impl
+    def __init__(self, ctx, impl=None):
+        if isinstance(ctx, DataFrame):
+            if impl is not None:
+                raise TypeError(
+                    "impl must not be provided when constructing from a DataFrame"
+                )
+
+            self._ctx = ctx._ctx
+            self._impl = ctx._impl
+        else:
+            if impl is None:
+                raise TypeError("impl is required when ctx is not a DataFrame")
+
+            self._ctx = ctx
+            self._impl = impl
 
     @property
     def schema(self):
