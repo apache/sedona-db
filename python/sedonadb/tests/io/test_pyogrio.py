@@ -446,18 +446,22 @@ def _run_independent_pyogrio_scans(result_sender, paths, expected_values):
     try:
         PyogrioFormatSpec.open_reader = open_reader
         connections = [sedonadb.connect(), sedonadb.connect()]
+        assert len(connections) == len(paths) == len(expected_values) == 2
 
         def scan(connection, path):
             return connection.read_pyogrio(path).to_arrow_table()
 
         executor = ThreadPoolExecutor(max_workers=2)
         futures = [
-            executor.submit(scan, connection, path)
-            for connection, path in zip(connections, paths, strict=True)
+            executor.submit(scan, connections[index], paths[index])
+            for index in range(2)
         ]
         tables = [future.result() for future in futures]
+        assert len(futures) == len(tables) == 2
 
-        for table, values in zip(tables, expected_values, strict=True):
+        for index in range(2):
+            table = tables[index]
+            values = expected_values[index]
             assert table.num_rows == len(values)
             assert sorted(table.column("idx").to_pylist()) == values
         assert boundary.reached >= 2
@@ -490,6 +494,10 @@ def _block_child_process(result_sender):
     threading.Event().wait()
 
 
+def _exit_child_process(result_sender):
+    raise SystemExit(17)
+
+
 def _terminate_child(process):
     process.terminate()
     process.join(5)
@@ -510,7 +518,12 @@ def _run_child_process(target, *args, timeout):
             _terminate_child(process)
             raise TimeoutError(f"child process exceeded {timeout} seconds")
 
-        child_result = result_receiver.recv() if result_receiver.poll() else None
+        child_result = None
+        if result_receiver.poll():
+            try:
+                child_result = result_receiver.recv()
+            except EOFError:
+                pass
         if process.exitcode != 0:
             raise AssertionError(
                 f"child process exited with {process.exitcode}: {child_result}"
@@ -531,13 +544,22 @@ def test_independent_scans_child_timeout_is_bounded():
     assert time.monotonic() - started < 5
 
 
+def test_child_process_nonzero_exit_is_reported():
+    with pytest.raises(AssertionError, match="child process exited with 17: None"):
+        _run_child_process(_exit_child_process, timeout=5)
+
+
 def test_independent_scans_from_threads():
     pytest.importorskip("pyogrio")
     expected_values = ([10, 11, 12], [20, 21, 22, 23])
+    filenames = ("left.fgb", "right.fgb")
+    assert len(filenames) == len(expected_values) == 2
 
     with tempfile.TemporaryDirectory() as td:
         paths = []
-        for filename, values in zip(("left.fgb", "right.fgb"), expected_values):
+        for index in range(2):
+            filename = filenames[index]
+            values = expected_values[index]
             path = Path(td) / filename
             geopandas.GeoDataFrame(
                 {"idx": values},
@@ -546,6 +568,7 @@ def test_independent_scans_from_threads():
                 ),
             ).to_file(path)
             paths.append(str(path))
+        assert len(paths) == 2
 
         result = _run_child_process(
             _run_independent_pyogrio_scans, paths, expected_values, timeout=30
@@ -553,6 +576,7 @@ def test_independent_scans_from_threads():
 
     assert result["ok"], result["error"]
     assert result["reader_boundary_reached"] >= 2
+    assert len(result["reader_boundary_sources"]) >= 2
     assert {Path(source).name for source in result["reader_boundary_sources"]} == {
         "left.fgb",
         "right.fgb",
