@@ -35,15 +35,11 @@ it flips to xpass the day the fix lands.
 import math
 
 import pytest
+from parity import BANDS, GDAL_TRANSFORM, HEIGHT, WIDTH, raster_view
 
 from sedonadb.raster_testing import random_raster_data, write_geotiff
 from sedonadb.testing import SedonaDB
 from sedonadb.testing_spark import SedonaSpark
-
-# North-up, CRS-less: origin (100, 500) with 2-wide by 3-tall pixels. These
-# functions take no geometry, so a CRS would only add a reprojection difference.
-GDAL_TRANSFORM = (100.0, 2.0, 0.0, 500.0, 0.0, -3.0)
-BANDS, HEIGHT, WIDTH = 2, 6, 7
 
 # Each value is representable both in its dtype and exactly in f64, so the
 # nodata reads back exactly.
@@ -78,22 +74,6 @@ def _outcome(engine, sql):
     if isinstance(value, float) and math.isnan(value):
         return ("value", "NaN")
     return ("value", value)
-
-
-def _raster_view(name, tmp_path, *, dtype="uint8", bands=BANDS, nodata=None):
-    """Write a random GeoTIFF and register it as view `name` on both engines,
-    returning `(sedona, spark)`."""
-    tif = tmp_path / f"{name}.tif"
-    write_geotiff(
-        tif,
-        random_raster_data(dtype, bands=bands, height=HEIGHT, width=WIDTH),
-        gdal_transform=GDAL_TRANSFORM,
-        nodata=nodata,
-    )
-    sedona, spark = SedonaDB(), SedonaSpark()
-    for eng in (sedona, spark):
-        eng.create_raster_view(name, tif)
-    return sedona, spark
 
 
 @pytest.mark.parametrize("dtype", list(BAND_NODATA))
@@ -135,7 +115,7 @@ def test_rs_band_nodata(dtype, tmp_path):
 def test_rs_band_nodata_nan(dtype, tmp_path):
     """A float band whose file nodata is NaN (GeoTIFF encodes it) reads back
     the same from both engines."""
-    sedona, spark = _raster_view(
+    sedona, spark = raster_view(
         "nan_nd_raster", tmp_path, dtype=dtype, bands=1, nodata=float("nan")
     )
     sql = "SELECT RS_BandNoDataValue(rast, 1) FROM nan_nd_raster"
@@ -150,7 +130,7 @@ def test_rs_band_nodata_fractional_on_int_band(tmp_path):
     """TIFFTAG_GDAL_NODATA is ASCII metadata, so a file can claim a nodata its
     band dtype cannot hold. rasterio refuses to write one beyond the dtype's
     range, so the writable case is a fractional nodata on an integer band."""
-    sedona, spark = _raster_view(
+    sedona, spark = raster_view(
         "frac_nd_raster", tmp_path, dtype="int32", bands=1, nodata=0.5
     )
     sql = "SELECT RS_BandNoDataValue(rast, 1) FROM frac_nd_raster"
@@ -165,7 +145,7 @@ def test_rs_band_nodata_fractional_on_int_band(tmp_path):
 def test_rs_band_nodata_out_of_range_band(band, tmp_path):
     """An out-of-range band index gets the same answer from both engines.
     Contrast the setter, which both engines refuse (see test_rs_raster_out.py)."""
-    sedona, spark = _raster_view("oob_raster", tmp_path, nodata=7.0)
+    sedona, spark = raster_view("oob_raster", tmp_path, nodata=7.0)
     sql = f"SELECT RS_BandNoDataValue(rast, {band}) FROM oob_raster"
     assert _outcome(sedona, sql) == _outcome(spark, sql)
 
@@ -177,7 +157,7 @@ def test_rs_band_nodata_out_of_range_band(band, tmp_path):
 def test_rs_band_nodata_null_raster(tmp_path):
     """NULL raster in, NULL out — phrased through CASE because neither dialect
     types a bare NULL literal as a raster."""
-    sedona, spark = _raster_view("null_src", tmp_path, nodata=7.0)
+    sedona, spark = raster_view("null_src", tmp_path, nodata=7.0)
     sql = "SELECT RS_BandNoDataValue(CASE WHEN 1 = 0 THEN rast END, 1) FROM null_src"
     assert _outcome(sedona, sql) == _outcome(spark, sql)
 
@@ -188,7 +168,7 @@ def test_rs_band_nodata_null_raster(tmp_path):
 )
 def test_rs_band_nodata_null_band(tmp_path):
     """A NULL band index propagates the same way through both engines."""
-    sedona, spark = _raster_view("null_band_src", tmp_path, nodata=7.0)
+    sedona, spark = raster_view("null_band_src", tmp_path, nodata=7.0)
     sql = (
         "SELECT RS_BandNoDataValue(rast, CASE WHEN 1 = 0 THEN 1 END) FROM null_band_src"
     )
