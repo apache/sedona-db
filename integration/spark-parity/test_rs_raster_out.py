@@ -47,11 +47,9 @@ BAND_NODATA = {"uint8": 200.0, "int32": -99999.0, "float64": -12345.5}
 # The grid the anchored tests write and reconstruct. Anchors must state the
 # exact raster they expect, so the placement is passed to
 # create_random_raster_view explicitly rather than relying on its defaults
-# staying in sync. GDAL_TRANSFORM is BBOX on the WIDTH x HEIGHT grid — the
-# transform an anchored `DecodedRaster` must decode back to.
+# staying in sync — and the anchors state the same BBOX.
 BANDS, HEIGHT, WIDTH = 2, 6, 7
 BBOX = (100.0, 482.0, 114.0, 500.0)
-GDAL_TRANSFORM = (100.0, 2.0, 0.0, 500.0, 0.0, -3.0)
 
 
 def _anchor(dtype, nodata, *, bands=BANDS, plants=None):
@@ -61,8 +59,8 @@ def _anchor(dtype, nodata, *, bands=BANDS, plants=None):
         random_raster_data(
             dtype, bands=bands, height=HEIGHT, width=WIDTH, plants=plants
         ),
-        GDAL_TRANSFORM,
-        nodata,
+        nodata=nodata,
+        bbox=BBOX,
     )
 
 
