@@ -45,7 +45,7 @@ class ReaderLifecycleState:
 
     def wait_for_peer(self):
         with self._condition:
-            if self.active == 1:
+            if self.opened == 1 and self.active == 1:
                 self._condition.wait_for(lambda: self.active > 1, timeout=0.25)
 
     def exit(self):
@@ -177,7 +177,7 @@ def test_format_register():
         sd.read("test.foofy", options={"k": "v"})
 
 
-def test_external_format_serializes_reader_lifecycles(con, tmp_path):
+def test_external_format_serializes_reader_lifecycles(tmp_path):
     paths = []
     for value in range(16):
         path = tmp_path / f"{value}.tracking"
@@ -186,6 +186,7 @@ def test_external_format_serializes_reader_lifecycles(con, tmp_path):
 
     state = ReaderLifecycleState()
     spec = TrackingFormatSpec(state)
+    con = sedonadb.connect()
     con.sql("SET datafusion.execution.target_partitions TO 8").execute()
 
     table = con.read(paths, format=spec).to_arrow_table()
