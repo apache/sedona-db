@@ -21,7 +21,7 @@ use datafusion_common::config::ConfigOptions;
 use datafusion_common::{exec_datafusion_err, DataFusionError, Result, ScalarValue};
 use datafusion_expr::{Expr, Operator};
 use datafusion_physical_expr::{
-    expressions::{BinaryExpr, Column, Literal, NegativeExpr},
+    expressions::{BinaryExpr, Column, Literal},
     PhysicalExpr, ScalarFunctionExpr,
 };
 use geo_traits::Dimensions;
@@ -237,44 +237,8 @@ impl SpatialFilterFactory {
     /// Logical columns are resolved by name, so the index stored in the resulting
     /// [Column] is always zero.
     pub fn try_from_logical_expr(&self, expr: &Expr) -> Result<SpatialFilter> {
-        if let Some(spatial_filter) = self.try_from_logical_range_predicate(expr)? {
-            Ok(spatial_filter)
-        } else if let Some(spatial_filter) = self.try_from_logical_distance_predicate(expr)? {
-            Ok(spatial_filter)
-        } else if let Expr::BinaryExpr(binary_expr) = expr {
-            match binary_expr.op {
-                Operator::And => Ok(SpatialFilter::And(
-                    Box::new(self.try_from_logical_expr(&binary_expr.left)?),
-                    Box::new(self.try_from_logical_expr(&binary_expr.right)?),
-                )),
-                Operator::Or => Ok(SpatialFilter::Or(
-                    Box::new(self.try_from_logical_expr(&binary_expr.left)?),
-                    Box::new(self.try_from_logical_expr(&binary_expr.right)?),
-                )),
-                _ => Ok(SpatialFilter::Unknown),
-            }
-        } else if let Expr::Literal(ScalarValue::Boolean(Some(value)), _) = expr {
-            if *value {
-                Ok(SpatialFilter::Unknown)
-            } else {
-                Ok(SpatialFilter::LiteralFalse)
-            }
-        } else {
-            Ok(SpatialFilter::Unknown)
-        }
-    }
-
-    fn try_from_logical_range_predicate(&self, expr: &Expr) -> Result<Option<SpatialFilter>> {
-        let Expr::ScalarFunction(_) = expr else {
-            return Ok(None);
-        };
         let physical_expr = logical_to_physical_expr(expr)?;
-        self.try_from_range_predicate(&physical_expr)
-    }
-
-    fn try_from_logical_distance_predicate(&self, expr: &Expr) -> Result<Option<SpatialFilter>> {
-        let physical_expr = logical_to_physical_expr(expr)?;
-        self.try_from_distance_predicate(&physical_expr)
+        self.try_from_expr(&physical_expr)
     }
 
     fn try_from_range_predicate(
@@ -571,9 +535,44 @@ fn logical_to_physical_expr(expr: &Expr) -> Result<Arc<dyn PhysicalExpr>> {
         }
         // Preserve an unsupported node as a physical expression that the shared
         // argument parser will classify as `Other`.
-        _ => Ok(Arc::new(NegativeExpr::new(Arc::new(Literal::new(
-            ScalarValue::Int64(Some(0)),
-        ))))),
+        _ => Ok(Arc::new(UnknownSentinelExpr)),
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Hash)]
+struct UnknownSentinelExpr;
+
+impl std::fmt::Display for UnknownSentinelExpr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("UnknownSentinelExpr")
+    }
+}
+
+impl PhysicalExpr for UnknownSentinelExpr {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn evaluate(
+        &self,
+        _batch: &arrow_array::RecordBatch,
+    ) -> Result<datafusion_expr::ColumnarValue> {
+        sedona_internal_err!("Unexpected call to evaluate()")
+    }
+
+    fn children(&self) -> Vec<&Arc<dyn PhysicalExpr>> {
+        vec![]
+    }
+
+    fn with_new_children(
+        self: Arc<Self>,
+        _children: Vec<Arc<dyn PhysicalExpr>>,
+    ) -> Result<Arc<dyn PhysicalExpr>> {
+        Ok(self)
+    }
+
+    fn fmt_sql(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("UnknownSentinelExpr")
     }
 }
 
