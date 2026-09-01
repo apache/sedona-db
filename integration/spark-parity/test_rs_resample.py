@@ -85,11 +85,11 @@ def _nearest_picks(n_src, n_out):
     return [int((i + 0.5) * n_src / n_out) for i in range(n_out)]
 
 
-# Upsampling the standard grid 2x on each axis: pure block replication, halved
-# pixel size. Several tests share this anchor (it is what NearestNeighbor —
-# and, on Sedona Spark, every fallback spelling — produces for 14x12).
+# Upsampling the standard grid 2x on each axis: pure block replication. Several
+# tests share this anchor (it is what NearestNeighbor — and, on Sedona Spark,
+# every fallback spelling — produces for 14x12). Dimension mode preserves the
+# extent, so these anchors sit on the fixture's own BBOX.
 UP_PIXELS = np.repeat(np.repeat(_data(), 2, axis=1), 2, axis=2)
-UP_TRANSFORM = (100.0, 1.0, 0.0, 500.0, 0.0, -1.5)
 
 
 @pytest.mark.parametrize(
@@ -103,7 +103,7 @@ def test_rs_resample_upsample(dtype, nodata, tmp_path):
     sedona, spark = _register("up_src", tmp_path, dtype=dtype, nodata=nodata)
     sql = "SELECT RS_Resample(rast, 14.0, 12.0, false, 'NearestNeighbor') FROM up_src"
     pixels = np.repeat(np.repeat(_data(dtype), 2, axis=1), 2, axis=2)
-    anchor = DecodedRaster(pixels, UP_TRANSFORM, [nodata] * BANDS)
+    anchor = DecodedRaster(pixels, nodata=[nodata] * BANDS, bbox=BBOX)
     compare(sql, sedona, spark, expected=anchor)
 
 
@@ -111,7 +111,7 @@ def test_rs_resample_identity(tmp_path):
     """Resampling to the source's own dimensions returns the raster unchanged."""
     sedona, spark = _register("id_src", tmp_path)
     sql = "SELECT RS_Resample(rast, 7.0, 6.0, false, 'NearestNeighbor') FROM id_src"
-    anchor = DecodedRaster(_data(), (100.0, 2.0, 0.0, 500.0, 0.0, -3.0), [None, None])
+    anchor = DecodedRaster(_data(), nodata=[None, None], bbox=BBOX)
     compare(sql, sedona, spark, expected=anchor)
 
 
@@ -121,7 +121,7 @@ def test_rs_resample_downsample(tmp_path):
     sedona, spark = _register("down_src", tmp_path)
     sql = "SELECT RS_Resample(rast, 4.0, 3.0, false, 'NearestNeighbor') FROM down_src"
     pixels = _data()[:, _nearest_picks(HEIGHT, 3)][:, :, _nearest_picks(WIDTH, 4)]
-    anchor = DecodedRaster(pixels, (100.0, 3.5, 0.0, 500.0, 0.0, -6.0), [None, None])
+    anchor = DecodedRaster(pixels, nodata=[None, None], bbox=BBOX)
     compare(sql, sedona, spark, expected=anchor)
 
 
@@ -130,7 +130,7 @@ def test_rs_resample_integer_literal_dimensions(tmp_path):
     engines (the docs write 14.0; users write 14)."""
     sedona, spark = _register("int_src", tmp_path)
     sql = "SELECT RS_Resample(rast, 14, 12, false, 'NearestNeighbor') FROM int_src"
-    anchor = DecodedRaster(UP_PIXELS, UP_TRANSFORM, [None, None])
+    anchor = DecodedRaster(UP_PIXELS, nodata=[None, None], bbox=BBOX)
     compare(sql, sedona, spark, expected=anchor)
 
 
@@ -143,7 +143,7 @@ def test_rs_resample_lowercase_algorithm(tmp_path):
     sql = (
         "SELECT RS_Resample(rast, 14.0, 12.0, false, 'nearestneighbor') FROM lower_src"
     )
-    anchor = DecodedRaster(UP_PIXELS, UP_TRANSFORM, [None, None])
+    anchor = DecodedRaster(UP_PIXELS, nodata=[None, None], bbox=BBOX)
     compare(sql, sedona, spark, expected=anchor)
 
 
@@ -153,7 +153,7 @@ def test_rs_resample_scale_exact_tiling(tmp_path):
     sedona, spark = _register("tile_src", tmp_path)
     sql = "SELECT RS_Resample(rast, 1.0, -1.0, true, 'NearestNeighbor') FROM tile_src"
     pixels = np.repeat(np.repeat(_data(), 3, axis=1), 2, axis=2)
-    anchor = DecodedRaster(pixels, (100.0, 1.0, 0.0, 500.0, 0.0, -1.0), [None, None])
+    anchor = DecodedRaster(pixels, nodata=[None, None], bbox=BBOX)
     compare(sql, sedona, spark, expected=anchor)
 
 
@@ -172,7 +172,7 @@ def test_rs_resample_scale_grows_extent(nodata, fill, tmp_path):
     pixels = np.full((BANDS, 5, 4), fill, dtype="uint8")
     pixels[:, :4, :3] = _data()[:, [0, 2, 3, 4]][:, :, [1, 3, 5]]
     anchor = DecodedRaster(
-        pixels, (100.0, 4.0, 0.0, 500.0, 0.0, -4.0), [nodata] * BANDS
+        pixels, nodata=[nodata] * BANDS, bbox=(100.0, 480.0, 116.0, 500.0)
     )
     compare(sql, sedona, spark, expected=anchor)
 
@@ -188,7 +188,7 @@ def test_rs_resample_reference_raster(tmp_path):
         "SELECT RS_Resample(a.rast, b.rast, false, 'NearestNeighbor') "
         "FROM ref_src a CROSS JOIN refgrid b"
     )
-    anchor = DecodedRaster(UP_PIXELS, UP_TRANSFORM, [None, None])
+    anchor = DecodedRaster(UP_PIXELS, nodata=[None, None], bbox=BBOX)
     compare(sql, sedona, spark, expected=anchor)
 
 
@@ -205,7 +205,9 @@ def test_rs_resample_grid_snap(tmp_path):
     )
     pixels = np.zeros((BANDS, 7, 8), dtype="uint8")
     pixels[:, :6, :7] = _data()
-    anchor = DecodedRaster(pixels, (99.5, 2.0, 0.0, 500.5, 0.0, -3.0), [None, None])
+    anchor = DecodedRaster(
+        pixels, nodata=[None, None], bbox=(99.5, 479.5, 115.5, 500.5)
+    )
     compare(sql, sedona, spark, expected=anchor)
 
 
