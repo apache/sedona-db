@@ -994,7 +994,7 @@ class ArrowSQLCache:
         self._dirty = False
 
 
-def compare(sql, *engines):
+def compare(sql, *engines, expected=None):
     """Assert every engine returns the same result for one shared SQL string.
 
     The cross-engine parity assertion. The first engine is the subject — its
@@ -1013,6 +1013,16 @@ def compare(sql, *engines):
     raster is NULL also counts as agreement. The dispatch asks the subject's
     `result_has_raster`, answered from its lazy result schema, so any engine
     that implements the raster hooks can be the subject.
+
+    `expected` (optional) anchors the comparison to a known value: the subject
+    is asserted against it first, and the references are then anchored
+    transitively. Engines agreeing with each other is not proof that any of
+    them is right — every engine returning the same wrong thing (say, a no-op
+    where an operation was meant to happen) passes the parity claim — so pass
+    an anchor whenever the expected result is easy to state. For table results
+    `expected` is anything `assert_result` accepts (a float, a list of
+    `result_to_tuples` rows, a pandas frame, ...); for raster results it is a
+    `sedonadb.raster_testing.DecodedRaster`.
     """
     if len(engines) < 2:
         raise ValueError("compare() needs at least two engines")
@@ -1022,16 +1032,22 @@ def compare(sql, *engines):
         from sedonadb.raster_testing import assert_decoded_equal
 
         got = subject.decode_raster_result(sql)
-        for reference in references:
-            expected = reference.decode_raster_result(sql)
-            if got is None and expected is None:
-                continue
+        if expected is not None:
             assert_decoded_equal(got, expected, context=sql)
+        for reference in references:
+            reference_raster = reference.decode_raster_result(sql)
+            if got is None and reference_raster is None:
+                continue
+            assert_decoded_equal(got, reference_raster, context=sql)
     else:
         result = subject.execute_and_collect(sql)
-        for reference in references:
-            expected = reference.result_to_tuples(reference.execute_and_collect(sql))
+        if expected is not None:
             subject.assert_result(result, expected)
+        for reference in references:
+            reference_tuples = reference.result_to_tuples(
+                reference.execute_and_collect(sql)
+            )
+            subject.assert_result(result, reference_tuples)
 
 
 def geom_or_null(arg, srid=None):

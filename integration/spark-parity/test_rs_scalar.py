@@ -75,10 +75,15 @@ def test_rs_band_nodata(dtype, tmp_path):
             plants={(2, 3): BAND_NODATA[dtype]},
         )
 
+    # Anchored to the value the fixture wrote (and NULL where none was):
+    # parity alone would also pass if both engines misread the same way.
     for band in (1, 2):
-        for view in ("nd_raster", "nond_raster"):
+        for view, anchor in (
+            ("nd_raster", BAND_NODATA[dtype]),
+            ("nond_raster", [(None,)]),
+        ):
             sql = f"SELECT RS_BandNoDataValue(rast, {band}) FROM {view}"
-            compare(sql, sedona, spark)
+            compare(sql, sedona, spark, expected=anchor)
 
 
 @pytest.mark.parametrize("dtype", ["float32", "float64"])
