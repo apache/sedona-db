@@ -17,12 +17,9 @@
 """SedonaDB vs Sedona Spark parity for the scalar raster readers.
 
 Sedona Spark is the compatibility target, so each test runs one shared SQL
-string on both engines and asserts SedonaDB's result against Sedona Spark's
-through the standard checker: ``sedona.assert_query_result(sql, _tuples(spark,
-sql))``. `result_to_tuples` is the cross-engine comparison form — every value
-is stringified by Arrow on both sides, so floats format identically, NULL
-stays `None`, and NaN becomes the string ``"nan"`` (distinct from `None`,
-where bare ``==`` on floats would lose it). SedonaDB's own correctness is
+string on both engines and asserts they agree with the harness-level
+`sedonadb.testing.compare`: ``compare(sql, sedona, spark)``, SedonaDB as the
+subject and Sedona Spark as the expected side. SedonaDB's own correctness is
 covered by the rasterio-oracle tests in `test_rs_value.py`.
 
 Both engines are constructed directly rather than through fixtures: this suite is
@@ -38,7 +35,7 @@ engine raises, that error is what trips the xfail.
 
 import pytest
 
-from sedonadb.testing import SedonaDB
+from sedonadb.testing import SedonaDB, compare
 from sedonadb.testing_spark import SedonaSpark
 
 # Each value is representable both in its dtype and exactly in f64, so the
@@ -53,12 +50,6 @@ BAND_NODATA = {
     "float32": -8000.5,
     "float64": -12345.5,
 }
-
-
-def _tuples(engine, sql):
-    """The rows of `sql` on `engine` in `result_to_tuples` form, for use as the
-    expected value of the other engine's `assert_query_result`."""
-    return engine.result_to_tuples(engine.execute_and_collect(sql))
 
 
 @pytest.mark.parametrize("dtype", list(BAND_NODATA))
@@ -87,7 +78,7 @@ def test_rs_band_nodata(dtype, tmp_path):
     for band in (1, 2):
         for view in ("nd_raster", "nond_raster"):
             sql = f"SELECT RS_BandNoDataValue(rast, {band}) FROM {view}"
-            sedona.assert_query_result(sql, _tuples(spark, sql))
+            compare(sql, sedona, spark)
 
 
 @pytest.mark.parametrize("dtype", ["float32", "float64"])
@@ -107,7 +98,7 @@ def test_rs_band_nodata_nan(dtype, tmp_path):
             nodata=float("nan"),
         )
     sql = "SELECT RS_BandNoDataValue(rast, 1) FROM nan_nd_raster"
-    sedona.assert_query_result(sql, _tuples(spark, sql))
+    compare(sql, sedona, spark)
 
 
 @pytest.mark.xfail(
@@ -128,7 +119,7 @@ def test_rs_band_nodata_fractional_on_int_band(tmp_path):
             nodata=0.5,
         )
     sql = "SELECT RS_BandNoDataValue(rast, 1) FROM frac_nd_raster"
-    sedona.assert_query_result(sql, _tuples(spark, sql))
+    compare(sql, sedona, spark)
 
 
 @pytest.mark.parametrize("band", [0, 3, -1])
@@ -143,7 +134,7 @@ def test_rs_band_nodata_out_of_range_band(band, tmp_path):
     for eng in (sedona, spark):
         eng.create_random_raster_view("oob_raster", tmp_path / "oob.tif", nodata=7.0)
     sql = f"SELECT RS_BandNoDataValue(rast, {band}) FROM oob_raster"
-    sedona.assert_query_result(sql, _tuples(spark, sql))
+    compare(sql, sedona, spark)
 
 
 @pytest.mark.xfail(
@@ -157,7 +148,7 @@ def test_rs_band_nodata_null_raster(tmp_path):
     for eng in (sedona, spark):
         eng.create_random_raster_view("null_src", tmp_path / "null_src.tif", nodata=7.0)
     sql = "SELECT RS_BandNoDataValue(CASE WHEN 1 = 0 THEN rast END, 1) FROM null_src"
-    sedona.assert_query_result(sql, _tuples(spark, sql))
+    compare(sql, sedona, spark)
 
 
 @pytest.mark.xfail(
@@ -174,4 +165,4 @@ def test_rs_band_nodata_null_band(tmp_path):
     sql = (
         "SELECT RS_BandNoDataValue(rast, CASE WHEN 1 = 0 THEN 1 END) FROM null_band_src"
     )
-    sedona.assert_query_result(sql, _tuples(spark, sql))
+    compare(sql, sedona, spark)

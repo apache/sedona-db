@@ -19,9 +19,10 @@
 These exercise the raster round-trip *out* of each engine: SedonaDB decodes its
 native raster column; Sedona Spark transports the result as GeoTIFF bytes
 (`RS_AsGeoTiff`) and decodes it with rasterio. Both sides land as a
-`DecodedRaster` (pixels + geotransform + per-band nodata) and are compared with
-`assert_decoded_equal`. Same `xfail`-for-known-divergence policy as the scalar
-suite.
+`DecodedRaster` (pixels + geotransform + per-band nodata), which is how the
+harness-level `sedonadb.testing.compare` compares a raster result — a NULL
+raster from every engine also counts as agreement. Same
+`xfail`-for-known-divergence policy as the scalar suite.
 
 Both engines are constructed directly rather than through fixtures: this suite is
 only run deliberately, so a missing pyspark, JVM, or Sedona jar should be a
@@ -36,8 +37,7 @@ operation divergence — it isolates the transport. Pixel-transforming ops
 
 import pytest
 
-from sedonadb.raster_testing import assert_decoded_equal
-from sedonadb.testing import SedonaDB
+from sedonadb.testing import SedonaDB, compare
 from sedonadb.testing_spark import SedonaSpark
 
 # Each value is representable in its dtype, so it packs into the band exactly.
@@ -62,10 +62,7 @@ def test_rs_setbandnodata(dtype, tmp_path):
         )
 
     sql = f"SELECT RS_SetBandNoDataValue(rast, 1, {BAND_NODATA[dtype]}) FROM src"
-    assert_decoded_equal(
-        sedona.decode_raster_result(sql),
-        spark.decode_raster_result(sql),
-    )
+    compare(sql, sedona, spark)
 
 
 def test_rs_setbandnodata_band2(tmp_path):
@@ -77,10 +74,7 @@ def test_rs_setbandnodata_band2(tmp_path):
             "band2_src", tmp_path / "band2_src.tif", dtype="float64"
         )
     sql = "SELECT RS_SetBandNoDataValue(rast, 2, 5.0) FROM band2_src"
-    assert_decoded_equal(
-        sedona.decode_raster_result(sql),
-        spark.decode_raster_result(sql),
-    )
+    compare(sql, sedona, spark)
 
 
 def test_rs_setbandnodata_overwrite(tmp_path):
@@ -95,10 +89,7 @@ def test_rs_setbandnodata_overwrite(tmp_path):
         "SELECT RS_SetBandNoDataValue(rast, 1, 9.0) FROM ow_src",
         "SELECT RS_SetBandNoDataValue(rast, 1, 7.0) FROM ow_src",
     ):
-        assert_decoded_equal(
-            sedona.decode_raster_result(sql),
-            spark.decode_raster_result(sql),
-        )
+        compare(sql, sedona, spark)
 
 
 def test_rs_setbandnodata_two_arg_single_band(tmp_path):
@@ -110,10 +101,7 @@ def test_rs_setbandnodata_two_arg_single_band(tmp_path):
             "two_arg_src", tmp_path / "two_arg_src.tif", bands=1
         )
     sql = "SELECT RS_SetBandNoDataValue(rast, 5.0) FROM two_arg_src"
-    assert_decoded_equal(
-        sedona.decode_raster_result(sql),
-        spark.decode_raster_result(sql),
-    )
+    compare(sql, sedona, spark)
 
 
 @pytest.mark.xfail(
@@ -129,10 +117,7 @@ def test_rs_setbandnodata_two_arg_multi_band(tmp_path):
             "two_arg_multi_src", tmp_path / "two_arg_multi_src.tif"
         )
     sql = "SELECT RS_SetBandNoDataValue(rast, 5.0) FROM two_arg_multi_src"
-    assert_decoded_equal(
-        sedona.decode_raster_result(sql),
-        spark.decode_raster_result(sql),
-    )
+    compare(sql, sedona, spark)
 
 
 @pytest.mark.parametrize(
@@ -168,10 +153,7 @@ def test_rs_setbandnodata_negative_on_uint8(tmp_path):
             "neg_src", tmp_path / "neg_src.tif", dtype="uint8"
         )
     sql = "SELECT RS_SetBandNoDataValue(rast, 1, -1.0) FROM neg_src"
-    assert_decoded_equal(
-        sedona.decode_raster_result(sql),
-        spark.decode_raster_result(sql),
-    )
+    compare(sql, sedona, spark)
 
 
 @pytest.mark.parametrize("band", [0, 3])
@@ -205,10 +187,7 @@ def test_rs_setbandnodata_nan_on_float(dtype, tmp_path):
     sql = (
         "SELECT RS_SetBandNoDataValue(rast, 1, CAST('NaN' AS DOUBLE)) FROM nan_set_src"
     )
-    assert_decoded_equal(
-        sedona.decode_raster_result(sql),
-        spark.decode_raster_result(sql),
-    )
+    compare(sql, sedona, spark)
 
 
 def test_rs_setbandnodata_null_band_and_value(tmp_path):
@@ -224,8 +203,7 @@ def test_rs_setbandnodata_null_band_and_value(tmp_path):
         "FROM null_arg_src",
         "SELECT RS_SetBandNoDataValue(rast, 1, CAST(NULL AS DOUBLE)) FROM null_arg_src",
     ):
-        assert sedona.decode_raster_result(sql) is None
-        assert spark.decode_raster_result(sql) is None
+        compare(sql, sedona, spark)
 
 
 @pytest.mark.xfail(
@@ -244,8 +222,7 @@ def test_rs_setbandnodata_null_raster(tmp_path):
         "SELECT RS_SetBandNoDataValue(CASE WHEN 1 = 0 THEN rast END, 1, 5.0) "
         "FROM null_rast_src"
     )
-    assert sedona.decode_raster_result(sql) is None
-    assert spark.decode_raster_result(sql) is None
+    compare(sql, sedona, spark)
 
 
 def test_rs_setbandnodata_replace_flag_rejected(tmp_path):

@@ -978,6 +978,52 @@ class ArrowSQLCache:
         self._dirty = False
 
 
+def compare(sql, *engines):
+    """Assert every engine returns the same result for one shared SQL string.
+
+    The cross-engine parity assertion. The first engine is the subject — its
+    result is the "got" side of every failure message — and each further
+    engine's result is an expected side, so with more than two engines the
+    subject is checked against every reference (which, by transitivity, means
+    they all agree).
+
+    Table-shaped results are compared in `result_to_tuples` form, the
+    representation built for verifying results between engines: Arrow
+    stringifies values identically on every side, NULL stays `None`, and NaN
+    becomes the string ``"nan"`` (bare float equality would lose it). A result
+    with a `sedona.raster` column is instead decoded on every engine
+    (`decode_raster_result`) and compared with
+    `sedonadb.raster_testing.assert_decoded_equal`; every engine agreeing the
+    raster is NULL also counts as agreement. That dispatch reads the subject's
+    collected schema, so the subject must be an engine that collects its
+    result natively — in the raster parity suite, SedonaDB.
+    """
+    if len(engines) < 2:
+        raise ValueError("compare() needs at least two engines")
+    subject, references = engines[0], engines[1:]
+
+    result = subject.execute_and_collect(sql)
+    table = subject.result_to_table(result)
+    is_raster = any(
+        getattr(t, "extension_name", None) == "sedona.raster"
+        for t in table.schema.types
+    )
+
+    if is_raster:
+        from sedonadb.raster_testing import assert_decoded_equal
+
+        got = subject.decode_raster_result(sql)
+        for reference in references:
+            expected = reference.decode_raster_result(sql)
+            if got is None and expected is None:
+                continue
+            assert_decoded_equal(got, expected, context=sql)
+    else:
+        for reference in references:
+            expected = reference.result_to_tuples(reference.execute_and_collect(sql))
+            subject.assert_result(result, expected)
+
+
 def geom_or_null(arg, srid=None):
     """Format SQL expression for a geometry object or NULL"""
     if arg is None:
