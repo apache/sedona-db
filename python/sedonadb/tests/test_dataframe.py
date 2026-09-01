@@ -25,7 +25,24 @@ import pandas as pd
 import pyarrow as pa
 import pytest
 import sedonadb
+from sedonadb.dataframe import DataFrame
 from sedonadb.testing import skip_if_not_exists
+
+
+def test_dataframe_constructor_from_dataframe(con):
+    class DataFrameSubclass(DataFrame):
+        def __init__(self, df):
+            super().__init__(df)
+
+    df = con.sql("SELECT 1 AS value")
+    copied = DataFrame(df)
+    subclassed = DataFrameSubclass(df)
+
+    assert copied._ctx is df._ctx
+    assert copied._impl is df._impl
+    assert subclassed._ctx is df._ctx
+    assert subclassed._impl is df._impl
+    pd.testing.assert_frame_equal(subclassed.to_pandas(), df.to_pandas())
 
 
 def test_dataframe_from_dataframe(con):

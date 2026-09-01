@@ -77,7 +77,7 @@ fn main() {
 
 fn parse_cmake_linker_flags(binary_dir: &Path) {
     // e.g., libabsl_base.a
-    let re_lib = Regex::new("^(lib|)([^.]+).*?(LIB|lib|a|dylib|so|dll)$").unwrap();
+    let re_lib = Regex::new("^(lib|)([^.]+).*?(LIB|lib|a|dylib|so|dll)(?:\\..*)?$").unwrap();
     // e.g., -L/path/to/lib (CMake doesn't usually output this, preferrig instead
     // to pass the full path to the library)
     let re_linker_dir = Regex::new("^-L(.*)").unwrap();
