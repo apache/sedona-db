@@ -323,7 +323,9 @@ impl Accumulator for ItemCrsAccumulator {
     }
 
     fn size(&self) -> usize {
-        self.inner.size() + size_of::<ItemCrsAccumulator>()
+        self.inner.size()
+            + size_of::<ItemCrsAccumulator>()
+            + self.crs.as_ref().map(|s| s.capacity()).unwrap_or(0)
     }
 
     fn state(&mut self) -> Result<Vec<ScalarValue>> {
