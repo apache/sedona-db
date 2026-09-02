@@ -15,11 +15,23 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import sys
+
+import geoarrow.pyarrow as ga
 import geopandas as gpd
+import numpy as np
+import numpy.ma.mrecords as mrecords
+import pandas as pd
+import pyarrow as pa
 import pytest
+from geopandas.testing import assert_geodataframe_equal
+from sedonadb.expr import lit
+from shapely.geometry import MultiPoint, Point
 
 import sedonadb_geopandas as sgpd
 from sedonadb_geopandas import GeoDataFrame, GeoSeries, Series
+from sedonadb_geopandas._frame import _is_missing
+from sedonadb_geopandas._series import is_scalar
 
 
 @pytest.fixture
@@ -65,7 +77,6 @@ def assert_geopandas_expr_equal(gdf, op, *, sort_by):
     row index. `check_crs` is left on, so CRS propagation is asserted too.
     Useful for throwing a corpus of GeoPandas ops at the wrapper.
     """
-    from geopandas.testing import assert_geodataframe_equal
 
     expected = op(gdf).sort_values(sort_by).reset_index(drop=True)
     got = (
@@ -169,7 +180,6 @@ def test_crs_propagates_from_projected_and_geographic(source_crs):
 
 def test_operand_accepts_literal(cities):
     # lit() is a supported escape hatch (and the way to carry a CRS).
-    from sedonadb.expr import lit
 
     gdf = sgpd.from_geopandas(cities)
     out = gdf[gdf["pop"] > lit(150)].to_geopandas().sort_values("name")
@@ -288,7 +298,6 @@ def test_setitem_geometry_column(points):
 def test_setitem_makes_geometry_active_when_frame_had_none():
     # A frame that starts without geometry gains an active geometry column when
     # one is assigned.
-    from shapely.geometry import Point
 
     plain = GeoDataFrame(sgpd.default_context().sql("SELECT 1 AS a"))
     assert plain._geometry_name is None
@@ -317,12 +326,33 @@ def test_setitem_rejects_bad_inputs(points):
 
 
 def test_setitem_stale_series_raises(points):
-    # Assignment rebinds the frame, so a Series read beforehand is stale.
+    # Replacing a column rebinds the frame in a way earlier reads cannot
+    # follow: a Series read beforehand would resolve to the new values, so it
+    # is stale and raises.
     gdf = sgpd.from_geopandas(points)
     before = gdf["v"]
-    gdf["k"] = 1
+    gdf["v"] = gdf["name"]
     with pytest.raises(ValueError, match="different"):
         gdf["z"] = before
+
+
+def test_series_survives_column_adding_assignments(points):
+    # One captured geometry can supply several derived columns in turn: an
+    # assignment that only adds a column leaves rows and existing columns
+    # untouched, so an earlier Series still resolves to the values it showed.
+    gdf = sgpd.from_geopandas(points)
+    g = gdf.geometry
+    v = gdf["v"]
+    gdf["buffered"] = g.buffer(1.0)
+    gdf["area"] = g.buffer(1.0).area
+    gdf["x_plus"] = v
+    out = gdf.to_geopandas().sort_values("name")
+    assert out["x_plus"].tolist() == points["v"].tolist()
+    assert (out["area"] > 3.0).all()
+    # ... and a filter by an earlier mask is equally valid.
+    mask = gdf["v"] > 1
+    gdf["k"] = 1
+    assert len(gdf[mask]) == 2
 
 
 def test_setitem_rejects_bare_expression(points):
@@ -354,7 +384,6 @@ def test_setitem_rejects_sequences(points, value):
 def test_setitem_accepts_numpy_scalar(points):
     # NumPy scalars do have __array__ but are single values, so they used to be
     # rejected as array-likes.
-    import numpy as np
 
     gdf = sgpd.from_geopandas(points)
     gdf["x"] = np.int64(5)
@@ -362,22 +391,26 @@ def test_setitem_accepts_numpy_scalar(points):
 
 
 def test_setitem_rejects_numpy_array(points):
-    import numpy as np
-
     gdf = sgpd.from_geopandas(points)
     with pytest.raises(TypeError, match="isn't supported"):
         gdf["x"] = np.array([1, 2, 3])
 
 
 def test_getitem_rejects_stale_mask(points):
-    # Assignment rebinds the frame, so a mask captured beforehand belongs to the
-    # previous one. It used to be accepted and quietly resolve against the new
-    # frame while the referenced column happened to still exist.
+    # Replacing a column (or filtering) rebinds the frame, so a mask captured
+    # beforehand belongs to the previous one. It used to be accepted and
+    # quietly resolve against the new frame while the referenced column
+    # happened to still exist.
     gdf = sgpd.from_geopandas(points)
     mask = gdf["v"] > 1
-    gdf["k"] = 1
+    gdf["v"] = gdf["name"]
     with pytest.raises(ValueError, match="different DataFrame"):
         gdf[mask]
+    gdf = sgpd.from_geopandas(points)
+    mask = gdf["v"] > 1
+    filtered = gdf[gdf["v"] > 0]
+    with pytest.raises(ValueError, match="different DataFrame"):
+        filtered[mask]
 
 
 def test_setitem_none_keeps_geometry_column(points):
@@ -406,11 +439,6 @@ def test_setitem_geometry_scalars_keep_type_and_crs(points, value_name):
     # Every supported scalar path has to go through the CRS-preserving branch:
     # GeoPandas treats None, NaN and pd.NA as missing geometry and keeps the typed
     # column and its CRS.
-    import numpy as np
-    import pandas as pd
-    from shapely.geometry import Point
-
-    from sedonadb.expr import lit
 
     values = {
         "none": None,
@@ -430,7 +458,6 @@ def test_setitem_crs_carrying_literal_keeps_its_crs(points):
     # A literal that carries its own CRS must not be relabeled with the
     # destination column's CRS — that changes what the coordinates mean without
     # transforming them.
-    from sedonadb.expr import lit
 
     src = gpd.GeoSeries.from_wkt(["POINT (10 10)"], crs="EPSG:4326")
     gdf = sgpd.from_geopandas(points)  # column is EPSG:3857
@@ -439,24 +466,18 @@ def test_setitem_crs_carrying_literal_keeps_its_crs(points):
 
 
 def test_pandas_na_assigns_as_null_to_ordinary_column(points):
-    import pandas as pd
-
     gdf = sgpd.from_geopandas(points)
     gdf["z"] = pd.NA
     assert gdf.to_geopandas()["z"].isna().all()
 
 
 def test_zero_dimensional_array_normalizes(points):
-    import numpy as np
-
     gdf = sgpd.from_geopandas(points)
     gdf["z"] = np.array(5)  # 0-d: scalar by classification, unwrapped on use
     assert gdf.to_geopandas()["z"].tolist() == [5, 5, 5]
 
 
 def test_masked_scalar_assigns_as_missing(points):
-    import numpy as np
-
     gdf = sgpd.from_geopandas(points)
     gdf["m"] = np.ma.masked
     assert gdf.to_geopandas()["m"].isna().all()
@@ -464,9 +485,6 @@ def test_masked_scalar_assigns_as_missing(points):
 
 def test_pyarrow_scalars_broadcast(points):
     # Arrow scalars implement __len__ but are single values.
-    import pyarrow as pa
-
-    from sedonadb_geopandas._series import is_scalar
 
     assert is_scalar(pa.scalar([1, 2]))
     assert is_scalar(pa.scalar({"a": 1}))
@@ -478,7 +496,6 @@ def test_pyarrow_scalars_broadcast(points):
 def test_geoarrow_scalar_inherits_crs(points):
     # A GeoArrow WKB scalar has no __geo_interface__, so geometry-ness must come
     # from the resolved schema; it is CRS-less and inherits the column's CRS.
-    import geoarrow.pyarrow as ga
 
     w = ga.as_wkb(ga.array(["POINT (5 5)"]))[0]
     gdf = sgpd.from_geopandas(points)
@@ -494,25 +511,6 @@ def test_explicitly_inactive_geometry_stays_inactive(points):
     gdf = GeoDataFrame(df, geometry=None)
     gdf["geometry"] = gdf["geometry"]
     assert gdf._geometry_name is None
-
-
-def test_temporal_scalars_are_deferred(points):
-    # Representing temporal scalars faithfully needs dedicated unit and
-    # timezone handling — a naive literal would silently truncate nanoseconds
-    # or reject most NumPy units — which arrives as its own change; until
-    # then they are rejected outright rather than stored subtly wrong.
-    import numpy as np
-    import pandas as pd
-
-    gdf = sgpd.from_geopandas(points)
-    for value in (
-        np.datetime64("2026-01-01", "ns"),
-        np.timedelta64(1, "ns"),
-        pd.Timestamp("2026-01-01"),
-        pd.Timedelta(1),
-    ):
-        with pytest.raises(TypeError, match="not supported yet"):
-            gdf["t"] = value
 
 
 # -- regressions from review ------------------------------------------------
@@ -567,7 +565,6 @@ def test_geography_column_replacement_preserves_geography():
     # Replacing a geography column with None or a Shapely scalar rebuilt it
     # as planar geometry; replacements are constructed with the destination's
     # own spatial kind.
-    from shapely.geometry import Point
 
     def geog_frame():
         return GeoDataFrame(
@@ -608,7 +605,6 @@ def test_geography_column_replacement_preserves_geography():
 def test_numpy_scalar_dtypes_are_preserved(points):
     # .item() promoted np.int8/np.float32 to int64/float64 columns and
     # overflowed np.uint64 past int64, which the engine supports natively.
-    import numpy as np
 
     gdf = sgpd.from_geopandas(points)
     gdf["i8"] = np.int8(5)
@@ -626,7 +622,6 @@ def test_arrow_wrapped_missing_values_keep_geometry(points):
     # pa.scalar(None), typed Arrow nulls, and Arrow-wrapped NaN cleared the
     # active geometry and CRS, unlike the equivalent bare None/NaN; a wrapped
     # value means whatever its payload means.
-    import pyarrow as pa
 
     for value in (
         pa.scalar(None),
@@ -643,7 +638,6 @@ def test_arrow_wrapped_missing_values_keep_geometry(points):
 def test_typed_null_nested_scalars_broadcast(points):
     # Valid nested Arrow scalars broadcast, but their typed-null forms failed
     # literal construction; they re-enter as one-element typed arrays.
-    import pyarrow as pa
 
     for value in (
         pa.scalar(None, pa.list_(pa.int64())),
@@ -654,36 +648,11 @@ def test_typed_null_nested_scalars_broadcast(points):
         assert gdf.to_geopandas()["x"].isna().all()
 
 
-def test_nat_is_rejected_like_other_temporals(points):
-    # pd.NaT is an instance of neither Timestamp nor Timedelta, so it slipped
-    # past the temporal deferral: ordinary assignment failed with a backend
-    # error while geometry assignment absorbed it as missing.
-    import pandas as pd
-
-    gdf = sgpd.from_geopandas(points)
-    with pytest.raises(TypeError, match="not supported yet"):
-        gdf["x"] = pd.NaT
-    with pytest.raises(TypeError, match="not supported yet"):
-        gdf["geometry"] = pd.NaT
-
-
 def test_multipart_geometries_classify_as_scalars(points):
-    # Shapely 1.x multipart geometries implement __len__, so the generic
-    # sequence check rejected them; any BaseGeometry is a single value.
-    from shapely.geometry import MultiPoint
-    from shapely.geometry.base import BaseGeometry
-
-    from sedonadb_geopandas._series import is_scalar
-
+    # A multipart geometry is a single value (Shapely 2 no longer gives it a
+    # sequence protocol, and the package requires Shapely 2).
     value = MultiPoint([(0, 0), (1, 1)])
     assert is_scalar(value)
-    import warnings
-
-    legacy = type("LegacyMultipart", (BaseGeometry,), {"__len__": lambda self: 2})
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")  # instantiating BaseGeometry warns
-        instance = legacy.__new__(legacy)
-    assert is_scalar(instance)
     gdf = sgpd.from_geopandas(points)
     gdf["mp"] = value
     assert gdf.to_geopandas()["mp"].tolist() == [value] * len(points)
@@ -719,7 +688,6 @@ def test_no_active_geometry_survives_any_column_name(points):
 def test_numpy_void_scalars_broadcast_as_binary(points):
     # np.void has no Arrow scalar form, so the typed-scalar conversion broke
     # what previously worked: void values broadcast through .item() as bytes.
-    import numpy as np
 
     gdf = sgpd.from_geopandas(points)
     gdf["x"] = np.void(b"abcd")
@@ -734,7 +702,6 @@ def test_typed_null_nested_scalar_keeps_geometry(points):
     # only worked through pandas coincidence, and without pandas the null
     # converted the geometry column to a list column. Classification is
     # explicit now: one null element is one missing value.
-    import pyarrow as pa
 
     gdf = sgpd.from_geopandas(points)
     gdf["geometry"] = pa.scalar(None, pa.list_(pa.int64()))
@@ -747,7 +714,6 @@ def test_crs_less_geography_replacement_stays_crs_less():
     # A geography constructor synthesizes CRS84, so replacing a CRS-less
     # geography with None or a Shapely value silently gained a CRS; the
     # synthesized one is stripped back off when the destination has none.
-    from shapely.geometry import Point
 
     def crs_less():
         df = sgpd.default_context().sql(
@@ -780,9 +746,6 @@ def test_typed_spatial_null_keeps_its_own_crs(points):
     # the destination CRS — while the equivalent valid scalar kept 4267. A
     # typed spatial null is a geometry value that happens to be null: it
     # keeps its own kind and CRS metadata.
-    import geopandas as gpd
-    import geoarrow.pyarrow as ga
-    import pyarrow as pa
 
     crs4267 = gpd.GeoSeries.from_wkt(["POINT (0 0)"], crs="EPSG:4267").crs
     null_scalar = pa.scalar(None, ga.wkb().with_crs(crs4267.to_json()))
@@ -802,10 +765,6 @@ def test_spherical_geoarrow_scalars_keep_geography(points):
     # valid spherical WKB scalar silently became planar geometry; the
     # one-element-array spelling resolves with the complete extension
     # metadata.
-    import geoarrow.pyarrow as ga
-    import geopandas as gpd
-    import pyarrow as pa
-    from shapely.geometry import Point
 
     crs4267 = gpd.GeoSeries.from_wkt(["POINT (0 0)"], crs="EPSG:4267").crs
     sph = ga.wkb().with_edge_type(ga.EdgeType.SPHERICAL).with_crs(crs4267.to_json())
@@ -822,8 +781,6 @@ def test_non_wkb_geoarrow_nulls_do_not_crash(points):
     # resolver inside the spatial-null detector. They now either resolve
     # through the array spelling or degrade to the destination-kind null —
     # never an error, and always still geometry.
-    import geoarrow.pyarrow as ga
-    import pyarrow as pa
 
     for typ in (ga.wkt(), ga.point()):
         gdf = sgpd.from_geopandas(points)
@@ -853,7 +810,6 @@ def test_structured_numpy_scalars_keep_fields_and_dtypes(points):
     # A structured np.void flattened to a tuple, silently storing
     # [("count", int16), ("ratio", float32)] as list<float64>; it broadcasts
     # as a typed Arrow struct with field names and dtypes intact.
-    import numpy as np
 
     rec = np.array([(3, 1.5)], dtype=[("count", "int16"), ("ratio", "float32")])[0]
     gdf = sgpd.from_geopandas(points)
@@ -868,11 +824,6 @@ def test_structured_numpy_scalars_keep_fields_and_dtypes(points):
 def test_is_missing_handles_null_array_without_pandas(monkeypatch):
     # The one-element-null array classification must not depend on optional
     # pandas; blocking the import proves the branch answers on its own.
-    import sys
-
-    import pyarrow as pa
-
-    from sedonadb_geopandas._frame import _is_missing
 
     null_array = pa.array([None], type=pa.list_(pa.int64()))
     value_array = pa.array([1], type=pa.int64())
@@ -886,7 +837,6 @@ def test_masked_structured_records(points):
     # np.ma.is_masked before any conversion ran — even fully unmasked.
     # Unmasked and partially masked records broadcast as typed structs with
     # masked fields null; a fully masked record is missing.
-    import numpy as np
 
     dtype = [("count", "int16"), ("ratio", "float32")]
 
@@ -908,10 +858,6 @@ def test_geoarrow_scalars_to_new_columns(points):
     # began: null WKT/point scalars raised ValueError, and a spherical WKB
     # scalar silently became planar — and could even become the active
     # geometry of a geometry-less frame with the wrong semantics.
-    import geoarrow.pyarrow as ga
-    import geopandas as gpd
-    import pyarrow as pa
-    from shapely.geometry import Point
 
     crs4267 = gpd.GeoSeries.from_wkt(["POINT (0 0)"], crs="EPSG:4267").crs
     sph = ga.wkb().with_edge_type(ga.EdgeType.SPHERICAL).with_crs(crs4267.to_json())
@@ -935,9 +881,6 @@ def test_non_wkb_geoarrow_null_keeps_its_own_crs(points):
     # The metadata-rebuilt null stamped str(StringCrs(...)) into ST_SetCRS,
     # which is not PROJJSON and failed deserialization; the canonical
     # to_json() form is used instead.
-    import geoarrow.pyarrow as ga
-    import geopandas as gpd
-    import pyarrow as pa
 
     crs4267 = gpd.GeoSeries.from_wkt(["POINT (0 0)"], crs="EPSG:4267").crs
     gdf = sgpd.from_geopandas(points)
@@ -951,9 +894,6 @@ def test_zero_dim_structured_masked_containers(points):
     # A 0-d structured MaskedArray raised an opaque structured-dtype-to-bool
     # TypeError inside the generic mask check, directly and inside a Literal;
     # it unwraps to its record form first.
-    import numpy as np
-
-    from sedonadb.expr import lit
 
     dtype = [("count", "int16"), ("ratio", "float32")]
 
@@ -977,12 +917,6 @@ def test_large_wkb_scalars_normalize_to_binary_storage(points):
     # importer rejects; they are rebuilt on Binary storage with the same CRS
     # and edge metadata. Valid and null, direct and Literal, fresh and
     # geometry destinations.
-    import geoarrow.pyarrow as ga
-    import geopandas as gpd
-    import pyarrow as pa
-    from shapely.geometry import Point
-
-    from sedonadb.expr import lit
 
     crs4267 = gpd.GeoSeries.from_wkt(["POINT (0 0)"], crs="EPSG:4267").crs
     lws = (
@@ -1004,10 +938,6 @@ def test_masked_records_do_not_recurse(points):
     # structured-masked unwrap recursed until RecursionError; the base
     # MaskedArray view yields the record form. All three mask states, direct
     # and through Literal.
-    import numpy as np
-    import numpy.ma.mrecords as mrecords
-
-    from sedonadb.expr import lit
 
     dtype = [("count", "int16"), ("ratio", "float32")]
 
@@ -1026,3 +956,154 @@ def test_masked_records_do_not_recurse(points):
     assert out["b"].tolist() == [{"count": None, "ratio": 1.5}] * len(points)
     assert out["c"].isna().all()
     assert out["d"].tolist() == [{"count": None, "ratio": 1.5}] * len(points)
+
+
+# -- temporal scalars --------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "value_name,expected_kind",
+    [
+        ("ns_datetime", "datetime"),
+        ("zero_d_ns_datetime", "datetime"),
+        ("day_unit_datetime", "datetime"),
+        ("day_unit_timedelta", "timedelta"),
+        ("datetime_nat", "datetime_nat"),
+        ("timedelta_nat", "timedelta_nat"),
+    ],
+)
+def test_numpy_temporals_materialize_correctly(points, value_name, expected_kind):
+    # Asserted end to end (assignment then collection), not on the normalization
+    # helper: .item() flattening, unit rejection, and zeroed durations were all
+    # invisible to helper-level equality checks.
+
+    values = {
+        "ns_datetime": np.datetime64("2026-01-01", "ns"),
+        "zero_d_ns_datetime": np.array(np.datetime64("2026-01-01", "ns")),
+        "day_unit_datetime": np.datetime64("2026-01-01"),
+        "day_unit_timedelta": np.timedelta64(2, "D"),
+        "datetime_nat": np.datetime64("NaT", "ns"),
+        "timedelta_nat": np.timedelta64("NaT", "ns"),
+    }
+    gdf = sgpd.from_geopandas(points)
+    gdf["t"] = values[value_name]
+    out = gdf.to_geopandas()["t"]
+    if expected_kind == "datetime":
+        assert out.tolist() == [pd.Timestamp("2026-01-01")] * 3
+    elif expected_kind == "timedelta":
+        assert out.tolist() == [pd.Timedelta(days=2)] * 3
+    else:
+        # NaT stays a typed null of the right family.
+        assert out.isna().all()
+        expected_dtype = "datetime64" if "datetime" in expected_kind else "timedelta64"
+        assert expected_dtype in str(out.dtype)
+
+
+def test_coarse_unit_temporals_are_exact(points):
+    # Forcing every temporal through nanoseconds silently wrapped values
+    # outside the ns range (1677-2262): 2500-01-01 materialized as 1915-06-14.
+    # Coarse units convert exactly to seconds instead. Expectations are
+    # independent second-resolution constants — deriving them from the
+    # materialized dtype would repeat the conversion under test and wrap
+    # identically against a broken implementation.
+
+    cases = [
+        (np.datetime64("2500-01-01", "D"), np.datetime64("2500-01-01T00:00:00", "s")),
+        (np.timedelta64(200000, "D"), np.timedelta64(200000 * 86400, "s")),
+        (np.datetime64("2500", "Y"), np.datetime64("2500-01-01T00:00:00", "s")),
+    ]
+    for value, expected in cases:
+        gdf = sgpd.from_geopandas(points)
+        gdf["t"] = value
+        got = gdf.to_geopandas()["t"].values[0]
+        assert got.dtype == expected.dtype
+        assert got == expected
+
+
+def test_ambiguous_and_subnano_temporal_units_are_rejected(points):
+    # Matches pandas, exception type included: timedelta months/years have no
+    # fixed length, and pandas raises ValueError for sub-nanosecond timedeltas
+    # even when the value is exactly representable.
+
+    gdf = sgpd.from_geopandas(points)
+    for unit in ("M", "Y", "ps"):
+        with pytest.raises(ValueError, match="exactly"):
+            gdf["t"] = np.timedelta64(1, unit)
+    # 1000 ps is exactly one nanosecond, and both pandas and GeoPandas still
+    # reject it — the rejection is per unit, not per value.
+    with pytest.raises(ValueError, match="exactly"):
+        gdf["t"] = np.timedelta64(1000, "ps")
+
+
+def test_exact_subnanosecond_datetimes_are_accepted(points):
+    # 10**6 fs and 10**9 as are exactly one nanosecond and GeoPandas accepts
+    # them, so rejecting every sub-ns datetime unit up front was too broad.
+    # Lossy values are still rejected — GeoPandas silently truncates those to
+    # nanoseconds instead, which this layer deliberately does not do.
+
+    for value in (np.datetime64(10**6, "fs"), np.datetime64(10**9, "as")):
+        gdf = sgpd.from_geopandas(points)
+        gdf["t"] = value
+        assert gdf.to_geopandas()["t"].values[0] == np.datetime64(1, "ns")
+
+    gdf = sgpd.from_geopandas(points)
+    with pytest.raises(ValueError, match="precision"):
+        gdf["t"] = np.datetime64(1, "fs")
+
+
+def test_zero_dim_object_array_holding_temporal(points):
+    # A 0-d object array classifies as a broadcastable scalar, but its .item()
+    # returns the wrapped numpy temporal, which bypassed temporal
+    # normalization and failed assignment for non-Arrow-native units.
+
+    gdf = sgpd.from_geopandas(points)
+    gdf["t"] = np.array(np.datetime64("2500-01-01", "D"), dtype=object)
+    got = gdf.to_geopandas()["t"].values[0]
+    assert got == np.datetime64("2500-01-01T00:00:00", "s")
+
+
+def test_pandas_temporal_scalars_keep_nanoseconds(points):
+    # pandas Timestamp/Timedelta scalars resolved to microsecond literals:
+    # assignment silently zeroed nanoseconds, and duration arithmetic lost
+    # them behind an interval coercion (`t + pd.Timedelta(1)` came back as
+    # DateOffset objects with the tick dropped). They route through their
+    # numpy form and its lossless unit handling instead.
+
+    gdf = sgpd.from_geopandas(points)
+    gdf["t"] = pd.Timedelta(1)
+    got = gdf.to_geopandas()["t"]
+    assert got.tolist() == [pd.Timedelta(1)] * len(got)
+    gdf["ts"] = pd.Timestamp("2026-01-01 00:00:00.000000001")
+    got = gdf.to_geopandas()["ts"]
+    assert got.tolist() == [pd.Timestamp("2026-01-01 00:00:00.000000001")] * len(got)
+
+
+def test_tz_aware_timestamp_scalars_keep_nanoseconds_and_zone(points):
+    # pyarrow resolves a zone-aware Timestamp at microseconds, silently
+    # truncating nanoseconds; the scalar is rebuilt at nanosecond ticks with
+    # its zone preserved.
+
+    gdf = sgpd.from_geopandas(points)
+    stamp = pd.Timestamp("2026-01-01 00:00:00.000000001", tz="US/Pacific")
+    gdf["ts"] = stamp
+    got = gdf.to_geopandas()["ts"]
+    assert got.dt.tz is not None
+    assert got.tolist() == [stamp] * len(got)
+
+
+def test_nat_assigns_as_datetime_missing(points):
+    # pd.NaT is an instance of neither Timestamp nor Timedelta, so it slipped
+    # past temporal normalization entirely: ordinary assignment failed with a
+    # backend error while geometry assignment absorbed it as missing. It now
+    # assigns the way pandas assigns it — a datetime column of missing values —
+    # while geometry columns keep treating it as a missing geometry.
+
+    gdf = sgpd.from_geopandas(points)
+    gdf["x"] = pd.NaT
+    got = gdf.to_geopandas()["x"]
+    assert got.isna().all()
+    assert str(got.dtype).startswith("datetime64")
+    gdf = sgpd.from_geopandas(points)
+    gdf["geometry"] = pd.NaT
+    assert gdf._geometry_name == "geometry"
+    assert gdf.to_geopandas()["geometry"].isna().all()

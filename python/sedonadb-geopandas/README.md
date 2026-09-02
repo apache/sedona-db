@@ -47,8 +47,11 @@ deliberately *not* identical to GeoPandas:
 - **No row index / alignment**: there is no pandas `Index`; joins and filters
   are positional/relational, not index-aligned.
 - **Immutable under the hood**: "in-place" style operations return a new frame.
-  Assigning a column with `gdf["x"] = ...` rebinds the frame, so a `Series` read
-  before the assignment is stale and cannot be combined with later reads.
+  A `Series` read from a frame stays usable across assignments that only *add*
+  columns (so `g = gdf.geometry` can supply `g.area`, `g.length`, ... in turn),
+  but replacing a column or filtering rebinds the frame, and a `Series` read
+  before that is stale and raises rather than silently resolving to different
+  values.
 - **Columns cannot be mixed across frames**: without row alignment, combining
   columns from two different frames raises rather than guessing. Join first.
 - **Plotting and arbitrary `apply`**: use the `to_geopandas()` escape hatch and
@@ -58,9 +61,6 @@ deliberately *not* identical to GeoPandas:
   against the destination and silently write the wrong values. Assign a `Series`
   read from the same frame, or a scalar (a geometry included). For anything the
   wrapper does not cover, drop to the SedonaDB `DataFrame` API directly.
-  NumPy and pandas temporal scalars (`datetime64`, `timedelta64`, `Timestamp`,
-  `Timedelta`, `NaT`) are temporarily rejected: representing them faithfully
-  needs dedicated unit and timezone handling, which arrives in a follow-up.
 
 See the SedonaDB "Migrating from GeoPandas" guide for the relational model that
 underlies each method.

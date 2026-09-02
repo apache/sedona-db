@@ -34,6 +34,10 @@ dependencies = [
     "sedonadb>=0.4.1",
     "sedonadb-expr>=0.4.0",
     "pyarrow",
+    # Geometry scalars (assignment, comparison operands) are Shapely objects;
+    # Shapely 2 dropped the sequence protocol on multipart geometries, which
+    # is what lets a geometry be told apart from an array-like generically.
+    "shapely>=2",
 ]
 classifiers = [
     "Programming Language :: Python :: 3",

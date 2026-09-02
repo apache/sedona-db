@@ -16,6 +16,10 @@
 # under the License.
 """pandas/GeoPandas-style Series backed by a SedonaDB expression."""
 
+import pyarrow as pa
+
+from sedonadb_geopandas._temporal import normalize_temporal_scalar
+
 
 def is_scalar(value):
     """Whether `value` is a single value that can be broadcast to every row.
@@ -31,25 +35,10 @@ def is_scalar(value):
     """
     if isinstance(value, (str, bytes, bytearray)):
         return True
-    try:
-        import pyarrow as pa
-
-        # An Arrow scalar is one value even when it implements __len__ (a
-        # ListScalar's length is its element count, not a row count).
-        if isinstance(value, pa.Scalar):
-            return True
-    except ImportError:
-        pass
-    try:
-        from shapely.geometry.base import BaseGeometry
-
-        # Shapely 1.x multipart geometries implement __len__ and __iter__;
-        # they are still single values. (Shapely 2 removed the sequence
-        # protocol, but the package floor does not require Shapely 2.)
-        if isinstance(value, BaseGeometry):
-            return True
-    except ImportError:
-        pass
+    # An Arrow scalar is one value even when it implements __len__ (a
+    # ListScalar's length is its element count, not a row count).
+    if isinstance(value, pa.Scalar):
+        return True
     if isinstance(value, (list, tuple, set, frozenset, dict, range)):
         return False
     if hasattr(value, "__array__"):
@@ -67,25 +56,18 @@ def normalize_scalar(value):
     and convert missing sentinels to `None` (SQL null). Callers apply this only
     after `is_scalar` has accepted the value.
 
-    NumPy and pandas temporal scalars are rejected for now: representing them
-    faithfully needs dedicated unit and timezone handling (`lit()` would
-    silently truncate nanoseconds or reject most NumPy units), which arrives
-    as its own change.
+    Temporal scalars are handed to `_temporal.normalize_temporal_scalar`,
+    which chooses units losslessly and keeps timezones.
     """
-    try:
-        import pyarrow as pa
-
-        # lit() rejects a typed-null *nested* scalar (list, map, struct); a
-        # one-element typed Arrow array is the resolver's supported spelling
-        # of the same broadcast value.
-        if (
-            isinstance(value, pa.Scalar)
-            and not value.is_valid
-            and pa.types.is_nested(value.type)
-        ):
-            return pa.array([None], type=value.type)
-    except ImportError:
-        pass
+    # lit() rejects a typed-null *nested* scalar (list, map, struct); a
+    # one-element typed Arrow array is the resolver's supported spelling of
+    # the same broadcast value.
+    if (
+        isinstance(value, pa.Scalar)
+        and not value.is_valid
+        and pa.types.is_nested(value.type)
+    ):
+        return pa.array([None], type=value.type)
     try:
         import numpy as np
 
@@ -94,8 +76,6 @@ def normalize_scalar(value):
         # record is missing; otherwise it broadcasts as a typed struct with
         # each masked field as null.
         if isinstance(value, np.ma.mvoid):
-            import pyarrow as pa
-
             names = value.dtype.names or ()
             fields_vals = {name: value[name] for name in names}
             if names and all(v is np.ma.masked for v in fields_vals.values()):
@@ -139,14 +119,11 @@ def normalize_scalar(value):
             # [()] keeps the typed NumPy scalar; .item() would promote it to a
             # Python int/float (and flatten temporals to integer ticks).
             return normalize_scalar(value[()])
+        # NumPy temporal scalars need unit-faithful handling: lit() rejects
+        # most NumPy units directly, and .item() would flatten them to ticks.
         if isinstance(value, (np.datetime64, np.timedelta64)):
-            raise TypeError(
-                "NumPy temporal scalars are not supported yet; faithful unit "
-                "handling arrives in a follow-up change"
-            )
+            return normalize_temporal_scalar(value)
         if isinstance(value, np.void):
-            import pyarrow as pa
-
             if value.dtype.fields is None:
                 # A plain void's payload is its bytes.
                 return value.item()
@@ -175,24 +152,25 @@ def normalize_scalar(value):
             # uint64 values past int64, which the engine supports natively.
             # (np.void has no Arrow scalar form; it falls through to .item(),
             # which yields its bytes.)
-            import pyarrow as pa
-
             return pa.scalar(value)
     except ImportError:
         pass
     if hasattr(value, "__array__") and getattr(value, "ndim", None) == 0:
         value = value.item()
+    # Temporal Arrow scalars need sentinel-aware handling.
+    if isinstance(value, pa.Scalar) and (
+        pa.types.is_duration(value.type) or pa.types.is_timestamp(value.type)
+    ):
+        return normalize_temporal_scalar(value)
     try:
         import pandas as pd
 
+        # pandas temporal scalars need unit- and zone-faithful handling. NaT
+        # is an instance of neither Timestamp nor Timedelta but is just as
+        # temporal, and assigns as a datetime missing value the way pandas
+        # assigns it.
         if value is pd.NaT or isinstance(value, (pd.Timestamp, pd.Timedelta)):
-            # NaT is an instance of neither Timestamp nor Timedelta, but it is
-            # just as temporal: without this it fails ordinary assignment with
-            # a backend error while geometry assignment absorbs it as missing.
-            raise TypeError(
-                "pandas temporal scalars are not supported yet; faithful unit "
-                "handling arrives in a follow-up change"
-            )
+            return normalize_temporal_scalar(value)
         # NaN is deliberately left as-is — pandas keeps NaN a float value; only
         # the NA sentinel becomes SQL null.
         if value is pd.NA:
