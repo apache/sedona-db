@@ -7846,7 +7846,7 @@ connect to non-docker PostGIS.</p>
 
 
 <a href="#sedonadb.testing.compare" class="headerlink" title="Permanent link">¶</a></h3>
-<div class="doc-signature highlight"><pre><span></span><code><span class="nf">compare</span><span class="p">(</span><span class="n">sql</span><span class="p">,</span> <span class="o">*</span><span class="n">engines</span><span class="p">)</span>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">compare</span><span class="p">(</span><span class="n">sql</span><span class="p">,</span> <span class="o">*</span><span class="n">engines</span><span class="p">,</span> <span class="n">expected</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
 </code></pre></div>
 
     <div class="doc doc-contents ">
@@ -7867,6 +7867,15 @@ with a raster column is instead decoded on every engine
 raster is NULL also counts as agreement. The dispatch asks the subject's
 <code>result_has_raster</code>, answered from its lazy result schema, so any engine
 that implements the raster hooks can be the subject.</p>
+<p><code>expected</code> (optional) anchors the comparison to a known value: the subject
+is asserted against it first, and the references are then anchored
+transitively. Engines agreeing with each other is not proof that any of
+them is right — every engine returning the same wrong thing (say, a no-op
+where an operation was meant to happen) passes the parity claim — so pass
+an anchor whenever the expected result is easy to state. For table results
+<code>expected</code> is anything <code>assert_result</code> accepts (a float, a list of
+<code>result_to_tuples</code> rows, a pandas frame, ...); for raster results it is a
+<code>sedonadb.raster_testing.DecodedRaster</code>.</p>
 
 
     </div>
