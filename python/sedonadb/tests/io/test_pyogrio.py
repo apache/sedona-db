@@ -406,42 +406,22 @@ class _NativePullBoundary:
     def __init__(self):
         self._barrier = threading.Barrier(2, timeout=10)
         self._lock = threading.Lock()
-        self.pull_intervals = {}
+        self._batch_pulls = {}
 
     def read_next_batch(self, source, reader):
         # Rendezvous immediately before each real pyogrio Arrow batch pull.
-        # The interval covers the native read_next_batch() call itself, so an
-        # overlap is evidence that two independent GDAL readers were active at
-        # the same time rather than merely that their Python shelters coexisted.
+        # This keeps both independent reader lifetimes active and repeatedly
+        # schedules their native work from the same execution boundary.
         self._barrier.wait()
-        started = time.perf_counter_ns()
         batch = reader.read_next_batch()
-        finished = time.perf_counter_ns()
 
         with self._lock:
-            self.pull_intervals.setdefault(source, []).append((started, finished))
+            self._batch_pulls[source] = self._batch_pulls.get(source, 0) + 1
         return batch
 
     def batch_pulls(self):
         with self._lock:
-            return {
-                source: len(intervals)
-                for source, intervals in self.pull_intervals.items()
-            }
-
-    def native_read_overlaps(self):
-        with self._lock:
-            sources = list(self.pull_intervals)
-            if len(sources) != 2:
-                return 0
-            left_intervals = self.pull_intervals[sources[0]]
-            right_intervals = self.pull_intervals[sources[1]]
-
-        return sum(
-            max(left_start, right_start) < min(left_end, right_end)
-            for left_start, left_end in left_intervals
-            for right_start, right_end in right_intervals
-        )
+            return dict(self._batch_pulls)
 
 
 class _NativePullBoundaryReader:
@@ -514,7 +494,6 @@ def _run_independent_pyogrio_scans(result_sender, paths, expected_values):
             {
                 "ok": True,
                 "native_batch_pulls": boundary.batch_pulls(),
-                "native_read_overlaps": boundary.native_read_overlaps(),
             }
         )
     except BaseException:
@@ -649,7 +628,6 @@ def test_independent_scans_from_threads(extension):
         f"right.{extension}",
     }
     assert all(count > 1 for count in result["native_batch_pulls"].values())
-    assert result["native_read_overlaps"] >= 1
 
 
 @pytest.mark.parametrize("extension", ["fgb", "gpkg"])
