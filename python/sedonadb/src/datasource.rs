@@ -52,6 +52,9 @@ pub struct PyExternalFormat {
     /// `False`); we snapshot it once to avoid GIL traffic in
     /// `list_single_object()`, which is called on hot paths.
     list_single_object: bool,
+    /// Cached from the Python spec so physical scan planning does not need the
+    /// GIL merely to decide whether file readers may overlap.
+    supports_concurrent_file_reads: bool,
     py_spec: Py<PyAny>,
 }
 
@@ -60,6 +63,7 @@ impl Clone for PyExternalFormat {
         Python::attach(|py| Self {
             extension: self.extension.clone(),
             list_single_object: self.list_single_object,
+            supports_concurrent_file_reads: self.supports_concurrent_file_reads,
             py_spec: self.py_spec.clone_ref(py),
         })
     }
@@ -78,9 +82,12 @@ impl PyExternalFormat {
             .getattr(py, "extension")?
             .extract::<String>(py)?;
         let new_list_single_object = read_list_single_object(py, &new_py_spec)?;
+        let new_supports_concurrent_file_reads =
+            read_supports_concurrent_file_reads(py, &new_py_spec)?;
         Ok(Self {
             extension: new_extension,
             list_single_object: new_list_single_object,
+            supports_concurrent_file_reads: new_supports_concurrent_file_reads,
             py_spec: new_py_spec,
         })
     }
@@ -138,8 +145,10 @@ impl PyExternalFormat {
         )?;
 
         let reader = import_arrow_array_stream(py, reader_obj.bind(py), None)?;
+        let schema = reader.schema();
         let wrapped_reader = WrappedRecordBatchReader {
-            inner: reader,
+            inner: Some(reader),
+            schema,
             shelter: Some(reader_obj),
         };
         Ok(Box::new(wrapped_reader))
@@ -152,9 +161,11 @@ impl PyExternalFormat {
     fn new<'py>(py: Python<'py>, py_spec: Py<PyAny>) -> Result<Self, PySedonaError> {
         let extension = py_spec.getattr(py, "extension")?.extract::<String>(py)?;
         let list_single_object = read_list_single_object(py, &py_spec)?;
+        let supports_concurrent_file_reads = read_supports_concurrent_file_reads(py, &py_spec)?;
         Ok(Self {
             extension,
             list_single_object,
+            supports_concurrent_file_reads,
             py_spec,
         })
     }
@@ -175,6 +186,18 @@ fn read_list_single_object<'py>(
         .extract::<bool>(py)?)
 }
 
+/// Read the `supports_concurrent_file_reads` attribute on a Python spec.
+///
+/// The [`ExternalFormatSpec`] Python base class defaults this to `True`.
+fn read_supports_concurrent_file_reads<'py>(
+    py: Python<'py>,
+    py_spec: &Py<PyAny>,
+) -> Result<bool, PySedonaError> {
+    Ok(py_spec
+        .getattr(py, "supports_concurrent_file_reads")?
+        .extract::<bool>(py)?)
+}
+
 #[async_trait]
 impl ExternalFormatSpec for PyExternalFormat {
     fn extension(&self) -> &str {
@@ -183,6 +206,10 @@ impl ExternalFormatSpec for PyExternalFormat {
 
     fn list_single_object(&self) -> bool {
         self.list_single_object
+    }
+
+    fn supports_concurrent_file_reads(&self) -> bool {
+        self.supports_concurrent_file_reads
     }
 
     fn with_options(
@@ -400,13 +427,30 @@ impl PyProjectedRecordBatchReader {
 /// ArrowArrayStream/RecordBatchReader (e.g., the pyogrio context manager, or
 /// an ADBC statement/cursor).
 struct WrappedRecordBatchReader {
-    pub inner: Box<dyn RecordBatchReader + Send>,
+    pub inner: Option<Box<dyn RecordBatchReader + Send>>,
+    pub schema: SchemaRef,
     pub shelter: Option<Py<PyAny>>,
+}
+
+impl WrappedRecordBatchReader {
+    /// Release resources in dependency order: the Arrow FFI stream first and
+    /// its owning Python context second. Explicitly dropping the shelter while
+    /// attached avoids PyO3 deferring its decref until a later Python callback.
+    fn finish(&mut self) {
+        self.inner = None;
+
+        if let Some(shelter) = self.shelter.take() {
+            if Python::try_attach(|_| drop(shelter)).is_none() {
+                // During interpreter shutdown PyO3 cannot safely decref the
+                // object. Let PyO3's normal deferred-drop path handle it.
+            }
+        }
+    }
 }
 
 impl RecordBatchReader for WrappedRecordBatchReader {
     fn schema(&self) -> SchemaRef {
-        self.inner.schema()
+        self.schema.clone()
     }
 }
 
@@ -414,11 +458,123 @@ impl Iterator for WrappedRecordBatchReader {
     type Item = Result<RecordBatch, ArrowError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(item) = self.inner.next() {
+        if let Some(item) = self.inner.as_mut().and_then(|inner| inner.next()) {
             Some(item)
         } else {
-            self.shelter = None;
+            self.finish();
             None
         }
+    }
+}
+
+impl Drop for WrappedRecordBatchReader {
+    fn drop(&mut self) {
+        self.finish();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pyo3::types::{PyAnyMethods, PyList, PyModule};
+
+    struct DropTrackingReader {
+        log: Py<PyAny>,
+        batch: Option<RecordBatch>,
+        schema: SchemaRef,
+    }
+
+    impl Iterator for DropTrackingReader {
+        type Item = std::result::Result<RecordBatch, ArrowError>;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            self.batch.take().map(Ok)
+        }
+    }
+
+    impl RecordBatchReader for DropTrackingReader {
+        fn schema(&self) -> SchemaRef {
+            self.schema.clone()
+        }
+    }
+
+    impl Drop for DropTrackingReader {
+        fn drop(&mut self) {
+            Python::attach(|py| {
+                self.log
+                    .bind(py)
+                    .call_method1("append", ("inner",))
+                    .unwrap();
+            });
+        }
+    }
+
+    fn shelter_and_log() -> (Py<PyAny>, Py<PyAny>) {
+        Python::attach(|py| {
+            let log = PyList::empty(py).unbind();
+            let module = PyModule::from_code(
+                py,
+                cr#"
+class Shelter:
+    def __init__(self, log):
+        self.log = log
+
+    def __del__(self):
+        self.log.append("shelter")
+"#,
+                cr"wrapped_reader_test.py",
+                cr"wrapped_reader_test",
+            )
+            .unwrap();
+            let shelter = module
+                .getattr("Shelter")
+                .unwrap()
+                .call1((log.bind(py),))
+                .unwrap()
+                .unbind();
+            (log.into_any(), shelter)
+        })
+    }
+
+    #[test]
+    fn wrapped_reader_drops_inner_before_python_shelter_at_eof() {
+        let (log, shelter) = shelter_and_log();
+        let schema = Arc::new(Schema::empty());
+        let mut reader = WrappedRecordBatchReader {
+            inner: Some(Box::new(DropTrackingReader {
+                log: Python::attach(|py| log.clone_ref(py)),
+                batch: None,
+                schema: schema.clone(),
+            })),
+            schema,
+            shelter: Some(shelter),
+        };
+
+        assert!(reader.next().is_none());
+        Python::attach(|py| {
+            let observed = log.bind(py).extract::<Vec<String>>().unwrap();
+            assert_eq!(observed, vec!["inner", "shelter"]);
+        });
+    }
+
+    #[test]
+    fn wrapped_reader_drops_inner_before_python_shelter_before_eof() {
+        let (log, shelter) = shelter_and_log();
+        let schema = Arc::new(Schema::empty());
+        let reader = WrappedRecordBatchReader {
+            inner: Some(Box::new(DropTrackingReader {
+                log: Python::attach(|py| log.clone_ref(py)),
+                batch: Some(RecordBatch::new_empty(schema.clone())),
+                schema: schema.clone(),
+            })),
+            schema,
+            shelter: Some(shelter),
+        };
+
+        drop(reader);
+        Python::attach(|py| {
+            let observed = log.bind(py).extract::<Vec<String>>().unwrap();
+            assert_eq!(observed, vec!["inner", "shelter"]);
+        });
     }
 }
