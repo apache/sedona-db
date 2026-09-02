@@ -415,7 +415,7 @@ impl<T: WkbBounder2D + Default + std::fmt::Debug> AnalyzeAccumulator<T> {
     }
 }
 
-impl<T: WkbBounder2D + Default + std::fmt::Debug> Accumulator for AnalyzeAccumulator<T> {
+impl<T: WkbBounder2D + Default + std::fmt::Debug + 'static> Accumulator for AnalyzeAccumulator<T> {
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
         if values.is_empty() {
             return sedona_internal_err!("No input arrays provided to accumulator");

@@ -16,17 +16,21 @@
 // under the License.
 
 use std::{
+    collections::HashMap,
     ffi::{c_int, CString},
     fmt::{Debug, Display},
     os::raw::{c_char, c_void},
     ptr::null_mut,
+    sync::Arc,
 };
 
 use arrow_array::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use arrow_schema::{DataType, Field};
 use datafusion_common::Result;
-use datafusion_execution::FunctionRegistry;
-use datafusion_expr::Expr;
+use datafusion_execution::{
+    config::SessionConfig, runtime_env::RuntimeEnv, FunctionRegistry, TaskContext,
+};
+use datafusion_expr::{AggregateUDF, Expr, HigherOrderUDF, ScalarUDF, WindowUDF};
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 
 pub use sedona_expr::placeholder_udf::{
@@ -222,17 +226,17 @@ impl<'a> ImportedExprView<'a> {
     /// replaced (e.g., using an optimizer rule or locally implemented replacement), inspected
     /// by parsing functions (e.g., to calculate pruning), or ignored (e.g., for table providers
     /// that do not support any filters).
-    pub fn to_expr(&self, _registry: Option<&dyn FunctionRegistry>) -> Result<Expr> {
+    pub fn to_expr(&self, registry: Option<&dyn FunctionRegistry>) -> Result<Expr> {
         #[cfg(feature = "protobuf")]
         {
             use datafusion_proto::bytes::Serializeable;
 
             let bytes = self.get_bytes_property("datafusion_expr_protobuf")?;
-            if let Some(registry) = _registry {
-                Expr::from_bytes_with_registry(&bytes, registry)
-            } else {
-                Expr::from_bytes_with_registry(&bytes, &PlaceholderRegistry)
-            }
+            let context = match registry {
+                Some(registry) => task_context_from_registry(registry)?,
+                None => TaskContext::default(),
+            };
+            Expr::from_bytes_with_ctx(&bytes, &context)
         }
 
         #[cfg(not(feature = "protobuf"))]
@@ -250,6 +254,45 @@ impl<'a> ImportedExprView<'a> {
     pub fn get_bytes_property(&self, property: &str) -> Result<Vec<u8>> {
         get_expr_view_bytes_property(self.inner, property)
     }
+}
+
+#[cfg(feature = "protobuf")]
+fn task_context_from_registry(registry: &dyn FunctionRegistry) -> Result<TaskContext> {
+    let scalar_functions: HashMap<String, Arc<ScalarUDF>> = registry
+        .udfs()
+        .into_iter()
+        .map(|name| registry.udf(&name).map(|function| (name, function)))
+        .collect::<Result<_>>()?;
+    let higher_order_functions: HashMap<String, Arc<HigherOrderUDF>> = registry
+        .higher_order_function_names()
+        .into_iter()
+        .map(|name| {
+            registry
+                .higher_order_function(&name)
+                .map(|function| (name, function))
+        })
+        .collect::<Result<_>>()?;
+    let aggregate_functions: HashMap<String, Arc<AggregateUDF>> = registry
+        .udafs()
+        .into_iter()
+        .map(|name| registry.udaf(&name).map(|function| (name, function)))
+        .collect::<Result<_>>()?;
+    let window_functions: HashMap<String, Arc<WindowUDF>> = registry
+        .udwfs()
+        .into_iter()
+        .map(|name| registry.udwf(&name).map(|function| (name, function)))
+        .collect::<Result<_>>()?;
+
+    Ok(TaskContext::new(
+        None,
+        "sedona-extension-expression-import".to_string(),
+        SessionConfig::new(),
+        scalar_functions,
+        higher_order_functions,
+        aggregate_functions,
+        window_functions,
+        Arc::new(RuntimeEnv::default()),
+    ))
 }
 
 /// Get a string property from a [SedonaCExprView].
@@ -440,7 +483,7 @@ mod tests {
                 // Verify it's actually a PlaceholderUDF
                 let udf_impl = func.func.inner();
                 assert!(
-                    udf_impl.as_any().downcast_ref::<PlaceholderUDF>().is_some(),
+                    udf_impl.downcast_ref::<PlaceholderUDF>().is_some(),
                     "Expected PlaceholderUDF, got {:?}",
                     udf_impl
                 );

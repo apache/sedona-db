@@ -16,7 +16,6 @@
 // under the License.
 
 use std::{
-    any::Any,
     collections::HashSet,
     ffi::{c_int, c_void},
     fmt::Debug,
@@ -31,7 +30,7 @@ use async_trait::async_trait;
 use datafusion_catalog::{Session, TableProvider};
 use datafusion_common::{exec_err, plan_err, Result, Statistics};
 use datafusion_execution::FunctionRegistry;
-use datafusion_expr::{Expr, ScalarUDF, TableProviderFilterPushDown, TableType};
+use datafusion_expr::{Expr, HigherOrderUDF, ScalarUDF, TableProviderFilterPushDown, TableType};
 use datafusion_physical_plan::ExecutionPlan;
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use serde::{Deserialize, Serialize};
@@ -493,10 +492,6 @@ impl ImportedTableProvider {
 
 #[async_trait]
 impl TableProvider for ImportedTableProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }
@@ -689,6 +684,14 @@ impl<'a> FunctionRegistry for SessionRefRegistry<'a> {
         self.session.scalar_functions().keys().cloned().collect()
     }
 
+    fn higher_order_function_names(&self) -> HashSet<String> {
+        self.session
+            .higher_order_functions()
+            .keys()
+            .cloned()
+            .collect()
+    }
+
     fn udafs(&self) -> HashSet<String> {
         self.session.aggregate_functions().keys().cloned().collect()
     }
@@ -702,6 +705,14 @@ impl<'a> FunctionRegistry for SessionRefRegistry<'a> {
             Ok(Arc::clone(func))
         } else {
             plan_err!("Can't find scalar function '{name}' in session")
+        }
+    }
+
+    fn higher_order_function(&self, name: &str) -> Result<Arc<HigherOrderUDF>> {
+        if let Some(func) = self.session.higher_order_functions().get(name) {
+            Ok(Arc::clone(func))
+        } else {
+            plan_err!("Can't find higher-order function '{name}' in session")
         }
     }
 
@@ -1018,10 +1029,6 @@ mod tests {
 
     #[async_trait]
     impl TableProvider for DummyTableProvider {
-        fn as_any(&self) -> &dyn Any {
-            self
-        }
-
         fn schema(&self) -> SchemaRef {
             self.schema.clone()
         }

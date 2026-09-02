@@ -34,7 +34,7 @@ use laz::{
     },
     DecompressionSelection, LasZipError,
 };
-use object_store::ObjectStore;
+use object_store::{ObjectStore, ObjectStoreExt};
 
 use crate::las::{
     builder::RowBuilder,

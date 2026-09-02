@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::{any::Any, iter, sync::Arc};
+use std::{iter, sync::Arc};
 
 use datafusion_common::{config::ConfigOptions, error::DataFusionError};
 use datafusion_datasource::{
@@ -114,10 +114,6 @@ impl FileSource for LasSource {
 
         // Wrap with ProjectionOpener to handle reordering/expressions
         ProjectionOpener::try_new(split_projection, las_opener, table_schema)
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 
     fn table_schema(&self) -> &TableSchema {
