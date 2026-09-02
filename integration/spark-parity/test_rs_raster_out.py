@@ -238,20 +238,42 @@ def test_rs_setbandnodata_nan_on_float(dtype, tmp_path):
     compare(sql, sedona, spark)
 
 
-def test_rs_setbandnodata_null_band_and_value(tmp_path):
-    """A NULL band index or a NULL nodata value yields a NULL raster on both
-    engines."""
+def test_rs_setbandnodata_null_band(tmp_path):
+    """A NULL band index yields a NULL raster on both engines."""
     sedona, spark = SedonaDB(), SedonaSpark()
     for eng in (sedona, spark):
         eng.create_random_raster_view(
-            "null_arg_src", tmp_path / "null_arg_src.tif", dtype="float64"
+            "null_band_src", tmp_path / "null_band_src.tif", dtype="float64"
         )
-    for sql in (
+    sql = (
         "SELECT RS_SetBandNoDataValue(rast, CASE WHEN 1 = 0 THEN 1 END, 5.0) "
-        "FROM null_arg_src",
-        "SELECT RS_SetBandNoDataValue(rast, 1, CAST(NULL AS DOUBLE)) FROM null_arg_src",
-    ):
-        compare(sql, sedona, spark)
+        "FROM null_band_src"
+    )
+    compare(sql, sedona, spark)
+
+
+@pytest.mark.xfail(
+    reason="SedonaDB reads a NULL nodata as 'clear this band's nodata' (the "
+    "trinary override semantics from #1198) and returns the raster; Sedona "
+    "Spark propagates the NULL and returns a NULL raster"
+)
+def test_rs_setbandnodata_null_value(tmp_path):
+    """A NULL nodata value gets the same treatment from both engines. The
+    fixture bands carry a nodata so a clear is observable (SedonaDB returns
+    band 1 cleared, band 2 still 7.0)."""
+    sedona, spark = SedonaDB(), SedonaSpark()
+    for eng in (sedona, spark):
+        eng.create_random_raster_view(
+            "null_value_src",
+            tmp_path / "null_value_src.tif",
+            dtype="float64",
+            nodata=7.0,
+        )
+    sql = (
+        "SELECT RS_SetBandNoDataValue(rast, 1, CAST(NULL AS DOUBLE)) "
+        "FROM null_value_src"
+    )
+    compare(sql, sedona, spark)
 
 
 @pytest.mark.xfail(
