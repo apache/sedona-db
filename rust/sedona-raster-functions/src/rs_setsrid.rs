@@ -23,15 +23,16 @@ use arrow_buffer::NullBuffer;
 use arrow_schema::DataType;
 use datafusion_common::cast::{as_int64_array, as_string_view_array};
 use datafusion_common::error::Result;
-use datafusion_common::{exec_err, DataFusionError, ScalarValue};
+use datafusion_common::{DataFusionError, ScalarValue};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::transform::CrsEngine;
+use sedona_raster::array::{with_column_overrides, RasterColumnOverrides};
+use sedona_raster::traits::Override;
 use sedona_schema::crs::{normalize_crs, CachedSRIDToCrs};
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;
-use sedona_schema::raster::{raster_indices, RasterSchema};
 
 /// RS_SetSRID() scalar UDF implementation
 ///
@@ -164,6 +165,22 @@ fn replace_raster_crs(
     crs_array: &StringViewArray,
     input_nulls: Option<NullBuffer>,
 ) -> Result<ColumnarValue> {
+    // Array-level edit: only the CRS column is rebuilt. Every other column —
+    // crucially the bands — is carried over as the same `Arc`, so the pixel
+    // bytes are untouched by construction rather than rebuilt.
+    let edit = |raster_struct: &StructArray| -> Result<StructArray> {
+        let crs: ArrayRef = broadcast_string_view(crs_array, raster_struct.len())?;
+        with_column_overrides(
+            raster_struct,
+            RasterColumnOverrides {
+                crs: Override::Set(crs),
+                ..Default::default()
+            },
+            input_nulls.as_ref(),
+        )
+        .map_err(DataFusionError::from)
+    };
+
     match raster_arg {
         ColumnarValue::Array(raster_array) => {
             let raster_struct = raster_array
@@ -172,56 +189,15 @@ fn replace_raster_crs(
                 .ok_or_else(|| {
                     sedona_internal_datafusion_err!("Expected StructArray for raster data")
                 })?;
-
-            let num_rows = raster_struct.len();
-            let new_crs: ArrayRef = broadcast_string_view(crs_array, num_rows)?;
-            let new_struct = swap_crs_column(raster_struct, new_crs)?;
-
-            let input_nulls = input_nulls.map(|nulls| {
-                if nulls.len() == 1 && num_rows != 1 {
-                    if nulls.is_valid(0) {
-                        NullBuffer::new_valid(num_rows)
-                    } else {
-                        NullBuffer::new_null(num_rows)
-                    }
-                } else {
-                    nulls
-                }
-            });
-
-            // Merge input nulls: rows where the SRID/CRS input was null become null rasters
-            let merged_nulls = NullBuffer::union(new_struct.nulls(), input_nulls.as_ref());
-            let new_struct = StructArray::new(
-                RasterSchema::fields(),
-                new_struct.columns().to_vec(),
-                merged_nulls,
-            );
-
-            Ok(ColumnarValue::Array(Arc::new(new_struct)))
+            Ok(ColumnarValue::Array(Arc::new(edit(raster_struct)?)))
         }
-        ColumnarValue::Scalar(ScalarValue::Struct(arc_struct)) => {
-            let new_crs: ArrayRef = Arc::new(crs_array.clone());
-            let new_struct = swap_crs_column(arc_struct.as_ref(), new_crs)?;
-
-            // Merge input nulls: null SRID/CRS input produces a null raster
-            let merged_nulls = NullBuffer::union(new_struct.nulls(), input_nulls.as_ref());
-            let new_struct = StructArray::new(
-                RasterSchema::fields(),
-                new_struct.columns().to_vec(),
-                merged_nulls,
-            );
-
-            Ok(ColumnarValue::Scalar(ScalarValue::Struct(Arc::new(
-                new_struct,
-            ))))
-        }
-        ColumnarValue::Scalar(ScalarValue::Null) => Ok(ColumnarValue::Scalar(ScalarValue::Null)),
-        _ => exec_err!("Expected raster (Struct) input for RS_SetSRID/RS_SetCRS"),
+        ColumnarValue::Scalar(ScalarValue::Struct(arc_struct)) => Ok(ColumnarValue::Scalar(
+            ScalarValue::Struct(Arc::new(edit(arc_struct.as_ref())?)),
+        )),
+        _ => sedona_internal_err!("Expected raster array or struct scalar"),
     }
 }
 
-/// Broadcast a `StringViewArray` to a target length.
-///
 /// If the array already has the target length, it is returned as-is (clone of Arc).
 /// Otherwise the array must have length 1, and its single value is repeated.
 fn broadcast_string_view(array: &StringViewArray, len: usize) -> Result<ArrayRef> {
@@ -244,17 +220,6 @@ fn broadcast_string_view(array: &StringViewArray, len: usize) -> Result<ArrayRef
         builder.try_append_value_n(value, len)?;
         Ok(Arc::new(builder.finish()))
     }
-}
-
-/// Swap only the CRS column of a raster StructArray, keeping all other columns intact.
-fn swap_crs_column(raster_struct: &StructArray, new_crs_array: ArrayRef) -> Result<StructArray> {
-    let mut columns: Vec<ArrayRef> = raster_struct.columns().to_vec();
-    columns[raster_indices::CRS] = new_crs_array;
-    Ok(StructArray::new(
-        RasterSchema::fields(),
-        columns,
-        raster_struct.nulls().cloned(),
-    ))
 }
 
 /// Extract a [NullBuffer] from the original SRID/CRS input argument.

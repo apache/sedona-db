@@ -31,23 +31,28 @@
 //! The shift uses the full affine (scale and skew halves), so it is exact for
 //! skewed rasters and round-trips with the getter.
 //!
-//! The raster is rebuilt with [`RasterBuilder::copy_raster_from`] overriding the
-//! transform; each band's pixel buffers are shared zero-copy, and the CRS plus
-//! every inherited band field — name, nodata, OutDb pointers — are carried over
-//! unchanged.
+//! This is a top-level metadata change, so the raster is edited at the array
+//! level: only the transform column is rebuilt and every other column — the
+//! CRS, the spatial dims/shape, and the whole bands column — is carried over as
+//! the same `Arc`. The bands are therefore byte-for-byte identical by
+//! construction; they are never read, copied, or rebuilt.
 
 use std::sync::Arc;
 
-use arrow_array::Array;
+use arrow_array::{Array, ArrayRef, Float64Array, ListArray, StructArray};
+use arrow_buffer::{NullBuffer, OffsetBuffer};
 use arrow_schema::DataType;
 use datafusion_common::cast::as_string_array;
 use datafusion_common::error::Result;
 use datafusion_common::{exec_datafusion_err, exec_err};
 use datafusion_expr::{ColumnarValue, Volatility};
+use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
-use sedona_raster::builder::{RasterBuilder, RasterOverrides};
+use sedona_raster::array::{with_column_overrides, RasterColumnOverrides};
+use sedona_raster::traits::Override;
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;
+use sedona_schema::raster::RasterSchema;
 
 use crate::executor::RasterExecutor;
 // Shared with the getter so the two agree on accepted format strings and the
@@ -111,18 +116,35 @@ impl SedonaScalarKernel for RsSetGeoReference {
             .map(|a| as_string_array(a))
             .transpose()?;
 
-        let mut builder = RasterBuilder::new(n);
-        executor.execute_raster_void(|i, raster_opt| {
-            let null_out = |b: &mut RasterBuilder| b.append_null().map_err(Into::into);
+        // Every row contributes six transform values; a null row still
+        // contributes six placeholders so the offsets stay uniform, because the
+        // struct row's null bit — not the list — is what makes it null.
+        let raster_array = args[0].clone().into_array(n)?;
+        let raster_struct = raster_array
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .ok_or_else(|| {
+                sedona_internal_datafusion_err!("Expected StructArray for raster data")
+            })?;
 
+        let mut values: Vec<f64> = Vec::with_capacity(n * 6);
+        let mut row_valid: Vec<bool> = Vec::with_capacity(n);
+
+        for i in 0..n {
             // A null georef or format is a null *input* and yields a null raster
             // (matching RS_SetCRS); check those first so a null-driven row never
             // raises an error.
             if georef_array.is_null(i) {
-                return null_out(&mut builder);
+                values.extend_from_slice(&[0.0; 6]);
+                row_valid.push(false);
+                continue;
             }
             let format = match &format_array {
-                Some(fmt) if fmt.is_null(i) => return null_out(&mut builder),
+                Some(fmt) if fmt.is_null(i) => {
+                    values.extend_from_slice(&[0.0; 6]);
+                    row_valid.push(false);
+                    continue;
+                }
                 Some(fmt) => GeoReferenceFormat::from_str(fmt.value(i))?,
                 None => GeoReferenceFormat::Gdal,
             };
@@ -133,20 +155,35 @@ impl SedonaScalarKernel for RsSetGeoReference {
             // null raster.
             let transform = parse_georeference(georef_array.value(i), format)?;
 
-            let Some(raster) = raster_opt else {
-                return null_out(&mut builder);
-            };
-            builder
-                .copy_raster_from(
-                    raster,
-                    RasterOverrides {
-                        transform: Some(transform),
-                    },
-                )
-                .map_err(Into::into)
-        })?;
+            if raster_struct.is_null(i) {
+                values.extend_from_slice(&[0.0; 6]);
+                row_valid.push(false);
+                continue;
+            }
+            values.extend_from_slice(&transform);
+            row_valid.push(true);
+        }
 
-        executor.finish(Arc::new(builder.finish()?))
+        let DataType::List(transform_field) = RasterSchema::transform_type() else {
+            return sedona_internal_err!("Expected list type for transform");
+        };
+        let transform: ArrayRef = Arc::new(ListArray::new(
+            transform_field,
+            OffsetBuffer::from_lengths(std::iter::repeat_n(6usize, n)),
+            Arc::new(Float64Array::from(values)),
+            None,
+        ));
+
+        let out = with_column_overrides(
+            raster_struct,
+            RasterColumnOverrides {
+                transform: Override::Set(transform),
+                ..Default::default()
+            },
+            Some(&NullBuffer::from(row_valid)),
+        )?;
+
+        executor.finish(Arc::new(out))
     }
 }
 

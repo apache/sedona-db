@@ -65,6 +65,16 @@ class ExternalFormatSpec:
         """
         return False
 
+    @property
+    def supports_concurrent_file_reads(self) -> bool:
+        """Whether file readers within one scan may be consumed concurrently
+
+        Return ``False`` when the underlying library cannot safely keep multiple
+        file readers active for one DataFusion scan. SedonaDB will then serialize
+        each file's full reader lifecycle, including consumption and cleanup.
+        """
+        return True
+
     def with_options(self, options: Mapping[str, Any]):
         """Clone this instance and return a new instance with options applied
 
@@ -140,6 +150,12 @@ class PyogrioFormatSpec(ExternalFormatSpec):
     def extension(self) -> str:
         return self._extension
 
+    @property
+    def supports_concurrent_file_reads(self) -> bool:
+        # Concurrent GDAL Arrow streams opened through pyogrio can abort the
+        # process. Keep each stream exclusive until its native reader is closed.
+        return False
+
     def open_reader(self, args):
         try:
             import pyogrio.raw
@@ -208,12 +224,10 @@ class PyogrioReaderShelter:
     is no longer required).
     """
 
-    # Serializes dataset open/close. pyogrio releases the GIL around the
-    # GDAL open, so a multi-file scan otherwise opens datasets from several
-    # threads at once, which can crash the process (SIGABRT) depending on
-    # the GDAL build and driver. Reentrant because a garbage-collected
-    # shelter's __del__ may run on a thread that is already holding the
-    # lock in __init__.
+    # Also serialize direct construction and destruction of shelter instances.
+    # File readers within an ExternalFormatSpec scan are protected for their
+    # whole lifetime by supports_concurrent_file_reads=False; this lock remains
+    # a safeguard for callers that construct a shelter directly.
     _open_close_lock = threading.RLock()
 
     def __init__(self, inner, output_names=None):

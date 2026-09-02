@@ -17,7 +17,8 @@
 
 use std::{any::Any, collections::HashMap, fmt::Debug, sync::Arc};
 
-use arrow_schema::{Schema, SchemaRef};
+use arrow_array::{RecordBatch, RecordBatchReader};
+use arrow_schema::{ArrowError, Schema, SchemaRef};
 use async_trait::async_trait;
 use datafusion::{
     config::ConfigOptions,
@@ -42,7 +43,10 @@ use datafusion_physical_plan::{
     metrics::ExecutionPlanMetricsSet,
     ExecutionPlan,
 };
-use futures::{StreamExt, TryStreamExt};
+use futures::{
+    lock::{Mutex, OwnedMutexGuard},
+    StreamExt, TryStreamExt,
+};
 use object_store::{ObjectMeta, ObjectStore};
 
 use crate::spec::{ExternalFormatSpec, Object, OpenReaderArgs, SupportsRepartition};
@@ -141,6 +145,12 @@ impl FileFormat for ExternalFileFormat {
             return plan_err!("Can't infer schema for zero objects. Does the input path exist?");
         }
 
+        let schema_concurrency = if self.spec.supports_concurrent_file_reads() {
+            state.config_options().execution.meta_fetch_concurrency
+        } else {
+            1
+        };
+
         let mut schemas: Vec<_> = futures::stream::iter(objects)
             .map(|object| async move {
                 let schema = self
@@ -155,7 +165,7 @@ impl FileFormat for ExternalFileFormat {
                 Ok::<_, DataFusionError>((object.location.clone(), schema))
             })
             .boxed() // Workaround https://github.com/rust-lang/rust/issues/64552
-            .buffered(state.config_options().execution.meta_fetch_concurrency)
+            .buffered(schema_concurrency)
             .try_collect()
             .await?;
 
@@ -216,6 +226,10 @@ impl FileFormat for ExternalFileFormat {
 #[derive(Debug, Clone)]
 struct ExternalFileSource {
     spec: Arc<dyn ExternalFormatSpec>,
+    /// Shared by all openers cloned from this physical scan. Keeping the lock
+    /// here scopes serialization to one scan instead of coupling independent
+    /// user streams through a process-wide lock.
+    reader_lock: Option<Arc<Mutex<()>>>,
     table_schema: TableSchema,
     batch_size: Option<usize>,
     /// Split projection: file_indices for column pruning, ProjectionOpener for the rest
@@ -226,8 +240,15 @@ struct ExternalFileSource {
 
 impl ExternalFileSource {
     pub fn new(spec: Arc<dyn ExternalFormatSpec>, table_schema: TableSchema) -> Self {
+        let reader_lock = if spec.supports_concurrent_file_reads() {
+            None
+        } else {
+            Some(Arc::new(Mutex::new(())))
+        };
+
         Self {
             spec,
+            reader_lock,
             table_schema,
             batch_size: None,
             split_projection: None,
@@ -265,6 +286,7 @@ impl FileSource for ExternalFileSource {
 
         let inner_opener: Arc<dyn FileOpener> = Arc::new(ExternalFileOpener {
             spec: self.spec.clone(),
+            reader_lock: self.reader_lock.clone(),
             args,
         });
 
@@ -380,6 +402,7 @@ impl FileSource for ExternalFileSource {
 #[derive(Debug, Clone)]
 struct ExternalFileOpener {
     spec: Arc<dyn ExternalFormatSpec>,
+    reader_lock: Option<Arc<Mutex<()>>>,
     args: OpenReaderArgs,
 }
 
@@ -389,11 +412,57 @@ impl FileOpener for ExternalFileOpener {
         Ok(Box::pin(async move {
             self_clone.args.src.meta.replace(file.object_meta);
             self_clone.args.src.range = file.range;
-            let reader = self_clone.spec.open_reader(&self_clone.args).await?;
+
+            let reader_guard = if let Some(reader_lock) = &self_clone.reader_lock {
+                Some(reader_lock.clone().lock_owned().await)
+            } else {
+                None
+            };
+
+            let inner = self_clone.spec.open_reader(&self_clone.args).await?;
+            let reader: Box<dyn RecordBatchReader + Send> = if let Some(reader_guard) = reader_guard
+            {
+                let schema = inner.schema();
+                Box::new(SerializedFileReader {
+                    inner: Some(inner),
+                    schema,
+                    reader_guard: Some(reader_guard),
+                })
+            } else {
+                inner
+            };
             let stream =
                 futures::stream::iter(reader.into_iter().map(|batch| batch.map_err(Into::into)));
             Ok(stream.boxed())
         }))
+    }
+}
+
+/// Keeps a scan-local exclusivity guard until its inner reader is exhausted or
+/// dropped. The inner reader is declared first so early cancellation drops and
+/// closes it before releasing the guard to the next file.
+struct SerializedFileReader {
+    inner: Option<Box<dyn RecordBatchReader + Send>>,
+    schema: SchemaRef,
+    reader_guard: Option<OwnedMutexGuard<()>>,
+}
+
+impl RecordBatchReader for SerializedFileReader {
+    fn schema(&self) -> SchemaRef {
+        self.schema.clone()
+    }
+}
+
+impl Iterator for SerializedFileReader {
+    type Item = Result<RecordBatch, ArrowError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let item = self.inner.as_mut().and_then(|inner| inner.next());
+        if item.is_none() {
+            self.inner = None;
+            self.reader_guard = None;
+        }
+        item
     }
 }
 
@@ -407,12 +476,15 @@ mod test {
     use datafusion::{
         assert_batches_eq,
         datasource::listing::ListingTableUrl,
-        prelude::{col, SessionContext},
+        prelude::{col, SessionConfig, SessionContext},
     };
     use datafusion_common::plan_err;
     use std::{
         io::{Read, Write},
         path::PathBuf,
+        sync::atomic::{AtomicUsize, Ordering},
+        thread,
+        time::Duration,
     };
     use tempfile::TempDir;
     use url::Url;
@@ -533,6 +605,124 @@ mod test {
 
             Ok(Box::new(RecordBatchIterator::new([Ok(batch)], schema)))
         }
+    }
+
+    #[derive(Debug, Clone, Default)]
+    struct SerialSpec {
+        active_readers: Arc<AtomicUsize>,
+        max_active_readers: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl ExternalFormatSpec for SerialSpec {
+        fn extension(&self) -> &str {
+            "serialspec"
+        }
+
+        fn supports_concurrent_file_reads(&self) -> bool {
+            false
+        }
+
+        fn with_options(
+            &self,
+            _options: &HashMap<String, String>,
+        ) -> Result<Arc<dyn ExternalFormatSpec>> {
+            Ok(Arc::new(self.clone()))
+        }
+
+        async fn infer_schema(&self, location: &Object) -> Result<Schema> {
+            check_object_is_readable_file(location);
+            Ok(Schema::new(vec![Field::new(
+                "value",
+                DataType::Int32,
+                false,
+            )]))
+        }
+
+        async fn open_reader(
+            &self,
+            args: &OpenReaderArgs,
+        ) -> Result<Box<dyn RecordBatchReader + Send>> {
+            check_object_is_readable_file(&args.src);
+            let schema = Arc::new(self.infer_schema(&args.src).await?);
+            let batch =
+                RecordBatch::try_new(schema.clone(), vec![Arc::new(Int32Array::from(vec![1]))])?;
+
+            let active = self.active_readers.fetch_add(1, Ordering::SeqCst) + 1;
+            self.max_active_readers.fetch_max(active, Ordering::SeqCst);
+
+            Ok(Box::new(TrackedReader {
+                batch: Some(batch),
+                schema,
+                active_readers: self.active_readers.clone(),
+            }))
+        }
+    }
+
+    struct TrackedReader {
+        batch: Option<RecordBatch>,
+        schema: SchemaRef,
+        active_readers: Arc<AtomicUsize>,
+    }
+
+    impl RecordBatchReader for TrackedReader {
+        fn schema(&self) -> SchemaRef {
+            self.schema.clone()
+        }
+    }
+
+    impl Iterator for TrackedReader {
+        type Item = Result<RecordBatch, ArrowError>;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            if self.batch.is_some() {
+                // Give other file partitions enough time to attempt their
+                // opens while this reader remains active.
+                thread::sleep(Duration::from_millis(10));
+            }
+            self.batch.take().map(Ok)
+        }
+    }
+
+    impl Drop for TrackedReader {
+        fn drop(&mut self) {
+            self.active_readers.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    #[tokio::test]
+    async fn serializes_file_reader_lifecycles_within_one_scan() {
+        let spec = Arc::new(SerialSpec::default());
+        let ctx = SessionContext::new_with_config(SessionConfig::new().with_target_partitions(8));
+        let temp_dir = TempDir::new().unwrap();
+        let files = (0..16)
+            .map(|i| {
+                let path = temp_dir.path().join(format!("item{i}.serialspec"));
+                std::fs::File::create(&path)
+                    .unwrap()
+                    .write_all(b"not empty")
+                    .unwrap();
+                path
+            })
+            .collect::<Vec<_>>();
+
+        let provider = external_table(
+            spec.clone(),
+            &ctx,
+            files
+                .iter()
+                .map(|f| ListingTableUrl::parse(f.to_string_lossy()).unwrap())
+                .collect(),
+            true,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let batches = ctx.read_table(provider).unwrap().collect().await.unwrap();
+        assert_eq!(batches.iter().map(RecordBatch::num_rows).sum::<usize>(), 16);
+        assert_eq!(spec.max_active_readers.load(Ordering::SeqCst), 1);
+        assert_eq!(spec.active_readers.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
