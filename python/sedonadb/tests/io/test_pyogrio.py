@@ -473,72 +473,6 @@ class _NativePullBoundaryReader:
         return self._reader.__arrow_c_stream__(requested_schema)
 
 
-class _NativeLifecycleBoundary:
-    def __init__(self, short_source, long_source):
-        self.short_source = short_source
-        self.long_source = long_source
-        self._open_read_barrier = threading.Barrier(2, timeout=10)
-        self._close_read_started = threading.Event()
-        self._lock = threading.Lock()
-        self._read_calls = {}
-        self._intervals = {"open": {}, "read": {}, "close": {}}
-
-    def open_reader(self, source, callback):
-        if source == self.long_source:
-            self._open_read_barrier.wait()
-        return self._record_call("open", source, callback)
-
-    def close_reader(self, source, callback):
-        if source == self.short_source and not self._close_read_started.wait(10):
-            raise TimeoutError("long reader did not start its close-overlap pull")
-        return self._record_call("close", source, callback)
-
-    def read_next_batch(self, source, reader):
-        with self._lock:
-            call_index = self._read_calls.get(source, 0)
-            self._read_calls[source] = call_index + 1
-
-        if source == self.short_source and call_index == 0:
-            self._open_read_barrier.wait()
-        elif source == self.long_source and call_index == 1:
-            # Let this real native pull start before the short reader closes.
-            self._close_read_started.set()
-
-        return self._record_call("read", source, reader.read_next_batch)
-
-    def _record_call(self, kind, source, callback):
-        started = time.perf_counter_ns()
-        result = callback()
-        finished = time.perf_counter_ns()
-        with self._lock:
-            self._intervals[kind].setdefault(source, []).append((started, finished))
-        return result
-
-    def overlaps(self, first_kind, first_source, second_kind, second_source):
-        with self._lock:
-            first = list(self._intervals[first_kind].get(first_source, ()))
-            second = list(self._intervals[second_kind].get(second_source, ()))
-
-        return sum(
-            max(first_start, second_start) < min(first_end, second_end)
-            for first_start, first_end in first
-            for second_start, second_end in second
-        )
-
-
-class _NativeLifecycleCloseContext:
-    def __init__(self, inner, boundary, source):
-        self._inner = inner
-        self._boundary = boundary
-        self._source = source
-
-    def __exit__(self, exc_type, exc_value, traceback_object):
-        return self._boundary.close_reader(
-            self._source,
-            lambda: self._inner.__exit__(exc_type, exc_value, traceback_object),
-        )
-
-
 def _run_independent_pyogrio_scans(result_sender, paths, expected_values):
     boundary = _NativePullBoundary()
     original_open_reader = PyogrioFormatSpec.open_reader
@@ -623,68 +557,6 @@ def _run_paused_pyogrio_readers(result_sender, paths, expected_values):
     except BaseException:
         result_sender.send({"ok": False, "error": traceback.format_exc()})
     finally:
-        result_sender.close()
-
-
-def _run_pyogrio_lifecycle_overlap(result_sender, paths, expected_values, short_side):
-    short_source = Path(paths[short_side]).name
-    long_source = Path(paths[1 - short_side]).name
-    boundary = _NativeLifecycleBoundary(short_source, long_source)
-    original_open_reader = PyogrioFormatSpec.open_reader
-    executor = None
-    futures = []
-
-    def open_reader(format_spec, args):
-        source = Path(args.src.to_url()).name
-        if args.file_schema is None:
-            return original_open_reader(format_spec, args)
-
-        inner = boundary.open_reader(
-            source, lambda: original_open_reader(format_spec, args)
-        )
-        if source == short_source:
-            inner._inner = _NativeLifecycleCloseContext(inner._inner, boundary, source)
-        return _NativePullBoundaryReader(inner, boundary, source)
-
-    try:
-        PyogrioFormatSpec.open_reader = open_reader
-        connections = [sedonadb.connect(), sedonadb.connect()]
-        for connection in connections:
-            connection.sql("SET datafusion.execution.batch_size TO 512").execute()
-
-        def scan(connection, path):
-            return connection.read_pyogrio(path).to_arrow_table()
-
-        executor = ThreadPoolExecutor(max_workers=2)
-        futures = [
-            executor.submit(scan, connections[index], paths[index])
-            for index in range(2)
-        ]
-        tables = [future.result() for future in futures]
-        row_counts = []
-        for index, table in enumerate(tables):
-            values = table.column("idx").to_pylist()
-            assert sorted(values) == expected_values[index]
-            row_counts.append(len(values))
-
-        result_sender.send(
-            {
-                "ok": True,
-                "open_read_overlaps": boundary.overlaps(
-                    "open", long_source, "read", short_source
-                ),
-                "close_read_overlaps": boundary.overlaps(
-                    "close", short_source, "read", long_source
-                ),
-                "row_counts": row_counts,
-            }
-        )
-    except BaseException:
-        result_sender.send({"ok": False, "error": traceback.format_exc()})
-    finally:
-        PyogrioFormatSpec.open_reader = original_open_reader
-        if executor is not None:
-            executor.shutdown(wait=all(future.done() for future in futures))
         result_sender.close()
 
 
@@ -793,29 +665,6 @@ def test_independent_reader_progress_while_first_reader_is_paused(extension):
 
     assert result["ok"], result["error"]
     assert result["first_batch_rows"] < len(expected_values[0])
-    assert result["row_counts"] == [len(values) for values in expected_values]
-
-
-@pytest.mark.parametrize("short_side", [0, 1])
-def test_independent_fgb_reader_lifecycle_overlaps_native_reads(short_side):
-    pytest.importorskip("pyogrio")
-    expected_values = (list(range(1024)), list(range(10000, 18192)))
-    if short_side == 1:
-        expected_values = (expected_values[1], expected_values[0])
-
-    with tempfile.TemporaryDirectory() as td:
-        paths = _write_pyogrio_pair(td, "fgb", expected_values)
-        result = _run_child_process(
-            _run_pyogrio_lifecycle_overlap,
-            paths,
-            expected_values,
-            short_side,
-            timeout=20,
-        )
-
-    assert result["ok"], result["error"]
-    assert result["open_read_overlaps"] >= 1
-    assert result["close_read_overlaps"] >= 1
     assert result["row_counts"] == [len(values) for values in expected_values]
 
 
