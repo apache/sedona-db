@@ -21,3 +21,6 @@ pub mod rect_bounder;
 pub mod register;
 mod s2geography_c_bindgen;
 pub mod utils;
+
+#[cfg(test)]
+mod bounding_tests;

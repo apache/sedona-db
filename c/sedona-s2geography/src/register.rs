@@ -18,6 +18,7 @@
 use datafusion_common::Result;
 use sedona_common::sedona_internal_err;
 use sedona_expr::aggregate_udf::SedonaAccumulatorRef;
+use sedona_expr::item_crs::ItemCrsSedonaAccumulator;
 use sedona_expr::scalar_udf::ScalarKernelRef;
 use sedona_functions::{st_analyze_agg, st_envelope_agg};
 use sedona_schema::{datatypes::WKB_GEOMETRY, matchers::ArgMatcher};
@@ -49,21 +50,20 @@ pub fn aggregate_kernels() -> Vec<(&'static str, Vec<SedonaAccumulatorRef>)> {
     vec![
         (
             "st_analyze_agg",
-            st_analyze_agg::st_analyze_agg_impl_for::<crate::rect_bounder::WkbGeographyBounder>(
-                ArgMatcher::new(
-                    vec![ArgMatcher::is_geography()],
-                    st_analyze_agg::output_sedona_type(),
-                ),
-            ),
+            ItemCrsSedonaAccumulator::wrap_impl(st_analyze_agg::st_analyze_agg_impl_for::<
+                crate::rect_bounder::WkbGeographyBounder,
+            >(ArgMatcher::new(
+                vec![ArgMatcher::is_geography()],
+                st_analyze_agg::output_sedona_type(),
+            ))),
         ),
         (
             "st_envelope_agg",
-            vec![Arc::new(st_envelope_agg::STEnvelopeAgg::<
+            ItemCrsSedonaAccumulator::wrap_impl(vec![Arc::new(st_envelope_agg::STEnvelopeAgg::<
                 crate::rect_bounder::WkbGeographyBounder,
-            >::new(ArgMatcher::new(
-                vec![ArgMatcher::is_geography()],
-                WKB_GEOMETRY,
-            )))],
+            >::new(
+                ArgMatcher::new(vec![ArgMatcher::is_geography()], WKB_GEOMETRY),
+            ))]),
         ),
     ]
 }
