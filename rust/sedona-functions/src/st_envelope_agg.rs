@@ -454,6 +454,7 @@ impl<T: WkbBounder2D + Default> GroupsAccumulator for BoundsGroupsAccumulator2D<
 
     fn size(&self) -> usize {
         size_of::<BoundsGroupsAccumulator2D<T>>()
+            + (self.bounders.capacity() - self.bounders.len()) * size_of::<T>()
             + self.bounders.iter().map(|b| b.mem_used()).sum::<usize>()
     }
 }
