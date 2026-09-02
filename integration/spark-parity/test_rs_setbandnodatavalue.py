@@ -14,9 +14,10 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-"""SedonaDB vs Sedona Spark parity for raster-in / raster-out functions.
+"""SedonaDB vs Sedona Spark parity for RS_SetBandNoDataValue.
 
-These exercise the raster round-trip *out* of each engine: SedonaDB decodes its
+The parity suite keeps one module per RS_ function. This one exercises the
+raster round-trip *out* of each engine: SedonaDB decodes its
 native raster column; Sedona Spark transports the result as GeoTIFF bytes
 (`RS_AsGeoTiff`) and decodes it with rasterio. Both sides land as a
 `DecodedRaster` (pixels + geotransform + per-band nodata), which is how the
@@ -31,10 +32,10 @@ only run deliberately, so a missing pyspark, JVM, or Sedona jar should be a
 failure with a real traceback, not a skip. `SedonaSpark` caches its
 `SparkSession` on the class, so building one per test reuses the same JVM.
 
-`RS_SetBandNoDataValue` is the first case on purpose: it is raster-in/raster-out
-but passes pixels through untouched, so a mismatch is a round-trip bug, not an
-operation divergence — it isolates the transport. Pixel-transforming coverage
-continues in test_rs_resample.py.
+`RS_SetBandNoDataValue` was the suite's first raster-in/raster-out function on
+purpose: it passes pixels through untouched, so a mismatch is a round-trip bug,
+not an operation divergence — it isolates the transport that every
+raster-returning module (e.g. test_rs_resample.py) rides on.
 """
 
 import pytest
