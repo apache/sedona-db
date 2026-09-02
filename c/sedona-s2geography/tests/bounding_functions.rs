@@ -23,7 +23,7 @@ use sedona_geometry::types::Edges;
 use sedona_schema::datatypes::SedonaType;
 use sedona_testing::testers::ScalarUdfTester;
 
-use crate::rect_bounder::WkbGeographyBounder;
+use sedona_s2geography::rect_bounder::WkbGeographyBounder;
 
 fn scalar_tester(udf: SedonaScalarUDF, arg_type: SedonaType) -> ScalarUdfTester {
     let mut tester = ScalarUdfTester::new(udf.into(), vec![arg_type]);
@@ -36,7 +36,7 @@ fn scalar_tester(udf: SedonaScalarUDF, arg_type: SedonaType) -> ScalarUdfTester 
 }
 
 fn aggregate_udf(name: &str) -> SedonaAggregateUDF {
-    let kernels = crate::register::aggregate_kernels()
+    let kernels = sedona_s2geography::register::aggregate_kernels()
         .into_iter()
         .find_map(|(kernel_name, kernels)| (kernel_name == name).then_some(kernels))
         .unwrap_or_else(|| panic!("aggregate kernel not found: {name}"));
