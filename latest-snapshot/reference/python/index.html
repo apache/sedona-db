@@ -7148,7 +7148,8 @@ avoid accidentally skipping tests on CI.</p>
     <span class="n">bands</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
     <span class="n">height</span><span class="o">=</span><span class="mi">6</span><span class="p">,</span>
     <span class="n">width</span><span class="o">=</span><span class="mi">7</span><span class="p">,</span>
-    <span class="n">gdal_transform</span><span class="o">=</span><span class="p">(</span><span class="mf">100.0</span><span class="p">,</span> <span class="mf">2.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">500.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">3.0</span><span class="p">),</span>
+    <span class="n">bbox</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">gdal_transform</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
     <span class="n">nodata</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
     <span class="n">plants</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="DBEngine (sedonadb.testing.DBEngine)" href="#sedonadb.testing.DBEngine">DBEngine</a></span>
@@ -7158,12 +7159,16 @@ avoid accidentally skipping tests on CI.</p>
 
         <p>Write a random GeoTIFF at <code>path</code> and register it as view <code>name</code>
 (see <code>create_raster_view</code>).</p>
-<p>The default grid is small and north-up/CRS-less so nothing reprojects
-and results stay bit-comparable across engines. The pixels come from
-<code>sedonadb.raster_testing.random_raster_data</code> with a fixed seed, so
-registering the same <code>path</code> on several engines rewrites identical
-bytes and every engine sees the same raster. <code>nodata</code> and <code>plants</code> are
-as <code>write_random_geotiff</code>.</p>
+<p>The grid is placed by <code>bbox</code> (<code>(minx, miny, maxx, maxy)</code>, north-up,
+no skew) or, for grids a bbox cannot express, a raw GDAL
+<code>gdal_transform</code> — at most one; the default is
+<code>bbox=(100, 482, 114, 500)</code>, whose extent divided by the default 7x6
+grid gives 2x3 pixels. The grid is small and north-up/CRS-less so
+nothing reprojects and results stay bit-comparable across engines.
+The pixels come from <code>sedonadb.raster_testing.random_raster_data</code>
+with a fixed seed, so registering the same <code>path</code> on several engines
+rewrites identical bytes and every engine sees the same raster.
+<code>nodata</code> and <code>plants</code> are as <code>write_random_geotiff</code>.</p>
 
 
     </div>
@@ -8050,9 +8055,15 @@ then every side carries the same CRS.</p>
 
 
         <p>One raster decoded to plain values.</p>
-<p><code>pixels</code> is <code>(band, rows, cols)</code>, <code>gdal_transform</code> is GDAL-order
-<code>(origin_x, scale_x, skew_x, origin_y, skew_y, scale_y)</code>, and <code>nodata</code>
-holds one sentinel per band (unpacked in the band's dtype).
+<p><code>pixels</code> is <code>(band, rows, cols)</code> and <code>nodata</code> holds one sentinel per band
+(unpacked in the band's dtype). The grid is stated as exactly one of
+<code>gdal_transform</code> — GDAL-order <code>(origin_x, scale_x, skew_x, origin_y,
+skew_y, scale_y)</code> — or, for a north-up grid, the readable <code>bbox</code> spelling
+<code>(minx, miny, maxx, maxy)</code> (pixel size derived from the data's shape),
+mirroring <code>write_geotiff</code>. Either way the instance carries a
+<code>gdal_transform</code>: decoders produce transforms and <code>assert_decoded_equal</code>
+compares them, so <code>bbox</code> is construction sugar for anchors, not a second
+stored representation.
 <code>compression</code> is the codec name of the decoded container when one was
 read (GeoTIFF decodes only); it is carried for encoder tests to assert
 on and deliberately not part of <code>assert_decoded_equal</code>.</p>
@@ -8313,18 +8324,28 @@ make meaningful.</p>
 
 <a href="#sedonadb.raster_testing.write_geotiff" class="headerlink" title="Permanent link">¶</a></h3>
 <div class="doc-signature highlight"><pre><span></span><code><span class="nf">write_geotiff</span><span class="p">(</span>
-    <span class="n">path</span><span class="p">,</span> <span class="n">data</span><span class="p">:</span> <span class="n"><span title="numpy.ndarray">ndarray</span></span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">gdal_transform</span><span class="p">,</span> <span class="n">nodata</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">crs</span><span class="o">=</span><span class="kc">None</span>
+    <span class="n">path</span><span class="p">,</span>
+    <span class="n">data</span><span class="p">:</span> <span class="n"><span title="numpy.ndarray">ndarray</span></span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">bbox</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">gdal_transform</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">nodata</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">crs</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
 </code></pre></div>
 
     <div class="doc doc-contents ">
 
         <p>Write a <code>(bands, height, width)</code> array as a GeoTIFF.</p>
-<p><code>gdal_transform</code> is GDAL-order <code>(origin_x, scale_x, skew_x, origin_y,
-skew_y, scale_y)</code>; <code>nodata</code> (optional) becomes the per-band nodata of
-every band. <code>crs</code> (optional) is any CRS rasterio accepts; parity fixtures
-stay CRS-less unless an engine requires one, and then use the same CRS
-everywhere so nothing reprojects.</p>
+<p>The grid is placed by exactly one of <code>bbox</code> — <code>(minx, miny, maxx, maxy)</code>,
+the readable spelling: north-up, no skew, pixel size derived from the
+data's shape (rasterio's <code>transform.from_bounds</code>) — or <code>gdal_transform</code> —
+GDAL-order <code>(origin_x, scale_x, skew_x, origin_y, skew_y, scale_y)</code>, for
+grids a bbox cannot express (skew, south-up).
+<code>nodata</code> (optional) becomes the per-band nodata of every band. <code>crs</code>
+(optional) is any CRS rasterio accepts; parity fixtures stay CRS-less
+unless an engine requires one, and then use the same CRS everywhere so
+nothing reprojects.</p>
 
 
     </div>
@@ -8339,14 +8360,17 @@ everywhere so nothing reprojects.</p>
 
 
 <a href="#sedonadb.raster_testing.write_grid_geotiff" class="headerlink" title="Permanent link">¶</a></h3>
-<div class="doc-signature highlight"><pre><span></span><code><span class="nf">write_grid_geotiff</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">gdal_transform</span><span class="p">,</span> <span class="n">width</span><span class="p">,</span> <span class="n">height</span><span class="p">,</span> <span class="n">crs</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">write_grid_geotiff</span><span class="p">(</span>
+    <span class="n">path</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">bbox</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">gdal_transform</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">width</span><span class="p">,</span> <span class="n">height</span><span class="p">,</span> <span class="n">crs</span><span class="o">=</span><span class="kc">None</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
 </code></pre></div>
 
     <div class="doc doc-contents ">
 
         <p>Write a zeroed single-band GeoTIFF whose only role is to define a grid.</p>
 <p>Its pixels are never read — only its extent, resolution, and CRS matter,
-e.g. as the reference grid for <code>RS_ReprojectMatch</code>.</p>
+e.g. as the reference grid for <code>RS_ReprojectMatch</code>. <code>bbox</code>/<code>gdal_transform</code>
+(exactly one) are as <code>write_geotiff</code>.</p>
 
 
     </div>
@@ -8368,7 +8392,8 @@ e.g. as the reference grid for <code>RS_ReprojectMatch</code>.</p>
     <span class="n">bands</span><span class="p">,</span>
     <span class="n">height</span><span class="p">,</span>
     <span class="n">width</span><span class="p">,</span>
-    <span class="n">gdal_transform</span><span class="p">,</span>
+    <span class="n">bbox</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">gdal_transform</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
     <span class="n">crs</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
     <span class="n">nodata</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
     <span class="n">plants</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
@@ -8380,8 +8405,8 @@ e.g. as the reference grid for <code>RS_ReprojectMatch</code>.</p>
         <p>Write a GeoTIFF of random <code>dtype</code> pixels on the given grid.</p>
 <p>Combines <code>random_raster_data</code> (dtype extremes planted in opposite corners)
 with <code>write_geotiff</code> — the input-raster fixture shape shared by raster warp
-parity tests. <code>gdal_transform</code>, <code>crs</code>, and <code>nodata</code> are as <code>write_geotiff</code>;
-<code>plants</code> is as <code>random_raster_data</code>.</p>
+parity tests. <code>bbox</code>/<code>gdal_transform</code> (exactly one), <code>crs</code>, and <code>nodata</code>
+are as <code>write_geotiff</code>; <code>plants</code> is as <code>random_raster_data</code>.</p>
 
 
     </div>
