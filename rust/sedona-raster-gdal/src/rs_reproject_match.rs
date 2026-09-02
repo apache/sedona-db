@@ -49,6 +49,7 @@ use sedona_raster::array::RasterRefImpl;
 use sedona_raster::builder::RasterBuilder;
 use sedona_raster::geo_transform::GeoTransform;
 use sedona_raster::traits::RasterRef;
+use sedona_raster_functions::rs_ensure_contiguous::NEEDS_CONTIGUOUS_METADATA_KEY;
 use sedona_raster_functions::rs_ensure_loaded::{
     NEEDS_PIXELS_METADATA_KEY, RETURNS_BYTES_METADATA_KEY,
 };
@@ -80,10 +81,12 @@ pub fn rs_reproject_match_udf() -> SedonaScalarUDF {
         ],
         Volatility::Immutable,
     )
-    // Reads band pixels (so the planner materializes OutDb rasters via
-    // RS_EnsureLoaded first) and emits a fresh InDb raster (so its output is
-    // already loaded and isn't wrapped again).
+    // Reads band pixels through the GDAL bridge (`as_contiguous`), so the
+    // planner materializes OutDb rasters via RS_EnsureLoaded and repacks strided
+    // bands via RS_EnsureContiguous first; emits a fresh InDb raster (so its
+    // output is already loaded and isn't wrapped again).
     .with_metadata(NEEDS_PIXELS_METADATA_KEY, "true")
+    .with_metadata(NEEDS_CONTIGUOUS_METADATA_KEY, "true")
     .with_metadata(RETURNS_BYTES_METADATA_KEY, "true")
 }
 

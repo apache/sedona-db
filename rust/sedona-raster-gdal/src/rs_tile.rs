@@ -46,6 +46,7 @@ use sedona_raster::builder::RasterBuilder;
 use sedona_raster::error::RasterResultExt;
 use sedona_raster::geo_transform::{GeoTransform, GeoTransformEx};
 use sedona_raster::traits::{is_spatial_dim_pair, nodata_f64_to_bytes, RasterRef};
+use sedona_raster_functions::rs_ensure_contiguous::NEEDS_CONTIGUOUS_METADATA_KEY;
 use sedona_raster_functions::rs_ensure_loaded::NEEDS_PIXELS_METADATA_KEY;
 use sedona_raster_functions::RasterExecutor;
 
@@ -86,10 +87,13 @@ pub fn rs_tile_udf() -> SedonaScalarUDF {
         ],
         Volatility::Immutable,
     )
-    // Reads band pixels, so the planner materializes OutDb rasters via
-    // RS_EnsureLoaded before this kernel runs. The output is a list of in-db
-    // tiles (not a top-level raster), so RETURNS_BYTES does not apply.
+    // Reads band pixels through the GDAL bridge (`as_contiguous`), so the
+    // planner materializes OutDb rasters via RS_EnsureLoaded and repacks strided
+    // bands via RS_EnsureContiguous before this kernel runs. The output is a
+    // list of in-db tiles (not a top-level raster), so RETURNS_BYTES does not
+    // apply.
     .with_metadata(NEEDS_PIXELS_METADATA_KEY, "true")
+    .with_metadata(NEEDS_CONTIGUOUS_METADATA_KEY, "true")
 }
 
 /// Which band-selector argument a signature carries after the raster.
