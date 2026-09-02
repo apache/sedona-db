@@ -41,6 +41,16 @@ from typing import Any, List, Mapping, Optional, Tuple
 
 import numpy as np
 
+# The standard random-raster grid. `DecodedRaster.random` and
+# `DBEngine.create_random_raster_view` both default to it, so a test's fixture
+# and its `expected=` anchor derive from one definition and cannot drift
+# apart. The bbox over the 7x6 grid gives 2x3 pixels — the transform
+# (100, 2, 0, 500, 0, -3), pinned by test_raster_testing.py.
+RANDOM_GRID_BANDS = 2
+RANDOM_GRID_HEIGHT = 6
+RANDOM_GRID_WIDTH = 7
+RANDOM_GRID_BBOX = (100.0, 482.0, 114.0, 500.0)
+
 
 @dataclass
 class DecodedRaster:
@@ -78,6 +88,57 @@ class DecodedRaster:
                     bbox, self.gdal_transform, width=width, height=height
                 ).to_gdal()
             )
+
+    @classmethod
+    def random(
+        cls,
+        dtype="uint8",
+        *,
+        bands=RANDOM_GRID_BANDS,
+        height=RANDOM_GRID_HEIGHT,
+        width=RANDOM_GRID_WIDTH,
+        bbox=None,
+        gdal_transform=None,
+        nodata=None,
+        plants=None,
+    ) -> "DecodedRaster":
+        """The standard random raster: `random_raster_data` pixels on the
+        default grid (`RANDOM_GRID_BBOX` when neither `bbox` nor
+        `gdal_transform` is given). This is exactly the raster
+        `DBEngine.create_random_raster_view` registers, so a test's
+        `expected=` anchor and the fixture it checks share one definition.
+        `nodata` is one value applied to every band, or a per-band list —
+        anchors state what an operation leaves per band; only the uniform
+        spelling is writable (see `write_geotiff`)."""
+        if bbox is None and gdal_transform is None:
+            bbox = RANDOM_GRID_BBOX
+        if not isinstance(nodata, list):
+            nodata = [nodata] * bands
+        return cls(
+            random_raster_data(
+                dtype, bands=bands, height=height, width=width, plants=plants
+            ),
+            nodata=nodata,
+            bbox=bbox,
+            gdal_transform=gdal_transform,
+        )
+
+    def write_geotiff(self, path, *, crs=None) -> None:
+        """Write this raster as a GeoTIFF at `path` (via the module-level
+        `write_geotiff`). GeoTIFF nodata is file-wide (TIFFTAG_GDAL_NODATA),
+        so the per-band `nodata` must be uniform to write."""
+        if len(set(self.nodata)) > 1:
+            raise ValueError(
+                "GeoTIFF nodata is file-wide; per-band nodata must be "
+                f"uniform to write, got {self.nodata}"
+            )
+        write_geotiff(
+            path,
+            self.pixels,
+            gdal_transform=self.gdal_transform,
+            nodata=self.nodata[0],
+            crs=crs,
+        )
 
 
 def _is_nodata(sampled, nodata) -> bool:
@@ -206,17 +267,22 @@ def write_random_geotiff(
 ) -> None:
     """Write a GeoTIFF of random `dtype` pixels on the given grid.
 
-    Combines `random_raster_data` (dtype extremes planted in opposite corners)
-    with `write_geotiff` — the input-raster fixture shape shared by raster warp
-    parity tests. `bbox`/`gdal_transform` (exactly one), `crs`, and `nodata`
-    are as `write_geotiff`; `plants` is as `random_raster_data`.
+    `DecodedRaster.random(...).write_geotiff(path)` as a function — the
+    input-raster fixture shape shared by raster warp parity tests.
+    `bbox`/`gdal_transform` place the grid (at most one; the standard
+    `RANDOM_GRID_BBOX` when neither is given); `crs` and `nodata` are as
+    `write_geotiff`; `plants` is as `random_raster_data`.
     """
-    data = random_raster_data(
-        dtype, bands=bands, height=height, width=width, plants=plants
-    )
-    write_geotiff(
-        path, data, bbox=bbox, gdal_transform=gdal_transform, nodata=nodata, crs=crs
-    )
+    DecodedRaster.random(
+        dtype,
+        bands=bands,
+        height=height,
+        width=width,
+        bbox=bbox,
+        gdal_transform=gdal_transform,
+        nodata=nodata,
+        plants=plants,
+    ).write_geotiff(path, crs=crs)
 
 
 def write_grid_geotiff(

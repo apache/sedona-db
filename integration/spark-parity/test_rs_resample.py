@@ -41,6 +41,10 @@ import numpy as np
 import pytest
 
 from sedonadb.raster_testing import (
+    RANDOM_GRID_BANDS as BANDS,
+    RANDOM_GRID_BBOX as BBOX,
+    RANDOM_GRID_HEIGHT as HEIGHT,
+    RANDOM_GRID_WIDTH as WIDTH,
     DecodedRaster,
     random_raster_data,
     write_grid_geotiff,
@@ -48,11 +52,8 @@ from sedonadb.raster_testing import (
 from sedonadb.testing import SedonaDB, compare
 from sedonadb.testing_spark import SedonaSpark
 
-# The standard grid: BBOX over 7x6 gives 2x3 pixels (extent 14 wide, 18 tall).
-# Anchors reconstruct outputs from these, so tests pass the placement to
-# create_random_raster_view explicitly rather than relying on its defaults.
-BANDS, HEIGHT, WIDTH = 2, 6, 7
-BBOX = (100.0, 482.0, 114.0, 500.0)
+# The standard grid (BBOX over 7x6 gives 2x3 pixels, extent 14 wide, 18 tall),
+# imported under short names because the anchors do arithmetic with it.
 
 # Representable in every dtype used here, so nodata packs into the band exactly.
 NODATA = 200.0
@@ -67,15 +68,7 @@ def _register(name, tmp_path, **kwargs):
     """Both engines with the standard random raster registered as view `name`."""
     sedona, spark = SedonaDB(), SedonaSpark()
     for eng in (sedona, spark):
-        eng.create_random_raster_view(
-            name,
-            tmp_path / f"{name}.tif",
-            bands=BANDS,
-            height=HEIGHT,
-            width=WIDTH,
-            bbox=BBOX,
-            **kwargs,
-        )
+        eng.create_random_raster_view(name, tmp_path / f"{name}.tif", **kwargs)
     return sedona, spark
 
 
@@ -111,8 +104,7 @@ def test_rs_resample_identity(tmp_path):
     """Resampling to the source's own dimensions returns the raster unchanged."""
     sedona, spark = _register("id_src", tmp_path)
     sql = "SELECT RS_Resample(rast, 7.0, 6.0, false, 'NearestNeighbor') FROM id_src"
-    anchor = DecodedRaster(_data(), nodata=[None, None], bbox=BBOX)
-    compare(sql, sedona, spark, expected=anchor)
+    compare(sql, sedona, spark, expected=DecodedRaster.random())
 
 
 def test_rs_resample_downsample(tmp_path):
