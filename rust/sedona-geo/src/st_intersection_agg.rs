@@ -181,22 +181,12 @@ impl Accumulator for IntersectionAccumulator {
     }
 
     fn size(&self) -> usize {
-        let mut size = size_of_val(self);
-
-        // Add size of the geometry data if it exists
-        if let Some(geo::Geometry::MultiPolygon(mp)) = &self.current_intersection {
-            for poly in &mp.0 {
-                // Count exterior ring points
-                size += size_of::<geo::Coord>() * poly.exterior().0.len();
-
-                // Count interior ring points
-                for ring in poly.interiors() {
-                    size += size_of::<geo::Coord>() * ring.0.len();
-                }
-            }
-        }
-
-        size
+        size_of_val(self)
+            + self
+                .current_intersection
+                .as_ref()
+                .map(crate::geometry_mem::geometry_heap_size)
+                .unwrap_or(0)
     }
 
     fn state(&mut self) -> Result<Vec<ScalarValue>> {
