@@ -40,13 +40,14 @@ directory anyway. There is deliberately no opt-in environment variable — each
 test constructs both engines outright, so a missing pyspark, JVM, or jar is a
 failure with a real traceback, not a skip.
 
-This suite is not wired into CI.
+The suite runs in CI as part of the `python` workflow
+(`.github/workflows/python.yml`), after the main sedonadb test steps.
 
 ## Running
 
 ```bash
 pip install -e "python/sedonadb[test]"      # the engine under test
-pip install "pyspark>=4.0" apache-sedona    # the compatibility target
+pip install "pyspark>=4.0,<4.2" apache-sedona    # the compatibility target
 cd integration/spark-parity
 pytest -v
 ```
