@@ -14,7 +14,7 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-"""SedonaDB vs Sedona Spark parity for raster-in / raster-out functions.
+"""SedonaDB vs Sedona Spark parity for `RS_SetBandNoDataValue`.
 
 These exercise the raster round-trip *out* of each engine: SedonaDB decodes its
 native raster column; Sedona Spark transports the result as GeoTIFF bytes
@@ -22,17 +22,18 @@ native raster column; Sedona Spark transports the result as GeoTIFF bytes
 `DecodedRaster` (pixels + geotransform + per-band nodata), which is how the
 harness-level `sedonadb.testing.compare` compares a raster result — a NULL
 raster from every engine also counts as agreement. Same
-`xfail`-for-known-divergence policy as the scalar suite.
+`xfail`-for-known-divergence policy as the rest of the suite.
 
 Both engines are constructed directly rather than through fixtures: this suite is
 only run deliberately, so a missing pyspark, JVM, or Sedona jar should be a
 failure with a real traceback, not a skip. `SedonaSpark` caches its
 `SparkSession` on the class, so building one per test reuses the same JVM.
 
-`RS_SetBandNoDataValue` is the first case on purpose: it is raster-in/raster-out
-but passes pixels through untouched, so a mismatch is a round-trip bug, not an
-operation divergence — it isolates the transport. Pixel-transforming ops
-(RS_Resample, RS_MapAlgebra) come next, with their known divergences as xfails.
+`RS_SetBandNoDataValue` was the harness's first raster-out case on purpose: it
+is raster-in/raster-out but passes pixels through untouched, so a mismatch is a
+round-trip bug, not an operation divergence — it isolates the transport.
+Pixel-transforming ops (RS_Resample, RS_MapAlgebra) each get their own file,
+with their known divergences as xfails.
 """
 
 import pytest
@@ -207,7 +208,7 @@ def test_rs_setbandnodata_negative_on_uint8(tmp_path):
 @pytest.mark.parametrize("band", [0, 3])
 def test_rs_setbandnodata_out_of_range_band_rejected(band, tmp_path):
     """Both engines refuse an out-of-range band index — unlike the getter,
-    where SedonaDB returns NULL (see test_rs_scalar.py)."""
+    where SedonaDB returns NULL (see test_rs_bandnodatavalue.py)."""
     sedona, spark = SedonaDB(), SedonaSpark()
     for eng in (sedona, spark):
         eng.create_random_raster_view(
