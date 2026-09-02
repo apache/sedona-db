@@ -402,51 +402,97 @@ def test_pyogrio_format_register():
         geopandas.testing.assert_geodataframe_equal(df.to_pandas(), gdf)
 
 
-class _ArrowStreamBoundary:
+class _NativePullBoundary:
     def __init__(self):
         self._barrier = threading.Barrier(2, timeout=10)
         self._lock = threading.Lock()
-        self.reached = 0
-        self.sources = []
+        self.pull_intervals = {}
 
-    def wait(self, source):
-        with self._lock:
-            self.reached += 1
-            self.sources.append(source)
+    def read_next_batch(self, source, reader):
+        # Rendezvous immediately before each real pyogrio Arrow batch pull.
+        # The interval covers the native read_next_batch() call itself, so an
+        # overlap is evidence that two independent GDAL readers were active at
+        # the same time rather than merely that their Python shelters coexisted.
         self._barrier.wait()
+        started = time.perf_counter_ns()
+        batch = reader.read_next_batch()
+        finished = time.perf_counter_ns()
+
+        with self._lock:
+            self.pull_intervals.setdefault(source, []).append((started, finished))
+        return batch
+
+    def batch_pulls(self):
+        with self._lock:
+            return {
+                source: len(intervals)
+                for source, intervals in self.pull_intervals.items()
+            }
+
+    def native_read_overlaps(self):
+        with self._lock:
+            sources = list(self.pull_intervals)
+            if len(sources) != 2:
+                return 0
+            left_intervals = self.pull_intervals[sources[0]]
+            right_intervals = self.pull_intervals[sources[1]]
+
+        return sum(
+            max(left_start, right_start) < min(left_end, right_end)
+            for left_start, left_end in left_intervals
+            for right_start, right_end in right_intervals
+        )
 
 
-class _ArrowStreamBoundaryReader:
+class _NativePullBoundaryReader:
     def __init__(self, inner, boundary, source):
-        self._inner = inner
-        self._boundary = boundary
-        self._source = source
+        native_reader = pa.RecordBatchReader.from_stream(inner)
+        self._reader = pa.RecordBatchReader.from_batches(
+            native_reader.schema,
+            self._read_batches(boundary, source, native_reader, inner),
+        )
+
+    @staticmethod
+    def _read_batches(boundary, source, reader, shelter):
+        try:
+            while True:
+                try:
+                    yield boundary.read_next_batch(source, reader)
+                except StopIteration:
+                    return
+        finally:
+            # Keep the original pyogrio shelter strongly referenced until its
+            # imported native Arrow stream is closed. This preserves the same
+            # stream-before-context cleanup order as the production bridge.
+            try:
+                reader.close()
+            finally:
+                del shelter
 
     def __arrow_c_stream__(self, requested_schema=None):
-        # The real open_reader() has already entered pyogrio/GDAL and created
-        # its shelter. Hold both real shelters live before importing either
-        # Arrow C stream, outside the shelter's open/close lock.
-        self._boundary.wait(self._source)
-        if requested_schema is None:
-            return self._inner.__arrow_c_stream__()
-        return self._inner.__arrow_c_stream__(requested_schema)
+        return self._reader.__arrow_c_stream__(requested_schema)
 
 
 def _run_independent_pyogrio_scans(result_sender, paths, expected_values):
-    boundary = _ArrowStreamBoundary()
+    boundary = _NativePullBoundary()
     original_open_reader = PyogrioFormatSpec.open_reader
     executor = None
     futures = []
 
     def open_reader(format_spec, args):
-        return _ArrowStreamBoundaryReader(
-            original_open_reader(format_spec, args), boundary, args.src.to_url()
-        )
+        inner = original_open_reader(format_spec, args)
+        if args.file_schema is None:
+            # Schema inference does not pull batches. Leave its real shelter
+            # untouched and instrument only the execution reader.
+            return inner
+        return _NativePullBoundaryReader(inner, boundary, args.src.to_url())
 
     try:
         PyogrioFormatSpec.open_reader = open_reader
         connections = [sedonadb.connect(), sedonadb.connect()]
         assert len(connections) == len(paths) == len(expected_values) == 2
+        for connection in connections:
+            connection.sql("SET datafusion.execution.batch_size TO 64").execute()
 
         def scan(connection, path):
             return connection.read_pyogrio(path).to_arrow_table()
@@ -464,29 +510,53 @@ def _run_independent_pyogrio_scans(result_sender, paths, expected_values):
             values = expected_values[index]
             assert table.num_rows == len(values)
             assert sorted(table.column("idx").to_pylist()) == values
-        assert boundary.reached >= 2
-        assert {Path(source).name for source in boundary.sources} == {
-            Path(path).name for path in paths
-        }
         result_sender.send(
             {
                 "ok": True,
-                "reader_boundary_reached": boundary.reached,
-                "reader_boundary_sources": boundary.sources,
+                "native_batch_pulls": boundary.batch_pulls(),
+                "native_read_overlaps": boundary.native_read_overlaps(),
             }
         )
     except BaseException:
-        result_sender.send(
-            {
-                "ok": False,
-                "error": traceback.format_exc(),
-                "reader_boundary_reached": boundary.reached,
-            }
-        )
+        result_sender.send({"ok": False, "error": traceback.format_exc()})
     finally:
         PyogrioFormatSpec.open_reader = original_open_reader
         if executor is not None:
             executor.shutdown(wait=all(future.done() for future in futures))
+        result_sender.close()
+
+
+def _run_paused_pyogrio_readers(result_sender, paths, expected_values):
+    try:
+        connections = [sedonadb.connect(), sedonadb.connect()]
+        for connection in connections:
+            connection.sql("SET datafusion.execution.batch_size TO 64").execute()
+
+        first_reader = connections[0].read_pyogrio(paths[0]).to_arrow_reader()
+        first_batch = first_reader.read_next_batch()
+        assert 0 < first_batch.num_rows < len(expected_values[0])
+
+        # Keep first_reader and its scan-local lifecycle guard alive while an
+        # independent connection opens and drains another real GDAL reader.
+        second_reader = connections[1].read_pyogrio(paths[1]).to_arrow_reader()
+        second_table = second_reader.read_all()
+        first_remainder = first_reader.read_all()
+        first_values = first_batch.column("idx").to_pylist()
+        first_values.extend(first_remainder.column("idx").to_pylist())
+        second_values = second_table.column("idx").to_pylist()
+        assert sorted(first_values) == expected_values[0]
+        assert sorted(second_values) == expected_values[1]
+
+        result_sender.send(
+            {
+                "ok": True,
+                "first_batch_rows": first_batch.num_rows,
+                "row_counts": [len(first_values), len(second_values)],
+            }
+        )
+    except BaseException:
+        result_sender.send({"ok": False, "error": traceback.format_exc()})
+    finally:
         result_sender.close()
 
 
@@ -537,6 +607,19 @@ def _run_child_process(target, *args, timeout):
         result_receiver.close()
 
 
+def _write_pyogrio_pair(directory, extension, expected_values):
+    paths = []
+    for index, side in enumerate(("left", "right")):
+        values = expected_values[index]
+        path = Path(directory) / f"{side}.{extension}"
+        geopandas.GeoDataFrame(
+            {"idx": values},
+            geometry=geopandas.GeoSeries.from_xy(values, values, crs="EPSG:4326"),
+        ).to_file(path)
+        paths.append(str(path))
+    return paths
+
+
 def test_independent_scans_child_timeout_is_bounded():
     started = time.monotonic()
     with pytest.raises(TimeoutError, match="exceeded 0.2 seconds"):
@@ -549,36 +632,40 @@ def test_child_process_nonzero_exit_is_reported():
         _run_child_process(_exit_child_process, timeout=5)
 
 
-def test_independent_scans_from_threads():
+@pytest.mark.parametrize("extension", ["fgb", "gpkg"])
+def test_independent_scans_from_threads(extension):
     pytest.importorskip("pyogrio")
-    expected_values = ([10, 11, 12], [20, 21, 22, 23])
-    filenames = ("left.fgb", "right.fgb")
-    assert len(filenames) == len(expected_values) == 2
+    expected_values = (list(range(2048)), list(range(10000, 12048)))
 
     with tempfile.TemporaryDirectory() as td:
-        paths = []
-        for index in range(2):
-            filename = filenames[index]
-            values = expected_values[index]
-            path = Path(td) / filename
-            geopandas.GeoDataFrame(
-                {"idx": values},
-                geometry=geopandas.GeoSeries.from_xy(values, values, crs="EPSG:4326"),
-            ).to_file(path)
-            paths.append(str(path))
-        assert len(paths) == 2
-
+        paths = _write_pyogrio_pair(td, extension, expected_values)
         result = _run_child_process(
             _run_independent_pyogrio_scans, paths, expected_values, timeout=30
         )
 
     assert result["ok"], result["error"]
-    assert result["reader_boundary_reached"] >= 2
-    assert len(result["reader_boundary_sources"]) >= 2
-    assert {Path(source).name for source in result["reader_boundary_sources"]} == {
-        "left.fgb",
-        "right.fgb",
+    assert {Path(source).name for source in result["native_batch_pulls"]} == {
+        f"left.{extension}",
+        f"right.{extension}",
     }
+    assert all(count > 1 for count in result["native_batch_pulls"].values())
+    assert result["native_read_overlaps"] >= 1
+
+
+@pytest.mark.parametrize("extension", ["fgb", "gpkg"])
+def test_independent_reader_progress_while_first_reader_is_paused(extension):
+    pytest.importorskip("pyogrio")
+    expected_values = (list(range(2048)), list(range(10000, 12048)))
+
+    with tempfile.TemporaryDirectory() as td:
+        paths = _write_pyogrio_pair(td, extension, expected_values)
+        result = _run_child_process(
+            _run_paused_pyogrio_readers, paths, expected_values, timeout=15
+        )
+
+    assert result["ok"], result["error"]
+    assert result["first_batch_rows"] < len(expected_values[0])
+    assert result["row_counts"] == [len(values) for values in expected_values]
 
 
 # The geometry-column name is GDAL's OGR reader's, not ours: fgb/geojson/shp
