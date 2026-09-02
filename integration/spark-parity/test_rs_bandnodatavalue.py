@@ -16,7 +16,6 @@
 # under the License.
 """SedonaDB vs Sedona Spark parity for RS_BandNoDataValue.
 
-The parity suite keeps one module per RS_ function.
 
 Sedona Spark is the compatibility target, so each test runs one shared SQL
 string on both engines and asserts they agree with the harness-level
