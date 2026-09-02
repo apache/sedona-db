@@ -22,7 +22,7 @@ use arrow_schema::{DataType, Field, FieldRef};
 use datafusion_common::{
     cast::{as_binary_array, as_int64_array, as_string_array},
     error::{DataFusionError, Result},
-    exec_err, HashSet, ScalarValue,
+    exec_err, ScalarValue,
 };
 use datafusion_expr::{Accumulator, ColumnarValue, Volatility};
 use geo_traits::Dimensions;
@@ -32,7 +32,7 @@ use sedona_expr::{
     item_crs::ItemCrsSedonaAccumulator,
 };
 use sedona_geometry::{
-    types::{GeometryTypeAndDimensions, GeometryTypeId},
+    types::{GeometryTypeAndDimensions, GeometryTypeAndDimensionsSet, GeometryTypeId},
     wkb_factory::{
         write_wkb_geometrycollection_header, write_wkb_multilinestring_header,
         write_wkb_multipoint_header, write_wkb_multipolygon_header,
@@ -97,8 +97,7 @@ impl SedonaAccumulator for STCollectAggr {
 #[derive(Debug)]
 struct CollectionAccumulator {
     input_type: SedonaType,
-    unique_geometry_types: HashSet<GeometryTypeId>,
-    unique_dimensions: HashSet<Dimensions>,
+    types_and_dims: GeometryTypeAndDimensionsSet,
     count: i64,
     item: Option<Vec<u8>>,
 }
@@ -116,8 +115,7 @@ impl CollectionAccumulator {
 
         Ok(Self {
             input_type,
-            unique_geometry_types: HashSet::new(),
-            unique_dimensions: HashSet::new(),
+            types_and_dims: GeometryTypeAndDimensionsSet::new(),
             count: 0,
             item: Some(item),
         })
@@ -134,13 +132,15 @@ impl CollectionAccumulator {
         let mut new_header = Vec::new();
         let count_usize = self.count.try_into().unwrap();
 
-        if self.unique_dimensions.len() != 1 {
+        let unique_dimensions = self.types_and_dims.dimensions();
+        if unique_dimensions.len() != 1 {
             return exec_err!("Can't ST_Collect_Agg() mixed dimension geometries");
         }
 
-        let dimensions = *self.unique_dimensions.iter().next().unwrap();
-        if self.unique_geometry_types.len() == 1 {
-            match self.unique_geometry_types.iter().next().unwrap() {
+        let dimensions = unique_dimensions[0];
+        let unique_geometry_types = self.types_and_dims.geometry_types();
+        if unique_geometry_types.len() == 1 {
+            match unique_geometry_types[0] {
                 GeometryTypeId::Point => {
                     write_wkb_multipoint_header(&mut new_header, dimensions, count_usize)
                         .map_err(|e| DataFusionError::External(Box::new(e)))?;
@@ -186,11 +186,14 @@ impl Accumulator for CollectionAccumulator {
         let executor = WkbExecutor::new(&arg_types, &args);
         executor.execute_wkb_void(|maybe_item| {
             if let Some(item) = maybe_item {
-                let type_and_dims = GeometryTypeAndDimensions::try_from_geom(&item)
+                let types_and_dims = GeometryTypeAndDimensions::try_from_geom(&item)
                     .map_err(|e| DataFusionError::External(Box::new(e)))?;
-                self.unique_geometry_types
-                    .insert(type_and_dims.geometry_type());
-                self.unique_dimensions.insert(type_and_dims.dimensions());
+                // insert() (not insert_or_ignore()) so geometries with
+                // unknown dimensions fail loudly instead of being silently
+                // dropped from the dimension check in make_wkb_result().
+                self.types_and_dims
+                    .insert(&types_and_dims)
+                    .map_err(|e| DataFusionError::External(Box::new(e)))?;
                 self.count += 1;
                 item_ref.extend_from_slice(item.buf());
             }
@@ -205,14 +208,17 @@ impl Accumulator for CollectionAccumulator {
     }
 
     fn state(&mut self) -> Result<Vec<ScalarValue>> {
-        let geometry_types_value =
-            serde_json::to_string(&self.unique_geometry_types.iter().collect::<Vec<_>>())
-                .map_err(|e| DataFusionError::External(Box::new(e)))?;
+        // Both columns keep the exact pre-bitset wire format: a JSON list of
+        // geometry types, and a JSON list of dimensions wrapped as
+        // (Geometry, dimensions) pairs.
+        let geometry_types_value = serde_json::to_string(&self.types_and_dims.geometry_types())
+            .map_err(|e| DataFusionError::External(Box::new(e)))?;
         let dimensions_value = serde_json::to_string(
             &self
-                .unique_dimensions
-                .iter()
-                .map(|dim| GeometryTypeAndDimensions::new(GeometryTypeId::Geometry, *dim))
+                .types_and_dims
+                .dimensions()
+                .into_iter()
+                .map(|dim| GeometryTypeAndDimensions::new(GeometryTypeId::Geometry, dim))
                 .collect::<Vec<_>>(),
         )
         .map_err(|e| DataFusionError::External(Box::new(e)))?;
@@ -275,10 +281,24 @@ impl Accumulator for CollectionAccumulator {
                     )
                     .map_err(|e| DataFusionError::External(Box::new(e)))?
                     .into_iter()
-                    .map(|item| item.dimensions());
+                    .map(|item| item.dimensions())
+                    .collect::<Vec<_>>();
 
-                    self.unique_geometry_types.extend(geometry_types);
-                    self.unique_dimensions.extend(dimensions);
+                    // The state stores the two marginals; only the marginals
+                    // are ever consumed, so inserting the cross product
+                    // reconstructs them exactly in the pair bitset. (A state
+                    // produced by update_batch never has one marginal empty
+                    // while the other is not.)
+                    for geometry_type in &geometry_types {
+                        for dimensions in &dimensions {
+                            self.types_and_dims
+                                .insert(&GeometryTypeAndDimensions::new(
+                                    *geometry_type,
+                                    *dimensions,
+                                ))
+                                .map_err(|e| DataFusionError::External(Box::new(e)))?;
+                        }
+                    }
                     self.count += count;
                     item_ref.extend_from_slice(&item[WKB_HEADER_SIZE..item.len()]);
                 }
@@ -523,6 +543,63 @@ mod test {
         assert_eq!(
             err.message(),
             "CRS values not equal: ogc:crs84 vs epsg:3857"
+        );
+    }
+
+    /// The bitset swap must not change the serialized state wire format:
+    /// column 0 is a JSON list of geometry types and column 1 a JSON list of
+    /// dimensions wrapped as (Geometry, dims) pairs, exactly as the HashSet
+    /// implementation produced, so states merge across versions.
+    #[test]
+    fn state_wire_format_is_unchanged() {
+        let mut acc = CollectionAccumulator::try_new(WKB_GEOMETRY, WKB_GEOMETRY).unwrap();
+        acc.types_and_dims
+            .insert(&GeometryTypeAndDimensions::new(
+                GeometryTypeId::Point,
+                Dimensions::Xy,
+            ))
+            .unwrap();
+        acc.count = 1;
+
+        let state = acc.state().unwrap();
+        let (ScalarValue::Utf8(Some(types_json)), ScalarValue::Utf8(Some(dims_json))) =
+            (&state[0], &state[1])
+        else {
+            panic!("unexpected state field types");
+        };
+        assert_eq!(types_json.as_str(), "[\"Point\"]");
+        assert_eq!(
+            dims_json.as_str(),
+            serde_json::to_string(&[GeometryTypeAndDimensions::new(
+                GeometryTypeId::Geometry,
+                Dimensions::Xy
+            )])
+            .unwrap()
+        );
+    }
+
+    /// Regression test for memory accounting: the accumulator must report an
+    /// exact size with no unaccounted per-group heap. The HashSets this
+    /// replaces allocated ~100 heap bytes per non-empty group that size()
+    /// reported as zero, hiding gigabytes of aggregate state from the memory
+    /// pool on large aggregations (no spill, unaccounted anon growth).
+    #[test]
+    fn accumulator_size_is_exact() {
+        let mut acc = CollectionAccumulator::try_new(WKB_GEOMETRY, WKB_GEOMETRY).unwrap();
+        let empty_size = acc.size();
+
+        acc.types_and_dims
+            .insert(&GeometryTypeAndDimensions::new(
+                GeometryTypeId::Point,
+                Dimensions::Xy,
+            ))
+            .unwrap();
+
+        // Inserting into the inline bitset allocates nothing.
+        assert_eq!(acc.size(), empty_size);
+        assert_eq!(
+            acc.size(),
+            size_of::<CollectionAccumulator>() + acc.item.as_ref().unwrap().capacity()
         );
     }
 }

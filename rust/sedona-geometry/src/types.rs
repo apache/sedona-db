@@ -429,6 +429,28 @@ impl GeometryTypeAndDimensionsSet {
             current_bit: 0,
         }
     }
+
+    /// The distinct geometry types in this set, in bitset iteration order.
+    pub fn geometry_types(&self) -> Vec<GeometryTypeId> {
+        let mut out = Vec::new();
+        for item in self.iter() {
+            if !out.contains(&item.geometry_type()) {
+                out.push(item.geometry_type());
+            }
+        }
+        out
+    }
+
+    /// The distinct dimensions in this set, in bitset iteration order.
+    pub fn dimensions(&self) -> Vec<Dimensions> {
+        let mut out = Vec::new();
+        for item in self.iter() {
+            if !out.contains(&item.dimensions()) {
+                out.push(item.dimensions());
+            }
+        }
+        out
+    }
 }
 
 /// Iterator over [`GeometryTypeAndDimensions`] values in a [`GeometryTypeAndDimensionsSet`]
@@ -513,6 +535,23 @@ impl<'de> Deserialize<'de> for GeometryTypeAndDimensionsSet {
 
 #[cfg(test)]
 mod test {
+    #[test]
+    fn set_projections_dedupe_shared_components() {
+        let mut set = GeometryTypeAndDimensionsSet::new();
+        for (t, d) in [
+            (GeometryTypeId::Point, Dimensions::Xy),
+            (GeometryTypeId::Point, Dimensions::Xyz),
+            (GeometryTypeId::LineString, Dimensions::Xy),
+        ] {
+            set.insert(&GeometryTypeAndDimensions::new(t, d)).unwrap();
+        }
+        assert_eq!(
+            set.geometry_types(),
+            vec![GeometryTypeId::Point, GeometryTypeId::LineString]
+        );
+        assert_eq!(set.dimensions(), vec![Dimensions::Xy, Dimensions::Xyz]);
+    }
+
     use super::*;
 
     use rstest::rstest;
