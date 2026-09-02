@@ -15,6 +15,8 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import math
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -239,6 +241,34 @@ def test_rs_value_matches_rasterio(con):
         con.drop_view(view)
 
     assert got == expected
+
+
+def test_rs_geotransform():
+    # RS_Example's geotransform is scaleX=2, skewX=1, skewY=1, scaleY=2 with
+    # upper-left (43.08, 79.07). The expected struct follows Sedona Spark's
+    # RS_GeoTransform decomposition: magnitudes sqrt(scaleX^2 + skewY^2) and
+    # sqrt(scaleY^2 + skewX^2), thetaI = -acos(scaleX / magnitudeI) (negative
+    # because skewY > 0), and thetaIJ positive because its sign test stays
+    # under pi/2 for this south-up transform. The thetaIJ expression repeats
+    # the implementation's operation order: sqrt(5)**2 is 5.000000000000001,
+    # so this is acos(4 / that), not acos(0.8).
+    eng = SedonaDB()
+    magnitude = math.sqrt(5.0)
+    eng.assert_query_result(
+        "SELECT RS_GeoTransform(RS_Example())",
+        [
+            (
+                {
+                    "magnitudeI": magnitude,
+                    "magnitudeJ": magnitude,
+                    "thetaI": -math.acos(2.0 / magnitude),
+                    "thetaIJ": math.acos(4.0 / (magnitude * magnitude)),
+                    "offsetX": 43.08,
+                    "offsetY": 79.07,
+                },
+            )
+        ],
+    )
 
 
 def test_rs_setgeoreference_roundtrips_with_getter():

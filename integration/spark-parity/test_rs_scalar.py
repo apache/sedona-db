@@ -33,6 +33,8 @@ it flips to xpass the day the fix lands. When today's divergence is that one
 engine raises, that error is what trips the xfail.
 """
 
+import math
+
 import pytest
 
 from sedonadb.testing import SedonaDB, compare
@@ -154,6 +156,59 @@ def test_rs_band_nodata_null_raster(tmp_path):
         eng.create_random_raster_view("null_src", tmp_path / "null_src.tif", nodata=7.0)
     sql = "SELECT RS_BandNoDataValue(CASE WHEN 1 = 0 THEN rast END, 1) FROM null_src"
     compare(sql, sedona, spark)
+
+
+def test_rs_geotransform_north_up(tmp_path):
+    """Both engines decompose a north-up geotransform into the same struct.
+
+    The default fixture bbox (100, 482, 114, 500) over a 7x6 grid gives
+    scaleX=2, scaleY=-3 with no skew, so the anchor is hand-derivable:
+    magnitudes are the pixel sizes, thetaI is acos(1) = 0, and thetaIJ is
+    acos(0) = pi/2 negated by its sign test (the i-to-j separation of a
+    y-down raster is -90 degrees)."""
+    sedona, spark = SedonaDB(), SedonaSpark()
+    for eng in (sedona, spark):
+        eng.create_random_raster_view("gt_raster", tmp_path / "gt.tif")
+    sql = "SELECT RS_GeoTransform(rast) FROM gt_raster"
+    anchor = {
+        "magnitudeI": 2.0,
+        "magnitudeJ": 3.0,
+        "thetaI": 0.0,
+        "thetaIJ": -math.pi / 2,
+        "offsetX": 100.0,
+        "offsetY": 500.0,
+    }
+    compare(sql, sedona, spark, expected=[(anchor,)])
+
+
+def test_rs_geotransform_skewed(tmp_path):
+    """A sheared transform exercises the acos sign tests in the decomposition.
+
+    skewX=5 and skewY=3 are deliberately distinct — equal skews are the
+    degenerate regime where the magnitudes coincide and thetaIJ collapses to
+    +/-pi/2. The 3-4-5 / 5-12-13 pairs keep the anchor exactly representable:
+    magnitudeI = sqrt(4^2 + 3^2) = 5, magnitudeJ = sqrt(12^2 + 5^2) = 13,
+    thetaI = -acos(4/5) (negative because skewY > 0), and thetaIJ =
+    -acos(-16/65) (products and magnitudes are exact, and the sign test
+    acos(-63/65) exceeds pi/2). The anchor repeats the implementation's
+    operation order so every value is bit-exact."""
+    sedona, spark = SedonaDB(), SedonaSpark()
+    for eng in (sedona, spark):
+        eng.create_random_raster_view(
+            "gt_skew_raster",
+            tmp_path / "gt_skew.tif",
+            gdal_transform=(100.0, 4.0, 5.0, 500.0, 3.0, -12.0),
+        )
+    sql = "SELECT RS_GeoTransform(rast) FROM gt_skew_raster"
+    anchor = {
+        "magnitudeI": 5.0,
+        "magnitudeJ": 13.0,
+        "thetaI": -math.acos(4.0 / 5.0),
+        "thetaIJ": -math.acos(-16.0 / 65.0),
+        "offsetX": 100.0,
+        "offsetY": 500.0,
+    }
+    compare(sql, sedona, spark, expected=[(anchor,)])
 
 
 @pytest.mark.xfail(
