@@ -21,10 +21,10 @@ Both engines compute the angle of the grid's column-axis direction
 `skewY > 0`. (SedonaDB previously computed `atan2(-skewX, scaleX)`, which
 agreed only while |skewX| == |skewY| and misreported rigid rotations of
 non-square pixels; it was aligned to Sedona Spark's formula alongside
-these tests.) Axis-aligned grids compare exactly, including the sign of
-the zero; rotated grids can differ by one ulp across runtimes (Rust's
-acos vs the JVM's), so those queries round to 12 digits — the agreement
-under test is semantic, not bit-level.
+these tests.) Axis-aligned grids compare raw and exactly, including the
+sign of the zero; the non-zero-angle queries compare through
+ROUND(..., 12) — see the comment above the rigid tests for the measured
+evidence forcing that.
 """
 
 import math
@@ -66,6 +66,20 @@ def test_rs_rotation_axis_aligned(transform, tmp_path):
     compare("SELECT RS_Rotation(rast) FROM rot_axis", sedona, spark, expected=0.0)
 
 
+# Why the non-zero-angle queries wrap RS_Rotation in ROUND(..., 12): neither
+# runtime promises a bit-exact acos. Java's Math.acos is specified only to
+# within 1 ulp of the correctly rounded result, and Rust's f64::acos delegates
+# to the platform libm with no accuracy contract, so the exact double is an
+# implementation detail that varies by platform and JDK. Measured on macOS
+# (Rust libm vs Temurin 17), sweeping a rigid 2x3-pixel rotation over 72
+# angles: 70 matched bit-for-bit and 2 differed by exactly 1 ulp
+# (e.g. theta=-2.923 read 2.9234264970905017 vs ...13) — and pi/6 below is
+# itself such an angle (-0.5235987755982988 vs ...87). Which angles are
+# unlucky depends on the libm, so a raw comparison would be flaky across
+# platforms rather than strict. ROUND to 12 digits collapses 1-ulp
+# neighbours safely: each anchored constant's 12th-digit remainder sits
+# thousands of ulps from a rounding boundary, so the engines cannot round
+# to different values.
 @pytest.mark.parametrize(
     "pixel", [(2.0, 2.0), (2.0, 3.0)], ids=["square", "non-square"]
 )
