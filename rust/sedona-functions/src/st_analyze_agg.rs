@@ -62,12 +62,22 @@ pub fn st_analyze_agg_udf() -> SedonaAggregateUDF {
 ///
 /// This wrapper is exposed because it is used by the spatial join implementation.
 pub fn st_analyze_agg_impl() -> Vec<SedonaAccumulatorRef> {
-    vec![Arc::new(STAnalyzeAgg::<WkbGeometryBounder>::new(
-        ArgMatcher::new(vec![ArgMatcher::is_geometry()], output_sedona_type()),
-    ))]
+    st_analyze_agg_impl_for::<WkbGeometryBounder>(ArgMatcher::new(
+        vec![ArgMatcher::is_geometry()],
+        output_sedona_type(),
+    ))
 }
 
-fn output_sedona_type() -> SedonaType {
+/// Create an ST_Analyze_Agg implementation backed by a particular edge bounder.
+pub fn st_analyze_agg_impl_for<T>(matcher: ArgMatcher) -> Vec<SedonaAccumulatorRef>
+where
+    T: WkbBounder2D + Default + std::fmt::Debug + 'static,
+{
+    vec![Arc::new(STAnalyzeAgg::<T>::new(matcher))]
+}
+
+/// Return the logical output type of ST_Analyze_Agg.
+pub fn output_sedona_type() -> SedonaType {
     let output_fields = STAnalyzeAgg::<WkbGeometryBounder>::output_fields();
     SedonaType::Arrow(DataType::Struct(output_fields.into()))
 }

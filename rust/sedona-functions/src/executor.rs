@@ -19,13 +19,36 @@ use std::iter::zip;
 use arrow_array::ArrayRef;
 use arrow_schema::DataType;
 use datafusion_common::cast::{as_binary_array, as_binary_view_array, as_struct_array};
+use datafusion_common::config::ConfigOptions;
 use datafusion_common::error::Result;
 use datafusion_common::{DataFusionError, ScalarValue};
 use datafusion_expr::ColumnarValue;
-use sedona_common::sedona_internal_err;
-use sedona_geometry::wkb_header::WkbPointLayout;
+use sedona_common::{option::SedonaOptions, sedona_internal_err};
+use sedona_geometry::{bounds::WkbBounder2D, types::Edges, wkb_header::WkbPointLayout};
 use sedona_schema::datatypes::SedonaType;
 use wkb::reader::{read_wkb, Wkb};
+
+/// Resolve the session bounder for a geometry/geography argument.
+pub(crate) fn bounder_for_arg_type(
+    arg_type: &SedonaType,
+    config_options: Option<&ConfigOptions>,
+    function_name: &str,
+) -> Result<Box<dyn WkbBounder2D>> {
+    let edges = match arg_type {
+        SedonaType::Wkb(edges, _) | SedonaType::WkbView(edges, _) => *edges,
+        SedonaType::Arrow(DataType::Null) => Edges::Planar,
+        _ => return sedona_internal_err!("Expected geometry or geography, got {arg_type:?}"),
+    };
+    let factory = config_options
+        .and_then(|options| options.extensions.get::<SedonaOptions>())
+        .map(|options| options.runtime.bounder_factory().clone())
+        .unwrap_or_default();
+    factory.bounder_for_edge_type(edges).ok_or_else(|| {
+        DataFusionError::Execution(format!(
+            "{function_name}() requires a bounder for {edges:?} edges, which is not registered in this session"
+        ))
+    })
+}
 
 /// Helper for writing general kernel implementations with geometry
 ///
