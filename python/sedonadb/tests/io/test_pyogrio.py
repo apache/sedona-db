@@ -589,11 +589,11 @@ def _run_child_process(target, *args, timeout):
             raise TimeoutError(f"child process exceeded {timeout} seconds")
 
         child_result = None
-        if result_receiver.poll():
-            try:
+        try:
+            if result_receiver.poll():
                 child_result = result_receiver.recv()
-            except EOFError:
-                pass
+        except (BrokenPipeError, EOFError):
+            pass
         if process.exitcode != 0:
             raise AssertionError(
                 f"child process exited with {process.exitcode}: {child_result}"
