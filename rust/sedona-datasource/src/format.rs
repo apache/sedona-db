@@ -104,7 +104,7 @@ impl GetExt for ExternalFormatFactory {
 }
 
 #[derive(Debug)]
-pub(crate) struct ExternalFileFormat {
+pub struct ExternalFileFormat {
     spec: Arc<dyn ExternalFormatSpec>,
 }
 

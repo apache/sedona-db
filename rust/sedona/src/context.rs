@@ -50,6 +50,7 @@ use datafusion_expr::sqlparser::dialect::{dialect_from_str, Dialect};
 use datafusion_expr::{AggregateUDFImpl, LogicalPlan, LogicalPlanBuilder, ScalarUDFImpl, SortExpr};
 use parking_lot::Mutex;
 use sedona_common::{sedona_internal_datafusion_err, SedonaOptions};
+use sedona_datasource::format::ExternalFormatFactory;
 use sedona_datasource::provider::external_table;
 use sedona_datasource::spec::ExternalFormatSpec;
 use sedona_expr::scalar_udf::{IntoScalarKernelRefs, SedonaScalarUDF};
@@ -244,6 +245,26 @@ impl SedonaContext {
         // Register GeoParquet file format
         state.register_file_format(Arc::new(GeoParquetFormatFactory::new()), true)?;
 
+        // Register GeoTIFF file formats
+        state.register_file_format(
+            Arc::new(ExternalFormatFactory::new(Arc::new(
+                sedona_raster_gdal::GeoTiffTilesSpec::new("tif"),
+            ))),
+            false,
+        )?;
+        state.register_file_format(
+            Arc::new(ExternalFormatFactory::new(Arc::new(
+                sedona_raster_gdal::GeoTiffTilesSpec::new("tiff"),
+            ))),
+            false,
+        )?;
+        state.register_file_format(
+            Arc::new(ExternalFormatFactory::new(Arc::new(
+                sedona_raster_gdal::GeoTiffTilesSpec::new("geotiff"),
+            ))),
+            false,
+        )?;
+
         #[cfg(feature = "pointcloud")]
         {
             state.register_file_format(Arc::new(LasFormatFactory::new(Extension::Laz)), false)?;
@@ -326,6 +347,10 @@ impl SedonaContext {
         );
 
         out.register_function_set(sedona_raster_gdal::register::default_function_set());
+        out.ctx.register_udtf(
+            "rs_geotiff_tiles",
+            sedona_raster_gdal::rs_geotiff_tiles_udtf(),
+        );
 
         // Always register default function set
         out.register_function_set(sedona_functions::register::default_function_set());
@@ -962,7 +987,7 @@ mod tests {
         datatypes::SedonaType,
         schema::SedonaSchema,
     };
-    use sedona_testing::data::test_geoparquet;
+    use sedona_testing::data::{test_geoparquet, test_raster};
     use tempfile::tempdir;
 
     use super::*;
@@ -1395,6 +1420,46 @@ mod tests {
             sedona_types[1],
             SedonaType::WkbView(Edges::Planar, deserialize_crs("EPSG:3857").unwrap())
         );
+    }
+
+    #[tokio::test]
+    async fn geotiff_format() {
+        let ctx = SedonaContext::new_local_interactive().await.unwrap();
+        let example = test_raster("test4.tiff").unwrap();
+
+        // 1. Direct dynamic query on the file path
+        let df = ctx
+            .sql(&format!("SELECT path, x, y FROM '{example}'"))
+            .await
+            .unwrap();
+        let batches = df.collect().await.unwrap();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].num_columns(), 3);
+        assert!(batches[0].num_rows() >= 1);
+
+        // 2. Query via rs_geotiff_tiles UDTF wrapper
+        let df = ctx
+            .sql(&format!(
+                "SELECT path, x, y FROM rs_geotiff_tiles('{example}')"
+            ))
+            .await
+            .unwrap();
+        let batches = df.collect().await.unwrap();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].num_columns(), 3);
+        assert!(batches[0].num_rows() >= 1);
+
+        // 3. Query with raster column and raster functions
+        let df = ctx
+            .sql(&format!(
+                "SELECT RS_Metadata(rast) FROM rs_geotiff_tiles('{example}')"
+            ))
+            .await
+            .unwrap();
+        let batches = df.collect().await.unwrap();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].num_columns(), 1);
+        assert!(batches[0].num_rows() >= 1);
     }
 
     #[tokio::test]

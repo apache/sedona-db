@@ -486,3 +486,31 @@ def test_raster_to_numpy_multiband_stacks(con):
     assert out.shape == (3, 32, 64)
     for i, band in enumerate(r.bands):
         np.testing.assert_array_equal(out[i], band.to_numpy())
+
+
+def test_rs_geotiff_tiles_udtf(con, tmp_path):
+    pytest.importorskip("rasterio")
+    from sedonadb.raster_testing import write_geotiff
+
+    tiff_path = tmp_path / "test.tif"
+    write_geotiff(
+        tiff_path,
+        np.arange(100, dtype="uint8").reshape(1, 10, 10),
+        gdal_transform=(0.0, 1.0, 0.0, 10.0, 0.0, -1.0),
+    )
+
+    # 1. Query via rs_geotiff_tiles
+    df = con.sql(
+        f"SELECT path, x, y, RS_MetaData(rast) AS meta FROM rs_geotiff_tiles('{tiff_path}')"
+    )
+    tab = df.to_arrow_table()
+    assert tab.num_rows >= 1
+    assert "path" in tab.column_names
+    assert "x" in tab.column_names
+    assert "y" in tab.column_names
+    assert "meta" in tab.column_names
+
+    # 2. Query via direct URL table
+    df = con.sql(f"SELECT path, x, y FROM '{tiff_path}'")
+    tab = df.to_arrow_table()
+    assert tab.num_rows >= 1

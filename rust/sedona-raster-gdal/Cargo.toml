@@ -35,10 +35,13 @@ arrow-array = { workspace = true }
 arrow-buffer = { workspace = true }
 arrow-schema = { workspace = true }
 async-trait = { workspace = true }
+datafusion = { workspace = true }
+datafusion-catalog = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
 lru = { workspace = true }
 sedona-common = { workspace = true }
+sedona-datasource = { workspace = true }
 sedona-expr = { workspace = true }
 sedona-functions = { workspace = true }
 sedona-gdal = { workspace = true }
@@ -53,6 +56,7 @@ bindgen = ["sedona-gdal/bindgen"]
 
 [dev-dependencies]
 criterion = { workspace = true }
+datafusion = { workspace = true, features = ["sql"] }
 sedona-gdal = { workspace = true, features = ["gdal-sys"] }
 sedona-proj = { workspace = true, features = ["proj-sys"] }
 sedona-testing = { workspace = true, features = ["criterion"] }
@@ -108,3 +112,8 @@ path = "benches/rs_tile.rs"
 harness = false
 name = "rs_zonalstats"
 path = "benches/rs_zonalstats.rs"
+
+[[bench]]
+harness = false
+name = "rs_geotiff_tiles"
+path = "benches/rs_geotiff_tiles.rs"
