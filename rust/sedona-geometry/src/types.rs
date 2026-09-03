@@ -442,26 +442,35 @@ impl GeometryTypeAndDimensionsSet {
         }
     }
 
-    /// The distinct geometry types in this set, in bitset iteration order.
+    /// The distinct geometry types in this set, in ascending WKB-id order.
     pub fn geometry_types(&self) -> Vec<GeometryTypeId> {
-        let mut out = Vec::new();
-        for item in self.iter() {
-            if !out.contains(&item.geometry_type()) {
-                out.push(item.geometry_type());
-            }
-        }
-        out
+        // Collapse the four dimension bytes onto one: bit i is set iff a
+        // geometry with WKB id i is present under any dimension.
+        let merged =
+            (self.types | (self.types >> 8) | (self.types >> 16) | (self.types >> 24)) & 0xFF;
+        (0..8)
+            .filter(|i| merged & (1 << i) != 0)
+            .map(|i| {
+                GeometryTypeId::try_from_wkb_id(i)
+                    .expect("Invalid geometry type wkb_id in GeometryTypeAndDimensionsSet")
+            })
+            .collect()
     }
 
-    /// The distinct dimensions in this set, in bitset iteration order.
+    /// The distinct dimensions in this set, in XY, XYZ, XYM, XYZM order.
     pub fn dimensions(&self) -> Vec<Dimensions> {
-        let mut out = Vec::new();
-        for item in self.iter() {
-            if !out.contains(&item.dimensions()) {
-                out.push(item.dimensions());
-            }
-        }
-        out
+        // Each dimension occupies one byte; the dimension is present iff its
+        // byte has any type bit set.
+        [
+            (0x0000_00FF, Dimensions::Xy),
+            (0x0000_FF00, Dimensions::Xyz),
+            (0x00FF_0000, Dimensions::Xym),
+            (0xFF00_0000_u32, Dimensions::Xyzm),
+        ]
+        .into_iter()
+        .filter(|(mask, _)| self.types & mask != 0)
+        .map(|(_, dim)| dim)
+        .collect()
     }
 }
 
