@@ -28,13 +28,10 @@ use arrow_schema::SchemaRef;
 use datafusion_common::{DataFusionError, Result};
 use datafusion_common_runtime::JoinSet;
 use float_next_after::NextAfter;
-use geo::BoundingRect;
+use geo::{coord, BoundingRect, Distance, Euclidean, Geometry, Rect};
 use geo_index::rtree::{
-    distance::{DistanceMetric, GeometryAccessor},
-    util::f64_box_to_f32,
+    sort::HilbertSort, util::f64_box_to_f32, NeighborsOptions, RTree, RTreeBuilder, RTreeIndex,
 };
-use geo_index::rtree::{sort::HilbertSort, RTree, RTreeBuilder, RTreeIndex};
-use geo_index::IndexableNum;
 use parking_lot::Mutex;
 use sedona_expr::statistics::GeoStatistics;
 use sedona_geo::to_geo::item_to_geometry;
@@ -339,30 +336,32 @@ impl SpatialIndex for DefaultSpatialIndex {
             }
         };
 
-        // Select the appropriate distance metric
-        let distance_metric: &dyn DistanceMetric<f32> = {
-            let Some(knn_components) = self.inner.knn_components.as_ref() else {
-                return sedona_internal_err!(
-                    "knn_components is not initialized when running KNN join"
-                );
-            };
-            if use_spheroid {
-                &knn_components.haversine_metric
-            } else {
-                &knn_components.euclidean_metric
-            }
-        };
-
         // Create geometry accessor for on-demand WKB decoding and caching
         let geometry_accessor = self.create_knn_accessor()?;
 
-        // Use neighbors_geometry to find k nearest neighbors
-        let initial_results = self.inner.rtree.neighbors_geometry(
-            &probe_geom,
-            Some(k as usize),
-            None, // no max_distance filter
-            distance_metric,
-            &geometry_accessor,
+        // Use dependency-free callbacks from geo-index. A zero lower bound is required for
+        // spherical distances because planar longitude/latitude boxes do not provide a valid
+        // Haversine lower bound. Planar queries use the exact geometry-to-rectangle distance.
+        let initial_results = self.inner.rtree.neighbors_with_callbacks(
+            NeighborsOptions {
+                k: Some(k as usize),
+                max_distance: None,
+                include_tie_breakers: false,
+            },
+            |[min_x, min_y, max_x, max_y]| {
+                if use_spheroid {
+                    0.0
+                } else {
+                    let bbox = Geometry::Rect(Rect::new(
+                        coord! { x: min_x as f64, y: min_y as f64 },
+                        coord! { x: max_x as f64, y: max_y as f64 },
+                    ));
+                    Euclidean.distance(&probe_geom, &bbox)
+                }
+            },
+            |item_index, _bbox| {
+                geometry_accessor.distance(&probe_geom, item_index as usize, use_spheroid)
+            },
         );
 
         if initial_results.is_empty() {
@@ -372,7 +371,10 @@ impl SpatialIndex for DefaultSpatialIndex {
             });
         }
 
-        let mut final_results = initial_results;
+        let mut final_results: Vec<u32> = initial_results
+            .into_iter()
+            .map(|(index, _)| index)
+            .collect();
         let mut candidate_count = final_results.len();
 
         // Handle tie-breakers if enabled
@@ -382,11 +384,10 @@ impl SpatialIndex for DefaultSpatialIndex {
 
             for &result_idx in &final_results {
                 if (result_idx as usize) < self.inner.data_id_to_batch_pos.len() {
-                    if let Some(item_geom) = geometry_accessor.get_geometry(result_idx as usize) {
-                        let distance = distance_metric.distance_to_geometry(&probe_geom, item_geom);
-                        if let Some(distance_f64) = distance.to_f64() {
-                            distances_with_indices.push((distance_f64, result_idx));
-                        }
+                    if let Some(distance_f64) =
+                        geometry_accessor.distance(&probe_geom, result_idx as usize, use_spheroid)
+                    {
+                        distances_with_indices.push((distance_f64, result_idx));
                     }
                 }
             }
@@ -437,13 +438,12 @@ impl SpatialIndex for DefaultSpatialIndex {
 
                 for &result_idx in &expanded_results {
                     if (result_idx as usize) < self.inner.data_id_to_batch_pos.len() {
-                        if let Some(item_geom) = geometry_accessor.get_geometry(result_idx as usize)
-                        {
-                            let distance =
-                                distance_metric.distance_to_geometry(&probe_geom, item_geom);
-                            if let Some(distance_f64) = distance.to_f64() {
-                                all_distances_with_indices.push((distance_f64, result_idx));
-                            }
+                        if let Some(distance_f64) = geometry_accessor.distance(
+                            &probe_geom,
+                            result_idx as usize,
+                            use_spheroid,
+                        ) {
+                            all_distances_with_indices.push((distance_f64, result_idx));
                         }
                     }
                 }
@@ -483,13 +483,9 @@ impl SpatialIndex for DefaultSpatialIndex {
                 build_batch_positions.push(self.inner.data_id_to_batch_pos[result_idx as usize]);
 
                 if let Some(dists) = distances.as_mut() {
-                    let mut dist = f64::NAN;
-                    if let Some(item_geom) = geometry_accessor.get_geometry(result_idx as usize) {
-                        dist = distance_metric
-                            .distance_to_geometry(&probe_geom, item_geom)
-                            .to_f64()
-                            .unwrap_or(f64::NAN);
-                    }
+                    let dist = geometry_accessor
+                        .distance(&probe_geom, result_idx as usize, use_spheroid)
+                        .unwrap_or(f64::NAN);
                     dists.push(dist);
                 }
             }

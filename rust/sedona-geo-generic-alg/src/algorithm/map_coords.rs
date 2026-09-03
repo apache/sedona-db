@@ -778,7 +778,7 @@ where
 
 impl<T: CoordNum> MapCoordsInPlace<T> for Triangle<T> {
     fn map_coords_in_place(&mut self, func: impl Fn(Coord<T>) -> Coord<T>) {
-        let mut new_triangle = Triangle::new(func(self.0), func(self.1), func(self.2));
+        let mut new_triangle = Triangle::new(func(self.v1()), func(self.v2()), func(self.v3()));
 
         ::std::mem::swap(self, &mut new_triangle);
     }
@@ -787,7 +787,7 @@ impl<T: CoordNum> MapCoordsInPlace<T> for Triangle<T> {
         &mut self,
         func: impl Fn(Coord<T>) -> Result<Coord<T>, E>,
     ) -> Result<(), E> {
-        let mut new_triangle = Triangle::new(func(self.0)?, func(self.1)?, func(self.2)?);
+        let mut new_triangle = Triangle::new(func(self.v1())?, func(self.v2())?, func(self.v3())?);
 
         ::std::mem::swap(self, &mut new_triangle);
 

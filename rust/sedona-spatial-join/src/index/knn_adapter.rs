@@ -17,7 +17,7 @@
 
 use once_cell::sync::OnceCell;
 
-use geo_index::rtree::distance::{EuclideanDistance, GeometryAccessor, HaversineDistance};
+use geo::{Centroid, Distance, Euclidean, Haversine};
 use geo_types::Geometry;
 use sedona_expr::statistics::GeoStatistics;
 use sedona_geo::to_geo::item_to_geometry;
@@ -26,8 +26,6 @@ use crate::evaluated_batch::EvaluatedBatch;
 
 /// Shared KNN components that can be reused across queries
 pub(crate) struct KnnComponents {
-    pub euclidean_metric: EuclideanDistance,
-    pub haversine_metric: HaversineDistance,
     /// Pre-allocated vector for geometry cache - lock-free access
     /// Indexed by rtree data index for O(1) access
     geometry_cache: Vec<OnceCell<Geometry<f64>>>,
@@ -50,8 +48,6 @@ impl KnnComponents {
         }
 
         Ok(Self {
-            euclidean_metric: EuclideanDistance,
-            haversine_metric: HaversineDistance::default(),
             geometry_cache,
             estimated_memory_usage: total_wkb_size,
         })
@@ -90,11 +86,9 @@ impl<'a> SedonaKnnAdapter<'a> {
             knn_components,
         }
     }
-}
 
-impl<'a> GeometryAccessor for SedonaKnnAdapter<'a> {
     /// Get geometry for the given item index with lock-free caching
-    fn get_geometry(&self, item_index: usize) -> Option<&Geometry<f64>> {
+    pub fn get_geometry(&self, item_index: usize) -> Option<&Geometry<f64>> {
         let geometry_cache = &self.knn_components.geometry_cache;
 
         // Bounds check
@@ -122,5 +116,21 @@ impl<'a> GeometryAccessor for SedonaKnnAdapter<'a> {
 
         // Failed to decode - don't cache invalid results
         None
+    }
+
+    pub fn distance(
+        &self,
+        probe: &Geometry<f64>,
+        item_index: usize,
+        use_spheroid: bool,
+    ) -> Option<f64> {
+        let item = self.get_geometry(item_index)?;
+        if use_spheroid {
+            let probe_centroid = probe.centroid()?;
+            let item_centroid = item.centroid()?;
+            Some(Haversine.distance(probe_centroid, item_centroid))
+        } else {
+            Some(Euclidean.distance(probe, item))
+        }
     }
 }
