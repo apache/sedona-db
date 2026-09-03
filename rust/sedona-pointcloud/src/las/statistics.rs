@@ -356,10 +356,9 @@ mod tests {
     use std::fs::File;
 
     use arrow_array::{cast::AsArray, types::UInt64Type};
-    use datafusion_common::Column;
     use datafusion_pruning::PruningStatistics;
     use las::{point::Format, Builder, Point, Writer};
-    use object_store::{local::LocalFileSystem, path::Path, ObjectStore};
+    use object_store::{ObjectStoreExt, local::LocalFileSystem, path::Path};
     use sedona_geometry::bounding_box::BoundingBox;
 
     use crate::las::{
@@ -389,7 +388,7 @@ mod tests {
             assert_eq!(statistics.num_containers(), 2);
             assert_eq!(
                 statistics
-                    .row_counts(&Column::from_name(""))
+                    .row_counts()
                     .unwrap()
                     .as_primitive::<UInt64Type>()
                     .value(0),

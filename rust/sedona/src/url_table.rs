@@ -139,7 +139,7 @@ impl SedonaUrlTableFactory {
         let Some(factory) = state.get_file_format_factory(&extension) else {
             return Ok(None);
         };
-        let Some(external) = factory.as_any().downcast_ref::<ExternalFormatFactory>() else {
+        let Some(external) = factory.downcast_ref::<ExternalFormatFactory>() else {
             return Ok(None);
         };
         if !external.spec().list_single_object() {

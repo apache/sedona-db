@@ -39,7 +39,7 @@ use datafusion::{
         runtime_env::{RuntimeEnv, RuntimeEnvBuilder},
         SessionStateBuilder,
     },
-    prelude::{CsvReadOptions, DataFrame, NdJsonReadOptions, SessionConfig, SessionContext},
+    prelude::{CsvReadOptions, DataFrame, JsonReadOptions, SessionConfig, SessionContext},
     sql::parser::{DFParser, Statement},
 };
 use datafusion::{dataframe::DataFrameWriteOptions, execution::memory_pool::MemoryLimit};
@@ -672,7 +672,7 @@ impl SedonaContext {
         }
 
         self.ctx
-            .read_json(table_paths, NdJsonReadOptions::default())
+            .read_json(table_paths, JsonReadOptions::default())
             .await
     }
 }

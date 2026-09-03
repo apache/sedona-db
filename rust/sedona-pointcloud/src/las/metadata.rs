@@ -493,7 +493,7 @@ mod tests {
     use std::fs::File;
 
     use las::{point::Format, Builder, Reader, Writer};
-    use object_store::{local::LocalFileSystem, path::Path, ObjectStore};
+    use object_store::{ObjectStoreExt, local::LocalFileSystem, path::Path};
 
     use crate::las::metadata::fetch_header;
 
