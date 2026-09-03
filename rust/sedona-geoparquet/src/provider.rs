@@ -475,9 +475,10 @@ mod test {
         )
         .await
         .unwrap_err();
-        assert_eq!(
-            err.message(),
-            "Can't infer Parquet schema for zero objects. Does the input path exist?"
+        assert!(
+            err.message().contains("No files found at"),
+            "Unexpected error: {}",
+            err.message()
         );
     }
 
