@@ -132,7 +132,7 @@ fn extract_spatial_predicate(
     }
 
     // No ST_KNN found, proceed with normal extraction
-    if let Some(scalar_fn) = expr.as_any().downcast_ref::<ScalarFunctionExpr>() {
+    if let Some(scalar_fn) = expr.downcast_ref::<ScalarFunctionExpr>() {
         if let Some(relation_predicate) = match_relation_predicate(scalar_fn, column_indices) {
             return Some((SpatialPredicate::Relation(relation_predicate), None));
         }
@@ -142,7 +142,7 @@ fn extract_spatial_predicate(
         return Some((SpatialPredicate::Distance(distance_predicate), None));
     }
 
-    if let Some(binary_expr) = expr.as_any().downcast_ref::<BinaryExpr>() {
+    if let Some(binary_expr) = expr.downcast_ref::<BinaryExpr>() {
         if !matches!(binary_expr.op(), Operator::And) {
             return None;
         }
@@ -186,14 +186,14 @@ fn extract_knn_predicate_prioritized(
     column_indices: &[ColumnIndex],
 ) -> Option<(KNNPredicate, Option<Arc<dyn PhysicalExpr>>)> {
     // Check if this expression itself is ST_KNN
-    if let Some(scalar_fn) = expr.as_any().downcast_ref::<ScalarFunctionExpr>() {
+    if let Some(scalar_fn) = expr.downcast_ref::<ScalarFunctionExpr>() {
         if let Some(knn_predicate) = match_knn_predicate(scalar_fn, column_indices) {
             return Some((knn_predicate, None));
         }
     }
 
     // If this is an AND expression, check both sides for ST_KNN
-    if let Some(binary_expr) = expr.as_any().downcast_ref::<BinaryExpr>() {
+    if let Some(binary_expr) = expr.downcast_ref::<BinaryExpr>() {
         if matches!(binary_expr.op(), Operator::And) {
             let left = binary_expr.left();
             let right = binary_expr.right();
@@ -410,7 +410,7 @@ fn collect_column_references(
     let mut collected_column_indices = Vec::with_capacity(column_indices.len());
 
     expr.apply(|node| {
-        if let Some(column) = node.as_any().downcast_ref::<Column>() {
+        if let Some(column) = node.downcast_ref::<Column>() {
             let intermediate_index = column.index();
             let column_info = &column_indices[intermediate_index];
             collected_column_indices.push(column_info.clone());
@@ -462,7 +462,7 @@ fn reproject_column_references(
     expr.clone()
         .transform_down(|node| {
             // Check if this is a Column expression
-            if let Some(column) = node.as_any().downcast_ref::<Column>() {
+            if let Some(column) = node.downcast_ref::<Column>() {
                 let old_index = column.index();
                 if let Some(&new_index) = index_map.get(&old_index) {
                     // Create a new Column with the mapped index
@@ -499,7 +499,7 @@ fn reproject_column_references_for_side(
 /// Extract a literal u32 value from an expression.
 /// Returns None if the expression is not a literal integer or if it's out of u32 range.
 fn extract_literal_u32(expr: &Arc<dyn PhysicalExpr>) -> Option<u32> {
-    let literal = expr.as_any().downcast_ref::<Literal>()?;
+    let literal = expr.downcast_ref::<Literal>()?;
     match literal.value() {
         ScalarValue::UInt32(Some(val)) => Some(*val),
         ScalarValue::Int32(Some(val)) if *val >= 0 => Some(*val as u32),
@@ -512,7 +512,7 @@ fn extract_literal_u32(expr: &Arc<dyn PhysicalExpr>) -> Option<u32> {
 /// Extract a literal boolean value from an expression.
 /// Returns None if the expression is not a literal boolean.
 fn extract_literal_bool(expr: &Arc<dyn PhysicalExpr>) -> Option<bool> {
-    let literal = expr.as_any().downcast_ref::<Literal>()?;
+    let literal = expr.downcast_ref::<Literal>()?;
     match literal.value() {
         ScalarValue::Boolean(Some(val)) => Some(*val),
         _ => None,
@@ -864,17 +864,14 @@ mod tests {
         let reprojected = reproject_column_references(&col_expr, &index_map);
 
         // Check that the column index was updated
-        let reprojected_col = reprojected.as_any().downcast_ref::<Column>().unwrap();
+        let reprojected_col = reprojected.downcast_ref::<Column>().unwrap();
         assert_eq!(reprojected_col.index(), 0);
         assert_eq!(reprojected_col.name(), "test_col");
 
         // Test expression with no mapping (should remain unchanged)
         let col_expr_unmapped = Arc::new(Column::new("other_col", 5)) as Arc<dyn PhysicalExpr>;
         let reprojected_unmapped = reproject_column_references(&col_expr_unmapped, &index_map);
-        let unmapped_col = reprojected_unmapped
-            .as_any()
-            .downcast_ref::<Column>()
-            .unwrap();
+        let unmapped_col = reprojected_unmapped.downcast_ref::<Column>().unwrap();
         assert_eq!(unmapped_col.index(), 5); // Should remain unchanged
     }
 
@@ -908,68 +905,45 @@ mod tests {
 
         // Reproject the expression
         let reprojected = reproject_column_references(&expr, &index_map);
-        let reprojected_col = reprojected.as_any().downcast_ref::<BinaryExpr>().unwrap();
+        let reprojected_col = reprojected.downcast_ref::<BinaryExpr>().unwrap();
 
         // The reprojected expression should be: ST_Intersects(left_geom[10], right_geom[11]) AND (IS NOT NULL(left_id[0]) AND IS NOT NULL(right_distance[12]))
         assert_eq!(reprojected_col.op(), &Operator::And);
 
         // Left side should be ST_Intersects
         let left_side = reprojected_col.left();
-        let st_intersects = left_side
-            .as_any()
-            .downcast_ref::<ScalarFunctionExpr>()
-            .unwrap();
+        let st_intersects = left_side.downcast_ref::<ScalarFunctionExpr>().unwrap();
         assert_eq!(st_intersects.fun().name(), "st_intersects");
 
         let st_intersects_args = st_intersects.args();
         assert_eq!(st_intersects_args.len(), 2);
 
         // First arg should be left_geom with index 10
-        let left_geom_col = st_intersects_args[0]
-            .as_any()
-            .downcast_ref::<Column>()
-            .unwrap();
+        let left_geom_col = st_intersects_args[0].downcast_ref::<Column>().unwrap();
         assert_eq!(left_geom_col.name(), "left_geom");
         assert_eq!(left_geom_col.index(), 10);
 
         // Second arg should be right_geom with index 11
-        let right_geom_col = st_intersects_args[1]
-            .as_any()
-            .downcast_ref::<Column>()
-            .unwrap();
+        let right_geom_col = st_intersects_args[1].downcast_ref::<Column>().unwrap();
         assert_eq!(right_geom_col.name(), "right_geom");
         assert_eq!(right_geom_col.index(), 11);
 
         // Right side should be nested AND expression
         let right_side = reprojected_col.right();
-        let nested_and = right_side.as_any().downcast_ref::<BinaryExpr>().unwrap();
+        let nested_and = right_side.downcast_ref::<BinaryExpr>().unwrap();
         assert_eq!(nested_and.op(), &Operator::And);
 
         // Left part of nested AND should be IS NOT NULL(left_id[0])
         let left_not_null = nested_and.left();
-        let left_is_not_null = left_not_null
-            .as_any()
-            .downcast_ref::<IsNotNullExpr>()
-            .unwrap();
-        let left_id_col = left_is_not_null
-            .arg()
-            .as_any()
-            .downcast_ref::<Column>()
-            .unwrap();
+        let left_is_not_null = left_not_null.downcast_ref::<IsNotNullExpr>().unwrap();
+        let left_id_col = left_is_not_null.arg().downcast_ref::<Column>().unwrap();
         assert_eq!(left_id_col.name(), "left_id");
         assert_eq!(left_id_col.index(), 0); // Should remain 0 (not remapped)
 
         // Right part of nested AND should be IS NOT NULL(right_distance[12])
         let right_not_null = nested_and.right();
-        let right_is_not_null = right_not_null
-            .as_any()
-            .downcast_ref::<IsNotNullExpr>()
-            .unwrap();
-        let right_distance_col = right_is_not_null
-            .arg()
-            .as_any()
-            .downcast_ref::<Column>()
-            .unwrap();
+        let right_is_not_null = right_not_null.downcast_ref::<IsNotNullExpr>().unwrap();
+        let right_distance_col = right_is_not_null.arg().downcast_ref::<Column>().unwrap();
         assert_eq!(right_distance_col.name(), "right_distance");
         assert_eq!(right_distance_col.index(), 12); // Should be remapped from 3 to 12
     }
@@ -985,7 +959,7 @@ mod tests {
         let reprojected =
             reproject_column_references_for_side(&left_col_expr, &column_indices, JoinSide::Left);
 
-        let reprojected_col = reprojected.as_any().downcast_ref::<Column>().unwrap();
+        let reprojected_col = reprojected.downcast_ref::<Column>().unwrap();
         assert_eq!(reprojected_col.index(), 1); // Should map to original left side index
     }
 
@@ -1000,7 +974,7 @@ mod tests {
         let reprojected =
             reproject_column_references_for_side(&right_col_expr, &column_indices, JoinSide::Right);
 
-        let reprojected_col = reprojected.as_any().downcast_ref::<Column>().unwrap();
+        let reprojected_col = reprojected.downcast_ref::<Column>().unwrap();
         assert_eq!(reprojected_col.index(), 0); // Should map to original right side index
     }
 
@@ -1038,12 +1012,12 @@ mod tests {
         assert_eq!(pred.relation_type, SpatialRelationType::Intersects);
 
         // Verify left argument is reprojected to left side (should reference index 1 on left side)
-        let left_arg_col = pred.left.as_any().downcast_ref::<Column>().unwrap();
+        let left_arg_col = pred.left.downcast_ref::<Column>().unwrap();
         assert_eq!(left_arg_col.index(), 1);
         assert_eq!(left_arg_col.name(), "left_geom");
 
         // Verify right argument is reprojected to right side (should reference index 0 on right side)
-        let right_arg_col = pred.right.as_any().downcast_ref::<Column>().unwrap();
+        let right_arg_col = pred.right.downcast_ref::<Column>().unwrap();
         assert_eq!(right_arg_col.index(), 0);
         assert_eq!(right_arg_col.name(), "right_geom");
     }
@@ -1068,12 +1042,12 @@ mod tests {
         assert_eq!(pred.relation_type, SpatialRelationType::Contains);
 
         // After inversion, left_arg should be the original left_geom
-        let left_arg_col = pred.left.as_any().downcast_ref::<Column>().unwrap();
+        let left_arg_col = pred.left.downcast_ref::<Column>().unwrap();
         assert_eq!(left_arg_col.index(), 1);
         assert_eq!(left_arg_col.name(), "left_geom");
 
         // After inversion, right_arg should be the original right_geom
-        let right_arg_col = pred.right.as_any().downcast_ref::<Column>().unwrap();
+        let right_arg_col = pred.right.downcast_ref::<Column>().unwrap();
         assert_eq!(right_arg_col.index(), 0);
         assert_eq!(right_arg_col.name(), "right_geom");
     }
@@ -1114,18 +1088,18 @@ mod tests {
 
         let pred = predicate.unwrap();
         // Verify left argument is reprojected to left side
-        let left_arg_col = pred.left.as_any().downcast_ref::<Column>().unwrap();
+        let left_arg_col = pred.left.downcast_ref::<Column>().unwrap();
         assert_eq!(left_arg_col.index(), 1);
         assert_eq!(left_arg_col.name(), "left_geom");
 
         // Verify right argument is reprojected to right side
-        let right_arg_col = pred.right.as_any().downcast_ref::<Column>().unwrap();
+        let right_arg_col = pred.right.downcast_ref::<Column>().unwrap();
         assert_eq!(right_arg_col.index(), 0);
         assert_eq!(right_arg_col.name(), "right_geom");
 
         // Verify distance is a literal with JoinSide::None
         assert_eq!(pred.distance_side, datafusion_common::JoinSide::None);
-        let distance_literal = pred.distance.as_any().downcast_ref::<Literal>().unwrap();
+        let distance_literal = pred.distance.downcast_ref::<Literal>().unwrap();
         match distance_literal.value() {
             ScalarValue::Float64(Some(val)) => assert_eq!(val, &1000.0),
             _ => panic!("Expected Float64 literal"),
@@ -1156,11 +1130,11 @@ mod tests {
 
         let pred = predicate.unwrap();
         // Verify left and right arguments are correctly reprojected
-        let left_arg_col = pred.left.as_any().downcast_ref::<Column>().unwrap();
+        let left_arg_col = pred.left.downcast_ref::<Column>().unwrap();
         assert_eq!(left_arg_col.index(), 1);
         assert_eq!(left_arg_col.name(), "left_geom");
 
-        let right_arg_col = pred.right.as_any().downcast_ref::<Column>().unwrap();
+        let right_arg_col = pred.right.downcast_ref::<Column>().unwrap();
         assert_eq!(right_arg_col.index(), 0);
         assert_eq!(right_arg_col.name(), "right_geom");
 
@@ -1187,17 +1161,17 @@ mod tests {
 
         let pred = predicate.unwrap();
         // Verify left and right geometry arguments
-        let left_arg_col = pred.left.as_any().downcast_ref::<Column>().unwrap();
+        let left_arg_col = pred.left.downcast_ref::<Column>().unwrap();
         assert_eq!(left_arg_col.index(), 1);
         assert_eq!(left_arg_col.name(), "left_geom");
 
-        let right_arg_col = pred.right.as_any().downcast_ref::<Column>().unwrap();
+        let right_arg_col = pred.right.downcast_ref::<Column>().unwrap();
         assert_eq!(right_arg_col.index(), 0);
         assert_eq!(right_arg_col.name(), "right_geom");
 
         // Verify distance comes from right side
         assert_eq!(pred.distance_side, datafusion_common::JoinSide::Right);
-        let distance_col = pred.distance.as_any().downcast_ref::<Column>().unwrap();
+        let distance_col = pred.distance.downcast_ref::<Column>().unwrap();
         assert_eq!(distance_col.index(), 1); // Should be reprojected to right side index 1
         assert_eq!(distance_col.name(), "right_distance");
     }
@@ -1222,24 +1196,8 @@ mod tests {
         let SpatialPredicate::Relation(rel_pred) = spatial_pred else {
             panic!("Expected SpatialPredicate::Relation");
         };
-        assert_eq!(
-            rel_pred
-                .left
-                .as_any()
-                .downcast_ref::<Column>()
-                .unwrap()
-                .index(),
-            1
-        );
-        assert_eq!(
-            rel_pred
-                .right
-                .as_any()
-                .downcast_ref::<Column>()
-                .unwrap()
-                .index(),
-            0
-        );
+        assert_eq!(rel_pred.left.downcast_ref::<Column>().unwrap().index(), 1);
+        assert_eq!(rel_pred.right.downcast_ref::<Column>().unwrap().index(), 0);
         assert_eq!(rel_pred.relation_type, SpatialRelationType::Intersects);
         assert!(remainder.is_none()); // No remainder for simple predicate
     }
@@ -1276,41 +1234,25 @@ mod tests {
         let SpatialPredicate::Relation(rel_pred) = spatial_pred else {
             panic!("Expected SpatialPredicate::Relation");
         };
-        assert_eq!(
-            rel_pred
-                .left
-                .as_any()
-                .downcast_ref::<Column>()
-                .unwrap()
-                .index(),
-            1
-        );
-        assert_eq!(
-            rel_pred
-                .right
-                .as_any()
-                .downcast_ref::<Column>()
-                .unwrap()
-                .index(),
-            0
-        );
+        assert_eq!(rel_pred.left.downcast_ref::<Column>().unwrap().index(), 1);
+        assert_eq!(rel_pred.right.downcast_ref::<Column>().unwrap().index(), 0);
         assert_eq!(rel_pred.relation_type, SpatialRelationType::Intersects);
         assert!(remainder.is_some()); // Should have remainder (the id filter)
         let remainder = remainder.unwrap();
 
         // Remainder should be: left_id = 1
-        let remainder_binary = remainder.as_any().downcast_ref::<BinaryExpr>().unwrap();
+        let remainder_binary = remainder.downcast_ref::<BinaryExpr>().unwrap();
         assert_eq!(remainder_binary.op(), &Operator::Eq);
 
         // Left side should be left_id column
         let left_side = remainder_binary.left();
-        let left_col = left_side.as_any().downcast_ref::<Column>().unwrap();
+        let left_col = left_side.downcast_ref::<Column>().unwrap();
         assert_eq!(left_col.name(), "left_id");
         assert_eq!(left_col.index(), 0);
 
         // Right side should be literal 1
         let right_side = remainder_binary.right();
-        let literal = right_side.as_any().downcast_ref::<Literal>().unwrap();
+        let literal = right_side.downcast_ref::<Literal>().unwrap();
         match literal.value() {
             ScalarValue::Int32(Some(val)) => assert_eq!(val, &1),
             _ => panic!("Expected Int32(1) literal"),
@@ -1348,28 +1290,11 @@ mod tests {
         let SpatialPredicate::Distance(dist_pred) = spatial_pred else {
             panic!("Expected SpatialPredicate::Distance");
         };
-        assert_eq!(
-            dist_pred
-                .left
-                .as_any()
-                .downcast_ref::<Column>()
-                .unwrap()
-                .index(),
-            1
-        );
-        assert_eq!(
-            dist_pred
-                .right
-                .as_any()
-                .downcast_ref::<Column>()
-                .unwrap()
-                .index(),
-            0
-        );
+        assert_eq!(dist_pred.left.downcast_ref::<Column>().unwrap().index(), 1);
+        assert_eq!(dist_pred.right.downcast_ref::<Column>().unwrap().index(), 0);
         assert_eq!(
             dist_pred
                 .distance
-                .as_any()
                 .downcast_ref::<Literal>()
                 .unwrap()
                 .value(),
@@ -1380,18 +1305,18 @@ mod tests {
         let remainder = remainder.unwrap();
 
         // Remainder should be: left_id = 1
-        let remainder_binary = remainder.as_any().downcast_ref::<BinaryExpr>().unwrap();
+        let remainder_binary = remainder.downcast_ref::<BinaryExpr>().unwrap();
         assert_eq!(remainder_binary.op(), &Operator::Eq);
 
         // Left side should be left_id column
         let left_side = remainder_binary.left();
-        let left_col = left_side.as_any().downcast_ref::<Column>().unwrap();
+        let left_col = left_side.downcast_ref::<Column>().unwrap();
         assert_eq!(left_col.name(), "left_id");
         assert_eq!(left_col.index(), 0);
 
         // Right side should be literal 1
         let right_side = remainder_binary.right();
-        let literal = right_side.as_any().downcast_ref::<Literal>().unwrap();
+        let literal = right_side.downcast_ref::<Literal>().unwrap();
         match literal.value() {
             ScalarValue::Int32(Some(val)) => assert_eq!(val, &1),
             _ => panic!("Expected Int32(1) literal"),
@@ -1444,15 +1369,10 @@ mod tests {
         );
 
         let expr = new_filter.expression();
-        let binary_expr = expr.as_any().downcast_ref::<BinaryExpr>().unwrap();
+        let binary_expr = expr.downcast_ref::<BinaryExpr>().unwrap();
         assert_eq!(binary_expr.op(), &Operator::Eq);
         assert_eq!(
-            binary_expr
-                .left()
-                .as_any()
-                .downcast_ref::<Column>()
-                .unwrap()
-                .index(),
+            binary_expr.left().downcast_ref::<Column>().unwrap().index(),
             0
         );
     }
@@ -1570,30 +1490,18 @@ mod tests {
         assert!(matches!(spatial_pred, SpatialPredicate::Relation(_)));
         assert!(remainder.is_some()); // Should have remainder combining both non-spatial filters
         let remainder = remainder.unwrap();
-        let binary_expr = remainder
-            .expression()
-            .as_any()
-            .downcast_ref::<BinaryExpr>()
-            .unwrap();
+        let binary_expr = remainder.expression().downcast_ref::<BinaryExpr>().unwrap();
         assert_eq!(binary_expr.op(), &Operator::And);
 
-        let left_expr = binary_expr
-            .left()
-            .as_any()
-            .downcast_ref::<BinaryExpr>()
-            .unwrap();
+        let left_expr = binary_expr.left().downcast_ref::<BinaryExpr>().unwrap();
         assert_eq!(left_expr.op(), &Operator::Gt);
-        let left_id_expr = left_expr.left().as_any().downcast_ref::<Column>().unwrap();
+        let left_id_expr = left_expr.left().downcast_ref::<Column>().unwrap();
         assert_eq!(left_id_expr.name(), "left_id");
         assert_eq!(left_id_expr.index(), 0);
 
-        let right_expr = binary_expr
-            .right()
-            .as_any()
-            .downcast_ref::<BinaryExpr>()
-            .unwrap();
+        let right_expr = binary_expr.right().downcast_ref::<BinaryExpr>().unwrap();
         assert_eq!(right_expr.op(), &Operator::Lt);
-        let right_distance_expr = right_expr.left().as_any().downcast_ref::<Column>().unwrap();
+        let right_distance_expr = right_expr.left().downcast_ref::<Column>().unwrap();
         assert_eq!(right_distance_expr.name(), "right_distance");
         assert_eq!(right_distance_expr.index(), 1);
 
@@ -1649,12 +1557,12 @@ mod tests {
         let pred = match_knn_predicate(&st_knn, &column_indices).unwrap();
 
         // Verify left argument is reprojected to left side
-        let left_arg_col = pred.left.as_any().downcast_ref::<Column>().unwrap();
+        let left_arg_col = pred.left.downcast_ref::<Column>().unwrap();
         assert_eq!(left_arg_col.index(), 1);
         assert_eq!(left_arg_col.name(), "left_geom");
 
         // Verify right argument is reprojected to right side
-        let right_arg_col = pred.right.as_any().downcast_ref::<Column>().unwrap();
+        let right_arg_col = pred.right.downcast_ref::<Column>().unwrap();
         assert_eq!(right_arg_col.index(), 0);
         assert_eq!(right_arg_col.name(), "right_geom");
 
@@ -1730,12 +1638,12 @@ mod tests {
 
         let pred = predicate.unwrap();
         // After inversion, left_arg should be the original left_geom
-        let left_arg_col = pred.left.as_any().downcast_ref::<Column>().unwrap();
+        let left_arg_col = pred.left.downcast_ref::<Column>().unwrap();
         assert_eq!(left_arg_col.index(), 0);
         assert_eq!(left_arg_col.name(), "right_geom");
 
         // After inversion, right_arg should be the original right_geom
-        let right_arg_col = pred.right.as_any().downcast_ref::<Column>().unwrap();
+        let right_arg_col = pred.right.downcast_ref::<Column>().unwrap();
         assert_eq!(right_arg_col.index(), 1);
         assert_eq!(right_arg_col.name(), "left_geom");
     }
@@ -1808,24 +1716,8 @@ mod tests {
         let SpatialPredicate::KNearestNeighbors(knn_pred) = spatial_pred else {
             panic!("Expected SpatialPredicate::KNearestNeighbors");
         };
-        assert_eq!(
-            knn_pred
-                .left
-                .as_any()
-                .downcast_ref::<Column>()
-                .unwrap()
-                .index(),
-            1
-        );
-        assert_eq!(
-            knn_pred
-                .right
-                .as_any()
-                .downcast_ref::<Column>()
-                .unwrap()
-                .index(),
-            0
-        );
+        assert_eq!(knn_pred.left.downcast_ref::<Column>().unwrap().index(), 1);
+        assert_eq!(knn_pred.right.downcast_ref::<Column>().unwrap().index(), 0);
         assert!(remainder.is_none()); // No remainder for simple predicate
     }
 
@@ -1862,40 +1754,24 @@ mod tests {
         let SpatialPredicate::KNearestNeighbors(knn_pred) = spatial_pred else {
             panic!("Expected SpatialPredicate::KNearestNeighbors");
         };
-        assert_eq!(
-            knn_pred
-                .left
-                .as_any()
-                .downcast_ref::<Column>()
-                .unwrap()
-                .index(),
-            1
-        );
-        assert_eq!(
-            knn_pred
-                .right
-                .as_any()
-                .downcast_ref::<Column>()
-                .unwrap()
-                .index(),
-            0
-        );
+        assert_eq!(knn_pred.left.downcast_ref::<Column>().unwrap().index(), 1);
+        assert_eq!(knn_pred.right.downcast_ref::<Column>().unwrap().index(), 0);
         assert!(remainder.is_some()); // Should have remainder (the id filter)
         let remainder = remainder.unwrap();
 
         // Remainder should be: left_id = 1
-        let remainder_binary = remainder.as_any().downcast_ref::<BinaryExpr>().unwrap();
+        let remainder_binary = remainder.downcast_ref::<BinaryExpr>().unwrap();
         assert_eq!(remainder_binary.op(), &Operator::Eq);
 
         // Left side should be left_id column
         let left_side = remainder_binary.left();
-        let left_col = left_side.as_any().downcast_ref::<Column>().unwrap();
+        let left_col = left_side.downcast_ref::<Column>().unwrap();
         assert_eq!(left_col.name(), "left_id");
         assert_eq!(left_col.index(), 0);
 
         // Right side should be literal 1
         let right_side = remainder_binary.right();
-        let literal = right_side.as_any().downcast_ref::<Literal>().unwrap();
+        let literal = right_side.downcast_ref::<Literal>().unwrap();
         match literal.value() {
             ScalarValue::Int32(Some(val)) => assert_eq!(val, &1),
             _ => panic!("Expected Int32(1) literal"),
@@ -2116,10 +1992,7 @@ mod tests {
         let remainder_expr = remainder.unwrap();
 
         // Remainder should be: left_id > 0 AND right_distance < 100.0
-        let remainder_and = remainder_expr
-            .as_any()
-            .downcast_ref::<BinaryExpr>()
-            .unwrap();
+        let remainder_and = remainder_expr.downcast_ref::<BinaryExpr>().unwrap();
         assert_eq!(remainder_and.op(), &Operator::And);
     }
 
@@ -2149,21 +2022,13 @@ mod tests {
 
         let pred = predicate.unwrap();
         // The wrapped columns should still be detected correctly
-        let left_is_not_null = pred.left.as_any().downcast_ref::<IsNotNullExpr>().unwrap();
-        let left_col = left_is_not_null
-            .arg()
-            .as_any()
-            .downcast_ref::<Column>()
-            .unwrap();
+        let left_is_not_null = pred.left.downcast_ref::<IsNotNullExpr>().unwrap();
+        let left_col = left_is_not_null.arg().downcast_ref::<Column>().unwrap();
         assert_eq!(left_col.name(), "left_geom");
         assert_eq!(left_col.index(), 1); // reprojected index for left side
 
-        let right_is_not_null = pred.right.as_any().downcast_ref::<IsNotNullExpr>().unwrap();
-        let right_col = right_is_not_null
-            .arg()
-            .as_any()
-            .downcast_ref::<Column>()
-            .unwrap();
+        let right_is_not_null = pred.right.downcast_ref::<IsNotNullExpr>().unwrap();
+        let right_col = right_is_not_null.arg().downcast_ref::<Column>().unwrap();
         assert_eq!(right_col.name(), "right_geom");
         assert_eq!(right_col.index(), 0); // reprojected index for right side
     }

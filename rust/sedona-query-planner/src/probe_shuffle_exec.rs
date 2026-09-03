@@ -31,7 +31,6 @@
 //! * **`execute()`** delegates to the internal `RepartitionExec` which performs
 //!   the actual round-robin shuffle.
 
-use std::any::Any;
 use std::fmt;
 use std::sync::Arc;
 
@@ -78,7 +77,7 @@ impl ProbeShuffleExec {
 
     /// Try to wrap the given [`RepartitionExec`] `plan` with [`ProbeShuffleExec`].
     pub fn try_wrap_repartition(plan: Arc<dyn ExecutionPlan>) -> Result<Self> {
-        let Some(repartition_exec) = plan.as_any().downcast_ref::<RepartitionExec>() else {
+        let Some(repartition_exec) = plan.downcast_ref::<RepartitionExec>() else {
             return plan_err!(
                 "ProbeShuffleExec can only wrap RepartitionExec, but got {}",
                 plan.name()
@@ -120,11 +119,7 @@ impl ExecutionPlan for ProbeShuffleExec {
         "ProbeShuffleExec"
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn properties(&self) -> &PlanProperties {
+    fn properties(&self) -> &std::sync::Arc<PlanProperties> {
         self.inner_repartition.properties()
     }
 
@@ -170,7 +165,7 @@ impl ExecutionPlan for ProbeShuffleExec {
         self.inner_repartition.metrics()
     }
 
-    fn partition_statistics(&self, partition: Option<usize>) -> Result<Statistics> {
+    fn partition_statistics(&self, partition: Option<usize>) -> Result<Arc<Statistics>> {
         self.inner_repartition.partition_statistics(partition)
     }
 

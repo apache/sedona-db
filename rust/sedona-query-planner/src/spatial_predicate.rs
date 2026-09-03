@@ -527,7 +527,6 @@ mod tests {
 
     fn assert_is_column(expr: &Arc<dyn PhysicalExpr>, name: &str, index: usize) {
         let col = expr
-            .as_any()
             .downcast_ref::<Column>()
             .expect("expected Column");
         assert_eq!(col.name(), name);

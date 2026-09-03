@@ -379,11 +379,18 @@ impl OptimizerRule for MergeSpatialFilterIntoJoin {
             join_type,
             ref join_constraint,
             ref null_equality,
+            ref null_aware,
             ..
         }) = input.as_ref()
         else {
             return Ok(Transformed::no(plan));
         };
+
+        // This should not happen for the types of joins we optimize here
+        // (only applies to left anti).
+        if *null_aware {
+            return Ok(Transformed::no(plan));
+        }
 
         // Check if this is a suitable join for rewriting
         let is_equi_join = !on.is_empty() && !spatial_predicates.contains("st_knn");
@@ -408,6 +415,7 @@ impl OptimizerRule for MergeSpatialFilterIntoJoin {
             JoinType::Inner,
             *join_constraint,
             *null_equality,
+            *null_aware
         )?;
 
         Ok(Transformed::yes(LogicalPlan::Join(rewritten_plan)))
