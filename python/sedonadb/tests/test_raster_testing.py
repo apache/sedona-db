@@ -37,18 +37,21 @@ BBOX = (100.0, 482.0, 114.0, 500.0)
 
 
 def test_write_geotiff_bbox_places_the_grid(tmp_path):
+    pytest.importorskip("rasterio")
     path = tmp_path / "bbox.tif"
     write_random_geotiff(path, "uint8", bands=1, height=6, width=7, bbox=BBOX)
     assert decode_geotiff(path).gdal_transform == (100.0, 2.0, 0.0, 500.0, 0.0, -3.0)
 
 
 def test_decoded_raster_bbox_places_the_grid():
+    pytest.importorskip("rasterio")
     data = np.zeros((1, 6, 7), dtype="uint8")
     by_bbox = DecodedRaster(data, nodata=[None], bbox=BBOX)
     assert by_bbox.gdal_transform == (100.0, 2.0, 0.0, 500.0, 0.0, -3.0)
 
 
 def test_decoded_raster_requires_exactly_one_grid_placement():
+    pytest.importorskip("rasterio")
     data = np.zeros((1, 6, 7), dtype="uint8")
     with pytest.raises(ValueError, match="exactly one"):
         DecodedRaster(data, nodata=[None])
@@ -67,6 +70,7 @@ def test_decoded_raster_requires_nodata():
 
 
 def test_write_geotiff_requires_exactly_one_grid_placement(tmp_path):
+    pytest.importorskip("rasterio")
     data = np.zeros((1, 6, 7), dtype="uint8")
     with pytest.raises(ValueError, match="exactly one"):
         write_geotiff(tmp_path / "neither.tif", data)
