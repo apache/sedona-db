@@ -99,6 +99,12 @@ fn setup_context(options: Option<SpatialJoinOptions>, batch_size: usize) -> Resu
     let mut session_config = SessionConfig::from_env()?
         .with_information_schema(true)
         .with_batch_size(batch_size);
+    // Work around https://github.com/apache/datafusion/issues/24933:
+    // physical scalar subqueries discard Arrow field metadata.
+    session_config
+        .options_mut()
+        .optimizer
+        .enable_physical_uncorrelated_scalar_subquery = false;
     session_config = session_config.with_option_extension(SedonaOptions::default());
     let mut state_builder = SessionStateBuilder::new();
     if let Some(options) = options {

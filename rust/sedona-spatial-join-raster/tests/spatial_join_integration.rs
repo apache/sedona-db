@@ -128,6 +128,12 @@ fn register_geom_table(ctx: &SessionContext) -> Result<()> {
 /// `SpatialJoinExec`. Otherwise the join stays a `NestedLoopJoinExec`.
 fn build_context(optimized: bool) -> Result<SessionContext> {
     let mut session_config = SessionConfig::from_env()?.with_batch_size(16);
+    // Work around https://github.com/apache/datafusion/issues/24933:
+    // physical scalar subqueries discard Arrow field metadata.
+    session_config
+        .options_mut()
+        .optimizer
+        .enable_physical_uncorrelated_scalar_subquery = false;
     session_config = session_config.with_option_extension(SedonaOptions::default());
 
     // Install a real CRS engine, mirroring the engine a normal session

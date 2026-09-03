@@ -275,6 +275,16 @@ impl SedonaContext {
             raster_loader_registry: Arc::new(RwLock::new(RasterLoaderRegistry::new())),
         };
 
+        // Work around https://github.com/apache/datafusion/issues/24933:
+        // physical scalar subqueries discard Arrow field metadata.
+        out.ctx
+            .state_ref()
+            .write()
+            .config_mut()
+            .options_mut()
+            .optimizer
+            .enable_physical_uncorrelated_scalar_subquery = false;
+
         // Stash a clone of the shared registry handle inside
         // `ConfigOptions` via the `RasterLoaderConfig` extension. The
         // RS_EnsureLoaded async UDF reads from there at dispatch time —
@@ -966,6 +976,18 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
+
+    #[test]
+    fn disables_physical_uncorrelated_scalar_subqueries() {
+        let ctx = SedonaContext::new();
+        assert!(
+            !ctx.ctx
+                .state()
+                .config_options()
+                .optimizer
+                .enable_physical_uncorrelated_scalar_subquery
+        );
+    }
 
     #[tokio::test]
     async fn outdb_registry_has_gdal_at_bootstrap_and_accepts_runtime_registration() {
