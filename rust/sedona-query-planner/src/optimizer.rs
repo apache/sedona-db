@@ -415,7 +415,7 @@ impl OptimizerRule for MergeSpatialFilterIntoJoin {
             JoinType::Inner,
             *join_constraint,
             *null_equality,
-            *null_aware
+            *null_aware,
         )?;
 
         Ok(Transformed::yes(LogicalPlan::Join(rewritten_plan)))

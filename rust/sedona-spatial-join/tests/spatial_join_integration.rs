@@ -191,21 +191,20 @@ fn setup_context(options: Option<SpatialJoinOptions>, batch_size: usize) -> Resu
 #[derive(Debug)]
 struct StatsOverrideTableProvider {
     inner: Arc<dyn TableProvider>,
-    stats: Statistics,
+    stats: Arc<Statistics>,
 }
 
 impl StatsOverrideTableProvider {
     fn new(inner: Arc<dyn TableProvider>, stats: Statistics) -> Self {
-        Self { inner, stats }
+        Self {
+            inner,
+            stats: Arc::new(stats),
+        }
     }
 }
 
 #[async_trait]
 impl TableProvider for StatsOverrideTableProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn schema(&self) -> SchemaRef {
         self.inner.schema()
     }
@@ -229,12 +228,12 @@ impl TableProvider for StatsOverrideTableProvider {
 #[derive(Debug)]
 struct StatsOverrideExec {
     inner: Arc<dyn ExecutionPlan>,
-    stats: Statistics,
-    properties: PlanProperties,
+    stats: Arc<Statistics>,
+    properties: Arc<PlanProperties>,
 }
 
 impl StatsOverrideExec {
-    fn new(inner: Arc<dyn ExecutionPlan>, stats: Statistics) -> Self {
+    fn new(inner: Arc<dyn ExecutionPlan>, stats: Arc<Statistics>) -> Self {
         let properties = PlanProperties::new(
             inner.equivalence_properties().clone(),
             inner.output_partitioning().clone(),
@@ -244,7 +243,7 @@ impl StatsOverrideExec {
         Self {
             inner,
             stats,
-            properties,
+            properties: Arc::new(properties),
         }
     }
 }
@@ -366,10 +365,6 @@ impl ExecutionPlan for StatsOverrideExec {
         "StatsOverrideExec"
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn properties(&self) -> &PlanProperties {
         &self.properties
     }
@@ -403,11 +398,7 @@ impl ExecutionPlan for StatsOverrideExec {
         self.inner.execute(partition, context)
     }
 
-    fn statistics(&self) -> Result<Statistics> {
-        Ok(self.stats.clone())
-    }
-
-    fn partition_statistics(&self, partition: Option<usize>) -> Result<Statistics> {
+    fn partition_statistics(&self, partition: Option<usize>) -> Result<Arc<Statistics>> {
         match partition {
             None => Ok(self.stats.clone()),
             Some(partition) => self.inner.partition_statistics(Some(partition)),

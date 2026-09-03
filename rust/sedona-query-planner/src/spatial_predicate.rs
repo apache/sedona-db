@@ -526,9 +526,7 @@ mod tests {
     }
 
     fn assert_is_column(expr: &Arc<dyn PhysicalExpr>, name: &str, index: usize) {
-        let col = expr
-            .downcast_ref::<Column>()
-            .expect("expected Column");
+        let col = expr.downcast_ref::<Column>().expect("expected Column");
         assert_eq!(col.name(), name);
         assert_eq!(col.index(), index);
     }

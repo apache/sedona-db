@@ -1044,9 +1044,7 @@ mod test {
         let dyn_format = format_factory
             .create(&ctx.state(), &HashMap::new())
             .unwrap();
-        assert!(dyn_format
-            .downcast_ref::<GeoParquetFormat>()
-            .is_some());
+        assert!(dyn_format.downcast_ref::<GeoParquetFormat>().is_some());
     }
 
     #[tokio::test]
@@ -1129,9 +1127,7 @@ mod test {
         let result = wrap_expr_columns(geometry_column, &file_schema).unwrap();
 
         // The result should be wrapped in MetadataPreservingColumn
-        assert!(result
-            .downcast_ref::<MetadataPreservingColumn>()
-            .is_some());
+        assert!(result.downcast_ref::<MetadataPreservingColumn>().is_some());
     }
 
     /// Test that columns without extension metadata are not wrapped

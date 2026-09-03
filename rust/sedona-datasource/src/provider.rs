@@ -34,7 +34,7 @@ use datafusion::{
     prelude::{SessionConfig, SessionContext},
 };
 use datafusion_catalog::{memory::DataSourceExec, Session};
-use datafusion_common::{Result, TableReference, exec_err, extensions::Extensions};
+use datafusion_common::{exec_err, extensions::Extensions, Result, TableReference};
 use datafusion_datasource::{
     file_groups::FileGroup, file_scan_config::FileScanConfigBuilder, table_schema::TableSchema,
     PartitionedFile,
