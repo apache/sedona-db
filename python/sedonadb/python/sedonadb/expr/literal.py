@@ -152,7 +152,7 @@ def _lit_from_geoarrow_scalar(obj):
     # its WKB, so one path serves them all. The edge type travels with the
     # CRS: a spherical (geography) scalar must not come back planar.
     wkb_value = None if obj.value is None else obj.wkb
-    return _lit_from_wkb_and_crs(wkb_value, obj.type.crs, obj.type.edge_type)
+    return _lit_from_wkb(wkb_value, obj.type.crs, obj.type.edge_type)
 
 
 def _lit_from_dataframe(obj):
@@ -173,7 +173,7 @@ def _lit_from_series(obj):
     if obj.dtype.name == "geometry":
         first_value = obj.array[0]
         first_wkb = None if first_value is None else first_value.wkb
-        return _lit_from_wkb_and_crs(first_wkb, obj.array.crs)
+        return _lit_from_wkb(first_wkb, obj.array.crs)
     else:
         import pyarrow as pa
 
@@ -196,10 +196,10 @@ def _lit_from_sedonadb(obj):
 
 
 def _lit_from_shapely(obj):
-    return _lit_from_wkb_and_crs(obj.wkb, None)
+    return _lit_from_wkb(obj.wkb, None)
 
 
-def _lit_from_wkb_and_crs(wkb, crs, edge_type=None):
+def _lit_from_wkb(wkb, crs, edge_type=None):
     import geoarrow.pyarrow as ga
     import pyarrow as pa
 
@@ -220,7 +220,9 @@ def _lit_from_missing(obj):
 def _lit_from_nat(obj):
     # NaT is a datetime missing value in pandas (assigning it yields a
     # datetime64 column), so it resolves to a typed timestamp null rather
-    # than an untyped NULL.
+    # than an untyped NULL. NaT itself carries no unit; nanoseconds is the
+    # unit pandas stores it in, and as a null it coerces to whatever unit
+    # and time zone the surrounding expression needs.
     import pyarrow as pa
 
     return pa.array([None], pa.timestamp("ns"))
