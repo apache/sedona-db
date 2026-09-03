@@ -317,7 +317,7 @@ impl ReadOptions<'_> for GeoParquetReadOptions<'_> {
 
         let mut options = self.inner.to_listing_options(config, table_options);
 
-        if let Some(parquet_format) = options.format.as_any().downcast_ref::<ParquetFormat>() {
+        if let Some(parquet_format) = options.format.downcast_ref::<ParquetFormat>() {
             let mut geoparquet_options =
                 TableGeoParquetOptions::from(parquet_format.options().clone());
             if let Some(geometry_columns) = &self.geometry_columns {

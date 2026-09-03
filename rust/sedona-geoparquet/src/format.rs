@@ -16,7 +16,6 @@
 // under the License.
 
 use std::{
-    any::Any,
     collections::{HashMap, HashSet},
     sync::Arc,
 };
@@ -119,7 +118,7 @@ impl FileFormatFactory for GeoParquetFormatFactory {
         }
 
         let inner_format = self.inner.create(state, &format_options_mut)?;
-        if let Some(parquet_format) = inner_format.as_any().downcast_ref::<ParquetFormat>() {
+        if let Some(parquet_format) = inner_format.downcast_ref::<ParquetFormat>() {
             options_mut.inner = parquet_format.options().clone();
             Ok(Arc::new(GeoParquetFormat::new(options_mut)))
         } else {
@@ -132,10 +131,6 @@ impl FileFormatFactory for GeoParquetFormatFactory {
 
     fn default(&self) -> std::sync::Arc<dyn FileFormat> {
         Arc::new(ParquetFormat::default())
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
     }
 }
 
@@ -169,10 +164,6 @@ impl GeoParquetFormat {
 
 #[async_trait]
 impl FileFormat for GeoParquetFormat {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn get_ext(&self) -> String {
         ParquetFormatFactory::new().get_ext()
     }
@@ -333,7 +324,6 @@ impl FileFormat for GeoParquetFormat {
 
         let mut source = config
             .file_source()
-            .as_any()
             .downcast_ref::<GeoParquetFileSource>()
             .cloned()
             .ok_or_else(|| sedona_internal_datafusion_err!("Expected GeoParquetFileSource"))?;
@@ -507,7 +497,7 @@ impl GeoParquetFileSource {
         metadata_size_hint: Option<usize>,
         predicate: Option<Arc<dyn PhysicalExpr>>,
     ) -> Result<Self> {
-        if let Some(parquet_source) = inner.as_any().downcast_ref::<ParquetSource>() {
+        if let Some(parquet_source) = inner.downcast_ref::<ParquetSource>() {
             let parquet_source = parquet_source.clone();
             // Extract the predicate from the existing source if it exists so we can keep a copy of it
             let new_predicate = match (parquet_source.filter(), predicate) {
@@ -647,10 +637,6 @@ impl FileSource for GeoParquetFileSource {
         }
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn with_batch_size(&self, batch_size: usize) -> Arc<dyn FileSource> {
         let mut source = Self::from_file_source(
             self.inner.with_batch_size(batch_size),
@@ -729,7 +715,7 @@ fn wrap_expr_columns(
     file_schema: &Schema,
 ) -> Result<Arc<dyn PhysicalExpr>> {
     expr.transform_down(|node| {
-        if let Some(column) = node.as_any().downcast_ref::<Column>() {
+        if let Some(column) = node.downcast_ref::<Column>() {
             let index = column.index();
 
             if index >= file_schema.fields().len() {
@@ -1059,7 +1045,6 @@ mod test {
             .create(&ctx.state(), &HashMap::new())
             .unwrap();
         assert!(dyn_format
-            .as_any()
             .downcast_ref::<GeoParquetFormat>()
             .is_some());
     }
@@ -1086,17 +1071,14 @@ mod test {
             .unwrap();
 
         let data_source_exec = plan
-            .as_any()
             .downcast_ref::<DataSourceExec>()
             .expect("plan root should be DataSourceExec");
         let file_scan_conf = data_source_exec
             .data_source()
-            .as_any()
             .downcast_ref::<FileScanConfig>()
             .expect("data source should be FileScanConfig");
         let geo_source = file_scan_conf
             .file_source()
-            .as_any()
             .downcast_ref::<GeoParquetFileSource>()
             .expect("file source should be GeoParquetFileSource");
         assert!(geo_source.inner.parquet_file_reader_factory().is_some());
@@ -1148,7 +1130,6 @@ mod test {
 
         // The result should be wrapped in MetadataPreservingColumn
         assert!(result
-            .as_any()
             .downcast_ref::<MetadataPreservingColumn>()
             .is_some());
     }
@@ -1172,7 +1153,7 @@ mod test {
         let result = wrap_expr_columns(name_column, &file_schema).unwrap();
 
         // The result should NOT be wrapped (still a Column)
-        assert!(result.as_any().downcast_ref::<Column>().is_some());
+        assert!(result.downcast_ref::<Column>().is_some());
     }
 
     /// Test that column index out of file schema bounds returns an error
