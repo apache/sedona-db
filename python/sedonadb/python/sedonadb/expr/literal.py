@@ -134,6 +134,11 @@ def _resolve_arrow_lit(obj: Any):
 
     import pyarrow as pa
 
+    # A null Arrow scalar of a nested or extension type is not accepted by
+    # pa.array([obj]); its one-element array spelling carries the same type.
+    if isinstance(obj, pa.Scalar) and not obj.is_valid:
+        return pa.array([None], type=obj.type)
+
     try:
         return pa.array([obj])
     except Exception as e:
@@ -143,8 +148,11 @@ def _resolve_arrow_lit(obj: Any):
 
 
 def _lit_from_geoarrow_scalar(obj):
+    # Every GeoArrow scalar (WKB, WKT, native point/linestring/...) exposes
+    # its WKB, so one path serves them all. The edge type travels with the
+    # CRS: a spherical (geography) scalar must not come back planar.
     wkb_value = None if obj.value is None else obj.wkb
-    return _lit_from_wkb_and_crs(wkb_value, obj.type.crs)
+    return _lit_from_wkb_and_crs(wkb_value, obj.type.crs, obj.type.edge_type)
 
 
 def _lit_from_dataframe(obj):
@@ -191,13 +199,135 @@ def _lit_from_shapely(obj):
     return _lit_from_wkb_and_crs(obj.wkb, None)
 
 
-def _lit_from_wkb_and_crs(wkb, crs):
+def _lit_from_wkb_and_crs(wkb, crs, edge_type=None):
     import geoarrow.pyarrow as ga
     import pyarrow as pa
 
     type = ga.wkb().with_crs(crs)
+    if edge_type is not None:
+        type = type.with_edge_type(edge_type)
     storage = pa.array([wkb], type.storage_type)
     return type.wrap_array(storage)
+
+
+def _lit_from_missing(obj):
+    # pandas.NA and numpy.ma.masked both mean "no value".
+    import pyarrow as pa
+
+    return pa.array([None])
+
+
+def _lit_from_nat(obj):
+    # NaT is a datetime missing value in pandas (assigning it yields a
+    # datetime64 column), so it resolves to a typed timestamp null rather
+    # than an untyped NULL.
+    import pyarrow as pa
+
+    return pa.array([None], pa.timestamp("ns"))
+
+
+def _lit_from_pandas_timestamp(obj):
+    # pa.array([Timestamp]) treats it as a datetime and resolves at
+    # microseconds, silently dropping nanoseconds. .asm8 is the instant as a
+    # numpy datetime64 at the Timestamp's own unit (UTC for a zone-aware
+    # value), which pyarrow converts exactly; the zone is then re-attached
+    # by a cast, which reinterprets the naive values as UTC without shifting
+    # them.
+    import pyarrow as pa
+
+    resolved = pa.array([obj.asm8])
+    if obj.tz is None:
+        return resolved
+    return resolved.cast(pa.timestamp(resolved.type.unit, pa.scalar(obj).type.tz))
+
+
+def _lit_from_pandas_timedelta(obj):
+    # Same nanosecond concern as Timestamp: .asm8 keeps the unit.
+    import pyarrow as pa
+
+    return pa.array([obj.asm8])
+
+
+_NUMPY_TEMPORAL_UNITS = {
+    # Arrow-native units keep their resolution.
+    "s": "s",
+    "ms": "ms",
+    "us": "us",
+    "ns": "ns",
+    # Whole multiples of seconds convert exactly to seconds.
+    "W": "s",
+    "D": "s",
+    "h": "s",
+    "m": "s",
+}
+
+
+def _lit_from_numpy_temporal(obj):
+    # pyarrow only understands the four Arrow units, so a datetime64[D] (the
+    # default unit for a bare date string) or a timedelta64[W] fails outright.
+    # Convert at a lossless unit instead of forcing nanoseconds: the ns range
+    # covers only 1677-2262, so an unchecked astype would silently wrap a
+    # coarse value centuries away.
+    import numpy as np
+    import pyarrow as pa
+
+    is_datetime = isinstance(obj, np.datetime64)
+    kind = "datetime64" if is_datetime else "timedelta64"
+    if np.isnat(obj):
+        return pa.array(
+            [None], pa.timestamp("ns") if is_datetime else pa.duration("ns")
+        )
+
+    unit = np.datetime_data(obj.dtype)[0]
+    if unit in _NUMPY_TEMPORAL_UNITS:
+        target = _NUMPY_TEMPORAL_UNITS[unit]
+    elif is_datetime and unit in ("Y", "M"):
+        # Calendar year/month positions are exact instants for a datetime
+        # (a timedelta in months or years has no fixed length).
+        target = "s"
+    elif is_datetime:
+        # Sub-nanosecond datetimes narrow to nanoseconds; the round-trip
+        # check below rejects the ones that lose precision.
+        target = "ns"
+    else:
+        raise ValueError(
+            f"Can't create SedonaDB literal from a {kind}[{unit}] value: use an "
+            f"unambiguous unit no finer than nanoseconds"
+        )
+
+    converted = obj.astype(f"{kind}[{target}]")
+    if converted.astype(obj.dtype) != obj:
+        # A same-unit conversion is the identity, so a mismatch is either a
+        # sub-nanosecond value with no exact ns form or a coarse value whose
+        # seconds form overflows int64.
+        if unit in _NUMPY_TEMPORAL_UNITS or unit in ("Y", "M"):
+            raise OverflowError(f"{obj!r} does not fit the Arrow {target!r} resolution")
+        raise ValueError(f"{obj!r} loses precision at the Arrow 'ns' resolution")
+    return pa.array([converted])
+
+
+def _lit_from_numpy_array(obj):
+    # A 0-d array is one value: unwrap to the typed NumPy scalar (which keeps
+    # the dtype, unlike .item()) and resolve that. Anything with dimensions
+    # keeps the generic behavior of becoming a single list value.
+    import pyarrow as pa
+
+    if obj.ndim == 0:
+        return _resolve_arrow_lit(obj[()])
+    return pa.array([obj])
+
+
+def _lit_from_numpy_void(obj):
+    # A plain void's payload is its bytes. A structured scalar becomes a
+    # typed Arrow struct so field names and dtypes survive (flattened to a
+    # tuple it would lose both).
+    import pyarrow as pa
+
+    if obj.dtype.fields is None:
+        return pa.array([obj.item()])
+    fields = [(name, pa.from_numpy_dtype(obj.dtype[name])) for name in obj.dtype.names]
+    payload = {name: obj[name].item() for name in obj.dtype.names}
+    return pa.array([payload], pa.struct(fields))
 
 
 def _lit_from_crs(crs):
@@ -216,9 +346,22 @@ SPECIAL_CASED_LITERALS = {
     # pandas < 3.0
     "pandas.core.frame.DataFrame": _lit_from_dataframe,
     "pandas.core.series.Series": _lit_from_series,
+    "pandas._libs.missing.NAType": _lit_from_missing,
+    "pandas._libs.tslibs.nattype.NaTType": _lit_from_nat,
+    "pandas._libs.tslibs.timestamps.Timestamp": _lit_from_pandas_timestamp,
+    "pandas._libs.tslibs.timedeltas.Timedelta": _lit_from_pandas_timedelta,
     # pandas >= 3.0
     "pandas.DataFrame": _lit_from_dataframe,
     "pandas.Series": _lit_from_series,
+    "pandas.api.typing.NAType": _lit_from_missing,
+    "pandas.api.typing.NaTType": _lit_from_nat,
+    "pandas.Timestamp": _lit_from_pandas_timestamp,
+    "pandas.Timedelta": _lit_from_pandas_timedelta,
+    "numpy.datetime64": _lit_from_numpy_temporal,
+    "numpy.timedelta64": _lit_from_numpy_temporal,
+    "numpy.ma.core.MaskedConstant": _lit_from_missing,
+    "numpy.ndarray": _lit_from_numpy_array,
+    "numpy.void": _lit_from_numpy_void,
     "pyproj.crs.crs.CRS": _lit_from_crs,
     "sedonadb.dataframe.DataFrame": _lit_from_sedonadb,
     "shapely.geometry.point.Point": _lit_from_shapely,
@@ -230,4 +373,6 @@ SPECIAL_CASED_LITERALS = {
     "shapely.geometry.multipolygon.MultiPolygon": _lit_from_shapely,
     "shapely.geometry.collection.GeometryCollection": _lit_from_shapely,
     "geoarrow.pyarrow._scalar.WkbScalar": _lit_from_geoarrow_scalar,
+    "geoarrow.pyarrow._scalar.WktScalar": _lit_from_geoarrow_scalar,
+    "geoarrow.pyarrow._scalar.GeometryExtensionScalar": _lit_from_geoarrow_scalar,
 }

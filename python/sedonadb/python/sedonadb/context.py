@@ -558,6 +558,8 @@ class SedonaContext:
         is accepted by `pyarrow.array([...])` is supported in addition to:
 
         - Shapely geometries become SedonaDB geometry objects.
+        - GeoArrow scalars (WKB, WKT, or native encodings) become SedonaDB
+        geometries with CRS and edge type (planar or spherical) preserved.
         - GeoSeries objects of length 1 become SedonaDB geometries
         with CRS preserved.
         - GeoDataFrame objects with a single column and single row become
@@ -569,6 +571,12 @@ class SedonaContext:
         value.
         - pyproj CRS objects become PROJJSON strings (e.g., so they may be used
         in `ST_SetCRS()`, `ST_Point()`, or `ST_GeomFromWKT()`).
+        - pandas `Timestamp` and `Timedelta` values keep their full resolution
+        (and time zone); `pandas.NA` and `numpy.ma.masked` become NULL and
+        `pandas.NaT` a timestamp NULL.
+        - NumPy `datetime64`/`timedelta64` values in any unit convert at a
+        lossless Arrow resolution, 0-d arrays resolve as their scalar, and
+        structured `numpy.void` values become structs.
         """
         return lit_expr(value, ctx=self)
 
