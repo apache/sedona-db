@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::{sync::Arc};
+use std::sync::Arc;
 
 use arrow_array::{Array, Float64Array, Int32Array, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema, SchemaRef};
@@ -365,7 +365,7 @@ impl ExecutionPlan for StatsOverrideExec {
         "StatsOverrideExec"
     }
 
-    fn properties(&self) -> &PlanProperties {
+    fn properties(&self) -> &Arc<PlanProperties> {
         &self.properties
     }
 
@@ -657,7 +657,7 @@ fn find_spatial_join_exec_arc(
 ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
     let mut found = None;
     plan.apply(|node| {
-        if node.as_any().downcast_ref::<SpatialJoinExec>().is_some() {
+        if node.downcast_ref::<SpatialJoinExec>().is_some() {
             found = Some(Arc::clone(node));
             return Ok(TreeNodeRecursion::Stop);
         }
@@ -1215,7 +1215,7 @@ async fn run_spatial_join_query(
 fn collect_spatial_join_exec(plan: &Arc<dyn ExecutionPlan>) -> Result<Vec<&SpatialJoinExec>> {
     let mut spatial_join_execs = Vec::new();
     plan.apply(|node| {
-        if let Some(spatial_join_exec) = node.as_any().downcast_ref::<SpatialJoinExec>() {
+        if let Some(spatial_join_exec) = node.downcast_ref::<SpatialJoinExec>() {
             spatial_join_execs.push(spatial_join_exec);
         }
         Ok(TreeNodeRecursion::Continue)
@@ -1284,7 +1284,7 @@ async fn test_mark_join(
     fn collect_nlj_exec(plan: &Arc<dyn ExecutionPlan>) -> Result<Vec<&NestedLoopJoinExec>> {
         let mut execs = Vec::new();
         plan.apply(|node| {
-            if let Some(exec) = node.as_any().downcast_ref::<NestedLoopJoinExec>() {
+            if let Some(exec) = node.downcast_ref::<NestedLoopJoinExec>() {
                 execs.push(exec);
             }
             Ok(TreeNodeRecursion::Continue)
@@ -1976,7 +1976,7 @@ async fn test_knn_join_mixed_filter_only_query_side_pushed_down() -> Result<()> 
 
 /// Check if there is a `FilterExec` node that is an ancestor of a `SpatialJoinExec`.
 fn has_filter_exec_above_spatial_join(plan: &Arc<dyn ExecutionPlan>) -> bool {
-    if plan.as_any().downcast_ref::<FilterExec>().is_some() {
+    if plan.downcast_ref::<FilterExec>().is_some() {
         // Check if any descendant of this FilterExec is a SpatialJoinExec
         for child in plan.children() {
             if contains_spatial_join_exec(child) {
@@ -1997,7 +1997,7 @@ fn has_filter_exec_above_spatial_join(plan: &Arc<dyn ExecutionPlan>) -> bool {
 fn contains_spatial_join_exec(plan: &Arc<dyn ExecutionPlan>) -> bool {
     let mut found = false;
     plan.apply(|node| {
-        if node.as_any().downcast_ref::<SpatialJoinExec>().is_some() {
+        if node.downcast_ref::<SpatialJoinExec>().is_some() {
             found = true;
             return Ok(TreeNodeRecursion::Stop);
         }
@@ -2011,7 +2011,7 @@ fn contains_spatial_join_exec(plan: &Arc<dyn ExecutionPlan>) -> bool {
 fn subtree_contains_filter_exec(plan: &Arc<dyn ExecutionPlan>) -> bool {
     let mut found = false;
     plan.apply(|node| {
-        if node.as_any().downcast_ref::<FilterExec>().is_some() {
+        if node.downcast_ref::<FilterExec>().is_some() {
             found = true;
             return Ok(TreeNodeRecursion::Stop);
         }
@@ -2025,7 +2025,7 @@ fn subtree_contains_filter_exec(plan: &Arc<dyn ExecutionPlan>) -> bool {
 fn subtree_contains_probe_shuffle_exec(plan: &Arc<dyn ExecutionPlan>) -> bool {
     let mut found = false;
     plan.apply(|node| {
-        if node.as_any().downcast_ref::<ProbeShuffleExec>().is_some() {
+        if node.downcast_ref::<ProbeShuffleExec>().is_some() {
             found = true;
             return Ok(TreeNodeRecursion::Stop);
         }

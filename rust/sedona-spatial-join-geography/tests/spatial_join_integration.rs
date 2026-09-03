@@ -139,7 +139,7 @@ fn collect_spatial_join_exec(
 ) -> Result<Vec<&SpatialJoinExec>> {
     let mut spatial_join_execs = Vec::new();
     plan.apply(|node| {
-        if let Some(spatial_join_exec) = node.as_any().downcast_ref::<SpatialJoinExec>() {
+        if let Some(spatial_join_exec) = node.downcast_ref::<SpatialJoinExec>() {
             spatial_join_execs.push(spatial_join_exec);
         }
         Ok(TreeNodeRecursion::Continue)

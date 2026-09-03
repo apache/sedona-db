@@ -194,7 +194,7 @@ mod tests {
 
     use datafusion_datasource::PartitionedFile;
     use las::{point::Format, Builder, Writer};
-    use object_store::{ObjectStoreExt, local::LocalFileSystem, path::Path};
+    use object_store::{local::LocalFileSystem, path::Path, ObjectStoreExt};
 
     use crate::las::reader::LasFileReaderFactory;
 

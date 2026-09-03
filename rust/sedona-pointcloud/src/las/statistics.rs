@@ -358,7 +358,7 @@ mod tests {
     use arrow_array::{cast::AsArray, types::UInt64Type};
     use datafusion_pruning::PruningStatistics;
     use las::{point::Format, Builder, Point, Writer};
-    use object_store::{ObjectStoreExt, local::LocalFileSystem, path::Path};
+    use object_store::{local::LocalFileSystem, path::Path, ObjectStoreExt};
     use sedona_geometry::bounding_box::BoundingBox;
 
     use crate::las::{
