@@ -5758,6 +5758,7 @@ dependencies = [
  "datafusion-proto",
  "futures",
  "libc",
+ "prost",
  "sedona-common",
  "sedona-expr",
  "sedona-schema",

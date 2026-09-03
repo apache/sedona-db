@@ -229,14 +229,20 @@ impl<'a> ImportedExprView<'a> {
     pub fn to_expr(&self, registry: Option<&dyn FunctionRegistry>) -> Result<Expr> {
         #[cfg(feature = "protobuf")]
         {
-            use datafusion_proto::bytes::Serializeable;
+            use datafusion_proto::{logical_plan::from_proto::parse_expr, protobuf};
+            use prost::Message;
 
             let bytes = self.get_bytes_property("datafusion_expr_protobuf")?;
             let context = match registry {
                 Some(registry) => task_context_from_registry(registry)?,
                 None => TaskContext::default(),
             };
-            Expr::from_bytes_with_ctx(&bytes, &context)
+            let protobuf = protobuf::LogicalExprNode::decode(bytes.as_slice()).map_err(|e| {
+                sedona_internal_datafusion_err!("Error decoding expr as protobuf: {e}")
+            })?;
+            parse_expr(&protobuf, &context, &PlaceholderLogicalExtensionCodec).map_err(|e| {
+                sedona_internal_datafusion_err!("Error parsing protobuf into Expr: {e}")
+            })
         }
 
         #[cfg(not(feature = "protobuf"))]
@@ -253,6 +259,62 @@ impl<'a> ImportedExprView<'a> {
     /// Get a binary property from this expression view.
     pub fn get_bytes_property(&self, property: &str) -> Result<Vec<u8>> {
         get_expr_view_bytes_property(self.inner, property)
+    }
+}
+
+/// Protobuf codec that preserves unresolved functions as non-executable placeholders.
+#[cfg(feature = "protobuf")]
+#[derive(Debug)]
+struct PlaceholderLogicalExtensionCodec;
+
+#[cfg(feature = "protobuf")]
+impl datafusion_proto::logical_plan::LogicalExtensionCodec for PlaceholderLogicalExtensionCodec {
+    fn try_decode(
+        &self,
+        _buf: &[u8],
+        _inputs: &[datafusion_expr::LogicalPlan],
+        _ctx: &TaskContext,
+    ) -> Result<datafusion_expr::logical_plan::Extension> {
+        sedona_internal_err!("Logical plan extensions are not supported when importing expressions")
+    }
+
+    fn try_encode(
+        &self,
+        _node: &datafusion_expr::logical_plan::Extension,
+        _buf: &mut Vec<u8>,
+    ) -> Result<()> {
+        sedona_internal_err!("Logical plan extensions are not supported when importing expressions")
+    }
+
+    fn try_decode_table_provider(
+        &self,
+        _buf: &[u8],
+        _table_ref: &datafusion_common::TableReference,
+        _schema: arrow_schema::SchemaRef,
+        _ctx: &TaskContext,
+    ) -> Result<Arc<dyn datafusion_catalog::TableProvider>> {
+        sedona_internal_err!("Table providers are not supported when importing expressions")
+    }
+
+    fn try_encode_table_provider(
+        &self,
+        _table_ref: &datafusion_common::TableReference,
+        _node: Arc<dyn datafusion_catalog::TableProvider>,
+        _buf: &mut Vec<u8>,
+    ) -> Result<()> {
+        sedona_internal_err!("Table providers are not supported when importing expressions")
+    }
+
+    fn try_decode_udf(&self, name: &str, _buf: &[u8]) -> Result<Arc<ScalarUDF>> {
+        PlaceholderRegistry.udf(name)
+    }
+
+    fn try_decode_udaf(&self, name: &str, _buf: &[u8]) -> Result<Arc<AggregateUDF>> {
+        PlaceholderRegistry.udaf(name)
+    }
+
+    fn try_decode_udwf(&self, name: &str, _buf: &[u8]) -> Result<Arc<WindowUDF>> {
+        PlaceholderRegistry.udwf(name)
     }
 }
 
