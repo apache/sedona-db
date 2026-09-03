@@ -398,6 +398,18 @@ impl GeometryTypeAndDimensionsSet {
         self.types |= 1 << bit_position;
     }
 
+    /// The raw bitset backing this set. Round-trips with [`from_bits`](Self::from_bits).
+    #[inline]
+    pub fn bits(&self) -> u32 {
+        self.types
+    }
+
+    /// Construct a set directly from a raw bitset produced by [`bits`](Self::bits).
+    #[inline]
+    pub fn from_bits(bits: u32) -> Self {
+        Self { types: bits }
+    }
+
     /// Merge the given set into this set.
     #[inline]
     pub fn merge(&mut self, other: &Self) {

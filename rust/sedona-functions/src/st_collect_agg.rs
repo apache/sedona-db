@@ -20,7 +20,7 @@ use crate::executor::WkbExecutor;
 use arrow_array::ArrayRef;
 use arrow_schema::{DataType, Field, FieldRef};
 use datafusion_common::{
-    cast::{as_binary_array, as_int64_array, as_string_array},
+    cast::{as_binary_array, as_int64_array, as_uint32_array},
     error::{DataFusionError, Result},
     exec_err, ScalarValue,
 };
@@ -86,8 +86,7 @@ impl SedonaAccumulator for STCollectAggr {
 
     fn state_fields(&self, _args: &[SedonaType]) -> Result<Vec<FieldRef>> {
         Ok(vec![
-            Arc::new(Field::new("unique_geometry_types", DataType::Utf8, false)),
-            Arc::new(Field::new("unique_dimensions", DataType::Utf8, false)),
+            Arc::new(Field::new("types_and_dims", DataType::UInt32, false)),
             Arc::new(Field::new("count", DataType::Int64, false)),
             Arc::new(WKB_GEOMETRY.to_storage_field("item", true)?),
         ])
@@ -208,31 +207,10 @@ impl Accumulator for CollectionAccumulator {
     }
 
     fn state(&mut self) -> Result<Vec<ScalarValue>> {
-        // Both columns keep the exact pre-bitset wire format: a JSON list of
-        // geometry types, and a JSON list of dimensions wrapped as
-        // (Geometry, dimensions) pairs.
-        let geometry_types_value = serde_json::to_string(&self.types_and_dims.geometry_types())
-            .map_err(|e| DataFusionError::External(Box::new(e)))?;
-        let dimensions_value = serde_json::to_string(
-            &self
-                .types_and_dims
-                .dimensions()
-                .into_iter()
-                .map(|dim| GeometryTypeAndDimensions::new(GeometryTypeId::Geometry, dim))
-                .collect::<Vec<_>>(),
-        )
-        .map_err(|e| DataFusionError::External(Box::new(e)))?;
-
-        let serialized_geometry_types = ScalarValue::Utf8(Some(geometry_types_value));
-        let serialized_dimensions = ScalarValue::Utf8(Some(dimensions_value));
-        let serialized_count = ScalarValue::Int64(Some(self.count));
-        let serialized_item = ScalarValue::Binary(self.item.take());
-
         Ok(vec![
-            serialized_geometry_types,
-            serialized_dimensions,
-            serialized_count,
-            serialized_item,
+            ScalarValue::UInt32(Some(self.types_and_dims.bits())),
+            ScalarValue::Int64(Some(self.count)),
+            ScalarValue::Binary(self.item.take()),
         ])
     }
 
@@ -242,9 +220,9 @@ impl Accumulator for CollectionAccumulator {
     }
 
     fn merge_batch(&mut self, states: &[ArrayRef]) -> Result<()> {
-        if states.len() != 4 {
+        if states.len() != 3 {
             return sedona_internal_err!(
-                "Unexpected number of state fields for st_collect() (expected 4, got {})",
+                "Unexpected number of state fields for st_collect() (expected 3, got {})",
                 states.len()
             );
         }
@@ -255,50 +233,15 @@ impl Accumulator for CollectionAccumulator {
             return sedona_internal_err!("Unexpected internal state in ST_Collect_Agg()");
         };
 
-        let mut geometry_types_iter = as_string_array(&states[0])?.into_iter();
-        let mut dimensions_iter = as_string_array(&states[1])?.into_iter();
-        let mut count_iter = as_int64_array(&states[2])?.into_iter();
-        let mut item_iter = as_binary_array(&states[3])?.into_iter();
+        let mut bits_iter = as_uint32_array(&states[0])?.into_iter();
+        let mut count_iter = as_int64_array(&states[1])?.into_iter();
+        let mut item_iter = as_binary_array(&states[2])?.into_iter();
 
-        for _ in 0..geometry_types_iter.len() {
-            match (
-                geometry_types_iter.next(),
-                dimensions_iter.next(),
-                count_iter.next(),
-                item_iter.next(),
-            ) {
-                (
-                    Some(Some(serialized_geometry_types)),
-                    Some(Some(serialized_dimensions)),
-                    Some(Some(count)),
-                    Some(Some(item)),
-                ) => {
-                    let geometry_types =
-                        serde_json::from_str::<Vec<GeometryTypeId>>(serialized_geometry_types)
-                            .map_err(|e| DataFusionError::External(Box::new(e)))?;
-                    let dimensions = serde_json::from_str::<Vec<GeometryTypeAndDimensions>>(
-                        serialized_dimensions,
-                    )
-                    .map_err(|e| DataFusionError::External(Box::new(e)))?
-                    .into_iter()
-                    .map(|item| item.dimensions())
-                    .collect::<Vec<_>>();
-
-                    // The state stores the two marginals; only the marginals
-                    // are ever consumed, so inserting the cross product
-                    // reconstructs them exactly in the pair bitset. (A state
-                    // produced by update_batch never has one marginal empty
-                    // while the other is not.)
-                    for geometry_type in &geometry_types {
-                        for dimensions in &dimensions {
-                            self.types_and_dims
-                                .insert(&GeometryTypeAndDimensions::new(
-                                    *geometry_type,
-                                    *dimensions,
-                                ))
-                                .map_err(|e| DataFusionError::External(Box::new(e)))?;
-                        }
-                    }
+        for _ in 0..bits_iter.len() {
+            match (bits_iter.next(), count_iter.next(), item_iter.next()) {
+                (Some(Some(bits)), Some(Some(count)), Some(Some(item))) => {
+                    self.types_and_dims
+                        .merge(&GeometryTypeAndDimensionsSet::from_bits(bits));
                     self.count += count;
                     item_ref.extend_from_slice(&item[WKB_HEADER_SIZE..item.len()]);
                 }
@@ -546,36 +489,28 @@ mod test {
         );
     }
 
-    /// The bitset swap must not change the serialized state wire format:
-    /// column 0 is a JSON list of geometry types and column 1 a JSON list of
-    /// dimensions wrapped as (Geometry, dims) pairs, exactly as the HashSet
-    /// implementation produced, so states merge across versions.
+    /// A serialized state round-trips: emitting state and merging it back into
+    /// a fresh accumulator reconstructs the same type/dimension set and count.
     #[test]
-    fn state_wire_format_is_unchanged() {
+    fn state_round_trips() {
         let mut acc = CollectionAccumulator::try_new(WKB_GEOMETRY, WKB_GEOMETRY).unwrap();
-        acc.types_and_dims
-            .insert(&GeometryTypeAndDimensions::new(
-                GeometryTypeId::Point,
-                Dimensions::Xy,
-            ))
-            .unwrap();
-        acc.count = 1;
+        for td in [
+            GeometryTypeAndDimensions::new(GeometryTypeId::Point, Dimensions::Xy),
+            GeometryTypeAndDimensions::new(GeometryTypeId::LineString, Dimensions::Xyz),
+        ] {
+            acc.types_and_dims.insert(&td).unwrap();
+        }
+        acc.count = 3;
+        let expected_set = acc.types_and_dims.clone();
 
         let state = acc.state().unwrap();
-        let (ScalarValue::Utf8(Some(types_json)), ScalarValue::Utf8(Some(dims_json))) =
-            (&state[0], &state[1])
-        else {
-            panic!("unexpected state field types");
-        };
-        assert_eq!(types_json.as_str(), "[\"Point\"]");
-        assert_eq!(
-            dims_json.as_str(),
-            serde_json::to_string(&[GeometryTypeAndDimensions::new(
-                GeometryTypeId::Geometry,
-                Dimensions::Xy
-            )])
-            .unwrap()
-        );
+        let arrays: Vec<ArrayRef> = state.iter().map(|s| s.to_array().unwrap()).collect();
+
+        let mut merged = CollectionAccumulator::try_new(WKB_GEOMETRY, WKB_GEOMETRY).unwrap();
+        merged.merge_batch(&arrays).unwrap();
+
+        assert_eq!(merged.types_and_dims, expected_set);
+        assert_eq!(merged.count, 3);
     }
 
     /// Regression test for memory accounting: the accumulator must report an
