@@ -25,6 +25,7 @@ use std::{
 };
 
 use arrow_schema::{DataType, Schema, SchemaRef};
+use bytes::Bytes;
 use datafusion_common::{
     error::DataFusionError, scalar::ScalarValue, stats::Precision, ColumnStatistics, Statistics,
 };
@@ -259,9 +260,13 @@ pub async fn fetch_header(
     let mut builder = Builder::new(raw_header)?;
 
     // VLRs
-    let bytes = store
-        .get_range(location, header_size..offset_to_point_data)
-        .await?;
+    let bytes = if header_size == offset_to_point_data {
+        Bytes::new()
+    } else {
+        store
+            .get_range(location, header_size..offset_to_point_data)
+            .await?
+    };
     let mut reader = Cursor::new(bytes);
 
     for _ in 0..num_vlr {
