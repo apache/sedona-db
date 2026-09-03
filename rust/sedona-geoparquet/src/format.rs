@@ -42,6 +42,7 @@ use datafusion_common::{
     tree_node::{Transformed, TreeNode, TreeNodeRecursion},
     DataFusionError,
 };
+use datafusion_datasource::morsel::Morselizer;
 use datafusion_datasource_parquet::metadata::DFParquetMetadata;
 use datafusion_datasource_parquet::{CachedParquetFileReaderFactory, ParquetFileReaderFactory};
 use datafusion_execution::cache::cache_manager::FileMetadataCache;
@@ -61,7 +62,7 @@ use sedona_geometry::bounds::WkbBounder2DFactory;
 use sedona_schema::extension_type::ExtensionType;
 
 use crate::{
-    file_opener::{storage_schema_contains_geo, GeoParquetFileOpener, GeoParquetFileOpenerMetrics},
+    file_opener::{storage_schema_contains_geo, GeoParquetFileOpenerMetrics, GeoParquetMorselizer},
     metadata::{GeoParquetColumnEncoding, GeoParquetMetadata},
     options::TableGeoParquetOptions,
     writer::create_geoparquet_writer_physical_plan,
@@ -420,7 +421,7 @@ impl FileFormat for GeoParquetFormat {
 ///
 /// The primary reason for this is to (1) ensure that the schema we pass
 /// to the Parquet file opener is the raw/unwrapped schema and (2) provide a
-/// custom [FileOpener] that implements pruning based on a predicate and
+/// custom [Morselizer] that implements pruning based on a predicate and
 /// column statistics. We have to keep a copy of `metadata_size_hint` and
 /// `predicate` because the [ParquetSource] marks these fields as private
 /// and we need them for our custom file opener.
@@ -586,16 +587,29 @@ impl FileSource for GeoParquetFileSource {
             return sedona_internal_err!("Error constructing GeoParquetFileSource: {err}");
         }
 
-        let inner_opener =
-            self.inner
-                .create_file_opener(object_store.clone(), base_config, partition)?;
+        let _ = (object_store, base_config, partition);
+        sedona_internal_err!("GeoParquetFileSource supports the Morsel API; use create_morselizer")
+    }
 
-        if !storage_schema_contains_geo(base_config.file_schema()) {
-            return Ok(inner_opener);
+    fn create_morselizer(
+        &self,
+        object_store: Arc<dyn ObjectStore>,
+        base_config: &FileScanConfig,
+        partition: usize,
+    ) -> Result<Box<dyn Morselizer>> {
+        if let Some(err) = &self.deferred_error {
+            return sedona_internal_err!("Error constructing GeoParquetFileSource: {err}");
         }
 
-        Ok(Arc::new(GeoParquetFileOpener {
-            inner: inner_opener,
+        let inner = self
+            .inner
+            .create_morselizer(object_store.clone(), base_config, partition)?;
+        if !storage_schema_contains_geo(base_config.file_schema()) {
+            return Ok(inner);
+        }
+
+        Ok(Box::new(GeoParquetMorselizer {
+            inner: Arc::from(inner),
             object_store,
             metadata_size_hint: self.metadata_size_hint,
             predicate: self.predicate.clone(),

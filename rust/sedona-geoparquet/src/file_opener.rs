@@ -14,18 +14,16 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, fmt, sync::Arc};
 
 use arrow_array::{Array, RecordBatch};
 use arrow_schema::{DataType, SchemaRef};
-use datafusion::datasource::{
-    listing::PartitionedFile,
-    physical_plan::{parquet::ParquetAccessPlan, FileOpenFuture, FileOpener},
-};
+use datafusion::datasource::{listing::PartitionedFile, physical_plan::parquet::ParquetAccessPlan};
 use datafusion_common::{
     cast::{as_binary_array, as_binary_view_array, as_large_binary_array},
     exec_err, Result,
 };
+use datafusion_datasource::morsel::{Morsel, MorselPlan, MorselPlanner, Morselizer};
 use datafusion_datasource_parquet::metadata::DFParquetMetadata;
 use datafusion_execution::cache::cache_manager::FileMetadataCache;
 use datafusion_physical_expr::PhysicalExpr;
@@ -99,13 +97,14 @@ impl GeoParquetFileOpenerMetrics {
     }
 }
 
-/// Geo-aware [FileOpener] implementing file and row group pruning
+/// Geo-aware wrapper around a native Parquet [`Morselizer`].
 ///
-/// Pruning happens (for Parquet) in the [FileOpener], so we implement
-/// that here, too.
-#[derive(Clone)]
-pub(crate) struct GeoParquetFileOpener {
-    pub inner: Arc<dyn FileOpener>,
+/// GeoParquet needs the footer before it can apply its spatial row-group pruning.
+/// The first planner therefore represents that metadata I/O phase. Once complete,
+/// it attaches the resulting [`ParquetAccessPlan`] to the file and delegates all
+/// subsequent morsel planning to Parquet's native implementation.
+pub(crate) struct GeoParquetMorselizer {
+    pub inner: Arc<dyn Morselizer>,
     pub object_store: Arc<dyn ObjectStore>,
     pub metadata_size_hint: Option<usize>,
     pub predicate: Option<Arc<dyn PhysicalExpr>>,
@@ -114,97 +113,200 @@ pub(crate) struct GeoParquetFileOpener {
     pub metrics: GeoParquetFileOpenerMetrics,
     pub options: TableGeoParquetOptions,
     pub metadata_cache: Option<Arc<dyn FileMetadataCache>>,
-    /// Factory for creating bounders used for spatial pruning
-    ///
-    /// Enables spatial pruning for both GEOMETRY and GEOGRAPHY columns.
-    /// This is typically obtained from `SedonaOptions::runtime.bounder_factory()`.
     pub bounder_factory: WkbBounder2DFactory,
 }
 
-impl FileOpener for GeoParquetFileOpener {
-    fn open(&self, file: PartitionedFile) -> Result<FileOpenFuture> {
-        let self_clone = self.clone();
+impl fmt::Debug for GeoParquetMorselizer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GeoParquetMorselizer")
+            .finish_non_exhaustive()
+    }
+}
 
-        Ok(Box::pin(async move {
-            let parquet_metadata =
-                DFParquetMetadata::new(&self_clone.object_store, &file.object_meta)
-                    .with_metadata_size_hint(self_clone.metadata_size_hint)
-                    .with_file_metadata_cache(self_clone.metadata_cache)
-                    .fetch_metadata()
-                    .await?;
+impl Morselizer for GeoParquetMorselizer {
+    fn plan_file(&self, file: PartitionedFile) -> Result<Box<dyn MorselPlanner>> {
+        Ok(Box::new(GeoParquetMetadataPlanner {
+            inner: self.inner.clone(),
+            file: Some(file),
+            object_store: self.object_store.clone(),
+            metadata_size_hint: self.metadata_size_hint,
+            predicate: self.predicate.clone(),
+            file_schema: self.file_schema.clone(),
+            enable_pruning: self.enable_pruning,
+            metrics: self.metrics.clone(),
+            options: self.options.clone(),
+            metadata_cache: self.metadata_cache.clone(),
+            bounder_factory: self.bounder_factory.clone(),
+        }))
+    }
+}
 
+struct GeoParquetMetadataPlanner {
+    inner: Arc<dyn Morselizer>,
+    file: Option<PartitionedFile>,
+    object_store: Arc<dyn ObjectStore>,
+    metadata_size_hint: Option<usize>,
+    predicate: Option<Arc<dyn PhysicalExpr>>,
+    file_schema: SchemaRef,
+    enable_pruning: bool,
+    metrics: GeoParquetFileOpenerMetrics,
+    options: TableGeoParquetOptions,
+    metadata_cache: Option<Arc<dyn FileMetadataCache>>,
+    bounder_factory: WkbBounder2DFactory,
+}
+
+impl fmt::Debug for GeoParquetMetadataPlanner {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GeoParquetMetadataPlanner")
+            .finish_non_exhaustive()
+    }
+}
+
+impl MorselPlanner for GeoParquetMetadataPlanner {
+    fn plan(mut self: Box<Self>) -> Result<Option<MorselPlan>> {
+        let file = self
+            .file
+            .take()
+            .expect("GeoParquet planner may only be planned once");
+        Ok(Some(MorselPlan::new().with_pending_planner(async move {
+            let parquet_metadata = DFParquetMetadata::new(&self.object_store, &file.object_meta)
+                .with_metadata_size_hint(self.metadata_size_hint)
+                .with_file_metadata_cache(self.metadata_cache)
+                .fetch_metadata()
+                .await?;
             let mut access_plan = ParquetAccessPlan::new_all(parquet_metadata.num_row_groups());
-
-            let maybe_geoparquet_metadata = GeoParquetMetadata::try_from_parquet_metadata(
+            let metadata = GeoParquetMetadata::try_from_parquet_metadata(
                 &parquet_metadata,
-                self_clone.options.geometry_columns.inner(),
+                self.options.geometry_columns.inner(),
             )?;
 
-            if self_clone.enable_pruning {
-                if let Some(predicate) = self_clone.predicate.as_ref() {
-                    let factory = SpatialFilterFactory::default()
-                        .with_bounder_factory(self_clone.bounder_factory.clone());
-
-                    let spatial_filter = factory.try_from_expr(predicate)?;
-
-                    if let Some(geoparquet_metadata) = maybe_geoparquet_metadata.as_ref() {
-                        filter_access_plan_using_geoparquet_file_metadata(
-                            &self_clone.file_schema,
-                            &mut access_plan,
-                            &spatial_filter,
-                            geoparquet_metadata,
-                            &self_clone.metrics,
-                        )?;
-
-                        filter_access_plan_using_geoparquet_covering(
-                            &self_clone.file_schema,
-                            &mut access_plan,
-                            &spatial_filter,
-                            geoparquet_metadata,
-                            &parquet_metadata,
-                            &self_clone.metrics,
-                        )?;
-
-                        filter_access_plan_using_native_geostats(
-                            &self_clone.file_schema,
-                            &mut access_plan,
-                            &spatial_filter,
-                            &parquet_metadata,
-                            &self_clone.metrics,
-                        )?;
-                    }
+            if self.enable_pruning {
+                if let (Some(predicate), Some(metadata)) =
+                    (self.predicate.as_ref(), metadata.as_ref())
+                {
+                    let spatial_filter = SpatialFilterFactory::default()
+                        .with_bounder_factory(self.bounder_factory.clone())
+                        .try_from_expr(predicate)?;
+                    filter_access_plan_using_geoparquet_file_metadata(
+                        &self.file_schema,
+                        &mut access_plan,
+                        &spatial_filter,
+                        metadata,
+                        &self.metrics,
+                    )?;
+                    filter_access_plan_using_geoparquet_covering(
+                        &self.file_schema,
+                        &mut access_plan,
+                        &spatial_filter,
+                        metadata,
+                        &parquet_metadata,
+                        &self.metrics,
+                    )?;
+                    filter_access_plan_using_native_geostats(
+                        &self.file_schema,
+                        &mut access_plan,
+                        &spatial_filter,
+                        &parquet_metadata,
+                        &self.metrics,
+                    )?;
                 }
             }
 
-            // When we have built-in GEOMETRY/GEOGRAPHY types, we can filter the access plan
-            // from the native GeoStatistics here.
-
-            // We could also consider filtering using null_count here in the future (i.e.,
-            // skip row groups that are all null)
-            let file = file.with_extension(access_plan);
-            let stream = self_clone.inner.open(file)?.await?;
-
-            // Validate geometry columns when enabled from read option.
-            let validation_columns = if self_clone.options.validate {
-                maybe_geoparquet_metadata
+            let validation_columns = if self.options.validate {
+                metadata
                     .as_ref()
-                    .map(|metadata| wkb_validation_columns(&self_clone.file_schema, metadata))
+                    .map(|metadata| wkb_validation_columns(&self.file_schema, metadata))
                     .unwrap_or_default()
             } else {
                 Vec::new()
             };
+            let planner = self.inner.plan_file(file.with_extension(access_plan))?;
+            Ok(Box::new(GeoParquetValidationPlanner::new(
+                planner,
+                Arc::new(validation_columns),
+            )) as Box<dyn MorselPlanner>)
+        })))
+    }
+}
 
-            if !self_clone.options.validate || validation_columns.is_empty() {
-                return Ok(stream);
-            }
+struct GeoParquetValidationPlanner {
+    inner: Box<dyn MorselPlanner>,
+    validation_columns: Arc<Vec<(usize, String)>>,
+}
 
-            let validated_stream = stream.map(move |batch_result| {
-                let batch = batch_result?;
-                validate_wkb_batch(&batch, &validation_columns)?;
-                Ok(batch)
+impl GeoParquetValidationPlanner {
+    fn new(inner: Box<dyn MorselPlanner>, validation_columns: Arc<Vec<(usize, String)>>) -> Self {
+        Self {
+            inner,
+            validation_columns,
+        }
+    }
+}
+
+impl fmt::Debug for GeoParquetValidationPlanner {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GeoParquetValidationPlanner")
+            .finish_non_exhaustive()
+    }
+}
+
+impl MorselPlanner for GeoParquetValidationPlanner {
+    fn plan(self: Box<Self>) -> Result<Option<MorselPlan>> {
+        let Some(mut plan) = self.inner.plan()? else {
+            return Ok(None);
+        };
+        let columns = self.validation_columns;
+        let morsels = plan
+            .take_morsels()
+            .into_iter()
+            .map(|inner| {
+                Box::new(GeoParquetValidationMorsel {
+                    inner,
+                    validation_columns: columns.clone(),
+                }) as Box<dyn Morsel>
+            })
+            .collect();
+        let planners = plan
+            .take_ready_planners()
+            .into_iter()
+            .map(|inner| Box::new(Self::new(inner, columns.clone())) as Box<dyn MorselPlanner>)
+            .collect();
+        let pending = plan.take_pending_planner();
+        let mut wrapped = MorselPlan::new()
+            .with_morsels(morsels)
+            .with_planners(planners);
+        if let Some(pending) = pending {
+            wrapped.set_pending_planner(async move {
+                let inner = pending.await?;
+                Ok(Box::new(Self::new(inner, columns)) as Box<dyn MorselPlanner>)
             });
+        }
+        Ok(Some(wrapped))
+    }
+}
 
-            Ok(Box::pin(validated_stream))
+struct GeoParquetValidationMorsel {
+    inner: Box<dyn Morsel>,
+    validation_columns: Arc<Vec<(usize, String)>>,
+}
+
+impl fmt::Debug for GeoParquetValidationMorsel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GeoParquetValidationMorsel")
+            .finish_non_exhaustive()
+    }
+}
+
+impl Morsel for GeoParquetValidationMorsel {
+    fn into_stream(self: Box<Self>) -> futures::stream::BoxStream<'static, Result<RecordBatch>> {
+        if self.validation_columns.is_empty() {
+            return self.inner.into_stream();
+        }
+        let columns = self.validation_columns;
+        Box::pin(self.inner.into_stream().map(move |result| {
+            let batch = result?;
+            validate_wkb_batch(&batch, &columns)?;
+            Ok(batch)
         }))
     }
 }
