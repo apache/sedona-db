@@ -862,6 +862,60 @@ mod test {
     }
 
     #[test]
+    fn geometry_type_set_type_dimension_matrix() {
+        // Every (GeometryTypeId, Dimensions) pair must round-trip through the
+        // u32 bit encoding. A set holding exactly one pair must project back to
+        // that single geometry type and that single dimension, which exercises
+        // the shift/mask bookkeeping in `insert`, `geometry_types`, and
+        // `dimensions` across the whole matrix (nothing else pins the bits down).
+        let all_types = [
+            Geometry,
+            Point,
+            LineString,
+            Polygon,
+            MultiPoint,
+            MultiLineString,
+            MultiPolygon,
+            GeometryCollection,
+        ];
+        let all_dimensions = [Xy, Xyz, Xym, Xyzm];
+
+        for geometry_type in all_types {
+            for dimensions in all_dimensions {
+                let mut set = GeometryTypeAndDimensionsSet::new();
+                set.insert(&GeometryTypeAndDimensions::new(geometry_type, dimensions))
+                    .unwrap();
+
+                assert_eq!(
+                    set.geometry_types(),
+                    vec![geometry_type],
+                    "geometry_types() mismatch for {geometry_type:?} {dimensions:?}"
+                );
+                assert_eq!(
+                    set.dimensions(),
+                    vec![dimensions],
+                    "dimensions() mismatch for {geometry_type:?} {dimensions:?}"
+                );
+
+                // The raw bit encoding must round-trip through from_bits(bits())
+                // and still project to the same single type and dimension.
+                let restored = GeometryTypeAndDimensionsSet::from_bits(set.bits());
+                assert_eq!(restored, set);
+                assert_eq!(
+                    restored.geometry_types(),
+                    vec![geometry_type],
+                    "from_bits geometry_types() mismatch for {geometry_type:?} {dimensions:?}"
+                );
+                assert_eq!(
+                    restored.dimensions(),
+                    vec![dimensions],
+                    "from_bits dimensions() mismatch for {geometry_type:?} {dimensions:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn geometry_type_set_serde_empty() {
         let set = GeometryTypeAndDimensionsSet::new();
 
