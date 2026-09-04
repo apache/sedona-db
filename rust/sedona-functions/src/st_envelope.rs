@@ -14,10 +14,11 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::{marker::PhantomData, sync::Arc, vec};
+use std::{sync::Arc, vec};
 
-use crate::executor::WkbBytesExecutor;
+use crate::executor::{bounder_for_arg_type, WkbBytesExecutor};
 use arrow_array::builder::BinaryBuilder;
+use datafusion_common::config::ConfigOptions;
 use datafusion_common::{
     error::{DataFusionError, Result},
     exec_datafusion_err,
@@ -30,7 +31,7 @@ use sedona_expr::{
     scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
 };
 use sedona_geometry::{
-    bounds::{WkbBounder2D, WkbGeometryBounder},
+    bounds::WkbBounder2D,
     interval::{Interval, IntervalTrait, WraparoundInterval},
     wkb_factory::{
         write_wkb_empty_point, write_wkb_geometrycollection_header, write_wkb_linestring,
@@ -50,30 +51,27 @@ use sedona_schema::{
 pub fn st_envelope_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_envelope",
-        ItemCrsKernel::wrap_impl(vec![Arc::new(STEnvelope::<WkbGeometryBounder>::new(
-            ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY),
-        ))]),
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STEnvelope::new(ArgMatcher::new(
+            vec![ArgMatcher::is_geometry_or_geography()],
+            WKB_GEOMETRY,
+        )))]),
         Volatility::Immutable,
     )
 }
 
 #[derive(Debug)]
-pub struct STEnvelope<T> {
+pub struct STEnvelope {
     matcher: ArgMatcher,
-    _phantom: PhantomData<T>,
 }
 
-impl<T> STEnvelope<T> {
+impl STEnvelope {
     /// Create a new ST_Envelope implementation with a specific ArgMatcher
     pub fn new(matcher: ArgMatcher) -> Self {
-        Self {
-            matcher,
-            _phantom: Default::default(),
-        }
+        Self { matcher }
     }
 }
 
-impl<T: WkbBounder2D + Default> SedonaScalarKernel for STEnvelope<T> {
+impl SedonaScalarKernel for STEnvelope {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         self.matcher.match_args(args)
     }
@@ -83,17 +81,28 @@ impl<T: WkbBounder2D + Default> SedonaScalarKernel for STEnvelope<T> {
         arg_types: &[SedonaType],
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
+        self.invoke_batch_from_args(arg_types, args, &WKB_GEOMETRY, 0, None)
+    }
+
+    fn invoke_batch_from_args(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+        _return_type: &SedonaType,
+        _num_rows: usize,
+        config_options: Option<&ConfigOptions>,
+    ) -> Result<ColumnarValue> {
         let executor = WkbBytesExecutor::new(arg_types, args);
         let mut builder = BinaryBuilder::with_capacity(
             executor.num_iterations(),
             WKB_MIN_PROBABLE_BYTES * executor.num_iterations(),
         );
 
-        let mut bounder = T::default();
+        let mut bounder = bounder_for_arg_type(&arg_types[0], config_options, "ST_Envelope")?;
         executor.execute_wkb_void(|maybe_item| {
             match maybe_item {
                 Some(item) => {
-                    invoke_scalar(item, &mut bounder, &mut builder)?;
+                    invoke_scalar(item, bounder.as_mut(), &mut builder)?;
                     builder.append_value([]);
                 }
                 None => builder.append_null(),
@@ -107,7 +116,7 @@ impl<T: WkbBounder2D + Default> SedonaScalarKernel for STEnvelope<T> {
 
 fn invoke_scalar(
     wkb_value: &[u8],
-    bounder: &mut impl WkbBounder2D,
+    bounder: &mut (impl WkbBounder2D + ?Sized),
     writer: &mut impl std::io::Write,
 ) -> Result<()> {
     bounder.clear();
@@ -236,7 +245,10 @@ mod tests {
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
-    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
+    use sedona_geometry::{bounds::WkbGeometryBounder, types::Edges};
+    use sedona_schema::datatypes::{
+        WKB_GEOGRAPHY, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY,
+    };
     use sedona_testing::{
         compare::{assert_array_equal, assert_scalar_equal_wkb_geometry},
         create::create_array,
@@ -296,6 +308,30 @@ mod tests {
 
         let result = tester.invoke_scalar("POINT (1 3)").unwrap();
         tester.assert_scalar_result_equals(result, "POINT (1 3)");
+    }
+
+    #[test]
+    fn udf_geography_uses_session_bounder() {
+        let mut tester = ScalarUdfTester::new(st_envelope_udf().into(), vec![WKB_GEOGRAPHY]);
+        let options = tester.sedona_options_mut();
+        options.runtime = options
+            .runtime
+            .with_bounder(Edges::Spherical, Arc::new(WkbGeometryBounder::default()))
+            .unwrap();
+        tester.assert_return_type(WKB_GEOMETRY);
+        tester.assert_scalar_result_equals(
+            tester
+                .invoke_scalar("LINESTRING (170 10, -170 20)")
+                .unwrap(),
+            "POLYGON((-170 10,-170 20,170 20,170 10,-170 10))",
+        );
+    }
+
+    #[test]
+    fn udf_geography_without_session_bounder_errors() {
+        let tester = ScalarUdfTester::new(st_envelope_udf().into(), vec![WKB_GEOGRAPHY]);
+        let err = tester.invoke_scalar("POINT (1 2)").unwrap_err();
+        assert!(err.to_string().contains("not registered in this session"));
     }
 
     #[test]

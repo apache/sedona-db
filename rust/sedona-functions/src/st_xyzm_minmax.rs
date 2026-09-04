@@ -16,9 +16,10 @@
 // under the License.
 use std::sync::Arc;
 
-use crate::executor::WkbExecutor;
+use crate::executor::{bounder_for_arg_type, WkbBytesExecutor, WkbExecutor};
 use arrow_array::builder::Float64Builder;
 use arrow_schema::DataType;
+use datafusion_common::config::ConfigOptions;
 use datafusion_common::error::Result;
 use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::GeometryTrait;
@@ -28,7 +29,7 @@ use sedona_expr::{
     scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
 };
 use sedona_geometry::{
-    bounds::{geo_traits_bounds_m, geo_traits_bounds_xy, geo_traits_bounds_z},
+    bounds::{geo_traits_bounds_m, geo_traits_bounds_xy, geo_traits_bounds_z, WkbBounder2D},
     interval::{Interval, IntervalTrait},
 };
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
@@ -130,7 +131,7 @@ struct STXyzmMinMax {
 impl SedonaScalarKernel for STXyzmMinMax {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let arg0 = match self.dim {
-            "x" | "y" => ArgMatcher::is_geometry(),
+            "x" | "y" => ArgMatcher::is_geometry_or_geography(),
             _ => ArgMatcher::is_geometry_or_geography(),
         };
         let matcher = ArgMatcher::new(vec![arg0], SedonaType::Arrow(DataType::Float64));
@@ -143,6 +144,42 @@ impl SedonaScalarKernel for STXyzmMinMax {
         arg_types: &[SedonaType],
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
+        self.invoke_batch_from_args(
+            arg_types,
+            args,
+            &SedonaType::Arrow(DataType::Float64),
+            0,
+            None,
+        )
+    }
+
+    fn invoke_batch_from_args(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+        _return_type: &SedonaType,
+        _num_rows: usize,
+        config_options: Option<&ConfigOptions>,
+    ) -> Result<ColumnarValue> {
+        if matches!(self.dim, "x" | "y") {
+            let executor = WkbBytesExecutor::new(arg_types, args);
+            let mut builder = Float64Builder::with_capacity(executor.num_iterations());
+            let mut bounder = bounder_for_arg_type(&arg_types[0], config_options, self.name())?;
+            executor.execute_wkb_void(|maybe_wkb| {
+                match maybe_wkb {
+                    Some(wkb) => builder.append_option(invoke_xy_scalar(
+                        wkb,
+                        bounder.as_mut(),
+                        self.dim,
+                        self.is_max,
+                    )?),
+                    None => builder.append_null(),
+                }
+                Ok(())
+            })?;
+            return executor.finish(Arc::new(builder.finish()));
+        }
+
         let executor = WkbExecutor::new(arg_types, args);
         let mut builder = Float64Builder::with_capacity(executor.num_iterations());
 
@@ -157,6 +194,50 @@ impl SedonaScalarKernel for STXyzmMinMax {
         })?;
 
         executor.finish(Arc::new(builder.finish()))
+    }
+}
+
+impl STXyzmMinMax {
+    fn name(&self) -> &'static str {
+        match (self.dim, self.is_max) {
+            ("x", false) => "ST_XMin",
+            ("x", true) => "ST_XMax",
+            ("y", false) => "ST_YMin",
+            ("y", true) => "ST_YMax",
+            ("z", false) => "ST_ZMin",
+            ("z", true) => "ST_ZMax",
+            ("m", false) => "ST_MMin",
+            ("m", true) => "ST_MMax",
+            _ => "ST_MinMax",
+        }
+    }
+}
+
+fn invoke_xy_scalar(
+    wkb: &[u8],
+    bounder: &mut (impl WkbBounder2D + ?Sized),
+    dim: &'static str,
+    is_max: bool,
+) -> Result<Option<f64>> {
+    bounder.clear();
+    bounder
+        .update_wkb_bytes(wkb)
+        .map_err(|e| sedona_internal_datafusion_err!("Error updating bounds: {e}"))?;
+    let (x, y) = bounder.finish();
+    match dim {
+        "x" => interval_minmax(&x, is_max),
+        "y" => interval_minmax(&y, is_max),
+        _ => sedona_internal_err!("unexpected dim: {dim}"),
+    }
+}
+
+fn interval_minmax(interval: &impl IntervalTrait, is_max: bool) -> Result<Option<f64>> {
+    if interval.is_empty() {
+        Ok(None)
+    } else if is_max {
+        Ok(Some(interval.hi()))
+    } else {
+        Ok(Some(interval.lo()))
     }
 }
 
@@ -202,7 +283,10 @@ mod tests {
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
-    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
+    use sedona_geometry::{bounds::WkbGeometryBounder, types::Edges};
+    use sedona_schema::datatypes::{
+        WKB_GEOGRAPHY, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY,
+    };
     use sedona_testing::compare::assert_array_equal;
     use sedona_testing::testers::ScalarUdfTester;
 
@@ -233,6 +317,18 @@ mod tests {
 
         let udf: ScalarUDF = st_mmax_udf().into();
         assert_eq!(udf.name(), "st_mmax");
+    }
+
+    #[test]
+    fn xy_geography_uses_session_bounder() {
+        let mut tester = ScalarUdfTester::new(st_xmin_udf().into(), vec![WKB_GEOGRAPHY]);
+        let options = tester.sedona_options_mut();
+        options.runtime = options
+            .runtime
+            .with_bounder(Edges::Spherical, Arc::new(WkbGeometryBounder::default()))
+            .unwrap();
+        tester
+            .assert_scalar_result_equals(tester.invoke_scalar("LINESTRING (1 2, 5 6)").unwrap(), 1);
     }
 
     #[rstest]
