@@ -34,6 +34,7 @@ CRS-less case checks that neither engine demands one.
 
 import numpy as np
 import pytest
+from rasterio.warp import transform_bounds
 
 from sedonadb.raster_testing import (
     DecodedRaster,
@@ -57,24 +58,6 @@ BIG_WIDTH, BIG_HEIGHT = 11, 13
 
 def _data(bands=BANDS):
     return random_raster_data("uint8", bands=bands, height=HEIGHT, width=WIDTH)
-
-
-def _register(tmp_path, name, path_writer):
-    """Both engines with `name` registered from the GeoTIFF `path_writer`
-    wrote at tmp_path/name.tif."""
-    sedona, spark = SedonaDB(), SedonaSpark()
-    path = tmp_path / f"{name}.tif"
-    path_writer(path)
-    for eng in (sedona, spark):
-        eng.create_raster_view(name, path)
-    return sedona, spark
-
-
-def _add_view(engines, tmp_path, name, path_writer):
-    path = tmp_path / f"{name}.tif"
-    path_writer(path)
-    for eng in engines:
-        eng.create_raster_view(name, path)
 
 
 def _nearest_regrid(data, *, out_bbox, out_width, out_height, fill):
@@ -102,28 +85,23 @@ def test_rs_reprojectmatch_same_crs_finer_grid(tmp_path):
     """A same-CRS regrid onto a 14x12 reference over the source's own extent
     doubles each axis: pure block replication, source nodata preserved. The
     2-argument form (default NearestNeighbor) is under test."""
-    sedona, spark = _register(
-        tmp_path,
-        "rm_src",
-        lambda p: write_random_geotiff(
-            p,
-            "uint8",
-            bands=BANDS,
-            height=HEIGHT,
-            width=WIDTH,
-            bbox=BBOX,
-            crs="EPSG:3857",
-            nodata=NODATA,
-        ),
+    src = tmp_path / "rm_src.tif"
+    write_random_geotiff(
+        src,
+        "uint8",
+        bands=BANDS,
+        height=HEIGHT,
+        width=WIDTH,
+        bbox=BBOX,
+        crs="EPSG:3857",
+        nodata=NODATA,
     )
-    _add_view(
-        (sedona, spark),
-        tmp_path,
-        "rm_fine",
-        lambda p: write_grid_geotiff(
-            p, bbox=BBOX, width=14, height=12, crs="EPSG:3857"
-        ),
-    )
+    ref = tmp_path / "rm_fine.tif"
+    write_grid_geotiff(ref, bbox=BBOX, width=14, height=12, crs="EPSG:3857")
+    sedona, spark = SedonaDB(), SedonaSpark()
+    for eng in (sedona, spark):
+        eng.create_raster_view("rm_src", src)
+        eng.create_raster_view("rm_fine", ref)
     sql = "SELECT RS_ReprojectMatch(a.rast, b.rast) FROM rm_src a CROSS JOIN rm_fine b"
     pixels = np.repeat(np.repeat(_data(), 2, axis=1), 2, axis=2)
     anchor = DecodedRaster(pixels, nodata=[NODATA] * BANDS, bbox=BBOX)
@@ -134,28 +112,25 @@ def test_rs_reprojectmatch_same_crs_larger_grid_fills_nodata(tmp_path):
     """A reference extending past the source resamples the covered cells and
     fills the border — output centres outside the source footprint — with the
     input band's nodata."""
-    sedona, spark = _register(
-        tmp_path,
-        "rm_big_src",
-        lambda p: write_random_geotiff(
-            p,
-            "uint8",
-            bands=BANDS,
-            height=HEIGHT,
-            width=WIDTH,
-            bbox=BBOX,
-            crs="EPSG:3857",
-            nodata=NODATA,
-        ),
+    src = tmp_path / "rm_big_src.tif"
+    write_random_geotiff(
+        src,
+        "uint8",
+        bands=BANDS,
+        height=HEIGHT,
+        width=WIDTH,
+        bbox=BBOX,
+        crs="EPSG:3857",
+        nodata=NODATA,
     )
-    _add_view(
-        (sedona, spark),
-        tmp_path,
-        "rm_big_ref",
-        lambda p: write_grid_geotiff(
-            p, bbox=BIG_BBOX, width=BIG_WIDTH, height=BIG_HEIGHT, crs="EPSG:3857"
-        ),
+    ref = tmp_path / "rm_big_ref.tif"
+    write_grid_geotiff(
+        ref, bbox=BIG_BBOX, width=BIG_WIDTH, height=BIG_HEIGHT, crs="EPSG:3857"
     )
+    sedona, spark = SedonaDB(), SedonaSpark()
+    for eng in (sedona, spark):
+        eng.create_raster_view("rm_big_src", src)
+        eng.create_raster_view("rm_big_ref", ref)
     sql = "SELECT RS_ReprojectMatch(a.rast, b.rast) FROM rm_big_src a CROSS JOIN rm_big_ref b"
     pixels = _nearest_regrid(
         _data(),
@@ -171,19 +146,14 @@ def test_rs_reprojectmatch_same_crs_larger_grid_fills_nodata(tmp_path):
 def test_rs_reprojectmatch_crs_less(tmp_path):
     """Neither engine demands a CRS: a CRS-less input regrids onto a CRS-less
     reference exactly as the same-CRS case does."""
-    sedona, spark = _register(
-        tmp_path,
-        "rm_nocrs_src",
-        lambda p: write_random_geotiff(
-            p, "uint8", bands=1, height=HEIGHT, width=WIDTH, bbox=BBOX
-        ),
-    )
-    _add_view(
-        (sedona, spark),
-        tmp_path,
-        "rm_nocrs_ref",
-        lambda p: write_grid_geotiff(p, bbox=BBOX, width=14, height=12),
-    )
+    src = tmp_path / "rm_nocrs_src.tif"
+    write_random_geotiff(src, "uint8", bands=1, height=HEIGHT, width=WIDTH, bbox=BBOX)
+    ref = tmp_path / "rm_nocrs_ref.tif"
+    write_grid_geotiff(ref, bbox=BBOX, width=14, height=12)
+    sedona, spark = SedonaDB(), SedonaSpark()
+    for eng in (sedona, spark):
+        eng.create_raster_view("rm_nocrs_src", src)
+        eng.create_raster_view("rm_nocrs_ref", ref)
     sql = (
         "SELECT RS_ReprojectMatch(a.rast, b.rast) "
         "FROM rm_nocrs_src a CROSS JOIN rm_nocrs_ref b"
@@ -199,30 +169,23 @@ def test_rs_reprojectmatch_cross_crs_nearest(tmp_path):
     pixel picks are not hand-computable, and SedonaDB's own correctness is
     covered by the rasterio-oracle tests."""
     src_bbox = (10.0, 40.0, 10.014, 40.018)
-    sedona, spark = _register(
-        tmp_path,
-        "rm_4326_src",
-        lambda p: write_random_geotiff(
-            p,
-            "uint8",
-            bands=1,
-            height=HEIGHT,
-            width=WIDTH,
-            bbox=src_bbox,
-            crs="EPSG:4326",
-        ),
-    )
-    from rasterio.warp import transform_bounds
-
     ref_bbox = transform_bounds("EPSG:4326", "EPSG:3857", *src_bbox)
-    _add_view(
-        (sedona, spark),
-        tmp_path,
-        "rm_3857_ref",
-        lambda p: write_grid_geotiff(
-            p, bbox=ref_bbox, width=WIDTH, height=HEIGHT, crs="EPSG:3857"
-        ),
+    src = tmp_path / "rm_4326_src.tif"
+    write_random_geotiff(
+        src,
+        "uint8",
+        bands=1,
+        height=HEIGHT,
+        width=WIDTH,
+        bbox=src_bbox,
+        crs="EPSG:4326",
     )
+    ref = tmp_path / "rm_3857_ref.tif"
+    write_grid_geotiff(ref, bbox=ref_bbox, width=WIDTH, height=HEIGHT, crs="EPSG:3857")
+    sedona, spark = SedonaDB(), SedonaSpark()
+    for eng in (sedona, spark):
+        eng.create_raster_view("rm_4326_src", src)
+        eng.create_raster_view("rm_3857_ref", ref)
     sql = (
         "SELECT RS_ReprojectMatch(a.rast, b.rast, 'NearestNeighbor') "
         "FROM rm_4326_src a CROSS JOIN rm_3857_ref b"
@@ -236,28 +199,23 @@ def test_rs_reprojectmatch_cross_crs_nearest(tmp_path):
 )
 def test_rs_reprojectmatch_bilinear(tmp_path):
     """Bilinear regridding produces the same pixels from both engines."""
-    sedona, spark = _register(
-        tmp_path,
-        "rm_bl_src",
-        lambda p: write_random_geotiff(
-            p,
-            "uint8",
-            bands=BANDS,
-            height=HEIGHT,
-            width=WIDTH,
-            bbox=BBOX,
-            crs="EPSG:3857",
-            nodata=NODATA,
-        ),
+    src = tmp_path / "rm_bl_src.tif"
+    write_random_geotiff(
+        src,
+        "uint8",
+        bands=BANDS,
+        height=HEIGHT,
+        width=WIDTH,
+        bbox=BBOX,
+        crs="EPSG:3857",
+        nodata=NODATA,
     )
-    _add_view(
-        (sedona, spark),
-        tmp_path,
-        "rm_bl_ref",
-        lambda p: write_grid_geotiff(
-            p, bbox=BBOX, width=14, height=12, crs="EPSG:3857"
-        ),
-    )
+    ref = tmp_path / "rm_bl_ref.tif"
+    write_grid_geotiff(ref, bbox=BBOX, width=14, height=12, crs="EPSG:3857")
+    sedona, spark = SedonaDB(), SedonaSpark()
+    for eng in (sedona, spark):
+        eng.create_raster_view("rm_bl_src", src)
+        eng.create_raster_view("rm_bl_ref", ref)
     sql = (
         "SELECT RS_ReprojectMatch(a.rast, b.rast, 'Bilinear') "
         "FROM rm_bl_src a CROSS JOIN rm_bl_ref b"
@@ -273,27 +231,22 @@ def test_rs_reprojectmatch_bilinear(tmp_path):
 def test_rs_reprojectmatch_unknown_algorithm(tmp_path):
     """An unrecognized algorithm name gets the same treatment from both
     engines."""
-    sedona, spark = _register(
-        tmp_path,
-        "rm_alg_src",
-        lambda p: write_random_geotiff(
-            p,
-            "uint8",
-            bands=1,
-            height=HEIGHT,
-            width=WIDTH,
-            bbox=BBOX,
-            crs="EPSG:3857",
-        ),
+    src = tmp_path / "rm_alg_src.tif"
+    write_random_geotiff(
+        src,
+        "uint8",
+        bands=1,
+        height=HEIGHT,
+        width=WIDTH,
+        bbox=BBOX,
+        crs="EPSG:3857",
     )
-    _add_view(
-        (sedona, spark),
-        tmp_path,
-        "rm_alg_ref",
-        lambda p: write_grid_geotiff(
-            p, bbox=BBOX, width=14, height=12, crs="EPSG:3857"
-        ),
-    )
+    ref = tmp_path / "rm_alg_ref.tif"
+    write_grid_geotiff(ref, bbox=BBOX, width=14, height=12, crs="EPSG:3857")
+    sedona, spark = SedonaDB(), SedonaSpark()
+    for eng in (sedona, spark):
+        eng.create_raster_view("rm_alg_src", src)
+        eng.create_raster_view("rm_alg_ref", ref)
     sql = (
         "SELECT RS_ReprojectMatch(a.rast, b.rast, 'sinc') "
         "FROM rm_alg_src a CROSS JOIN rm_alg_ref b"
