@@ -70,7 +70,6 @@ mod tests {
     use super::*;
     use crate::traits::BandRef;
     use approx::assert_relative_eq;
-    use std::f64::consts::FRAC_1_SQRT_2;
     use std::f64::consts::PI;
 
     /// Minimal `RasterRef` stub carrying only a geotransform and a spatial
@@ -109,30 +108,39 @@ mod tests {
 
     #[test]
     fn test_rotation() {
-        // 0 degree rotation -> gt[1.0, 0.0, 0.0, -1.0]
+        // Axis-aligned -> exactly +0.0. acos yields the positive zero Sedona
+        // Spark reports; the previous atan2 spelling returned -0.0.
         let raster = rotation_raster(1.0, -1.0, 0.0, 0.0);
         let rot = rotation(&raster);
         assert_eq!(rot, 0.0);
+        assert!(rot.is_sign_positive());
 
-        // pi/2 -> gt[0.0, -1.0, 1.0, 0.0]
-        let raster = rotation_raster(0.0, 0.0, -1.0, 1.0);
-        let rot = rotation(&raster);
-        assert_relative_eq!(rot, PI / 2.0, epsilon = 1e-6); // 90 degrees in radians
+        // A rigid rotation by theta of a north-up grid with pixel (px, py) has
+        // (scale_x, skew_x, skew_y, scale_y) = (px*cos, py*sin, px*sin,
+        // -py*cos), and reads back as -theta.
+        let (sin, cos) = (PI / 6.0).sin_cos();
+        let raster = rotation_raster(cos, -cos, sin, sin);
+        assert_relative_eq!(rotation(&raster), -PI / 6.0, epsilon = 1e-12);
+        let raster = rotation_raster(cos, -cos, -sin, -sin);
+        assert_relative_eq!(rotation(&raster), PI / 6.0, epsilon = 1e-12);
 
-        // pi/4 -> gt[0.70710678, -0.70710678, 0.70710678, 0.70710678]
-        let raster = rotation_raster(FRAC_1_SQRT_2, FRAC_1_SQRT_2, -FRAC_1_SQRT_2, FRAC_1_SQRT_2);
-        let rot = rotation(&raster);
-        assert_relative_eq!(rot, PI / 4.0, epsilon = 1e-6); // 45 degrees in radians
+        // Non-square 2x3 pixels: still exactly -theta — the rigid case the old
+        // atan2(-skew_x, scale_x) misreported (as -0.7137 here).
+        let raster = rotation_raster(2.0 * cos, -3.0 * cos, 3.0 * sin, 2.0 * sin);
+        assert_relative_eq!(rotation(&raster), -PI / 6.0, epsilon = 1e-12);
 
-        // pi/3 -> gt[0.5, -0.866025, 0.866025, 0.5]
-        let raster = rotation_raster(0.5, 0.5, -0.866025, 0.866025);
-        let rot = rotation(&raster);
-        assert_relative_eq!(rot, PI / 3.0, epsilon = 1e-6); // 60 degrees in radians
+        // Under shear the angle follows the column-axis direction
+        // (scale_x, skew_y) — Sedona Spark's convention.
+        let raster = rotation_raster(0.2, -0.3, 0.06, 0.08);
+        assert_relative_eq!(
+            rotation(&raster),
+            -(0.2f64 / 0.2f64.hypot(0.08)).acos(),
+            epsilon = 1e-15
+        );
 
-        // pi -> gt[-1.0, 0.0, 0.0, -1.0]
+        // A mirrored grid (scale_x < 0) reports +pi.
         let raster = rotation_raster(-1.0, -1.0, 0.0, 0.0);
-        let rot = rotation(&raster);
-        assert_relative_eq!(rot, -PI, epsilon = 1e-6); // 180 degrees in radians
+        assert_relative_eq!(rotation(&raster), PI, epsilon = 1e-12);
     }
 
     #[test]
