@@ -73,7 +73,10 @@ use sedona_schema::schema::SedonaSchema;
 use sedona_spatial_join_gpu::options::GpuOptions;
 
 use sedona_query_planner::{
-    optimizer::{register_ensure_loaded_optimizer, register_spatial_join_logical_optimizer},
+    optimizer::{
+        register_ensure_loaded_optimizer, register_spatial_join_logical_optimizer,
+        register_vendored_optimizer_rules,
+    },
     query_planner::SedonaQueryPlanner,
 };
 use sedona_raster::raster_loader::{AsyncRasterLoader, RasterLoaderConfig, RasterLoaderRegistry};
@@ -100,7 +103,11 @@ impl SedonaContext {
     pub fn new() -> Self {
         // This will panic only if the default build settings are
         // incorrect which we test!
-        Self::new_from_context(SessionContext::new()).unwrap()
+        let state_builder = SessionStateBuilder::new_with_default_features();
+        // DataFusion #22620 workaround tracked by
+        // https://github.com/apache/sedona-db/issues/1232.
+        let state_builder = register_vendored_optimizer_rules(state_builder).unwrap();
+        Self::new_from_context(SessionContext::new_with_state(state_builder.build())).unwrap()
     }
 
     /// Creates a new context with default interactive options
@@ -235,6 +242,9 @@ impl SedonaContext {
             .with_runtime_env(runtime_env)
             .with_config(session_config);
 
+        // DataFusion #22620 workaround tracked by
+        // https://github.com/apache/sedona-db/issues/1232.
+        state_builder = register_vendored_optimizer_rules(state_builder)?;
         state_builder = register_spatial_join_logical_optimizer(state_builder)?;
         state_builder = register_ensure_loaded_optimizer(state_builder)?;
         state_builder = state_builder.with_query_planner(Arc::new(planner));
@@ -986,6 +996,34 @@ mod tests {
                 .config_options()
                 .optimizer
                 .enable_physical_uncorrelated_scalar_subquery
+        );
+    }
+
+    #[tokio::test]
+    async fn select_struct_field_after_unnest_st_dump() {
+        // Regression for https://github.com/apache/sedona-db/issues/1232.
+        use datafusion::{functions::core::expr_fn::get_field, prelude::col};
+
+        let ctx = SedonaContext::new();
+        let df = ctx
+            .sql(
+                r#"
+                SELECT ST_Dump(
+                    ST_GeomFromText('MULTIPOINT (0 0, 1 1)')
+                ) AS dump
+                "#,
+            )
+            .await
+            .unwrap()
+            .unnest_columns(&["dump"])
+            .unwrap()
+            .select(vec![get_field(col("dump"), "geom").alias("geometry")])
+            .unwrap();
+
+        let batches = df.collect().await.unwrap();
+        assert_eq!(
+            batches.iter().map(|batch| batch.num_rows()).sum::<usize>(),
+            2
         );
     }
 
