@@ -27,6 +27,7 @@ import pytest
 
 from sedonadb.raster_testing import (
     DecodedRaster,
+    assert_decoded_equal,
     decode_geotiff,
     write_geotiff,
     write_random_geotiff,
@@ -34,6 +35,26 @@ from sedonadb.raster_testing import (
 
 # The default extent of `DBEngine.create_random_raster_view`.
 BBOX = (100.0, 482.0, 114.0, 500.0)
+
+
+def test_decoded_raster_random_roundtrips_through_geotiff(tmp_path):
+    """`DecodedRaster.random()` on its defaults writes and decodes back
+    unchanged, and its default grid is the historical transform — the pin
+    that keeps every fixture-vs-anchor pairing honest."""
+    pytest.importorskip("rasterio")
+    raster = DecodedRaster.random(nodata=7.0)
+    assert raster.gdal_transform == (100.0, 2.0, 0.0, 500.0, 0.0, -3.0)
+    path = tmp_path / "roundtrip.tif"
+    raster.write_geotiff(path)
+    assert_decoded_equal(decode_geotiff(path), raster)
+
+
+def test_decoded_raster_write_geotiff_requires_uniform_nodata(tmp_path):
+    """GeoTIFF nodata is file-wide, so a per-band anchor cannot be written."""
+    pytest.importorskip("rasterio")  # the bbox construction resolves through it
+    raster = DecodedRaster.random(nodata=[7.0, None])
+    with pytest.raises(ValueError, match="file-wide"):
+        raster.write_geotiff(tmp_path / "nonuniform.tif")
 
 
 def test_write_geotiff_bbox_places_the_grid(tmp_path):
