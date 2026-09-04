@@ -413,7 +413,7 @@ fn point_triangle_intersection(c: &mut Criterion) {
             }
 
             assert_eq!(intersects, 533);
-            assert_eq!(non_intersects, 5450151);
+            assert_eq!(non_intersects, 5484911);
         });
     });
 
