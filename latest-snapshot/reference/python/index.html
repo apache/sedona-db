@@ -7153,9 +7153,9 @@ avoid accidentally skipping tests on CI.</p>
     <span class="n">path</span><span class="p">,</span>
     <span class="o">*</span><span class="p">,</span>
     <span class="n">dtype</span><span class="o">=</span><span class="s2">"uint8"</span><span class="p">,</span>
-    <span class="n">bands</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
-    <span class="n">height</span><span class="o">=</span><span class="mi">6</span><span class="p">,</span>
-    <span class="n">width</span><span class="o">=</span><span class="mi">7</span><span class="p">,</span>
+    <span class="n">bands</span><span class="o">=</span><span class="n"><span title="sedonadb.raster_testing.RANDOM_GRID_BANDS">RANDOM_GRID_BANDS</span></span><span class="p">,</span>
+    <span class="n">height</span><span class="o">=</span><span class="n"><span title="sedonadb.raster_testing.RANDOM_GRID_HEIGHT">RANDOM_GRID_HEIGHT</span></span><span class="p">,</span>
+    <span class="n">width</span><span class="o">=</span><span class="n"><span title="sedonadb.raster_testing.RANDOM_GRID_WIDTH">RANDOM_GRID_WIDTH</span></span><span class="p">,</span>
     <span class="n">bbox</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
     <span class="n">gdal_transform</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
     <span class="n">nodata</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
@@ -7167,16 +7167,15 @@ avoid accidentally skipping tests on CI.</p>
 
         <p>Write a random GeoTIFF at <code>path</code> and register it as view <code>name</code>
 (see <code>create_raster_view</code>).</p>
-<p>The grid is placed by <code>bbox</code> (<code>(minx, miny, maxx, maxy)</code>, north-up,
-no skew) or, for grids a bbox cannot express, a raw GDAL
-<code>gdal_transform</code> — at most one; the default is
-<code>bbox=(100, 482, 114, 500)</code>, whose extent divided by the default 7x6
-grid gives 2x3 pixels. The grid is small and north-up/CRS-less so
-nothing reprojects and results stay bit-comparable across engines.
-The pixels come from <code>sedonadb.raster_testing.random_raster_data</code>
-with a fixed seed, so registering the same <code>path</code> on several engines
-rewrites identical bytes and every engine sees the same raster.
-<code>nodata</code> and <code>plants</code> are as <code>write_random_geotiff</code>.</p>
+<p>The raster is exactly <code>DecodedRaster.random(...)</code> with the same
+arguments, so a test can anchor with that constructor and the fixture
+cannot drift from the expectation. The grid defaults to
+<code>RANDOM_GRID_BBOX</code> on the 7x6 grid (2x3 pixels; override with <code>bbox</code>
+or, for grids a bbox cannot express, a raw GDAL <code>gdal_transform</code> —
+at most one). It is small and north-up/CRS-less so nothing reprojects
+and results stay bit-comparable across engines, and the pixels are
+seeded, so registering the same <code>path</code> on several engines rewrites
+identical bytes and every engine sees the same raster.</p>
 
 
     </div>
@@ -8106,6 +8105,74 @@ on and deliberately not part of <code>assert_decoded_equal</code>.</p>
 
 
 
+<div class="doc doc-object doc-function">
+
+
+<h4 id="sedonadb.raster_testing.DecodedRaster.random" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">random</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-classmethod"><code>classmethod</code></small>
+  </span>
+
+<a href="#sedonadb.raster_testing.DecodedRaster.random" class="headerlink" title="Permanent link">¶</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">random</span><span class="p">(</span>
+    <span class="n">dtype</span><span class="o">=</span><span class="s2">"uint8"</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">bands</span><span class="o">=</span><span class="n"><span title="sedonadb.raster_testing.RANDOM_GRID_BANDS">RANDOM_GRID_BANDS</span></span><span class="p">,</span>
+    <span class="n">height</span><span class="o">=</span><span class="n"><span title="sedonadb.raster_testing.RANDOM_GRID_HEIGHT">RANDOM_GRID_HEIGHT</span></span><span class="p">,</span>
+    <span class="n">width</span><span class="o">=</span><span class="n"><span title="sedonadb.raster_testing.RANDOM_GRID_WIDTH">RANDOM_GRID_WIDTH</span></span><span class="p">,</span>
+    <span class="n">bbox</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">gdal_transform</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">nodata</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">plants</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="DecodedRaster
+
+
+  
+      dataclass
+   (sedonadb.raster_testing.DecodedRaster)" href="#sedonadb.raster_testing.DecodedRaster">DecodedRaster</a></span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>The standard random raster: <code>random_raster_data</code> pixels on the
+default grid (<code>RANDOM_GRID_BBOX</code> when neither <code>bbox</code> nor
+<code>gdal_transform</code> is given). This is exactly the raster
+<code>DBEngine.create_random_raster_view</code> registers, so a test's
+<code>expected=</code> anchor and the fixture it checks share one definition.
+<code>nodata</code> is one value applied to every band, or a per-band list —
+anchors state what an operation leaves per band; only the uniform
+spelling is writable (see <code>write_geotiff</code>).</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="sedonadb.raster_testing.DecodedRaster.write_geotiff" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">write_geotiff</span>
+
+
+<a href="#sedonadb.raster_testing.DecodedRaster.write_geotiff" class="headerlink" title="Permanent link">¶</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">write_geotiff</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">crs</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Write this raster as a GeoTIFF at <code>path</code> (via the module-level
+<code>write_geotiff</code>). GeoTIFF nodata is file-wide (TIFFTAG_GDAL_NODATA),
+so the per-band <code>nodata</code> must be uniform to write.</p>
+
+
+    </div>
+
+</div>
+
 
 
   </div>
@@ -8420,10 +8487,11 @@ e.g. as the reference grid for <code>RS_ReprojectMatch</code>. <code>bbox</code>
     <div class="doc doc-contents ">
 
         <p>Write a GeoTIFF of random <code>dtype</code> pixels on the given grid.</p>
-<p>Combines <code>random_raster_data</code> (dtype extremes planted in opposite corners)
-with <code>write_geotiff</code> — the input-raster fixture shape shared by raster warp
-parity tests. <code>bbox</code>/<code>gdal_transform</code> (exactly one), <code>crs</code>, and <code>nodata</code>
-are as <code>write_geotiff</code>; <code>plants</code> is as <code>random_raster_data</code>.</p>
+<p><code>DecodedRaster.random(...).write_geotiff(path)</code> as a function — the
+input-raster fixture shape shared by raster warp parity tests.
+<code>bbox</code>/<code>gdal_transform</code> place the grid (at most one; the standard
+<code>RANDOM_GRID_BBOX</code> when neither is given); <code>crs</code> and <code>nodata</code> are as
+<code>write_geotiff</code>; <code>plants</code> is as <code>random_raster_data</code>.</p>
 
 
     </div>
