@@ -153,7 +153,7 @@ impl BuildSideBatchesCollector {
     pub async fn collect(
         &self,
         mut stream: SendableEvaluatedBatchStream,
-        mut reservation: MemoryReservation,
+        reservation: MemoryReservation,
         mut bbox_sampler: BoundingBoxSampler,
         metrics: CollectBuildSideMetrics,
     ) -> Result<BuildPartition> {

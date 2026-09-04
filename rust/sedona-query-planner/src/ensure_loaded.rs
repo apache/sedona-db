@@ -165,7 +165,6 @@ fn rewrite_expr_node(
     let needs_bytes = func_call
         .func
         .inner()
-        .as_any()
         .downcast_ref::<SedonaScalarUDF>()
         .map(|u| {
             u.metadata()
@@ -262,7 +261,6 @@ fn already_loaded(expr: &Expr) -> bool {
         Expr::ScalarFunction(sf) => sf
             .func
             .inner()
-            .as_any()
             .downcast_ref::<SedonaScalarUDF>()
             .is_some_and(|u| {
                 u.metadata()

@@ -25,7 +25,6 @@
 //! `data` columns are populated with the loaded bytes. InDb bands pass
 //! through unchanged. Other band/raster metadata is preserved verbatim.
 
-use std::any::Any;
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, RwLock};
 
@@ -159,10 +158,6 @@ impl Hash for RsEnsureLoaded {
 }
 
 impl ScalarUDFImpl for RsEnsureLoaded {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         "rs_ensureloaded"
     }

@@ -22,6 +22,10 @@ include(FetchContent)
 # Required for S2
 set(CMAKE_CXX_STANDARD 17)
 
+# Always use the nanoarrow sources vendored by s2geography to keep the
+# binary self-contained.
+set(CMAKE_DISABLE_FIND_PACKAGE_nanoarrow TRUE)
+
 # These are our two external dependencies that we don't build on the fly.
 # These can be installed with homebrew or vcpkg (see README).
 find_package(OpenSSL REQUIRED)

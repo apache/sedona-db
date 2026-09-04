@@ -288,7 +288,7 @@ unsafe extern "C" fn c_exec_plan_release(self_: *mut SedonaCExecutionPlan) {
 pub struct ImportedSedonaCExec {
     inner: SedonaCExecutionPlan,
     schema: SchemaRef,
-    properties: PlanProperties,
+    properties: Arc<PlanProperties>,
     supports_limit_pushdown: bool,
     name: String,
     /// Stored as Arc so it can be cloned for each partition execution.
@@ -345,7 +345,7 @@ impl ImportedSedonaCExec {
         Ok(Self {
             inner,
             schema,
-            properties,
+            properties: Arc::new(properties),
             supports_limit_pushdown,
             name,
             cancel_checker: None,
@@ -399,20 +399,16 @@ impl DisplayAs for ImportedSedonaCExec {
 }
 
 impl ExecutionPlan for ImportedSedonaCExec {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         &self.name
     }
 
-    fn properties(&self) -> &PlanProperties {
+    fn properties(&self) -> &Arc<PlanProperties> {
         &self.properties
     }
 
-    fn partition_statistics(&self, _partition: Option<usize>) -> Result<Statistics> {
-        Ok(Statistics::new_unknown(&self.schema))
+    fn partition_statistics(&self, _partition: Option<usize>) -> Result<Arc<Statistics>> {
+        Ok(Arc::new(Statistics::new_unknown(&self.schema)))
     }
 
     fn cardinality_effect(&self) -> CardinalityEffect {
@@ -443,10 +439,6 @@ impl ExecutionPlan for ImportedSedonaCExec {
 
     fn supports_limit_pushdown(&self) -> bool {
         self.supports_limit_pushdown
-    }
-
-    fn statistics(&self) -> Result<Statistics> {
-        Ok(Statistics::new_unknown(&self.schema))
     }
 
     fn execute(
@@ -663,7 +655,7 @@ mod tests {
     #[derive(Debug)]
     struct DummyExec {
         schema: SchemaRef,
-        properties: PlanProperties,
+        properties: Arc<PlanProperties>,
         limit_pushdown: bool,
     }
 
@@ -689,7 +681,7 @@ mod tests {
             );
             Self {
                 schema,
-                properties,
+                properties: Arc::new(properties),
                 limit_pushdown: supports_limit_pushdown,
             }
         }
@@ -706,15 +698,11 @@ mod tests {
     }
 
     impl ExecutionPlan for DummyExec {
-        fn as_any(&self) -> &dyn Any {
-            self
-        }
-
         fn name(&self) -> &str {
             "DummyExec"
         }
 
-        fn properties(&self) -> &PlanProperties {
+        fn properties(&self) -> &Arc<PlanProperties> {
             &self.properties
         }
 

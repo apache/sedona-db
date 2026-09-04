@@ -16,7 +16,7 @@
 // under the License.
 
 use datafusion::execution::memory_pool::{
-    MemoryConsumer, MemoryLimit, MemoryPool, MemoryReservation,
+    human_readable_size, MemoryConsumer, MemoryLimit, MemoryPool, MemoryReservation,
 };
 use datafusion_common::{resources_datafusion_err, DataFusionError, Result};
 use parking_lot::Mutex;
@@ -168,6 +168,22 @@ impl MemoryPool for SedonaFairSpillPool {
     fn memory_limit(&self) -> MemoryLimit {
         MemoryLimit::Finite(self.pool_size)
     }
+
+    fn name(&self) -> &str {
+        "SedonaFairSpillPool"
+    }
+}
+
+impl std::fmt::Display for SedonaFairSpillPool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}(pool_size: {}, unspillable_reserve_ratio: {:.1}%)",
+            self.name(),
+            human_readable_size(self.pool_size),
+            self.unspillable_reserve_ratio * 100.0,
+        )
+    }
 }
 
 fn insufficient_capacity_err(
@@ -195,15 +211,24 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
+    fn test_sedona_fair_spill_pool_display() {
+        let pool = SedonaFairSpillPool::new(4096, 0.2);
+        assert_eq!(
+            pool.to_string(),
+            "SedonaFairSpillPool(pool_size: 4.0 KB, unspillable_reserve_ratio: 20.0%)"
+        );
+    }
+
+    #[test]
     fn test_sedona_fair_spill_pool_reserve() {
         // Pool size 100, 20% reserved for unspillable (20 bytes)
         let pool: Arc<dyn MemoryPool> = Arc::new(SedonaFairSpillPool::new(100, 0.2));
 
         let spillable_consumer = MemoryConsumer::new("spillable").with_can_spill(true);
-        let mut spillable = spillable_consumer.register(&pool);
+        let spillable = spillable_consumer.register(&pool);
 
         let unspillable_consumer = MemoryConsumer::new("unspillable").with_can_spill(false);
-        let mut unspillable = unspillable_consumer.register(&pool);
+        let unspillable = unspillable_consumer.register(&pool);
 
         // Case 1: Spillable cannot eat into reserved memory
         // Available for spillable = 100 - 20 = 80
@@ -255,10 +280,10 @@ mod tests {
         let pool: Arc<dyn MemoryPool> = Arc::new(SedonaFairSpillPool::new(100, 0.0));
 
         let c1 = MemoryConsumer::new("c1").with_can_spill(true);
-        let mut r1 = c1.register(&pool);
+        let r1 = c1.register(&pool);
 
         let c2 = MemoryConsumer::new("c2").with_can_spill(true);
-        let mut r2 = c2.register(&pool);
+        let r2 = c2.register(&pool);
 
         // With 2 spillers, each gets 50.
         r1.try_grow(50).unwrap();

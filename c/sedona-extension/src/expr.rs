@@ -16,17 +16,21 @@
 // under the License.
 
 use std::{
+    collections::HashMap,
     ffi::{c_int, CString},
     fmt::{Debug, Display},
     os::raw::{c_char, c_void},
     ptr::null_mut,
+    sync::Arc,
 };
 
 use arrow_array::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use arrow_schema::{DataType, Field};
 use datafusion_common::Result;
-use datafusion_execution::FunctionRegistry;
-use datafusion_expr::Expr;
+use datafusion_execution::{
+    config::SessionConfig, runtime_env::RuntimeEnv, FunctionRegistry, TaskContext,
+};
+use datafusion_expr::{AggregateUDF, Expr, HigherOrderUDF, ScalarUDF, WindowUDF};
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 
 pub use sedona_expr::placeholder_udf::{
@@ -222,17 +226,23 @@ impl<'a> ImportedExprView<'a> {
     /// replaced (e.g., using an optimizer rule or locally implemented replacement), inspected
     /// by parsing functions (e.g., to calculate pruning), or ignored (e.g., for table providers
     /// that do not support any filters).
-    pub fn to_expr(&self, _registry: Option<&dyn FunctionRegistry>) -> Result<Expr> {
+    pub fn to_expr(&self, registry: Option<&dyn FunctionRegistry>) -> Result<Expr> {
         #[cfg(feature = "protobuf")]
         {
-            use datafusion_proto::bytes::Serializeable;
+            use datafusion_proto::{logical_plan::from_proto::parse_expr, protobuf};
+            use prost::Message;
 
             let bytes = self.get_bytes_property("datafusion_expr_protobuf")?;
-            if let Some(registry) = _registry {
-                Expr::from_bytes_with_registry(&bytes, registry)
-            } else {
-                Expr::from_bytes_with_registry(&bytes, &PlaceholderRegistry)
-            }
+            let context = match registry {
+                Some(registry) => task_context_from_registry(registry)?,
+                None => TaskContext::default(),
+            };
+            let protobuf = protobuf::LogicalExprNode::decode(bytes.as_slice()).map_err(|e| {
+                sedona_internal_datafusion_err!("Error decoding expr as protobuf: {e}")
+            })?;
+            parse_expr(&protobuf, &context, &PlaceholderLogicalExtensionCodec).map_err(|e| {
+                sedona_internal_datafusion_err!("Error parsing protobuf into Expr: {e}")
+            })
         }
 
         #[cfg(not(feature = "protobuf"))]
@@ -250,6 +260,101 @@ impl<'a> ImportedExprView<'a> {
     pub fn get_bytes_property(&self, property: &str) -> Result<Vec<u8>> {
         get_expr_view_bytes_property(self.inner, property)
     }
+}
+
+/// Protobuf codec that preserves unresolved functions as non-executable placeholders.
+#[cfg(feature = "protobuf")]
+#[derive(Debug)]
+struct PlaceholderLogicalExtensionCodec;
+
+#[cfg(feature = "protobuf")]
+impl datafusion_proto::logical_plan::LogicalExtensionCodec for PlaceholderLogicalExtensionCodec {
+    fn try_decode(
+        &self,
+        _buf: &[u8],
+        _inputs: &[datafusion_expr::LogicalPlan],
+        _ctx: &TaskContext,
+    ) -> Result<datafusion_expr::logical_plan::Extension> {
+        sedona_internal_err!("Logical plan extensions are not supported when importing expressions")
+    }
+
+    fn try_encode(
+        &self,
+        _node: &datafusion_expr::logical_plan::Extension,
+        _buf: &mut Vec<u8>,
+    ) -> Result<()> {
+        sedona_internal_err!("Logical plan extensions are not supported when importing expressions")
+    }
+
+    fn try_decode_table_provider(
+        &self,
+        _buf: &[u8],
+        _table_ref: &datafusion_common::TableReference,
+        _schema: arrow_schema::SchemaRef,
+        _ctx: &TaskContext,
+    ) -> Result<Arc<dyn datafusion_catalog::TableProvider>> {
+        sedona_internal_err!("Table providers are not supported when importing expressions")
+    }
+
+    fn try_encode_table_provider(
+        &self,
+        _table_ref: &datafusion_common::TableReference,
+        _node: Arc<dyn datafusion_catalog::TableProvider>,
+        _buf: &mut Vec<u8>,
+    ) -> Result<()> {
+        sedona_internal_err!("Table providers are not supported when importing expressions")
+    }
+
+    fn try_decode_udf(&self, name: &str, _buf: &[u8]) -> Result<Arc<ScalarUDF>> {
+        PlaceholderRegistry.udf(name)
+    }
+
+    fn try_decode_udaf(&self, name: &str, _buf: &[u8]) -> Result<Arc<AggregateUDF>> {
+        PlaceholderRegistry.udaf(name)
+    }
+
+    fn try_decode_udwf(&self, name: &str, _buf: &[u8]) -> Result<Arc<WindowUDF>> {
+        PlaceholderRegistry.udwf(name)
+    }
+}
+
+#[cfg(feature = "protobuf")]
+fn task_context_from_registry(registry: &dyn FunctionRegistry) -> Result<TaskContext> {
+    let scalar_functions: HashMap<String, Arc<ScalarUDF>> = registry
+        .udfs()
+        .into_iter()
+        .map(|name| registry.udf(&name).map(|function| (name, function)))
+        .collect::<Result<_>>()?;
+    let higher_order_functions: HashMap<String, Arc<HigherOrderUDF>> = registry
+        .higher_order_function_names()
+        .into_iter()
+        .map(|name| {
+            registry
+                .higher_order_function(&name)
+                .map(|function| (name, function))
+        })
+        .collect::<Result<_>>()?;
+    let aggregate_functions: HashMap<String, Arc<AggregateUDF>> = registry
+        .udafs()
+        .into_iter()
+        .map(|name| registry.udaf(&name).map(|function| (name, function)))
+        .collect::<Result<_>>()?;
+    let window_functions: HashMap<String, Arc<WindowUDF>> = registry
+        .udwfs()
+        .into_iter()
+        .map(|name| registry.udwf(&name).map(|function| (name, function)))
+        .collect::<Result<_>>()?;
+
+    Ok(TaskContext::new(
+        None,
+        "sedona-extension-expression-import".to_string(),
+        SessionConfig::new(),
+        scalar_functions,
+        higher_order_functions,
+        aggregate_functions,
+        window_functions,
+        Arc::new(RuntimeEnv::default()),
+    ))
 }
 
 /// Get a string property from a [SedonaCExprView].
@@ -440,7 +545,7 @@ mod tests {
                 // Verify it's actually a PlaceholderUDF
                 let udf_impl = func.func.inner();
                 assert!(
-                    udf_impl.as_any().downcast_ref::<PlaceholderUDF>().is_some(),
+                    udf_impl.downcast_ref::<PlaceholderUDF>().is_some(),
                     "Expected PlaceholderUDF, got {:?}",
                     udf_impl
                 );

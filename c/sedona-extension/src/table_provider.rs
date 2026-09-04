@@ -16,7 +16,6 @@
 // under the License.
 
 use std::{
-    any::Any,
     collections::HashSet,
     ffi::{c_int, c_void},
     fmt::Debug,
@@ -31,12 +30,12 @@ use async_trait::async_trait;
 use datafusion_catalog::{Session, TableProvider};
 use datafusion_common::{exec_err, plan_err, Result, Statistics};
 use datafusion_execution::FunctionRegistry;
-use datafusion_expr::{Expr, ScalarUDF, TableProviderFilterPushDown, TableType};
+use datafusion_expr::{Expr, HigherOrderUDF, ScalarUDF, TableProviderFilterPushDown, TableType};
 use datafusion_physical_plan::ExecutionPlan;
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use serde::{Deserialize, Serialize};
 
-use crate::expr::{ExportedExprView, ImportedExprView};
+use crate::expr::{ExportedExprView, ImportedExprView, PlaceholderRegistry};
 use crate::extension::{
     SedonaCError, SedonaCExecutionPlan, SedonaCExecutionPlanArgs, SedonaCExprView,
     SedonaCTableProvider,
@@ -234,8 +233,10 @@ unsafe extern "C" fn c_table_provider_get_property(
                 let expr_ptrs = std::slice::from_raw_parts(args_ref.exprs, args_ref.num_exprs);
                 let registry = SessionRefRegistry::new(provider.session.as_ref());
 
-                // Try to deserialize each filter; track successes and failures
-                let mut deserialized: Vec<Option<Expr>> = Vec::with_capacity(args_ref.num_exprs);
+                // Try to deserialize each filter; track successes, failures, and whether
+                // any function remains unresolved in the producer session.
+                let mut deserialized: Vec<Option<(Expr, bool)>> =
+                    Vec::with_capacity(args_ref.num_exprs);
                 for &expr_ptr in expr_ptrs {
                     if expr_ptr.is_null() {
                         deserialized.push(None);
@@ -250,17 +251,22 @@ unsafe extern "C" fn c_table_provider_get_property(
                         }
                     };
 
-                    // If deserialization fails (e.g., UDF not available on this side),
-                    // mark as None (will become Unsupported)
                     match expr_view.to_expr(Some(&registry)) {
-                        Ok(expr) => deserialized.push(Some(expr)),
+                        Ok(expr) => {
+                            let unresolved =
+                                PlaceholderRegistry::expr_contains_any_placeholder(&expr)
+                                    .unwrap_or(true);
+                            deserialized.push(Some((expr, unresolved)));
+                        }
                         Err(_) => deserialized.push(None),
                     }
                 }
 
                 // Collect only the successfully deserialized filters
-                let valid_filters: Vec<&Expr> =
-                    deserialized.iter().filter_map(|opt| opt.as_ref()).collect();
+                let valid_filters: Vec<&Expr> = deserialized
+                    .iter()
+                    .filter_map(|opt| opt.as_ref().map(|(expr, _)| expr))
+                    .collect();
 
                 // Get pushdown results for valid filters from the inner provider
                 let inner_results = provider
@@ -274,16 +280,20 @@ unsafe extern "C" fn c_table_provider_get_property(
                 let mut inner_iter = inner_results.into_iter();
                 let final_results: Vec<&str> = deserialized
                     .iter()
-                    .map(|opt| {
-                        if opt.is_some() {
-                            match inner_iter.next() {
-                                Some(TableProviderFilterPushDown::Exact) => "Exact",
-                                Some(TableProviderFilterPushDown::Inexact) => "Inexact",
-                                _ => "Unsupported",
+                    .map(|opt| match opt {
+                        Some((_, unresolved)) => match inner_iter.next() {
+                            // An unresolved function cannot be executed by the producer.
+                            // Preserve Inexact so implementations may still use the
+                            // expression for pruning, but do not allow Exact to remove the
+                            // consumer-side filter.
+                            Some(TableProviderFilterPushDown::Exact) if *unresolved => {
+                                "Unsupported"
                             }
-                        } else {
-                            "Unsupported"
-                        }
+                            Some(TableProviderFilterPushDown::Exact) => "Exact",
+                            Some(TableProviderFilterPushDown::Inexact) => "Inexact",
+                            _ => "Unsupported",
+                        },
+                        None => "Unsupported",
                     })
                     .collect();
 
@@ -493,10 +503,6 @@ impl ImportedTableProvider {
 
 #[async_trait]
 impl TableProvider for ImportedTableProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }
@@ -689,6 +695,14 @@ impl<'a> FunctionRegistry for SessionRefRegistry<'a> {
         self.session.scalar_functions().keys().cloned().collect()
     }
 
+    fn higher_order_function_names(&self) -> HashSet<String> {
+        self.session
+            .higher_order_functions()
+            .keys()
+            .cloned()
+            .collect()
+    }
+
     fn udafs(&self) -> HashSet<String> {
         self.session.aggregate_functions().keys().cloned().collect()
     }
@@ -702,6 +716,14 @@ impl<'a> FunctionRegistry for SessionRefRegistry<'a> {
             Ok(Arc::clone(func))
         } else {
             plan_err!("Can't find scalar function '{name}' in session")
+        }
+    }
+
+    fn higher_order_function(&self, name: &str) -> Result<Arc<HigherOrderUDF>> {
+        if let Some(func) = self.session.higher_order_functions().get(name) {
+            Ok(Arc::clone(func))
+        } else {
+            plan_err!("Can't find higher-order function '{name}' in session")
         }
     }
 
@@ -947,6 +969,82 @@ mod tests {
     }
 
     #[test]
+    fn test_unknown_udf_filter_pushdown_is_unsupported() {
+        let runtime = test_runtime();
+        runtime
+            .block_on(async {
+                let ctx = create_test_context().await?;
+                let table = ctx.table("test_data").await?.into_view();
+                let session = Arc::new(ctx.state());
+                let exported = ExportedTableProvider::new(table, session, runtime.clone());
+                let ffi_provider: SedonaCTableProvider = exported.into();
+                let imported = ImportedTableProvider::try_new(ffi_provider)?;
+
+                // This represents a UDF that exists only in the importing/consumer
+                // session. It is decoded as a placeholder in the producer session.
+                let udf =
+                    ScalarUDF::new_from_impl(crate::expr::PlaceholderUDF::new("consumer_only_udf"));
+                let filter = udf.call(vec![datafusion_expr::col("id")]);
+                let result = imported.supports_filters_pushdown(&[&filter])?;
+
+                assert_eq!(result, vec![TableProviderFilterPushDown::Unsupported]);
+                Ok::<(), datafusion_common::DataFusionError>(())
+            })
+            .unwrap();
+    }
+
+    #[derive(Debug)]
+    struct InexactPlaceholderProvider {
+        schema: SchemaRef,
+    }
+
+    #[async_trait]
+    impl TableProvider for InexactPlaceholderProvider {
+        fn schema(&self) -> SchemaRef {
+            self.schema.clone()
+        }
+
+        fn table_type(&self) -> TableType {
+            TableType::Base
+        }
+
+        fn supports_filters_pushdown(
+            &self,
+            filters: &[&Expr],
+        ) -> Result<Vec<TableProviderFilterPushDown>> {
+            Ok(vec![TableProviderFilterPushDown::Inexact; filters.len()])
+        }
+
+        async fn scan(
+            &self,
+            _state: &dyn Session,
+            _projection: Option<&Vec<usize>>,
+            _filters: &[Expr],
+            _limit: Option<usize>,
+        ) -> Result<Arc<dyn ExecutionPlan>> {
+            exec_err!("scan is not used by this test")
+        }
+    }
+
+    #[test]
+    fn test_unknown_udf_filter_preserves_inexact_pushdown() {
+        let runtime = test_runtime();
+        let ctx = SessionContext::new();
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, false)]));
+        let provider = Arc::new(InexactPlaceholderProvider { schema });
+        let session = Arc::new(ctx.state());
+        let exported = ExportedTableProvider::new(provider, session, runtime.clone());
+        let ffi_provider: SedonaCTableProvider = exported.into();
+        let imported = ImportedTableProvider::try_new(ffi_provider).unwrap();
+
+        let udf = ScalarUDF::new_from_impl(crate::expr::PlaceholderUDF::new("consumer_only_udf"));
+        let filter = udf.call(vec![datafusion_expr::col("id")]);
+        let result = imported.supports_filters_pushdown(&[&filter]).unwrap();
+
+        assert_eq!(result, vec![TableProviderFilterPushDown::Inexact]);
+    }
+
+    #[test]
     fn test_roundtrip_sort() {
         test_roundtrip_query(
             "SELECT id, value_c FROM imported_data ORDER BY id DESC LIMIT 5",
@@ -1018,10 +1116,6 @@ mod tests {
 
     #[async_trait]
     impl TableProvider for DummyTableProvider {
-        fn as_any(&self) -> &dyn Any {
-            self
-        }
-
         fn schema(&self) -> SchemaRef {
             self.schema.clone()
         }

@@ -25,16 +25,19 @@ use std::{
 };
 
 use arrow_schema::{DataType, Schema, SchemaRef};
+use bytes::Bytes;
 use datafusion_common::{
     error::DataFusionError, scalar::ScalarValue, stats::Precision, ColumnStatistics, Statistics,
 };
-use datafusion_execution::cache::cache_manager::{FileMetadata, FileMetadataCache};
+use datafusion_execution::cache::cache_manager::{
+    CachedFileMetadataEntry, FileMetadata, FileMetadataCache,
+};
 use las::{
     raw::{Header as RawHeader, Vlr as RawVlr},
     Builder, Header, Vlr,
 };
 use laz::laszip::ChunkTable;
-use object_store::{ObjectMeta, ObjectStore};
+use object_store::{ObjectMeta, ObjectStore, ObjectStoreExt};
 
 use crate::las::{
     options::LasOptions,
@@ -129,9 +132,11 @@ impl<'a> LasMetadataReader<'a> {
 
         if let Some(las_file_metadata) = file_metadata_cache
             .as_ref()
-            .and_then(|file_metadata_cache| file_metadata_cache.get(object_meta))
+            .and_then(|file_metadata_cache| file_metadata_cache.get(&object_meta.location))
+            .filter(|cached| cached.is_valid_for(object_meta))
             .and_then(|file_metadata| {
                 file_metadata
+                    .file_metadata
                     .as_any()
                     .downcast_ref::<LasMetadata>()
                     .map(|las_file_metadata| Arc::new(las_file_metadata.to_owned()))
@@ -167,7 +172,13 @@ impl<'a> LasMetadataReader<'a> {
         });
 
         if let Some(file_metadata_cache) = file_metadata_cache {
-            file_metadata_cache.put(object_meta, metadata.clone());
+            file_metadata_cache.put(
+                &object_meta.location,
+                CachedFileMetadataEntry::new(
+                    (*object_meta).clone(),
+                    metadata.clone() as Arc<dyn FileMetadata>,
+                ),
+            );
         }
 
         Ok(metadata)
@@ -249,9 +260,13 @@ pub async fn fetch_header(
     let mut builder = Builder::new(raw_header)?;
 
     // VLRs
-    let bytes = store
-        .get_range(location, header_size..offset_to_point_data)
-        .await?;
+    let bytes = if header_size == offset_to_point_data {
+        Bytes::new()
+    } else {
+        store
+            .get_range(location, header_size..offset_to_point_data)
+            .await?
+    };
     let mut reader = Cursor::new(bytes);
 
     for _ in 0..num_vlr {
@@ -483,7 +498,7 @@ mod tests {
     use std::fs::File;
 
     use las::{point::Format, Builder, Reader, Writer};
-    use object_store::{local::LocalFileSystem, path::Path, ObjectStore};
+    use object_store::{local::LocalFileSystem, path::Path, ObjectStoreExt};
 
     use crate::las::metadata::fetch_header;
 

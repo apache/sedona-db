@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::{any::Any, collections::HashMap, fmt::Debug, sync::Arc};
+use std::{collections::HashMap, fmt::Debug, sync::Arc};
 
 use arrow_array::{RecordBatch, RecordBatchReader};
 use arrow_schema::SchemaRef;
@@ -75,10 +75,6 @@ impl Debug for RecordBatchReaderProvider {
 
 #[async_trait]
 impl TableProvider for RecordBatchReaderProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }
@@ -165,7 +161,7 @@ impl Iterator for RowLimitedIterator {
 struct RecordBatchReaderExec {
     reader: Mutex<Option<Box<dyn RecordBatchReader + Send>>>,
     schema: SchemaRef,
-    properties: PlanProperties,
+    properties: Arc<PlanProperties>,
     limit: Option<usize>,
     projection: Option<Vec<usize>>,
 }
@@ -199,7 +195,7 @@ impl RecordBatchReaderExec {
         Ok(Self {
             reader: Mutex::new(Some(reader)),
             schema,
-            properties,
+            properties: Arc::new(properties),
             limit,
             projection,
         })
@@ -229,15 +225,11 @@ impl ExecutionPlan for RecordBatchReaderExec {
         "RecordBatchReaderExec"
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }
 
-    fn properties(&self) -> &PlanProperties {
+    fn properties(&self) -> &Arc<PlanProperties> {
         &self.properties
     }
 
@@ -513,7 +505,7 @@ mod test {
 
     // Navigate through the plan structure to find our RecordBatchReaderExec
     fn find_record_batch_reader_exec(plan: &dyn ExecutionPlan) -> Option<&RecordBatchReaderExec> {
-        if let Some(reader_exec) = plan.as_any().downcast_ref::<RecordBatchReaderExec>() {
+        if let Some(reader_exec) = plan.downcast_ref::<RecordBatchReaderExec>() {
             return Some(reader_exec);
         }
 

@@ -263,7 +263,7 @@ mod tests {
             .await
             .unwrap_err()
             .to_string();
-        assert!(err.contains("No RSA key found in pem file"), "{err}");
+        assert!(err.contains("no items found"), "{err}");
 
         // for application_credentials_path
         let sql = format!("CREATE EXTERNAL TABLE test STORED AS PARQUET

@@ -187,6 +187,15 @@ def test_columns(con):
     assert set(df.columns) == set(pdf.columns)
 
 
+def test_select_struct_field_after_unnest_st_dump(con):
+    # Regression for https://github.com/apache/sedona-db/issues/1232.
+    multi = con.sql("SELECT ST_GeomFromText('MULTIPOINT (0 0, 1 1)') AS geometry")
+    dumped = multi.select(multi["geometry"].geo.dump().alias("dump")).unnest("dump")
+    result = dumped.select(dumped["dump"]["geom"].alias("geometry"))
+
+    assert result.to_arrow_table().num_rows == 2
+
+
 def test_schema_non_null_crs(con):
     tab = pa.table({"geom": ga.with_crs(ga.as_wkb(["POINT (0 1)"]), gat.OGC_CRS84)})
     df = con.create_data_frame(tab)

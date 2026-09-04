@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::{any::Any, collections::HashMap, fmt::Debug, sync::Arc};
+use std::{collections::HashMap, fmt::Debug, sync::Arc};
 
 use arrow_array::{RecordBatch, RecordBatchReader};
 use arrow_schema::{ArrowError, Schema, SchemaRef};
@@ -91,10 +91,6 @@ impl FileFormatFactory for ExternalFormatFactory {
             spec: self.spec.clone(),
         })
     }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
 }
 
 impl GetExt for ExternalFormatFactory {
@@ -116,10 +112,6 @@ impl ExternalFileFormat {
 
 #[async_trait]
 impl FileFormat for ExternalFileFormat {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn get_ext(&self) -> String {
         self.spec.extension().to_string()
     }
@@ -342,10 +334,6 @@ impl FileSource for ExternalFileSource {
 
     fn projection(&self) -> Option<&ProjectionExprs> {
         self.split_projection.as_ref().map(|sp| &sp.source)
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 
     fn with_batch_size(&self, batch_size: usize) -> Arc<dyn FileSource> {
