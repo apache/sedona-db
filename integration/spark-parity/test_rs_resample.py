@@ -269,8 +269,8 @@ def test_rs_resample_bicubic(tmp_path):
 )
 @pytest.mark.xfail(
     reason="Sedona Spark only implements NearestNeighbor, Bilinear, and "
-    "Bicubic, silently resampling nearest for the other names it accepts; "
-    "SedonaDB runs the named kernel"
+    "Bicubic, silently resampling nearest for the other names it accepts "
+    "(apache/sedona#3320); SedonaDB runs the named kernel"
 )
 def test_rs_resample_spark_fallback_algorithms(algorithm, tmp_path):
     """Every algorithm spelling SedonaDB documents resamples the same way on
@@ -283,7 +283,7 @@ def test_rs_resample_spark_fallback_algorithms(algorithm, tmp_path):
 
 @pytest.mark.xfail(
     reason="SedonaDB rejects an unknown algorithm name; Sedona Spark silently "
-    "resamples with NearestNeighbor"
+    "resamples with NearestNeighbor (apache/sedona#3320)"
 )
 def test_rs_resample_unknown_algorithm(tmp_path):
     """An unrecognized algorithm name gets the same treatment from both
