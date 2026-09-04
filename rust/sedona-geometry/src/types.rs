@@ -398,6 +398,18 @@ impl GeometryTypeAndDimensionsSet {
         self.types |= 1 << bit_position;
     }
 
+    /// The raw bitset backing this set. Round-trips with [`from_bits`](Self::from_bits).
+    #[inline]
+    pub fn bits(&self) -> u32 {
+        self.types
+    }
+
+    /// Construct a set directly from a raw bitset produced by [`bits`](Self::bits).
+    #[inline]
+    pub fn from_bits(bits: u32) -> Self {
+        Self { types: bits }
+    }
+
     /// Merge the given set into this set.
     #[inline]
     pub fn merge(&mut self, other: &Self) {
@@ -428,6 +440,37 @@ impl GeometryTypeAndDimensionsSet {
             types: self.types,
             current_bit: 0,
         }
+    }
+
+    /// The distinct geometry types in this set, in ascending WKB-id order.
+    pub fn geometry_types(&self) -> Vec<GeometryTypeId> {
+        // Collapse the four dimension bytes onto one: bit i is set iff a
+        // geometry with WKB id i is present under any dimension.
+        let merged =
+            (self.types | (self.types >> 8) | (self.types >> 16) | (self.types >> 24)) & 0xFF;
+        (0..8)
+            .filter(|i| merged & (1 << i) != 0)
+            .map(|i| {
+                GeometryTypeId::try_from_wkb_id(i)
+                    .expect("Invalid geometry type wkb_id in GeometryTypeAndDimensionsSet")
+            })
+            .collect()
+    }
+
+    /// The distinct dimensions in this set, in XY, XYZ, XYM, XYZM order.
+    pub fn dimensions(&self) -> Vec<Dimensions> {
+        // Each dimension occupies one byte; the dimension is present iff its
+        // byte has any type bit set.
+        [
+            (0x0000_00FF, Dimensions::Xy),
+            (0x0000_FF00, Dimensions::Xyz),
+            (0x00FF_0000, Dimensions::Xym),
+            (0xFF00_0000_u32, Dimensions::Xyzm),
+        ]
+        .into_iter()
+        .filter(|(mask, _)| self.types & mask != 0)
+        .map(|(_, dim)| dim)
+        .collect()
     }
 }
 
@@ -513,6 +556,23 @@ impl<'de> Deserialize<'de> for GeometryTypeAndDimensionsSet {
 
 #[cfg(test)]
 mod test {
+    #[test]
+    fn set_projections_dedupe_shared_components() {
+        let mut set = GeometryTypeAndDimensionsSet::new();
+        for (t, d) in [
+            (GeometryTypeId::Point, Dimensions::Xy),
+            (GeometryTypeId::Point, Dimensions::Xyz),
+            (GeometryTypeId::LineString, Dimensions::Xy),
+        ] {
+            set.insert(&GeometryTypeAndDimensions::new(t, d)).unwrap();
+        }
+        assert_eq!(
+            set.geometry_types(),
+            vec![GeometryTypeId::Point, GeometryTypeId::LineString]
+        );
+        assert_eq!(set.dimensions(), vec![Dimensions::Xy, Dimensions::Xyz]);
+    }
+
     use super::*;
 
     use rstest::rstest;
@@ -798,6 +858,60 @@ mod test {
 
         for type_and_dim in &test_types {
             assert!(items.contains(type_and_dim));
+        }
+    }
+
+    #[test]
+    fn geometry_type_set_type_dimension_matrix() {
+        // Every (GeometryTypeId, Dimensions) pair must round-trip through the
+        // u32 bit encoding. A set holding exactly one pair must project back to
+        // that single geometry type and that single dimension, which exercises
+        // the shift/mask bookkeeping in `insert`, `geometry_types`, and
+        // `dimensions` across the whole matrix (nothing else pins the bits down).
+        let all_types = [
+            Geometry,
+            Point,
+            LineString,
+            Polygon,
+            MultiPoint,
+            MultiLineString,
+            MultiPolygon,
+            GeometryCollection,
+        ];
+        let all_dimensions = [Xy, Xyz, Xym, Xyzm];
+
+        for geometry_type in all_types {
+            for dimensions in all_dimensions {
+                let mut set = GeometryTypeAndDimensionsSet::new();
+                set.insert(&GeometryTypeAndDimensions::new(geometry_type, dimensions))
+                    .unwrap();
+
+                assert_eq!(
+                    set.geometry_types(),
+                    vec![geometry_type],
+                    "geometry_types() mismatch for {geometry_type:?} {dimensions:?}"
+                );
+                assert_eq!(
+                    set.dimensions(),
+                    vec![dimensions],
+                    "dimensions() mismatch for {geometry_type:?} {dimensions:?}"
+                );
+
+                // The raw bit encoding must round-trip through from_bits(bits())
+                // and still project to the same single type and dimension.
+                let restored = GeometryTypeAndDimensionsSet::from_bits(set.bits());
+                assert_eq!(restored, set);
+                assert_eq!(
+                    restored.geometry_types(),
+                    vec![geometry_type],
+                    "from_bits geometry_types() mismatch for {geometry_type:?} {dimensions:?}"
+                );
+                assert_eq!(
+                    restored.dimensions(),
+                    vec![dimensions],
+                    "from_bits dimensions() mismatch for {geometry_type:?} {dimensions:?}"
+                );
+            }
         }
     }
 
