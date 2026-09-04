@@ -14,7 +14,7 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-"""SedonaDB vs Sedona Spark parity for the scalar raster readers.
+"""SedonaDB vs Sedona Spark parity for `RS_BandNoDataValue`.
 
 Sedona Spark is the compatibility target, so each test runs one shared SQL
 string on both engines and asserts they agree with the harness-level
@@ -134,7 +134,8 @@ def test_rs_band_nodata_fractional_on_int_band(tmp_path):
 )
 def test_rs_band_nodata_out_of_range_band(band, tmp_path):
     """An out-of-range band index gets the same answer from both engines.
-    Contrast the setter, which both engines refuse (see test_rs_raster_out.py)."""
+    Contrast the setter, which both engines refuse (see
+    test_rs_setbandnodatavalue.py)."""
     sedona, spark = SedonaDB(), SedonaSpark()
     for eng in (sedona, spark):
         eng.create_random_raster_view("oob_raster", tmp_path / "oob.tif", nodata=7.0)
