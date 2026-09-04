@@ -267,7 +267,8 @@ def test_rs_reprojectmatch_bilinear(tmp_path):
 
 @pytest.mark.xfail(
     reason="SedonaDB rejects an unknown algorithm name; Sedona Spark silently "
-    "resamples with NearestNeighbor — the same divergence RS_Resample catalogs"
+    "resamples with NearestNeighbor (apache/sedona#3320) — the same "
+    "divergence RS_Resample catalogs"
 )
 def test_rs_reprojectmatch_unknown_algorithm(tmp_path):
     """An unrecognized algorithm name gets the same treatment from both
