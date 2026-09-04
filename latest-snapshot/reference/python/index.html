@@ -3307,6 +3307,8 @@ representation as a scalar constant is unambiguous. Any object that
 is accepted by <code>pyarrow.array([...])</code> is supported in addition to:</p>
 <ul>
 <li>Shapely geometries become SedonaDB geometry objects.</li>
+<li>GeoArrow scalars (WKB, WKT, or native encodings) become SedonaDB
+geometries with CRS and edge type (planar or spherical) preserved.</li>
 <li>GeoSeries objects of length 1 become SedonaDB geometries
 with CRS preserved.</li>
 <li>GeoDataFrame objects with a single column and single row become
@@ -3318,6 +3320,12 @@ row become a scalar value according to the single represented
 value.</li>
 <li>pyproj CRS objects become PROJJSON strings (e.g., so they may be used
 in <code>ST_SetCRS()</code>, <code>ST_Point()</code>, or <code>ST_GeomFromWKT()</code>).</li>
+<li>pandas <code>Timestamp</code> and <code>Timedelta</code> values keep their full resolution
+(and time zone); <code>pandas.NA</code> and <code>numpy.ma.masked</code> become NULL and
+<code>pandas.NaT</code> a timestamp NULL.</li>
+<li>NumPy <code>datetime64</code>/<code>timedelta64</code> values in any unit convert at a
+lossless Arrow resolution, 0-d arrays resolve as their scalar, and
+structured <code>numpy.void</code> values become structs.</li>
 </ul>
 
 
