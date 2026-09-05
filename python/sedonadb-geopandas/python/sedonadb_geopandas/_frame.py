@@ -16,7 +16,11 @@
 # under the License.
 """GeoPandas-style GeoDataFrame backed by a lazy SedonaDB frame."""
 
-from sedonadb_geopandas._series import GeoSeries, Series
+import pyarrow as pa
+from sedonadb.expr import Expr, Literal, lit
+from shapely.geometry.base import BaseGeometry
+
+from sedonadb_geopandas._series import GeoSeries, Series, is_scalar, normalize_scalar
 
 # Rows to collect for the Jupyter rich-text (`_repr_html_`) preview.
 _REPR_HTML_ROWS = 10
@@ -31,6 +35,48 @@ def _geometry_column_names(df):
     return {names[i] for i in df.schema.geometry_column_indices}
 
 
+def _expr_crs(df, expr):
+    """The CRS carried by `expr`, read from a projected schema (a plan build)."""
+    field = df.select(expr.alias("x")).schema.field("x")
+    return getattr(field.type, "crs", None)
+
+
+def _is_missing(value):
+    """Whether `value` is one of the missing-value sentinels.
+
+    `None`, NaN, and `pandas.NA` all mean "no value" to GeoPandas, and a geometry
+    column assigned any of them keeps its type and CRS rather than becoming an
+    ordinary column of nulls.
+    """
+    if value is None:
+        return True
+    # An Arrow-wrapped value means whatever its payload means: a typed null
+    # is missing like bare None, and a wrapped NaN is missing like bare NaN.
+    # The original scalar is kept by the caller for type-preserving literal
+    # construction; this only classifies.
+    if isinstance(value, pa.Scalar):
+        if not value.is_valid:
+            return True
+        if pa.types.is_floating(value.type):
+            payload = value.as_py()
+            return payload != payload
+        return False
+    if isinstance(value, pa.Array):
+        # A typed-null nested scalar is normalized into its one-element array
+        # spelling before missingness is judged; one null element is still
+        # one missing value. Classified here explicitly so the answer does
+        # not depend on optional pandas being installed.
+        return len(value) == 1 and value.null_count == 1
+    try:
+        import pandas as pd
+
+        # Safe for scalars; geometries and numbers simply return False.
+        return bool(pd.isna(value))
+    except Exception:
+        # Without pandas, catch NaN via its self-inequality.
+        return isinstance(value, float) and value != value
+
+
 class GeoDataFrame:
     """A lazy SedonaDB frame in the shape of a `geopandas.GeoDataFrame`.
 
@@ -42,6 +88,12 @@ class GeoDataFrame:
 
     def __init__(self, df, geometry=_DERIVE):
         self._df = df
+        # Earlier frames whose columns this one still contains unchanged, in
+        # the same rows: a Series read from any of them resolves correctly
+        # against this frame. Column-adding assignment extends the list;
+        # replacing a column resets it, and every other operation starts a
+        # new frame with an empty one.
+        self._ancestors = []
         if geometry is _DERIVE:
             # Fall back to SedonaDB's primary-geometry heuristic (same one
             # `to_geopandas` uses); `None` when the frame has no geometry.
@@ -54,6 +106,21 @@ class GeoDataFrame:
                 )
             raise ValueError(f"Column {geometry!r} is not a geometry column")
         self._geometry_name = geometry
+
+    def _accepts(self, series):
+        """Whether `series` can be resolved against this frame.
+
+        A Series records the frame it was read from. It stays valid across
+        assignments that only *add* columns — the rows and every column it
+        could reference are unchanged, so its expression resolves by name
+        to the same values — which is what lets a captured `g = gdf.geometry`
+        supply several derived columns in a row. Replacing a column, or any
+        row-changing operation (filter, reprojection, ...), invalidates
+        earlier reads, since the same expression would then resolve to
+        different values than the Series showed.
+        """
+        df = series._df
+        return df is self._df or any(df is ancestor for ancestor in self._ancestors)
 
     @property
     def geometry(self):
@@ -77,6 +144,19 @@ class GeoDataFrame:
     def __getitem__(self, key):
         # Boolean mask -> row filter (gdf[gdf["pop"] > 1000]).
         if isinstance(key, Series):
+            if not self._accepts(key):
+                # Same check assignment makes. Without it a mask captured
+                # before a column replacement or a filter is silently reused
+                # against the rebound frame: it happens to resolve while the
+                # referenced column still exists, and fails obscurely at
+                # collection when it does not.
+                raise ValueError(
+                    "Cannot filter with a mask built from a different DataFrame: "
+                    "there is no row alignment, so the result would be silently "
+                    "wrong. Note that replacing a column or filtering rebinds "
+                    "this frame, so a mask taken beforehand is stale; re-read it "
+                    "as gdf[...] > ... and try again."
+                )
             return GeoDataFrame(self._df.filter(key._expr), self._geometry_name)
 
         # Column subset -> GeoDataFrame. Matching GeoPandas, the active geometry
@@ -92,7 +172,10 @@ class GeoDataFrame:
         # Single column -> (Geo)Series.
         if isinstance(key, str):
             expr = self._df[key]
-            if key == self._geometry_name:
+            # Any geometry-typed column reads back as a GeoSeries — not just
+            # the active one — so a freshly assigned geometry column supports
+            # .area and .buffer() immediately, as it does in GeoPandas.
+            if key in _geometry_column_names(self._df):
                 return GeoSeries(self._df, expr, key)
             return Series(self._df, expr, key)
 
@@ -115,6 +198,254 @@ class GeoDataFrame:
             f"boolean mask, not {type(key).__name__}"
         )
 
+    def __setitem__(self, key, value):
+        """Add or replace a column, as in `gdf["buffered"] = gdf.geometry.buffer(1)`.
+
+        The underlying frame is immutable, so this rebinds this object to a new
+        frame rather than mutating data in place. A `Series` read from this
+        frame stays usable across assignments that only add columns, so one
+        captured geometry can supply several derived columns; replacing a
+        column (or filtering) invalidates earlier reads, which then raise
+        rather than silently resolving to different values.
+
+        Args:
+            key: Column name to add or replace.
+            value: A `Series`/`GeoSeries` from this same frame, or a scalar (which
+                may be a geometry) to broadcast to every row.
+
+        A bare SedonaDB expression is deliberately not accepted. An expression
+        carries no record of the frame it was built from, so a column reference
+        taken from another frame would resolve against this one and silently
+        produce this frame's values instead of the intended ones.
+        """
+        if not isinstance(key, str):
+            raise TypeError(f"Column name must be a string, not {type(key).__name__}")
+
+        if isinstance(value, Series):
+            if not self._accepts(value):
+                raise ValueError(
+                    "Cannot assign a Series that comes from a different "
+                    "DataFrame: there is no row alignment, so the result would "
+                    "be silently wrong. Note that replacing a column or "
+                    "filtering rebinds this frame, so a Series read before "
+                    "that is stale; re-read it as gdf[...] and try again."
+                )
+            expr = self._series_expr(key, value)
+        elif isinstance(value, Literal):
+            # A literal holds a value rather than a column reference, so there is
+            # no frame for it to be misattributed to. It still goes through the
+            # scalar path so that a literal geometry gets the same CRS treatment as
+            # a plain one.
+            expr = self._scalar_expr(key, value)
+        elif isinstance(value, Expr):
+            raise TypeError(
+                "Assigning a bare expression isn't supported: an expression does "
+                "not record which frame its columns came from, so one built "
+                "against another frame would silently resolve against this one. "
+                "Assign a Series read from this frame, or a literal."
+            )
+        elif not is_scalar(value):
+            raise TypeError(
+                f"Assigning a {type(value).__name__} isn't supported (there is no "
+                f"row alignment, so the values could not be matched to rows). "
+                f"Build the column from this frame's own columns, or load the "
+                f"data as a frame and join it."
+            )
+        else:
+            expr = self._scalar_expr(key, value)
+
+        geometry_before = _geometry_column_names(self._df)
+        if key in self._df.schema.names:
+            # Replacing a column: an earlier Series may reference it and
+            # would now resolve to the new values, so earlier reads are no
+            # longer valid.
+            self._ancestors = []
+        else:
+            self._ancestors.append(self._df)
+        self._df = self._df.mutate(**{key: expr})
+
+        # Assignment can change whether the active geometry column is still a
+        # geometry: replacing it with a number leaves nothing to be active, and
+        # *creating* a geometry column on a frame without one activates it. The
+        # created-not-preexisting distinction matters: a frame whose geometry was
+        # explicitly deactivated (geometry=None) must not be reactivated by a
+        # no-op reassignment of a column that was already geometry.
+        geometry_after = _geometry_column_names(self._df)
+        if key == self._geometry_name and key not in geometry_after:
+            self._geometry_name = None
+        elif (
+            self._geometry_name is None
+            and key in geometry_after
+            and key not in geometry_before
+        ):
+            self._geometry_name = key
+
+    def _series_expr(self, key, value):
+        """Adjust a same-frame `Series` expression for assignment to `key`.
+
+        Mirrors the scalar path's CRS rule: a geometry column that carries no
+        CRS of its own inherits the destination column's CRS when it replaces
+        one that has it — GeoPandas keeps the frame CRS in this situation —
+        while a column that carries its own CRS keeps it, since restamping
+        would relabel coordinates without transforming them.
+        """
+        expr = value._expr
+        if key not in _geometry_column_names(self._df):
+            return expr
+        crs = self._df.schema.field(key).type.crs
+        if crs is None or _expr_crs(self._df, expr) is not None:
+            return expr
+        projected = self._df.select(expr.alias("x")).schema
+        if not projected.geometry_column_indices:
+            # A non-geometry value legitimately converts the column.
+            return expr
+        ctx = self._df._ctx
+        return expr.funcs.st_setcrs(ctx.lit(crs.to_json()))
+
+    def _scalar_expr(self, key, value):
+        """Build the expression for broadcasting `value` into column `key`.
+
+        Replacing an existing geometry column keeps that column's type and CRS, as
+        GeoPandas does. A bare Shapely geometry carries no CRS of its own, and any
+        missing-value sentinel (`None`, NaN, `pandas.NA`) means "no geometry" rather
+        than "no longer a geometry column", so neither should silently reset what
+        the frame already knew.
+
+        A `Literal` is unwrapped and rebuilt on this frame's context: a literal
+        constructed by the bare `lit()` has no context, so functions cannot be
+        applied to it, and passing it straight through would skip the CRS handling.
+        """
+        raw = value._value if isinstance(value, Literal) else value
+        raw = normalize_scalar(raw)
+
+        # Only geometry values inherit the column's type and CRS. Assigning a number
+        # over a geometry column is a legitimate way to turn it into an ordinary
+        # column, and must not be dressed up as geometry. Geometry-ness is decided
+        # from the resolved literal's schema rather than by duck-typing the Python
+        # value: a GeoArrow scalar carries no __geo_interface__ yet is geometry.
+        missing = _is_missing(raw)
+        replacing_geometry = key in _geometry_column_names(self._df)
+
+        # A GeoArrow-typed scalar — valid or null — is recognized from its
+        # extension name, not by resolving it: the scalar resolver drops the
+        # planar/spherical edge type and rejects non-WKB storage outright.
+        # It needs the handling below even for a brand-new or non-geometry
+        # column, so this must come before that early return.
+        geoarrow_typed = isinstance(raw, pa.Scalar) and str(
+            getattr(raw.type, "extension_name", "")
+        ).startswith("geoarrow.")
+
+        if not replacing_geometry and not geoarrow_typed:
+            return lit(raw)
+
+        if not missing and not geoarrow_typed:
+            candidate = lit(raw)
+            projected = self._df.select(candidate.alias("x")).schema
+            if not projected.geometry_column_indices:
+                return candidate
+
+        if replacing_geometry:
+            dtype = self._df.schema.field(key).type
+            crs = dtype.crs
+            spherical = "SPHERICAL" in str(getattr(dtype, "edge_type", "")).upper()
+        else:
+            # A new or non-geometry destination has no type or CRS to
+            # inherit; the value's own metadata is all there is.
+            crs = None
+            spherical = False
+        # A context-bound literal is needed to call functions on it.
+        ctx = self._df._ctx
+        inherits_crs = False
+        strips_crs = False
+        expr = None
+        if geoarrow_typed:
+            scalar_spherical = (
+                "SPHERICAL" in str(getattr(raw.type, "edge_type", "")).upper()
+            )
+            scalar_crs = getattr(raw.type, "crs", None)
+            if str(raw.type.extension_name) == "geoarrow.wkb":
+                arr_type = raw.type
+                if pa.types.is_large_binary(arr_type.storage_type):
+                    # SedonaDB's WKB importer requires Binary storage; the
+                    # type is rebuilt on Binary with the same CRS and edge
+                    # metadata rather than passed through and rejected.
+                    import geoarrow.pyarrow as ga
+
+                    rebuilt = ga.wkb().with_edge_type(arr_type.edge_type)
+                    if arr_type.crs is not None:
+                        rebuilt = rebuilt.with_crs(arr_type.crs)
+                    arr_type = rebuilt
+                expr = ctx.lit(pa.array([raw.as_py()], type=arr_type))
+            elif missing:
+                # Non-WKB storage cannot become a literal; a null of it is
+                # rebuilt from its own metadata. Kind and CRS survive; the
+                # storage kind, which holds nothing for a null, does not.
+                if scalar_spherical:
+                    expr = ctx.lit(None).funcs.st_geogfromwkt()
+                else:
+                    expr = ctx.lit(None).funcs.st_geomfromwkt()
+                if scalar_crs:
+                    # GeoArrow CRS wrappers stringify as StringCrs(...);
+                    # to_json() is the canonical PROJJSON form ST_SetCRS
+                    # accepts.
+                    crs_text = (
+                        scalar_crs.to_json()
+                        if hasattr(scalar_crs, "to_json")
+                        else str(scalar_crs)
+                    )
+                    expr = expr.funcs.st_setcrs(ctx.lit(crs_text))
+                else:
+                    # A CRS-less carrier inherits the destination CRS like
+                    # any other, shedding any constructor-synthesized one.
+                    inherits_crs = True
+                    strips_crs = crs is None
+            else:
+                # A valid non-WKB GeoArrow scalar keeps the literal
+                # resolver's own error, which names the unsupported storage.
+                expr = ctx.lit(raw)
+        if expr is not None:
+            pass
+        elif missing:
+            # The typed null is built with the destination's own spatial kind:
+            # a geography column stays geography rather than degrading to
+            # planar geometry. A missing value has no CRS of its own, whatever
+            # CRS the constructor synthesizes — so a CRS-less destination
+            # strips the synthesized one back off.
+            inherits_crs = True
+            if spherical:
+                expr = ctx.lit(None).funcs.st_geogfromwkt()
+                strips_crs = crs is None
+            else:
+                expr = ctx.lit(None).funcs.st_geomfromwkt()
+        elif spherical:
+            if isinstance(raw, BaseGeometry):
+                # A bare Shapely value re-enters through WKB as geography.
+                # It carries no CRS of its own — the constructor synthesizes
+                # CRS84 — so the destination CRS applies. (A value that
+                # already carries a spatial type — a GeoArrow scalar, say —
+                # keeps it; converting between planar and spherical semantics
+                # is not something an assignment should do silently.)
+                inherits_crs = True
+                strips_crs = crs is None
+                expr = ctx.lit(raw.wkb).funcs.st_geogfromwkb()
+            else:
+                expr = ctx.lit(raw)
+        else:
+            expr = ctx.lit(raw)
+        # The destination CRS is inherited by values that have none of their
+        # own: missing values, bare Shapely geometry, and anything whose
+        # projection shows no CRS. A value that carries its own CRS (a
+        # GeoSeries literal, say) keeps it: stamping the destination CRS over
+        # it would relabel the coordinates without transforming them, which
+        # is silently wrong data.
+        if crs is not None and (inherits_crs or _expr_crs(self._df, expr) is None):
+            expr = expr.funcs.st_setcrs(ctx.lit(crs.to_json()))
+        elif strips_crs and _expr_crs(self._df, expr) is not None:
+            # SRID 0 means "no CRS" and keeps the value; st_setcrs(NULL)
+            # would null-propagate and erase every row.
+            expr = expr.funcs.st_setsrid(ctx.lit(0))
+        return expr
+
     def head(self, n=5):
         """Return a `GeoDataFrame` of at most `n` rows.
 
@@ -127,8 +458,6 @@ class GeoDataFrame:
         """Reproject the geometry column to `crs` (`ST_Transform`)."""
         if self._geometry_name is None:
             raise ValueError("to_crs() requires an active geometry column")
-        from sedonadb.expr import lit
-
         transformed = self._df[self._geometry_name].geo.transform(lit(crs))
         new_df = self._df.mutate(**{self._geometry_name: transformed})
         return GeoDataFrame(new_df, self._geometry_name)
@@ -142,13 +471,26 @@ class GeoDataFrame:
         the expected column active.
         """
         result = self._df.to_pandas()
-        if self._geometry_name is not None and hasattr(result, "set_geometry"):
-            try:
-                active = result.geometry.name
-            except Exception:
-                active = None
-            if active != self._geometry_name:
-                result = result.set_geometry(self._geometry_name)
+        if not hasattr(result, "set_geometry"):
+            return result
+        if self._geometry_name is None:
+            # The frame has no active geometry (possibly explicitly cleared),
+            # but the materializer heuristically activates one whenever a
+            # geometry column exists — and a later to_crs() on the result
+            # would silently target a column this frame never had active.
+            # There is no public spelling for "GeoDataFrame with geometry
+            # columns but no active one", so the marker is cleared in place.
+            # (Reconstructing the frame instead would let the constructor
+            # coerce an unrelated all-null column named "geometry" to
+            # geometry dtype.)
+            result._geometry_column_name = None
+            return result
+        try:
+            active = result.geometry.name
+        except Exception:
+            active = None
+        if active != self._geometry_name:
+            result = result.set_geometry(self._geometry_name)
         return result
 
     # Alias: results carry geometry, so this returns a GeoDataFrame too.
