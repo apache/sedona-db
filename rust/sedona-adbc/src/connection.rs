@@ -23,7 +23,7 @@ use adbc_core::{
     options::{InfoCode, ObjectDepth},
     Connection,
 };
-use arrow_array::RecordBatchReader;
+use arrow_array_adbc::RecordBatchReader;
 use sedona::context::SedonaContext;
 use sedona_extension::runtime::RuntimeHandle;
 use std::sync::Arc;
@@ -151,7 +151,7 @@ impl Connection for SedonaConnection {
         _catalog: Option<&str>,
         _db_schema: Option<&str>,
         _table_name: &str,
-    ) -> Result<arrow_schema::Schema> {
+    ) -> Result<arrow_schema_adbc::Schema> {
         err_not_implemented!()
     }
 

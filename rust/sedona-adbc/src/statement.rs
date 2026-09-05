@@ -15,8 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 use adbc_core::PartitionedResult;
-use arrow_array::{RecordBatch, RecordBatchReader};
-use arrow_schema::Schema;
+use arrow_array_adbc::{RecordBatch, RecordBatchReader};
+use arrow_schema_adbc::Schema;
 use sedona::context::SedonaContext;
 use sedona_extension::runtime::RuntimeHandle;
 use sedona_extension::streaming::StreamingRecordBatchReader;
@@ -28,7 +28,11 @@ use adbc_core::{
     Optionable, Statement,
 };
 
-use crate::{err_not_implemented, err_unrecognized_option, utils::from_datafusion_error};
+use crate::{
+    arrow_compat::{convert_schema, ArrowVersionAdapter},
+    err_not_implemented, err_unrecognized_option,
+    utils::from_datafusion_error,
+};
 
 pub struct SedonaStatement {
     runtime: Arc<RuntimeHandle>,
@@ -84,7 +88,9 @@ impl Statement for SedonaStatement {
         if let Some(query) = self.sql_query.clone() {
             self.runtime.block_on(async {
                 let df = self.ctx.sql(&query).await.map_err(from_datafusion_error)?;
-                Ok(df.schema().as_arrow().clone())
+                convert_schema(df.schema().as_arrow()).map_err(|error| {
+                    Error::with_message_and_status(error.to_string(), Status::Internal)
+                })
             })
         } else {
             Err(Error::with_message_and_status(
@@ -101,6 +107,9 @@ impl Statement for SedonaStatement {
                 let stream = df.execute_stream().await.map_err(from_datafusion_error)?;
                 let reader = StreamingRecordBatchReader::new(stream, self.runtime.clone())
                     .with_skip_empty_batches(true);
+                let reader = ArrowVersionAdapter::try_new(reader).map_err(|error| {
+                    Error::with_message_and_status(error.to_string(), Status::Internal)
+                })?;
                 Ok(Box::new(reader) as Box<dyn RecordBatchReader + Send + 'static>)
             })
         } else {
@@ -142,12 +151,9 @@ impl Statement for SedonaStatement {
 
 #[cfg(test)]
 mod test {
-    use std::ops::Deref;
-
     use adbc_core::{Connection, Database, Driver, Statement};
-    use arrow_array::RecordBatch;
-    use arrow_schema::{Field, Schema};
-    use datafusion::assert_batches_eq;
+    use arrow_array_adbc::{RecordBatch, StringArray};
+    use arrow_schema_adbc::{Field, Schema};
 
     use crate::driver::SedonaDriver;
 
@@ -175,20 +181,22 @@ mod test {
 
         assert_eq!(
             statement.execute_schema().unwrap(),
-            Schema::new(vec![Field::new("geom", arrow_schema::DataType::Utf8, true)])
+            Schema::new(vec![Field::new(
+                "geom",
+                arrow_schema_adbc::DataType::Utf8,
+                true,
+            )])
         );
 
         let batches: Result<Vec<RecordBatch>, _> = statement.execute().unwrap().collect();
 
-        assert_batches_eq!(
-            [
-                "+------------+",
-                "| geom       |",
-                "+------------+",
-                "| POINT(1 2) |",
-                "+------------+",
-            ],
-            batches.unwrap().deref()
-        );
+        let batches = batches.unwrap();
+        assert_eq!(batches.len(), 1);
+        let values = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(values.value(0), "POINT(1 2)");
     }
 }
