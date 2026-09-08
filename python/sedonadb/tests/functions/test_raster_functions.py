@@ -83,12 +83,13 @@ def test_rs_srid_from_wkt():
     )
 
 
-def test_rs_srid_from_authorityless_wkt_errors(con):
-    """A WKT with no authority code anywhere has no SRID to extract."""
-    with pytest.raises(Exception, match="SRID"):
-        con.sql(
-            f"SELECT RS_SRID(RS_SetCRS(RS_Example(), '{WKT_LCC_NO_AUTHORITY}'))"
-        ).to_arrow_table()
+def test_rs_srid_from_authorityless_wkt_is_null(con):
+    """A WKT with no authority code anywhere is a valid, usable CRS but has no
+    SRID to extract, so RS_SRID yields NULL rather than erroring."""
+    result = con.sql(
+        f"SELECT RS_SRID(RS_SetCRS(RS_Example(), '{WKT_LCC_NO_AUTHORITY}')) AS srid"
+    ).to_arrow_table()
+    assert result["srid"][0].as_py() is None
 
 
 def test_rs_ensureloaded(con, sedona_testing):
