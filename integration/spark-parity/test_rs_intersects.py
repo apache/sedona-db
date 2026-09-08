@@ -146,3 +146,32 @@ def test_rs_intersects_polar_raster_densified_footprint(wkt, tmp_path):
         f"'{wkt}'), 4326)) FROM polar_src"
     )
     compare(sql, sedona, spark)
+
+
+def test_rs_intersects_antimeridian_raster(tmp_path):
+    """An EPSG:3413 square straddling the longitude-180 direction intersects
+    a two-lobe region written on both sides of the antimeridian — the flat
+    lon/lat spelling both engines evaluate correctly (contrast RS_Within,
+    where the same footprint turns inside out)."""
+    path = tmp_path / "am.tif"
+    write_random_geotiff(
+        path,
+        "uint8",
+        bands=1,
+        height=10,
+        width=10,
+        bbox=(-1330942.0, 730942.0, -730942.0, 1330942.0),
+        crs="EPSG:3413",
+    )
+    sedona, spark = SedonaDB(), SedonaSpark()
+    for eng in (sedona, spark):
+        eng.create_raster_view("ix_am_src", path)
+    lobes = (
+        "MULTIPOLYGON(((160 70, 180 70, 180 84, 160 84, 160 70)), "
+        "((-180 70, -160 70, -160 84, -180 84, -180 70)))"
+    )
+    sql = (
+        "SELECT RS_Intersects(rast, ST_SetSRID(ST_GeomFromWKT("
+        f"'{lobes}'), 4326)) FROM ix_am_src"
+    )
+    compare(sql, sedona, spark, expected=True)

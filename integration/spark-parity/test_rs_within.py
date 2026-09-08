@@ -75,18 +75,58 @@ def test_rs_within_polar_raster_not_within(tmp_path):
 
 
 @pytest.mark.xfail(
-    reason="a pole-spanning EPSG:4326 polygon degenerates in flat lon/lat "
-    "space (the cap's footprint wraps the antimeridian): SedonaDB answers "
-    "false where Sedona Spark throws — and neither models the spherical "
-    "truth, which is that the square lies within the latitude-75 cap"
+    reason="a footprint whose interior wraps the pole turns inside out when "
+    "reprojected: the pole maps to the degenerate latitude-90 edge of "
+    "lon/lat space, so BOTH engines are wrong — SedonaDB answers false "
+    "(apache/sedona-db#1240) and Sedona Spark throws (apache/sedona#3323) "
+    "where the spherical truth is true; the anchor states that truth"
 )
 def test_rs_within_polar_raster_pole_spanning(tmp_path):
-    """The pole square is within a polygon covering everything north of
-    latitude 75, in both engines."""
+    """The pole square is within the latitude-75 cap (its footprint stays
+    above latitude 77) — a case where the raster interior's pole becomes an
+    edge of the geometry's CRS. Anchored to the spherical truth so the test
+    proves both engines wrong rather than merely recording their mismatch."""
     sedona, spark = _polar_engines(tmp_path)
     sql = (
         "SELECT RS_Within(rast, ST_SetSRID(ST_GeomFromWKT("
         "'POLYGON((-180 75, 180 75, 180 90, -180 90, -180 75))'), 4326)) "
         "FROM wi_polar_src"
     )
-    compare(sql, sedona, spark)
+    compare(sql, sedona, spark, expected=True)
+
+
+@pytest.mark.xfail(
+    reason="SedonaDB reprojects the densified footprint into the geometry's "
+    "CRS, and a footprint straddling the antimeridian turns inside out there "
+    "(longitudes jump across the ±180 seam), so it answers false for a "
+    "truly-within raster (apache/sedona-db#1240); Sedona Spark transforms "
+    "the geometry into the raster's CRS instead and answers true — the "
+    "suite's first case where SedonaDB is the wrong engine"
+)
+def test_rs_within_antimeridian_raster(tmp_path):
+    """An EPSG:3413 square centred on the longitude-180 direction (corner
+    longitudes ±163.8 and ±180, latitudes 72.7-80.5) is within a two-lobe
+    region covering longitudes 160..180 and -180..-160 at latitudes 70-84 —
+    every footprint point lies in a lobe."""
+    path = tmp_path / "am.tif"
+    write_random_geotiff(
+        path,
+        "uint8",
+        bands=1,
+        height=10,
+        width=10,
+        bbox=(-1330942.0, 730942.0, -730942.0, 1330942.0),
+        crs="EPSG:3413",
+    )
+    sedona, spark = SedonaDB(), SedonaSpark()
+    for eng in (sedona, spark):
+        eng.create_raster_view("wi_am_src", path)
+    lobes = (
+        "MULTIPOLYGON(((160 70, 180 70, 180 84, 160 84, 160 70)), "
+        "((-180 70, -160 70, -160 84, -180 84, -180 70)))"
+    )
+    sql = (
+        "SELECT RS_Within(rast, ST_SetSRID(ST_GeomFromWKT("
+        f"'{lobes}'), 4326)) FROM wi_am_src"
+    )
+    compare(sql, sedona, spark, expected=True)
