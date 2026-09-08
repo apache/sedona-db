@@ -15,24 +15,32 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! Logical optimizer rule that wraps raster arguments of `needs_bytes`
-//! UDFs with `RS_EnsureLoaded`, so OutDb byte materialisation happens
-//! explicitly in the logical plan instead of as a hidden side effect
-//! inside the kernel.
+//! Logical optimizer rule that normalises raster arguments of raster UDFs by
+//! making their byte-access preconditions explicit in the logical plan instead
+//! of as hidden side effects inside the kernel. Two preconditions are handled:
 //!
-//! After this rule, calls like `RS_Value(raster, x, y)` (where
-//! `RS_Value` is annotated with the `needs_pixels` metadata flag) become
-//! `RS_Value(RS_EnsureLoaded(raster), x, y)`. DataFusion's
-//! `CommonSubexprEliminate` pass deduplicates identical
-//! `RS_EnsureLoaded(col)` calls across multiple `needs_bytes` UDFs
-//! sharing the same raster column — provided `RS_EnsureLoaded`'s
-//! signature is `Volatility::Stable` (not `Volatile`).
+//! - a UDF tagged `needs_pixels` has its raster arguments wrapped with
+//!   `RS_EnsureLoaded`, materialising any OutDb bytes;
+//! - a UDF tagged `needs_contiguous` has them wrapped with
+//!   `RS_EnsureContiguous`, repacking any strided in-database band into a
+//!   packed row-major layout the kernel can borrow zero-copy.
 //!
-//! This is a logical optimizer rule (not an analyzer rule) so it can
-//! look `RS_EnsureLoaded` up from the [`FunctionRegistry`] rather than
-//! capturing an `Arc` at construction time. Because optimizer rules run
-//! to a fixpoint, the rewrite is idempotent: an argument already wrapped
-//! in `RS_EnsureLoaded` is left alone (see [`already_loaded`]).
+//! A UDF that needs both (e.g. an export function that loads bytes and then
+//! hands them to GDAL) yields the nested form
+//! `RS_X(RS_EnsureContiguous(RS_EnsureLoaded(raster)), …)` — load innermost,
+//! then repack the loaded result. So after this rule `RS_Value(raster, x, y)`
+//! (tagged `needs_pixels`) becomes `RS_Value(RS_EnsureLoaded(raster), x, y)`,
+//! and `RS_AsGeoTiff(raster)` (tagged both) becomes
+//! `RS_AsGeoTiff(RS_EnsureContiguous(RS_EnsureLoaded(raster)))`. DataFusion's
+//! `CommonSubexprEliminate` pass deduplicates identical wrapper calls across
+//! multiple UDFs sharing the same raster column — provided both wrappers'
+//! signatures are `Volatility::Stable` (not `Volatile`).
+//!
+//! This is a logical optimizer rule (not an analyzer rule) so it can look the
+//! wrapper UDFs up from the [`FunctionRegistry`] rather than capturing an `Arc`
+//! at construction time. Because optimizer rules run to a fixpoint, the rewrite
+//! is idempotent: an argument already wrapped is left alone (see
+//! [`already_loaded`] and [`already_contiguous`]).
 
 use std::sync::Arc;
 
@@ -64,6 +72,14 @@ const NEEDS_PIXELS_METADATA_KEY: &str = "needs_pixels";
 /// `sedona_raster_functions::rs_ensure_loaded::RETURNS_BYTES_METADATA_KEY`.
 const RETURNS_BYTES_METADATA_KEY: &str = "returns_bytes";
 
+/// `SedonaScalarUDF` metadata key marking a UDF whose kernels require their
+/// raster's band bytes laid out contiguously (they call `as_contiguous`,
+/// directly or through the GDAL bridge). Raster arguments of such a UDF are
+/// wrapped with `RS_EnsureContiguous`. Duplicated from `sedona_raster_functions`
+/// (the owner), which this crate can't depend on — keep the literal in sync with
+/// `sedona_raster_functions::rs_ensure_contiguous::NEEDS_CONTIGUOUS_METADATA_KEY`.
+const NEEDS_CONTIGUOUS_METADATA_KEY: &str = "needs_contiguous";
+
 /// Logical optimizer rule wrapping raster arguments of `needs_bytes`
 /// UDFs with `RS_EnsureLoaded`. Stateless — the `RS_EnsureLoaded` UDF
 /// is resolved from the session's [`FunctionRegistry`] at rewrite time.
@@ -92,12 +108,17 @@ impl OptimizerRule for EnsureLoadedOptimizerRule {
         plan: LogicalPlan,
         config: &dyn OptimizerConfig,
     ) -> Result<Transformed<LogicalPlan>> {
-        // Resolve RS_EnsureLoaded from the registry. A context that never
-        // registered it (no raster support) has nothing to rewrite.
+        // Resolve both wrapper UDFs from the registry. A context that never
+        // registered them (no raster support) has nothing to rewrite; they are
+        // registered together, so if either is missing there is no wrapping to
+        // do and we bail cleanly rather than half-normalise.
         let Some(registry) = config.function_registry() else {
             return Ok(Transformed::no(plan));
         };
         let Ok(ensure_loaded_udf) = registry.udf("rs_ensureloaded") else {
+            return Ok(Transformed::no(plan));
+        };
+        let Ok(ensure_contiguous_udf) = registry.udf("rs_ensurecontiguous") else {
             return Ok(Transformed::no(plan));
         };
 
@@ -124,7 +145,9 @@ impl OptimizerRule for EnsureLoadedOptimizerRule {
         drop(inputs);
 
         plan.map_expressions(|e| {
-            e.transform_up(|expr| rewrite_expr_node(expr, &schema, &ensure_loaded_udf))
+            e.transform_up(|expr| {
+                rewrite_expr_node(expr, &schema, &ensure_loaded_udf, &ensure_contiguous_udf)
+            })
         })
     }
 }
@@ -140,41 +163,42 @@ fn merged_input_schema(inputs: &[&LogicalPlan]) -> Option<Arc<DFSchema>> {
     Some(Arc::new(merged))
 }
 
-/// Single-step rewrite: if `expr` is a `needs_bytes` UDF call, wrap each
-/// raster-typed arg with `RS_EnsureLoaded`. Two guards keep it correct:
-/// it never wraps `RS_EnsureLoaded` itself (recursion), and it never
-/// re-wraps an arg already wrapped in `RS_EnsureLoaded` (idempotency,
-/// required because optimizer rules run to a fixpoint).
+/// Single-step rewrite: if `expr` is a UDF call tagged `needs_pixels` and/or
+/// `needs_contiguous`, wrap each raster-typed arg with the corresponding
+/// wrapper(s). Two guards keep it correct: it never wraps either wrapper UDF
+/// itself (recursion), and it never re-adds a wrapper an arg already carries
+/// (idempotency, required because optimizer rules run to a fixpoint).
 fn rewrite_expr_node(
     expr: Expr,
     schema: &Arc<DFSchema>,
     ensure_loaded_udf: &Arc<ScalarUDF>,
+    ensure_contiguous_udf: &Arc<ScalarUDF>,
 ) -> Result<Transformed<Expr>> {
     let Expr::ScalarFunction(ref func_call) = expr else {
         return Ok(Transformed::no(expr));
     };
 
-    // Recursion guard: don't wrap rs_ensureloaded itself.
+    // Recursion guard: don't wrap either wrapper UDF itself.
     let name = func_call.func.name();
-    if name == "rs_ensureloaded" {
+    if name == "rs_ensureloaded" || name == "rs_ensurecontiguous" {
         return Ok(Transformed::no(expr));
     }
 
-    // Only annotated SedonaScalarUDFs participate. DataFusion built-ins
-    // and unannotated UDFs pass through unchanged.
-    let needs_bytes = func_call
-        .func
-        .inner()
-        .as_any()
-        .downcast_ref::<SedonaScalarUDF>()
-        .map(|u| {
-            u.metadata()
-                .get(NEEDS_PIXELS_METADATA_KEY)
-                .map(String::as_str)
-                == Some("true")
-        })
-        .unwrap_or(false);
-    if !needs_bytes {
+    // Only annotated SedonaScalarUDFs participate. DataFusion built-ins and
+    // unannotated UDFs pass through unchanged. Each flag read is its own
+    // statement so the metadata borrow of `expr` (via `func_call`) is a
+    // temporary that ends before `expr` is moved out below.
+    let has_flag = |key: &str| {
+        func_call
+            .func
+            .inner()
+            .as_any()
+            .downcast_ref::<SedonaScalarUDF>()
+            .is_some_and(|u| u.metadata().get(key).map(String::as_str) == Some("true"))
+    };
+    let needs_pixels = has_flag(NEEDS_PIXELS_METADATA_KEY);
+    let needs_contiguous = has_flag(NEEDS_CONTIGUOUS_METADATA_KEY);
+    if !needs_pixels && !needs_contiguous {
         return Ok(Transformed::no(expr));
     }
 
@@ -191,19 +215,26 @@ fn rewrite_expr_node(
     let new_args: Vec<Expr> = args
         .into_iter()
         .map(|arg| {
-            // Don't wrap an argument that already yields loaded bytes —
-            // whether it's an injected loader (idempotency across fixpoint
-            // passes) or a function that returns materialised bytes (avoids a
-            // redundant nested async wrap; apache/datafusion#20031).
-            if already_loaded(&arg) {
+            if !expr_is_raster(&arg, schema) {
                 return arg;
             }
-            if expr_is_raster(&arg, schema) {
-                changed = true;
-                wrap_for_loading(arg, ensure_loaded_udf)
-            } else {
-                arg
+            // Add each wrapper only if the flag is set AND the arg doesn't
+            // already carry it. `already_loaded`/`already_contiguous` look
+            // through the other wrapper too, so a fixpoint re-run over a
+            // fully-wrapped arg is a no-op.
+            let add_load = needs_pixels && !already_loaded(&arg);
+            let add_contiguous = needs_contiguous && !already_contiguous(&arg);
+            if !add_load && !add_contiguous {
+                return arg;
             }
+            changed = true;
+            wrap_raster_arg(
+                arg,
+                add_load,
+                add_contiguous,
+                ensure_loaded_udf,
+                ensure_contiguous_udf,
+            )
         })
         .collect();
 
@@ -218,8 +249,11 @@ fn rewrite_expr_node(
     }
 }
 
-/// Wrap a raster argument so its byte materialisation is explicit in the
-/// plan: `rs_ensureloaded(arg)`, aliased back to the argument's name.
+/// Wrap a raster argument so its byte-access preconditions are explicit in the
+/// plan, then alias the result back to the argument's original name. With both
+/// wrappers requested the nesting is
+/// `rs_ensurecontiguous(rs_ensureloaded(arg))` — load innermost so the repack
+/// operates on the materialised bytes.
 ///
 /// The alias matters: an optimizer rule must not change the plan's output
 /// schema, but rewriting `f(rast)` to `f(rs_ensureloaded(rast))` would change
@@ -227,15 +261,33 @@ fn rewrite_expr_node(
 /// is a projection's output (e.g. `SELECT RS_DimToBand(rast, …)`), the column
 /// is renamed from `rs_dimtoband(rast, …)` to `rs_dimtoband(rs_ensureloaded(rast), …)`.
 /// DataFusion's `optimize_projections` invariant check then fails the query.
-/// Aliasing the wrap back to the argument's original name keeps the enclosing
-/// name — and the output schema — stable. (`WrapAsyncUdfRule` uses the same
-/// trick to preserve its wrapper's name.)
-fn wrap_for_loading(arg: Expr, ensure_loaded_udf: &Arc<ScalarUDF>) -> Expr {
+/// Aliasing back to the argument's original name keeps the enclosing name — and
+/// the output schema — stable. (`WrapAsyncUdfRule` uses the same trick to
+/// preserve its wrapper's name.)
+///
+/// `add_load` / `add_contiguous` are precomputed by the caller (already
+/// accounting for the idempotency guards), so at least one is `true` here.
+fn wrap_raster_arg(
+    arg: Expr,
+    add_load: bool,
+    add_contiguous: bool,
+    ensure_loaded_udf: &Arc<ScalarUDF>,
+    ensure_contiguous_udf: &Arc<ScalarUDF>,
+) -> Expr {
     let original_name = arg.schema_name().to_string();
-    let wrapped = Expr::ScalarFunction(ScalarFunction {
-        func: Arc::clone(ensure_loaded_udf),
-        args: vec![arg],
-    });
+    let mut wrapped = arg;
+    if add_load {
+        wrapped = Expr::ScalarFunction(ScalarFunction {
+            func: Arc::clone(ensure_loaded_udf),
+            args: vec![wrapped],
+        });
+    }
+    if add_contiguous {
+        wrapped = Expr::ScalarFunction(ScalarFunction {
+            func: Arc::clone(ensure_contiguous_udf),
+            args: vec![wrapped],
+        });
+    }
     Expr::Alias(Alias::new(wrapped, None::<&str>, original_name))
 }
 
@@ -256,6 +308,14 @@ fn wrap_for_loading(arg: Expr, ensure_loaded_udf: &Arc<ScalarUDF>) -> Expr {
 fn already_loaded(expr: &Expr) -> bool {
     match expr {
         Expr::ScalarFunction(sf) if sf.func.name() == "rs_ensureloaded" => true,
+        // `rs_ensurecontiguous` only repacks already-in-database bytes — it
+        // never un-loads — so `rs_ensurecontiguous(X)` is loaded iff `X` is.
+        // This makes a fixpoint re-run over a fully-wrapped both-flags arg
+        // (`rs_ensurecontiguous(rs_ensureloaded(rast))`) recognise it as
+        // already loaded and skip re-adding the loader.
+        Expr::ScalarFunction(sf) if sf.func.name() == "rs_ensurecontiguous" => {
+            sf.args.first().is_some_and(already_loaded)
+        }
         Expr::ScalarFunction(sf) if sf.func.name() == RESTORE_METADATA_NAME => {
             sf.args.first().is_some_and(already_loaded)
         }
@@ -271,6 +331,24 @@ fn already_loaded(expr: &Expr) -> bool {
                     == Some("true")
             }),
         Expr::Alias(alias) => already_loaded(&alias.expr),
+        _ => false,
+    }
+}
+
+/// True if `expr` already yields contiguous raster bytes, so the rule must not
+/// wrap it in `RS_EnsureContiguous`. An argument is already contiguous when it
+/// is (or, through an alias, wraps) an injected `rs_ensurecontiguous` call —
+/// the idempotency guard that stops a fixpoint re-run from stacking repackers.
+/// `RS_EnsureContiguous` is matched by name because it is a plain UDF, not a
+/// `SedonaScalarUDF` that could carry metadata.
+///
+/// Unlike [`already_loaded`], there is no `sd_restore_metadata` arm:
+/// `RS_EnsureContiguous` is synchronous, so `WrapAsyncUdfRule` never stamps the
+/// async-only restore wrapper onto it.
+fn already_contiguous(expr: &Expr) -> bool {
+    match expr {
+        Expr::ScalarFunction(sf) if sf.func.name() == "rs_ensurecontiguous" => true,
+        Expr::Alias(alias) => already_contiguous(&alias.expr),
         _ => false,
     }
 }
@@ -309,6 +387,19 @@ mod tests {
             Arc::new(|_, _| unreachable!("stub kernel; rewrite never invokes it")),
         );
         let udf = SedonaScalarUDF::new("rs_ensureloaded", vec![kernel], Volatility::Immutable);
+        Arc::new(ScalarUDF::new_from_impl(udf))
+    }
+
+    /// A stand-in `rs_ensurecontiguous` UDF. Like the loader stub, the rule
+    /// keys off the name only, so a plain SedonaScalarUDF carrying the
+    /// canonical name is sufficient (the real impl is a plain sync
+    /// ScalarUDFImpl in the `sedona-raster-functions` crate).
+    fn fake_ensure_contiguous_udf() -> Arc<ScalarUDF> {
+        let kernel: ScalarKernelRef = SimpleSedonaScalarKernel::new_ref(
+            ArgMatcher::new(vec![ArgMatcher::is_raster()], SedonaType::Raster),
+            Arc::new(|_, _| unreachable!("stub kernel; rewrite never invokes it")),
+        );
+        let udf = SedonaScalarUDF::new("rs_ensurecontiguous", vec![kernel], Volatility::Immutable);
         Arc::new(ScalarUDF::new_from_impl(udf))
     }
 
@@ -352,6 +443,38 @@ mod tests {
         Arc::new(ScalarUDF::new_from_impl(udf))
     }
 
+    /// A `needs_contiguous`-only UDF accepting a raster, returning Int32 —
+    /// models a kernel that reads contiguous bytes but assumes loaded input.
+    fn needs_contiguous_udf(name: &str) -> Arc<ScalarUDF> {
+        let kernel: ScalarKernelRef = SimpleSedonaScalarKernel::new_ref(
+            ArgMatcher::new(
+                vec![ArgMatcher::is_raster()],
+                SedonaType::Arrow(DataType::Int32),
+            ),
+            Arc::new(|_, _| unreachable!("stub kernel; not invoked at plan time")),
+        );
+        let udf = SedonaScalarUDF::new(name, vec![kernel], Volatility::Immutable)
+            .with_metadata(NEEDS_CONTIGUOUS_METADATA_KEY, "true");
+        Arc::new(ScalarUDF::new_from_impl(udf))
+    }
+
+    /// A UDF tagged BOTH `needs_pixels` and `needs_contiguous` — models a
+    /// GDAL-bridge export like RS_AsGeoTiff that loads bytes then hands them to
+    /// GDAL contiguously.
+    fn needs_pixels_and_contiguous_udf(name: &str) -> Arc<ScalarUDF> {
+        let kernel: ScalarKernelRef = SimpleSedonaScalarKernel::new_ref(
+            ArgMatcher::new(
+                vec![ArgMatcher::is_raster()],
+                SedonaType::Arrow(DataType::Int32),
+            ),
+            Arc::new(|_, _| unreachable!("stub kernel; not invoked at plan time")),
+        );
+        let udf = SedonaScalarUDF::new(name, vec![kernel], Volatility::Immutable)
+            .with_metadata(NEEDS_PIXELS_METADATA_KEY, "true")
+            .with_metadata(NEEDS_CONTIGUOUS_METADATA_KEY, "true");
+        Arc::new(ScalarUDF::new_from_impl(udf))
+    }
+
     fn raster_schema_named(name: &str) -> Arc<DFSchema> {
         let field = SedonaType::Raster.to_storage_field(name, true).unwrap();
         let arrow_schema = Arc::new(Schema::new(vec![field]));
@@ -364,11 +487,11 @@ mod tests {
         Arc::new(DFSchema::try_from(arrow_schema.as_ref().clone()).unwrap())
     }
 
-    fn count_ensure_loaded(expr: &Expr) -> usize {
+    fn count_named(expr: &Expr, name: &str) -> usize {
         let mut n = 0;
         expr.apply(|e| {
             if let Expr::ScalarFunction(sf) = e {
-                if sf.func.name() == "rs_ensureloaded" {
+                if sf.func.name() == name {
                     n += 1;
                 }
             }
@@ -378,8 +501,27 @@ mod tests {
         n
     }
 
+    fn count_ensure_loaded(expr: &Expr) -> usize {
+        count_named(expr, "rs_ensureloaded")
+    }
+
+    fn count_ensure_contiguous(expr: &Expr) -> usize {
+        count_named(expr, "rs_ensurecontiguous")
+    }
+
+    /// Drive `rewrite_expr_node` with the given loader stub and a fresh
+    /// contiguous stub. Existing call sites that only exercise the loader pass
+    /// just the loader; the contiguous wrapper is supplied here.
     fn rewrite(expr: Expr, schema: &Arc<DFSchema>, udf: &Arc<ScalarUDF>) -> Expr {
-        rewrite_expr_node(expr, schema, udf).unwrap().data
+        let contig = fake_ensure_contiguous_udf();
+        rewrite_expr_node(expr, schema, udf, &contig).unwrap().data
+    }
+
+    /// Test-only shim preserving the pre-nesting `wrap_for_loading(arg, udf)`
+    /// call shape used by the idempotency tests: wrap with the loader only.
+    fn wrap_for_loading(arg: Expr, ensure_loaded_udf: &Arc<ScalarUDF>) -> Expr {
+        let contig = fake_ensure_contiguous_udf();
+        wrap_raster_arg(arg, true, false, ensure_loaded_udf, &contig)
     }
 
     #[test]
@@ -636,9 +778,10 @@ mod tests {
         use datafusion_expr::{EmptyRelation, LogicalPlanBuilder};
 
         // SessionState doubles as the OptimizerConfig and carries the
-        // function registry the rule resolves `rs_ensureloaded` from.
+        // function registry the rule resolves both wrapper UDFs from.
         let mut state = SessionStateBuilder::new().with_default_features().build();
         state.register_udf(fake_ensure_loaded_udf()).unwrap();
+        state.register_udf(fake_ensure_contiguous_udf()).unwrap();
 
         let scan = LogicalPlan::EmptyRelation(EmptyRelation {
             produce_one_row: false,
@@ -680,6 +823,7 @@ mod tests {
     fn idempotent_with_transform_up() {
         let schema = raster_schema_named("rast");
         let udf = fake_ensure_loaded_udf();
+        let contig = fake_ensure_contiguous_udf();
 
         // Initial expression: rs_mock(rast)
         let call = Expr::ScalarFunction(ScalarFunction {
@@ -689,7 +833,7 @@ mod tests {
 
         // First pass via transform_up (matching the optimizer's pattern).
         let first_pass = call
-            .transform_up(|e| rewrite_expr_node(e, &schema, &udf))
+            .transform_up(|e| rewrite_expr_node(e, &schema, &udf, &contig))
             .unwrap();
         assert!(first_pass.transformed, "first pass should wrap");
         assert_eq!(
@@ -701,12 +845,164 @@ mod tests {
         // Second pass: should be a no-op.
         let second_pass = first_pass
             .data
-            .transform_up(|e| rewrite_expr_node(e, &schema, &udf))
+            .transform_up(|e| rewrite_expr_node(e, &schema, &udf, &contig))
             .unwrap();
         assert_eq!(
             count_ensure_loaded(&second_pass.data),
             1,
             "second pass should not add more wrappers"
+        );
+    }
+
+    #[test]
+    fn wraps_raster_arg_of_needs_contiguous_udf() {
+        // A needs_contiguous-only UDF: its raster arg is wrapped in
+        // rs_ensurecontiguous (and nothing else — no loader).
+        let schema = raster_schema_named("rast");
+        let udf = fake_ensure_loaded_udf();
+        let call = Expr::ScalarFunction(ScalarFunction {
+            func: needs_contiguous_udf("rs_mock"),
+            args: vec![col("rast")],
+        });
+        let out = rewrite(call, &schema, &udf);
+        assert_eq!(count_ensure_contiguous(&out), 1, "{out:?}");
+        assert_eq!(count_ensure_loaded(&out), 0, "{out:?}");
+        let Expr::ScalarFunction(ScalarFunction { args, .. }) = &out else {
+            panic!("expected ScalarFunction, got {out:?}");
+        };
+        assert!(
+            already_contiguous(&args[0]),
+            "raster arg should be wrapped in rs_ensurecontiguous"
+        );
+    }
+
+    #[test]
+    fn wraps_needs_pixels_and_contiguous_as_ensurecontiguous_of_ensureloaded() {
+        // A UDF tagged BOTH flags yields the nested form
+        // rs_ensurecontiguous(rs_ensureloaded(rast)): load innermost, repack
+        // outermost.
+        let schema = raster_schema_named("rast");
+        let udf = fake_ensure_loaded_udf();
+        let call = Expr::ScalarFunction(ScalarFunction {
+            func: needs_pixels_and_contiguous_udf("rs_mock"),
+            args: vec![col("rast")],
+        });
+        let out = rewrite(call, &schema, &udf);
+        assert_eq!(count_ensure_loaded(&out), 1, "{out:?}");
+        assert_eq!(count_ensure_contiguous(&out), 1, "{out:?}");
+
+        // Assert the exact nesting: arg = rs_ensurecontiguous(rs_ensureloaded(rast)),
+        // aliased back to the original name.
+        let Expr::ScalarFunction(ScalarFunction { args, .. }) = &out else {
+            panic!("expected outer ScalarFunction, got {out:?}");
+        };
+        let inner = match &args[0] {
+            Expr::Alias(alias) => alias.expr.as_ref(),
+            other => other,
+        };
+        let Expr::ScalarFunction(ScalarFunction {
+            func: outer_func,
+            args: outer_args,
+        }) = inner
+        else {
+            panic!("expected rs_ensurecontiguous call, got {inner:?}");
+        };
+        assert_eq!(outer_func.name(), "rs_ensurecontiguous");
+        let Expr::ScalarFunction(ScalarFunction {
+            func: loader_func, ..
+        }) = &outer_args[0]
+        else {
+            panic!(
+                "expected rs_ensureloaded nested inside, got {:?}",
+                outer_args[0]
+            );
+        };
+        assert_eq!(
+            loader_func.name(),
+            "rs_ensureloaded",
+            "loader must be nested INSIDE the contiguous wrapper"
+        );
+    }
+
+    #[test]
+    fn needs_contiguous_leaves_non_raster_args_alone() {
+        let schema = int_schema("n");
+        let udf = fake_ensure_loaded_udf();
+        let call = Expr::ScalarFunction(ScalarFunction {
+            func: needs_contiguous_udf("rs_mock"),
+            args: vec![col("n")],
+        });
+        let out = rewrite(call, &schema, &udf);
+        assert_eq!(count_ensure_contiguous(&out), 0);
+        assert_eq!(count_ensure_loaded(&out), 0);
+    }
+
+    #[test]
+    fn does_not_rewrap_already_contiguous_arg() {
+        // An arg already wrapped in rs_ensurecontiguous is not wrapped again by
+        // a needs_contiguous UDF (idempotency across fixpoint passes), and the
+        // aliased form is likewise recognised.
+        let schema = raster_schema_named("rast");
+        let udf = fake_ensure_loaded_udf();
+        let already = wrap_raster_arg(
+            col("rast"),
+            false,
+            true,
+            &udf,
+            &fake_ensure_contiguous_udf(),
+        );
+        let call = Expr::ScalarFunction(ScalarFunction {
+            func: needs_contiguous_udf("rs_mock"),
+            args: vec![already],
+        });
+        let out = rewrite(call, &schema, &udf);
+        assert_eq!(
+            count_ensure_contiguous(&out),
+            1,
+            "already-contiguous arg must not be re-wrapped: {out:?}"
+        );
+    }
+
+    #[test]
+    fn both_flags_idempotent_over_fully_wrapped_arg() {
+        // Fixpoint re-run: the arg is already rs_ensurecontiguous(rs_ensureloaded(rast))
+        // and the UDF needs both. Neither wrapper is re-added — already_loaded
+        // looks THROUGH rs_ensurecontiguous, and already_contiguous matches the
+        // outer wrapper.
+        let schema = raster_schema_named("rast");
+        let udf = fake_ensure_loaded_udf();
+        let fully_wrapped =
+            wrap_raster_arg(col("rast"), true, true, &udf, &fake_ensure_contiguous_udf());
+        let call = Expr::ScalarFunction(ScalarFunction {
+            func: needs_pixels_and_contiguous_udf("rs_mock"),
+            args: vec![fully_wrapped],
+        });
+        let out = rewrite(call, &schema, &udf);
+        assert_eq!(count_ensure_loaded(&out), 1, "no extra loader: {out:?}");
+        assert_eq!(
+            count_ensure_contiguous(&out),
+            1,
+            "no extra repacker: {out:?}"
+        );
+    }
+
+    #[test]
+    fn contiguous_wrapping_preserves_enclosing_expression_name() {
+        // As with the loader, wrapping must not rename the enclosing call, or
+        // DataFusion's optimize_projections invariant check fails for an
+        // unaliased projection.
+        let schema = raster_schema_named("rast");
+        let udf = fake_ensure_loaded_udf();
+        let call = Expr::ScalarFunction(ScalarFunction {
+            func: needs_pixels_and_contiguous_udf("rs_mock"),
+            args: vec![col("rast")],
+        });
+        let original_name = call.schema_name().to_string();
+        let out = rewrite(call, &schema, &udf);
+        assert_eq!(
+            out.schema_name().to_string(),
+            original_name,
+            "nested wrapping must not rename the enclosing expression: {out:?}"
         );
     }
 }
