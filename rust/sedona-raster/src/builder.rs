@@ -413,7 +413,9 @@ impl RasterBuilder {
                 nodata: nodata.map_or(Override::Keep, Override::Set),
                 outdb_uri: outdb_uri.map_or(Override::Keep, Override::Set),
                 outdb_format: outdb_format.map_or(Override::Keep, Override::Set),
+                source_shape: None,
                 view: Override::Set(&composed),
+                data: Override::Keep,
             },
         )
     }
@@ -660,6 +662,15 @@ impl BandWriter for RasterBuilder {
         row: usize,
     ) -> Result<(), RasterError> {
         self.bands.append_band_data_from(src, row)
+    }
+
+    fn append_band_data_buffer(
+        &mut self,
+        buffer: &Buffer,
+        offset: u32,
+        len: u32,
+    ) -> Result<(), RasterError> {
+        self.bands.append_band_data_buffer(buffer, offset, len)
     }
 }
 

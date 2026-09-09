@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use arrow_buffer::Buffer;
 use sedona_schema::raster::BandDataType;
 
 use crate::band_builder::BandWriter;
@@ -329,6 +330,18 @@ pub struct BandOverrides<'a> {
     /// broadcast, permutation, or reverse) and decoded back by the reader; the
     /// underlying bytes are carried over unchanged.
     pub view: Override<&'a ViewEntries>,
+    /// Override the source shape the derived band's bytes are laid out in;
+    /// `None` inherits the source's [`BandRef::raw_source_shape`]. Pair it
+    /// with a `view` override (and normally a `data` override) when the bytes
+    /// describe a different extent than the source's — e.g. a loader that
+    /// returned only the visible region, under an identity view over it.
+    pub source_shape: Option<&'a [i64]>,
+    /// Override the derived band's bytes. `Keep` carries the source's data
+    /// over (zero-copy where the implementation supports it, see
+    /// [`BandRef::append_data_into`]); `Set(b)` shares `b` zero-copy as the
+    /// derived band's data; `Clear` writes empty data, i.e. an OutDb-style
+    /// band whose bytes live behind `outdb_uri`.
+    pub data: Override<&'a Buffer>,
 }
 
 /// Trait for accessing a single band/variable within an N-D raster.
@@ -518,7 +531,10 @@ pub trait BandRef {
             Some(d) => d.to_vec(),
             None => inherited_dims,
         };
-        let source_shape = self.raw_source_shape().to_vec();
+        let source_shape = match overrides.source_shape {
+            Some(shape) => shape.to_vec(),
+            None => self.raw_source_shape().to_vec(),
+        };
         // The view is used as-is — never composed onto the source's own view.
         // `Clear` applies the canonical identity (the bytes already reflect any
         // prior view); `Set(v)` uses `v` verbatim; `Keep` carries the source's
@@ -556,7 +572,22 @@ pub trait BandRef {
             outdb_format,
             ..StartBandArgs::new(&dim_names, &source_shape, self.data_type())
         })?;
-        self.append_data_into(builder)
+        match overrides.data {
+            Override::Keep => self.append_data_into(builder),
+            Override::Clear => {
+                builder.band_data_writer().append_value([]);
+                Ok(())
+            }
+            Override::Set(buffer) => {
+                let len = u32::try_from(buffer.len()).map_err(|_| {
+                    RasterError::Invalid(format!(
+                        "band data of {} bytes exceeds the BinaryView length limit",
+                        buffer.len()
+                    ))
+                })?;
+                builder.append_band_data_buffer(buffer, 0, len)
+            }
+        }
     }
 
     /// Append `self`'s band data as the current band's single `data` value.

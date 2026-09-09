@@ -61,6 +61,14 @@ pub trait BandWriter {
         src: &BinaryViewArray,
         row: usize,
     ) -> Result<(), RasterError>;
+    /// Append the current band's data as a zero-copy view into `buffer`
+    /// (see [`BandArrayBuilder::append_band_data_buffer`]).
+    fn append_band_data_buffer(
+        &mut self,
+        buffer: &Buffer,
+        offset: u32,
+        len: u32,
+    ) -> Result<(), RasterError>;
 }
 
 /// Builder for the flat, per-band columns of `RasterSchema::band_type()` —
@@ -465,6 +473,16 @@ impl BandWriter for BandArrayBuilder {
         args: StartBandArgs<'_>,
     ) -> Result<(Vec<String>, Vec<i64>), RasterError> {
         self.start_band_impl(args)
+    }
+
+    fn append_band_data_buffer(
+        &mut self,
+        buffer: &Buffer,
+        offset: u32,
+        len: u32,
+    ) -> Result<(), RasterError> {
+        // Inherent method of the same name (method resolution prefers it).
+        BandArrayBuilder::append_band_data_buffer(self, buffer, offset, len)
     }
 
     fn band_data_writer(&mut self) -> &mut BinaryViewBuilder {
