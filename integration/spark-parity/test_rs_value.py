@@ -74,12 +74,50 @@ def test_rs_value_float64_fraction(tmp_path):
 
 
 def test_rs_value_pixel_corner(tmp_path):
-    """A point exactly on a shared pixel corner resolves to the pixel to its
-    lower right on both engines: (104, 494) reads pixel (row 2, col 2)."""
+    """A point exactly on the shared corner of four pixels resolves to the
+    pixel to its lower right on both engines: (104, 494) sits where rows 1-2
+    and columns 1-2 meet and reads pixel (row 2, col 2)."""
     sedona, spark = _engines("val_c_src", tmp_path)
     data = random_raster_data("uint8", bands=2, height=6, width=7)
     sql = "SELECT RS_Value(rast, ST_GeomFromWKT('POINT(104 494)'), 1) FROM val_c_src"
     compare(sql, sedona, spark, expected=float(data[0, 2, 2]))
+
+
+@pytest.mark.parametrize(
+    "wkt,pixel",
+    [
+        # The lower-right convention keeps the upper-left raster corner inside
+        # (pixel (0, 0) holds the planted dtype max)...
+        pytest.param("POINT(100 500)", (0, 0), id="raster-corner-upper-left"),
+        # ...and top/left edge midpoints resolve inclusively.
+        pytest.param("POINT(104 500)", (0, 2), id="top-edge"),
+        pytest.param("POINT(100 494)", (2, 0), id="left-edge"),
+    ],
+)
+def test_rs_value_boundary_inclusive(wkt, pixel, tmp_path):
+    """Points on the raster's top/left boundary read the adjacent pixel on
+    both engines."""
+    sedona, spark = _engines("val_b_src", tmp_path)
+    data = random_raster_data("uint8", bands=2, height=6, width=7)
+    sql = f"SELECT RS_Value(rast, ST_GeomFromWKT('{wkt}'), 1) FROM val_b_src"
+    compare(sql, sedona, spark, expected=float(data[0][pixel]))
+
+
+@pytest.mark.parametrize(
+    "wkt",
+    [
+        pytest.param("POINT(114 482)", id="raster-corner-lower-right"),
+        pytest.param("POINT(114 500)", id="raster-corner-upper-right"),
+        pytest.param("POINT(100 482)", id="raster-corner-lower-left"),
+    ],
+)
+def test_rs_value_boundary_exclusive(wkt, tmp_path):
+    """The other three raster corners are NULL on both engines — the
+    lower-right convention steps outside the grid there, so the right and
+    bottom boundaries are exclusive."""
+    sedona, spark = _engines("val_bx_src", tmp_path)
+    sql = f"SELECT RS_Value(rast, ST_GeomFromWKT('{wkt}'), 1) FROM val_bx_src"
+    compare(sql, sedona, spark, expected=[(None,)])
 
 
 def test_rs_value_non_point_rejected(tmp_path):
