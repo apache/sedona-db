@@ -133,15 +133,15 @@ where
     forward_triangle_trait_ext_funcs!();
 
     fn first_coord(&self) -> Coord<<Self as GeometryTrait>::T> {
-        self.0
+        self.v1()
     }
 
     fn second_coord(&self) -> Coord<<Self as GeometryTrait>::T> {
-        self.1
+        self.v2()
     }
 
     fn third_coord(&self) -> Coord<<Self as GeometryTrait>::T> {
-        self.2
+        self.v3()
     }
 
     fn to_array(&self) -> [Coord<<Self as GeometryTrait>::T>; 3] {
@@ -164,15 +164,15 @@ where
     forward_triangle_trait_ext_funcs!();
 
     fn first_coord(&self) -> Coord<<Self as GeometryTrait>::T> {
-        self.0
+        self.v1()
     }
 
     fn second_coord(&self) -> Coord<<Self as GeometryTrait>::T> {
-        self.1
+        self.v2()
     }
 
     fn third_coord(&self) -> Coord<<Self as GeometryTrait>::T> {
-        self.2
+        self.v3()
     }
 
     fn to_array(&self) -> [Coord<<Self as GeometryTrait>::T>; 3] {
