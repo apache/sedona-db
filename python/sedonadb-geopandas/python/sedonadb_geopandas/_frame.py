@@ -553,17 +553,26 @@ class GeoDataFrame:
                 )
 
         source = self._df
+        # "Missing" has to cover IEEE NaN as well as SQL null: a float column
+        # read from pandas carries NaN, and grouping treats it as an ordinary
+        # value, so a key column holding both would form two missing groups
+        # (and dropna would drop only one of them). NaN is normalized to null
+        # first, in both modes, so the two representations group as one
+        # missing key the way they do in pandas. The gate is null where the
+        # key is NaN and zero elsewhere, and adding it keeps real values and
+        # null keys unchanged.
+        floating = {
+            key: source[key]
+            + source[key].funcs.isnan().funcs.nullif(lit(True)).cast(pa.float64())
+            for key in keys
+            if _is_floating(source, key)
+        }
+        if floating:
+            source = source.mutate(**floating)
         if keys and dropna:
-            # GeoPandas drops rows with a missing group key by default. "Missing"
-            # has to cover IEEE NaN as well as SQL null: a float column read from
-            # pandas carries NaN, and grouping treats it as an ordinary value, so
-            # filtering nulls alone would leave it as its own group.
+            # GeoPandas drops rows with a missing group key by default.
             for key in keys:
-                column = source[key]
-                keep = column.is_not_null()
-                if _is_floating(source, key):
-                    keep = keep & ~column.funcs.isnan()
-                source = source.filter(keep)
+                source = source.filter(source[key].is_not_null())
 
         # Collect each group into one geometry and union it afterwards, rather than
         # using ST_Union_Agg: that aggregate only initializes for polygonal input,

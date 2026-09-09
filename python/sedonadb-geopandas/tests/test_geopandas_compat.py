@@ -1468,6 +1468,27 @@ def test_dissolve_drops_nan_group_keys():
     assert len(GeoDataFrame(df).dissolve(by="k", dropna=False).to_geopandas()) == 2
 
 
+def test_dissolve_groups_null_and_nan_keys_together():
+    # Missing-key handling only ran with dropna=True, so with dropna=False a
+    # SQL NULL and an IEEE NaN in the same float key column formed two
+    # missing groups where pandas forms one. NaN is normalized to null before
+    # grouping, in both modes.
+    tbl = pa.table(
+        {
+            "k": pa.array([None, float("nan"), 1.0], pa.float64()),
+            "geometry": ga.as_wkb(["POINT (0 0)", "POINT (1 1)", "POINT (2 2)"]),
+        }
+    )
+    gdf = GeoDataFrame(sgpd.default_context().create_data_frame(tbl))
+    kept = gdf.dissolve(by="k", dropna=False).to_geopandas()
+    assert len(kept) == 2
+    assert kept["k"].isna().sum() == 1
+    missing = kept[kept["k"].isna()].geometry.iloc[0]
+    assert missing.geom_type == "MultiPoint" and len(missing.geoms) == 2
+    dropped = gdf.dissolve(by="k").to_geopandas()
+    assert dropped["k"].tolist() == [1.0]
+
+
 def test_dissolve_by_nested_float_column():
     # _is_floating used to match the rendered type string, so `list<item: double>`
     # looked like a float column and dropna called isnan() on it, failing at
